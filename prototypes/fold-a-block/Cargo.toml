@@ -5,7 +5,7 @@ edition = "2021"
 description = "EvaporChain go/no-go prototype: Nova IVC folding benchmark"
 
 [dependencies]
-nova-snark = "0.68"
+nova-snark = { version = "0.68", features = ["test-utils"] }
 ff = "0.13"
 rand = "0.8"
 rand_chacha = "0.3"
