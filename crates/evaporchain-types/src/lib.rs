@@ -75,11 +75,20 @@ pub struct Block {
     pub timestamp: u64,
 }
 
+/// An account with a balance.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Account {
+    pub address: AccountAddress,
+    pub balance: u64,
+    pub nonce: u64,
+}
+
 /// Transaction types.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Transaction {
     Transfer(TransferTx),
     Refresh(RefreshTx),
+    CreateObject(CreateObjectTx),
 }
 
 /// Value transfer transaction.
@@ -96,6 +105,16 @@ pub struct TransferTx {
 pub struct RefreshTx {
     pub object_id: ObjectId,
     pub energy_deposit: Energy,
+}
+
+/// Create a new state object with initial energy.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateObjectTx {
+    pub creator: AccountAddress,
+    pub object_id: ObjectId,
+    pub energy: Energy,
+    pub half_life: HalfLife,
+    pub data: Vec<u8>,
 }
 
 /// Commitment to the global state.

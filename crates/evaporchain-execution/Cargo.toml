@@ -10,3 +10,4 @@ evaporchain-types = { path = "../evaporchain-types" }
 evaporchain-state = { path = "../evaporchain-state" }
 tracing = { workspace = true }
 thiserror = { workspace = true }
+hex = { workspace = true }

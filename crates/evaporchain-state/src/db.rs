@@ -1,5 +1,5 @@
 use evaporchain_crypto::hash::blake3_hash;
-use evaporchain_types::{GhostRecord, ObjectId, StateObject};
+use evaporchain_types::{Account, AccountAddress, GhostRecord, ObjectId, StateObject};
 use std::collections::HashMap;
 
 /// Trait for state database backends.
@@ -34,7 +34,19 @@ pub trait StateDB: Send + Sync {
     /// Return the number of ghost records.
     fn ghost_count(&self) -> usize;
 
-    /// Compute the state root hash over all objects.
+    /// Retrieve an account by address.
+    fn get_account(&self, addr: &AccountAddress) -> Option<&Account>;
+
+    /// Retrieve a mutable reference to an account.
+    fn get_account_mut(&mut self, addr: &AccountAddress) -> Option<&mut Account>;
+
+    /// Store or update an account.
+    fn put_account(&mut self, account: Account);
+
+    /// Get or create an account (returns mutable ref). Creates with zero balance if missing.
+    fn get_or_create_account(&mut self, addr: &AccountAddress) -> &mut Account;
+
+    /// Compute the state root hash over all objects and accounts.
     fn compute_state_root(&self) -> [u8; 32];
 }
 
@@ -42,6 +54,7 @@ pub trait StateDB: Send + Sync {
 pub struct InMemoryStateDB {
     objects: HashMap<ObjectId, StateObject>,
     ghosts: HashMap<ObjectId, GhostRecord>,
+    accounts: HashMap<AccountAddress, Account>,
 }
 
 impl InMemoryStateDB {
@@ -49,6 +62,7 @@ impl InMemoryStateDB {
         Self {
             objects: HashMap::new(),
             ghosts: HashMap::new(),
+            accounts: HashMap::new(),
         }
     }
 }
@@ -100,12 +114,43 @@ impl StateDB for InMemoryStateDB {
         self.ghosts.len()
     }
 
+    fn get_account(&self, addr: &AccountAddress) -> Option<&Account> {
+        self.accounts.get(addr)
+    }
+
+    fn get_account_mut(&mut self, addr: &AccountAddress) -> Option<&mut Account> {
+        self.accounts.get_mut(addr)
+    }
+
+    fn put_account(&mut self, account: Account) {
+        self.accounts.insert(account.address, account);
+    }
+
+    fn get_or_create_account(&mut self, addr: &AccountAddress) -> &mut Account {
+        self.accounts.entry(*addr).or_insert_with(|| Account {
+            address: *addr,
+            balance: 0,
+            nonce: 0,
+        })
+    }
+
     fn compute_state_root(&self) -> [u8; 32] {
-        // Sort keys for deterministic ordering, then hash all objects
+        let mut hasher_input = Vec::new();
+
+        // Hash accounts (sorted for determinism)
+        let mut addrs: Vec<&AccountAddress> = self.accounts.keys().collect();
+        addrs.sort();
+        for addr in addrs {
+            hasher_input.extend_from_slice(addr);
+            if let Some(acc) = self.accounts.get(addr) {
+                hasher_input.extend_from_slice(&acc.balance.to_le_bytes());
+                hasher_input.extend_from_slice(&acc.nonce.to_le_bytes());
+            }
+        }
+
+        // Hash objects (sorted for determinism)
         let mut ids: Vec<&ObjectId> = self.objects.keys().collect();
         ids.sort();
-
-        let mut hasher_input = Vec::new();
         for id in ids {
             hasher_input.extend_from_slice(id);
             if let Some(obj) = self.objects.get(id) {
