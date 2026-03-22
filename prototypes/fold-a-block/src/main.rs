@@ -128,7 +128,7 @@ fn main() {
         let start = Instant::now();
         recursive_snark
             .prove_step(&pp, &circuit_i)
-            .expect(&format!("Failed to prove fold step {}", i));
+            .unwrap_or_else(|_| panic!("Failed to prove fold step {}", i));
         let elapsed = start.elapsed();
 
         fold_times.push(elapsed);

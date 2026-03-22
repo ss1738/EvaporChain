@@ -1,0 +1,12 @@
+[package]
+name = "evaporchain-proving"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }

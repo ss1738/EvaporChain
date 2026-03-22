@@ -1,0 +1,31 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/evaporchain-types",
+    "crates/evaporchain-crypto",
+    "crates/evaporchain-state",
+    "crates/evaporchain-consensus",
+    "crates/evaporchain-execution",
+    "crates/evaporchain-proving",
+    "crates/evaporchain-network",
+    "crates/evaporchain-node",
+    "crates/evaporchain-cli",
+    "prototypes/fold-a-block",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/ss1738/EvaporChain"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+anyhow = "1"
+thiserror = "1"
+rand = "0.8"
+hex = "0.4"

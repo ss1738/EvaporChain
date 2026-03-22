@@ -1,0 +1,20 @@
+[package]
+name = "evaporchain-node"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+evaporchain-crypto = { path = "../evaporchain-crypto" }
+evaporchain-state = { path = "../evaporchain-state" }
+evaporchain-consensus = { path = "../evaporchain-consensus" }
+evaporchain-execution = { path = "../evaporchain-execution" }
+evaporchain-proving = { path = "../evaporchain-proving" }
+evaporchain-network = { path = "../evaporchain-network" }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+serde_json = { workspace = true }

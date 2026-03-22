@@ -1,0 +1,13 @@
+[package]
+name = "evaporchain-state"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+evaporchain-crypto = { path = "../evaporchain-crypto" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }

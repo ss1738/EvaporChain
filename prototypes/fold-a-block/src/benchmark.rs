@@ -29,6 +29,7 @@ pub struct BenchmarkReport {
 }
 
 impl BenchmarkReport {
+    #[allow(clippy::too_many_arguments)]
     pub fn from_fold_times(
         fold_times: &[Duration],
         num_constraints: usize,

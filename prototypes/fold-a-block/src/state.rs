@@ -9,6 +9,7 @@ pub const DECAY_RATE: u64 = 5;
 pub const INITIAL_ENERGY: u64 = 1000;
 
 /// A single transfer instruction.
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct Transfer {
     pub sender: usize,
@@ -80,6 +81,7 @@ impl BlockWitness {
 
     /// Compute a simple deterministic "hash" of the state.
     /// This is a placeholder for Poseidon — uses a field-friendly accumulation.
+    #[allow(dead_code)]
     pub fn state_commitment<F: PrimeField>(&self) -> F {
         let mut acc: u64 = self.epoch.wrapping_mul(31);
         for (i, b) in self.balances.iter().enumerate() {
