@@ -91,6 +91,59 @@ pub enum Transaction {
     CreateObject(CreateObjectTx),
 }
 
+impl Transaction {
+    /// Compute the canonical byte representation for signing.
+    /// Excludes signature/public_key fields — only the transaction body is signed.
+    pub fn signable_bytes(&self) -> Vec<u8> {
+        match self {
+            Transaction::Transfer(tx) => {
+                let mut buf = Vec::with_capacity(1 + 32 + 32 + 8 + 8);
+                buf.push(0x01); // type tag
+                buf.extend_from_slice(&tx.from);
+                buf.extend_from_slice(&tx.to);
+                buf.extend_from_slice(&tx.amount.to_le_bytes());
+                buf.extend_from_slice(&tx.nonce.to_le_bytes());
+                buf
+            }
+            Transaction::Refresh(tx) => {
+                let mut buf = Vec::with_capacity(1 + 32 + 8);
+                buf.push(0x02);
+                buf.extend_from_slice(&tx.object_id);
+                buf.extend_from_slice(&tx.energy_deposit.to_le_bytes());
+                buf
+            }
+            Transaction::CreateObject(tx) => {
+                let mut buf = Vec::with_capacity(1 + 32 + 32 + 8 + 8 + tx.data.len());
+                buf.push(0x03);
+                buf.extend_from_slice(&tx.creator);
+                buf.extend_from_slice(&tx.object_id);
+                buf.extend_from_slice(&tx.energy.to_le_bytes());
+                buf.extend_from_slice(&tx.half_life.to_le_bytes());
+                buf.extend_from_slice(&tx.data);
+                buf
+            }
+        }
+    }
+
+    /// Get the signature bytes (if present on the inner tx).
+    pub fn signature(&self) -> Option<&[u8]> {
+        match self {
+            Transaction::Transfer(tx) => tx.signature.as_deref(),
+            Transaction::Refresh(tx) => tx.signature.as_deref(),
+            Transaction::CreateObject(tx) => tx.signature.as_deref(),
+        }
+    }
+
+    /// Get the public key bytes (if present on the inner tx).
+    pub fn public_key(&self) -> Option<&[u8]> {
+        match self {
+            Transaction::Transfer(tx) => tx.public_key.as_deref(),
+            Transaction::Refresh(tx) => tx.public_key.as_deref(),
+            Transaction::CreateObject(tx) => tx.public_key.as_deref(),
+        }
+    }
+}
+
 /// Value transfer transaction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransferTx {
@@ -98,6 +151,10 @@ pub struct TransferTx {
     pub to: AccountAddress,
     pub amount: u64,
     pub nonce: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<Vec<u8>>,
 }
 
 /// Energy refresh transaction (prevents evaporation or resurrects a ghost).
@@ -105,6 +162,10 @@ pub struct TransferTx {
 pub struct RefreshTx {
     pub object_id: ObjectId,
     pub energy_deposit: Energy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<Vec<u8>>,
 }
 
 /// Create a new state object with initial energy.
@@ -115,6 +176,10 @@ pub struct CreateObjectTx {
     pub energy: Energy,
     pub half_life: HalfLife,
     pub data: Vec<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<Vec<u8>>,
 }
 
 /// Commitment to the global state.

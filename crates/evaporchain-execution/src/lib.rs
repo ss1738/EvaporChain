@@ -1,3 +1,4 @@
+use evaporchain_crypto::signatures::{MlDsaVerifier, Verifier};
 use evaporchain_state::db::StateDB;
 use evaporchain_state::{EvaporationEngine, RefreshEngine};
 use evaporchain_types::{
@@ -27,6 +28,10 @@ pub enum ExecutionError {
     ZeroAmount,
     #[error("refresh failed: {0}")]
     RefreshFailed(String),
+    #[error("invalid signature")]
+    InvalidSignature,
+    #[error("missing signature")]
+    MissingSignature,
 }
 
 /// Result of executing a single block.
@@ -53,14 +58,42 @@ pub trait ExecutionEngine: Send + Sync {
 /// evaporation at the end of each block.
 pub struct SimpleExecutor {
     evaporation_engine: EvaporationEngine,
+    verify_signatures: bool,
 }
 
 impl SimpleExecutor {
     /// Create a new executor with the given grace period for evaporation.
+    /// Signature verification is OFF by default (for backward compatibility).
     pub fn new(grace_period: u64) -> Self {
         Self {
             evaporation_engine: EvaporationEngine::new(grace_period),
+            verify_signatures: false,
         }
+    }
+
+    /// Create a new executor with signature verification enabled.
+    pub fn new_with_sig_verification(grace_period: u64) -> Self {
+        Self {
+            evaporation_engine: EvaporationEngine::new(grace_period),
+            verify_signatures: true,
+        }
+    }
+
+    /// Verify the ML-DSA signature on a transaction (if verification is enabled).
+    fn verify_tx_signature(&self, tx: &Transaction) -> Result<(), ExecutionError> {
+        if !self.verify_signatures {
+            return Ok(());
+        }
+
+        let sig = tx.signature().ok_or(ExecutionError::MissingSignature)?;
+        let pk = tx.public_key().ok_or(ExecutionError::MissingSignature)?;
+        let msg = tx.signable_bytes();
+
+        if !MlDsaVerifier::verify(&msg, sig, pk) {
+            return Err(ExecutionError::InvalidSignature);
+        }
+
+        Ok(())
     }
 
     /// Execute a single transfer transaction.
@@ -182,6 +215,13 @@ impl ExecutionEngine for SimpleExecutor {
 
         // Execute transactions
         for tx in &block.transactions {
+            // Signature verification (if enabled)
+            if let Err(e) = self.verify_tx_signature(tx) {
+                debug!(error = %e, "Signature verification failed");
+                txs_failed += 1;
+                continue;
+            }
+
             let result = match tx {
                 Transaction::Transfer(transfer) => self.execute_transfer(db, transfer),
                 Transaction::CreateObject(create) => {
@@ -228,6 +268,7 @@ impl ExecutionEngine for SimpleExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use evaporchain_crypto::signatures::{MlDsaKeypair, Signer};
     use evaporchain_state::InMemoryStateDB;
     use evaporchain_types::Account;
 
@@ -262,6 +303,27 @@ mod tests {
         });
     }
 
+    /// Helper: sign a transaction with the given keypair.
+    fn sign_tx(tx: &mut Transaction, kp: &MlDsaKeypair) {
+        let msg = tx.signable_bytes();
+        let sig = kp.sign(&msg);
+        let pk = kp.public_key_bytes();
+        match tx {
+            Transaction::Transfer(t) => {
+                t.signature = Some(sig);
+                t.public_key = Some(pk);
+            }
+            Transaction::Refresh(r) => {
+                r.signature = Some(sig);
+                r.public_key = Some(pk);
+            }
+            Transaction::CreateObject(c) => {
+                c.signature = Some(sig);
+                c.public_key = Some(pk);
+            }
+        }
+    }
+
     // ─── Basic Transfer ───
 
     #[test]
@@ -278,6 +340,8 @@ mod tests {
                 to: addr(2),
                 amount: 300,
                 nonce: 0,
+                signature: None,
+                public_key: None,
             })],
         );
 
@@ -309,6 +373,8 @@ mod tests {
                 to: addr(2),
                 amount: 500,
                 nonce: 0,
+                signature: None,
+                public_key: None,
             })],
         );
 
@@ -316,9 +382,7 @@ mod tests {
         assert_eq!(result.txs_executed, 0);
         assert_eq!(result.txs_failed, 1);
 
-        // Balance unchanged
         assert_eq!(db.get_account(&addr(1)).unwrap().balance, 100);
-        // Receiver not created
         assert!(db.get_account(&addr(2)).is_none());
     }
 
@@ -338,6 +402,8 @@ mod tests {
                 to: addr(1),
                 amount: 100,
                 nonce: 0,
+                signature: None,
+                public_key: None,
             })],
         );
 
@@ -361,7 +427,9 @@ mod tests {
                 from: addr(1),
                 to: addr(2),
                 amount: 100,
-                nonce: 5, // wrong — expected 0
+                nonce: 5,
+                signature: None,
+                public_key: None,
             })],
         );
 
@@ -385,6 +453,8 @@ mod tests {
                 energy: 5000,
                 half_life: 100,
                 data: vec![0xDE, 0xAD],
+                signature: None,
+                public_key: None,
             })],
         );
 
@@ -414,6 +484,8 @@ mod tests {
             energy: 1000,
             half_life: 50,
             data: vec![],
+            signature: None,
+            public_key: None,
         });
 
         let block1 = make_block(1, 1, vec![create_tx.clone()]);
@@ -438,34 +510,38 @@ mod tests {
             1,
             1,
             vec![
-                // Transfer 1→2
                 Transaction::Transfer(TransferTx {
                     from: addr(1),
                     to: addr(2),
                     amount: 2000,
                     nonce: 0,
+                    signature: None,
+                    public_key: None,
                 }),
-                // Transfer 2→3
                 Transaction::Transfer(TransferTx {
                     from: addr(2),
                     to: addr(3),
                     amount: 1000,
                     nonce: 0,
+                    signature: None,
+                    public_key: None,
                 }),
-                // Create object
                 Transaction::CreateObject(CreateObjectTx {
                     creator: addr(1),
                     object_id: obj_id(10),
                     energy: 500,
                     half_life: 50,
                     data: vec![1],
+                    signature: None,
+                    public_key: None,
                 }),
-                // Another transfer from 1 (nonce should be 1 now)
                 Transaction::Transfer(TransferTx {
                     from: addr(1),
                     to: addr(3),
                     amount: 500,
                     nonce: 1,
+                    signature: None,
+                    public_key: None,
                 }),
             ],
         );
@@ -474,13 +550,11 @@ mod tests {
         assert_eq!(result.txs_executed, 4);
         assert_eq!(result.txs_failed, 0);
 
-        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 7500); // 10000 - 2000 - 500
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 7500);
         assert_eq!(db.get_account(&addr(1)).unwrap().nonce, 2);
-        assert_eq!(db.get_account(&addr(2)).unwrap().balance, 6000); // 5000 + 2000 - 1000
-        assert_eq!(db.get_account(&addr(3)).unwrap().balance, 1500); // 1000 + 500
+        assert_eq!(db.get_account(&addr(2)).unwrap().balance, 6000);
+        assert_eq!(db.get_account(&addr(3)).unwrap().balance, 1500);
         assert_eq!(db.object_count(), 1);
-
-        // State root should be non-zero
         assert_ne!(result.state_root, [0u8; 32]);
     }
 
@@ -496,26 +570,29 @@ mod tests {
             1,
             1,
             vec![
-                // Succeeds
                 Transaction::Transfer(TransferTx {
                     from: addr(1),
                     to: addr(2),
                     amount: 200,
                     nonce: 0,
+                    signature: None,
+                    public_key: None,
                 }),
-                // Fails: insufficient (300 > 300 remaining)
                 Transaction::Transfer(TransferTx {
                     from: addr(1),
                     to: addr(3),
                     amount: 400,
                     nonce: 1,
+                    signature: None,
+                    public_key: None,
                 }),
-                // Succeeds
                 Transaction::Transfer(TransferTx {
                     from: addr(1),
                     to: addr(4),
                     amount: 100,
                     nonce: 1,
+                    signature: None,
+                    public_key: None,
                 }),
             ],
         );
@@ -532,8 +609,6 @@ mod tests {
     fn test_evaporation_triggered_by_block() {
         let mut db = InMemoryStateDB::new();
 
-        // Create an object with very low energy and short half-life
-        // energy=4, half_life=1 → energy_at(3) = 4>>3 = 0
         db.put_object(StateObject {
             id: obj_id(1),
             owner: addr(1),
@@ -546,9 +621,8 @@ mod tests {
             data: vec![0xAB],
         });
 
-        let executor = SimpleExecutor::new(3); // 3-epoch grace period
+        let executor = SimpleExecutor::new(3);
 
-        // Block at epoch 3: energy depleted → enters grace
         let block1 = make_block(1, 3, vec![]);
         let r1 = executor.execute_block(&mut db, &block1).unwrap();
         assert_eq!(r1.objects_entered_grace, 1);
@@ -556,12 +630,10 @@ mod tests {
         assert_eq!(db.object_count(), 1);
         assert_eq!(db.get_object(&obj_id(1)).unwrap().state, ObjectState::Grace);
 
-        // Block at epoch 5: still in grace (need epoch 6 = 3 + 3)
         let block2 = make_block(2, 5, vec![]);
         let r2 = executor.execute_block(&mut db, &block2).unwrap();
         assert_eq!(r2.objects_evaporated, 0);
 
-        // Block at epoch 6: grace expired → evaporated
         let block3 = make_block(3, 6, vec![]);
         let r3 = executor.execute_block(&mut db, &block3).unwrap();
         assert_eq!(r3.objects_evaporated, 1);
@@ -593,18 +665,18 @@ mod tests {
 
         let executor = SimpleExecutor::new(5);
 
-        // Epoch 3: enters grace
         let block1 = make_block(1, 3, vec![]);
         let r1 = executor.execute_block(&mut db, &block1).unwrap();
         assert_eq!(r1.objects_entered_grace, 1);
 
-        // Epoch 4: refresh with new energy → rescued
         let block2 = make_block(
             2,
             4,
             vec![Transaction::Refresh(RefreshTx {
                 object_id: obj_id(1),
                 energy_deposit: 10_000,
+                signature: None,
+                public_key: None,
             })],
         );
         let r2 = executor.execute_block(&mut db, &block2).unwrap();
@@ -615,7 +687,6 @@ mod tests {
         assert_eq!(obj.energy, 10_000);
         assert_eq!(obj.last_refreshed, 4);
 
-        // Object survives later epochs
         let block3 = make_block(3, 10, vec![]);
         let r3 = executor.execute_block(&mut db, &block3).unwrap();
         assert_eq!(r3.objects_entered_grace, 0);
@@ -628,7 +699,6 @@ mod tests {
     fn test_resurrection_via_refresh_in_block() {
         let mut db = InMemoryStateDB::new();
 
-        // Manually place a ghost
         db.put_ghost(evaporchain_types::GhostRecord {
             object_id: obj_id(1),
             owner: addr(1),
@@ -644,6 +714,8 @@ mod tests {
             vec![Transaction::Refresh(RefreshTx {
                 object_id: obj_id(1),
                 energy_deposit: 8000,
+                signature: None,
+                public_key: None,
             })],
         );
 
@@ -675,6 +747,8 @@ mod tests {
                 to: addr(2),
                 amount: 500,
                 nonce: 0,
+                signature: None,
+                public_key: None,
             })],
         );
         let r1 = executor.execute_block(&mut db, &block1).unwrap();
@@ -687,6 +761,8 @@ mod tests {
                 to: addr(3),
                 amount: 300,
                 nonce: 1,
+                signature: None,
+                public_key: None,
             })],
         );
         let r2 = executor.execute_block(&mut db, &block2).unwrap();
@@ -712,6 +788,8 @@ mod tests {
                 to: addr(2),
                 amount: 0,
                 nonce: 0,
+                signature: None,
+                public_key: None,
             })],
         );
 
@@ -732,10 +810,180 @@ mod tests {
             vec![Transaction::Refresh(RefreshTx {
                 object_id: obj_id(99),
                 energy_deposit: 1000,
+                signature: None,
+                public_key: None,
             })],
         );
 
         let result = executor.execute_block(&mut db, &block).unwrap();
         assert_eq!(result.txs_failed, 1);
+    }
+
+    // ═══════════════════ Signature Verification Tests ═══════════════════
+
+    #[test]
+    fn test_signed_transfer_succeeds() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1000);
+
+        let executor = SimpleExecutor::new_with_sig_verification(7);
+        let kp = MlDsaKeypair::generate();
+
+        let mut tx = Transaction::Transfer(TransferTx {
+            from: addr(1),
+            to: addr(2),
+            amount: 200,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        });
+        sign_tx(&mut tx, &kp);
+
+        let block = make_block(1, 1, vec![tx]);
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_executed, 1);
+        assert_eq!(result.txs_failed, 0);
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 800);
+    }
+
+    #[test]
+    fn test_unsigned_tx_rejected_when_verification_on() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1000);
+
+        let executor = SimpleExecutor::new_with_sig_verification(7);
+
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::Transfer(TransferTx {
+                from: addr(1),
+                to: addr(2),
+                amount: 200,
+                nonce: 0,
+                signature: None, // no signature
+                public_key: None,
+            })],
+        );
+
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_executed, 0);
+        assert_eq!(result.txs_failed, 1);
+        // Balance unchanged
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 1000);
+    }
+
+    #[test]
+    fn test_invalid_signature_rejected() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1000);
+
+        let executor = SimpleExecutor::new_with_sig_verification(7);
+        let kp = MlDsaKeypair::generate();
+
+        let mut tx = Transaction::Transfer(TransferTx {
+            from: addr(1),
+            to: addr(2),
+            amount: 200,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        });
+        sign_tx(&mut tx, &kp);
+
+        // Tamper with the signature
+        if let Transaction::Transfer(ref mut t) = tx {
+            if let Some(ref mut sig) = t.signature {
+                sig[0] ^= 0xFF;
+            }
+        }
+
+        let block = make_block(1, 1, vec![tx]);
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_executed, 0);
+        assert_eq!(result.txs_failed, 1);
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 1000);
+    }
+
+    #[test]
+    fn test_wrong_key_signature_rejected() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1000);
+
+        let executor = SimpleExecutor::new_with_sig_verification(7);
+        let kp1 = MlDsaKeypair::generate();
+        let kp2 = MlDsaKeypair::generate();
+
+        let mut tx = Transaction::Transfer(TransferTx {
+            from: addr(1),
+            to: addr(2),
+            amount: 200,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        });
+        // Sign with kp1 but replace public key with kp2's
+        sign_tx(&mut tx, &kp1);
+        if let Transaction::Transfer(ref mut t) = tx {
+            t.public_key = Some(kp2.public_key_bytes());
+        }
+
+        let block = make_block(1, 1, vec![tx]);
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_failed, 1);
+    }
+
+    #[test]
+    fn test_signed_create_object_succeeds() {
+        let mut db = InMemoryStateDB::new();
+        let executor = SimpleExecutor::new_with_sig_verification(7);
+        let kp = MlDsaKeypair::generate();
+
+        let mut tx = Transaction::CreateObject(CreateObjectTx {
+            creator: addr(1),
+            object_id: obj_id(42),
+            energy: 5000,
+            half_life: 100,
+            data: vec![0xDE, 0xAD],
+            signature: None,
+            public_key: None,
+        });
+        sign_tx(&mut tx, &kp);
+
+        let block = make_block(1, 10, vec![tx]);
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_executed, 1);
+        assert_eq!(db.object_count(), 1);
+    }
+
+    #[test]
+    fn test_signed_refresh_succeeds() {
+        let mut db = InMemoryStateDB::new();
+        db.put_object(StateObject {
+            id: obj_id(1),
+            owner: addr(1),
+            energy: 100,
+            half_life: 10,
+            created_at: 0,
+            last_refreshed: 0,
+            state: ObjectState::Active,
+            grace_epoch: None,
+            data: vec![],
+        });
+
+        let executor = SimpleExecutor::new_with_sig_verification(7);
+        let kp = MlDsaKeypair::generate();
+
+        let mut tx = Transaction::Refresh(RefreshTx {
+            object_id: obj_id(1),
+            energy_deposit: 500,
+            signature: None,
+            public_key: None,
+        });
+        sign_tx(&mut tx, &kp);
+
+        let block = make_block(1, 5, vec![tx]);
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_executed, 1);
     }
 }

@@ -12,3 +12,6 @@ thiserror = { workspace = true }
 serde = { workspace = true }
 blake3 = "1"
 sha2 = "0.10"
+pasta_curves = "0.5"
+pqcrypto-dilithium = "0.5"
+pqcrypto-traits = "0.3"

@@ -8,6 +8,7 @@ repository.workspace = true
 [dependencies]
 evaporchain-types = { path = "../evaporchain-types" }
 evaporchain-state = { path = "../evaporchain-state" }
+evaporchain-crypto = { path = "../evaporchain-crypto" }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 hex = { workspace = true }

@@ -183,6 +183,8 @@ mod tests {
                 to: addr(2),
                 amount: 100,
                 nonce: 0,
+                signature: None,
+                public_key: None,
             }));
 
         let result = consensus.produce_block(&mut db).unwrap();
@@ -244,6 +246,8 @@ mod tests {
                 energy: 5000,
                 half_life: 100,
                 data: vec![1, 2, 3],
+                signature: None,
+                public_key: None,
             }));
 
         let result = consensus.produce_block(&mut db).unwrap();

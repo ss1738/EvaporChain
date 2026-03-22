@@ -55,6 +55,8 @@ mod tests {
             to: [2u8; 32],
             amount: 100,
             nonce: 0,
+            signature: None,
+            public_key: None,
         })
     }
 

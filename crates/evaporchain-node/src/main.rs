@@ -211,6 +211,8 @@ fn parse_stdin_command(line: &str) -> Option<Transaction> {
                 to: addr(to),
                 amount,
                 nonce,
+                signature: None,
+                public_key: None,
             }),
             StdinCommand::CreateObject {
                 creator,
@@ -223,6 +225,8 @@ fn parse_stdin_command(line: &str) -> Option<Transaction> {
                 energy,
                 half_life,
                 data: format!("UserObj-{}", object_id).into_bytes(),
+                signature: None,
+                public_key: None,
             }),
             StdinCommand::Refresh {
                 object_id,
@@ -230,6 +234,8 @@ fn parse_stdin_command(line: &str) -> Option<Transaction> {
             } => Transaction::Refresh(RefreshTx {
                 object_id: obj_id(object_id),
                 energy_deposit,
+                signature: None,
+                public_key: None,
             }),
         });
     }
@@ -268,6 +274,8 @@ fn generate_demo_tx(rng: &mut impl Rng, epoch: u64, nonces: &mut [u64; 4]) -> Op
                 to: addr(to),
                 amount,
                 nonce,
+                signature: None,
+                public_key: None,
             }))
         }
         // 20% chance: create a new ephemeral object
@@ -282,6 +290,8 @@ fn generate_demo_tx(rng: &mut impl Rng, epoch: u64, nonces: &mut [u64; 4]) -> Op
                 energy,
                 half_life,
                 data: format!("Demo-E{}", epoch).into_bytes(),
+                signature: None,
+                public_key: None,
             }))
         }
         // 20% chance: refresh a genesis object (keep Durable-D alive)
@@ -291,6 +301,8 @@ fn generate_demo_tx(rng: &mut impl Rng, epoch: u64, nonces: &mut [u64; 4]) -> Op
             Some(Transaction::Refresh(RefreshTx {
                 object_id: obj_id(target),
                 energy_deposit: deposit,
+                signature: None,
+                public_key: None,
             }))
         }
         // 10% chance: refresh with big energy (rescue attempt)
@@ -299,6 +311,8 @@ fn generate_demo_tx(rng: &mut impl Rng, epoch: u64, nonces: &mut [u64; 4]) -> Op
             Some(Transaction::Refresh(RefreshTx {
                 object_id: obj_id(target),
                 energy_deposit: rng.gen_range(500..5000),
+                signature: None,
+                public_key: None,
             }))
         }
     }
