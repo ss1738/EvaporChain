@@ -2,6 +2,10 @@ use async_trait::async_trait;
 use evaporchain_types::{Block, Transaction};
 use thiserror::Error;
 
+pub mod service;
+
+pub use service::{NetworkConfig, P2pNetworkService};
+
 /// Errors that can occur in the network layer.
 #[derive(Debug, Error)]
 pub enum NetworkError {

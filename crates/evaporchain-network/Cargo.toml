@@ -10,4 +10,21 @@ evaporchain-types = { path = "../evaporchain-types" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 async-trait = "0.1"
+libp2p = { version = "0.54", features = [
+    "tokio",
+    "gossipsub",
+    "mdns",
+    "noise",
+    "tcp",
+    "yamux",
+    "macros",
+    "identify",
+] }
+futures = "0.3"
+
+[dev-dependencies]
+tokio = { workspace = true }
+tracing-subscriber = { workspace = true }
