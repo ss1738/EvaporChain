@@ -1,0 +1,21 @@
+{
+  "blocks_folded": 1000,
+  "num_constraints": 10015,
+  "num_accounts": 64,
+  "num_objects": 64,
+  "num_txs": 50,
+  "setup_time_s": 0.651040792,
+  "avg_fold_ms": 33.71478162700002,
+  "min_fold_ms": 0.000167,
+  "max_fold_ms": 97.477625,
+  "median_fold_ms": 32.326333,
+  "p95_fold_ms": 41.764791,
+  "p99_fold_ms": 74.43133300000001,
+  "total_fold_s": 33.714781627,
+  "recursive_verify_ms": 36.004915999999994,
+  "compression_time_s": 0.80393125,
+  "compressed_verify_ms": 24.011083,
+  "proof_size_bytes": 10624,
+  "evaporated_objects": 64,
+  "verdict": "MARGINAL"
+}
