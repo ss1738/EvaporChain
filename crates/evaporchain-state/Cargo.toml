@@ -11,3 +11,4 @@ evaporchain-crypto = { path = "../evaporchain-crypto" }
 serde = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+hex = { workspace = true }

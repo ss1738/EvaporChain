@@ -26,16 +26,42 @@ pub struct StateObject {
     pub energy: Energy,
     pub half_life: HalfLife,
     pub created_at: Epoch,
+    pub last_refreshed: Epoch,
+    pub state: ObjectState,
+    pub grace_epoch: Option<Epoch>,
     pub data: Vec<u8>,
 }
 
+impl StateObject {
+    /// Compute remaining energy at the given epoch using exponential decay.
+    pub fn energy_at(&self, current_epoch: Epoch) -> Energy {
+        let epochs_since_refresh = current_epoch.saturating_sub(self.last_refreshed);
+        energy_at_epoch(self.energy, self.half_life, epochs_since_refresh)
+    }
+}
+
 /// Lifecycle state of an object.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ObjectState {
+    /// Object is live and accessible.
     Active,
+    /// Energy reached zero; object is in grace period before evaporation.
     Grace,
+    /// Object has been evaporated — only a nullifier proof remains.
     Ghost,
+    /// Object was resurrected from Ghost state via a refresh transaction.
     Resurrected,
+}
+
+/// Record left behind when an object evaporates.
+/// Stores enough information to verify the object existed and to allow resurrection.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GhostRecord {
+    pub object_id: ObjectId,
+    pub owner: AccountAddress,
+    pub evaporated_at: Epoch,
+    pub data_hash: [u8; 32],
+    pub original_data: Vec<u8>,
 }
 
 /// A block in the chain.
@@ -65,7 +91,7 @@ pub struct TransferTx {
     pub nonce: u64,
 }
 
-/// Energy refresh transaction (prevents evaporation).
+/// Energy refresh transaction (prevents evaporation or resurrects a ghost).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RefreshTx {
     pub object_id: ObjectId,
@@ -83,12 +109,12 @@ pub struct StateCommitment {
 /// Compute remaining energy after exponential decay using integer math.
 ///
 /// Uses the approximation: energy * 2^(-epochs_elapsed / half_life)
-/// Implemented via bit-shifting for integer arithmetic.
+/// Implemented via bit-shifting for complete halvings and linear
+/// interpolation for the fractional part.
 pub fn energy_at_epoch(initial: Energy, half_life: HalfLife, epochs_elapsed: u64) -> Energy {
     if half_life == 0 {
         return 0;
     }
-    // Number of complete half-lives elapsed
     let full_halvings = epochs_elapsed / half_life;
     let remainder = epochs_elapsed % half_life;
 
@@ -96,12 +122,9 @@ pub fn energy_at_epoch(initial: Energy, half_life: HalfLife, epochs_elapsed: u64
         return 0;
     }
 
-    // Apply complete halvings via right-shift
     let after_halvings = initial >> full_halvings;
 
-    // For the fractional part, linearly interpolate between current and next halving
-    // energy * (1 - remainder / (2 * half_life))
-    // This is a first-order approximation of the exponential between halvings
+    // Linear interpolation for the fractional part between halvings
     let fractional_decay = after_halvings * remainder / (2 * half_life);
     after_halvings.saturating_sub(fractional_decay)
 }
@@ -117,13 +140,11 @@ mod tests {
 
     #[test]
     fn test_energy_one_half_life() {
-        // After exactly one half-life, energy should be ~500
         assert_eq!(energy_at_epoch(1000, 10, 10), 500);
     }
 
     #[test]
     fn test_energy_two_half_lives() {
-        // After two half-lives, energy should be ~250
         assert_eq!(energy_at_epoch(1000, 10, 20), 250);
     }
 
@@ -134,14 +155,31 @@ mod tests {
 
     #[test]
     fn test_energy_large_elapsed() {
-        // After 64+ half-lives, should be 0
         assert_eq!(energy_at_epoch(1000, 1, 100), 0);
     }
 
     #[test]
     fn test_energy_partial_decay() {
-        // After 5 epochs with half-life 10, energy decays partially
         let result = energy_at_epoch(1000, 10, 5);
         assert!(result > 500 && result < 1000, "got {result}");
+    }
+
+    #[test]
+    fn test_state_object_energy_at() {
+        let obj = StateObject {
+            id: [1u8; 32],
+            owner: [2u8; 32],
+            energy: 1000,
+            half_life: 10,
+            created_at: 0,
+            last_refreshed: 5,
+            state: ObjectState::Active,
+            grace_epoch: None,
+            data: vec![],
+        };
+        // At epoch 15, 10 epochs since refresh -> one half-life -> 500
+        assert_eq!(obj.energy_at(15), 500);
+        // At epoch 5 (same as refresh), no decay
+        assert_eq!(obj.energy_at(5), 1000);
     }
 }
