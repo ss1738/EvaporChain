@@ -1,5 +1,6 @@
 use anyhow::Result;
 use evaporchain_consensus::MockConsensus;
+use evaporchain_proving::{MockProver, ProvingEngine};
 use evaporchain_state::db::StateDB;
 use evaporchain_state::InMemoryStateDB;
 use evaporchain_types::{
@@ -322,9 +323,10 @@ fn generate_demo_tx(rng: &mut impl Rng, epoch: u64, nonces: &mut [u64; 4]) -> Op
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Check for --demo flag
+    // Check for flags
     let args: Vec<String> = std::env::args().collect();
     let demo_mode = args.iter().any(|a| a == "--demo");
+    let prove_mode = args.iter().any(|a| a == "--prove");
     let block_ms = args
         .iter()
         .position(|a| a == "--interval")
@@ -343,6 +345,33 @@ async fn main() -> Result<()> {
     }
     println!();
 
+    // ── Prover setup ──
+    let prover: Arc<Mutex<Box<dyn ProvingEngine>>> = if prove_mode {
+        #[cfg(feature = "prove")]
+        {
+            println!("\x1b[1;33mProving mode active\x1b[0m — setting up Nova IVC (this takes a moment)...");
+            let genesis_root = {
+                let db = db.lock().unwrap();
+                db.compute_state_root()
+            };
+            let nova_prover = evaporchain_proving::nova::NovaProver::new(genesis_root)
+                .expect("Failed to set up NovaProver");
+            let (primary, secondary) = nova_prover.num_constraints();
+            println!(
+                "  Nova ready: {} primary constraints, {} secondary",
+                primary, secondary
+            );
+            Arc::new(Mutex::new(Box::new(nova_prover) as Box<dyn ProvingEngine>))
+        }
+        #[cfg(not(feature = "prove"))]
+        {
+            eprintln!("\x1b[31m--prove requires the 'prove' feature. Recompile with: cargo build -p evaporchain-node --features prove\x1b[0m");
+            std::process::exit(1);
+        }
+    } else {
+        Arc::new(Mutex::new(Box::new(MockProver::new()) as Box<dyn ProvingEngine>))
+    };
+
     if demo_mode {
         println!("\x1b[1;33mDemo mode active\x1b[0m — auto-generating transactions");
     } else {
@@ -352,8 +381,10 @@ async fn main() -> Result<()> {
         println!(r#"  {{"type":"refresh","object_id":10,"energy_deposit":500}}"#);
     }
     println!(
-        "Block interval: {}ms | Grace period: {} epochs",
-        block_ms, GRACE_PERIOD
+        "Block interval: {}ms | Grace period: {} epochs | Proving: {}",
+        block_ms,
+        GRACE_PERIOD,
+        if prove_mode { "Nova IVC" } else { "Mock (off)" }
     );
     println!("\x1b[90m──────────────────────────────────────────────────────────────\x1b[0m");
 
@@ -406,6 +437,27 @@ async fn main() -> Result<()> {
 
         match c.produce_block(&mut *db) {
             Ok(result) => {
+                // Fold block into prover
+                let old_root = result.block.parent_hash; // approximate old state
+                let new_root = result.execution.state_root;
+                let mut p = prover.lock().unwrap();
+                match p.fold_block(&result.block, old_root, new_root) {
+                    Ok(()) => {
+                        if prove_mode {
+                            println!(
+                                "  \x1b[35mProof: fold={:.1}ms  accumulator={}B  blocks_folded={}\x1b[0m",
+                                p.last_fold_time_us() as f64 / 1000.0,
+                                p.accumulator_size(),
+                                p.num_blocks_folded(),
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("\x1b[31mProving error: {}\x1b[0m", e);
+                    }
+                }
+                drop(p);
+
                 print_block_result(
                     result.block.number,
                     result.block.epoch,

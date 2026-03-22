@@ -5,8 +5,18 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+nova = ["dep:nova-snark", "dep:ff", "dep:bincode"]
+
 [dependencies]
 evaporchain-types = { path = "../evaporchain-types" }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
+hex = { workspace = true }
+
+# Heavy deps — only compiled with the "nova" feature
+nova-snark = { version = "0.68", features = ["test-utils"], optional = true }
+ff = { version = "0.13", optional = true }
+bincode = { version = "1", optional = true }

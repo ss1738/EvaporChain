@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+prove = ["evaporchain-proving/nova"]
+
 [dependencies]
 evaporchain-types = { path = "../evaporchain-types" }
 evaporchain-crypto = { path = "../evaporchain-crypto" }
