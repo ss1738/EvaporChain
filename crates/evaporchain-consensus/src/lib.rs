@@ -60,6 +60,45 @@ impl MockConsensus {
         self.block_number
     }
 
+    /// Apply a block received from a peer: re-execute transactions and
+    /// advance local state to match.  Returns the execution result so the
+    /// caller can verify the state root matches.
+    pub fn apply_block(
+        &mut self,
+        db: &mut dyn StateDB,
+        block: &Block,
+    ) -> Result<BlockProductionResult, ConsensusError> {
+        let execution = self
+            .executor
+            .execute_block(db, block)
+            .map_err(|e| ConsensusError::ExecutionFailed(e.to_string()))?;
+
+        // Advance local tracking to stay in sync
+        self.block_number = block.number;
+        self.epoch = block.epoch;
+
+        // Derive parent hash the same way produce_block does
+        let mut hash_input = Vec::new();
+        hash_input.extend_from_slice(&block.number.to_le_bytes());
+        hash_input.extend_from_slice(&block.epoch.to_le_bytes());
+        hash_input.extend_from_slice(&execution.state_root);
+        hash_input.extend_from_slice(&block.parent_hash);
+        self.parent_hash = blake3_hash(&hash_input);
+
+        info!(
+            block = block.number,
+            epoch = block.epoch,
+            txs = block.transactions.len(),
+            state_root = hex::encode(execution.state_root),
+            "Block applied from peer"
+        );
+
+        Ok(BlockProductionResult {
+            block: block.clone(),
+            execution,
+        })
+    }
+
     /// Produce the next block: drain mempool, execute, advance state.
     pub fn produce_block(
         &mut self,
@@ -257,5 +296,142 @@ mod tests {
         let obj = db.get_object(&obj_id(42)).unwrap();
         assert_eq!(obj.energy, 5000);
         assert_eq!(obj.created_at, 1); // epoch 1
+    }
+
+    #[test]
+    fn test_apply_block_from_peer() {
+        // Producer creates a block
+        let mut producer_db = InMemoryStateDB::new();
+        producer_db.put_account(Account {
+            address: addr(1),
+            balance: 10_000,
+            nonce: 0,
+        });
+        let mut producer = MockConsensus::new(5);
+        producer
+            .mempool
+            .submit(Transaction::Transfer(TransferTx {
+                from: addr(1),
+                to: addr(2),
+                amount: 500,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            }));
+        let produced = producer.produce_block(&mut producer_db).unwrap();
+
+        // Follower applies the same block
+        let mut follower_db = InMemoryStateDB::new();
+        follower_db.put_account(Account {
+            address: addr(1),
+            balance: 10_000,
+            nonce: 0,
+        });
+        let mut follower = MockConsensus::new(5);
+        let applied = follower.apply_block(&mut follower_db, &produced.block).unwrap();
+
+        // State roots must match
+        assert_eq!(applied.execution.state_root, produced.execution.state_root);
+        assert_eq!(applied.execution.txs_executed, 1);
+        assert_eq!(follower.epoch(), 1);
+        assert_eq!(follower.block_number(), 1);
+
+        // Balances must match
+        assert_eq!(
+            follower_db.get_account(&addr(1)).unwrap().balance,
+            producer_db.get_account(&addr(1)).unwrap().balance,
+        );
+        assert_eq!(
+            follower_db.get_account(&addr(2)).unwrap().balance,
+            producer_db.get_account(&addr(2)).unwrap().balance,
+        );
+    }
+
+    #[test]
+    fn test_apply_multiple_blocks_state_convergence() {
+        // Producer creates 3 blocks with transactions
+        let mut producer_db = InMemoryStateDB::new();
+        producer_db.put_account(Account {
+            address: addr(1),
+            balance: 100_000,
+            nonce: 0,
+        });
+        producer_db.put_object(StateObject {
+            id: obj_id(1),
+            owner: addr(1),
+            energy: 100,
+            half_life: 5,
+            created_at: 0,
+            last_refreshed: 0,
+            state: ObjectState::Active,
+            grace_epoch: None,
+            data: vec![0xAA],
+        });
+
+        let mut producer = MockConsensus::new(3);
+        let mut blocks = Vec::new();
+
+        // Block 1: transfer
+        producer
+            .mempool
+            .submit(Transaction::Transfer(TransferTx {
+                from: addr(1),
+                to: addr(2),
+                amount: 1000,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            }));
+        blocks.push(producer.produce_block(&mut producer_db).unwrap().block);
+
+        // Block 2: create object
+        producer
+            .mempool
+            .submit(Transaction::CreateObject(CreateObjectTx {
+                creator: addr(2),
+                object_id: obj_id(42),
+                energy: 500,
+                half_life: 10,
+                data: vec![0xBB],
+                signature: None,
+                public_key: None,
+            }));
+        blocks.push(producer.produce_block(&mut producer_db).unwrap().block);
+
+        // Block 3: empty (just evaporation tick)
+        blocks.push(producer.produce_block(&mut producer_db).unwrap().block);
+
+        // Follower replays all 3 blocks
+        let mut follower_db = InMemoryStateDB::new();
+        follower_db.put_account(Account {
+            address: addr(1),
+            balance: 100_000,
+            nonce: 0,
+        });
+        follower_db.put_object(StateObject {
+            id: obj_id(1),
+            owner: addr(1),
+            energy: 100,
+            half_life: 5,
+            created_at: 0,
+            last_refreshed: 0,
+            state: ObjectState::Active,
+            grace_epoch: None,
+            data: vec![0xAA],
+        });
+        let mut follower = MockConsensus::new(3);
+
+        for block in &blocks {
+            follower.apply_block(&mut follower_db, block).unwrap();
+        }
+
+        // State roots must converge
+        assert_eq!(
+            producer_db.compute_state_root(),
+            follower_db.compute_state_root(),
+        );
+        assert_eq!(follower.epoch(), 3);
+        assert_eq!(follower.block_number(), 3);
+        assert_eq!(follower_db.object_count(), producer_db.object_count());
     }
 }
