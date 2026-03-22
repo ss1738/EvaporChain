@@ -1,5 +1,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -66,6 +68,8 @@ pub struct NetworkChannels {
     pub block_sender: mpsc::Sender<Block>,
     /// Receive blocks from the network (network → app).
     pub block_receiver: mpsc::Receiver<Block>,
+    /// Number of connected peers (updated by the network event loop).
+    pub peer_count: Arc<AtomicUsize>,
 }
 
 /// Handle for broadcasting to a running network service.
@@ -194,6 +198,9 @@ impl P2pNetworkService {
         let (app_block_sender, mut net_block_receiver) = mpsc::channel::<Block>(buf);
         let (net_block_sender, app_block_receiver) = mpsc::channel::<Block>(buf);
 
+        let peer_count = Arc::new(AtomicUsize::new(0));
+        let peer_count_inner = Arc::clone(&peer_count);
+
         let handle = NetworkHandle {
             tx_sender: app_tx_sender.clone(),
             block_sender: app_block_sender.clone(),
@@ -204,6 +211,7 @@ impl P2pNetworkService {
             tx_receiver: app_tx_receiver,
             block_sender: app_block_sender,
             block_receiver: app_block_receiver,
+            peer_count,
         };
 
         // Spawn the event loop
@@ -264,6 +272,8 @@ impl P2pNetworkService {
                                     info!("mDNS discovered peer: {peer_id} at {addr}");
                                     swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
                                 }
+                                let count = swarm.connected_peers().count();
+                                peer_count_inner.store(count, Ordering::Relaxed);
                             }
                             SwarmEvent::Behaviour(EvaporBehaviourEvent::Mdns(
                                 mdns::Event::Expired(peers),
@@ -272,6 +282,16 @@ impl P2pNetworkService {
                                     debug!("mDNS peer expired: {peer_id}");
                                     swarm.behaviour_mut().gossipsub.remove_explicit_peer(&peer_id);
                                 }
+                                let count = swarm.connected_peers().count();
+                                peer_count_inner.store(count, Ordering::Relaxed);
+                            }
+                            SwarmEvent::ConnectionEstablished { .. } => {
+                                let count = swarm.connected_peers().count();
+                                peer_count_inner.store(count, Ordering::Relaxed);
+                            }
+                            SwarmEvent::ConnectionClosed { .. } => {
+                                let count = swarm.connected_peers().count();
+                                peer_count_inner.store(count, Ordering::Relaxed);
                             }
                             SwarmEvent::NewListenAddr { address, .. } => {
                                 info!("Listening on {address}/p2p/{local_peer_id}");

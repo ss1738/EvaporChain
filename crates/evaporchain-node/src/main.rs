@@ -303,6 +303,8 @@ struct NodeArgs {
     block_ms: u64,
     port: u16,
     node_id: String,
+    startup_delay_ms: u64,
+    bootstrap_peers: Vec<String>,
 }
 
 fn parse_args() -> NodeArgs {
@@ -328,6 +330,24 @@ fn parse_args() -> NodeArgs {
         .and_then(|i| args.get(i + 1))
         .cloned()
         .unwrap_or_else(|| "node".to_string());
+    let startup_delay_ms = args
+        .iter()
+        .position(|a| a == "--startup-delay")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(if network_mode { 5000 } else { 0 });
+    let mut bootstrap_peers = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--bootstrap" {
+            if let Some(addr) = args.get(i + 1) {
+                bootstrap_peers.push(addr.clone());
+            }
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
 
     NodeArgs {
         demo_mode,
@@ -336,6 +356,8 @@ fn parse_args() -> NodeArgs {
         block_ms,
         port,
         node_id,
+        startup_delay_ms,
+        bootstrap_peers,
     }
 }
 
@@ -410,21 +432,22 @@ async fn main() -> Result<()> {
     };
 
     // ── Network setup ──
-    let peer_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut peer_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let net_channels = if args.network_mode {
         let net_config = NetworkConfig {
             listen_address: format!("/ip4/0.0.0.0/tcp/{}", args.port),
-            bootstrap_peers: vec![],
+            bootstrap_peers: args.bootstrap_peers.clone(),
             channel_buffer: 256,
         };
         println!(
-            "{} \x1b[1;33mNetwork mode active\x1b[0m — listening on port {}, mDNS discovery enabled",
+            "{} \x1b[1;33mNetwork mode active\x1b[0m — listening on port {}, {} bootstrap peer(s)",
             node_tag,
             if args.port == 0 {
                 "random".to_string()
             } else {
                 args.port.to_string()
-            }
+            },
+            args.bootstrap_peers.len()
         );
         let (channels, _handle, peer_id) =
             P2pNetworkService::start(net_config).await.map_err(|e| {
@@ -435,6 +458,8 @@ async fn main() -> Result<()> {
             node_tag,
             peer_id
         );
+        // Use the network's live peer count
+        peer_count = channels.peer_count.clone();
         Some(channels)
     } else {
         None
@@ -473,6 +498,20 @@ async fn main() -> Result<()> {
         "{} \x1b[90m──────────────────────────────────────────────────────────────\x1b[0m",
         node_tag
     );
+
+    // ── Startup delay (wait for mDNS peer discovery) ──
+    if args.startup_delay_ms > 0 {
+        println!(
+            "{} Waiting {}ms for peer discovery...",
+            node_tag, args.startup_delay_ms
+        );
+        tokio::time::sleep(Duration::from_millis(args.startup_delay_ms)).await;
+        let peers = peer_count.load(std::sync::atomic::Ordering::Relaxed);
+        println!(
+            "{} Discovery complete — {} peer(s) connected",
+            node_tag, peers
+        );
+    }
 
     // ── Shared consensus ──
     let consensus = Arc::new(Mutex::new(MockConsensus::new(GRACE_PERIOD)));

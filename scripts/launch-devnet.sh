@@ -8,7 +8,8 @@
 #   node-3 (port 9003) — Follower
 #   node-4 (port 9004) — Follower
 #
-# All nodes auto-discover each other via mDNS.
+# Nodes connect via bootstrap peers (node-1 address passed to followers).
+# mDNS is also enabled for additional discovery.
 # Press Ctrl+C to stop all nodes.
 #
 # Usage:
@@ -22,6 +23,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BINARY="$ROOT_DIR/target/release/evaporchain-node"
 INTERVAL="${EVAPORCHAIN_INTERVAL:-2000}"
+PRODUCER_PORT=9001
 
 # ── Build ──
 echo "━━━ Building EvaporChain node (release mode)... ━━━"
@@ -39,7 +41,7 @@ PIDS=()
 cleanup() {
     echo ""
     echo "━━━ Shutting down devnet... ━━━"
-    for pid in "${PIDS[@]}"; do
+    for pid in "${PIDS[@]+"${PIDS[@]}"}"; do
         kill "$pid" 2>/dev/null || true
     done
     wait 2>/dev/null
@@ -49,6 +51,7 @@ trap cleanup EXIT INT TERM
 
 # ── Launch mode ──
 SPLIT_MODE=false
+LOG_DIR=""
 if [[ "${1:-}" == "--split" ]]; then
     SPLIT_MODE=true
     LOG_DIR="$ROOT_DIR/logs"
@@ -59,57 +62,73 @@ fi
 echo "╔══════════════════════════════════════════════════════════════╗"
 echo "║         EvaporChain Multi-Node Devnet (4 nodes)             ║"
 echo "║                                                             ║"
-echo "║  node-1 (9001) — Producer + Demo                            ║"
+echo "║  node-1 (${PRODUCER_PORT}) — Producer + Demo                            ║"
 echo "║  node-2 (9002) — Follower                                   ║"
 echo "║  node-3 (9003) — Follower                                   ║"
 echo "║  node-4 (9004) — Follower                                   ║"
 echo "║                                                             ║"
-echo "║  Block interval: ${INTERVAL}ms | mDNS auto-discovery              ║"
+echo "║  Block interval: ${INTERVAL}ms | Bootstrap peer discovery          ║"
 echo "║  Press Ctrl+C to stop all nodes                             ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo ""
 
-# ── Start nodes ──
+# ── Start producer ──
+echo "  Starting producer (node-1)..."
+if $SPLIT_MODE; then
+    "$BINARY" \
+        --node-id "node-1" \
+        --port "$PRODUCER_PORT" \
+        --network \
+        --interval "$INTERVAL" \
+        --startup-delay 3000 \
+        --demo \
+        > "$LOG_DIR/node-1.log" 2>&1 &
+else
+    "$BINARY" \
+        --node-id "node-1" \
+        --port "$PRODUCER_PORT" \
+        --network \
+        --interval "$INTERVAL" \
+        --startup-delay 3000 \
+        --demo &
+fi
+PIDS+=($!)
+echo "  Started node-1 (PID $!) on port ${PRODUCER_PORT} --demo"
 
-start_node() {
-    local node_id="$1"
-    local port="$2"
-    shift 2
-    local extra_args=("$@")
+# Give the producer a moment to bind its port
+sleep 1
+
+# ── Start followers with bootstrap peer ──
+BOOTSTRAP="/ip4/127.0.0.1/tcp/${PRODUCER_PORT}"
+
+for i in 2 3 4; do
+    PORT=$((9000 + i))
+    NODE_ID="node-${i}"
 
     if $SPLIT_MODE; then
         "$BINARY" \
-            --node-id "$node_id" \
-            --port "$port" \
+            --node-id "$NODE_ID" \
+            --port "$PORT" \
             --network \
             --interval "$INTERVAL" \
-            "${extra_args[@]}" \
-            > "$LOG_DIR/${node_id}.log" 2>&1 &
+            --startup-delay 3000 \
+            --bootstrap "$BOOTSTRAP" \
+            > "$LOG_DIR/${NODE_ID}.log" 2>&1 &
     else
         "$BINARY" \
-            --node-id "$node_id" \
-            --port "$port" \
+            --node-id "$NODE_ID" \
+            --port "$PORT" \
             --network \
             --interval "$INTERVAL" \
-            "${extra_args[@]}" &
+            --startup-delay 3000 \
+            --bootstrap "$BOOTSTRAP" &
     fi
     PIDS+=($!)
-    echo "  Started $node_id (PID $!) on port $port ${extra_args[*]:-}"
-}
-
-# Node 1: Producer with demo mode
-start_node "node-1" 9001 --demo
-
-# Small delay so node-1 starts listening before followers try to discover
-sleep 1
-
-# Nodes 2-4: Followers
-start_node "node-2" 9002
-start_node "node-3" 9003
-start_node "node-4" 9004
+    echo "  Started $NODE_ID (PID $!) on port $PORT → bootstrap $BOOTSTRAP"
+done
 
 echo ""
-echo "━━━ All 4 nodes launched. Waiting for mDNS discovery... ━━━"
+echo "━━━ All 4 nodes launched. Waiting for peer connections (~3s)... ━━━"
 echo ""
 
 if $SPLIT_MODE; then
