@@ -10,6 +10,7 @@ members = [
     "crates/evaporchain-proving",
     "crates/evaporchain-network",
     "crates/evaporchain-node",
+    "crates/evaporchain-da",
     "crates/evaporchain-cli",
     "crates/evaporchain-script",
     "crates/evaporchain-mcp",

@@ -1,0 +1,32 @@
+{
+  "name": "@evaporchain/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for EvaporChain — the blockchain that gets lighter over time",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test dist/tests/client.test.js",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "evaporchain",
+    "blockchain",
+    "sdk",
+    "typescript",
+    "decay",
+    "thermodynamic"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ss1738/EvaporChain"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0"
+  }
+}
