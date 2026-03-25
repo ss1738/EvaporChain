@@ -30,8 +30,8 @@ pub struct ApiState {
     pub events: Arc<Mutex<VecDeque<EventRecord>>>,
     pub prove_mode: bool,
     pub start_time: Instant,
-    /// Faucet rate limiter: address byte -> last request timestamp.
-    pub faucet_rate_limit: Mutex<HashMap<u8, Instant>>,
+    /// Faucet rate limiter: address hex string -> last request timestamp.
+    pub faucet_rate_limit: Mutex<HashMap<String, Instant>>,
     /// NFT marketplace store.
     pub nft_store: Arc<Mutex<NftStore>>,
     /// Token store.
@@ -170,6 +170,20 @@ pub struct EventRecord {
     pub timestamp_ms: u64,
 }
 
+// ──────────────────────────── Genesis Addresses ─────────────────────────
+
+/// Realistic 20-byte genesis addresses (hex, no 0x prefix).
+pub const GENESIS_FOUNDATION: &str = "7f3a8b2ce419d605a1c74e823fb960d4159ae378";
+pub const GENESIS_CORE_DEV:   &str = "2b91f50d68a37ce214b65903d74a8ef1c5263b90";
+pub const GENESIS_VALIDATOR1:  &str = "91e5c8f23d7b4a061f9c82e640d53a17b8f26f47";
+pub const GENESIS_VALIDATOR2:  &str = "4d02a7e91c3f86b5d24e0f738c915ba6e0d7a8b6";
+pub const GENESIS_ECOSYSTEM:   &str = "a3f71b5e928d4c063e7a50f81d9c26b34e8a1c5e";
+pub const GENESIS_COMMUNITY:   &str = "e8b12d7f94c6a35081e4f29b6d3c8a57f1e07d94";
+
+pub fn genesis_addr_display(hex: &str) -> String {
+    format!("0x{}", hex)
+}
+
 // ──────────────────────────── Name Helpers ─────────────────────────────
 
 fn addr_from_byte(b: u8) -> [u8; 32] {
@@ -178,15 +192,48 @@ fn addr_from_byte(b: u8) -> [u8; 32] {
     a
 }
 
+/// Parse a hex address string into a 32-byte array.
+pub fn parse_hex_address(s: &str) -> Result<[u8; 32], String> {
+    let clean = s.strip_prefix("0x").unwrap_or(s);
+    let bytes = hex::decode(clean).map_err(|_| "invalid hex address".to_string())?;
+    if bytes.is_empty() || bytes.len() > 32 {
+        return Err("address must be 1-32 bytes".to_string());
+    }
+    let mut addr = [0u8; 32];
+    addr[..bytes.len()].copy_from_slice(&bytes);
+    Ok(addr)
+}
+
+/// Parse address from JSON value — accepts hex string or legacy integer byte.
+fn parse_address_value(val: &serde_json::Value) -> Result<[u8; 32], String> {
+    match val {
+        serde_json::Value::Number(n) => {
+            let byte = n.as_u64().ok_or("invalid address number")? as u8;
+            Ok(addr_from_byte(byte))
+        }
+        serde_json::Value::String(s) => parse_hex_address(s),
+        _ => Err("address must be a hex string or number".to_string()),
+    }
+}
+
 fn obj_id_from_byte(b: u8) -> [u8; 32] {
     let mut id = [0u8; 32];
     id[0] = b;
     id
 }
 
-/// Display address as truncated hex (no human names).
+/// Display address as truncated hex (first 4 bytes + last 3 bytes of 20-byte portion).
 fn account_name(addr: &[u8; 32]) -> String {
-    format!("0x{}…{}", &hex::encode(&addr[..3]), &hex::encode(&addr[30..]))
+    let full = hex::encode(&addr[..20]);
+    if full.trim_start_matches('0').is_empty() {
+        return "0x0000...0000".to_string();
+    }
+    format!("0x{}...{}", &full[..8], &full[34..])
+}
+
+/// Full 20-byte address as 0x-prefixed hex.
+fn account_full(addr: &[u8; 32]) -> String {
+    format!("0x{}", hex::encode(&addr[..20]))
 }
 
 /// Try to extract a name from the object's data field, otherwise use hex id.
@@ -196,16 +243,27 @@ fn object_name(id: &[u8; 32], data: &[u8]) -> String {
             return s.to_string();
         }
     }
-    format!("0x{:02x}{:02x}...", id[0], id[1])
+    let full = hex::encode(&id[..8]);
+    format!("0x{}...{}", &full[..8], &hex::encode(&id[6..8]))
 }
 
 fn hex_short(bytes: &[u8]) -> String {
     let full = hex::encode(bytes);
     if full.len() > 16 {
-        format!("{}...", &full[..16])
+        format!("{}...{}", &full[..10], &full[full.len()-6..])
     } else {
         full
     }
+}
+
+/// Generate a blake3 tx hash from content.
+fn tx_hash(content: &str) -> String {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let input = format!("{}:{}", content, ts);
+    blake3::hash(input.as_bytes()).to_hex().to_string()
 }
 
 // ──────────────────────────── Response Types ──────────────────────────
@@ -293,27 +351,27 @@ struct EventsQuery {
     limit: Option<usize>,
 }
 
-// ── Transaction request types ──
+// ── Transaction request types (accept hex string or legacy integer) ──
 
 #[derive(Deserialize)]
 struct TransferRequest {
-    from: u8,
-    to: u8,
+    from: serde_json::Value,
+    to: serde_json::Value,
     amount: u64,
     nonce: u64,
 }
 
 #[derive(Deserialize)]
 struct CreateObjectRequest {
-    creator: u8,
-    object_id: u8,
+    creator: serde_json::Value,
+    object_id: serde_json::Value,
     energy: u64,
     half_life: u64,
 }
 
 #[derive(Deserialize)]
 struct RefreshRequest {
-    object_id: u8,
+    object_id: serde_json::Value,
     energy_deposit: u64,
 }
 
@@ -321,11 +379,13 @@ struct RefreshRequest {
 struct TxResultResponse {
     success: bool,
     message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tx_hash: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct FaucetRequest {
-    address: u8,
+    address: serde_json::Value,
 }
 
 #[derive(Serialize)]
@@ -568,25 +628,26 @@ async fn post_transfer(
     State(state): State<Arc<ApiState>>,
     Json(req): Json<TransferRequest>,
 ) -> Json<TxResultResponse> {
+    let from = match parse_address_value(&req.from) {
+        Ok(a) => a, Err(e) => return Json(TxResultResponse { success: false, message: e, tx_hash: None }),
+    };
+    let to = match parse_address_value(&req.to) {
+        Ok(a) => a, Err(e) => return Json(TxResultResponse { success: false, message: e, tx_hash: None }),
+    };
+    let hash = tx_hash(&format!("transfer:{}:{}:{}", hex::encode(&from[..20]), hex::encode(&to[..20]), req.amount));
     let tx = Transaction::Transfer(TransferTx {
-        from: addr_from_byte(req.from),
-        to: addr_from_byte(req.to),
-        amount: req.amount,
-        nonce: req.nonce,
-        signature: None,
-        public_key: None,
+        from, to, amount: req.amount, nonce: req.nonce,
+        signature: None, public_key: None,
     });
     let mut c = state.consensus.lock().unwrap();
     c.mempool.submit(tx);
     Json(TxResultResponse {
         success: true,
         message: format!(
-            "Transfer queued: {} -> {} amount={} (mempool={})",
-            account_name(&addr_from_byte(req.from)),
-            account_name(&addr_from_byte(req.to)),
-            req.amount,
-            c.mempool.len()
+            "Transfer queued: {} -> {} amount={}",
+            account_name(&from), account_name(&to), req.amount
         ),
+        tx_hash: Some(hash),
     })
 }
 
@@ -594,26 +655,28 @@ async fn post_create_object(
     State(state): State<Arc<ApiState>>,
     Json(req): Json<CreateObjectRequest>,
 ) -> Json<TxResultResponse> {
+    let creator = match parse_address_value(&req.creator) {
+        Ok(a) => a, Err(e) => return Json(TxResultResponse { success: false, message: e, tx_hash: None }),
+    };
+    let obj_id_val = match parse_address_value(&req.object_id) {
+        Ok(a) => a, Err(e) => return Json(TxResultResponse { success: false, message: e, tx_hash: None }),
+    };
+    let hash = tx_hash(&format!("create:{}:{}:{}", hex::encode(&obj_id_val[..8]), req.energy, req.half_life));
+    let obj_label = hex::encode(&obj_id_val[..4]);
     let tx = Transaction::CreateObject(CreateObjectTx {
-        creator: addr_from_byte(req.creator),
-        object_id: obj_id_from_byte(req.object_id),
-        energy: req.energy,
-        half_life: req.half_life,
-        data: format!("UserObj-{}", req.object_id).into_bytes(),
-        signature: None,
-        public_key: None,
+        creator, object_id: obj_id_val, energy: req.energy, half_life: req.half_life,
+        data: format!("obj-0x{}", &obj_label).into_bytes(),
+        signature: None, public_key: None,
     });
     let mut c = state.consensus.lock().unwrap();
     c.mempool.submit(tx);
     Json(TxResultResponse {
         success: true,
         message: format!(
-            "CreateObject queued: id=0x{:02x} energy={} half_life={} (mempool={})",
-            req.object_id,
-            req.energy,
-            req.half_life,
-            c.mempool.len()
+            "CreateObject queued: id=0x{} energy={} half_life={}",
+            &obj_label, req.energy, req.half_life
         ),
+        tx_hash: Some(hash),
     })
 }
 
@@ -621,46 +684,41 @@ async fn post_refresh(
     State(state): State<Arc<ApiState>>,
     Json(req): Json<RefreshRequest>,
 ) -> Json<TxResultResponse> {
+    let obj_id_val = match parse_address_value(&req.object_id) {
+        Ok(a) => a, Err(e) => return Json(TxResultResponse { success: false, message: e, tx_hash: None }),
+    };
+    let hash = tx_hash(&format!("refresh:{}:{}", hex::encode(&obj_id_val[..8]), req.energy_deposit));
     let tx = Transaction::Refresh(RefreshTx {
-        object_id: obj_id_from_byte(req.object_id),
-        energy_deposit: req.energy_deposit,
-        signature: None,
-        public_key: None,
+        object_id: obj_id_val, energy_deposit: req.energy_deposit,
+        signature: None, public_key: None,
     });
     let mut c = state.consensus.lock().unwrap();
     c.mempool.submit(tx);
     Json(TxResultResponse {
         success: true,
-        message: format!(
-            "Refresh queued: obj=0x{:02x} energy_deposit={} (mempool={})",
-            req.object_id,
-            req.energy_deposit,
-            c.mempool.len()
-        ),
+        message: format!("Refresh queued: obj=0x{} energy_deposit={}", hex::encode(&obj_id_val[..4]), req.energy_deposit),
+        tx_hash: Some(hash),
     })
 }
 
-// Resurrect uses the same mechanism as refresh (refresh on a ghost)
 async fn post_resurrect(
     State(state): State<Arc<ApiState>>,
     Json(req): Json<RefreshRequest>,
 ) -> Json<TxResultResponse> {
+    let obj_id_val = match parse_address_value(&req.object_id) {
+        Ok(a) => a, Err(e) => return Json(TxResultResponse { success: false, message: e, tx_hash: None }),
+    };
+    let hash = tx_hash(&format!("resurrect:{}:{}", hex::encode(&obj_id_val[..8]), req.energy_deposit));
     let tx = Transaction::Refresh(RefreshTx {
-        object_id: obj_id_from_byte(req.object_id),
-        energy_deposit: req.energy_deposit,
-        signature: None,
-        public_key: None,
+        object_id: obj_id_val, energy_deposit: req.energy_deposit,
+        signature: None, public_key: None,
     });
     let mut c = state.consensus.lock().unwrap();
     c.mempool.submit(tx);
     Json(TxResultResponse {
         success: true,
-        message: format!(
-            "Resurrect queued: obj=0x{:02x} energy_deposit={} (mempool={})",
-            req.object_id,
-            req.energy_deposit,
-            c.mempool.len()
-        ),
+        message: format!("Resurrect queued: obj=0x{} energy_deposit={}", hex::encode(&obj_id_val[..4]), req.energy_deposit),
+        tx_hash: Some(hash),
     })
 }
 
@@ -704,12 +762,14 @@ async fn post_deploy_contract(
     });
     let mut c = state.consensus.lock().unwrap();
     c.mempool.submit(tx);
+    let hash = tx_hash(&format!("deploy:{}:{}:{}", req.template, req.energy, req.half_life));
     Json(TxResultResponse {
         success: true,
         message: format!(
             "Deploy queued: template={} energy={} hl={} (mempool={})",
             req.template, req.energy, req.half_life, c.mempool.len()
         ),
+        tx_hash: Some(hash),
     })
 }
 
@@ -728,12 +788,14 @@ async fn post_call_contract(
     });
     let mut c = state.consensus.lock().unwrap();
     c.mempool.submit(tx);
+    let hash = tx_hash(&format!("call:{}:{}:{}", req.contract_id, req.method, c.mempool.len()));
     Json(TxResultResponse {
         success: true,
         message: format!(
             "Call queued: contract={} method={} (mempool={})",
             req.contract_id, req.method, c.mempool.len()
         ),
+        tx_hash: Some(hash),
     })
 }
 
@@ -798,6 +860,88 @@ async fn health() -> impl IntoResponse {
     (StatusCode::OK, "ok")
 }
 
+// ──────────────────────────── Address Detail ─────────────────────────────
+
+async fn address_html() -> impl IntoResponse {
+    Html(include_str!("../dashboard/address.html"))
+}
+
+#[derive(Serialize)]
+struct AddressDetailResponse {
+    address: String,
+    balance: u64,
+    nonce: u64,
+    objects: Vec<ObjectResponse>,
+    nfts: Vec<NftResponse>,
+    tokens: Vec<serde_json::Value>,
+}
+
+async fn get_address_detail(
+    State(state): State<Arc<ApiState>>,
+    Path(addr_hex): Path<String>,
+) -> Result<Json<AddressDetailResponse>, StatusCode> {
+    let addr_bytes = parse_hex_address(&addr_hex).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let full_hex = account_full(&addr_bytes);
+
+    let db = state.db.lock().unwrap();
+    let history = state.block_history.lock().unwrap();
+    let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
+
+    let (balance, nonce) = if let Some(acct) = db.get_account(&addr_bytes) {
+        (acct.balance, acct.nonce)
+    } else {
+        (0, 0)
+    };
+
+    // Objects owned by this address
+    let objects: Vec<ObjectResponse> = db.all_object_ids().iter().filter_map(|id| {
+        let obj = db.get_object(id)?;
+        if obj.owner != addr_bytes { return None; }
+        let current_energy = obj.energy_at(epoch);
+        let decay_pct = if obj.energy > 0 {
+            ((obj.energy - current_energy) as f64 / obj.energy as f64) * 100.0
+        } else { 100.0 };
+        let state_str = match obj.state {
+            ObjectState::Active => "Active",
+            ObjectState::Grace => "Grace",
+            ObjectState::Ghost => "Ghost",
+            ObjectState::Resurrected => "Risen",
+        };
+        Some(ObjectResponse {
+            id: hex::encode(id), name: object_name(id, &obj.data),
+            owner: hex::encode(obj.owner), owner_name: account_name(&obj.owner),
+            energy: obj.energy, max_energy: obj.energy, half_life: obj.half_life,
+            state: state_str.to_string(), created_epoch: obj.created_at,
+            last_refreshed: obj.last_refreshed, grace_epoch: obj.grace_epoch,
+            current_energy, decay_percentage: (decay_pct * 10.0).round() / 10.0,
+        })
+    }).collect();
+    drop(history);
+    drop(db);
+
+    // NFTs owned by this address
+    let nft_store = state.nft_store.lock().unwrap();
+    let nfts: Vec<NftResponse> = nft_store.tokens.iter()
+        .filter(|n| n.owner == full_hex || n.owner.contains(&addr_hex))
+        .map(|n| nft_to_response(n, epoch))
+        .collect();
+    drop(nft_store);
+
+    // Token balances
+    let token_store = state.token_store.lock().unwrap();
+    let tokens: Vec<serde_json::Value> = token_store.tokens.iter().filter_map(|t| {
+        let bal = t.balances.get(&full_hex).or_else(|| {
+            t.balances.keys().find(|k| k.contains(&addr_hex)).and_then(|k| t.balances.get(k))
+        }).copied().unwrap_or(0);
+        if bal == 0 { return None; }
+        Some(serde_json::json!({
+            "token_id": t.id, "symbol": t.symbol, "name": t.name, "balance": bal
+        }))
+    }).collect();
+
+    Ok(Json(AddressDetailResponse { address: full_hex, balance, nonce, objects, nfts, tokens }))
+}
+
 // ──────────────────────────── Faucet ───────────────────────────────────
 
 const FAUCET_AMOUNT: u64 = 10_000;
@@ -815,10 +959,16 @@ async fn post_faucet(
     State(state): State<Arc<ApiState>>,
     Json(req): Json<FaucetRequest>,
 ) -> Json<FaucetResponse> {
+    let addr = match parse_address_value(&req.address) {
+        Ok(a) => a,
+        Err(e) => return Json(FaucetResponse { success: false, balance: 0, message: Some(format!("Invalid address: {}", e)) }),
+    };
+    let addr_key = hex::encode(&addr[..20]);
+
     // Rate limit check
     {
         let mut limits = state.faucet_rate_limit.lock().unwrap();
-        if let Some(last) = limits.get(&req.address) {
+        if let Some(last) = limits.get(&addr_key) {
             if last.elapsed().as_secs() < FAUCET_RATE_LIMIT_SECS {
                 let remaining = FAUCET_RATE_LIMIT_SECS - last.elapsed().as_secs();
                 return Json(FaucetResponse {
@@ -831,12 +981,11 @@ async fn post_faucet(
                 });
             }
         }
-        limits.insert(req.address, Instant::now());
+        limits.insert(addr_key, Instant::now());
     }
 
     // Credit the account
     let mut db = state.db.lock().unwrap();
-    let addr = addr_from_byte(req.address);
     let account = db.get_or_create_account(&addr);
     account.balance += FAUCET_AMOUNT;
     let balance = account.balance;
@@ -952,7 +1101,7 @@ async fn post_mint_nft(
     drop(history);
 
     let metadata_hash = blake3::hash(req.metadata.as_bytes()).to_hex().to_string();
-    let owner = req.owner.unwrap_or_else(|| "0x7f0000…0000".to_string());
+    let owner = req.owner.unwrap_or_else(|| format!("0x{}", GENESIS_FOUNDATION));
     let collection = req.collection.unwrap_or_else(|| "Genesis Collection".to_string());
 
     let mut store = state.nft_store.lock().unwrap();
@@ -963,7 +1112,7 @@ async fn post_mint_nft(
         name: req.name.clone(),
         collection,
         owner,
-        metadata_hash: metadata_hash[..16].to_string(),
+        metadata_hash,
         energy: req.energy,
         max_energy: req.energy,
         half_life: req.half_life,
@@ -975,9 +1124,11 @@ async fn post_mint_nft(
         ghost_proof: None,
     });
 
+    let hash = tx_hash(&format!("nft:mint:{}:{}", id, req.name));
     Json(TxResultResponse {
         success: true,
         message: format!("NFT #{} '{}' minted with energy={}, half_life={}", id, req.name, req.energy, req.half_life),
+        tx_hash: Some(hash),
     })
 }
 
@@ -997,18 +1148,22 @@ async fn post_transfer_nft(
             return Json(TxResultResponse {
                 success: false,
                 message: "Cannot transfer a ghost NFT".to_string(),
+                tx_hash: None,
             });
         }
         let from = nft.owner.clone();
         nft.owner = req.to.clone();
+        let hash = tx_hash(&format!("nft:transfer:{}:{}:{}", req.nft_id, from, req.to));
         Json(TxResultResponse {
             success: true,
             message: format!("NFT #{} transferred from {} to {}", req.nft_id, from, req.to),
+            tx_hash: Some(hash),
         })
     } else {
         Json(TxResultResponse {
             success: false,
             message: format!("NFT #{} not found", req.nft_id),
+            tx_hash: None,
         })
     }
 }
@@ -1030,7 +1185,6 @@ async fn post_refresh_nft(
     let mut store = state.nft_store.lock().unwrap();
     if let Some(nft) = store.tokens.iter_mut().find(|n| n.id == req.nft_id) {
         if nft.state == "Ghost" {
-            // Resurrect
             nft.state = "Active".to_string();
             nft.energy = req.energy;
             nft.max_energy = req.energy;
@@ -1038,9 +1192,11 @@ async fn post_refresh_nft(
             nft.grace_epoch = None;
             nft.evaporated_epoch = None;
             nft.ghost_proof = None;
+            let hash = tx_hash(&format!("nft:resurrect:{}:{}", nft.id, req.energy));
             Json(TxResultResponse {
                 success: true,
                 message: format!("NFT #{} '{}' resurrected with energy={}", nft.id, nft.name, req.energy),
+                tx_hash: Some(hash),
             })
         } else {
             let current = nft.current_energy(epoch);
@@ -1051,15 +1207,18 @@ async fn post_refresh_nft(
                 nft.state = "Active".to_string();
                 nft.grace_epoch = None;
             }
+            let hash = tx_hash(&format!("nft:refresh:{}:{}", nft.id, req.energy));
             Json(TxResultResponse {
                 success: true,
                 message: format!("NFT #{} '{}' refreshed, energy now {}", nft.id, nft.name, nft.energy),
+                tx_hash: Some(hash),
             })
         }
     } else {
         Json(TxResultResponse {
             success: false,
             message: format!("NFT #{} not found", req.nft_id),
+            tx_hash: None,
         })
     }
 }
@@ -1083,7 +1242,7 @@ fn tick_nft_lifecycle(state: &ApiState, epoch: u64) {
                     nft.evaporated_epoch = Some(epoch);
                     let proof_data = format!("{}:{}:{}", nft.id, nft.name, epoch);
                     let hash = blake3::hash(proof_data.as_bytes());
-                    nft.ghost_proof = Some(hash.to_hex()[..32].to_string());
+                    nft.ghost_proof = Some(hash.to_hex().to_string());
                 }
             }
         }
@@ -1202,7 +1361,7 @@ async fn post_deploy_token(State(state): State<Arc<ApiState>>, Json(req): Json<D
     let history = state.block_history.lock().unwrap();
     let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
     drop(history);
-    let deployer = req.deployer.unwrap_or_else(|| "0x7f0000…0000".to_string());
+    let deployer = req.deployer.unwrap_or_else(|| format!("0x{}", GENESIS_FOUNDATION));
     let mut store = state.token_store.lock().unwrap();
     let id = store.next_id; store.next_id += 1;
     let mut balances = HashMap::new();
@@ -1212,7 +1371,8 @@ async fn post_deploy_token(State(state): State<Arc<ApiState>>, Json(req): Json<D
         total_supply: req.total_supply, decay_half_life: req.decay_half_life,
         deployed_epoch: epoch, deployer, balances, last_decay_epoch: epoch,
     });
-    Json(TxResultResponse { success: true, message: format!("{} ({}) deployed with supply={}, half_life={}", req.name, req.symbol, req.total_supply, req.decay_half_life) })
+    let hash = tx_hash(&format!("token:deploy:{}:{}", req.symbol, req.total_supply));
+    Json(TxResultResponse { success: true, message: format!("{} ({}) deployed with supply={}, half_life={}", req.name, req.symbol, req.total_supply, req.decay_half_life), tx_hash: Some(hash) })
 }
 
 #[derive(Deserialize)]
@@ -1221,15 +1381,16 @@ struct TokenTransferRequest { token_id: u64, from: String, to: String, amount: u
 async fn post_token_transfer(State(state): State<Arc<ApiState>>, Json(req): Json<TokenTransferRequest>) -> Json<TxResultResponse> {
     let mut store = state.token_store.lock().unwrap();
     let t = match store.tokens.iter_mut().find(|t| t.id == req.token_id) {
-        Some(t) => t, None => return Json(TxResultResponse { success: false, message: "Token not found".into() }),
+        Some(t) => t, None => return Json(TxResultResponse { success: false, message: "Token not found".into(), tx_hash: None }),
     };
     let from_bal = t.balances.get(&req.from).copied().unwrap_or(0);
     if from_bal < req.amount {
-        return Json(TxResultResponse { success: false, message: format!("Insufficient balance: {} < {}", from_bal, req.amount) });
+        return Json(TxResultResponse { success: false, message: format!("Insufficient balance: {} < {}", from_bal, req.amount), tx_hash: None });
     }
     *t.balances.entry(req.from.clone()).or_insert(0) -= req.amount;
     *t.balances.entry(req.to.clone()).or_insert(0) += req.amount;
-    Json(TxResultResponse { success: true, message: format!("{} {} transferred from {} to {}", req.amount, t.symbol, req.from, req.to) })
+    let hash = tx_hash(&format!("token:transfer:{}:{}:{}:{}", req.token_id, req.from, req.to, req.amount));
+    Json(TxResultResponse { success: true, message: format!("{} {} transferred from {} to {}", req.amount, t.symbol, req.from, req.to), tx_hash: Some(hash) })
 }
 
 #[derive(Deserialize)]
@@ -1360,7 +1521,7 @@ async fn post_stake(State(state): State<Arc<ApiState>>, Json(req): Json<StakeReq
     drop(history);
     let mut store = state.staking_store.lock().unwrap();
     let p = match store.pools.iter_mut().find(|p| p.id == req.pool_id) {
-        Some(p) => p, None => return Json(TxResultResponse { success: false, message: "Pool not found".into() }),
+        Some(p) => p, None => return Json(TxResultResponse { success: false, message: "Pool not found".into(), tx_hash: None }),
     };
     if let Some(s) = p.stakers.iter_mut().find(|s| s.address == req.address) {
         s.amount += req.amount;
@@ -1368,7 +1529,8 @@ async fn post_stake(State(state): State<Arc<ApiState>>, Json(req): Json<StakeReq
         p.stakers.push(Staker { address: req.address.clone(), amount: req.amount, staked_epoch: epoch, pending_rewards: 0, last_claim_epoch: epoch, total_claimed: 0, total_decayed: 0 });
     }
     p.total_staked += req.amount;
-    Json(TxResultResponse { success: true, message: format!("Staked {} in {}", req.amount, p.name) })
+    let hash = tx_hash(&format!("stake:{}:{}:{}", req.pool_id, req.address, req.amount));
+    Json(TxResultResponse { success: true, message: format!("Staked {} in {}", req.amount, p.name), tx_hash: Some(hash) })
 }
 
 #[derive(Deserialize)]
@@ -1377,17 +1539,18 @@ struct UnstakeRequest { pool_id: u64, address: String, amount: u64 }
 async fn post_unstake(State(state): State<Arc<ApiState>>, Json(req): Json<UnstakeRequest>) -> Json<TxResultResponse> {
     let mut store = state.staking_store.lock().unwrap();
     let p = match store.pools.iter_mut().find(|p| p.id == req.pool_id) {
-        Some(p) => p, None => return Json(TxResultResponse { success: false, message: "Pool not found".into() }),
+        Some(p) => p, None => return Json(TxResultResponse { success: false, message: "Pool not found".into(), tx_hash: None }),
     };
     let s = match p.stakers.iter_mut().find(|s| s.address == req.address) {
-        Some(s) => s, None => return Json(TxResultResponse { success: false, message: "Not staked".into() }),
+        Some(s) => s, None => return Json(TxResultResponse { success: false, message: "Not staked".into(), tx_hash: None }),
     };
     if s.amount < req.amount {
-        return Json(TxResultResponse { success: false, message: format!("Insufficient stake: {} < {}", s.amount, req.amount) });
+        return Json(TxResultResponse { success: false, message: format!("Insufficient stake: {} < {}", s.amount, req.amount), tx_hash: None });
     }
     s.amount -= req.amount;
     p.total_staked -= req.amount;
-    Json(TxResultResponse { success: true, message: format!("Unstaked {} from {}", req.amount, p.name) })
+    let hash = tx_hash(&format!("unstake:{}:{}:{}", req.pool_id, req.address, req.amount));
+    Json(TxResultResponse { success: true, message: format!("Unstaked {} from {}", req.amount, p.name), tx_hash: Some(hash) })
 }
 
 #[derive(Deserialize)]
@@ -1399,15 +1562,14 @@ async fn post_claim(State(state): State<Arc<ApiState>>, Json(req): Json<ClaimReq
     drop(history);
     let mut store = state.staking_store.lock().unwrap();
     let p = match store.pools.iter_mut().find(|p| p.id == req.pool_id) {
-        Some(p) => p, None => return Json(TxResultResponse { success: false, message: "Pool not found".into() }),
+        Some(p) => p, None => return Json(TxResultResponse { success: false, message: "Pool not found".into(), tx_hash: None }),
     };
     let reward_decay_hl = p.reward_decay_hl;
     let reward_rate = p.reward_rate;
     let total_staked = p.total_staked;
     let s = match p.stakers.iter_mut().find(|s| s.address == req.address) {
-        Some(s) => s, None => return Json(TxResultResponse { success: false, message: "Not staked".into() }),
+        Some(s) => s, None => return Json(TxResultResponse { success: false, message: "Not staked".into(), tx_hash: None }),
     };
-    // Compute rewards
     let epochs_since = epoch.saturating_sub(s.last_claim_epoch);
     let share = if total_staked > 0 { s.amount as f64 / total_staked as f64 } else { 0.0 };
     let raw = (share * reward_rate as f64 * epochs_since as f64) as u64 + s.pending_rewards;
@@ -1417,7 +1579,8 @@ async fn post_claim(State(state): State<Arc<ApiState>>, Json(req): Json<ClaimReq
     s.total_decayed += decayed;
     s.pending_rewards = 0;
     s.last_claim_epoch = epoch;
-    Json(TxResultResponse { success: true, message: format!("Claimed {} rewards ({} decayed)", actual, decayed) })
+    let hash = tx_hash(&format!("claim:{}:{}:{}", req.pool_id, req.address, actual));
+    Json(TxResultResponse { success: true, message: format!("Claimed {} rewards ({} decayed)", actual, decayed), tx_hash: Some(hash) })
 }
 
 // ──────────────────────────── DAO Store ─────────────────────────────────
@@ -1548,7 +1711,7 @@ async fn post_propose(State(state): State<Arc<ApiState>>, Json(req): Json<Propos
     let history = state.block_history.lock().unwrap();
     let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
     drop(history);
-    let creator = req.creator.unwrap_or_else(|| "0x7f0000…0000".to_string());
+    let creator = req.creator.unwrap_or_else(|| format!("0x{}", GENESIS_FOUNDATION));
     let mut store = state.dao_store.lock().unwrap();
     let id = store.next_id; store.next_id += 1;
     store.proposals.push(DAOProposal {
@@ -1557,7 +1720,8 @@ async fn post_propose(State(state): State<Arc<ApiState>>, Json(req): Json<Propos
         voting_period: req.voting_period, creator, status: "Active".into(),
         evaporated_epoch: None,
     });
-    Json(TxResultResponse { success: true, message: format!("Proposal #{} '{}' created, voting for {} epochs", id, req.title, req.voting_period) })
+    let hash = tx_hash(&format!("dao:propose:{}:{}", id, req.title));
+    Json(TxResultResponse { success: true, message: format!("Proposal #{} '{}' created, voting for {} epochs", id, req.title, req.voting_period), tx_hash: Some(hash) })
 }
 
 #[derive(Deserialize)]
@@ -1567,23 +1731,23 @@ async fn post_vote(State(state): State<Arc<ApiState>>, Json(req): Json<VoteReque
     let history = state.block_history.lock().unwrap();
     let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
     drop(history);
-    let voter = req.voter.unwrap_or_else(|| "0x7f0000…0000".to_string());
+    let voter = req.voter.unwrap_or_else(|| format!("0x{}", GENESIS_FOUNDATION));
     let mut store = state.dao_store.lock().unwrap();
     let p = match store.proposals.iter_mut().find(|p| p.id == req.proposal_id) {
-        Some(p) => p, None => return Json(TxResultResponse { success: false, message: "Proposal not found".into() }),
+        Some(p) => p, None => return Json(TxResultResponse { success: false, message: "Proposal not found".into(), tx_hash: None }),
     };
     if p.status != "Active" {
-        return Json(TxResultResponse { success: false, message: format!("Proposal is {}, cannot vote", p.status) });
+        return Json(TxResultResponse { success: false, message: format!("Proposal is {}, cannot vote", p.status), tx_hash: None });
     }
     if !p.options.contains(&req.option) {
-        return Json(TxResultResponse { success: false, message: format!("Invalid option: {}", req.option) });
+        return Json(TxResultResponse { success: false, message: format!("Invalid option: {}", req.option), tx_hash: None });
     }
-    // Check if already voted
     if p.votes.iter().any(|v| v.voter == voter) {
-        return Json(TxResultResponse { success: false, message: "Already voted".into() });
+        return Json(TxResultResponse { success: false, message: "Already voted".into(), tx_hash: None });
     }
     p.votes.push(DAOVote { voter: voter.clone(), option: req.option.clone(), weight: req.weight, epoch });
-    Json(TxResultResponse { success: true, message: format!("Voted '{}' with weight {} on proposal #{}", req.option, req.weight, req.proposal_id) })
+    let hash = tx_hash(&format!("dao:vote:{}:{}:{}", req.proposal_id, voter, req.option));
+    Json(TxResultResponse { success: true, message: format!("Voted '{}' with weight {} on proposal #{}", req.option, req.weight, req.proposal_id), tx_hash: Some(hash) })
 }
 
 // ──────────────────────────── Router ───────────────────────────────────
@@ -1616,11 +1780,11 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         // Explorer
         .route("/api/status", get(get_status))
         .route("/api/objects", get(get_objects))
-        .route("/api/object/{id}", get(get_single_object))
+        .route("/api/object/:id", get(get_single_object))
         .route("/api/accounts", get(get_accounts))
         .route("/api/ghosts", get(get_ghosts))
         .route("/api/blocks", get(get_blocks))
-        .route("/api/block/{number}", get(get_single_block))
+        .route("/api/block/:number", get(get_single_block))
         .route("/api/events", get(get_events))
         // Stats
         .route("/api/stats/timeline", get(get_stats_timeline))
@@ -1634,36 +1798,39 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/tx/resurrect", post(post_resurrect))
         // Contracts
         .route("/api/contracts", get(get_contracts))
-        .route("/api/contract/{id}", get(get_contract))
+        .route("/api/contract/:id", get(get_contract))
         .route("/api/tx/deploy-contract", post(post_deploy_contract))
         .route("/api/tx/call-contract", post(post_call_contract))
         // NFT Marketplace
         .route("/nft", get(nft_html))
         .route("/api/nfts", get(get_nfts))
-        .route("/api/nft/{id}", get(get_single_nft))
+        .route("/api/nft/:id", get(get_single_nft))
         .route("/api/nft/mint", post(post_mint_nft))
         .route("/api/nft/transfer", post(post_transfer_nft))
         .route("/api/nft/refresh", post(post_refresh_nft))
         // Tokens
         .route("/tokens", get(tokens_html))
         .route("/api/tokens", get(get_tokens))
-        .route("/api/token/{id}", get(get_single_token))
+        .route("/api/token/:id", get(get_single_token))
         .route("/api/token/deploy", post(post_deploy_token))
         .route("/api/token/transfer", post(post_token_transfer))
         .route("/api/token/balance", post(post_token_balance))
         // Staking
         .route("/staking", get(staking_html))
         .route("/api/staking/pools", get(get_staking_pools))
-        .route("/api/staking/pool/{id}", get(get_single_pool))
+        .route("/api/staking/pool/:id", get(get_single_pool))
         .route("/api/staking/stake", post(post_stake))
         .route("/api/staking/unstake", post(post_unstake))
         .route("/api/staking/claim", post(post_claim))
         // DAO
         .route("/dao", get(dao_html))
         .route("/api/dao/proposals", get(get_proposals))
-        .route("/api/dao/proposal/{id}", get(get_single_proposal))
+        .route("/api/dao/proposal/:id", get(get_single_proposal))
         .route("/api/dao/propose", post(post_propose))
         .route("/api/dao/vote", post(post_vote))
+        // Address detail
+        .route("/address/:addr", get(address_html))
+        .route("/api/address/:addr", get(get_address_detail))
         // Faucet
         .route("/faucet", get(faucet_html))
         .route("/api/faucet", post(post_faucet))

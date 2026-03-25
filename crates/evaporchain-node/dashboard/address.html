@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Address Detail — EvaporChain Testnet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#06060a;--bg2:#0a0a12;--bg3:#0e0e18;
+  --surface:rgba(255,255,255,0.025);--surface-hover:rgba(255,255,255,0.045);
+  --border:rgba(255,255,255,0.06);--border-active:rgba(255,255,255,0.12);
+  --text:#f1f5f9;--text2:#94a3b8;--text3:#475569;--text4:#1e293b;
+  --ember:#FF4D00;--ember-dim:rgba(255,77,0,0.12);
+  --cyan:#00f0ff;--cyan-dim:rgba(0,240,255,0.08);
+  --green:#22c55e;--green-dim:rgba(34,197,94,0.1);
+  --amber:#f59e0b;--amber-dim:rgba(245,158,11,0.1);
+  --red:#ef4444;--red-dim:rgba(239,68,68,0.1);
+  --purple:#8b5cf6;--purple-dim:rgba(139,92,246,0.08);
+  --radius:12px;--radius-sm:8px;--radius-xs:4px;
+  --nav-h:56px;
+  --font-sans:'Inter',system-ui,-apple-system,sans-serif;
+  --font-mono:'JetBrains Mono',monospace;
+}
+html{font-family:var(--font-sans);background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
+body{min-height:100vh}
+a{color:inherit;text-decoration:none}
+
+/* Testnet banner */
+.testnet-banner{background:linear-gradient(90deg,var(--amber-dim),var(--ember-dim));text-align:center;padding:6px;font-size:11px;font-weight:600;color:var(--amber);letter-spacing:0.05em;text-transform:uppercase;border-bottom:1px solid rgba(245,158,11,0.15)}
+
+/* Nav */
+.nav{position:fixed;top:28px;left:0;right:0;height:var(--nav-h);background:rgba(6,6,10,0.92);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);z-index:100;display:flex;align-items:center;padding:0 24px}
+.nav-brand{font-weight:700;font-size:15px;letter-spacing:-0.02em;color:var(--text);margin-right:32px;white-space:nowrap}
+.nav-brand span{background:linear-gradient(135deg,var(--ember),var(--amber));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.nav-links{display:flex;gap:4px}
+.nav-links a{padding:6px 14px;font-size:13px;font-weight:500;color:var(--text2);border-radius:6px;transition:all 0.15s}
+.nav-links a:hover{color:var(--text);background:var(--surface)}
+.nav-links a.active{color:var(--text);background:var(--surface-hover)}
+.nav-right{margin-left:auto;display:flex;align-items:center;gap:12px}
+.nav-stat{font-size:11px;font-family:var(--font-mono);color:var(--text3)}
+.nav-stat b{color:var(--text2)}
+.network-dot{width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block;margin-right:4px;animation:pulse-dot 2s ease infinite}
+@keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:0.4}}
+
+/* Layout */
+.main{padding-top:calc(var(--nav-h) + 28px + 24px);max-width:1320px;margin:0 auto;padding-left:20px;padding-right:20px;padding-bottom:80px}
+
+/* Page */
+.page-header{margin-bottom:32px}
+.page-title{font-size:22px;font-weight:700;letter-spacing:-0.02em;line-height:1.3}
+.address-full{font-size:14px;font-family:var(--font-mono);color:var(--cyan);word-break:break-all;margin-top:8px;display:flex;align-items:center;gap:8px}
+.copy-btn{background:var(--surface);border:1px solid var(--border);color:var(--text2);cursor:pointer;padding:3px 8px;border-radius:4px;font-size:11px;transition:all 0.15s}
+.copy-btn:hover{background:var(--surface-hover);color:var(--text)}
+
+/* Stats */
+.stats-bar{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:32px}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px 16px}
+.stat-label{font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:0.05em;color:var(--text3);margin-bottom:4px}
+.stat-value{font-size:20px;font-weight:700;font-family:var(--font-mono);color:var(--text)}
+
+/* Sections */
+.section{margin-bottom:32px}
+.section-title{font-size:16px;font-weight:600;margin-bottom:16px;color:var(--text2)}
+.section-empty{color:var(--text3);font-size:13px;padding:24px;text-align:center;background:var(--surface);border-radius:var(--radius-sm);border:1px solid var(--border)}
+
+/* Table */
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:10px 14px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text3);border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:10px 14px;border-bottom:1px solid var(--border);color:var(--text2);white-space:nowrap}
+td.mono{font-family:var(--font-mono);font-size:12px}
+
+/* Badges */
+.badge{display:inline-block;padding:2px 8px;font-size:11px;font-weight:600;border-radius:var(--radius-xs)}
+.badge-active{background:var(--green-dim);color:var(--green)}
+.badge-grace{background:var(--amber-dim);color:var(--amber)}
+.badge-ghost{background:var(--purple-dim);color:var(--purple)}
+
+/* Disclaimer */
+.disclaimer{text-align:center;padding:20px;font-size:11px;color:var(--text3);border-top:1px solid var(--border);margin-top:60px}
+.disclaimer a{color:var(--text2);text-decoration:underline}
+
+/* Loading */
+.loading{text-align:center;padding:60px;color:var(--text3)}
+</style>
+</head>
+<body>
+
+<div class="testnet-banner">Testnet — Tokens have no real-world value</div>
+
+<nav class="nav">
+  <a class="nav-brand" href="/"><span>Evapor</span>Chain</a>
+  <div class="nav-links">
+    <a href="/wallet">Wallet</a>
+    <a href="/explorer">Explorer</a>
+    <a href="/nft">NFTs</a>
+    <a href="/tokens">Tokens</a>
+    <a href="/staking">Staking</a>
+    <a href="/dao">DAO</a>
+    <a href="/faucet">Faucet</a>
+  </div>
+  <div class="nav-right">
+    <span class="nav-stat"><span class="network-dot"></span> <b>Testnet</b></span>
+  </div>
+</nav>
+
+<div class="main">
+  <div id="content">
+    <div class="loading">Loading address details...</div>
+  </div>
+</div>
+
+<script>
+const addr = window.location.pathname.split('/address/')[1];
+if (!addr) {
+  document.getElementById('content').innerHTML = '<div class="loading">No address specified</div>';
+} else {
+  loadAddress(addr);
+}
+
+async function loadAddress(hex) {
+  try {
+    const res = await fetch('/api/address/' + hex);
+    if (!res.ok) throw new Error('Address not found');
+    const d = await res.json();
+    render(d);
+  } catch(e) {
+    document.getElementById('content').innerHTML = '<div class="loading">Address not found or invalid</div>';
+  }
+}
+
+function render(d) {
+  let html = `
+    <div class="page-header">
+      <div class="page-title">Address Detail</div>
+      <div class="address-full">${d.address} <button class="copy-btn" onclick="copyAddr()">Copy</button></div>
+    </div>
+    <div class="stats-bar">
+      <div class="stat-card"><div class="stat-label">Balance</div><div class="stat-value">${d.balance.toLocaleString()} EVAP</div></div>
+      <div class="stat-card"><div class="stat-label">Nonce</div><div class="stat-value">${d.nonce}</div></div>
+      <div class="stat-card"><div class="stat-label">Objects</div><div class="stat-value">${d.objects.length}</div></div>
+      <div class="stat-card"><div class="stat-label">NFTs</div><div class="stat-value">${d.nfts.length}</div></div>
+      <div class="stat-card"><div class="stat-label">Tokens</div><div class="stat-value">${d.tokens.length}</div></div>
+    </div>
+  `;
+
+  // Objects
+  html += '<div class="section"><div class="section-title">State Objects</div>';
+  if (d.objects.length === 0) {
+    html += '<div class="section-empty">No state objects owned by this address</div>';
+  } else {
+    html += '<div class="table-wrap"><table><thead><tr><th>ID</th><th>Name</th><th>Energy</th><th>Half-life</th><th>State</th><th>Decay</th></tr></thead><tbody>';
+    for (const o of d.objects) {
+      const badge = o.state === 'Active' ? 'badge-active' : o.state === 'Grace' ? 'badge-grace' : 'badge-ghost';
+      html += '<tr><td class="mono">' + o.id.slice(0,16) + '...</td><td>' + o.name + '</td><td class="mono">' + o.current_energy.toLocaleString() + '</td><td class="mono">' + o.half_life + '</td><td><span class="badge ' + badge + '">' + o.state + '</span></td><td class="mono">' + o.decay_percentage.toFixed(1) + '%</td></tr>';
+    }
+    html += '</tbody></table></div>';
+  }
+  html += '</div>';
+
+  // NFTs
+  html += '<div class="section"><div class="section-title">NFTs</div>';
+  if (d.nfts.length === 0) {
+    html += '<div class="section-empty">No NFTs owned by this address</div>';
+  } else {
+    html += '<div class="table-wrap"><table><thead><tr><th>ID</th><th>Name</th><th>Collection</th><th>Energy</th><th>State</th></tr></thead><tbody>';
+    for (const n of d.nfts) {
+      const badge = n.state === 'Active' ? 'badge-active' : n.state === 'Grace' ? 'badge-grace' : 'badge-ghost';
+      html += '<tr><td class="mono">#' + n.id + '</td><td>' + n.name + '</td><td>' + n.collection + '</td><td class="mono">' + n.current_energy.toLocaleString() + '</td><td><span class="badge ' + badge + '">' + n.state + '</span></td></tr>';
+    }
+    html += '</tbody></table></div>';
+  }
+  html += '</div>';
+
+  // Tokens
+  html += '<div class="section"><div class="section-title">Token Balances</div>';
+  if (d.tokens.length === 0) {
+    html += '<div class="section-empty">No token holdings</div>';
+  } else {
+    html += '<div class="table-wrap"><table><thead><tr><th>Token</th><th>Symbol</th><th>Balance</th></tr></thead><tbody>';
+    for (const t of d.tokens) {
+      html += '<tr><td>' + t.name + '</td><td class="mono">' + t.symbol + '</td><td class="mono">' + t.balance.toLocaleString() + '</td></tr>';
+    }
+    html += '</tbody></table></div>';
+  }
+  html += '</div>';
+
+  html += '<div class="disclaimer">This is a testnet. Tokens have no real-world value. <a href="https://evaporchain.com/terms">Terms</a> &middot; <a href="https://evaporchain.com/privacy">Privacy</a></div>';
+
+  document.getElementById('content').innerHTML = html;
+}
+
+function copyAddr() {
+  navigator.clipboard.writeText(document.querySelector('.address-full').textContent.replace('Copy','').trim());
+  const btn = document.querySelector('.copy-btn');
+  btn.textContent = 'Copied!';
+  setTimeout(() => btn.textContent = 'Copy', 1500);
+}
+</script>
+</body>
+</html>

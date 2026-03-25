@@ -495,9 +495,24 @@ body {
 </head>
 <body>
 
+<div style="background:linear-gradient(90deg,rgba(245,158,11,0.08),rgba(255,77,0,0.08));text-align:center;padding:6px;font-size:11px;font-weight:600;color:#f59e0b;letter-spacing:0.05em;text-transform:uppercase;border-bottom:1px solid rgba(245,158,11,0.15);position:fixed;top:0;left:0;right:0;z-index:200">Testnet — Tokens have no real-world value</div>
+
+<nav style="position:fixed;top:28px;left:0;right:0;height:56px;background:rgba(10,10,15,0.92);backdrop-filter:blur(20px);border-bottom:1px solid rgba(255,255,255,0.06);z-index:100;display:flex;align-items:center;padding:0 24px">
+  <a href="/" style="font-weight:700;font-size:15px;color:#f1f5f9;margin-right:32px;text-decoration:none"><span style="background:linear-gradient(135deg,#FF4D00,#f59e0b);-webkit-background-clip:text;-webkit-text-fill-color:transparent">Evapor</span>Chain</a>
+  <div style="display:flex;gap:4px">
+    <a href="/wallet" style="padding:6px 14px;font-size:13px;font-weight:500;color:#94a3b8;border-radius:6px;text-decoration:none">Wallet</a>
+    <a href="/explorer" style="padding:6px 14px;font-size:13px;font-weight:500;color:#94a3b8;border-radius:6px;text-decoration:none">Explorer</a>
+    <a href="/nft" style="padding:6px 14px;font-size:13px;font-weight:500;color:#94a3b8;border-radius:6px;text-decoration:none">NFTs</a>
+    <a href="/tokens" style="padding:6px 14px;font-size:13px;font-weight:500;color:#94a3b8;border-radius:6px;text-decoration:none">Tokens</a>
+    <a href="/staking" style="padding:6px 14px;font-size:13px;font-weight:500;color:#94a3b8;border-radius:6px;text-decoration:none">Staking</a>
+    <a href="/dao" style="padding:6px 14px;font-size:13px;font-weight:500;color:#94a3b8;border-radius:6px;text-decoration:none">DAO</a>
+    <a href="/faucet" style="padding:6px 14px;font-size:13px;font-weight:500;color:#f1f5f9;background:rgba(255,255,255,0.045);border-radius:6px;text-decoration:none">Faucet</a>
+  </div>
+</nav>
+
 <div class="orb"></div>
 
-<div class="page-wrapper">
+<div class="page-wrapper" style="padding-top:100px">
   <div class="card" id="mainCard">
 
     <!-- Confetti overlay -->
@@ -540,14 +555,16 @@ body {
         <div class="form-group">
           <label class="form-label" for="address">Wallet Address</label>
           <input
-            type="number"
+            type="text"
             id="address"
             name="address"
             class="form-input"
-            min="0"
-            max="255"
-            placeholder="Enter account address (0-255)"
+            placeholder="0x7f3a8b2ce419d605a1c74e823fb960d4159ae378"
+            pattern="^(0x)?[0-9a-fA-F]{1,40}$"
             required
+            spellcheck="false"
+            autocomplete="off"
+            style="font-family:'JetBrains Mono',monospace;font-size:13px"
           >
         </div>
         <button type="submit" id="submitBtn" class="btn-claim">
@@ -603,15 +620,19 @@ async function requestTokens(e) {
   const btnText = document.getElementById('btnText');
   const errorMsg = document.getElementById('errorMsg');
   const card = document.getElementById('mainCard');
-  const address = parseInt(document.getElementById('address').value);
+  let address = document.getElementById('address').value.trim();
 
   // Reset states
   errorMsg.classList.remove('visible');
 
-  if (isNaN(address) || address < 0 || address > 255) {
-    showError('Please enter a valid address (0-255).');
+  // Validate hex address
+  const clean = address.startsWith('0x') ? address.slice(2) : address;
+  if (!/^[0-9a-fA-F]{1,40}$/.test(clean)) {
+    showError('Please enter a valid hex address (e.g., 0x7f3a8b...)');
     return false;
   }
+  // Ensure 0x prefix
+  if (!address.startsWith('0x')) address = '0x' + address;
 
   // Loading state
   btn.disabled = true;
@@ -662,8 +683,7 @@ function showSuccess(address, balance) {
   const sv = document.getElementById('successView');
   sv.classList.add('visible');
 
-  const hexAddr = '0x' + address.toString(16).padStart(2, '0').toUpperCase();
-  document.getElementById('successAddress').textContent = 'Tokens sent to address ' + hexAddr;
+  document.getElementById('successAddress').textContent = 'Tokens sent to ' + address;
   document.getElementById('successBalance').textContent = balance.toLocaleString() + ' EVAP';
 
   // Fire confetti

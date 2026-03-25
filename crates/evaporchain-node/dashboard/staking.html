@@ -49,7 +49,8 @@ a{color:inherit;text-decoration:none}
 </style>
 </head>
 <body>
-<nav class="nav">
+<div style="background:linear-gradient(90deg,rgba(245,158,11,0.08),rgba(255,77,0,0.08));text-align:center;padding:6px;font-size:11px;font-weight:600;color:#f59e0b;letter-spacing:0.05em;text-transform:uppercase;border-bottom:1px solid rgba(245,158,11,0.15);position:fixed;top:0;left:0;right:0;z-index:200">Testnet — Tokens have no real-world value</div>
+<nav class="nav" style="top:28px">
   <div class="nav-brand"><span>EvaporChain</span> Testnet</div>
   <div class="nav-links">
     <a href="/wallet">Wallet</a><a href="/explorer">Explorer</a><a href="/nft">NFTs</a>
@@ -57,7 +58,7 @@ a{color:inherit;text-decoration:none}
   </div>
   <div class="nav-right"><span class="nav-stat"><span class="network-dot"></span>Testnet</span><span class="nav-stat" id="navBlock">Block <b>—</b></span></div>
 </nav>
-<div class="main" style="padding-top:calc(var(--nav-h)+24px)">
+<div class="main" style="padding-top:calc(var(--nav-h)+28px+24px)">
   <h1 class="page-title">Staking</h1>
   <p class="page-subtitle">Stake EVAP to earn rewards. Unclaimed rewards decay — claim before they evaporate.</p>
 
@@ -147,5 +148,6 @@ function toast(m){const t=document.getElementById('toast');t.textContent=m;t.cla
 function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
 fetchPools();setInterval(fetchPools,3000);
 </script>
+<div style="text-align:center;padding:20px;font-size:11px;color:#475569;border-top:1px solid rgba(255,255,255,0.06);margin-top:40px">This is a testnet. Tokens have no real-world value. <a href="https://evaporchain.com/terms" style="color:#94a3b8;text-decoration:underline">Terms</a> &middot; <a href="https://evaporchain.com/privacy" style="color:#94a3b8;text-decoration:underline">Privacy</a></div>
 </body>
 </html>

@@ -102,7 +102,7 @@ canvas{display:block}
 /* ═══════════════════════════════════════════════════════════
    MAIN LAYOUT
    ═══════════════════════════════════════════════════════════ */
-.main{margin-top:var(--nav-h);min-height:calc(100vh - var(--nav-h))}
+.main{margin-top:calc(var(--nav-h) + 28px);min-height:calc(100vh - var(--nav-h) - 28px)}
 .page{display:none;padding:0}
 .page.active{display:block}
 .container{max-width:1280px;margin:0 auto;padding:0 20px}
@@ -382,10 +382,13 @@ canvas{display:block}
   <div class="mob-stats" id="mobStats"></div>
 </div>
 
+<!-- Testnet Banner -->
+<div style="background:linear-gradient(90deg,rgba(245,158,11,0.08),rgba(255,77,0,0.08));text-align:center;padding:6px;font-size:11px;font-weight:600;color:#f59e0b;letter-spacing:0.05em;text-transform:uppercase;border-bottom:1px solid rgba(245,158,11,0.15);position:fixed;top:0;left:0;right:0;z-index:200">Testnet — Tokens have no real-world value</div>
+
 <!-- ═══════════════════════════════════════════════════════════
      NAVBAR
      ═══════════════════════════════════════════════════════════ -->
-<nav class="navbar">
+<nav class="navbar" style="top:28px">
   <div class="nav-brand">
     <svg viewBox="0 0 32 32" fill="none"><defs><linearGradient id="lg" x1="4" y1="4" x2="28" y2="28"><stop stop-color="#FF4D00"/><stop offset="1" stop-color="#ff8a3d"/></linearGradient></defs><path d="M16 2L28.66 10v12L16 30 3.34 22V10L16 2z" stroke="url(#lg)" stroke-width="1.5" fill="none"/><path d="M16 8c0 0 5 4 5 10s-5 8-5 8-5-2-5-8 5-10 5-10z" fill="url(#lg)" opacity="0.8"/></svg>
     <span>EvaporChain</span>
@@ -403,6 +406,7 @@ canvas{display:block}
     <a href="/staking" class="nav-tab" style="text-decoration:none;color:var(--text3)">Staking</a>
     <a href="/dao" class="nav-tab" style="text-decoration:none;color:var(--text3)">DAO</a>
     <a href="/wallet" class="nav-tab" style="text-decoration:none;color:var(--text3)">Wallet</a>
+    <a href="/faucet" class="nav-tab" style="text-decoration:none;color:var(--text3)">Faucet</a>
   </div>
 
   <button class="mob-menu-btn" onclick="toggleMobMenu()">☰</button>
