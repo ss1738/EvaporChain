@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NFT Marketplace — EvaporChain Testnet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#06060a;--bg2:#0a0a12;--bg3:#0e0e18;
+  --surface:rgba(255,255,255,0.025);--surface-hover:rgba(255,255,255,0.045);
+  --border:rgba(255,255,255,0.06);--border-active:rgba(255,255,255,0.12);
+  --text:#f1f5f9;--text2:#94a3b8;--text3:#475569;--text4:#1e293b;
+  --ember:#FF4D00;--ember-dim:rgba(255,77,0,0.12);
+  --cyan:#00f0ff;--cyan-dim:rgba(0,240,255,0.08);
+  --green:#22c55e;--green-dim:rgba(34,197,94,0.1);
+  --amber:#f59e0b;--amber-dim:rgba(245,158,11,0.1);
+  --red:#ef4444;--red-dim:rgba(239,68,68,0.1);
+  --purple:#8b5cf6;--purple-dim:rgba(139,92,246,0.08);
+  --ghost-purple:#6d28d9;
+  --radius:12px;--radius-sm:8px;--radius-xs:4px;
+  --nav-h:56px;
+  --font-sans:'Inter',system-ui,-apple-system,sans-serif;
+  --font-mono:'JetBrains Mono',monospace;
+}
+html{font-family:var(--font-sans);background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
+body{min-height:100vh}
+a{color:inherit;text-decoration:none}
+
+/* ── Nav ── */
+.nav{position:fixed;top:0;left:0;right:0;height:var(--nav-h);background:rgba(6,6,10,0.92);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);z-index:100;display:flex;align-items:center;padding:0 24px}
+.nav-brand{font-weight:700;font-size:15px;letter-spacing:-0.02em;color:var(--text);margin-right:32px;white-space:nowrap}
+.nav-brand span{background:linear-gradient(135deg,var(--ember),var(--amber));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.nav-links{display:flex;gap:4px}
+.nav-links a{padding:6px 14px;font-size:13px;font-weight:500;color:var(--text2);border-radius:6px;transition:all 0.15s}
+.nav-links a:hover{color:var(--text);background:var(--surface)}
+.nav-links a.active{color:var(--text);background:var(--surface-hover)}
+.nav-right{margin-left:auto;display:flex;align-items:center;gap:12px}
+.nav-stat{font-size:11px;font-family:var(--font-mono);color:var(--text3)}
+.nav-stat b{color:var(--text2)}
+.network-dot{width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block;margin-right:4px;animation:pulse-dot 2s ease infinite}
+@keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:0.4}}
+
+/* ── Layout ── */
+.main{padding-top:calc(var(--nav-h) + 24px);max-width:1320px;margin:0 auto;padding-left:20px;padding-right:20px;padding-bottom:80px}
+
+/* ── Header ── */
+.page-header{margin-bottom:40px}
+.page-title{font-size:28px;font-weight:700;letter-spacing:-0.03em;color:var(--text);line-height:1.2}
+.page-subtitle{font-size:14px;color:var(--text3);margin-top:6px;font-weight:400}
+
+/* ── Stats Bar ── */
+.stats-bar{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:32px}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px 16px}
+.stat-label{font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:0.05em;color:var(--text3);margin-bottom:4px}
+.stat-value{font-size:20px;font-weight:700;font-family:var(--font-mono);color:var(--text)}
+
+/* ── Tabs ── */
+.tabs{display:flex;gap:2px;margin-bottom:24px;border-bottom:1px solid var(--border);padding-bottom:0}
+.tab{padding:10px 20px;font-size:13px;font-weight:500;color:var(--text3);cursor:pointer;border-bottom:2px solid transparent;transition:all 0.15s;margin-bottom:-1px}
+.tab:hover{color:var(--text2)}
+.tab.active{color:var(--text);border-bottom-color:var(--ember)}
+.tab-count{font-size:11px;font-family:var(--font-mono);color:var(--text3);margin-left:6px;background:var(--surface);padding:1px 6px;border-radius:var(--radius-xs)}
+
+/* ── NFT Grid ── */
+.nft-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px}
+
+/* ── NFT Card ── */
+.nft-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;transition:border-color 0.2s,transform 0.2s}
+.nft-card:hover{border-color:var(--border-active);transform:translateY(-2px)}
+.nft-card.grace{border-color:rgba(245,158,11,0.2)}
+.nft-card.grace:hover{border-color:rgba(245,158,11,0.35)}
+.nft-card.ghost{border-color:rgba(139,92,246,0.15);opacity:0.85}
+.nft-card.ghost:hover{opacity:1;border-color:rgba(139,92,246,0.3)}
+
+/* Card visual area — generative art placeholder */
+.nft-visual{height:200px;position:relative;overflow:hidden}
+.nft-visual canvas{width:100%;height:100%;display:block}
+
+/* Card body */
+.nft-body{padding:16px}
+.nft-top-row{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px}
+.nft-name{font-size:15px;font-weight:600;color:var(--text);letter-spacing:-0.01em}
+.nft-collection{font-size:11px;color:var(--text3);margin-top:2px}
+
+/* Status badge */
+.badge{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;padding:3px 8px;border-radius:var(--radius-xs);white-space:nowrap}
+.badge-active{background:var(--green-dim);color:var(--green)}
+.badge-grace{background:var(--amber-dim);color:var(--amber)}
+.badge-ghost{background:var(--purple-dim);color:var(--purple)}
+
+/* Data rows */
+.nft-data{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+.data-row{display:flex;justify-content:space-between;align-items:center}
+.data-label{font-size:11px;color:var(--text3);font-weight:500}
+.data-value{font-size:12px;font-family:var(--font-mono);color:var(--text2)}
+.data-value.addr{font-size:11px;color:var(--text3)}
+
+/* Energy bar */
+.energy-bar-wrap{margin-top:12px}
+.energy-bar-header{display:flex;justify-content:space-between;margin-bottom:6px}
+.energy-bar-label{font-size:11px;color:var(--text3)}
+.energy-bar-pct{font-size:11px;font-family:var(--font-mono);color:var(--text2)}
+.energy-bar{height:4px;background:var(--text4);border-radius:2px;overflow:hidden}
+.energy-bar-fill{height:100%;border-radius:2px;transition:width 0.6s ease}
+
+/* Ghost overlay */
+.ghost-overlay{position:absolute;top:0;left:0;right:0;bottom:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(109,40,217,0.15);backdrop-filter:blur(2px)}
+.ghost-label{font-size:11px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--purple);margin-bottom:4px}
+.ghost-epoch{font-size:10px;font-family:var(--font-mono);color:var(--text3)}
+
+/* Card actions */
+.nft-actions{display:flex;gap:8px;margin-top:14px}
+.btn{font-size:12px;font-weight:500;padding:7px 14px;border-radius:6px;border:none;cursor:pointer;transition:all 0.15s;font-family:var(--font-sans)}
+.btn-primary{background:var(--ember);color:#fff}
+.btn-primary:hover{background:#e64400}
+.btn-secondary{background:var(--surface-hover);color:var(--text2);border:1px solid var(--border)}
+.btn-secondary:hover{color:var(--text);border-color:var(--border-active)}
+.btn-ghost{background:var(--purple-dim);color:var(--purple);border:1px solid rgba(139,92,246,0.2)}
+.btn-ghost:hover{background:rgba(139,92,246,0.15);border-color:rgba(139,92,246,0.35)}
+.btn:disabled{opacity:0.4;cursor:not-allowed}
+.btn-sm{font-size:11px;padding:5px 10px}
+
+/* ── Mint Section ── */
+.mint-section{margin-top:48px;border-top:1px solid var(--border);padding-top:32px}
+.mint-title{font-size:18px;font-weight:600;color:var(--text);margin-bottom:4px}
+.mint-desc{font-size:13px;color:var(--text3);margin-bottom:20px}
+.mint-form{display:grid;grid-template-columns:1fr 1fr;gap:12px;max-width:640px}
+.form-group{display:flex;flex-direction:column;gap:4px}
+.form-group.full{grid-column:1/-1}
+.form-label{font-size:11px;font-weight:500;color:var(--text3);text-transform:uppercase;letter-spacing:0.04em}
+.form-input{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:9px 12px;color:var(--text);font-size:13px;font-family:var(--font-sans);transition:border-color 0.15s}
+.form-input:focus{outline:none;border-color:var(--ember)}
+.form-input::placeholder{color:var(--text4)}
+.mint-preview{font-size:12px;font-family:var(--font-mono);color:var(--text3);margin-top:4px}
+.mint-actions{grid-column:1/-1;display:flex;gap:12px;align-items:center;margin-top:4px}
+
+/* ── Toast ── */
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(100px);background:var(--bg3);border:1px solid var(--border-active);border-radius:var(--radius-sm);padding:10px 20px;font-size:13px;color:var(--text);z-index:200;opacity:0;transition:all 0.3s ease;pointer-events:none;max-width:400px;text-align:center}
+.toast.show{transform:translateX(-50%) translateY(0);opacity:1}
+
+/* ── Empty state ── */
+.empty-state{text-align:center;padding:60px 20px;color:var(--text3)}
+.empty-state p{font-size:14px;margin-bottom:8px}
+.empty-state span{font-size:12px}
+
+/* ── Skeleton ── */
+.skeleton{background:linear-gradient(90deg,var(--surface) 25%,var(--surface-hover) 50%,var(--surface) 75%);background-size:200% 100%;animation:shimmer 1.5s infinite;border-radius:var(--radius-xs)}
+@keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.skeleton-card{height:380px;border-radius:var(--radius)}
+
+/* ── Mobile ── */
+.mobile-menu{display:none}
+@media(max-width:768px){
+  .nav-links{display:none}
+  .nav-right{display:none}
+  .mobile-menu{display:block;margin-left:auto}
+  .mobile-menu button{background:none;border:none;color:var(--text2);font-size:20px;cursor:pointer;padding:4px}
+  .mobile-nav{display:none;position:fixed;top:var(--nav-h);left:0;right:0;background:var(--bg2);border-bottom:1px solid var(--border);padding:12px;z-index:99}
+  .mobile-nav.open{display:flex;flex-direction:column;gap:4px}
+  .mobile-nav a{padding:10px 14px;font-size:14px;color:var(--text2);border-radius:6px}
+  .mobile-nav a.active{background:var(--surface);color:var(--text)}
+  .nft-grid{grid-template-columns:1fr}
+  .mint-form{grid-template-columns:1fr}
+  .stats-bar{grid-template-columns:repeat(2,1fr)}
+}
+
+/* ── Modal ── */
+.modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);z-index:150;display:none;align-items:center;justify-content:center}
+.modal-overlay.open{display:flex}
+.modal{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:24px;max-width:400px;width:90%}
+.modal-title{font-size:16px;font-weight:600;margin-bottom:16px}
+.modal-actions{display:flex;gap:8px;margin-top:16px;justify-content:flex-end}
+</style>
+</head>
+<body>
+
+<!-- Nav -->
+<nav class="nav">
+  <div class="nav-brand"><span>EvaporChain</span> Testnet</div>
+  <div class="nav-links">
+    <a href="/wallet">Wallet</a><a href="/explorer">Explorer</a><a href="/nft" class="active">NFTs</a>
+    <a href="/tokens">Tokens</a><a href="/staking">Staking</a><a href="/dao">DAO</a><a href="/faucet">Faucet</a>
+  </div>
+  <div class="nav-right">
+    <span class="nav-stat"><span class="network-dot"></span>Testnet</span>
+    <span class="nav-stat" id="navBlock">Block <b>—</b></span>
+    <span class="nav-stat" id="navEpoch">Epoch <b>—</b></span>
+  </div>
+  <div class="mobile-menu"><button onclick="toggleMobileNav()">&#9776;</button></div>
+</nav>
+<div class="mobile-nav" id="mobileNav">
+  <a href="/wallet">Wallet</a>
+  <a href="/explorer">Explorer</a>
+  <a href="/nft" class="active">NFTs</a>
+  <a href="/faucet">Faucet</a>
+</div>
+
+<!-- Main -->
+<div class="main">
+  <div class="page-header">
+    <h1 class="page-title">NFT Marketplace</h1>
+    <p class="page-subtitle">Digital assets with lifespans. Mint, trade, and watch them live and die.</p>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats-bar">
+    <div class="stat-card"><div class="stat-label">Total minted</div><div class="stat-value" id="statTotal">—</div></div>
+    <div class="stat-card"><div class="stat-label">Active</div><div class="stat-value" id="statActive" style="color:var(--green)">—</div></div>
+    <div class="stat-card"><div class="stat-label">In Grace</div><div class="stat-value" id="statGrace" style="color:var(--amber)">—</div></div>
+    <div class="stat-card"><div class="stat-label">Evaporated</div><div class="stat-value" id="statGhost" style="color:var(--purple)">—</div></div>
+    <div class="stat-card"><div class="stat-label">Collection</div><div class="stat-value" id="statCollection" style="font-size:14px">—</div></div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <div class="tab active" data-tab="live" onclick="switchTab('live')">Live NFTs<span class="tab-count" id="liveCount">0</span></div>
+    <div class="tab" data-tab="ghosts" onclick="switchTab('ghosts')">Ghost Gallery<span class="tab-count" id="ghostCount">0</span></div>
+  </div>
+
+  <!-- Content -->
+  <div id="livePanel">
+    <div class="nft-grid" id="liveGrid">
+      <div class="skeleton skeleton-card"></div>
+      <div class="skeleton skeleton-card"></div>
+      <div class="skeleton skeleton-card"></div>
+    </div>
+  </div>
+
+  <div id="ghostPanel" style="display:none">
+    <div class="nft-grid" id="ghostGrid"></div>
+    <div class="empty-state" id="ghostEmpty" style="display:none">
+      <p>No evaporated NFTs yet</p>
+      <span>When an NFT's energy reaches zero and its grace period expires, it will appear here.</span>
+    </div>
+  </div>
+
+  <!-- Mint -->
+  <div class="mint-section">
+    <h2 class="mint-title">Mint a Mortal NFT</h2>
+    <p class="mint-desc">Create an NFT that decays over time. Set the energy and half-life to control its lifespan.</p>
+    <div class="mint-form">
+      <div class="form-group">
+        <label class="form-label">Name</label>
+        <input class="form-input" id="mintName" placeholder="My NFT" maxlength="64">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Collection</label>
+        <input class="form-input" id="mintCollection" placeholder="Genesis Collection" maxlength="64">
+      </div>
+      <div class="form-group full">
+        <label class="form-label">Metadata</label>
+        <input class="form-input" id="mintMetadata" placeholder="Description or metadata string">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Energy</label>
+        <input class="form-input" id="mintEnergy" type="number" placeholder="10000" min="1" max="1000000" value="10000">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Half-life (epochs)</label>
+        <input class="form-input" id="mintHalfLife" type="number" placeholder="50" min="1" max="10000" value="50">
+      </div>
+      <div class="form-group full">
+        <div class="mint-preview" id="mintPreview">This NFT will live for approximately 800 epochs</div>
+      </div>
+      <div class="mint-actions">
+        <button class="btn btn-primary" onclick="mintNft()">Mint NFT</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Transfer Modal -->
+<div class="modal-overlay" id="transferModal">
+  <div class="modal">
+    <div class="modal-title">Transfer NFT</div>
+    <div class="form-group" style="margin-bottom:12px">
+      <label class="form-label">NFT</label>
+      <div id="transferNftName" style="font-size:13px;color:var(--text)"></div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Recipient address</label>
+      <input class="form-input" id="transferTo" placeholder="0x..." style="width:100%">
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('transferModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitTransfer()">Transfer</button>
+    </div>
+  </div>
+</div>
+
+<!-- Refresh Modal -->
+<div class="modal-overlay" id="refreshModal">
+  <div class="modal">
+    <div class="modal-title">Refresh Energy</div>
+    <div class="form-group" style="margin-bottom:12px">
+      <label class="form-label">NFT</label>
+      <div id="refreshNftName" style="font-size:13px;color:var(--text)"></div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Energy deposit</label>
+      <input class="form-input" id="refreshEnergy" type="number" placeholder="1000" min="1" style="width:100%">
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('refreshModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitRefresh()">Deposit Energy</button>
+    </div>
+  </div>
+</div>
+
+<!-- Resurrect Modal -->
+<div class="modal-overlay" id="resurrectModal">
+  <div class="modal">
+    <div class="modal-title">Resurrect NFT</div>
+    <div class="form-group" style="margin-bottom:12px">
+      <label class="form-label">NFT</label>
+      <div id="resurrectNftName" style="font-size:13px;color:var(--text)"></div>
+    </div>
+    <div class="form-group" style="margin-bottom:8px">
+      <label class="form-label">Ghost proof</label>
+      <div id="resurrectProof" style="font-size:11px;font-family:var(--font-mono);color:var(--text3);word-break:break-all"></div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Energy for resurrection</label>
+      <input class="form-input" id="resurrectEnergy" type="number" placeholder="5000" min="1" style="width:100%">
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('resurrectModal')">Cancel</button>
+      <button class="btn btn-ghost" onclick="submitResurrect()">Resurrect</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ── State ──
+let nfts = [];
+let currentTab = 'live';
+let modalNftId = null;
+let epoch = 0;
+
+// ── API ──
+const API = '';
+
+async function fetchNfts() {
+  try {
+    const [nftRes, statusRes] = await Promise.allSettled([
+      fetch(API + '/api/nfts'),
+      fetch(API + '/api/status')
+    ]);
+    if (nftRes.status === 'fulfilled' && nftRes.value.ok) {
+      nfts = await nftRes.value.json();
+    }
+    if (statusRes.status === 'fulfilled' && statusRes.value.ok) {
+      const s = await statusRes.value.json();
+      epoch = s.epoch || 0;
+      document.getElementById('navBlock').innerHTML = 'Block <b>' + (s.block_height || 0).toLocaleString() + '</b>';
+      document.getElementById('navEpoch').innerHTML = 'Epoch <b>' + epoch.toLocaleString() + '</b>';
+    }
+    render();
+  } catch(e) {
+    console.error('Fetch error:', e);
+  }
+}
+
+// ── Render ──
+
+function render() {
+  const live = nfts.filter(n => n.state !== 'Ghost');
+  const ghosts = nfts.filter(n => n.state === 'Ghost');
+  const active = nfts.filter(n => n.state === 'Active').length;
+  const grace = nfts.filter(n => n.state === 'Grace').length;
+
+  // Stats
+  document.getElementById('statTotal').textContent = nfts.length;
+  document.getElementById('statActive').textContent = active;
+  document.getElementById('statGrace').textContent = grace;
+  document.getElementById('statGhost').textContent = ghosts.length;
+  const collections = [...new Set(nfts.map(n => n.collection))];
+  document.getElementById('statCollection').textContent = collections[0] || '—';
+
+  // Tab counts
+  document.getElementById('liveCount').textContent = live.length;
+  document.getElementById('ghostCount').textContent = ghosts.length;
+
+  // Live grid
+  const liveGrid = document.getElementById('liveGrid');
+  liveGrid.innerHTML = '';
+  if (live.length === 0) {
+    liveGrid.innerHTML = '<div class="empty-state"><p>No live NFTs</p><span>Mint one below to get started.</span></div>';
+  } else {
+    live.forEach(n => liveGrid.appendChild(createNftCard(n)));
+  }
+
+  // Ghost grid
+  const ghostGrid = document.getElementById('ghostGrid');
+  const ghostEmpty = document.getElementById('ghostEmpty');
+  ghostGrid.innerHTML = '';
+  if (ghosts.length === 0) {
+    ghostEmpty.style.display = 'block';
+  } else {
+    ghostEmpty.style.display = 'none';
+    ghosts.forEach(n => ghostGrid.appendChild(createGhostCard(n)));
+  }
+}
+
+function createNftCard(nft) {
+  const card = document.createElement('div');
+  const isGrace = nft.state === 'Grace';
+  card.className = 'nft-card' + (isGrace ? ' grace' : '');
+
+  const pct = Math.max(0, 100 - nft.decay_percentage);
+  const barColor = pct > 60 ? 'var(--green)' : pct > 30 ? 'var(--amber)' : 'var(--red)';
+  const badgeClass = isGrace ? 'badge-grace' : 'badge-active';
+  const badgeText = nft.state;
+
+  card.innerHTML = `
+    <div class="nft-visual"><canvas data-nft-id="${nft.id}" data-energy-pct="${pct}" data-state="${nft.state}"></canvas></div>
+    <div class="nft-body">
+      <div class="nft-top-row">
+        <div>
+          <div class="nft-name">${esc(nft.name)}</div>
+          <div class="nft-collection">${esc(nft.collection)}</div>
+        </div>
+        <span class="badge ${badgeClass}">${badgeText}</span>
+      </div>
+      <div class="nft-data">
+        <div class="data-row"><span class="data-label">Owner</span><span class="data-value addr">${esc(nft.owner)}</span></div>
+        <div class="data-row"><span class="data-label">Metadata</span><span class="data-value addr">${esc(nft.metadata_hash)}</span></div>
+        <div class="data-row"><span class="data-label">Half-life</span><span class="data-value">${nft.half_life.toLocaleString()} epochs</span></div>
+        <div class="data-row"><span class="data-label">Remaining</span><span class="data-value" style="color:${pct < 20 ? 'var(--red)' : 'var(--text2)'}">${nft.epochs_remaining > 0 ? '~' + nft.epochs_remaining.toLocaleString() + ' epochs' : 'Expiring'}</span></div>
+      </div>
+      <div class="energy-bar-wrap">
+        <div class="energy-bar-header">
+          <span class="energy-bar-label">Energy</span>
+          <span class="energy-bar-pct">${nft.current_energy.toLocaleString()} / ${nft.max_energy.toLocaleString()}</span>
+        </div>
+        <div class="energy-bar"><div class="energy-bar-fill" style="width:${pct}%;background:${barColor}"></div></div>
+      </div>
+      <div class="nft-actions">
+        <button class="btn btn-primary btn-sm" onclick="openRefresh(${nft.id})">Refresh</button>
+        <button class="btn btn-secondary btn-sm" onclick="openTransfer(${nft.id})">Transfer</button>
+      </div>
+    </div>
+  `;
+
+  // Draw generative visual after append
+  requestAnimationFrame(() => {
+    const canvas = card.querySelector('canvas');
+    if (canvas) drawNftVisual(canvas, nft);
+  });
+
+  return card;
+}
+
+function createGhostCard(nft) {
+  const card = document.createElement('div');
+  card.className = 'nft-card ghost';
+
+  card.innerHTML = `
+    <div class="nft-visual" style="position:relative">
+      <canvas data-nft-id="${nft.id}" data-energy-pct="0" data-state="Ghost"></canvas>
+      <div class="ghost-overlay">
+        <div class="ghost-label">Evaporated</div>
+        <div class="ghost-epoch">Epoch ${nft.evaporated_epoch || '—'}</div>
+      </div>
+    </div>
+    <div class="nft-body">
+      <div class="nft-top-row">
+        <div>
+          <div class="nft-name">${esc(nft.name)}</div>
+          <div class="nft-collection">${esc(nft.collection)}</div>
+        </div>
+        <span class="badge badge-ghost">Ghost</span>
+      </div>
+      <div class="nft-data">
+        <div class="data-row"><span class="data-label">Owner</span><span class="data-value addr">${esc(nft.owner)}</span></div>
+        <div class="data-row"><span class="data-label">Evaporated</span><span class="data-value">Epoch ${nft.evaporated_epoch || '—'}</span></div>
+        <div class="data-row"><span class="data-label">Ghost proof</span><span class="data-value addr">${esc((nft.ghost_proof || '').slice(0, 16))}…</span></div>
+        <div class="data-row"><span class="data-label">Original energy</span><span class="data-value">${nft.max_energy.toLocaleString()}</span></div>
+      </div>
+      <div class="nft-actions">
+        <button class="btn btn-ghost btn-sm" onclick="openResurrect(${nft.id})">Resurrect</button>
+      </div>
+    </div>
+  `;
+
+  requestAnimationFrame(() => {
+    const canvas = card.querySelector('canvas');
+    if (canvas) drawNftVisual(canvas, nft);
+  });
+
+  return card;
+}
+
+// ── Generative NFT Visual ──
+// Deterministic abstract art based on NFT id + name hash
+
+function drawNftVisual(canvas, nft) {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const w = rect.width, h = rect.height;
+
+  // Seed from NFT id
+  let seed = nft.id * 2654435761;
+  function rng() { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; }
+
+  const isGhost = nft.state === 'Ghost';
+  const pct = isGhost ? 0 : Math.max(0, 100 - (nft.decay_percentage || 0));
+
+  // Background gradient
+  const grad = ctx.createLinearGradient(0, 0, w, h);
+  if (isGhost) {
+    grad.addColorStop(0, 'rgba(109,40,217,0.08)');
+    grad.addColorStop(1, 'rgba(30,10,60,0.15)');
+  } else {
+    const hue1 = (nft.id * 47) % 360;
+    const hue2 = (hue1 + 40) % 360;
+    const sat = isGhost ? 10 : 40 + pct * 0.3;
+    const lum = 6 + pct * 0.04;
+    grad.addColorStop(0, `hsla(${hue1},${sat}%,${lum}%,1)`);
+    grad.addColorStop(1, `hsla(${hue2},${sat}%,${Math.max(4, lum - 2)}%,1)`);
+  }
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, w, h);
+
+  // Geometric shapes
+  const shapes = 5 + Math.floor(rng() * 8);
+  for (let i = 0; i < shapes; i++) {
+    const x = rng() * w;
+    const y = rng() * h;
+    const size = 20 + rng() * 80;
+    const type = Math.floor(rng() * 3);
+    const hue = (nft.id * 73 + i * 57) % 360;
+    const alpha = isGhost ? 0.04 + rng() * 0.06 : 0.06 + rng() * 0.12 * (pct / 100);
+
+    ctx.fillStyle = `hsla(${hue},50%,50%,${alpha})`;
+    ctx.strokeStyle = `hsla(${hue},40%,40%,${alpha * 0.7})`;
+    ctx.lineWidth = 1;
+
+    if (type === 0) {
+      ctx.beginPath();
+      ctx.arc(x, y, size / 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    } else if (type === 1) {
+      ctx.fillRect(x - size / 2, y - size / 2, size, size);
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(x, y - size / 2);
+      ctx.lineTo(x + size / 2, y + size / 2);
+      ctx.lineTo(x - size / 2, y + size / 2);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  // Energy ring (only for live NFTs)
+  if (!isGhost && pct > 0) {
+    const cx = w / 2, cy = h / 2;
+    const radius = Math.min(w, h) * 0.3;
+    const angle = (pct / 100) * Math.PI * 2;
+    const ringColor = pct > 60 ? 'rgba(34,197,94,0.3)' : pct > 30 ? 'rgba(245,158,11,0.3)' : 'rgba(239,68,68,0.3)';
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, -Math.PI / 2, -Math.PI / 2 + angle);
+    ctx.strokeStyle = ringColor;
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+
+    // Faint full ring
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  // Ghost scan lines
+  if (isGhost) {
+    ctx.fillStyle = 'rgba(109,40,217,0.03)';
+    for (let y = 0; y < h; y += 3) {
+      ctx.fillRect(0, y, w, 1);
+    }
+  }
+}
+
+// ── Tab switching ──
+
+function switchTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  document.getElementById('livePanel').style.display = tab === 'live' ? 'block' : 'none';
+  document.getElementById('ghostPanel').style.display = tab === 'ghosts' ? 'block' : 'none';
+}
+
+// ── Modals ──
+
+function openTransfer(id) {
+  modalNftId = id;
+  const nft = nfts.find(n => n.id === id);
+  if (!nft) return;
+  document.getElementById('transferNftName').textContent = nft.name + ' (#' + id + ')';
+  document.getElementById('transferTo').value = '';
+  document.getElementById('transferModal').classList.add('open');
+}
+
+function openRefresh(id) {
+  modalNftId = id;
+  const nft = nfts.find(n => n.id === id);
+  if (!nft) return;
+  document.getElementById('refreshNftName').textContent = nft.name + ' (#' + id + ')';
+  document.getElementById('refreshEnergy').value = Math.max(1000, Math.floor(nft.max_energy * 0.5));
+  document.getElementById('refreshModal').classList.add('open');
+}
+
+function openResurrect(id) {
+  modalNftId = id;
+  const nft = nfts.find(n => n.id === id);
+  if (!nft) return;
+  document.getElementById('resurrectNftName').textContent = nft.name + ' (#' + id + ')';
+  document.getElementById('resurrectProof').textContent = nft.ghost_proof || 'N/A';
+  document.getElementById('resurrectEnergy').value = nft.max_energy;
+  document.getElementById('resurrectModal').classList.add('open');
+}
+
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+  modalNftId = null;
+}
+
+async function submitTransfer() {
+  const to = document.getElementById('transferTo').value.trim();
+  if (!to) return;
+  const res = await postApi('/api/nft/transfer', { nft_id: modalNftId, to });
+  closeModal('transferModal');
+  showToast(res.message);
+  fetchNfts();
+}
+
+async function submitRefresh() {
+  const energy = parseInt(document.getElementById('refreshEnergy').value) || 0;
+  if (energy <= 0) return;
+  const res = await postApi('/api/nft/refresh', { nft_id: modalNftId, energy });
+  closeModal('refreshModal');
+  showToast(res.message);
+  fetchNfts();
+}
+
+async function submitResurrect() {
+  const energy = parseInt(document.getElementById('resurrectEnergy').value) || 0;
+  if (energy <= 0) return;
+  const res = await postApi('/api/nft/refresh', { nft_id: modalNftId, energy });
+  closeModal('resurrectModal');
+  showToast(res.message);
+  fetchNfts();
+}
+
+// ── Mint ──
+
+async function mintNft() {
+  const name = document.getElementById('mintName').value.trim();
+  const collection = document.getElementById('mintCollection').value.trim();
+  const metadata = document.getElementById('mintMetadata').value.trim();
+  const energy = parseInt(document.getElementById('mintEnergy').value) || 0;
+  const halfLife = parseInt(document.getElementById('mintHalfLife').value) || 0;
+
+  if (!name) { showToast('Name is required'); return; }
+  if (energy <= 0) { showToast('Energy must be positive'); return; }
+  if (halfLife <= 0) { showToast('Half-life must be positive'); return; }
+
+  const body = { name, metadata: metadata || name, energy, half_life: halfLife };
+  if (collection) body.collection = collection;
+
+  const res = await postApi('/api/nft/mint', body);
+  showToast(res.message);
+
+  // Clear form
+  document.getElementById('mintName').value = '';
+  document.getElementById('mintMetadata').value = '';
+  fetchNfts();
+}
+
+// Update mint preview
+function updateMintPreview() {
+  const energy = parseInt(document.getElementById('mintEnergy').value) || 0;
+  const halfLife = parseInt(document.getElementById('mintHalfLife').value) || 0;
+  const el = document.getElementById('mintPreview');
+  if (energy > 0 && halfLife > 0) {
+    const lifetime = Math.ceil(halfLife * Math.log2(Math.max(1, energy)));
+    el.textContent = 'This NFT will live for approximately ' + lifetime.toLocaleString() + ' epochs';
+  } else {
+    el.textContent = '';
+  }
+}
+document.getElementById('mintEnergy').addEventListener('input', updateMintPreview);
+document.getElementById('mintHalfLife').addEventListener('input', updateMintPreview);
+updateMintPreview();
+
+// ── Helpers ──
+
+async function postApi(path, body) {
+  try {
+    const res = await fetch(API + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    return await res.json();
+  } catch(e) {
+    return { success: false, message: 'Network error' };
+  }
+}
+
+function showToast(msg) {
+  const toast = document.getElementById('toast');
+  toast.textContent = msg;
+  toast.classList.add('show');
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => toast.classList.remove('show'), 3500);
+}
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s || '';
+  return d.innerHTML;
+}
+
+function toggleMobileNav() {
+  document.getElementById('mobileNav').classList.toggle('open');
+}
+
+// Close modals on overlay click
+document.querySelectorAll('.modal-overlay').forEach(el => {
+  el.addEventListener('click', e => {
+    if (e.target === el) el.classList.remove('open');
+  });
+});
+
+// ── Init ──
+fetchNfts();
+setInterval(fetchNfts, 3000);
+</script>
+</body>
+</html>

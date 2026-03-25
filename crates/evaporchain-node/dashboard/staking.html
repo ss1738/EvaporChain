@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Staking — EvaporChain Testnet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#06060a;--bg2:#0a0a12;--bg3:#0e0e18;--surface:rgba(255,255,255,0.025);--surface-hover:rgba(255,255,255,0.045);--border:rgba(255,255,255,0.06);--border-active:rgba(255,255,255,0.12);--text:#f1f5f9;--text2:#94a3b8;--text3:#475569;--text4:#1e293b;--ember:#FF4D00;--cyan:#00f0ff;--green:#22c55e;--green-dim:rgba(34,197,94,0.1);--amber:#f59e0b;--amber-dim:rgba(245,158,11,0.1);--red:#ef4444;--red-dim:rgba(239,68,68,0.1);--purple:#8b5cf6;--radius:12px;--radius-sm:8px;--radius-xs:4px;--nav-h:56px;--font-sans:'Inter',system-ui,sans-serif;--font-mono:'JetBrains Mono',monospace}
+html{font-family:var(--font-sans);background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}
+.nav{position:fixed;top:0;left:0;right:0;height:var(--nav-h);background:rgba(6,6,10,0.92);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);z-index:100;display:flex;align-items:center;padding:0 24px}
+.nav-brand{font-weight:700;font-size:15px;letter-spacing:-0.02em;margin-right:32px;white-space:nowrap}.nav-brand span{background:linear-gradient(135deg,var(--ember),var(--amber));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.nav-links{display:flex;gap:4px}.nav-links a{padding:6px 14px;font-size:13px;font-weight:500;color:var(--text2);border-radius:6px;transition:all .15s}.nav-links a:hover{color:var(--text);background:var(--surface)}.nav-links a.active{color:var(--text);background:var(--surface-hover)}
+.nav-right{margin-left:auto;display:flex;gap:12px;align-items:center}.nav-stat{font-size:11px;font-family:var(--font-mono);color:var(--text3)}.nav-stat b{color:var(--text2)}
+.network-dot{width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block;margin-right:4px;animation:pd 2s ease infinite}@keyframes pd{0%,100%{opacity:1}50%{opacity:.4}}
+.main{padding-top:calc(var(--nav-h)+24px);max-width:1320px;margin:0 auto;padding:0 20px 80px}
+.page-title{font-size:28px;font-weight:700;letter-spacing:-0.03em;margin-bottom:4px}.page-subtitle{font-size:14px;color:var(--text3);margin-bottom:32px}
+.stats-bar{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:32px}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px 16px}.stat-label{font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);margin-bottom:4px}.stat-value{font-size:20px;font-weight:700;font-family:var(--font-mono)}
+.pool-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:24px;margin-bottom:24px}
+.pool-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px}
+.pool-name{font-size:20px;font-weight:600}.pool-meta{font-size:12px;color:var(--text3);margin-top:4px}
+.badge{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;padding:3px 8px;border-radius:var(--radius-xs)}.badge-live{background:var(--green-dim);color:var(--green)}
+.pool-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:24px}
+.pool-stat{background:var(--surface);border-radius:var(--radius-sm);padding:12px}.pool-stat-label{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);margin-bottom:4px}.pool-stat-value{font-size:18px;font-weight:700;font-family:var(--font-mono)}
+/* Staker table */
+.staker-table{width:100%;border-collapse:collapse;margin-bottom:20px}
+.staker-table th{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);text-align:left;padding:8px 12px;border-bottom:1px solid var(--border);font-weight:500}
+.staker-table td{font-size:12px;font-family:var(--font-mono);color:var(--text2);padding:10px 12px;border-bottom:1px solid var(--border)}
+.staker-table tr:hover td{background:var(--surface)}
+.reward-bar{height:4px;background:var(--text4);border-radius:2px;overflow:hidden;min-width:60px}.reward-bar-fill{height:100%;border-radius:2px}
+.staker-actions{display:flex;gap:6px}
+.btn{font-size:12px;font-weight:500;padding:7px 14px;border-radius:6px;border:none;cursor:pointer;transition:all .15s;font-family:var(--font-sans)}
+.btn-primary{background:var(--ember);color:#fff}.btn-primary:hover{background:#e64400}
+.btn-secondary{background:var(--surface-hover);color:var(--text2);border:1px solid var(--border)}.btn-secondary:hover{color:var(--text);border-color:var(--border-active)}
+.btn-sm{font-size:11px;padding:5px 10px}
+.warning-text{color:var(--amber);font-size:11px;font-family:var(--font-mono)}
+/* Forms */
+.section{margin-top:32px;border-top:1px solid var(--border);padding-top:24px}
+.section-title{font-size:18px;font-weight:600;margin-bottom:4px}.section-desc{font-size:13px;color:var(--text3);margin-bottom:16px}
+.form-row{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px}
+.form-group{display:flex;flex-direction:column;gap:4px}.form-label{font-size:11px;font-weight:500;color:var(--text3);text-transform:uppercase;letter-spacing:.04em}
+.form-input{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:9px 12px;color:var(--text);font-size:13px;font-family:var(--font-sans);width:200px}.form-input:focus{outline:none;border-color:var(--ember)}.form-input::placeholder{color:var(--text4)}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(100px);background:var(--bg3);border:1px solid var(--border-active);border-radius:var(--radius-sm);padding:10px 20px;font-size:13px;color:var(--text);z-index:200;opacity:0;transition:all .3s;pointer-events:none;max-width:400px;text-align:center}.toast.show{transform:translateX(-50%) translateY(0);opacity:1}
+@media(max-width:768px){.nav-links,.nav-right{display:none}.staker-table{font-size:11px}.form-input{width:100%}.form-row{flex-direction:column}}
+</style>
+</head>
+<body>
+<nav class="nav">
+  <div class="nav-brand"><span>EvaporChain</span> Testnet</div>
+  <div class="nav-links">
+    <a href="/wallet">Wallet</a><a href="/explorer">Explorer</a><a href="/nft">NFTs</a>
+    <a href="/tokens">Tokens</a><a href="/staking" class="active">Staking</a><a href="/dao">DAO</a><a href="/faucet">Faucet</a>
+  </div>
+  <div class="nav-right"><span class="nav-stat"><span class="network-dot"></span>Testnet</span><span class="nav-stat" id="navBlock">Block <b>—</b></span></div>
+</nav>
+<div class="main" style="padding-top:calc(var(--nav-h)+24px)">
+  <h1 class="page-title">Staking</h1>
+  <p class="page-subtitle">Stake EVAP to earn rewards. Unclaimed rewards decay — claim before they evaporate.</p>
+
+  <div class="stats-bar">
+    <div class="stat-card"><div class="stat-label">Total staked</div><div class="stat-value" id="statStaked" style="color:var(--cyan)">—</div></div>
+    <div class="stat-card"><div class="stat-label">Reward rate</div><div class="stat-value" id="statRate">—</div></div>
+    <div class="stat-card"><div class="stat-label">Reward decay</div><div class="stat-value" id="statDecayHL" style="color:var(--amber)">—</div></div>
+    <div class="stat-card"><div class="stat-label">Active stakers</div><div class="stat-value" id="statStakers">—</div></div>
+  </div>
+
+  <div id="poolsContainer"></div>
+
+  <!-- Stake / Unstake -->
+  <div class="section">
+    <h2 class="section-title">Stake / Unstake</h2>
+    <p class="section-desc">Enter your address and amount to stake or unstake from a pool.</p>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Address</label><input class="form-input" id="sAddr" placeholder="0x910000…0000"></div>
+      <div class="form-group"><label class="form-label">Amount</label><input class="form-input" id="sAmount" type="number" placeholder="10000"></div>
+      <button class="btn btn-primary" onclick="doStake()">Stake</button>
+      <button class="btn btn-secondary" onclick="doUnstake()">Unstake</button>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+let pools=[];
+async function fetchPools(){
+  try{
+    const [pr,sr]=await Promise.allSettled([fetch('/api/staking/pools'),fetch('/api/status')]);
+    if(pr.status==='fulfilled'&&pr.value.ok) pools=await pr.value.json();
+    if(sr.status==='fulfilled'&&sr.value.ok){const s=await sr.value.json();document.getElementById('navBlock').innerHTML='Block <b>'+(s.block_height||0).toLocaleString()+'</b>'}
+    render();
+  }catch(e){console.error(e)}
+}
+function render(){
+  const p=pools[0];if(!p)return;
+  document.getElementById('statStaked').textContent=p.total_staked.toLocaleString()+' EVAP';
+  document.getElementById('statRate').textContent=p.reward_rate+'/epoch';
+  document.getElementById('statDecayHL').textContent='HL '+p.reward_decay_hl+' epochs';
+  document.getElementById('statStakers').textContent=p.staker_count;
+  const c=document.getElementById('poolsContainer');c.innerHTML='';
+  pools.forEach(pool=>{
+    const div=document.createElement('div');div.className='pool-card';
+    let rows=pool.stakers.sort((a,b)=>b.amount-a.amount).map(s=>{
+      const rewardPct=s.reward_decay_pct;
+      const barPct=Math.max(0,100-rewardPct);
+      const barColor=barPct>60?'var(--green)':barPct>30?'var(--amber)':'var(--red)';
+      const urgency=rewardPct>50?` <span class="warning-text">${rewardPct.toFixed(1)}% decayed</span>`:'';
+      return `<tr>
+        <td style="color:var(--text3);font-size:11px">${esc(s.address)}</td>
+        <td>${s.amount.toLocaleString()}</td>
+        <td>${s.pending_rewards.toLocaleString()}${urgency}</td>
+        <td><div class="reward-bar"><div class="reward-bar-fill" style="width:${barPct}%;background:${barColor}"></div></div></td>
+        <td>${s.total_claimed.toLocaleString()}</td>
+        <td><div class="staker-actions"><button class="btn btn-primary btn-sm" onclick="doClaim('${esc(s.address)}',${pool.id})">Claim</button></div></td>
+      </tr>`;
+    }).join('');
+    div.innerHTML=`
+      <div class="pool-header"><div><div class="pool-name">${esc(pool.name)}</div><div class="pool-meta">${pool.reward_rate} EVAP/epoch &middot; Reward decay HL ${pool.reward_decay_hl} epochs</div></div><span class="badge badge-live">Live</span></div>
+      <div class="pool-stats">
+        <div class="pool-stat"><div class="pool-stat-label">Total staked</div><div class="pool-stat-value">${pool.total_staked.toLocaleString()}</div></div>
+        <div class="pool-stat"><div class="pool-stat-label">Stakers</div><div class="pool-stat-value">${pool.staker_count}</div></div>
+        <div class="pool-stat"><div class="pool-stat-label">Reward rate</div><div class="pool-stat-value">${pool.reward_rate}/ep</div></div>
+        <div class="pool-stat"><div class="pool-stat-label">Reward half-life</div><div class="pool-stat-value" style="color:var(--amber)">${pool.reward_decay_hl} ep</div></div>
+      </div>
+      <table class="staker-table">
+        <thead><tr><th>Address</th><th>Staked</th><th>Pending rewards</th><th>Reward health</th><th>Total claimed</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+    c.appendChild(div);
+  });
+}
+async function doClaim(addr,poolId){const r=await postApi('/api/staking/claim',{pool_id:poolId,address:addr});toast(r.message);fetchPools()}
+async function doStake(){
+  const addr=document.getElementById('sAddr').value.trim();const amount=parseInt(document.getElementById('sAmount').value)||0;
+  if(!addr||amount<=0){toast('Fill address and amount');return}
+  const r=await postApi('/api/staking/stake',{pool_id:1,address:addr,amount});toast(r.message);fetchPools();
+}
+async function doUnstake(){
+  const addr=document.getElementById('sAddr').value.trim();const amount=parseInt(document.getElementById('sAmount').value)||0;
+  if(!addr||amount<=0){toast('Fill address and amount');return}
+  const r=await postApi('/api/staking/unstake',{pool_id:1,address:addr,amount});toast(r.message);fetchPools();
+}
+async function postApi(p,b){try{const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});return await r.json()}catch(e){return{success:false,message:'Network error'}}}
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),3500)}
+function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
+fetchPools();setInterval(fetchPools,3000);
+</script>
+</body>
+</html>

@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Tokens — EvaporChain Testnet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#06060a;--bg2:#0a0a12;--bg3:#0e0e18;--surface:rgba(255,255,255,0.025);--surface-hover:rgba(255,255,255,0.045);--border:rgba(255,255,255,0.06);--border-active:rgba(255,255,255,0.12);--text:#f1f5f9;--text2:#94a3b8;--text3:#475569;--text4:#1e293b;--ember:#FF4D00;--cyan:#00f0ff;--green:#22c55e;--green-dim:rgba(34,197,94,0.1);--amber:#f59e0b;--amber-dim:rgba(245,158,11,0.1);--red:#ef4444;--red-dim:rgba(239,68,68,0.1);--purple:#8b5cf6;--radius:12px;--radius-sm:8px;--radius-xs:4px;--nav-h:56px;--font-sans:'Inter',system-ui,sans-serif;--font-mono:'JetBrains Mono',monospace}
+html{font-family:var(--font-sans);background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}
+.nav{position:fixed;top:0;left:0;right:0;height:var(--nav-h);background:rgba(6,6,10,0.92);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);z-index:100;display:flex;align-items:center;padding:0 24px}
+.nav-brand{font-weight:700;font-size:15px;letter-spacing:-0.02em;margin-right:32px;white-space:nowrap}.nav-brand span{background:linear-gradient(135deg,var(--ember),var(--amber));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.nav-links{display:flex;gap:4px}.nav-links a{padding:6px 14px;font-size:13px;font-weight:500;color:var(--text2);border-radius:6px;transition:all .15s}.nav-links a:hover{color:var(--text);background:var(--surface)}.nav-links a.active{color:var(--text);background:var(--surface-hover)}
+.nav-right{margin-left:auto;display:flex;gap:12px;align-items:center}.nav-stat{font-size:11px;font-family:var(--font-mono);color:var(--text3)}.nav-stat b{color:var(--text2)}
+.network-dot{width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block;margin-right:4px;animation:pd 2s ease infinite}@keyframes pd{0%,100%{opacity:1}50%{opacity:.4}}
+.main{padding-top:calc(var(--nav-h)+24px);max-width:1320px;margin:0 auto;padding:0 20px 80px}
+.page-title{font-size:28px;font-weight:700;letter-spacing:-0.03em;margin-bottom:4px}.page-subtitle{font-size:14px;color:var(--text3);margin-bottom:32px}
+.stats-bar{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:32px}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px 16px}.stat-label{font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);margin-bottom:4px}.stat-value{font-size:20px;font-weight:700;font-family:var(--font-mono)}
+.token-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px;margin-bottom:48px}
+.token-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:20px;transition:border-color .2s}.token-card:hover{border-color:var(--border-active)}
+.token-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px}
+.token-name{font-size:17px;font-weight:600}.token-symbol{font-size:12px;font-family:var(--font-mono);color:var(--text2);margin-top:2px}
+.badge{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;padding:3px 8px;border-radius:var(--radius-xs)}
+.badge-healthy{background:var(--green-dim);color:var(--green)}.badge-decaying{background:var(--amber-dim);color:var(--amber)}.badge-critical{background:var(--red-dim);color:var(--red)}
+.token-data{display:flex;flex-direction:column;gap:6px;margin-bottom:14px}
+.data-row{display:flex;justify-content:space-between}.data-label{font-size:11px;color:var(--text3)}.data-value{font-size:12px;font-family:var(--font-mono);color:var(--text2)}
+.supply-bar-wrap{margin-bottom:14px}.supply-bar-header{display:flex;justify-content:space-between;margin-bottom:6px}.supply-bar-label{font-size:11px;color:var(--text3)}.supply-bar-pct{font-size:11px;font-family:var(--font-mono);color:var(--text2)}
+.supply-bar{height:4px;background:var(--text4);border-radius:2px;overflow:hidden}.supply-bar-fill{height:100%;border-radius:2px;transition:width .6s ease}
+.holders-section{border-top:1px solid var(--border);padding-top:12px;margin-top:4px}
+.holders-title{font-size:11px;font-weight:500;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px}
+.holder-row{display:flex;justify-content:space-between;padding:4px 0;font-size:12px}.holder-addr{font-family:var(--font-mono);color:var(--text3);font-size:11px}.holder-bal{font-family:var(--font-mono);color:var(--text2)}
+.section{margin-top:48px;border-top:1px solid var(--border);padding-top:32px}
+.section-title{font-size:18px;font-weight:600;margin-bottom:4px}.section-desc{font-size:13px;color:var(--text3);margin-bottom:20px}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;max-width:640px}
+.form-group{display:flex;flex-direction:column;gap:4px}.form-group.full{grid-column:1/-1}
+.form-label{font-size:11px;font-weight:500;color:var(--text3);text-transform:uppercase;letter-spacing:.04em}
+.form-input{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:9px 12px;color:var(--text);font-size:13px;font-family:var(--font-sans);transition:border-color .15s}.form-input:focus{outline:none;border-color:var(--ember)}.form-input::placeholder{color:var(--text4)}
+.form-select{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:9px 12px;color:var(--text);font-size:13px;font-family:var(--font-sans)}
+.btn{font-size:12px;font-weight:500;padding:7px 14px;border-radius:6px;border:none;cursor:pointer;transition:all .15s;font-family:var(--font-sans)}
+.btn-primary{background:var(--ember);color:#fff}.btn-primary:hover{background:#e64400}
+.btn-secondary{background:var(--surface-hover);color:var(--text2);border:1px solid var(--border)}.btn-secondary:hover{color:var(--text);border-color:var(--border-active)}
+.preview{font-size:12px;font-family:var(--font-mono);color:var(--text3);margin-top:4px}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(100px);background:var(--bg3);border:1px solid var(--border-active);border-radius:var(--radius-sm);padding:10px 20px;font-size:13px;color:var(--text);z-index:200;opacity:0;transition:all .3s;pointer-events:none;max-width:400px;text-align:center}.toast.show{transform:translateX(-50%) translateY(0);opacity:1}
+.skeleton{background:linear-gradient(90deg,var(--surface) 25%,var(--surface-hover) 50%,var(--surface) 75%);background-size:200% 100%;animation:shim 1.5s infinite;border-radius:var(--radius)}@keyframes shim{0%{background-position:200% 0}100%{background-position:-200% 0}}.skeleton-card{height:300px}
+@media(max-width:768px){.nav-links,.nav-right{display:none}.token-grid{grid-template-columns:1fr}.form-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<nav class="nav">
+  <div class="nav-brand"><span>EvaporChain</span> Testnet</div>
+  <div class="nav-links">
+    <a href="/wallet">Wallet</a><a href="/explorer">Explorer</a><a href="/nft">NFTs</a>
+    <a href="/tokens" class="active">Tokens</a><a href="/staking">Staking</a><a href="/dao">DAO</a><a href="/faucet">Faucet</a>
+  </div>
+  <div class="nav-right"><span class="nav-stat"><span class="network-dot"></span>Testnet</span><span class="nav-stat" id="navBlock">Block <b>—</b></span></div>
+</nav>
+<div class="main" style="padding-top:calc(var(--nav-h)+24px)">
+  <h1 class="page-title">Decaying Tokens</h1>
+  <p class="page-subtitle">ERC-20 tokens with built-in supply decay. Every token's total supply shrinks over time.</p>
+
+  <div class="stats-bar">
+    <div class="stat-card"><div class="stat-label">Tokens deployed</div><div class="stat-value" id="statCount">—</div></div>
+    <div class="stat-card"><div class="stat-label">Total supply (all)</div><div class="stat-value" id="statSupply">—</div></div>
+    <div class="stat-card"><div class="stat-label">Current supply</div><div class="stat-value" id="statCurrent" style="color:var(--amber)">—</div></div>
+    <div class="stat-card"><div class="stat-label">Total holders</div><div class="stat-value" id="statHolders">—</div></div>
+  </div>
+
+  <div class="token-grid" id="tokenGrid"><div class="skeleton skeleton-card"></div><div class="skeleton skeleton-card"></div></div>
+
+  <!-- Deploy -->
+  <div class="section">
+    <h2 class="section-title">Deploy Token</h2>
+    <p class="section-desc">Deploy a new decaying token. Its total supply will shrink according to the half-life.</p>
+    <div class="form-grid">
+      <div class="form-group"><label class="form-label">Name</label><input class="form-input" id="dName" placeholder="My Token"></div>
+      <div class="form-group"><label class="form-label">Symbol</label><input class="form-input" id="dSymbol" placeholder="MTK" maxlength="8"></div>
+      <div class="form-group"><label class="form-label">Total supply</label><input class="form-input" id="dSupply" type="number" placeholder="100000" value="100000"></div>
+      <div class="form-group"><label class="form-label">Decay half-life (epochs)</label><input class="form-input" id="dHL" type="number" placeholder="50" value="50"></div>
+      <div class="form-group full"><div class="preview" id="dPreview">Supply will halve every 50 epochs</div></div>
+      <div class="form-group full"><button class="btn btn-primary" onclick="deployToken()">Deploy Token</button></div>
+    </div>
+  </div>
+
+  <!-- Transfer -->
+  <div class="section">
+    <h2 class="section-title">Transfer Tokens</h2>
+    <p class="section-desc">Send tokens between addresses. Balances decay proportionally with the token.</p>
+    <div class="form-grid">
+      <div class="form-group full"><label class="form-label">Token</label><select class="form-select" id="tToken"></select></div>
+      <div class="form-group"><label class="form-label">From</label><input class="form-input" id="tFrom" placeholder="0x7f0000…0000"></div>
+      <div class="form-group"><label class="form-label">To</label><input class="form-input" id="tTo" placeholder="0xe80000…0000"></div>
+      <div class="form-group"><label class="form-label">Amount</label><input class="form-input" id="tAmount" type="number" placeholder="1000"></div>
+      <div class="form-group"><button class="btn btn-primary" onclick="transferToken()" style="margin-top:18px">Transfer</button></div>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+let tokens=[];
+async function fetchTokens(){
+  try{
+    const [tr,sr]=await Promise.allSettled([fetch('/api/tokens'),fetch('/api/status')]);
+    if(tr.status==='fulfilled'&&tr.value.ok) tokens=await tr.value.json();
+    if(sr.status==='fulfilled'&&sr.value.ok){const s=await sr.value.json();document.getElementById('navBlock').innerHTML='Block <b>'+(s.block_height||0).toLocaleString()+'</b>'}
+    render();
+  }catch(e){console.error(e)}
+}
+function render(){
+  document.getElementById('statCount').textContent=tokens.length;
+  const totalSup=tokens.reduce((a,t)=>a+t.total_supply,0);
+  const curSup=tokens.reduce((a,t)=>a+t.current_supply,0);
+  const holders=tokens.reduce((a,t)=>a+t.holder_count,0);
+  document.getElementById('statSupply').textContent=totalSup.toLocaleString();
+  document.getElementById('statCurrent').textContent=curSup.toLocaleString();
+  document.getElementById('statHolders').textContent=holders;
+  const grid=document.getElementById('tokenGrid');grid.innerHTML='';
+  tokens.forEach(t=>grid.appendChild(createTokenCard(t)));
+  // Update transfer dropdown
+  const sel=document.getElementById('tToken');sel.innerHTML='';
+  tokens.forEach(t=>{const o=document.createElement('option');o.value=t.id;o.textContent=t.name+' ('+t.symbol+')';sel.appendChild(o)});
+}
+function createTokenCard(t){
+  const card=document.createElement('div');card.className='token-card';
+  const pct=Math.max(0,100-t.decay_percentage);
+  const barColor=pct>70?'var(--green)':pct>30?'var(--amber)':'var(--red)';
+  const badgeClass=pct>70?'badge-healthy':pct>30?'badge-decaying':'badge-critical';
+  const badgeText=pct>70?'Healthy':pct>30?'Decaying':'Critical';
+  let holdersHtml=t.holders.slice(0,5).map(h=>`<div class="holder-row"><span class="holder-addr">${esc(h.address)}</span><span class="holder-bal">${h.balance.toLocaleString()} ${esc(t.symbol)}</span></div>`).join('');
+  if(t.holders.length>5) holdersHtml+=`<div style="font-size:11px;color:var(--text3);margin-top:4px">+${t.holders.length-5} more</div>`;
+  card.innerHTML=`
+    <div class="token-header"><div><div class="token-name">${esc(t.name)}</div><div class="token-symbol">${esc(t.symbol)}</div></div><span class="badge ${badgeClass}">${badgeText}</span></div>
+    <div class="token-data">
+      <div class="data-row"><span class="data-label">Deployer</span><span class="data-value" style="font-size:11px;color:var(--text3)">${esc(t.deployer)}</span></div>
+      <div class="data-row"><span class="data-label">Half-life</span><span class="data-value">${t.decay_half_life.toLocaleString()} epochs</span></div>
+      <div class="data-row"><span class="data-label">Holders</span><span class="data-value">${t.holder_count}</span></div>
+    </div>
+    <div class="supply-bar-wrap">
+      <div class="supply-bar-header"><span class="supply-bar-label">Supply remaining</span><span class="supply-bar-pct">${t.current_supply.toLocaleString()} / ${t.total_supply.toLocaleString()}</span></div>
+      <div class="supply-bar"><div class="supply-bar-fill" style="width:${pct}%;background:${barColor}"></div></div>
+    </div>
+    <div class="holders-section"><div class="holders-title">Top holders</div>${holdersHtml}</div>`;
+  return card;
+}
+async function deployToken(){
+  const name=document.getElementById('dName').value.trim();
+  const symbol=document.getElementById('dSymbol').value.trim().toUpperCase();
+  const supply=parseInt(document.getElementById('dSupply').value)||0;
+  const hl=parseInt(document.getElementById('dHL').value)||0;
+  if(!name||!symbol||supply<=0||hl<=0){toast('Fill all fields');return}
+  const r=await postApi('/api/token/deploy',{name,symbol,total_supply:supply,decay_half_life:hl});
+  toast(r.message);document.getElementById('dName').value='';document.getElementById('dSymbol').value='';fetchTokens();
+}
+async function transferToken(){
+  const id=parseInt(document.getElementById('tToken').value);
+  const from=document.getElementById('tFrom').value.trim();
+  const to=document.getElementById('tTo').value.trim();
+  const amount=parseInt(document.getElementById('tAmount').value)||0;
+  if(!from||!to||amount<=0){toast('Fill all fields');return}
+  const r=await postApi('/api/token/transfer',{token_id:id,from,to,amount});
+  toast(r.message);fetchTokens();
+}
+document.getElementById('dHL').addEventListener('input',()=>{const v=parseInt(document.getElementById('dHL').value)||0;document.getElementById('dPreview').textContent=v>0?'Supply will halve every '+v+' epochs':''});
+async function postApi(p,b){try{const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});return await r.json()}catch(e){return{success:false,message:'Network error'}}}
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),3500)}
+function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
+fetchTokens();setInterval(fetchTokens,3000);
+</script>
+</body>
+</html>

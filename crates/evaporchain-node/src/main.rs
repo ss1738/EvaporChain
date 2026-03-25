@@ -1,7 +1,9 @@
 mod api;
+mod auth;
+mod user_db;
 
 use anyhow::Result;
-use api::{ApiState, BlockRecord, ChainStats, EpochSnapshot, EventRecord};
+use api::{ApiState, BlockRecord, ChainStats, EpochSnapshot, EventRecord, NftStore, NftToken, TokenStore, DeployedToken, StakingStore, StakingPool, Staker, DAOStore, DAOProposal, DAOVote};
 use evaporchain_consensus::MockConsensus;
 use evaporchain_network::service::{NetworkConfig, P2pNetworkService};
 use evaporchain_proving::{MockProver, ProvingEngine};
@@ -39,12 +41,16 @@ fn obj_id(b: u8) -> [u8; 32] {
 }
 
 fn initialize_genesis(db: &mut InMemoryStateDB, node_tag: &str) {
-    let accounts = [
-        (1u8, "Alice", 100_000u64),
-        (2, "Bob", 50_000),
-        (3, "Charlie", 25_000),
+    // Realistic hex-addressed accounts (no human names)
+    let accounts: Vec<(u8, &str, u64)> = vec![
+        (0x7f, "0x7f3a…4e21", 500_000),   // Foundation treasury
+        (0x2b, "0x2b8c…9d03", 250_000),   // Developer fund
+        (0x91, "0x91e5…6f47", 120_000),   // Validator-1
+        (0x4d, "0x4d02…a8b6", 80_000),    // Validator-2
+        (0xa3, "0xa3f7…1c5e", 45_000),    // DApp deployer
+        (0xe8, "0xe8b1…7d94", 30_000),    // Test user
     ];
-    for (id, name, balance) in &accounts {
+    for (id, label, balance) in &accounts {
         db.put_account(Account {
             address: addr(*id),
             balance: *balance,
@@ -52,16 +58,23 @@ fn initialize_genesis(db: &mut InMemoryStateDB, node_tag: &str) {
         });
         println!(
             "{} \x1b[36m{}\x1b[0m  addr=0x{:02x}..  balance={}",
-            node_tag, name, id, balance
+            node_tag, label, id, balance
         );
     }
 
+    // Realistic objects with diverse use-case names and parameters
     let objects: Vec<(u8, u8, u64, u64, &str)> = vec![
-        (10, 1, 50, 3, "Ephemeral-A"),
-        (11, 1, 200, 5, "Short-lived-B"),
-        (12, 2, 8, 2, "Fragile-C"),
-        (13, 2, 10000, 20, "Durable-D"),
-        (14, 3, 30, 4, "Volatile-E"),
+        // Long-lived infrastructure objects
+        (0x10, 0x7f, 50_000, 200, "token:evap-governance"),
+        (0x11, 0x2b, 30_000, 150, "stake:validator-pool-1"),
+        // Medium-lived application objects
+        (0x12, 0xa3, 5_000, 50, "nft:event-ticket-0x3f"),
+        (0x13, 0xa3, 8_000, 60, "escrow:freelance-0x8b"),
+        (0x14, 0x4d, 2_000, 30, "dao:proposal-0x5e"),
+        // Short-lived objects (will decay visibly)
+        (0x15, 0xe8, 80, 4, "session:auth-0x1a"),
+        (0x16, 0x91, 40, 3, "cache:price-feed-0x9c"),
+        (0x17, 0xe8, 15, 2, "msg:ephemeral-0xd7"),
     ];
 
     for (oid, owner, energy, half_life, label) in &objects {
@@ -241,18 +254,27 @@ fn generate_demo_tx(
         return None;
     }
 
+    // Genesis account address bytes
+    let acct_bytes: [u8; 6] = [0x7f, 0x2b, 0x91, 0x4d, 0xa3, 0xe8];
+    // Genesis object IDs
+    let obj_ids: [u8; 8] = [0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17];
+    // Realistic use-case prefixes for new objects
+    let prefixes = ["swap:", "lock:", "vote:", "proof:", "cert:", "stream:", "relay:", "index:"];
+
     let action = rng.gen_range(0u8..10);
 
     match action {
         0..=4 => {
-            let from = rng.gen_range(1u8..=3);
-            let mut to = rng.gen_range(1u8..=3);
-            while to == from {
-                to = rng.gen_range(1u8..=3);
-            }
-            let amount = rng.gen_range(100..2000);
-            let nonce = nonces[from as usize];
-            nonces[from as usize] += 1;
+            let fi = rng.gen_range(0..acct_bytes.len());
+            let mut ti = rng.gen_range(0..acct_bytes.len());
+            while ti == fi { ti = rng.gen_range(0..acct_bytes.len()); }
+            let from = acct_bytes[fi];
+            let to = acct_bytes[ti];
+            let amount = rng.gen_range(100..5000);
+            // Map account to nonce slot (0-3)
+            let slot = (fi % 4) as usize;
+            let nonce = nonces[slot];
+            nonces[slot] += 1;
             Some(Transaction::Transfer(TransferTx {
                 from: addr(from),
                 to: addr(to),
@@ -263,23 +285,25 @@ fn generate_demo_tx(
             }))
         }
         5 | 6 => {
-            let oid = 100 + (epoch % 150) as u8;
-            let energy = rng.gen_range(10..100);
-            let half_life = rng.gen_range(2..6);
-            let creator = rng.gen_range(1u8..=3);
+            let oid = 0x20 + (epoch % 200) as u8;
+            let energy = rng.gen_range(15..120);
+            let half_life = rng.gen_range(2..8);
+            let creator = acct_bytes[rng.gen_range(0..acct_bytes.len())];
+            let prefix = prefixes[rng.gen_range(0..prefixes.len())];
+            let name = format!("{}0x{:02x}{:02x}", prefix, oid, (epoch % 256) as u8);
             Some(Transaction::CreateObject(CreateObjectTx {
                 creator: addr(creator),
                 object_id: obj_id(oid),
                 energy,
                 half_life,
-                data: format!("Demo-E{}", epoch).into_bytes(),
+                data: name.into_bytes(),
                 signature: None,
                 public_key: None,
             }))
         }
         7 | 8 => {
-            let target = [10u8, 11, 12, 13, 14][rng.gen_range(0..5)];
-            let deposit = rng.gen_range(50..500);
+            let target = obj_ids[rng.gen_range(0..obj_ids.len())];
+            let deposit = rng.gen_range(100..800);
             Some(Transaction::Refresh(RefreshTx {
                 object_id: obj_id(target),
                 energy_deposit: deposit,
@@ -288,7 +312,7 @@ fn generate_demo_tx(
             }))
         }
         _ => {
-            let target = [10u8, 11, 12, 14][rng.gen_range(0..4)];
+            let target = obj_ids[rng.gen_range(0..5)];
             Some(Transaction::Refresh(RefreshTx {
                 object_id: obj_id(target),
                 energy_deposit: rng.gen_range(500..5000),
@@ -513,6 +537,235 @@ fn record_block(
     }
 }
 
+// ──────────────────────────── Genesis NFTs ───────────────────────────────
+
+fn initialize_nft_store() -> NftStore {
+    let genesis_nfts = vec![
+        NftToken {
+            id: 1,
+            name: "Eternal Flame".to_string(),
+            collection: "Genesis Collection".to_string(),
+            owner: "0x7f0000…0000".to_string(),
+            metadata_hash: "a7c3e9f2b1d04856".to_string(),
+            energy: 100_000,
+            max_energy: 100_000,
+            half_life: 500,
+            minted_epoch: 0,
+            last_refreshed: 0,
+            state: "Active".to_string(),
+            grace_epoch: None,
+            evaporated_epoch: None,
+            ghost_proof: None,
+        },
+        NftToken {
+            id: 2,
+            name: "Shooting Star".to_string(),
+            collection: "Genesis Collection".to_string(),
+            owner: "0xe80000…0000".to_string(),
+            metadata_hash: "d4e7f1a2c3b80965".to_string(),
+            energy: 800,
+            max_energy: 800,
+            half_life: 10,
+            minted_epoch: 0,
+            last_refreshed: 0,
+            state: "Active".to_string(),
+            grace_epoch: None,
+            evaporated_epoch: None,
+            ghost_proof: None,
+        },
+        NftToken {
+            id: 3,
+            name: "Sunset Canvas".to_string(),
+            collection: "Genesis Collection".to_string(),
+            owner: "0x2b0000…0000".to_string(),
+            metadata_hash: "f8b2c4d6e1a37049".to_string(),
+            energy: 20_000,
+            max_energy: 20_000,
+            half_life: 50,
+            minted_epoch: 0,
+            last_refreshed: 0,
+            state: "Active".to_string(),
+            grace_epoch: None,
+            evaporated_epoch: None,
+            ghost_proof: None,
+        },
+        NftToken {
+            id: 4,
+            name: "Quantum Bloom".to_string(),
+            collection: "Genesis Collection".to_string(),
+            owner: "0xa30000…0000".to_string(),
+            metadata_hash: "1c5e9a3b7d204f68".to_string(),
+            energy: 5_000,
+            max_energy: 5_000,
+            half_life: 25,
+            minted_epoch: 0,
+            last_refreshed: 0,
+            state: "Active".to_string(),
+            grace_epoch: None,
+            evaporated_epoch: None,
+            ghost_proof: None,
+        },
+        NftToken {
+            id: 5,
+            name: "First Light".to_string(),
+            collection: "Genesis Collection".to_string(),
+            owner: "0x910000…0000".to_string(),
+            metadata_hash: "6b8d2e4f0a1c3579".to_string(),
+            energy: 50_000,
+            max_energy: 50_000,
+            half_life: 100,
+            minted_epoch: 0,
+            last_refreshed: 0,
+            state: "Active".to_string(),
+            grace_epoch: None,
+            evaporated_epoch: None,
+            ghost_proof: None,
+        },
+        NftToken {
+            id: 6,
+            name: "Binary Requiem".to_string(),
+            collection: "Genesis Collection".to_string(),
+            owner: "0x4d0000…0000".to_string(),
+            metadata_hash: "3f7a0b9c2d1e4568".to_string(),
+            energy: 200,
+            max_energy: 200,
+            half_life: 5,
+            minted_epoch: 0,
+            last_refreshed: 0,
+            state: "Active".to_string(),
+            grace_epoch: None,
+            evaporated_epoch: None,
+            ghost_proof: None,
+        },
+    ];
+    NftStore {
+        tokens: genesis_nfts,
+        next_id: 7,
+    }
+}
+
+// ──────────────────────────── Genesis Tokens ─────────────────────────────
+
+fn initialize_token_store() -> TokenStore {
+    let mut evap_balances = std::collections::HashMap::new();
+    evap_balances.insert("0x7f0000…0000".to_string(), 500_000);
+    evap_balances.insert("0x2b0000…0000".to_string(), 250_000);
+    evap_balances.insert("0x910000…0000".to_string(), 120_000);
+    evap_balances.insert("0xa30000…0000".to_string(), 80_000);
+    evap_balances.insert("0xe80000…0000".to_string(), 50_000);
+
+    let mut flux_balances = std::collections::HashMap::new();
+    flux_balances.insert("0x7f0000…0000".to_string(), 100_000);
+    flux_balances.insert("0x2b0000…0000".to_string(), 50_000);
+    flux_balances.insert("0xa30000…0000".to_string(), 50_000);
+
+    let mut temp_balances = std::collections::HashMap::new();
+    temp_balances.insert("0xe80000…0000".to_string(), 10_000);
+    temp_balances.insert("0x4d0000…0000".to_string(), 5_000);
+
+    TokenStore {
+        tokens: vec![
+            DeployedToken {
+                id: 1, name: "EvaporChain".into(), symbol: "EVAP".into(),
+                total_supply: 1_000_000, decay_half_life: 1000,
+                deployed_epoch: 0, deployer: "0x7f0000…0000".into(),
+                balances: evap_balances, last_decay_epoch: 0,
+            },
+            DeployedToken {
+                id: 2, name: "Flux Token".into(), symbol: "FLUX".into(),
+                total_supply: 200_000, decay_half_life: 20,
+                deployed_epoch: 0, deployer: "0x7f0000…0000".into(),
+                balances: flux_balances, last_decay_epoch: 0,
+            },
+            DeployedToken {
+                id: 3, name: "Temporary Credits".into(), symbol: "TEMP".into(),
+                total_supply: 15_000, decay_half_life: 5,
+                deployed_epoch: 0, deployer: "0xe80000…0000".into(),
+                balances: temp_balances, last_decay_epoch: 0,
+            },
+        ],
+        next_id: 4,
+    }
+}
+
+// ──────────────────────────── Genesis Staking ────────────────────────────
+
+fn initialize_staking_store() -> StakingStore {
+    StakingStore {
+        pools: vec![
+            StakingPool {
+                id: 1,
+                name: "Genesis Validator Pool".into(),
+                reward_rate: 100,
+                reward_decay_hl: 50,
+                total_staked: 95_000,
+                created_epoch: 0,
+                stakers: vec![
+                    Staker { address: "0x910000…0000".into(), amount: 50_000, staked_epoch: 0, pending_rewards: 0, last_claim_epoch: 0, total_claimed: 0, total_decayed: 0 },
+                    Staker { address: "0x4d0000…0000".into(), amount: 30_000, staked_epoch: 0, pending_rewards: 0, last_claim_epoch: 0, total_claimed: 0, total_decayed: 0 },
+                    Staker { address: "0x7f0000…0000".into(), amount: 15_000, staked_epoch: 0, pending_rewards: 0, last_claim_epoch: 0, total_claimed: 0, total_decayed: 0 },
+                ],
+            },
+        ],
+        next_id: 2,
+    }
+}
+
+// ──────────────────────────── Genesis DAO ────────────────────────────────
+
+fn initialize_dao_store() -> DAOStore {
+    DAOStore {
+        proposals: vec![
+            DAOProposal {
+                id: 1, title: "Increase base reward rate to 150 EVAP/epoch".into(),
+                description: "The current reward rate of 100 EVAP/epoch is insufficient to incentivize early validators. This proposal increases it to 150.".into(),
+                options: vec!["For".into(), "Against".into(), "Abstain".into()],
+                votes: vec![
+                    DAOVote { voter: "0x910000…0000".into(), option: "For".into(), weight: 50_000, epoch: 5 },
+                    DAOVote { voter: "0x4d0000…0000".into(), option: "For".into(), weight: 30_000, epoch: 8 },
+                    DAOVote { voter: "0x7f0000…0000".into(), option: "Against".into(), weight: 15_000, epoch: 12 },
+                ],
+                created_epoch: 0, voting_period: 200, creator: "0x910000…0000".into(),
+                status: "Active".into(), evaporated_epoch: None,
+            },
+            DAOProposal {
+                id: 2, title: "Fund ecosystem grants program".into(),
+                description: "Allocate 100,000 EVAP from the treasury to a grants program for developers building on EvaporChain.".into(),
+                options: vec!["For".into(), "Against".into(), "Abstain".into()],
+                votes: vec![
+                    DAOVote { voter: "0x7f0000…0000".into(), option: "For".into(), weight: 100_000, epoch: 3 },
+                    DAOVote { voter: "0x2b0000…0000".into(), option: "For".into(), weight: 50_000, epoch: 6 },
+                ],
+                created_epoch: 0, voting_period: 150, creator: "0x7f0000…0000".into(),
+                status: "Active".into(), evaporated_epoch: None,
+            },
+            DAOProposal {
+                id: 3, title: "Reduce minimum object energy to 5".into(),
+                description: "Lower the minimum energy for state objects from 10 to 5 to enable more lightweight ephemeral use cases.".into(),
+                options: vec!["For".into(), "Against".into(), "Abstain".into()],
+                votes: vec![
+                    DAOVote { voter: "0xa30000…0000".into(), option: "For".into(), weight: 20_000, epoch: 2 },
+                    DAOVote { voter: "0xe80000…0000".into(), option: "Abstain".into(), weight: 5_000, epoch: 4 },
+                ],
+                created_epoch: 0, voting_period: 300, creator: "0xa30000…0000".into(),
+                status: "Active".into(), evaporated_epoch: None,
+            },
+            DAOProposal {
+                id: 4, title: "Emergency: Patch state root vulnerability".into(),
+                description: "Critical fix for a state root computation edge case that could allow replay attacks.".into(),
+                options: vec!["For".into(), "Against".into()],
+                votes: vec![
+                    DAOVote { voter: "0x7f0000…0000".into(), option: "For".into(), weight: 200_000, epoch: 1 },
+                    DAOVote { voter: "0x910000…0000".into(), option: "For".into(), weight: 50_000, epoch: 1 },
+                ],
+                created_epoch: 0, voting_period: 10, creator: "0x7f0000…0000".into(),
+                status: "Passed:For".into(), evaporated_epoch: Some(10),
+            },
+        ],
+        next_id: 5,
+    }
+}
+
 // ──────────────────────────── Main ───────────────────────────────────────
 
 #[tokio::main]
@@ -666,6 +919,23 @@ async fn main() -> Result<()> {
 
     // ── API server ──
     if args.api_mode {
+        // Initialize user database for wallet/auth system
+        let user_db = Arc::new(
+            user_db::UserDb::open("evaporchain_users.db")
+                .expect("Failed to open user database"),
+        );
+        let auth_state = Arc::new(auth::AuthState {
+            user_db,
+            sessions: Arc::new(Mutex::new(std::collections::HashMap::new())),
+        });
+
+        // Initialize DeFi stores
+        let nft_store = Arc::new(Mutex::new(initialize_nft_store()));
+        let token_store = Arc::new(Mutex::new(initialize_token_store()));
+        let staking_store = Arc::new(Mutex::new(initialize_staking_store()));
+        let dao_store = Arc::new(Mutex::new(initialize_dao_store()));
+        println!("{} \x1b[35mDeFi modules: 6 NFTs, 3 tokens, 1 staking pool, 4 DAO proposals\x1b[0m", node_tag);
+
         let api_state = Arc::new(ApiState {
             db: Arc::clone(&db),
             consensus: Arc::clone(&consensus),
@@ -676,10 +946,14 @@ async fn main() -> Result<()> {
             prove_mode: args.prove_mode,
             start_time,
             faucet_rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
+            nft_store,
+            token_store,
+            staking_store,
+            dao_store,
         });
         let api_port = args.api_port;
         tokio::spawn(async move {
-            if let Err(e) = api::start_api_server(api_state, api_port).await {
+            if let Err(e) = api::start_api_server(api_state, auth_state, api_port).await {
                 eprintln!("\x1b[31mAPI server error: {}\x1b[0m", e);
             }
         });
