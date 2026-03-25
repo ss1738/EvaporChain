@@ -12,6 +12,7 @@ members = [
     "crates/evaporchain-node",
     "crates/evaporchain-cli",
     "crates/evaporchain-script",
+    "crates/evaporchain-mcp",
     "prototypes/fold-a-block",
 ]
 

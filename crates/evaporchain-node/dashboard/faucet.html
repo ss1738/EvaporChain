@@ -5,39 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>EvaporChain — Testnet Faucet</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
-:root {
-  --bg: #0a0e1a;
-  --bg-gradient: linear-gradient(135deg, #0a0e1a 0%, #0f1629 50%, #0a0e1a 100%);
-  --surface: #111827;
-  --surface-hover: #1a2234;
-  --border: #1e293b;
-  --border-hover: #334155;
-  --text: #f1f5f9;
-  --text-secondary: #cbd5e1;
-  --text-dim: #64748b;
-  --accent: #38bdf8;
-  --accent-glow: rgba(56, 189, 248, 0.15);
-  --green: #22c55e;
-  --green-dim: rgba(34, 197, 94, 0.12);
-  --red: #ef4444;
-  --red-dim: rgba(239, 68, 68, 0.10);
-  --purple: #8b5cf6;
-  --shadow-md: 0 4px 12px rgba(0,0,0,0.35);
-  --shadow-lg: 0 8px 32px rgba(0,0,0,0.4);
-  --radius: 12px;
-  --radius-sm: 8px;
-  --transition: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-* { margin: 0; padding: 0; box-sizing: border-box; }
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background: var(--bg);
-  background-image: var(--bg-gradient);
-  color: var(--text);
+  background: #0a0a0f;
+  color: #f1f5f9;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
@@ -45,224 +21,602 @@ body {
   justify-content: center;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+  position: relative;
 }
 
-.container {
+/* ── Animated gradient orb ── */
+.orb {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 600px;
+  height: 600px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(0,240,255,0.15) 0%, rgba(139,92,246,0.10) 40%, transparent 70%);
+  filter: blur(80px);
+  animation: orbPulse 10s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+
+@keyframes orbPulse {
+  0%, 100% {
+    background: radial-gradient(circle, rgba(0,240,255,0.18) 0%, rgba(139,92,246,0.08) 40%, transparent 70%);
+    transform: translate(-50%, -50%) scale(1);
+  }
+  33% {
+    background: radial-gradient(circle, rgba(139,92,246,0.18) 0%, rgba(0,240,255,0.08) 40%, transparent 70%);
+    transform: translate(-50%, -50%) scale(1.05);
+  }
+  66% {
+    background: radial-gradient(circle, rgba(0,240,255,0.14) 0%, rgba(168,85,247,0.12) 40%, transparent 70%);
+    transform: translate(-50%, -50%) scale(0.95);
+  }
+}
+
+/* ── Main layout ── */
+.page-wrapper {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   width: 100%;
+  padding: 24px;
+}
+
+/* ── Glassmorphism card ── */
+.card {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+  backdrop-filter: blur(40px);
+  -webkit-backdrop-filter: blur(40px);
+  border-radius: 24px;
+  padding: 48px;
   max-width: 480px;
-  padding: 0 24px;
+  width: 100%;
+  position: relative;
+  transition: box-shadow 0.4s ease, border-color 0.4s ease;
 }
 
-.logo {
+.card:hover {
+  box-shadow: 0 0 60px rgba(0,240,255,0.08), 0 0 120px rgba(0,240,255,0.03);
+  border-color: rgba(255,255,255,0.12);
+}
+
+.card.error-flash {
+  animation: errorFlash 0.6s ease;
+}
+
+@keyframes errorFlash {
+  0%, 100% { border-color: rgba(255,255,255,0.08); }
+  30% { border-color: rgba(239,68,68,0.6); }
+  60% { border-color: rgba(239,68,68,0.3); }
+}
+
+/* ── Card header ── */
+.card-header {
   text-align: center;
-  margin-bottom: 40px;
+  margin-bottom: 36px;
 }
 
-.logo h1 {
-  font-size: 28px;
-  font-weight: 800;
-  letter-spacing: -0.5px;
+.logo-hex {
+  display: inline-block;
+  margin-bottom: 16px;
 }
 
-.logo h1 span {
-  background: linear-gradient(135deg, var(--accent) 0%, var(--purple) 100%);
+.brand-name {
+  font-size: 20px;
+  font-weight: 600;
+  background: linear-gradient(135deg, #00f0ff, #8b5cf6);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+  letter-spacing: -0.3px;
 }
 
-.logo p {
-  color: var(--text-dim);
-  font-size: 14px;
-  margin-top: 8px;
-}
-
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 32px;
-  box-shadow: var(--shadow-lg);
-}
-
-.card h2 {
-  font-size: 18px;
-  font-weight: 600;
-  margin-bottom: 8px;
-}
-
-.card p {
-  color: var(--text-secondary);
-  font-size: 14px;
-  margin-bottom: 24px;
-}
-
-label {
-  display: block;
-  font-size: 13px;
+.brand-subtitle {
+  font-size: 12px;
+  color: rgba(255,255,255,0.35);
+  text-transform: uppercase;
+  letter-spacing: 3px;
+  margin-top: 6px;
   font-weight: 500;
-  color: var(--text-secondary);
-  margin-bottom: 8px;
 }
 
-input[type="number"] {
+/* ── Token amount display ── */
+.token-display {
+  text-align: center;
+  margin-bottom: 36px;
+}
+
+.token-amount {
+  font-size: 42px;
+  font-weight: 800;
+  letter-spacing: -1px;
+  background: linear-gradient(135deg, #00f0ff, #8b5cf6);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  position: relative;
+  display: inline-block;
+}
+
+.token-amount::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 60%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent);
+  animation: shimmer 3s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes shimmer {
+  0% { left: -100%; }
+  100% { left: 200%; }
+}
+
+.token-label {
+  font-size: 13px;
+  color: rgba(255,255,255,0.35);
+  margin-top: 4px;
+}
+
+/* ── Form ── */
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(255,255,255,0.35);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  margin-bottom: 10px;
+}
+
+.form-input {
   width: 100%;
-  padding: 12px 16px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text);
+  padding: 16px 24px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 9999px;
+  color: #f1f5f9;
   font-size: 15px;
   font-family: inherit;
   outline: none;
-  transition: border-color var(--transition);
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
 }
 
-input[type="number"]:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-glow);
+.form-input:focus {
+  border-color: #00f0ff;
+  box-shadow: 0 0 0 4px rgba(0,240,255,0.1), 0 0 20px rgba(0,240,255,0.05);
 }
 
-input[type="number"]::placeholder {
-  color: var(--text-dim);
+.form-input::placeholder {
+  color: rgba(255,255,255,0.2);
 }
 
-/* Hide number input spinners */
-input[type="number"]::-webkit-inner-spin-button,
-input[type="number"]::-webkit-outer-spin-button {
+/* Hide number spinners */
+.form-input::-webkit-inner-spin-button,
+.form-input::-webkit-outer-spin-button {
   -webkit-appearance: none;
   margin: 0;
 }
-input[type="number"] { -moz-appearance: textfield; }
+.form-input[type="number"] { -moz-appearance: textfield; }
 
-button {
+/* ── Button ── */
+.btn-claim {
   width: 100%;
-  padding: 14px;
-  margin-top: 20px;
-  background: linear-gradient(135deg, var(--accent) 0%, var(--purple) 100%);
+  padding: 16px;
+  margin-top: 8px;
+  background: linear-gradient(135deg, #00f0ff, #8b5cf6);
   color: white;
   border: none;
-  border-radius: var(--radius-sm);
-  font-size: 15px;
+  border-radius: 9999px;
+  font-size: 16px;
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
-  transition: opacity var(--transition), transform var(--transition);
+  transition: filter 0.3s ease, box-shadow 0.3s ease, opacity 0.3s ease, transform 0.2s ease;
+  position: relative;
+  overflow: hidden;
 }
 
-button:hover {
-  opacity: 0.9;
+.btn-claim:hover:not(:disabled) {
+  filter: brightness(1.15);
+  box-shadow: 0 0 30px rgba(0,240,255,0.3), 0 0 60px rgba(0,240,255,0.1);
   transform: translateY(-1px);
 }
 
-button:active {
+.btn-claim:active:not(:disabled) {
   transform: translateY(0);
 }
 
-button:disabled {
+.btn-claim:disabled {
   opacity: 0.5;
   cursor: not-allowed;
   transform: none;
 }
 
-.result {
-  margin-top: 20px;
-  padding: 16px;
-  border-radius: var(--radius-sm);
-  font-size: 14px;
+.btn-claim .btn-content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.spinner {
   display: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
 }
 
-.result.success {
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.btn-claim.loading .spinner { display: inline-block; }
+
+/* ── Error state ── */
+.error-msg {
+  display: none;
+  text-align: center;
+  padding: 14px 20px;
+  margin-top: 20px;
+  border-radius: 16px;
+  font-size: 13px;
+  color: #f87171;
+  background: rgba(239,68,68,0.08);
+  border: 1px solid rgba(239,68,68,0.15);
+}
+
+.error-msg.visible {
   display: block;
-  background: var(--green-dim);
-  border: 1px solid rgba(34, 197, 94, 0.3);
-  color: var(--green);
+  animation: fadeInUp 0.3s ease;
 }
 
-.result.error {
+/* ── Success state ── */
+.success-view {
+  display: none;
+  text-align: center;
+}
+
+.success-view.visible {
   display: block;
-  background: var(--red-dim);
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  color: var(--red);
+  animation: fadeInUp 0.5s ease;
 }
 
-.result .balance {
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.checkmark-circle {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: rgba(34,197,94,0.1);
+  border: 2px solid rgba(34,197,94,0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 24px;
+  animation: checkPop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes checkPop {
+  0% { transform: scale(0); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.checkmark-svg {
+  width: 32px;
+  height: 32px;
+}
+
+.checkmark-path {
+  stroke: #22c55e;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+  stroke-dasharray: 30;
+  stroke-dashoffset: 30;
+  animation: drawCheck 0.5s 0.3s ease forwards;
+}
+
+@keyframes drawCheck {
+  to { stroke-dashoffset: 0; }
+}
+
+.success-title {
   font-size: 24px;
   font-weight: 700;
-  margin-top: 4px;
-  color: var(--text);
+  background: linear-gradient(135deg, #00f0ff, #8b5cf6);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 8px;
 }
 
-.info {
-  text-align: center;
-  margin-top: 32px;
+.success-address {
   font-size: 13px;
-  color: var(--text-dim);
+  color: rgba(255,255,255,0.35);
+  margin-bottom: 20px;
 }
 
-.info a {
-  color: var(--accent);
+.success-balance {
+  font-size: 32px;
+  font-weight: 800;
+  color: #f1f5f9;
+  margin-bottom: 4px;
+}
+
+.success-balance-label {
+  font-size: 12px;
+  color: rgba(255,255,255,0.35);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  margin-bottom: 24px;
+}
+
+.link-dashboard {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #00f0ff;
+  font-size: 14px;
+  font-weight: 500;
   text-decoration: none;
+  transition: color 0.2s ease;
 }
 
-.info a:hover {
-  text-decoration: underline;
+.link-dashboard:hover {
+  color: #67f7ff;
 }
 
-.amount-badge {
-  display: inline-block;
-  background: var(--accent-glow);
-  color: var(--accent);
-  padding: 2px 10px;
-  border-radius: 100px;
-  font-size: 13px;
-  font-weight: 600;
+/* ── Confetti / particles ── */
+.confetti-container {
+  display: none;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: hidden;
+  border-radius: 24px;
+}
+
+.confetti-container.active { display: block; }
+
+.particle {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  animation: particleBurst 1.2s ease-out forwards;
+}
+
+@keyframes particleBurst {
+  0% {
+    opacity: 1;
+    transform: translate(0, 0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--tx), var(--ty)) scale(0);
+  }
+}
+
+/* ── Card footer ── */
+.card-footer {
+  margin-top: 32px;
+  padding-top: 20px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.disclaimer {
+  font-size: 11px;
+  color: rgba(255,255,255,0.2);
+}
+
+.network-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: rgba(255,255,255,0.3);
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 6px rgba(34,197,94,0.5);
+  animation: dotPulse 2s ease-in-out infinite;
+}
+
+.status-dot.disconnected {
+  background: #ef4444;
+  box-shadow: 0 0 6px rgba(239,68,68,0.5);
+}
+
+@keyframes dotPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* ── Info row below card ── */
+.info-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  margin-top: 32px;
+  flex-wrap: wrap;
+}
+
+.info-item {
+  font-size: 12px;
+  color: rgba(255,255,255,0.2);
+  white-space: nowrap;
+}
+
+.info-divider {
+  width: 1px;
+  height: 12px;
+  background: rgba(255,255,255,0.08);
+}
+
+/* ── Responsive ── */
+@media (max-width: 520px) {
+  .card { padding: 32px 24px; }
+  .token-amount { font-size: 32px; }
+  .card-footer { flex-direction: column; gap: 10px; text-align: center; }
 }
 </style>
 </head>
 <body>
-<div class="container">
-  <div class="logo">
-    <h1><span>EvaporChain</span> Testnet Faucet</h1>
-    <p>Get free EVAP tokens for testing</p>
+
+<div class="orb"></div>
+
+<div class="page-wrapper">
+  <div class="card" id="mainCard">
+
+    <!-- Confetti overlay -->
+    <div class="confetti-container" id="confetti"></div>
+
+    <!-- ── Default claim view ── -->
+    <div id="claimView">
+      <div class="card-header">
+        <div class="logo-hex">
+          <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M24 2L43.0526 13V35L24 46L4.94744 35V13L24 2Z" fill="none" stroke="url(#hexGrad)" stroke-width="1.5"/>
+            <path d="M24 14C24 14 18 22 18 27C18 30.314 20.686 33 24 33C27.314 33 30 30.314 30 27C30 22 24 14 24 14Z" fill="url(#flameGrad)" opacity="0.9"/>
+            <path d="M24 19C24 19 21 24 21 27C21 28.657 22.343 30 24 30C25.657 30 27 28.657 27 27C27 24 24 19 24 19Z" fill="url(#flameInner)" opacity="0.7"/>
+            <defs>
+              <linearGradient id="hexGrad" x1="4" y1="2" x2="44" y2="46">
+                <stop stop-color="#00f0ff" stop-opacity="0.6"/>
+                <stop offset="1" stop-color="#8b5cf6" stop-opacity="0.6"/>
+              </linearGradient>
+              <linearGradient id="flameGrad" x1="24" y1="14" x2="24" y2="33">
+                <stop stop-color="#00f0ff"/>
+                <stop offset="1" stop-color="#8b5cf6"/>
+              </linearGradient>
+              <linearGradient id="flameInner" x1="24" y1="19" x2="24" y2="30">
+                <stop stop-color="#ffffff" stop-opacity="0.8"/>
+                <stop offset="1" stop-color="#00f0ff" stop-opacity="0.4"/>
+              </linearGradient>
+            </defs>
+          </svg>
+        </div>
+        <div class="brand-name">EvaporChain</div>
+        <div class="brand-subtitle">Testnet Faucet</div>
+      </div>
+
+      <div class="token-display">
+        <div class="token-amount">10,000 EVAP</div>
+        <div class="token-label">Free testnet tokens</div>
+      </div>
+
+      <form id="faucetForm" onsubmit="return requestTokens(event)" autocomplete="off">
+        <div class="form-group">
+          <label class="form-label" for="address">Wallet Address</label>
+          <input
+            type="number"
+            id="address"
+            name="address"
+            class="form-input"
+            min="0"
+            max="255"
+            placeholder="Enter account address (0-255)"
+            required
+          >
+        </div>
+        <button type="submit" id="submitBtn" class="btn-claim">
+          <span class="btn-content">
+            <span class="spinner" id="spinner"></span>
+            <span id="btnText">Claim Tokens</span>
+          </span>
+        </button>
+      </form>
+
+      <div class="error-msg" id="errorMsg"></div>
+    </div>
+
+    <!-- ── Success view ── -->
+    <div class="success-view" id="successView">
+      <div class="checkmark-circle">
+        <svg class="checkmark-svg" viewBox="0 0 32 32">
+          <path class="checkmark-path" d="M8 16L14 22L24 10"/>
+        </svg>
+      </div>
+      <div class="success-title">10,000 EVAP Claimed!</div>
+      <div class="success-address" id="successAddress">Tokens sent to address 0x...</div>
+      <div class="success-balance" id="successBalance">0 EVAP</div>
+      <div class="success-balance-label">New Balance</div>
+      <a href="/" class="link-dashboard">View on Dashboard <span>&rarr;</span></a>
+    </div>
+
+    <!-- ── Card footer ── -->
+    <div class="card-footer">
+      <span class="disclaimer">Testnet tokens have no real value</span>
+      <div class="network-status">
+        <span class="status-dot" id="statusDot"></span>
+        <span id="statusText">Connecting...</span>
+      </div>
+    </div>
   </div>
 
-  <div class="card">
-    <h2>Request Tokens</h2>
-    <p>Enter your account address to receive <span class="amount-badge">10,000 EVAP</span> testnet tokens. Rate limited to one request per address per hour.</p>
-
-    <form id="faucetForm" onsubmit="return requestTokens(event)">
-      <label for="address">Account Address (0-255)</label>
-      <input type="number" id="address" name="address" min="0" max="255" placeholder="e.g. 1" required>
-      <button type="submit" id="submitBtn">Request Tokens</button>
-    </form>
-
-    <div class="result" id="result"></div>
-  </div>
-
-  <div class="info">
-    <a href="/">Back to Dashboard</a>
+  <!-- ── Info row ── -->
+  <div class="info-row">
+    <span class="info-item">&#9889; Instant</span>
+    <span class="info-divider"></span>
+    <span class="info-item">&#128260; 1 per hour</span>
+    <span class="info-divider"></span>
+    <span class="info-item">&#128128; Tokens decay over time</span>
   </div>
 </div>
 
 <script>
+// ── Faucet logic ──
 async function requestTokens(e) {
   e.preventDefault();
   const btn = document.getElementById('submitBtn');
-  const result = document.getElementById('result');
+  const btnText = document.getElementById('btnText');
+  const errorMsg = document.getElementById('errorMsg');
+  const card = document.getElementById('mainCard');
   const address = parseInt(document.getElementById('address').value);
 
+  // Reset states
+  errorMsg.classList.remove('visible');
+
   if (isNaN(address) || address < 0 || address > 255) {
-    result.className = 'result error';
-    result.innerHTML = 'Please enter a valid address (0-255).';
+    showError('Please enter a valid address (0-255).');
     return false;
   }
 
+  // Loading state
   btn.disabled = true;
-  btn.textContent = 'Requesting...';
-  result.className = 'result';
-  result.style.display = 'none';
+  btn.classList.add('loading');
+  btnText.textContent = 'Claiming...';
 
   try {
     const resp = await fetch('/api/faucet', {
@@ -273,22 +627,100 @@ async function requestTokens(e) {
     const data = await resp.json();
 
     if (data.success) {
-      result.className = 'result success';
-      result.innerHTML = 'Tokens sent successfully!<div class="balance">' +
-        data.balance.toLocaleString() + ' EVAP</div>';
+      showSuccess(address, data.balance);
     } else {
-      result.className = 'result error';
-      result.innerHTML = data.message || 'Request failed.';
+      const msg = data.message || 'Request failed.';
+      if (msg.toLowerCase().includes('rate') || msg.toLowerCase().includes('limit')) {
+        showError('Rate limit: 1 request per hour');
+      } else {
+        showError(msg);
+      }
     }
   } catch (err) {
-    result.className = 'result error';
-    result.innerHTML = 'Network error: ' + err.message;
+    showError('Network error: ' + err.message);
   }
 
   btn.disabled = false;
-  btn.textContent = 'Request Tokens';
+  btn.classList.remove('loading');
+  btnText.textContent = 'Claim Tokens';
   return false;
 }
+
+function showError(msg) {
+  const errorMsg = document.getElementById('errorMsg');
+  const card = document.getElementById('mainCard');
+  errorMsg.textContent = msg;
+  errorMsg.classList.add('visible');
+  card.classList.remove('error-flash');
+  // Force reflow to restart animation
+  void card.offsetWidth;
+  card.classList.add('error-flash');
+}
+
+function showSuccess(address, balance) {
+  document.getElementById('claimView').style.display = 'none';
+  const sv = document.getElementById('successView');
+  sv.classList.add('visible');
+
+  const hexAddr = '0x' + address.toString(16).padStart(2, '0').toUpperCase();
+  document.getElementById('successAddress').textContent = 'Tokens sent to address ' + hexAddr;
+  document.getElementById('successBalance').textContent = balance.toLocaleString() + ' EVAP';
+
+  // Fire confetti
+  launchConfetti();
+}
+
+function launchConfetti() {
+  const container = document.getElementById('confetti');
+  container.innerHTML = '';
+  container.classList.add('active');
+
+  const colors = ['#00f0ff', '#8b5cf6', '#22c55e', '#f59e0b', '#ec4899', '#ffffff'];
+  const centerX = container.offsetWidth / 2;
+  const centerY = container.offsetHeight / 3;
+
+  for (let i = 0; i < 40; i++) {
+    const p = document.createElement('div');
+    p.className = 'particle';
+    const angle = (Math.PI * 2 * i) / 40 + (Math.random() - 0.5) * 0.5;
+    const distance = 80 + Math.random() * 120;
+    const tx = Math.cos(angle) * distance;
+    const ty = Math.sin(angle) * distance - 30;
+    p.style.cssText = `
+      left: ${centerX}px;
+      top: ${centerY}px;
+      background: ${colors[i % colors.length]};
+      width: ${4 + Math.random() * 4}px;
+      height: ${4 + Math.random() * 4}px;
+      --tx: ${tx}px;
+      --ty: ${ty}px;
+      animation-delay: ${Math.random() * 0.2}s;
+      animation-duration: ${0.8 + Math.random() * 0.6}s;
+    `;
+    container.appendChild(p);
+  }
+
+  setTimeout(() => { container.classList.remove('active'); }, 2000);
+}
+
+// ── Network status polling ──
+async function fetchStatus() {
+  const dot = document.getElementById('statusDot');
+  const text = document.getElementById('statusText');
+  try {
+    const resp = await fetch('/api/status');
+    const data = await resp.json();
+    dot.classList.remove('disconnected');
+    const blockNum = data.block_height || data.blocks || data.height || 0;
+    text.textContent = 'Connected \u00B7 Block #' + blockNum.toLocaleString();
+  } catch {
+    dot.classList.add('disconnected');
+    text.textContent = 'Disconnected';
+  }
+}
+
+fetchStatus();
+setInterval(fetchStatus, 5000);
 </script>
 </body>
 </html>

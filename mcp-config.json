@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "evaporchain": {
+      "command": "cargo",
+      "args": ["run", "-p", "evaporchain-mcp", "--", "--node-url", "http://37.27.1.1:8080"],
+      "cwd": "/Users/satyawansingh/EvaporChain",
+      "env": {}
+    }
+  }
+}
