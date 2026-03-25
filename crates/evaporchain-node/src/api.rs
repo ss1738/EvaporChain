@@ -737,6 +737,10 @@ async fn health() -> impl IntoResponse {
 const FAUCET_AMOUNT: u64 = 10_000;
 const FAUCET_RATE_LIMIT_SECS: u64 = 3600; // 1 hour
 
+async fn wallet_html() -> impl IntoResponse {
+    Html(include_str!("../dashboard/wallet.html"))
+}
+
 async fn faucet_html() -> impl IntoResponse {
     Html(include_str!("../dashboard/faucet.html"))
 }
@@ -814,6 +818,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .route("/api/contract/{id}", get(get_contract))
         .route("/api/tx/deploy-contract", post(post_deploy_contract))
         .route("/api/tx/call-contract", post(post_call_contract))
+        // Wallet
+        .route("/wallet", get(wallet_html))
         // Faucet
         .route("/faucet", get(faucet_html))
         .route("/api/faucet", post(post_faucet))
