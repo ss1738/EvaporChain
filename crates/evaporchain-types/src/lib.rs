@@ -62,6 +62,9 @@ pub struct GhostRecord {
     pub evaporated_at: Epoch,
     pub data_hash: [u8; 32],
     pub original_data: Vec<u8>,
+    /// Position in the MMR nullifier accumulator (None for legacy ghosts).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mmr_position: Option<u64>,
 }
 
 /// A block in the chain.
@@ -73,6 +76,9 @@ pub struct Block {
     pub state_root: [u8; 32],
     pub transactions: Vec<Transaction>,
     pub timestamp: u64,
+    /// Validator ID that produced this block (None for single-node mode).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub producer_id: Option<u64>,
 }
 
 /// An account with a balance.
@@ -89,6 +95,10 @@ pub enum Transaction {
     Transfer(TransferTx),
     Refresh(RefreshTx),
     CreateObject(CreateObjectTx),
+    DeployContract(DeployContractTx),
+    CallContract(CallContractTx),
+    DeployScript(DeployScriptTx),
+    CallScript(CallScriptTx),
 }
 
 impl Transaction {
@@ -122,6 +132,43 @@ impl Transaction {
                 buf.extend_from_slice(&tx.data);
                 buf
             }
+            Transaction::DeployContract(tx) => {
+                let mut buf = Vec::new();
+                buf.push(0x04);
+                buf.extend_from_slice(&tx.deployer);
+                buf.extend_from_slice(tx.template.as_bytes());
+                buf.extend_from_slice(tx.init_args.as_bytes());
+                buf.extend_from_slice(&tx.energy.to_le_bytes());
+                buf.extend_from_slice(&tx.half_life.to_le_bytes());
+                buf
+            }
+            Transaction::CallContract(tx) => {
+                let mut buf = Vec::new();
+                buf.push(0x05);
+                buf.extend_from_slice(&tx.caller);
+                buf.extend_from_slice(&tx.contract_id.to_le_bytes());
+                buf.extend_from_slice(tx.method.as_bytes());
+                buf.extend_from_slice(tx.args.as_bytes());
+                buf
+            }
+            Transaction::DeployScript(tx) => {
+                let mut buf = Vec::new();
+                buf.push(0x06);
+                buf.extend_from_slice(&tx.deployer);
+                buf.extend_from_slice(tx.source_code.as_bytes());
+                buf.extend_from_slice(&tx.energy.to_le_bytes());
+                buf.extend_from_slice(&tx.half_life.to_le_bytes());
+                buf
+            }
+            Transaction::CallScript(tx) => {
+                let mut buf = Vec::new();
+                buf.push(0x07);
+                buf.extend_from_slice(&tx.caller);
+                buf.extend_from_slice(&tx.contract_id.to_le_bytes());
+                buf.extend_from_slice(tx.method.as_bytes());
+                buf.extend_from_slice(tx.args.as_bytes());
+                buf
+            }
         }
     }
 
@@ -131,6 +178,10 @@ impl Transaction {
             Transaction::Transfer(tx) => tx.signature.as_deref(),
             Transaction::Refresh(tx) => tx.signature.as_deref(),
             Transaction::CreateObject(tx) => tx.signature.as_deref(),
+            Transaction::DeployContract(tx) => tx.signature.as_deref(),
+            Transaction::CallContract(tx) => tx.signature.as_deref(),
+            Transaction::DeployScript(tx) => tx.signature.as_deref(),
+            Transaction::CallScript(tx) => tx.signature.as_deref(),
         }
     }
 
@@ -140,6 +191,10 @@ impl Transaction {
             Transaction::Transfer(tx) => tx.public_key.as_deref(),
             Transaction::Refresh(tx) => tx.public_key.as_deref(),
             Transaction::CreateObject(tx) => tx.public_key.as_deref(),
+            Transaction::DeployContract(tx) => tx.public_key.as_deref(),
+            Transaction::CallContract(tx) => tx.public_key.as_deref(),
+            Transaction::DeployScript(tx) => tx.public_key.as_deref(),
+            Transaction::CallScript(tx) => tx.public_key.as_deref(),
         }
     }
 }
@@ -182,12 +237,98 @@ pub struct CreateObjectTx {
     pub public_key: Option<Vec<u8>>,
 }
 
+/// Deploy a smart contract.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeployContractTx {
+    pub deployer: AccountAddress,
+    /// Template name: "DecayingToken", "MortalNFT", "ThermodynamicEscrow",
+    /// "DecayingAuction", "StakingPool", "DAOVote"
+    pub template: String,
+    /// JSON-encoded initialization arguments.
+    pub init_args: String,
+    /// Initial energy for the contract instance.
+    pub energy: Energy,
+    /// Half-life for contract energy decay.
+    pub half_life: HalfLife,
+    /// Custom rules (JSON-encoded array), optional.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rules: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<Vec<u8>>,
+}
+
+/// Call a method on a deployed contract.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CallContractTx {
+    pub caller: AccountAddress,
+    pub contract_id: u64,
+    pub method: String,
+    /// JSON-encoded method arguments.
+    pub args: String,
+    /// Current epoch (for energy checks).
+    pub epoch: Epoch,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<Vec<u8>>,
+}
+
+/// Deploy an EvaporScript contract from source code.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeployScriptTx {
+    pub deployer: AccountAddress,
+    /// EvaporScript source code.
+    pub source_code: String,
+    /// Initial energy for the script contract.
+    pub energy: Energy,
+    /// Half-life for script contract energy decay.
+    pub half_life: HalfLife,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<Vec<u8>>,
+}
+
+/// Call a method on a deployed EvaporScript contract.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CallScriptTx {
+    pub caller: AccountAddress,
+    pub contract_id: u64,
+    pub method: String,
+    /// JSON-encoded method arguments.
+    pub args: String,
+    /// Current epoch (for energy checks).
+    pub epoch: Epoch,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<Vec<u8>>,
+}
+
 /// Commitment to the global state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StateCommitment {
     pub verkle_root: [u8; 32],
     pub accumulator_value: [u8; 32],
     pub epoch: Epoch,
+}
+
+/// Dual commitment: Verkle state trie + MMR nullifier accumulator.
+/// This is the canonical commitment to EvaporChain's full state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DualCommitment {
+    /// Verkle trie root over active objects and accounts.
+    pub verkle_root: [u8; 32],
+    /// MMR root over all energy-stamped nullifiers (evaporated objects).
+    pub mmr_root: [u8; 32],
+    /// Current epoch.
+    pub epoch: Epoch,
+    /// Number of active (non-ghost) objects.
+    pub active_count: usize,
+    /// Number of ghost records.
+    pub ghost_count: usize,
 }
 
 /// Compute remaining energy after exponential decay using integer math.

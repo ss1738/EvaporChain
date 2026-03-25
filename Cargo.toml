@@ -5,11 +5,13 @@ members = [
     "crates/evaporchain-crypto",
     "crates/evaporchain-state",
     "crates/evaporchain-consensus",
+    "crates/evaporchain-contracts",
     "crates/evaporchain-execution",
     "crates/evaporchain-proving",
     "crates/evaporchain-network",
     "crates/evaporchain-node",
     "crates/evaporchain-cli",
+    "crates/evaporchain-script",
     "prototypes/fold-a-block",
 ]
 

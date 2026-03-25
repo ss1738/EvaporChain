@@ -1,4 +1,7 @@
+mod api;
+
 use anyhow::Result;
+use api::{ApiState, BlockRecord, ChainStats, EpochSnapshot, EventRecord};
 use evaporchain_consensus::MockConsensus;
 use evaporchain_network::service::{NetworkConfig, P2pNetworkService};
 use evaporchain_proving::{MockProver, ProvingEngine};
@@ -9,8 +12,10 @@ use evaporchain_types::{
 };
 use rand::Rng;
 use serde::Deserialize;
+use std::collections::VecDeque;
 use std::io::BufRead;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tokio::time::{interval, Duration};
 
 // ──────────────────────────── Configuration ─────────────────────────────
@@ -300,6 +305,8 @@ struct NodeArgs {
     demo_mode: bool,
     prove_mode: bool,
     network_mode: bool,
+    api_mode: bool,
+    api_port: u16,
     block_ms: u64,
     port: u16,
     node_id: String,
@@ -312,6 +319,13 @@ fn parse_args() -> NodeArgs {
     let demo_mode = args.iter().any(|a| a == "--demo");
     let prove_mode = args.iter().any(|a| a == "--prove");
     let network_mode = args.iter().any(|a| a == "--network");
+    let api_mode = args.iter().any(|a| a == "--api");
+    let api_port = args
+        .iter()
+        .position(|a| a == "--api-port")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse::<u16>().ok())
+        .unwrap_or(8080);
     let block_ms = args
         .iter()
         .position(|a| a == "--interval")
@@ -353,6 +367,8 @@ fn parse_args() -> NodeArgs {
         demo_mode,
         prove_mode,
         network_mode,
+        api_mode,
+        api_port,
         block_ms,
         port,
         node_id,
@@ -379,6 +395,124 @@ fn make_tag(node_id: &str) -> String {
     format!("{}[{}]\x1b[0m", color, node_id)
 }
 
+// ──────────────────────────── API Recording ──────────────────────────────
+
+use evaporchain_execution::BlockExecutionResult;
+
+/// Record a block into the API shared state (block history, stats, events).
+fn record_block(
+    block_history: &Arc<Mutex<VecDeque<BlockRecord>>>,
+    chain_stats: &Arc<Mutex<ChainStats>>,
+    events: &Arc<Mutex<VecDeque<api::EventRecord>>>,
+    block: &evaporchain_types::Block,
+    execution: &BlockExecutionResult,
+    active_objects: usize,
+    ghost_count: usize,
+) {
+    // Compute total energy from block txs for stats
+    let mut tx_creates = 0u64;
+    let mut tx_refreshes = 0u64;
+    for tx in &block.transactions {
+        match tx {
+            Transaction::CreateObject(_) => tx_creates += 1,
+            Transaction::Refresh(_) => tx_refreshes += 1,
+            _ => {}
+        }
+    }
+
+    let record = BlockRecord {
+        number: block.number,
+        epoch: block.epoch,
+        parent_hash: hex::encode(block.parent_hash),
+        state_root: hex::encode(execution.state_root),
+        tx_count: block.transactions.len(),
+        evaporations: execution.objects_evaporated,
+        entered_grace: execution.objects_entered_grace,
+        timestamp: block.timestamp,
+        active_objects,
+        ghost_count,
+        transactions: api::tx_records_from_block(block),
+    };
+
+    // Push to block history
+    {
+        let mut history = block_history.lock().unwrap();
+        history.push_back(record);
+        while history.len() > 500 {
+            history.pop_front();
+        }
+    }
+
+    // Update stats
+    {
+        let mut stats = chain_stats.lock().unwrap();
+        stats.total_objects_created += tx_creates;
+        stats.total_refreshed += tx_refreshes;
+        stats.total_evaporated += execution.objects_evaporated as u64;
+        stats.total_transactions += block.transactions.len() as u64;
+
+        // Compute total energy across active objects (approximate from active count * avg)
+        // We store per-epoch snapshot for the timeline chart
+        stats.state_size_trend.push(EpochSnapshot {
+            epoch: block.epoch,
+            active_count: active_objects,
+            ghost_count,
+            total_energy: 0, // filled below if needed
+        });
+    }
+
+    // Push events
+    if execution.objects_entered_grace > 0 {
+        api::push_event(
+            events,
+            block.epoch,
+            "grace",
+            format!(
+                "{} object(s) entered GRACE period",
+                execution.objects_entered_grace
+            ),
+        );
+    }
+    if execution.objects_evaporated > 0 {
+        api::push_event(
+            events,
+            block.epoch,
+            "evaporated",
+            format!(
+                "{} object(s) EVAPORATED",
+                execution.objects_evaporated
+            ),
+        );
+    }
+    if tx_creates > 0 {
+        api::push_event(
+            events,
+            block.epoch,
+            "created",
+            format!("{} object(s) created", tx_creates),
+        );
+    }
+    if tx_refreshes > 0 {
+        api::push_event(
+            events,
+            block.epoch,
+            "refreshed",
+            format!("{} object(s) refreshed", tx_refreshes),
+        );
+    }
+    if execution.txs_executed > 0 {
+        api::push_event(
+            events,
+            block.epoch,
+            "block",
+            format!(
+                "Block #{} produced: {} tx, {} evaporated",
+                block.number, execution.txs_executed, execution.objects_evaporated
+            ),
+        );
+    }
+}
+
 // ──────────────────────────── Main ───────────────────────────────────────
 
 #[tokio::main]
@@ -402,22 +536,28 @@ async fn main() -> Result<()> {
         #[cfg(feature = "prove")]
         {
             println!(
-                "{} \x1b[1;33mProving mode active\x1b[0m — setting up Nova IVC...",
+                "{} \x1b[1;33mProving mode active\x1b[0m — setting up Nova IVC (real blocks)...",
                 node_tag
             );
-            let genesis_root = {
+            let genesis_commitment = {
                 let db = db.lock().unwrap();
-                db.compute_state_root()
+                evaporchain_types::DualCommitment {
+                    verkle_root: db.compute_state_root(),
+                    mmr_root: [0u8; 32],
+                    epoch: 0,
+                    active_count: db.object_count(),
+                    ghost_count: db.ghost_count(),
+                }
             };
-            let nova_prover = evaporchain_proving::nova::NovaProver::new(genesis_root)
-                .expect("Failed to set up NovaProver");
-            let (primary, secondary) = nova_prover.num_constraints();
+            let real_prover = evaporchain_proving::nova::RealBlockProver::new(&genesis_commitment)
+                .expect("Failed to set up RealBlockProver");
+            let (primary, secondary) = real_prover.num_constraints();
             println!(
-                "{}   Nova ready: {} primary, {} secondary constraints",
+                "{}   Nova ready (real blocks): {} primary, {} secondary constraints",
                 node_tag, primary, secondary
             );
             Arc::new(Mutex::new(
-                Box::new(nova_prover) as Box<dyn ProvingEngine>
+                Box::new(real_prover) as Box<dyn ProvingEngine>
             ))
         }
         #[cfg(not(feature = "prove"))]
@@ -488,7 +628,7 @@ async fn main() -> Result<()> {
         args.block_ms,
         GRACE_PERIOD,
         if args.prove_mode {
-            "Nova IVC"
+            "Nova IVC (real blocks)"
         } else {
             "Mock"
         },
@@ -515,6 +655,39 @@ async fn main() -> Result<()> {
 
     // ── Shared consensus ──
     let consensus = Arc::new(Mutex::new(MockConsensus::new(GRACE_PERIOD)));
+
+    // ── API shared state ──
+    let block_history: Arc<Mutex<VecDeque<BlockRecord>>> =
+        Arc::new(Mutex::new(VecDeque::with_capacity(500)));
+    let chain_stats: Arc<Mutex<ChainStats>> = Arc::new(Mutex::new(ChainStats::new()));
+    let events: Arc<Mutex<VecDeque<EventRecord>>> =
+        Arc::new(Mutex::new(VecDeque::with_capacity(200)));
+    let start_time = Instant::now();
+
+    // ── API server ──
+    if args.api_mode {
+        let api_state = Arc::new(ApiState {
+            db: Arc::clone(&db),
+            consensus: Arc::clone(&consensus),
+            peer_count: Arc::clone(&peer_count),
+            block_history: Arc::clone(&block_history),
+            stats: Arc::clone(&chain_stats),
+            events: Arc::clone(&events),
+            prove_mode: args.prove_mode,
+            start_time,
+            faucet_rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
+        });
+        let api_port = args.api_port;
+        tokio::spawn(async move {
+            if let Err(e) = api::start_api_server(api_state, api_port).await {
+                eprintln!("\x1b[31mAPI server error: {}\x1b[0m", e);
+            }
+        });
+        println!(
+            "{} \x1b[1;33mAPI mode active\x1b[0m — dashboard on http://localhost:{}",
+            node_tag, args.api_port
+        );
+    }
 
     // ── Stdin reader (non-demo, non-follower) ──
     if !args.demo_mode && is_producer {
@@ -629,6 +802,17 @@ async fn main() -> Result<()> {
                         let _ = sender.send(result.block.clone()).await;
                     }
 
+                    // Record block for API
+                    record_block(
+                        &block_history,
+                        &chain_stats,
+                        &events,
+                        &result.block,
+                        &result.execution,
+                        obj_count,
+                        ghost_count,
+                    );
+
                     print_block_result(
                         &node_tag,
                         "PRODUCED",
@@ -679,8 +863,19 @@ async fn main() -> Result<()> {
                         drop(p);
 
                         let obj_count = db_guard.object_count();
-                        let ghost_count = db_guard.ghost_count();
+                        let ghost_count_val = db_guard.ghost_count();
                         let peers = peer_count.load(std::sync::atomic::Ordering::Relaxed);
+
+                        // Record block for API
+                        record_block(
+                            &block_history,
+                            &chain_stats,
+                            &events,
+                            &result.block,
+                            &result.execution,
+                            obj_count,
+                            ghost_count_val,
+                        );
 
                         // Check state root match
                         let roots_match = result.execution.state_root == block.state_root;
@@ -703,7 +898,7 @@ async fn main() -> Result<()> {
                             result.execution.objects_entered_grace,
                             result.execution.objects_evaporated,
                             obj_count,
-                            ghost_count,
+                            ghost_count_val,
                             &result.execution.state_root,
                             peers,
                         );

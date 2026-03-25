@@ -1,8 +1,13 @@
+pub mod fees;
+
+use evaporchain_contracts::{ContractEngine, ContractTemplate};
 use evaporchain_crypto::signatures::{MlDsaVerifier, Verifier};
+use evaporchain_script::ScriptEngine;
 use evaporchain_state::db::StateDB;
 use evaporchain_state::{EvaporationEngine, RefreshEngine};
 use evaporchain_types::{
-    Block, CreateObjectTx, Epoch, ObjectState, RefreshTx, StateObject, Transaction, TransferTx,
+    Block, CallContractTx, CallScriptTx, CreateObjectTx, DeployContractTx, DeployScriptTx,
+    Epoch, ObjectState, RefreshTx, StateObject, Transaction, TransferTx,
 };
 use thiserror::Error;
 use tracing::{debug, info};
@@ -32,6 +37,10 @@ pub enum ExecutionError {
     InvalidSignature,
     #[error("missing signature")]
     MissingSignature,
+    #[error("contract error: {0}")]
+    ContractError(String),
+    #[error("script error: {0}")]
+    ScriptError(String),
 }
 
 /// Result of executing a single block.
@@ -42,23 +51,46 @@ pub struct BlockExecutionResult {
     pub txs_failed: usize,
     pub objects_entered_grace: usize,
     pub objects_evaporated: usize,
+    /// Total gas used by all executed transactions in this block.
+    pub gas_used: u64,
+    /// Base fee that was active during this block.
+    pub base_fee: u64,
+    /// Total fees collected (gas fees + creation deposits + refresh fees).
+    pub total_fees: u64,
 }
 
 /// Trait for block/transaction execution engines.
 pub trait ExecutionEngine: Send + Sync {
     /// Execute all transactions in a block, returning the execution result.
     fn execute_block(
-        &self,
+        &mut self,
         db: &mut dyn StateDB,
         block: &Block,
     ) -> Result<BlockExecutionResult, ExecutionError>;
 }
+
+/// Gas cost constants for transaction types.
+const GAS_TRANSFER: u64 = 21_000;
+const GAS_CREATE_OBJECT_BASE: u64 = 50_000;
+const GAS_CREATE_OBJECT_PER_BYTE: u64 = 200;
+const GAS_REFRESH: u64 = 30_000;
+const GAS_DEPLOY_CONTRACT: u64 = 100_000;
+const GAS_CALL_CONTRACT: u64 = 40_000;
+const GAS_DEPLOY_SCRIPT: u64 = 150_000;
+const GAS_CALL_SCRIPT: u64 = 50_000;
 
 /// Simple executor that processes transactions sequentially and runs
 /// evaporation at the end of each block.
 pub struct SimpleExecutor {
     evaporation_engine: EvaporationEngine,
     verify_signatures: bool,
+    fee_controller: Option<fees::PidFeeController>,
+    /// Gas limit per block (0 = unlimited). Used by PID controller for utilization.
+    pub block_gas_limit: u64,
+    /// Smart contract engine (template-based).
+    pub contract_engine: ContractEngine,
+    /// EvaporScript engine (script-based).
+    pub script_engine: ScriptEngine,
 }
 
 impl SimpleExecutor {
@@ -68,6 +100,10 @@ impl SimpleExecutor {
         Self {
             evaporation_engine: EvaporationEngine::new(grace_period),
             verify_signatures: false,
+            fee_controller: None,
+            block_gas_limit: 0,
+            contract_engine: ContractEngine::new(),
+            script_engine: ScriptEngine::new(),
         }
     }
 
@@ -76,6 +112,51 @@ impl SimpleExecutor {
         Self {
             evaporation_engine: EvaporationEngine::new(grace_period),
             verify_signatures: true,
+            fee_controller: None,
+            block_gas_limit: 0,
+            contract_engine: ContractEngine::new(),
+            script_engine: ScriptEngine::new(),
+        }
+    }
+
+    /// Create a new executor with PID fee controller.
+    pub fn new_with_fees(
+        grace_period: u64,
+        fee_controller: fees::PidFeeController,
+        block_gas_limit: u64,
+    ) -> Self {
+        Self {
+            evaporation_engine: EvaporationEngine::new(grace_period),
+            verify_signatures: false,
+            fee_controller: Some(fee_controller),
+            block_gas_limit,
+            contract_engine: ContractEngine::new(),
+            script_engine: ScriptEngine::new(),
+        }
+    }
+
+    /// Get a reference to the fee controller (if configured).
+    pub fn fee_controller(&self) -> Option<&fees::PidFeeController> {
+        self.fee_controller.as_ref()
+    }
+
+    /// Get a mutable reference to the fee controller.
+    pub fn fee_controller_mut(&mut self) -> Option<&mut fees::PidFeeController> {
+        self.fee_controller.as_mut()
+    }
+
+    /// Estimate gas for a transaction.
+    fn estimate_gas(tx: &Transaction) -> u64 {
+        match tx {
+            Transaction::Transfer(_) => GAS_TRANSFER,
+            Transaction::CreateObject(create) => {
+                GAS_CREATE_OBJECT_BASE + GAS_CREATE_OBJECT_PER_BYTE * create.data.len() as u64
+            }
+            Transaction::Refresh(_) => GAS_REFRESH,
+            Transaction::DeployContract(_) => GAS_DEPLOY_CONTRACT,
+            Transaction::CallContract(_) => GAS_CALL_CONTRACT,
+            Transaction::DeployScript(_) => GAS_DEPLOY_SCRIPT,
+            Transaction::CallScript(_) => GAS_CALL_SCRIPT,
         }
     }
 
@@ -202,16 +283,125 @@ impl SimpleExecutor {
 
         Err(ExecutionError::ObjectNotFound(hex::encode(tx.object_id)))
     }
+
+    /// Execute a contract deployment transaction.
+    fn execute_deploy_contract(
+        &mut self,
+        tx: &DeployContractTx,
+        epoch: Epoch,
+    ) -> Result<(), ExecutionError> {
+        let template = match tx.template.as_str() {
+            "DecayingToken" => ContractTemplate::DecayingToken,
+            "MortalNFT" => ContractTemplate::MortalNFT,
+            "ThermodynamicEscrow" => ContractTemplate::ThermodynamicEscrow,
+            "DecayingAuction" => ContractTemplate::DecayingAuction,
+            "StakingPool" => ContractTemplate::StakingPool,
+            "DAOVote" => ContractTemplate::DAOVote,
+            other => {
+                return Err(ExecutionError::ContractError(format!(
+                    "unknown template: {other}"
+                )));
+            }
+        };
+
+        let init_args: serde_json::Value = serde_json::from_str(&tx.init_args)
+            .map_err(|e| ExecutionError::ContractError(format!("invalid init_args JSON: {e}")))?;
+
+        let rules = if let Some(rules_str) = &tx.rules {
+            let parsed: Vec<evaporchain_contracts::Rule> = serde_json::from_str(rules_str)
+                .map_err(|e| ExecutionError::ContractError(format!("invalid rules JSON: {e}")))?;
+            parsed
+        } else {
+            vec![]
+        };
+
+        let id = self
+            .contract_engine
+            .deploy(template, init_args, rules, tx.deployer, tx.energy, tx.half_life, epoch)
+            .map_err(|e| ExecutionError::ContractError(e.to_string()))?;
+
+        debug!(contract_id = id, template = %tx.template, "Contract deployed");
+        Ok(())
+    }
+
+    /// Execute a contract call transaction.
+    fn execute_call_contract(
+        &mut self,
+        tx: &CallContractTx,
+    ) -> Result<(), ExecutionError> {
+        let args: serde_json::Value = serde_json::from_str(&tx.args)
+            .map_err(|e| ExecutionError::ContractError(format!("invalid args JSON: {e}")))?;
+
+        let result = self
+            .contract_engine
+            .call(tx.contract_id, &tx.method, &args, &tx.caller, tx.epoch)
+            .map_err(|e| ExecutionError::ContractError(e.to_string()))?;
+
+        debug!(
+            contract_id = tx.contract_id,
+            method = %tx.method,
+            events = ?result.events,
+            "Contract called"
+        );
+        Ok(())
+    }
+
+    /// Execute a script deployment transaction.
+    fn execute_deploy_script(
+        &mut self,
+        tx: &DeployScriptTx,
+        epoch: Epoch,
+    ) -> Result<(), ExecutionError> {
+        let id = self
+            .script_engine
+            .deploy(&tx.source_code, tx.deployer, tx.energy, tx.half_life, epoch)
+            .map_err(|e| ExecutionError::ScriptError(e.to_string()))?;
+
+        debug!(script_id = id, "Script contract deployed");
+        Ok(())
+    }
+
+    /// Execute a script call transaction.
+    fn execute_call_script(
+        &mut self,
+        tx: &CallScriptTx,
+    ) -> Result<(), ExecutionError> {
+        // Parse args from JSON
+        let args: Vec<evaporchain_script::Value> = if tx.args.is_empty() || tx.args == "[]" {
+            vec![]
+        } else {
+            serde_json::from_str(&tx.args)
+                .map_err(|e| ExecutionError::ScriptError(format!("invalid args JSON: {e}")))?
+        };
+
+        let _result = self
+            .script_engine
+            .call(tx.contract_id, &tx.method, args, tx.caller, tx.epoch)
+            .map_err(|e| ExecutionError::ScriptError(e.to_string()))?;
+
+        debug!(
+            script_id = tx.contract_id,
+            method = %tx.method,
+            "Script called"
+        );
+        Ok(())
+    }
 }
 
 impl ExecutionEngine for SimpleExecutor {
     fn execute_block(
-        &self,
+        &mut self,
         db: &mut dyn StateDB,
         block: &Block,
     ) -> Result<BlockExecutionResult, ExecutionError> {
         let mut txs_executed = 0;
         let mut txs_failed = 0;
+        let mut gas_used = 0u64;
+        let mut total_fees = 0u64;
+        let base_fee = self
+            .fee_controller
+            .as_ref()
+            .map_or(0, |fc| fc.base_fee);
 
         // Execute transactions
         for tx in &block.transactions {
@@ -222,16 +412,46 @@ impl ExecutionEngine for SimpleExecutor {
                 continue;
             }
 
+            let tx_gas = Self::estimate_gas(tx);
+
             let result = match tx {
                 Transaction::Transfer(transfer) => self.execute_transfer(db, transfer),
                 Transaction::CreateObject(create) => {
                     self.execute_create_object(db, create, block.epoch)
                 }
                 Transaction::Refresh(refresh) => self.execute_refresh(db, refresh, block.epoch),
+                Transaction::DeployContract(deploy) => self.execute_deploy_contract(deploy, block.epoch),
+                Transaction::CallContract(call) => self.execute_call_contract(call),
+                Transaction::DeployScript(deploy) => self.execute_deploy_script(deploy, block.epoch),
+                Transaction::CallScript(call) => self.execute_call_script(call),
             };
 
             match result {
-                Ok(()) => txs_executed += 1,
+                Ok(()) => {
+                    txs_executed += 1;
+                    gas_used += tx_gas;
+
+                    // Compute fees if controller is configured
+                    if let Some(fc) = &self.fee_controller {
+                        let gas_fee = fc.compute_gas_fee(tx_gas, 0);
+                        let extra_fee = match tx {
+                            Transaction::CreateObject(create) => {
+                                fc.compute_creation_deposit(create.data.len())
+                            }
+                            Transaction::Refresh(refresh) => {
+                                // Check if this is a resurrection (ghost exists)
+                                if db.get_ghost(&refresh.object_id).is_some() {
+                                    // Already resurrected at this point, but was ghost
+                                    fc.compute_refresh_fee(refresh.energy_deposit)
+                                } else {
+                                    fc.compute_refresh_fee(refresh.energy_deposit)
+                                }
+                            }
+                            _ => 0,
+                        };
+                        total_fees += gas_fee + extra_fee;
+                    }
+                }
                 Err(e) => {
                     debug!(error = %e, "Transaction failed");
                     txs_failed += 1;
@@ -242,6 +462,12 @@ impl ExecutionEngine for SimpleExecutor {
         // Run evaporation at end of block
         let evap_result = self.evaporation_engine.process_epoch(db, block.epoch);
 
+        // Tick all contracts (energy decay, auto-finalize, etc.)
+        self.contract_engine.tick(block.epoch);
+
+        // Tick all script contracts (energy decay, lifecycle hooks)
+        self.script_engine.tick(block.epoch);
+
         let state_root = db.compute_state_root();
 
         info!(
@@ -249,6 +475,9 @@ impl ExecutionEngine for SimpleExecutor {
             epoch = block.epoch,
             txs_executed,
             txs_failed,
+            gas_used,
+            base_fee,
+            total_fees,
             entered_grace = evap_result.entered_grace.len(),
             evaporated = evap_result.evaporated.len(),
             state_root = hex::encode(state_root),
@@ -261,6 +490,9 @@ impl ExecutionEngine for SimpleExecutor {
             txs_failed,
             objects_entered_grace: evap_result.entered_grace.len(),
             objects_evaporated: evap_result.evaporated.len(),
+            gas_used,
+            base_fee,
+            total_fees,
         })
     }
 }
@@ -292,6 +524,7 @@ mod tests {
             state_root: [0u8; 32],
             transactions: txs,
             timestamp: 0,
+            producer_id: None,
         }
     }
 
@@ -321,6 +554,22 @@ mod tests {
                 c.signature = Some(sig);
                 c.public_key = Some(pk);
             }
+            Transaction::DeployContract(d) => {
+                d.signature = Some(sig);
+                d.public_key = Some(pk);
+            }
+            Transaction::CallContract(c) => {
+                c.signature = Some(sig);
+                c.public_key = Some(pk);
+            }
+            Transaction::DeployScript(d) => {
+                d.signature = Some(sig);
+                d.public_key = Some(pk);
+            }
+            Transaction::CallScript(c) => {
+                c.signature = Some(sig);
+                c.public_key = Some(pk);
+            }
         }
     }
 
@@ -331,7 +580,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 1000);
 
-        let executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new(7);
         let block = make_block(
             1,
             1,
@@ -364,7 +613,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 100);
 
-        let executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new(7);
         let block = make_block(
             1,
             1,
@@ -393,7 +642,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 1000);
 
-        let executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new(7);
         let block = make_block(
             1,
             1,
@@ -419,7 +668,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 1000);
 
-        let executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new(7);
         let block = make_block(
             1,
             1,
@@ -442,7 +691,7 @@ mod tests {
     #[test]
     fn test_create_object_with_energy() {
         let mut db = InMemoryStateDB::new();
-        let executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new(7);
 
         let block = make_block(
             1,
@@ -476,7 +725,7 @@ mod tests {
     #[test]
     fn test_duplicate_object_creation_fails() {
         let mut db = InMemoryStateDB::new();
-        let executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new(7);
 
         let create_tx = Transaction::CreateObject(CreateObjectTx {
             creator: addr(1),
@@ -505,7 +754,7 @@ mod tests {
         fund_account(&mut db, 1, 10_000);
         fund_account(&mut db, 2, 5_000);
 
-        let executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new(7);
         let block = make_block(
             1,
             1,
@@ -565,7 +814,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 500);
 
-        let executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new(7);
         let block = make_block(
             1,
             1,
@@ -621,7 +870,7 @@ mod tests {
             data: vec![0xAB],
         });
 
-        let executor = SimpleExecutor::new(3);
+        let mut executor = SimpleExecutor::new(3);
 
         let block1 = make_block(1, 3, vec![]);
         let r1 = executor.execute_block(&mut db, &block1).unwrap();
@@ -663,7 +912,7 @@ mod tests {
             data: vec![],
         });
 
-        let executor = SimpleExecutor::new(5);
+        let mut executor = SimpleExecutor::new(5);
 
         let block1 = make_block(1, 3, vec![]);
         let r1 = executor.execute_block(&mut db, &block1).unwrap();
@@ -705,9 +954,10 @@ mod tests {
             evaporated_at: 50,
             data_hash: [0u8; 32],
             original_data: vec![0xCA, 0xFE],
+            mmr_position: None,
         });
 
-        let executor = SimpleExecutor::new(5);
+        let mut executor = SimpleExecutor::new(5);
         let block = make_block(
             10,
             60,
@@ -737,7 +987,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 10_000);
 
-        let executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new(7);
 
         let block1 = make_block(
             1,
@@ -779,7 +1029,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 1000);
 
-        let executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new(7);
         let block = make_block(
             1,
             1,
@@ -803,7 +1053,7 @@ mod tests {
     fn test_refresh_nonexistent_object_fails() {
         let mut db = InMemoryStateDB::new();
 
-        let executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new(7);
         let block = make_block(
             1,
             1,
@@ -826,7 +1076,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 1000);
 
-        let executor = SimpleExecutor::new_with_sig_verification(7);
+        let mut executor = SimpleExecutor::new_with_sig_verification(7);
         let kp = MlDsaKeypair::generate();
 
         let mut tx = Transaction::Transfer(TransferTx {
@@ -851,7 +1101,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 1000);
 
-        let executor = SimpleExecutor::new_with_sig_verification(7);
+        let mut executor = SimpleExecutor::new_with_sig_verification(7);
 
         let block = make_block(
             1,
@@ -878,7 +1128,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 1000);
 
-        let executor = SimpleExecutor::new_with_sig_verification(7);
+        let mut executor = SimpleExecutor::new_with_sig_verification(7);
         let kp = MlDsaKeypair::generate();
 
         let mut tx = Transaction::Transfer(TransferTx {
@@ -910,7 +1160,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 1000);
 
-        let executor = SimpleExecutor::new_with_sig_verification(7);
+        let mut executor = SimpleExecutor::new_with_sig_verification(7);
         let kp1 = MlDsaKeypair::generate();
         let kp2 = MlDsaKeypair::generate();
 
@@ -936,7 +1186,7 @@ mod tests {
     #[test]
     fn test_signed_create_object_succeeds() {
         let mut db = InMemoryStateDB::new();
-        let executor = SimpleExecutor::new_with_sig_verification(7);
+        let mut executor = SimpleExecutor::new_with_sig_verification(7);
         let kp = MlDsaKeypair::generate();
 
         let mut tx = Transaction::CreateObject(CreateObjectTx {
@@ -971,7 +1221,7 @@ mod tests {
             data: vec![],
         });
 
-        let executor = SimpleExecutor::new_with_sig_verification(7);
+        let mut executor = SimpleExecutor::new_with_sig_verification(7);
         let kp = MlDsaKeypair::generate();
 
         let mut tx = Transaction::Refresh(RefreshTx {
@@ -985,5 +1235,210 @@ mod tests {
         let block = make_block(1, 5, vec![tx]);
         let result = executor.execute_block(&mut db, &block).unwrap();
         assert_eq!(result.txs_executed, 1);
+    }
+
+    // ═══════════════════ EvaporScript Integration Tests ═══════════════════
+
+    const COUNTER_SCRIPT: &str = r#"
+contract Counter {
+    state {
+        count: u64 = 0
+    }
+    fn increment(n: u64) {
+        self.count += n
+    }
+    fn get() -> u64 {
+        return self.count
+    }
+    on_evaporate() {
+        emit("counter expired")
+    }
+    on_grace() {
+        emit("counter entering grace")
+    }
+}
+"#;
+
+    #[test]
+    fn test_deploy_script_via_transaction() {
+        let mut db = InMemoryStateDB::new();
+        let mut executor = SimpleExecutor::new(7);
+
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::DeployScript(
+                evaporchain_types::DeployScriptTx {
+                    deployer: addr(1),
+                    source_code: COUNTER_SCRIPT.to_string(),
+                    energy: 10_000,
+                    half_life: 100,
+                    signature: None,
+                    public_key: None,
+                },
+            )],
+        );
+
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_executed, 1);
+        assert_eq!(result.txs_failed, 0);
+
+        // Verify the contract was deployed
+        let contract = executor.script_engine.get(1).unwrap();
+        assert_eq!(contract.name, "Counter");
+        assert_eq!(contract.energy, 10_000);
+    }
+
+    #[test]
+    fn test_call_script_via_transaction() {
+        let mut db = InMemoryStateDB::new();
+        let mut executor = SimpleExecutor::new(7);
+
+        // Deploy
+        let deploy_block = make_block(
+            1,
+            1,
+            vec![Transaction::DeployScript(
+                evaporchain_types::DeployScriptTx {
+                    deployer: addr(1),
+                    source_code: COUNTER_SCRIPT.to_string(),
+                    energy: 10_000,
+                    half_life: 100,
+                    signature: None,
+                    public_key: None,
+                },
+            )],
+        );
+        executor.execute_block(&mut db, &deploy_block).unwrap();
+
+        // Call increment
+        let call_block = make_block(
+            2,
+            2,
+            vec![Transaction::CallScript(
+                evaporchain_types::CallScriptTx {
+                    caller: addr(2),
+                    contract_id: 1,
+                    method: "increment".to_string(),
+                    args: r#"[{"U64": 42}]"#.to_string(),
+                    epoch: 2,
+                    signature: None,
+                    public_key: None,
+                },
+            )],
+        );
+        let result = executor.execute_block(&mut db, &call_block).unwrap();
+        assert_eq!(result.txs_executed, 1);
+
+        // Verify state was updated
+        let contract = executor.script_engine.get(1).unwrap();
+        match contract.state.get("count") {
+            Some(evaporchain_script::Value::U64(n)) => assert_eq!(*n, 42),
+            other => panic!("expected count=42, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_script_contract_lifecycle_with_decay() {
+        let mut db = InMemoryStateDB::new();
+        // Very short half-life: 1 epoch, energy: 4 → dies at epoch ~3
+        let mut executor = SimpleExecutor::new(3);
+
+        // Deploy with minimal energy
+        let deploy_block = make_block(
+            1,
+            0,
+            vec![Transaction::DeployScript(
+                evaporchain_types::DeployScriptTx {
+                    deployer: addr(1),
+                    source_code: COUNTER_SCRIPT.to_string(),
+                    energy: 4,
+                    half_life: 1,
+                    signature: None,
+                    public_key: None,
+                },
+            )],
+        );
+        executor.execute_block(&mut db, &deploy_block).unwrap();
+
+        // Tick at epoch 3 — energy should be 0, triggering on_evaporate
+        let block2 = make_block(2, 3, vec![]);
+        executor.execute_block(&mut db, &block2).unwrap();
+
+        // Contract should be evaporated
+        let contract = executor.script_engine.get(1).unwrap();
+        assert!(contract.evaporated);
+    }
+
+    #[test]
+    fn test_script_and_template_contracts_coexist() {
+        let mut db = InMemoryStateDB::new();
+        let mut executor = SimpleExecutor::new(7);
+
+        // Deploy a template contract
+        let deploy_template = make_block(
+            1,
+            1,
+            vec![Transaction::DeployContract(DeployContractTx {
+                deployer: addr(1),
+                template: "DecayingToken".to_string(),
+                init_args: r#"{"name":"TestToken","symbol":"TT","total_supply":1000000,"decay_half_life":100,"owner":"alice"}"#
+                    .to_string(),
+                energy: 10_000,
+                half_life: 100,
+                rules: None,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        let r1 = executor.execute_block(&mut db, &deploy_template).unwrap();
+        assert_eq!(r1.txs_executed, 1, "template deploy failed");
+
+        // Deploy a script contract
+        let deploy_script = make_block(
+            2,
+            2,
+            vec![Transaction::DeployScript(
+                evaporchain_types::DeployScriptTx {
+                    deployer: addr(2),
+                    source_code: COUNTER_SCRIPT.to_string(),
+                    energy: 10_000,
+                    half_life: 100,
+                    signature: None,
+                    public_key: None,
+                },
+            )],
+        );
+        let r2 = executor.execute_block(&mut db, &deploy_script).unwrap();
+        assert_eq!(r2.txs_executed, 1, "script deploy failed");
+
+        // Both should exist
+        assert!(executor.contract_engine.get(1).is_some());
+        assert!(executor.script_engine.get(1).is_some());
+    }
+
+    #[test]
+    fn test_deploy_invalid_script_fails() {
+        let mut db = InMemoryStateDB::new();
+        let mut executor = SimpleExecutor::new(7);
+
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::DeployScript(
+                evaporchain_types::DeployScriptTx {
+                    deployer: addr(1),
+                    source_code: "this is not valid evaporscript!!!".to_string(),
+                    energy: 10_000,
+                    half_life: 100,
+                    signature: None,
+                    public_key: None,
+                },
+            )],
+        );
+
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_executed, 0);
+        assert_eq!(result.txs_failed, 1);
     }
 }
