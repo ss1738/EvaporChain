@@ -174,11 +174,9 @@ fn bench_decay_engine() -> f64 {
     let current_epoch = 500;
     let start = Instant::now();
 
-    let mut decayed = 0u64;
     let mut evaporated = 0u64;
     for obj in &objects {
         let energy = obj.energy_at(current_epoch);
-        decayed += 1;
         if energy == 0 {
             evaporated += 1;
         }

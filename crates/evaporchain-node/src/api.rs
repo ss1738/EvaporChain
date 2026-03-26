@@ -208,10 +208,6 @@ pub const GENESIS_VALIDATOR2:  &str = "4d02a7e91c3f86b5d24e0f738c915ba6e0d7a8b6"
 pub const GENESIS_ECOSYSTEM:   &str = "a3f71b5e928d4c063e7a50f81d9c26b34e8a1c5e";
 pub const GENESIS_COMMUNITY:   &str = "e8b12d7f94c6a35081e4f29b6d3c8a57f1e07d94";
 
-pub fn genesis_addr_display(hex: &str) -> String {
-    format!("0x{}", hex)
-}
-
 // ──────────────────────────── Name Helpers ─────────────────────────────
 
 fn addr_from_byte(b: u8) -> [u8; 32] {
@@ -244,12 +240,6 @@ fn parse_address_value(val: &serde_json::Value) -> Result<[u8; 32], String> {
     }
 }
 
-fn obj_id_from_byte(b: u8) -> [u8; 32] {
-    let mut id = [0u8; 32];
-    id[0] = b;
-    id
-}
-
 /// Display address as truncated hex (first 4 bytes + last 3 bytes of 20-byte portion).
 fn account_name(addr: &[u8; 32]) -> String {
     let full = hex::encode(&addr[..20]);
@@ -273,15 +263,6 @@ fn object_name(id: &[u8; 32], data: &[u8]) -> String {
     }
     let full = hex::encode(&id[..8]);
     format!("0x{}...{}", &full[..8], &hex::encode(&id[6..8]))
-}
-
-fn hex_short(bytes: &[u8]) -> String {
-    let full = hex::encode(bytes);
-    if full.len() > 16 {
-        format!("{}...{}", &full[..10], &full[full.len()-6..])
-    } else {
-        full
-    }
 }
 
 /// Generate a blake3 tx hash from content.
@@ -372,6 +353,23 @@ struct EventsResponse {
 #[derive(Deserialize)]
 struct BlocksQuery {
     limit: Option<usize>,
+}
+
+#[derive(Deserialize)]
+struct TransactionsQuery {
+    limit: Option<usize>,
+    offset: Option<usize>,
+    #[serde(rename = "type")]
+    tx_type: Option<String>,
+    address: Option<String>,
+}
+
+#[derive(Serialize)]
+struct TransactionsResponse {
+    transactions: Vec<TxRecord>,
+    total: usize,
+    limit: usize,
+    offset: usize,
 }
 
 #[derive(Deserialize)]
@@ -467,7 +465,7 @@ fn require_wallet_ownership(state: &ApiState, user_id: Option<i64>, addr_hex: &s
         Some(id) => id,
         None => return Ok(()), // signature-based auth, no user binding
     };
-    if let Some(ref sessions) = state.auth_sessions {
+    if let Some(ref _sessions) = state.auth_sessions {
         // We need user_db to check ownership — it's on auth_state
         // For now, we store it on ApiState
         if let Some(ref user_db) = state.user_db {
@@ -780,6 +778,47 @@ async fn get_tx_by_hash(
         }
     }
     Err(StatusCode::NOT_FOUND)
+}
+
+async fn get_transactions(
+    State(state): State<Arc<ApiState>>,
+    Query(params): Query<TransactionsQuery>,
+) -> Json<TransactionsResponse> {
+    let history = state.block_history.lock().unwrap();
+    let limit = params.limit.unwrap_or(50).min(200);
+    let offset = params.offset.unwrap_or(0);
+
+    // Collect all transactions from recent blocks (newest first)
+    let mut all_txs: Vec<TxRecord> = Vec::new();
+    for block in history.iter().rev() {
+        for tx in block.transactions.iter().rev() {
+            all_txs.push(tx.clone());
+        }
+    }
+
+    // Filter by type if specified
+    if let Some(ref filter_type) = params.tx_type {
+        all_txs.retain(|tx| tx.tx_type.eq_ignore_ascii_case(filter_type));
+    }
+
+    // Filter by address if specified
+    if let Some(ref addr) = params.address {
+        let addr_lower = addr.to_lowercase();
+        all_txs.retain(|tx| {
+            tx.from.to_lowercase().contains(&addr_lower)
+                || tx.to.to_lowercase().contains(&addr_lower)
+        });
+    }
+
+    let total = all_txs.len();
+    let page: Vec<TxRecord> = all_txs.into_iter().skip(offset).take(limit).collect();
+
+    Json(TransactionsResponse {
+        transactions: page,
+        total,
+        limit,
+        offset,
+    })
 }
 
 async fn get_stats_timeline(State(state): State<Arc<ApiState>>) -> Json<StatsTimelineResponse> {
@@ -2302,6 +2341,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/block/latest", get(get_latest_block))
         .route("/api/block/:number", get(get_single_block))
         .route("/api/tx/:hash", get(get_tx_by_hash))
+        .route("/api/transactions", get(get_transactions))
         .route("/block/:number", get(block_detail_html))
         .route("/tx/:hash", get(tx_detail_html))
         .route("/api/mempool", get(get_mempool))

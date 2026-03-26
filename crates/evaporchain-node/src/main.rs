@@ -7,7 +7,7 @@ mod user_db;
 use anyhow::Result;
 use api::{ApiState, BlockRecord, ChainStats, EpochSnapshot, EventRecord, NftStore, NftToken, TokenStore, DeployedToken, StakingStore, StakingPool, Staker, DAOStore, DAOProposal, DAOVote};
 use evaporchain_consensus::MockConsensus;
-use evaporchain_consensus::tendermint::{TendermintConsensus, ConsensusMessage, ConsensusAction, Phase};
+use evaporchain_consensus::tendermint::{TendermintConsensus, ConsensusMessage, ConsensusAction};
 use evaporchain_consensus::validator_set::{ValidatorInfo, ValidatorSet};
 use evaporchain_network::service::{cache_block, NetworkConfig, P2pNetworkService};
 use evaporchain_proving::{MockProver, ProvingEngine};
@@ -1410,7 +1410,7 @@ async fn main() -> Result<()> {
     async fn broadcast_consensus_actions(
         actions: Vec<ConsensusAction>,
         consensus_sender: &Option<mpsc::Sender<Vec<u8>>>,
-        node_tag: &str,
+        _node_tag: &str,
     ) -> Vec<ConsensusAction> {
         let mut commit_actions = Vec::new();
         for action in actions {
@@ -1495,7 +1495,7 @@ async fn main() -> Result<()> {
 
                                 // Flush state
                                 {
-                                    let mut db_guard = db.lock().unwrap();
+                                    let db_guard = db.lock().unwrap();
                                     db_guard.flush_accounts();
                                     db_guard.flush_objects();
                                 }
@@ -1609,7 +1609,7 @@ async fn main() -> Result<()> {
                                 Ok(result) => {
                                     block.state_root = result.execution.state_root;
                                     {
-                                        let mut db_guard = db.lock().unwrap();
+                                        let db_guard = db.lock().unwrap();
                                         db_guard.flush_accounts();
                                         db_guard.flush_objects();
                                     }
