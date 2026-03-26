@@ -37,6 +37,12 @@ pub enum ExecutionError {
     InvalidSignature,
     #[error("missing signature")]
     MissingSignature,
+    #[error("insufficient balance for gas: account {account} has {available}, needs {required} for fees")]
+    InsufficientGas {
+        account: String,
+        available: u64,
+        required: u64,
+    },
     #[error("contract error: {0}")]
     ContractError(String),
     #[error("script error: {0}")]
@@ -128,6 +134,23 @@ impl SimpleExecutor {
         Self {
             evaporation_engine: EvaporationEngine::new(grace_period),
             verify_signatures: false,
+            fee_controller: Some(fee_controller),
+            block_gas_limit,
+            contract_engine: ContractEngine::new(),
+            script_engine: ScriptEngine::new(),
+        }
+    }
+
+    /// Create a new executor with signature verification AND fee deduction enabled.
+    /// This is the production configuration.
+    pub fn new_production(
+        grace_period: u64,
+        fee_controller: fees::PidFeeController,
+        block_gas_limit: u64,
+    ) -> Self {
+        Self {
+            evaporation_engine: EvaporationEngine::new(grace_period),
+            verify_signatures: true,
             fee_controller: Some(fee_controller),
             block_gas_limit,
             contract_engine: ContractEngine::new(),
@@ -414,6 +437,46 @@ impl ExecutionEngine for SimpleExecutor {
 
             let tx_gas = Self::estimate_gas(tx);
 
+            // Compute and deduct fees BEFORE execution (if fee controller enabled)
+            let tx_fee = if let Some(fc) = &self.fee_controller {
+                let gas_fee = fc.compute_gas_fee(tx_gas, 0);
+                let extra_fee = match tx {
+                    Transaction::CreateObject(create) => {
+                        fc.compute_creation_deposit(create.data.len())
+                    }
+                    Transaction::Refresh(refresh) => {
+                        fc.compute_refresh_fee(refresh.energy_deposit)
+                    }
+                    _ => 0,
+                };
+                let total_tx_fee = gas_fee + extra_fee;
+
+                // Deduct fee from sender's balance before executing
+                if let Some(sender_addr) = tx.sender() {
+                    let sender = db.get_or_create_account(sender_addr);
+                    if sender.balance < total_tx_fee {
+                        debug!(
+                            sender = hex::encode(sender_addr),
+                            available = sender.balance,
+                            required = total_tx_fee,
+                            "Insufficient balance for gas fees"
+                        );
+                        txs_failed += 1;
+                        continue;
+                    }
+                    // Deduct fees upfront (burned — deflationary model)
+                    sender.balance -= total_tx_fee;
+                }
+                total_tx_fee
+            } else {
+                0
+            };
+
+            // Snapshot sender state before execution for revert-on-failure
+            let sender_snapshot = tx.sender().and_then(|addr| {
+                db.get_account(addr).map(|acct| (acct.balance, acct.nonce))
+            });
+
             let result = match tx {
                 Transaction::Transfer(transfer) => self.execute_transfer(db, transfer),
                 Transaction::CreateObject(create) => {
@@ -430,31 +493,22 @@ impl ExecutionEngine for SimpleExecutor {
                 Ok(()) => {
                     txs_executed += 1;
                     gas_used += tx_gas;
-
-                    // Compute fees if controller is configured
-                    if let Some(fc) = &self.fee_controller {
-                        let gas_fee = fc.compute_gas_fee(tx_gas, 0);
-                        let extra_fee = match tx {
-                            Transaction::CreateObject(create) => {
-                                fc.compute_creation_deposit(create.data.len())
-                            }
-                            Transaction::Refresh(refresh) => {
-                                // Check if this is a resurrection (ghost exists)
-                                if db.get_ghost(&refresh.object_id).is_some() {
-                                    // Already resurrected at this point, but was ghost
-                                    fc.compute_refresh_fee(refresh.energy_deposit)
-                                } else {
-                                    fc.compute_refresh_fee(refresh.energy_deposit)
-                                }
-                            }
-                            _ => 0,
-                        };
-                        total_fees += gas_fee + extra_fee;
-                    }
+                    total_fees += tx_fee;
                 }
                 Err(e) => {
-                    debug!(error = %e, "Transaction failed");
+                    // Revert sender state changes from the failed execution,
+                    // but KEEP the fee deduction (sender still pays for gas used).
+                    // Snapshot was taken AFTER fee deduction but BEFORE execution,
+                    // so restoring it reverts execution changes while keeping fees burned.
+                    if let (Some(sender_addr), Some((snap_balance, snap_nonce))) = (tx.sender(), sender_snapshot) {
+                        if let Some(acct) = db.get_account_mut(sender_addr) {
+                            acct.balance = snap_balance;
+                            acct.nonce = snap_nonce;
+                        }
+                    }
+                    debug!(error = %e, "Transaction failed — state reverted, fee kept");
                     txs_failed += 1;
+                    total_fees += tx_fee; // Fee is still burned even on failure
                 }
             }
         }
@@ -684,6 +738,52 @@ mod tests {
 
         let result = executor.execute_block(&mut db, &block).unwrap();
         assert_eq!(result.txs_failed, 1);
+    }
+
+    // ─── Replay Protection ───
+
+    #[test]
+    fn test_replay_protection_same_tx_twice() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1_000_000);
+
+        let mut executor = SimpleExecutor::new(7);
+        // Same transfer submitted twice in the same block
+        let tx1 = Transaction::Transfer(TransferTx {
+            from: addr(1), to: addr(2), amount: 100, nonce: 0,
+            signature: None, public_key: None,
+        });
+        let tx2 = Transaction::Transfer(TransferTx {
+            from: addr(1), to: addr(2), amount: 100, nonce: 0,
+            signature: None, public_key: None,
+        });
+        let block = make_block(1, 1, vec![tx1, tx2]);
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        // First succeeds (nonce 0 matches), second fails (nonce now 1, but tx says 0)
+        assert_eq!(result.txs_executed, 1);
+        assert_eq!(result.txs_failed, 1);
+    }
+
+    #[test]
+    fn test_sequential_nonces_work() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1_000_000);
+
+        let mut executor = SimpleExecutor::new(7);
+        let tx1 = Transaction::Transfer(TransferTx {
+            from: addr(1), to: addr(2), amount: 100, nonce: 0,
+            signature: None, public_key: None,
+        });
+        let tx2 = Transaction::Transfer(TransferTx {
+            from: addr(1), to: addr(2), amount: 100, nonce: 1,
+            signature: None, public_key: None,
+        });
+        let block = make_block(1, 1, vec![tx1, tx2]);
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_executed, 2);
+        assert_eq!(result.txs_failed, 0);
+        assert_eq!(db.get_account(&addr(1)).unwrap().nonce, 2);
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 999_800);
     }
 
     // ─── Object Creation with Energy ───
@@ -1440,5 +1540,289 @@ contract Counter {
         let result = executor.execute_block(&mut db, &block).unwrap();
         assert_eq!(result.txs_executed, 0);
         assert_eq!(result.txs_failed, 1);
+    }
+
+    // ─── Signature Verification Tests ───
+
+    #[test]
+    fn test_valid_signature_passes() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1000);
+        let kp = MlDsaKeypair::generate();
+
+        let mut tx = Transaction::Transfer(TransferTx {
+            from: addr(1), to: addr(2), amount: 100, nonce: 0,
+            signature: None, public_key: None,
+        });
+        sign_tx(&mut tx, &kp);
+
+        let mut executor = SimpleExecutor::new_with_sig_verification(7);
+        let block = make_block(1, 1, vec![tx]);
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_executed, 1);
+        assert_eq!(result.txs_failed, 0);
+    }
+
+    #[test]
+    fn test_missing_signature_rejected() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1000);
+
+        let tx = Transaction::Transfer(TransferTx {
+            from: addr(1), to: addr(2), amount: 100, nonce: 0,
+            signature: None, public_key: None,
+        });
+
+        let mut executor = SimpleExecutor::new_with_sig_verification(7);
+        let block = make_block(1, 1, vec![tx]);
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_executed, 0);
+        assert_eq!(result.txs_failed, 1);
+    }
+
+    #[test]
+    fn test_corrupted_signature_rejected() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1000);
+        let kp = MlDsaKeypair::generate();
+
+        let mut tx = Transaction::Transfer(TransferTx {
+            from: addr(1), to: addr(2), amount: 100, nonce: 0,
+            signature: None, public_key: None,
+        });
+        sign_tx(&mut tx, &kp);
+
+        // Corrupt the signature
+        if let Transaction::Transfer(ref mut t) = tx {
+            if let Some(ref mut sig) = t.signature {
+                sig[0] ^= 0xFF;
+            }
+        }
+
+        let mut executor = SimpleExecutor::new_with_sig_verification(7);
+        let block = make_block(1, 1, vec![tx]);
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_executed, 0);
+        assert_eq!(result.txs_failed, 1);
+    }
+
+    #[test]
+    fn test_wrong_key_rejected() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1000);
+        let kp1 = MlDsaKeypair::generate();
+        let kp2 = MlDsaKeypair::generate();
+
+        let mut tx = Transaction::Transfer(TransferTx {
+            from: addr(1), to: addr(2), amount: 100, nonce: 0,
+            signature: None, public_key: None,
+        });
+        // Sign with kp1 but attach kp2's public key
+        let msg = tx.signable_bytes();
+        let sig = kp1.sign(&msg);
+        let pk = kp2.public_key_bytes(); // wrong key
+        if let Transaction::Transfer(ref mut t) = tx {
+            t.signature = Some(sig);
+            t.public_key = Some(pk);
+        }
+
+        let mut executor = SimpleExecutor::new_with_sig_verification(7);
+        let block = make_block(1, 1, vec![tx]);
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_executed, 0);
+        assert_eq!(result.txs_failed, 1);
+    }
+
+    #[test]
+    fn test_tampered_tx_rejected() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1000);
+        let kp = MlDsaKeypair::generate();
+
+        let mut tx = Transaction::Transfer(TransferTx {
+            from: addr(1), to: addr(2), amount: 100, nonce: 0,
+            signature: None, public_key: None,
+        });
+        sign_tx(&mut tx, &kp);
+
+        // Tamper with the amount after signing
+        if let Transaction::Transfer(ref mut t) = tx {
+            t.amount = 999;
+        }
+
+        let mut executor = SimpleExecutor::new_with_sig_verification(7);
+        let block = make_block(1, 1, vec![tx]);
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_executed, 0);
+        assert_eq!(result.txs_failed, 1);
+    }
+
+    #[test]
+    fn test_sig_disabled_allows_unsigned() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1000);
+
+        let tx = Transaction::Transfer(TransferTx {
+            from: addr(1), to: addr(2), amount: 100, nonce: 0,
+            signature: None, public_key: None,
+        });
+
+        // SimpleExecutor::new() has verify_signatures: false
+        let mut executor = SimpleExecutor::new(7);
+        let block = make_block(1, 1, vec![tx]);
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_executed, 1);
+        assert_eq!(result.txs_failed, 0);
+    }
+
+    // ─── Fee Deduction Tests ───
+
+    #[test]
+    fn test_fees_deducted_from_sender() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1_000_000);
+
+        let fc = fees::PidFeeController::testnet_config();
+        let mut executor = SimpleExecutor::new_with_fees(7, fc, 500_000);
+
+        let block = make_block(1, 1, vec![
+            Transaction::Transfer(TransferTx {
+                from: addr(1), to: addr(2), amount: 100, nonce: 0,
+                signature: None, public_key: None,
+            }),
+        ]);
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_executed, 1);
+        assert!(result.total_fees > 0, "Fees should be collected");
+
+        let sender = db.get_account(&addr(1)).unwrap();
+        // Balance should be: 1_000_000 - 100 (transfer) - gas_fee
+        assert!(sender.balance < 1_000_000 - 100, "Fees should have been deducted: balance={}", sender.balance);
+    }
+
+    #[test]
+    fn test_insufficient_balance_for_gas_rejected() {
+        let mut db = InMemoryStateDB::new();
+        // Fund with only 10 — not enough for gas (transfer costs 21000 * 1 = 21000)
+        fund_account(&mut db, 1, 10);
+
+        let fc = fees::PidFeeController::testnet_config();
+        let mut executor = SimpleExecutor::new_with_fees(7, fc, 500_000);
+
+        let block = make_block(1, 1, vec![
+            Transaction::Transfer(TransferTx {
+                from: addr(1), to: addr(2), amount: 5, nonce: 0,
+                signature: None, public_key: None,
+            }),
+        ]);
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_executed, 0);
+        assert_eq!(result.txs_failed, 1);
+
+        // Balance should be unchanged (couldn't afford gas)
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 10);
+    }
+
+    #[test]
+    fn test_fee_burned_even_on_tx_failure() {
+        let mut db = InMemoryStateDB::new();
+        // Enough for gas but not for the transfer amount
+        fund_account(&mut db, 1, 50_000);
+
+        let fc = fees::PidFeeController::testnet_config();
+        let mut executor = SimpleExecutor::new_with_fees(7, fc, 500_000);
+
+        let block = make_block(1, 1, vec![
+            Transaction::Transfer(TransferTx {
+                from: addr(1), to: addr(2), amount: 999_999, nonce: 0,
+                signature: None, public_key: None,
+            }),
+        ]);
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_executed, 0);
+        assert_eq!(result.txs_failed, 1);
+        assert!(result.total_fees > 0, "Fee should still be burned on failure");
+
+        // Balance should be reduced by gas fee even though transfer failed
+        let sender = db.get_account(&addr(1)).unwrap();
+        assert!(sender.balance < 50_000, "Gas fee should have been deducted: balance={}", sender.balance);
+    }
+
+    #[test]
+    fn test_creation_deposit_deducted() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1_000_000);
+
+        let fc = fees::PidFeeController::testnet_config();
+        let mut executor = SimpleExecutor::new_with_fees(7, fc, 500_000);
+
+        let block = make_block(1, 1, vec![
+            Transaction::CreateObject(CreateObjectTx {
+                creator: addr(1),
+                object_id: obj_id(42),
+                energy: 5000,
+                half_life: 100,
+                data: vec![1, 2, 3, 4, 5],
+                signature: None,
+                public_key: None,
+            }),
+        ]);
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_executed, 1);
+
+        // Fee should include gas + creation deposit
+        // Gas: 50000 + 200*5 = 51000; fee = 51000 * 1 = 51000
+        // Creation deposit: max(100 * 5, 1000) = 1000
+        // Total: 52000
+        assert!(result.total_fees >= 52_000, "Creation deposit should be included: fees={}", result.total_fees);
+    }
+
+    #[test]
+    fn test_revert_on_failed_tx_keeps_fee() {
+        let mut db = InMemoryStateDB::new();
+        // Balance: 100_000. Transfer gas fee = 21000.
+        // After fee deduction: 79_000. Transfer amount 999_999 > 79_000 → fail.
+        fund_account(&mut db, 1, 100_000);
+
+        let fc = fees::PidFeeController::testnet_config();
+        let mut executor = SimpleExecutor::new_with_fees(7, fc, 500_000);
+
+        let block = make_block(1, 1, vec![
+            Transaction::Transfer(TransferTx {
+                from: addr(1), to: addr(2), amount: 999_999, nonce: 0,
+                signature: None, public_key: None,
+            }),
+        ]);
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_executed, 0);
+        assert_eq!(result.txs_failed, 1);
+
+        let sender = db.get_account(&addr(1)).unwrap();
+        // Fee deducted (21000), but nonce NOT incremented (reverted)
+        assert_eq!(sender.balance, 100_000 - 21_000);
+        assert_eq!(sender.nonce, 0, "Nonce should be reverted on failed tx");
+
+        // Receiver should NOT have been credited
+        assert!(db.get_account(&addr(2)).is_none());
+    }
+
+    #[test]
+    fn test_no_fees_when_controller_disabled() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1000);
+
+        let mut executor = SimpleExecutor::new(7); // No fee controller
+        let block = make_block(1, 1, vec![
+            Transaction::Transfer(TransferTx {
+                from: addr(1), to: addr(2), amount: 100, nonce: 0,
+                signature: None, public_key: None,
+            }),
+        ]);
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_executed, 1);
+        assert_eq!(result.total_fees, 0);
+
+        // Balance should only reflect the transfer, not gas
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 900);
     }
 }

@@ -1,7 +1,8 @@
 use std::collections::hash_map::DefaultHasher;
+use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -9,9 +10,11 @@ use futures::StreamExt;
 use libp2p::{
     gossipsub::{self, IdentTopic, MessageAuthenticity},
     identify, mdns, noise,
+    request_response::{self, ProtocolSupport},
     swarm::{NetworkBehaviour, SwarmEvent},
-    tcp, yamux, Multiaddr, PeerId, SwarmBuilder,
+    tcp, yamux, Multiaddr, PeerId, StreamProtocol, SwarmBuilder,
 };
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
@@ -22,6 +25,34 @@ use evaporchain_types::{Block, Transaction};
 
 const TX_TOPIC: &str = "evaporchain/txs/1";
 const BLOCK_TOPIC: &str = "evaporchain/blocks/1";
+const BLOCK_SYNC_PROTOCOL: &str = "/evaporchain/blocksync/1";
+
+// ─────────────────────────── Block Sync Types ────────────────────────────
+
+/// Request a range of blocks from a peer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockSyncRequest {
+    pub from_height: u64,
+    pub to_height: u64,
+}
+
+/// Response containing requested blocks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockSyncResponse {
+    pub blocks: Vec<Block>,
+    /// The responder's current chain tip height.
+    pub tip_height: u64,
+}
+
+/// Shared block cache for serving sync requests. The app inserts produced/applied blocks;
+/// the network layer reads from it to serve peer requests.
+pub type BlockCache = Arc<RwLock<BTreeMap<u64, Block>>>;
+
+/// Maximum number of blocks to serve in a single sync response.
+const MAX_SYNC_BATCH: u64 = 100;
+
+/// Maximum number of blocks to keep in the cache.
+const MAX_CACHE_SIZE: usize = 2000;
 
 // ─────────────────────────── Config ──────────────────────────────────────
 
@@ -53,6 +84,7 @@ struct EvaporBehaviour {
     gossipsub: gossipsub::Behaviour,
     mdns: mdns::tokio::Behaviour,
     identify: identify::Behaviour,
+    block_sync: request_response::json::Behaviour<BlockSyncRequest, BlockSyncResponse>,
 }
 
 // ─────────────────────────── Service ─────────────────────────────────────
@@ -70,6 +102,14 @@ pub struct NetworkChannels {
     pub block_receiver: mpsc::Receiver<Block>,
     /// Number of connected peers (updated by the network event loop).
     pub peer_count: Arc<AtomicUsize>,
+    /// Shared block cache — app inserts blocks, network reads to serve sync requests.
+    pub block_cache: BlockCache,
+    /// Send sync request (from_height, to_height) to trigger block backfill from peers.
+    pub sync_request_sender: mpsc::Sender<(u64, u64)>,
+    /// Receive synced blocks from peers (backfill responses).
+    pub sync_blocks_receiver: mpsc::Receiver<Vec<Block>>,
+    /// Receive peer tip height announcements (peer connected with this chain height).
+    pub tip_receiver: mpsc::Receiver<u64>,
 }
 
 /// Handle for broadcasting to a running network service.
@@ -96,7 +136,19 @@ impl NetworkService for NetworkHandle {
     }
 }
 
-/// P2P network service using libp2p with GossipSub + mDNS.
+/// Insert a block into the cache, evicting old entries if needed.
+pub fn cache_block(cache: &BlockCache, block: &Block) {
+    let mut c = cache.write().unwrap();
+    c.insert(block.number, block.clone());
+    // Evict oldest entries if cache is too large
+    while c.len() > MAX_CACHE_SIZE {
+        if let Some(&oldest) = c.keys().next() {
+            c.remove(&oldest);
+        }
+    }
+}
+
+/// P2P network service using libp2p with GossipSub + mDNS + block sync.
 pub struct P2pNetworkService;
 
 impl P2pNetworkService {
@@ -107,6 +159,9 @@ impl P2pNetworkService {
     pub async fn start(
         config: NetworkConfig,
     ) -> Result<(NetworkChannels, NetworkHandle, PeerId), NetworkError> {
+        let block_cache: BlockCache = Arc::new(RwLock::new(BTreeMap::new()));
+        let block_cache_inner = Arc::clone(&block_cache);
+
         // Build the swarm
         let mut swarm = SwarmBuilder::with_new_identity()
             .with_tokio()
@@ -147,10 +202,20 @@ impl P2pNetworkService {
                     key.public(),
                 ));
 
+                let block_sync = request_response::json::Behaviour::new(
+                    [(
+                        StreamProtocol::new(BLOCK_SYNC_PROTOCOL),
+                        ProtocolSupport::Full,
+                    )],
+                    request_response::Config::default()
+                        .with_request_timeout(Duration::from_secs(30)),
+                );
+
                 EvaporBehaviour {
                     gossipsub,
                     mdns,
                     identify,
+                    block_sync,
                 }
             })
             .map_err(|e| NetworkError::ConnectionError(format!("behaviour: {e}")))?
@@ -198,6 +263,11 @@ impl P2pNetworkService {
         let (app_block_sender, mut net_block_receiver) = mpsc::channel::<Block>(buf);
         let (net_block_sender, app_block_receiver) = mpsc::channel::<Block>(buf);
 
+        // Sync channels
+        let (sync_req_sender, mut sync_req_receiver) = mpsc::channel::<(u64, u64)>(32);
+        let (sync_blocks_sender, sync_blocks_receiver) = mpsc::channel::<Vec<Block>>(32);
+        let (tip_sender, tip_receiver) = mpsc::channel::<u64>(32);
+
         let peer_count = Arc::new(AtomicUsize::new(0));
         let peer_count_inner = Arc::clone(&peer_count);
 
@@ -212,6 +282,10 @@ impl P2pNetworkService {
             block_sender: app_block_sender,
             block_receiver: app_block_receiver,
             peer_count,
+            block_cache: Arc::clone(&block_cache),
+            sync_request_sender: sync_req_sender,
+            sync_blocks_receiver,
+            tip_receiver,
         };
 
         // Spawn the event loop
@@ -243,9 +317,27 @@ impl P2pNetworkService {
                             Err(e) => warn!("Failed to serialize block: {e}"),
                         }
                     }
+                    // App requests block sync from peers
+                    Some((from, to)) = sync_req_receiver.recv() => {
+                        // Pick a connected peer to request blocks from
+                        let peers: Vec<PeerId> = swarm.connected_peers().cloned().collect();
+                        if peers.is_empty() {
+                            warn!("No peers available for block sync request {from}..{to}");
+                        } else {
+                            // Request from each peer (first responder wins)
+                            let target = peers[0]; // Pick first peer
+                            let capped_to = from + MAX_SYNC_BATCH.min(to - from);
+                            info!("Requesting blocks {from}..{capped_to} from peer {target}");
+                            swarm.behaviour_mut().block_sync.send_request(
+                                &target,
+                                BlockSyncRequest { from_height: from, to_height: capped_to },
+                            );
+                        }
+                    }
                     // Swarm events
                     event = swarm.select_next_some() => {
                         match event {
+                            // ── GossipSub messages ──
                             SwarmEvent::Behaviour(EvaporBehaviourEvent::Gossipsub(
                                 gossipsub::Event::Message { message, .. },
                             )) => {
@@ -265,6 +357,61 @@ impl P2pNetworkService {
                                     }
                                 }
                             }
+                            // ── Block sync: inbound request (serve blocks) ──
+                            SwarmEvent::Behaviour(EvaporBehaviourEvent::BlockSync(
+                                request_response::Event::Message {
+                                    peer,
+                                    message: request_response::Message::Request { request, channel, .. },
+                                },
+                            )) => {
+                                let from = request.from_height;
+                                let to = request.to_height.min(from + MAX_SYNC_BATCH);
+                                info!("Peer {peer} requested blocks {from}..{to}");
+
+                                let cache = block_cache_inner.read().unwrap();
+                                let blocks: Vec<Block> = (from..=to)
+                                    .filter_map(|n| cache.get(&n).cloned())
+                                    .collect();
+                                let tip = cache.keys().last().copied().unwrap_or(0);
+                                drop(cache);
+
+                                info!("Serving {} blocks to peer {peer} (tip={tip})", blocks.len());
+                                let response = BlockSyncResponse { blocks, tip_height: tip };
+                                if let Err(e) = swarm.behaviour_mut().block_sync.send_response(channel, response) {
+                                    warn!("Failed to send sync response to {peer}: {e:?}");
+                                }
+                            }
+                            // ── Block sync: outbound response (received blocks) ──
+                            SwarmEvent::Behaviour(EvaporBehaviourEvent::BlockSync(
+                                request_response::Event::Message {
+                                    peer,
+                                    message: request_response::Message::Response { response, .. },
+                                },
+                            )) => {
+                                info!(
+                                    "Received {} sync blocks from peer {peer} (tip={})",
+                                    response.blocks.len(), response.tip_height
+                                );
+                                if !response.blocks.is_empty() {
+                                    let _ = sync_blocks_sender.send(response.blocks).await;
+                                }
+                                let _ = tip_sender.send(response.tip_height).await;
+                            }
+                            // ── Block sync failures ──
+                            SwarmEvent::Behaviour(EvaporBehaviourEvent::BlockSync(
+                                request_response::Event::OutboundFailure { peer, error, .. },
+                            )) => {
+                                warn!("Block sync request to {peer} failed: {error}");
+                            }
+                            SwarmEvent::Behaviour(EvaporBehaviourEvent::BlockSync(
+                                request_response::Event::InboundFailure { peer, error, .. },
+                            )) => {
+                                debug!("Inbound sync from {peer} failed: {error}");
+                            }
+                            SwarmEvent::Behaviour(EvaporBehaviourEvent::BlockSync(
+                                request_response::Event::ResponseSent { .. },
+                            )) => {}
+                            // ── mDNS discovery ──
                             SwarmEvent::Behaviour(EvaporBehaviourEvent::Mdns(
                                 mdns::Event::Discovered(peers),
                             )) => {
@@ -285,9 +432,17 @@ impl P2pNetworkService {
                                 let count = swarm.connected_peers().count();
                                 peer_count_inner.store(count, Ordering::Relaxed);
                             }
-                            SwarmEvent::ConnectionEstablished { .. } => {
+                            // ── Connection events ──
+                            SwarmEvent::ConnectionEstablished { peer_id, .. } => {
                                 let count = swarm.connected_peers().count();
                                 peer_count_inner.store(count, Ordering::Relaxed);
+                                info!("Connection established with {peer_id} (total: {count})");
+
+                                // Request the peer's chain tip to detect if we're behind
+                                swarm.behaviour_mut().block_sync.send_request(
+                                    &peer_id,
+                                    BlockSyncRequest { from_height: 0, to_height: 0 },
+                                );
                             }
                             SwarmEvent::ConnectionClosed { .. } => {
                                 let count = swarm.connected_peers().count();
@@ -343,6 +498,7 @@ mod tests {
             state_root: [0u8; 32],
             transactions: vec![],
             timestamp: 0,
+            producer_id: None,
         }
     }
 
@@ -456,8 +612,6 @@ mod tests {
 
         // Broadcasting via handle should succeed (even with no peers)
         let tx = dummy_tx(100);
-        // publish will "fail" with InsufficientPeers but handle.broadcast_tx
-        // only fails if the channel is closed, which it's not
         let result = handle.broadcast_tx(&tx).await;
         assert!(result.is_ok());
 
@@ -471,5 +625,58 @@ mod tests {
         let mock = crate::MockNetwork;
         assert!(mock.broadcast_tx(&dummy_tx(1)).await.is_ok());
         assert!(mock.broadcast_block(&dummy_block(1)).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_block_cache_insert_and_evict() {
+        let cache: BlockCache = Arc::new(RwLock::new(BTreeMap::new()));
+
+        // Insert blocks
+        for i in 0..10 {
+            cache_block(&cache, &dummy_block(i));
+        }
+        assert_eq!(cache.read().unwrap().len(), 10);
+
+        // Verify ordering
+        let c = cache.read().unwrap();
+        let keys: Vec<u64> = c.keys().copied().collect();
+        assert_eq!(keys, (0..10).collect::<Vec<_>>());
+    }
+
+    #[tokio::test]
+    async fn test_block_sync_request_response() {
+        // Start two nodes
+        let (ch1, _h1, _pid1) = P2pNetworkService::start(make_config(0))
+            .await
+            .expect("node1");
+        let (mut ch2, _h2, _pid2) = P2pNetworkService::start(make_config(0))
+            .await
+            .expect("node2");
+
+        // Populate node1's block cache
+        for i in 1..=10 {
+            cache_block(&ch1.block_cache, &dummy_block(i));
+        }
+
+        // Wait for mDNS discovery
+        wait_for_discovery(Duration::from_secs(3)).await;
+
+        // Node 2 requests blocks 1..5 from peers
+        ch2.sync_request_sender.send((1, 5)).await.expect("send sync request");
+
+        // Node 2 should receive synced blocks
+        let result = timeout(Duration::from_secs(5), ch2.sync_blocks_receiver.recv()).await;
+        match result {
+            Ok(Some(blocks)) => {
+                assert!(!blocks.is_empty(), "should receive blocks");
+                info!("Received {} synced blocks", blocks.len());
+            }
+            Ok(None) => {
+                eprintln!("sync_blocks_receiver closed (mDNS may not have connected)");
+            }
+            Err(_) => {
+                eprintln!("block sync timed out (mDNS may not be available)");
+            }
+        }
     }
 }

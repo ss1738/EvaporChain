@@ -63,7 +63,7 @@ pub struct GhostRecord {
     pub data_hash: [u8; 32],
     pub original_data: Vec<u8>,
     /// Position in the MMR nullifier accumulator (None for legacy ghosts).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub mmr_position: Option<u64>,
 }
 
@@ -195,6 +195,20 @@ impl Transaction {
             Transaction::CallContract(tx) => tx.public_key.as_deref(),
             Transaction::DeployScript(tx) => tx.public_key.as_deref(),
             Transaction::CallScript(tx) => tx.public_key.as_deref(),
+        }
+    }
+
+    /// Get the sender/payer address for fee deduction.
+    /// Returns the address of the account responsible for paying gas fees.
+    pub fn sender(&self) -> Option<&AccountAddress> {
+        match self {
+            Transaction::Transfer(tx) => Some(&tx.from),
+            Transaction::CreateObject(tx) => Some(&tx.creator),
+            Transaction::DeployContract(tx) => Some(&tx.deployer),
+            Transaction::CallContract(tx) => Some(&tx.caller),
+            Transaction::DeployScript(tx) => Some(&tx.deployer),
+            Transaction::CallScript(tx) => Some(&tx.caller),
+            Transaction::Refresh(_) => None, // Refresh has no sender address field
         }
     }
 }

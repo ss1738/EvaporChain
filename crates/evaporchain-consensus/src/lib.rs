@@ -1,13 +1,17 @@
+pub mod encrypted_mempool;
 pub mod mempool;
+pub mod validator_set;
 
+use encrypted_mempool::EncryptedMempool;
 use evaporchain_crypto::hash::blake3_hash;
-use evaporchain_execution::{BlockExecutionResult, ExecutionEngine, SimpleExecutor};
+use evaporchain_execution::{fees::PidFeeController, BlockExecutionResult, ExecutionEngine, SimpleExecutor};
 use evaporchain_state::db::StateDB;
 use evaporchain_types::{Block, Epoch, Transaction};
 use mempool::Mempool;
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use tracing::info;
+use validator_set::{ValidatorInfo, ValidatorSet};
 
 /// Errors that can occur during consensus.
 #[derive(Debug, Error)]
@@ -16,6 +20,17 @@ pub enum ConsensusError {
     ProposalFailed(String),
     #[error("execution failed: {0}")]
     ExecutionFailed(String),
+    #[error("not leader: validator {validator_id} is not the leader for epoch {epoch} (leader is {leader_id})")]
+    NotLeader {
+        validator_id: u64,
+        epoch: u64,
+        leader_id: u64,
+    },
+    #[error("invalid producer: block produced by validator {producer_id}, expected {expected_id}")]
+    InvalidProducer {
+        producer_id: u64,
+        expected_id: u64,
+    },
 }
 
 /// Result of producing one block.
@@ -32,8 +47,10 @@ pub struct MockConsensus {
     block_number: u64,
     epoch: Epoch,
     parent_hash: [u8; 32],
-    executor: SimpleExecutor,
+    pub executor: SimpleExecutor,
     pub mempool: Mempool,
+    /// MEV-protected encrypted mempool (enabled with --mev-protection).
+    pub encrypted_mempool: Option<EncryptedMempool>,
 }
 
 impl MockConsensus {
@@ -41,13 +58,37 @@ impl MockConsensus {
     ///
     /// `grace_period` is forwarded to the evaporation engine inside the executor.
     pub fn new(grace_period: u64) -> Self {
+        // Block gas limit: ~20 transfers per block (21000 gas each)
+        let block_gas_limit = 500_000;
         Self {
             block_number: 0,
             epoch: 0,
             parent_hash: [0u8; 32],
-            executor: SimpleExecutor::new(grace_period),
+            executor: SimpleExecutor::new_production(
+                grace_period,
+                PidFeeController::testnet_config(),
+                block_gas_limit,
+            ),
             mempool: Mempool::new(),
+            encrypted_mempool: None,
         }
+    }
+
+    /// Create a new consensus engine with MEV protection enabled.
+    pub fn new_with_mev_protection(grace_period: u64, reveal_delay: u64) -> Self {
+        Self {
+            block_number: 0,
+            epoch: 0,
+            parent_hash: [0u8; 32],
+            executor: SimpleExecutor::new_with_sig_verification(grace_period),
+            mempool: Mempool::new(),
+            encrypted_mempool: Some(EncryptedMempool::new(reveal_delay)),
+        }
+    }
+
+    /// Whether MEV protection is enabled.
+    pub fn mev_protection_enabled(&self) -> bool {
+        self.encrypted_mempool.is_some()
     }
 
     /// Current epoch.
@@ -58,6 +99,13 @@ impl MockConsensus {
     /// Current block number.
     pub fn block_number(&self) -> u64 {
         self.block_number
+    }
+
+    /// Restore consensus state from persistent storage (used on restart).
+    pub fn restore_state(&mut self, block_number: u64, epoch: Epoch, parent_hash: [u8; 32]) {
+        self.block_number = block_number;
+        self.epoch = epoch;
+        self.parent_hash = parent_hash;
     }
 
     /// Apply a block received from a peer: re-execute transactions and
@@ -121,6 +169,7 @@ impl MockConsensus {
             state_root: [0u8; 32],
             transactions: txs,
             timestamp,
+            producer_id: None,
         };
 
         let execution = self
@@ -148,11 +197,299 @@ impl MockConsensus {
 
         Ok(BlockProductionResult { block, execution })
     }
+
+    /// Produce a block with MEV-protected reveals.
+    ///
+    /// Processes encrypted tx reveals for the current epoch, combines with
+    /// plaintext mempool transactions, and produces a block.
+    /// `nonces` maps commitment → nonce for encrypted txs being revealed.
+    pub fn produce_block_with_reveals(
+        &mut self,
+        db: &mut dyn StateDB,
+        nonces: &[([u8; 32], [u8; 32])],
+    ) -> Result<BlockProductionResult, ConsensusError> {
+        self.epoch += 1;
+        self.block_number += 1;
+
+        // Drain plaintext mempool
+        let mut txs: Vec<Transaction> = self.mempool.drain();
+
+        // Process encrypted reveals
+        if let Some(ref mut enc_pool) = self.encrypted_mempool {
+            let revealed = enc_pool.process_reveals(self.epoch, nonces);
+            txs.extend(revealed);
+        }
+
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let mut block = Block {
+            number: self.block_number,
+            epoch: self.epoch,
+            parent_hash: self.parent_hash,
+            state_root: [0u8; 32],
+            transactions: txs,
+            timestamp,
+            producer_id: None,
+        };
+
+        let execution = self
+            .executor
+            .execute_block(db, &block)
+            .map_err(|e| ConsensusError::ExecutionFailed(e.to_string()))?;
+
+        block.state_root = execution.state_root;
+
+        let mut hash_input = Vec::new();
+        hash_input.extend_from_slice(&block.number.to_le_bytes());
+        hash_input.extend_from_slice(&block.epoch.to_le_bytes());
+        hash_input.extend_from_slice(&block.state_root);
+        hash_input.extend_from_slice(&block.parent_hash);
+        self.parent_hash = blake3_hash(&hash_input);
+
+        info!(
+            block = block.number,
+            epoch = block.epoch,
+            txs = block.transactions.len(),
+            state_root = hex::encode(block.state_root),
+            "Block produced (MEV-protected)"
+        );
+
+        Ok(BlockProductionResult { block, execution })
+    }
+}
+
+// ─────────────────── RotatingConsensus ──────────────────────────────────────
+
+/// Multi-producer consensus with energy-weighted leader rotation.
+///
+/// Wraps a `ValidatorSet` and the existing block production logic from
+/// `MockConsensus`.  Each epoch, exactly one validator is the legitimate
+/// leader.  Other validators verify that received blocks were produced by
+/// the correct leader.
+pub struct RotatingConsensus {
+    /// This node's validator id.
+    my_id: u64,
+    block_number: u64,
+    epoch: Epoch,
+    parent_hash: [u8; 32],
+    executor: SimpleExecutor,
+    pub mempool: Mempool,
+    pub encrypted_mempool: Option<EncryptedMempool>,
+    pub validator_set: ValidatorSet,
+}
+
+impl RotatingConsensus {
+    /// Create a new rotating consensus engine.
+    pub fn new(my_id: u64, grace_period: u64, validator_set: ValidatorSet) -> Self {
+        let block_gas_limit = 500_000;
+        Self {
+            my_id,
+            block_number: 0,
+            epoch: 0,
+            parent_hash: [0u8; 32],
+            executor: SimpleExecutor::new_production(
+                grace_period,
+                PidFeeController::testnet_config(),
+                block_gas_limit,
+            ),
+            mempool: Mempool::new(),
+            encrypted_mempool: None,
+            validator_set,
+        }
+    }
+
+    /// Create with MEV protection enabled.
+    pub fn new_with_mev_protection(
+        my_id: u64,
+        grace_period: u64,
+        reveal_delay: u64,
+        validator_set: ValidatorSet,
+    ) -> Self {
+        Self {
+            my_id,
+            block_number: 0,
+            epoch: 0,
+            parent_hash: [0u8; 32],
+            executor: SimpleExecutor::new_with_sig_verification(grace_period),
+            mempool: Mempool::new(),
+            encrypted_mempool: Some(EncryptedMempool::new(reveal_delay)),
+            validator_set,
+        }
+    }
+
+    /// This node's validator id.
+    pub fn my_id(&self) -> u64 {
+        self.my_id
+    }
+
+    /// Current epoch.
+    pub fn epoch(&self) -> Epoch {
+        self.epoch
+    }
+
+    /// Current block number.
+    pub fn block_number(&self) -> u64 {
+        self.block_number
+    }
+
+    /// Check if validator `id` is the leader for the given epoch.
+    pub fn is_my_turn(&self, my_id: u64, epoch: u64) -> bool {
+        self.validator_set.is_leader(my_id, epoch)
+    }
+
+    /// Produce a block if this node is the leader for the next epoch.
+    ///
+    /// Returns `None` if this node is not the leader.
+    /// Returns `Err` if block production fails.
+    pub fn produce_block_if_leader(
+        &mut self,
+        db: &mut dyn StateDB,
+    ) -> Result<Option<BlockProductionResult>, ConsensusError> {
+        let next_epoch = self.epoch + 1;
+
+        if !self.is_my_turn(self.my_id, next_epoch) {
+            return Ok(None);
+        }
+
+        self.epoch = next_epoch;
+        self.block_number += 1;
+
+        let txs: Vec<Transaction> = self.mempool.drain();
+
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let mut block = Block {
+            number: self.block_number,
+            epoch: self.epoch,
+            parent_hash: self.parent_hash,
+            state_root: [0u8; 32],
+            transactions: txs,
+            timestamp,
+            producer_id: Some(self.my_id),
+        };
+
+        let execution = self
+            .executor
+            .execute_block(db, &block)
+            .map_err(|e| ConsensusError::ExecutionFailed(e.to_string()))?;
+
+        block.state_root = execution.state_root;
+
+        // Update validator health based on evaporations processed
+        self.validator_set
+            .update_health_score(self.my_id, execution.objects_evaporated);
+
+        // Decay all health scores each epoch
+        self.validator_set.decay_health_scores();
+
+        // Derive parent hash for next block
+        let mut hash_input = Vec::new();
+        hash_input.extend_from_slice(&block.number.to_le_bytes());
+        hash_input.extend_from_slice(&block.epoch.to_le_bytes());
+        hash_input.extend_from_slice(&block.state_root);
+        hash_input.extend_from_slice(&block.parent_hash);
+        self.parent_hash = blake3_hash(&hash_input);
+
+        info!(
+            block = block.number,
+            epoch = block.epoch,
+            producer = self.my_id,
+            txs = block.transactions.len(),
+            state_root = hex::encode(block.state_root),
+            "Block produced (rotating consensus)"
+        );
+
+        Ok(Some(BlockProductionResult { block, execution }))
+    }
+
+    /// Validate that a received block was produced by the legitimate leader.
+    pub fn validate_received_block(&self, block: &Block) -> Result<(), ConsensusError> {
+        let producer_id = block.producer_id.ok_or(ConsensusError::ProposalFailed(
+            "block missing producer_id".to_string(),
+        ))?;
+
+        let expected_leader = self
+            .validator_set
+            .leader_for_epoch(block.epoch)
+            .ok_or(ConsensusError::ProposalFailed(
+                "no validators in set".to_string(),
+            ))?;
+
+        if producer_id != expected_leader.id {
+            return Err(ConsensusError::InvalidProducer {
+                producer_id,
+                expected_id: expected_leader.id,
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Apply a validated block from a peer: re-execute and advance local state.
+    pub fn apply_block(
+        &mut self,
+        db: &mut dyn StateDB,
+        block: &Block,
+    ) -> Result<BlockProductionResult, ConsensusError> {
+        // Validate producer legitimacy first
+        self.validate_received_block(block)?;
+
+        let execution = self
+            .executor
+            .execute_block(db, block)
+            .map_err(|e| ConsensusError::ExecutionFailed(e.to_string()))?;
+
+        // Update health score for the block producer
+        if let Some(producer_id) = block.producer_id {
+            self.validator_set
+                .update_health_score(producer_id, execution.objects_evaporated);
+        }
+
+        // Decay all health scores
+        self.validator_set.decay_health_scores();
+
+        // Advance local tracking
+        self.block_number = block.number;
+        self.epoch = block.epoch;
+
+        let mut hash_input = Vec::new();
+        hash_input.extend_from_slice(&block.number.to_le_bytes());
+        hash_input.extend_from_slice(&block.epoch.to_le_bytes());
+        hash_input.extend_from_slice(&execution.state_root);
+        hash_input.extend_from_slice(&block.parent_hash);
+        self.parent_hash = blake3_hash(&hash_input);
+
+        info!(
+            block = block.number,
+            epoch = block.epoch,
+            producer = ?block.producer_id,
+            txs = block.transactions.len(),
+            state_root = hex::encode(execution.state_root),
+            "Block applied from peer (rotating consensus)"
+        );
+
+        Ok(BlockProductionResult {
+            block: block.clone(),
+            execution,
+        })
+    }
+
+    /// Get the leader validator for a given epoch.
+    pub fn leader_for_epoch(&self, epoch: u64) -> Option<&ValidatorInfo> {
+        self.validator_set.leader_for_epoch(epoch)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use evaporchain_crypto::signatures::{MlDsaKeypair, Signer};
     use evaporchain_state::InMemoryStateDB;
     use evaporchain_types::{Account, CreateObjectTx, ObjectState, StateObject, TransferTx};
 
@@ -166,6 +503,43 @@ mod tests {
         let mut id = [0u8; 32];
         id[0] = b;
         id
+    }
+
+    /// Sign a transaction with the given keypair.
+    fn sign_tx(tx: &mut Transaction, kp: &MlDsaKeypair) {
+        let msg = tx.signable_bytes();
+        let sig = kp.sign(&msg);
+        let pk = kp.public_key_bytes();
+        match tx {
+            Transaction::Transfer(ref mut inner) => {
+                inner.signature = Some(sig);
+                inner.public_key = Some(pk);
+            }
+            Transaction::CreateObject(ref mut inner) => {
+                inner.signature = Some(sig);
+                inner.public_key = Some(pk);
+            }
+            Transaction::Refresh(ref mut inner) => {
+                inner.signature = Some(sig);
+                inner.public_key = Some(pk);
+            }
+            Transaction::DeployContract(ref mut inner) => {
+                inner.signature = Some(sig);
+                inner.public_key = Some(pk);
+            }
+            Transaction::CallContract(ref mut inner) => {
+                inner.signature = Some(sig);
+                inner.public_key = Some(pk);
+            }
+            Transaction::DeployScript(ref mut inner) => {
+                inner.signature = Some(sig);
+                inner.public_key = Some(pk);
+            }
+            Transaction::CallScript(ref mut inner) => {
+                inner.signature = Some(sig);
+                inner.public_key = Some(pk);
+            }
+        }
     }
 
     #[test]
@@ -210,21 +584,22 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         db.put_account(Account {
             address: addr(1),
-            balance: 1000,
+            balance: 1_000_000,
             nonce: 0,
         });
 
+        let kp = MlDsaKeypair::generate();
         let mut consensus = MockConsensus::new(5);
-        consensus
-            .mempool
-            .submit(Transaction::Transfer(TransferTx {
-                from: addr(1),
-                to: addr(2),
-                amount: 100,
-                nonce: 0,
-                signature: None,
-                public_key: None,
-            }));
+        let mut tx = Transaction::Transfer(TransferTx {
+            from: addr(1),
+            to: addr(2),
+            amount: 100,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        });
+        sign_tx(&mut tx, &kp);
+        consensus.mempool.submit(tx);
 
         let result = consensus.produce_block(&mut db).unwrap();
         assert_eq!(result.execution.txs_executed, 1);
@@ -275,19 +650,25 @@ mod tests {
     #[test]
     fn test_create_object_via_consensus() {
         let mut db = InMemoryStateDB::new();
+        db.put_account(Account {
+            address: addr(1),
+            balance: 1_000_000,
+            nonce: 0,
+        });
+        let kp = MlDsaKeypair::generate();
         let mut consensus = MockConsensus::new(5);
 
-        consensus
-            .mempool
-            .submit(Transaction::CreateObject(CreateObjectTx {
-                creator: addr(1),
-                object_id: obj_id(42),
-                energy: 5000,
-                half_life: 100,
-                data: vec![1, 2, 3],
-                signature: None,
-                public_key: None,
-            }));
+        let mut tx = Transaction::CreateObject(CreateObjectTx {
+            creator: addr(1),
+            object_id: obj_id(42),
+            energy: 5000,
+            half_life: 100,
+            data: vec![1, 2, 3],
+            signature: None,
+            public_key: None,
+        });
+        sign_tx(&mut tx, &kp);
+        consensus.mempool.submit(tx);
 
         let result = consensus.produce_block(&mut db).unwrap();
         assert_eq!(result.execution.txs_executed, 1);
@@ -304,27 +685,28 @@ mod tests {
         let mut producer_db = InMemoryStateDB::new();
         producer_db.put_account(Account {
             address: addr(1),
-            balance: 10_000,
+            balance: 1_000_000,
             nonce: 0,
         });
+        let kp = MlDsaKeypair::generate();
         let mut producer = MockConsensus::new(5);
-        producer
-            .mempool
-            .submit(Transaction::Transfer(TransferTx {
-                from: addr(1),
-                to: addr(2),
-                amount: 500,
-                nonce: 0,
-                signature: None,
-                public_key: None,
-            }));
+        let mut tx = Transaction::Transfer(TransferTx {
+            from: addr(1),
+            to: addr(2),
+            amount: 500,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        });
+        sign_tx(&mut tx, &kp);
+        producer.mempool.submit(tx);
         let produced = producer.produce_block(&mut producer_db).unwrap();
 
         // Follower applies the same block
         let mut follower_db = InMemoryStateDB::new();
         follower_db.put_account(Account {
             address: addr(1),
-            balance: 10_000,
+            balance: 1_000_000,
             nonce: 0,
         });
         let mut follower = MockConsensus::new(5);
@@ -368,34 +750,36 @@ mod tests {
             data: vec![0xAA],
         });
 
+        let kp1 = MlDsaKeypair::generate();
+        let kp2 = MlDsaKeypair::generate();
         let mut producer = MockConsensus::new(3);
         let mut blocks = Vec::new();
 
         // Block 1: transfer
-        producer
-            .mempool
-            .submit(Transaction::Transfer(TransferTx {
-                from: addr(1),
-                to: addr(2),
-                amount: 1000,
-                nonce: 0,
-                signature: None,
-                public_key: None,
-            }));
+        let mut tx1 = Transaction::Transfer(TransferTx {
+            from: addr(1),
+            to: addr(2),
+            amount: 1000,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        });
+        sign_tx(&mut tx1, &kp1);
+        producer.mempool.submit(tx1);
         blocks.push(producer.produce_block(&mut producer_db).unwrap().block);
 
         // Block 2: create object
-        producer
-            .mempool
-            .submit(Transaction::CreateObject(CreateObjectTx {
-                creator: addr(2),
-                object_id: obj_id(42),
-                energy: 500,
-                half_life: 10,
-                data: vec![0xBB],
-                signature: None,
-                public_key: None,
-            }));
+        let mut tx2 = Transaction::CreateObject(CreateObjectTx {
+            creator: addr(2),
+            object_id: obj_id(42),
+            energy: 500,
+            half_life: 10,
+            data: vec![0xBB],
+            signature: None,
+            public_key: None,
+        });
+        sign_tx(&mut tx2, &kp2);
+        producer.mempool.submit(tx2);
         blocks.push(producer.produce_block(&mut producer_db).unwrap().block);
 
         // Block 3: empty (just evaporation tick)
@@ -433,5 +817,320 @@ mod tests {
         assert_eq!(follower.epoch(), 3);
         assert_eq!(follower.block_number(), 3);
         assert_eq!(follower_db.object_count(), producer_db.object_count());
+    }
+
+    // ─────────────── RotatingConsensus tests ───────────────────────────────
+
+    fn make_validator(id: u64, stake: u64) -> ValidatorInfo {
+        let mut address = [0u8; 32];
+        address[0] = id as u8;
+        ValidatorInfo::new(id, stake, address)
+    }
+
+    fn make_rotating(my_id: u64, validator_ids: &[u64]) -> RotatingConsensus {
+        let validators: Vec<_> = validator_ids
+            .iter()
+            .map(|&id| make_validator(id, 1000))
+            .collect();
+        RotatingConsensus::new(my_id, 5, ValidatorSet::with_validators(validators))
+    }
+
+    #[test]
+    fn test_rotating_produce_when_leader() {
+        let mut db = InMemoryStateDB::new();
+        // Try many epochs — we must be leader for at least one
+        let mut rc = make_rotating(1, &[1, 2, 3, 4]);
+        let mut produced = false;
+        for _ in 0..100 {
+            if let Ok(Some(result)) = rc.produce_block_if_leader(&mut db) {
+                assert_eq!(result.block.producer_id, Some(1));
+                produced = true;
+                break;
+            } else {
+                // Not our turn — advance epoch manually
+                rc.epoch += 1;
+            }
+        }
+        assert!(produced, "Validator 1 should be leader at least once in 100 epochs");
+    }
+
+    #[test]
+    fn test_rotating_skip_when_not_leader() {
+        let mut db = InMemoryStateDB::new();
+        let mut rc = make_rotating(1, &[1, 2, 3, 4]);
+        let mut skipped = false;
+        for _ in 0..100 {
+            let next_epoch = rc.epoch + 1;
+            if !rc.is_my_turn(1, next_epoch) {
+                let result = rc.produce_block_if_leader(&mut db).unwrap();
+                assert!(result.is_none());
+                skipped = true;
+                break;
+            }
+            rc.epoch += 1;
+        }
+        assert!(skipped, "Validator 1 should NOT be leader for at least one epoch");
+    }
+
+    #[test]
+    fn test_rotating_validate_legitimate_block() {
+        let mut db = InMemoryStateDB::new();
+        // Producer produces a block
+        let mut producer = make_rotating(1, &[1, 2, 3, 4]);
+        let mut block = None;
+        for _ in 0..100 {
+            if let Ok(Some(result)) = producer.produce_block_if_leader(&mut db) {
+                block = Some(result.block);
+                break;
+            } else {
+                producer.epoch += 1;
+            }
+        }
+        let block = block.expect("should produce at least one block");
+
+        // Follower validates it
+        let follower = make_rotating(2, &[1, 2, 3, 4]);
+        assert!(follower.validate_received_block(&block).is_ok());
+    }
+
+    #[test]
+    fn test_rotating_reject_wrong_producer() {
+        let rc = make_rotating(1, &[1, 2, 3, 4]);
+
+        // Find which validator is leader for epoch 1
+        let leader = rc.leader_for_epoch(1).unwrap().id;
+        let wrong_id = if leader == 1 { 2 } else { 1 };
+
+        let block = Block {
+            number: 1,
+            epoch: 1,
+            parent_hash: [0u8; 32],
+            state_root: [0u8; 32],
+            transactions: vec![],
+            timestamp: 0,
+            producer_id: Some(wrong_id),
+        };
+
+        let result = rc.validate_received_block(&block);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ConsensusError::InvalidProducer { producer_id, expected_id } => {
+                assert_eq!(producer_id, wrong_id);
+                assert_eq!(expected_id, leader);
+            }
+            e => panic!("Expected InvalidProducer, got {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_rotating_reject_missing_producer_id() {
+        let rc = make_rotating(1, &[1, 2, 3, 4]);
+        let block = Block {
+            number: 1,
+            epoch: 1,
+            parent_hash: [0u8; 32],
+            state_root: [0u8; 32],
+            transactions: vec![],
+            timestamp: 0,
+            producer_id: None,
+        };
+        assert!(rc.validate_received_block(&block).is_err());
+    }
+
+    #[test]
+    fn test_rotating_apply_block_from_peer() {
+        let mut producer_db = InMemoryStateDB::new();
+        producer_db.put_account(Account {
+            address: addr(1),
+            balance: 1_000_000,
+            nonce: 0,
+        });
+
+        let mut producer = make_rotating(1, &[1, 2, 3, 4]);
+        // Find an epoch where validator 1 is leader
+        let mut produced_block = None;
+        for _ in 0..100 {
+            if let Ok(Some(result)) = producer.produce_block_if_leader(&mut producer_db) {
+                produced_block = Some(result.block);
+                break;
+            } else {
+                producer.epoch += 1;
+            }
+        }
+        let block = produced_block.expect("should produce");
+
+        // Follower applies
+        let mut follower_db = InMemoryStateDB::new();
+        follower_db.put_account(Account {
+            address: addr(1),
+            balance: 1_000_000,
+            nonce: 0,
+        });
+        let mut follower = make_rotating(2, &[1, 2, 3, 4]);
+        let applied = follower.apply_block(&mut follower_db, &block).unwrap();
+        assert_eq!(applied.execution.state_root, block.state_root);
+        assert_eq!(follower.epoch(), block.epoch);
+    }
+
+    #[test]
+    fn test_rotating_apply_rejects_invalid_producer() {
+        let mut db = InMemoryStateDB::new();
+        let mut follower = make_rotating(2, &[1, 2, 3, 4]);
+
+        let leader = follower.leader_for_epoch(1).unwrap().id;
+        let wrong_id = if leader == 1 { 2 } else { 1 };
+
+        let block = Block {
+            number: 1,
+            epoch: 1,
+            parent_hash: [0u8; 32],
+            state_root: [0u8; 32],
+            transactions: vec![],
+            timestamp: 0,
+            producer_id: Some(wrong_id),
+        };
+
+        assert!(follower.apply_block(&mut db, &block).is_err());
+    }
+
+    #[test]
+    fn test_rotating_producer_id_set_in_block() {
+        let mut db = InMemoryStateDB::new();
+        let mut rc = make_rotating(3, &[1, 2, 3, 4]);
+
+        for _ in 0..100 {
+            if let Ok(Some(result)) = rc.produce_block_if_leader(&mut db) {
+                assert_eq!(result.block.producer_id, Some(3));
+                return;
+            } else {
+                rc.epoch += 1;
+            }
+        }
+        panic!("Validator 3 never got a turn");
+    }
+
+    #[test]
+    fn test_rotating_health_score_updates_on_produce() {
+        let mut db = InMemoryStateDB::new();
+        // Add an object that will evaporate
+        db.put_object(StateObject {
+            id: obj_id(1),
+            owner: addr(1),
+            energy: 2,
+            half_life: 1,
+            created_at: 0,
+            last_refreshed: 0,
+            state: ObjectState::Active,
+            grace_epoch: None,
+            data: vec![0xAB],
+        });
+
+        let mut rc = make_rotating(1, &[1, 2]);
+        let initial_health = rc.validator_set.get(1).unwrap().health_score;
+
+        // Produce blocks until evaporation happens
+        for _ in 0..20 {
+            if rc.produce_block_if_leader(&mut db).is_ok() {
+                // produced or skipped
+            }
+            if rc.validator_set.get(1).unwrap().health_score != initial_health {
+                break;
+            }
+            rc.epoch += 1;
+        }
+        // Health score changed (either increased from evaporation or decayed)
+        // The point is the system tracks it
+        assert!(rc.validator_set.get(1).unwrap().blocks_produced > 0
+            || rc.validator_set.get(1).unwrap().health_score != initial_health);
+    }
+
+    #[test]
+    fn test_rotating_all_validators_produce() {
+        let mut db = InMemoryStateDB::new();
+        let ids = [1u64, 2, 3, 4];
+        let mut produced_by = std::collections::HashSet::new();
+
+        for &my_id in &ids {
+            let mut rc = make_rotating(my_id, &ids);
+            for _ in 0..200 {
+                if let Ok(Some(result)) = rc.produce_block_if_leader(&mut db) {
+                    produced_by.insert(result.block.producer_id.unwrap());
+                } else {
+                    rc.epoch += 1;
+                }
+            }
+        }
+
+        assert_eq!(
+            produced_by.len(),
+            4,
+            "All 4 validators should produce at least one block: {:?}",
+            produced_by
+        );
+    }
+
+    #[test]
+    fn test_rotating_epoch_advances_only_on_produce() {
+        let mut db = InMemoryStateDB::new();
+        let mut rc = make_rotating(1, &[1, 2, 3, 4]);
+
+        // When not leader, epoch should not advance
+        let epoch_before = rc.epoch();
+        let result = rc.produce_block_if_leader(&mut db).unwrap();
+        if result.is_none() {
+            assert_eq!(rc.epoch(), epoch_before);
+        }
+    }
+
+    #[test]
+    fn test_rotating_is_my_turn() {
+        let rc = make_rotating(1, &[1, 2, 3, 4]);
+        let mut my_turns = 0;
+        let mut not_my_turns = 0;
+        for epoch in 1..=100 {
+            if rc.is_my_turn(1, epoch) {
+                my_turns += 1;
+            } else {
+                not_my_turns += 1;
+            }
+        }
+        // With 4 equal-stake validators, should get roughly 25% of turns
+        assert!(my_turns > 10, "Expected at least 10 turns, got {}", my_turns);
+        assert!(not_my_turns > 50, "Expected mostly not-my-turns, got {}", not_my_turns);
+    }
+
+    #[test]
+    fn test_rotating_with_transactions() {
+        let mut db = InMemoryStateDB::new();
+        db.put_account(Account {
+            address: addr(1),
+            balance: 1_000_000,
+            nonce: 0,
+        });
+
+        let kp = MlDsaKeypair::generate();
+        let mut rc = make_rotating(1, &[1, 2]);
+        let mut tx = Transaction::Transfer(TransferTx {
+            from: addr(1),
+            to: addr(2),
+            amount: 500,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        });
+        sign_tx(&mut tx, &kp);
+        rc.mempool.submit(tx);
+
+        // Produce until our turn
+        for _ in 0..100 {
+            if let Ok(Some(result)) = rc.produce_block_if_leader(&mut db) {
+                assert_eq!(result.execution.txs_executed, 1);
+                assert_eq!(result.block.transactions.len(), 1);
+                return;
+            } else {
+                rc.epoch += 1;
+            }
+        }
+        panic!("Never got to produce");
     }
 }
