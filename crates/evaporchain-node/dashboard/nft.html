@@ -45,7 +45,7 @@ a{color:inherit;text-decoration:none}
 @keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:0.4}}
 
 /* ── Layout ── */
-.main{padding-top:calc(var(--nav-h) + 28px + 24px);max-width:1320px;margin:0 auto;padding-left:20px;padding-right:20px;padding-bottom:80px}
+.main{padding-top:calc(var(--nav-h) + 28px + 24px);max-width:1320px;margin:0 auto;padding-left:20px;padding-right:20px;padding-bottom:80px;position:relative;z-index:1}
 
 /* ── Header ── */
 .page-header{margin-bottom:40px}
@@ -54,7 +54,7 @@ a{color:inherit;text-decoration:none}
 
 /* ── Stats Bar ── */
 .stats-bar{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:32px}
-.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px 16px}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px 16px;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
 .stat-label{font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:0.05em;color:var(--text3);margin-bottom:4px}
 .stat-value{font-size:20px;font-weight:700;font-family:var(--font-mono);color:var(--text)}
 
@@ -69,7 +69,7 @@ a{color:inherit;text-decoration:none}
 .nft-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px}
 
 /* ── NFT Card ── */
-.nft-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;transition:border-color 0.2s,transform 0.2s}
+.nft-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;transition:border-color 0.2s,transform 0.2s;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
 .nft-card:hover{border-color:var(--border-active);transform:translateY(-2px)}
 .nft-card.grace{border-color:rgba(245,158,11,0.2)}
 .nft-card.grace:hover{border-color:rgba(245,158,11,0.35)}
@@ -174,21 +174,31 @@ a{color:inherit;text-decoration:none}
 .modal{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:24px;max-width:400px;width:90%}
 .modal-title{font-size:16px;font-weight:600;margin-bottom:16px}
 .modal-actions{display:flex;gap:8px;margin-top:16px;justify-content:flex-end}
+/* Aurora orb */
+.aurora-orb{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:700px;height:700px;border-radius:50%;background:radial-gradient(circle,rgba(0,240,255,0.06) 0%,rgba(139,92,246,0.04) 40%,transparent 70%);filter:blur(80px);animation:orbFloat 14s ease-in-out infinite;pointer-events:none;z-index:0}
+@keyframes orbFloat{0%,100%{transform:translate(-50%,-50%) scale(1)}33%{transform:translate(-48%,-52%) scale(1.06)}66%{transform:translate(-52%,-48%) scale(0.94)}}
+/* Entrance animations */
+@keyframes fadeSlideUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+.fade-in{animation:fadeSlideUp 0.5s ease both}
+/* Clickable address */
+.addr-copy{cursor:pointer;transition:color 0.15s}.addr-copy:hover{color:var(--cyan)}
 </style>
 </head>
 <body>
 
 <!-- Testnet Banner -->
 <div style="background:linear-gradient(90deg,rgba(245,158,11,0.08),rgba(255,77,0,0.08));text-align:center;padding:6px;font-size:11px;font-weight:600;color:#f59e0b;letter-spacing:0.05em;text-transform:uppercase;border-bottom:1px solid rgba(245,158,11,0.15);position:fixed;top:0;left:0;right:0;z-index:200">Testnet — Tokens have no real-world value</div>
+<div class="aurora-orb"></div>
 
 <!-- Nav -->
 <nav class="nav" style="top:28px">
-  <div class="nav-brand"><span>EvaporChain</span> Testnet</div>
+  <a class="nav-brand" href="https://evaporchain.com" style="text-decoration:none"><span>EvaporChain</span> Testnet</a>
   <div class="nav-links">
     <a href="/wallet">Wallet</a><a href="/explorer">Explorer</a><a href="/nft" class="active">NFTs</a>
     <a href="/tokens">Tokens</a><a href="/staking">Staking</a><a href="/dao">DAO</a><a href="/faucet">Faucet</a>
   </div>
   <div class="nav-right">
+    <a href="https://evaporchain.com" class="nav-stat" style="text-decoration:none;color:var(--cyan);font-size:11px">&larr; evaporchain.com</a>
     <span class="nav-stat"><span class="network-dot"></span>Testnet</span>
     <span class="nav-stat" id="navBlock">Block <b>—</b></span>
     <span class="nav-stat" id="navEpoch">Epoch <b>—</b></span>
@@ -199,6 +209,11 @@ a{color:inherit;text-decoration:none}
   <a href="/wallet">Wallet</a>
   <a href="/explorer">Explorer</a>
   <a href="/nft" class="active">NFTs</a>
+  <a href="/tokens">Tokens</a>
+  <a href="/staking">Staking</a>
+  <a href="/dao">DAO</a>
+  <a href="/faucet">Faucet</a>
+  <a href="https://evaporchain.com" style="color:var(--cyan)">&larr; evaporchain.com</a>
   <a href="/faucet">Faucet</a>
 </div>
 
@@ -210,7 +225,7 @@ a{color:inherit;text-decoration:none}
   </div>
 
   <!-- Stats -->
-  <div class="stats-bar">
+  <div class="stats-bar fade-in">
     <div class="stat-card"><div class="stat-label">Total minted</div><div class="stat-value" id="statTotal">—</div></div>
     <div class="stat-card"><div class="stat-label">Active</div><div class="stat-value" id="statActive" style="color:var(--green)">—</div></div>
     <div class="stat-card"><div class="stat-label">In Grace</div><div class="stat-value" id="statGrace" style="color:var(--amber)">—</div></div>
@@ -226,7 +241,7 @@ a{color:inherit;text-decoration:none}
 
   <!-- Content -->
   <div id="livePanel">
-    <div class="nft-grid" id="liveGrid">
+    <div class="nft-grid fade-in" id="liveGrid">
       <div class="skeleton skeleton-card"></div>
       <div class="skeleton skeleton-card"></div>
       <div class="skeleton skeleton-card"></div>
@@ -234,7 +249,7 @@ a{color:inherit;text-decoration:none}
   </div>
 
   <div id="ghostPanel" style="display:none">
-    <div class="nft-grid" id="ghostGrid"></div>
+    <div class="nft-grid fade-in" id="ghostGrid"></div>
     <div class="empty-state" id="ghostEmpty" style="display:none">
       <p>No evaporated NFTs yet</p>
       <span>When an NFT's energy reaches zero and its grace period expires, it will appear here.</span>
@@ -367,7 +382,7 @@ async function fetchNfts() {
     }
     render();
   } catch(e) {
-    console.error('Fetch error:', e);
+    /* fetch error silenced */
   }
 }
 
@@ -433,8 +448,8 @@ function createNftCard(nft) {
         <span class="badge ${badgeClass}">${badgeText}</span>
       </div>
       <div class="nft-data">
-        <div class="data-row"><span class="data-label">Owner</span><span class="data-value addr">${esc(nft.owner)}</span></div>
-        <div class="data-row"><span class="data-label">Metadata</span><span class="data-value addr">${esc(nft.metadata_hash)}</span></div>
+        <div class="data-row"><span class="data-label">Owner</span><span class="data-value addr addr-copy" title="Click to copy" onclick="copyAddr(this)">${esc(nft.owner)}</span></div>
+        <div class="data-row"><span class="data-label">Metadata</span><span class="data-value addr addr-copy" title="Click to copy" onclick="copyAddr(this)">${esc(nft.metadata_hash)}</span></div>
         <div class="data-row"><span class="data-label">Half-life</span><span class="data-value">${nft.half_life.toLocaleString()} epochs</span></div>
         <div class="data-row"><span class="data-label">Remaining</span><span class="data-value" style="color:${pct < 20 ? 'var(--red)' : 'var(--text2)'}">${nft.epochs_remaining > 0 ? '~' + nft.epochs_remaining.toLocaleString() + ' epochs' : 'Expiring'}</span></div>
       </div>
@@ -482,7 +497,7 @@ function createGhostCard(nft) {
         <span class="badge badge-ghost">Ghost</span>
       </div>
       <div class="nft-data">
-        <div class="data-row"><span class="data-label">Owner</span><span class="data-value addr">${esc(nft.owner)}</span></div>
+        <div class="data-row"><span class="data-label">Owner</span><span class="data-value addr addr-copy" title="Click to copy" onclick="copyAddr(this)">${esc(nft.owner)}</span></div>
         <div class="data-row"><span class="data-label">Evaporated</span><span class="data-value">Epoch ${nft.evaporated_epoch || '—'}</span></div>
         <div class="data-row"><span class="data-label">Ghost proof</span><span class="data-value addr">${esc((nft.ghost_proof || '').slice(0, 16))}…</span></div>
         <div class="data-row"><span class="data-label">Original energy</span><span class="data-value">${nft.max_energy.toLocaleString()}</span></div>
@@ -714,9 +729,12 @@ updateMintPreview();
 
 async function postApi(path, body) {
   try {
+    const h = { 'Content-Type': 'application/json' };
+    const t = localStorage.getItem('token');
+    if (t) h['Authorization'] = 'Bearer ' + t;
     const res = await fetch(API + path, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: h,
       body: JSON.stringify(body)
     });
     return await res.json();
@@ -736,7 +754,7 @@ function showToast(msg) {
 function esc(s) {
   const d = document.createElement('div');
   d.textContent = s || '';
-  return d.innerHTML;
+  return d.innerHTML.replace(/'/g,'&#39;').replace(/\\/g,'&#92;').replace(/`/g,'&#96;');
 }
 
 function toggleMobileNav() {
@@ -749,6 +767,8 @@ document.querySelectorAll('.modal-overlay').forEach(el => {
     if (e.target === el) el.classList.remove('open');
   });
 });
+
+function copyAddr(el){navigator.clipboard.writeText(el.textContent.trim());const o=el.style.color;el.style.color='var(--cyan)';setTimeout(()=>el.style.color=o,600);showToast('Copied!')}
 
 // ── Init ──
 fetchNfts();

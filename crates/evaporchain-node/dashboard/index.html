@@ -92,7 +92,7 @@ canvas{display:block}
 .ribbon{display:flex;align-items:center;gap:8px}
 .ribbon-pill{display:flex;align-items:center;gap:5px;padding:3px 10px;
   background:var(--surface);border:1px solid var(--border);border-radius:20px;
-  font-size:11px;font-family:var(--font-mono);white-space:nowrap}
+  font-size:11px;font-family:var(--font-mono);white-space:nowrap;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
 .ribbon-label{color:var(--text3);font-weight:500;font-size:9px;text-transform:uppercase;letter-spacing:.05em}
 .ribbon-val{color:var(--text);font-weight:600}
 .conn-dot{width:8px;height:8px;border-radius:50%;background:var(--green);
@@ -132,7 +132,7 @@ canvas{display:block}
    ═══════════════════════════════════════════════════════════ */
 .obj-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;padding-bottom:40px}
 .obj-card{position:relative;padding:16px;background:var(--surface);border:1px solid var(--border);
-  border-radius:var(--radius);cursor:pointer;transition:all .25s;overflow:hidden}
+  border-radius:var(--radius);cursor:pointer;transition:all .25s;overflow:hidden;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
 .obj-card:hover{border-color:var(--border-hover);transform:translateY(-2px);
   box-shadow:0 8px 32px rgba(0,0,0,0.3)}
 .obj-card-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px}
@@ -244,7 +244,7 @@ canvas{display:block}
    ═══════════════════════════════════════════════════════════ */
 .ghost-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;padding-bottom:40px}
 .ghost-card{padding:16px;background:var(--surface);border:1px dashed rgba(139,92,246,0.25);
-  border-radius:var(--radius);opacity:0.7;transition:all .25s;position:relative;overflow:hidden}
+  border-radius:var(--radius);opacity:0.7;transition:all .25s;position:relative;overflow:hidden;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
 .ghost-card:hover{opacity:1;border-color:rgba(139,92,246,0.4)}
 .ghost-card::before{content:'';position:absolute;inset:0;
   background:radial-gradient(ellipse at 50% 0%,rgba(139,92,246,0.05),transparent 70%);pointer-events:none}
@@ -261,7 +261,7 @@ canvas{display:block}
    CONTRACTS
    ═══════════════════════════════════════════════════════════ */
 .contract-list{display:grid;gap:12px;padding-bottom:24px}
-.contract-card{padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius)}
+.contract-card{padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
 .contract-name{font-size:14px;font-weight:600;color:var(--text);margin-bottom:4px}
 .contract-id{font-family:var(--font-mono);font-size:10px;color:var(--text3)}
 .deploy-form{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
@@ -290,7 +290,7 @@ canvas{display:block}
    ═══════════════════════════════════════════════════════════ */
 .summary-bar{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:1px;
   background:var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:24px}
-.summary-item{padding:16px;background:var(--bg2);text-align:center}
+.summary-item{padding:16px;background:var(--bg2);text-align:center;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
 .summary-val{font-size:24px;font-weight:200;font-family:var(--font-mono);color:var(--text)}
 .summary-label{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.1em;margin-top:4px}
 
@@ -353,9 +353,18 @@ canvas{display:block}
 .toast{padding:10px 16px;background:rgba(12,12,20,0.95);border:1px solid var(--border-hover);
   border-radius:8px;font-size:12px;color:var(--text);backdrop-filter:blur(8px);
   animation:fadeSlideIn .3s ease-out;max-width:320px}
+/* Aurora orb */
+.aurora-orb{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:700px;height:700px;border-radius:50%;background:radial-gradient(circle,rgba(0,240,255,0.06) 0%,rgba(139,92,246,0.04) 40%,transparent 70%);filter:blur(80px);animation:orbFloat 14s ease-in-out infinite;pointer-events:none;z-index:0}
+@keyframes orbFloat{0%,100%{transform:translate(-50%,-50%) scale(1)}33%{transform:translate(-48%,-52%) scale(1.06)}66%{transform:translate(-52%,-48%) scale(0.94)}}
+/* Entrance animations */
+@keyframes fadeSlideUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+.fade-in{animation:fadeSlideUp 0.5s ease both}
+/* Clickable address/hash */
+.addr-copy{cursor:pointer;transition:color 0.15s}.addr-copy:hover{color:var(--cyan)}
 </style>
 </head>
 <body>
+<div class="aurora-orb"></div>
 
 <!-- ═══════════════════════════════════════════════════════════
      TOAST CONTAINER
@@ -389,10 +398,10 @@ canvas{display:block}
      NAVBAR
      ═══════════════════════════════════════════════════════════ -->
 <nav class="navbar" style="top:28px">
-  <div class="nav-brand">
+  <a class="nav-brand" href="https://evaporchain.com" style="text-decoration:none">
     <svg viewBox="0 0 32 32" fill="none"><defs><linearGradient id="lg" x1="4" y1="4" x2="28" y2="28"><stop stop-color="#FF4D00"/><stop offset="1" stop-color="#ff8a3d"/></linearGradient></defs><path d="M16 2L28.66 10v12L16 30 3.34 22V10L16 2z" stroke="url(#lg)" stroke-width="1.5" fill="none"/><path d="M16 8c0 0 5 4 5 10s-5 8-5 8-5-2-5-8 5-10 5-10z" fill="url(#lg)" opacity="0.8"/></svg>
     <span>EvaporChain</span>
-  </div>
+  </a>
 
   <div class="nav-tabs" id="navTabs">
     <div class="nav-tab active" data-page="live">Live State</div>
@@ -417,6 +426,7 @@ canvas{display:block}
       <input class="search-input" id="searchInput" placeholder="Search block, object, address..." autocomplete="off">
       <div class="search-results" id="searchResults"></div>
     </div>
+    <a href="https://evaporchain.com" style="text-decoration:none;color:var(--cyan);font-size:11px;font-weight:500;white-space:nowrap">&larr; evaporchain.com</a>
     <div class="ribbon" id="ribbon">
       <div class="ribbon-pill"><span class="ribbon-label">BLK</span> <span class="ribbon-val" id="ribBlk">—</span></div>
       <div class="ribbon-pill"><span class="ribbon-label">OBJ</span> <span class="ribbon-val" id="ribObj">—</span></div>
@@ -525,7 +535,7 @@ var S = {
 var $ = function(id){return document.getElementById(id)};
 
 /* ─── Utilities ──────────────────────────────────────────── */
-function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML}
+function esc(s){var d=document.createElement('div');d.textContent=s||'';return d.innerHTML.replace(/'/g,'&#39;').replace(/\\/g,'&#92;').replace(/`/g,'&#96;')}
 function truncHash(h,n){n=n||8;if(!h)return'—';return h.slice(0,n)+'…'+h.slice(-4)}
 function fmtTime(ts){
   if(!ts)return'—';
@@ -679,7 +689,8 @@ function updateMobStats(){
   var tabs=['live','blocks','accounts','events','ghosts','contracts'];
   var labels=['Live State','Blocks','Accounts','Events','Ghosts','Contracts'];
   $('mobMenu').innerHTML='<div class="mob-stats">'+$('mobStats').innerHTML+'</div>'+
-    tabs.map(function(t,i){return '<div class="nav-tab'+(t===S.currentPage?' active':'')+'" data-page="'+t+'" onclick="showPage(\''+t+'\')">'+labels[i]+'</div>'}).join('');
+    tabs.map(function(t,i){return '<div class="nav-tab'+(t===S.currentPage?' active':'')+'" data-page="'+t+'" onclick="showPage(\''+t+'\')">'+labels[i]+'</div>'}).join('')+
+    '<a href="/nft" class="nav-tab" style="text-decoration:none;color:var(--text3)">NFTs</a><a href="/tokens" class="nav-tab" style="text-decoration:none;color:var(--text3)">Tokens</a><a href="/staking" class="nav-tab" style="text-decoration:none;color:var(--text3)">Staking</a><a href="/dao" class="nav-tab" style="text-decoration:none;color:var(--text3)">DAO</a><a href="/wallet" class="nav-tab" style="text-decoration:none;color:var(--text3)">Wallet</a><a href="/faucet" class="nav-tab" style="text-decoration:none;color:var(--text3)">Faucet</a><a href="https://evaporchain.com" class="nav-tab" style="text-decoration:none;color:var(--cyan)">&larr; evaporchain.com</a>';
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -1004,8 +1015,8 @@ function renderLive(){
       var col=energyColor(ratio);
       return '<div class="obj-card" onclick="openObjModal(\''+esc(o.id)+'\')">'+
         '<div class="obj-card-top"><div><div class="obj-name">'+esc(o.name)+'</div>'+
-        '<div class="obj-id">'+truncHash(o.id,12)+'</div></div>'+stateBadge(o.state)+'</div>'+
-        '<div class="obj-owner">Owner: '+esc(o.owner_name||truncHash(o.owner))+'</div>'+
+        '<div class="obj-id addr-copy" onclick="event.stopPropagation();copyAddr(this)" title="Click to copy">'+truncHash(o.id,12)+'</div></div>'+stateBadge(o.state)+'</div>'+
+        '<div class="obj-owner">Owner: <span class="addr-copy" onclick="event.stopPropagation();copyAddr(this)" title="Click to copy">'+esc(o.owner_name||truncHash(o.owner))+'</span></div>'+
         '<div class="energy-bar-wrap"><div class="energy-bar-bg">'+
         '<div class="energy-bar-fill" style="width:'+Math.max(ratio*100,1)+'%;background:'+col+'"></div>'+
         '</div><div class="energy-meta"><span>'+fmtNum(o.current_energy)+' / '+fmtNum(o.max_energy)+' energy</span>'+
@@ -1028,7 +1039,7 @@ function openObjModal(id){
   var epochsAlive=(S.status.epoch||0)-(obj.created_epoch||0);
   var epochsToGrace=obj.half_life>0?Math.max(0,Math.round(obj.half_life*Math.log2(Math.max(obj.current_energy,1)))): '∞';
 
-  $('omHeader').innerHTML='<div><h2>'+esc(obj.name)+'</h2><div class="obj-id">ID: '+esc(obj.id)+'</div></div>'+stateBadge(obj.state);
+  $('omHeader').innerHTML='<div><h2>'+esc(obj.name)+'</h2><div class="obj-id addr-copy" onclick="copyAddr(this)" title="Click to copy">ID: '+esc(obj.id)+'</div></div>'+stateBadge(obj.state);
   $('omStats').innerHTML=[
     {l:'Current Energy',v:fmtNum(obj.current_energy),c:ratio>0.3?'green':'ember'},
     {l:'Max Energy',v:fmtNum(obj.max_energy),c:''},
@@ -1039,7 +1050,7 @@ function openObjModal(id){
     {l:'Age',v:epochsAlive+' epochs',c:''},
     {l:'Est. Epochs to Zero',v:epochsToGrace,c:'cyan'}
   ].map(function(s){return '<div class="modal-stat"><div class="modal-stat-label">'+s.l+'</div><div class="modal-stat-val'+(s.c?' '+s.c:'')+'">'+s.v+'</div></div>'}).join('');
-  $('omFooter').innerHTML='<div style="font-size:12px;color:var(--text3)">Owner: '+esc(obj.owner_name||'Unknown')+' &nbsp;·&nbsp; '+truncHash(obj.owner,16)+'</div>';
+  $('omFooter').innerHTML='<div style="font-size:12px;color:var(--text3)">Owner: '+esc(obj.owner_name||'Unknown')+' &nbsp;·&nbsp; <span class="addr-copy" onclick="copyAddr(this)" title="Click to copy">'+truncHash(obj.owner,16)+'</span></div>';
 
   $('objModal').classList.add('open');
   setTimeout(function(){drawDecayCurve(obj)},50);
@@ -1058,19 +1069,19 @@ function renderBlocks(){
       '<td>'+(b.evaporations>0?'<span style="color:var(--ember)">'+b.evaporations+'</span>':'0')+'</td>'+
       '<td>'+(b.entered_grace>0?'<span style="color:var(--yellow)">'+b.entered_grace+'</span>':'0')+'</td>'+
       '<td>'+b.active_objects+'</td>'+
-      '<td class="block-hash">'+truncHash(b.state_root,10)+'</td>'+
+      '<td class="block-hash addr-copy" onclick="event.stopPropagation();copyAddr(this)" title="Click to copy">'+truncHash(b.state_root,10)+'</td>'+
       '<td style="font-size:12px;color:var(--text2)">'+fmtTime(b.timestamp)+'</td></tr>';
     if(isExp){
       html+='<tr class="block-detail"><td colspan="7">'+
-        '<div style="font-size:12px;margin-bottom:8px"><strong>State Root:</strong> <span style="font-family:var(--font-mono);font-size:11px;color:var(--text2)">'+esc(b.state_root)+'</span></div>'+
-        '<div style="font-size:12px;margin-bottom:8px"><strong>Parent:</strong> <span style="font-family:var(--font-mono);font-size:11px;color:var(--text2)">'+truncHash(b.parent_hash,16)+'</span></div>';
+        '<div style="font-size:12px;margin-bottom:8px"><strong>State Root:</strong> <span class="addr-copy" style="font-family:var(--font-mono);font-size:11px;color:var(--text2)" onclick="copyAddr(this)" title="Click to copy">'+esc(b.state_root)+'</span></div>'+
+        '<div style="font-size:12px;margin-bottom:8px"><strong>Parent:</strong> <span class="addr-copy" style="font-family:var(--font-mono);font-size:11px;color:var(--text2)" onclick="copyAddr(this)" title="Click to copy">'+truncHash(b.parent_hash,16)+'</span></div>';
       if(b.transactions&&b.transactions.length>0){
         html+='<div style="font-size:12px;margin-bottom:6px"><strong>Transactions:</strong></div>';
         b.transactions.forEach(function(tx){
           html+='<div class="block-tx-item">'+
             '<span class="badge badge-ember" style="margin-right:8px">'+esc(tx.tx_type||'tx')+'</span>'+
-            '<span style="font-family:var(--font-mono);font-size:11px">From: '+truncHash(tx.from||tx.sender,10)+' → '+
-            (tx.to?truncHash(tx.to,10):'contract')+'</span>'+
+            '<span style="font-family:var(--font-mono);font-size:11px">From: <span class="addr-copy" onclick="copyAddr(this)" title="Click to copy">'+truncHash(tx.from||tx.sender,10)+'</span> → '+
+            (tx.to?'<span class="addr-copy" onclick="copyAddr(this)" title="Click to copy">'+truncHash(tx.to,10)+'</span>':'contract')+'</span>'+
             (tx.amount?' <span style="color:var(--green);margin-left:8px">'+fmtNum(tx.amount)+' EVAP</span>':'')+
             '</div>';
         });
@@ -1094,7 +1105,7 @@ function renderAccounts(){
       $('accDetail').innerHTML='<div class="acc-detail">'+
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">'+
         '<h3>'+esc(acc.name)+'</h3><button class="btn btn-ghost" onclick="S.selectedAccount=null;render()">✕ Close</button></div>'+
-        '<div style="font-family:var(--font-mono);font-size:11px;color:var(--text3);margin-bottom:12px;word-break:break-all">'+esc(acc.address)+'</div>'+
+        '<div class="addr-copy" style="font-family:var(--font-mono);font-size:11px;color:var(--text3);margin-bottom:12px;word-break:break-all" onclick="copyAddr(this)" title="Click to copy">'+esc(acc.address)+'</div>'+
         '<div style="display:flex;gap:24px;margin-bottom:16px">'+
         '<div><div style="font-size:10px;color:var(--text3);text-transform:uppercase">Balance</div><div style="font-size:20px;font-weight:600;font-family:var(--font-mono);color:var(--green)">'+fmtNum(acc.balance)+' <span style="font-size:12px;color:var(--text3)">EVAP</span></div></div>'+
         '<div><div style="font-size:10px;color:var(--text3);text-transform:uppercase">Nonce</div><div style="font-size:20px;font-weight:600;font-family:var(--font-mono)">'+acc.nonce+'</div></div>'+
@@ -1121,7 +1132,7 @@ function renderAccounts(){
     var isSelected=S.selectedAccount===a.address;
     html+='<tr class="acc-row'+(isSelected?' style="background:var(--surface)"':'')+'" onclick="S.selectedAccount=\''+esc(a.address)+'\';render()">'+
       '<td class="acc-name">'+esc(a.name)+'</td>'+
-      '<td class="acc-addr">'+truncHash(a.address,12)+'</td>'+
+      '<td class="acc-addr addr-copy" onclick="event.stopPropagation();copyAddr(this)" title="Click to copy">'+truncHash(a.address,12)+'</td>'+
       '<td class="acc-bal">'+fmtNum(a.balance)+' EVAP</td>'+
       '<td>'+a.nonce+'</td>'+
       '<td>'+(ownedCount>0?'<span style="color:var(--cyan)">'+ownedCount+'</span>':'0')+'</td></tr>';
@@ -1161,7 +1172,7 @@ function renderGhosts(){
     var id=g.id||g.object_id||'';
     return '<div class="ghost-card"><div class="ghost-emoji">👻</div>'+
       '<div class="ghost-name">'+esc(name)+'</div>'+
-      '<div class="ghost-hash">'+esc(id)+'</div>'+
+      '<div class="ghost-hash addr-copy" onclick="copyAddr(this)" title="Click to copy">'+esc(id)+'</div>'+
       '<div class="ghost-meta">'+
       (g.evaporated_epoch!=null?'<span>Evaporated: E'+g.evaporated_epoch+'</span>':'')+
       (g.energy_at_death!=null?'<span>Final energy: '+g.energy_at_death+'</span>':'')+
@@ -1198,7 +1209,7 @@ function renderContracts(){
   } else {
     $('contractList').innerHTML=S.contracts.map(function(c){
       return '<div class="contract-card"><div class="contract-name">'+esc(c.name||'Contract')+'</div>'+
-        '<div class="contract-id">ID: '+esc(c.id||'')+'</div>'+
+        '<div class="contract-id addr-copy" onclick="copyAddr(this)" title="Click to copy">ID: '+esc(c.id||'')+'</div>'+
         '<div style="margin-top:8px;font-size:12px;color:var(--text2)">Template: '+esc(c.template||'Unknown')+'</div></div>';
     }).join('');
   }
@@ -1209,14 +1220,18 @@ async function deployContract(){
   var body={deployer:parseInt(deployer.value,16),template:$('dcTemplate').value,
     name:$('dcName').value||'Unnamed',half_life:parseInt($('dcHL').value)||100};
   try{
-    var r=await fetch('/api/tx/deploy-contract',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var h={'Content-Type':'application/json'};var tk=localStorage.getItem('token');if(tk)h['Authorization']='Bearer '+tk;
+    var r=await fetch('/api/tx/deploy-contract',{method:'POST',headers:h,body:JSON.stringify(body)});
     var d=await r.json();
     var log=$('txLog');
     log.classList.add('has-content');
-    log.innerHTML='<div style="color:var(--green)">'+JSON.stringify(d,null,2)+'</div>'+log.innerHTML;
+    log.innerHTML='<div style="color:var(--green)">'+esc(JSON.stringify(d,null,2))+'</div>'+log.innerHTML;
     toast('Contract deployed!');
   }catch(e){toast('Deploy failed: '+e.message)}
 }
+
+/* ─── Copy to clipboard ─────────────────────────────────── */
+function copyAddr(el){navigator.clipboard.writeText(el.textContent.trim());el.style.color='var(--cyan)';setTimeout(()=>el.style.color='',600)}
 
 /* ═══════════════════════════════════════════════════════════
    INIT

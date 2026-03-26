@@ -4,11 +4,12 @@ import { useState, useEffect } from "react";
 import { Menu, X } from "lucide-react";
 
 const navLinks = [
-  { label: "Home", href: "#home" },
   { label: "Technology", href: "#technology" },
   { label: "Contracts", href: "#contracts" },
   { label: "Roadmap", href: "#roadmap" },
   { label: "Whitepaper", href: "/whitepaper" },
+  { label: "Explorer", href: "https://testnet.evaporchain.com/explorer" },
+  { label: "Ecosystem", href: "#contracts" },
 ];
 
 function Logo() {

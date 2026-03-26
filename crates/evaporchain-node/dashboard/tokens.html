@@ -16,12 +16,12 @@ a{color:inherit;text-decoration:none}
 .nav-links{display:flex;gap:4px}.nav-links a{padding:6px 14px;font-size:13px;font-weight:500;color:var(--text2);border-radius:6px;transition:all .15s}.nav-links a:hover{color:var(--text);background:var(--surface)}.nav-links a.active{color:var(--text);background:var(--surface-hover)}
 .nav-right{margin-left:auto;display:flex;gap:12px;align-items:center}.nav-stat{font-size:11px;font-family:var(--font-mono);color:var(--text3)}.nav-stat b{color:var(--text2)}
 .network-dot{width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block;margin-right:4px;animation:pd 2s ease infinite}@keyframes pd{0%,100%{opacity:1}50%{opacity:.4}}
-.main{padding-top:calc(var(--nav-h)+24px);max-width:1320px;margin:0 auto;padding:0 20px 80px}
+.main{padding-top:calc(var(--nav-h)+24px);max-width:1320px;margin:0 auto;padding:0 20px 80px;position:relative;z-index:1}
 .page-title{font-size:28px;font-weight:700;letter-spacing:-0.03em;margin-bottom:4px}.page-subtitle{font-size:14px;color:var(--text3);margin-bottom:32px}
 .stats-bar{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:32px}
-.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px 16px}.stat-label{font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);margin-bottom:4px}.stat-value{font-size:20px;font-weight:700;font-family:var(--font-mono)}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px 16px;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}.stat-label{font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);margin-bottom:4px}.stat-value{font-size:20px;font-weight:700;font-family:var(--font-mono)}
 .token-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px;margin-bottom:48px}
-.token-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:20px;transition:border-color .2s}.token-card:hover{border-color:var(--border-active)}
+.token-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:20px;transition:border-color .2s;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}.token-card:hover{border-color:var(--border-active)}
 .token-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px}
 .token-name{font-size:17px;font-weight:600}.token-symbol{font-size:12px;font-family:var(--font-mono);color:var(--text2);margin-top:2px}
 .badge{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;padding:3px 8px;border-radius:var(--radius-xs)}
@@ -46,31 +46,46 @@ a{color:inherit;text-decoration:none}
 .preview{font-size:12px;font-family:var(--font-mono);color:var(--text3);margin-top:4px}
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(100px);background:var(--bg3);border:1px solid var(--border-active);border-radius:var(--radius-sm);padding:10px 20px;font-size:13px;color:var(--text);z-index:200;opacity:0;transition:all .3s;pointer-events:none;max-width:400px;text-align:center}.toast.show{transform:translateX(-50%) translateY(0);opacity:1}
 .skeleton{background:linear-gradient(90deg,var(--surface) 25%,var(--surface-hover) 50%,var(--surface) 75%);background-size:200% 100%;animation:shim 1.5s infinite;border-radius:var(--radius)}@keyframes shim{0%{background-position:200% 0}100%{background-position:-200% 0}}.skeleton-card{height:300px}
-@media(max-width:768px){.nav-links,.nav-right{display:none}.token-grid{grid-template-columns:1fr}.form-grid{grid-template-columns:1fr}}
+@media(max-width:768px){.nav-links,.nav-right{display:none}.token-grid{grid-template-columns:1fr}.form-grid{grid-template-columns:1fr}.mobile-menu{display:block;margin-left:auto}.mobile-menu button{background:none;border:none;color:var(--text);font-size:22px;cursor:pointer;padding:4px 8px}.mobile-nav{display:none;position:fixed;top:calc(var(--nav-h)+28px);left:0;right:0;background:rgba(6,6,10,0.96);border-bottom:1px solid var(--border);padding:12px;z-index:99;flex-direction:column;gap:4px}.mobile-nav.open{display:flex}.mobile-nav a{padding:10px 14px;font-size:14px;color:var(--text2);border-radius:6px;text-decoration:none}.mobile-nav a:hover,.mobile-nav a.active{background:var(--surface);color:var(--text)}}
+/* Aurora orb */
+.aurora-orb{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:700px;height:700px;border-radius:50%;background:radial-gradient(circle,rgba(0,240,255,0.06) 0%,rgba(139,92,246,0.04) 40%,transparent 70%);filter:blur(80px);animation:orbFloat 14s ease-in-out infinite;pointer-events:none;z-index:0}
+@keyframes orbFloat{0%,100%{transform:translate(-50%,-50%) scale(1)}33%{transform:translate(-48%,-52%) scale(1.06)}66%{transform:translate(-52%,-48%) scale(0.94)}}
+/* Entrance animations */
+@keyframes fadeSlideUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+.fade-in{animation:fadeSlideUp 0.5s ease both}
+/* Clickable address */
+.addr-copy{cursor:pointer;transition:color 0.15s}.addr-copy:hover{color:var(--cyan)}
 </style>
 </head>
 <body>
 <div style="background:linear-gradient(90deg,rgba(245,158,11,0.08),rgba(255,77,0,0.08));text-align:center;padding:6px;font-size:11px;font-weight:600;color:#f59e0b;letter-spacing:0.05em;text-transform:uppercase;border-bottom:1px solid rgba(245,158,11,0.15);position:fixed;top:0;left:0;right:0;z-index:200">Testnet — Tokens have no real-world value</div>
+<div class="aurora-orb"></div>
 <nav class="nav" style="top:28px">
-  <div class="nav-brand"><span>EvaporChain</span> Testnet</div>
+  <a class="nav-brand" href="https://evaporchain.com" style="text-decoration:none"><span>EvaporChain</span> Testnet</a>
   <div class="nav-links">
     <a href="/wallet">Wallet</a><a href="/explorer">Explorer</a><a href="/nft">NFTs</a>
     <a href="/tokens" class="active">Tokens</a><a href="/staking">Staking</a><a href="/dao">DAO</a><a href="/faucet">Faucet</a>
   </div>
-  <div class="nav-right"><span class="nav-stat"><span class="network-dot"></span>Testnet</span><span class="nav-stat" id="navBlock">Block <b>—</b></span></div>
+  <div class="mobile-menu" style="display:none"><button onclick="toggleMobileNav()">&#9776;</button></div>
+  <div class="nav-right"><a href="https://evaporchain.com" class="nav-stat" style="text-decoration:none;color:var(--cyan);font-size:11px">&larr; evaporchain.com</a><span class="nav-stat"><span class="network-dot"></span>Testnet</span><span class="nav-stat" id="navBlock">Block <b>—</b></span></div>
 </nav>
+<div class="mobile-nav" id="mobileNav">
+  <a href="/wallet">Wallet</a><a href="/explorer">Explorer</a><a href="/nft">NFTs</a>
+  <a href="/tokens" class="active">Tokens</a><a href="/staking">Staking</a><a href="/dao">DAO</a><a href="/faucet">Faucet</a>
+  <a href="https://evaporchain.com" style="color:var(--cyan)">&larr; evaporchain.com</a>
+</div>
 <div class="main" style="padding-top:calc(var(--nav-h)+28px+24px)">
   <h1 class="page-title">Decaying Tokens</h1>
   <p class="page-subtitle">ERC-20 tokens with built-in supply decay. Every token's total supply shrinks over time.</p>
 
-  <div class="stats-bar">
+  <div class="stats-bar fade-in">
     <div class="stat-card"><div class="stat-label">Tokens deployed</div><div class="stat-value" id="statCount">—</div></div>
     <div class="stat-card"><div class="stat-label">Total supply (all)</div><div class="stat-value" id="statSupply">—</div></div>
     <div class="stat-card"><div class="stat-label">Current supply</div><div class="stat-value" id="statCurrent" style="color:var(--amber)">—</div></div>
     <div class="stat-card"><div class="stat-label">Total holders</div><div class="stat-value" id="statHolders">—</div></div>
   </div>
 
-  <div class="token-grid" id="tokenGrid"><div class="skeleton skeleton-card"></div><div class="skeleton skeleton-card"></div></div>
+  <div class="token-grid fade-in" id="tokenGrid"><div class="skeleton skeleton-card"></div><div class="skeleton skeleton-card"></div></div>
 
   <!-- Deploy -->
   <div class="section">
@@ -108,7 +123,7 @@ async function fetchTokens(){
     if(tr.status==='fulfilled'&&tr.value.ok) tokens=await tr.value.json();
     if(sr.status==='fulfilled'&&sr.value.ok){const s=await sr.value.json();document.getElementById('navBlock').innerHTML='Block <b>'+(s.block_height||0).toLocaleString()+'</b>'}
     render();
-  }catch(e){console.error(e)}
+  }catch(e){/* fetch error silenced */}
 }
 function render(){
   document.getElementById('statCount').textContent=tokens.length;
@@ -130,12 +145,12 @@ function createTokenCard(t){
   const barColor=pct>70?'var(--green)':pct>30?'var(--amber)':'var(--red)';
   const badgeClass=pct>70?'badge-healthy':pct>30?'badge-decaying':'badge-critical';
   const badgeText=pct>70?'Healthy':pct>30?'Decaying':'Critical';
-  let holdersHtml=t.holders.slice(0,5).map(h=>`<div class="holder-row"><span class="holder-addr">${esc(h.address)}</span><span class="holder-bal">${h.balance.toLocaleString()} ${esc(t.symbol)}</span></div>`).join('');
+  let holdersHtml=t.holders.slice(0,5).map(h=>`<div class="holder-row"><span class="holder-addr addr-copy" title="Click to copy" onclick="copyAddr(this)">${esc(h.address)}</span><span class="holder-bal">${h.balance.toLocaleString()} ${esc(t.symbol)}</span></div>`).join('');
   if(t.holders.length>5) holdersHtml+=`<div style="font-size:11px;color:var(--text3);margin-top:4px">+${t.holders.length-5} more</div>`;
   card.innerHTML=`
     <div class="token-header"><div><div class="token-name">${esc(t.name)}</div><div class="token-symbol">${esc(t.symbol)}</div></div><span class="badge ${badgeClass}">${badgeText}</span></div>
     <div class="token-data">
-      <div class="data-row"><span class="data-label">Deployer</span><span class="data-value" style="font-size:11px;color:var(--text3)">${esc(t.deployer)}</span></div>
+      <div class="data-row"><span class="data-label">Deployer</span><span class="data-value addr-copy" style="font-size:11px;color:var(--text3)" title="Click to copy" onclick="copyAddr(this)">${esc(t.deployer)}</span></div>
       <div class="data-row"><span class="data-label">Half-life</span><span class="data-value">${t.decay_half_life.toLocaleString()} epochs</span></div>
       <div class="data-row"><span class="data-label">Holders</span><span class="data-value">${t.holder_count}</span></div>
     </div>
@@ -165,9 +180,11 @@ async function transferToken(){
   toast(r.message);fetchTokens();
 }
 document.getElementById('dHL').addEventListener('input',()=>{const v=parseInt(document.getElementById('dHL').value)||0;document.getElementById('dPreview').textContent=v>0?'Supply will halve every '+v+' epochs':''});
-async function postApi(p,b){try{const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});return await r.json()}catch(e){return{success:false,message:'Network error'}}}
+async function postApi(p,b){try{const h={'Content-Type':'application/json'};const t=localStorage.getItem('token');if(t)h['Authorization']='Bearer '+t;const r=await fetch(p,{method:'POST',headers:h,body:JSON.stringify(b)});return await r.json()}catch(e){return{success:false,message:'Network error'}}}
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),3500)}
-function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
+function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML.replace(/'/g,'&#39;').replace(/\\/g,'&#92;').replace(/`/g,'&#96;')}
+function copyAddr(el){navigator.clipboard.writeText(el.textContent.trim());const o=el.style.color;el.style.color='var(--cyan)';setTimeout(()=>el.style.color=o,600);toast('Copied!')}
+function toggleMobileNav(){document.getElementById('mobileNav').classList.toggle('open')}
 fetchTokens();setInterval(fetchTokens,3000);
 </script>
 <div style="text-align:center;padding:20px;font-size:11px;color:#475569;border-top:1px solid rgba(255,255,255,0.06);margin-top:40px">This is a testnet. Tokens have no real-world value. <a href="https://evaporchain.com/terms" style="color:#94a3b8;text-decoration:underline">Terms</a> &middot; <a href="https://evaporchain.com/privacy" style="color:#94a3b8;text-decoration:underline">Privacy</a></div>

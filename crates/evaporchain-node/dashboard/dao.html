@@ -16,13 +16,13 @@ a{color:inherit;text-decoration:none}
 .nav-links{display:flex;gap:4px}.nav-links a{padding:6px 14px;font-size:13px;font-weight:500;color:var(--text2);border-radius:6px;transition:all .15s}.nav-links a:hover{color:var(--text);background:var(--surface)}.nav-links a.active{color:var(--text);background:var(--surface-hover)}
 .nav-right{margin-left:auto;display:flex;gap:12px;align-items:center}.nav-stat{font-size:11px;font-family:var(--font-mono);color:var(--text3)}.nav-stat b{color:var(--text2)}
 .network-dot{width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block;margin-right:4px;animation:pd 2s ease infinite}@keyframes pd{0%,100%{opacity:1}50%{opacity:.4}}
-.main{padding-top:calc(var(--nav-h)+24px);max-width:1320px;margin:0 auto;padding:0 20px 80px}
+.main{padding-top:calc(var(--nav-h)+24px);max-width:1320px;margin:0 auto;padding:0 20px 80px;position:relative;z-index:1}
 .page-title{font-size:28px;font-weight:700;letter-spacing:-0.03em;margin-bottom:4px}.page-subtitle{font-size:14px;color:var(--text3);margin-bottom:32px}
 .stats-bar{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:24px}
-.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px 16px}.stat-label{font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);margin-bottom:4px}.stat-value{font-size:20px;font-weight:700;font-family:var(--font-mono)}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px 16px;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}.stat-label{font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);margin-bottom:4px}.stat-value{font-size:20px;font-weight:700;font-family:var(--font-mono)}
 .tabs{display:flex;gap:2px;margin-bottom:24px;border-bottom:1px solid var(--border)}.tab{padding:10px 20px;font-size:13px;font-weight:500;color:var(--text3);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;margin-bottom:-1px}.tab:hover{color:var(--text2)}.tab.active{color:var(--text);border-bottom-color:var(--ember)}.tab-count{font-size:11px;font-family:var(--font-mono);color:var(--text3);margin-left:6px;background:var(--surface);padding:1px 6px;border-radius:var(--radius-xs)}
 .proposals{display:flex;flex-direction:column;gap:16px}
-.proposal-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:24px;transition:border-color .2s}.proposal-card:hover{border-color:var(--border-active)}
+.proposal-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:24px;transition:border-color .2s;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}.proposal-card:hover{border-color:var(--border-active)}
 .proposal-card.ended{opacity:.75;border-color:rgba(139,92,246,0.12)}.proposal-card.ended:hover{opacity:1}
 .proposal-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px}
 .proposal-title{font-size:16px;font-weight:600}.proposal-id{font-size:11px;font-family:var(--font-mono);color:var(--text3);margin-top:2px}
@@ -63,24 +63,39 @@ a{color:inherit;text-decoration:none}
 .modal-title{font-size:16px;font-weight:600;margin-bottom:16px}.modal-actions{display:flex;gap:8px;margin-top:16px;justify-content:flex-end}
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(100px);background:var(--bg3);border:1px solid var(--border-active);border-radius:var(--radius-sm);padding:10px 20px;font-size:13px;color:var(--text);z-index:200;opacity:0;transition:all .3s;pointer-events:none;max-width:400px;text-align:center}.toast.show{transform:translateX(-50%) translateY(0);opacity:1}
 .empty-state{text-align:center;padding:40px;color:var(--text3);font-size:14px}
-@media(max-width:768px){.nav-links,.nav-right{display:none}.form-grid{grid-template-columns:1fr}.proposal-meta{flex-direction:column;gap:6px}}
+@media(max-width:768px){.nav-links,.nav-right{display:none}.form-grid{grid-template-columns:1fr}.proposal-meta{flex-direction:column;gap:6px}.mobile-menu{display:block;margin-left:auto}.mobile-menu button{background:none;border:none;color:var(--text);font-size:22px;cursor:pointer;padding:4px 8px}.mobile-nav{display:none;position:fixed;top:calc(var(--nav-h)+28px);left:0;right:0;background:rgba(6,6,10,0.96);border-bottom:1px solid var(--border);padding:12px;z-index:99;flex-direction:column;gap:4px}.mobile-nav.open{display:flex}.mobile-nav a{padding:10px 14px;font-size:14px;color:var(--text2);border-radius:6px;text-decoration:none}.mobile-nav a:hover,.mobile-nav a.active{background:var(--surface);color:var(--text)}}
+/* Aurora orb */
+.aurora-orb{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:700px;height:700px;border-radius:50%;background:radial-gradient(circle,rgba(0,240,255,0.06) 0%,rgba(139,92,246,0.04) 40%,transparent 70%);filter:blur(80px);animation:orbFloat 14s ease-in-out infinite;pointer-events:none;z-index:0}
+@keyframes orbFloat{0%,100%{transform:translate(-50%,-50%) scale(1)}33%{transform:translate(-48%,-52%) scale(1.06)}66%{transform:translate(-52%,-48%) scale(0.94)}}
+/* Entrance animations */
+@keyframes fadeSlideUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+.fade-in{animation:fadeSlideUp 0.5s ease both}
+/* Clickable address */
+.addr-copy{cursor:pointer;transition:color 0.15s}.addr-copy:hover{color:var(--cyan)}
 </style>
 </head>
 <body>
 <div style="background:linear-gradient(90deg,rgba(245,158,11,0.08),rgba(255,77,0,0.08));text-align:center;padding:6px;font-size:11px;font-weight:600;color:#f59e0b;letter-spacing:0.05em;text-transform:uppercase;border-bottom:1px solid rgba(245,158,11,0.15);position:fixed;top:0;left:0;right:0;z-index:200">Testnet — Tokens have no real-world value</div>
+<div class="aurora-orb"></div>
 <nav class="nav" style="top:28px">
-  <div class="nav-brand"><span>EvaporChain</span> Testnet</div>
+  <a class="nav-brand" href="https://evaporchain.com" style="text-decoration:none"><span>EvaporChain</span> Testnet</a>
   <div class="nav-links">
     <a href="/wallet">Wallet</a><a href="/explorer">Explorer</a><a href="/nft">NFTs</a>
     <a href="/tokens">Tokens</a><a href="/staking">Staking</a><a href="/dao" class="active">DAO</a><a href="/faucet">Faucet</a>
   </div>
-  <div class="nav-right"><span class="nav-stat"><span class="network-dot"></span>Testnet</span><span class="nav-stat" id="navBlock">Block <b>—</b></span></div>
+  <div class="mobile-menu" style="display:none"><button onclick="toggleMobileNav()">&#9776;</button></div>
+  <div class="nav-right"><a href="https://evaporchain.com" class="nav-stat" style="text-decoration:none;color:var(--cyan);font-size:11px">&larr; evaporchain.com</a><span class="nav-stat"><span class="network-dot"></span>Testnet</span><span class="nav-stat" id="navBlock">Block <b>—</b></span></div>
 </nav>
+<div class="mobile-nav" id="mobileNav">
+  <a href="/wallet">Wallet</a><a href="/explorer">Explorer</a><a href="/nft">NFTs</a>
+  <a href="/tokens">Tokens</a><a href="/staking">Staking</a><a href="/dao" class="active">DAO</a><a href="/faucet">Faucet</a>
+  <a href="https://evaporchain.com" style="color:var(--cyan)">&larr; evaporchain.com</a>
+</div>
 <div class="main" style="padding-top:calc(var(--nav-h)+28px+24px)">
   <h1 class="page-title">Governance</h1>
   <p class="page-subtitle">Proposals that evaporate. Vote before they expire — expired proposals become ghost records.</p>
 
-  <div class="stats-bar">
+  <div class="stats-bar fade-in">
     <div class="stat-card"><div class="stat-label">Total proposals</div><div class="stat-value" id="statTotal">—</div></div>
     <div class="stat-card"><div class="stat-label">Active</div><div class="stat-value" id="statActive" style="color:var(--green)">—</div></div>
     <div class="stat-card"><div class="stat-label">Passed</div><div class="stat-value" id="statPassed" style="color:var(--cyan)">—</div></div>
@@ -93,8 +108,8 @@ a{color:inherit;text-decoration:none}
     <div class="tab" data-tab="ended" onclick="switchTab('ended')">Passed / Evaporated<span class="tab-count" id="endedCount">0</span></div>
   </div>
 
-  <div id="activePanel"><div class="proposals" id="activeProposals"></div></div>
-  <div id="endedPanel" style="display:none"><div class="proposals" id="endedProposals"></div></div>
+  <div id="activePanel" class="fade-in"><div class="proposals" id="activeProposals"></div></div>
+  <div id="endedPanel" class="fade-in" style="display:none"><div class="proposals" id="endedProposals"></div></div>
 
   <!-- Create Proposal -->
   <div class="section">
@@ -139,7 +154,7 @@ async function fetchProposals(){
     if(pr.status==='fulfilled'&&pr.value.ok) proposals=await pr.value.json();
     if(sr.status==='fulfilled'&&sr.value.ok){const s=await sr.value.json();document.getElementById('navBlock').innerHTML='Block <b>'+(s.block_height||0).toLocaleString()+'</b>'}
     render();
-  }catch(e){console.error(e)}
+  }catch(e){/* silently ignore fetch errors */}
 }
 function render(){
   const active=proposals.filter(p=>p.status==='Active');
@@ -187,12 +202,12 @@ function renderList(containerId,list,isEnded){
 
     let actionsHtml='';
     if(!isEnded){
-      actionsHtml=p.options.map(opt=>`<button class="btn btn-secondary btn-sm" onclick="openVote(${p.id},'${esc(opt)}')">Vote ${esc(opt)}</button>`).join('');
+      actionsHtml=p.options.map(opt=>`<button class="btn btn-secondary btn-sm" data-pid="${p.id}" data-opt="${esc(opt)}" onclick="openVote(+this.dataset.pid,this.dataset.opt)">Vote ${esc(opt)}</button>`).join('');
     }
 
     card.innerHTML=`
       <div class="proposal-header">
-        <div><div class="proposal-title">${esc(p.title)}</div><div class="proposal-id">#${p.id} &middot; by ${esc(p.creator)} &middot; ${p.voter_count} voter${p.voter_count!==1?'s':''}</div></div>
+        <div><div class="proposal-title">${esc(p.title)}</div><div class="proposal-id">#${p.id} &middot; by <span class="addr-copy" title="Click to copy" onclick="event.stopPropagation();copyAddr(this)">${esc(p.creator)}</span> &middot; ${p.voter_count} voter${p.voter_count!==1?'s':''}</div></div>
         <span class="badge ${badgeClass}">${badgeText}</span>
       </div>
       <div class="proposal-desc">${esc(p.description)}</div>
@@ -233,9 +248,11 @@ async function createProposal(){
   const r=await postApi('/api/dao/propose',{title,description:desc,options,voting_period:period});
   toast(r.message);document.getElementById('pTitle').value='';document.getElementById('pDesc').value='';fetchProposals();
 }
-async function postApi(p,b){try{const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});return await r.json()}catch(e){return{success:false,message:'Network error'}}}
+async function postApi(p,b){try{const h={'Content-Type':'application/json'};const t=localStorage.getItem('token');if(t)h['Authorization']='Bearer '+t;const r=await fetch(p,{method:'POST',headers:h,body:JSON.stringify(b)});return await r.json()}catch(e){return{success:false,message:'Network error'}}}
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),3500)}
-function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
+function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML.replace(/'/g,'&#39;').replace(/\\/g,'&#92;').replace(/`/g,'&#96;')}
+function copyAddr(el){navigator.clipboard.writeText(el.textContent.trim());const o=el.style.color;el.style.color='var(--cyan)';setTimeout(()=>el.style.color=o,600);toast('Copied!')}
+function toggleMobileNav(){document.getElementById('mobileNav').classList.toggle('open')}
 fetchProposals();setInterval(fetchProposals,3000);
 </script>
 <div style="text-align:center;padding:20px;font-size:11px;color:#475569;border-top:1px solid rgba(255,255,255,0.06);margin-top:40px">This is a testnet. Tokens have no real-world value. <a href="https://evaporchain.com/terms" style="color:#94a3b8;text-decoration:underline">Terms</a> &middot; <a href="https://evaporchain.com/privacy" style="color:#94a3b8;text-decoration:underline">Privacy</a></div>

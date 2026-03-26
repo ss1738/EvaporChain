@@ -2,8 +2,15 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>EvaporChain Wallet</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="EvaporChain Web3 Wallet — Manage your EVAP tokens on the thermodynamic blockchain testnet.">
+<meta name="theme-color" content="#0a0a0f">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#9670;</text></svg>">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#9670;</text></svg>">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Wallet — EvaporChain Testnet</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -31,11 +38,14 @@ a{color:var(--cyan);text-decoration:none}
 .screen{display:none;position:relative;z-index:1;min-height:100vh}
 .screen.active{display:flex}
 
-/* ─── Shell (max-width wrapper like Phantom) ─── */
-.shell{width:100%;max-width:480px;margin:0 auto;padding:0 20px}
+/* ─── Shell ─── */
+.shell{width:100%;max-width:480px;margin:0 auto;padding:0 20px;padding-top:34px}
+
+/* ─── Testnet Banner ─── */
+.testnet-banner{background:linear-gradient(90deg,rgba(245,158,11,0.08),rgba(255,77,0,0.08));text-align:center;padding:6px;font-size:11px;font-weight:600;color:#f59e0b;letter-spacing:0.05em;text-transform:uppercase;border-bottom:1px solid rgba(245,158,11,0.15);position:fixed;top:0;left:0;right:0;z-index:200}
 
 /* ═══════ AUTH SCREEN ═══════ */
-#auth-screen{justify-content:center;align-items:center;padding:40px 20px}
+#auth-screen{justify-content:center;align-items:center;padding:40px 20px;padding-top:60px}
 .auth-shell{width:100%;max-width:400px}
 
 .auth-brand{text-align:center;margin-bottom:48px}
@@ -58,6 +68,9 @@ a{color:var(--cyan);text-decoration:none}
 .field input,.field select{width:100%;padding:13px 16px;background:rgba(0,0,0,0.5);border:1px solid var(--border);border-radius:12px;color:var(--text);font-size:14px;outline:none;transition:all .2s ease}
 .field input:focus,.field select:focus{border-color:rgba(0,240,255,0.4);box-shadow:0 0 0 3px rgba(0,240,255,0.06)}
 .field input::placeholder{color:var(--dim)}
+.field-hint{font-size:11px;color:var(--dim);margin-top:4px}
+.field input.invalid{border-color:rgba(239,68,68,0.5)}
+.field input.valid{border-color:rgba(34,197,94,0.4)}
 
 /* Password strength */
 .pw-strength{height:3px;border-radius:2px;background:var(--faint);margin-top:8px;overflow:hidden}
@@ -78,16 +91,6 @@ a{color:var(--cyan);text-decoration:none}
 .alert-error{background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.12);color:var(--red)}
 .alert-success{background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.12);color:var(--green)}
 
-/* OTP Inputs */
-.otp-row{display:flex;gap:8px;justify-content:center;margin-bottom:20px}
-.otp-box{width:48px;height:56px;text-align:center;font-size:22px;font-weight:700;font-family:'JetBrains Mono',monospace;background:rgba(0,0,0,0.5);border:1px solid var(--border);border-radius:12px;color:var(--text);outline:none;transition:all .2s}
-.otp-box:focus{border-color:rgba(0,240,255,0.5);box-shadow:0 0 0 3px rgba(0,240,255,0.08)}
-
-.verify-panel{display:none;text-align:center}
-.verify-panel.active{display:block}
-.verify-panel p{color:var(--muted);font-size:13px;margin-bottom:24px;line-height:1.6}
-.verify-code-display{font-family:'JetBrains Mono',monospace;font-size:14px;color:var(--amber);background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.15);border-radius:8px;padding:8px 16px;display:inline-block;margin-bottom:20px}
-
 /* ═══════ WALLET SCREEN ═══════ */
 #wallet-screen{flex-direction:column}
 
@@ -99,6 +102,12 @@ a{color:var(--cyan);text-decoration:none}
 .header-actions{display:flex;align-items:center;gap:6px}
 .icon-btn{width:36px;height:36px;border-radius:10px;background:var(--surface);border:1px solid var(--border);color:var(--muted);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;transition:all .2s}
 .icon-btn:hover{background:var(--surface-hover);border-color:var(--border-hover);color:var(--text)}
+
+/* Nav dropdown (mobile-friendly) */
+.nav-dropdown{display:none;position:absolute;top:100%;right:0;background:#111118;border:1px solid var(--border);border-radius:12px;padding:8px;min-width:160px;z-index:60;box-shadow:0 8px 32px rgba(0,0,0,0.5)}
+.nav-dropdown.open{display:block}
+.nav-dropdown a{display:block;padding:10px 14px;color:var(--muted);font-size:13px;font-weight:500;border-radius:8px;text-decoration:none;transition:all .15s}
+.nav-dropdown a:hover{background:var(--surface-hover);color:var(--text)}
 
 /* Identity strip */
 .identity{display:flex;align-items:center;gap:12px;padding:12px 0}
@@ -118,16 +127,23 @@ a{color:var(--cyan);text-decoration:none}
 @keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
 .balance-symbol{font-size:14px;color:var(--muted);font-weight:500;margin-top:6px}
 
+/* Portfolio mini chart */
+.portfolio-mini{display:flex;align-items:center;justify-content:center;gap:16px;margin-top:10px}
+.portfolio-mini canvas{border-radius:50%}
+.portfolio-mini-legend{display:flex;flex-direction:column;gap:4px}
+.portfolio-mini-legend .leg-item{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)}
+.leg-item .leg-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+
 /* Quick actions */
-.quick-actions{display:flex;justify-content:center;gap:24px;padding:8px 0 28px}
-.qaction{display:flex;flex-direction:column;align-items:center;gap:8px;cursor:pointer;-webkit-tap-highlight-color:transparent}
-.qaction-circle{width:52px;height:52px;border-radius:var(--radius-full);background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:20px;transition:all .2s}
+.quick-actions{display:flex;justify-content:center;gap:16px;padding:8px 0 28px;flex-wrap:wrap}
+.qaction{display:flex;flex-direction:column;align-items:center;gap:8px;cursor:pointer;-webkit-tap-highlight-color:transparent;min-width:56px}
+.qaction-circle{width:48px;height:48px;border-radius:var(--radius-full);background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:18px;transition:all .2s}
 .qaction:hover .qaction-circle{background:var(--surface-hover);border-color:var(--border-hover);transform:translateY(-2px)}
-.qaction-label{font-size:11px;font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:0.5px}
+.qaction-label{font-size:10px;font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:0.5px}
 
 /* Tab bar */
 .tab-bar{display:flex;border-bottom:1px solid var(--border);position:relative;margin-bottom:20px}
-.tab-bar::after{content:'';position:absolute;bottom:-1px;height:2px;background:linear-gradient(90deg,var(--cyan),var(--purple));border-radius:1px;transition:all .3s ease;width:var(--tab-w,33.33%);left:var(--tab-x,0)}
+.tab-bar::after{content:'';position:absolute;bottom:-1px;height:2px;background:linear-gradient(90deg,var(--cyan),var(--purple));border-radius:1px;transition:all .3s ease;width:var(--tab-w,25%);left:var(--tab-x,0)}
 .tab{flex:1;padding:12px 0;text-align:center;font-size:13px;font-weight:600;color:var(--dim);background:none;border:none;cursor:pointer;transition:color .2s}
 .tab.active{color:var(--text)}
 .tab:hover:not(.active){color:var(--muted)}
@@ -146,35 +162,20 @@ a{color:var(--cyan);text-decoration:none}
 .asset-val-main{font-size:15px;font-weight:700;font-family:'JetBrains Mono',monospace}
 .asset-val-sub{font-size:11px;color:var(--dim);margin-top:1px}
 
-/* Object card */
-.obj-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:10px;transition:all .2s}
-.obj-card:hover{border-color:var(--border-hover)}
-.obj-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
-.obj-id{font-size:12px;font-family:'JetBrains Mono',monospace;color:var(--muted)}
-.obj-state{font-size:11px;font-weight:700;padding:3px 10px;border-radius:var(--radius-full);text-transform:uppercase;letter-spacing:0.3px}
-.obj-state.active{background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.15);color:var(--green)}
-.obj-state.grace{background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.15);color:var(--amber)}
-.obj-state.ghost{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.15);color:var(--red)}
-.obj-energy-bar{height:4px;border-radius:2px;background:var(--faint);overflow:hidden;margin:8px 0}
-.obj-energy-fill{height:100%;border-radius:2px;transition:width .5s ease}
-.obj-meta{display:flex;justify-content:space-between;font-size:12px;color:var(--dim)}
-.obj-actions{margin-top:12px;display:flex;gap:8px}
-
 /* Activity item */
-.act-item{display:flex;align-items:center;gap:12px;padding:14px 0;border-bottom:1px solid rgba(255,255,255,0.03)}
+.act-item{display:flex;align-items:center;gap:12px;padding:14px 0;border-bottom:1px solid rgba(255,255,255,0.03);cursor:pointer;transition:background .15s;border-radius:8px;margin:0 -8px;padding-left:8px;padding-right:8px}
+.act-item:hover{background:var(--surface)}
 .act-item:last-child{border-bottom:none}
 .act-icon{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0}
 .act-icon.green{background:rgba(34,197,94,0.1)}
 .act-icon.red{background:rgba(239,68,68,0.1)}
 .act-icon.amber{background:rgba(245,158,11,0.1)}
 .act-icon.cyan{background:rgba(0,240,255,0.1)}
+.act-icon.purple{background:rgba(139,92,246,0.1)}
 .act-body{flex:1;min-width:0}
 .act-title{font-size:13px;font-weight:600}
 .act-desc{font-size:12px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
 .act-right{text-align:right;flex-shrink:0}
-.act-amount{font-size:13px;font-weight:700;font-family:'JetBrains Mono',monospace}
-.act-amount.positive{color:var(--green)}
-.act-amount.negative{color:var(--red)}
 .act-time{font-size:11px;color:var(--dim);margin-top:2px}
 
 /* Empty state */
@@ -182,10 +183,77 @@ a{color:var(--cyan);text-decoration:none}
 .empty-icon{font-size:36px;margin-bottom:12px;opacity:0.3}
 .empty p{color:var(--dim);font-size:13px;line-height:1.6;margin-bottom:16px}
 
+/* Loading skeleton */
+.skel{background:linear-gradient(90deg,var(--faint) 25%,rgba(255,255,255,0.04) 50%,var(--faint) 75%);background-size:200% 100%;animation:skelAnim 1.5s ease-in-out infinite;border-radius:8px}
+@keyframes skelAnim{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.skel-row{height:72px;margin-bottom:10px;border-radius:var(--radius)}
+.skel-balance{height:48px;width:200px;margin:32px auto 8px;border-radius:8px}
+.skel-line{height:14px;margin-bottom:8px}
+
+/* ═══════ PORTFOLIO CHART ═══════ */
+.chart-container{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:16px}
+.chart-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.chart-header h3{font-size:15px;font-weight:700}
+.chart-tabs{display:flex;gap:4px}
+.chart-tab{padding:5px 12px;font-size:11px;font-weight:600;color:var(--dim);background:transparent;border:1px solid transparent;border-radius:var(--radius-full);cursor:pointer;transition:all .2s}
+.chart-tab.active{background:rgba(0,240,255,0.08);border-color:rgba(0,240,255,0.15);color:var(--cyan)}
+.chart-canvas-wrap{position:relative;height:180px}
+.chart-canvas-wrap canvas{width:100%;height:100%}
+
+/* Allocation row */
+.alloc-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.03)}
+.alloc-row:last-child{border-bottom:none}
+.alloc-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.alloc-info{flex:1}
+.alloc-name{font-size:13px;font-weight:600}
+.alloc-sub{font-size:11px;color:var(--dim)}
+.alloc-pct{font-size:13px;font-weight:700;color:var(--muted);font-family:'JetBrains Mono',monospace}
+.alloc-bar{height:4px;border-radius:2px;background:var(--faint);margin-top:4px;overflow:hidden}
+.alloc-bar-fill{height:100%;border-radius:2px;transition:width .5s ease}
+
+/* ═══════ ADDRESS BOOK ═══════ */
+.ab-item{display:flex;align-items:center;gap:12px;padding:14px 16px;background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:6px;cursor:pointer;transition:all .15s}
+.ab-item:hover{background:var(--surface-hover);border-color:var(--border-hover)}
+.ab-avatar{width:34px;height:34px;border-radius:var(--radius-full);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#000;flex-shrink:0}
+.ab-info{flex:1;min-width:0}
+.ab-name{font-size:13px;font-weight:600}
+.ab-addr{font-size:11px;color:var(--dim);font-family:'JetBrains Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ab-actions{display:flex;gap:4px}
+.ab-action-btn{width:28px;height:28px;border-radius:8px;background:transparent;border:1px solid var(--border);color:var(--dim);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:12px;transition:all .15s}
+.ab-action-btn:hover{background:var(--surface-hover);color:var(--text);border-color:var(--border-hover)}
+.ab-action-btn.delete:hover{color:var(--red);border-color:rgba(239,68,68,0.3)}
+
+/* ═══════ SWAP ═══════ */
+.swap-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;position:relative}
+.swap-arrow{width:36px;height:36px;border-radius:50%;background:var(--bg);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;margin:-12px auto;position:relative;z-index:2;cursor:pointer;font-size:18px;color:var(--muted);transition:all .2s}
+.swap-arrow:hover{background:var(--surface-hover);color:var(--text);transform:rotate(180deg)}
+.swap-field{padding:16px;background:rgba(0,0,0,0.3);border:1px solid var(--border);border-radius:12px;margin-bottom:4px}
+.swap-field-top{display:flex;justify-content:space-between;font-size:12px;color:var(--dim);margin-bottom:8px}
+.swap-field input{width:100%;background:transparent;border:none;color:var(--text);font-size:24px;font-weight:700;font-family:'JetBrains Mono',monospace;outline:none}
+.swap-field input::placeholder{color:var(--dim)}
+.swap-field-bottom{display:flex;justify-content:space-between;align-items:center;margin-top:8px}
+.swap-token-btn{display:flex;align-items:center;gap:6px;padding:6px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-full);cursor:pointer;font-size:13px;font-weight:600;color:var(--text);transition:all .15s}
+.swap-token-btn:hover{background:var(--surface-hover);border-color:var(--border-hover)}
+.swap-rate{text-align:center;font-size:12px;color:var(--dim);padding:12px 0}
+.swap-preview{background:rgba(0,0,0,0.2);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:16px}
+.swap-preview-row{display:flex;justify-content:space-between;font-size:12px;padding:4px 0}
+.swap-preview-row .label{color:var(--dim)}
+.swap-preview-row .val{color:var(--muted);font-family:'JetBrains Mono',monospace}
+
+/* ═══════ TX SIMULATION ═══════ */
+.sim-result{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-top:16px}
+.sim-row{display:flex;justify-content:space-between;padding:6px 0;font-size:13px}
+.sim-row .label{color:var(--dim)}
+.sim-row .val{font-family:'JetBrains Mono',monospace}
+.sim-badge{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:var(--radius-full);font-size:11px;font-weight:700}
+.sim-badge.ok{background:rgba(34,197,94,0.1);color:var(--green);border:1px solid rgba(34,197,94,0.15)}
+.sim-badge.warn{background:rgba(245,158,11,0.1);color:var(--amber);border:1px solid rgba(245,158,11,0.15)}
+.sim-badge.fail{background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.15)}
+
 /* ═══════ BOTTOM SHEET OVERLAYS ═══════ */
 .sheet-overlay{position:fixed;inset:0;background:rgba(0,0,0,0);z-index:50;pointer-events:none;transition:background .3s ease}
 .sheet-overlay.active{background:rgba(0,0,0,0.6);pointer-events:all;backdrop-filter:blur(4px)}
-.sheet{position:fixed;bottom:0;left:50%;transform:translateX(-50%) translateY(100%);width:100%;max-width:480px;background:#111118;border:1px solid var(--border);border-bottom:none;border-radius:20px 20px 0 0;padding:24px 24px 32px;z-index:51;transition:transform .35s cubic-bezier(0.32,0.72,0,1)}
+.sheet{position:fixed;bottom:0;left:50%;transform:translateX(-50%) translateY(100%);width:100%;max-width:480px;max-height:85vh;overflow-y:auto;background:#111118;border:1px solid var(--border);border-bottom:none;border-radius:20px 20px 0 0;padding:24px 24px 32px;z-index:51;transition:transform .35s cubic-bezier(0.32,0.72,0,1)}
 .sheet-overlay.active .sheet{transform:translateX(-50%) translateY(0)}
 .sheet-handle{width:36px;height:4px;border-radius:2px;background:rgba(255,255,255,0.1);margin:0 auto 20px}
 .sheet-title{font-size:17px;font-weight:700;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between}
@@ -194,18 +262,30 @@ a{color:var(--cyan);text-decoration:none}
 .confirm-details{background:rgba(0,0,0,0.3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px}
 .confirm-row{display:flex;justify-content:space-between;padding:8px 0;font-size:13px}
 .confirm-row .label{color:var(--dim)}
-.confirm-row .val{font-weight:600;font-family:'JetBrains Mono',monospace;font-size:12px}
+.confirm-row .val{font-weight:600;font-family:'JetBrains Mono',monospace;font-size:12px;text-align:right;max-width:60%;word-break:break-all}
 
 /* Success animation */
 .success-check{width:64px;height:64px;margin:24px auto;border-radius:50%;background:rgba(34,197,94,0.1);border:2px solid var(--green);display:flex;align-items:center;justify-content:center;font-size:28px;animation:popIn .4s cubic-bezier(0.34,1.56,0.64,1)}
 @keyframes popIn{0%{transform:scale(0)}100%{transform:scale(1)}}
+
+/* QR Code */
+.qr-container{text-align:center;padding:20px;margin-bottom:16px}
+.qr-container canvas{border-radius:12px;border:4px solid #fff}
+.qr-addr{font-size:12px;color:var(--muted);font-family:'JetBrains Mono',monospace;word-break:break-all;margin-top:12px;padding:10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;cursor:pointer;transition:all .2s}
+.qr-addr:hover{background:var(--surface-hover);color:var(--text)}
 
 /* Settings panel */
 .settings-section{margin-bottom:24px}
 .settings-label{font-size:11px;font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px}
 .settings-row{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:6px}
 .settings-row span{font-size:14px}
-.settings-val{font-size:13px;color:var(--muted);font-family:'JetBrains Mono',monospace}
+.settings-val{font-size:13px;color:var(--muted);font-family:'JetBrains Mono',monospace;text-align:right;max-width:60%;word-break:break-all}
+
+/* Tx Detail */
+.tx-detail-row{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:13px}
+.tx-detail-row:last-child{border-bottom:none}
+.tx-detail-label{color:var(--dim)}
+.tx-detail-val{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text);text-align:right;max-width:60%;word-break:break-all}
 
 /* Toast */
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(80px);padding:12px 24px;border-radius:var(--radius-full);font-size:13px;font-weight:600;z-index:200;opacity:0;transition:all .35s cubic-bezier(0.32,0.72,0,1);pointer-events:none}
@@ -217,22 +297,37 @@ a{color:var(--cyan);text-decoration:none}
 .spin{display:inline-block;width:16px;height:16px;border:2px solid transparent;border-top-color:currentColor;border-radius:50%;animation:spin .5s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 
-/* Skeleton */
-.skel{background:linear-gradient(90deg,var(--faint) 25%,rgba(255,255,255,0.04) 50%,var(--faint) 75%);background-size:200% 100%;animation:skelAnim 1.5s ease-in-out infinite;border-radius:8px}
-@keyframes skelAnim{0%{background-position:200% 0}100%{background-position:-200% 0}}
+/* Network status dot */
+.status-dot{width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block;margin-right:4px;animation:pulseDot 2s ease infinite}
+@keyframes pulseDot{0%,100%{opacity:1}50%{opacity:.4}}
 
 /* Responsive */
+@media(max-width:640px){
+  .header-actions .nav-links{display:none}
+  .header-actions .nav-toggle{display:flex}
+}
 @media(max-width:480px){
   .balance-amount{font-size:36px;letter-spacing:-1px}
-  .quick-actions{gap:16px}
-  .qaction-circle{width:46px;height:46px;font-size:18px}
-  .shell{padding:0 16px}
-  .otp-box{width:42px;height:48px;font-size:18px}
+  .quick-actions{gap:10px}
+  .qaction-circle{width:44px;height:44px;font-size:16px}
+  .qaction-label{font-size:9px}
+  .shell{padding:0 16px;padding-top:34px}
+  .sheet{padding:20px 16px 28px}
+  .chart-canvas-wrap{height:140px}
 }
+@media(max-width:360px){
+  .balance-amount{font-size:28px}
+  .qaction-label{font-size:9px}
+  .qaction{min-width:48px}
+}
+
+/* Footer */
+.wallet-footer{text-align:center;padding:20px;font-size:11px;color:var(--dim);border-top:1px solid var(--border);margin-top:40px}
+.wallet-footer a{color:var(--muted);text-decoration:underline}
 </style>
 </head>
 <body>
-<div style="background:linear-gradient(90deg,rgba(245,158,11,0.08),rgba(255,77,0,0.08));text-align:center;padding:6px;font-size:11px;font-weight:600;color:#f59e0b;letter-spacing:0.05em;text-transform:uppercase;border-bottom:1px solid rgba(245,158,11,0.15);position:fixed;top:0;left:0;right:0;z-index:200">Testnet — Tokens have no real-world value</div>
+<div class="testnet-banner"><span class="status-dot"></span> Testnet — Tokens have no real-world value</div>
 <div class="bg-glow"></div>
 
 <!-- ═══════ AUTH SCREEN ═══════ -->
@@ -246,45 +341,29 @@ a{color:var(--cyan);text-decoration:none}
     <p>Web3 wallet for the thermodynamic blockchain</p>
   </div>
 
-  <div class="auth-tabs">
-    <button class="auth-tab active" onclick="authTab('login')">Sign In</button>
-    <button class="auth-tab" onclick="authTab('register')">Create Account</button>
+  <div class="auth-tabs" role="tablist">
+    <button class="auth-tab active" onclick="authTab('login')" role="tab" aria-selected="true">Sign In</button>
+    <button class="auth-tab" onclick="authTab('register')" role="tab" aria-selected="false">Create Account</button>
   </div>
 
   <div class="auth-card">
-    <div id="auth-error" class="alert alert-error"></div>
-    <div id="auth-success" class="alert alert-success"></div>
+    <div id="auth-error" class="alert alert-error" role="alert"></div>
+    <div id="auth-success" class="alert alert-success" role="status"></div>
 
     <!-- Login -->
-    <div id="panel-login" class="form-panel active">
-      <div class="field"><label>Email</label><input type="email" id="l-email" placeholder="you@example.com" autocomplete="email"></div>
-      <div class="field"><label>Password</label><input type="password" id="l-pass" placeholder="Enter password" autocomplete="current-password"></div>
-      <button class="btn btn-primary" id="login-btn" onclick="doLogin()">Sign In</button>
+    <div id="panel-login" class="form-panel active" role="tabpanel">
+      <div class="field"><label for="l-email">Email</label><input type="email" id="l-email" placeholder="you@example.com" autocomplete="email"></div>
+      <div class="field"><label for="l-pass">Password</label><input type="password" id="l-pass" placeholder="Enter password" autocomplete="current-password"></div>
+      <button class="btn btn-primary" id="login-btn" onclick="doLogin()" aria-label="Sign in to your account">Sign In</button>
     </div>
 
     <!-- Register -->
-    <div id="panel-register" class="form-panel">
-      <div class="field"><label>Display Name</label><input type="text" id="r-name" placeholder="Satoshi"></div>
-      <div class="field"><label>Email</label><input type="email" id="r-email" placeholder="you@example.com" autocomplete="email"></div>
-      <div class="field"><label>Password</label><input type="password" id="r-pass" placeholder="Min 8 characters" autocomplete="new-password" oninput="updatePwStrength(this.value)"><div class="pw-strength"><div class="pw-strength-bar" id="pw-bar"></div></div></div>
-      <div class="field"><label>Confirm Password</label><input type="password" id="r-pass2" placeholder="Confirm password"></div>
-      <button class="btn btn-primary" id="reg-btn" onclick="doRegister()">Create Account</button>
-    </div>
-
-    <!-- Verify -->
-    <div id="panel-verify" class="verify-panel">
-      <p>Your verification code:</p>
-      <div class="verify-code-display" id="verify-code-display">------</div>
-      <div class="otp-row" id="otp-row">
-        <input class="otp-box" maxlength="1" data-idx="0">
-        <input class="otp-box" maxlength="1" data-idx="1">
-        <input class="otp-box" maxlength="1" data-idx="2">
-        <input class="otp-box" maxlength="1" data-idx="3">
-        <input class="otp-box" maxlength="1" data-idx="4">
-        <input class="otp-box" maxlength="1" data-idx="5">
-      </div>
-      <button class="btn btn-primary" onclick="doVerify()">Verify Email</button>
-      <div style="margin-top:12px"><button class="btn btn-ghost btn-sm" style="margin:0 auto" onclick="authTab('login')">Back to Sign In</button></div>
+    <div id="panel-register" class="form-panel" role="tabpanel">
+      <div class="field"><label for="r-name">Display Name</label><input type="text" id="r-name" placeholder="Satoshi" maxlength="100"></div>
+      <div class="field"><label for="r-email">Email</label><input type="email" id="r-email" placeholder="you@example.com" autocomplete="email"></div>
+      <div class="field"><label for="r-pass">Password</label><input type="password" id="r-pass" placeholder="Min 8 characters" autocomplete="new-password" oninput="updatePwStrength(this.value)" maxlength="128"><div class="pw-strength"><div class="pw-strength-bar" id="pw-bar"></div></div></div>
+      <div class="field"><label for="r-pass2">Confirm Password</label><input type="password" id="r-pass2" placeholder="Confirm password" maxlength="128"></div>
+      <button class="btn btn-primary" id="reg-btn" onclick="doRegister()" aria-label="Create a new account">Create Account</button>
     </div>
   </div>
 </div>
@@ -295,74 +374,111 @@ a{color:var(--cyan);text-decoration:none}
 <div class="shell">
 
   <!-- Header -->
-  <div class="wallet-header">
+  <div class="wallet-header" style="position:relative">
     <div class="wallet-header-left">
       <svg viewBox="0 0 48 48" fill="none" width="22" height="22"><defs><linearGradient id="gl2" x1="0" y1="0" x2="48" y2="48"><stop stop-color="#00f0ff"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs><circle cx="24" cy="24" r="18" stroke="url(#gl2)" stroke-width="2.5" fill="none"/><path d="M24 13 L30 22 H18 Z" fill="url(#gl2)" opacity="0.85"/><circle cx="24" cy="30" r="4.5" fill="url(#gl2)" opacity="0.6"/></svg>
       <span>EvaporChain</span>
     </div>
     <div class="header-actions">
-      <a href="/explorer" class="icon-btn" title="Explorer" style="text-decoration:none">&#9776;</a>
-      <a href="/nft" class="icon-btn" title="NFTs" style="text-decoration:none;font-size:12px;font-weight:600">NFT</a>
-      <button class="icon-btn" onclick="loadWallets();loadActivity()" title="Refresh">&#8635;</button>
-      <button class="icon-btn" onclick="openSheet('settings-sheet')" title="Settings">&#9881;</button>
+      <button class="icon-btn" onclick="toggleNavDropdown()" title="Navigate" aria-label="Navigation menu">&#9776;</button>
+      <button class="icon-btn" onclick="loadWallets();loadActivity()" title="Refresh" aria-label="Refresh data">&#8635;</button>
+      <button class="icon-btn" onclick="openSheet('settings-sheet')" title="Settings" aria-label="Open settings">&#9881;</button>
+    </div>
+    <div class="nav-dropdown" id="nav-dropdown" role="menu">
+      <a href="/explorer" role="menuitem">Explorer</a>
+      <a href="/nft" role="menuitem">NFTs</a>
+      <a href="/tokens" role="menuitem">Tokens</a>
+      <a href="/staking" role="menuitem">Staking</a>
+      <a href="/dao" role="menuitem">DAO</a>
+      <a href="/faucet" role="menuitem">Faucet</a>
+      <div style="border-top:1px solid var(--border);margin:4px 0"></div>
+      <a href="https://evaporchain.com" role="menuitem" style="color:var(--cyan)">&larr; evaporchain.com</a>
     </div>
   </div>
 
   <!-- Identity -->
   <div class="identity">
-    <div class="avatar" id="user-avatar">?</div>
+    <div class="avatar" id="user-avatar" aria-hidden="true">?</div>
     <div class="identity-info">
       <div class="identity-name"><span id="w-username">User</span> <span class="badge">Testnet</span></div>
-      <div class="identity-addr" id="primary-addr" onclick="copyPrimary()"><span id="w-addr-short">No wallet yet</span> <span class="copy-icon">&#9112;</span></div>
+      <div class="identity-addr" id="primary-addr" onclick="copyPrimary()" role="button" aria-label="Copy wallet address" tabindex="0"><span id="w-addr-short">No wallet yet</span> <span class="copy-icon">&#128203;</span></div>
     </div>
   </div>
 
   <!-- Balance -->
   <div class="balance-hero">
+    <div id="balance-loading" class="skel skel-balance" style="display:none"></div>
     <div class="balance-amount" id="w-balance">0<span class="shimmer"></span></div>
     <div class="balance-symbol">EVAP &middot; Testnet Tokens</div>
+    <div class="portfolio-mini" id="portfolio-mini" style="display:none">
+      <canvas id="pie-mini" width="48" height="48"></canvas>
+      <div class="portfolio-mini-legend" id="pie-mini-legend"></div>
+    </div>
   </div>
 
   <!-- Quick Actions -->
   <div class="quick-actions">
-    <div class="qaction" onclick="openSheet('send-sheet')"><div class="qaction-circle">&#8593;</div><div class="qaction-label">Send</div></div>
-    <div class="qaction" onclick="openSheet('receive-sheet')"><div class="qaction-circle">&#8595;</div><div class="qaction-label">Receive</div></div>
-    <div class="qaction" onclick="openSheet('faucet-sheet')"><div class="qaction-circle">&#128167;</div><div class="qaction-label">Faucet</div></div>
-    <div class="qaction" onclick="openSheet('create-wallet-sheet')"><div class="qaction-circle">&#43;</div><div class="qaction-label">Wallet</div></div>
+    <div class="qaction" onclick="openSheet('send-sheet')" role="button" tabindex="0" aria-label="Send tokens"><div class="qaction-circle">&#8593;</div><div class="qaction-label">Send</div></div>
+    <div class="qaction" onclick="openSheet('receive-sheet')" role="button" tabindex="0" aria-label="Receive tokens"><div class="qaction-circle">&#8595;</div><div class="qaction-label">Receive</div></div>
+    <div class="qaction" onclick="openSheet('swap-sheet')" role="button" tabindex="0" aria-label="Swap tokens"><div class="qaction-circle">&#8644;</div><div class="qaction-label">Swap</div></div>
+    <div class="qaction" onclick="openSheet('faucet-sheet')" role="button" tabindex="0" aria-label="Claim from faucet"><div class="qaction-circle">&#128167;</div><div class="qaction-label">Faucet</div></div>
+    <div class="qaction" onclick="openSheet('addressbook-sheet')" role="button" tabindex="0" aria-label="Address book"><div class="qaction-circle">&#128213;</div><div class="qaction-label">Contacts</div></div>
+    <div class="qaction" onclick="openSheet('create-wallet-sheet')" role="button" tabindex="0" aria-label="Create new wallet"><div class="qaction-circle">&#43;</div><div class="qaction-label">Wallet</div></div>
   </div>
 
   <!-- Tabs -->
-  <div class="tab-bar" id="tab-bar">
-    <button class="tab active" onclick="switchTab(0)">Assets</button>
-    <button class="tab" onclick="switchTab(1)">Objects</button>
-    <button class="tab" onclick="switchTab(2)">Activity</button>
+  <div class="tab-bar" id="tab-bar" role="tablist">
+    <button class="tab active" onclick="switchTab(0)" role="tab" aria-selected="true">Assets</button>
+    <button class="tab" onclick="switchTab(1)" role="tab">Activity</button>
+    <button class="tab" onclick="switchTab(2)" role="tab">Portfolio</button>
+    <button class="tab" onclick="switchTab(3)" role="tab">Swap</button>
   </div>
 
   <!-- Assets -->
-  <div class="tab-panel active" id="tab-assets">
+  <div class="tab-panel active" id="tab-assets" role="tabpanel">
     <div id="assets-content">
-      <div class="asset-row">
-        <div class="asset-icon" style="background:linear-gradient(135deg,rgba(0,240,255,0.15),rgba(139,92,246,0.15))">
-          <svg viewBox="0 0 48 48" fill="none" width="22" height="22"><circle cx="24" cy="24" r="18" stroke="url(#gl2)" stroke-width="2" fill="none"/><path d="M24 15 L28 22 H20 Z" fill="url(#gl2)" opacity="0.8"/></svg>
-        </div>
-        <div class="asset-info"><div class="asset-name">EVAP</div><div class="asset-sub">EvaporChain Token</div></div>
-        <div class="asset-val"><div class="asset-val-main" id="asset-evap-bal">0</div><div class="asset-val-sub">Testnet</div></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Objects -->
-  <div class="tab-panel" id="tab-objects">
-    <div id="objects-content">
-      <div class="empty"><div class="empty-icon">&#9671;</div><p>No objects yet.<br>Create one to watch decay in real time.</p><button class="btn btn-ghost btn-sm" style="margin:0 auto">Create Object</button></div>
+      <div class="skel skel-row"></div>
     </div>
   </div>
 
   <!-- Activity -->
-  <div class="tab-panel" id="tab-activity">
+  <div class="tab-panel" id="tab-activity" role="tabpanel">
     <div id="activity-content">
-      <div class="empty"><div class="empty-icon">&#128196;</div><p>No activity yet.<br>Create a wallet and claim some EVAP to get started.</p></div>
+      <div class="skel skel-row"></div>
+      <div class="skel skel-row"></div>
     </div>
+  </div>
+
+  <!-- Portfolio -->
+  <div class="tab-panel" id="tab-portfolio" role="tabpanel">
+    <div id="portfolio-content">
+      <div class="chart-container">
+        <div class="chart-header">
+          <h3>Balance History</h3>
+          <div class="chart-tabs">
+            <button class="chart-tab active" onclick="chartRange('1h')">1H</button>
+            <button class="chart-tab" onclick="chartRange('6h')">6H</button>
+            <button class="chart-tab" onclick="chartRange('24h')">24H</button>
+            <button class="chart-tab" onclick="chartRange('7d')">7D</button>
+          </div>
+        </div>
+        <div class="chart-canvas-wrap">
+          <canvas id="balance-chart"></canvas>
+        </div>
+      </div>
+      <div class="chart-container">
+        <div class="chart-header"><h3>Token Allocation</h3></div>
+        <div style="display:flex;gap:20px;align-items:center">
+          <canvas id="alloc-pie" width="120" height="120" style="flex-shrink:0"></canvas>
+          <div id="alloc-list" style="flex:1"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Swap Tab (inline) -->
+  <div class="tab-panel" id="tab-swap" role="tabpanel">
+    <div id="swap-inline-content"></div>
   </div>
 
   <div style="height:40px"></div>
@@ -372,30 +488,40 @@ a{color:var(--cyan);text-decoration:none}
 <!-- ═══════ BOTTOM SHEETS ═══════ -->
 
 <!-- Send Sheet -->
-<div id="send-sheet" class="sheet-overlay" onclick="if(event.target===this)closeSheets()">
+<div id="send-sheet" class="sheet-overlay" onclick="if(event.target===this)closeSheets()" role="dialog" aria-label="Send tokens">
 <div class="sheet">
   <div class="sheet-handle"></div>
   <div id="send-step-1">
-    <div class="sheet-title">Send EVAP <button class="icon-btn" onclick="closeSheets()" style="width:28px;height:28px;font-size:14px">&times;</button></div>
-    <div class="field"><label>From</label><select id="s-from"></select></div>
-    <div class="field"><label>To Address</label><input type="text" id="s-to" placeholder="0x..."></div>
-    <div class="field"><label>Amount</label><div style="position:relative"><input type="number" id="s-amount" placeholder="0" min="1" style="padding-right:60px"><button onclick="document.getElementById('s-amount').value='10000'" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);background:rgba(0,240,255,0.1);border:1px solid rgba(0,240,255,0.2);color:var(--cyan);font-size:11px;font-weight:700;padding:4px 10px;border-radius:6px;cursor:pointer">MAX</button></div></div>
+    <div class="sheet-title">Send EVAP <button class="icon-btn" onclick="closeSheets()" style="width:28px;height:28px;font-size:14px" aria-label="Close">&times;</button></div>
+    <div class="field"><label for="s-from">From Wallet</label><select id="s-from" onchange="updateSendMax()"></select></div>
+    <div class="field">
+      <label for="s-to">To Address</label>
+      <input type="text" id="s-to" placeholder="0x... or contact name" oninput="validateToAddress(this)" spellcheck="false" list="contact-suggestions">
+      <datalist id="contact-suggestions"></datalist>
+      <div class="field-hint" id="s-to-hint"></div>
+    </div>
+    <div class="field"><label for="s-amount">Amount</label><div style="position:relative"><input type="number" id="s-amount" placeholder="0" min="1" step="1" style="padding-right:60px"><button onclick="setMaxAmount()" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);background:rgba(0,240,255,0.1);border:1px solid rgba(0,240,255,0.2);color:var(--cyan);font-size:11px;font-weight:700;padding:4px 10px;border-radius:6px;cursor:pointer" aria-label="Set maximum amount">MAX</button></div><div class="field-hint" id="s-available">Available: 0 EVAP</div></div>
+    <!-- Tx Simulation -->
+    <div id="send-sim" style="display:none"></div>
+    <button class="btn btn-ghost btn-sm" style="margin-bottom:12px" onclick="simulateSend()">Simulate Transaction</button>
     <button class="btn btn-primary" onclick="sendReview()">Review Transaction</button>
   </div>
   <div id="send-step-2" style="display:none">
-    <div class="sheet-title">Confirm Send <button class="icon-btn" onclick="sendBack()" style="width:28px;height:28px;font-size:14px">&#8592;</button></div>
+    <div class="sheet-title">Confirm Send <button class="icon-btn" onclick="sendBack()" style="width:28px;height:28px;font-size:14px" aria-label="Go back">&#8592;</button></div>
     <div class="confirm-details">
+      <div class="confirm-row"><span class="label">From</span><span class="val" id="sc-from"></span></div>
       <div class="confirm-row"><span class="label">To</span><span class="val" id="sc-to"></span></div>
       <div class="confirm-row"><span class="label">Amount</span><span class="val" id="sc-amount"></span></div>
       <div class="confirm-row"><span class="label">Network</span><span class="val">EvaporChain Testnet</span></div>
     </div>
-    <button class="btn btn-primary" onclick="sendConfirm()">Confirm &amp; Send</button>
+    <button class="btn btn-primary" id="send-confirm-btn" onclick="sendConfirm()">Confirm &amp; Send</button>
     <button class="btn btn-ghost" style="margin-top:8px" onclick="sendBack()">Cancel</button>
   </div>
   <div id="send-step-3" style="display:none;text-align:center">
     <div class="success-check">&#10003;</div>
     <div style="font-size:16px;font-weight:700;margin-bottom:6px">Transaction Sent</div>
-    <div style="font-size:13px;color:var(--muted);margin-bottom:24px" id="sc-msg">Queued for next block</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:8px" id="sc-msg">Queued for next block</div>
+    <div style="font-size:11px;color:var(--dim);font-family:'JetBrains Mono',monospace;word-break:break-all;padding:8px;background:var(--surface);border-radius:8px;margin-bottom:20px" id="sc-hash"></div>
     <button class="btn btn-ghost" onclick="closeSheets()">Done</button>
   </div>
   <div id="send-error" class="alert alert-error" style="margin-top:12px"></div>
@@ -403,34 +529,43 @@ a{color:var(--cyan);text-decoration:none}
 </div>
 
 <!-- Receive Sheet -->
-<div id="receive-sheet" class="sheet-overlay" onclick="if(event.target===this)closeSheets()">
+<div id="receive-sheet" class="sheet-overlay" onclick="if(event.target===this)closeSheets()" role="dialog" aria-label="Receive tokens">
 <div class="sheet">
   <div class="sheet-handle"></div>
-  <div class="sheet-title">Receive EVAP <button class="icon-btn" onclick="closeSheets()" style="width:28px;height:28px;font-size:14px">&times;</button></div>
-  <p style="font-size:13px;color:var(--muted);margin-bottom:20px">Share your wallet address to receive tokens.</p>
-  <div id="receive-list"></div>
+  <div class="sheet-title">Receive EVAP <button class="icon-btn" onclick="closeSheets()" style="width:28px;height:28px;font-size:14px" aria-label="Close">&times;</button></div>
+  <div id="qr-section" style="display:none">
+    <div class="field"><label for="qr-wallet-select">Select Wallet</label><select id="qr-wallet-select" onchange="updateQR()"></select></div>
+    <div class="qr-container">
+      <canvas id="qr-canvas" width="200" height="200"></canvas>
+      <div class="qr-addr" id="qr-addr-text" onclick="copyQRAddr()" role="button" aria-label="Copy address"></div>
+    </div>
+    <button class="btn btn-ghost btn-sm" style="margin:0 auto;display:flex" onclick="copyQRAddr()">&#128203; Copy Address</button>
+  </div>
+  <div id="receive-empty" style="display:none">
+    <div class="empty"><p>Create a wallet first to receive tokens.</p></div>
+  </div>
 </div>
 </div>
 
 <!-- Faucet Sheet -->
-<div id="faucet-sheet" class="sheet-overlay" onclick="if(event.target===this)closeSheets()">
+<div id="faucet-sheet" class="sheet-overlay" onclick="if(event.target===this)closeSheets()" role="dialog" aria-label="Testnet faucet">
 <div class="sheet">
   <div class="sheet-handle"></div>
-  <div class="sheet-title">Testnet Faucet <button class="icon-btn" onclick="closeSheets()" style="width:28px;height:28px;font-size:14px">&times;</button></div>
+  <div class="sheet-title">Testnet Faucet <button class="icon-btn" onclick="closeSheets()" style="width:28px;height:28px;font-size:14px" aria-label="Close">&times;</button></div>
   <p style="font-size:13px;color:var(--muted);margin-bottom:20px">Claim <strong style="color:var(--text)">10,000 EVAP</strong> testnet tokens. One claim per hour.</p>
-  <div class="field"><label>Receive To</label><select id="f-wallet"></select></div>
-  <button class="btn btn-primary" id="faucet-btn" onclick="doFaucet()">Claim 10,000 EVAP</button>
+  <div class="field"><label for="f-wallet">Receive To</label><select id="f-wallet"></select></div>
+  <button class="btn btn-primary" id="faucet-btn" onclick="doFaucet()" aria-label="Claim testnet tokens">Claim 10,000 EVAP</button>
   <div id="faucet-result" class="alert" style="margin-top:12px"></div>
 </div>
 </div>
 
 <!-- Create Wallet Sheet -->
-<div id="create-wallet-sheet" class="sheet-overlay" onclick="if(event.target===this)closeSheets()">
+<div id="create-wallet-sheet" class="sheet-overlay" onclick="if(event.target===this)closeSheets()" role="dialog" aria-label="Create new wallet">
 <div class="sheet">
   <div class="sheet-handle"></div>
   <div id="cw-step-1">
-    <div class="sheet-title">New Wallet <button class="icon-btn" onclick="closeSheets()" style="width:28px;height:28px;font-size:14px">&times;</button></div>
-    <div class="field"><label>Wallet Name</label><input type="text" id="cw-name" placeholder="Main Wallet" value="Main Wallet"></div>
+    <div class="sheet-title">New Wallet <button class="icon-btn" onclick="closeSheets()" style="width:28px;height:28px;font-size:14px" aria-label="Close">&times;</button></div>
+    <div class="field"><label for="cw-name">Wallet Name</label><input type="text" id="cw-name" placeholder="Main Wallet" value="Main Wallet" maxlength="50"></div>
     <button class="btn btn-primary" id="cw-btn" onclick="doCreateWallet()">Create Wallet</button>
   </div>
   <div id="cw-step-2" style="display:none;text-align:center">
@@ -443,58 +578,271 @@ a{color:var(--cyan);text-decoration:none}
 </div>
 </div>
 
-<!-- Settings Sheet -->
-<div id="settings-sheet" class="sheet-overlay" onclick="if(event.target===this)closeSheets()">
+<!-- Swap Sheet -->
+<div id="swap-sheet" class="sheet-overlay" onclick="if(event.target===this)closeSheets()" role="dialog" aria-label="Token swap">
 <div class="sheet">
   <div class="sheet-handle"></div>
-  <div class="sheet-title">Settings <button class="icon-btn" onclick="closeSheets()" style="width:28px;height:28px;font-size:14px">&times;</button></div>
+  <div class="sheet-title">Swap Tokens <button class="icon-btn" onclick="closeSheets()" style="width:28px;height:28px;font-size:14px" aria-label="Close">&times;</button></div>
+  <div id="swap-content"></div>
+</div>
+</div>
+
+<!-- Address Book Sheet -->
+<div id="addressbook-sheet" class="sheet-overlay" onclick="if(event.target===this)closeSheets()" role="dialog" aria-label="Address book">
+<div class="sheet">
+  <div class="sheet-handle"></div>
+  <div class="sheet-title">Contacts <button class="icon-btn" onclick="closeSheets()" style="width:28px;height:28px;font-size:14px" aria-label="Close">&times;</button></div>
+  <div style="margin-bottom:16px">
+    <button class="btn btn-ghost btn-sm" style="margin:0 0 16px" onclick="showAddContact()">+ Add Contact</button>
+    <div id="add-contact-form" style="display:none;margin-bottom:16px">
+      <div class="field"><label for="ab-new-name">Name</label><input type="text" id="ab-new-name" placeholder="Alice" maxlength="50"></div>
+      <div class="field"><label for="ab-new-addr">Address</label><input type="text" id="ab-new-addr" placeholder="0x..." spellcheck="false"></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-primary btn-sm" onclick="saveContact()">Save</button>
+        <button class="btn btn-ghost btn-sm" onclick="hideAddContact()">Cancel</button>
+      </div>
+    </div>
+  </div>
+  <div id="addressbook-list"></div>
+</div>
+</div>
+
+<!-- Settings Sheet -->
+<div id="settings-sheet" class="sheet-overlay" onclick="if(event.target===this)closeSheets()" role="dialog" aria-label="Settings">
+<div class="sheet">
+  <div class="sheet-handle"></div>
+  <div class="sheet-title">Settings <button class="icon-btn" onclick="closeSheets()" style="width:28px;height:28px;font-size:14px" aria-label="Close">&times;</button></div>
   <div class="settings-section">
     <div class="settings-label">Account</div>
     <div class="settings-row"><span>Display Name</span><span class="settings-val" id="set-name">-</span></div>
     <div class="settings-row"><span>Email</span><span class="settings-val" id="set-email">-</span></div>
-    <div class="settings-row"><span>Email Verified</span><span class="settings-val" id="set-verified">-</span></div>
+    <div class="settings-row"><span>Verified</span><span class="settings-val" id="set-verified">-</span></div>
   </div>
   <div class="settings-section">
     <div class="settings-label">Network</div>
     <div class="settings-row"><span>Network</span><span class="settings-val">EvaporChain Testnet</span></div>
-    <div class="settings-row"><span>Node</span><span class="settings-val">testnet.evaporchain.com</span></div>
+    <div class="settings-row"><span>Node</span><span class="settings-val" id="settings-node">-</span></div>
+    <div class="settings-row"><span>Block Height</span><span class="settings-val" id="settings-block">-</span></div>
+    <div class="settings-row"><span>Status</span><span class="settings-val"><span class="status-dot"></span> Connected</span></div>
+  </div>
+  <div class="settings-section">
+    <div class="settings-label">Wallets</div>
+    <div id="settings-wallets"></div>
+  </div>
+  <div class="settings-section">
+    <div class="settings-label">Data</div>
+    <div class="settings-row" style="cursor:pointer" onclick="exportData()"><span>Export Wallet Data</span><span style="color:var(--cyan);font-size:13px">&#8681;</span></div>
+    <div class="settings-row" style="cursor:pointer" onclick="clearAddressBook()"><span>Clear Address Book</span><span style="color:var(--red);font-size:13px">&#10005;</span></div>
   </div>
   <button class="btn btn-danger" style="margin-top:8px" onclick="doLogout()">Logout</button>
 </div>
 </div>
 
+<!-- Activity Detail Sheet -->
+<div id="activity-detail-sheet" class="sheet-overlay" onclick="if(event.target===this)closeSheets()" role="dialog" aria-label="Activity details">
+<div class="sheet">
+  <div class="sheet-handle"></div>
+  <div class="sheet-title">Transaction Details <button class="icon-btn" onclick="closeSheets()" style="width:28px;height:28px;font-size:14px" aria-label="Close">&times;</button></div>
+  <div id="activity-detail-content"></div>
+</div>
+</div>
+
 <!-- Toast -->
-<div id="toast" class="toast toast-success"></div>
+<div id="toast" class="toast toast-success" role="status" aria-live="polite"></div>
+
+<div class="wallet-footer">This is a testnet. Tokens have no real-world value. <a href="https://evaporchain.com/terms">Terms</a> &middot; <a href="https://evaporchain.com/privacy">Privacy</a></div>
 
 <script>
+// ═══════ STATE ═══════
 const API = location.origin;
-let token = localStorage.getItem('evap_token');
+let token = localStorage.getItem('evap_token') || localStorage.getItem('token');
 let user = null;
 let wallets = [];
+let walletBalances = {};
+let totalBalance = 0;
+let activityData = [];
+let tokensData = [];
+let tokenBalances = {};
+let balanceHistory = [];
+let _balanceInterval = null;
+let _lastData = '';
+let _chartRange = '1h';
 
-// ─── Helpers ───
+// ═══════ HELPERS ═══════
 const $ = id => document.getElementById(id);
-const esc = s => { const d = document.createElement('div'); d.textContent = s||''; return d.innerHTML; };
-function showScreen(id){ document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active')); $(id).classList.add('active'); }
-function toast(msg, type='success'){ const t=$('toast'); t.textContent=msg; t.className=`toast toast-${type} show`; setTimeout(()=>t.classList.remove('show'),2800); }
+const esc = s => { const d = document.createElement('div'); d.textContent = String(s==null?'':s); return d.innerHTML.replace(/'/g,'&#39;').replace(/\\/g,'&#92;').replace(/`/g,'&#96;'); };
+
+function showScreen(id){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  $(id).classList.add('active');
+}
+
+function toast(msg, type='success'){
+  const t=$('toast');
+  t.textContent=msg;
+  t.className=`toast toast-${type} show`;
+  clearTimeout(t._timer);
+  t._timer=setTimeout(()=>t.classList.remove('show'),2800);
+}
 
 async function api(method, path, body){
   const h = {'Content-Type':'application/json'};
-  if(token) h['Authorization']=`Bearer ${token}`;
+  if(token) h['Authorization'] = 'Bearer '+token;
   const opts = {method, headers:h};
   if(body) opts.body = JSON.stringify(body);
-  const r = await fetch(API+path, opts);
-  return r.json();
+  try {
+    const r = await fetch(API+path, opts);
+    if(!r.ok && r.status === 401){
+      token=null;
+      localStorage.removeItem('evap_token');
+      localStorage.removeItem('token');
+      localStorage.removeItem('evap_user');
+      showScreen('auth-screen');
+      toast('Session expired. Please sign in again.','error');
+      return {success:false, message:'Session expired'};
+    }
+    const data = await r.json();
+    return data;
+  } catch(e){
+    return {success:false, message:'Network error — check your connection'};
+  }
 }
 
-// ─── Auth ───
+// ═══════ ADDRESS BOOK (localStorage) ═══════
+function getAddressBook(){
+  try { return JSON.parse(localStorage.getItem('evap_contacts')||'[]'); } catch(e){ return []; }
+}
+function saveAddressBook(book){
+  localStorage.setItem('evap_contacts', JSON.stringify(book));
+  updateContactSuggestions();
+}
+function showAddContact(){ $('add-contact-form').style.display='block'; $('ab-new-name').focus(); }
+function hideAddContact(){ $('add-contact-form').style.display='none'; $('ab-new-name').value=''; $('ab-new-addr').value=''; }
+
+function saveContact(){
+  const name=$('ab-new-name').value.trim(), addr=$('ab-new-addr').value.trim();
+  if(!name) return toast('Enter a contact name','error');
+  if(!/^0x[0-9a-fA-F]{40,128}$/.test(addr)) return toast('Invalid address format','error');
+  const book = getAddressBook();
+  if(book.find(c=>c.address.toLowerCase()===addr.toLowerCase())) return toast('Contact already exists','error');
+  book.push({name, address:addr, added:Date.now()});
+  saveAddressBook(book);
+  hideAddContact();
+  renderAddressBook();
+  toast('Contact saved!');
+}
+
+function deleteContact(idx){
+  const book = getAddressBook();
+  book.splice(idx,1);
+  saveAddressBook(book);
+  renderAddressBook();
+  toast('Contact removed');
+}
+
+function useContact(addr){
+  closeSheets();
+  setTimeout(()=>{
+    openSheet('send-sheet');
+    $('s-to').value = addr;
+    validateToAddress($('s-to'));
+  },400);
+}
+
+function renderAddressBook(){
+  const book = getAddressBook();
+  const list = $('addressbook-list');
+  if(book.length===0){
+    list.innerHTML='<div class="empty"><div class="empty-icon">&#128213;</div><p>No contacts yet.<br>Save addresses you send to frequently.</p></div>';
+    return;
+  }
+  list.innerHTML = book.map((c,i)=>{
+    const hue = c.name.split('').reduce((a,ch)=>a+ch.charCodeAt(0),0)%360;
+    const initials = c.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+    return '<div class="ab-item">' +
+      '<div class="ab-avatar" style="background:hsl('+hue+',55%,50%)">'+esc(initials)+'</div>' +
+      '<div class="ab-info"><div class="ab-name">'+esc(c.name)+'</div><div class="ab-addr">'+esc(c.address)+'</div></div>' +
+      '<div class="ab-actions">' +
+        '<button class="ab-action-btn" onclick="useContact(\''+esc(c.address)+'\')" title="Send to this address">&#8593;</button>' +
+        '<button class="ab-action-btn" onclick="navigator.clipboard.writeText(\''+esc(c.address)+'\');toast(\'Copied!\')" title="Copy address">&#128203;</button>' +
+        '<button class="ab-action-btn delete" onclick="deleteContact('+i+')" title="Delete contact">&#10005;</button>' +
+      '</div></div>';
+  }).join('');
+}
+
+function updateContactSuggestions(){
+  const dl = $('contact-suggestions');
+  if(!dl) return;
+  const book = getAddressBook();
+  dl.innerHTML = book.map(c=>'<option value="'+esc(c.address)+'">'+esc(c.name)+'</option>').join('');
+}
+
+function clearAddressBook(){
+  if(!confirm('Clear all contacts?')) return;
+  localStorage.removeItem('evap_contacts');
+  renderAddressBook();
+  toast('Address book cleared');
+}
+
+// ═══════ QR CODE (minimal generator) ═══════
+function drawQR(canvas, text){
+  const ctx = canvas.getContext('2d');
+  const size = canvas.width;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0,0,size,size);
+  const bytes = [];
+  const hex = text.replace('0x','');
+  for(let i=0;i<hex.length;i+=2){
+    bytes.push(parseInt(hex.substr(i,2),16)||0);
+  }
+  const gridSize = 16;
+  const cellSize = Math.floor((size-40)/gridSize);
+  const offset = Math.floor((size-cellSize*gridSize)/2);
+  ctx.fillStyle = '#000000';
+  function drawCorner(x,y){
+    ctx.fillRect(x,y,cellSize*3,cellSize*3);
+    ctx.fillStyle='#ffffff';
+    ctx.fillRect(x+cellSize,y+cellSize,cellSize,cellSize);
+    ctx.fillStyle='#000000';
+  }
+  drawCorner(offset,offset);
+  drawCorner(offset+(gridSize-3)*cellSize,offset);
+  drawCorner(offset,offset+(gridSize-3)*cellSize);
+  for(let i=0;i<bytes.length && i<gridSize*gridSize;i++){
+    const row = Math.floor(i/gridSize);
+    const col = i%gridSize;
+    if(row<4 && col<4) continue;
+    if(row<4 && col>=gridSize-4) continue;
+    if(row>=gridSize-4 && col<4) continue;
+    if(bytes[i%bytes.length] & (1<<(i%8))){
+      ctx.fillRect(offset+col*cellSize, offset+row*cellSize, cellSize, cellSize);
+    }
+  }
+  const cx = size/2;
+  const logoSize = cellSize*2;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(cx-logoSize-2, cx-logoSize-2, logoSize*2+4, logoSize*2+4);
+  ctx.fillStyle = '#00f0ff';
+  ctx.beginPath();
+  ctx.arc(cx, cx, logoSize*0.7, 0, Math.PI*2);
+  ctx.fill();
+  ctx.fillStyle = '#000000';
+  ctx.font = 'bold '+Math.floor(logoSize*0.8)+'px Inter';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('E', cx, cx+1);
+}
+
+// ═══════ AUTH ═══════
 function authTab(t){
-  document.querySelectorAll('.auth-tab').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.auth-tab').forEach((b,i)=>{
+    b.classList.toggle('active', (t==='login'?i===0:i===1));
+    b.setAttribute('aria-selected', (t==='login'?i===0:i===1));
+  });
   document.querySelectorAll('.form-panel').forEach(p=>p.classList.remove('active'));
-  $('panel-verify').classList.remove('active');
   hideAlerts();
-  if(t==='login'){ document.querySelectorAll('.auth-tab')[0].classList.add('active'); $('panel-login').classList.add('active'); }
-  else{ document.querySelectorAll('.auth-tab')[1].classList.add('active'); $('panel-register').classList.add('active'); }
+  if(t==='login') $('panel-login').classList.add('active');
+  else $('panel-register').classList.add('active');
 }
 function hideAlerts(){ $('auth-error').style.display='none'; $('auth-success').style.display='none'; }
 function authErr(m){ $('auth-error').textContent=m; $('auth-error').style.display='block'; $('auth-success').style.display='none'; }
@@ -502,9 +850,14 @@ function authOk(m){ $('auth-success').textContent=m; $('auth-success').style.dis
 
 function updatePwStrength(v){
   const bar=$('pw-bar');
-  let s=0; if(v.length>=8)s++; if(v.length>=12)s++; if(/[A-Z]/.test(v)&&/[0-9]/.test(v))s++; if(/[^a-zA-Z0-9]/.test(v))s++;
+  let s=0;
+  if(v.length>=8)s++;
+  if(v.length>=12)s++;
+  if(/[A-Z]/.test(v)&&/[0-9]/.test(v))s++;
+  if(/[^a-zA-Z0-9]/.test(v))s++;
   const colors=['var(--red)','var(--amber)','var(--amber)','var(--green)','var(--green)'];
-  bar.style.width=(s/4*100)+'%'; bar.style.background=colors[s]||'var(--red)';
+  bar.style.width=(s/4*100)+'%';
+  bar.style.background=colors[s]||'var(--red)';
 }
 
 async function doRegister(){
@@ -513,37 +866,18 @@ async function doRegister(){
   if(!name||!email||!pw) return authErr('All fields are required');
   if(pw.length<8) return authErr('Password must be at least 8 characters');
   if(pw!==pw2) return authErr('Passwords do not match');
+  if(!email.includes('@')||!email.includes('.')) return authErr('Please enter a valid email');
   const btn=$('reg-btn'); btn.disabled=true; btn.innerHTML='<span class="spin"></span>';
-  try{
-    const d = await api('POST','/api/auth/register',{email,password:pw,display_name:name});
-    if(d.success){
-      window._regEmail=email; window._regPw=pw;
-      $('verify-code-display').textContent=d.verification_code||'------';
-      // Pre-fill OTP boxes
-      if(d.verification_code){ const chars=d.verification_code.split(''); document.querySelectorAll('.otp-box').forEach((b,i)=>b.value=chars[i]||''); }
-      document.querySelectorAll('.form-panel').forEach(p=>p.classList.remove('active'));
-      $('panel-verify').classList.add('active');
-      document.querySelectorAll('.auth-tab').forEach(b=>b.classList.remove('active'));
-    } else authErr(d.message);
-  }catch(e){ authErr('Network error'); }
+  const d = await api('POST','/api/auth/register',{email,password:pw,display_name:name});
+  if(d.success){
+    authOk('Account created! Signing you in...');
+    setTimeout(async()=>{
+      const ld = await api('POST','/api/auth/login',{email,password:pw});
+      if(ld.success){ saveAuth(ld.token, ld.user); enterWallet(); }
+      else authErr(ld.message);
+    },800);
+  } else authErr(d.message);
   btn.disabled=false; btn.textContent='Create Account';
-}
-
-async function doVerify(){
-  hideAlerts();
-  const code = Array.from(document.querySelectorAll('.otp-box')).map(b=>b.value).join('');
-  if(code.length!==6) return authErr('Enter the 6-digit code');
-  try{
-    const d = await api('POST','/api/auth/verify-email',{email:window._regEmail,code});
-    if(d.success){
-      authOk('Verified! Signing you in...');
-      setTimeout(async()=>{
-        const ld = await api('POST','/api/auth/login',{email:window._regEmail,password:window._regPw});
-        if(ld.success){ token=ld.token; user=ld.user; localStorage.setItem('evap_token',token); localStorage.setItem('evap_user',JSON.stringify(user)); enterWallet(); }
-        else authErr(ld.message);
-      },800);
-    } else authErr(d.message);
-  }catch(e){ authErr('Network error'); }
 }
 
 async function doLogin(){
@@ -551,22 +885,31 @@ async function doLogin(){
   const email=$('l-email').value.trim(), pw=$('l-pass').value;
   if(!email||!pw) return authErr('Email and password required');
   const btn=$('login-btn'); btn.disabled=true; btn.innerHTML='<span class="spin"></span>';
-  try{
-    const d = await api('POST','/api/auth/login',{email,password:pw});
-    if(d.success){ token=d.token; user=d.user; localStorage.setItem('evap_token',token); localStorage.setItem('evap_user',JSON.stringify(user)); enterWallet(); }
-    else authErr(d.message);
-  }catch(e){ authErr('Network error'); }
+  const d = await api('POST','/api/auth/login',{email,password:pw});
+  if(d.success){ saveAuth(d.token, d.user); enterWallet(); }
+  else authErr(d.message);
   btn.disabled=false; btn.textContent='Sign In';
+}
+
+function saveAuth(t, u){
+  token=t; user=u;
+  localStorage.setItem('evap_token',t);
+  localStorage.setItem('token',t);
+  localStorage.setItem('evap_user',JSON.stringify(u));
 }
 
 function doLogout(){
   api('POST','/api/auth/logout',{}).catch(()=>{});
-  token=null; user=null; wallets=[];
-  localStorage.removeItem('evap_token'); localStorage.removeItem('evap_user');
-  closeSheets(); showScreen('auth-screen');
+  token=null; user=null; wallets=[]; walletBalances={}; totalBalance=0;
+  localStorage.removeItem('evap_token');
+  localStorage.removeItem('token');
+  localStorage.removeItem('evap_user');
+  if(_balanceInterval) clearInterval(_balanceInterval);
+  closeSheets();
+  showScreen('auth-screen');
 }
 
-// ─── Wallet ───
+// ═══════ WALLET ═══════
 function enterWallet(){
   showScreen('wallet-screen');
   $('w-username').textContent=user?.display_name||'User';
@@ -575,182 +918,773 @@ function enterWallet(){
   $('set-verified').textContent=user?.email_verified?'Yes':'No';
   const initials=(user?.display_name||'?').split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
   const av=$('user-avatar'); av.textContent=initials;
-  // Deterministic color
   const hue=(user?.display_name||'').split('').reduce((a,c)=>a+c.charCodeAt(0),0)%360;
-  av.style.background=`hsl(${hue},60%,55%)`;
-  loadWallets(); loadActivity();
-  // Auto-refresh balance every 5 seconds
-  if(window._balanceInterval) clearInterval(window._balanceInterval);
-  window._balanceInterval = setInterval(loadWallets, 5000);
+  av.style.background='hsl('+hue+',60%,55%)';
+  if($('settings-node')) $('settings-node').textContent=location.host;
+  updateContactSuggestions();
+  loadWallets(); loadActivity(); loadTokens(); loadNetworkStatus();
+  if(_balanceInterval) clearInterval(_balanceInterval);
+  _balanceInterval = setInterval(()=>{ loadWallets(); loadActivity(); }, 10000);
 }
 
-let walletBalances = {}; // address -> balance
-let totalBalance = 0;
+async function loadNetworkStatus(){
+  try{
+    const d = await api('GET','/api/status');
+    if(d.block_height && $('settings-block')) $('settings-block').textContent = '#'+d.block_height;
+  }catch(e){}
+}
 
 async function loadWallets(){
   try{
     const [wd, ad] = await Promise.all([
       api('GET','/api/wallet/list'),
-      fetch(API+'/api/accounts').then(r=>r.json())
+      api('GET','/api/accounts')
     ]);
-    if(wd.success){ wallets=wd.wallets||[]; }
-    // Build chain account lookup: first-two-hex-chars -> balance
+    if(!wd.success) return;
+    wallets = wd.wallets || [];
+
     const chainAccounts = {};
-    if(Array.isArray(ad)){
-      ad.forEach(a=>{ chainAccounts[a.address.slice(0,2).toLowerCase()] = a.balance; });
-    }
-    // Map wallet addresses to chain balances
+    const accounts = Array.isArray(ad) ? ad : (ad.accounts||[]);
+    accounts.forEach(a => {
+      const addr = (a.address||'').toLowerCase();
+      chainAccounts[addr] = a.balance || 0;
+      if(addr.startsWith('0x')) chainAccounts[addr.slice(2)] = a.balance || 0;
+      else chainAccounts['0x'+addr] = a.balance || 0;
+    });
+
     walletBalances = {};
     totalBalance = 0;
-    wallets.forEach(w=>{
-      const addrByte = w.address.slice(2,4).toLowerCase(); // first byte after 0x
-      const bal = chainAccounts[addrByte] || 0;
+    wallets.forEach(w => {
+      const addr = (w.address||'').toLowerCase();
+      let bal = chainAccounts[addr];
+      if(bal === undefined) bal = chainAccounts[addr.replace('0x','')];
+      if(bal === undefined){
+        const short = addr.replace('0x','').slice(0,40);
+        for(const k of Object.keys(chainAccounts)){
+          if(k.replace('0x','').slice(0,40) === short){ bal = chainAccounts[k]; break; }
+        }
+      }
+      bal = bal || 0;
       walletBalances[w.address] = bal;
       totalBalance += bal;
     });
-    renderWallets();
-  }catch(e){ console.error('loadWallets:',e); }
+
+    // Track balance history
+    recordBalance(totalBalance);
+
+    const sig = JSON.stringify({wallets, walletBalances, totalBalance});
+    if(sig !== _lastData){
+      _lastData = sig;
+      renderWallets();
+    }
+  }catch(e){
+    console.warn('Wallet load error:', e);
+  }
+}
+
+// ═══════ BALANCE HISTORY (localStorage) ═══════
+function recordBalance(bal){
+  try{
+    const key = 'evap_bal_history';
+    let hist = JSON.parse(localStorage.getItem(key)||'[]');
+    const now = Date.now();
+    // Only record if last record was >30s ago or balance changed
+    if(hist.length>0 && (now-hist[hist.length-1].t < 30000) && hist[hist.length-1].v === bal) return;
+    hist.push({t:now, v:bal});
+    // Keep max 2000 entries (~5.5 hours at 10s intervals)
+    if(hist.length > 2000) hist = hist.slice(-2000);
+    localStorage.setItem(key, JSON.stringify(hist));
+    balanceHistory = hist;
+  }catch(e){}
+}
+
+function getBalanceHistory(){
+  try { return JSON.parse(localStorage.getItem('evap_bal_history')||'[]'); } catch(e){ return []; }
+}
+
+// ═══════ TOKENS ═══════
+async function loadTokens(){
+  try{
+    const d = await api('GET','/api/tokens');
+    if(Array.isArray(d)) tokensData = d;
+    else if(d.tokens) tokensData = d.tokens;
+    else tokensData = [];
+
+    // Map token balances for our wallets
+    tokenBalances = {};
+    tokensData.forEach(t=>{
+      if(!t.holders) return;
+      t.holders.forEach(h=>{
+        wallets.forEach(w=>{
+          if(h.address && w.address && h.address.toLowerCase()===w.address.toLowerCase()){
+            if(!tokenBalances[t.symbol]) tokenBalances[t.symbol] = {name:t.name, symbol:t.symbol, id:t.id, balance:0, total_supply:t.total_supply};
+            tokenBalances[t.symbol].balance += h.balance||0;
+          }
+        });
+      });
+    });
+  }catch(e){
+    console.warn('Token load error:', e);
+  }
 }
 
 function renderWallets(){
   // Primary address
-  if(wallets.length>0){
-    const a=wallets[0].address;
-    $('w-addr-short').textContent=a.slice(0,8)+'...'+a.slice(-6);
-    $('primary-addr').dataset.addr=a;
+  if(wallets.length > 0){
+    const a = wallets[0].address;
+    $('w-addr-short').textContent = a.slice(0,8)+'...'+a.slice(-6);
+    $('primary-addr').dataset.addr = a;
   } else {
-    $('w-addr-short').textContent='No wallet yet';
+    $('w-addr-short').textContent = 'No wallet yet';
   }
-  // Balance display — real EVAP balance
-  $('w-balance').innerHTML=totalBalance>0? `${totalBalance.toLocaleString()}<span class="shimmer"></span>` : '0<span class="shimmer"></span>';
-  $('asset-evap-bal').textContent=totalBalance>0?totalBalance.toLocaleString():'0';
-  // Populate selects
-  ['s-from','f-wallet'].forEach(id=>{
-    const sel=$(id); if(!sel) return;
-    const opts = wallets.map(w=>{
-      const bal = walletBalances[w.address]||0;
-      return `<option value="${w.address}">${esc(w.name)} — ${bal.toLocaleString()} EVAP</option>`;
-    });
-    sel.innerHTML=wallets.length===0?'<option value="">Create a wallet first</option>':opts.join('');
+
+  // Balance display
+  $('w-balance').innerHTML = totalBalance > 0
+    ? esc(totalBalance.toLocaleString())+'<span class="shimmer"></span>'
+    : '0<span class="shimmer"></span>';
+
+  // Mini pie chart if we have token holdings
+  renderMiniPie();
+
+  // Assets tab — show EVAP wallets + token holdings
+  let assetsHtml = wallets.map(w => {
+    const bal = walletBalances[w.address] || 0;
+    return '<div class="asset-row" style="margin-bottom:8px">' +
+      '<div class="asset-icon" style="background:linear-gradient(135deg,rgba(0,240,255,0.15),rgba(139,92,246,0.15))">' +
+        '<svg viewBox="0 0 48 48" fill="none" width="22" height="22"><circle cx="24" cy="24" r="18" stroke="url(#gl2)" stroke-width="2" fill="none"/><path d="M24 15 L28 22 H20 Z" fill="url(#gl2)" opacity="0.8"/></svg>' +
+      '</div>' +
+      '<div class="asset-info"><div class="asset-name">'+esc(w.name)+'</div><div class="asset-sub" style="font-family:\'JetBrains Mono\',monospace;font-size:11px">'+esc(w.address.slice(0,10))+'...'+esc(w.address.slice(-6))+'</div></div>' +
+      '<div class="asset-val"><div class="asset-val-main">'+bal.toLocaleString()+'</div><div class="asset-val-sub">EVAP</div></div>' +
+    '</div>';
+  }).join('');
+
+  // Add token holdings
+  const tokenColors = ['#f59e0b','#ec4899','#22c55e','#8b5cf6','#ef4444','#06b6d4'];
+  let tIdx = 0;
+  Object.values(tokenBalances).forEach(tb=>{
+    if(tb.balance <= 0) return;
+    const color = tokenColors[tIdx % tokenColors.length]; tIdx++;
+    assetsHtml += '<div class="asset-row" style="margin-bottom:8px">' +
+      '<div class="asset-icon" style="background:'+color+'22"><span style="color:'+color+';font-weight:700;font-size:16px">'+esc(tb.symbol.charAt(0))+'</span></div>' +
+      '<div class="asset-info"><div class="asset-name">'+esc(tb.name)+'</div><div class="asset-sub">'+esc(tb.symbol)+'</div></div>' +
+      '<div class="asset-val"><div class="asset-val-main">'+tb.balance.toLocaleString()+'</div><div class="asset-val-sub">'+esc(tb.symbol)+'</div></div>' +
+    '</div>';
   });
-  // Receive list
-  const rl=$('receive-list');
-  if(wallets.length===0){ rl.innerHTML='<div class="empty"><p>Create a wallet first.</p></div>'; return; }
-  rl.innerHTML=wallets.map(w=>`
-    <div class="asset-row" style="margin-bottom:8px;cursor:pointer" onclick="navigator.clipboard.writeText('${w.address}');toast('Address copied!')">
-      <div class="asset-info"><div class="asset-name">${esc(w.name)}</div><div class="asset-sub" style="word-break:break-all;font-family:'JetBrains Mono',monospace;font-size:11px">${w.address}</div></div>
-      <div style="color:var(--cyan);font-size:12px;font-weight:600;white-space:nowrap">Copy</div>
-    </div>`).join('');
+
+  $('assets-content').innerHTML = wallets.length === 0
+    ? '<div class="empty"><div class="empty-icon">&#128176;</div><p>No wallets yet.<br>Create one to get started.</p><button class="btn btn-ghost btn-sm" style="margin:0 auto" onclick="openSheet(\'create-wallet-sheet\')">Create Wallet</button></div>'
+    : assetsHtml;
+
+  // Populate selects
+  ['s-from','f-wallet','qr-wallet-select'].forEach(id => {
+    const sel = $(id); if(!sel) return;
+    const opts = wallets.map(w => {
+      const bal = walletBalances[w.address]||0;
+      return '<option value="'+esc(w.address)+'">'+esc(w.name)+' — '+bal.toLocaleString()+' EVAP</option>';
+    });
+    sel.innerHTML = wallets.length===0 ? '<option value="">Create a wallet first</option>' : opts.join('');
+  });
+
+  // Settings wallets list
+  const sw = $('settings-wallets');
+  if(sw){
+    sw.innerHTML = wallets.map(w =>
+      '<div class="settings-row"><span style="font-size:13px">'+esc(w.name)+'</span><span class="settings-val" style="font-size:11px">'+esc(w.address.slice(0,10))+'...'+esc(w.address.slice(-4))+'</span></div>'
+    ).join('') || '<div style="color:var(--dim);font-size:13px;padding:8px 0">No wallets created</div>';
+  }
+
+  updateSendMax();
+  renderSwapUI();
 }
 
-async function loadActivity(){
-  try{
-    const d = await api('GET','/api/wallet/activity');
-    if(d.success) renderActivity(d.activity||[]);
-  }catch(e){}
-}
+// ═══════ MINI PIE (balance hero) ═══════
+function renderMiniPie(){
+  const canvas = $('pie-mini');
+  const legend = $('pie-mini-legend');
+  const container = $('portfolio-mini');
+  if(!canvas||!legend||!container) return;
 
-function renderActivity(items){
-  const c=$('activity-content');
-  if(items.length===0){ c.innerHTML='<div class="empty"><div class="empty-icon">&#128196;</div><p>No activity yet.<br>Create a wallet and claim some EVAP to get started.</p></div>'; return; }
-  c.innerHTML=items.map(a=>{
-    const cls=a.action==='faucet'?'green':a.action==='wallet_created'?'cyan':a.action==='transfer'?'red':'amber';
-    const icon=a.action==='faucet'?'&#128167;':a.action==='wallet_created'?'&#9670;':'&#8596;';
-    const label=a.action==='wallet_created'?'Wallet Created':a.action==='faucet'?'Faucet Claim':a.action.replace(/_/g,' ');
-    const t=timeAgo(a.timestamp);
-    return `<div class="act-item"><div class="act-icon ${cls}">${icon}</div><div class="act-body"><div class="act-title">${esc(label)}</div><div class="act-desc">${esc(a.details)}</div></div><div class="act-right"><div class="act-time">${t}</div></div></div>`;
+  const holdings = [{name:'EVAP', balance:totalBalance, color:'#00f0ff'}];
+  Object.values(tokenBalances).forEach(tb=>{
+    if(tb.balance>0) holdings.push({name:tb.symbol, balance:tb.balance, color:['#f59e0b','#ec4899','#22c55e','#8b5cf6'][holdings.length-1]||'#94a3b8'});
+  });
+
+  if(holdings.length<=1 && totalBalance===0){ container.style.display='none'; return; }
+  container.style.display='flex';
+
+  const ctx = canvas.getContext('2d');
+  const size = 48, cx = size/2, cy = size/2, r = 20;
+  ctx.clearRect(0,0,size,size);
+
+  const total = holdings.reduce((s,h)=>s+h.balance,0);
+  if(total===0) return;
+
+  let startAngle = -Math.PI/2;
+  holdings.forEach(h=>{
+    const slice = (h.balance/total)*Math.PI*2;
+    ctx.beginPath();
+    ctx.moveTo(cx,cy);
+    ctx.arc(cx,cy,r,startAngle,startAngle+slice);
+    ctx.closePath();
+    ctx.fillStyle=h.color;
+    ctx.fill();
+    startAngle += slice;
+  });
+  // Inner circle for donut effect
+  ctx.beginPath(); ctx.arc(cx,cy,r*0.55,0,Math.PI*2); ctx.fillStyle='#0a0a0f'; ctx.fill();
+
+  legend.innerHTML = holdings.slice(0,3).map(h=>{
+    const pct = total>0 ? ((h.balance/total)*100).toFixed(0) : '0';
+    return '<div class="leg-item"><span class="leg-dot" style="background:'+h.color+'"></span>'+esc(h.name)+' '+pct+'%</div>';
   }).join('');
 }
 
+// ═══════ PORTFOLIO TAB ═══════
+function renderPortfolioChart(){
+  const canvas = $('balance-chart');
+  if(!canvas) return;
+  const hist = getBalanceHistory();
+  if(hist.length < 2){
+    canvas.parentElement.innerHTML = '<div class="empty" style="padding:20px"><p>Balance history will appear here as data is collected over time.</p></div>';
+    return;
+  }
+
+  // Filter by range
+  const now = Date.now();
+  const ranges = {'1h':3600000,'6h':21600000,'24h':86400000,'7d':604800000};
+  const cutoff = now - (ranges[_chartRange]||3600000);
+  const data = hist.filter(h=>h.t >= cutoff);
+  if(data.length < 2) return;
+
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.parentElement.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  canvas.style.width = rect.width+'px';
+  canvas.style.height = rect.height+'px';
+  ctx.scale(dpr, dpr);
+
+  const w = rect.width, h = rect.height;
+  const pad = {top:10,right:10,bottom:30,left:50};
+  const cw = w-pad.left-pad.right, ch = h-pad.top-pad.bottom;
+
+  const minV = Math.min(...data.map(d=>d.v));
+  const maxV = Math.max(...data.map(d=>d.v));
+  const range = maxV-minV || 1;
+  const minT = data[0].t, maxT = data[data.length-1].t;
+  const tRange = maxT-minT || 1;
+
+  const x = d => pad.left + ((d.t-minT)/tRange)*cw;
+  const y = d => pad.top + ch - ((d.v-minV)/range)*ch;
+
+  // Clear
+  ctx.clearRect(0,0,w,h);
+
+  // Grid lines
+  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+  ctx.lineWidth = 1;
+  for(let i=0;i<=4;i++){
+    const gy = pad.top + (ch/4)*i;
+    ctx.beginPath(); ctx.moveTo(pad.left,gy); ctx.lineTo(w-pad.right,gy); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.font = '10px JetBrains Mono';
+    ctx.textAlign = 'right';
+    const val = maxV - (range/4)*i;
+    ctx.fillText(val>=1000?(val/1000).toFixed(1)+'k':val.toFixed(0), pad.left-6, gy+4);
+  }
+
+  // X axis labels
+  ctx.fillStyle = 'rgba(255,255,255,0.2)';
+  ctx.textAlign = 'center';
+  ctx.font = '10px JetBrains Mono';
+  const xLabels = 5;
+  for(let i=0;i<xLabels;i++){
+    const t = minT + (tRange/xLabels)*i;
+    const d = new Date(t);
+    const label = _chartRange==='7d' ? (d.getMonth()+1)+'/'+d.getDate() : d.getHours()+':'+String(d.getMinutes()).padStart(2,'0');
+    ctx.fillText(label, x({t}), h-pad.bottom+18);
+  }
+
+  // Gradient fill
+  const grad = ctx.createLinearGradient(0,pad.top,0,pad.top+ch);
+  grad.addColorStop(0,'rgba(0,240,255,0.15)');
+  grad.addColorStop(1,'rgba(0,240,255,0)');
+  ctx.beginPath();
+  ctx.moveTo(x(data[0]),h-pad.bottom);
+  data.forEach(d=>ctx.lineTo(x(d),y(d)));
+  ctx.lineTo(x(data[data.length-1]),h-pad.bottom);
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Line
+  ctx.beginPath();
+  ctx.moveTo(x(data[0]),y(data[0]));
+  data.forEach(d=>ctx.lineTo(x(d),y(d)));
+  ctx.strokeStyle = '#00f0ff';
+  ctx.lineWidth = 2;
+  ctx.lineJoin = 'round';
+  ctx.stroke();
+
+  // End dot
+  const last = data[data.length-1];
+  ctx.beginPath(); ctx.arc(x(last),y(last),4,0,Math.PI*2);
+  ctx.fillStyle='#00f0ff'; ctx.fill();
+  ctx.strokeStyle='rgba(0,240,255,0.3)'; ctx.lineWidth=6; ctx.stroke();
+}
+
+function chartRange(r){
+  _chartRange = r;
+  document.querySelectorAll('.chart-tab').forEach(t=>t.classList.remove('active'));
+  document.querySelector('.chart-tab[onclick="chartRange(\''+r+'\')"]')?.classList.add('active');
+  renderPortfolioChart();
+}
+
+function renderAllocationPie(){
+  const canvas = $('alloc-pie');
+  const list = $('alloc-list');
+  if(!canvas||!list) return;
+
+  const allocs = [{name:'EVAP', symbol:'EVAP', balance:totalBalance, color:'#00f0ff'}];
+  const tokenColors = ['#f59e0b','#ec4899','#22c55e','#8b5cf6','#ef4444'];
+  let ci = 0;
+  Object.values(tokenBalances).forEach(tb=>{
+    if(tb.balance>0) allocs.push({name:tb.name, symbol:tb.symbol, balance:tb.balance, color:tokenColors[ci++%tokenColors.length]});
+  });
+
+  const total = allocs.reduce((s,a)=>s+a.balance,0);
+  if(total===0){
+    list.innerHTML='<div style="color:var(--dim);font-size:13px;padding:16px 0">No holdings yet</div>';
+    return;
+  }
+
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio||1;
+  canvas.width = 120*dpr; canvas.height = 120*dpr;
+  canvas.style.width='120px'; canvas.style.height='120px';
+  ctx.scale(dpr,dpr);
+  ctx.clearRect(0,0,120,120);
+
+  let startAngle = -Math.PI/2;
+  allocs.forEach(a=>{
+    const slice = (a.balance/total)*Math.PI*2;
+    ctx.beginPath(); ctx.moveTo(60,60); ctx.arc(60,60,55,startAngle,startAngle+slice); ctx.closePath();
+    ctx.fillStyle=a.color; ctx.fill();
+    startAngle += slice;
+  });
+  ctx.beginPath(); ctx.arc(60,60,30,0,Math.PI*2); ctx.fillStyle='#111118'; ctx.fill();
+
+  list.innerHTML = allocs.map(a=>{
+    const pct = ((a.balance/total)*100).toFixed(1);
+    return '<div class="alloc-row">'+
+      '<div class="alloc-dot" style="background:'+a.color+'"></div>'+
+      '<div class="alloc-info"><div class="alloc-name">'+esc(a.name)+'</div><div class="alloc-sub">'+a.balance.toLocaleString()+' '+esc(a.symbol)+'</div></div>'+
+      '<div class="alloc-pct">'+pct+'%</div></div>';
+  }).join('');
+}
+
+// ═══════ SWAP ═══════
+let swapFrom = 'EVAP', swapTo = '';
+function renderSwapUI(){
+  const available = [{symbol:'EVAP',name:'EvaporChain',id:0}];
+  tokensData.forEach(t=>{
+    if(t.symbol!=='EVAP') available.push({symbol:t.symbol,name:t.name,id:t.id});
+  });
+
+  if(available.length < 2){
+    const html = '<div class="empty" style="padding:20px 0"><div class="empty-icon">&#8644;</div><p>No tokens available for swapping yet.<br>Deploy a token first on the <a href="/tokens">Tokens</a> page.</p></div>';
+    $('swap-inline-content').innerHTML = html;
+    $('swap-content').innerHTML = html;
+    return;
+  }
+
+  if(!swapTo || !available.find(a=>a.symbol===swapTo)){
+    swapTo = available.find(a=>a.symbol!==swapFrom)?.symbol || '';
+  }
+
+  const fromBal = swapFrom==='EVAP' ? totalBalance : (tokenBalances[swapFrom]?.balance||0);
+  const rate = getSwapRate(swapFrom, swapTo);
+
+  const buildUI = () => {
+    const fromOpts = available.map(a=>'<option value="'+esc(a.symbol)+'" '+(a.symbol===swapFrom?'selected':'')+'>'+esc(a.symbol)+'</option>').join('');
+    const toOpts = available.map(a=>'<option value="'+esc(a.symbol)+'" '+(a.symbol===swapTo?'selected':'')+'>'+esc(a.symbol)+'</option>').join('');
+
+    return '<div class="field"><label>From Wallet</label><select id="swap-wallet" onchange="updateSwapBal()">'+
+      wallets.map(w=>'<option value="'+esc(w.address)+'">'+esc(w.name)+'</option>').join('')+'</select></div>'+
+      '<div class="swap-field"><div class="swap-field-top"><span>You pay</span><span>Balance: '+fromBal.toLocaleString()+'</span></div>'+
+      '<div style="display:flex;gap:8px;align-items:center"><input type="number" id="swap-amt-from" placeholder="0" min="1" step="1" oninput="updateSwapOutput()">'+
+      '<select id="swap-sel-from" onchange="swapFromChanged(this.value)" style="width:auto;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:10px;color:var(--text);font-weight:700;font-size:14px">'+fromOpts+'</select></div></div>'+
+      '<div class="swap-arrow" onclick="flipSwap()">&#8645;</div>'+
+      '<div class="swap-field"><div class="swap-field-top"><span>You receive (estimated)</span><span>&nbsp;</span></div>'+
+      '<div style="display:flex;gap:8px;align-items:center"><input type="number" id="swap-amt-to" placeholder="0" readonly style="opacity:0.7">'+
+      '<select id="swap-sel-to" onchange="swapToChanged(this.value)" style="width:auto;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:10px;color:var(--text);font-weight:700;font-size:14px">'+toOpts+'</select></div></div>'+
+      '<div class="swap-rate" id="swap-rate-display">1 '+esc(swapFrom)+' = '+rate.toFixed(4)+' '+esc(swapTo)+'</div>'+
+      '<div class="swap-preview" id="swap-preview" style="display:none"></div>'+
+      '<button class="btn btn-primary" onclick="executeSwap()">Swap Tokens</button>'+
+      '<div id="swap-error" class="alert alert-error" style="margin-top:12px"></div>';
+  };
+
+  $('swap-inline-content').innerHTML = buildUI();
+  $('swap-content').innerHTML = buildUI();
+}
+
+function getSwapRate(from, to){
+  // Simple rate based on supply ratios (AMM-like)
+  const fromToken = tokensData.find(t=>t.symbol===from) || {current_supply:totalBalance||100000,total_supply:1000000};
+  const toToken = tokensData.find(t=>t.symbol===to) || {current_supply:totalBalance||100000,total_supply:1000000};
+  const fromReserve = fromToken.current_supply || fromToken.total_supply || 100000;
+  const toReserve = toToken.current_supply || toToken.total_supply || 100000;
+  return toReserve / fromReserve;
+}
+
+function updateSwapOutput(){
+  const amt = parseInt($('swap-amt-from')?.value) || 0;
+  const rate = getSwapRate(swapFrom, swapTo);
+  const output = Math.floor(amt * rate * 0.997); // 0.3% fee
+  const toField = $('swap-amt-to');
+  if(toField) toField.value = output > 0 ? output : '';
+
+  const preview = $('swap-preview');
+  if(preview && amt > 0){
+    preview.style.display='block';
+    preview.innerHTML = '<div class="swap-preview-row"><span class="label">Rate</span><span class="val">1 '+esc(swapFrom)+' = '+rate.toFixed(4)+' '+esc(swapTo)+'</span></div>'+
+      '<div class="swap-preview-row"><span class="label">Fee (0.3%)</span><span class="val">'+Math.floor(amt*rate*0.003)+' '+esc(swapTo)+'</span></div>'+
+      '<div class="swap-preview-row"><span class="label">You receive</span><span class="val" style="color:var(--green);font-weight:700">'+output.toLocaleString()+' '+esc(swapTo)+'</span></div>';
+  } else if(preview) preview.style.display='none';
+}
+
+function swapFromChanged(v){ swapFrom=v; if(swapFrom===swapTo){ swapTo=tokensData.find(t=>t.symbol!==v)?.symbol||'EVAP'; } renderSwapUI(); }
+function swapToChanged(v){ swapTo=v; if(swapFrom===swapTo){ swapFrom=tokensData.find(t=>t.symbol!==v)?.symbol||'EVAP'; } renderSwapUI(); }
+function flipSwap(){ const tmp=swapFrom; swapFrom=swapTo; swapTo=tmp; renderSwapUI(); }
+
+async function executeSwap(){
+  const amt = parseInt($('swap-amt-from')?.value);
+  const wallet = $('swap-wallet')?.value;
+  if(!wallet) return toast('Select a wallet','error');
+  if(!amt || amt <= 0) return toast('Enter an amount','error');
+  const fromBal = swapFrom==='EVAP' ? (walletBalances[wallet]||0) : (tokenBalances[swapFrom]?.balance||0);
+  if(amt > fromBal) return toast('Insufficient '+swapFrom+' balance','error');
+
+  const rate = getSwapRate(swapFrom, swapTo);
+  const output = Math.floor(amt * rate * 0.997);
+
+  // Execute as two transfers via the token transfer API
+  // For testnet: simulate the swap by transferring tokens
+  const swapAddr = '0x0000000000000000000000000000000000000000000000000000000000swap01'; // burn address
+
+  let d;
+  if(swapFrom==='EVAP'){
+    // Transfer EVAP to burn, then the backend "mints" the target token
+    d = await api('POST','/api/tx/transfer',{from:wallet, to:swapAddr, amount:amt, nonce:0});
+  } else {
+    // Token transfer
+    const tokenId = tokensData.find(t=>t.symbol===swapFrom)?.id;
+    d = await api('POST','/api/token/transfer',{token_id:tokenId, from:wallet, to:swapAddr, amount:amt});
+  }
+
+  if(d.success){
+    toast('Swap executed! '+amt+' '+swapFrom+' -> '+output+' '+swapTo);
+    setTimeout(()=>{ loadWallets(); loadTokens(); },2000);
+  } else {
+    toast(d.message||'Swap failed','error');
+  }
+}
+
+// ═══════ TX SIMULATION ═══════
+async function simulateSend(){
+  const from=$('s-from')?.value, to=$('s-to')?.value?.trim(), amount=parseInt($('s-amount')?.value)||0;
+  const sim = $('send-sim');
+  if(!from||!to||!amount){ sim.innerHTML='<div class="sim-result"><div style="color:var(--dim);font-size:13px">Fill in all fields to simulate</div></div>'; sim.style.display='block'; return; }
+
+  const bal = walletBalances[from]||0;
+  const isValidAddr = /^0x[0-9a-fA-F]{40,128}$/.test(to);
+  const isSelf = from.toLowerCase()===to.toLowerCase();
+
+  let status, statusClass, details=[];
+  if(!isValidAddr){
+    status='Invalid Address'; statusClass='fail';
+    details.push({label:'Error', val:'Recipient address format is invalid'});
+  } else if(isSelf){
+    status='Self Transfer'; statusClass='warn';
+    details.push({label:'Warning', val:'Sending to your own address'});
+  } else if(amount > bal){
+    status='Insufficient Funds'; statusClass='fail';
+    details.push({label:'Balance', val:bal.toLocaleString()+' EVAP'});
+    details.push({label:'Shortfall', val:(amount-bal).toLocaleString()+' EVAP'});
+  } else {
+    status='Likely Success'; statusClass='ok';
+    details.push({label:'Balance after', val:(bal-amount).toLocaleString()+' EVAP'});
+  }
+
+  details.push({label:'From', val:from.slice(0,10)+'...'+from.slice(-6)});
+  details.push({label:'To', val:to.slice(0,10)+'...'+to.slice(-6)});
+  details.push({label:'Amount', val:amount.toLocaleString()+' EVAP'});
+  details.push({label:'Network Fee', val:'0 EVAP (testnet)'});
+
+  sim.innerHTML = '<div class="sim-result">'+
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px"><span style="font-size:14px;font-weight:700">Simulation</span><span class="sim-badge '+statusClass+'">'+
+    (statusClass==='ok'?'&#10003; ':'&#9888; ')+esc(status)+'</span></div>'+
+    details.map(d=>'<div class="sim-row"><span class="label">'+esc(d.label)+'</span><span class="val">'+esc(d.val)+'</span></div>').join('')+
+    '</div>';
+  sim.style.display='block';
+}
+
+// ═══════ ACTIVITY ═══════
+async function loadActivity(){
+  try{
+    const d = await api('GET','/api/wallet/activity');
+    if(d.success){
+      activityData = d.activity || [];
+      renderActivity(activityData);
+    }
+  }catch(e){
+    console.warn('Activity load error:', e);
+  }
+}
+
+function renderActivity(items){
+  const c = $('activity-content');
+  if(items.length === 0){
+    c.innerHTML = '<div class="empty"><div class="empty-icon">&#128196;</div><p>No activity yet.<br>Create a wallet and claim some EVAP to get started.</p></div>';
+    return;
+  }
+  c.innerHTML = items.map((a,idx) => {
+    const cls = a.action==='faucet'?'green':a.action==='wallet_created'?'cyan':a.action==='transfer'?'red':a.action==='swap'?'purple':'amber';
+    const icon = a.action==='faucet'?'&#128167;':a.action==='wallet_created'?'&#9670;':a.action==='transfer'?'&#8596;':a.action==='swap'?'&#8644;':'&#9733;';
+    const label = a.action==='wallet_created'?'Wallet Created':a.action==='faucet'?'Faucet Claim':a.action==='swap'?'Token Swap':a.action.replace(/_/g,' ');
+    const t = timeAgo(a.timestamp);
+    return '<div class="act-item" onclick="showActivityDetail('+idx+')" role="button" tabindex="0" aria-label="View details for '+esc(label)+'">' +
+      '<div class="act-icon '+cls+'">'+icon+'</div>' +
+      '<div class="act-body"><div class="act-title">'+esc(label)+'</div><div class="act-desc">'+esc(a.details)+'</div></div>' +
+      '<div class="act-right"><div class="act-time">'+t+'</div></div>' +
+    '</div>';
+  }).join('');
+}
+
+function showActivityDetail(idx){
+  const a = activityData[idx];
+  if(!a) return;
+  const label = a.action==='wallet_created'?'Wallet Created':a.action==='faucet'?'Faucet Claim':a.action.replace(/_/g,' ');
+  const time = a.timestamp ? new Date(a.timestamp).toLocaleString() : 'Unknown';
+  let html = '<div class="tx-detail-row"><span class="tx-detail-label">Type</span><span class="tx-detail-val">'+esc(label)+'</span></div>';
+  html += '<div class="tx-detail-row"><span class="tx-detail-label">Details</span><span class="tx-detail-val">'+esc(a.details||'-')+'</span></div>';
+  if(a.wallet_address) html += '<div class="tx-detail-row"><span class="tx-detail-label">Address</span><span class="tx-detail-val">'+esc(a.wallet_address)+'</span></div>';
+  html += '<div class="tx-detail-row"><span class="tx-detail-label">Time</span><span class="tx-detail-val">'+esc(time)+'</span></div>';
+  // Add to contacts option
+  if(a.wallet_address){
+    const book = getAddressBook();
+    const exists = book.find(c=>c.address.toLowerCase()===a.wallet_address.toLowerCase());
+    if(!exists){
+      html += '<button class="btn btn-ghost btn-sm" style="margin-top:12px" onclick="quickAddContact(\''+esc(a.wallet_address)+'\')">Add to Contacts</button>';
+    }
+  }
+  $('activity-detail-content').innerHTML = html;
+  openSheet('activity-detail-sheet');
+}
+
+function quickAddContact(addr){
+  const name = prompt('Contact name:');
+  if(!name) return;
+  const book = getAddressBook();
+  book.push({name:name.trim(), address:addr, added:Date.now()});
+  saveAddressBook(book);
+  toast('Contact added!');
+}
+
 function timeAgo(ts){
-  const d=Date.now()-new Date(ts).getTime();
+  if(!ts) return '';
+  const d = Date.now()-new Date(ts).getTime();
+  if(d<0) return 'Just now';
   if(d<60000) return 'Just now';
   if(d<3600000) return Math.floor(d/60000)+'m ago';
   if(d<86400000) return Math.floor(d/3600000)+'h ago';
   return Math.floor(d/86400000)+'d ago';
 }
 
-// ─── Create Wallet ───
+// ═══════ CREATE WALLET ═══════
 async function doCreateWallet(){
   const name=$('cw-name').value.trim()||'Main Wallet';
   const btn=$('cw-btn'); btn.disabled=true; btn.innerHTML='<span class="spin"></span>';
   $('cw-error').style.display='none';
-  try{
-    const d=await api('POST','/api/wallet/create',{name});
-    if(d.success){
-      $('cw-step-1').style.display='none';
-      $('cw-addr-display').textContent=d.address;
-      $('cw-step-2').style.display='block';
-      toast('Wallet created!');
-      await loadWallets(); await loadActivity();
-    } else { $('cw-error').textContent=d.message; $('cw-error').style.display='block'; }
-  }catch(e){ $('cw-error').textContent='Network error'; $('cw-error').style.display='block'; }
+  const d = await api('POST','/api/wallet/create',{name});
+  if(d.success){
+    $('cw-step-1').style.display='none';
+    $('cw-addr-display').textContent=d.address;
+    $('cw-step-2').style.display='block';
+    toast('Wallet created!');
+    await loadWallets(); await loadActivity();
+  } else {
+    $('cw-error').textContent=d.message; $('cw-error').style.display='block';
+  }
   btn.disabled=false; btn.textContent='Create Wallet';
 }
 
-// ─── Faucet ───
+// ═══════ FAUCET ═══════
 async function doFaucet(){
   const addr=$('f-wallet').value;
-  if(!addr) return;
+  if(!addr) return toast('Select a wallet first','error');
   const btn=$('faucet-btn'); btn.disabled=true; btn.innerHTML='<span class="spin"></span>';
   const res=$('faucet-result'); res.style.display='none';
-  try{
-    const addrByte=parseInt(addr.slice(2,4),16)||1;
-    const d=await api('POST','/api/faucet',{address:addrByte});
-    if(d.success){
-      res.className='alert alert-success'; res.textContent=`Claimed! New balance: ${d.balance.toLocaleString()} EVAP`; res.style.display='block';
-      toast('10,000 EVAP claimed!');
-      // Refresh balance display
-      await loadWallets();
-    } else {
-      res.className='alert alert-error'; res.textContent=d.message||'Claim failed'; res.style.display='block';
-    }
-  }catch(e){ res.className='alert alert-error'; res.textContent='Network error'; res.style.display='block'; }
+  const d = await api('POST','/api/faucet',{address:addr});
+  if(d.success){
+    res.className='alert alert-success';
+    res.textContent='Claimed! New balance: '+(d.balance||0).toLocaleString()+' EVAP';
+    res.style.display='block';
+    toast('10,000 EVAP claimed!');
+    await loadWallets();
+  } else {
+    res.className='alert alert-error';
+    res.textContent=d.message||'Claim failed';
+    res.style.display='block';
+  }
   btn.disabled=false; btn.textContent='Claim 10,000 EVAP';
 }
 
-// ─── Send ───
+// ═══════ SEND ═══════
+function validateToAddress(input){
+  const v = input.value.trim();
+  const hint = $('s-to-hint');
+  if(!v){ input.className=''; hint.textContent=''; return; }
+
+  // Check if it's a contact name
+  const book = getAddressBook();
+  const contact = book.find(c=>c.name.toLowerCase()===v.toLowerCase());
+  if(contact){
+    input.value = contact.address;
+    input.classList.remove('invalid');
+    input.classList.add('valid');
+    hint.textContent='Contact: '+contact.name;
+    hint.style.color='var(--cyan)';
+    return;
+  }
+
+  if(/^0x[0-9a-fA-F]{40,128}$/.test(v)){
+    input.classList.remove('invalid');
+    input.classList.add('valid');
+    // Check if this address is in contacts
+    const known = book.find(c=>c.address.toLowerCase()===v.toLowerCase());
+    hint.textContent=known ? 'Contact: '+known.name : 'Valid address';
+    hint.style.color=known ? 'var(--cyan)' : 'var(--green)';
+  } else {
+    input.classList.remove('valid');
+    input.classList.add('invalid');
+    hint.textContent='Invalid address format (must start with 0x)';
+    hint.style.color='var(--red)';
+  }
+}
+
+function updateSendMax(){
+  const from = $('s-from')?.value;
+  const bal = from ? (walletBalances[from]||0) : 0;
+  const hint = $('s-available');
+  if(hint) hint.textContent = 'Available: '+bal.toLocaleString()+' EVAP';
+}
+
+function setMaxAmount(){
+  const from = $('s-from')?.value;
+  const bal = from ? (walletBalances[from]||0) : 0;
+  $('s-amount').value = bal;
+}
+
 function sendReview(){
-  const to=$('s-to').value.trim(), amount=$('s-amount').value;
+  const to=$('s-to').value.trim(), amount=parseInt($('s-amount').value), from=$('s-from').value;
   const err=$('send-error'); err.style.display='none';
-  if(!to||!amount){ err.textContent='All fields required'; err.style.display='block'; return; }
-  $('sc-to').textContent=to.slice(0,12)+'...'+to.slice(-8);
-  $('sc-amount').textContent=amount+' EVAP';
+  if(!from) return showSendErr('Select a wallet');
+  if(!to) return showSendErr('Enter a recipient address');
+  if(!/^0x[0-9a-fA-F]{40,128}$/.test(to)) return showSendErr('Invalid address format');
+  if(!amount || amount<=0) return showSendErr('Enter a valid amount');
+  const bal = walletBalances[from]||0;
+  if(amount > bal) return showSendErr('Insufficient balance ('+bal.toLocaleString()+' EVAP available)');
+  if(from.toLowerCase() === to.toLowerCase()) return showSendErr('Cannot send to yourself');
+  $('sc-from').textContent=from.slice(0,10)+'...'+from.slice(-6);
+  $('sc-to').textContent=to.slice(0,10)+'...'+to.slice(-6);
+  $('sc-amount').textContent=amount.toLocaleString()+' EVAP';
   $('send-step-1').style.display='none'; $('send-step-2').style.display='block';
 }
-function sendBack(){ $('send-step-2').style.display='none'; $('send-step-1').style.display='block'; }
+function showSendErr(m){ const err=$('send-error'); err.textContent=m; err.style.display='block'; }
+function sendBack(){ $('send-step-2').style.display='none'; $('send-step-1').style.display='block'; $('send-error').style.display='none'; }
 
 async function sendConfirm(){
   const from=$('s-from').value, to=$('s-to').value.trim(), amount=parseInt($('s-amount').value);
   const err=$('send-error'); err.style.display='none';
+  const btn=$('send-confirm-btn'); btn.disabled=true; btn.innerHTML='<span class="spin"></span>';
+
+  let nonce = 0;
   try{
-    const fromByte=parseInt(from.slice(2,4),16)||1;
-    const toByte=parseInt(to.slice(2,4),16)||2;
-    const d=await api('POST','/api/tx/transfer',{from:fromByte,to:toByte,amount,nonce:0});
-    if(d.success){
-      $('send-step-2').style.display='none'; $('sc-msg').textContent=d.message; $('send-step-3').style.display='block';
-      toast('Transaction sent!');
-      setTimeout(()=>loadWallets(),2000); // Refresh balance after block processes
-    } else { err.textContent=d.message; err.style.display='block'; }
-  }catch(e){ err.textContent='Network error'; err.style.display='block'; }
+    const addrData = await api('GET','/api/address/'+encodeURIComponent(from));
+    if(addrData && addrData.nonce !== undefined) nonce = addrData.nonce;
+  }catch(e){}
+
+  const d = await api('POST','/api/tx/transfer',{from, to, amount, nonce});
+  if(d.success){
+    $('send-step-2').style.display='none';
+    $('sc-msg').textContent=d.message||'Queued for next block';
+    $('sc-hash').textContent=d.tx_hash||'';
+    $('sc-hash').style.display=d.tx_hash?'block':'none';
+    $('send-step-3').style.display='block';
+    toast('Transaction sent!');
+    setTimeout(()=>loadWallets(),2000);
+  } else {
+    err.textContent=d.message; err.style.display='block';
+    $('send-step-2').style.display='none'; $('send-step-1').style.display='block';
+  }
+  btn.disabled=false; btn.textContent='Confirm & Send';
 }
 
-// ─── Tabs ───
+// ═══════ RECEIVE / QR ═══════
+function updateQR(){
+  const addr = $('qr-wallet-select')?.value;
+  if(!addr) return;
+  $('qr-addr-text').textContent = addr;
+  $('qr-addr-text').dataset.addr = addr;
+  drawQR($('qr-canvas'), addr);
+}
+
+function copyQRAddr(){
+  const addr = $('qr-addr-text')?.dataset?.addr;
+  if(addr){ navigator.clipboard.writeText(addr); toast('Address copied!'); }
+}
+
+// ═══════ TABS ═══════
+const tabCount = 4;
 function switchTab(idx){
   const tabs=document.querySelectorAll('.tab'), panels=document.querySelectorAll('.tab-panel');
-  tabs.forEach(t=>t.classList.remove('active')); panels.forEach(p=>p.classList.remove('active'));
-  tabs[idx].classList.add('active'); panels[idx].classList.add('active');
-  const bar=$('tab-bar');
-  bar.style.setProperty('--tab-x',(idx*33.33)+'%');
+  tabs.forEach((t,i)=>{t.classList.toggle('active',i===idx); t.setAttribute('aria-selected',i===idx);});
+  panels.forEach((p,i)=>p.classList.toggle('active',i===idx));
+  $('tab-bar').style.setProperty('--tab-w',(100/tabCount)+'%');
+  $('tab-bar').style.setProperty('--tab-x',(idx*(100/tabCount))+'%');
+
+  // Render portfolio charts when tab becomes visible
+  if(idx===2){
+    balanceHistory = getBalanceHistory();
+    setTimeout(()=>{ renderPortfolioChart(); renderAllocationPie(); },50);
+  }
+  if(idx===3){ renderSwapUI(); }
 }
 
-// ─── Sheets ───
+// ═══════ SHEETS ═══════
 function openSheet(id){
   closeSheets();
-  // Reset multi-step sheets
-  if(id==='send-sheet'){ $('send-step-1').style.display='block'; $('send-step-2').style.display='none'; $('send-step-3').style.display='none'; $('send-error').style.display='none'; }
+  if(id==='send-sheet'){
+    $('send-step-1').style.display='block'; $('send-step-2').style.display='none';
+    $('send-step-3').style.display='none'; $('send-error').style.display='none';
+    $('send-sim').style.display='none';
+    $('s-to').value=''; $('s-amount').value=''; $('s-to').className=''; $('s-to-hint').textContent='';
+    updateSendMax();
+  }
   if(id==='create-wallet-sheet'){ $('cw-step-1').style.display='block'; $('cw-step-2').style.display='none'; $('cw-error').style.display='none'; }
   if(id==='faucet-sheet'){ $('faucet-result').style.display='none'; }
+  if(id==='receive-sheet'){
+    if(wallets.length>0){
+      $('qr-section').style.display='block'; $('receive-empty').style.display='none';
+      updateQR();
+    } else {
+      $('qr-section').style.display='none'; $('receive-empty').style.display='block';
+    }
+  }
+  if(id==='addressbook-sheet'){ renderAddressBook(); }
+  if(id==='swap-sheet'){ renderSwapUI(); }
   $(id).classList.add('active');
 }
 function closeSheets(){ document.querySelectorAll('.sheet-overlay').forEach(s=>s.classList.remove('active')); }
@@ -760,41 +1694,66 @@ function copyPrimary(){
   if(addr){ navigator.clipboard.writeText(addr); toast('Address copied!'); }
 }
 
-// ─── OTP boxes ───
-document.querySelectorAll('.otp-box').forEach(box=>{
-  box.addEventListener('input',e=>{
-    if(e.target.value.length===1){
-      const next=e.target.nextElementSibling;
-      if(next&&next.classList.contains('otp-box')) next.focus();
-    }
-  });
-  box.addEventListener('keydown',e=>{
-    if(e.key==='Backspace'&&!e.target.value){
-      const prev=e.target.previousElementSibling;
-      if(prev&&prev.classList.contains('otp-box')){ prev.focus(); prev.value=''; }
-    }
-  });
-  // Allow paste of full code
-  box.addEventListener('paste',e=>{
-    e.preventDefault();
-    const text=(e.clipboardData||window.clipboardData).getData('text').replace(/\D/g,'').slice(0,6);
-    document.querySelectorAll('.otp-box').forEach((b,i)=>b.value=text[i]||'');
-  });
+// ═══════ EXPORT DATA ═══════
+function exportData(){
+  const data = {
+    user: user,
+    wallets: wallets,
+    contacts: getAddressBook(),
+    balanceHistory: getBalanceHistory().slice(-100),
+    exported: new Date().toISOString()
+  };
+  const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'evaporchain-wallet-'+Date.now()+'.json';
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('Data exported!');
+}
+
+// ═══════ NAV DROPDOWN ═══════
+function toggleNavDropdown(){
+  $('nav-dropdown').classList.toggle('open');
+}
+document.addEventListener('click', e => {
+  if(!e.target.closest('.wallet-header')) $('nav-dropdown')?.classList.remove('open');
 });
 
-// Enter key
-$('l-pass').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin()});
+// ═══════ KEYBOARD ═══════
+document.addEventListener('keydown', e => {
+  if(e.key==='Escape') closeSheets();
+});
+$('l-pass')?.addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
+$('l-email')?.addEventListener('keydown', e => { if(e.key==='Enter') $('l-pass').focus(); });
+$('r-pass2')?.addEventListener('keydown', e => { if(e.key==='Enter') doRegister(); });
+$('s-from')?.addEventListener('change', updateSendMax);
 
-// ─── Init ───
+// ═══════ PWA SERVICE WORKER ═══════
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('/sw.js').catch(()=>{});
+}
+
+// ═══════ INIT ═══════
 (async()=>{
+  $('tab-bar').style.setProperty('--tab-w',(100/tabCount)+'%');
+
   if(token){
     try{
       const saved=localStorage.getItem('evap_user');
       if(saved) user=JSON.parse(saved);
       const d=await api('GET','/api/auth/me');
-      if(d.success){ user=d.user; localStorage.setItem('evap_user',JSON.stringify(user)); enterWallet(); return; }
+      if(d.success){
+        user=d.user;
+        localStorage.setItem('evap_user',JSON.stringify(user));
+        enterWallet();
+        return;
+      }
     }catch(e){}
-    token=null; localStorage.removeItem('evap_token'); localStorage.removeItem('evap_user');
+    token=null;
+    localStorage.removeItem('evap_token');
+    localStorage.removeItem('token');
+    localStorage.removeItem('evap_user');
   }
   showScreen('auth-screen');
 })();
