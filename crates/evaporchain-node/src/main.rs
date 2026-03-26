@@ -73,14 +73,14 @@ fn initialize_genesis(db: &mut RocksDBStateDB, node_tag: &str) {
 
     // Realistic objects with diverse use-case names and parameters
     let objects: Vec<(u8, &str, u64, u64, &str)> = vec![
-        (0x10, GENESIS_FOUNDATION, 50_000, 200, "token:evap-governance"),
-        (0x11, GENESIS_CORE_DEV, 30_000, 150, "stake:validator-pool-1"),
-        (0x12, GENESIS_ECOSYSTEM, 5_000, 50, "nft:event-ticket-0x3f"),
-        (0x13, GENESIS_ECOSYSTEM, 8_000, 60, "escrow:freelance-0x8b"),
-        (0x14, GENESIS_VALIDATOR2, 2_000, 30, "dao:proposal-0x5e"),
-        (0x15, GENESIS_COMMUNITY, 80, 4, "session:auth-0x1a"),
-        (0x16, GENESIS_VALIDATOR1, 40, 3, "cache:price-feed-0x9c"),
-        (0x17, GENESIS_COMMUNITY, 15, 2, "msg:ephemeral-0xd7"),
+        (0x10, GENESIS_FOUNDATION, 50_000, 50_000, "token:evap-governance"),
+        (0x11, GENESIS_CORE_DEV, 30_000, 50_000, "stake:validator-pool-1"),
+        (0x12, GENESIS_ECOSYSTEM, 5_000, 10_000, "nft:event-ticket-0x3f"),
+        (0x13, GENESIS_ECOSYSTEM, 8_000, 10_000, "escrow:freelance-0x8b"),
+        (0x14, GENESIS_VALIDATOR2, 2_000, 5_000, "dao:proposal-0x5e"),
+        (0x15, GENESIS_COMMUNITY, 800, 100, "session:auth-0x1a"),       // decays visibly
+        (0x16, GENESIS_VALIDATOR1, 400, 50, "cache:price-feed-0x9c"),   // dies in hours
+        (0x17, GENESIS_COMMUNITY, 150, 20, "msg:ephemeral-0xd7"),       // dies fast — demo
     ];
 
     for (oid, owner_hex, energy, half_life, label) in &objects {
@@ -316,7 +316,7 @@ fn generate_demo_tx(
         5 | 6 => {
             let oid = 0x20 + (epoch % 200) as u8;
             let energy = rng.gen_range(15..120);
-            let half_life = rng.gen_range(2..8);
+            let half_life = rng.gen_range(500..5000);
             let ci = rng.gen_range(0..acct_hexes.len());
             let creator = parse_hex_address(acct_hexes[ci]).unwrap();
             let prefix = prefixes[rng.gen_range(0..prefixes.len())];
@@ -660,7 +660,7 @@ fn initialize_nft_store() -> NftStore {
             metadata_hash: mkhash("genesis:001:eternal-flame"),
             energy: 100_000,
             max_energy: 100_000,
-            half_life: 500,
+            half_life: 50_000,   // stays alive for weeks
             minted_epoch: 0,
             last_refreshed: 0,
             state: "Active".to_string(),
@@ -674,9 +674,9 @@ fn initialize_nft_store() -> NftStore {
             collection: "Genesis Collection".to_string(),
             owner: format!("0x{}", GENESIS_COMMUNITY),
             metadata_hash: mkhash("genesis:002:shooting-star"),
-            energy: 800,
-            max_energy: 800,
-            half_life: 10,
+            energy: 80_000,
+            max_energy: 80_000,
+            half_life: 20_000,   // stays alive for days
             minted_epoch: 0,
             last_refreshed: 0,
             state: "Active".to_string(),
@@ -690,9 +690,9 @@ fn initialize_nft_store() -> NftStore {
             collection: "Genesis Collection".to_string(),
             owner: format!("0x{}", GENESIS_CORE_DEV),
             metadata_hash: mkhash("genesis:003:sunset-canvas"),
-            energy: 20_000,
-            max_energy: 20_000,
-            half_life: 50,
+            energy: 50_000,
+            max_energy: 50_000,
+            half_life: 10_000,   // stays alive for days
             minted_epoch: 0,
             last_refreshed: 0,
             state: "Active".to_string(),
@@ -706,9 +706,9 @@ fn initialize_nft_store() -> NftStore {
             collection: "Genesis Collection".to_string(),
             owner: format!("0x{}", GENESIS_ECOSYSTEM),
             metadata_hash: mkhash("genesis:004:quantum-bloom"),
-            energy: 5_000,
-            max_energy: 5_000,
-            half_life: 25,
+            energy: 20_000,
+            max_energy: 20_000,
+            half_life: 1_000,    // visible decay over hours
             minted_epoch: 0,
             last_refreshed: 0,
             state: "Active".to_string(),
@@ -722,9 +722,9 @@ fn initialize_nft_store() -> NftStore {
             collection: "Genesis Collection".to_string(),
             owner: format!("0x{}", GENESIS_VALIDATOR1),
             metadata_hash: mkhash("genesis:005:first-light"),
-            energy: 50_000,
-            max_energy: 50_000,
-            half_life: 100,
+            energy: 5_000,
+            max_energy: 5_000,
+            half_life: 100,      // decays visibly — shows the concept
             minted_epoch: 0,
             last_refreshed: 0,
             state: "Active".to_string(),
@@ -738,9 +738,9 @@ fn initialize_nft_store() -> NftStore {
             collection: "Genesis Collection".to_string(),
             owner: format!("0x{}", GENESIS_VALIDATOR2),
             metadata_hash: mkhash("genesis:006:binary-requiem"),
-            energy: 200,
-            max_energy: 200,
-            half_life: 5,
+            energy: 500,
+            max_energy: 500,
+            half_life: 20,       // dies fast — demonstrates evaporation
             minted_epoch: 0,
             last_refreshed: 0,
             state: "Active".to_string(),
@@ -782,19 +782,19 @@ fn initialize_token_store() -> TokenStore {
         tokens: vec![
             DeployedToken {
                 id: 1, name: "EvaporChain".into(), symbol: "EVAP".into(),
-                total_supply: 962_716, decay_half_life: 1000,
+                total_supply: 962_716, decay_half_life: 100_000,  // barely decays
                 deployed_epoch: 0, deployer: f(GENESIS_FOUNDATION),
                 balances: evap_balances, last_decay_epoch: 0,
             },
             DeployedToken {
                 id: 2, name: "Flux Token".into(), symbol: "FLUX".into(),
-                total_supply: 183_272, decay_half_life: 20,
+                total_supply: 183_272, decay_half_life: 5_000,  // slow decay over hours
                 deployed_epoch: 0, deployer: f(GENESIS_FOUNDATION),
                 balances: flux_balances, last_decay_epoch: 0,
             },
             DeployedToken {
                 id: 3, name: "Thermal Credits".into(), symbol: "HEAT".into(),
-                total_supply: 14_258, decay_half_life: 5,
+                total_supply: 14_258, decay_half_life: 100,  // decays fast — demo token
                 deployed_epoch: 0, deployer: f(GENESIS_COMMUNITY),
                 balances: heat_balances, last_decay_epoch: 0,
             },
@@ -815,7 +815,7 @@ fn initialize_staking_store() -> StakingStore {
                 id: 1,
                 name: "Genesis Validator Pool".into(),
                 reward_rate: 100,
-                reward_decay_hl: 50,
+                reward_decay_hl: 10_000,  // rewards last long enough to claim
                 total_staked: 93_714,
                 created_epoch: 0,
                 stakers: vec![
@@ -847,7 +847,7 @@ fn initialize_dao_store() -> DAOStore {
                     DAOVote { voter: f(GENESIS_FOUNDATION), option: "Against".into(), weight: 12_841, epoch: 12 },
                     DAOVote { voter: f(GENESIS_COMMUNITY), option: "Abstain".into(), weight: 3_917, epoch: 15 },
                 ],
-                created_epoch: 0, voting_period: 200, creator: f(GENESIS_VALIDATOR1),
+                created_epoch: 0, voting_period: 50_000, creator: f(GENESIS_VALIDATOR1),
                 status: "Active".into(), evaporated_epoch: None,
             },
             DAOProposal {
@@ -859,7 +859,7 @@ fn initialize_dao_store() -> DAOStore {
                     DAOVote { voter: f(GENESIS_CORE_DEV), option: "For".into(), weight: 46_823, epoch: 6 },
                     DAOVote { voter: f(GENESIS_ECOSYSTEM), option: "Against".into(), weight: 8_271, epoch: 9 },
                 ],
-                created_epoch: 0, voting_period: 150, creator: f(GENESIS_FOUNDATION),
+                created_epoch: 0, voting_period: 50_000, creator: f(GENESIS_FOUNDATION),
                 status: "Active".into(), evaporated_epoch: None,
             },
             DAOProposal {
@@ -871,8 +871,8 @@ fn initialize_dao_store() -> DAOStore {
                     DAOVote { voter: f(GENESIS_COMMUNITY), option: "Abstain".into(), weight: 4_217, epoch: 4 },
                     DAOVote { voter: f(GENESIS_CORE_DEV), option: "For".into(), weight: 23_814, epoch: 7 },
                 ],
-                created_epoch: 0, voting_period: 300, creator: f(GENESIS_ECOSYSTEM),
-                status: "Active".into(), evaporated_epoch: None,
+                created_epoch: 0, voting_period: 100, creator: f(GENESIS_ECOSYSTEM),
+                status: "Active".into(), evaporated_epoch: None,  // this one expires fast — demo
             },
             DAOProposal {
                 id: 4, title: "Emergency: Patch state root vulnerability".into(),

@@ -410,12 +410,9 @@ canvas{display:block}
     <div class="nav-tab" data-page="events">Events</div>
     <div class="nav-tab" data-page="ghosts">Ghosts</div>
     <div class="nav-tab" data-page="contracts">Contracts</div>
-    <a href="/nft" class="nav-tab" style="text-decoration:none;color:var(--text3)">NFTs</a>
-    <a href="/tokens" class="nav-tab" style="text-decoration:none;color:var(--text3)">Tokens</a>
-    <a href="/staking" class="nav-tab" style="text-decoration:none;color:var(--text3)">Staking</a>
-    <a href="/dao" class="nav-tab" style="text-decoration:none;color:var(--text3)">DAO</a>
     <a href="/wallet" class="nav-tab" style="text-decoration:none;color:var(--text3)">Wallet</a>
     <a href="/faucet" class="nav-tab" style="text-decoration:none;color:var(--text3)">Faucet</a>
+    <a href="https://evaporchain.com" class="nav-tab" style="text-decoration:none;color:var(--cyan)">evaporchain.com</a>
   </div>
 
   <button class="mob-menu-btn" onclick="toggleMobMenu()">☰</button>
@@ -690,7 +687,7 @@ function updateMobStats(){
   var labels=['Live State','Blocks','Accounts','Events','Ghosts','Contracts'];
   $('mobMenu').innerHTML='<div class="mob-stats">'+$('mobStats').innerHTML+'</div>'+
     tabs.map(function(t,i){return '<div class="nav-tab'+(t===S.currentPage?' active':'')+'" data-page="'+t+'" onclick="showPage(\''+t+'\')">'+labels[i]+'</div>'}).join('')+
-    '<a href="/nft" class="nav-tab" style="text-decoration:none;color:var(--text3)">NFTs</a><a href="/tokens" class="nav-tab" style="text-decoration:none;color:var(--text3)">Tokens</a><a href="/staking" class="nav-tab" style="text-decoration:none;color:var(--text3)">Staking</a><a href="/dao" class="nav-tab" style="text-decoration:none;color:var(--text3)">DAO</a><a href="/wallet" class="nav-tab" style="text-decoration:none;color:var(--text3)">Wallet</a><a href="/faucet" class="nav-tab" style="text-decoration:none;color:var(--text3)">Faucet</a><a href="https://evaporchain.com" class="nav-tab" style="text-decoration:none;color:var(--cyan)">&larr; evaporchain.com</a>';
+    '<a href="/wallet" class="nav-tab" style="text-decoration:none;color:var(--text3)">Wallet</a><a href="/faucet" class="nav-tab" style="text-decoration:none;color:var(--text3)">Faucet</a><a href="https://evaporchain.com" class="nav-tab" style="text-decoration:none;color:var(--cyan)">&larr; evaporchain.com</a>';
 }
 
 /* ═══════════════════════════════════════════════════════════
