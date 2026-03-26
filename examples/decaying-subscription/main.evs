@@ -1,0 +1,81 @@
+// Decaying Subscription Service — EvaporScript Reference dApp
+//
+// A subscription that naturally expires through energy decay.
+// Users pay energy to subscribe. When energy decays to zero,
+// the subscription enters grace period, then expires.
+//
+// This demonstrates EvaporChain's killer feature: subscriptions
+// that don't need explicit cancellation — they simply evaporate.
+
+contract DecayingSubscription {
+  state {
+    // Subscription tier → required energy
+    tier_costs: map(string -> u64),
+    // Subscriber address → tier name
+    subscribers: map(address -> string),
+    // Subscriber address → subscription energy remaining
+    sub_energy: map(address -> u64),
+    // Total active subscriptions
+    active_count: u64,
+    // Revenue collected (total energy paid)
+    total_revenue: u64,
+    // Service owner
+    owner: address,
+  }
+
+  // Initialize with subscription tiers
+  fn init(owner: address) {
+    state.owner = owner;
+    state.active_count = 0;
+    state.total_revenue = 0;
+    // Default tiers
+    map_set(state.tier_costs, "basic", 1000);
+    map_set(state.tier_costs, "pro", 5000);
+    map_set(state.tier_costs, "enterprise", 20000);
+  }
+
+  // Subscribe to a tier
+  fn subscribe(subscriber: address, tier: string, energy_paid: u64) -> bool {
+    let required = map_get(state.tier_costs, tier);
+    require(energy_paid >= required, "Insufficient energy for tier");
+
+    map_set(state.subscribers, subscriber, tier);
+    map_set(state.sub_energy, subscriber, energy_paid);
+    state.active_count = state.active_count + 1;
+    state.total_revenue = state.total_revenue + energy_paid;
+
+    emit("Subscribed", subscriber, tier, energy_paid);
+    return true;
+  }
+
+  // Check if a subscription is active
+  fn is_active(subscriber: address) -> bool {
+    let energy = map_get(state.sub_energy, subscriber);
+    return energy > 0;
+  }
+
+  // Renew (add more energy to extend subscription)
+  fn renew(subscriber: address, additional_energy: u64) -> bool {
+    let current = map_get(state.sub_energy, subscriber);
+    require(current > 0, "No active subscription to renew");
+
+    map_set(state.sub_energy, subscriber, current + additional_energy);
+    state.total_revenue = state.total_revenue + additional_energy;
+
+    emit("Renewed", subscriber, additional_energy);
+    return true;
+  }
+
+  // Called automatically when energy decays to zero
+  OnEvaporate {
+    // Subscription expired — no action needed!
+    // The object just... evaporates. That's the point.
+    state.active_count = state.active_count - 1;
+    emit("SubscriptionExpired", state.active_count);
+  }
+
+  // Called when entering grace period
+  OnGrace {
+    emit("GracePeriod", "Subscription expiring soon");
+  }
+}

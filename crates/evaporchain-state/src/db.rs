@@ -1,4 +1,6 @@
 use evaporchain_crypto::hash::blake3_hash;
+use evaporchain_crypto::VerkleTrie;
+
 use evaporchain_types::{Account, AccountAddress, GhostRecord, ObjectId, StateObject};
 use std::collections::HashMap;
 
@@ -34,6 +36,9 @@ pub trait StateDB: Send + Sync {
     /// Return the number of ghost records.
     fn ghost_count(&self) -> usize;
 
+    /// Return all ghost record object IDs.
+    fn all_ghost_ids(&self) -> Vec<ObjectId>;
+
     /// Retrieve an account by address.
     fn get_account(&self, addr: &AccountAddress) -> Option<&Account>;
 
@@ -45,6 +50,9 @@ pub trait StateDB: Send + Sync {
 
     /// Get or create an account (returns mutable ref). Creates with zero balance if missing.
     fn get_or_create_account(&mut self, addr: &AccountAddress) -> &mut Account;
+
+    /// Return all account addresses.
+    fn all_account_addresses(&self) -> Vec<AccountAddress>;
 
     /// Compute the state root hash over all objects and accounts.
     fn compute_state_root(&self) -> [u8; 32];
@@ -114,6 +122,10 @@ impl StateDB for InMemoryStateDB {
         self.ghosts.len()
     }
 
+    fn all_ghost_ids(&self) -> Vec<ObjectId> {
+        self.ghosts.keys().copied().collect()
+    }
+
     fn get_account(&self, addr: &AccountAddress) -> Option<&Account> {
         self.accounts.get(addr)
     }
@@ -134,40 +146,52 @@ impl StateDB for InMemoryStateDB {
         })
     }
 
+    fn all_account_addresses(&self) -> Vec<AccountAddress> {
+        self.accounts.keys().copied().collect()
+    }
+
     fn compute_state_root(&self) -> [u8; 32] {
-        let mut hasher_input = Vec::new();
-
-        // Hash accounts (sorted for determinism)
-        let mut addrs: Vec<&AccountAddress> = self.accounts.keys().collect();
-        addrs.sort();
-        for addr in addrs {
-            hasher_input.extend_from_slice(addr);
-            if let Some(acc) = self.accounts.get(addr) {
-                hasher_input.extend_from_slice(&acc.balance.to_le_bytes());
-                hasher_input.extend_from_slice(&acc.nonce.to_le_bytes());
-            }
-        }
-
-        // Hash objects (sorted for determinism)
-        let mut ids: Vec<&ObjectId> = self.objects.keys().collect();
-        ids.sort();
-        for id in ids {
-            hasher_input.extend_from_slice(id);
-            if let Some(obj) = self.objects.get(id) {
-                hasher_input.extend_from_slice(&obj.energy.to_le_bytes());
-                hasher_input.push(object_state_to_u8(&obj.state));
-            }
-        }
-
-        if hasher_input.is_empty() {
+        if self.objects.is_empty() && self.accounts.is_empty() {
             return [0u8; 32];
         }
 
-        blake3_hash(&hasher_input)
+        let mut trie = VerkleTrie::new();
+
+        // Insert accounts into trie: key = blake3("acct" || address), value = hash(balance || nonce)
+        for (addr, acc) in &self.accounts {
+            let mut key_input = Vec::with_capacity(36);
+            key_input.extend_from_slice(b"acct");
+            key_input.extend_from_slice(addr);
+            let key = blake3_hash(&key_input);
+
+            let mut val_input = Vec::with_capacity(16);
+            val_input.extend_from_slice(&acc.balance.to_le_bytes());
+            val_input.extend_from_slice(&acc.nonce.to_le_bytes());
+            let value = blake3_hash(&val_input);
+
+            trie.insert(key, value);
+        }
+
+        // Insert objects into trie: key = blake3("obj" || id), value = hash(energy || state)
+        for (id, obj) in &self.objects {
+            let mut key_input = Vec::with_capacity(35);
+            key_input.extend_from_slice(b"obj");
+            key_input.extend_from_slice(id);
+            let key = blake3_hash(&key_input);
+
+            let mut val_input = Vec::with_capacity(9);
+            val_input.extend_from_slice(&obj.energy.to_le_bytes());
+            val_input.push(object_state_to_u8(&obj.state));
+            let value = blake3_hash(&val_input);
+
+            trie.insert(key, value);
+        }
+
+        trie.root()
     }
 }
 
-fn object_state_to_u8(s: &evaporchain_types::ObjectState) -> u8 {
+pub fn object_state_to_u8(s: &evaporchain_types::ObjectState) -> u8 {
     match s {
         evaporchain_types::ObjectState::Active => 0,
         evaporchain_types::ObjectState::Grace => 1,
@@ -229,6 +253,7 @@ mod tests {
             evaporated_at: 100,
             data_hash: [0u8; 32],
             original_data: vec![1, 2, 3],
+            mmr_position: None,
         };
         db.put_ghost(ghost.clone());
         assert_eq!(db.ghost_count(), 1);

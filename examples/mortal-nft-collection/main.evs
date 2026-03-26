@@ -1,0 +1,109 @@
+// Mortal NFT Collection — EvaporScript Reference dApp
+//
+// An NFT collection where each NFT has a finite lifespan.
+// Owners must periodically refresh their NFTs with energy
+// or they'll decay through Active → Grace → Ghost.
+//
+// Ghost NFTs leave behind a permanent on-chain proof that
+// they once existed (nullifier in the MMR accumulator).
+
+contract MortalNFTCollection {
+  state {
+    name: string,
+    symbol: string,
+    // Token ID → owner address
+    owners: map(u64 -> address),
+    // Token ID → metadata URI
+    metadata: map(u64 -> string),
+    // Token ID → current energy
+    energies: map(u64 -> u64),
+    // Owner address → token count
+    balances: map(address -> u64),
+    // Next token ID
+    next_id: u64,
+    // Total minted (including evaporated)
+    total_minted: u64,
+    // Total evaporated
+    total_evaporated: u64,
+    // Mint price (energy required)
+    mint_price: u64,
+    // Collection creator
+    creator: address,
+  }
+
+  fn init(creator: address, name: string, symbol: string, mint_price: u64) {
+    state.creator = creator;
+    state.name = name;
+    state.symbol = symbol;
+    state.mint_price = mint_price;
+    state.next_id = 1;
+    state.total_minted = 0;
+    state.total_evaporated = 0;
+  }
+
+  // Mint a new mortal NFT
+  fn mint(to: address, metadata_uri: string, energy: u64) -> u64 {
+    require(energy >= state.mint_price, "Insufficient energy for minting");
+
+    let token_id = state.next_id;
+    state.next_id = state.next_id + 1;
+
+    map_set(state.owners, token_id, to);
+    map_set(state.metadata, token_id, metadata_uri);
+    map_set(state.energies, token_id, energy);
+
+    let balance = map_get(state.balances, to);
+    map_set(state.balances, to, balance + 1);
+
+    state.total_minted = state.total_minted + 1;
+
+    emit("Mint", token_id, to, energy);
+    return token_id;
+  }
+
+  // Transfer an NFT (only active NFTs can be transferred)
+  fn transfer(from: address, to: address, token_id: u64) -> bool {
+    let owner = map_get(state.owners, token_id);
+    require(owner == from, "Not the owner");
+
+    let energy = map_get(state.energies, token_id);
+    require(energy > 0, "Cannot transfer evaporated NFT");
+
+    map_set(state.owners, token_id, to);
+
+    let from_bal = map_get(state.balances, from);
+    map_set(state.balances, from, from_bal - 1);
+    let to_bal = map_get(state.balances, to);
+    map_set(state.balances, to, to_bal + 1);
+
+    emit("Transfer", from, to, token_id);
+    return true;
+  }
+
+  // Refresh an NFT (add energy to extend its life)
+  fn refresh(token_id: u64, energy_deposit: u64) -> bool {
+    let current = map_get(state.energies, token_id);
+    require(current > 0, "Cannot refresh evaporated NFT");
+
+    map_set(state.energies, token_id, current + energy_deposit);
+    emit("Refresh", token_id, energy_deposit);
+    return true;
+  }
+
+  // When an NFT evaporates, it leaves a ghost record
+  OnEvaporate {
+    state.total_evaporated = state.total_evaporated + 1;
+    emit("Evaporated", state.total_evaporated);
+    // Ghost record is automatically created by the runtime
+    // with a nullifier proof in the MMR accumulator
+  }
+
+  OnGrace {
+    emit("EnteringGrace", "NFT entering grace period — refresh to save it!");
+  }
+
+  // Resurrect a ghost NFT (if you have the nullifier proof)
+  OnRefresh {
+    emit("Resurrected", "NFT brought back from the ghost state");
+  }
+}

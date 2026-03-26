@@ -200,6 +200,7 @@ mod tests {
             evaporated_at: 100,
             data_hash: [0u8; 32],
             original_data: vec![1, 2, 3],
+            mmr_position: None,
         });
 
         assert_eq!(db.ghost_count(), 1);

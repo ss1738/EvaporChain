@@ -31,3 +31,4 @@ Thumbs.db
 
 # Benchmark results (keep JSON, ignore binaries)
 benchmark_results.bin
+logs/

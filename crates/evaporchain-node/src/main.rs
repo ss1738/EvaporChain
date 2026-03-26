@@ -1,5 +1,6 @@
 mod api;
 mod auth;
+mod bench;
 mod persistence;
 mod user_db;
 
@@ -891,6 +892,12 @@ fn initialize_dao_store() -> DAOStore {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Quick exit for --bench mode
+    if std::env::args().any(|a| a == "--bench") {
+        bench::run_benchmarks();
+        return Ok(());
+    }
+
     let args = parse_args();
     let node_tag = make_tag(&args.node_id);
 

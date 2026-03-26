@@ -1,118 +1,217 @@
-# EvaporScript Language Guide
+# EvaporScript Language Reference
 
-EvaporScript is a lightweight, non-Turing-complete scripting language for EvaporChain smart contracts. Every contract has thermodynamic decay built into the language itself — contracts have energy that depletes over time, and lifecycle hooks let you respond to evaporation events.
+EvaporScript is a non-Turing-complete scripting language for EvaporChain smart contracts. Every contract has thermodynamic decay built into the language itself — contracts have energy that depletes over time, and lifecycle hooks let you respond to evaporation events.
 
-## Syntax Overview
+## Contract Structure
 
 ```
-contract LoyaltyPoints {
+contract ContractName {
     state {
-        name: string = "ShopPoints"
-        points: map[address -> u64]
-        total_issued: u64 = 0
+        field_name: type = default_value
     }
 
-    fn issue(to: address, amount: u64) {
-        require(caller == owner, "only owner")
-        self.points[to] += amount
-        self.total_issued += amount
-    }
-
-    fn spend(amount: u64) {
-        require(self.points[caller] >= amount, "insufficient points")
-        self.points[caller] -= amount
-    }
-
-    fn balance(addr: address) -> u64 {
-        return self.points[addr]
+    fn method_name(param: type) -> return_type {
+        // body
     }
 
     on_evaporate() {
-        emit("loyalty program expired")
+        // called when energy reaches zero
     }
 }
 ```
 
 A contract has three sections:
-- **state** — declares persistent storage fields with types and optional defaults
-- **fn** — defines callable methods with parameters and optional return types
+
+- **state** — persistent storage fields with types and optional defaults
+- **fn** — callable methods with parameters and optional return types
 - **lifecycle hooks** — `on_evaporate()`, `on_grace()`, `on_refresh()` — called automatically by the chain
 
 ## Types
 
-| Type | Description | Example |
-|------|-------------|---------|
-| `u64` | Unsigned 64-bit integer | `42`, `0`, `1000000` |
-| `bool` | Boolean | `true`, `false` |
-| `string` | UTF-8 string | `"hello world"` |
-| `address` | 32-byte account address | — |
-| `map[K -> V]` | Key-value mapping | `map[address -> u64]` |
+| Type | Description | Default | Example |
+|------|-------------|---------|---------|
+| `u64` | Unsigned 64-bit integer | `0` | `42`, `1000000` |
+| `bool` | Boolean | `false` | `true`, `false` |
+| `string` | UTF-8 string | `""` | `"hello world"` |
+| `address` | 32-byte account address | `0x00...00` | — |
+| `map[K -> V]` | Key-value mapping | `{}` | `map[address -> u64]` |
 
 ## Operators
 
 ### Arithmetic
-`+`, `-`, `*`, `/`
+
+| Operator | Description |
+|----------|-------------|
+| `+` | Addition |
+| `-` | Subtraction |
+| `*` | Multiplication |
+| `/` | Division |
 
 ### Comparison
-`==`, `!=`, `>`, `<`, `>=`, `<=`
+
+| Operator | Description |
+|----------|-------------|
+| `==` | Equal |
+| `!=` | Not equal |
+| `>` | Greater than |
+| `<` | Less than |
+| `>=` | Greater or equal |
+| `<=` | Less or equal |
 
 ### Logical
-`&&`, `||`, `!`
+
+| Operator | Description |
+|----------|-------------|
+| `&&` | Logical AND |
+| `\|\|` | Logical OR |
+| `!` | Logical NOT |
 
 ### Assignment
-`=`, `+=`, `-=`
+
+| Operator | Description |
+|----------|-------------|
+| `=` | Assign |
+| `+=` | Add-assign |
+| `-=` | Subtract-assign |
 
 ## Statements
 
 ```
-let x = 42                           // variable declaration
-self.field = value                   // state field assignment
-self.field += value                  // compound assignment
-self.map_field[key] = value          // map entry assignment
-self.map_field[key] += value         // compound map assignment
+// Variable declaration
+let x = 42
 
-if condition {                       // conditional
+// State field assignment
+self.field = value
+self.field += value
+
+// Map operations
+self.map_field[key] = value
+self.map_field[key] += value
+
+// Conditional
+if condition {
     // ...
 } else {
     // ...
 }
 
-require(condition, "error message")  // assertion (reverts on false)
-emit("event message")               // emit a chain event
-return expression                    // return a value
+// Assertion (reverts on false)
+require(condition, "error message")
+
+// Emit chain event
+emit("event message")
+
+// Return value
+return expression
 ```
 
 ## Built-in Functions
 
-| Function | Args | Returns | Description |
-|----------|------|---------|-------------|
-| `caller` | 0 | `address` | Address of the transaction sender |
-| `owner` | 0 | `address` | Address of the contract deployer |
-| `epoch` | 0 | `u64` | Current chain epoch |
-| `energy` | 0 | `u64` | Contract's remaining energy |
-| `balance(addr)` | 1 | `u64` | On-chain token balance of an address |
-| `transfer(to, amount)` | 2 | — | Transfer tokens to an address |
-| `emit(msg)` | 1 | — | Emit a contract event |
-| `require(cond, msg)` | 2 | — | Revert execution if condition is false |
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `caller` | `address` | Address of the transaction sender |
+| `owner` | `address` | Address of the contract deployer |
+| `epoch` | `u64` | Current chain epoch |
+| `energy` | `u64` | Contract's remaining energy |
+| `balance(addr)` | `u64` | On-chain EVAP balance of an address |
+| `transfer(to, amount)` | — | Transfer EVAP tokens to an address |
+| `emit(msg)` | — | Emit a contract event |
+| `require(cond, msg)` | — | Revert execution if condition is false |
 
 ## Lifecycle Hooks
 
-Lifecycle hooks are called automatically by the EvaporChain runtime when contract energy state changes:
+The EvaporChain runtime calls lifecycle hooks automatically when a contract's energy state changes. These hooks are optional — only define the ones you need.
 
 ### `on_evaporate()`
+
 Called when the contract's energy reaches zero and the contract is about to be evaporated. Use this for cleanup, final notifications, or archival.
 
+```
+on_evaporate() {
+    emit("contract expired, final state archived")
+}
+```
+
 ### `on_grace()`
+
 Called when the contract enters the grace period (energy depleted but not yet evaporated). The contract can still be saved by refreshing its energy.
 
+```
+on_grace() {
+    emit("contract energy low, refresh to prevent evaporation")
+}
+```
+
 ### `on_refresh()`
+
 Called when the contract receives an energy deposit, extending its lifetime.
+
+```
+on_refresh() {
+    emit("contract energy restored")
+}
+```
+
+## Gas Costs
+
+Every operation consumes gas. If gas exceeds the limit, execution reverts.
+
+| Operation | Cost |
+|-----------|------|
+| Push value | 1 |
+| Load/Store variable | 2 |
+| Load state field | 5 |
+| Store state field | 10 |
+| Arithmetic (+, -, *, /) | 3-5 |
+| Comparison | 3 |
+| Logic (&&, \|\|, !) | 3 |
+| Jump | 2 |
+| Built-in call | 10 |
+| Map get | 10 |
+| Map set | 20 |
+| Require | 5 |
+| Emit event | 8 |
+| Return | 1 |
+
+## Execution Model
+
+EvaporScript compiles to a stack-based bytecode (EvaporBytecode) that runs on the EvaporVM:
+
+1. **Parse** — source code is tokenized and parsed into an AST
+2. **Compile** — the AST is compiled into bytecode with a method table and state schema
+3. **Execute** — the VM executes bytecode against contract state with gas metering
+
+The VM is deliberately non-Turing-complete: no unbounded loops, no recursion. This ensures predictable gas costs and prevents infinite execution.
 
 ## Example Contracts
 
-### 1. Loyalty Points
+### Counter
 
-A points system where a shop owner issues points to customers. Points can be spent. The entire loyalty program expires when contract energy runs out.
+Minimal contract that increments a counter. Evaporates when its energy runs out.
+
+```
+contract Counter {
+    state {
+        count: u64 = 0
+    }
+
+    fn increment(n: u64) {
+        self.count += n
+    }
+
+    fn get() -> u64 {
+        return self.count
+    }
+
+    on_evaporate() {
+        emit("counter expired")
+    }
+}
+```
+
+### Loyalty Points
+
+A points system where a shop owner issues points to customers. The entire loyalty program expires when contract energy runs out.
 
 ```
 contract LoyaltyPoints {
@@ -143,9 +242,9 @@ contract LoyaltyPoints {
 }
 ```
 
-### 2. Expiring Event Ticket
+### Expiring Event Ticket
 
-A ticket that can only be used once. The ticket itself evaporates after the event window passes.
+A ticket that can only be used once. The ticket system evaporates after the event window passes.
 
 ```
 contract EventTicket {
@@ -181,9 +280,9 @@ contract EventTicket {
 }
 ```
 
-### 3. Decaying Auction
+### Decaying Auction
 
-An auction where the entire auction evaporates if nobody bids in time. The winner is the highest bidder when the contract runs out of energy.
+An auction where the entire auction evaporates if nobody bids in time.
 
 ```
 contract DecayingAuction {
@@ -221,8 +320,7 @@ contract DecayingAuction {
 ### Deploy via API
 
 ```bash
-# Deploy an EvaporScript contract
-curl -X POST http://localhost:3000/api/tx/deploy-script \
+curl -X POST https://testnet.evaporchain.com/api/tx/deploy-script \
   -H "Content-Type: application/json" \
   -d '{
     "deployer": 1,
@@ -232,11 +330,10 @@ curl -X POST http://localhost:3000/api/tx/deploy-script \
   }'
 ```
 
-### Call a method
+### Call a Method
 
 ```bash
-# Call the increment method
-curl -X POST http://localhost:3000/api/tx/call-script \
+curl -X POST https://testnet.evaporchain.com/api/tx/call-script \
   -H "Content-Type: application/json" \
   -d '{
     "caller": 1,
@@ -247,29 +344,32 @@ curl -X POST http://localhost:3000/api/tx/call-script \
   }'
 ```
 
-## Execution Model
+### Deploy via SDK
 
-EvaporScript compiles to a stack-based bytecode (EvaporBytecode) that runs on the EvaporVM:
+```typescript
+import { EvaporChain } from "@evaporchain/sdk";
 
-1. **Parse** — Source code is tokenized and parsed into an AST
-2. **Compile** — The AST is compiled into bytecode with a method table and state schema
-3. **Execute** — The VM executes bytecode against contract state with gas metering
+const chain = new EvaporChain("https://testnet.evaporchain.com");
 
-### Gas Costs
+// Deploy using a template (simpler)
+await chain.deployContract(1, "DecayingToken", {
+  name: "MyToken",
+  symbol: "MTK",
+  supply: 1000000,
+}, 50000, 500);
 
-| Operation | Cost |
-|-----------|------|
-| Push value | 1 |
-| Load/Store variable | 2 |
-| Load state field | 5 |
-| Store state field | 10 |
-| Arithmetic (+, -, *, /) | 3-5 |
-| Comparison | 3 |
-| Logic (&&, \|\|, !) | 3 |
-| Jump | 2 |
-| Built-in call | 10 |
-| Map get | 10 |
-| Map set | 20 |
-| Require | 5 |
-| Emit event | 8 |
-| Return | 1 |
+// Call a method
+await chain.callContract(1, 1, "transfer", { to: 2, amount: 100 }, 42);
+```
+
+## Design Philosophy
+
+EvaporScript is intentionally limited compared to languages like Solidity or Move:
+
+- **No unbounded loops** — prevents gas bombs and infinite execution
+- **No recursion** — eliminates reentrancy attacks by design
+- **Built-in decay** — every contract has a natural lifespan, preventing abandoned contract bloat
+- **Lifecycle hooks** — first-class support for responding to state transitions
+- **Explicit state schema** — all storage is declared upfront, no hidden slots
+
+The constraint is the feature: contracts that know they will die can make better decisions about their final state.
