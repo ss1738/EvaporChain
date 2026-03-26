@@ -1,5 +1,6 @@
 pub mod encrypted_mempool;
 pub mod mempool;
+pub mod tendermint;
 pub mod validator_set;
 
 use encrypted_mempool::EncryptedMempool;

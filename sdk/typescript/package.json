@@ -1,0 +1,22 @@
+{
+  "name": "@evaporchain/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for EvaporChain — thermodynamic state decay blockchain",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "lint": "eslint src/"
+  },
+  "keywords": ["blockchain", "evaporchain", "sdk", "web3", "post-quantum"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ss1738/EvaporChain"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "vitest": "^2.0.0"
+  }
+}

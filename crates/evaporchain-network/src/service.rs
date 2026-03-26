@@ -25,6 +25,7 @@ use evaporchain_types::{Block, Transaction};
 
 const TX_TOPIC: &str = "evaporchain/txs/1";
 const BLOCK_TOPIC: &str = "evaporchain/blocks/1";
+const CONSENSUS_TOPIC: &str = "evaporchain/consensus/1";
 const BLOCK_SYNC_PROTOCOL: &str = "/evaporchain/blocksync/1";
 
 // ─────────────────────────── Block Sync Types ────────────────────────────
@@ -110,6 +111,10 @@ pub struct NetworkChannels {
     pub sync_blocks_receiver: mpsc::Receiver<Vec<Block>>,
     /// Receive peer tip height announcements (peer connected with this chain height).
     pub tip_receiver: mpsc::Receiver<u64>,
+    /// Send consensus messages to the network (app → network).
+    pub consensus_sender: mpsc::Sender<Vec<u8>>,
+    /// Receive consensus messages from the network (network → app).
+    pub consensus_receiver: mpsc::Receiver<Vec<u8>>,
 }
 
 /// Handle for broadcasting to a running network service.
@@ -227,6 +232,7 @@ impl P2pNetworkService {
         // Subscribe to topics
         let tx_topic = IdentTopic::new(TX_TOPIC);
         let block_topic = IdentTopic::new(BLOCK_TOPIC);
+        let consensus_topic = IdentTopic::new(CONSENSUS_TOPIC);
         swarm
             .behaviour_mut()
             .gossipsub
@@ -237,6 +243,11 @@ impl P2pNetworkService {
             .gossipsub
             .subscribe(&block_topic)
             .map_err(|e| NetworkError::ConnectionError(format!("subscribe block: {e}")))?;
+        swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&consensus_topic)
+            .map_err(|e| NetworkError::ConnectionError(format!("subscribe consensus: {e}")))?;
 
         // Listen
         let listen_addr: Multiaddr = config
@@ -263,6 +274,10 @@ impl P2pNetworkService {
         let (app_block_sender, mut net_block_receiver) = mpsc::channel::<Block>(buf);
         let (net_block_sender, app_block_receiver) = mpsc::channel::<Block>(buf);
 
+        // Consensus message channels (raw bytes — app serializes/deserializes)
+        let (app_consensus_sender, mut net_consensus_receiver) = mpsc::channel::<Vec<u8>>(buf);
+        let (net_consensus_sender, app_consensus_receiver) = mpsc::channel::<Vec<u8>>(buf);
+
         // Sync channels
         let (sync_req_sender, mut sync_req_receiver) = mpsc::channel::<(u64, u64)>(32);
         let (sync_blocks_sender, sync_blocks_receiver) = mpsc::channel::<Vec<Block>>(32);
@@ -286,12 +301,15 @@ impl P2pNetworkService {
             sync_request_sender: sync_req_sender,
             sync_blocks_receiver,
             tip_receiver,
+            consensus_sender: app_consensus_sender,
+            consensus_receiver: app_consensus_receiver,
         };
 
         // Spawn the event loop
         tokio::spawn(async move {
             let tx_topic_hash = tx_topic.hash();
             let block_topic_hash = block_topic.hash();
+            let consensus_topic_hash = consensus_topic.hash();
 
             loop {
                 tokio::select! {
@@ -315,6 +333,12 @@ impl P2pNetworkService {
                                 }
                             }
                             Err(e) => warn!("Failed to serialize block: {e}"),
+                        }
+                    }
+                    // App wants to broadcast a consensus message
+                    Some(data) = net_consensus_receiver.recv() => {
+                        if let Err(e) = swarm.behaviour_mut().gossipsub.publish(consensus_topic.clone(), data) {
+                            debug!("Failed to publish consensus msg: {e}");
                         }
                     }
                     // App requests block sync from peers
@@ -355,6 +379,9 @@ impl P2pNetworkService {
                                         }
                                         Err(e) => debug!("Invalid block gossip: {e}"),
                                     }
+                                } else if message.topic == consensus_topic_hash {
+                                    // Forward raw bytes — app deserializes
+                                    let _ = net_consensus_sender.send(message.data.to_vec()).await;
                                 }
                             }
                             // ── Block sync: inbound request (serve blocks) ──

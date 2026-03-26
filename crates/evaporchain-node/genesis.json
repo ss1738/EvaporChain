@@ -1,0 +1,54 @@
+{
+  "chain_id": "evaporchain-testnet-1",
+  "genesis_time": "2026-03-01T00:00:00Z",
+  "consensus": {
+    "type": "tendermint",
+    "block_interval_ms": 1000,
+    "grace_period": 5,
+    "max_rounds_per_height": 10
+  },
+  "validators": [
+    {
+      "id": 1,
+      "name": "validator-alpha",
+      "stake": 1000,
+      "address": "0x01",
+      "p2p_address": "/ip4/37.27.1.1/tcp/9000"
+    },
+    {
+      "id": 2,
+      "name": "validator-beta",
+      "stake": 1000,
+      "address": "0x02",
+      "p2p_address": "/ip4/37.27.1.1/tcp/9001"
+    },
+    {
+      "id": 3,
+      "name": "validator-gamma",
+      "stake": 1000,
+      "address": "0x03",
+      "p2p_address": "/ip4/37.27.1.1/tcp/9002"
+    },
+    {
+      "id": 4,
+      "name": "validator-delta",
+      "stake": 1000,
+      "address": "0x04",
+      "p2p_address": "/ip4/37.27.1.1/tcp/9003"
+    }
+  ],
+  "bootstrap_peers": [
+    "/ip4/37.27.1.1/tcp/9000",
+    "/ip4/37.27.1.1/tcp/9001",
+    "/ip4/37.27.1.1/tcp/9002",
+    "/ip4/37.27.1.1/tcp/9003"
+  ],
+  "accounts": [
+    { "address": "0xa1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2", "balance": 487293, "label": "Foundation" },
+    { "address": "0xb2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3", "balance": 234851, "label": "Core Dev" },
+    { "address": "0xc3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4", "balance": 128472, "label": "Validator-1" },
+    { "address": "0xd4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5", "balance": 91337, "label": "Validator-2" },
+    { "address": "0xe5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6", "balance": 52184, "label": "Ecosystem" },
+    { "address": "0xf6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1", "balance": 38916, "label": "Community" }
+  ]
+}

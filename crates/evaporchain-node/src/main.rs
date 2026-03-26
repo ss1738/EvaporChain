@@ -6,6 +6,8 @@ mod user_db;
 use anyhow::Result;
 use api::{ApiState, BlockRecord, ChainStats, EpochSnapshot, EventRecord, NftStore, NftToken, TokenStore, DeployedToken, StakingStore, StakingPool, Staker, DAOStore, DAOProposal, DAOVote};
 use evaporchain_consensus::MockConsensus;
+use evaporchain_consensus::tendermint::{TendermintConsensus, ConsensusMessage, ConsensusAction, Phase};
+use evaporchain_consensus::validator_set::{ValidatorInfo, ValidatorSet};
 use evaporchain_network::service::{cache_block, NetworkConfig, P2pNetworkService};
 use evaporchain_proving::{MockProver, ProvingEngine};
 use evaporchain_state::db::StateDB;
@@ -21,6 +23,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::io::BufRead;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use tokio::sync::mpsc;
 use tokio::time::{interval, Duration};
 
 // ──────────────────────────── Configuration ─────────────────────────────
@@ -389,6 +392,14 @@ struct NodeArgs {
     startup_delay_ms: u64,
     bootstrap_peers: Vec<String>,
     data_dir: String,
+    /// Enable Tendermint BFT consensus (requires --network).
+    tendermint_mode: bool,
+    /// This node's validator ID (for Tendermint consensus).
+    validator_id: u64,
+    /// Total number of validators in the set (for genesis validator set).
+    validator_count: u64,
+    /// Stake for each validator (default 1000).
+    validator_stake: u64,
 }
 
 fn parse_args() -> NodeArgs {
@@ -434,6 +445,26 @@ fn parse_args() -> NodeArgs {
         .cloned()
         .unwrap_or_else(|| "./evaporchain-data".to_string());
 
+    let tendermint_mode = args.iter().any(|a| a == "--tendermint");
+    let validator_id = args
+        .iter()
+        .position(|a| a == "--validator-id")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(1);
+    let validator_count = args
+        .iter()
+        .position(|a| a == "--validators")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(4);
+    let validator_stake = args
+        .iter()
+        .position(|a| a == "--stake")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(1000);
+
     let mut bootstrap_peers = Vec::new();
     let mut i = 0;
     while i < args.len() {
@@ -459,6 +490,10 @@ fn parse_args() -> NodeArgs {
         startup_delay_ms,
         bootstrap_peers,
         data_dir,
+        tendermint_mode,
+        validator_id,
+        validator_count,
+        validator_stake,
     }
 }
 
@@ -980,9 +1015,15 @@ async fn main() -> Result<()> {
         );
     }
 
-    let role_str = if is_producer { "Producer" } else { "Follower" };
+    let role_str = if args.tendermint_mode {
+        format!("Validator-{} (Tendermint BFT)", args.validator_id)
+    } else if is_producer {
+        "Producer".to_string()
+    } else {
+        "Follower".to_string()
+    };
     println!(
-        "{} Role: {} | Block interval: {}ms | Grace: {} epochs | Proving: {} | Network: {}",
+        "{} Role: {} | Block interval: {}ms | Grace: {} epochs | Proving: {} | Network: {} | Consensus: {}",
         node_tag,
         role_str,
         args.block_ms,
@@ -992,7 +1033,8 @@ async fn main() -> Result<()> {
         } else {
             "Mock"
         },
-        if args.network_mode { "ON" } else { "OFF" }
+        if args.network_mode { "ON" } else { "OFF" },
+        if args.tendermint_mode { "Tendermint BFT" } else { "MockConsensus" }
     );
     println!(
         "{} \x1b[90m──────────────────────────────────────────────────────────────\x1b[0m",
@@ -1016,15 +1058,43 @@ async fn main() -> Result<()> {
     // ── Shared consensus ──
     let consensus = Arc::new(Mutex::new(MockConsensus::new(GRACE_PERIOD)));
 
+    // Build Tendermint consensus if enabled
+    let tendermint = if args.tendermint_mode {
+        let mut validators = Vec::new();
+        for vid in 1..=args.validator_count {
+            let mut address = [0u8; 32];
+            address[0] = vid as u8;
+            validators.push(ValidatorInfo::new(vid, args.validator_stake, address));
+        }
+        let vs = ValidatorSet::with_validators(validators);
+        let tc = TendermintConsensus::new(args.validator_id, GRACE_PERIOD, vs);
+        println!(
+            "{} \x1b[1;35mTendermint BFT consensus\x1b[0m — validator_id={}, validators={}, stake={}",
+            node_tag, args.validator_id, args.validator_count, args.validator_stake
+        );
+        Some(Arc::new(Mutex::new(tc)))
+    } else {
+        None
+    };
+
     // Restore consensus state from disk if available
     if !is_fresh {
         if let Some((block_number, epoch, parent_hash)) = chain_store.load_consensus_meta() {
-            let mut c = consensus.lock().unwrap();
-            c.restore_state(block_number, epoch, parent_hash);
-            println!(
-                "{} \x1b[1;32mConsensus restored:\x1b[0m block={}, epoch={}, parent_hash={}…",
-                node_tag, block_number, epoch, &hex::encode(parent_hash)[..16]
-            );
+            if let Some(ref tc) = tendermint {
+                let mut c = tc.lock().unwrap();
+                c.restore_state(block_number, epoch, parent_hash);
+                println!(
+                    "{} \x1b[1;32mTendermint restored:\x1b[0m block={}, epoch={}, parent_hash={}…",
+                    node_tag, block_number, epoch, &hex::encode(parent_hash)[..16]
+                );
+            } else {
+                let mut c = consensus.lock().unwrap();
+                c.restore_state(block_number, epoch, parent_hash);
+                println!(
+                    "{} \x1b[1;32mConsensus restored:\x1b[0m block={}, epoch={}, parent_hash={}…",
+                    node_tag, block_number, epoch, &hex::encode(parent_hash)[..16]
+                );
+            }
         }
     }
 
@@ -1162,6 +1232,8 @@ async fn main() -> Result<()> {
         sync_request_sender,
         mut sync_blocks_receiver,
         mut tip_receiver,
+        consensus_net_sender,
+        mut consensus_net_receiver,
     ) = if let Some(ch) = net_channels {
         (
             Some(ch.tx_sender),
@@ -1172,9 +1244,11 @@ async fn main() -> Result<()> {
             Some(ch.sync_request_sender),
             Some(ch.sync_blocks_receiver),
             Some(ch.tip_receiver),
+            Some(ch.consensus_sender),
+            Some(ch.consensus_receiver),
         )
     } else {
-        (None, None, None, None, None, None, None, None)
+        (None, None, None, None, None, None, None, None, None, None)
     };
 
     // Block queue for out-of-order blocks (gap filling)
@@ -1322,15 +1396,284 @@ async fn main() -> Result<()> {
         }
     }
 
+    // ── Helper: broadcast consensus actions to network ──
+    async fn broadcast_consensus_actions(
+        actions: Vec<ConsensusAction>,
+        consensus_sender: &Option<mpsc::Sender<Vec<u8>>>,
+        node_tag: &str,
+    ) -> Vec<ConsensusAction> {
+        let mut commit_actions = Vec::new();
+        for action in actions {
+            match action {
+                ConsensusAction::BroadcastMessage(ref msg) => {
+                    if let Some(ref sender) = consensus_sender {
+                        if let Ok(data) = serde_json::to_vec(msg) {
+                            let _ = sender.send(data).await;
+                        }
+                    }
+                }
+                ConsensusAction::CommitBlock(_) => {
+                    commit_actions.push(action);
+                }
+            }
+        }
+        commit_actions
+    }
+
     // ── Block production / follower loop ──
     let mut ticker = interval(Duration::from_millis(args.block_ms));
     let mut rng = rand::thread_rng();
     let mut demo_nonces = [0u64; 4];
 
+    // Tendermint consensus tick interval (faster than block interval)
+    let mut consensus_ticker = interval(Duration::from_millis(100));
+
     loop {
         tokio::select! {
-            // ── Tick: producer creates a block ──
-            _ = ticker.tick(), if is_producer => {
+            // ── Tendermint consensus tick ──
+            _ = consensus_ticker.tick(), if tendermint.is_some() => {
+                let tc_ref = tendermint.as_ref().unwrap();
+
+                // Drain network txs into mempool
+                if let Some(ref mut rx) = net_tx_receiver {
+                    while let Ok(tx) = rx.try_recv() {
+                        let mut tc = tc_ref.lock().unwrap();
+                        tc.mempool.submit(tx);
+                    }
+                }
+
+                // Also drain demo txs
+                if args.demo_mode {
+                    let epoch = {
+                        let tc = tc_ref.lock().unwrap();
+                        tc.epoch() + 1
+                    };
+                    if let Some(tx) = generate_demo_tx(&mut rng, epoch, &mut demo_nonces, &demo_keypairs) {
+                        if let Some(ref sender) = net_tx_sender {
+                            let _ = sender.send(tx.clone()).await;
+                        }
+                        let mut tc = tc_ref.lock().unwrap();
+                        tc.mempool.submit(tx);
+                    }
+                }
+
+                // Tick the consensus state machine
+                let actions = {
+                    let mut tc = tc_ref.lock().unwrap();
+                    let mut db_guard = db.lock().unwrap();
+                    tc.tick(&mut *db_guard)
+                };
+
+                // Process actions
+                let mut commits = broadcast_consensus_actions(
+                    actions, &consensus_net_sender, &node_tag,
+                ).await;
+
+                // Handle commits
+                for action in commits.drain(..) {
+                    if let ConsensusAction::CommitBlock(mut block) = action {
+                        // Execute the block to get state root
+                        let result = {
+                            let mut tc = tc_ref.lock().unwrap();
+                            let mut db_guard = db.lock().unwrap();
+                            tc.execute_block(&mut *db_guard, &block)
+                        };
+
+                        match result {
+                            Ok(result) => {
+                                block.state_root = result.execution.state_root;
+
+                                // Flush state
+                                {
+                                    let mut db_guard = db.lock().unwrap();
+                                    db_guard.flush_accounts();
+                                    db_guard.flush_objects();
+                                }
+
+                                // Fold proof
+                                {
+                                    let mut p = prover.lock().unwrap();
+                                    if let Err(e) = p.fold_block(&block, block.parent_hash, result.execution.state_root) {
+                                        eprintln!("{} \x1b[31mProving error: {}\x1b[0m", node_tag, e);
+                                    }
+                                }
+
+                                let (obj_count, ghost_count) = {
+                                    let db_guard = db.lock().unwrap();
+                                    (db_guard.object_count(), db_guard.ghost_count())
+                                };
+                                let peers = peer_count.load(std::sync::atomic::Ordering::Relaxed);
+
+                                // Advance consensus state
+                                {
+                                    let mut tc = tc_ref.lock().unwrap();
+                                    tc.on_block_committed(&block, result.execution.state_root, result.execution.objects_evaporated);
+                                }
+
+                                // Cache and broadcast the committed block
+                                if let Some(ref cache) = block_cache {
+                                    cache_block(cache, &block);
+                                }
+                                if let Some(ref sender) = net_block_sender {
+                                    let _ = sender.send(block.clone()).await;
+                                }
+
+                                // Record for API
+                                record_block(
+                                    &block_history, &chain_stats, &events,
+                                    &block, &result.execution,
+                                    obj_count, ghost_count,
+                                );
+
+                                // Persist
+                                chain_store.save_consensus_meta(block.number, block.epoch, block.parent_hash);
+                                {
+                                    let history = block_history.lock().unwrap();
+                                    if let Some(record) = history.back() {
+                                        chain_store.save_block(record);
+                                    }
+                                }
+                                {
+                                    let stats = chain_stats.lock().unwrap();
+                                    chain_store.save_chain_stats(&stats);
+                                }
+                                {
+                                    let ev = events.lock().unwrap();
+                                    chain_store.save_events(&ev);
+                                }
+
+                                let producer_str = block.producer_id
+                                    .map(|id| format!("validator-{}", id))
+                                    .unwrap_or_else(|| "unknown".to_string());
+
+                                print_block_result(
+                                    &node_tag,
+                                    &format!("COMMITTED ({})", producer_str),
+                                    block.number,
+                                    block.epoch,
+                                    result.execution.txs_executed,
+                                    result.execution.txs_failed,
+                                    result.execution.objects_entered_grace,
+                                    result.execution.objects_evaporated,
+                                    obj_count,
+                                    ghost_count,
+                                    &result.execution.state_root,
+                                    peers,
+                                );
+                            }
+                            Err(e) => {
+                                eprintln!("{} \x1b[31mBlock execution error: {}\x1b[0m", node_tag, e);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── Receive consensus messages from network ──
+            Some(data) = async {
+                match consensus_net_receiver.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending::<Option<Vec<u8>>>().await,
+                }
+            }, if tendermint.is_some() => {
+                if let Ok(msg) = serde_json::from_slice::<ConsensusMessage>(&data) {
+                    let tc_ref = tendermint.as_ref().unwrap();
+                    let actions = {
+                        let mut tc = tc_ref.lock().unwrap();
+                        tc.on_message(msg)
+                    };
+                    let mut commits = broadcast_consensus_actions(
+                        actions, &consensus_net_sender, &node_tag,
+                    ).await;
+
+                    // Handle any commits from message processing
+                    for action in commits.drain(..) {
+                        if let ConsensusAction::CommitBlock(mut block) = action {
+                            let result = {
+                                let mut tc = tc_ref.lock().unwrap();
+                                let mut db_guard = db.lock().unwrap();
+                                tc.execute_block(&mut *db_guard, &block)
+                            };
+
+                            match result {
+                                Ok(result) => {
+                                    block.state_root = result.execution.state_root;
+                                    {
+                                        let mut db_guard = db.lock().unwrap();
+                                        db_guard.flush_accounts();
+                                        db_guard.flush_objects();
+                                    }
+                                    {
+                                        let mut p = prover.lock().unwrap();
+                                        let _ = p.fold_block(&block, block.parent_hash, result.execution.state_root);
+                                    }
+
+                                    let (obj_count, ghost_count) = {
+                                        let db_guard = db.lock().unwrap();
+                                        (db_guard.object_count(), db_guard.ghost_count())
+                                    };
+                                    let peers = peer_count.load(std::sync::atomic::Ordering::Relaxed);
+
+                                    {
+                                        let mut tc = tc_ref.lock().unwrap();
+                                        tc.on_block_committed(&block, result.execution.state_root, result.execution.objects_evaporated);
+                                    }
+
+                                    if let Some(ref cache) = block_cache {
+                                        cache_block(cache, &block);
+                                    }
+                                    if let Some(ref sender) = net_block_sender {
+                                        let _ = sender.send(block.clone()).await;
+                                    }
+
+                                    record_block(
+                                        &block_history, &chain_stats, &events,
+                                        &block, &result.execution,
+                                        obj_count, ghost_count,
+                                    );
+                                    chain_store.save_consensus_meta(block.number, block.epoch, block.parent_hash);
+                                    {
+                                        let history = block_history.lock().unwrap();
+                                        if let Some(record) = history.back() {
+                                            chain_store.save_block(record);
+                                        }
+                                    }
+                                    {
+                                        let stats = chain_stats.lock().unwrap();
+                                        chain_store.save_chain_stats(&stats);
+                                    }
+                                    {
+                                        let ev = events.lock().unwrap();
+                                        chain_store.save_events(&ev);
+                                    }
+
+                                    let producer_str = block.producer_id
+                                        .map(|id| format!("validator-{}", id))
+                                        .unwrap_or_else(|| "unknown".to_string());
+
+                                    print_block_result(
+                                        &node_tag,
+                                        &format!("COMMITTED ({})", producer_str),
+                                        block.number, block.epoch,
+                                        result.execution.txs_executed,
+                                        result.execution.txs_failed,
+                                        result.execution.objects_entered_grace,
+                                        result.execution.objects_evaporated,
+                                        obj_count, ghost_count,
+                                        &result.execution.state_root, peers,
+                                    );
+                                }
+                                Err(e) => {
+                                    eprintln!("{} \x1b[31mBlock execution error: {}\x1b[0m", node_tag, e);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── Tick: producer creates a block (mock consensus only) ──
+            _ = ticker.tick(), if is_producer && tendermint.is_none() => {
                 // In demo mode, inject random transactions
                 if args.demo_mode {
                     let epoch = {
