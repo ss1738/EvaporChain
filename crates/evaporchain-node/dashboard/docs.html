@@ -1,0 +1,1174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Documentation — EvaporChain Testnet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#06060a;--bg2:#0a0a12;--bg3:#0e0e18;
+  --surface:rgba(255,255,255,0.025);--surface-hover:rgba(255,255,255,0.045);
+  --border:rgba(255,255,255,0.06);--border-active:rgba(255,255,255,0.12);
+  --text:#f1f5f9;--text2:#94a3b8;--text3:#475569;--text4:#1e293b;
+  --ember:#FF4D00;--ember-dim:rgba(255,77,0,0.12);
+  --cyan:#00f0ff;--cyan-dim:rgba(0,240,255,0.08);
+  --green:#22c55e;--green-dim:rgba(34,197,94,0.1);
+  --amber:#f59e0b;--amber-dim:rgba(245,158,11,0.1);
+  --red:#ef4444;--red-dim:rgba(239,68,68,0.1);
+  --purple:#8b5cf6;--purple-dim:rgba(139,92,246,0.08);
+  --radius:12px;--radius-sm:8px;
+  --nav-h:56px;
+  --font-sans:'Inter',system-ui,-apple-system,sans-serif;
+  --font-mono:'JetBrains Mono',monospace;
+}
+html{font-family:var(--font-sans);background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;scroll-behavior:smooth}
+body{min-height:100vh}
+a{color:var(--cyan);text-decoration:none}
+a:hover{text-decoration:underline}
+
+/* Testnet banner */
+.testnet-banner{background:linear-gradient(90deg,var(--amber-dim),var(--ember-dim));text-align:center;padding:6px;font-size:11px;font-weight:600;color:var(--amber);letter-spacing:0.05em;text-transform:uppercase;border-bottom:1px solid rgba(245,158,11,0.15)}
+
+/* Nav */
+.nav{position:fixed;top:28px;left:0;right:0;height:var(--nav-h);background:rgba(6,6,10,0.92);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);z-index:100;display:flex;align-items:center;padding:0 24px}
+.nav-brand{font-weight:700;font-size:15px;letter-spacing:-0.02em;color:var(--text);margin-right:32px;white-space:nowrap;text-decoration:none}
+.nav-brand span{background:linear-gradient(135deg,var(--ember),var(--amber));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.nav-links{display:flex;gap:4px}
+.nav-links a{padding:6px 14px;font-size:13px;font-weight:500;color:var(--text2);border-radius:6px;transition:all 0.15s;text-decoration:none}
+.nav-links a:hover{color:var(--text);background:var(--surface)}
+.nav-links a.active{color:var(--text);background:var(--surface-hover)}
+.nav-right{margin-left:auto;display:flex;align-items:center;gap:12px}
+.nav-stat{font-size:11px;font-family:var(--font-mono);color:var(--text3)}
+.nav-stat b{color:var(--text2)}
+.network-dot{width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block;margin-right:4px;animation:pulse-dot 2s ease infinite}
+@keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:0.4}}
+
+/* Layout */
+.layout{display:flex;padding-top:calc(var(--nav-h) + 28px);min-height:100vh}
+
+/* Sidebar */
+.sidebar{width:260px;flex-shrink:0;border-right:1px solid var(--border);padding:24px 16px;position:fixed;top:calc(var(--nav-h) + 28px);bottom:0;overflow-y:auto;background:var(--bg)}
+.sidebar-section{margin-bottom:24px}
+.sidebar-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);padding:0 12px;margin-bottom:8px}
+.sidebar a{display:block;padding:6px 12px;font-size:13px;color:var(--text2);border-radius:6px;transition:all 0.15s;text-decoration:none;line-height:1.5}
+.sidebar a:hover{color:var(--text);background:var(--surface)}
+.sidebar a.active{color:var(--ember);background:var(--ember-dim)}
+
+/* Main content */
+.main{margin-left:260px;flex:1;max-width:900px;padding:40px 48px 120px}
+.main h1{font-size:32px;font-weight:700;letter-spacing:-0.02em;margin-bottom:8px;color:var(--text)}
+.main h2{font-size:22px;font-weight:600;letter-spacing:-0.01em;margin-top:48px;margin-bottom:16px;padding-top:24px;border-top:1px solid var(--border);color:var(--text)}
+.main h3{font-size:16px;font-weight:600;margin-top:32px;margin-bottom:12px;color:var(--text)}
+.main p{font-size:14px;line-height:1.8;color:var(--text2);margin-bottom:16px}
+.main ul,.main ol{font-size:14px;line-height:1.8;color:var(--text2);margin-bottom:16px;padding-left:24px}
+.main li{margin-bottom:6px}
+.main strong{color:var(--text);font-weight:600}
+.main code{font-family:var(--font-mono);font-size:12px;background:var(--surface);border:1px solid var(--border);padding:1px 6px;border-radius:4px;color:var(--cyan)}
+.subtitle{font-size:16px;color:var(--text2);margin-bottom:32px}
+
+/* Code blocks */
+pre{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:16px 20px;margin-bottom:20px;overflow-x:auto;position:relative}
+pre code{background:none;border:none;padding:0;font-size:12px;line-height:1.7;color:var(--text2)}
+.code-label{position:absolute;top:0;right:0;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;padding:4px 10px;border-radius:0 7px 0 6px;background:var(--surface);color:var(--text3)}
+
+/* Endpoint cards */
+.endpoint{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:16px;overflow:hidden}
+.endpoint-header{display:flex;align-items:center;gap:10px;padding:12px 16px;cursor:pointer;user-select:none}
+.endpoint-header:hover{background:var(--surface-hover)}
+.method{font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;font-family:var(--font-mono);letter-spacing:0.03em}
+.method-get{background:var(--green-dim);color:var(--green)}
+.method-post{background:var(--amber-dim);color:var(--amber)}
+.endpoint-path{font-size:13px;font-family:var(--font-mono);color:var(--text)}
+.endpoint-desc{font-size:12px;color:var(--text3);margin-left:auto}
+.endpoint-body{display:none;padding:16px;border-top:1px solid var(--border)}
+.endpoint.open .endpoint-body{display:block}
+.endpoint-chevron{color:var(--text3);font-size:10px;transition:transform 0.2s}
+.endpoint.open .endpoint-chevron{transform:rotate(90deg)}
+
+/* Table */
+table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:16px}
+th{text-align:left;padding:8px 12px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text3);border-bottom:1px solid var(--border)}
+td{padding:8px 12px;border-bottom:1px solid var(--border);color:var(--text2)}
+td code{font-size:11px}
+
+/* Lifecycle diagram */
+.lifecycle{display:flex;align-items:center;gap:0;margin:24px 0;flex-wrap:wrap}
+.lifecycle-stage{padding:10px 20px;font-size:13px;font-weight:600;text-align:center;border:1px solid var(--border);position:relative}
+.lifecycle-stage:first-child{border-radius:8px 0 0 8px}
+.lifecycle-stage:last-child{border-radius:0 8px 8px 0}
+.lifecycle-arrow{font-size:16px;color:var(--text3);padding:0 4px}
+
+/* Mobile */
+.mobile-menu{display:none}
+@media(max-width:768px){
+  .sidebar{display:none}
+  .main{margin-left:0;padding:24px 16px 80px}
+  .main h1{font-size:24px}
+  .main h2{font-size:18px}
+  .nav-links,.nav-right{display:none}
+  .mobile-menu{display:block;margin-left:auto}
+  .mobile-menu button{background:none;border:none;color:var(--text);font-size:22px;cursor:pointer;padding:4px 8px}
+  .mobile-nav{display:none;position:fixed;top:calc(var(--nav-h)+28px);left:0;right:0;background:rgba(6,6,10,0.96);border-bottom:1px solid var(--border);padding:12px;z-index:99;flex-direction:column;gap:4px}
+  .mobile-nav.open{display:flex}
+  .mobile-nav a{padding:10px 14px;font-size:14px;color:var(--text2);border-radius:6px;text-decoration:none}
+  .mobile-nav a:hover{background:var(--surface);color:var(--text)}
+  pre{font-size:11px;padding:12px}
+  .endpoint-desc{display:none}
+}
+
+/* Aurora orb */
+.aurora-orb{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:700px;height:700px;border-radius:50%;background:radial-gradient(circle,rgba(0,240,255,0.04) 0%,rgba(139,92,246,0.03) 40%,transparent 70%);filter:blur(80px);pointer-events:none;z-index:0}
+
+.disclaimer{text-align:center;padding:20px;font-size:11px;color:var(--text3);border-top:1px solid var(--border);margin-top:60px}
+.disclaimer a{color:var(--text2);text-decoration:underline}
+</style>
+</head>
+<body>
+
+<div class="testnet-banner">Testnet — Tokens have no real-world value</div>
+<div class="aurora-orb"></div>
+
+<nav class="nav" style="top:28px">
+  <a class="nav-brand" href="https://evaporchain.com"><span>EvaporChain</span> Testnet</a>
+  <div class="nav-links">
+    <a href="/wallet">Wallet</a>
+    <a href="/explorer">Explorer</a>
+    <a href="/docs" class="active">Docs</a>
+    <a href="/faucet">Faucet</a>
+  </div>
+  <div class="mobile-menu"><button onclick="toggleMobileNav()">&#9776;</button></div>
+  <div class="nav-right">
+    <a href="https://evaporchain.com" class="nav-stat" style="text-decoration:none;color:var(--cyan);font-size:11px">&larr; evaporchain.com</a>
+    <span class="nav-stat"><span class="network-dot"></span> <b>Testnet</b></span>
+  </div>
+</nav>
+<div class="mobile-nav" id="mobileNav">
+  <a href="/wallet">Wallet</a><a href="/explorer">Explorer</a><a href="/docs">Docs</a><a href="/faucet">Faucet</a>
+  <a href="https://evaporchain.com" style="color:var(--cyan)">&larr; evaporchain.com</a>
+</div>
+
+<div class="layout">
+
+<!-- Sidebar -->
+<aside class="sidebar">
+  <div class="sidebar-section">
+    <div class="sidebar-title">Getting Started</div>
+    <a href="#overview">What is EvaporChain?</a>
+    <a href="#connect">Connect to Testnet</a>
+    <a href="#faucet-guide">Get Testnet Tokens</a>
+    <a href="#first-tx">Send Your First Transaction</a>
+  </div>
+  <div class="sidebar-section">
+    <div class="sidebar-title">Core Concepts</div>
+    <a href="#decay">Thermodynamic State Decay</a>
+    <a href="#energy">Energy and Half-Life</a>
+    <a href="#lifecycle">Object Lifecycle</a>
+    <a href="#ghosts">Ghost Records &amp; Resurrection</a>
+  </div>
+  <div class="sidebar-section">
+    <div class="sidebar-title">API Reference</div>
+    <a href="#api-status">Chain Status</a>
+    <a href="#api-objects">State Objects</a>
+    <a href="#api-accounts">Accounts</a>
+    <a href="#api-blocks">Blocks</a>
+    <a href="#api-transactions">Transactions</a>
+    <a href="#api-nfts">NFTs (EVR-721)</a>
+    <a href="#api-tokens">Tokens (EVR-20)</a>
+    <a href="#api-staking">Staking</a>
+    <a href="#api-dao">Governance</a>
+    <a href="#api-contracts">Smart Contracts</a>
+    <a href="#api-network">Network &amp; Stats</a>
+    <a href="#api-faucet">Faucet</a>
+  </div>
+  <div class="sidebar-section">
+    <div class="sidebar-title">Standards</div>
+    <a href="#evr721">EVR-721: Mortal NFTs</a>
+    <a href="#evr20">EVR-20: Decaying Tokens</a>
+  </div>
+  <div class="sidebar-section">
+    <div class="sidebar-title">Architecture</div>
+    <a href="#crates">13 Crates Overview</a>
+    <a href="#crypto">Post-Quantum Signatures</a>
+    <a href="#contracts-guide">Smart Contracts</a>
+  </div>
+</aside>
+
+<!-- Main -->
+<div class="main">
+
+<h1>EvaporChain Documentation</h1>
+<p class="subtitle">Complete guide to the EvaporChain testnet, API, and core concepts.</p>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<h2 id="overview">What is EvaporChain?</h2>
+
+<p>EvaporChain is a Layer 1 blockchain where every state object carries <strong>energy</strong> that depletes over time. When an object's energy reaches zero, it <strong>evaporates</strong> from the active ledger &mdash; but leaves behind a compact cryptographic proof called a <strong>ghost record</strong>. The result is a blockchain that gets lighter over time, not heavier.</p>
+
+<p>Key properties:</p>
+<ul>
+  <li><strong>Self-cleaning state</strong> &mdash; unused data evaporates automatically</li>
+  <li><strong>Ghost records</strong> &mdash; cryptographic proof that evaporated data existed</li>
+  <li><strong>Post-quantum signatures</strong> &mdash; ML-DSA (FIPS 204) from genesis</li>
+  <li><strong>Dual state commitment</strong> &mdash; Verkle Trie + Merkle Mountain Range</li>
+  <li><strong>13 Rust crates, 356+ tests</strong> &mdash; modular, well-tested architecture</li>
+</ul>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<h2 id="connect">Connect to the Testnet</h2>
+
+<p>The testnet runs at <code>https://testnet.evaporchain.com</code>. All API endpoints are available over HTTPS. No authentication is required for read endpoints.</p>
+
+<h3>Quick check</h3>
+<pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/status</code></pre>
+
+<p>This returns the current chain status including block height, active objects, uptime, and more.</p>
+
+<h3>Base URL</h3>
+<pre><code>https://testnet.evaporchain.com</code></pre>
+
+<p>All API paths below are relative to this base URL.</p>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<h2 id="faucet-guide">Get Testnet Tokens</h2>
+
+<p>The faucet gives you <strong>10,000 EVAP</strong> per request, rate-limited to once per hour per address.</p>
+
+<h3>Via the UI</h3>
+<p>Visit <a href="/faucet">/faucet</a>, enter your address, and click "Request Tokens".</p>
+
+<h3>Via the API</h3>
+<pre><code><span class="code-label">bash</span>curl -X POST https://testnet.evaporchain.com/api/faucet \
+  -H "Content-Type: application/json" \
+  -d '{"address": "YOUR_ADDRESS_HEX"}'</code></pre>
+
+<p>Response:</p>
+<pre><code>{
+  "success": true,
+  "balance": 10000,
+  "message": null
+}</code></pre>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<h2 id="first-tx">Send Your First Transaction</h2>
+
+<p>Create a state object with energy that will decay over time:</p>
+
+<pre><code><span class="code-label">bash</span>curl -X POST https://testnet.evaporchain.com/api/tx/create-object \
+  -H "Content-Type: application/json" \
+  -d '{
+    "owner": "YOUR_ADDRESS_HEX",
+    "name": "my-first-object",
+    "initial_energy": 1000,
+    "half_life": 500
+  }'</code></pre>
+
+<p>The object will start with 1000 energy and lose half every 500 epochs (~500 blocks). You can monitor its decay in the <a href="/explorer">Explorer</a>.</p>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<h2 id="decay">Thermodynamic State Decay</h2>
+
+<p>Every state object on EvaporChain has an <strong>energy</strong> parameter that decays exponentially over time, following the formula:</p>
+
+<pre><code>E(t) = E_initial * (1/2)^(t / half_life)</code></pre>
+
+<p>Where <code>t</code> is the number of epochs elapsed since the object was last refreshed, and <code>half_life</code> is the object's decay rate. This is identical to radioactive decay in physics.</p>
+
+<p>Decay is passive &mdash; no one needs to trigger it. The network calculates current energy on-the-fly based on the timestamp.</p>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<h2 id="energy">Energy and Half-Life</h2>
+
+<p><strong>Energy</strong> is the "fuel" that keeps a state object alive in the active ledger. Higher energy means longer lifespan. Energy can be <strong>refreshed</strong> by the owner at any time, resetting the decay clock.</p>
+
+<p><strong>Half-life</strong> controls the decay rate. A half-life of 1000 means the object loses 50% of its energy every 1000 epochs. Longer half-life = slower decay.</p>
+
+<table>
+  <thead><tr><th>Half-life</th><th>50% decay in</th><th>Use case</th></tr></thead>
+  <tbody>
+    <tr><td><code>100</code></td><td>~100 blocks</td><td>Temporary state, demos</td></tr>
+    <tr><td><code>5,000</code></td><td>~5,000 blocks</td><td>Medium-term storage</td></tr>
+    <tr><td><code>50,000</code></td><td>~50,000 blocks</td><td>Long-term assets</td></tr>
+  </tbody>
+</table>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<h2 id="lifecycle">Object Lifecycle</h2>
+
+<div class="lifecycle">
+  <div class="lifecycle-stage" style="background:var(--green-dim);color:var(--green);border-color:rgba(34,197,94,0.3)">Active</div>
+  <span class="lifecycle-arrow">&rarr;</span>
+  <div class="lifecycle-stage" style="background:var(--amber-dim);color:var(--amber);border-color:rgba(245,158,11,0.3)">Grace Period</div>
+  <span class="lifecycle-arrow">&rarr;</span>
+  <div class="lifecycle-stage" style="background:var(--purple-dim);color:var(--purple);border-color:rgba(139,92,246,0.3)">Ghost</div>
+</div>
+
+<ul>
+  <li><strong>Active</strong> &mdash; Energy &gt; 0. Object is in the live state tree. Fully readable and writable.</li>
+  <li><strong>Grace Period</strong> &mdash; Energy has hit zero. Owner is notified. 7-day window to refresh before evaporation.</li>
+  <li><strong>Ghost</strong> &mdash; Object has been evaporated. Raw data removed from active state. A compact cryptographic proof (ghost record) remains permanently, proving the data existed and what it contained.</li>
+</ul>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<h2 id="ghosts">Ghost Records &amp; Resurrection</h2>
+
+<p>When state evaporates, the network creates a <strong>ghost record</strong> &mdash; a compact proof containing:</p>
+<ul>
+  <li>The object's ID and final state hash</li>
+  <li>Timestamp of evaporation</li>
+  <li>Cryptographic proof of existence</li>
+  <li>Original owner address</li>
+</ul>
+
+<p><strong>Resurrection:</strong> Within 30 days of evaporation, the original owner can <strong>resurrect</strong> a ghost object by paying a small energy fee. After 30 days, the ghost record is permanent but the object cannot be restored.</p>
+
+<pre><code><span class="code-label">bash</span>curl -X POST https://testnet.evaporchain.com/api/tx/resurrect \
+  -H "Content-Type: application/json" \
+  -d '{"object_id": "OBJECT_ID_HEX", "owner": "OWNER_ADDRESS_HEX"}'</code></pre>
+
+<p>View all ghost records:</p>
+<pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/ghosts</code></pre>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<h2 id="api-status">API: Chain Status</h2>
+
+<div class="endpoint open">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-get">GET</span>
+    <span class="endpoint-path">/api/status</span>
+    <span class="endpoint-desc">Full chain status</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <p>Returns current block height, active objects count, total evaporated, uptime, and more.</p>
+    <pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/status</code></pre>
+    <p>Sample response:</p>
+    <pre><code>{
+  "block_height": 1234,
+  "active_objects": 8,
+  "total_evaporated": 3,
+  "ghost_objects": 3,
+  "total_accounts": 6,
+  "total_energy": 450000,
+  "uptime": "2h 15m 30s",
+  "version": "0.1.0",
+  "chain_id": "evaporchain-testnet-1"
+}</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-get">GET</span>
+    <span class="endpoint-path">/health</span>
+    <span class="endpoint-desc">Health check</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <p>Simple health check. Returns 200 OK when the node is running.</p>
+    <pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/health</code></pre>
+    <pre><code>{"status":"ok"}</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-get">GET</span>
+    <span class="endpoint-path">/api/chain</span>
+    <span class="endpoint-desc">Chain configuration</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <p>Returns chain configuration and genesis parameters.</p>
+    <pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/chain</code></pre>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<h2 id="api-objects">API: State Objects</h2>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-get">GET</span>
+    <span class="endpoint-path">/api/objects</span>
+    <span class="endpoint-desc">List all active state objects</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <p>Returns all active state objects with their current energy, decay rates, and lifecycle state.</p>
+    <pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/objects</code></pre>
+    <pre><code>[
+  {
+    "id": "a1b2c3...",
+    "name": "genesis-reserve",
+    "owner": "ff0011...",
+    "initial_energy": 100000,
+    "current_energy": 98500,
+    "half_life": 50000,
+    "state": "Active",
+    "created_epoch": 0,
+    "decay_percentage": 1.5
+  }
+]</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-get">GET</span>
+    <span class="endpoint-path">/api/object/:id</span>
+    <span class="endpoint-desc">Single object detail</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <p>Returns a single state object by its hex ID.</p>
+    <pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/object/a1b2c3...</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-get">GET</span>
+    <span class="endpoint-path">/api/ghosts</span>
+    <span class="endpoint-desc">All evaporated ghost records</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <p>Returns all ghost records &mdash; cryptographic proofs of evaporated state objects.</p>
+    <pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/ghosts</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-post">POST</span>
+    <span class="endpoint-path">/api/tx/create-object</span>
+    <span class="endpoint-desc">Create a new state object</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <p>Creates a new state object with specified energy and half-life.</p>
+    <pre><code><span class="code-label">bash</span>curl -X POST https://testnet.evaporchain.com/api/tx/create-object \
+  -H "Content-Type: application/json" \
+  -d '{
+    "owner": "ADDRESS_HEX",
+    "name": "my-object",
+    "initial_energy": 1000,
+    "half_life": 500
+  }'</code></pre>
+    <table>
+      <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>owner</code></td><td>string</td><td>Hex address of the owner</td></tr>
+        <tr><td><code>name</code></td><td>string</td><td>Human-readable name</td></tr>
+        <tr><td><code>initial_energy</code></td><td>u64</td><td>Starting energy</td></tr>
+        <tr><td><code>half_life</code></td><td>u64</td><td>Epochs for 50% decay</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-post">POST</span>
+    <span class="endpoint-path">/api/tx/refresh</span>
+    <span class="endpoint-desc">Refresh an object's energy</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <p>Resets the decay clock on a state object, restoring its energy.</p>
+    <pre><code><span class="code-label">bash</span>curl -X POST https://testnet.evaporchain.com/api/tx/refresh \
+  -H "Content-Type: application/json" \
+  -d '{"object_id": "OBJECT_ID_HEX", "owner": "OWNER_ADDRESS_HEX"}'</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-post">POST</span>
+    <span class="endpoint-path">/api/tx/resurrect</span>
+    <span class="endpoint-desc">Resurrect a ghost object</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <p>Restores an evaporated object within the 30-day resurrection window.</p>
+    <pre><code><span class="code-label">bash</span>curl -X POST https://testnet.evaporchain.com/api/tx/resurrect \
+  -H "Content-Type: application/json" \
+  -d '{"object_id": "OBJECT_ID_HEX", "owner": "OWNER_ADDRESS_HEX"}'</code></pre>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<h2 id="api-accounts">API: Accounts</h2>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-get">GET</span>
+    <span class="endpoint-path">/api/accounts</span>
+    <span class="endpoint-desc">All accounts with balances</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/accounts</code></pre>
+    <pre><code>[
+  {
+    "address": "ff001122...",
+    "balance": 1000000,
+    "nonce": 5,
+    "label": "Foundation"
+  }
+]</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-get">GET</span>
+    <span class="endpoint-path">/api/address/:addr</span>
+    <span class="endpoint-desc">Address detail with objects, NFTs, tokens</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <p>Returns comprehensive details for an address: balance, nonce, owned objects, NFTs, and token balances.</p>
+    <pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/address/ff001122...</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-post">POST</span>
+    <span class="endpoint-path">/api/tx/transfer</span>
+    <span class="endpoint-desc">Transfer EVAP tokens</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl -X POST https://testnet.evaporchain.com/api/tx/transfer \
+  -H "Content-Type: application/json" \
+  -d '{
+    "from": "SENDER_HEX",
+    "to": "RECIPIENT_HEX",
+    "amount": 100
+  }'</code></pre>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<h2 id="api-blocks">API: Blocks</h2>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-get">GET</span>
+    <span class="endpoint-path">/api/blocks</span>
+    <span class="endpoint-desc">Recent blocks</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/blocks</code></pre>
+    <pre><code>[
+  {
+    "height": 1234,
+    "hash": "abc123...",
+    "timestamp": "2026-03-26T10:00:00Z",
+    "tx_count": 3,
+    "objects_created": 1,
+    "objects_evaporated": 0
+  }
+]</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-get">GET</span>
+    <span class="endpoint-path">/api/block/:number</span>
+    <span class="endpoint-desc">Block detail by height</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/block/1234</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-get">GET</span>
+    <span class="endpoint-path">/api/blocks/latest</span>
+    <span class="endpoint-desc">Latest block</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/blocks/latest</code></pre>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<h2 id="api-transactions">API: Transactions</h2>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-get">GET</span>
+    <span class="endpoint-path">/api/transactions</span>
+    <span class="endpoint-desc">Recent transactions</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/transactions</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-get">GET</span>
+    <span class="endpoint-path">/api/tx/:hash</span>
+    <span class="endpoint-desc">Transaction detail by hash</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/tx/abc123...</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-get">GET</span>
+    <span class="endpoint-path">/api/mempool</span>
+    <span class="endpoint-desc">Pending transactions</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/mempool</code></pre>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<h2 id="api-nfts">API: NFTs (EVR-721)</h2>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-get">GET</span>
+    <span class="endpoint-path">/api/nfts</span>
+    <span class="endpoint-desc">All NFTs</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/nfts</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-get">GET</span>
+    <span class="endpoint-path">/api/nft/collections</span>
+    <span class="endpoint-desc">NFT collections</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/nft/collections</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-get">GET</span>
+    <span class="endpoint-path">/api/nft/:id</span>
+    <span class="endpoint-desc">Single NFT detail</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/nft/1</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-post">POST</span>
+    <span class="endpoint-path">/api/nft/mint</span>
+    <span class="endpoint-desc">Mint a new NFT</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl -X POST https://testnet.evaporchain.com/api/nft/mint \
+  -H "Content-Type: application/json" \
+  -d '{
+    "owner": "ADDRESS_HEX",
+    "name": "My Mortal NFT",
+    "collection": "test-collection",
+    "initial_energy": 5000,
+    "half_life": 1000,
+    "metadata": "ipfs://..."
+  }'</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-post">POST</span>
+    <span class="endpoint-path">/api/nft/transfer</span>
+    <span class="endpoint-desc">Transfer an NFT</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl -X POST https://testnet.evaporchain.com/api/nft/transfer \
+  -H "Content-Type: application/json" \
+  -d '{"nft_id": 1, "from": "SENDER_HEX", "to": "RECIPIENT_HEX"}'</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-post">POST</span>
+    <span class="endpoint-path">/api/nft/refresh</span>
+    <span class="endpoint-desc">Refresh NFT energy</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl -X POST https://testnet.evaporchain.com/api/nft/refresh \
+  -H "Content-Type: application/json" \
+  -d '{"nft_id": 1, "owner": "OWNER_ADDRESS_HEX"}'</code></pre>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<h2 id="api-tokens">API: Tokens (EVR-20)</h2>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-get">GET</span>
+    <span class="endpoint-path">/api/tokens</span>
+    <span class="endpoint-desc">All deployed tokens</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/tokens</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-get">GET</span>
+    <span class="endpoint-path">/api/token/:id</span>
+    <span class="endpoint-desc">Single token detail</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/token/0</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-post">POST</span>
+    <span class="endpoint-path">/api/token/deploy</span>
+    <span class="endpoint-desc">Deploy a new EVR-20 token</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl -X POST https://testnet.evaporchain.com/api/token/deploy \
+  -H "Content-Type: application/json" \
+  -d '{
+    "deployer": "ADDRESS_HEX",
+    "name": "Test Token",
+    "symbol": "TST",
+    "initial_supply": 1000000,
+    "decay_half_life": 5000
+  }'</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-post">POST</span>
+    <span class="endpoint-path">/api/token/transfer</span>
+    <span class="endpoint-desc">Transfer tokens</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl -X POST https://testnet.evaporchain.com/api/token/transfer \
+  -H "Content-Type: application/json" \
+  -d '{"token_id": 0, "from": "SENDER_HEX", "to": "RECIPIENT_HEX", "amount": 100}'</code></pre>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<h2 id="api-staking">API: Staking</h2>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-get">GET</span>
+    <span class="endpoint-path">/api/staking/pools</span>
+    <span class="endpoint-desc">All staking pools</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/staking/pools</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-get">GET</span>
+    <span class="endpoint-path">/api/staking/pool/:id</span>
+    <span class="endpoint-desc">Single pool detail</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/staking/pool/0</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-post">POST</span>
+    <span class="endpoint-path">/api/staking/stake</span>
+    <span class="endpoint-desc">Stake EVAP</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl -X POST https://testnet.evaporchain.com/api/staking/stake \
+  -H "Content-Type: application/json" \
+  -d '{"pool_id": 0, "staker": "ADDRESS_HEX", "amount": 1000}'</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-post">POST</span>
+    <span class="endpoint-path">/api/staking/unstake</span>
+    <span class="endpoint-desc">Unstake EVAP</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl -X POST https://testnet.evaporchain.com/api/staking/unstake \
+  -H "Content-Type: application/json" \
+  -d '{"pool_id": 0, "staker": "ADDRESS_HEX", "amount": 500}'</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-post">POST</span>
+    <span class="endpoint-path">/api/staking/claim</span>
+    <span class="endpoint-desc">Claim staking rewards</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl -X POST https://testnet.evaporchain.com/api/staking/claim \
+  -H "Content-Type: application/json" \
+  -d '{"pool_id": 0, "staker": "ADDRESS_HEX"}'</code></pre>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<h2 id="api-dao">API: Governance (DAO)</h2>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-get">GET</span>
+    <span class="endpoint-path">/api/dao/proposals</span>
+    <span class="endpoint-desc">All governance proposals</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/dao/proposals</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-get">GET</span>
+    <span class="endpoint-path">/api/dao/proposal/:id</span>
+    <span class="endpoint-desc">Single proposal detail</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/dao/proposal/0</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-post">POST</span>
+    <span class="endpoint-path">/api/dao/propose</span>
+    <span class="endpoint-desc">Submit a proposal</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl -X POST https://testnet.evaporchain.com/api/dao/propose \
+  -H "Content-Type: application/json" \
+  -d '{
+    "proposer": "ADDRESS_HEX",
+    "title": "Proposal Title",
+    "description": "What this proposal does",
+    "voting_period": 1000
+  }'</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-post">POST</span>
+    <span class="endpoint-path">/api/dao/vote</span>
+    <span class="endpoint-desc">Vote on a proposal</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl -X POST https://testnet.evaporchain.com/api/dao/vote \
+  -H "Content-Type: application/json" \
+  -d '{"proposal_id": 0, "voter": "ADDRESS_HEX", "approve": true, "weight": 100}'</code></pre>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<h2 id="api-contracts">API: Smart Contracts</h2>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-get">GET</span>
+    <span class="endpoint-path">/api/contracts</span>
+    <span class="endpoint-desc">All deployed contracts</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/contracts</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-get">GET</span>
+    <span class="endpoint-path">/api/contract/:id</span>
+    <span class="endpoint-desc">Contract detail</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/contract/CONTRACT_ID</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-post">POST</span>
+    <span class="endpoint-path">/api/tx/deploy-contract</span>
+    <span class="endpoint-desc">Deploy an EvaporScript contract</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <p>Deploy a smart contract using EvaporScript. Available templates: <code>DecayingToken</code>, <code>MortalNFT</code>, <code>ThermodynamicEscrow</code>, <code>DecayingAuction</code>, <code>StakingPool</code>, <code>DAOVote</code>.</p>
+    <pre><code><span class="code-label">bash</span>curl -X POST https://testnet.evaporchain.com/api/tx/deploy-contract \
+  -H "Content-Type: application/json" \
+  -d '{
+    "deployer": "ADDRESS_HEX",
+    "code": "contract MyToken { ... }",
+    "initial_energy": 10000,
+    "half_life": 5000
+  }'</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-post">POST</span>
+    <span class="endpoint-path">/api/tx/call-contract</span>
+    <span class="endpoint-desc">Call a contract function</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl -X POST https://testnet.evaporchain.com/api/tx/call-contract \
+  -H "Content-Type: application/json" \
+  -d '{
+    "caller": "ADDRESS_HEX",
+    "contract_id": "CONTRACT_ID",
+    "function": "transfer",
+    "args": ["RECIPIENT_HEX", "100"]
+  }'</code></pre>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<h2 id="api-network">API: Network &amp; Stats</h2>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-get">GET</span>
+    <span class="endpoint-path">/api/network</span>
+    <span class="endpoint-desc">Network information</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/network</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-get">GET</span>
+    <span class="endpoint-path">/api/stats</span>
+    <span class="endpoint-desc">Network statistics summary</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/stats</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-get">GET</span>
+    <span class="endpoint-path">/api/stats/timeline</span>
+    <span class="endpoint-desc">Historical stats timeline</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/stats/timeline</code></pre>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-get">GET</span>
+    <span class="endpoint-path">/api/events</span>
+    <span class="endpoint-desc">Recent chain events</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <pre><code><span class="code-label">bash</span>curl https://testnet.evaporchain.com/api/events</code></pre>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<h2 id="api-faucet">API: Faucet</h2>
+
+<div class="endpoint open">
+  <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="method method-post">POST</span>
+    <span class="endpoint-path">/api/faucet</span>
+    <span class="endpoint-desc">Request testnet tokens</span>
+    <span class="endpoint-chevron">&#9654;</span>
+  </div>
+  <div class="endpoint-body">
+    <p>Rate limited to once per hour per address. Grants 10,000 EVAP.</p>
+    <pre><code><span class="code-label">bash</span>curl -X POST https://testnet.evaporchain.com/api/faucet \
+  -H "Content-Type: application/json" \
+  -d '{"address": "YOUR_ADDRESS_HEX"}'</code></pre>
+    <pre><code>{
+  "success": true,
+  "balance": 10000,
+  "message": null
+}</code></pre>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<h2 id="evr721">EVR-721: Mortal NFT Standard</h2>
+
+<p>EVR-721 is EvaporChain's NFT standard. Unlike ERC-721 on Ethereum, EVR-721 NFTs carry energy and decay over time. Key differences:</p>
+
+<ul>
+  <li><strong>Energy</strong> &mdash; Each NFT has an energy parameter that decays</li>
+  <li><strong>Half-life</strong> &mdash; Controls decay rate per NFT</li>
+  <li><strong>Evaporation</strong> &mdash; NFTs evaporate when energy reaches zero, leaving ghost records</li>
+  <li><strong>Refresh</strong> &mdash; Owners can refresh NFT energy to extend lifespan</li>
+  <li><strong>Collections</strong> &mdash; NFTs are grouped into named collections</li>
+</ul>
+
+<p>Use the <code>/api/nft/mint</code>, <code>/api/nft/transfer</code>, and <code>/api/nft/refresh</code> endpoints above.</p>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<h2 id="evr20">EVR-20: Decaying Fungible Token Standard</h2>
+
+<p>EVR-20 is EvaporChain's fungible token standard. Token supplies decay over time:</p>
+
+<ul>
+  <li><strong>Supply decay</strong> &mdash; Total supply decreases based on <code>decay_half_life</code></li>
+  <li><strong>Per-holder decay</strong> &mdash; Individual balances can decay independently</li>
+  <li><strong>Deploy</strong> &mdash; Anyone can deploy a new EVR-20 token via the API</li>
+</ul>
+
+<p>Use the <code>/api/token/deploy</code>, <code>/api/token/transfer</code>, and <code>/api/token/balance</code> endpoints above.</p>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<h2 id="crates">Architecture: 13 Crates</h2>
+
+<p>EvaporChain is built from 13 modular Rust crates:</p>
+
+<table>
+  <thead><tr><th>Crate</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>evaporchain-core</code></td><td>Core types, traits, and state object definitions</td></tr>
+    <tr><td><code>evaporchain-state</code></td><td>State tree (Verkle Trie) and state management</td></tr>
+    <tr><td><code>evaporchain-chain</code></td><td>Chain store, block storage, and chain logic</td></tr>
+    <tr><td><code>evaporchain-consensus</code></td><td>Consensus engine and block production</td></tr>
+    <tr><td><code>evaporchain-crypto</code></td><td>ML-DSA post-quantum signatures, hashing</td></tr>
+    <tr><td><code>evaporchain-network</code></td><td>P2P networking and peer discovery</td></tr>
+    <tr><td><code>evaporchain-mempool</code></td><td>Transaction pool and ordering</td></tr>
+    <tr><td><code>evaporchain-vm</code></td><td>EvaporScript virtual machine</td></tr>
+    <tr><td><code>evaporchain-node</code></td><td>Full node binary, API server, dashboard</td></tr>
+    <tr><td><code>evaporchain-types</code></td><td>Shared type definitions</td></tr>
+    <tr><td><code>evaporchain-storage</code></td><td>RocksDB storage layer</td></tr>
+    <tr><td><code>evaporchain-proof</code></td><td>Ghost proofs and Merkle Mountain Range</td></tr>
+    <tr><td><code>evaporchain-erasure</code></td><td>Reed-Solomon erasure coding for data availability</td></tr>
+  </tbody>
+</table>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<h2 id="crypto">Post-Quantum Cryptography</h2>
+
+<p>EvaporChain uses <strong>ML-DSA</strong> (Module-Lattice Digital Signature Algorithm, FIPS 204) for all signatures from genesis. This is the same standard selected by NIST for post-quantum digital signatures.</p>
+
+<ul>
+  <li>All transaction signatures use ML-DSA</li>
+  <li>Block producer signatures use ML-DSA</li>
+  <li>No classical signature fallback &mdash; quantum-safe only</li>
+  <li>Addresses are derived from ML-DSA public keys</li>
+</ul>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<h2 id="contracts-guide">Smart Contracts (EvaporScript)</h2>
+
+<p>EvaporChain supports smart contracts written in <strong>EvaporScript</strong>, a domain-specific language designed for decay-native applications. Available contract templates:</p>
+
+<table>
+  <thead><tr><th>Template</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>DecayingToken</code></td><td>EVR-20 token with configurable supply decay</td></tr>
+    <tr><td><code>MortalNFT</code></td><td>EVR-721 NFT collection with per-item energy</td></tr>
+    <tr><td><code>ThermodynamicEscrow</code></td><td>Time-locked escrow that releases as energy decays</td></tr>
+    <tr><td><code>DecayingAuction</code></td><td>Auction where bid energy determines priority</td></tr>
+    <tr><td><code>StakingPool</code></td><td>Staking pool with decaying reward rates</td></tr>
+    <tr><td><code>DAOVote</code></td><td>Governance voting with energy-weighted ballots</td></tr>
+  </tbody>
+</table>
+
+<p>Deploy contracts via <code>/api/tx/deploy-contract</code> and call them via <code>/api/tx/call-contract</code>.</p>
+
+<div class="disclaimer">
+  This is a testnet. Tokens have no real-world value.
+  <a href="https://evaporchain.com/terms">Terms</a> &middot;
+  <a href="https://evaporchain.com/privacy">Privacy</a> &middot;
+  <a href="https://evaporchain.com/whitepaper">Whitepaper</a>
+</div>
+
+</div>
+</div>
+
+<script>
+function toggleMobileNav(){document.getElementById('mobileNav').classList.toggle('open')}
+
+// Highlight active sidebar link on scroll
+const sections = document.querySelectorAll('h2[id]');
+const sidebarLinks = document.querySelectorAll('.sidebar a');
+window.addEventListener('scroll', () => {
+  let current = '';
+  sections.forEach(s => {
+    if (window.scrollY >= s.offsetTop - 120) current = s.id;
+  });
+  sidebarLinks.forEach(a => {
+    a.classList.toggle('active', a.getAttribute('href') === '#' + current);
+  });
+}, {passive: true});
+</script>
+</body>
+</html>

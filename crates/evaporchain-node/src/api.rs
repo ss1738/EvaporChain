@@ -1272,6 +1272,10 @@ async fn faucet_html() -> impl IntoResponse {
     Html(include_str!("../dashboard/faucet.html"))
 }
 
+async fn docs_html() -> impl IntoResponse {
+    Html(include_str!("../dashboard/docs.html"))
+}
+
 async fn manifest_json() -> impl IntoResponse {
     (
         [(axum::http::header::CONTENT_TYPE, "application/manifest+json")],
@@ -2398,6 +2402,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/address/:addr", get(get_address_detail))
         // Faucet
         .route("/faucet", get(faucet_html))
+        .route("/docs", get(docs_html))
         .route("/api/faucet", post(post_faucet))
         // PWA
         .route("/manifest.json", get(manifest_json))
