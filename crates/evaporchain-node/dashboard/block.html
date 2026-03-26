@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Block Detail — EvaporChain Testnet</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#06060a;--bg2:#0a0a12;--surface:rgba(255,255,255,0.025);--surface-hover:rgba(255,255,255,0.045);--border:rgba(255,255,255,0.06);--text:#f1f5f9;--text2:#94a3b8;--text3:#475569;--ember:#FF4D00;--ember-dim:rgba(255,77,0,0.12);--cyan:#00f0ff;--cyan-dim:rgba(0,240,255,0.08);--green:#22c55e;--green-dim:rgba(34,197,94,0.1);--amber:#f59e0b;--amber-dim:rgba(245,158,11,0.1);--red:#ef4444;--purple:#8b5cf6;--radius:12px;--radius-sm:8px;--nav-h:56px;--font-sans:'Inter',system-ui,sans-serif;--font-mono:'JetBrains Mono',monospace}
+html{font-family:var(--font-sans);background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
+body{min-height:100vh}
+a{color:var(--cyan);text-decoration:none}a:hover{text-decoration:underline}
+.testnet-banner{background:linear-gradient(90deg,var(--amber-dim),var(--ember-dim));text-align:center;padding:6px;font-size:11px;font-weight:600;color:var(--amber);letter-spacing:0.05em;text-transform:uppercase;border-bottom:1px solid rgba(245,158,11,0.15)}
+.nav{position:fixed;top:28px;left:0;right:0;height:var(--nav-h);background:rgba(6,6,10,0.92);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);z-index:100;display:flex;align-items:center;padding:0 24px}
+.nav-brand{font-weight:700;font-size:15px;margin-right:32px;white-space:nowrap}
+.nav-brand span{background:linear-gradient(135deg,var(--ember),var(--amber));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.nav-links{display:flex;gap:4px}.nav-links a{padding:6px 14px;font-size:13px;font-weight:500;color:var(--text2);border-radius:6px;transition:all 0.15s}.nav-links a:hover{color:var(--text);background:var(--surface)}
+.nav-right{margin-left:auto;display:flex;align-items:center;gap:12px}
+.main{padding-top:calc(var(--nav-h) + 28px + 24px);max-width:1100px;margin:0 auto;padding-left:20px;padding-right:20px;padding-bottom:80px}
+.breadcrumb{font-size:13px;color:var(--text3);margin-bottom:16px}.breadcrumb a{color:var(--cyan)}
+.page-title{font-size:24px;font-weight:700;margin-bottom:24px;display:flex;align-items:center;gap:12px}
+.page-title .hash{font-family:var(--font-mono);font-size:14px;font-weight:400;color:var(--text2)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:20px}
+.card-header{padding:16px 20px;border-bottom:1px solid var(--border);font-weight:600;font-size:14px}
+.row{display:flex;padding:12px 20px;border-bottom:1px solid rgba(255,255,255,0.03);align-items:baseline;gap:16px}
+.row:last-child{border-bottom:none}
+.row-label{width:160px;flex-shrink:0;font-size:13px;color:var(--text3);font-weight:500}
+.row-value{font-size:13px;font-family:var(--font-mono);color:var(--text);word-break:break-all}
+.row-value.success{color:var(--green)}.row-value.fail{color:var(--red)}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
+.badge-green{background:var(--green-dim);color:var(--green)}
+.badge-amber{background:var(--amber-dim);color:var(--amber)}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:var(--text3);padding:10px 16px;border-bottom:1px solid var(--border);font-weight:600}
+td{padding:10px 16px;font-size:13px;border-bottom:1px solid rgba(255,255,255,0.03)}
+td.mono{font-family:var(--font-mono);font-size:12px}
+tr:hover{background:var(--surface-hover)}
+.empty{padding:40px;text-align:center;color:var(--text3);font-size:14px}
+.loading{padding:60px;text-align:center;color:var(--text3)}
+@media(max-width:768px){.row{flex-direction:column;gap:4px}.row-label{width:auto}}
+</style>
+</head>
+<body>
+<div class="testnet-banner">Testnet — Tokens have no real-world value</div>
+<nav class="nav">
+  <a class="nav-brand" href="/explorer"><span>EvaporChain</span></a>
+  <div class="nav-links">
+    <a href="/explorer">Explorer</a><a href="/nft">NFTs</a><a href="/tokens">Tokens</a>
+    <a href="/staking">Staking</a><a href="/dao">DAO</a><a href="/wallet">Wallet</a><a href="/faucet">Faucet</a>
+  </div>
+  <div class="nav-right">
+    <a href="https://evaporchain.com" style="font-size:11px;font-weight:500;color:var(--cyan)">&larr; evaporchain.com</a>
+  </div>
+</nav>
+
+<div class="main">
+  <div class="breadcrumb"><a href="/explorer">Explorer</a> &rsaquo; Block</div>
+  <div class="page-title" id="pageTitle">Block <span class="hash" id="blockNum"></span></div>
+
+  <div id="loading" class="loading">Loading block data...</div>
+  <div id="content" style="display:none">
+    <div class="card">
+      <div class="card-header">Block Overview</div>
+      <div class="row"><div class="row-label">Block Number</div><div class="row-value" id="bNum"></div></div>
+      <div class="row"><div class="row-label">Epoch</div><div class="row-value" id="bEpoch"></div></div>
+      <div class="row"><div class="row-label">Timestamp</div><div class="row-value" id="bTime"></div></div>
+      <div class="row"><div class="row-label">Parent Hash</div><div class="row-value" id="bParent"></div></div>
+      <div class="row"><div class="row-label">State Root</div><div class="row-value" id="bRoot"></div></div>
+      <div class="row"><div class="row-label">Transactions</div><div class="row-value" id="bTxCount"></div></div>
+      <div class="row"><div class="row-label">Gas Used</div><div class="row-value" id="bGas"></div></div>
+      <div class="row"><div class="row-label">Base Fee</div><div class="row-value" id="bBaseFee"></div></div>
+      <div class="row"><div class="row-label">Total Fees</div><div class="row-value" id="bFees"></div></div>
+      <div class="row"><div class="row-label">Evaporations</div><div class="row-value" id="bEvap"></div></div>
+      <div class="row"><div class="row-label">Entered Grace</div><div class="row-value" id="bGrace"></div></div>
+      <div class="row"><div class="row-label">Active Objects</div><div class="row-value" id="bObjects"></div></div>
+      <div class="row"><div class="row-label">Ghost Count</div><div class="row-value" id="bGhosts"></div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">Transactions</div>
+      <div id="txTable"></div>
+    </div>
+  </div>
+  <div id="notfound" style="display:none" class="empty">Block not found. It may not be in the retained history (last 500 blocks).</div>
+</div>
+
+<script>
+(function(){
+  var num = window.location.pathname.split('/').pop();
+  document.getElementById('blockNum').textContent = '#' + num;
+  fetch('/api/block/' + num).then(function(r){
+    if(!r.ok) throw new Error('not found');
+    return r.json();
+  }).then(function(b){
+    document.getElementById('loading').style.display='none';
+    document.getElementById('content').style.display='block';
+    document.getElementById('bNum').textContent=b.number;
+    document.getElementById('bEpoch').textContent=b.epoch;
+    document.getElementById('bTime').textContent=new Date(b.timestamp*1000).toLocaleString();
+    document.getElementById('bParent').textContent='0x'+b.parent_hash;
+    document.getElementById('bRoot').textContent='0x'+b.state_root;
+    document.getElementById('bTxCount').textContent=b.tx_count;
+    document.getElementById('bGas').textContent=(b.gas_used||0).toLocaleString();
+    document.getElementById('bBaseFee').textContent=(b.base_fee||0)+' EVAP';
+    document.getElementById('bFees').textContent=(b.total_fees||0).toLocaleString()+' EVAP';
+    document.getElementById('bEvap').textContent=b.evaporations;
+    document.getElementById('bGrace').textContent=b.entered_grace;
+    document.getElementById('bObjects').textContent=b.active_objects;
+    document.getElementById('bGhosts').textContent=b.ghost_count;
+    var txDiv=document.getElementById('txTable');
+    if(!b.transactions||b.transactions.length===0){
+      txDiv.innerHTML='<div class="empty">No transactions in this block</div>';
+    }else{
+      var html='<table><thead><tr><th>Hash</th><th>Type</th><th>From</th><th>To</th><th>Value</th><th>Gas</th></tr></thead><tbody>';
+      b.transactions.forEach(function(tx){
+        var h=tx.hash?tx.hash.substring(0,16)+'...':'—';
+        var href=tx.hash?'/tx/'+tx.hash:'#';
+        var val=tx.amount?tx.amount.toLocaleString()+' EVAP':tx.energy?('+'+tx.energy+' energy'):'—';
+        var from=tx.from?(tx.from.substring(0,10)+'...'+tx.from.slice(-4)):'—';
+        var to=tx.to?(tx.to.substring(0,10)+'...'+tx.to.slice(-4)):'—';
+        html+='<tr><td class="mono"><a href="'+href+'">'+h+'</a></td><td><span class="badge badge-green">'+tx.type+'</span></td><td class="mono">'+from+'</td><td class="mono">'+to+'</td><td>'+val+'</td><td class="mono">'+(tx.gas||0).toLocaleString()+'</td></tr>';
+      });
+      html+='</tbody></table>';
+      txDiv.innerHTML=html;
+    }
+  }).catch(function(){
+    document.getElementById('loading').style.display='none';
+    document.getElementById('notfound').style.display='block';
+  });
+})();
+</script>
+</body>
+</html>

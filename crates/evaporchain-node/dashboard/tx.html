@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Transaction Detail — EvaporChain Testnet</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#06060a;--bg2:#0a0a12;--surface:rgba(255,255,255,0.025);--surface-hover:rgba(255,255,255,0.045);--border:rgba(255,255,255,0.06);--text:#f1f5f9;--text2:#94a3b8;--text3:#475569;--ember:#FF4D00;--ember-dim:rgba(255,77,0,0.12);--cyan:#00f0ff;--cyan-dim:rgba(0,240,255,0.08);--green:#22c55e;--green-dim:rgba(34,197,94,0.1);--amber:#f59e0b;--amber-dim:rgba(245,158,11,0.1);--red:#ef4444;--purple:#8b5cf6;--radius:12px;--radius-sm:8px;--nav-h:56px;--font-sans:'Inter',system-ui,sans-serif;--font-mono:'JetBrains Mono',monospace}
+html{font-family:var(--font-sans);background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
+body{min-height:100vh}
+a{color:var(--cyan);text-decoration:none}a:hover{text-decoration:underline}
+.testnet-banner{background:linear-gradient(90deg,var(--amber-dim),var(--ember-dim));text-align:center;padding:6px;font-size:11px;font-weight:600;color:var(--amber);letter-spacing:0.05em;text-transform:uppercase;border-bottom:1px solid rgba(245,158,11,0.15)}
+.nav{position:fixed;top:28px;left:0;right:0;height:var(--nav-h);background:rgba(6,6,10,0.92);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);z-index:100;display:flex;align-items:center;padding:0 24px}
+.nav-brand{font-weight:700;font-size:15px;margin-right:32px;white-space:nowrap}
+.nav-brand span{background:linear-gradient(135deg,var(--ember),var(--amber));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.nav-links{display:flex;gap:4px}.nav-links a{padding:6px 14px;font-size:13px;font-weight:500;color:var(--text2);border-radius:6px;transition:all 0.15s}.nav-links a:hover{color:var(--text);background:var(--surface)}
+.nav-right{margin-left:auto;display:flex;align-items:center;gap:12px}
+.main{padding-top:calc(var(--nav-h) + 28px + 24px);max-width:1100px;margin:0 auto;padding-left:20px;padding-right:20px;padding-bottom:80px}
+.breadcrumb{font-size:13px;color:var(--text3);margin-bottom:16px}.breadcrumb a{color:var(--cyan)}
+.page-title{font-size:22px;font-weight:700;margin-bottom:24px}
+.page-title .label{font-size:13px;font-weight:400;color:var(--text3);display:block;margin-bottom:4px}
+.page-title .hash{font-family:var(--font-mono);font-size:14px;font-weight:400;color:var(--text2);word-break:break-all}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:20px}
+.card-header{padding:16px 20px;border-bottom:1px solid var(--border);font-weight:600;font-size:14px}
+.row{display:flex;padding:12px 20px;border-bottom:1px solid rgba(255,255,255,0.03);align-items:baseline;gap:16px}
+.row:last-child{border-bottom:none}
+.row-label{width:160px;flex-shrink:0;font-size:13px;color:var(--text3);font-weight:500}
+.row-value{font-size:13px;font-family:var(--font-mono);color:var(--text);word-break:break-all}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
+.badge-green{background:var(--green-dim);color:var(--green)}
+.badge-amber{background:var(--amber-dim);color:var(--amber)}
+.badge-cyan{background:var(--cyan-dim);color:var(--cyan)}
+.status-success{color:var(--green);font-weight:600}
+.status-fail{color:var(--red);font-weight:600}
+.loading{padding:60px;text-align:center;color:var(--text3)}
+.empty{padding:40px;text-align:center;color:var(--text3);font-size:14px}
+@media(max-width:768px){.row{flex-direction:column;gap:4px}.row-label{width:auto}}
+</style>
+</head>
+<body>
+<div class="testnet-banner">Testnet — Tokens have no real-world value</div>
+<nav class="nav">
+  <a class="nav-brand" href="/explorer"><span>EvaporChain</span></a>
+  <div class="nav-links">
+    <a href="/explorer">Explorer</a><a href="/nft">NFTs</a><a href="/tokens">Tokens</a>
+    <a href="/staking">Staking</a><a href="/dao">DAO</a><a href="/wallet">Wallet</a><a href="/faucet">Faucet</a>
+  </div>
+  <div class="nav-right">
+    <a href="https://evaporchain.com" style="font-size:11px;font-weight:500;color:var(--cyan)">&larr; evaporchain.com</a>
+  </div>
+</nav>
+
+<div class="main">
+  <div class="breadcrumb"><a href="/explorer">Explorer</a> &rsaquo; Transaction</div>
+  <div class="page-title">
+    <span class="label">Transaction Hash</span>
+    <span class="hash" id="txHash"></span>
+  </div>
+
+  <div id="loading" class="loading">Loading transaction data...</div>
+  <div id="content" style="display:none">
+    <div class="card">
+      <div class="card-header">Transaction Overview</div>
+      <div class="row"><div class="row-label">Transaction Hash</div><div class="row-value" id="tHash"></div></div>
+      <div class="row"><div class="row-label">Status</div><div class="row-value" id="tStatus"></div></div>
+      <div class="row"><div class="row-label">Type</div><div class="row-value" id="tType"></div></div>
+      <div class="row"><div class="row-label">Block</div><div class="row-value" id="tBlock"></div></div>
+      <div class="row"><div class="row-label">Epoch</div><div class="row-value" id="tEpoch"></div></div>
+      <div class="row"><div class="row-label">From</div><div class="row-value" id="tFrom"></div></div>
+      <div class="row"><div class="row-label">To</div><div class="row-value" id="tTo"></div></div>
+      <div class="row" id="rowAmount" style="display:none"><div class="row-label">Amount</div><div class="row-value" id="tAmount"></div></div>
+      <div class="row" id="rowObject" style="display:none"><div class="row-label">Object ID</div><div class="row-value" id="tObject"></div></div>
+      <div class="row" id="rowEnergy" style="display:none"><div class="row-label">Energy</div><div class="row-value" id="tEnergy"></div></div>
+      <div class="row" id="rowHalfLife" style="display:none"><div class="row-label">Half-Life</div><div class="row-value" id="tHalfLife"></div></div>
+      <div class="row" id="rowMethod" style="display:none"><div class="row-label">Method</div><div class="row-value" id="tMethod"></div></div>
+      <div class="row"><div class="row-label">Gas Used</div><div class="row-value" id="tGas"></div></div>
+    </div>
+  </div>
+  <div id="notfound" style="display:none" class="empty">Transaction not found. It may not be in the retained history (last 500 blocks).</div>
+</div>
+
+<script>
+(function(){
+  var hash = window.location.pathname.split('/').pop();
+  document.getElementById('txHash').textContent = '0x' + hash;
+  fetch('/api/tx/' + hash).then(function(r){
+    if(!r.ok) throw new Error('not found');
+    return r.json();
+  }).then(function(tx){
+    document.getElementById('loading').style.display='none';
+    document.getElementById('content').style.display='block';
+    document.getElementById('tHash').textContent='0x'+tx.hash;
+    document.getElementById('tStatus').innerHTML=tx.status==='success'?'<span class="status-success">Success</span>':'<span class="status-fail">Failed</span>';
+    document.getElementById('tType').innerHTML='<span class="badge badge-cyan">'+tx.type+'</span>';
+    document.getElementById('tBlock').innerHTML='<a href="/block/'+tx.block_number+'">#'+tx.block_number+'</a>';
+    document.getElementById('tEpoch').textContent=tx.epoch;
+    document.getElementById('tFrom').innerHTML=tx.from?'<a href="/address/'+tx.from+'">'+tx.from+'</a>':'—';
+    document.getElementById('tTo').innerHTML=tx.to?'<a href="/address/'+tx.to+'">'+tx.to+'</a>':'—';
+    if(tx.amount!=null){document.getElementById('rowAmount').style.display='flex';document.getElementById('tAmount').textContent=tx.amount.toLocaleString()+' EVAP'}
+    if(tx.object_id){document.getElementById('rowObject').style.display='flex';document.getElementById('tObject').textContent=tx.object_id}
+    if(tx.energy!=null){document.getElementById('rowEnergy').style.display='flex';document.getElementById('tEnergy').textContent=tx.energy.toLocaleString()}
+    if(tx.half_life!=null){document.getElementById('rowHalfLife').style.display='flex';document.getElementById('tHalfLife').textContent=tx.half_life+' epochs'}
+    if(tx.method){document.getElementById('rowMethod').style.display='flex';document.getElementById('tMethod').textContent=tx.method}
+    document.getElementById('tGas').textContent=(tx.gas||0).toLocaleString();
+  }).catch(function(){
+    document.getElementById('loading').style.display='none';
+    document.getElementById('notfound').style.display='block';
+  });
+})();
+</script>
+</body>
+</html>

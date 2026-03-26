@@ -127,15 +127,34 @@ pub struct BlockRecord {
     pub timestamp: u64,
     pub active_objects: usize,
     pub ghost_count: usize,
+    pub gas_used: u64,
+    pub base_fee: u64,
+    pub total_fees: u64,
     pub transactions: Vec<TxRecord>,
 }
 
-/// Minimal transaction record for block history.
+/// Transaction record with hash and structured data.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TxRecord {
+    pub hash: String,
     #[serde(rename = "type")]
     pub tx_type: String,
-    pub detail: String,
+    pub from: String,
+    pub to: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub amount: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub object_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub energy: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub half_life: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
+    pub gas: u64,
+    pub block_number: u64,
+    pub epoch: u64,
+    pub status: String,
 }
 
 /// Accumulated chain statistics.
@@ -696,7 +715,7 @@ async fn get_accounts(State(state): State<Arc<ApiState>>) -> Json<Vec<AccountRes
         .filter_map(|addr| {
             let acc = db.get_account(addr)?;
             Some(AccountResponse {
-                address: hex::encode(addr),
+                address: account_full(addr),
                 name: account_name(addr),
                 balance: acc.balance,
                 nonce: acc.nonce,
@@ -746,6 +765,21 @@ async fn get_single_block(
         .cloned()
         .ok_or(StatusCode::NOT_FOUND)?;
     Ok(Json(block))
+}
+
+async fn get_tx_by_hash(
+    State(state): State<Arc<ApiState>>,
+    Path(hash): Path<String>,
+) -> Result<Json<TxRecord>, StatusCode> {
+    let history = state.block_history.lock().unwrap();
+    for block in history.iter().rev() {
+        for tx in &block.transactions {
+            if tx.hash == hash {
+                return Ok(Json(tx.clone()));
+            }
+        }
+    }
+    Err(StatusCode::NOT_FOUND)
 }
 
 async fn get_stats_timeline(State(state): State<Arc<ApiState>>) -> Json<StatsTimelineResponse> {
@@ -1100,6 +1134,14 @@ async fn health() -> impl IntoResponse {
 
 async fn address_html() -> impl IntoResponse {
     Html(include_str!("../dashboard/address.html"))
+}
+
+async fn block_detail_html() -> impl IntoResponse {
+    Html(include_str!("../dashboard/block.html"))
+}
+
+async fn tx_detail_html() -> impl IntoResponse {
+    Html(include_str!("../dashboard/tx.html"))
 }
 
 #[derive(Serialize)]
@@ -2213,12 +2255,8 @@ async fn fallback_404() -> impl IntoResponse {
 /// Security headers middleware.
 fn security_headers(response: &mut axum::http::Response<axum::body::Body>) {
     let h = response.headers_mut();
-    h.insert("X-Frame-Options", "SAMEORIGIN".parse().unwrap());
-    h.insert("X-Content-Type-Options", "nosniff".parse().unwrap());
-    h.insert("X-XSS-Protection", "1; mode=block".parse().unwrap());
-    h.insert("Referrer-Policy", "strict-origin-when-cross-origin".parse().unwrap());
+    // Only set headers not already handled by nginx reverse proxy
     h.insert("Permissions-Policy", "camera=(), microphone=(), geolocation=()".parse().unwrap());
-    h.insert("Content-Security-Policy", "default-src 'self' 'unsafe-inline' 'unsafe-eval' https://testnet.evaporchain.com https://evaporchain.com; img-src 'self' data: https:; font-src 'self' https://fonts.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; connect-src 'self' https://testnet.evaporchain.com".parse().unwrap());
 }
 
 pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthState>) -> Router {
@@ -2263,6 +2301,9 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/blocks/latest", get(get_latest_block))
         .route("/api/block/latest", get(get_latest_block))
         .route("/api/block/:number", get(get_single_block))
+        .route("/api/tx/:hash", get(get_tx_by_hash))
+        .route("/block/:number", get(block_detail_html))
+        .route("/tx/:hash", get(tx_detail_html))
         .route("/api/mempool", get(get_mempool))
         .route("/api/events", get(get_events))
         // Stats
@@ -2348,75 +2389,133 @@ pub async fn start_api_server(state: Arc<ApiState>, auth_state: Arc<crate::auth:
 // ──────────────────────────── Helpers for main.rs ─────────────────────
 
 /// Build TxRecord entries from a block's transactions.
+/// Gas cost estimates (must match execution crate).
+fn estimate_tx_gas(tx: &Transaction) -> u64 {
+    match tx {
+        Transaction::Transfer(_) => 21_000,
+        Transaction::CreateObject(t) => 50_000 + (200 * t.data.len() as u64),
+        Transaction::Refresh(_) => 30_000,
+        Transaction::DeployContract(_) => 100_000,
+        Transaction::CallContract(_) => 40_000,
+        Transaction::DeployScript(_) => 150_000,
+        Transaction::CallScript(_) => 50_000,
+    }
+}
+
 pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
     block
         .transactions
         .iter()
-        .map(|tx| match tx {
-            Transaction::Transfer(t) => TxRecord {
-                tx_type: "transfer".to_string(),
-                detail: format!(
-                    "{} -> {} amount={}",
-                    account_name(&t.from),
-                    account_name(&t.to),
-                    t.amount
-                ),
-            },
-            Transaction::CreateObject(t) => TxRecord {
-                tx_type: "create_object".to_string(),
-                detail: format!(
-                    "creator={} id={} energy={} hl={}",
-                    account_name(&t.creator),
-                    hex_short(&t.object_id),
-                    t.energy,
-                    t.half_life
-                ),
-            },
-            Transaction::Refresh(t) => TxRecord {
-                tx_type: "refresh".to_string(),
-                detail: format!(
-                    "obj={} +{}",
-                    hex_short(&t.object_id),
-                    t.energy_deposit
-                ),
-            },
-            Transaction::DeployContract(t) => TxRecord {
-                tx_type: "deploy_contract".to_string(),
-                detail: format!(
-                    "deployer={} template={} energy={} hl={}",
-                    account_name(&t.deployer),
-                    t.template,
-                    t.energy,
-                    t.half_life
-                ),
-            },
-            Transaction::CallContract(t) => TxRecord {
-                tx_type: "call_contract".to_string(),
-                detail: format!(
-                    "caller={} contract={} method={}",
-                    account_name(&t.caller),
-                    t.contract_id,
-                    t.method
-                ),
-            },
-            Transaction::DeployScript(t) => TxRecord {
-                tx_type: "deploy_script".to_string(),
-                detail: format!(
-                    "deployer={} energy={} hl={}",
-                    account_name(&t.deployer),
-                    t.energy,
-                    t.half_life
-                ),
-            },
-            Transaction::CallScript(t) => TxRecord {
-                tx_type: "call_script".to_string(),
-                detail: format!(
-                    "caller={} script={} method={}",
-                    account_name(&t.caller),
-                    t.contract_id,
-                    t.method
-                ),
-            },
+        .map(|tx| {
+            let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
+            let gas = estimate_tx_gas(tx);
+            match tx {
+                Transaction::Transfer(t) => TxRecord {
+                    hash,
+                    tx_type: "transfer".to_string(),
+                    from: account_full(&t.from),
+                    to: account_full(&t.to),
+                    amount: Some(t.amount),
+                    object_id: None,
+                    energy: None,
+                    half_life: None,
+                    method: None,
+                    gas,
+                    block_number: block.number,
+                    epoch: block.epoch,
+                    status: "success".to_string(),
+                },
+                Transaction::CreateObject(t) => TxRecord {
+                    hash,
+                    tx_type: "create_object".to_string(),
+                    from: account_full(&t.creator),
+                    to: String::new(),
+                    amount: None,
+                    object_id: Some(format!("0x{}", hex::encode(&t.object_id[..8]))),
+                    energy: Some(t.energy),
+                    half_life: Some(t.half_life),
+                    method: None,
+                    gas,
+                    block_number: block.number,
+                    epoch: block.epoch,
+                    status: "success".to_string(),
+                },
+                Transaction::Refresh(t) => TxRecord {
+                    hash,
+                    tx_type: "refresh".to_string(),
+                    from: String::new(),
+                    to: String::new(),
+                    amount: None,
+                    object_id: Some(format!("0x{}", hex::encode(&t.object_id[..8]))),
+                    energy: Some(t.energy_deposit),
+                    half_life: None,
+                    method: None,
+                    gas,
+                    block_number: block.number,
+                    epoch: block.epoch,
+                    status: "success".to_string(),
+                },
+                Transaction::DeployContract(t) => TxRecord {
+                    hash,
+                    tx_type: "deploy_contract".to_string(),
+                    from: account_full(&t.deployer),
+                    to: String::new(),
+                    amount: None,
+                    object_id: None,
+                    energy: Some(t.energy),
+                    half_life: Some(t.half_life),
+                    method: Some(t.template.clone()),
+                    gas,
+                    block_number: block.number,
+                    epoch: block.epoch,
+                    status: "success".to_string(),
+                },
+                Transaction::CallContract(t) => TxRecord {
+                    hash,
+                    tx_type: "call_contract".to_string(),
+                    from: account_full(&t.caller),
+                    to: format!("contract:{}", t.contract_id),
+                    amount: None,
+                    object_id: None,
+                    energy: None,
+                    half_life: None,
+                    method: Some(t.method.clone()),
+                    gas,
+                    block_number: block.number,
+                    epoch: block.epoch,
+                    status: "success".to_string(),
+                },
+                Transaction::DeployScript(t) => TxRecord {
+                    hash,
+                    tx_type: "deploy_script".to_string(),
+                    from: account_full(&t.deployer),
+                    to: String::new(),
+                    amount: None,
+                    object_id: None,
+                    energy: Some(t.energy),
+                    half_life: Some(t.half_life),
+                    method: None,
+                    gas,
+                    block_number: block.number,
+                    epoch: block.epoch,
+                    status: "success".to_string(),
+                },
+                Transaction::CallScript(t) => TxRecord {
+                    hash,
+                    tx_type: "call_script".to_string(),
+                    from: account_full(&t.caller),
+                    to: format!("script:{}", t.contract_id),
+                    amount: None,
+                    object_id: None,
+                    energy: None,
+                    half_life: None,
+                    method: Some(t.method.clone()),
+                    gas,
+                    block_number: block.number,
+                    epoch: block.epoch,
+                    status: "success".to_string(),
+                },
+            }
         })
         .collect()
 }

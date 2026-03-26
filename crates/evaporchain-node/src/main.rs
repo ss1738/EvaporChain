@@ -552,6 +552,9 @@ fn record_block(
         timestamp: block.timestamp,
         active_objects,
         ghost_count,
+        gas_used: execution.gas_used,
+        base_fee: execution.base_fee,
+        total_fees: execution.total_fees,
         transactions: api::tx_records_from_block(block),
     };
 
