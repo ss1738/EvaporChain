@@ -1,4 +1,4 @@
-const T = "https://testnet.evaporchain.com";
+import Link from "next/link";
 
 export default function Footer() {
   return (
@@ -34,15 +34,14 @@ export default function Footer() {
         </div>
 
         <div>
-          <h4 className="text-sm font-semibold mb-4">Testnet</h4>
+          <h4 className="text-sm font-semibold mb-4">Products</h4>
           <ul className="space-y-2.5">
-            <li><a href={`${T}/explorer`} className="text-sm text-text-muted hover:text-accent-cyan transition-colors">Explorer</a></li>
-            <li><a href={`${T}/wallet`} className="text-sm text-text-muted hover:text-accent-cyan transition-colors">Wallet</a></li>
-            <li><a href={`${T}/faucet`} className="text-sm text-text-muted hover:text-accent-cyan transition-colors">Faucet</a></li>
-            <li><a href={`${T}/nft`} className="text-sm text-text-muted hover:text-accent-cyan transition-colors">NFT Marketplace</a></li>
-            <li><a href={`${T}/tokens`} className="text-sm text-text-muted hover:text-accent-cyan transition-colors">Tokens</a></li>
-            <li><a href={`${T}/staking`} className="text-sm text-text-muted hover:text-accent-cyan transition-colors">Staking</a></li>
-            <li><a href={`${T}/dao`} className="text-sm text-text-muted hover:text-accent-cyan transition-colors">Governance</a></li>
+            <li><Link href="/wallet" className="text-sm text-text-muted hover:text-accent-cyan transition-colors">Wallet</Link></li>
+            <li><Link href="/nft" className="text-sm text-text-muted hover:text-accent-cyan transition-colors">NFT Marketplace</Link></li>
+            <li><Link href="/tokens" className="text-sm text-text-muted hover:text-accent-cyan transition-colors">Tokens</Link></li>
+            <li><Link href="/staking" className="text-sm text-text-muted hover:text-accent-cyan transition-colors">Staking</Link></li>
+            <li><Link href="/dao" className="text-sm text-text-muted hover:text-accent-cyan transition-colors">Governance</Link></li>
+            <li><Link href="/explorer" className="text-sm text-text-muted hover:text-accent-cyan transition-colors">Explorer</Link></li>
           </ul>
         </div>
 
@@ -50,12 +49,12 @@ export default function Footer() {
           <h4 className="text-sm font-semibold mb-4">Resources</h4>
           <ul className="space-y-2.5">
             <li>
-              <a
+              <Link
                 href="/whitepaper"
                 className="text-sm text-text-muted hover:text-accent-cyan transition-colors"
               >
                 Whitepaper
-              </a>
+              </Link>
             </li>
             <li>
               <a

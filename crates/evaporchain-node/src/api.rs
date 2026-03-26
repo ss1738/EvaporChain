@@ -2213,17 +2213,22 @@ async fn fallback_404() -> impl IntoResponse {
 /// Security headers middleware.
 fn security_headers(response: &mut axum::http::Response<axum::body::Body>) {
     let h = response.headers_mut();
-    h.insert("X-Frame-Options", "DENY".parse().unwrap());
+    h.insert("X-Frame-Options", "SAMEORIGIN".parse().unwrap());
     h.insert("X-Content-Type-Options", "nosniff".parse().unwrap());
-    h.insert("X-XSS-Protection", "0".parse().unwrap()); // Disabled; CSP is the defense
+    h.insert("X-XSS-Protection", "1; mode=block".parse().unwrap());
     h.insert("Referrer-Policy", "strict-origin-when-cross-origin".parse().unwrap());
     h.insert("Permissions-Policy", "camera=(), microphone=(), geolocation=()".parse().unwrap());
-    h.insert("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'".parse().unwrap());
+    h.insert("Content-Security-Policy", "default-src 'self' 'unsafe-inline' 'unsafe-eval' https://testnet.evaporchain.com https://evaporchain.com; img-src 'self' data: https:; font-src 'self' https://fonts.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; connect-src 'self' https://testnet.evaporchain.com".parse().unwrap());
 }
 
 pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthState>) -> Router {
+    let allowed_origins = [
+        "https://evaporchain.com".parse().unwrap(),
+        "https://testnet.evaporchain.com".parse().unwrap(),
+        "http://localhost:3000".parse().unwrap(),
+    ];
     let cors = CorsLayer::new()
-        .allow_origin(tower_http::cors::AllowOrigin::any())
+        .allow_origin(allowed_origins.to_vec())
         .allow_methods([axum::http::Method::GET, axum::http::Method::POST, axum::http::Method::OPTIONS])
         .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::header::AUTHORIZATION]);
 

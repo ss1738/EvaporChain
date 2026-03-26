@@ -1,15 +1,25 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Menu, X } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { Menu, X, ChevronDown } from "lucide-react";
+import Link from "next/link";
+
+const TESTNET = "https://testnet.evaporchain.com";
+
+const productLinks = [
+  { label: "Wallet", href: "/wallet" },
+  { label: "NFT Marketplace", href: "/nft" },
+  { label: "Tokens", href: "/tokens" },
+  { label: "Staking", href: "/staking" },
+  { label: "Governance", href: "/dao" },
+  { label: "Explorer", href: "/explorer" },
+];
 
 const navLinks = [
-  { label: "Technology", href: "#technology" },
-  { label: "Contracts", href: "#contracts" },
-  { label: "Roadmap", href: "#roadmap" },
+  { label: "Technology", href: "/#technology" },
+  { label: "Developers", href: "/#contracts" },
+  { label: "Roadmap", href: "/#roadmap" },
   { label: "Whitepaper", href: "/whitepaper" },
-  { label: "Explorer", href: "https://testnet.evaporchain.com/explorer" },
-  { label: "Ecosystem", href: "#contracts" },
 ];
 
 function Logo() {
@@ -53,11 +63,23 @@ function Logo() {
 export default function Navbar() {
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [productsOpen, setProductsOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 20);
     window.addEventListener("scroll", onScroll);
     return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setProductsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
   }, []);
 
   return (
@@ -69,31 +91,61 @@ export default function Navbar() {
       }`}
     >
       <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-        <a href="#home" className="flex items-center gap-2.5">
+        <Link href="/" className="flex items-center gap-2.5">
           <Logo />
           <span className="text-lg font-semibold tracking-tight text-text-primary">
             EvaporChain
           </span>
-        </a>
+        </Link>
 
         <div className="hidden md:flex items-center gap-8">
+          {/* Products dropdown */}
+          <div ref={dropdownRef} className="relative">
+            <button
+              onClick={() => setProductsOpen(!productsOpen)}
+              className="flex items-center gap-1 text-sm text-text-secondary hover:text-accent-cyan transition-colors duration-200"
+            >
+              Products
+              <ChevronDown
+                size={14}
+                className={`transition-transform duration-200 ${productsOpen ? "rotate-180" : ""}`}
+              />
+            </button>
+            {productsOpen && (
+              <div className="absolute top-full left-0 mt-2 w-52 bg-bg-card/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl py-2 overflow-hidden">
+                {productLinks.map((link) => (
+                  <Link
+                    key={link.label}
+                    href={link.href}
+                    className="block px-4 py-2.5 text-sm text-text-secondary hover:text-accent-cyan hover:bg-white/5 transition-colors"
+                    onClick={() => setProductsOpen(false)}
+                  >
+                    {link.label}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+
           {navLinks.map((link) => (
-            <a
+            <Link
               key={link.label}
               href={link.href}
               className="text-sm text-text-secondary hover:text-accent-cyan transition-colors duration-200"
             >
               {link.label}
-            </a>
+            </Link>
           ))}
         </div>
 
         <div className="hidden md:block">
           <a
-            href="https://testnet.evaporchain.com"
+            href={TESTNET}
+            target="_blank"
+            rel="noopener noreferrer"
             className="gradient-bg text-sm font-medium text-bg-primary px-6 py-2 rounded-full hover:shadow-[0_0_20px_rgba(0,240,255,0.3)] transition-shadow duration-300"
           >
-            Try the Testnet
+            Launch App &rarr;
           </a>
         </div>
 
@@ -108,23 +160,40 @@ export default function Navbar() {
 
       {mobileOpen && (
         <div className="md:hidden bg-[rgba(10,10,15,0.95)] backdrop-blur-xl border-t border-white/5">
-          <div className="px-6 py-4 flex flex-col gap-4">
+          <div className="px-6 py-4 flex flex-col gap-1">
+            <p className="text-xs uppercase tracking-widest text-text-muted mb-2 mt-2">Products</p>
+            {productLinks.map((link) => (
+              <Link
+                key={link.label}
+                href={link.href}
+                className="text-text-secondary hover:text-accent-cyan transition-colors py-2 pl-2"
+                onClick={() => setMobileOpen(false)}
+              >
+                {link.label}
+              </Link>
+            ))}
+
+            <div className="border-t border-white/5 my-3" />
+
             {navLinks.map((link) => (
-              <a
+              <Link
                 key={link.label}
                 href={link.href}
                 className="text-text-secondary hover:text-accent-cyan transition-colors py-2"
                 onClick={() => setMobileOpen(false)}
               >
                 {link.label}
-              </a>
+              </Link>
             ))}
+
             <a
-              href="https://testnet.evaporchain.com"
-              className="gradient-bg text-center text-sm font-medium text-bg-primary px-6 py-2.5 rounded-full mt-2"
+              href={TESTNET}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="gradient-bg text-center text-sm font-medium text-bg-primary px-6 py-2.5 rounded-full mt-4"
               onClick={() => setMobileOpen(false)}
             >
-              Try the Testnet
+              Launch App &rarr;
             </a>
           </div>
         </div>
