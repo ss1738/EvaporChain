@@ -1,0 +1,37 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body {
+  width: 380px;
+  min-height: 600px;
+  margin: 0;
+  padding: 0;
+  background: #0a0a0f;
+  color: #e4e4e7;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+/* Energy bar animations */
+@keyframes pulse-low {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.energy-critical {
+  animation: pulse-low 1s ease-in-out infinite;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e1e2e;
+  border-radius: 2px;
+}
