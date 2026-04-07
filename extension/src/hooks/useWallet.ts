@@ -6,8 +6,11 @@
 import { create } from "zustand";
 import { BrowserKeyStore, type KeyEntry } from "@/crypto/keystore";
 import { api, type AccountDetail, type StateObject, type ChainStatus, type TokenInfo, type SwapResult, type NftItem, type GhostObject, type GhostDetail, type RefreshCostEstimate, type SocialAuthResult } from "@/utils/api";
+import type { WcSession, WcSessionProposal } from "@/utils/walletconnect";
+import { ledgerManager, type LedgerAccount } from "@/utils/ledger";
+import { type BridgeTransfer } from "@/utils/bridge";
 
-export type View = "locked" | "create" | "import" | "home" | "send" | "receive" | "objects" | "activity" | "settings" | "swap" | "nfts" | "nft-detail" | "buy" | "batch-refresh" | "ghost-recovery" | "energy-dashboard" | "social-login" | "tutorial" | "decay-forecast";
+export type View = "locked" | "create" | "import" | "home" | "send" | "receive" | "objects" | "activity" | "settings" | "swap" | "nfts" | "nft-detail" | "buy" | "batch-refresh" | "ghost-recovery" | "energy-dashboard" | "social-login" | "tutorial" | "decay-forecast" | "walletconnect" | "ledger" | "bridge" | "plugins" | "ai-assistant";
 
 interface WalletState {
   // Auth
@@ -34,6 +37,17 @@ interface WalletState {
 
   // Social / Onboarding
   tutorialComplete: boolean;
+
+  // WalletConnect
+  wcSessions: WcSession[];
+  wcPendingProposal: WcSessionProposal | null;
+
+  // Ledger
+  ledgerConnected: boolean;
+  ledgerAccounts: LedgerAccount[];
+
+  // Bridge
+  bridgeTransfers: BridgeTransfer[];
 
   // UI
   view: View;
@@ -65,6 +79,12 @@ interface WalletState {
   batchRefreshObjects: (objects: Array<{ id: string; energy: number }>) => Promise<void>;
   socialLogin: (provider: "google" | "apple") => Promise<void>;
   completeTutorial: () => void;
+  setWcSessions: (sessions: WcSession[]) => void;
+  setWcPendingProposal: (proposal: WcSessionProposal | null) => void;
+  connectLedger: () => Promise<void>;
+  disconnectLedger: () => Promise<void>;
+  importLedgerAccounts: (accounts: LedgerAccount[]) => void;
+  addBridgeTransfer: (transfer: BridgeTransfer) => void;
   setView: (view: View) => void;
   setError: (error: string | null) => void;
   setNotification: (msg: string | null) => void;
@@ -91,6 +111,11 @@ export const useWallet = create<WalletState>((set, get) => ({
   selectedNft: null,
   ghosts: [],
   selectedGhost: null,
+  wcSessions: [],
+  wcPendingProposal: null,
+  ledgerConnected: false,
+  ledgerAccounts: [],
+  bridgeTransfers: [],
   tutorialComplete: (() => { try { return localStorage.getItem("evaporchain_tutorial_complete") === "true"; } catch { return false; } })(),
   view: "locked",
   loading: false,
@@ -400,6 +425,39 @@ export const useWallet = create<WalletState>((set, get) => ({
       // localStorage may not be available
     }
     set({ tutorialComplete: true, view: "home" });
+  },
+
+  setWcSessions: (sessions: WcSession[]) => set({ wcSessions: sessions }),
+  setWcPendingProposal: (proposal: WcSessionProposal | null) => set({ wcPendingProposal: proposal }),
+
+  connectLedger: async () => {
+    set({ loading: true, error: null });
+    try {
+      const connected = await ledgerManager.connect();
+      if (connected) {
+        const accounts = await ledgerManager.getAccounts(5);
+        set({ ledgerConnected: true, ledgerAccounts: accounts, loading: false });
+      } else {
+        set({ loading: false, error: "No Ledger device found" });
+      }
+    } catch (e: any) {
+      set({ loading: false, error: e.message });
+    }
+  },
+
+  disconnectLedger: async () => {
+    await ledgerManager.disconnect();
+    set({ ledgerConnected: false, ledgerAccounts: [] });
+  },
+
+  importLedgerAccounts: (ledgerAccts: LedgerAccount[]) => {
+    // Store ledger accounts alongside software accounts.
+    // In production, these would be persisted with a "hardware" flag in the keystore.
+    set({ ledgerConnected: true, ledgerAccounts: ledgerAccts });
+  },
+
+  addBridgeTransfer: (transfer: BridgeTransfer) => {
+    set({ bridgeTransfers: [transfer, ...get().bridgeTransfers] });
   },
 
   setView: (view: View) => set({ view, error: null }),

@@ -1,0 +1,49 @@
+{
+  "name": "@evaporchain/wallet-sdk",
+  "version": "0.1.0",
+  "description": "Zero-dependency SDK for integrating dApps with the EvaporChain browser wallet",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "import": "./dist/react.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "evaporchain",
+    "wallet",
+    "sdk",
+    "blockchain",
+    "dapp",
+    "post-quantum",
+    "decay",
+    "web3"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ss1738/EvaporChain"
+  },
+  "peerDependencies": {
+    "react": ">=18.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  }
+}

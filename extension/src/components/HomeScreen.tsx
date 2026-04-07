@@ -6,7 +6,8 @@ import { QuantumBadge } from "./QuantumBadge";
 
 export function HomeScreen() {
   const {
-    activeAccount, balance, chainStatus, ghosts,
+    activeAccount, balance, chainStatus, ghosts, wcSessions,
+    ledgerConnected,
     setView, claimFaucet, refreshBalance, refreshObjects, refreshGhosts,
     loading, notification, setNotification,
   } = useWallet();
@@ -40,6 +41,20 @@ export function HomeScreen() {
         </div>
       )}
 
+      {/* Hardware wallet indicator */}
+      {ledgerConnected && (
+        <div className="mx-4 mt-2 px-3 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/30 flex items-center gap-2">
+          <div className="w-2 h-2 rounded-full bg-blue-500" />
+          <span className="text-[10px] text-blue-400 font-medium">Hardware Wallet Connected</span>
+          <button
+            onClick={() => setView("ledger")}
+            className="ml-auto text-[10px] text-blue-400 hover:text-blue-300 transition"
+          >
+            Manage
+          </button>
+        </div>
+      )}
+
       {/* Balance card */}
       <div className="px-4 pt-6 pb-4">
         <p className="text-xs text-zinc-500 mb-1">Total Balance</p>
@@ -55,10 +70,11 @@ export function HomeScreen() {
       </div>
 
       {/* Quick actions */}
-      <div className="grid grid-cols-3 gap-2 px-4 pb-2">
+      <div className="grid grid-cols-4 gap-2 px-4 pb-2">
         <QuickAction label="Send" icon="↑" onClick={() => setView("send")} />
         <QuickAction label="Receive" icon="↓" onClick={() => setView("receive")} />
         <QuickAction label="Swap" icon="⇄" onClick={() => setView("swap")} />
+        <QuickAction label="Bridge" icon="🌉" onClick={() => setView("bridge")} />
       </div>
       <div className="grid grid-cols-5 gap-2 px-4 pb-2">
         <QuickAction label="Buy" icon="$" onClick={() => setView("buy")} />
@@ -81,6 +97,20 @@ export function HomeScreen() {
           badge={recoverableGhosts > 0 ? recoverableGhosts : undefined}
         />
         <QuickAction label="Forecast" icon="📉" onClick={() => { setView("decay-forecast"); refreshObjects(); }} />
+        <QuickAction
+          label={wcSessions.length > 0 ? `WC (${wcSessions.length})` : "WalletConnect"}
+          icon="🔗"
+          onClick={() => setView("walletconnect")}
+          badge={wcSessions.length > 0 ? wcSessions.length : undefined}
+        />
+        <QuickAction
+          label={ledgerConnected ? "Ledger" : "Hardware"}
+          icon="🔐"
+          onClick={() => setView("ledger")}
+          badge={ledgerConnected ? 1 : undefined}
+        />
+        <QuickAction label="Plugins" icon="+" onClick={() => setView("plugins")} />
+        <QuickAction label="AI" icon=">" onClick={() => setView("ai-assistant")} />
       </div>
 
       {/* Chain status */}

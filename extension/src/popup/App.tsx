@@ -19,6 +19,11 @@ import { GhostRecovery } from "@/components/GhostRecovery";
 import { DecayForecasting } from "@/components/DecayForecasting";
 import { SocialLogin } from "@/components/SocialLogin";
 import { OnboardingTutorial } from "@/components/OnboardingTutorial";
+import { WalletConnectScreen } from "@/components/WalletConnectScreen";
+import { LedgerConnect } from "@/components/LedgerConnect";
+import { BridgeScreen } from "@/components/BridgeScreen";
+import { PluginStore } from "@/components/PluginStore";
+import { AiAssistant } from "@/components/AiAssistant";
 
 export function App() {
   const { view, init, completeTutorial } = useWallet();
@@ -66,6 +71,16 @@ export function App() {
       return <SocialLogin />;
     case "tutorial":
       return <OnboardingTutorial onComplete={completeTutorial} />;
+    case "walletconnect":
+      return <WalletConnectScreen />;
+    case "ledger":
+      return <LedgerConnect />;
+    case "bridge":
+      return <BridgeScreen />;
+    case "plugins":
+      return <PluginStore />;
+    case "ai-assistant":
+      return <AiAssistant />;
     default:
       return <LockScreen />;
   }
