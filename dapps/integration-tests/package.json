@@ -1,0 +1,23 @@
+{
+  "name": "evaporchain-integration-tests",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:chain": "vitest run --reporter=verbose tests/chain.test.ts",
+    "test:objects": "vitest run --reporter=verbose tests/objects.test.ts",
+    "test:nfts": "vitest run --reporter=verbose tests/nfts.test.ts",
+    "test:faucet": "vitest run --reporter=verbose tests/faucet.test.ts",
+    "test:tokens": "vitest run --reporter=verbose tests/tokens.test.ts",
+    "test:staking": "vitest run --reporter=verbose tests/staking.test.ts",
+    "test:contracts": "vitest run --reporter=verbose tests/contracts.test.ts",
+    "test:explorer": "vitest run --reporter=verbose tests/explorer.test.ts",
+    "test:dao": "vitest run --reporter=verbose tests/dao.test.ts",
+    "test:all": "vitest run --reporter=verbose"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.1"
+  }
+}
