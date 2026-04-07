@@ -3,6 +3,7 @@ import { useWallet } from "@/hooks/useWallet";
 import { EnergyBar } from "./EnergyBar";
 import { energyStatus } from "@/utils/format";
 import { Header } from "./Header";
+import { QuickRefresh } from "./QuickRefresh";
 
 export function ObjectsScreen() {
   const { objects, refreshObjects, setView } = useWallet();
@@ -14,8 +15,9 @@ export function ObjectsScreen() {
   }, [refreshObjects]);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full relative">
       <Header />
+      <QuickRefresh />
       <div className="px-4 pt-4 pb-2 flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold text-zinc-100">Objects</h2>

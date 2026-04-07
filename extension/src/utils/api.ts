@@ -124,6 +124,85 @@ export interface SwapResult {
   amount_out: number;
 }
 
+export interface RefreshCostEstimate {
+  object_id: string;
+  current_energy: number;
+  target_energy: number;
+  energy_needed: number;
+  evap_cost: number;
+  epochs_extended: number;
+}
+
+export interface GhostObject {
+  id: string;
+  name: string;
+  owner: string;
+  original_energy: number;
+  max_energy: number;
+  half_life: number;
+  evaporated_epoch: number;
+  epochs_since_evaporation: number;
+  recovery_cost: number;
+  recovery_window_remaining: number;
+  recovery_window_total: number;
+  proof_status: "valid" | "expiring" | "expired";
+}
+
+export interface GhostDetail extends GhostObject {
+  created_epoch: number;
+  evaporation_date: string;
+  mint_date: string;
+  merkle_proof: string;
+  metadata: Record<string, string>;
+  energy_history: Array<{ epoch: number; energy: number; percent: number }>;
+}
+
+export interface RecoveryCostEstimate {
+  object_id: string;
+  base_cost: number;
+  decay_penalty: number;
+  total_cost: number;
+  proof_valid: boolean;
+  epochs_until_expiry: number;
+}
+
+export interface EnergyPortfolio {
+  total_energy: number;
+  total_max_energy: number;
+  object_count: number;
+  ghost_count: number;
+  at_risk_count: number;
+  expiring_today_count: number;
+  energy_trend: number;
+  objects_refreshed_this_week: number;
+  objects_evaporated_this_week: number;
+  total_energy_spent_this_week: number;
+  net_energy_change_this_week: number;
+  objects: Array<{
+    id: string;
+    name: string;
+    energy: number;
+    max_energy: number;
+    state: string;
+  }>;
+}
+
+export interface EnergyHistory {
+  address: string;
+  epochs: Array<{
+    epoch: number;
+    energy: number;
+  }>;
+}
+
+export interface SocialAuthResult {
+  success: boolean;
+  address: string;
+  encrypted_key: string;
+  is_new_account: boolean;
+  message?: string;
+}
+
 class EvaporChainAPI {
   private baseUrl: string;
 
@@ -249,6 +328,45 @@ class EvaporChainAPI {
     return this.post("/api/nft/transfer", { nft_id: id, to });
   }
 
+  // ── Batch Refresh ──
+
+  async batchRefresh(objects: Array<{ id: string; energy: number }>): Promise<TxResult> {
+    return this.post("/api/tx/batch-refresh", { objects });
+  }
+
+  async getRefreshCost(objectId: string, targetEnergy: number): Promise<RefreshCostEstimate> {
+    return this.post("/api/tx/refresh/estimate", { object_id: objectId, target_energy: targetEnergy });
+  }
+
+  // ── Ghost Recovery ──
+
+  async getGhosts(owner?: string): Promise<GhostObject[]> {
+    const ghosts = await this.get<GhostObject[]>("/api/ghosts");
+    return owner ? ghosts.filter(g => g.owner === owner) : ghosts;
+  }
+
+  async getGhostDetail(id: string): Promise<GhostDetail> {
+    return this.get(`/api/ghost/${id}`);
+  }
+
+  async resurrectObject(id: string, energy: number): Promise<TxResult> {
+    return this.post("/api/tx/resurrect", { object_id: id, energy_deposit: energy });
+  }
+
+  async getRecoveryCost(id: string): Promise<RecoveryCostEstimate> {
+    return this.get(`/api/ghost/${id}/cost`);
+  }
+
+  // ── Energy Dashboard ──
+
+  async getEnergyPortfolio(address: string): Promise<EnergyPortfolio> {
+    return this.get(`/api/address/${address}/energy`);
+  }
+
+  async getEnergyHistory(address: string): Promise<EnergyHistory> {
+    return this.get(`/api/address/${address}/energy/history`);
+  }
+
   // ── Simulation ──
 
   async simulateTransaction(tx: SimulateTransactionRequest): Promise<SimulationResult> {
@@ -257,6 +375,12 @@ class EvaporChainAPI {
 
   async getDecayForecast(objectId: string): Promise<DecayForecastResult> {
     return this.get(`/api/object/${objectId}/forecast`);
+  }
+
+  // ── Social Auth ──
+
+  async socialAuth(provider: "google" | "apple", token: string): Promise<SocialAuthResult> {
+    return this.post("/api/auth/social", { provider, token });
   }
 }
 

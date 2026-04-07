@@ -2,19 +2,23 @@ import { useEffect } from "react";
 import { useWallet } from "@/hooks/useWallet";
 import { formatBalance, shortAddress } from "@/utils/format";
 import { Header } from "./Header";
+import { QuantumBadge } from "./QuantumBadge";
 
 export function HomeScreen() {
   const {
-    activeAccount, balance, chainStatus,
-    setView, claimFaucet, refreshBalance, refreshObjects,
+    activeAccount, balance, chainStatus, ghosts,
+    setView, claimFaucet, refreshBalance, refreshObjects, refreshGhosts,
     loading, notification, setNotification,
   } = useWallet();
 
+  const recoverableGhosts = ghosts.filter(g => g.proof_status !== "expired").length;
+
   useEffect(() => {
     refreshBalance();
+    refreshGhosts();
     const interval = setInterval(refreshBalance, 10_000);
     return () => clearInterval(interval);
-  }, [refreshBalance]);
+  }, [refreshBalance, refreshGhosts]);
 
   useEffect(() => {
     if (notification) {
@@ -56,16 +60,27 @@ export function HomeScreen() {
         <QuickAction label="Receive" icon="↓" onClick={() => setView("receive")} />
         <QuickAction label="Swap" icon="⇄" onClick={() => setView("swap")} />
       </div>
-      <div className="grid grid-cols-4 gap-2 px-4 pb-4">
+      <div className="grid grid-cols-5 gap-2 px-4 pb-2">
         <QuickAction label="Buy" icon="$" onClick={() => setView("buy")} />
         <QuickAction label="Objects" icon="◈" onClick={() => { setView("objects"); refreshObjects(); }} />
         <QuickAction label="NFTs" icon="🖼" onClick={() => setView("nfts")} />
+        <QuickAction label="Energy" icon="⚡" onClick={() => setView("energy-dashboard")} />
         <QuickAction
           label="Faucet"
           icon="💧"
           onClick={claimFaucet}
           disabled={loading}
         />
+      </div>
+      <div className="grid grid-cols-3 gap-2 px-4 pb-4">
+        <QuickAction label="Batch Refresh" icon="🔄" onClick={() => { setView("batch-refresh"); refreshObjects(); }} />
+        <QuickAction
+          label={recoverableGhosts > 0 ? `Ghosts (${recoverableGhosts})` : "Ghosts"}
+          icon="👻"
+          onClick={() => { setView("ghost-recovery"); refreshGhosts(); }}
+          badge={recoverableGhosts > 0 ? recoverableGhosts : undefined}
+        />
+        <QuickAction label="Forecast" icon="📉" onClick={() => { setView("decay-forecast"); refreshObjects(); }} />
       </div>
 
       {/* Chain status */}
@@ -84,12 +99,8 @@ export function HomeScreen() {
       )}
 
       {/* Post-quantum badge */}
-      <div className="mt-auto px-4 pb-4">
-        <div className="px-3 py-2 rounded-lg bg-evap-purple/10 border border-evap-purple/20">
-          <p className="text-[10px] text-evap-purple text-center">
-            🛡️ Post-Quantum Secured · ML-DSA (FIPS 204)
-          </p>
-        </div>
+      <div className="mt-auto">
+        <QuantumBadge />
       </div>
 
       {/* Bottom nav */}
@@ -103,17 +114,22 @@ export function HomeScreen() {
   );
 }
 
-function QuickAction({ label, icon, onClick, disabled }: {
-  label: string; icon: string; onClick: () => void; disabled?: boolean;
+function QuickAction({ label, icon, onClick, disabled, badge }: {
+  label: string; icon: string; onClick: () => void; disabled?: boolean; badge?: number;
 }) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
-      className="flex flex-col items-center gap-1 py-3 rounded-lg bg-evap-surface border border-evap-border hover:border-evap-cyan/40 transition disabled:opacity-50"
+      className="relative flex flex-col items-center gap-1 py-3 rounded-lg bg-evap-surface border border-evap-border hover:border-evap-cyan/40 transition disabled:opacity-50"
     >
       <span className="text-lg">{icon}</span>
       <span className="text-[10px] text-zinc-400">{label}</span>
+      {badge !== undefined && badge > 0 && (
+        <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-evap-amber text-[9px] font-bold text-black flex items-center justify-center">
+          {badge}
+        </span>
+      )}
     </button>
   );
 }

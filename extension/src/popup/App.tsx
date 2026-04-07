@@ -13,9 +13,15 @@ import { SwapScreen } from "@/components/SwapScreen";
 import { NftGallery } from "@/components/NftGallery";
 import { NftDetail } from "@/components/NftDetail";
 import { BuyScreen } from "@/components/BuyScreen";
+import { EnergyDashboard } from "@/components/EnergyDashboard";
+import { BatchRefresh } from "@/components/BatchRefresh";
+import { GhostRecovery } from "@/components/GhostRecovery";
+import { DecayForecasting } from "@/components/DecayForecasting";
+import { SocialLogin } from "@/components/SocialLogin";
+import { OnboardingTutorial } from "@/components/OnboardingTutorial";
 
 export function App() {
-  const { view, init } = useWallet();
+  const { view, init, completeTutorial } = useWallet();
 
   useEffect(() => {
     init();
@@ -48,6 +54,18 @@ export function App() {
       return <NftDetail />;
     case "buy":
       return <BuyScreen />;
+    case "energy-dashboard":
+      return <EnergyDashboard />;
+    case "batch-refresh":
+      return <BatchRefresh />;
+    case "ghost-recovery":
+      return <GhostRecovery />;
+    case "decay-forecast":
+      return <DecayForecasting />;
+    case "social-login":
+      return <SocialLogin />;
+    case "tutorial":
+      return <OnboardingTutorial onComplete={completeTutorial} />;
     default:
       return <LockScreen />;
   }

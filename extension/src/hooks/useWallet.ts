@@ -5,9 +5,9 @@
 
 import { create } from "zustand";
 import { BrowserKeyStore, type KeyEntry } from "@/crypto/keystore";
-import { api, type AccountDetail, type StateObject, type ChainStatus, type TokenInfo, type SwapResult, type NftItem } from "@/utils/api";
+import { api, type AccountDetail, type StateObject, type ChainStatus, type TokenInfo, type SwapResult, type NftItem, type GhostObject, type GhostDetail, type RefreshCostEstimate, type SocialAuthResult } from "@/utils/api";
 
-export type View = "locked" | "create" | "import" | "home" | "send" | "receive" | "objects" | "activity" | "settings" | "swap" | "nfts" | "nft-detail" | "buy";
+export type View = "locked" | "create" | "import" | "home" | "send" | "receive" | "objects" | "activity" | "settings" | "swap" | "nfts" | "nft-detail" | "buy" | "batch-refresh" | "ghost-recovery" | "energy-dashboard" | "social-login" | "tutorial" | "decay-forecast";
 
 interface WalletState {
   // Auth
@@ -27,6 +27,13 @@ interface WalletState {
   tokens: TokenInfo[];
   nfts: NftItem[];
   selectedNft: NftItem | null;
+
+  // Ghost recovery
+  ghosts: GhostObject[];
+  selectedGhost: GhostDetail | null;
+
+  // Social / Onboarding
+  tutorialComplete: boolean;
 
   // UI
   view: View;
@@ -52,6 +59,12 @@ interface WalletState {
   swapTokens: (fromToken: string, toToken: string, amount: number, slippage: number) => Promise<SwapResult>;
   refreshNfts: () => Promise<void>;
   selectNft: (nft: NftItem | null) => void;
+  refreshGhosts: () => Promise<void>;
+  selectGhost: (id: string | null) => Promise<void>;
+  resurrectGhost: (id: string, energy: number) => Promise<void>;
+  batchRefreshObjects: (objects: Array<{ id: string; energy: number }>) => Promise<void>;
+  socialLogin: (provider: "google" | "apple") => Promise<void>;
+  completeTutorial: () => void;
   setView: (view: View) => void;
   setError: (error: string | null) => void;
   setNotification: (msg: string | null) => void;
@@ -76,6 +89,9 @@ export const useWallet = create<WalletState>((set, get) => ({
   tokens: [],
   nfts: [],
   selectedNft: null,
+  ghosts: [],
+  selectedGhost: null,
+  tutorialComplete: (() => { try { return localStorage.getItem("evaporchain_tutorial_complete") === "true"; } catch { return false; } })(),
   view: "locked",
   loading: false,
   error: null,
@@ -90,7 +106,7 @@ export const useWallet = create<WalletState>((set, get) => ({
       keystore: ks,
       accounts,
       activeAccount: active,
-      view: accounts.length === 0 ? "create" : "locked",
+      view: accounts.length === 0 ? "social-login" : "locked",
     });
   },
 
@@ -272,6 +288,118 @@ export const useWallet = create<WalletState>((set, get) => ({
     if (nft) {
       set({ view: "nft-detail" });
     }
+  },
+
+  refreshGhosts: async () => {
+    const { activeAccount } = get();
+    if (!activeAccount) return;
+    try {
+      const ghosts = await api.getGhosts(activeAccount.address);
+      set({ ghosts });
+    } catch {
+      // Ghost endpoint may not be available
+    }
+  },
+
+  selectGhost: async (id: string | null) => {
+    if (!id) {
+      set({ selectedGhost: null });
+      return;
+    }
+    try {
+      const detail = await api.getGhostDetail(id);
+      set({ selectedGhost: detail });
+    } catch {
+      // Ignore
+    }
+  },
+
+  resurrectGhost: async (id: string, energy: number) => {
+    set({ loading: true, error: null });
+    try {
+      const result = await api.resurrectObject(id, energy);
+      if (result.success) {
+        set({ loading: false, notification: `Resurrected object! Spent ${energy} EVAP` });
+        get().refreshGhosts();
+        get().refreshBalance();
+        get().refreshObjects();
+      } else {
+        set({ loading: false, error: result.message });
+      }
+    } catch (e: any) {
+      set({ loading: false, error: e.message });
+    }
+  },
+
+  batchRefreshObjects: async (objects: Array<{ id: string; energy: number }>) => {
+    set({ loading: true, error: null });
+    try {
+      const result = await api.batchRefresh(objects);
+      if (result.success) {
+        const totalEnergy = objects.reduce((sum, o) => sum + o.energy, 0);
+        set({
+          loading: false,
+          notification: `Refreshed ${objects.length} objects, spent ${totalEnergy} EVAP`,
+        });
+        get().refreshBalance();
+        get().refreshObjects();
+      } else {
+        set({ loading: false, error: result.message });
+      }
+    } catch (e: any) {
+      set({ loading: false, error: e.message });
+    }
+  },
+
+  socialLogin: async (provider: "google" | "apple") => {
+    set({ loading: true, error: null });
+    try {
+      // In production, this would open an OAuth popup and get a real token.
+      // For now, we simulate the OAuth flow by passing a placeholder token.
+      const token = `${provider}_oauth_token_${Date.now()}`;
+      const result = await api.socialAuth(provider, token);
+
+      if (result.success) {
+        // Auto-generate a local keystore entry from the social auth result
+        let ks = get().keystore;
+        if (!ks) {
+          ks = new BrowserKeyStore();
+        }
+        const name = `${provider}-${result.address.slice(0, 8)}`;
+        const autoPassword = result.encrypted_key.slice(0, 32);
+        await ks.generateKey(name, autoPassword);
+        const accounts = ks.listAccounts();
+        const active = ks.getActiveAccount();
+
+        const tutorialDone = get().tutorialComplete;
+        set({
+          keystore: ks,
+          accounts,
+          activeAccount: active,
+          isUnlocked: true,
+          password: autoPassword,
+          loading: false,
+          view: tutorialDone ? "home" : "tutorial",
+        });
+
+        // Fetch balance in background
+        get().refreshBalance();
+        get().refreshChainStatus();
+      } else {
+        set({ loading: false, error: result.message ?? "Social login failed" });
+      }
+    } catch (e: any) {
+      set({ loading: false, error: e.message });
+    }
+  },
+
+  completeTutorial: () => {
+    try {
+      localStorage.setItem("evaporchain_tutorial_complete", "true");
+    } catch {
+      // localStorage may not be available
+    }
+    set({ tutorialComplete: true, view: "home" });
   },
 
   setView: (view: View) => set({ view, error: null }),
