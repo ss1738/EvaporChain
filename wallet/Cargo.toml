@@ -1,0 +1,39 @@
+[package]
+name = "evaporchain-wallet"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Post-quantum wallet for EvaporChain — key management, transaction signing, and chain interaction"
+
+[dependencies]
+evaporchain-crypto = { path = "../crates/evaporchain-crypto" }
+evaporchain-types = { path = "../crates/evaporchain-types" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+hex = { workspace = true }
+thiserror = { workspace = true }
+rand = { workspace = true }
+blake3 = "1"
+aes-gcm = "0.10"
+argon2 = "0.5"
+zeroize = { version = "1", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+reqwest = { version = "0.12", features = ["json"] }
+tokio = { workspace = true }
+url = "2"
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+colored = "2"
+dialoguer = "0.11"
+rpassword = "5"
+
+[build-dependencies]
+chrono = "0.4"
+
+[dev-dependencies]
+proptest = "1"
+
+[[bin]]
+name = "evaporchain-wallet"
+path = "src/bin/wallet.rs"
