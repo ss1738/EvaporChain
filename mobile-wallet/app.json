@@ -1,0 +1,43 @@
+{
+  "expo": {
+    "name": "EvaporChain Wallet",
+    "slug": "evaporchain-wallet",
+    "version": "0.1.0",
+    "scheme": "evaporchain",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.evaporchain.wallet",
+      "infoPlist": {
+        "NSFaceIDUsageDescription": "Authenticate to unlock your EvaporChain wallet",
+        "NSCameraUsageDescription": "Scan QR codes to send EVAP tokens"
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.evaporchain.wallet",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT"
+      ]
+    },
+    "plugins": [
+      "expo-camera",
+      "expo-local-authentication",
+      "expo-notifications",
+      "expo-secure-store"
+    ]
+  }
+}

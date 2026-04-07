@@ -2,31 +2,46 @@ import { useState } from "react";
 import { useWallet } from "@/hooks/useWallet";
 import { formatBalance } from "@/utils/format";
 import { Header } from "./Header";
+import { TxSimulation } from "./TxSimulation";
+
+type SendStep = "form" | "preview" | "sent";
 
 export function SendScreen() {
-  const { sendTransfer, balance, setView, loading, error } = useWallet();
+  const { sendTransfer, balance, setView, loading, error, chainStatus } = useWallet();
   const [to, setTo] = useState("");
   const [amount, setAmount] = useState("");
-  const [sent, setSent] = useState(false);
+  const [step, setStep] = useState<SendStep>("form");
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const parsedAmount = parseInt(amount, 10);
+  const isFormValid = to.length > 0 && !isNaN(parsedAmount) && parsedAmount > 0;
+
+  const handlePreview = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!to || !amount) return;
+    if (!isFormValid) return;
+    setStep("preview");
+  };
 
-    const result = await sendTransfer(to, parseInt(amount, 10));
+  const handleConfirm = async () => {
+    if (!to || !amount) return;
+    const result = await sendTransfer(to, parsedAmount);
     if (result.success) {
-      setSent(true);
+      setStep("sent");
       setTimeout(() => setView("home"), 2000);
     }
   };
 
-  if (sent) {
+  const handleCancelPreview = () => {
+    setStep("form");
+  };
+
+  // Success screen
+  if (step === "sent") {
     return (
       <div className="flex flex-col h-full">
         <Header />
         <div className="flex flex-col items-center justify-center flex-1 px-8">
           <div className="w-16 h-16 rounded-full bg-evap-green/20 flex items-center justify-center mb-4">
-            <span className="text-3xl">✓</span>
+            <span className="text-3xl">&#10003;</span>
           </div>
           <p className="text-sm font-semibold text-zinc-200">Transaction Sent</p>
           <p className="text-xs text-zinc-500 mt-1">{amount} EVAP sent</p>
@@ -35,6 +50,59 @@ export function SendScreen() {
     );
   }
 
+  // Preview / simulation step
+  if (step === "preview") {
+    const activeAddress = useWallet.getState().activeAccount?.address ?? "";
+    const currentEpoch = chainStatus?.epoch ?? 0;
+    // Default epoch duration: 30 seconds (configurable per chain)
+    const epochDurationMs = 30_000;
+
+    return (
+      <div className="flex flex-col h-full">
+        <Header />
+        <div className="px-4 pt-4">
+          <button
+            onClick={handleCancelPreview}
+            className="text-xs text-zinc-500 hover:text-zinc-300 mb-3"
+          >
+            &larr; Back to form
+          </button>
+          <h2 className="text-lg font-semibold text-zinc-100 mb-1">Preview Transaction</h2>
+          <p className="text-xs text-zinc-500 mb-4">
+            Review the simulation before sending
+          </p>
+        </div>
+
+        <div className="px-4 flex-1 overflow-y-auto pb-4">
+          {error && (
+            <div className="mb-3 rounded-md bg-evap-red/10 border border-evap-red/30 px-3 py-2">
+              <p className="text-[10px] text-evap-red">{error}</p>
+            </div>
+          )}
+
+          <TxSimulation
+            from={activeAddress}
+            to={to}
+            amount={parsedAmount}
+            currentBalance={balance}
+            currentEpoch={currentEpoch}
+            epochDurationMs={epochDurationMs}
+            onConfirm={handleConfirm}
+            onCancel={handleCancelPreview}
+          />
+
+          {loading && (
+            <div className="mt-3 flex items-center justify-center gap-2">
+              <div className="w-4 h-4 border-2 border-evap-cyan border-t-transparent rounded-full animate-spin" />
+              <span className="text-[11px] text-zinc-400">Sending transaction...</span>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Form step
   return (
     <div className="flex flex-col h-full">
       <Header />
@@ -43,7 +111,7 @@ export function SendScreen() {
           onClick={() => setView("home")}
           className="text-xs text-zinc-500 hover:text-zinc-300 mb-3"
         >
-          ← Back
+          &larr; Back
         </button>
         <h2 className="text-lg font-semibold text-zinc-100 mb-1">Send EVAP</h2>
         <p className="text-xs text-zinc-500 mb-4">
@@ -51,7 +119,7 @@ export function SendScreen() {
         </p>
       </div>
 
-      <form onSubmit={handleSubmit} className="px-4 space-y-3 flex-1">
+      <form onSubmit={handlePreview} className="px-4 space-y-3 flex-1">
         <div>
           <label className="text-[10px] text-zinc-500 mb-1 block">Recipient Address</label>
           <input
@@ -90,10 +158,10 @@ export function SendScreen() {
 
         <button
           type="submit"
-          disabled={loading || !to || !amount}
+          disabled={!isFormValid}
           className="w-full py-3 rounded-lg bg-gradient-to-r from-evap-cyan to-evap-purple text-sm font-semibold text-black hover:opacity-90 transition disabled:opacity-50"
         >
-          {loading ? "Sending..." : "Send"}
+          Preview Transaction
         </button>
       </form>
     </div>

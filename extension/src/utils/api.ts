@@ -36,6 +36,22 @@ export interface StateObject {
   decay_percentage: number;
 }
 
+export interface NftItem {
+  id: string;
+  name: string;
+  collection: string;
+  owner: string;
+  image_url?: string;
+  energy: number;
+  max_energy: number;
+  current_energy: number;
+  half_life: number;
+  decay_percentage: number;
+  state: "Active" | "Grace" | "Ghost";
+  epochs_remaining: number;
+  created_epoch: number;
+}
+
 export interface TxResult {
   success: boolean;
   message: string;
@@ -46,6 +62,66 @@ export interface TransactionRecord {
   type: string;
   detail: string;
   hash?: string;
+}
+
+export interface SimulateTransactionRequest {
+  from: string;
+  to: string;
+  amount: number;
+}
+
+export interface SimulationResult {
+  balanceBefore: number;
+  balanceAfter: number;
+  maxEnergy: number;
+  gasCost: number;
+  energyCost: number;
+  nonce: number;
+  estimatedBlock: number;
+  recipientIsGhost: boolean;
+  objectSurvivalEpochs?: number;
+  objectHalfLife?: number;
+  objectStateAfter: "Active" | "Grace" | "Ghost" | "Risen";
+}
+
+export interface DecayForecastResult {
+  objectId: string;
+  currentEnergy: number;
+  maxEnergy: number;
+  halfLife: number;
+  currentEpoch: number;
+  epochDurationMs: number;
+  projectedEnergy: Array<{ epoch: number; energy: number; percent: number }>;
+  evaporationEpoch: number;
+  evaporationDate: string;
+}
+
+export interface TokenInfo {
+  symbol: string;
+  name: string;
+  address: string;
+  decimals: number;
+  balance: number;
+  logo?: string;
+}
+
+export interface SwapQuote {
+  from_token: string;
+  to_token: string;
+  amount_in: number;
+  amount_out: number;
+  rate: number;
+  price_impact: number;
+  energy_cost: number;
+  estimated_fee: number;
+}
+
+export interface SwapResult {
+  success: boolean;
+  message: string;
+  hash?: string;
+  amount_in: number;
+  amount_out: number;
 }
 
 class EvaporChainAPI {
@@ -134,6 +210,53 @@ class EvaporChainAPI {
 
   async getTransactions(): Promise<TransactionRecord[]> {
     return this.get("/api/transactions");
+  }
+
+  // ── Swap / DEX ──
+
+  async getTokens(): Promise<TokenInfo[]> {
+    return this.get("/api/tokens");
+  }
+
+  async getSwapQuote(fromToken: string, toToken: string, amount: number): Promise<SwapQuote> {
+    return this.post("/api/swap/quote", { from_token: fromToken, to_token: toToken, amount });
+  }
+
+  async executeSwap(fromToken: string, toToken: string, amount: number, slippage: number): Promise<SwapResult> {
+    return this.post("/api/swap/execute", { from_token: fromToken, to_token: toToken, amount, slippage });
+  }
+
+  // ── NFTs ──
+
+  async getNfts(): Promise<NftItem[]> {
+    return this.get("/api/nfts");
+  }
+
+  async getNftsByOwner(address: string): Promise<NftItem[]> {
+    const all = await this.getNfts();
+    return all.filter(n => n.owner === address);
+  }
+
+  async getNft(id: string): Promise<NftItem> {
+    return this.get(`/api/nft/${id}`);
+  }
+
+  async refreshNft(id: string, energy: number): Promise<TxResult> {
+    return this.post("/api/nft/refresh", { nft_id: id, energy_deposit: energy });
+  }
+
+  async transferNft(id: string, to: string): Promise<TxResult> {
+    return this.post("/api/nft/transfer", { nft_id: id, to });
+  }
+
+  // ── Simulation ──
+
+  async simulateTransaction(tx: SimulateTransactionRequest): Promise<SimulationResult> {
+    return this.post("/api/tx/simulate", tx);
+  }
+
+  async getDecayForecast(objectId: string): Promise<DecayForecastResult> {
+    return this.get(`/api/object/${objectId}/forecast`);
   }
 }
 

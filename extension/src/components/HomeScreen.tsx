@@ -51,10 +51,15 @@ export function HomeScreen() {
       </div>
 
       {/* Quick actions */}
-      <div className="grid grid-cols-4 gap-2 px-4 pb-4">
+      <div className="grid grid-cols-3 gap-2 px-4 pb-2">
         <QuickAction label="Send" icon="↑" onClick={() => setView("send")} />
         <QuickAction label="Receive" icon="↓" onClick={() => setView("receive")} />
+        <QuickAction label="Swap" icon="⇄" onClick={() => setView("swap")} />
+      </div>
+      <div className="grid grid-cols-4 gap-2 px-4 pb-4">
+        <QuickAction label="Buy" icon="$" onClick={() => setView("buy")} />
         <QuickAction label="Objects" icon="◈" onClick={() => { setView("objects"); refreshObjects(); }} />
+        <QuickAction label="NFTs" icon="🖼" onClick={() => setView("nfts")} />
         <QuickAction
           label="Faucet"
           icon="💧"

@@ -9,6 +9,10 @@ import { ReceiveScreen } from "@/components/ReceiveScreen";
 import { ObjectsScreen } from "@/components/ObjectsScreen";
 import { ActivityScreen } from "@/components/ActivityScreen";
 import { SettingsScreen } from "@/components/SettingsScreen";
+import { SwapScreen } from "@/components/SwapScreen";
+import { NftGallery } from "@/components/NftGallery";
+import { NftDetail } from "@/components/NftDetail";
+import { BuyScreen } from "@/components/BuyScreen";
 
 export function App() {
   const { view, init } = useWallet();
@@ -36,6 +40,14 @@ export function App() {
       return <ActivityScreen />;
     case "settings":
       return <SettingsScreen />;
+    case "swap":
+      return <SwapScreen />;
+    case "nfts":
+      return <NftGallery />;
+    case "nft-detail":
+      return <NftDetail />;
+    case "buy":
+      return <BuyScreen />;
     default:
       return <LockScreen />;
   }

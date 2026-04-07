@@ -5,9 +5,9 @@
 
 import { create } from "zustand";
 import { BrowserKeyStore, type KeyEntry } from "@/crypto/keystore";
-import { api, type AccountDetail, type StateObject, type ChainStatus } from "@/utils/api";
+import { api, type AccountDetail, type StateObject, type ChainStatus, type TokenInfo, type SwapResult, type NftItem } from "@/utils/api";
 
-export type View = "locked" | "create" | "import" | "home" | "send" | "receive" | "objects" | "activity" | "settings";
+export type View = "locked" | "create" | "import" | "home" | "send" | "receive" | "objects" | "activity" | "settings" | "swap" | "nfts" | "nft-detail" | "buy";
 
 interface WalletState {
   // Auth
@@ -24,6 +24,9 @@ interface WalletState {
   nonce: number;
   objects: StateObject[];
   chainStatus: ChainStatus | null;
+  tokens: TokenInfo[];
+  nfts: NftItem[];
+  selectedNft: NftItem | null;
 
   // UI
   view: View;
@@ -45,6 +48,10 @@ interface WalletState {
   refreshChainStatus: () => Promise<void>;
   sendTransfer: (to: string, amount: number) => Promise<TxSendResult>;
   claimFaucet: () => Promise<void>;
+  refreshTokens: () => Promise<void>;
+  swapTokens: (fromToken: string, toToken: string, amount: number, slippage: number) => Promise<SwapResult>;
+  refreshNfts: () => Promise<void>;
+  selectNft: (nft: NftItem | null) => void;
   setView: (view: View) => void;
   setError: (error: string | null) => void;
   setNotification: (msg: string | null) => void;
@@ -66,6 +73,9 @@ export const useWallet = create<WalletState>((set, get) => ({
   nonce: 0,
   objects: [],
   chainStatus: null,
+  tokens: [],
+  nfts: [],
+  selectedNft: null,
   view: "locked",
   loading: false,
   error: null,
@@ -201,6 +211,33 @@ export const useWallet = create<WalletState>((set, get) => ({
     }
   },
 
+  refreshTokens: async () => {
+    try {
+      const tokens = await api.getTokens();
+      set({ tokens });
+    } catch {
+      // Ignore — tokens endpoint may not be available
+    }
+  },
+
+  swapTokens: async (fromToken: string, toToken: string, amount: number, slippage: number) => {
+    set({ loading: true, error: null });
+    try {
+      const result = await api.executeSwap(fromToken, toToken, amount, slippage);
+      if (result.success) {
+        set({ loading: false, notification: `Swapped ${result.amount_in} ${fromToken} for ${result.amount_out} ${toToken}` });
+        get().refreshBalance();
+        get().refreshTokens();
+      } else {
+        set({ loading: false, error: result.message });
+      }
+      return result;
+    } catch (e: any) {
+      set({ loading: false, error: e.message });
+      return { success: false, message: e.message, amount_in: 0, amount_out: 0 };
+    }
+  },
+
   claimFaucet: async () => {
     const { activeAccount } = get();
     if (!activeAccount) return;
@@ -216,6 +253,24 @@ export const useWallet = create<WalletState>((set, get) => ({
       }
     } catch (e: any) {
       set({ loading: false, error: e.message });
+    }
+  },
+
+  refreshNfts: async () => {
+    const { activeAccount } = get();
+    if (!activeAccount) return;
+    try {
+      const nfts = await api.getNftsByOwner(activeAccount.address);
+      set({ nfts });
+    } catch {
+      // Ignore — NFT endpoint may not be available
+    }
+  },
+
+  selectNft: (nft: NftItem | null) => {
+    set({ selectedNft: nft });
+    if (nft) {
+      set({ view: "nft-detail" });
     }
   },
 
