@@ -26,9 +26,9 @@ use tracing::{debug, info, warn};
 // ─────────────────────── Configuration ───────────────────────────────────
 
 /// Default timeout for each consensus phase.
-const PROPOSE_TIMEOUT_MS: u64 = 3000;
-const PREVOTE_TIMEOUT_MS: u64 = 2000;
-const PRECOMMIT_TIMEOUT_MS: u64 = 2000;
+const PROPOSE_TIMEOUT_MS: u64 = 8000;
+const PREVOTE_TIMEOUT_MS: u64 = 4000;
+const PRECOMMIT_TIMEOUT_MS: u64 = 4000;
 
 /// Maximum rounds before forcing commit (prevents livelock).
 const MAX_ROUNDS_PER_HEIGHT: u32 = 10;
@@ -174,6 +174,18 @@ pub struct TendermintConsensus {
     precommit_timeout: Duration,
     /// Blocks committed at each height (for duplicate detection).
     committed_heights: HashSet<u64>,
+    // ── Slashing Evidence ──────────────────────────────────────────────
+    /// Tracks proposals seen per (height, round) → (proposer_id, block_hash).
+    /// Used to detect equivocation (same validator proposing two different blocks).
+    proposals_seen: HashMap<(u64, u32), Vec<(u64, [u8; 32])>>,
+    /// Tracks consecutive missed proposals per validator.
+    /// Reset to 0 when the validator successfully produces a block.
+    missed_proposals: HashMap<u64, u64>,
+    /// Weak subjectivity checkpoint: (height, state_root) pairs.
+    /// Validators refuse to reorg past the most recent checkpoint.
+    weak_subjectivity_checkpoints: Vec<(u64, [u8; 32])>,
+    /// Interval between weak subjectivity checkpoints (in blocks).
+    checkpoint_interval: u64,
 }
 
 impl TendermintConsensus {
@@ -201,6 +213,10 @@ impl TendermintConsensus {
             prevote_timeout: Duration::from_millis(PREVOTE_TIMEOUT_MS),
             precommit_timeout: Duration::from_millis(PRECOMMIT_TIMEOUT_MS),
             committed_heights: HashSet::new(),
+            proposals_seen: HashMap::new(),
+            missed_proposals: HashMap::new(),
+            weak_subjectivity_checkpoints: Vec::new(),
+            checkpoint_interval: 1000, // Checkpoint every 1000 blocks
         }
     }
 
@@ -399,7 +415,11 @@ impl TendermintConsensus {
             }
 
             Phase::Commit => {
-                // Waiting for commit to be applied externally
+                // If there's a forced block waiting (from max-round overflow), commit it
+                if let Some(block) = self.round_state.proposed_block.take() {
+                    actions.push(ConsensusAction::CommitBlock(block));
+                }
+                // Otherwise: waiting for commit to be applied externally
             }
         }
 
@@ -417,17 +437,25 @@ impl TendermintConsensus {
 
         // Ignore messages for future heights (we'll catch up via block sync)
         if msg.height() > self.height {
-            debug!(
-                msg_height = msg.height(),
-                local_height = self.height,
-                "Ignoring future consensus message"
-            );
             return actions;
         }
 
         // Ignore messages for old rounds
         if msg.round() < self.round_state.round {
             return actions;
+        }
+
+        // Round-skip: if we receive a message from a future round at the same
+        // height, jump to that round. This prevents cascading round desync where
+        // nodes fall behind and can never achieve quorum.
+        if msg.round() > self.round_state.round {
+            info!(
+                height = self.height,
+                from_round = self.round_state.round,
+                to_round = msg.round(),
+                "Round-skipping to match peer"
+            );
+            self.round_state = RoundState::new(msg.round());
         }
 
         match msg {
@@ -458,6 +486,30 @@ impl TendermintConsensus {
                 }
 
                 let hash = Self::block_hash(&block);
+
+                // ── Equivocation Detection ──
+                // Track proposals per (height, round). If the same proposer sends
+                // two different block hashes for the same slot, slash them.
+                let key = (height, round);
+                let entry = self.proposals_seen.entry(key).or_default();
+                let already_proposed = entry.iter().find(|(id, _)| *id == proposer_id);
+                if let Some((_, prev_hash)) = already_proposed {
+                    if *prev_hash != hash {
+                        // EQUIVOCATION: same proposer, same slot, different block!
+                        let slashed = self.validator_set.slash_equivocation(proposer_id);
+                        warn!(
+                            validator = proposer_id,
+                            slashed_amount = slashed,
+                            height = height,
+                            round = round,
+                            "SLASHED for equivocation (double-signing)"
+                        );
+                        return actions; // Reject the equivocating proposal
+                    }
+                } else {
+                    entry.push((proposer_id, hash));
+                }
+
                 self.round_state.proposed_block = Some(block);
                 self.round_state.proposed_hash = Some(hash);
 
@@ -538,6 +590,8 @@ impl TendermintConsensus {
         if let Some(producer_id) = block.producer_id {
             self.validator_set
                 .update_health_score(producer_id, objects_evaporated);
+            // Reset missed-proposal counter for successful producer
+            self.missed_proposals.insert(producer_id, 0);
         }
         self.validator_set.decay_health_scores();
 
@@ -553,6 +607,24 @@ impl TendermintConsensus {
         self.committed_heights.insert(self.height);
         self.height += 1;
 
+        // ── Weak Subjectivity Checkpoint ──
+        // Periodically snapshot (height, state_root) so nodes refuse to reorg
+        // past this point. Prevents long-range attacks.
+        if block.number > 0 && block.number % self.checkpoint_interval == 0 {
+            self.weak_subjectivity_checkpoints
+                .push((block.number, state_root));
+            info!(
+                height = block.number,
+                state_root = hex::encode(state_root),
+                total_checkpoints = self.weak_subjectivity_checkpoints.len(),
+                "Weak subjectivity checkpoint created"
+            );
+        }
+
+        // Clean up old proposal evidence (keep only last 10 heights)
+        let cutoff = self.height.saturating_sub(10);
+        self.proposals_seen.retain(|(h, _), _| *h >= cutoff);
+
         // Reset round state for new height
         self.round_state = RoundState::new(0);
         self.locked_block = None;
@@ -567,6 +639,32 @@ impl TendermintConsensus {
         );
     }
 
+    /// Verify a block does not violate weak subjectivity.
+    /// Returns false if the block tries to reorg past a checkpoint.
+    pub fn check_weak_subjectivity(&self, block: &Block) -> bool {
+        if let Some(&(cp_height, _cp_root)) = self.weak_subjectivity_checkpoints.last() {
+            if block.number <= cp_height {
+                warn!(
+                    block = block.number,
+                    checkpoint = cp_height,
+                    "Block rejected: violates weak subjectivity checkpoint"
+                );
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Get all weak subjectivity checkpoints.
+    pub fn checkpoints(&self) -> &[(u64, [u8; 32])] {
+        &self.weak_subjectivity_checkpoints
+    }
+
+    /// Load checkpoints from persistent storage (on restart).
+    pub fn load_checkpoints(&mut self, checkpoints: Vec<(u64, [u8; 32])>) {
+        self.weak_subjectivity_checkpoints = checkpoints;
+    }
+
     /// Apply a block received from block sync (not through consensus).
     /// Used for catch-up when joining the network.
     pub fn apply_block(
@@ -574,6 +672,16 @@ impl TendermintConsensus {
         db: &mut dyn StateDB,
         block: &Block,
     ) -> Result<BlockProductionResult, ConsensusError> {
+        // Weak subjectivity check: refuse blocks that reorg past a checkpoint
+        if !self.check_weak_subjectivity(block) {
+            return Err(ConsensusError::ExecutionFailed(
+                format!(
+                    "Block {} violates weak subjectivity checkpoint",
+                    block.number
+                ),
+            ));
+        }
+
         let execution = self
             .executor
             .execute_block(db, block)
@@ -614,9 +722,11 @@ impl TendermintConsensus {
     // ──────────────── Internal Helpers ───────────────────────────────────
 
     /// Create a block proposal from the current mempool.
+    /// Caps transactions per block to keep proposals under gossipsub size limits.
     fn create_proposal(&mut self, _db: &mut dyn StateDB) -> Option<Block> {
+        const MAX_TXS_PER_BLOCK: usize = 50;
         let next_epoch = self.epoch + 1;
-        let txs: Vec<Transaction> = self.mempool.drain();
+        let txs: Vec<Transaction> = self.mempool.take(MAX_TXS_PER_BLOCK);
 
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -684,6 +794,36 @@ impl TendermintConsensus {
 
     /// Move to the next round within the same height.
     fn advance_round(&mut self) {
+        // ── Downtime Detection ──
+        // If no proposal was received this round, the expected proposer missed.
+        // Track consecutive misses and slash after threshold.
+        if self.round_state.proposed_block.is_none() {
+            if let Some(expected) = self.proposer_for_round(self.height, self.round_state.round) {
+                let expected_id = expected.id;
+                let misses = self.missed_proposals.entry(expected_id).or_insert(0);
+                *misses += 1;
+                let total_misses = *misses;
+
+                if total_misses >= 3 {
+                    let slashed = self.validator_set.slash_downtime(expected_id, total_misses);
+                    warn!(
+                        validator = expected_id,
+                        missed_blocks = total_misses,
+                        slashed_amount = slashed,
+                        "SLASHED for downtime (missed proposals)"
+                    );
+                    // Reset counter after slashing (jailed at 3+)
+                    self.missed_proposals.insert(expected_id, 0);
+                } else {
+                    debug!(
+                        validator = expected_id,
+                        missed_blocks = total_misses,
+                        "Proposer missed round (slash at 3)"
+                    );
+                }
+            }
+        }
+
         let next_round = self.round_state.round + 1;
         if next_round >= MAX_ROUNDS_PER_HEIGHT {
             warn!(
@@ -968,5 +1108,124 @@ mod tests {
         assert_eq!(tc.height(), 101);
         assert_eq!(tc.epoch(), 100);
         assert_eq!(tc.parent_hash, [42u8; 32]);
+    }
+
+    // ─── Adversarial Consensus Tests ──────────────────────────────────
+
+    #[test]
+    fn test_stale_message_ignored() {
+        // Old-height messages should be silently ignored
+        let mut tc = make_consensus(1, &[1, 2, 3]);
+        // Advance to height 5
+        tc.restore_state(4, 4, [0u8; 32]);
+        assert_eq!(tc.height(), 5);
+
+        // Send a prevote from height 1 — should produce no actions
+        let stale = ConsensusMessage::Prevote {
+            height: 1,
+            round: 0,
+            block_hash: Some([1u8; 32]),
+            validator_id: 2,
+        };
+        let actions = tc.on_message(stale);
+        assert!(actions.is_empty(), "Stale messages should be dropped");
+    }
+
+    #[test]
+    fn test_duplicate_votes_ignored() {
+        // Same validator voting twice for the same round shouldn't double-count
+        let ids = &[1, 2, 3, 4];
+        let mut nodes: Vec<_> = ids.iter().map(|&id| make_consensus(id, ids)).collect();
+
+        // Find proposer for height 1 round 0
+        let proposer_id = nodes[0].proposer_for_round(1, 0).unwrap().id;
+        let proposer_idx = ids.iter().position(|&id| id == proposer_id).unwrap();
+
+        // Let proposer tick to create proposal
+        let mut db = InMemoryStateDB::new();
+        let actions = nodes[proposer_idx].tick(&mut db);
+        let proposal = actions.iter().find_map(|a| match a {
+            ConsensusAction::BroadcastMessage(msg @ ConsensusMessage::Proposal { .. }) => Some(msg.clone()),
+            _ => None,
+        });
+        assert!(proposal.is_some(), "Proposer should create a proposal");
+
+        // Deliver proposal to validator 2 (not the proposer)
+        let non_proposer_idx = ids.iter().position(|&id| id != proposer_id).unwrap();
+        let actions = nodes[non_proposer_idx].on_message(proposal.clone().unwrap());
+
+        // Validator 2 should send a prevote
+        let prevote = actions.iter().find_map(|a| match a {
+            ConsensusAction::BroadcastMessage(msg @ ConsensusMessage::Prevote { .. }) => Some(msg.clone()),
+            _ => None,
+        });
+        assert!(prevote.is_some(), "Should generate a prevote");
+
+        // Deliver the same prevote to proposer TWICE
+        let actions1 = nodes[proposer_idx].on_message(prevote.clone().unwrap());
+        let actions2 = nodes[proposer_idx].on_message(prevote.unwrap());
+
+        // The second delivery shouldn't cause different behavior than if it hadn't happened
+        // (the vote is already recorded, so it's a no-op)
+        // We just verify no crash and no duplicate commit
+        let commits1 = actions1.iter().filter(|a| matches!(a, ConsensusAction::CommitBlock(_))).count();
+        let commits2 = actions2.iter().filter(|a| matches!(a, ConsensusAction::CommitBlock(_))).count();
+        // Should not commit from duplicate votes alone
+        assert!(commits1 + commits2 <= 1, "Duplicate votes should not cause multiple commits");
+    }
+
+    #[test]
+    fn test_wrong_proposer_rejected() {
+        // A proposal from a non-leader should be ignored
+        let ids = &[1, 2, 3, 4];
+        let mut tc = make_consensus(1, ids);
+
+        let proposer_id = tc.proposer_for_round(1, 0).unwrap().id;
+        let wrong_id = ids.iter().find(|&&id| id != proposer_id).unwrap();
+
+        // Create fake proposal from wrong validator
+        let block = Block {
+            number: 1,
+            epoch: 1,
+            parent_hash: tc.parent_hash,
+            state_root: [0u8; 32],
+            transactions: vec![],
+            timestamp: 0,
+            producer_id: Some(*wrong_id),
+        };
+
+        let fake_proposal = ConsensusMessage::Proposal {
+            height: 1,
+            round: 0,
+            block,
+            proposer_id: *wrong_id,
+        };
+
+        let actions = tc.on_message(fake_proposal);
+        // Should not generate a prevote for a wrong proposer's block
+        let prevotes: Vec<_> = actions.iter().filter(|a| matches!(a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. }))).collect();
+        assert!(prevotes.is_empty(), "Should not prevote for wrong proposer");
+    }
+
+    #[test]
+    fn test_consensus_liveness_with_timeouts() {
+        // Even with no messages, consensus should advance rounds via timeouts
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        let mut db = InMemoryStateDB::new();
+
+        let initial_round = tc.round();
+
+        // Simulate timeout-driven advancement:
+        // Each tick checks elapsed time, so we set phase_start to the past
+        // AFTER the tick resets it, then tick again to trigger the timeout.
+        for _ in 0..20 {
+            // Set phase_start far in the past to trigger timeout
+            tc.round_state.phase_start = std::time::Instant::now() - std::time::Duration::from_secs(10);
+            // Now tick — this should detect the timeout and advance
+            tc.tick(&mut db);
+        }
+
+        // Round should have advanced (timeout-driven round rotation)
+        assert!(tc.round() > initial_round, "Timeouts should advance rounds: was {} now {}", initial_round, tc.round());
     }
 }

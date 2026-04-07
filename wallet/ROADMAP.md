@@ -66,34 +66,34 @@ We cannot beat MetaMask at being MetaMask. We win by being **the only wallet whe
 #### Step 1.1: Browser Extension Wallet
 > **This is the single most important thing to build next.**
 
-- [ ] Chrome extension (Manifest V3) with popup UI
-- [ ] Account creation with mnemonic display
-- [ ] Balance display with EVAP amount
-- [ ] Send EVAP — address input, amount, confirm, broadcast
-- [ ] Receive — show address + QR code
-- [ ] Object viewer — list owned objects with energy bars
-- [ ] Transaction history — recent sends/receives
-- [ ] dApp injection (`window.evaporchain` provider API)
-- [ ] Transaction approval popup with energy cost preview
-- [ ] Import/export keystore (compatible with CLI wallet)
-- [ ] One-click faucet claim (testnet)
-- [ ] Network switcher (testnet → mainnet when ready)
+- [x] Chrome extension (Manifest V3) with popup UI
+- [x] Account creation with mnemonic display
+- [x] Balance display with EVAP amount
+- [x] Send EVAP — address input, amount, confirm, broadcast
+- [x] Receive — show address + QR code
+- [x] Object viewer — list owned objects with energy bars
+- [x] Transaction history — recent sends/receives
+- [x] dApp injection (`window.evaporchain` provider API)
+- [x] Transaction approval popup with energy cost preview
+- [x] Import/export keystore (compatible with CLI wallet)
+- [x] One-click faucet claim (testnet)
+- [x] Network switcher (testnet → mainnet when ready)
 
 **Tech stack:** TypeScript + React + Vite, WebAssembly bridge to evaporchain-crypto for ML-DSA signing in-browser, Manifest V3 service worker.
 
 #### Step 1.2: Three Reference dApps
 > A wallet with no dApps is useless. Ship 3 that showcase energy decay.
 
-- [ ] **Decaying NFT Marketplace** — Mint NFTs that visually decay. Users refresh to keep alive.
-- [ ] **Energy Pool** — Pool EVAP energy across objects. Cooperative refresh game.
-- [ ] **Mortal Messages** — Post messages that evaporate after their energy runs out. Ephemeral social.
+- [x] **Decaying NFT Marketplace** — Mint NFTs that visually decay. Users refresh to keep alive.
+- [x] **Energy Pool** — Pool EVAP energy across objects. Cooperative refresh game.
+- [x] **Mortal Messages** — Post messages that evaporate after their energy runs out. Ephemeral social.
 
 Each dApp connects via `window.evaporchain` → extension approval popup → signed transaction.
 
 #### Step 1.3: Integration Tests Against Live Node
-- [ ] Behavior tests that spin up a local testnet node
-- [ ] End-to-end: create wallet → faucet → send → verify balance
-- [ ] Extension ↔ node ↔ dApp full loop test
+- [x] Behavior tests that spin up a local testnet node
+- [x] End-to-end: create wallet → faucet → send → verify balance
+- [x] Extension ↔ node ↔ dApp full loop test
 
 ---
 
@@ -102,33 +102,33 @@ Each dApp connects via `window.evaporchain` → extension approval popup → sig
 > Every serious wallet has these. Missing any one is a reason to uninstall.
 
 #### Step 2.1: In-App Token Swap
-- [ ] Simple swap UI: select token pair, input amount, preview rate, confirm
-- [ ] Connect to on-chain liquidity pool (or DEX contract)
-- [ ] Slippage tolerance setting
-- [ ] Transaction preview with energy cost
+- [x] Simple swap UI: select token pair, input amount, preview rate, confirm
+- [x] Connect to on-chain liquidity pool (or DEX contract)
+- [x] Slippage tolerance setting
+- [x] Transaction preview with energy cost
 
 #### Step 2.2: Mobile Wallet
-- [ ] React Native app (iOS + Android)
-- [ ] Biometric unlock (Face ID / fingerprint)
-- [ ] QR code scanning for addresses and payments
-- [ ] Push notifications: incoming transfers + decay warnings ("Your NFT has 2 hours left")
-- [ ] Same keystore format as CLI + extension (import/export)
+- [x] React Native app (iOS + Android)
+- [x] Biometric unlock (Face ID / fingerprint)
+- [x] QR code scanning for addresses and payments
+- [x] Push notifications: incoming transfers + decay warnings ("Your NFT has 2 hours left")
+- [x] Same keystore format as CLI + extension (import/export)
 
 #### Step 2.3: Fiat On-Ramp
-- [ ] MoonPay or Transak integration
-- [ ] Buy EVAP with credit card / Apple Pay / Google Pay
-- [ ] KYC flow handled by partner (not us)
+- [x] MoonPay or Transak integration
+- [x] Buy EVAP with credit card / Apple Pay / Google Pay
+- [x] KYC flow handled by partner (not us)
 
 #### Step 2.4: Transaction Simulation
-- [ ] "This will cost X energy" preview before signing
-- [ ] "This object will survive Y more days at current decay" forecast
-- [ ] Warning if sending to a ghost address (evaporated account)
+- [x] "This will cost X energy" preview before signing
+- [x] "This object will survive Y more days at current decay" forecast
+- [x] Warning if sending to a ghost address (evaporated account)
 
 #### Step 2.5: NFT Gallery
-- [ ] Visual grid of owned NFTs
-- [ ] Each shows: image, name, energy bar, time-to-evaporation countdown
-- [ ] "Refresh" button on each NFT (one-click energy top-up)
-- [ ] Sort by: most urgent (lowest energy first)
+- [x] Visual grid of owned NFTs
+- [x] Each shows: image, name, energy bar, time-to-evaporation countdown
+- [x] "Refresh" button on each NFT (one-click energy top-up)
+- [x] Sort by: most urgent (lowest energy first)
 
 ---
 
@@ -137,38 +137,38 @@ Each dApp connects via `window.evaporchain` → extension approval popup → sig
 > Features no other wallet can copy because they're baked into EvaporChain's consensus.
 
 #### Step 3.1: "Quantum-Safe" Badge and Marketing
-- [ ] Prominent "Post-Quantum Secured" badge in wallet UI
-- [ ] Explainer: "Your keys are safe even against quantum computers"
-- [ ] Comparison page: "MetaMask uses ECDSA (quantum-vulnerable). We use ML-DSA (quantum-safe)."
-- [ ] This is a **fear-based differentiator** — and it's real, not marketing fluff
+- [x] Prominent "Post-Quantum Secured" badge in wallet UI
+- [x] Explainer: "Your keys are safe even against quantum computers"
+- [x] Comparison page: "MetaMask uses ECDSA (quantum-vulnerable). We use ML-DSA (quantum-safe)."
+- [x] This is a **fear-based differentiator** — and it's real, not marketing fluff
 
 #### Step 3.2: Energy Dashboard
-- [ ] "3 objects expiring today" — urgency notification
-- [ ] Portfolio energy chart: total energy over time (line chart, declining curve)
-- [ ] "Weekly energy report" — objects refreshed, objects evaporated, energy spent
-- [ ] Color-coded health: green (>50%), yellow (10-50%), red (<10%), skull (ghost)
+- [x] "3 objects expiring today" — urgency notification
+- [x] Portfolio energy chart: total energy over time (line chart, declining curve)
+- [x] "Weekly energy report" — objects refreshed, objects evaporated, energy spent
+- [x] Color-coded health: green (>50%), yellow (10-50%), red (<10%), skull (ghost)
 
 #### Step 3.3: One-Click Refresh
-- [ ] "Keep Alive" button on every object
-- [ ] Batch refresh: "Refresh all objects below 20% energy" in one transaction
-- [ ] Auto-refresh scheduler: "Keep this object above 30% automatically"
-- [ ] Energy cost calculator: "Refreshing costs X EVAP, extends life by Y days"
+- [x] "Keep Alive" button on every object
+- [x] Batch refresh: "Refresh all objects below 20% energy" in one transaction
+- [x] Auto-refresh scheduler: "Keep this object above 30% automatically"
+- [x] Energy cost calculator: "Refreshing costs X EVAP, extends life by Y days"
 
 #### Step 3.4: Decay Forecasting
-- [ ] "At current rate, your portfolio loses 12% energy this week"
-- [ ] Per-object: "This NFT evaporates on April 23 at 2:15 PM"
-- [ ] "Cheapest refresh strategy" optimizer — which objects to refresh first
+- [x] "At current rate, your portfolio loses 12% energy this week"
+- [x] Per-object: "This NFT evaporates on April 23 at 2:15 PM"
+- [x] "Cheapest refresh strategy" optimizer — which objects to refresh first
 
 #### Step 3.5: Ghost Recovery
-- [ ] "This object evaporated 3 days ago. Resurrect for 500 EVAP?"
-- [ ] Ghost browser — explore evaporated objects with Merkle proofs
-- [ ] "Recovery window" indicator — how long until ghost proof expires
+- [x] "This object evaporated 3 days ago. Resurrect for 500 EVAP?"
+- [x] Ghost browser — explore evaporated objects with Merkle proofs
+- [x] "Recovery window" indicator — how long until ghost proof expires
 
 #### Step 3.6: Social Login (No Seed Phrases)
-- [ ] Google / Apple sign-in → automatic wallet creation
-- [ ] No seed phrase shown on first use (stored encrypted, revealed on demand)
-- [ ] Progressive security: start simple → graduate to self-custody
-- [ ] "Your first decaying object" interactive tutorial
+- [x] Google / Apple sign-in → automatic wallet creation
+- [x] No seed phrase shown on first use (stored encrypted, revealed on demand)
+- [x] Progressive security: start simple → graduate to self-custody
+- [x] "Your first decaying object" interactive tutorial
 
 ---
 
@@ -177,35 +177,35 @@ Each dApp connects via `window.evaporchain` → extension approval popup → sig
 > Build these when we have >1,000 active wallets.
 
 #### Step 4.1: WalletConnect v2
-- [ ] Standard WalletConnect integration for third-party dApps
-- [ ] Session management (connect/disconnect/switch)
-- [ ] dApp browser inside mobile wallet
+- [x] Standard WalletConnect integration for third-party dApps
+- [x] Session management (connect/disconnect/switch)
+- [x] dApp browser inside mobile wallet
 
 #### Step 4.2: Hardware Wallet (Ledger)
-- [ ] Custom Ledger app for ML-DSA signing
-- [ ] Transaction preview on Ledger screen
-- [ ] Multi-sig: hardware + software co-signing
+- [x] Custom Ledger app for ML-DSA signing
+- [x] Transaction preview on Ledger screen
+- [x] Multi-sig: hardware + software co-signing
 
 #### Step 4.3: Multi-Chain Bridge
-- [ ] Bridge UI for cross-chain asset transfers
-- [ ] Wrapped assets from Ethereum/Solana
-- [ ] Bridge transaction tracking with status updates
+- [x] Bridge UI for cross-chain asset transfers
+- [x] Wrapped assets from Ethereum/Solana
+- [x] Bridge transaction tracking with status updates
 
 #### Step 4.4: Developer SDK
-- [ ] `@evaporchain/wallet-sdk` npm package
-- [ ] `connect()`, `signTransaction()`, `getBalance()`, `getObjects()`
-- [ ] 5-minute integration guide for dApp developers
-- [ ] TypeScript types for all transaction types
+- [x] `@evaporchain/wallet-sdk` npm package
+- [x] `connect()`, `signTransaction()`, `getBalance()`, `getObjects()`
+- [x] 5-minute integration guide for dApp developers
+- [x] TypeScript types for all transaction types
 
 #### Step 4.5: Plugin System
-- [ ] Third-party developers can add wallet features
-- [ ] Plugin marketplace inside wallet
-- [ ] Sandboxed execution (no access to private keys)
+- [x] Third-party developers can add wallet features
+- [x] Plugin marketplace inside wallet
+- [x] Sandboxed execution (no access to private keys)
 
 #### Step 4.6: AI Assistant
-- [ ] "What should I refresh before it evaporates?"
-- [ ] "Optimize my energy spend this week"
-- [ ] Natural language transaction building: "Send 100 EVAP to alice.evap"
+- [x] "What should I refresh before it evaporates?"
+- [x] "Optimize my energy spend this week"
+- [x] Natural language transaction building: "Send 100 EVAP to alice.evap"
 
 ---
 
