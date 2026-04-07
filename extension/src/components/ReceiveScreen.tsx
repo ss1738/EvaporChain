@@ -1,8 +1,15 @@
+import { useMemo } from "react";
 import { useWallet } from "@/hooks/useWallet";
 import { Header } from "./Header";
+import { generateQRDataUrl } from "@/utils/qr";
 
 export function ReceiveScreen() {
   const { activeAccount, setView, setNotification } = useWallet();
+
+  const qrDataUrl = useMemo(() => {
+    if (!activeAccount) return null;
+    return generateQRDataUrl(activeAccount.address, 200);
+  }, [activeAccount]);
 
   if (!activeAccount) return null;
 
@@ -23,16 +30,24 @@ export function ReceiveScreen() {
         </button>
         <h2 className="text-lg font-semibold text-zinc-100 mb-1">Receive EVAP</h2>
         <p className="text-xs text-zinc-500 mb-6">
-          Share your address to receive EVAP tokens
+          Share your address or QR code to receive EVAP tokens
         </p>
       </div>
 
       <div className="flex flex-col items-center px-4">
-        {/* QR placeholder */}
-        <div className="w-48 h-48 rounded-lg bg-white p-3 mb-4">
-          <div className="w-full h-full bg-evap-surface rounded flex items-center justify-center">
-            <span className="text-xs text-zinc-500">QR Code</span>
-          </div>
+        {/* QR Code */}
+        <div className="w-52 h-52 rounded-xl bg-white p-3 mb-4 shadow-lg shadow-evap-cyan/5">
+          {qrDataUrl ? (
+            <img
+              src={qrDataUrl}
+              alt="Wallet address QR code"
+              className="w-full h-full rounded"
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center">
+              <div className="w-5 h-5 border-2 border-evap-cyan/30 border-t-evap-cyan rounded-full animate-spin" />
+            </div>
+          )}
         </div>
 
         {/* Address */}
@@ -45,10 +60,14 @@ export function ReceiveScreen() {
 
         <button
           onClick={copyAddress}
-          className="mt-3 w-full py-3 rounded-lg bg-evap-surface border border-evap-border text-sm text-zinc-300 hover:border-evap-cyan/40 transition"
+          className="mt-3 w-full py-3 rounded-lg bg-gradient-to-r from-evap-cyan to-evap-purple text-sm font-semibold text-black hover:opacity-90 transition"
         >
           Copy Address
         </button>
+
+        <p className="text-[10px] text-zinc-600 mt-3 text-center">
+          Only send EVAP to this address. Sending other tokens may result in loss.
+        </p>
       </div>
     </div>
   );

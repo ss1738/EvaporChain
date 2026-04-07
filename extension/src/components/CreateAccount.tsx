@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useWallet } from "@/hooks/useWallet";
 
 export function CreateAccount() {
-  const { createAccount, error, loading } = useWallet();
+  const { createAccount, error, loading, setView } = useWallet();
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -68,7 +68,14 @@ export function CreateAccount() {
         </button>
       </form>
 
-      <div className="mt-6 px-4 py-2 rounded-md bg-evap-surface border border-evap-border">
+      <button
+        onClick={() => setView("import")}
+        className="mt-4 text-xs text-evap-cyan hover:underline"
+      >
+        Already have a wallet? Import instead
+      </button>
+
+      <div className="mt-4 px-4 py-2 rounded-md bg-evap-surface border border-evap-border">
         <p className="text-[10px] text-zinc-500 text-center">
           Keys are encrypted with AES-256-GCM and never leave your browser.
         </p>

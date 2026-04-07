@@ -2,10 +2,12 @@ import { useEffect } from "react";
 import { useWallet } from "@/hooks/useWallet";
 import { LockScreen } from "@/components/LockScreen";
 import { CreateAccount } from "@/components/CreateAccount";
+import { ImportAccount } from "@/components/ImportAccount";
 import { HomeScreen } from "@/components/HomeScreen";
 import { SendScreen } from "@/components/SendScreen";
 import { ReceiveScreen } from "@/components/ReceiveScreen";
 import { ObjectsScreen } from "@/components/ObjectsScreen";
+import { ActivityScreen } from "@/components/ActivityScreen";
 import { SettingsScreen } from "@/components/SettingsScreen";
 
 export function App() {
@@ -20,6 +22,8 @@ export function App() {
       return <LockScreen />;
     case "create":
       return <CreateAccount />;
+    case "import":
+      return <ImportAccount />;
     case "home":
       return <HomeScreen />;
     case "send":
@@ -28,11 +32,10 @@ export function App() {
       return <ReceiveScreen />;
     case "objects":
       return <ObjectsScreen />;
+    case "activity":
+      return <ActivityScreen />;
     case "settings":
       return <SettingsScreen />;
-    case "activity":
-      // TODO: Activity screen
-      return <HomeScreen />;
     default:
       return <LockScreen />;
   }
