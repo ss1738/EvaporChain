@@ -804,3 +804,105 @@ mod tests {
         }
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Property-Based Tests (Audit Hardening)
+// ═══════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use crate::hash::blake3_hash;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// Every appended leaf is provable against the current root.
+        #[test]
+        fn all_leaves_provable(count in 1u64..50) {
+            let mut mmr = MerkleMountainRange::new();
+            let mut hashes = Vec::new();
+            for i in 0..count {
+                let h = blake3_hash(&i.to_le_bytes());
+                mmr.append(h);
+                hashes.push(h);
+            }
+            let root = mmr.root();
+            for i in 0..count {
+                let proof = mmr.prove(i).ok_or_else(|| TestCaseError::fail("prove returned None"))?;
+                prop_assert!(
+                    MerkleMountainRange::verify(&proof, &hashes[i as usize], &root),
+                    "proof failed for leaf {} of {}",
+                    i,
+                    count
+                );
+            }
+        }
+
+        /// Appending a new leaf always changes the root.
+        #[test]
+        fn append_changes_root(count in 1u64..30) {
+            let mut mmr = MerkleMountainRange::new();
+            let mut prev_root = mmr.root();
+            for i in 0..count {
+                let h = blake3_hash(&i.to_le_bytes());
+                mmr.append(h);
+                let new_root = mmr.root();
+                // After first append, root should differ from empty
+                // After each subsequent append, root should change
+                if i > 0 || prev_root != [0u8; 32] {
+                    prop_assert_ne!(new_root, prev_root, "root unchanged after append {}", i);
+                }
+                prev_root = new_root;
+            }
+        }
+
+        /// Root is deterministic: same sequence of appends gives same root.
+        #[test]
+        fn root_deterministic(count in 1u64..30) {
+            let mut mmr1 = MerkleMountainRange::new();
+            let mut mmr2 = MerkleMountainRange::new();
+            for i in 0..count {
+                let h = blake3_hash(&i.to_le_bytes());
+                mmr1.append(h);
+                mmr2.append(h);
+            }
+            prop_assert_eq!(mmr1.root(), mmr2.root());
+        }
+
+        /// A proof for the wrong leaf data fails verification.
+        #[test]
+        fn wrong_data_fails_verification(count in 2u64..20, leaf_idx in 0u64..20) {
+            let leaf_idx = leaf_idx % count;
+            let mut mmr = MerkleMountainRange::new();
+            for i in 0..count {
+                mmr.append(blake3_hash(&i.to_le_bytes()));
+            }
+            let root = mmr.root();
+            let proof = mmr.prove(leaf_idx).ok_or_else(|| TestCaseError::fail("prove returned None"))?;
+            let wrong_data = blake3_hash(b"wrong");
+            prop_assert!(!MerkleMountainRange::verify(&proof, &wrong_data, &root));
+        }
+
+        /// EnergyStampedNullifier serialization is deterministic.
+        #[test]
+        fn nullifier_deterministic(
+            epoch in any::<u64>(),
+            energy in any::<u64>(),
+            id_byte in any::<u8>(),
+        ) {
+            let mut obj_id = [0u8; 32];
+            obj_id[0] = id_byte;
+            let nullifier = EnergyStampedNullifier {
+                object_id: obj_id,
+                value_hash: blake3_hash(&[id_byte]),
+                evaporation_epoch: epoch,
+                energy_at_death: energy,
+                owner: [0u8; 32],
+            };
+            let bytes1 = nullifier.to_bytes();
+            let bytes2 = nullifier.to_bytes();
+            prop_assert_eq!(bytes1, bytes2);
+            prop_assert_eq!(bytes1.len(), 32);
+        }
+    }
+}

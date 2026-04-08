@@ -160,7 +160,7 @@ impl EvaporationEngine {
             owner: obj.owner,
             evaporated_at: current_epoch,
             data_hash,
-            original_data: obj.data.clone(),
+            original_data: Some(obj.data.clone()),
             mmr_position,
         };
 
@@ -262,7 +262,7 @@ mod tests {
             id
         }).unwrap();
         assert_eq!(ghost.evaporated_at, 107);
-        assert_eq!(ghost.original_data, vec![1, 1]);
+        assert_eq!(ghost.original_data, Some(vec![1, 1]));
     }
 
     #[test]

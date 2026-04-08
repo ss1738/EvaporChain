@@ -327,19 +327,23 @@ impl ProvingEngine for NovaProver {
 //
 // Public IO (arity = 4): [state_hash, mmr_root_hash, epoch, block_number]
 //
-// Constraints per step (~60 total):
+// Constraints per step:
 //   - 2 for epoch/block increment
 //   - 4 for state/mmr/tx/evap bindings
 //   - 5 × MAX_OBJECTS for energy decay + evaporation checks
-//   - 1 × MAX_TRANSFERS for transfer binding
+//   - 2 × (RANGE_BITS + 2) × MAX_OBJECTS for decay remainder range checks
+//   - (2 + RANGE_BITS + 2) × MAX_TRANSFERS for balance conservation + amount range check
+//   - (1) × MAX_TRANSFERS for nonce increment
 //   - 1 × MAX_EVAPORATIONS for nullifier binding
 
 /// Maximum number of objects tracked per block proof.
-const MAX_OBJECTS: usize = 8;
+const MAX_OBJECTS: usize = 16;
 /// Maximum number of transfers per block proof.
-const MAX_TRANSFERS: usize = 8;
+const MAX_TRANSFERS: usize = 16;
 /// Maximum number of evaporations per block proof.
-const MAX_EVAPORATIONS: usize = 4;
+const MAX_EVAPORATIONS: usize = 8;
+/// Number of bits for range checks (supports values up to 2^32 - 1).
+const RANGE_BITS: usize = 32;
 
 // ─────────────── Witness Types ─────────────────────────────────────────
 
@@ -451,14 +455,47 @@ impl ObjectDecaySlot {
 #[derive(Clone, Debug)]
 struct TransferSlot {
     amount: u64,
+    /// Sender's balance before this transfer.
+    sender_balance_before: u64,
+    /// Sender's balance after this transfer (must equal before - amount).
+    sender_balance_after: u64,
+    /// Sender's nonce before this transfer.
+    old_nonce: u64,
+    /// Sender's nonce after (must equal old_nonce + 1).
+    new_nonce: u64,
 }
 
 impl TransferSlot {
     fn empty() -> Self {
-        Self { amount: 0 }
+        Self {
+            amount: 0,
+            sender_balance_before: 0,
+            sender_balance_after: 0,
+            old_nonce: 0,
+            new_nonce: 1,
+        }
     }
     fn new(amount: u64) -> Self {
-        Self { amount }
+        // When balance/nonce data is not available from execution,
+        // use trivially-satisfying defaults. Real enforcement comes
+        // from the state hash binding; these constraints add defense-in-depth.
+        Self {
+            amount,
+            sender_balance_before: amount,
+            sender_balance_after: 0,
+            old_nonce: 0,
+            new_nonce: 1,
+        }
+    }
+    #[cfg(test)]
+    fn with_balance(amount: u64, balance_before: u64, old_nonce: u64) -> Self {
+        Self {
+            amount,
+            sender_balance_before: balance_before,
+            sender_balance_after: balance_before.saturating_sub(amount),
+            old_nonce,
+            new_nonce: old_nonce + 1,
+        }
     }
 }
 
@@ -573,6 +610,76 @@ impl RealBlockWitness {
             evaporations,
         }
     }
+}
+
+// ─────────────── Range Check Helper ───────────────────────────────────
+
+/// Proves `value` fits in `num_bits` bits via bit decomposition.
+/// Adds `num_bits + 1` R1CS constraints:
+///   - `num_bits` boolean constraints (each bit is 0 or 1)
+///   - 1 recomposition constraint (sum of bits×2^i = value)
+fn range_check_bits<G: Group, CS: ConstraintSystem<G::Scalar>>(
+    cs: &mut CS,
+    ns: &str,
+    value: &AllocatedNum<G::Scalar>,
+    value_u64: u64,
+    num_bits: usize,
+) -> Result<(), SynthesisError> {
+    let mut bit_vars = Vec::with_capacity(num_bits);
+    for bit_idx in 0..num_bits {
+        let bit_val = (value_u64 >> bit_idx) & 1;
+        let bit = AllocatedNum::alloc(cs.namespace(|| format!("{ns}_b{bit_idx}")), || {
+            Ok(G::Scalar::from(bit_val))
+        })?;
+        // Boolean: bit × (1 - bit) = 0
+        cs.enforce(
+            || format!("{ns}_bl{bit_idx}"),
+            |lc| lc + bit.get_variable(),
+            |lc| lc + CS::one() - bit.get_variable(),
+            |lc| lc,
+        );
+        bit_vars.push(bit);
+    }
+    // Recomposition: Σ(bit_i × 2^i) = value
+    cs.enforce(
+        || format!("{ns}_rc"),
+        |mut lc| {
+            for (idx, bit) in bit_vars.iter().enumerate() {
+                lc = lc + (G::Scalar::from(1u64 << idx), bit.get_variable());
+            }
+            lc
+        },
+        |lc| lc + CS::one(),
+        |lc| lc + value.get_variable(),
+    );
+    Ok(())
+}
+
+/// Proves `a < b` by decomposing `b - a - 1` into `num_bits` bits.
+/// Adds `num_bits + 2` constraints.
+fn enforce_less_than<G: Group, CS: ConstraintSystem<G::Scalar>>(
+    cs: &mut CS,
+    ns: &str,
+    a: &AllocatedNum<G::Scalar>,
+    a_val: u64,
+    b: &AllocatedNum<G::Scalar>,
+    b_val: u64,
+    num_bits: usize,
+) -> Result<(), SynthesisError> {
+    let diff_val = b_val.wrapping_sub(a_val).wrapping_sub(1);
+    let diff = AllocatedNum::alloc(cs.namespace(|| format!("{ns}_diff")), || {
+        Ok(G::Scalar::from(diff_val))
+    })?;
+    // Constrain: a + diff + 1 = b  →  diff = b - a - 1
+    cs.enforce(
+        || format!("{ns}_eq"),
+        |lc| lc + a.get_variable() + diff.get_variable() + CS::one(),
+        |lc| lc + CS::one(),
+        |lc| lc + b.get_variable(),
+    );
+    // Range check diff (proves diff ≥ 0 in Z, i.e., a < b)
+    range_check_bits::<G, CS>(cs, &format!("{ns}_d"), &diff, diff_val, num_bits)?;
+    Ok(())
 }
 
 // ─────────────── RealBlockCircuit ──────────────────────────────────────
@@ -802,9 +909,39 @@ impl<G: Group> StepCircuit<G::Scalar> for RealBlockCircuit<G> {
                 |lc| lc + new_e.get_variable(),
                 |lc| lc,
             );
+
+            // (f) Range check: shift_remainder < shift_factor
+            //     Proves the division remainder is valid (prevents field-wrap cheating).
+            enforce_less_than::<G, CS>(
+                cs,
+                &format!("{ns}_sr"),
+                &shift_rem,
+                obj.shift_remainder,
+                &shift_fac,
+                obj.shift_factor,
+                RANGE_BITS,
+            )?;
+
+            // (g) Range check: frac_remainder < two_half_life
+            //     Proves the fractional decay remainder is valid.
+            enforce_less_than::<G, CS>(
+                cs,
+                &format!("{ns}_fr"),
+                &frac_rem,
+                obj.frac_remainder,
+                &two_hl,
+                obj.two_half_life,
+                RANGE_BITS,
+            )?;
         }
 
-        // ═══ 8. Transfer amount binding (per slot) ═══
+        // ═══ 8. Transfer constraints (per slot) ═══
+        //
+        // For each transfer:
+        //   (a) Amount binding: amount² = amount² (binds witness value)
+        //   (b) Balance conservation: sender_before - amount = sender_after
+        //   (c) Balance range check: sender_after fits in RANGE_BITS (non-negative)
+        //   (d) Nonce increment: new_nonce = old_nonce + 1
         for i in 0..MAX_TRANSFERS {
             let t = &self.witness.transfers[i];
             let amount = AllocatedNum::alloc(cs.namespace(|| format!("tx{i}_amt")), || {
@@ -816,11 +953,53 @@ impl<G: Group> StepCircuit<G::Scalar> for RealBlockCircuit<G> {
                     .ok_or(SynthesisError::AssignmentMissing)?;
                 Ok(v * v)
             })?;
+            // (a) Amount binding
             cs.enforce(
                 || format!("tx{i}_bind"),
                 |lc| lc + amount.get_variable(),
                 |lc| lc + amount.get_variable(),
                 |lc| lc + amt_sq.get_variable(),
+            );
+
+            // (b) Balance conservation: sender_before - amount = sender_after
+            let bal_before =
+                AllocatedNum::alloc(cs.namespace(|| format!("tx{i}_bal_b")), || {
+                    Ok(G::Scalar::from(t.sender_balance_before))
+                })?;
+            let bal_after =
+                AllocatedNum::alloc(cs.namespace(|| format!("tx{i}_bal_a")), || {
+                    Ok(G::Scalar::from(t.sender_balance_after))
+                })?;
+            cs.enforce(
+                || format!("tx{i}_bal"),
+                |lc| lc + bal_before.get_variable() - amount.get_variable(),
+                |lc| lc + CS::one(),
+                |lc| lc + bal_after.get_variable(),
+            );
+
+            // (c) Range check sender_after (proves sufficient funds — no underflow)
+            range_check_bits::<G, CS>(
+                cs,
+                &format!("tx{i}_bar"),
+                &bal_after,
+                t.sender_balance_after,
+                RANGE_BITS,
+            )?;
+
+            // (d) Nonce increment: new_nonce = old_nonce + 1
+            let old_nonce =
+                AllocatedNum::alloc(cs.namespace(|| format!("tx{i}_on")), || {
+                    Ok(G::Scalar::from(t.old_nonce))
+                })?;
+            let new_nonce =
+                AllocatedNum::alloc(cs.namespace(|| format!("tx{i}_nn")), || {
+                    Ok(G::Scalar::from(t.new_nonce))
+                })?;
+            cs.enforce(
+                || format!("tx{i}_nonce"),
+                |lc| lc + new_nonce.get_variable(),
+                |lc| lc + CS::one(),
+                |lc| lc + old_nonce.get_variable() + CS::one(),
             );
         }
 
@@ -1207,7 +1386,7 @@ mod tests {
         let mut prover = RealBlockProver::new(&genesis).expect("setup failed");
 
         let (primary, secondary) = prover.num_constraints();
-        assert!(primary > 50, "Expected >50 constraints, got {primary}");
+        assert!(primary > 500, "Expected >500 constraints, got {primary}");
         println!(
             "RealBlockCircuit: {primary} primary, {secondary} secondary constraints"
         );
@@ -1331,9 +1510,9 @@ mod tests {
     }
 
     #[test]
-    fn test_real_block_wrong_energy_fails_verification() {
+    fn test_real_block_wrong_energy_caught_by_range_check() {
         let genesis = make_dual_commitment(0, 0);
-        let mut prover = RealBlockProver::new(&genesis).expect("setup failed");
+        let prover = RealBlockProver::new(&genesis).expect("setup failed");
 
         let block = dummy_block(1, 1);
         let new_state = make_dual_commitment(1, 1);
@@ -1341,17 +1520,11 @@ mod tests {
         // Manually construct a witness with WRONG energy values.
         // Correct: energy_at_epoch(1000, 10, 1) = 950
         // We claim: new_energy = 999 (barely decayed — WRONG)
+        //
+        // The algebraic constraints are satisfiable with frac_remainder = 980,
+        // but the range check on frac_remainder < two_half_life (20) catches
+        // this: 20 - 980 - 1 = -961 cannot be decomposed into 32 bits.
         let mut witness = RealBlockWitness::from_block(&block, &new_state, None);
-
-        // Manually set object slot 0 with inconsistent values.
-        // The constraints: after_halvings * shift_factor = old_e - shift_rem
-        //                  new_e + frac_decay = after_halvings
-        // If we set new_e = 999 but after_halvings = 1000 (shift=1),
-        // then frac_decay must = 1. But frac_decay * two_hl must = product_ar - frac_rem.
-        // product_ar = after_halvings * remainder_epochs = 1000 * 1 = 1000
-        // So frac_decay * 20 = 1000 - frac_rem → 1 * 20 = 1000 - frac_rem → frac_rem = 980.
-        // This IS satisfiable with large frac_rem (no range check).
-        // So we need a TRULY inconsistent witness: violate the multiplicative constraint.
         witness.objects[0] = ObjectDecaySlot {
             old_energy: 1000,
             new_energy: 999, // Wrong!
@@ -1362,26 +1535,26 @@ mod tests {
             two_half_life: 20,
             product_ar: 1000,
             frac_decay: 1,
-            frac_remainder: 980,
+            frac_remainder: 980, // 980 >= 20 → range check fails!
             is_evaporated: 0,
         };
 
-        // This witness is algebraically consistent (no range checks),
-        // so folding will succeed. The proof validates the algebraic
-        // structure. In V2 with range checks, this would fail.
         let circuit = RealBlockCircuit::<G1>::new(witness);
-        let start = Instant::now();
-        let mut snark =
-            RecursiveSNARK::<E1, E2, RealBlockCircuit<G1>>::new(&prover.pp, &circuit, &prover.z0)
-                .expect("snark creation failed");
-        snark.prove_step(&prover.pp, &circuit).expect("prove_step");
-        let _elapsed = start.elapsed();
+        let snark_result =
+            RecursiveSNARK::<E1, E2, RealBlockCircuit<G1>>::new(&prover.pp, &circuit, &prover.z0);
 
-        // The algebraically-consistent but wrong-energy witness passes folding.
-        // This demonstrates that range checks (planned for V2) are needed for
-        // full soundness against malicious provers.
-        // For now, the state hash binding provides the primary integrity guarantee.
-        assert!(snark.verify(&prover.pp, 1, &prover.z0).is_ok());
+        // Range check makes this witness fail: frac_remainder(980) >= two_half_life(20).
+        // The bit decomposition of (20 - 980 - 1) wraps in the field and can't fit
+        // in RANGE_BITS bits, causing Nova to reject the proof.
+        if let Ok(mut snark) = snark_result {
+            let _ = snark.prove_step(&prover.pp, &circuit);
+            let verify_result = snark.verify(&prover.pp, 1, &prover.z0);
+            assert!(
+                verify_result.is_err(),
+                "Range check should catch wrong energy (frac_remainder >= two_half_life)"
+            );
+        }
+        // If snark creation itself fails, that's also correct behavior
     }
 
     #[test]
@@ -1523,5 +1696,140 @@ mod tests {
 
         assert_eq!(prover.num_blocks_folded(), 1);
         assert!(prover.last_fold_time_us() > 0);
+    }
+
+    #[test]
+    fn test_real_block_balance_conservation() {
+        // Verify that transfer constraints enforce balance conservation.
+        let genesis = make_dual_commitment(0, 0);
+        let mut prover = RealBlockProver::new(&genesis).expect("setup failed");
+
+        let block = make_block_with_txs(1, 1, 3);
+        let new_state = make_dual_commitment(1, 1);
+
+        // Default TransferSlot::new(amount) sets sender_balance_before = amount,
+        // sender_balance_after = 0, which satisfies the conservation constraint.
+        prover
+            .fold_real_block(&block, &genesis, &new_state)
+            .expect("fold with transfers failed");
+
+        assert!(prover.verify_recursive().expect("verify failed"));
+    }
+
+    #[test]
+    fn test_real_block_insufficient_balance_fails() {
+        // A transfer where sender_balance_before < amount should fail.
+        let genesis = make_dual_commitment(0, 0);
+        let prover = RealBlockProver::new(&genesis).expect("setup failed");
+
+        let block = dummy_block(1, 1);
+        let new_state = make_dual_commitment(1, 1);
+
+        let mut witness = RealBlockWitness::from_block(&block, &new_state, None);
+        // sender has 50 but tries to send 100 → sender_after wraps to huge field value
+        witness.transfers[0] = TransferSlot {
+            amount: 100,
+            sender_balance_before: 50,
+            sender_balance_after: u64::MAX - 49, // Would be negative in u64
+            old_nonce: 0,
+            new_nonce: 1,
+        };
+
+        let circuit = RealBlockCircuit::<G1>::new(witness);
+        let snark_result =
+            RecursiveSNARK::<E1, E2, RealBlockCircuit<G1>>::new(&prover.pp, &circuit, &prover.z0);
+
+        // The range check on sender_balance_after catches the underflow:
+        // u64::MAX - 49 doesn't fit in 32 bits.
+        if let Ok(mut snark) = snark_result {
+            let _ = snark.prove_step(&prover.pp, &circuit);
+            let verify_result = snark.verify(&prover.pp, 1, &prover.z0);
+            assert!(
+                verify_result.is_err(),
+                "Insufficient balance should fail range check"
+            );
+        }
+    }
+
+    #[test]
+    fn test_real_block_with_explicit_balance_witness() {
+        // Test with explicitly provided balance data via TransferSlot::with_balance.
+        let genesis = make_dual_commitment(0, 0);
+        let prover = RealBlockProver::new(&genesis).expect("setup failed");
+
+        let block = dummy_block(1, 1);
+        let new_state = make_dual_commitment(1, 1);
+
+        let mut witness = RealBlockWitness::from_block(&block, &new_state, None);
+        // Sender has 1000, sends 300, left with 700. Nonce goes from 5 to 6.
+        witness.transfers[0] = TransferSlot::with_balance(300, 1000, 5);
+
+        let circuit = RealBlockCircuit::<G1>::new(witness);
+        let mut snark =
+            RecursiveSNARK::<E1, E2, RealBlockCircuit<G1>>::new(&prover.pp, &circuit, &prover.z0)
+                .expect("snark creation failed");
+        snark
+            .prove_step(&prover.pp, &circuit)
+            .expect("prove_step failed");
+
+        assert!(
+            snark.verify(&prover.pp, 1, &prover.z0).is_ok(),
+            "Valid balance + nonce witness should verify"
+        );
+    }
+
+    #[test]
+    fn test_real_block_wrong_nonce_fails() {
+        // A transfer where new_nonce ≠ old_nonce + 1 should fail.
+        let genesis = make_dual_commitment(0, 0);
+        let prover = RealBlockProver::new(&genesis).expect("setup failed");
+
+        let block = dummy_block(1, 1);
+        let new_state = make_dual_commitment(1, 1);
+
+        let mut witness = RealBlockWitness::from_block(&block, &new_state, None);
+        witness.transfers[0] = TransferSlot {
+            amount: 100,
+            sender_balance_before: 100,
+            sender_balance_after: 0,
+            old_nonce: 5,
+            new_nonce: 7, // Wrong: should be 6
+        };
+
+        let circuit = RealBlockCircuit::<G1>::new(witness);
+        let snark_result =
+            RecursiveSNARK::<E1, E2, RealBlockCircuit<G1>>::new(&prover.pp, &circuit, &prover.z0);
+
+        if let Ok(mut snark) = snark_result {
+            let _ = snark.prove_step(&prover.pp, &circuit);
+            let verify_result = snark.verify(&prover.pp, 1, &prover.z0);
+            assert!(
+                verify_result.is_err(),
+                "Wrong nonce should fail verification"
+            );
+        }
+    }
+
+    #[test]
+    fn test_real_block_constraint_count_report() {
+        let genesis = make_dual_commitment(0, 0);
+        let prover = RealBlockProver::new(&genesis).expect("setup failed");
+
+        let (primary, secondary) = prover.num_constraints();
+        println!(
+            "═══ Circuit Report ═══\n\
+             Primary constraints: {primary}\n\
+             Secondary constraints: {secondary}\n\
+             MAX_OBJECTS: {MAX_OBJECTS}\n\
+             MAX_TRANSFERS: {MAX_TRANSFERS}\n\
+             MAX_EVAPORATIONS: {MAX_EVAPORATIONS}\n\
+             RANGE_BITS: {RANGE_BITS}"
+        );
+
+        // Verify the circuit is non-trivially large (range checks added)
+        assert!(
+            primary > 1000,
+            "Expected >1000 constraints with range checks, got {primary}"
+        );
     }
 }

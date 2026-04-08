@@ -27,11 +27,21 @@ use std::time::Instant;
 use tokio::sync::mpsc;
 use tokio::time::{interval, Duration};
 
+// ──────────────────────────── Lock Helper ──────────────────────────────
+
+/// Safely acquire a Mutex lock, recovering from poisoned state.
+fn safe_lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|poisoned| {
+        tracing::warn!("Recovered poisoned mutex lock");
+        poisoned.into_inner()
+    })
+}
+
 // ──────────────────────────── Configuration ─────────────────────────────
 
 const GRACE_PERIOD: u64 = 5;
 const BLOCK_INTERVAL_MS: u64 = 1000;
-const DEMO_TX_CHANCE: f64 = 0.4; // 40% chance of a demo tx each block
+const DEMO_TX_CHANCE: f64 = 0.15; // 15% chance of a demo tx each tick
 
 // ──────────────────────────── Genesis State ──────────────────────────────
 
@@ -49,6 +59,15 @@ fn obj_id(b: u8) -> [u8; 32] {
 
 fn initialize_genesis(db: &mut RocksDBStateDB, node_tag: &str) {
     use api::{GENESIS_FOUNDATION, GENESIS_CORE_DEV, GENESIS_VALIDATOR1, GENESIS_VALIDATOR2, GENESIS_ECOSYSTEM, GENESIS_COMMUNITY, parse_hex_address};
+
+    // Faucet address (all-zeros) pre-seeded with large supply
+    let faucet_addr = [0u8; 32];
+    db.put_account(Account {
+        address: faucet_addr,
+        balance: u64::MAX / 2,
+        nonce: 0,
+    });
+    println!("{} \x1b[36mFaucet (0x0000...)\x1b[0m  balance=MAX/2", node_tag);
 
     let accounts: Vec<(&str, u64)> = vec![
         (GENESIS_FOUNDATION, 487_293),
@@ -446,7 +465,8 @@ fn parse_args() -> NodeArgs {
         .cloned()
         .unwrap_or_else(|| "./evaporchain-data".to_string());
 
-    let tendermint_mode = args.iter().any(|a| a == "--tendermint");
+    let mock_consensus = args.iter().any(|a| a == "--mock-consensus");
+    let tendermint_mode = !mock_consensus;
     let validator_id = args
         .iter()
         .position(|a| a == "--validator-id")
@@ -560,7 +580,7 @@ fn record_block(
 
     // Push to block history
     {
-        let mut history = block_history.lock().unwrap();
+        let mut history = safe_lock(&block_history);
         history.push_back(record);
         while history.len() > 500 {
             history.pop_front();
@@ -569,7 +589,7 @@ fn record_block(
 
     // Update stats
     {
-        let mut stats = chain_stats.lock().unwrap();
+        let mut stats = safe_lock(&chain_stats);
         stats.total_objects_created += tx_creates;
         stats.total_refreshed += tx_refreshes;
         stats.total_evaporated += execution.objects_evaporated as u64;
@@ -921,11 +941,11 @@ async fn main() -> Result<()> {
 
     if is_fresh {
         println!("{} \x1b[1mFresh start — loading genesis state:\x1b[0m", node_tag);
-        let mut db = db.lock().unwrap();
+        let mut db = safe_lock(&db);
         initialize_genesis(&mut db, &node_tag);
     } else {
         println!("{} \x1b[1;32mResuming from persistent state\x1b[0m", node_tag);
-        let db = db.lock().unwrap();
+        let db = safe_lock(&db);
         println!(
             "{}   {} accounts, {} objects, {} ghosts loaded from disk",
             node_tag,
@@ -945,7 +965,7 @@ async fn main() -> Result<()> {
                 node_tag
             );
             let genesis_commitment = {
-                let db = db.lock().unwrap();
+                let db = safe_lock(&db);
                 evaporchain_types::DualCommitment {
                     verkle_root: db.compute_state_root(),
                     mmr_root: [0u8; 32],
@@ -1091,14 +1111,14 @@ async fn main() -> Result<()> {
     if !is_fresh {
         if let Some((block_number, epoch, parent_hash)) = chain_store.load_consensus_meta() {
             if let Some(ref tc) = tendermint {
-                let mut c = tc.lock().unwrap();
+                let mut c = safe_lock(&tc);
                 c.restore_state(block_number, epoch, parent_hash);
                 println!(
                     "{} \x1b[1;32mTendermint restored:\x1b[0m block={}, epoch={}, parent_hash={}…",
                     node_tag, block_number, epoch, &hex::encode(parent_hash)[..16]
                 );
             } else {
-                let mut c = consensus.lock().unwrap();
+                let mut c = safe_lock(&consensus);
                 c.restore_state(block_number, epoch, parent_hash);
                 println!(
                     "{} \x1b[1;32mConsensus restored:\x1b[0m block={}, epoch={}, parent_hash={}…",
@@ -1133,6 +1153,9 @@ async fn main() -> Result<()> {
         }
     ));
     let start_time = Instant::now();
+
+    // Channel for API-submitted transactions to reach P2P network & all mempools
+    let (api_tx_sender, mut api_tx_receiver) = tokio::sync::mpsc::channel::<Transaction>(256);
 
     // ── API server ──
     if args.api_mode {
@@ -1193,6 +1216,8 @@ async fn main() -> Result<()> {
             auth_sessions: Some(Arc::clone(&auth_state.sessions)),
             user_db: Some(Arc::clone(&auth_state.user_db)),
             node_keypair,
+            tendermint: tendermint.as_ref().map(Arc::clone),
+            tx_broadcast: Some(api_tx_sender.clone()),
         });
         let api_port = args.api_port;
         tokio::spawn(async move {
@@ -1217,7 +1242,7 @@ async fn main() -> Result<()> {
                 match line {
                     Ok(line) => {
                         if let Some(tx) = parse_stdin_command(&line, &stdin_keypair) {
-                            let mut c = consensus_tx.lock().unwrap();
+                            let mut c = safe_lock(&consensus_tx);
                             c.mempool.submit(tx);
                             println!(
                                 "{} \x1b[90m→ transaction queued (mempool={})\x1b[0m",
@@ -1307,8 +1332,8 @@ async fn main() -> Result<()> {
         peer_count: &Arc<std::sync::atomic::AtomicUsize>,
         block_cache: &Option<evaporchain_network::service::BlockCache>,
     ) -> Option<(usize, usize)> {
-        let mut c = consensus.lock().unwrap();
-        let mut db_guard = db.lock().unwrap();
+        let mut c = safe_lock(&consensus);
+        let mut db_guard = safe_lock(&db);
 
         // Only apply if this block advances our chain
         if block.number <= c.block_number() {
@@ -1322,7 +1347,7 @@ async fn main() -> Result<()> {
 
                 let old_root = block.parent_hash;
                 let new_root = result.execution.state_root;
-                let mut p = prover.lock().unwrap();
+                let mut p = safe_lock(&prover);
                 if let Err(e) = p.fold_block(&result.block, old_root, new_root) {
                     eprintln!("{} \x1b[31mProving error: {}\x1b[0m", node_tag, e);
                 } else if prove_mode {
@@ -1350,17 +1375,17 @@ async fn main() -> Result<()> {
                     result.block.number, result.block.epoch, result.block.parent_hash,
                 );
                 {
-                    let history = block_history.lock().unwrap();
+                    let history = safe_lock(&block_history);
                     if let Some(record) = history.back() {
                         chain_store.save_block(record);
                     }
                 }
                 {
-                    let stats = chain_stats.lock().unwrap();
+                    let stats = safe_lock(&chain_stats);
                     chain_store.save_chain_stats(&stats);
                 }
                 {
-                    let ev = events.lock().unwrap();
+                    let ev = safe_lock(&events);
                     chain_store.save_events(&ev);
                 }
 
@@ -1447,31 +1472,49 @@ async fn main() -> Result<()> {
                 // Drain network txs into mempool
                 if let Some(ref mut rx) = net_tx_receiver {
                     while let Ok(tx) = rx.try_recv() {
-                        let mut tc = tc_ref.lock().unwrap();
+                        let mut tc = safe_lock(&tc_ref);
                         tc.mempool.submit(tx);
+                    }
+                }
+
+                // Drain API-submitted txs and broadcast via P2P to other validators.
+                // (The API handler already added these to the local mempool.)
+                while let Ok(tx) = api_tx_receiver.try_recv() {
+                    if let Some(ref sender) = net_tx_sender {
+                        let _ = sender.try_send(tx);
                     }
                 }
 
                 // Also drain demo txs
                 if args.demo_mode {
                     let epoch = {
-                        let tc = tc_ref.lock().unwrap();
+                        let tc = safe_lock(&tc_ref);
                         tc.epoch() + 1
                     };
                     if let Some(tx) = generate_demo_tx(&mut rng, epoch, &mut demo_nonces, &demo_keypairs) {
                         if let Some(ref sender) = net_tx_sender {
                             let _ = sender.send(tx.clone()).await;
                         }
-                        let mut tc = tc_ref.lock().unwrap();
+                        let mut tc = safe_lock(&tc_ref);
                         tc.mempool.submit(tx);
                     }
                 }
 
                 // Tick the consensus state machine
                 let actions = {
-                    let mut tc = tc_ref.lock().unwrap();
-                    let mut db_guard = db.lock().unwrap();
-                    tc.tick(&mut *db_guard)
+                    let mut tc = safe_lock(&tc_ref);
+                    let mut db_guard = safe_lock(&db);
+                    let phase = tc.phase();
+                    let height = tc.height();
+                    let round = tc.round();
+                    let actions = tc.tick(&mut *db_guard);
+                    if !actions.is_empty() {
+                        eprintln!(
+                            "{} [consensus] h={} r={} phase={:?} -> {} action(s)",
+                            node_tag, height, round, phase, actions.len()
+                        );
+                    }
+                    actions
                 };
 
                 // Process actions
@@ -1484,8 +1527,8 @@ async fn main() -> Result<()> {
                     if let ConsensusAction::CommitBlock(mut block) = action {
                         // Execute the block to get state root
                         let result = {
-                            let mut tc = tc_ref.lock().unwrap();
-                            let mut db_guard = db.lock().unwrap();
+                            let mut tc = safe_lock(&tc_ref);
+                            let mut db_guard = safe_lock(&db);
                             tc.execute_block(&mut *db_guard, &block)
                         };
 
@@ -1495,28 +1538,28 @@ async fn main() -> Result<()> {
 
                                 // Flush state
                                 {
-                                    let db_guard = db.lock().unwrap();
+                                    let db_guard = safe_lock(&db);
                                     db_guard.flush_accounts();
                                     db_guard.flush_objects();
                                 }
 
                                 // Fold proof
                                 {
-                                    let mut p = prover.lock().unwrap();
+                                    let mut p = safe_lock(&prover);
                                     if let Err(e) = p.fold_block(&block, block.parent_hash, result.execution.state_root) {
                                         eprintln!("{} \x1b[31mProving error: {}\x1b[0m", node_tag, e);
                                     }
                                 }
 
                                 let (obj_count, ghost_count) = {
-                                    let db_guard = db.lock().unwrap();
+                                    let db_guard = safe_lock(&db);
                                     (db_guard.object_count(), db_guard.ghost_count())
                                 };
                                 let peers = peer_count.load(std::sync::atomic::Ordering::Relaxed);
 
                                 // Advance consensus state
                                 {
-                                    let mut tc = tc_ref.lock().unwrap();
+                                    let mut tc = safe_lock(&tc_ref);
                                     tc.on_block_committed(&block, result.execution.state_root, result.execution.objects_evaporated);
                                 }
 
@@ -1538,17 +1581,17 @@ async fn main() -> Result<()> {
                                 // Persist
                                 chain_store.save_consensus_meta(block.number, block.epoch, block.parent_hash);
                                 {
-                                    let history = block_history.lock().unwrap();
+                                    let history = safe_lock(&block_history);
                                     if let Some(record) = history.back() {
                                         chain_store.save_block(record);
                                     }
                                 }
                                 {
-                                    let stats = chain_stats.lock().unwrap();
+                                    let stats = safe_lock(&chain_stats);
                                     chain_store.save_chain_stats(&stats);
                                 }
                                 {
-                                    let ev = events.lock().unwrap();
+                                    let ev = safe_lock(&events);
                                     chain_store.save_events(&ev);
                                 }
 
@@ -1587,9 +1630,18 @@ async fn main() -> Result<()> {
                 }
             }, if tendermint.is_some() => {
                 if let Ok(msg) = serde_json::from_slice::<ConsensusMessage>(&data) {
+                    eprintln!(
+                        "{} [net-msg] h={} r={} type={}",
+                        node_tag, msg.height(), msg.round(),
+                        match &msg {
+                            ConsensusMessage::Proposal { .. } => "Proposal",
+                            ConsensusMessage::Prevote { .. } => "Prevote",
+                            ConsensusMessage::Precommit { .. } => "Precommit",
+                        }
+                    );
                     let tc_ref = tendermint.as_ref().unwrap();
                     let actions = {
-                        let mut tc = tc_ref.lock().unwrap();
+                        let mut tc = safe_lock(&tc_ref);
                         tc.on_message(msg)
                     };
                     let mut commits = broadcast_consensus_actions(
@@ -1600,8 +1652,8 @@ async fn main() -> Result<()> {
                     for action in commits.drain(..) {
                         if let ConsensusAction::CommitBlock(mut block) = action {
                             let result = {
-                                let mut tc = tc_ref.lock().unwrap();
-                                let mut db_guard = db.lock().unwrap();
+                                let mut tc = safe_lock(&tc_ref);
+                                let mut db_guard = safe_lock(&db);
                                 tc.execute_block(&mut *db_guard, &block)
                             };
 
@@ -1609,23 +1661,23 @@ async fn main() -> Result<()> {
                                 Ok(result) => {
                                     block.state_root = result.execution.state_root;
                                     {
-                                        let db_guard = db.lock().unwrap();
+                                        let db_guard = safe_lock(&db);
                                         db_guard.flush_accounts();
                                         db_guard.flush_objects();
                                     }
                                     {
-                                        let mut p = prover.lock().unwrap();
+                                        let mut p = safe_lock(&prover);
                                         let _ = p.fold_block(&block, block.parent_hash, result.execution.state_root);
                                     }
 
                                     let (obj_count, ghost_count) = {
-                                        let db_guard = db.lock().unwrap();
+                                        let db_guard = safe_lock(&db);
                                         (db_guard.object_count(), db_guard.ghost_count())
                                     };
                                     let peers = peer_count.load(std::sync::atomic::Ordering::Relaxed);
 
                                     {
-                                        let mut tc = tc_ref.lock().unwrap();
+                                        let mut tc = safe_lock(&tc_ref);
                                         tc.on_block_committed(&block, result.execution.state_root, result.execution.objects_evaporated);
                                     }
 
@@ -1643,17 +1695,17 @@ async fn main() -> Result<()> {
                                     );
                                     chain_store.save_consensus_meta(block.number, block.epoch, block.parent_hash);
                                     {
-                                        let history = block_history.lock().unwrap();
+                                        let history = safe_lock(&block_history);
                                         if let Some(record) = history.back() {
                                             chain_store.save_block(record);
                                         }
                                     }
                                     {
-                                        let stats = chain_stats.lock().unwrap();
+                                        let stats = safe_lock(&chain_stats);
                                         chain_store.save_chain_stats(&stats);
                                     }
                                     {
-                                        let ev = events.lock().unwrap();
+                                        let ev = safe_lock(&events);
                                         chain_store.save_events(&ev);
                                     }
 
@@ -1687,7 +1739,7 @@ async fn main() -> Result<()> {
                 // In demo mode, inject random transactions
                 if args.demo_mode {
                     let epoch = {
-                        let c = consensus.lock().unwrap();
+                        let c = safe_lock(&consensus);
                         c.epoch() + 1
                     };
                     if let Some(tx) = generate_demo_tx(&mut rng, epoch, &mut demo_nonces, &demo_keypairs) {
@@ -1695,7 +1747,7 @@ async fn main() -> Result<()> {
                         if let Some(ref sender) = net_tx_sender {
                             let _ = sender.send(tx.clone()).await;
                         }
-                        let mut c = consensus.lock().unwrap();
+                        let mut c = safe_lock(&consensus);
                         c.mempool.submit(tx);
                     }
                 }
@@ -1703,21 +1755,28 @@ async fn main() -> Result<()> {
                 // Drain any txs received from the network into the mempool
                 if let Some(ref mut rx) = net_tx_receiver {
                     while let Ok(tx) = rx.try_recv() {
-                        let mut c = consensus.lock().unwrap();
+                        let mut c = safe_lock(&consensus);
                         c.mempool.submit(tx);
+                    }
+                }
+
+                // Drain API-submitted txs and broadcast via P2P
+                while let Ok(tx) = api_tx_receiver.try_recv() {
+                    if let Some(ref sender) = net_tx_sender {
+                        let _ = sender.try_send(tx);
                     }
                 }
 
                 // Produce block — all synchronous work under locks, then drop before await
                 let produced = {
-                    let mut c = consensus.lock().unwrap();
-                    let mut db_guard = db.lock().unwrap();
+                    let mut c = safe_lock(&consensus);
+                    let mut db_guard = safe_lock(&db);
 
                     match c.produce_block(&mut *db_guard) {
                         Ok(result) => {
                             let old_root = result.block.parent_hash;
                             let new_root = result.execution.state_root;
-                            let mut p = prover.lock().unwrap();
+                            let mut p = safe_lock(&prover);
                             if let Err(e) = p.fold_block(&result.block, old_root, new_root) {
                                 eprintln!("{} \x1b[31mProving error: {}\x1b[0m", node_tag, e);
                             } else if args.prove_mode {
@@ -1777,17 +1836,17 @@ async fn main() -> Result<()> {
                         result.block.parent_hash,
                     );
                     {
-                        let history = block_history.lock().unwrap();
+                        let history = safe_lock(&block_history);
                         if let Some(record) = history.back() {
                             chain_store.save_block(record);
                         }
                     }
                     {
-                        let stats = chain_stats.lock().unwrap();
+                        let stats = safe_lock(&chain_stats);
                         chain_store.save_chain_stats(&stats);
                     }
                     {
-                        let ev = events.lock().unwrap();
+                        let ev = safe_lock(&events);
                         chain_store.save_events(&ev);
                     }
 
@@ -1815,17 +1874,24 @@ async fn main() -> Result<()> {
                     None => std::future::pending::<Option<evaporchain_types::Block>>().await,
                 }
             } => {
-                let local_height = {
-                    let c = consensus.lock().unwrap();
+                let local_height = if let Some(ref tc_ref) = tendermint {
+                    // In Tendermint mode, height() is the next height to decide,
+                    // so the last committed block = height - 1.
+                    let tc = safe_lock(tc_ref);
+                    tc.height().saturating_sub(1)
+                } else {
+                    let c = safe_lock(&consensus);
                     c.block_number()
                 };
 
-                // Skip stale blocks
+                // Skip blocks already committed
                 if block.number <= local_height {
-                    println!(
-                        "{} \x1b[90mSkipping stale block #{} (local={})\x1b[0m",
-                        node_tag, block.number, local_height
-                    );
+                    continue;
+                }
+
+                // In Tendermint mode, skip — consensus handles block application.
+                // (Block sync for gap-fill is handled by consensus catch-up.)
+                if tendermint.is_some() {
                     continue;
                 }
 
@@ -1842,7 +1908,7 @@ async fn main() -> Result<()> {
                     // After applying, drain any pending blocks that are now in sequence
                     loop {
                         let next = {
-                            let c = consensus.lock().unwrap();
+                            let c = safe_lock(&consensus);
                             c.block_number() + 1
                         };
                         if let Some(queued) = pending_blocks.remove(&next) {
@@ -1908,34 +1974,125 @@ async fn main() -> Result<()> {
                     sorted.sort_by_key(|b| b.number);
 
                     for block in &sorted {
-                        let local_height = {
-                            let c = consensus.lock().unwrap();
+                        let local_height = if let Some(ref tc_ref) = tendermint {
+                            let tc = safe_lock(tc_ref);
+                            tc.height().saturating_sub(1)
+                        } else {
+                            let c = safe_lock(&consensus);
                             c.block_number()
                         };
-                        if block.number == local_height + 1 {
+
+                        if block.number <= local_height {
+                            continue; // Already have this block
+                        }
+                        if block.number > local_height + 1 {
+                            // Gap — queue for later
+                            pending_blocks.insert(block.number, block.clone());
+                            continue;
+                        }
+
+                        // block.number == local_height + 1
+                        if let Some(ref tc_ref) = tendermint {
+                            // Apply via Tendermint consensus for state consistency
+                            let result = {
+                                let mut tc = safe_lock(tc_ref);
+                                let mut db_guard = safe_lock(&db);
+                                tc.apply_block(&mut *db_guard, block)
+                            };
+                            match result {
+                                Ok(result) => {
+                                    {
+                                        let db_guard = safe_lock(&db);
+                                        db_guard.flush_accounts();
+                                        db_guard.flush_objects();
+                                    }
+                                    {
+                                        let mut p = safe_lock(&prover);
+                                        let _ = p.fold_block(block, block.parent_hash, result.execution.state_root);
+                                    }
+                                    let (obj_count, ghost_count) = {
+                                        let db_guard = safe_lock(&db);
+                                        (db_guard.object_count(), db_guard.ghost_count())
+                                    };
+                                    let peers = peer_count.load(std::sync::atomic::Ordering::Relaxed);
+                                    if let Some(ref cache) = block_cache {
+                                        cache_block(cache, block);
+                                    }
+                                    // Record in block history & chain store
+                                    {
+                                        let record = BlockRecord {
+                                            number: block.number,
+                                            epoch: block.epoch,
+                                            state_root: hex::encode(result.execution.state_root),
+                                            parent_hash: hex::encode(block.parent_hash),
+                                            tx_count: block.transactions.len(),
+                                            evaporations: result.execution.objects_evaporated,
+                                            entered_grace: result.execution.objects_entered_grace,
+                                            timestamp: block.timestamp,
+                                            active_objects: obj_count,
+                                            ghost_count,
+                                            gas_used: result.execution.gas_used,
+                                            base_fee: result.execution.base_fee,
+                                            total_fees: result.execution.total_fees,
+                                            transactions: api::tx_records_from_block(block),
+                                        };
+                                        let mut history = safe_lock(&block_history);
+                                        history.push_back(record.clone());
+                                        if history.len() > 500 { history.pop_front(); }
+                                        chain_store.save_block(&record);
+                                    }
+                                    println!(
+                                        "\n{} \x1b[1;32m━━━ Block #{:<4} │ Epoch {:<4} ━━━ SYNCED ━━━━━━━━━━━━━━━━━━━━━━\x1b[0m",
+                                        node_tag, block.number, block.epoch,
+                                    );
+                                    println!(
+                                        "{}   State: \x1b[36m{} active\x1b[0m  \x1b[90m{} ghosts\x1b[0m  root=\x1b[1m{}…\x1b[0m  peers={}",
+                                        node_tag, obj_count, ghost_count,
+                                        &hex::encode(result.execution.state_root)[..16], peers,
+                                    );
+                                }
+                                Err(e) => {
+                                    eprintln!("{} \x1b[31mSync apply error: {}\x1b[0m", node_tag, e);
+                                }
+                            }
+                        } else {
                             apply_follower_block(
                                 &node_tag, block, &consensus, &db, &prover,
                                 args.prove_mode, &block_history, &chain_stats, &events,
                                 &chain_store, &peer_count, &block_cache,
                             );
-                        } else if block.number > local_height + 1 {
-                            // Still have a gap — queue and request more
-                            pending_blocks.insert(block.number, block.clone());
                         }
                     }
 
                     // Drain pending queue after applying synced blocks
                     loop {
-                        let next = {
-                            let c = consensus.lock().unwrap();
+                        let next = if let Some(ref tc_ref) = tendermint {
+                            let tc = safe_lock(tc_ref);
+                            tc.height()
+                        } else {
+                            let c = safe_lock(&consensus);
                             c.block_number() + 1
                         };
                         if let Some(queued) = pending_blocks.remove(&next) {
-                            apply_follower_block(
-                                &node_tag, &queued, &consensus, &db, &prover,
-                                args.prove_mode, &block_history, &chain_stats, &events,
-                                &chain_store, &peer_count, &block_cache,
-                            );
+                            if let Some(ref tc_ref) = tendermint {
+                                let result = {
+                                    let mut tc = safe_lock(tc_ref);
+                                    let mut db_guard = safe_lock(&db);
+                                    tc.apply_block(&mut *db_guard, &queued)
+                                };
+                                if let Ok(result) = result {
+                                    let db_guard = safe_lock(&db);
+                                    db_guard.flush_accounts();
+                                    db_guard.flush_objects();
+                                    let _ = safe_lock(&prover).fold_block(&queued, queued.parent_hash, result.execution.state_root);
+                                }
+                            } else {
+                                apply_follower_block(
+                                    &node_tag, &queued, &consensus, &db, &prover,
+                                    args.prove_mode, &block_history, &chain_stats, &events,
+                                    &chain_store, &peer_count, &block_cache,
+                                );
+                            }
                         } else {
                             break;
                         }
@@ -1943,8 +2100,11 @@ async fn main() -> Result<()> {
 
                     // Check if there are still pending blocks (more gaps)
                     if !pending_blocks.is_empty() {
-                        let local_height = {
-                            let c = consensus.lock().unwrap();
+                        let local_height = if let Some(ref tc_ref) = tendermint {
+                            let tc = safe_lock(tc_ref);
+                            tc.height().saturating_sub(1)
+                        } else {
+                            let c = safe_lock(&consensus);
                             c.block_number()
                         };
                         let next_needed = local_height + 1;
@@ -1973,8 +2133,11 @@ async fn main() -> Result<()> {
                 if tip_height == 0 {
                     continue; // Empty tip probe response
                 }
-                let local_height = {
-                    let c = consensus.lock().unwrap();
+                let local_height = if let Some(ref tc) = tendermint {
+                    let tc = safe_lock(tc);
+                    tc.height().saturating_sub(1)
+                } else {
+                    let c = safe_lock(&consensus);
                     c.block_number()
                 };
                 if tip_height > local_height && !sync_in_flight {
@@ -2000,7 +2163,7 @@ async fn main() -> Result<()> {
                     None => std::future::pending::<Option<Transaction>>().await,
                 }
             } => {
-                let mut c = consensus.lock().unwrap();
+                let mut c = safe_lock(&consensus);
                 c.mempool.submit(tx);
             }
         }

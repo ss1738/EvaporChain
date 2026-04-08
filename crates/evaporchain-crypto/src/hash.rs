@@ -354,3 +354,83 @@ mod tests {
         assert_eq!(out, expected);
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Property-Based Tests (Audit Hardening)
+// ═══════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// BLAKE3: identical inputs always produce identical outputs.
+        #[test]
+        fn blake3_deterministic(data in proptest::collection::vec(any::<u8>(), 0..1024)) {
+            let h1 = blake3_hash(&data);
+            let h2 = blake3_hash(&data);
+            prop_assert_eq!(h1, h2);
+        }
+
+        /// BLAKE3: different inputs produce different outputs (collision resistance).
+        #[test]
+        fn blake3_collision_resistance(
+            a in proptest::collection::vec(any::<u8>(), 1..512),
+            b in proptest::collection::vec(any::<u8>(), 1..512),
+        ) {
+            prop_assume!(a != b);
+            let ha = blake3_hash(&a);
+            let hb = blake3_hash(&b);
+            prop_assert_ne!(ha, hb);
+        }
+
+        /// Poseidon: identical inputs always produce identical outputs.
+        #[test]
+        fn poseidon_deterministic(data in proptest::collection::vec(any::<u8>(), 0..256)) {
+            let h1 = poseidon_hash(&data);
+            let h2 = poseidon_hash(&data);
+            prop_assert_eq!(h1, h2);
+        }
+
+        /// Poseidon: output is always 32 bytes, never all zeros for non-empty input.
+        #[test]
+        fn poseidon_output_valid(data in proptest::collection::vec(any::<u8>(), 1..256)) {
+            let h = poseidon_hash(&data);
+            prop_assert_eq!(h.len(), 32);
+            prop_assert_ne!(h, [0u8; 32]);
+        }
+
+        /// Field element roundtrip: bytes → field → bytes is stable after first conversion.
+        #[test]
+        fn field_roundtrip(bytes in any::<[u8; 32]>()) {
+            let elem = bytes_to_field(&bytes);
+            let out = field_to_bytes(&elem);
+            // A second roundtrip must be identical (idempotent).
+            let elem2 = bytes_to_field(&out);
+            let out2 = field_to_bytes(&elem2);
+            prop_assert_eq!(out, out2, "double roundtrip must be stable");
+        }
+
+        /// HashEngine trait: both implementations produce 32-byte output.
+        #[test]
+        fn hash_engines_produce_32_bytes(data in proptest::collection::vec(any::<u8>(), 0..512)) {
+            let b3 = Blake3Hasher.hash(&data);
+            let pos = PoseidonHasher.hash(&data);
+            prop_assert_eq!(b3.len(), 32);
+            prop_assert_eq!(pos.len(), 32);
+        }
+
+        /// hash_two is not commutative (order matters).
+        #[test]
+        fn hash_two_order_matters(
+            a in any::<[u8; 32]>(),
+            b in any::<[u8; 32]>(),
+        ) {
+            prop_assume!(a != b);
+            let h1 = Blake3Hasher.hash_two(&a, &b);
+            let h2 = Blake3Hasher.hash_two(&b, &a);
+            prop_assert_ne!(h1, h2);
+        }
+    }
+}

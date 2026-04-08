@@ -27,6 +27,7 @@ pub enum Op {
     Sub,
     Mul,
     Div,
+    Mod,
 
     // Comparison
     Eq,
@@ -259,6 +260,27 @@ impl Compiler {
                 }
             }
 
+            Stmt::While { condition, body } => {
+                // while condition { body }
+                //
+                // Compiled to:
+                //   loop_start:
+                //     <condition>
+                //     JumpIfFalse loop_end
+                //     <body>
+                //     Jump loop_start
+                //   loop_end:
+                let loop_start = self.current_offset();
+                self.compile_expr(condition)?;
+                let exit_jump = self.emit(Op::JumpIfFalse(0));
+                for s in body {
+                    self.compile_stmt(s)?;
+                }
+                self.emit(Op::Jump(loop_start));
+                let loop_end = self.current_offset();
+                self.patch_jump(exit_jump, loop_end);
+            }
+
             Stmt::Return(expr) => {
                 if let Some(e) = expr {
                     self.compile_expr(e)?;
@@ -351,6 +373,7 @@ impl Compiler {
             BinOp::Sub => self.emit(Op::Sub),
             BinOp::Mul => self.emit(Op::Mul),
             BinOp::Div => self.emit(Op::Div),
+            BinOp::Mod => self.emit(Op::Mod),
             BinOp::Eq => self.emit(Op::Eq),
             BinOp::Neq => self.emit(Op::Neq),
             BinOp::Gt => self.emit(Op::Gt),

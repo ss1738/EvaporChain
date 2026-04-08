@@ -55,6 +55,10 @@ const MAX_SYNC_BATCH: u64 = 100;
 /// Maximum number of blocks to keep in the cache.
 const MAX_CACHE_SIZE: usize = 2000;
 
+/// Maximum allowed gossip message size (10 MB). Messages exceeding this
+/// are dropped before deserialization to prevent OOM attacks.
+const MAX_GOSSIP_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
+
 // ─────────────────────────── Config ──────────────────────────────────────
 
 /// Configuration for the P2P network service.
@@ -141,9 +145,25 @@ impl NetworkService for NetworkHandle {
     }
 }
 
+/// Acquire a write lock on the block cache, recovering from poisoning.
+fn safe_write(cache: &BlockCache) -> std::sync::RwLockWriteGuard<'_, BTreeMap<u64, Block>> {
+    cache.write().unwrap_or_else(|poisoned| {
+        warn!("Recovered poisoned block cache write lock");
+        poisoned.into_inner()
+    })
+}
+
+/// Acquire a read lock on the block cache, recovering from poisoning.
+fn safe_read(cache: &BlockCache) -> std::sync::RwLockReadGuard<'_, BTreeMap<u64, Block>> {
+    cache.read().unwrap_or_else(|poisoned| {
+        warn!("Recovered poisoned block cache read lock");
+        poisoned.into_inner()
+    })
+}
+
 /// Insert a block into the cache, evicting old entries if needed.
 pub fn cache_block(cache: &BlockCache, block: &Block) {
-    let mut c = cache.write().unwrap();
+    let mut c = safe_write(cache);
     c.insert(block.number, block.clone());
     // Evict oldest entries if cache is too large
     while c.len() > MAX_CACHE_SIZE {
@@ -185,9 +205,10 @@ impl P2pNetworkService {
                     gossipsub::MessageId::from(s.finish().to_string())
                 };
                 let gossipsub_config = gossipsub::ConfigBuilder::default()
-                    .heartbeat_interval(Duration::from_secs(1))
+                    .heartbeat_interval(Duration::from_millis(500))
                     .validation_mode(gossipsub::ValidationMode::Strict)
                     .message_id_fn(message_id_fn)
+                    .max_transmit_size(4 * 1024 * 1024) // 4MB — consensus proposals with ML-DSA sigs can be large
                     .build()
                     .expect("valid gossipsub config");
                 let gossipsub = gossipsub::Behaviour::new(
@@ -365,7 +386,14 @@ impl P2pNetworkService {
                             SwarmEvent::Behaviour(EvaporBehaviourEvent::Gossipsub(
                                 gossipsub::Event::Message { message, .. },
                             )) => {
-                                if message.topic == tx_topic_hash {
+                                // Drop oversized messages before deserialization (DoS protection)
+                                if message.data.len() > MAX_GOSSIP_MESSAGE_SIZE {
+                                    warn!(
+                                        "Dropping oversized gossip message: {} bytes (limit {})",
+                                        message.data.len(),
+                                        MAX_GOSSIP_MESSAGE_SIZE
+                                    );
+                                } else if message.topic == tx_topic_hash {
                                     match serde_json::from_slice::<Transaction>(&message.data) {
                                         Ok(tx) => {
                                             let _ = net_tx_sender.send(tx).await;
@@ -395,7 +423,7 @@ impl P2pNetworkService {
                                 let to = request.to_height.min(from + MAX_SYNC_BATCH);
                                 info!("Peer {peer} requested blocks {from}..{to}");
 
-                                let cache = block_cache_inner.read().unwrap();
+                                let cache = safe_read(&block_cache_inner);
                                 let blocks: Vec<Block> = (from..=to)
                                     .filter_map(|n| cache.get(&n).cloned())
                                     .collect();

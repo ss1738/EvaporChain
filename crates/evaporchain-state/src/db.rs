@@ -252,7 +252,7 @@ mod tests {
             owner: [0u8; 32],
             evaporated_at: 100,
             data_hash: [0u8; 32],
-            original_data: vec![1, 2, 3],
+            original_data: Some(vec![1, 2, 3]),
             mmr_position: None,
         };
         db.put_ghost(ghost.clone());

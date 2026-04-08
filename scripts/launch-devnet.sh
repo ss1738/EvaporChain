@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 #
-# EvaporChain Multi-Node Devnet Launcher
+# EvaporChain Multi-Node Devnet Launcher (Tendermint BFT)
 #
-# Starts 4 nodes on the local machine:
-#   node-1 (port 9001) — Producer with --demo (generates transactions)
-#   node-2 (port 9002) — Follower (syncs blocks from peers)
-#   node-3 (port 9003) — Follower
-#   node-4 (port 9004) — Follower
+# Starts 4 validator nodes on the local machine:
+#   node-1 (port 9001) — Validator 1 + Demo transactions
+#   node-2 (port 9002) — Validator 2
+#   node-3 (port 9003) — Validator 3
+#   node-4 (port 9004) — Validator 4
 #
-# Nodes connect via bootstrap peers (node-1 address passed to followers).
+# Consensus: Tendermint BFT (default) with 2/3 stake finality.
+# Nodes connect via bootstrap peers (node-1 address passed to others).
 # mDNS is also enabled for additional discovery.
 # Press Ctrl+C to stop all nodes.
 #
@@ -60,20 +61,24 @@ if [[ "${1:-}" == "--split" ]]; then
 fi
 
 echo "╔══════════════════════════════════════════════════════════════╗"
-echo "║         EvaporChain Multi-Node Devnet (4 nodes)             ║"
+echo "║      EvaporChain Tendermint BFT Devnet (4 validators)        ║"
 echo "║                                                             ║"
-echo "║  node-1 (${PRODUCER_PORT}) — Producer + Demo                            ║"
-echo "║  node-2 (9002) — Follower                                   ║"
-echo "║  node-3 (9003) — Follower                                   ║"
-echo "║  node-4 (9004) — Follower                                   ║"
+echo "║  node-1 (${PRODUCER_PORT}) — Validator 1 + Demo                         ║"
+echo "║  node-2 (9002) — Validator 2                                ║"
+echo "║  node-3 (9003) — Validator 3                                ║"
+echo "║  node-4 (9004) — Validator 4                                ║"
 echo "║                                                             ║"
-echo "║  Block interval: ${INTERVAL}ms | Bootstrap peer discovery          ║"
+echo "║  Consensus: Tendermint BFT | Stake: ${VALIDATOR_STAKE} per validator    ║"
 echo "║  Press Ctrl+C to stop all nodes                             ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo ""
 
-# ── Start producer ──
-echo "  Starting producer (node-1)..."
+# ── Consensus configuration ──
+NUM_VALIDATORS=4
+VALIDATOR_STAKE=1000
+
+# ── Start node-1 (validator 1) ──
+echo "  Starting validator node-1..."
 if $SPLIT_MODE; then
     "$BINARY" \
         --node-id "node-1" \
@@ -81,6 +86,9 @@ if $SPLIT_MODE; then
         --network \
         --interval "$INTERVAL" \
         --startup-delay 3000 \
+        --validator-id 1 \
+        --validators "$NUM_VALIDATORS" \
+        --stake "$VALIDATOR_STAKE" \
         --demo \
         > "$LOG_DIR/node-1.log" 2>&1 &
 else
@@ -90,15 +98,18 @@ else
         --network \
         --interval "$INTERVAL" \
         --startup-delay 3000 \
+        --validator-id 1 \
+        --validators "$NUM_VALIDATORS" \
+        --stake "$VALIDATOR_STAKE" \
         --demo &
 fi
 PIDS+=($!)
-echo "  Started node-1 (PID $!) on port ${PRODUCER_PORT} --demo"
+echo "  Started node-1 (PID $!) on port ${PRODUCER_PORT} — validator 1 of $NUM_VALIDATORS"
 
-# Give the producer a moment to bind its port
+# Give the first node a moment to bind its port
 sleep 1
 
-# ── Start followers with bootstrap peer ──
+# ── Start validators 2-4 with bootstrap peer ──
 BOOTSTRAP="/ip4/127.0.0.1/tcp/${PRODUCER_PORT}"
 
 for i in 2 3 4; do
@@ -112,6 +123,9 @@ for i in 2 3 4; do
             --network \
             --interval "$INTERVAL" \
             --startup-delay 3000 \
+            --validator-id "$i" \
+            --validators "$NUM_VALIDATORS" \
+            --stake "$VALIDATOR_STAKE" \
             --bootstrap "$BOOTSTRAP" \
             > "$LOG_DIR/${NODE_ID}.log" 2>&1 &
     else
@@ -121,10 +135,13 @@ for i in 2 3 4; do
             --network \
             --interval "$INTERVAL" \
             --startup-delay 3000 \
+            --validator-id "$i" \
+            --validators "$NUM_VALIDATORS" \
+            --stake "$VALIDATOR_STAKE" \
             --bootstrap "$BOOTSTRAP" &
     fi
     PIDS+=($!)
-    echo "  Started $NODE_ID (PID $!) on port $PORT → bootstrap $BOOTSTRAP"
+    echo "  Started $NODE_ID (PID $!) on port $PORT — validator $i of $NUM_VALIDATORS"
 done
 
 echo ""

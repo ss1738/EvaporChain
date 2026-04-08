@@ -8,7 +8,7 @@ use crate::db::{object_state_to_u8, StateDB};
 use evaporchain_crypto::hash::blake3_hash;
 use evaporchain_crypto::VerkleTrie;
 use evaporchain_types::{Account, AccountAddress, GhostRecord, ObjectId, StateObject};
-use rocksdb::{ColumnFamilyDescriptor, Options, DB};
+use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, Options, DB};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -47,7 +47,8 @@ impl RocksDBStateDB {
         let mut accounts = HashMap::new();
 
         // Load objects
-        let cf_obj = db.cf_handle(CF_OBJECTS).unwrap();
+        let cf_obj = db.cf_handle(CF_OBJECTS)
+            .ok_or_else(|| format!("missing column family: {CF_OBJECTS}"))?;
         let iter = db.iterator_cf(cf_obj, rocksdb::IteratorMode::Start);
         for item in iter {
             let (key, value) = item.map_err(|e| format!("RocksDB iterator error: {}", e))?;
@@ -66,7 +67,8 @@ impl RocksDBStateDB {
         }
 
         // Load ghosts (with fallback for legacy records without mmr_position)
-        let cf_ghost = db.cf_handle(CF_GHOSTS).unwrap();
+        let cf_ghost = db.cf_handle(CF_GHOSTS)
+            .ok_or_else(|| format!("missing column family: {CF_GHOSTS}"))?;
         let mut ghost_migrated = 0u32;
         let iter = db.iterator_cf(cf_ghost, rocksdb::IteratorMode::Start);
         for item in iter {
@@ -89,7 +91,8 @@ impl RocksDBStateDB {
         }
         // Re-persist migrated ghosts in the current format and compact
         if ghost_migrated > 0 {
-            let cf_g = db.cf_handle(CF_GHOSTS).unwrap();
+            let cf_g = db.cf_handle(CF_GHOSTS)
+                .ok_or_else(|| format!("missing column family: {CF_GHOSTS}"))?;
             for ghost in ghosts.values() {
                 let val = bincode::serialize(ghost).expect("serialize ghost");
                 db.put_cf(cf_g, ghost.object_id, val).expect("migrate ghost to RocksDB");
@@ -100,7 +103,8 @@ impl RocksDBStateDB {
         }
 
         // Load accounts
-        let cf_acct = db.cf_handle(CF_ACCOUNTS).unwrap();
+        let cf_acct = db.cf_handle(CF_ACCOUNTS)
+            .ok_or_else(|| format!("missing column family: {CF_ACCOUNTS}"))?;
         let iter = db.iterator_cf(cf_acct, rocksdb::IteratorMode::Start);
         for item in iter {
             let (key, value) = item.map_err(|e| format!("RocksDB iterator error: {}", e))?;
@@ -141,30 +145,43 @@ impl RocksDBStateDB {
         !self.accounts.is_empty()
     }
 
+    /// Get a column family handle, panicking with a clear message if missing.
+    /// Column families are created at open time, so this should never fail
+    /// unless the DB is corrupted.
+    fn cf(&self, name: &str) -> &ColumnFamily {
+        self.db.cf_handle(name).unwrap_or_else(|| {
+            panic!(
+                "FATAL: RocksDB column family '{}' missing — database may be corrupted. \
+                 Delete the data directory and restart.",
+                name
+            )
+        })
+    }
+
     fn persist_object(&self, obj: &StateObject) {
-        let cf = self.db.cf_handle(CF_OBJECTS).unwrap();
+        let cf = self.cf(CF_OBJECTS);
         let value = bincode::serialize(obj).expect("serialize object");
         self.db.put_cf(cf, obj.id, value).expect("write object to RocksDB");
     }
 
     fn delete_object_disk(&self, id: &ObjectId) {
-        let cf = self.db.cf_handle(CF_OBJECTS).unwrap();
+        let cf = self.cf(CF_OBJECTS);
         self.db.delete_cf(cf, id).expect("delete object from RocksDB");
     }
 
     fn persist_ghost(&self, ghost: &GhostRecord) {
-        let cf = self.db.cf_handle(CF_GHOSTS).unwrap();
+        let cf = self.cf(CF_GHOSTS);
         let value = bincode::serialize(ghost).expect("serialize ghost");
         self.db.put_cf(cf, ghost.object_id, value).expect("write ghost to RocksDB");
     }
 
     fn delete_ghost_disk(&self, id: &ObjectId) {
-        let cf = self.db.cf_handle(CF_GHOSTS).unwrap();
+        let cf = self.cf(CF_GHOSTS);
         self.db.delete_cf(cf, id).expect("delete ghost from RocksDB");
     }
 
     fn persist_account(&self, account: &Account) {
-        let cf = self.db.cf_handle(CF_ACCOUNTS).unwrap();
+        let cf = self.cf(CF_ACCOUNTS);
         let value = bincode::serialize(account).expect("serialize account");
         self.db.put_cf(cf, account.address, value).expect("write account to RocksDB");
     }
@@ -190,7 +207,11 @@ fn deserialize_legacy_ghost(data: &[u8], id: &ObjectId) -> Result<GhostRecord, B
     owner.copy_from_slice(&data[offset..offset + 32]);
     offset += 32;
 
-    let evaporated_at = u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap());
+    let evaporated_at = u64::from_le_bytes(
+        data[offset..offset + 8]
+            .try_into()
+            .map_err(|_| Box::new(bincode::ErrorKind::Custom("invalid evaporated_at bytes".into())))?,
+    );
     offset += 8;
 
     let mut data_hash = [0u8; 32];
@@ -198,7 +219,11 @@ fn deserialize_legacy_ghost(data: &[u8], id: &ObjectId) -> Result<GhostRecord, B
     offset += 32;
 
     // bincode encodes Vec<u8> with a u64 length prefix
-    let data_len = u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap()) as usize;
+    let data_len = u64::from_le_bytes(
+        data[offset..offset + 8]
+            .try_into()
+            .map_err(|_| Box::new(bincode::ErrorKind::Custom("invalid data_len bytes".into())))?,
+    ) as usize;
     offset += 8;
 
     if offset + data_len > data.len() {
@@ -214,7 +239,7 @@ fn deserialize_legacy_ghost(data: &[u8], id: &ObjectId) -> Result<GhostRecord, B
         owner,
         evaporated_at,
         data_hash,
-        original_data,
+        original_data: Some(original_data),
         mmr_position: None,
     })
 }
@@ -291,7 +316,9 @@ impl StateDB for RocksDBStateDB {
             self.persist_account(&account);
             self.accounts.insert(*addr, account);
         }
-        self.accounts.get_mut(addr).unwrap()
+        self.accounts
+            .get_mut(addr)
+            .expect("account must exist: just inserted above")
     }
 
     fn all_account_addresses(&self) -> Vec<AccountAddress> {
@@ -342,7 +369,7 @@ impl StateDB for RocksDBStateDB {
 /// or get_or_create_account() followed by balance/nonce changes.
 impl RocksDBStateDB {
     pub fn flush_accounts(&self) {
-        let cf = self.db.cf_handle(CF_ACCOUNTS).unwrap();
+        let cf = self.cf(CF_ACCOUNTS);
         for (_, account) in &self.accounts {
             let value = bincode::serialize(account).expect("serialize account");
             self.db.put_cf(cf, account.address, value).expect("flush account to RocksDB");
@@ -350,7 +377,7 @@ impl RocksDBStateDB {
     }
 
     pub fn flush_objects(&self) {
-        let cf = self.db.cf_handle(CF_OBJECTS).unwrap();
+        let cf = self.cf(CF_OBJECTS);
         for (_, obj) in &self.objects {
             let value = bincode::serialize(obj).expect("serialize object");
             self.db.put_cf(cf, obj.id, value).expect("flush object to RocksDB");

@@ -1,4 +1,6 @@
 pub mod fees;
+pub mod genesis;
+pub mod rewards;
 
 use evaporchain_contracts::{ContractEngine, ContractTemplate};
 use evaporchain_crypto::signatures::{MlDsaVerifier, Verifier};
@@ -8,6 +10,7 @@ use evaporchain_state::{EvaporationEngine, RefreshEngine};
 use evaporchain_types::{
     Block, CallContractTx, CallScriptTx, CreateObjectTx, DeployContractTx, DeployScriptTx,
     Epoch, ObjectState, RefreshTx, StateObject, Transaction, TransferTx,
+    ValidatorExitTx, ValidatorStakeTx,
 };
 use thiserror::Error;
 use tracing::{debug, info};
@@ -47,6 +50,8 @@ pub enum ExecutionError {
     ContractError(String),
     #[error("script error: {0}")]
     ScriptError(String),
+    #[error("block gas limit exceeded: used {used}, limit {limit}")]
+    BlockGasLimitExceeded { used: u64, limit: u64 },
 }
 
 /// Result of executing a single block.
@@ -84,6 +89,8 @@ const GAS_DEPLOY_CONTRACT: u64 = 100_000;
 const GAS_CALL_CONTRACT: u64 = 40_000;
 const GAS_DEPLOY_SCRIPT: u64 = 150_000;
 const GAS_CALL_SCRIPT: u64 = 50_000;
+const GAS_VALIDATOR_STAKE: u64 = 50_000;
+const GAS_VALIDATOR_EXIT: u64 = 30_000;
 
 /// Simple executor that processes transactions sequentially and runs
 /// evaporation at the end of each block.
@@ -91,7 +98,7 @@ pub struct SimpleExecutor {
     evaporation_engine: EvaporationEngine,
     verify_signatures: bool,
     fee_controller: Option<fees::PidFeeController>,
-    /// Gas limit per block (0 = unlimited). Used by PID controller for utilization.
+    /// Gas limit per block (0 = unlimited). Transactions exceeding this limit are skipped.
     pub block_gas_limit: u64,
     /// Smart contract engine (template-based).
     pub contract_engine: ContractEngine,
@@ -180,6 +187,8 @@ impl SimpleExecutor {
             Transaction::CallContract(_) => GAS_CALL_CONTRACT,
             Transaction::DeployScript(_) => GAS_DEPLOY_SCRIPT,
             Transaction::CallScript(_) => GAS_CALL_SCRIPT,
+            Transaction::ValidatorStake(_) => GAS_VALIDATOR_STAKE,
+            Transaction::ValidatorExit(_) => GAS_VALIDATOR_EXIT,
         }
     }
 
@@ -409,6 +418,71 @@ impl SimpleExecutor {
         );
         Ok(())
     }
+
+    /// Execute a validator staking transaction.
+    /// Locks `stake_amount` from the validator's balance.
+    fn execute_validator_stake(
+        &self,
+        db: &mut dyn StateDB,
+        tx: &ValidatorStakeTx,
+    ) -> Result<(), ExecutionError> {
+        if tx.stake_amount == 0 {
+            return Err(ExecutionError::ZeroAmount);
+        }
+
+        let sender = db.get_or_create_account(&tx.validator_address);
+        if sender.nonce != tx.nonce {
+            return Err(ExecutionError::InvalidNonce {
+                expected: sender.nonce,
+                got: tx.nonce,
+            });
+        }
+        if sender.balance < tx.stake_amount {
+            return Err(ExecutionError::InsufficientBalance {
+                account: hex::encode(tx.validator_address),
+                available: sender.balance,
+                required: tx.stake_amount,
+            });
+        }
+
+        // Lock stake by deducting from balance
+        sender.balance -= tx.stake_amount;
+        sender.nonce += 1;
+
+        debug!(
+            validator = hex::encode(tx.validator_address),
+            stake = tx.stake_amount,
+            validator_id = tx.validator_id,
+            "Validator stake locked"
+        );
+
+        Ok(())
+    }
+
+    /// Execute a validator exit transaction.
+    /// Marks the validator as exiting (the consensus layer handles the unbonding period).
+    fn execute_validator_exit(
+        &self,
+        db: &mut dyn StateDB,
+        tx: &ValidatorExitTx,
+    ) -> Result<(), ExecutionError> {
+        let sender = db.get_or_create_account(&tx.validator_address);
+        if sender.nonce != tx.nonce {
+            return Err(ExecutionError::InvalidNonce {
+                expected: sender.nonce,
+                got: tx.nonce,
+            });
+        }
+        sender.nonce += 1;
+
+        debug!(
+            validator = hex::encode(tx.validator_address),
+            validator_id = tx.validator_id,
+            "Validator exit requested"
+        );
+
+        Ok(())
+    }
 }
 
 impl ExecutionEngine for SimpleExecutor {
@@ -436,6 +510,18 @@ impl ExecutionEngine for SimpleExecutor {
             }
 
             let tx_gas = Self::estimate_gas(tx);
+
+            // Enforce per-block gas limit: skip transactions that would exceed it
+            if self.block_gas_limit > 0 && gas_used + tx_gas > self.block_gas_limit {
+                debug!(
+                    gas_used,
+                    tx_gas,
+                    block_gas_limit = self.block_gas_limit,
+                    "Skipping transaction: block gas limit would be exceeded"
+                );
+                txs_failed += 1;
+                continue;
+            }
 
             // Compute and deduct fees BEFORE execution (if fee controller enabled)
             let tx_fee = if let Some(fc) = &self.fee_controller {
@@ -487,6 +573,8 @@ impl ExecutionEngine for SimpleExecutor {
                 Transaction::CallContract(call) => self.execute_call_contract(call),
                 Transaction::DeployScript(deploy) => self.execute_deploy_script(deploy, block.epoch),
                 Transaction::CallScript(call) => self.execute_call_script(call),
+                Transaction::ValidatorStake(stake) => self.execute_validator_stake(db, stake),
+                Transaction::ValidatorExit(exit) => self.execute_validator_exit(db, exit),
             };
 
             match result {
@@ -623,6 +711,14 @@ mod tests {
             Transaction::CallScript(c) => {
                 c.signature = Some(sig);
                 c.public_key = Some(pk);
+            }
+            Transaction::ValidatorStake(v) => {
+                v.signature = Some(sig);
+                v.public_key = Some(pk);
+            }
+            Transaction::ValidatorExit(v) => {
+                v.signature = Some(sig);
+                v.public_key = Some(pk);
             }
         }
     }
@@ -991,7 +1087,7 @@ mod tests {
 
         let ghost = db.get_ghost(&obj_id(1)).unwrap();
         assert_eq!(ghost.evaporated_at, 6);
-        assert_eq!(ghost.original_data, vec![0xAB]);
+        assert_eq!(ghost.original_data, Some(vec![0xAB]));
     }
 
     // ─── Refresh Saves Object from Evaporation ───
@@ -1053,7 +1149,7 @@ mod tests {
             owner: addr(1),
             evaporated_at: 50,
             data_hash: [0u8; 32],
-            original_data: vec![0xCA, 0xFE],
+            original_data: Some(vec![0xCA, 0xFE]),
             mmr_position: None,
         });
 
@@ -1824,5 +1920,270 @@ contract Counter {
 
         // Balance should only reflect the transfer, not gas
         assert_eq!(db.get_account(&addr(1)).unwrap().balance, 900);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Phase 5: Stress Tests
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn stress_1000_transfers_single_block() {
+        let mut db = InMemoryStateDB::new();
+        let mut executor = SimpleExecutor::new(7);
+
+        // Fund 100 accounts with 1M each
+        for i in 1..=100u8 {
+            fund_account(&mut db, i, 1_000_000);
+        }
+
+        // Track nonces locally so we don't mutate the DB before execution
+        let mut nonces = std::collections::HashMap::<u8, u64>::new();
+
+        // Create 1000 transfers between random pairs
+        let mut txs = Vec::with_capacity(1000);
+        for i in 0..1000u32 {
+            let from_idx = (i % 100) as u8 + 1;
+            let to_idx = ((i + 37) % 100) as u8 + 1;
+            if from_idx == to_idx {
+                continue;
+            }
+            let nonce = *nonces.entry(from_idx).or_insert(0);
+            txs.push(Transaction::Transfer(TransferTx {
+                from: addr(from_idx),
+                to: addr(to_idx),
+                amount: 10,
+                nonce,
+                signature: None,
+                public_key: None,
+            }));
+            *nonces.entry(from_idx).or_insert(0) += 1;
+        }
+
+        let block = make_block(1, 1, txs);
+        let result = executor.execute_block(&mut db, &block).unwrap();
+
+        assert!(
+            result.txs_executed > 900,
+            "Expected >900 txs executed, got {}",
+            result.txs_executed
+        );
+        println!(
+            "Stress 1000 transfers: {} executed, {} failed",
+            result.txs_executed, result.txs_failed
+        );
+    }
+
+    #[test]
+    fn stress_rapid_epoch_decay() {
+        let mut db = InMemoryStateDB::new();
+        let mut executor = SimpleExecutor::new(7);
+
+        fund_account(&mut db, 1, 10_000_000);
+        // Energy 1000, half_life 3 → needs ~30 epochs to reach 0, +7 grace = 37 to evaporate
+        for i in 0..50u8 {
+            db.put_object(StateObject {
+                id: obj_id(i + 1),
+                owner: addr(1),
+                data: vec![0xAB; 64],
+                energy: 1000,
+                half_life: 3,
+                created_at: 0,
+                last_refreshed: 0,
+                state: ObjectState::Active,
+                grace_epoch: None,
+            });
+        }
+
+        for epoch in 1..=50u64 {
+            let block = make_block(epoch, epoch, vec![]);
+            executor.execute_block(&mut db, &block).unwrap();
+        }
+
+        let active_count = (1..=50u8)
+            .filter(|i| {
+                db.get_object(&obj_id(*i))
+                    .map(|o| o.energy > 0)
+                    .unwrap_or(false)
+            })
+            .count();
+        let ghost_count = db.all_ghost_ids().len();
+
+        println!(
+            "Stress decay: {} still active, {} evaporated after 50 epochs",
+            active_count, ghost_count
+        );
+        assert!(
+            ghost_count > 30,
+            "Expected most objects evaporated, got only {} ghosts",
+            ghost_count
+        );
+    }
+
+    #[test]
+    fn stress_fee_controller_rapid_utilization_swings() {
+        use crate::fees::PidFeeController;
+
+        let mut controller = PidFeeController::new(0.5, 0.1, 0.01, 0.05, 1000, 1, 1_000_000_000);
+
+        let mut fees = Vec::with_capacity(100);
+        for i in 0..100u64 {
+            let used = if i % 2 == 0 { 1_000_000 } else { 0 };
+            let new_fee = controller.update(used, 1_000_000);
+            fees.push(new_fee);
+        }
+
+        for (i, fee) in fees.iter().enumerate() {
+            assert!(*fee > 0, "Fee should never be zero (block {i})");
+            assert!(
+                *fee < 1_000_000_000,
+                "Fee should not explode: {} at block {i}",
+                fee
+            );
+        }
+
+        let last_10_range = fees[90..].iter().max().unwrap() - fees[90..].iter().min().unwrap();
+        println!(
+            "Fee controller: final fee={}, last-10 range={}, min={}, max={}",
+            fees.last().unwrap(),
+            last_10_range,
+            fees.iter().min().unwrap(),
+            fees.iter().max().unwrap()
+        );
+    }
+
+    #[test]
+    fn stress_fee_controller_sustained_full_utilization() {
+        use crate::fees::PidFeeController;
+
+        let mut controller = PidFeeController::new(0.5, 0.1, 0.01, 0.05, 100, 1, 1_000_000_000);
+
+        let mut fee = 100;
+        for _ in 0..200 {
+            fee = controller.update(1_000_000, 1_000_000);
+        }
+        assert!(
+            fee > 100,
+            "Fee should rise under sustained full utilization, got {fee}"
+        );
+
+        let peak = fee;
+        for _ in 0..200 {
+            fee = controller.update(0, 1_000_000);
+        }
+        assert!(
+            fee < peak,
+            "Fee should fall under sustained zero utilization: peak={peak}, now={fee}"
+        );
+        println!("Fee controller: peak={peak}, after cooldown={fee}");
+    }
+
+    #[test]
+    fn stress_fee_controller_zero_gas_limit() {
+        use crate::fees::PidFeeController;
+
+        let mut controller = PidFeeController::new(0.5, 0.1, 0.01, 0.05, 1000, 1, 1_000_000_000);
+        let fee = controller.update(0, 0);
+        assert_eq!(fee, 1000, "Zero gas limit should return base_fee unchanged");
+    }
+
+    #[test]
+    fn stress_fee_controller_overflow_boundaries() {
+        use crate::fees::PidFeeController;
+
+        let mut controller = PidFeeController::new(0.5, 0.1, 0.01, 0.05, u64::MAX / 2, 1, u64::MAX);
+        let fee = controller.update(u64::MAX, u64::MAX);
+        assert!(fee > 0, "Fee should remain positive even at overflow boundaries");
+    }
+
+    #[test]
+    fn stress_block_gas_limit_enforcement() {
+        let mut db = InMemoryStateDB::new();
+        let fee_controller = crate::fees::PidFeeController::new(0.5, 0.1, 0.01, 0.05, 1000, 1, 1_000_000_000);
+        let mut executor = SimpleExecutor::new_with_fees(7, fee_controller, 100_000);
+
+        fund_account(&mut db, 1, 10_000_000);
+
+        let txs: Vec<Transaction> = (0..100u64)
+            .map(|i| {
+                Transaction::Transfer(TransferTx {
+                    from: addr(1),
+                    to: addr(2),
+                    amount: 1,
+                    nonce: i,
+                    signature: None,
+                    public_key: None,
+                })
+            })
+            .collect();
+
+        let block = make_block(1, 1, txs);
+        let result = executor.execute_block(&mut db, &block).unwrap();
+
+        assert!(
+            result.txs_executed < 100,
+            "Gas limit should cap execution, but all {} executed",
+            result.txs_executed
+        );
+        println!(
+            "Gas limit stress: {}/{} executed within limit",
+            result.txs_executed, 100
+        );
+    }
+
+    #[test]
+    fn stress_concurrent_object_lifecycle() {
+        let mut db = InMemoryStateDB::new();
+        let mut executor = SimpleExecutor::new(7);
+        fund_account(&mut db, 1, 100_000_000);
+
+        // Epoch 1: Create 100 objects (energy 500, half_life 5)
+        // Energy reaches 0 after ~45 epochs from creation, +7 grace = ~53 to evaporate
+        let create_txs: Vec<Transaction> = (0..100u8)
+            .map(|i| {
+                let mut id = [0u8; 32];
+                id[0] = i + 1;
+                Transaction::CreateObject(CreateObjectTx {
+                    creator: addr(1),
+                    object_id: id,
+                    data: vec![0xAB; 32],
+                    energy: 500,
+                    half_life: 5,
+                    signature: None,
+                    public_key: None,
+                })
+            })
+            .collect();
+        let block1 = make_block(1, 1, create_txs);
+        executor.execute_block(&mut db, &block1).unwrap();
+
+        // Epochs 2-70: Decay + periodic refreshes for every 3rd object
+        for epoch in 2..=70u64 {
+            let mut txs = vec![];
+            // Refresh every 3rd object periodically to keep some alive
+            if epoch % 10 == 0 {
+                for i in (0..100u8).step_by(3) {
+                    txs.push(Transaction::Refresh(RefreshTx {
+                        object_id: obj_id(i + 1),
+                        energy_deposit: 500,
+                        signature: None,
+                        public_key: None,
+                    }));
+                }
+            }
+            let block = make_block(epoch, epoch, txs);
+            executor.execute_block(&mut db, &block).unwrap();
+        }
+
+        let active = (1..=100u8)
+            .filter(|i| db.get_object(&obj_id(*i)).is_some())
+            .count();
+        let ghosts = db.all_ghost_ids().len();
+        println!(
+            "Lifecycle stress: {} active, {} evaporated after 70 epochs",
+            active, ghosts
+        );
+
+        assert!(ghosts > 0, "Some objects should have evaporated");
+        assert!(active > 0, "Some refreshed objects should survive");
     }
 }

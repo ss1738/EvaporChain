@@ -1,3 +1,5 @@
+pub mod genesis;
+
 use serde::{Deserialize, Serialize};
 
 /// 32-byte object identifier.
@@ -54,14 +56,23 @@ pub enum ObjectState {
 }
 
 /// Record left behind when an object evaporates.
-/// Stores enough information to verify the object existed and to allow resurrection.
+/// Stores a compact cryptographic commitment (data_hash) plus an optional
+/// copy of the original data. By default, the node retains original data
+/// for resurrection convenience. In production, data availability is handled
+/// by the DA layer — compact ghosts (original_data = None) save storage
+/// and resurrection requires the caller to supply the original data, which
+/// is verified against data_hash.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GhostRecord {
     pub object_id: ObjectId,
     pub owner: AccountAddress,
     pub evaporated_at: Epoch,
+    /// BLAKE3 hash of the original object data — always stored.
     pub data_hash: [u8; 32],
-    pub original_data: Vec<u8>,
+    /// Original data retained for resurrection. None = compact ghost
+    /// (data must be supplied externally via DA layer for resurrection).
+    #[serde(default)]
+    pub original_data: Option<Vec<u8>>,
     /// Position in the MMR nullifier accumulator (None for legacy ghosts).
     #[serde(default)]
     pub mmr_position: Option<u64>,
@@ -99,6 +110,8 @@ pub enum Transaction {
     CallContract(CallContractTx),
     DeployScript(DeployScriptTx),
     CallScript(CallScriptTx),
+    ValidatorStake(ValidatorStakeTx),
+    ValidatorExit(ValidatorExitTx),
 }
 
 impl Transaction {
@@ -169,6 +182,23 @@ impl Transaction {
                 buf.extend_from_slice(tx.args.as_bytes());
                 buf
             }
+            Transaction::ValidatorStake(tx) => {
+                let mut buf = Vec::with_capacity(1 + 32 + 8 + 8 + 8);
+                buf.push(0x08);
+                buf.extend_from_slice(&tx.validator_address);
+                buf.extend_from_slice(&tx.stake_amount.to_le_bytes());
+                buf.extend_from_slice(&tx.validator_id.to_le_bytes());
+                buf.extend_from_slice(&tx.nonce.to_le_bytes());
+                buf
+            }
+            Transaction::ValidatorExit(tx) => {
+                let mut buf = Vec::with_capacity(1 + 32 + 8 + 8);
+                buf.push(0x09);
+                buf.extend_from_slice(&tx.validator_address);
+                buf.extend_from_slice(&tx.validator_id.to_le_bytes());
+                buf.extend_from_slice(&tx.nonce.to_le_bytes());
+                buf
+            }
         }
     }
 
@@ -182,6 +212,8 @@ impl Transaction {
             Transaction::CallContract(tx) => tx.signature.as_deref(),
             Transaction::DeployScript(tx) => tx.signature.as_deref(),
             Transaction::CallScript(tx) => tx.signature.as_deref(),
+            Transaction::ValidatorStake(tx) => tx.signature.as_deref(),
+            Transaction::ValidatorExit(tx) => tx.signature.as_deref(),
         }
     }
 
@@ -195,6 +227,8 @@ impl Transaction {
             Transaction::CallContract(tx) => tx.public_key.as_deref(),
             Transaction::DeployScript(tx) => tx.public_key.as_deref(),
             Transaction::CallScript(tx) => tx.public_key.as_deref(),
+            Transaction::ValidatorStake(tx) => tx.public_key.as_deref(),
+            Transaction::ValidatorExit(tx) => tx.public_key.as_deref(),
         }
     }
 
@@ -209,6 +243,8 @@ impl Transaction {
             Transaction::DeployScript(tx) => Some(&tx.deployer),
             Transaction::CallScript(tx) => Some(&tx.caller),
             Transaction::Refresh(_) => None, // Refresh has no sender address field
+            Transaction::ValidatorStake(tx) => Some(&tx.validator_address),
+            Transaction::ValidatorExit(tx) => Some(&tx.validator_address),
         }
     }
 }
@@ -321,6 +357,42 @@ pub struct CallScriptTx {
     pub public_key: Option<Vec<u8>>,
 }
 
+/// Stake tokens as a validator (or increase existing stake).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidatorStakeTx {
+    /// Validator address (same as staker address).
+    pub validator_address: AccountAddress,
+    /// Amount to stake (transferred from balance to stake).
+    pub stake_amount: u64,
+    /// Validator ID to register or update.
+    pub validator_id: u64,
+    /// Sender nonce.
+    pub nonce: u64,
+    /// BLS12-381 public key for consensus (hex-encoded, 48 bytes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bls_public_key: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<Vec<u8>>,
+}
+
+/// Request to exit the validator set and begin unbonding.
+/// Stake is locked for `unbonding_period` epochs after this tx is processed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidatorExitTx {
+    /// Validator address.
+    pub validator_address: AccountAddress,
+    /// Validator ID to exit.
+    pub validator_id: u64,
+    /// Sender nonce.
+    pub nonce: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<Vec<u8>>,
+}
+
 /// Commitment to the global state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StateCommitment {
@@ -363,8 +435,10 @@ pub fn energy_at_epoch(initial: Energy, half_life: HalfLife, epochs_elapsed: u64
 
     let after_halvings = initial >> full_halvings;
 
-    // Linear interpolation for the fractional part between halvings
-    let fractional_decay = after_halvings * remainder / (2 * half_life);
+    // Linear interpolation for the fractional part between halvings.
+    // Use u128 to avoid overflow on large values.
+    let fractional_decay =
+        (after_halvings as u128 * remainder as u128 / (2u128 * half_life as u128)) as u64;
     after_halvings.saturating_sub(fractional_decay)
 }
 
@@ -420,5 +494,79 @@ mod tests {
         assert_eq!(obj.energy_at(15), 500);
         // At epoch 5 (same as refresh), no decay
         assert_eq!(obj.energy_at(5), 1000);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Property-Based Tests (Audit Hardening)
+// ═══════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// Energy never increases with time (monotonically non-increasing).
+        #[test]
+        fn energy_monotonically_decreasing(
+            initial in 1u64..1_000_000,
+            half_life in 1u64..1000,
+            t1 in 0u64..500,
+            dt in 0u64..500,
+        ) {
+            let t2 = t1 + dt;
+            let e1 = energy_at_epoch(initial, half_life, t1);
+            let e2 = energy_at_epoch(initial, half_life, t2);
+            prop_assert!(e2 <= e1, "energy increased: e({})={} > e({})={}", t1, e1, t2, e2);
+        }
+
+        /// Energy at t=0 equals the initial value.
+        #[test]
+        fn energy_at_zero_is_initial(initial in 0u64..u64::MAX, half_life in 1u64..1000) {
+            prop_assert_eq!(energy_at_epoch(initial, half_life, 0), initial);
+        }
+
+        /// Energy after exactly one half-life is exactly half (for exact halvings).
+        #[test]
+        fn energy_halves_at_half_life(initial in 0u64..1_000_000, half_life in 1u64..1000) {
+            let result = energy_at_epoch(initial, half_life, half_life);
+            prop_assert_eq!(result, initial / 2);
+        }
+
+        /// Energy after exactly two half-lives is exactly one quarter.
+        #[test]
+        fn energy_quarters_at_two_half_lives(initial in 0u64..1_000_000, half_life in 1u64..500) {
+            let result = energy_at_epoch(initial, half_life, 2 * half_life);
+            prop_assert_eq!(result, initial / 4);
+        }
+
+        /// Energy never overflows or panics for any valid inputs.
+        #[test]
+        fn energy_never_panics(
+            initial in any::<u64>(),
+            half_life in any::<u64>(),
+            elapsed in any::<u64>(),
+        ) {
+            let _ = energy_at_epoch(initial, half_life, elapsed);
+        }
+
+        /// Energy eventually reaches zero for any positive initial and half_life.
+        #[test]
+        fn energy_eventually_reaches_zero(
+            initial in 1u64..1_000_000,
+            half_life in 1u64..100,
+        ) {
+            // After 64 full halvings, any u64 initial should be 0
+            let elapsed = 64 * half_life;
+            let result = energy_at_epoch(initial, half_life, elapsed);
+            prop_assert_eq!(result, 0, "energy should be 0 after 64 half-lives");
+        }
+
+        /// Energy with zero half_life is always zero.
+        #[test]
+        fn zero_half_life_gives_zero(initial in any::<u64>(), elapsed in any::<u64>()) {
+            prop_assert_eq!(energy_at_epoch(initial, 0, elapsed), 0);
+        }
     }
 }

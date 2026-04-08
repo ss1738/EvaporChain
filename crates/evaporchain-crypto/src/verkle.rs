@@ -12,7 +12,7 @@ use pasta_curves::group::ff::{Field, PrimeField};
 use pasta_curves::group::{Curve, Group, GroupEncoding};
 use pasta_curves::{Ep, Fq};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 // ─────────────────────── Constants ───────────────────────────────────────
@@ -65,7 +65,7 @@ fn point_to_bytes(point: &Ep) -> [u8; 32] {
 /// Internal node: commits to up to 256 children.
 #[derive(Clone, Debug)]
 struct InternalNode {
-    children: HashMap<u8, Node>,
+    children: BTreeMap<u8, Node>,
 }
 
 /// Leaf node: stores a key-value pair.
@@ -91,7 +91,7 @@ impl Default for Node {
 impl InternalNode {
     fn new() -> Self {
         Self {
-            children: HashMap::new(),
+            children: BTreeMap::new(),
         }
     }
 }
@@ -100,7 +100,7 @@ impl InternalNode {
 
 /// Compute the Pedersen vector commitment for an internal node.
 /// C = Σ(child_hash_as_scalar_i · G_i) for all non-empty children.
-fn commit_internal(children: &HashMap<u8, Node>) -> Ep {
+fn commit_internal(children: &BTreeMap<u8, Node>) -> Ep {
     let gens = generators();
     let mut commitment = Ep::identity();
 
@@ -391,8 +391,16 @@ impl VerkleTrie {
     /// Verify a Verkle proof against a root commitment.
     pub fn verify(proof: &VerkleProof, expected_root: &[u8; 32]) -> bool {
         if proof.depth == 0 {
-            // Empty trie or key at root level
-            return *expected_root == [0u8; 32] && proof.value.is_none();
+            if proof.value.is_none() {
+                // Empty trie: root should be the empty hash
+                return *expected_root == [0u8; 32];
+            }
+            // Single leaf at root (no internal nodes): verify leaf hash = root
+            let mut data = Vec::with_capacity(64);
+            data.extend_from_slice(&proof.key);
+            data.extend_from_slice(proof.value.as_ref().unwrap());
+            let leaf_hash = *blake3::hash(&data).as_bytes();
+            return leaf_hash == *expected_root;
         }
 
         if proof.commitments.len() != proof.depth
@@ -749,5 +757,99 @@ mod tests {
         // For a trie with 20 entries, depth should be small
         assert!(proof.depth <= MAX_DEPTH);
         assert!(proof.depth > 0);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Property-Based Tests (Audit Hardening)
+// ═══════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn arb_key() -> impl Strategy<Value = [u8; 32]> {
+        any::<[u8; 32]>()
+    }
+
+    fn arb_value() -> impl Strategy<Value = [u8; 32]> {
+        any::<[u8; 32]>()
+    }
+
+    proptest! {
+        /// Insert then get always retrieves the value.
+        #[test]
+        fn insert_get_roundtrip(key in arb_key(), value in arb_value()) {
+            let mut trie = VerkleTrie::new();
+            trie.insert(key, value);
+            prop_assert_eq!(trie.get(&key), Some(value));
+        }
+
+        /// Root is deterministic: same insertions produce same root.
+        #[test]
+        fn root_deterministic(
+            entries in proptest::collection::vec((arb_key(), arb_value()), 1..20)
+        ) {
+            let mut trie1 = VerkleTrie::new();
+            let mut trie2 = VerkleTrie::new();
+            for (k, v) in &entries {
+                trie1.insert(*k, *v);
+                trie2.insert(*k, *v);
+            }
+            prop_assert_eq!(trie1.root(), trie2.root());
+        }
+
+        /// Proof of an inserted key always verifies.
+        #[test]
+        fn proof_verifies_for_inserted_key(
+            entries in proptest::collection::vec((arb_key(), arb_value()), 1..10),
+            query_idx in 0usize..10,
+        ) {
+            let mut trie = VerkleTrie::new();
+            for (k, v) in &entries {
+                trie.insert(*k, *v);
+            }
+            let idx = query_idx % entries.len();
+            let (key, _) = &entries[idx];
+            let root = trie.root();
+            let proof = trie.prove(key);
+            prop_assert!(VerkleTrie::verify(&proof, &root));
+        }
+
+        /// Deleting a key makes get return None.
+        #[test]
+        fn delete_removes_key(key in arb_key(), value in arb_value()) {
+            let mut trie = VerkleTrie::new();
+            trie.insert(key, value);
+            trie.delete(&key);
+            prop_assert_eq!(trie.get(&key), None);
+        }
+
+        /// Updating a key changes the root.
+        #[test]
+        fn update_changes_root(key in arb_key(), v1 in arb_value(), v2 in arb_value()) {
+            prop_assume!(v1 != v2);
+            let mut trie = VerkleTrie::new();
+            trie.insert(key, v1);
+            let root1 = trie.root();
+            trie.insert(key, v2);
+            let root2 = trie.root();
+            prop_assert_ne!(root1, root2);
+        }
+
+        /// Trie length matches number of unique keys inserted.
+        #[test]
+        fn len_matches_unique_keys(
+            entries in proptest::collection::vec((arb_key(), arb_value()), 1..30)
+        ) {
+            let mut trie = VerkleTrie::new();
+            let mut unique_keys = std::collections::BTreeSet::new();
+            for (k, v) in &entries {
+                trie.insert(*k, *v);
+                unique_keys.insert(*k);
+            }
+            prop_assert_eq!(trie.len(), unique_keys.len());
+        }
     }
 }

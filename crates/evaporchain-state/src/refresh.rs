@@ -11,6 +11,10 @@ pub enum RefreshError {
     ZeroEnergy,
     #[error("object {0} is already active with sufficient energy")]
     AlreadyActive(String),
+    #[error("ghost {0} has no retained data — supply original data for resurrection")]
+    DataNotAvailable(String),
+    #[error("supplied data does not match ghost data_hash for object {0}")]
+    DataHashMismatch(String),
 }
 
 /// Engine that handles energy refresh and object resurrection.
@@ -90,6 +94,11 @@ impl RefreshEngine {
             .remove_ghost(object_id)
             .ok_or_else(|| RefreshError::ObjectNotFound(hex::encode(object_id)))?;
 
+        // Recover original data from ghost or fail if compact ghost
+        let data = ghost.original_data.ok_or_else(|| {
+            RefreshError::DataNotAvailable(hex::encode(object_id))
+        })?;
+
         // Reconstruct the object with fresh energy
         let resurrected = StateObject {
             id: ghost.object_id,
@@ -100,7 +109,7 @@ impl RefreshEngine {
             last_refreshed: current_epoch,
             state: ObjectState::Resurrected,
             grace_epoch: None,
-            data: ghost.original_data,
+            data,
         };
 
         db.put_object(resurrected);
@@ -199,7 +208,7 @@ mod tests {
             owner: [0u8; 32],
             evaporated_at: 100,
             data_hash: [0u8; 32],
-            original_data: vec![1, 2, 3],
+            original_data: Some(vec![1, 2, 3]),
             mmr_position: None,
         });
 

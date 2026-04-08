@@ -60,10 +60,38 @@ impl Mempool {
         true
     }
 
+    /// Add a high-priority transaction to the FRONT of the pool.
+    /// Used for API-submitted transactions that should be included before demo txs.
+    pub fn submit_priority(&mut self, tx: Transaction) -> bool {
+        if self.pending.len() >= self.max_size {
+            self.rejected_count += 1;
+            return false;
+        }
+        let tx_size = Self::estimate_tx_size(&tx);
+        if tx_size > MAX_TX_SIZE_BYTES {
+            self.rejected_count += 1;
+            return false;
+        }
+        self.total_bytes += tx_size;
+        self.pending.push_front(tx);
+        true
+    }
+
     /// Drain all pending transactions for inclusion in the next block.
     pub fn drain(&mut self) -> Vec<Transaction> {
         self.total_bytes = 0;
         self.pending.drain(..).collect()
+    }
+
+    /// Take up to `n` transactions from the front of the pool, leaving the rest.
+    pub fn take(&mut self, n: usize) -> Vec<Transaction> {
+        let take_count = n.min(self.pending.len());
+        let taken: Vec<Transaction> = self.pending.drain(..take_count).collect();
+        // Recalculate total_bytes for remaining
+        self.total_bytes = self.pending.iter()
+            .map(|tx| serde_json::to_vec(tx).map(|v| v.len()).unwrap_or(0))
+            .sum();
+        taken
     }
 
     /// Number of pending transactions.
@@ -126,6 +154,17 @@ impl Mempool {
             }
             Transaction::CallScript(t) => {
                 32 + 8 + t.method.len() + t.args.len() + 16
+                    + t.signature.as_ref().map_or(0, |s| s.len())
+                    + t.public_key.as_ref().map_or(0, |p| p.len())
+            }
+            Transaction::ValidatorStake(t) => {
+                32 + 8 + 8 + 8
+                    + t.bls_public_key.as_ref().map_or(0, |k| k.len())
+                    + t.signature.as_ref().map_or(0, |s| s.len())
+                    + t.public_key.as_ref().map_or(0, |p| p.len())
+            }
+            Transaction::ValidatorExit(t) => {
+                32 + 8 + 8
                     + t.signature.as_ref().map_or(0, |s| s.len())
                     + t.public_key.as_ref().map_or(0, |p| p.len())
             }

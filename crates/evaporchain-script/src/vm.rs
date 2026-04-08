@@ -23,6 +23,12 @@ const GAS_MAP_SET: u64 = 20;
 const GAS_REQUIRE: u64 = 5;
 const GAS_EMIT: u64 = 8;
 const GAS_RETURN: u64 = 1;
+const GAS_MOD: u64 = 5;
+
+/// Maximum stack depth to prevent OOM.
+const MAX_STACK_DEPTH: usize = 1024;
+/// Maximum loop iterations per method call (gas also limits this, but this is a hard cap).
+const MAX_LOOP_ITERATIONS: u64 = 100_000;
 
 // ─── VM ─────────────────────────────────────────────────────────────────────
 
@@ -59,8 +65,14 @@ impl EvaporVM {
         Ok(())
     }
 
-    fn push(&mut self, val: Value) {
+    fn push(&mut self, val: Value) -> Result<(), ScriptError> {
+        if self.stack.len() >= MAX_STACK_DEPTH {
+            return Err(ScriptError::Runtime(format!(
+                "stack overflow: depth exceeded {MAX_STACK_DEPTH}"
+            )));
+        }
         self.stack.push(val);
+        Ok(())
     }
 
     fn pop(&mut self) -> Result<Value, ScriptError> {
@@ -83,10 +95,11 @@ impl EvaporVM {
 
         // Push args onto stack (left-to-right, so first arg is deepest)
         for arg in args {
-            self.push(arg);
+            self.push(arg)?;
         }
 
         let mut ip = *start_offset;
+        let mut loop_counter: u64 = 0;
 
         loop {
             if ip >= bytecode.opcodes.len() {
@@ -98,7 +111,7 @@ impl EvaporVM {
             match op {
                 Op::Push(val) => {
                     self.charge_gas(GAS_PUSH)?;
-                    self.push(val.clone());
+                    self.push(val.clone())?;
                 }
 
                 Op::Pop => {
@@ -113,7 +126,7 @@ impl EvaporVM {
                         .get(name)
                         .cloned()
                         .unwrap_or(Value::Null);
-                    self.push(val);
+                    self.push(val)?;
                 }
 
                 Op::Store(name) => {
@@ -129,7 +142,7 @@ impl EvaporVM {
                         .get(field)
                         .cloned()
                         .unwrap_or(Value::Null);
-                    self.push(val);
+                    self.push(val)?;
                 }
 
                 Op::StateStore(field) => {
@@ -143,7 +156,11 @@ impl EvaporVM {
                     let b = self.pop()?;
                     let a = self.pop()?;
                     let result = match (&a, &b) {
-                        (Value::U64(x), Value::U64(y)) => Value::U64(x.wrapping_add(*y)),
+                        (Value::U64(x), Value::U64(y)) => Value::U64(
+                            x.checked_add(*y).ok_or_else(|| {
+                                ScriptError::Runtime("arithmetic overflow: addition".into())
+                            })?,
+                        ),
                         (Value::Str(x), Value::Str(y)) => Value::Str(format!("{x}{y}")),
                         _ => {
                             return Err(ScriptError::Runtime(format!(
@@ -151,21 +168,27 @@ impl EvaporVM {
                             )))
                         }
                     };
-                    self.push(result);
+                    self.push(result)?;
                 }
 
                 Op::Sub => {
                     self.charge_gas(GAS_SUB)?;
                     let b = self.pop()?.as_u64()?;
                     let a = self.pop()?.as_u64()?;
-                    self.push(Value::U64(a.wrapping_sub(b)));
+                    let result = a.checked_sub(b).ok_or_else(|| {
+                        ScriptError::Runtime("arithmetic underflow: subtraction".into())
+                    })?;
+                    self.push(Value::U64(result))?;
                 }
 
                 Op::Mul => {
                     self.charge_gas(GAS_MUL)?;
                     let b = self.pop()?.as_u64()?;
                     let a = self.pop()?.as_u64()?;
-                    self.push(Value::U64(a.wrapping_mul(b)));
+                    let result = a.checked_mul(b).ok_or_else(|| {
+                        ScriptError::Runtime("arithmetic overflow: multiplication".into())
+                    })?;
+                    self.push(Value::U64(result))?;
                 }
 
                 Op::Div => {
@@ -175,80 +198,103 @@ impl EvaporVM {
                     if b == 0 {
                         return Err(ScriptError::Runtime("division by zero".into()));
                     }
-                    self.push(Value::U64(a / b));
+                    self.push(Value::U64(a / b))?;
+                }
+
+                Op::Mod => {
+                    self.charge_gas(GAS_MOD)?;
+                    let b = self.pop()?.as_u64()?;
+                    let a = self.pop()?.as_u64()?;
+                    if b == 0 {
+                        return Err(ScriptError::Runtime("modulo by zero".into()));
+                    }
+                    self.push(Value::U64(a % b))?;
                 }
 
                 Op::Eq => {
                     self.charge_gas(GAS_CMP)?;
                     let b = self.pop()?;
                     let a = self.pop()?;
-                    self.push(Value::Bool(a == b));
+                    self.push(Value::Bool(a == b))?;
                 }
 
                 Op::Neq => {
                     self.charge_gas(GAS_CMP)?;
                     let b = self.pop()?;
                     let a = self.pop()?;
-                    self.push(Value::Bool(a != b));
+                    self.push(Value::Bool(a != b))?;
                 }
 
                 Op::Gt => {
                     self.charge_gas(GAS_CMP)?;
                     let b = self.pop()?.as_u64()?;
                     let a = self.pop()?.as_u64()?;
-                    self.push(Value::Bool(a > b));
+                    self.push(Value::Bool(a > b))?;
                 }
 
                 Op::Lt => {
                     self.charge_gas(GAS_CMP)?;
                     let b = self.pop()?.as_u64()?;
                     let a = self.pop()?.as_u64()?;
-                    self.push(Value::Bool(a < b));
+                    self.push(Value::Bool(a < b))?;
                 }
 
                 Op::Gte => {
                     self.charge_gas(GAS_CMP)?;
                     let b = self.pop()?.as_u64()?;
                     let a = self.pop()?.as_u64()?;
-                    self.push(Value::Bool(a >= b));
+                    self.push(Value::Bool(a >= b))?;
                 }
 
                 Op::Lte => {
                     self.charge_gas(GAS_CMP)?;
                     let b = self.pop()?.as_u64()?;
                     let a = self.pop()?.as_u64()?;
-                    self.push(Value::Bool(a <= b));
+                    self.push(Value::Bool(a <= b))?;
                 }
 
                 Op::And => {
                     self.charge_gas(GAS_LOGIC)?;
                     let b = self.pop()?.as_bool()?;
                     let a = self.pop()?.as_bool()?;
-                    self.push(Value::Bool(a && b));
+                    self.push(Value::Bool(a && b))?;
                 }
 
                 Op::Or => {
                     self.charge_gas(GAS_LOGIC)?;
                     let b = self.pop()?.as_bool()?;
                     let a = self.pop()?.as_bool()?;
-                    self.push(Value::Bool(a || b));
+                    self.push(Value::Bool(a || b))?;
                 }
 
                 Op::Not => {
                     self.charge_gas(GAS_LOGIC)?;
                     let a = self.pop()?.as_bool()?;
-                    self.push(Value::Bool(!a));
+                    self.push(Value::Bool(!a))?;
                 }
 
                 Op::Neg => {
                     self.charge_gas(GAS_SUB)?;
                     let a = self.pop()?.as_u64()?;
-                    // For u64, negation wraps
-                    self.push(Value::U64(0u64.wrapping_sub(a)));
+                    if a > 0 {
+                        return Err(ScriptError::Runtime(
+                            "arithmetic underflow: negation of positive u64".into(),
+                        ));
+                    }
+                    self.push(Value::U64(0))?;
                 }
 
                 Op::Jump(target) => {
                     self.charge_gas(GAS_JUMP)?;
+                    // Backwards jumps are loops — enforce iteration limit
+                    if *target <= ip {
+                        loop_counter += 1;
+                        if loop_counter > MAX_LOOP_ITERATIONS {
+                            return Err(ScriptError::Runtime(format!(
+                                "loop iteration limit exceeded ({MAX_LOOP_ITERATIONS})"
+                            )));
+                        }
+                    }
                     ip = *target;
                     continue;
                 }
@@ -274,7 +320,7 @@ impl EvaporVM {
                 Op::Call(name, arg_count) => {
                     self.charge_gas(GAS_CALL)?;
                     let result = self.call_builtin(name, *arg_count, ctx)?;
-                    self.push(result);
+                    self.push(result)?;
                 }
 
                 Op::MapGet(field) => {
@@ -287,7 +333,7 @@ impl EvaporVM {
                         }
                         _ => Value::U64(0),
                     };
-                    self.push(val);
+                    self.push(val)?;
                 }
 
                 Op::MapSet(field) => {
@@ -424,6 +470,85 @@ impl EvaporVM {
                 Ok(Value::Null)
             }
 
+            // ── Math built-ins ──
+            "min" => {
+                if arg_count != 2 {
+                    return Err(ScriptError::Runtime("min() takes 2 arguments".into()));
+                }
+                let b = self.pop()?.as_u64()?;
+                let a = self.pop()?.as_u64()?;
+                Ok(Value::U64(a.min(b)))
+            }
+
+            "max" => {
+                if arg_count != 2 {
+                    return Err(ScriptError::Runtime("max() takes 2 arguments".into()));
+                }
+                let b = self.pop()?.as_u64()?;
+                let a = self.pop()?.as_u64()?;
+                Ok(Value::U64(a.max(b)))
+            }
+
+            // ── Hashing ──
+            "hash" => {
+                if arg_count != 1 {
+                    return Err(ScriptError::Runtime("hash() takes 1 argument".into()));
+                }
+                let val = self.pop()?;
+                let input = match &val {
+                    Value::Str(s) => s.as_bytes().to_vec(),
+                    Value::U64(n) => n.to_le_bytes().to_vec(),
+                    Value::Address(a) => a.to_vec(),
+                    _ => format!("{val:?}").into_bytes(),
+                };
+                // Use a simple hash → u64 for in-VM use
+                let hash = {
+                    let mut h: u64 = 0xcbf29ce484222325; // FNV-1a offset basis
+                    for byte in &input {
+                        h ^= *byte as u64;
+                        h = h.wrapping_mul(0x100000001b3); // FNV prime
+                    }
+                    h
+                };
+                Ok(Value::U64(hash))
+            }
+
+            // ── String/collection utilities ──
+            "len" => {
+                if arg_count != 1 {
+                    return Err(ScriptError::Runtime("len() takes 1 argument".into()));
+                }
+                let val = self.pop()?;
+                let length = match &val {
+                    Value::Str(s) => s.len() as u64,
+                    Value::Map(m) => m.len() as u64,
+                    _ => {
+                        return Err(ScriptError::Runtime(format!(
+                            "len() not supported for {val:?}"
+                        )))
+                    }
+                };
+                Ok(Value::U64(length))
+            }
+
+            "to_string" => {
+                if arg_count != 1 {
+                    return Err(ScriptError::Runtime(
+                        "to_string() takes 1 argument".into(),
+                    ));
+                }
+                let val = self.pop()?;
+                let s = match val {
+                    Value::U64(n) => n.to_string(),
+                    Value::Bool(b) => b.to_string(),
+                    Value::Str(s) => s,
+                    Value::Address(a) => format!("0x{}", hex::encode(a)),
+                    Value::Null => "null".to_string(),
+                    Value::Map(_) => "<map>".to_string(),
+                };
+                Ok(Value::Str(s))
+            }
+
             other => Err(ScriptError::Runtime(format!(
                 "unknown built-in function: {other}"
             ))),
@@ -485,6 +610,18 @@ mod tests {
 
     fn empty_state() -> HashMap<String, Value> {
         HashMap::new()
+    }
+
+    /// Build a minimal bytecode with a single method from raw opcodes.
+    fn make_bytecode(method: &str, opcodes: Vec<Op>) -> EvaporBytecode {
+        let mut methods = HashMap::new();
+        methods.insert(method.to_string(), 0);
+        EvaporBytecode {
+            methods,
+            opcodes,
+            state_schema: crate::StateSchema { fields: vec![] },
+            name: "Test".to_string(),
+        }
     }
 
     #[test]
@@ -1061,5 +1198,310 @@ contract GraceAware {
                 .unwrap();
 
         assert_eq!(result.events, vec!["entering grace period"]);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Phase 4: New Feature Tests
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_vm_checked_add_overflow() {
+        let ops = vec![
+            Op::Push(Value::U64(u64::MAX)),
+            Op::Push(Value::U64(1)),
+            Op::Add,
+            Op::Return,
+        ];
+        let bytecode = make_bytecode("run", ops);
+        let result = EvaporVM::execute(&bytecode, "run", vec![], empty_state(), &test_ctx());
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        match err {
+            ScriptError::Runtime(msg) => assert!(msg.contains("overflow"), "got: {msg}"),
+            _ => panic!("expected Runtime error, got {err:?}"),
+        }
+    }
+
+    #[test]
+    fn test_vm_checked_sub_underflow() {
+        let ops = vec![
+            Op::Push(Value::U64(5)),
+            Op::Push(Value::U64(10)),
+            Op::Sub,
+            Op::Return,
+        ];
+        let bytecode = make_bytecode("run", ops);
+        let result = EvaporVM::execute(&bytecode, "run", vec![], empty_state(), &test_ctx());
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        match err {
+            ScriptError::Runtime(msg) => assert!(msg.contains("underflow"), "got: {msg}"),
+            _ => panic!("expected Runtime error, got {err:?}"),
+        }
+    }
+
+    #[test]
+    fn test_vm_checked_mul_overflow() {
+        let ops = vec![
+            Op::Push(Value::U64(u64::MAX)),
+            Op::Push(Value::U64(2)),
+            Op::Mul,
+            Op::Return,
+        ];
+        let bytecode = make_bytecode("run", ops);
+        let result = EvaporVM::execute(&bytecode, "run", vec![], empty_state(), &test_ctx());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_vm_modulo() {
+        let ops = vec![
+            Op::Push(Value::U64(17)),
+            Op::Push(Value::U64(5)),
+            Op::Mod,
+            Op::Return,
+        ];
+        let bytecode = make_bytecode("run", ops);
+        let result =
+            EvaporVM::execute(&bytecode, "run", vec![], empty_state(), &test_ctx()).unwrap();
+        assert_eq!(result.return_value, Value::U64(2));
+    }
+
+    #[test]
+    fn test_vm_modulo_by_zero() {
+        let ops = vec![
+            Op::Push(Value::U64(10)),
+            Op::Push(Value::U64(0)),
+            Op::Mod,
+            Op::Return,
+        ];
+        let bytecode = make_bytecode("run", ops);
+        let result = EvaporVM::execute(&bytecode, "run", vec![], empty_state(), &test_ctx());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_vm_builtin_min_max() {
+        // min(10, 20) = 10
+        let ops = vec![
+            Op::Push(Value::U64(10)),
+            Op::Push(Value::U64(20)),
+            Op::Call("min".into(), 2),
+            Op::Return,
+        ];
+        let bytecode = make_bytecode("run", ops);
+        let r = EvaporVM::execute(&bytecode, "run", vec![], empty_state(), &test_ctx()).unwrap();
+        assert_eq!(r.return_value, Value::U64(10));
+
+        // max(10, 20) = 20
+        let ops2 = vec![
+            Op::Push(Value::U64(10)),
+            Op::Push(Value::U64(20)),
+            Op::Call("max".into(), 2),
+            Op::Return,
+        ];
+        let bytecode2 = make_bytecode("run", ops2);
+        let r2 =
+            EvaporVM::execute(&bytecode2, "run", vec![], empty_state(), &test_ctx()).unwrap();
+        assert_eq!(r2.return_value, Value::U64(20));
+    }
+
+    #[test]
+    fn test_vm_builtin_hash() {
+        let ops = vec![
+            Op::Push(Value::Str("hello".into())),
+            Op::Call("hash".into(), 1),
+            Op::Return,
+        ];
+        let bytecode = make_bytecode("run", ops);
+        let r = EvaporVM::execute(&bytecode, "run", vec![], empty_state(), &test_ctx()).unwrap();
+        match r.return_value {
+            Value::U64(h) => assert!(h != 0, "hash should be non-zero"),
+            other => panic!("expected U64, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_vm_builtin_len() {
+        let ops = vec![
+            Op::Push(Value::Str("hello".into())),
+            Op::Call("len".into(), 1),
+            Op::Return,
+        ];
+        let bytecode = make_bytecode("run", ops);
+        let r = EvaporVM::execute(&bytecode, "run", vec![], empty_state(), &test_ctx()).unwrap();
+        assert_eq!(r.return_value, Value::U64(5));
+    }
+
+    #[test]
+    fn test_vm_builtin_to_string() {
+        let ops = vec![
+            Op::Push(Value::U64(42)),
+            Op::Call("to_string".into(), 1),
+            Op::Return,
+        ];
+        let bytecode = make_bytecode("run", ops);
+        let r = EvaporVM::execute(&bytecode, "run", vec![], empty_state(), &test_ctx()).unwrap();
+        assert_eq!(r.return_value, Value::Str("42".into()));
+    }
+
+    #[test]
+    fn test_vm_stack_overflow() {
+        // Push 1025 values to exceed MAX_STACK_DEPTH
+        let mut ops: Vec<Op> = (0..1025)
+            .map(|_| Op::Push(Value::U64(1)))
+            .collect();
+        ops.push(Op::Return);
+        let bytecode = make_bytecode("run", ops);
+        let result = EvaporVM::execute(&bytecode, "run", vec![], empty_state(), &test_ctx());
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        match err {
+            ScriptError::Runtime(msg) => assert!(msg.contains("stack overflow"), "got: {msg}"),
+            _ => panic!("expected Runtime error, got {err:?}"),
+        }
+    }
+
+    #[test]
+    fn test_full_pipeline_while_loop() {
+        let src = r#"
+contract Counter {
+    state { total: u64 = 0 }
+
+    fn sum_to(n: u64) -> u64 {
+        let i: u64 = 0
+        let acc: u64 = 0
+        while i < n {
+            i += 1
+            acc += i
+        }
+        self.total = acc
+        return acc
+    }
+}
+"#;
+        let bytecode = compile_src(src);
+        let ctx = test_ctx();
+        let mut state = HashMap::new();
+        state.insert("total".into(), Value::U64(0));
+
+        let result = EvaporVM::execute(
+            &bytecode,
+            "sum_to",
+            vec![Value::U64(10)],
+            state,
+            &ctx,
+        )
+        .unwrap();
+        // sum 1..=10 = 55
+        assert_eq!(result.return_value, Value::U64(55));
+        assert_eq!(result.state_changes.get("total"), Some(&Value::U64(55)));
+    }
+
+    #[test]
+    fn test_full_pipeline_while_with_gas_limit() {
+        let src = r#"
+contract Looper {
+    state { x: u64 = 0 }
+
+    fn loop_forever() {
+        let i: u64 = 0
+        while i < 1000000 {
+            i += 1
+        }
+    }
+}
+"#;
+        let bytecode = compile_src(src);
+        let ctx = test_ctx();
+        let state = HashMap::new();
+
+        // With a tight gas limit, the loop should run out of gas
+        let result = EvaporVM::execute_with_gas_limit(
+            &bytecode,
+            "loop_forever",
+            vec![],
+            state,
+            &ctx,
+            500,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_full_pipeline_modulo_operator() {
+        let src = r#"
+contract Math {
+    state { x: u64 = 0 }
+
+    fn is_even(n: u64) -> bool {
+        return n % 2 == 0
+    }
+}
+"#;
+        let bytecode = compile_src(src);
+        let ctx = test_ctx();
+
+        let r1 = EvaporVM::execute(
+            &bytecode,
+            "is_even",
+            vec![Value::U64(4)],
+            HashMap::new(),
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(r1.return_value, Value::Bool(true));
+
+        let r2 = EvaporVM::execute(
+            &bytecode,
+            "is_even",
+            vec![Value::U64(7)],
+            HashMap::new(),
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(r2.return_value, Value::Bool(false));
+    }
+
+    #[test]
+    fn test_full_pipeline_checked_arithmetic_in_contract() {
+        // A contract that tries to withdraw more than balance should fail
+        let src = r#"
+contract Vault {
+    state { balance: u64 = 100 }
+
+    fn withdraw(amount: u64) {
+        self.balance -= amount
+    }
+}
+"#;
+        let bytecode = compile_src(src);
+        let ctx = test_ctx();
+        let mut state = HashMap::new();
+        state.insert("balance".into(), Value::U64(100));
+
+        // Withdraw 50 — should succeed
+        let r1 = EvaporVM::execute(
+            &bytecode,
+            "withdraw",
+            vec![Value::U64(50)],
+            state.clone(),
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(
+            r1.state_changes.get("balance"),
+            Some(&Value::U64(50))
+        );
+
+        // Withdraw 200 from 100 — should fail with underflow
+        let r2 = EvaporVM::execute(
+            &bytecode,
+            "withdraw",
+            vec![Value::U64(200)],
+            state,
+            &ctx,
+        );
+        assert!(r2.is_err(), "should fail: 100 - 200 underflows");
     }
 }

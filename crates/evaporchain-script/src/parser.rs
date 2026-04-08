@@ -11,6 +11,7 @@ pub enum Token {
     Let,
     If,
     Else,
+    While,
     Return,
     SelfKw,
     True,
@@ -36,6 +37,7 @@ pub enum Token {
     Minus,
     Star,
     Slash,
+    Percent,
     EqEq,
     Neq,
     Gt,
@@ -122,6 +124,10 @@ pub enum Stmt {
         then_body: Vec<Stmt>,
         else_body: Option<Vec<Stmt>>,
     },
+    While {
+        condition: Expr,
+        body: Vec<Stmt>,
+    },
     Return(Option<Expr>),
     Require {
         condition: Expr,
@@ -146,6 +152,7 @@ pub enum BinOp {
     Sub,
     Mul,
     Div,
+    Mod,
     Eq,
     Neq,
     Gt,
@@ -303,6 +310,7 @@ impl Lexer {
                 "let" => Token::Let,
                 "if" => Token::If,
                 "else" => Token::Else,
+                "while" => Token::While,
                 "return" => Token::Return,
                 "self" => Token::SelfKw,
                 "true" => Token::True,
@@ -357,6 +365,7 @@ impl Lexer {
             }
             '*' => Token::Star,
             '/' => Token::Slash,
+            '%' => Token::Percent,
             '=' => {
                 if self.peek() == Some('=') {
                     self.advance();
@@ -666,13 +675,70 @@ impl Parser {
         match self.peek().clone() {
             Token::Let => self.parse_let(),
             Token::If => self.parse_if(),
+            Token::While => self.parse_while(),
             Token::Return => self.parse_return(),
             Token::SelfKw => self.parse_self_assign_or_expr(),
             Token::Ident(ref name) if name == "require" => self.parse_require(),
             Token::Ident(ref name) if name == "emit" => self.parse_emit(),
+            Token::Ident(_) => self.parse_ident_stmt(),
             _ => {
                 let expr = self.parse_expr()?;
                 Ok(Stmt::ExprStmt(expr))
+            }
+        }
+    }
+
+    /// Parse a statement starting with an identifier.
+    /// Handles: `x = expr`, `x += expr`, `x -= expr`, or falls back to expr statement.
+    fn parse_ident_stmt(&mut self) -> Result<Stmt, ScriptError> {
+        let name = self.expect_ident()?;
+
+        match self.peek().clone() {
+            Token::Assign => {
+                self.advance();
+                let value = self.parse_expr()?;
+                Ok(Stmt::Assign {
+                    target: AssignTarget::Variable(name),
+                    value,
+                })
+            }
+            Token::PlusAssign => {
+                self.advance();
+                let value = self.parse_expr()?;
+                Ok(Stmt::CompoundAssign {
+                    target: AssignTarget::Variable(name),
+                    op: BinOp::Add,
+                    value,
+                })
+            }
+            Token::MinusAssign => {
+                self.advance();
+                let value = self.parse_expr()?;
+                Ok(Stmt::CompoundAssign {
+                    target: AssignTarget::Variable(name),
+                    op: BinOp::Sub,
+                    value,
+                })
+            }
+            _ => {
+                // Not an assignment — reparse as expression statement.
+                // We already consumed the ident, so construct the expr manually.
+                // Check if it's a function call: name(...)
+                if *self.peek() == Token::LParen {
+                    self.advance(); // consume '('
+                    let mut args = Vec::new();
+                    if *self.peek() != Token::RParen {
+                        args.push(self.parse_expr()?);
+                        while *self.peek() == Token::Comma {
+                            self.advance();
+                            args.push(self.parse_expr()?);
+                        }
+                    }
+                    self.expect(&Token::RParen)?;
+                    Ok(Stmt::ExprStmt(Expr::FunctionCall { name, args }))
+                } else {
+                    Ok(Stmt::ExprStmt(Expr::Variable(name)))
+                }
             }
         }
     }
@@ -725,6 +791,24 @@ impl Parser {
             then_body,
             else_body,
         })
+    }
+
+    fn parse_while(&mut self) -> Result<Stmt, ScriptError> {
+        self.advance(); // consume 'while'
+
+        // Allow optional parens around condition
+        let has_paren = *self.peek() == Token::LParen;
+        if has_paren {
+            self.advance();
+        }
+        let condition = self.parse_expr()?;
+        if has_paren {
+            self.expect(&Token::RParen)?;
+        }
+
+        let body = self.parse_block()?;
+
+        Ok(Stmt::While { condition, body })
     }
 
     fn parse_return(&mut self) -> Result<Stmt, ScriptError> {
@@ -935,6 +1019,7 @@ impl Parser {
             let op = match self.peek() {
                 Token::Star => BinOp::Mul,
                 Token::Slash => BinOp::Div,
+                Token::Percent => BinOp::Mod,
                 _ => break,
             };
             self.advance();

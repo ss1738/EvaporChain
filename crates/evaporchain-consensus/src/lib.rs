@@ -540,6 +540,14 @@ mod tests {
                 inner.signature = Some(sig);
                 inner.public_key = Some(pk);
             }
+            Transaction::ValidatorStake(ref mut inner) => {
+                inner.signature = Some(sig);
+                inner.public_key = Some(pk);
+            }
+            Transaction::ValidatorExit(ref mut inner) => {
+                inner.signature = Some(sig);
+                inner.public_key = Some(pk);
+            }
         }
     }
 

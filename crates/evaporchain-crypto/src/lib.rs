@@ -9,7 +9,7 @@ pub use accumulator::{
 };
 pub use hash::{blake3_hash, poseidon_hash, Blake3Hasher, HashEngine, PoseidonHasher};
 pub use signatures::{
-    BlsPublicKey, BlsScheme, BlsSecretKey, BlsSignature, MlDsaKeypair, MlDsaVerifier, Signer,
-    Verifier,
+    BlsError, BlsKeypair, BlsPublicKey, BlsSecretKey, BlsSignature, BlsVerifier,
+    MlDsaKeypair, MlDsaVerifier, Signer, Verifier,
 };
 pub use verkle::{VerkleProof, VerkleTrie};

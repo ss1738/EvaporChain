@@ -7,6 +7,7 @@ use axum::{
 };
 use axum::http::HeaderMap;
 use evaporchain_consensus::MockConsensus;
+use evaporchain_consensus::tendermint::TendermintConsensus;
 use evaporchain_crypto::signatures::{MlDsaKeypair, Signer};
 use evaporchain_state::db::StateDB;
 use evaporchain_state::RocksDBStateDB;
@@ -19,6 +20,18 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{atomic::AtomicUsize, Arc, Mutex};
 use std::time::Instant;
 use tower_http::cors::CorsLayer;
+
+// ──────────────────────────── Lock Helper ─────────────────────────────
+
+/// Safely acquire a Mutex lock, recovering from poisoned state.
+/// A poisoned mutex means a thread panicked while holding the lock,
+/// but the data inside is still usable — we recover it rather than crashing.
+fn safe_lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|poisoned| {
+        tracing::warn!("Recovered poisoned mutex lock");
+        poisoned.into_inner()
+    })
+}
 
 // ──────────────────────────── Shared State ────────────────────────────
 
@@ -48,6 +61,53 @@ pub struct ApiState {
     pub user_db: Option<Arc<crate::user_db::UserDb>>,
     /// Node-level ML-DSA keypair for signing API-submitted transactions.
     pub node_keypair: Arc<MlDsaKeypair>,
+    /// Tendermint consensus (used in multi-validator mode). When present, API
+    /// transactions are routed here instead of MockConsensus.
+    pub tendermint: Option<Arc<Mutex<TendermintConsensus>>>,
+    /// P2P transaction broadcast sender. When present, API-submitted transactions
+    /// are also broadcast to the network so other validators can include them.
+    pub tx_broadcast: Option<tokio::sync::mpsc::Sender<Transaction>>,
+}
+
+impl ApiState {
+    /// Submit a transaction to the correct mempool and broadcast over P2P.
+    /// API transactions use priority insertion (front of queue) to avoid being
+    /// buried behind demo transactions.
+    pub fn submit_tx(&self, tx: Transaction) {
+        // Broadcast to other validators via P2P
+        if let Some(ref sender) = self.tx_broadcast {
+            let _ = sender.try_send(tx.clone());
+        }
+        if let Some(ref tc) = self.tendermint {
+            let mut c = safe_lock(tc);
+            c.mempool.submit_priority(tx);
+        } else {
+            let mut c = safe_lock(&self.consensus);
+            c.mempool.submit_priority(tx);
+        }
+    }
+
+    /// Check for duplicate transaction in the active mempool.
+    pub fn mempool_contains(&self, predicate: impl Fn(&Transaction) -> bool) -> bool {
+        if let Some(ref tc) = self.tendermint {
+            let c = safe_lock(tc);
+            c.mempool.pending().iter().any(predicate)
+        } else {
+            let c = safe_lock(&self.consensus);
+            c.mempool.pending().iter().any(predicate)
+        }
+    }
+
+    /// Get current mempool length.
+    pub fn mempool_len(&self) -> usize {
+        if let Some(ref tc) = self.tendermint {
+            let c = safe_lock(tc);
+            c.mempool.len()
+        } else {
+            let c = safe_lock(&self.consensus);
+            c.mempool.len()
+        }
+    }
 }
 
 // ──────────────────────────── NFT Store ────────────────────────────────
@@ -498,9 +558,12 @@ fn require_wallet_ownership(state: &ApiState, user_id: Option<i64>, addr_hex: &s
 /// First tries the wallet's own ML-DSA keypair from the user DB.
 /// Falls back to the node-level keypair if wallet keys are unavailable or legacy (too short).
 fn sign_transaction(tx: &mut Transaction, state: &ApiState, sender_address: Option<&str>) {
-    // Already signed by client — skip
-    if tx.signature().is_some() {
-        return;
+    // If already signed with a real ML-DSA signature (~3300 bytes), skip
+    if let Some(sig) = tx.signature() {
+        if sig.len() > 1000 {
+            return; // Real signature — keep it
+        }
+        // Dummy/short signature — replace with node signing below
     }
 
     // Try wallet-specific keys first
@@ -538,6 +601,8 @@ fn set_tx_signature(tx: &mut Transaction, sig: Vec<u8>, pk: Vec<u8>) {
         Transaction::CallContract(t) => { t.signature = Some(sig); t.public_key = Some(pk); }
         Transaction::DeployScript(t) => { t.signature = Some(sig); t.public_key = Some(pk); }
         Transaction::CallScript(t) => { t.signature = Some(sig); t.public_key = Some(pk); }
+        Transaction::ValidatorStake(t) => { t.signature = Some(sig); t.public_key = Some(pk); }
+        Transaction::ValidatorExit(t) => { t.signature = Some(sig); t.public_key = Some(pk); }
     }
 }
 
@@ -583,9 +648,9 @@ pub fn is_valid_email(email: &str) -> bool {
 // ──────────────────────────── Handlers ─────────────────────────────────
 
 async fn get_status(State(state): State<Arc<ApiState>>) -> Json<StatusResponse> {
-    let db = state.db.lock().unwrap();
-    let history = state.block_history.lock().unwrap();
-    let stats = state.stats.lock().unwrap();
+    let db = safe_lock(&state.db);
+    let history = safe_lock(&state.block_history);
+    let stats = safe_lock(&state.stats);
     let latest = history.back();
 
     Json(StatusResponse {
@@ -604,8 +669,8 @@ async fn get_status(State(state): State<Arc<ApiState>>) -> Json<StatusResponse> 
 }
 
 async fn get_objects(State(state): State<Arc<ApiState>>) -> Json<Vec<ObjectResponse>> {
-    let db = state.db.lock().unwrap();
-    let history = state.block_history.lock().unwrap();
+    let db = safe_lock(&state.db);
+    let history = safe_lock(&state.block_history);
     let current_epoch = history.back().map(|b| b.epoch).unwrap_or(0);
 
     let ids = db.all_object_ids();
@@ -670,8 +735,8 @@ async fn get_single_object(
     let mut id = [0u8; 32];
     id.copy_from_slice(&id_bytes);
 
-    let db = state.db.lock().unwrap();
-    let history = state.block_history.lock().unwrap();
+    let db = safe_lock(&state.db);
+    let history = safe_lock(&state.block_history);
     let current_epoch = history.back().map(|b| b.epoch).unwrap_or(0);
 
     let obj = db.get_object(&id).ok_or(StatusCode::NOT_FOUND)?;
@@ -706,7 +771,7 @@ async fn get_single_object(
 }
 
 async fn get_accounts(State(state): State<Arc<ApiState>>) -> Json<Vec<AccountResponse>> {
-    let db = state.db.lock().unwrap();
+    let db = safe_lock(&state.db);
     let addrs = db.all_account_addresses();
     let mut accounts: Vec<AccountResponse> = addrs
         .iter()
@@ -725,7 +790,7 @@ async fn get_accounts(State(state): State<Arc<ApiState>>) -> Json<Vec<AccountRes
 }
 
 async fn get_ghosts(State(state): State<Arc<ApiState>>) -> Json<Vec<GhostResponse>> {
-    let db = state.db.lock().unwrap();
+    let db = safe_lock(&state.db);
     let ghost_ids = db.all_ghost_ids();
     let ghosts: Vec<GhostResponse> = ghost_ids
         .iter()
@@ -746,7 +811,7 @@ async fn get_blocks(
     State(state): State<Arc<ApiState>>,
     Query(params): Query<BlocksQuery>,
 ) -> Json<Vec<BlockRecord>> {
-    let history = state.block_history.lock().unwrap();
+    let history = safe_lock(&state.block_history);
     let limit = params.limit.unwrap_or(50).min(500);
     let blocks: Vec<BlockRecord> = history.iter().rev().take(limit).cloned().collect();
     Json(blocks)
@@ -756,7 +821,7 @@ async fn get_single_block(
     State(state): State<Arc<ApiState>>,
     Path(number): Path<u64>,
 ) -> Result<Json<BlockRecord>, StatusCode> {
-    let history = state.block_history.lock().unwrap();
+    let history = safe_lock(&state.block_history);
     let block = history
         .iter()
         .find(|b| b.number == number)
@@ -769,7 +834,7 @@ async fn get_tx_by_hash(
     State(state): State<Arc<ApiState>>,
     Path(hash): Path<String>,
 ) -> Result<Json<TxRecord>, StatusCode> {
-    let history = state.block_history.lock().unwrap();
+    let history = safe_lock(&state.block_history);
     for block in history.iter().rev() {
         for tx in &block.transactions {
             if tx.hash == hash {
@@ -784,7 +849,7 @@ async fn get_transactions(
     State(state): State<Arc<ApiState>>,
     Query(params): Query<TransactionsQuery>,
 ) -> Json<TransactionsResponse> {
-    let history = state.block_history.lock().unwrap();
+    let history = safe_lock(&state.block_history);
     let limit = params.limit.unwrap_or(50).min(200);
     let offset = params.offset.unwrap_or(0);
 
@@ -822,14 +887,14 @@ async fn get_transactions(
 }
 
 async fn get_stats_timeline(State(state): State<Arc<ApiState>>) -> Json<StatsTimelineResponse> {
-    let stats = state.stats.lock().unwrap();
+    let stats = safe_lock(&state.stats);
     Json(StatsTimelineResponse {
         epochs: stats.state_size_trend.clone(),
     })
 }
 
 async fn get_stats_summary(State(state): State<Arc<ApiState>>) -> Json<StatsSummaryResponse> {
-    let stats = state.stats.lock().unwrap();
+    let stats = safe_lock(&state.stats);
     let avg_lifetime = if stats.total_evaporated > 0 {
         stats.state_size_trend.len() as f64 / stats.total_evaporated as f64
     } else {
@@ -856,7 +921,7 @@ async fn get_events(
     State(state): State<Arc<ApiState>>,
     Query(params): Query<EventsQuery>,
 ) -> Json<EventsResponse> {
-    let events = state.events.lock().unwrap();
+    let events = safe_lock(&state.events);
     let limit = params.limit.unwrap_or(50).min(200);
     let evts: Vec<EventRecord> = events.iter().rev().take(limit).cloned().collect();
     Json(EventsResponse { events: evts })
@@ -890,7 +955,7 @@ async fn post_transfer(
     }
     // Balance and nonce pre-check
     {
-        let db = state.db.lock().unwrap();
+        let db = safe_lock(&state.db);
         if let Some(acct) = db.get_account(&from) {
             if acct.balance < req.amount {
                 return Json(TxResultResponse { success: false, message: format!("Insufficient balance: {} < {}", acct.balance, req.amount), tx_hash: None });
@@ -903,10 +968,9 @@ async fn post_transfer(
         }
     }
     let hash = tx_hash(&format!("transfer:{}:{}:{}", hex::encode(&from[..20]), hex::encode(&to[..20]), req.amount));
-    // Atomic dedup check + submit (single lock to prevent TOCTOU race)
+    // Dedup check
     {
-        let mut c = state.consensus.lock().unwrap();
-        let is_dup = c.mempool.pending().iter().any(|tx| {
+        let is_dup = state.mempool_contains(|tx| {
             if let Transaction::Transfer(t) = tx {
                 t.from == from && t.to == to && t.amount == req.amount && t.nonce == req.nonce
             } else {
@@ -916,6 +980,8 @@ async fn post_transfer(
         if is_dup {
             return Json(TxResultResponse { success: false, message: "Duplicate transaction already in mempool".into(), tx_hash: None });
         }
+    }
+    {
         let mut tx = Transaction::Transfer(TransferTx {
             from, to, amount: req.amount, nonce: req.nonce,
             signature: req.signature.and_then(|s| hex::decode(s).ok()),
@@ -923,7 +989,7 @@ async fn post_transfer(
         });
         let sender_addr = format!("0x{}", hex::encode(from));
         sign_transaction(&mut tx, &state, Some(&sender_addr));
-        c.mempool.submit(tx);
+        state.submit_tx(tx);
     }
     Json(TxResultResponse {
         success: true,
@@ -959,8 +1025,7 @@ async fn post_create_object(
     });
     let creator_addr = format!("0x{}", hex::encode(creator));
     sign_transaction(&mut tx, &state, Some(&creator_addr));
-    let mut c = state.consensus.lock().unwrap();
-    c.mempool.submit(tx);
+    state.submit_tx(tx);
     Json(TxResultResponse {
         success: true,
         message: format!(
@@ -989,8 +1054,7 @@ async fn post_refresh(
         public_key: req.public_key.and_then(|s| hex::decode(s).ok()),
     });
     sign_transaction(&mut tx, &state, None);
-    let mut c = state.consensus.lock().unwrap();
-    c.mempool.submit(tx);
+    state.submit_tx(tx);
     Json(TxResultResponse {
         success: true,
         message: format!("Refresh queued: obj=0x{} energy_deposit={}", hex::encode(&obj_id_val[..4]), req.energy_deposit),
@@ -1016,8 +1080,7 @@ async fn post_resurrect(
         public_key: req.public_key.and_then(|s| hex::decode(s).ok()),
     });
     sign_transaction(&mut tx, &state, None);
-    let mut c = state.consensus.lock().unwrap();
-    c.mempool.submit(tx);
+    state.submit_tx(tx);
     Json(TxResultResponse {
         success: true,
         message: format!("Resurrect queued: obj=0x{} energy_deposit={}", hex::encode(&obj_id_val[..4]), req.energy_deposit),
@@ -1066,14 +1129,13 @@ async fn post_deploy_contract(
         public_key: None,
     });
     sign_transaction(&mut tx, &state, None);
-    let mut c = state.consensus.lock().unwrap();
-    c.mempool.submit(tx);
+    state.submit_tx(tx);
     let hash = tx_hash(&format!("deploy:{}:{}:{}", req.template, req.energy, req.half_life));
     Json(TxResultResponse {
         success: true,
         message: format!(
             "Deploy queued: template={} energy={} hl={} (mempool={})",
-            req.template, req.energy, req.half_life, c.mempool.len()
+            req.template, req.energy, req.half_life, state.mempool_len()
         ),
         tx_hash: Some(hash),
     })
@@ -1095,14 +1157,13 @@ async fn post_call_contract(
         public_key: None,
     });
     sign_transaction(&mut tx, &state, None);
-    let mut c = state.consensus.lock().unwrap();
-    c.mempool.submit(tx);
-    let hash = tx_hash(&format!("call:{}:{}:{}", req.contract_id, req.method, c.mempool.len()));
+    state.submit_tx(tx);
+    let hash = tx_hash(&format!("call:{}:{}:{}", req.contract_id, req.method, state.mempool_len()));
     Json(TxResultResponse {
         success: true,
         message: format!(
             "Call queued: contract={} method={} (mempool={})",
-            req.contract_id, req.method, c.mempool.len()
+            req.contract_id, req.method, state.mempool_len()
         ),
         tx_hash: Some(hash),
     })
@@ -1111,7 +1172,7 @@ async fn post_call_contract(
 async fn get_contracts(
     State(state): State<Arc<ApiState>>,
 ) -> Json<serde_json::Value> {
-    let c = state.consensus.lock().unwrap();
+    let c = safe_lock(&state.consensus);
     let contracts = c.executor.contract_engine.list();
     let list: Vec<serde_json::Value> = contracts
         .iter()
@@ -1134,7 +1195,7 @@ async fn get_contract(
     State(state): State<Arc<ApiState>>,
     Path(id): Path<u64>,
 ) -> impl IntoResponse {
-    let c = state.consensus.lock().unwrap();
+    let c = safe_lock(&state.consensus);
     match c.executor.contract_engine.get(id) {
         Some(ci) => {
             let state_val = c.executor.contract_engine.get_state(id).cloned();
@@ -1200,8 +1261,8 @@ async fn get_address_detail(
     let addr_bytes = parse_hex_address(&addr_hex).map_err(|_| StatusCode::BAD_REQUEST)?;
     let full_hex = account_full(&addr_bytes);
 
-    let db = state.db.lock().unwrap();
-    let history = state.block_history.lock().unwrap();
+    let db = safe_lock(&state.db);
+    let history = safe_lock(&state.block_history);
     let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
 
     let (balance, nonce) = if let Some(acct) = db.get_account(&addr_bytes) {
@@ -1237,7 +1298,7 @@ async fn get_address_detail(
     drop(db);
 
     // NFTs owned by this address
-    let nft_store = state.nft_store.lock().unwrap();
+    let nft_store = safe_lock(&state.nft_store);
     let nfts: Vec<NftResponse> = nft_store.tokens.iter()
         .filter(|n| n.owner == full_hex || n.owner.contains(&addr_hex))
         .map(|n| nft_to_response(n, epoch))
@@ -1245,7 +1306,7 @@ async fn get_address_detail(
     drop(nft_store);
 
     // Token balances
-    let token_store = state.token_store.lock().unwrap();
+    let token_store = safe_lock(&state.token_store);
     let tokens: Vec<serde_json::Value> = token_store.tokens.iter().filter_map(|t| {
         let bal = t.balances.get(&full_hex).or_else(|| {
             t.balances.keys().find(|k| k.contains(&addr_hex)).and_then(|k| t.balances.get(k))
@@ -1302,7 +1363,7 @@ async fn post_faucet(
 
     // Rate limit check
     {
-        let mut limits = state.faucet_rate_limit.lock().unwrap();
+        let mut limits = safe_lock(&state.faucet_rate_limit);
         if let Some(last) = limits.get(&addr_key) {
             if last.elapsed().as_secs() < FAUCET_RATE_LIMIT_SECS {
                 let remaining = FAUCET_RATE_LIMIT_SECS - last.elapsed().as_secs();
@@ -1323,16 +1384,34 @@ async fn post_faucet(
         }
     }
 
-    // Credit the account
-    let mut db = state.db.lock().unwrap();
-    let account = db.get_or_create_account(&addr);
-    account.balance += FAUCET_AMOUNT;
-    let balance = account.balance;
+    // Submit faucet as a transfer from the "faucet account" (all-zeros address)
+    // through consensus so all validators see it.
+    let faucet_addr = [0u8; 32]; // special faucet/mint address (pre-seeded at genesis)
+    let nonce = {
+        let db = safe_lock(&state.db);
+        db.get_account(&faucet_addr).map(|a| a.nonce).unwrap_or(0)
+    };
+    let mut tx = Transaction::Transfer(TransferTx {
+        from: faucet_addr,
+        to: addr,
+        amount: FAUCET_AMOUNT,
+        nonce,
+        signature: None,
+        public_key: None,
+    });
+    sign_transaction(&mut tx, &state, None);
+    state.submit_tx(tx);
+
+    // Return expected balance (may not be applied yet until next block)
+    let balance = {
+        let db = safe_lock(&state.db);
+        db.get_account(&addr).map(|a| a.balance).unwrap_or(0) + FAUCET_AMOUNT
+    };
 
     (StatusCode::OK, Json(FaucetResponse {
         success: true,
         balance,
-        message: None,
+        message: Some("Faucet transaction submitted to consensus — balance updates after next block".into()),
     }))
 }
 
@@ -1386,14 +1465,14 @@ fn nft_to_response(nft: &NftToken, epoch: u64) -> NftResponse {
 }
 
 async fn get_nfts(State(state): State<Arc<ApiState>>) -> Json<Vec<NftResponse>> {
-    let store = state.nft_store.lock().unwrap();
-    let history = state.block_history.lock().unwrap();
+    let store = safe_lock(&state.nft_store);
+    let history = safe_lock(&state.block_history);
     let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
 
     // Tick lifecycle for display (decay state transitions)
     drop(store);
     tick_nft_lifecycle(&state, epoch);
-    let store = state.nft_store.lock().unwrap();
+    let store = safe_lock(&state.nft_store);
 
     let mut nfts: Vec<NftResponse> = store.tokens.iter().map(|n| nft_to_response(n, epoch)).collect();
     // Active first, then Grace, then Ghost
@@ -1410,12 +1489,12 @@ async fn get_single_nft(
     State(state): State<Arc<ApiState>>,
     Path(id): Path<u64>,
 ) -> Result<Json<NftResponse>, StatusCode> {
-    let history = state.block_history.lock().unwrap();
+    let history = safe_lock(&state.block_history);
     let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
     drop(history);
 
     tick_nft_lifecycle(&state, epoch);
-    let store = state.nft_store.lock().unwrap();
+    let store = safe_lock(&state.nft_store);
 
     let nft = store.tokens.iter().find(|n| n.id == id).ok_or(StatusCode::NOT_FOUND)?;
     Ok(Json(nft_to_response(nft, epoch)))
@@ -1456,7 +1535,7 @@ async fn post_mint_nft(
     if req.energy > 1_000_000_000 {
         return Json(TxResultResponse { success: false, message: "Energy exceeds maximum (1,000,000,000)".into(), tx_hash: None });
     }
-    let history = state.block_history.lock().unwrap();
+    let history = safe_lock(&state.block_history);
     let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
     drop(history);
 
@@ -1479,7 +1558,7 @@ async fn post_mint_nft(
         None => "Genesis Collection".to_string(),
     };
 
-    let mut store = state.nft_store.lock().unwrap();
+    let mut store = safe_lock(&state.nft_store);
     let id = store.next_id;
     store.next_id += 1;
     store.tokens.push(NftToken {
@@ -1522,7 +1601,7 @@ async fn post_transfer_nft(
         Ok(uid) => uid,
         Err(resp) => return resp,
     };
-    let mut store = state.nft_store.lock().unwrap();
+    let mut store = safe_lock(&state.nft_store);
     if let Some(nft) = store.tokens.iter_mut().find(|n| n.id == req.nft_id) {
         if nft.state == "Ghost" {
             return Json(TxResultResponse {
@@ -1569,18 +1648,18 @@ async fn post_refresh_nft(
     };
     // Ownership check: verify caller owns this NFT
     {
-        let store = state.nft_store.lock().unwrap();
+        let store = safe_lock(&state.nft_store);
         if let Some(nft) = store.tokens.iter().find(|n| n.id == req.nft_id) {
             if let Err(resp) = require_wallet_ownership(&state, user_id, &nft.owner) {
                 return resp;
             }
         }
     }
-    let history = state.block_history.lock().unwrap();
+    let history = safe_lock(&state.block_history);
     let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
     drop(history);
 
-    let mut store = state.nft_store.lock().unwrap();
+    let mut store = safe_lock(&state.nft_store);
     if let Some(nft) = store.tokens.iter_mut().find(|n| n.id == req.nft_id) {
         if nft.state == "Ghost" {
             nft.state = "Active".to_string();
@@ -1623,7 +1702,7 @@ async fn post_refresh_nft(
 
 /// Tick NFT lifecycle — move to Grace/Ghost based on energy decay.
 fn tick_nft_lifecycle(state: &ApiState, epoch: u64) {
-    let mut store = state.nft_store.lock().unwrap();
+    let mut store = safe_lock(&state.nft_store);
     for nft in store.tokens.iter_mut() {
         if nft.state == "Ghost" {
             continue;
@@ -1710,10 +1789,10 @@ struct TokenResponse {
 struct TokenHolder { address: String, balance: u64 }
 
 async fn get_tokens(State(state): State<Arc<ApiState>>) -> Json<Vec<TokenResponse>> {
-    let history = state.block_history.lock().unwrap();
+    let history = safe_lock(&state.block_history);
     let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
     drop(history);
-    let mut store = state.token_store.lock().unwrap();
+    let mut store = safe_lock(&state.token_store);
     for t in store.tokens.iter_mut() { t.tick_decay(epoch); }
     let res: Vec<TokenResponse> = store.tokens.iter().map(|t| {
         let mut holders: Vec<TokenHolder> = t.balances.iter()
@@ -1733,10 +1812,10 @@ async fn get_tokens(State(state): State<Arc<ApiState>>) -> Json<Vec<TokenRespons
 }
 
 async fn get_single_token(State(state): State<Arc<ApiState>>, Path(id): Path<u64>) -> Result<Json<TokenResponse>, StatusCode> {
-    let history = state.block_history.lock().unwrap();
+    let history = safe_lock(&state.block_history);
     let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
     drop(history);
-    let mut store = state.token_store.lock().unwrap();
+    let mut store = safe_lock(&state.token_store);
     let t = store.tokens.iter_mut().find(|t| t.id == id).ok_or(StatusCode::NOT_FOUND)?;
     t.tick_decay(epoch);
     let mut holders: Vec<TokenHolder> = t.balances.iter()
@@ -1768,11 +1847,11 @@ async fn post_deploy_token(State(state): State<Arc<ApiState>>, headers: HeaderMa
     if token_symbol.is_empty() { return Json(TxResultResponse { success: false, message: "Token symbol is required".into(), tx_hash: None }); }
     if req.total_supply == 0 { return Json(TxResultResponse { success: false, message: "Total supply must be > 0".into(), tx_hash: None }); }
     if req.decay_half_life == 0 { return Json(TxResultResponse { success: false, message: "Decay half-life must be > 0".into(), tx_hash: None }); }
-    let history = state.block_history.lock().unwrap();
+    let history = safe_lock(&state.block_history);
     let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
     drop(history);
     let deployer = req.deployer.unwrap_or_else(|| format!("0x{}", GENESIS_FOUNDATION));
-    let mut store = state.token_store.lock().unwrap();
+    let mut store = safe_lock(&state.token_store);
     let id = store.next_id; store.next_id += 1;
     let mut balances = HashMap::new();
     balances.insert(deployer.clone(), req.total_supply);
@@ -1797,7 +1876,7 @@ async fn post_token_transfer(State(state): State<Arc<ApiState>>, headers: Header
     if let Err(resp) = require_wallet_ownership(&state, user_id, &req.from) {
         return resp;
     }
-    let mut store = state.token_store.lock().unwrap();
+    let mut store = safe_lock(&state.token_store);
     let t = match store.tokens.iter_mut().find(|t| t.id == req.token_id) {
         Some(t) => t, None => return Json(TxResultResponse { success: false, message: "Token not found".into(), tx_hash: None }),
     };
@@ -1815,7 +1894,7 @@ async fn post_token_transfer(State(state): State<Arc<ApiState>>, headers: Header
 struct TokenBalanceRequest { token_id: u64, address: String }
 
 async fn post_token_balance(State(state): State<Arc<ApiState>>, Json(req): Json<TokenBalanceRequest>) -> Json<serde_json::Value> {
-    let store = state.token_store.lock().unwrap();
+    let store = safe_lock(&state.token_store);
     let t = match store.tokens.iter().find(|t| t.id == req.token_id) {
         Some(t) => t, None => return Json(serde_json::json!({"error":"Token not found"})),
     };
@@ -1887,10 +1966,10 @@ struct StakerResponse {
 }
 
 async fn get_staking_pools(State(state): State<Arc<ApiState>>) -> Json<Vec<StakingPoolResponse>> {
-    let history = state.block_history.lock().unwrap();
+    let history = safe_lock(&state.block_history);
     let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
     drop(history);
-    let store = state.staking_store.lock().unwrap();
+    let store = safe_lock(&state.staking_store);
     let res: Vec<StakingPoolResponse> = store.pools.iter().map(|p| {
         let stakers: Vec<StakerResponse> = p.stakers.iter().map(|s| {
             let pending = p.compute_rewards(s, epoch);
@@ -1915,10 +1994,10 @@ async fn get_staking_pools(State(state): State<Arc<ApiState>>) -> Json<Vec<Staki
 }
 
 async fn get_single_pool(State(state): State<Arc<ApiState>>, Path(id): Path<u64>) -> Result<Json<StakingPoolResponse>, StatusCode> {
-    let history = state.block_history.lock().unwrap();
+    let history = safe_lock(&state.block_history);
     let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
     drop(history);
-    let store = state.staking_store.lock().unwrap();
+    let store = safe_lock(&state.staking_store);
     let p = store.pools.iter().find(|p| p.id == id).ok_or(StatusCode::NOT_FOUND)?;
     let stakers: Vec<StakerResponse> = p.stakers.iter().map(|s| {
         let pending = p.compute_rewards(s, epoch);
@@ -1949,7 +2028,7 @@ async fn post_stake(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json
     {
         let addr = parse_hex_address(&req.address);
         if let Ok(addr_bytes) = addr {
-            let db = state.db.lock().unwrap();
+            let db = safe_lock(&state.db);
             if let Some(acct) = db.get_account(&addr_bytes) {
                 if acct.balance < req.amount {
                     return Json(TxResultResponse { success: false, message: format!("Insufficient balance: {} < {}", acct.balance, req.amount), tx_hash: None });
@@ -1959,10 +2038,10 @@ async fn post_stake(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json
             }
         }
     }
-    let history = state.block_history.lock().unwrap();
+    let history = safe_lock(&state.block_history);
     let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
     drop(history);
-    let mut store = state.staking_store.lock().unwrap();
+    let mut store = safe_lock(&state.staking_store);
     let p = match store.pools.iter_mut().find(|p| p.id == req.pool_id) {
         Some(p) => p, None => return Json(TxResultResponse { success: false, message: "Pool not found".into(), tx_hash: None }),
     };
@@ -1987,7 +2066,7 @@ async fn post_unstake(State(state): State<Arc<ApiState>>, headers: HeaderMap, Js
     if let Err(resp) = require_wallet_ownership(&state, user_id, &req.address) {
         return resp;
     }
-    let mut store = state.staking_store.lock().unwrap();
+    let mut store = safe_lock(&state.staking_store);
     let p = match store.pools.iter_mut().find(|p| p.id == req.pool_id) {
         Some(p) => p, None => return Json(TxResultResponse { success: false, message: "Pool not found".into(), tx_hash: None }),
     };
@@ -2014,10 +2093,10 @@ async fn post_claim(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json
     if let Err(resp) = require_wallet_ownership(&state, user_id, &req.address) {
         return resp;
     }
-    let history = state.block_history.lock().unwrap();
+    let history = safe_lock(&state.block_history);
     let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
     drop(history);
-    let mut store = state.staking_store.lock().unwrap();
+    let mut store = safe_lock(&state.staking_store);
     let p = match store.pools.iter_mut().find(|p| p.id == req.pool_id) {
         Some(p) => p, None => return Json(TxResultResponse { success: false, message: "Pool not found".into(), tx_hash: None }),
     };
@@ -2123,10 +2202,10 @@ struct ProposalResponse {
 }
 
 async fn get_proposals(State(state): State<Arc<ApiState>>) -> Json<Vec<ProposalResponse>> {
-    let history = state.block_history.lock().unwrap();
+    let history = safe_lock(&state.block_history);
     let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
     drop(history);
-    let mut store = state.dao_store.lock().unwrap();
+    let mut store = safe_lock(&state.dao_store);
     for p in store.proposals.iter_mut() { p.tick(epoch); }
     let res: Vec<ProposalResponse> = store.proposals.iter().map(|p| {
         let remaining = if epoch < p.end_epoch() { p.end_epoch() - epoch } else { 0 };
@@ -2144,10 +2223,10 @@ async fn get_proposals(State(state): State<Arc<ApiState>>) -> Json<Vec<ProposalR
 }
 
 async fn get_single_proposal(State(state): State<Arc<ApiState>>, Path(id): Path<u64>) -> Result<Json<ProposalResponse>, StatusCode> {
-    let history = state.block_history.lock().unwrap();
+    let history = safe_lock(&state.block_history);
     let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
     drop(history);
-    let mut store = state.dao_store.lock().unwrap();
+    let mut store = safe_lock(&state.dao_store);
     let p = store.proposals.iter_mut().find(|p| p.id == id).ok_or(StatusCode::NOT_FOUND)?;
     p.tick(epoch);
     let remaining = if epoch < p.end_epoch() { p.end_epoch() - epoch } else { 0 };
@@ -2177,11 +2256,11 @@ async fn post_propose(State(state): State<Arc<ApiState>>, headers: HeaderMap, Js
         Ok(d) => d, Err(e) => return Json(TxResultResponse { success: false, message: e, tx_hash: None }),
     };
     let options: Vec<String> = req.options.iter().map(|o| strip_html_tags(o)).collect();
-    let history = state.block_history.lock().unwrap();
+    let history = safe_lock(&state.block_history);
     let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
     drop(history);
     let creator = req.creator.unwrap_or_else(|| format!("0x{}", GENESIS_FOUNDATION));
-    let mut store = state.dao_store.lock().unwrap();
+    let mut store = safe_lock(&state.dao_store);
     let id = store.next_id; store.next_id += 1;
     store.proposals.push(DAOProposal {
         id, title: title.clone(), description,
@@ -2214,7 +2293,7 @@ async fn post_vote(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(
         return Json(TxResultResponse { success: false, message: "Vote weight must be greater than zero".into(), tx_hash: None });
     }
     {
-        let staking = state.staking_store.lock().unwrap();
+        let staking = safe_lock(&state.staking_store);
         let total_staked: u64 = staking.pools.iter().flat_map(|p| p.stakers.iter())
             .filter(|s| s.address == voter)
             .map(|s| s.amount)
@@ -2223,10 +2302,10 @@ async fn post_vote(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(
             return Json(TxResultResponse { success: false, message: format!("Vote weight {} exceeds your total stake {}", req.weight, total_staked), tx_hash: None });
         }
     }
-    let history = state.block_history.lock().unwrap();
+    let history = safe_lock(&state.block_history);
     let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
     drop(history);
-    let mut store = state.dao_store.lock().unwrap();
+    let mut store = safe_lock(&state.dao_store);
     let p = match store.proposals.iter_mut().find(|p| p.id == req.proposal_id) {
         Some(p) => p, None => return Json(TxResultResponse { success: false, message: "Proposal not found".into(), tx_hash: None }),
     };
@@ -2248,9 +2327,9 @@ async fn post_vote(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(
 
 /// Chain metadata endpoint.
 async fn get_chain(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
-    let history = state.block_history.lock().unwrap();
+    let history = safe_lock(&state.block_history);
     let latest = history.back();
-    let stats = state.stats.lock().unwrap();
+    let stats = safe_lock(&state.stats);
     Json(serde_json::json!({
         "chain_name": "EvaporChain",
         "chain_id": "evaporchain-testnet-1",
@@ -2265,21 +2344,20 @@ async fn get_chain(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value
 
 /// Latest block shortcut.
 async fn get_latest_block(State(state): State<Arc<ApiState>>) -> Result<Json<BlockRecord>, StatusCode> {
-    let history = state.block_history.lock().unwrap();
+    let history = safe_lock(&state.block_history);
     history.back().cloned().ok_or(StatusCode::NOT_FOUND).map(Json)
 }
 
 /// Mempool endpoint.
 async fn get_mempool(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
-    let c = state.consensus.lock().unwrap();
     Json(serde_json::json!({
-        "pending": c.mempool.len(),
+        "pending": state.mempool_len(),
     }))
 }
 
 /// NFT collections endpoint.
 async fn get_nft_collections(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
-    let store = state.nft_store.lock().unwrap();
+    let store = safe_lock(&state.nft_store);
     let mut collections: HashMap<String, Vec<u64>> = HashMap::new();
     for nft in &store.tokens {
         collections.entry(nft.collection.clone()).or_default().push(nft.id);
@@ -2444,6 +2522,8 @@ fn estimate_tx_gas(tx: &Transaction) -> u64 {
         Transaction::CallContract(_) => 40_000,
         Transaction::DeployScript(_) => 150_000,
         Transaction::CallScript(_) => 50_000,
+        Transaction::ValidatorStake(_) => 50_000,
+        Transaction::ValidatorExit(_) => 30_000,
     }
 }
 
@@ -2560,6 +2640,36 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     epoch: block.epoch,
                     status: "success".to_string(),
                 },
+                Transaction::ValidatorStake(t) => TxRecord {
+                    hash,
+                    tx_type: "validator_stake".to_string(),
+                    from: account_full(&t.validator_address),
+                    to: String::new(),
+                    amount: Some(t.stake_amount),
+                    object_id: None,
+                    energy: None,
+                    half_life: None,
+                    method: None,
+                    gas,
+                    block_number: block.number,
+                    epoch: block.epoch,
+                    status: "success".to_string(),
+                },
+                Transaction::ValidatorExit(t) => TxRecord {
+                    hash,
+                    tx_type: "validator_exit".to_string(),
+                    from: account_full(&t.validator_address),
+                    to: String::new(),
+                    amount: None,
+                    object_id: None,
+                    energy: None,
+                    half_life: None,
+                    method: None,
+                    gas,
+                    block_number: block.number,
+                    epoch: block.epoch,
+                    status: "success".to_string(),
+                },
             }
         })
         .collect()
@@ -2572,7 +2682,7 @@ pub fn push_event(
     event_type: &str,
     message: String,
 ) {
-    let mut evts = events.lock().unwrap();
+    let mut evts = safe_lock(&events);
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
