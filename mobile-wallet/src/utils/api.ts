@@ -1,154 +1,164 @@
 /**
- * EvaporChain API Client
+ * EvaporChain REST API Client for Mobile Wallet
  *
- * Communicates with the same RPC endpoints used by the CLI wallet
- * and browser extension.
+ * Uses the same REST endpoints as the browser extension and testnet explorer.
+ * Transactions are sent unsigned — the node signs with its keypair for mobile.
+ * Future: bundle a Dilithium3 JS implementation for client-side signing.
  */
 
 export interface ChainStatus {
-  blockHeight: number;
+  chain_name: string;
+  version: string;
+  block_height: number;
   epoch: number;
-  networkId: string;
-  peerCount: number;
+  active_objects: number;
+  ghost_count: number;
+  peer_count: number;
 }
 
 export interface Balance {
-  available: string;
-  staked: string;
-  total: string;
+  address: string;
+  balance: number;
+  nonce: number;
 }
 
 export interface Transaction {
   hash: string;
-  from: string;
-  to: string;
-  amount: string;
-  fee: string;
-  timestamp: number;
-  status: 'confirmed' | 'pending' | 'failed';
-  blockHeight?: number;
+  type: string;
+  detail: string;
 }
 
-export interface TransactionSimulation {
-  estimatedFee: string;
-  estimatedEnergyCost: number;
-  willSucceed: boolean;
-  reason?: string;
+export interface TxResult {
+  success: boolean;
+  message: string;
+  tx_hash?: string;
 }
 
-export type ObjectState = 'Active' | 'Grace' | 'Ghost';
+export type ObjectState = 'Active' | 'Grace' | 'Ghost' | 'Risen';
 
 export interface ChainObject {
   id: string;
   name: string;
   owner: string;
   energy: number;
-  maxEnergy: number;
+  max_energy: number;
   state: ObjectState;
-  decayRate: number;
-  lastRefreshed: number;
-  estimatedGhostTime: number;
+  half_life: number;
+  current_energy: number;
+  decay_percentage: number;
 }
 
 export interface NFT {
   id: string;
   name: string;
-  imageUri: string;
-  collectionName: string;
+  collection: string;
+  owner: string;
+  image_url?: string;
   energy: number;
-  maxEnergy: number;
+  max_energy: number;
+  current_energy: number;
   state: ObjectState;
-  decayRate: number;
-  estimatedGhostTime: number;
+  decay_percentage: number;
 }
 
-const DEFAULT_ENDPOINTS: Record<string, string> = {
-  testnet: 'https://testnet-rpc.evaporchain.io',
-  mainnet: 'https://rpc.evaporchain.io',
-};
+export interface SwapQuote {
+  from_token: string;
+  to_token: string;
+  amount_in: number;
+  amount_out: number;
+  rate: number;
+  price_impact: number;
+}
+
+const DEFAULT_BASE_URL = 'https://testnet.evaporchain.com';
 
 class EvaporChainAPI {
   private baseUrl: string;
-  private network: string;
 
-  constructor(network: string = 'testnet') {
-    this.network = network;
-    this.baseUrl = DEFAULT_ENDPOINTS[network] || DEFAULT_ENDPOINTS.testnet;
+  constructor(baseUrl: string = DEFAULT_BASE_URL) {
+    this.baseUrl = baseUrl.replace(/\/+$/, '');
   }
 
-  setNetwork(network: string): void {
-    this.network = network;
-    this.baseUrl = DEFAULT_ENDPOINTS[network] || DEFAULT_ENDPOINTS.testnet;
+  setNetwork(network: 'testnet' | 'mainnet'): void {
+    this.baseUrl = network === 'mainnet'
+      ? 'https://rpc.evaporchain.io'
+      : DEFAULT_BASE_URL;
   }
 
-  getNetwork(): string {
-    return this.network;
+  private async get<T>(path: string): Promise<T> {
+    const res = await fetch(`${this.baseUrl}${path}`);
+    if (!res.ok) throw new Error(`API ${res.status}`);
+    return res.json();
   }
 
-  private async request<T>(method: string, params: unknown[] = []): Promise<T> {
-    const response = await fetch(this.baseUrl, {
+  private async post<T>(path: string, body: unknown): Promise<T> {
+    const res = await fetch(`${this.baseUrl}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: Date.now(),
-        method,
-        params,
-      }),
+      body: JSON.stringify(body),
     });
-
-    if (!response.ok) {
-      throw new Error(`RPC error: ${response.status} ${response.statusText}`);
-    }
-
-    const data = await response.json();
-    if (data.error) {
-      throw new Error(`RPC error: ${data.error.message}`);
-    }
-
-    return data.result as T;
+    if (!res.ok) throw new Error(`API ${res.status}`);
+    return res.json();
   }
+
+  // ── Chain ──
 
   async getChainStatus(): Promise<ChainStatus> {
-    return this.request<ChainStatus>('evap_chainStatus');
+    return this.get('/api/status');
   }
+
+  // ── Account ──
 
   async getBalance(address: string): Promise<Balance> {
-    return this.request<Balance>('evap_getBalance', [address]);
+    return this.get(`/api/address/${address}`);
   }
 
-  async getTransactions(address: string, limit: number = 20): Promise<Transaction[]> {
-    return this.request<Transaction[]>('evap_getTransactions', [address, limit]);
+  // ── Transactions ──
+
+  async transfer(from: string, to: string, amount: number, nonce: number): Promise<TxResult> {
+    return this.post('/api/tx/transfer', { from, to, amount, nonce });
   }
 
-  async simulateTransaction(
-    from: string,
-    to: string,
-    amount: string
-  ): Promise<TransactionSimulation> {
-    return this.request<TransactionSimulation>('evap_simulateTransaction', [
-      { from, to, amount },
-    ]);
+  async getTransactions(): Promise<Transaction[]> {
+    return this.get('/api/transactions');
   }
 
-  async sendTransaction(signedTx: string): Promise<{ hash: string }> {
-    return this.request<{ hash: string }>('evap_sendRawTransaction', [signedTx]);
+  // ── Faucet ──
+
+  async claimFaucet(address: string): Promise<{ success: boolean; balance: number; message?: string }> {
+    return this.post('/api/faucet', { address });
   }
 
-  async getObjects(owner: string): Promise<ChainObject[]> {
-    return this.request<ChainObject[]>('evap_getObjects', [owner]);
+  // ── Objects ──
+
+  async getObjects(owner?: string): Promise<ChainObject[]> {
+    const all = await this.get<ChainObject[]>('/api/objects');
+    return owner ? all.filter(o => o.owner === owner) : all;
   }
 
-  async refreshObject(objectId: string, signedTx: string): Promise<{ hash: string }> {
-    return this.request<{ hash: string }>('evap_refreshObject', [objectId, signedTx]);
+  async refreshObject(objectId: string, energyDeposit: number): Promise<TxResult> {
+    return this.post('/api/tx/refresh', { object_id: objectId, energy_deposit: energyDeposit });
   }
 
-  async getNFTs(owner: string): Promise<NFT[]> {
-    return this.request<NFT[]>('evap_getNFTs', [owner]);
+  // ── NFTs ──
+
+  async getNFTs(owner?: string): Promise<NFT[]> {
+    const all = await this.get<NFT[]>('/api/nfts');
+    return owner ? all.filter(n => n.owner === owner) : all;
   }
 
-  async refreshNFT(nftId: string, signedTx: string): Promise<{ hash: string }> {
-    return this.request<{ hash: string }>('evap_refreshNFT', [nftId, signedTx]);
+  async refreshNFT(nftId: string, energy: number): Promise<TxResult> {
+    return this.post('/api/nft/refresh', { nft_id: nftId, energy_deposit: energy });
+  }
+
+  // ── Swap ──
+
+  async getSwapQuote(fromToken: string, toToken: string, amount: number): Promise<SwapQuote> {
+    return this.post('/api/swap/quote', { from_token: fromToken, to_token: toToken, amount });
+  }
+
+  async executeSwap(fromToken: string, toToken: string, amount: number, slippage: number): Promise<TxResult> {
+    return this.post('/api/swap/execute', { from_token: fromToken, to_token: toToken, amount, slippage });
   }
 }
 

@@ -60,18 +60,13 @@ const NftScreen: React.FC = () => {
   const handleRefreshNft = async (nftId: string) => {
     setRefreshingId(nftId);
     try {
-      const privateKey = await keystore.getPrivateKey();
-      if (!privateKey) throw new Error('No key');
-
-      const signedTx = JSON.stringify({
-        action: 'refresh_nft',
-        nftId,
-        timestamp: Date.now(),
-      });
-
-      await api.refreshNFT(nftId, signedTx);
-      Alert.alert('Refreshed', 'NFT energy has been restored.');
-      await loadNfts();
+      const result = await api.refreshNFT(nftId, 1000);
+      if (result.success) {
+        Alert.alert('Refreshed', 'NFT energy has been restored.');
+        await loadNfts();
+      } else {
+        Alert.alert('Error', result.message);
+      }
     } catch {
       Alert.alert('Error', 'Could not refresh NFT.');
     } finally {

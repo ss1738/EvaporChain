@@ -59,19 +59,13 @@ const ObjectsScreen: React.FC = () => {
   const handleRefreshObject = async (objectId: string) => {
     setRefreshingId(objectId);
     try {
-      const privateKey = await keystore.getPrivateKey();
-      if (!privateKey) throw new Error('No key');
-
-      // Placeholder signed transaction
-      const signedTx = JSON.stringify({
-        action: 'refresh',
-        objectId,
-        timestamp: Date.now(),
-      });
-
-      await api.refreshObject(objectId, signedTx);
-      Alert.alert('Refreshed', 'Object energy has been restored.');
-      await loadObjects();
+      const result = await api.refreshObject(objectId, 1000);
+      if (result.success) {
+        Alert.alert('Refreshed', 'Object energy has been restored.');
+        await loadObjects();
+      } else {
+        Alert.alert('Error', result.message);
+      }
     } catch {
       Alert.alert('Error', 'Could not refresh object.');
     } finally {

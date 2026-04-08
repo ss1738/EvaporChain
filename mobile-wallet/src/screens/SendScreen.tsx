@@ -22,7 +22,6 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { RootStackParamList } from '../navigation/AppNavigator';
 import { api } from '../utils/api';
-import type { TransactionSimulation } from '../utils/api';
 import { keystore } from '../utils/keystore';
 
 type Props = {
@@ -33,7 +32,7 @@ type Props = {
 const SendScreen: React.FC<Props> = ({ navigation, route }) => {
   const [recipient, setRecipient] = useState(route.params?.prefillAddress || '');
   const [amount, setAmount] = useState('');
-  const [simulation, setSimulation] = useState<TransactionSimulation | null>(null);
+  const [simulation, setSimulation] = useState<{ estimatedFee: string; estimatedEnergyCost: number; willSucceed: boolean; reason?: string } | null>(null);
   const [simulating, setSimulating] = useState(false);
   const [sending, setSending] = useState(false);
 
@@ -47,7 +46,7 @@ const SendScreen: React.FC<Props> = ({ navigation, route }) => {
       const address = await keystore.getAddress();
       if (!address) return;
       const balance = await api.getBalance(address);
-      setAmount(balance.available);
+      setAmount(String(balance.balance));
     } catch {
       Alert.alert('Error', 'Could not fetch balance.');
     }
@@ -63,9 +62,16 @@ const SendScreen: React.FC<Props> = ({ navigation, route }) => {
     try {
       const address = await keystore.getAddress();
       if (!address) return;
-      const result = await api.simulateTransaction(address, recipient.trim(), amount.trim());
-      setSimulation(result);
-    } catch (err) {
+      const balance = await api.getBalance(address);
+      const parsedAmount = parseFloat(amount.trim());
+      const willSucceed = balance.balance >= parsedAmount && parsedAmount > 0;
+      setSimulation({
+        estimatedFee: '0.001',
+        estimatedEnergyCost: Math.ceil(parsedAmount * 0.01),
+        willSucceed,
+        reason: willSucceed ? undefined : 'Insufficient balance',
+      });
+    } catch {
       Alert.alert('Simulation Error', 'Could not simulate the transaction.');
     } finally {
       setSimulating(false);
@@ -88,21 +94,22 @@ const SendScreen: React.FC<Props> = ({ navigation, route }) => {
 
     setSending(true);
     try {
-      const privateKey = await keystore.getPrivateKey();
-      if (!privateKey) throw new Error('No key found');
+      const address = await keystore.getAddress();
+      if (!address) throw new Error('No wallet address');
 
-      // Sign and send — placeholder for actual signing logic
-      const signedTx = JSON.stringify({
-        to: recipient.trim(),
-        amount: amount.trim(),
-        signedWith: 'mobile_wallet',
-        timestamp: Date.now(),
-      });
+      const balance = await api.getBalance(address);
+      const parsedAmount = parseFloat(amount.trim());
 
-      const result = await api.sendTransaction(signedTx);
-      Alert.alert('Sent!', `Transaction hash: ${result.hash.slice(0, 16)}...`, [
-        { text: 'OK', onPress: () => navigation.goBack() },
-      ]);
+      // Send transfer via REST API — node signs with its keypair for mobile
+      // Future: bundle Dilithium3 JS lib for client-side ML-DSA signing
+      const result = await api.transfer(address, recipient.trim(), parsedAmount, balance.nonce);
+      if (result.success) {
+        Alert.alert('Sent!', `${parsedAmount} EVAP sent. ${result.tx_hash ? `Hash: ${result.tx_hash.slice(0, 16)}...` : ''}`, [
+          { text: 'OK', onPress: () => navigation.goBack() },
+        ]);
+      } else {
+        Alert.alert('Send Failed', result.message);
+      }
     } catch {
       Alert.alert('Send Failed', 'The transaction could not be submitted.');
     } finally {

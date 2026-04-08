@@ -38,6 +38,10 @@
     "type": "git",
     "url": "https://github.com/ss1738/EvaporChain"
   },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "@types/react": "^19.0.0"
+  },
   "peerDependencies": {
     "react": ">=18.0.0"
   },
