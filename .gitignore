@@ -29,6 +29,12 @@ Thumbs.db
 *.so
 *.dylib
 
+# Test artifacts
+**/proptest-regressions/
+
+# Runtime data
+*.db
+
 # Benchmark results (keep JSON, ignore binaries)
 benchmark_results.bin
 logs/
