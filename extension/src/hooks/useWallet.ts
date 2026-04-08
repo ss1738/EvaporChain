@@ -4,7 +4,7 @@
  */
 
 import { create } from "zustand";
-import { BrowserKeyStore, type KeyEntry } from "@/crypto/keystore";
+import { BrowserKeyStore, type KeyEntry, signMessage } from "@/crypto/keystore";
 import { api, type AccountDetail, type StateObject, type ChainStatus, type TokenInfo, type SwapResult, type NftItem, type GhostObject, type GhostDetail, type RefreshCostEstimate, type SocialAuthResult } from "@/utils/api";
 import type { WcSession, WcSessionProposal } from "@/utils/walletconnect";
 import { ledgerManager, type LedgerAccount } from "@/utils/ledger";
@@ -68,6 +68,7 @@ interface WalletState {
   refreshObjects: () => Promise<void>;
   refreshChainStatus: () => Promise<void>;
   sendTransfer: (to: string, amount: number) => Promise<TxSendResult>;
+  signTransaction: (txPayload: string) => Promise<{ signature: string; publicKey: string }>;
   claimFaucet: () => Promise<void>;
   refreshTokens: () => Promise<void>;
   swapTokens: (fromToken: string, toToken: string, amount: number, slippage: number) => Promise<SwapResult>;
@@ -233,12 +234,34 @@ export const useWallet = create<WalletState>((set, get) => ({
   },
 
   sendTransfer: async (to: string, amount: number) => {
-    const { activeAccount, nonce } = get();
+    const { activeAccount, nonce, password, keystore } = get();
     if (!activeAccount) throw new Error("No active account");
+    if (!password || !keystore) throw new Error("Wallet locked");
 
     set({ loading: true, error: null });
     try {
-      const result = await api.transfer(activeAccount.address, to, amount, nonce);
+      // 1. Decrypt private key
+      const secretKey = await keystore.unlockKey(activeAccount.name, password);
+
+      // 2. Build transaction payload to sign
+      const txPayload = JSON.stringify({
+        type: "transfer",
+        from: activeAccount.address,
+        to,
+        amount,
+        nonce,
+      });
+      const txBytes = new TextEncoder().encode(txPayload);
+
+      // 3. Sign with real ML-DSA-65 via WASM
+      const signature = await signMessage(secretKey, txBytes);
+
+      // 4. Encode signature and public key as hex for the API
+      const sigHex = Array.from(signature).map(b => b.toString(16).padStart(2, "0")).join("");
+      const pubKeyHex = activeAccount.publicKey;
+
+      // 5. Broadcast signed transaction
+      const result = await api.transfer(activeAccount.address, to, amount, nonce, sigHex, pubKeyHex);
       if (result.success) {
         set({ nonce: nonce + 1, loading: false, notification: `Sent ${amount} EVAP` });
         get().refreshBalance();
@@ -252,6 +275,21 @@ export const useWallet = create<WalletState>((set, get) => ({
     }
   },
 
+  /**
+   * Sign a raw transaction payload and return the hex signature + public key.
+   * Used by the dApp approval flow and WalletConnect.
+   */
+  signTransaction: async (txPayload: string): Promise<{ signature: string; publicKey: string }> => {
+    const { activeAccount, password, keystore } = get();
+    if (!activeAccount || !password || !keystore) throw new Error("Wallet locked");
+
+    const secretKey = await keystore.unlockKey(activeAccount.name, password);
+    const txBytes = new TextEncoder().encode(txPayload);
+    const sig = await signMessage(secretKey, txBytes);
+    const sigHex = Array.from(sig).map(b => b.toString(16).padStart(2, "0")).join("");
+    return { signature: sigHex, publicKey: activeAccount.publicKey };
+  },
+
   refreshTokens: async () => {
     try {
       const tokens = await api.getTokens();
@@ -262,9 +300,13 @@ export const useWallet = create<WalletState>((set, get) => ({
   },
 
   swapTokens: async (fromToken: string, toToken: string, amount: number, slippage: number) => {
+    const { activeAccount } = get();
     set({ loading: true, error: null });
     try {
-      const result = await api.executeSwap(fromToken, toToken, amount, slippage);
+      // Sign the swap transaction
+      const txPayload = JSON.stringify({ type: "swap", from_token: fromToken, to_token: toToken, amount, slippage, from: activeAccount?.address });
+      const { signature, publicKey } = await get().signTransaction(txPayload);
+      const result = await api.executeSwap(fromToken, toToken, amount, slippage, signature, publicKey);
       if (result.success) {
         set({ loading: false, notification: `Swapped ${result.amount_in} ${fromToken} for ${result.amount_out} ${toToken}` });
         get().refreshBalance();
@@ -340,9 +382,13 @@ export const useWallet = create<WalletState>((set, get) => ({
   },
 
   resurrectGhost: async (id: string, energy: number) => {
+    const { activeAccount } = get();
     set({ loading: true, error: null });
     try {
-      const result = await api.resurrectObject(id, energy);
+      // Sign the resurrect transaction
+      const txPayload = JSON.stringify({ type: "resurrect", object_id: id, energy_deposit: energy, from: activeAccount?.address });
+      const { signature, publicKey } = await get().signTransaction(txPayload);
+      const result = await api.resurrectObject(id, energy, signature, publicKey);
       if (result.success) {
         set({ loading: false, notification: `Resurrected object! Spent ${energy} EVAP` });
         get().refreshGhosts();
@@ -357,9 +403,13 @@ export const useWallet = create<WalletState>((set, get) => ({
   },
 
   batchRefreshObjects: async (objects: Array<{ id: string; energy: number }>) => {
+    const { activeAccount } = get();
     set({ loading: true, error: null });
     try {
-      const result = await api.batchRefresh(objects);
+      // Sign the batch refresh transaction
+      const txPayload = JSON.stringify({ type: "batch_refresh", objects, from: activeAccount?.address });
+      const { signature, publicKey } = await get().signTransaction(txPayload);
+      const result = await api.batchRefresh(objects, signature, publicKey);
       if (result.success) {
         const totalEnergy = objects.reduce((sum, o) => sum + o.energy, 0);
         set({

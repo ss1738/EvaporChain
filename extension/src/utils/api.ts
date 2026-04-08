@@ -301,8 +301,8 @@ class EvaporChainAPI {
     return this.post("/api/swap/quote", { from_token: fromToken, to_token: toToken, amount });
   }
 
-  async executeSwap(fromToken: string, toToken: string, amount: number, slippage: number): Promise<SwapResult> {
-    return this.post("/api/swap/execute", { from_token: fromToken, to_token: toToken, amount, slippage });
+  async executeSwap(fromToken: string, toToken: string, amount: number, slippage: number, signature?: string, publicKey?: string): Promise<SwapResult> {
+    return this.post("/api/swap/execute", { from_token: fromToken, to_token: toToken, amount, slippage, signature, public_key: publicKey });
   }
 
   // ── NFTs ──
@@ -330,8 +330,8 @@ class EvaporChainAPI {
 
   // ── Batch Refresh ──
 
-  async batchRefresh(objects: Array<{ id: string; energy: number }>): Promise<TxResult> {
-    return this.post("/api/tx/batch-refresh", { objects });
+  async batchRefresh(objects: Array<{ id: string; energy: number }>, signature?: string, publicKey?: string): Promise<TxResult> {
+    return this.post("/api/tx/batch-refresh", { objects, signature, public_key: publicKey });
   }
 
   async getRefreshCost(objectId: string, targetEnergy: number): Promise<RefreshCostEstimate> {
@@ -349,8 +349,8 @@ class EvaporChainAPI {
     return this.get(`/api/ghost/${id}`);
   }
 
-  async resurrectObject(id: string, energy: number): Promise<TxResult> {
-    return this.post("/api/tx/resurrect", { object_id: id, energy_deposit: energy });
+  async resurrectObject(id: string, energy: number, signature?: string, publicKey?: string): Promise<TxResult> {
+    return this.post("/api/tx/resurrect", { object_id: id, energy_deposit: energy, signature, public_key: publicKey });
   }
 
   async getRecoveryCost(id: string): Promise<RecoveryCostEstimate> {
