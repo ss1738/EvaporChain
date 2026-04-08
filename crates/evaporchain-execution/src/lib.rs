@@ -1,5 +1,7 @@
+pub mod block_stm;
 pub mod fees;
 pub mod genesis;
+pub mod parallel;
 pub mod rewards;
 
 use evaporchain_contracts::{ContractEngine, ContractTemplate};
@@ -81,16 +83,16 @@ pub trait ExecutionEngine: Send + Sync {
 }
 
 /// Gas cost constants for transaction types.
-const GAS_TRANSFER: u64 = 21_000;
-const GAS_CREATE_OBJECT_BASE: u64 = 50_000;
-const GAS_CREATE_OBJECT_PER_BYTE: u64 = 200;
-const GAS_REFRESH: u64 = 30_000;
-const GAS_DEPLOY_CONTRACT: u64 = 100_000;
-const GAS_CALL_CONTRACT: u64 = 40_000;
-const GAS_DEPLOY_SCRIPT: u64 = 150_000;
-const GAS_CALL_SCRIPT: u64 = 50_000;
-const GAS_VALIDATOR_STAKE: u64 = 50_000;
-const GAS_VALIDATOR_EXIT: u64 = 30_000;
+pub(crate) const GAS_TRANSFER: u64 = 21_000;
+pub(crate) const GAS_CREATE_OBJECT_BASE: u64 = 50_000;
+pub(crate) const GAS_CREATE_OBJECT_PER_BYTE: u64 = 200;
+pub(crate) const GAS_REFRESH: u64 = 30_000;
+pub(crate) const GAS_DEPLOY_CONTRACT: u64 = 100_000;
+pub(crate) const GAS_CALL_CONTRACT: u64 = 40_000;
+pub(crate) const GAS_DEPLOY_SCRIPT: u64 = 150_000;
+pub(crate) const GAS_CALL_SCRIPT: u64 = 50_000;
+pub(crate) const GAS_VALIDATOR_STAKE: u64 = 50_000;
+pub(crate) const GAS_VALIDATOR_EXIT: u64 = 30_000;
 
 /// Simple executor that processes transactions sequentially and runs
 /// evaporation at the end of each block.
@@ -329,6 +331,7 @@ impl SimpleExecutor {
             "DecayingAuction" => ContractTemplate::DecayingAuction,
             "StakingPool" => ContractTemplate::StakingPool,
             "DAOVote" => ContractTemplate::DAOVote,
+            "TemporalContract" => ContractTemplate::TemporalContract,
             other => {
                 return Err(ExecutionError::ContractError(format!(
                     "unknown template: {other}"
