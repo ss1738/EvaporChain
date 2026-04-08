@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+exclude = ["crates/evaporchain-crypto-wasm"]
 members = [
     "crates/evaporchain-types",
     "crates/evaporchain-crypto",
@@ -15,6 +16,7 @@ members = [
     "crates/evaporchain-script",
     "crates/evaporchain-mcp",
     "prototypes/fold-a-block",
+    "wallet",
 ]
 
 [workspace.package]

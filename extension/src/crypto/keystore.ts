@@ -5,10 +5,11 @@
  * - PBKDF2 for key derivation (password → AES key)
  * - AES-256-GCM for encrypting private keys at rest
  *
- * Note: ML-DSA signing is stubbed for now — will be replaced with WASM
- * bridge to evaporchain-crypto once compiled to wasm32-unknown-unknown.
- * For testnet, we use Ed25519-style key simulation via Web Crypto.
+ * Key generation and signing use real ML-DSA-65 (Dilithium3) post-quantum
+ * cryptography via WASM bridge to evaporchain-crypto-wasm.
  */
+
+import { generateMlDsaKeypair, signWithMlDsa, mlDsaDeriveAddress } from "./wasm-bridge";
 
 export interface KeyEntry {
   name: string;
@@ -78,38 +79,21 @@ function fromHex(hex: string): Uint8Array {
   return bytes;
 }
 
-// ── Key generation ──
-// Temporary: uses Web Crypto Ed25519-style keys for testnet.
-// Production: will use ML-DSA via WASM.
+// ── Key generation (real ML-DSA-65 via WASM) ──
 
 async function generateKeypair(): Promise<{ publicKey: Uint8Array; privateKey: Uint8Array }> {
-  // Generate 32-byte random keypair (simulating key material)
-  const privateKey = crypto.getRandomValues(new Uint8Array(32));
-  // Derive public key via SHA-256 hash of private key (deterministic)
-  const pubKeyHash = await crypto.subtle.digest("SHA-256", privateKey);
-  const publicKey = new Uint8Array(pubKeyHash);
-  return { publicKey, privateKey };
+  const { publicKey, secretKey } = await generateMlDsaKeypair();
+  return { publicKey, privateKey: secretKey };
 }
 
 function deriveAddress(publicKey: Uint8Array): string {
-  // BLAKE3 on Rust side — here we use first 32 bytes of SHA-256(pubkey) as address
-  // This matches the testnet format: 0x + 64 hex chars
-  return "0x" + toHex(publicKey);
+  return mlDsaDeriveAddress(publicKey);
 }
 
-// ── Sign transaction ──
+// ── Sign transaction (real ML-DSA-65 via WASM) ──
 
 export async function signMessage(privateKey: Uint8Array, message: Uint8Array): Promise<Uint8Array> {
-  // Stub: HMAC-SHA256 signature for testnet compatibility
-  // Production: ML-DSA signing via WASM
-  const key = await crypto.subtle.importKey(
-    "raw",
-    privateKey as BufferSource,
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"]
-  );
-  return new Uint8Array(await crypto.subtle.sign("HMAC", key, message as BufferSource));
+  return signWithMlDsa(privateKey, message);
 }
 
 // ── KeyStore class ──

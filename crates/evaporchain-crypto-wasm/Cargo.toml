@@ -1,0 +1,27 @@
+[package]
+name = "evaporchain-crypto-wasm"
+version = "0.1.0"
+edition = "2021"
+description = "WASM bridge for ML-DSA post-quantum signing in EvaporChain browser wallet"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+pqc_dilithium = { version = "0.2", features = ["mode3"] }
+getrandom = { version = "0.2", features = ["js"] }
+sha2 = "0.10"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
