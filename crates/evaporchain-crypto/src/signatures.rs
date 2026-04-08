@@ -1,7 +1,4 @@
-use pqcrypto_dilithium::dilithium3;
-use pqcrypto_traits::sign::{
-    DetachedSignature, PublicKey as PqPublicKey, SecretKey as PqSecretKey,
-};
+use pqc_dilithium::Keypair;
 
 // ─────────────────────────── Traits ─────────────────────────────────────
 
@@ -23,48 +20,66 @@ pub trait Verifier: Send + Sync {
 
 /// ML-DSA keypair for post-quantum transaction signing.
 ///
-/// Uses NIST security level 3 (Dilithium3).
-/// Public key: 1952 bytes, Signature: 3293 bytes.
+/// Uses NIST security level 3 (Dilithium3) via `pqc_dilithium` mode3.
+/// Public key: 1952 bytes, Secret key: 4000 bytes, Signature: 3293 bytes.
+///
+/// This is the same pure-Rust implementation used in the WASM bridge,
+/// ensuring byte-level compatibility between node and browser extension.
 pub struct MlDsaKeypair {
-    pk: dilithium3::PublicKey,
-    sk: dilithium3::SecretKey,
+    inner: Keypair,
 }
 
 impl MlDsaKeypair {
     /// Generate a new random keypair.
     pub fn generate() -> Self {
-        let (pk, sk) = dilithium3::keypair();
-        Self { pk, sk }
+        Self { inner: Keypair::generate() }
     }
 
     /// Reconstruct a keypair from raw bytes.
     pub fn from_bytes(pk_bytes: &[u8], sk_bytes: &[u8]) -> Result<Self, MlDsaError> {
-        let pk = dilithium3::PublicKey::from_bytes(pk_bytes)
-            .map_err(|_| MlDsaError::InvalidPublicKey)?;
-        let sk = dilithium3::SecretKey::from_bytes(sk_bytes)
-            .map_err(|_| MlDsaError::InvalidSecretKey)?;
-        Ok(Self { pk, sk })
+        if pk_bytes.len() != pqc_dilithium::PUBLICKEYBYTES {
+            return Err(MlDsaError::InvalidPublicKey);
+        }
+        if sk_bytes.len() != pqc_dilithium::SECRETKEYBYTES {
+            return Err(MlDsaError::InvalidSecretKey);
+        }
+        // Reconstruct Keypair by generating a dummy then overwriting fields.
+        // Keypair is { public: [u8; PK], secret: [u8; SK] } and is Copy.
+        let mut kp = Keypair::generate();
+
+        // SAFETY: Keypair layout is { public: [u8; PUBLICKEYBYTES], secret: [u8; SECRETKEYBYTES] }
+        // We overwrite both fields with the provided bytes.
+        unsafe {
+            let ptr = &mut kp as *mut Keypair as *mut u8;
+            std::ptr::copy_nonoverlapping(pk_bytes.as_ptr(), ptr, pqc_dilithium::PUBLICKEYBYTES);
+            std::ptr::copy_nonoverlapping(
+                sk_bytes.as_ptr(),
+                ptr.add(pqc_dilithium::PUBLICKEYBYTES),
+                pqc_dilithium::SECRETKEYBYTES,
+            );
+        }
+
+        Ok(Self { inner: kp })
     }
 
-    /// Raw public key bytes.
+    /// Raw public key bytes (1952 bytes).
     pub fn public_key(&self) -> &[u8] {
-        self.pk.as_bytes()
+        &self.inner.public
     }
 
-    /// Raw secret key bytes.
+    /// Raw secret key bytes (4000 bytes).
     pub fn secret_key(&self) -> &[u8] {
-        self.sk.as_bytes()
+        self.inner.expose_secret()
     }
 }
 
 impl Signer for MlDsaKeypair {
     fn sign(&self, msg: &[u8]) -> Vec<u8> {
-        let sig = dilithium3::detached_sign(msg, &self.sk);
-        sig.as_bytes().to_vec()
+        self.inner.sign(msg).to_vec()
     }
 
     fn public_key_bytes(&self) -> Vec<u8> {
-        self.pk.as_bytes().to_vec()
+        self.inner.public.to_vec()
     }
 }
 
@@ -73,15 +88,12 @@ pub struct MlDsaVerifier;
 
 impl Verifier for MlDsaVerifier {
     fn verify(msg: &[u8], signature: &[u8], public_key: &[u8]) -> bool {
-        let pk = match dilithium3::PublicKey::from_bytes(public_key) {
-            Ok(pk) => pk,
-            Err(_) => return false,
-        };
-        let sig = match dilithium3::DetachedSignature::from_bytes(signature) {
-            Ok(sig) => sig,
-            Err(_) => return false,
-        };
-        dilithium3::verify_detached_signature(&sig, msg, &pk).is_ok()
+        if public_key.len() != pqc_dilithium::PUBLICKEYBYTES
+            || signature.len() != pqc_dilithium::SIGNBYTES
+        {
+            return false;
+        }
+        pqc_dilithium::verify(signature, msg, public_key).is_ok()
     }
 }
 
@@ -414,5 +426,62 @@ mod tests {
         let sig = signer.sign(msg);
         let pk = signer.public_key_bytes();
         assert!(MlDsaVerifier::verify(msg, &sig, &pk));
+    }
+
+    // ─── Cross-validation: simulates WASM → Node flow ────────────────
+
+    #[test]
+    fn test_cross_validation_wasm_to_node() {
+        // Simulate what the WASM bridge does: generate keypair, sign tx
+        let wasm_kp = pqc_dilithium::Keypair::generate();
+        let tx_bytes = b"transfer:from=0xabc,to=0xdef,amount=1000";
+        let wasm_sig = wasm_kp.sign(tx_bytes);
+        let wasm_pk = wasm_kp.public.to_vec();
+
+        // Simulate what the node does: verify with MlDsaVerifier
+        assert!(
+            MlDsaVerifier::verify(tx_bytes, &wasm_sig, &wasm_pk),
+            "Node must accept WASM-signed transactions"
+        );
+    }
+
+    #[test]
+    fn test_cross_validation_node_to_wasm() {
+        // Simulate what the node does: generate keypair, sign
+        let node_kp = MlDsaKeypair::generate();
+        let msg = b"block proposal at height 42";
+        let node_sig = node_kp.sign(msg);
+        let node_pk = node_kp.public_key().to_vec();
+
+        // Simulate what the WASM bridge does: verify with pqc_dilithium
+        assert!(
+            pqc_dilithium::verify(&node_sig, msg, &node_pk).is_ok(),
+            "WASM must accept node-signed data"
+        );
+    }
+
+    #[test]
+    fn test_cross_validation_keypair_serialization() {
+        // Generate in "WASM" (raw pqc_dilithium), reconstruct in "node" (MlDsaKeypair)
+        let wasm_kp = pqc_dilithium::Keypair::generate();
+        let pk = wasm_kp.public.to_vec();
+        let sk = wasm_kp.expose_secret().to_vec();
+
+        // Node reconstructs keypair from bytes sent by WASM
+        let node_kp = MlDsaKeypair::from_bytes(&pk, &sk).unwrap();
+
+        // Sign with reconstructed keypair, verify with raw pqc_dilithium
+        let msg = b"cross-crate roundtrip";
+        let sig = node_kp.sign(msg);
+        assert!(pqc_dilithium::verify(&sig, msg, &pk).is_ok());
+    }
+
+    #[test]
+    fn test_key_sizes_match_wasm_expectations() {
+        let kp = MlDsaKeypair::generate();
+        assert_eq!(kp.public_key().len(), 1952, "PK must be 1952 bytes");
+        assert_eq!(kp.secret_key().len(), pqc_dilithium::SECRETKEYBYTES, "SK size must match");
+        let sig = kp.sign(b"test");
+        assert_eq!(sig.len(), 3293, "Signature must be 3293 bytes");
     }
 }

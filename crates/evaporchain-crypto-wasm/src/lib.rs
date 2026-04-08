@@ -2,8 +2,8 @@
 //!
 //! Exposes key generation, signing, and verification to the browser extension
 //! via wasm-bindgen. Uses `pqc_dilithium` in mode3 (NIST security level 3)
-//! which produces identical key/signature formats to the `pqcrypto_dilithium::dilithium3`
-//! used by the EvaporChain node.
+//! which is the same `pqc_dilithium` crate used by the EvaporChain node,
+//! ensuring byte-level compatibility between browser and node signatures.
 //!
 //! Key sizes (Dilithium3 / ML-DSA-65):
 //! - Public key:  1952 bytes
