@@ -1,0 +1,100 @@
+{
+  "chain_params": {
+    "chain_id": "evaporchain-mainnet-1",
+    "block_interval_ms": 2000,
+    "grace_period": 5,
+    "block_gas_limit": 500000,
+    "max_tx_size": 1048576,
+    "max_txs_per_block": 10000,
+    "min_validator_stake": 100000,
+    "unbonding_period": 100
+  },
+  "tokenomics": {
+    "total_supply": 1000000000,
+    "block_reward": 100,
+    "reward_half_life": 1000000,
+    "fee_burn_rate": 0.50,
+    "staker_fee_share": 0.50,
+    "target_staking_apy": 0.05
+  },
+  "genesis_time": "2026-10-01T00:00:00Z",
+  "validators": [
+    {
+      "id": 1,
+      "name": "validator-alpha",
+      "stake": 250000,
+      "address": [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "p2p_address": "/ip4/0.0.0.0/tcp/9000"
+    },
+    {
+      "id": 2,
+      "name": "validator-beta",
+      "stake": 250000,
+      "address": [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "p2p_address": "/ip4/0.0.0.0/tcp/9001"
+    },
+    {
+      "id": 3,
+      "name": "validator-gamma",
+      "stake": 250000,
+      "address": [3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "p2p_address": "/ip4/0.0.0.0/tcp/9002"
+    },
+    {
+      "id": 4,
+      "name": "validator-delta",
+      "stake": 250000,
+      "address": [4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "p2p_address": "/ip4/0.0.0.0/tcp/9003"
+    }
+  ],
+  "accounts": [
+    {
+      "address": [160, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "balance": 350000000,
+      "label": "Foundation Treasury"
+    },
+    {
+      "address": [176, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "balance": 200000000,
+      "label": "Ecosystem Development"
+    },
+    {
+      "address": [192, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "balance": 150000000,
+      "label": "Core Contributors"
+    },
+    {
+      "address": [208, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "balance": 100000000,
+      "label": "Community Airdrop"
+    },
+    {
+      "address": [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "balance": 50000000,
+      "label": "Validator-Alpha Operator"
+    },
+    {
+      "address": [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "balance": 50000000,
+      "label": "Validator-Beta Operator"
+    },
+    {
+      "address": [3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "balance": 50000000,
+      "label": "Validator-Gamma Operator"
+    },
+    {
+      "address": [4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "balance": 50000000,
+      "label": "Validator-Delta Operator"
+    }
+  ],
+  "objects": [],
+  "bootstrap_peers": [
+    "/ip4/0.0.0.0/tcp/9000",
+    "/ip4/0.0.0.0/tcp/9001",
+    "/ip4/0.0.0.0/tcp/9002",
+    "/ip4/0.0.0.0/tcp/9003"
+  ]
+}
