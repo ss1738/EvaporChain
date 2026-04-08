@@ -1,12 +1,54 @@
 name: CI
 on: [push, pull_request]
+
 jobs:
-  check:
+  rust:
+    name: Rust — check, test, lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace
       - run: cargo test --workspace
       - run: cargo clippy --workspace -- -D warnings
       - run: cargo fmt --check
+
+  wasm:
+    name: WASM — build ML-DSA crypto
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: jetli/wasm-pack-action@v0.4.0
+      - run: wasm-pack build crates/evaporchain-crypto-wasm --target web --release --out-dir ../../extension/src/crypto/wasm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-pkg
+          path: extension/src/crypto/wasm/
+
+  extension:
+    name: Extension — typecheck and build
+    needs: wasm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm-pkg
+          path: extension/src/crypto/wasm/
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - working-directory: extension
+        run: npm ci
+      - working-directory: extension
+        run: npx tsc --noEmit
+      - working-directory: extension
+        run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extension-dist
+          path: extension/dist/
