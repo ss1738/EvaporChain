@@ -17,10 +17,16 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { RootStackParamList } from '../navigation/AppNavigator';
 import { api } from '../utils/api';
 import type { ChainObject } from '../utils/api';
 import { keystore } from '../utils/keystore';
 import { EnergyBar } from '../components/EnergyBar';
+
+type Props = {
+  navigation: NativeStackNavigationProp<RootStackParamList, 'Objects'>;
+};
 
 const STATE_COLORS: Record<string, string> = {
   Active: '#22c55e',
@@ -28,7 +34,7 @@ const STATE_COLORS: Record<string, string> = {
   Ghost: '#9ca3af',
 };
 
-const ObjectsScreen: React.FC = () => {
+const ObjectsScreen: React.FC<Props> = ({ navigation }) => {
   const [objects, setObjects] = useState<ChainObject[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
@@ -87,7 +93,11 @@ const ObjectsScreen: React.FC = () => {
     const isRefreshing = refreshingId === item.id;
 
     return (
-      <View style={styles.card}>
+      <TouchableOpacity
+        style={styles.card}
+        onPress={() => navigation.navigate('ObjectDetail', { objectId: item.id })}
+        activeOpacity={0.7}
+      >
         <View style={styles.cardHeader}>
           <View style={styles.cardTitleRow}>
             <Text style={styles.cardName}>{item.name}</Text>
@@ -128,7 +138,7 @@ const ObjectsScreen: React.FC = () => {
             </TouchableOpacity>
           )}
         </View>
-      </View>
+      </TouchableOpacity>
     );
   };
 

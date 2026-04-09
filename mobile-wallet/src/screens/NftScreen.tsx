@@ -16,10 +16,16 @@ import {
   Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { RootStackParamList } from '../navigation/AppNavigator';
 import { api } from '../utils/api';
 import type { NFT } from '../utils/api';
 import { keystore } from '../utils/keystore';
 import { EnergyBar } from '../components/EnergyBar';
+
+type Props = {
+  navigation: NativeStackNavigationProp<RootStackParamList, 'NFTs'>;
+};
 
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = (width - 48) / 2; // 2 columns with gaps
@@ -30,7 +36,7 @@ const STATE_COLORS: Record<string, string> = {
   Ghost: '#9ca3af',
 };
 
-const NftScreen: React.FC = () => {
+const NftScreen: React.FC<Props> = ({ navigation }) => {
   const [nfts, setNfts] = useState<NFT[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
@@ -88,7 +94,11 @@ const NftScreen: React.FC = () => {
     const isRefreshing = refreshingId === item.id;
 
     return (
-      <View style={styles.card}>
+      <TouchableOpacity
+        style={styles.card}
+        onPress={() => navigation.navigate('NftDetail', { nftId: item.id })}
+        activeOpacity={0.7}
+      >
         {/* NFT Image */}
         <View style={styles.imageContainer}>
           {item.imageUri ? (
@@ -146,7 +156,7 @@ const NftScreen: React.FC = () => {
             </TouchableOpacity>
           )}
         </View>
-      </View>
+      </TouchableOpacity>
     );
   };
 

@@ -65,7 +65,7 @@ const UnlockScreen: React.FC<Props> = ({ navigation }) => {
   const verifyPin = async (enteredPin: string) => {
     const valid = await keystore.verifyPin(enteredPin);
     if (valid) {
-      navigation.replace('Home');
+      navigation.replace('MainTabs');
     } else {
       Alert.alert('Incorrect PIN', 'Please try again.');
       setPin('');
@@ -80,7 +80,7 @@ const UnlockScreen: React.FC<Props> = ({ navigation }) => {
     });
 
     if (result.success) {
-      navigation.replace('Home');
+      navigation.replace('MainTabs');
     }
   };
 

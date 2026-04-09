@@ -202,13 +202,13 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
           )}
         </View>
 
-        {/* Settings link */}
+        {/* Faucet link */}
         <TouchableOpacity
-          style={styles.settingsLink}
-          onPress={() => navigation.navigate('Settings')}
+          style={styles.faucetLink}
+          onPress={() => navigation.navigate('Faucet' as any)}
           activeOpacity={0.7}
         >
-          <Text style={styles.settingsLinkText}>Settings</Text>
+          <Text style={styles.faucetLinkText}>Claim Testnet Tokens</Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
@@ -374,15 +374,20 @@ const styles = StyleSheet.create({
     color: '#9ca3af',
     marginTop: 2,
   },
-  settingsLink: {
-    marginTop: 24,
-    alignItems: 'center',
+  faucetLink: {
+    marginTop: 16,
+    marginHorizontal: 16,
+    backgroundColor: '#ecfeff',
+    borderWidth: 1,
+    borderColor: '#06b6d4',
+    borderRadius: 12,
     paddingVertical: 14,
+    alignItems: 'center',
   },
-  settingsLinkText: {
+  faucetLinkText: {
     fontSize: 14,
-    color: '#6b7280',
-    fontWeight: '500',
+    color: '#06b6d4',
+    fontWeight: '600',
   },
 });
 
