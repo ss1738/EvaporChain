@@ -15,8 +15,10 @@ import {
   StyleSheet,
   Alert,
   ActivityIndicator,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as LocalAuthentication from 'expo-local-authentication';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
@@ -35,10 +37,24 @@ const SendScreen: React.FC<Props> = ({ navigation, route }) => {
   const [simulation, setSimulation] = useState<{ estimatedFee: string; estimatedEnergyCost: number; willSucceed: boolean; reason?: string } | null>(null);
   const [simulating, setSimulating] = useState(false);
   const [sending, setSending] = useState(false);
+  const [scannerVisible, setScannerVisible] = useState(false);
+  const [permission, requestPermission] = useCameraPermissions();
 
-  const handleScanQR = () => {
-    // TODO: Open camera for QR scanning
-    Alert.alert('QR Scanner', 'QR scanning will open the camera to scan a recipient address.');
+  const handleScanQR = async () => {
+    if (!permission?.granted) {
+      const result = await requestPermission();
+      if (!result.granted) {
+        Alert.alert('Permission Required', 'Camera access is needed to scan QR codes.');
+        return;
+      }
+    }
+    setScannerVisible(true);
+  };
+
+  const handleBarCodeScanned = (result: { data: string }) => {
+    setScannerVisible(false);
+    const address = result.data.replace(/^evaporchain:/i, '').trim();
+    setRecipient(address);
   };
 
   const handleMax = async () => {
@@ -217,6 +233,30 @@ const SendScreen: React.FC<Props> = ({ navigation, route }) => {
           </TouchableOpacity>
         )}
       </ScrollView>
+
+      {/* QR Scanner Modal */}
+      <Modal visible={scannerVisible} animationType="slide">
+        <SafeAreaView style={styles.scannerContainer}>
+          <View style={styles.scannerHeader}>
+            <Text style={styles.scannerTitle}>Scan QR Code</Text>
+            <TouchableOpacity onPress={() => setScannerVisible(false)} activeOpacity={0.7}>
+              <Text style={styles.scannerClose}>Close</Text>
+            </TouchableOpacity>
+          </View>
+          <CameraView
+            style={styles.camera}
+            barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+            onBarcodeScanned={handleBarCodeScanned}
+          >
+            <View style={styles.scannerOverlay}>
+              <View style={styles.scannerFrame} />
+              <Text style={styles.scannerHint}>
+                Point at an EvaporChain address QR code
+              </Text>
+            </View>
+          </CameraView>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -360,6 +400,50 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '700',
+  },
+  scannerContainer: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
+  scannerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#000000',
+  },
+  scannerTitle: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: '#ffffff',
+  },
+  scannerClose: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#06b6d4',
+  },
+  camera: {
+    flex: 1,
+  },
+  scannerOverlay: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scannerFrame: {
+    width: 240,
+    height: 240,
+    borderWidth: 2,
+    borderColor: '#06b6d4',
+    borderRadius: 16,
+  },
+  scannerHint: {
+    color: '#ffffff',
+    fontSize: 14,
+    marginTop: 20,
+    textAlign: 'center',
+    opacity: 0.8,
   },
 });
 

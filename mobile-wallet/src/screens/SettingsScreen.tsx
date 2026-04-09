@@ -9,19 +9,24 @@ import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
+  TextInput,
   TouchableOpacity,
   ScrollView,
   StyleSheet,
   Alert,
   Switch,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as LocalAuthentication from 'expo-local-authentication';
+import * as Clipboard from 'expo-clipboard';
 import { api } from '../utils/api';
 import { keystore } from '../utils/keystore';
 
 const NETWORKS = ['testnet', 'mainnet'] as const;
 const AUTO_LOCK_OPTIONS = [1, 5, 15, 30] as const;
+
+type PinModalMode = 'export' | 'change-current' | 'change-new' | 'change-confirm' | null;
 
 const SettingsScreen: React.FC = () => {
   const [network, setNetwork] = useState<string>(api.getNetwork());
@@ -29,6 +34,13 @@ const SettingsScreen: React.FC = () => {
   const [pushEnabled, setPushEnabled] = useState(true);
   const [decayAlerts, setDecayAlerts] = useState(true);
   const [transferAlerts, setTransferAlerts] = useState(true);
+
+  // PIN modal state
+  const [pinModalMode, setPinModalMode] = useState<PinModalMode>(null);
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState('');
+  const [currentPinForChange, setCurrentPinForChange] = useState('');
+  const [newPinForChange, setNewPinForChange] = useState('');
 
   useEffect(() => {
     loadSettings();
@@ -48,7 +60,7 @@ const SettingsScreen: React.FC = () => {
         {
           text: 'Switch',
           onPress: () => {
-            api.setNetwork(newNetwork);
+            api.setNetwork(newNetwork as 'testnet' | 'mainnet');
             setNetwork(newNetwork);
           },
         },
@@ -77,29 +89,84 @@ const SettingsScreen: React.FC = () => {
     );
   };
 
-  const handleExportKeystore = async () => {
-    Alert.prompt?.(
-      'Export Keystore',
-      'Enter your PIN to export:',
-      async (pin: string) => {
-        const data = await keystore.exportKeystore(pin);
-        if (!data) {
-          Alert.alert('Error', 'Incorrect PIN or export failed.');
-          return;
-        }
-        // In production, save to file or share
-        Alert.alert('Keystore Exported', 'Keystore JSON has been copied to clipboard.');
-      },
-      'secure-text'
-    ) ?? Alert.alert('Export', 'Keystore export requires PIN verification. Feature coming soon on Android.');
+  const handleExportKeystore = () => {
+    resetPinModal();
+    setPinModalMode('export');
   };
 
   const handleChangePin = () => {
-    Alert.alert(
-      'Change PIN',
-      'PIN change flow will guide you through entering your current PIN and setting a new 6-digit PIN.',
-      [{ text: 'OK' }]
-    );
+    resetPinModal();
+    setPinModalMode('change-current');
+  };
+
+  const resetPinModal = () => {
+    setPinInput('');
+    setPinError('');
+    setCurrentPinForChange('');
+    setNewPinForChange('');
+  };
+
+  const closePinModal = () => {
+    setPinModalMode(null);
+    resetPinModal();
+  };
+
+  const handlePinSubmit = async () => {
+    if (pinInput.length !== 6) {
+      setPinError('PIN must be 6 digits');
+      return;
+    }
+
+    if (pinModalMode === 'export') {
+      const data = await keystore.exportKeystore(pinInput);
+      if (!data) {
+        setPinError('Incorrect PIN');
+        setPinInput('');
+        return;
+      }
+      closePinModal();
+      await Clipboard.setStringAsync(data);
+      Alert.alert('Exported', 'Keystore JSON copied to clipboard.');
+    } else if (pinModalMode === 'change-current') {
+      const valid = await keystore.verifyPin(pinInput);
+      if (!valid) {
+        setPinError('Incorrect PIN');
+        setPinInput('');
+        return;
+      }
+      setCurrentPinForChange(pinInput);
+      setPinInput('');
+      setPinError('');
+      setPinModalMode('change-new');
+    } else if (pinModalMode === 'change-new') {
+      setNewPinForChange(pinInput);
+      setPinInput('');
+      setPinError('');
+      setPinModalMode('change-confirm');
+    } else if (pinModalMode === 'change-confirm') {
+      if (pinInput !== newPinForChange) {
+        setPinError('PINs do not match');
+        setPinInput('');
+        return;
+      }
+      const success = await keystore.changePin(currentPinForChange, pinInput);
+      closePinModal();
+      if (success) {
+        Alert.alert('PIN Changed', 'Your wallet PIN has been updated.');
+      } else {
+        Alert.alert('Error', 'Could not change PIN. Please try again.');
+      }
+    }
+  };
+
+  const getPinModalTitle = (): string => {
+    switch (pinModalMode) {
+      case 'export': return 'Enter PIN to Export';
+      case 'change-current': return 'Enter Current PIN';
+      case 'change-new': return 'Enter New PIN';
+      case 'change-confirm': return 'Confirm New PIN';
+      default: return '';
+    }
   };
 
   const handleAutoLockChange = (minutes: number) => {
@@ -267,6 +334,50 @@ const SettingsScreen: React.FC = () => {
           </Text>
         </View>
       </ScrollView>
+
+      {/* PIN Input Modal */}
+      <Modal visible={pinModalMode !== null} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>{getPinModalTitle()}</Text>
+
+            <TextInput
+              style={styles.pinInput}
+              value={pinInput}
+              onChangeText={(text) => {
+                setPinError('');
+                setPinInput(text.replace(/[^0-9]/g, '').slice(0, 6));
+              }}
+              keyboardType="number-pad"
+              secureTextEntry
+              maxLength={6}
+              placeholder="6-digit PIN"
+              placeholderTextColor="#9ca3af"
+              autoFocus
+            />
+
+            {pinError ? <Text style={styles.pinErrorText}>{pinError}</Text> : null}
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={styles.modalCancel}
+                onPress={closePinModal}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalConfirm, pinInput.length < 6 && styles.modalConfirmDisabled]}
+                onPress={handlePinSubmit}
+                disabled={pinInput.length < 6}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.modalConfirmText}>Confirm</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -405,6 +516,81 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#d1d5db',
     marginTop: 4,
+  },
+  // PIN Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+  },
+  modalCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 24,
+    width: '100%',
+    maxWidth: 340,
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: '#111827',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  pinInput: {
+    backgroundColor: '#f3f4f6',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 24,
+    fontWeight: '600',
+    textAlign: 'center',
+    color: '#111827',
+    letterSpacing: 8,
+  },
+  pinErrorText: {
+    color: '#ef4444',
+    fontSize: 13,
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 20,
+  },
+  modalCancel: {
+    flex: 1,
+    backgroundColor: '#f3f4f6',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    minHeight: 48,
+    justifyContent: 'center',
+  },
+  modalCancelText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#6b7280',
+  },
+  modalConfirm: {
+    flex: 1,
+    backgroundColor: '#06b6d4',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    minHeight: 48,
+    justifyContent: 'center',
+  },
+  modalConfirmDisabled: {
+    opacity: 0.5,
+  },
+  modalConfirmText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#ffffff',
   },
 });
 

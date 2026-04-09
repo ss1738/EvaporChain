@@ -105,10 +105,10 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
         <View style={styles.balanceCard}>
           <Text style={styles.balanceLabel}>Total Balance</Text>
           <Text style={styles.balanceAmount}>
-            {balance ? formatAmount(balance.total) : '---'} EVAP
+            {balance ? formatAmount(String(balance.balance)) : '---'} EVAP
           </Text>
           <Text style={styles.balanceUsd}>
-            {balance ? `~ $${(parseFloat(balance.total) * 0.042).toFixed(2)} USD` : ''}
+            {balance ? `~ $${(balance.balance * 0.042).toFixed(2)} USD` : ''}
           </Text>
         </View>
 
@@ -161,35 +161,44 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
 
         {/* Recent Transactions */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Recent Transactions</Text>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Recent Transactions</Text>
+            <TouchableOpacity onPress={() => navigation.navigate('History')} activeOpacity={0.7}>
+              <Text style={styles.viewAllText}>View All</Text>
+            </TouchableOpacity>
+          </View>
           {transactions.length === 0 ? (
             <View style={styles.emptyState}>
               <Text style={styles.emptyText}>No transactions yet</Text>
             </View>
           ) : (
-            transactions.map((tx) => (
-              <View key={tx.hash} style={styles.txRow}>
-                <View style={styles.txLeft}>
-                  <Text style={styles.txType}>
-                    {tx.from === '(self)' ? 'Sent' : 'Received'}
-                  </Text>
-                  <Text style={styles.txAddress}>
-                    {formatAddress(tx.from === '(self)' ? tx.to : tx.from)}
-                  </Text>
+            transactions.map((tx) => {
+              const address = balance?.address || '';
+              const isSent = tx.from.toLowerCase() === address.toLowerCase();
+              return (
+                <View key={tx.hash} style={styles.txRow}>
+                  <View style={styles.txLeft}>
+                    <Text style={styles.txType}>
+                      {isSent ? 'Sent' : 'Received'}
+                    </Text>
+                    <Text style={styles.txAddress}>
+                      {formatAddress(isSent ? tx.to : tx.from)}
+                    </Text>
+                  </View>
+                  <View style={styles.txRight}>
+                    <Text
+                      style={[
+                        styles.txAmount,
+                        { color: isSent ? '#ef4444' : '#22c55e' },
+                      ]}
+                    >
+                      {isSent ? '-' : '+'}{formatAmount(tx.amount)} EVAP
+                    </Text>
+                    <Text style={styles.txTime}>{formatTime(tx.timestamp)}</Text>
+                  </View>
                 </View>
-                <View style={styles.txRight}>
-                  <Text
-                    style={[
-                      styles.txAmount,
-                      { color: tx.from === '(self)' ? '#ef4444' : '#22c55e' },
-                    ]}
-                  >
-                    {tx.from === '(self)' ? '-' : '+'}{formatAmount(tx.amount)} EVAP
-                  </Text>
-                  <Text style={styles.txTime}>{formatTime(tx.timestamp)}</Text>
-                </View>
-              </View>
-            ))
+              );
+            })
           )}
         </View>
 
@@ -307,11 +316,21 @@ const styles = StyleSheet.create({
     marginTop: 20,
     marginHorizontal: 16,
   },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
   sectionTitle: {
     fontSize: 16,
     fontWeight: '600',
     color: '#111827',
-    marginBottom: 12,
+  },
+  viewAllText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#06b6d4',
   },
   emptyState: {
     backgroundColor: '#ffffff',

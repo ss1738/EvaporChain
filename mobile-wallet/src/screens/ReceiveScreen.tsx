@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
+import QRCode from 'react-native-qrcode-svg';
 import { keystore } from '../utils/keystore';
 
 const ReceiveScreen: React.FC = () => {
@@ -49,15 +50,21 @@ const ReceiveScreen: React.FC = () => {
   return (
     <SafeAreaView style={styles.container} edges={['bottom']}>
       <View style={styles.content}>
-        {/* QR Code placeholder */}
+        {/* QR Code */}
         <View style={styles.qrContainer}>
-          <View style={styles.qrPlaceholder}>
-            {/* In production, use react-native-qrcode-svg here */}
-            <Text style={styles.qrText}>QR</Text>
-            <Text style={styles.qrSubtext}>
-              {address ? address.slice(0, 12) + '...' : 'Loading...'}
-            </Text>
-          </View>
+          {address ? (
+            <QRCode
+              value={address}
+              size={220}
+              color="#111827"
+              backgroundColor="#ffffff"
+              quietZone={12}
+            />
+          ) : (
+            <View style={styles.qrPlaceholder}>
+              <Text style={styles.qrText}>...</Text>
+            </View>
+          )}
         </View>
 
         <Text style={styles.instructions}>
@@ -126,19 +133,10 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: '#e5e7eb',
-    borderStyle: 'dashed',
   },
   qrText: {
-    fontSize: 48,
-    fontWeight: '700',
-    color: '#06b6d4',
-  },
-  qrSubtext: {
-    fontSize: 12,
+    fontSize: 24,
     color: '#9ca3af',
-    marginTop: 8,
   },
   instructions: {
     fontSize: 14,

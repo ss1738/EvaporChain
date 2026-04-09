@@ -7,13 +7,13 @@
  */
 
 export interface ChainStatus {
-  chain_name: string;
+  chainName: string;
   version: string;
-  block_height: number;
+  blockHeight: number;
   epoch: number;
-  active_objects: number;
-  ghost_count: number;
-  peer_count: number;
+  activeObjects: number;
+  ghostCount: number;
+  peerCount: number;
 }
 
 export interface Balance {
@@ -26,6 +26,10 @@ export interface Transaction {
   hash: string;
   type: string;
   detail: string;
+  from: string;
+  to: string;
+  amount: string;
+  timestamp: number;
 }
 
 export interface TxResult {
@@ -41,24 +45,27 @@ export interface ChainObject {
   name: string;
   owner: string;
   energy: number;
-  max_energy: number;
+  maxEnergy: number;
   state: ObjectState;
-  half_life: number;
-  current_energy: number;
-  decay_percentage: number;
+  halfLife: number;
+  currentEnergy: number;
+  decayPercentage: number;
+  estimatedGhostTime: number;
 }
 
 export interface NFT {
   id: string;
   name: string;
   collection: string;
+  collectionName: string;
   owner: string;
-  image_url?: string;
+  imageUri?: string;
   energy: number;
-  max_energy: number;
-  current_energy: number;
+  maxEnergy: number;
+  currentEnergy: number;
   state: ObjectState;
-  decay_percentage: number;
+  decayPercentage: number;
+  estimatedGhostTime: number;
 }
 
 export interface SwapQuote {
@@ -72,14 +79,36 @@ export interface SwapQuote {
 
 const DEFAULT_BASE_URL = 'https://testnet.evaporchain.com';
 
+/**
+ * Convert snake_case REST API responses to camelCase for React consumption.
+ */
+function toCamelCase<T>(obj: unknown): T {
+  if (Array.isArray(obj)) return obj.map((item) => toCamelCase(item)) as T;
+  if (obj !== null && typeof obj === 'object') {
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+      const camelKey = key.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+      result[camelKey] = toCamelCase(value);
+    }
+    return result as T;
+  }
+  return obj as T;
+}
+
 class EvaporChainAPI {
   private baseUrl: string;
+  private network: 'testnet' | 'mainnet' = 'testnet';
 
   constructor(baseUrl: string = DEFAULT_BASE_URL) {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
   }
 
+  getNetwork(): string {
+    return this.network;
+  }
+
   setNetwork(network: 'testnet' | 'mainnet'): void {
+    this.network = network;
     this.baseUrl = network === 'mainnet'
       ? 'https://rpc.evaporchain.io'
       : DEFAULT_BASE_URL;
@@ -88,7 +117,8 @@ class EvaporChainAPI {
   private async get<T>(path: string): Promise<T> {
     const res = await fetch(`${this.baseUrl}${path}`);
     if (!res.ok) throw new Error(`API ${res.status}`);
-    return res.json();
+    const json = await res.json();
+    return toCamelCase<T>(json);
   }
 
   private async post<T>(path: string, body: unknown): Promise<T> {
@@ -98,7 +128,8 @@ class EvaporChainAPI {
       body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(`API ${res.status}`);
-    return res.json();
+    const json = await res.json();
+    return toCamelCase<T>(json);
   }
 
   // ── Chain ──
@@ -119,8 +150,12 @@ class EvaporChainAPI {
     return this.post('/api/tx/transfer', { from, to, amount, nonce });
   }
 
-  async getTransactions(): Promise<Transaction[]> {
-    return this.get('/api/transactions');
+  async getTransactions(address?: string, limit?: number): Promise<Transaction[]> {
+    const params = new URLSearchParams();
+    if (address) params.set('address', address);
+    if (limit) params.set('limit', limit.toString());
+    const query = params.toString();
+    return this.get(`/api/transactions${query ? `?${query}` : ''}`);
   }
 
   // ── Faucet ──
@@ -132,8 +167,8 @@ class EvaporChainAPI {
   // ── Objects ──
 
   async getObjects(owner?: string): Promise<ChainObject[]> {
-    const all = await this.get<ChainObject[]>('/api/objects');
-    return owner ? all.filter(o => o.owner === owner) : all;
+    const path = owner ? `/api/objects?owner=${owner}` : '/api/objects';
+    return this.get(path);
   }
 
   async refreshObject(objectId: string, energyDeposit: number): Promise<TxResult> {
@@ -143,8 +178,8 @@ class EvaporChainAPI {
   // ── NFTs ──
 
   async getNFTs(owner?: string): Promise<NFT[]> {
-    const all = await this.get<NFT[]>('/api/nfts');
-    return owner ? all.filter(n => n.owner === owner) : all;
+    const path = owner ? `/api/nfts?owner=${owner}` : '/api/nfts';
+    return this.get(path);
   }
 
   async refreshNFT(nftId: string, energy: number): Promise<TxResult> {
