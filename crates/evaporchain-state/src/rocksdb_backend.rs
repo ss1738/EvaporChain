@@ -22,6 +22,11 @@ pub struct RocksDBStateDB {
     objects: HashMap<ObjectId, StateObject>,
     ghosts: HashMap<ObjectId, GhostRecord>,
     accounts: HashMap<AccountAddress, Account>,
+    // Privacy layer state (in-memory; RocksDB persistence in future pass)
+    note_tree_root: [u8; 32],
+    spent_nullifiers: std::collections::HashSet<[u8; 32]>,
+    shielded_pool_balance: u64,
+    note_count: u64,
 }
 
 impl RocksDBStateDB {
@@ -137,6 +142,10 @@ impl RocksDBStateDB {
             objects,
             ghosts,
             accounts,
+            note_tree_root: [0u8; 32],
+            spent_nullifiers: std::collections::HashSet::new(),
+            shielded_pool_balance: 0,
+            note_count: 0,
         })
     }
 
@@ -361,6 +370,42 @@ impl StateDB for RocksDBStateDB {
         }
 
         trie.root()
+    }
+
+    fn put_note_tree_root(&mut self, root: [u8; 32]) {
+        self.note_tree_root = root;
+    }
+
+    fn get_note_tree_root(&self) -> [u8; 32] {
+        self.note_tree_root
+    }
+
+    fn spend_nullifier(&mut self, nullifier: &[u8; 32]) -> bool {
+        self.spent_nullifiers.insert(*nullifier)
+    }
+
+    fn is_nullifier_spent(&self, nullifier: &[u8; 32]) -> bool {
+        self.spent_nullifiers.contains(nullifier)
+    }
+
+    fn nullifier_count(&self) -> usize {
+        self.spent_nullifiers.len()
+    }
+
+    fn put_shielded_pool_balance(&mut self, balance: u64) {
+        self.shielded_pool_balance = balance;
+    }
+
+    fn get_shielded_pool_balance(&self) -> u64 {
+        self.shielded_pool_balance
+    }
+
+    fn put_note_count(&mut self, count: u64) {
+        self.note_count = count;
+    }
+
+    fn get_note_count(&self) -> u64 {
+        self.note_count
     }
 }
 

@@ -168,6 +168,24 @@ impl Mempool {
                     + t.signature.as_ref().map_or(0, |s| s.len())
                     + t.public_key.as_ref().map_or(0, |p| p.len())
             }
+            Transaction::Shield(t) => {
+                32 + 8 + 8 + 32 + 32 + 8 // from + amount + nonce + owner_hash + blinding + half_life
+                    + t.signature.as_ref().map_or(0, |s| s.len())
+                    + t.public_key.as_ref().map_or(0, |p| p.len())
+            }
+            Transaction::Unshield(t) => {
+                32 + 8 + 32 + 32 // to + amount + anchor + balance_binding
+                    + t.input_nullifiers.len() * 32
+                    + t.change_commitments.len() * 32
+            }
+            Transaction::PrivateTransfer(t) => {
+                32 + 32 + 8 // anchor + balance_binding + fee
+                    + t.input_nullifiers.len() * 32
+                    + t.output_commitments.len() * 32
+            }
+            Transaction::Deferred(dtx) => {
+                32 + 8 + 8 + dtx.guards.len() * 50 + dtx.inner_tx_bytes.len()
+            }
         }
     }
 }

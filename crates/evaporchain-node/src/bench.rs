@@ -3,7 +3,8 @@
 //! Measures TPS, block execution time, decay engine throughput,
 //! and proof generation speed.
 
-use evaporchain_execution::{ExecutionEngine, SimpleExecutor};
+use evaporchain_execution::ExecutionEngine;
+use evaporchain_execution::parallel::ParallelExecutor;
 use evaporchain_state::db::{InMemoryStateDB, StateDB};
 use evaporchain_types::{
     Account, Block, CreateObjectTx, RefreshTx, StateObject, Transaction, TransferTx,
@@ -78,9 +79,11 @@ fn bench_transaction_throughput() -> f64 {
         transactions: txs,
         timestamp: 0,
         producer_id: None,
+        vrf_output: None,
+        vrf_proof: None,
     };
 
-    let mut executor = SimpleExecutor::new(5);
+    let mut executor = ParallelExecutor::new(5);
     let start = Instant::now();
     let _ = executor.execute_block(&mut db, &block);
     let elapsed = start.elapsed();
@@ -108,7 +111,7 @@ fn bench_block_execution() -> f64 {
         });
     }
 
-    let mut executor = SimpleExecutor::new(5);
+    let mut executor = ParallelExecutor::new(5);
     let start = Instant::now();
 
     for block_num in 0..num_blocks {
@@ -137,6 +140,8 @@ fn bench_block_execution() -> f64 {
             transactions: txs,
             timestamp: 0,
             producer_id: None,
+            vrf_output: None,
+            vrf_proof: None,
         };
 
         let _ = executor.execute_block(&mut db, &block);
@@ -229,9 +234,11 @@ fn bench_object_creation() -> f64 {
         transactions: txs,
         timestamp: 0,
         producer_id: None,
+        vrf_output: None,
+        vrf_proof: None,
     };
 
-    let mut executor = SimpleExecutor::new(5);
+    let mut executor = ParallelExecutor::new(5);
     let start = Instant::now();
     let _ = executor.execute_block(&mut db, &block);
     let elapsed = start.elapsed();
@@ -292,9 +299,11 @@ fn bench_refresh_throughput() -> f64 {
         transactions: txs,
         timestamp: 0,
         producer_id: None,
+        vrf_output: None,
+        vrf_proof: None,
     };
 
-    let mut executor = SimpleExecutor::new(5);
+    let mut executor = ParallelExecutor::new(5);
     let start = Instant::now();
     let _ = executor.execute_block(&mut db, &block);
     let elapsed = start.elapsed();

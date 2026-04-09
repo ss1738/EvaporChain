@@ -1,5 +1,7 @@
+pub mod chain_proof;
 #[cfg(feature = "nova")]
 pub mod nova;
+pub mod privacy;
 
 use evaporchain_types::Block;
 use serde::{Deserialize, Serialize};
@@ -154,6 +156,8 @@ mod tests {
             transactions: vec![],
             timestamp: 0,
             producer_id: None,
+            vrf_output: None,
+            vrf_proof: None,
         }
     }
 

@@ -603,6 +603,9 @@ fn set_tx_signature(tx: &mut Transaction, sig: Vec<u8>, pk: Vec<u8>) {
         Transaction::CallScript(t) => { t.signature = Some(sig); t.public_key = Some(pk); }
         Transaction::ValidatorStake(t) => { t.signature = Some(sig); t.public_key = Some(pk); }
         Transaction::ValidatorExit(t) => { t.signature = Some(sig); t.public_key = Some(pk); }
+        Transaction::Shield(t) => { t.signature = Some(sig); t.public_key = Some(pk); }
+        Transaction::Unshield(_) | Transaction::PrivateTransfer(_) => {} // ZK-authenticated
+        Transaction::Deferred(d) => { d.signature = Some(sig); d.public_key = Some(pk); }
     }
 }
 
@@ -2524,6 +2527,15 @@ fn estimate_tx_gas(tx: &Transaction) -> u64 {
         Transaction::CallScript(_) => 50_000,
         Transaction::ValidatorStake(_) => 50_000,
         Transaction::ValidatorExit(_) => 30_000,
+        Transaction::Shield(_) => 60_000,
+        Transaction::Unshield(_) => 80_000,
+        Transaction::PrivateTransfer(ptx) => {
+            100_000 + 20_000 * ptx.input_nullifiers.len() as u64
+                + 15_000 * ptx.output_commitments.len() as u64
+        }
+        Transaction::Deferred(dtx) => {
+            75_000 + 5_000 * dtx.guards.len() as u64
+        }
     }
 }
 
@@ -2661,6 +2673,66 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     from: account_full(&t.validator_address),
                     to: String::new(),
                     amount: None,
+                    object_id: None,
+                    energy: None,
+                    half_life: None,
+                    method: None,
+                    gas,
+                    block_number: block.number,
+                    epoch: block.epoch,
+                    status: "success".to_string(),
+                },
+                Transaction::Shield(t) => TxRecord {
+                    hash,
+                    tx_type: "shield".to_string(),
+                    from: account_full(&t.from),
+                    to: String::new(),
+                    amount: Some(t.amount),
+                    object_id: None,
+                    energy: t.energy,
+                    half_life: Some(t.half_life),
+                    method: None,
+                    gas,
+                    block_number: block.number,
+                    epoch: block.epoch,
+                    status: "success".to_string(),
+                },
+                Transaction::Unshield(t) => TxRecord {
+                    hash,
+                    tx_type: "unshield".to_string(),
+                    from: String::new(),
+                    to: account_full(&t.to),
+                    amount: Some(t.amount),
+                    object_id: None,
+                    energy: None,
+                    half_life: None,
+                    method: None,
+                    gas,
+                    block_number: block.number,
+                    epoch: block.epoch,
+                    status: "success".to_string(),
+                },
+                Transaction::PrivateTransfer(t) => TxRecord {
+                    hash,
+                    tx_type: "private_transfer".to_string(),
+                    from: String::new(),
+                    to: String::new(),
+                    amount: Some(t.fee),
+                    object_id: None,
+                    energy: None,
+                    half_life: None,
+                    method: None,
+                    gas,
+                    block_number: block.number,
+                    epoch: block.epoch,
+                    status: "success".to_string(),
+                },
+                Transaction::Deferred(dtx) => TxRecord {
+                    hash,
+                    tx_type: "deferred".to_string(),
+                    from: account_full(&dtx.submitter),
+                    to: String::new(),
+                    amount: Some(dtx.deposit),
                     object_id: None,
                     energy: None,
                     half_life: None,

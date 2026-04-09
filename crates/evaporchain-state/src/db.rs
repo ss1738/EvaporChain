@@ -56,6 +56,35 @@ pub trait StateDB: Send + Sync {
 
     /// Compute the state root hash over all objects and accounts.
     fn compute_state_root(&self) -> [u8; 32];
+
+    // ─── Privacy Layer State ──────────────────────────────────────────────
+
+    /// Store the current Merkle note tree root.
+    fn put_note_tree_root(&mut self, root: [u8; 32]);
+
+    /// Get the current Merkle note tree root (returns zero hash if none set).
+    fn get_note_tree_root(&self) -> [u8; 32];
+
+    /// Record a spent nullifier. Returns false if already spent (double-spend).
+    fn spend_nullifier(&mut self, nullifier: &[u8; 32]) -> bool;
+
+    /// Check if a nullifier has been spent.
+    fn is_nullifier_spent(&self, nullifier: &[u8; 32]) -> bool;
+
+    /// Number of spent nullifiers.
+    fn nullifier_count(&self) -> usize;
+
+    /// Store the total shielded pool balance (for auditing / invariant checks).
+    fn put_shielded_pool_balance(&mut self, balance: u64);
+
+    /// Get the total shielded pool balance.
+    fn get_shielded_pool_balance(&self) -> u64;
+
+    /// Store the note count (number of notes ever inserted into the tree).
+    fn put_note_count(&mut self, count: u64);
+
+    /// Get the note count.
+    fn get_note_count(&self) -> u64;
 }
 
 /// In-memory state database for development and testing.
@@ -63,6 +92,11 @@ pub struct InMemoryStateDB {
     objects: HashMap<ObjectId, StateObject>,
     ghosts: HashMap<ObjectId, GhostRecord>,
     accounts: HashMap<AccountAddress, Account>,
+    // Privacy layer state
+    note_tree_root: [u8; 32],
+    spent_nullifiers: std::collections::HashSet<[u8; 32]>,
+    shielded_pool_balance: u64,
+    note_count: u64,
 }
 
 impl InMemoryStateDB {
@@ -71,6 +105,10 @@ impl InMemoryStateDB {
             objects: HashMap::new(),
             ghosts: HashMap::new(),
             accounts: HashMap::new(),
+            note_tree_root: [0u8; 32],
+            spent_nullifiers: std::collections::HashSet::new(),
+            shielded_pool_balance: 0,
+            note_count: 0,
         }
     }
 }
@@ -148,6 +186,42 @@ impl StateDB for InMemoryStateDB {
 
     fn all_account_addresses(&self) -> Vec<AccountAddress> {
         self.accounts.keys().copied().collect()
+    }
+
+    fn put_note_tree_root(&mut self, root: [u8; 32]) {
+        self.note_tree_root = root;
+    }
+
+    fn get_note_tree_root(&self) -> [u8; 32] {
+        self.note_tree_root
+    }
+
+    fn spend_nullifier(&mut self, nullifier: &[u8; 32]) -> bool {
+        self.spent_nullifiers.insert(*nullifier)
+    }
+
+    fn is_nullifier_spent(&self, nullifier: &[u8; 32]) -> bool {
+        self.spent_nullifiers.contains(nullifier)
+    }
+
+    fn nullifier_count(&self) -> usize {
+        self.spent_nullifiers.len()
+    }
+
+    fn put_shielded_pool_balance(&mut self, balance: u64) {
+        self.shielded_pool_balance = balance;
+    }
+
+    fn get_shielded_pool_balance(&self) -> u64 {
+        self.shielded_pool_balance
+    }
+
+    fn put_note_count(&mut self, count: u64) {
+        self.note_count = count;
+    }
+
+    fn get_note_count(&self) -> u64 {
+        self.note_count
     }
 
     fn compute_state_root(&self) -> [u8; 32] {

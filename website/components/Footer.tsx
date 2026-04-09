@@ -50,6 +50,30 @@ export default function Footer() {
           <ul className="space-y-2.5">
             <li>
               <Link
+                href="/developers"
+                className="text-sm text-text-muted hover:text-accent-cyan transition-colors"
+              >
+                Developers
+              </Link>
+            </li>
+            <li>
+              <Link
+                href="/developers/api"
+                className="text-sm text-text-muted hover:text-accent-cyan transition-colors"
+              >
+                API Reference
+              </Link>
+            </li>
+            <li>
+              <Link
+                href="/developers/sdk"
+                className="text-sm text-text-muted hover:text-accent-cyan transition-colors"
+              >
+                SDK Reference
+              </Link>
+            </li>
+            <li>
+              <Link
                 href="/whitepaper"
                 className="text-sm text-text-muted hover:text-accent-cyan transition-colors"
               >

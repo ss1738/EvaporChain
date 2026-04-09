@@ -13,8 +13,10 @@ use crate::validator_set::{ValidatorInfo, ValidatorSet};
 use crate::{BlockProductionResult, ConsensusError};
 
 use evaporchain_crypto::hash::blake3_hash;
+use evaporchain_crypto::vrf::{RandomnessBeacon, VrfKeypair, leader_vrf_input};
 use evaporchain_execution::fees::PidFeeController;
-use evaporchain_execution::{ExecutionEngine, SimpleExecutor};
+use evaporchain_execution::ExecutionEngine;
+use evaporchain_execution::parallel::ParallelExecutor;
 use evaporchain_state::db::StateDB;
 use evaporchain_types::{Block, Epoch, Transaction};
 
@@ -155,7 +157,7 @@ pub struct TendermintConsensus {
     /// Parent hash for the next block.
     parent_hash: [u8; 32],
     /// Execution engine.
-    executor: SimpleExecutor,
+    executor: ParallelExecutor,
     /// Transaction mempool.
     pub mempool: Mempool,
     /// Validator set for leader selection and vote counting.
@@ -186,6 +188,10 @@ pub struct TendermintConsensus {
     weak_subjectivity_checkpoints: Vec<(u64, [u8; 32])>,
     /// Interval between weak subjectivity checkpoints (in blocks).
     checkpoint_interval: u64,
+    /// Post-quantum VRF keypair for this validator (leader election + randomness).
+    vrf_keypair: Option<VrfKeypair>,
+    /// On-chain randomness beacon (chains VRF outputs across blocks).
+    randomness_beacon: RandomnessBeacon,
 }
 
 impl TendermintConsensus {
@@ -197,7 +203,7 @@ impl TendermintConsensus {
             height: 1, // Start at height 1 (genesis is 0)
             epoch: 0,
             parent_hash: [0u8; 32],
-            executor: SimpleExecutor::new_production(
+            executor: ParallelExecutor::new_production(
                 grace_period,
                 PidFeeController::testnet_config(),
                 block_gas_limit,
@@ -217,6 +223,48 @@ impl TendermintConsensus {
             missed_proposals: HashMap::new(),
             weak_subjectivity_checkpoints: Vec::new(),
             checkpoint_interval: 1000, // Checkpoint every 1000 blocks
+            vrf_keypair: None,
+            randomness_beacon: RandomnessBeacon::new(),
+        }
+    }
+
+    /// Set the VRF keypair for this validator (enables VRF-based leader election).
+    pub fn set_vrf_keypair(&mut self, keypair: VrfKeypair) {
+        self.vrf_keypair = Some(keypair);
+    }
+
+    /// Get a reference to the randomness beacon.
+    pub fn randomness_beacon(&self) -> &RandomnessBeacon {
+        &self.randomness_beacon
+    }
+
+    /// Create a test-friendly consensus engine with a small privacy tree (depth 4)
+    /// to avoid the ~60s initialization of the full 2^20 Merkle tree.
+    #[cfg(test)]
+    pub fn new_for_test(my_id: u64, grace_period: u64, validator_set: ValidatorSet) -> Self {
+        Self {
+            my_id,
+            height: 1,
+            epoch: 0,
+            parent_hash: [0u8; 32],
+            executor: ParallelExecutor::new_for_test(grace_period),
+            mempool: Mempool::new(),
+            validator_set,
+            round_state: RoundState::new(0),
+            locked_block: None,
+            locked_round: None,
+            valid_block: None,
+            valid_round: None,
+            propose_timeout: Duration::from_millis(PROPOSE_TIMEOUT_MS),
+            prevote_timeout: Duration::from_millis(PREVOTE_TIMEOUT_MS),
+            precommit_timeout: Duration::from_millis(PRECOMMIT_TIMEOUT_MS),
+            committed_heights: HashSet::new(),
+            proposals_seen: HashMap::new(),
+            missed_proposals: HashMap::new(),
+            weak_subjectivity_checkpoints: Vec::new(),
+            checkpoint_interval: 1000,
+            vrf_keypair: None,
+            randomness_beacon: RandomnessBeacon::new(),
         }
     }
 
@@ -280,6 +328,10 @@ impl TendermintConsensus {
         input.extend_from_slice(&block.parent_hash);
         input.extend_from_slice(&block.state_root);
         input.extend_from_slice(&block.timestamp.to_le_bytes());
+        // Include VRF output in block hash (commits randomness to the block).
+        if let Some(ref vrf_out) = block.vrf_output {
+            input.extend_from_slice(vrf_out);
+        }
         for tx in &block.transactions {
             input.extend_from_slice(&serde_json::to_vec(tx).unwrap_or_default());
         }
@@ -607,6 +659,11 @@ impl TendermintConsensus {
         self.committed_heights.insert(self.height);
         self.height += 1;
 
+        // Advance randomness beacon with this block's VRF output.
+        if let Some(ref vrf_out) = block.vrf_output {
+            self.randomness_beacon.ingest(block.number, vrf_out);
+        }
+
         // ── Weak Subjectivity Checkpoint ──
         // Periodically snapshot (height, state_root) so nodes refuse to reorg
         // past this point. Prevents long-range attacks.
@@ -685,7 +742,7 @@ impl TendermintConsensus {
         let execution = self
             .executor
             .execute_block(db, block)
-            .map_err(|e| ConsensusError::ExecutionFailed(e.to_string()))?;
+            .map_err(|e: evaporchain_execution::ExecutionError| ConsensusError::ExecutionFailed(e.to_string()))?;
 
         self.on_block_committed(block, execution.state_root, execution.objects_evaporated);
 
@@ -711,7 +768,7 @@ impl TendermintConsensus {
         let execution = self
             .executor
             .execute_block(db, block)
-            .map_err(|e| ConsensusError::ExecutionFailed(e.to_string()))?;
+            .map_err(|e: evaporchain_execution::ExecutionError| ConsensusError::ExecutionFailed(e.to_string()))?;
 
         Ok(BlockProductionResult {
             block: block.clone(),
@@ -733,6 +790,15 @@ impl TendermintConsensus {
             .unwrap_or_default()
             .as_secs();
 
+        // Compute VRF output for this block (leader election proof + randomness).
+        let (vrf_out, vrf_prf) = if let Some(ref vrf_kp) = self.vrf_keypair {
+            let alpha = leader_vrf_input(self.height, self.round_state.round);
+            let (output, proof) = vrf_kp.evaluate(&alpha);
+            (Some(output.0), Some(proof.0))
+        } else {
+            (None, None)
+        };
+
         let block = Block {
             number: self.height,
             epoch: next_epoch,
@@ -741,6 +807,8 @@ impl TendermintConsensus {
             transactions: txs,
             timestamp,
             producer_id: Some(self.my_id),
+            vrf_output: vrf_out,
+            vrf_proof: vrf_prf,
         };
 
         info!(
@@ -843,6 +911,8 @@ impl TendermintConsensus {
                 transactions: vec![],
                 timestamp,
                 producer_id: Some(self.my_id),
+                vrf_output: None,
+                vrf_proof: None,
             };
             self.round_state = RoundState::new(0);
             self.round_state.phase = Phase::Commit;
@@ -891,7 +961,7 @@ mod tests {
     }
 
     fn make_consensus(my_id: u64, ids: &[u64]) -> TendermintConsensus {
-        TendermintConsensus::new(my_id, 5, make_validator_set(ids))
+        TendermintConsensus::new_for_test(my_id, 5, make_validator_set(ids))
     }
 
     #[test]
@@ -1046,6 +1116,8 @@ mod tests {
             transactions: vec![],
             timestamp: 0,
             producer_id: Some(1),
+            vrf_output: None,
+            vrf_proof: None,
         };
 
         tc.on_block_committed(&block, [1u8; 32], 0);
@@ -1063,6 +1135,8 @@ mod tests {
             transactions: vec![],
             timestamp: 12345,
             producer_id: Some(1),
+            vrf_output: None,
+            vrf_proof: None,
         };
 
         let h1 = TendermintConsensus::block_hash(&block);
@@ -1192,6 +1266,8 @@ mod tests {
             transactions: vec![],
             timestamp: 0,
             producer_id: Some(*wrong_id),
+            vrf_output: None,
+            vrf_proof: None,
         };
 
         let fake_proposal = ConsensusMessage::Proposal {

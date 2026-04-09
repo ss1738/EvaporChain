@@ -389,6 +389,86 @@ impl EvaporVM {
                 Op::Halt => {
                     return Ok(Value::Null);
                 }
+
+                // ── Temporal Opcodes ──
+
+                Op::EpochNow => {
+                    self.charge_gas(GAS_PUSH)?;
+                    self.push(Value::U64(ctx.epoch))?;
+                }
+
+                Op::BlockNum => {
+                    self.charge_gas(GAS_PUSH)?;
+                    // Block number is available as epoch (1:1 mapping in EvaporChain).
+                    self.push(Value::U64(ctx.epoch))?;
+                }
+
+                Op::EnergyOf => {
+                    self.charge_gas(GAS_STATE_LOAD)?;
+                    // For scripts, energy_of returns the contract's own energy.
+                    // Object energy queries are done via the contract engine.
+                    self.push(Value::U64(ctx.energy))?;
+                }
+
+                Op::RequireEpochRange => {
+                    self.charge_gas(GAS_REQUIRE)?;
+                    let max_epoch = self.pop()?.as_u64()?;
+                    let min_epoch = self.pop()?.as_u64()?;
+                    if ctx.epoch < min_epoch || ctx.epoch >= max_epoch {
+                        return Err(ScriptError::Runtime(format!(
+                            "epoch {} outside required range [{}, {})",
+                            ctx.epoch, min_epoch, max_epoch
+                        )));
+                    }
+                }
+
+                Op::ComputeDecay => {
+                    self.charge_gas(GAS_MUL)?; // Slightly more expensive
+                    let half_life = self.pop()?.as_u64()?;
+                    let initial_energy = self.pop()?.as_u64()?;
+                    let epochs_elapsed = self.pop()?.as_u64()?;
+                    let decayed =
+                        evaporchain_types::energy_at_epoch(initial_energy, half_life, epochs_elapsed);
+                    self.push(Value::U64(decayed))?;
+                }
+
+                // ── VRF / Randomness Opcodes ──
+
+                Op::VrfRandomness => {
+                    self.charge_gas(GAS_PUSH)?;
+                    let value = u64::from_le_bytes(
+                        ctx.vrf_randomness[..8].try_into().unwrap(),
+                    );
+                    self.push(Value::U64(value))?;
+                }
+
+                Op::VrfDomainRandomness => {
+                    self.charge_gas(GAS_STATE_LOAD)?; // Costs a bit more (hashing)
+                    let domain = self.pop()?.as_str()?.to_string();
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(b"EvaporChain_Beacon_Derive");
+                    hasher.update(&ctx.vrf_randomness);
+                    hasher.update(domain.as_bytes());
+                    let derived = hasher.finalize();
+                    let value = u64::from_le_bytes(
+                        derived.as_bytes()[..8].try_into().unwrap(),
+                    );
+                    self.push(Value::U64(value))?;
+                }
+
+                Op::RandomRange => {
+                    self.charge_gas(GAS_STATE_LOAD)?;
+                    let max = self.pop()?.as_u64()?;
+                    if max == 0 {
+                        return Err(ScriptError::Runtime(
+                            "random_range: max must be > 0".into(),
+                        ));
+                    }
+                    let raw = u64::from_le_bytes(
+                        ctx.vrf_randomness[..8].try_into().unwrap(),
+                    );
+                    self.push(Value::U64(raw % max))?;
+                }
             }
 
             ip += 1;
@@ -600,6 +680,7 @@ mod tests {
             owner: [2u8; 32],
             epoch: 100,
             energy: 5000,
+            vrf_randomness: [42u8; 32],
         }
     }
 
@@ -935,6 +1016,7 @@ contract Context {
             owner: [2u8; 32],
             epoch: 0,
             energy: 0,
+            vrf_randomness: [0u8; 32],
         };
         let r1 =
             EvaporVM::execute(&bytecode, "is_owner", vec![], empty_state(), &ctx1).unwrap();
@@ -946,6 +1028,7 @@ contract Context {
             owner: [1u8; 32],
             epoch: 0,
             energy: 0,
+            vrf_randomness: [0u8; 32],
         };
         let r2 =
             EvaporVM::execute(&bytecode, "is_owner", vec![], empty_state(), &ctx2).unwrap();
@@ -1043,6 +1126,7 @@ contract LoyaltyPoints {
             owner,
             epoch: 100,
             energy: 5000,
+            vrf_randomness: [0u8; 32],
         };
 
         // Initialize state
@@ -1113,12 +1197,14 @@ contract LoyaltyPoints {
             owner,
             epoch: 100,
             energy: 5000,
+            vrf_randomness: [0u8; 32],
         };
         let ctx_user = ExecutionContext {
             caller: user,
             owner,
             epoch: 100,
             energy: 5000,
+            vrf_randomness: [0u8; 32],
         };
 
         let mut state = HashMap::new();

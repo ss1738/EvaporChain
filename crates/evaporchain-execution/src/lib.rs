@@ -2,7 +2,9 @@ pub mod block_stm;
 pub mod fees;
 pub mod genesis;
 pub mod parallel;
+pub mod privacy_exec;
 pub mod rewards;
+pub mod temporal;
 
 use evaporchain_contracts::{ContractEngine, ContractTemplate};
 use evaporchain_crypto::signatures::{MlDsaVerifier, Verifier};
@@ -106,6 +108,12 @@ pub struct SimpleExecutor {
     pub contract_engine: ContractEngine,
     /// EvaporScript engine (script-based).
     pub script_engine: ScriptEngine,
+    /// Zero-knowledge privacy execution engine.
+    pub privacy_executor: privacy_exec::PrivacyExecutor,
+    /// Deferred transaction queue (temporal execution).
+    pub deferred_queue: temporal::DeferredQueue,
+    /// Decay watcher engine (energy threshold triggers).
+    pub decay_watchers: temporal::DecayWatcherEngine,
 }
 
 impl SimpleExecutor {
@@ -119,6 +127,25 @@ impl SimpleExecutor {
             block_gas_limit: 0,
             contract_engine: ContractEngine::new(),
             script_engine: ScriptEngine::new(),
+            privacy_executor: privacy_exec::PrivacyExecutor::new(),
+            deferred_queue: temporal::DeferredQueue::new(),
+            decay_watchers: temporal::DecayWatcherEngine::new(),
+        }
+    }
+
+    /// Create a test-friendly executor with a small privacy tree (depth 4).
+    #[cfg(test)]
+    pub fn new_for_test(grace_period: u64) -> Self {
+        Self {
+            evaporation_engine: EvaporationEngine::new(grace_period),
+            verify_signatures: false,
+            fee_controller: None,
+            block_gas_limit: 0,
+            contract_engine: ContractEngine::new(),
+            script_engine: ScriptEngine::new(),
+            privacy_executor: privacy_exec::PrivacyExecutor::with_depth(4),
+            deferred_queue: temporal::DeferredQueue::new(),
+            decay_watchers: temporal::DecayWatcherEngine::new(),
         }
     }
 
@@ -131,6 +158,9 @@ impl SimpleExecutor {
             block_gas_limit: 0,
             contract_engine: ContractEngine::new(),
             script_engine: ScriptEngine::new(),
+            privacy_executor: privacy_exec::PrivacyExecutor::new(),
+            deferred_queue: temporal::DeferredQueue::new(),
+            decay_watchers: temporal::DecayWatcherEngine::new(),
         }
     }
 
@@ -147,6 +177,9 @@ impl SimpleExecutor {
             block_gas_limit,
             contract_engine: ContractEngine::new(),
             script_engine: ScriptEngine::new(),
+            privacy_executor: privacy_exec::PrivacyExecutor::new(),
+            deferred_queue: temporal::DeferredQueue::new(),
+            decay_watchers: temporal::DecayWatcherEngine::new(),
         }
     }
 
@@ -164,6 +197,9 @@ impl SimpleExecutor {
             block_gas_limit,
             contract_engine: ContractEngine::new(),
             script_engine: ScriptEngine::new(),
+            privacy_executor: privacy_exec::PrivacyExecutor::new(),
+            deferred_queue: temporal::DeferredQueue::new(),
+            decay_watchers: temporal::DecayWatcherEngine::new(),
         }
     }
 
@@ -191,12 +227,27 @@ impl SimpleExecutor {
             Transaction::CallScript(_) => GAS_CALL_SCRIPT,
             Transaction::ValidatorStake(_) => GAS_VALIDATOR_STAKE,
             Transaction::ValidatorExit(_) => GAS_VALIDATOR_EXIT,
+            Transaction::Shield(_) => privacy_exec::GAS_SHIELD,
+            Transaction::Unshield(_) => privacy_exec::GAS_UNSHIELD,
+            Transaction::PrivateTransfer(ptx) => {
+                privacy_exec::PrivacyExecutor::estimate_private_transfer_gas(ptx)
+            }
+            Transaction::Deferred(dtx) => {
+                temporal::GAS_DEFERRED_SUBMIT
+                    + temporal::GAS_PER_GUARD * dtx.guards.len() as u64
+            }
         }
     }
 
     /// Verify the ML-DSA signature on a transaction (if verification is enabled).
+    /// Unshield and PrivateTransfer are authenticated by ZK proofs, not signatures.
     fn verify_tx_signature(&self, tx: &Transaction) -> Result<(), ExecutionError> {
         if !self.verify_signatures {
+            return Ok(());
+        }
+
+        // ZK-authenticated transactions don't use signatures
+        if matches!(tx, Transaction::Unshield(_) | Transaction::PrivateTransfer(_)) {
             return Ok(());
         }
 
@@ -578,6 +629,33 @@ impl ExecutionEngine for SimpleExecutor {
                 Transaction::CallScript(call) => self.execute_call_script(call),
                 Transaction::ValidatorStake(stake) => self.execute_validator_stake(db, stake),
                 Transaction::ValidatorExit(exit) => self.execute_validator_exit(db, exit),
+                Transaction::Shield(shield) => {
+                    self.privacy_executor.set_epoch(block.epoch);
+                    self.privacy_executor
+                        .execute_shield(db, shield)
+                        .map(|_| ())
+                        .map_err(|e| ExecutionError::ContractError(e.to_string()))
+                }
+                Transaction::Unshield(unshield) => {
+                    self.privacy_executor.set_epoch(block.epoch);
+                    self.privacy_executor
+                        .execute_unshield(db, unshield)
+                        .map(|_| ())
+                        .map_err(|e| ExecutionError::ContractError(e.to_string()))
+                }
+                Transaction::PrivateTransfer(ptx) => {
+                    self.privacy_executor.set_epoch(block.epoch);
+                    self.privacy_executor
+                        .execute_private_transfer(db, ptx)
+                        .map(|_| ())
+                        .map_err(|e| ExecutionError::ContractError(e.to_string()))
+                }
+                Transaction::Deferred(dtx) => {
+                    self.deferred_queue
+                        .submit(dtx.clone())
+                        .map(|_| ())
+                        .map_err(|e| ExecutionError::ContractError(e.to_string()))
+                }
             };
 
             match result {
@@ -612,6 +690,31 @@ impl ExecutionEngine for SimpleExecutor {
 
         // Tick all script contracts (energy decay, lifecycle hooks)
         self.script_engine.tick(block.epoch);
+
+        // Process decay watchers (fire callbacks when energy crosses thresholds).
+        let watcher_result = self.decay_watchers.process(block.epoch, db);
+        for (contract_id, method, args) in &watcher_result.callbacks {
+            let args_val: serde_json::Value = serde_json::from_str(args)
+                .unwrap_or(serde_json::Value::Null);
+            let _ = self.contract_engine.call(
+                *contract_id,
+                method,
+                &args_val,
+                &[0u8; 32], // system caller
+                block.epoch,
+            );
+        }
+
+        // Process deferred queue (mature deferred txs when guards are satisfied).
+        let deferred_result =
+            self.deferred_queue
+                .process_epoch(block.epoch, db, &self.contract_engine);
+        // Refund expired deferred tx deposits.
+        for (addr, refund) in &deferred_result.refunds {
+            if let Some(acct) = db.get_account_mut(addr) {
+                acct.balance += refund;
+            }
+        }
 
         let state_root = db.compute_state_root();
 
@@ -670,6 +773,8 @@ mod tests {
             transactions: txs,
             timestamp: 0,
             producer_id: None,
+            vrf_output: None,
+            vrf_proof: None,
         }
     }
 
@@ -723,6 +828,15 @@ mod tests {
                 v.signature = Some(sig);
                 v.public_key = Some(pk);
             }
+            Transaction::Shield(s) => {
+                s.signature = Some(sig);
+                s.public_key = Some(pk);
+            }
+            Transaction::Unshield(_) | Transaction::PrivateTransfer(_) => {}
+            Transaction::Deferred(d) => {
+                d.signature = Some(sig);
+                d.public_key = Some(pk);
+            }
         }
     }
 
@@ -733,7 +847,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 1000);
 
-        let mut executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
         let block = make_block(
             1,
             1,
@@ -766,7 +880,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 100);
 
-        let mut executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
         let block = make_block(
             1,
             1,
@@ -795,7 +909,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 1000);
 
-        let mut executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
         let block = make_block(
             1,
             1,
@@ -821,7 +935,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 1000);
 
-        let mut executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
         let block = make_block(
             1,
             1,
@@ -846,7 +960,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 1_000_000);
 
-        let mut executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
         // Same transfer submitted twice in the same block
         let tx1 = Transaction::Transfer(TransferTx {
             from: addr(1), to: addr(2), amount: 100, nonce: 0,
@@ -868,7 +982,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 1_000_000);
 
-        let mut executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
         let tx1 = Transaction::Transfer(TransferTx {
             from: addr(1), to: addr(2), amount: 100, nonce: 0,
             signature: None, public_key: None,
@@ -890,7 +1004,7 @@ mod tests {
     #[test]
     fn test_create_object_with_energy() {
         let mut db = InMemoryStateDB::new();
-        let mut executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
 
         let block = make_block(
             1,
@@ -924,7 +1038,7 @@ mod tests {
     #[test]
     fn test_duplicate_object_creation_fails() {
         let mut db = InMemoryStateDB::new();
-        let mut executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
 
         let create_tx = Transaction::CreateObject(CreateObjectTx {
             creator: addr(1),
@@ -953,7 +1067,7 @@ mod tests {
         fund_account(&mut db, 1, 10_000);
         fund_account(&mut db, 2, 5_000);
 
-        let mut executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
         let block = make_block(
             1,
             1,
@@ -1013,7 +1127,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 500);
 
-        let mut executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
         let block = make_block(
             1,
             1,
@@ -1069,7 +1183,7 @@ mod tests {
             data: vec![0xAB],
         });
 
-        let mut executor = SimpleExecutor::new(3);
+        let mut executor = SimpleExecutor::new_for_test(3);
 
         let block1 = make_block(1, 3, vec![]);
         let r1 = executor.execute_block(&mut db, &block1).unwrap();
@@ -1111,7 +1225,7 @@ mod tests {
             data: vec![],
         });
 
-        let mut executor = SimpleExecutor::new(5);
+        let mut executor = SimpleExecutor::new_for_test(5);
 
         let block1 = make_block(1, 3, vec![]);
         let r1 = executor.execute_block(&mut db, &block1).unwrap();
@@ -1156,7 +1270,7 @@ mod tests {
             mmr_position: None,
         });
 
-        let mut executor = SimpleExecutor::new(5);
+        let mut executor = SimpleExecutor::new_for_test(5);
         let block = make_block(
             10,
             60,
@@ -1186,7 +1300,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 10_000);
 
-        let mut executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
 
         let block1 = make_block(
             1,
@@ -1228,7 +1342,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 1000);
 
-        let mut executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
         let block = make_block(
             1,
             1,
@@ -1252,7 +1366,7 @@ mod tests {
     fn test_refresh_nonexistent_object_fails() {
         let mut db = InMemoryStateDB::new();
 
-        let mut executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
         let block = make_block(
             1,
             1,
@@ -1461,7 +1575,7 @@ contract Counter {
     #[test]
     fn test_deploy_script_via_transaction() {
         let mut db = InMemoryStateDB::new();
-        let mut executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
 
         let block = make_block(
             1,
@@ -1491,7 +1605,7 @@ contract Counter {
     #[test]
     fn test_call_script_via_transaction() {
         let mut db = InMemoryStateDB::new();
-        let mut executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
 
         // Deploy
         let deploy_block = make_block(
@@ -1541,7 +1655,7 @@ contract Counter {
     fn test_script_contract_lifecycle_with_decay() {
         let mut db = InMemoryStateDB::new();
         // Very short half-life: 1 epoch, energy: 4 → dies at epoch ~3
-        let mut executor = SimpleExecutor::new(3);
+        let mut executor = SimpleExecutor::new_for_test(3);
 
         // Deploy with minimal energy
         let deploy_block = make_block(
@@ -1572,7 +1686,7 @@ contract Counter {
     #[test]
     fn test_script_and_template_contracts_coexist() {
         let mut db = InMemoryStateDB::new();
-        let mut executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
 
         // Deploy a template contract
         let deploy_template = make_block(
@@ -1619,7 +1733,7 @@ contract Counter {
     #[test]
     fn test_deploy_invalid_script_fails() {
         let mut db = InMemoryStateDB::new();
-        let mut executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
 
         let block = make_block(
             1,
@@ -1767,7 +1881,7 @@ contract Counter {
         });
 
         // SimpleExecutor::new() has verify_signatures: false
-        let mut executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
         let block = make_block(1, 1, vec![tx]);
         let result = executor.execute_block(&mut db, &block).unwrap();
         assert_eq!(result.txs_executed, 1);
@@ -1910,7 +2024,7 @@ contract Counter {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 1000);
 
-        let mut executor = SimpleExecutor::new(7); // No fee controller
+        let mut executor = SimpleExecutor::new_for_test(7); // No fee controller
         let block = make_block(1, 1, vec![
             Transaction::Transfer(TransferTx {
                 from: addr(1), to: addr(2), amount: 100, nonce: 0,
@@ -1932,7 +2046,7 @@ contract Counter {
     #[test]
     fn stress_1000_transfers_single_block() {
         let mut db = InMemoryStateDB::new();
-        let mut executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
 
         // Fund 100 accounts with 1M each
         for i in 1..=100u8 {
@@ -1979,7 +2093,7 @@ contract Counter {
     #[test]
     fn stress_rapid_epoch_decay() {
         let mut db = InMemoryStateDB::new();
-        let mut executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
 
         fund_account(&mut db, 1, 10_000_000);
         // Energy 1000, half_life 3 → needs ~30 epochs to reach 0, +7 grace = 37 to evaporate
@@ -2136,7 +2250,7 @@ contract Counter {
     #[test]
     fn stress_concurrent_object_lifecycle() {
         let mut db = InMemoryStateDB::new();
-        let mut executor = SimpleExecutor::new(7);
+        let mut executor = SimpleExecutor::new_for_test(7);
         fund_account(&mut db, 1, 100_000_000);
 
         // Epoch 1: Create 100 objects (energy 500, half_life 5)

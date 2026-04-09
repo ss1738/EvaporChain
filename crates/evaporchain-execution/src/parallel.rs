@@ -48,6 +48,10 @@ enum AccessKey {
     ContractEngine,
     /// The global script engine — deploy/call script transactions.
     ScriptEngine,
+    /// The global privacy engine — shield/unshield/private transfer.
+    PrivacyEngine,
+    /// The global temporal engine — deferred transactions.
+    TemporalEngine,
 }
 
 /// Extract all state keys that a transaction reads or writes.
@@ -79,6 +83,18 @@ fn extract_access_keys(tx: &Transaction) -> Vec<AccessKey> {
         }
         Transaction::ValidatorExit(t) => {
             vec![AccessKey::Account(t.validator_address)]
+        }
+        Transaction::Shield(t) => {
+            vec![AccessKey::Account(t.from), AccessKey::PrivacyEngine]
+        }
+        Transaction::Unshield(t) => {
+            vec![AccessKey::Account(t.to), AccessKey::PrivacyEngine]
+        }
+        Transaction::PrivateTransfer(_) => {
+            vec![AccessKey::PrivacyEngine]
+        }
+        Transaction::Deferred(dtx) => {
+            vec![AccessKey::Account(dtx.submitter), AccessKey::TemporalEngine]
         }
     }
 }
@@ -215,7 +231,7 @@ impl OverlayStateDB {
                         self.ghosts.insert(*id, ghost.clone());
                     }
                 }
-                AccessKey::ContractEngine | AccessKey::ScriptEngine => {
+                AccessKey::ContractEngine | AccessKey::ScriptEngine | AccessKey::PrivacyEngine | AccessKey::TemporalEngine => {
                     // These are handled by the executor, not the state DB.
                 }
             }
@@ -302,6 +318,17 @@ impl StateDB for OverlayStateDB {
         // Overlay doesn't compute state root — that happens on the merged main DB.
         [0u8; 32]
     }
+
+    // Privacy methods — overlay doesn't handle privacy state (it's in the serial phase).
+    fn put_note_tree_root(&mut self, _root: [u8; 32]) {}
+    fn get_note_tree_root(&self) -> [u8; 32] { [0u8; 32] }
+    fn spend_nullifier(&mut self, _nullifier: &[u8; 32]) -> bool { false }
+    fn is_nullifier_spent(&self, _nullifier: &[u8; 32]) -> bool { false }
+    fn nullifier_count(&self) -> usize { 0 }
+    fn put_shielded_pool_balance(&mut self, _balance: u64) {}
+    fn get_shielded_pool_balance(&self) -> u64 { 0 }
+    fn put_note_count(&mut self, _count: u64) {}
+    fn get_note_count(&self) -> u64 { 0 }
 }
 
 // ─── Partition Execution Result ────────────────────────────────────────────
@@ -332,6 +359,9 @@ pub struct ParallelExecutor {
     pub block_gas_limit: u64,
     pub contract_engine: ContractEngine,
     pub script_engine: ScriptEngine,
+    pub privacy_executor: crate::privacy_exec::PrivacyExecutor,
+    pub deferred_queue: crate::temporal::DeferredQueue,
+    pub decay_watchers: crate::temporal::DecayWatcherEngine,
 }
 
 impl ParallelExecutor {
@@ -343,6 +373,40 @@ impl ParallelExecutor {
             block_gas_limit: 0,
             contract_engine: ContractEngine::new(),
             script_engine: ScriptEngine::new(),
+            privacy_executor: crate::privacy_exec::PrivacyExecutor::new(),
+            deferred_queue: crate::temporal::DeferredQueue::new(),
+            decay_watchers: crate::temporal::DecayWatcherEngine::new(),
+        }
+    }
+
+    /// Create executor with a small privacy tree for fast test initialization.
+    /// Uses depth 4 (16 notes) instead of depth 20 (1M notes).
+    pub fn new_for_test(grace_period: u64) -> Self {
+        Self {
+            evaporation_engine: EvaporationEngine::new(grace_period),
+            verify_signatures: false,
+            fee_controller: None,
+            block_gas_limit: 0,
+            contract_engine: ContractEngine::new(),
+            script_engine: ScriptEngine::new(),
+            privacy_executor: crate::privacy_exec::PrivacyExecutor::with_depth(4),
+            deferred_queue: crate::temporal::DeferredQueue::new(),
+            decay_watchers: crate::temporal::DecayWatcherEngine::new(),
+        }
+    }
+
+    /// Create executor with signature verification and a small privacy tree for tests.
+    pub fn new_with_sig_verification_for_test(grace_period: u64) -> Self {
+        Self {
+            evaporation_engine: EvaporationEngine::new(grace_period),
+            verify_signatures: true,
+            fee_controller: None,
+            block_gas_limit: 0,
+            contract_engine: ContractEngine::new(),
+            script_engine: ScriptEngine::new(),
+            privacy_executor: crate::privacy_exec::PrivacyExecutor::with_depth(4),
+            deferred_queue: crate::temporal::DeferredQueue::new(),
+            decay_watchers: crate::temporal::DecayWatcherEngine::new(),
         }
     }
 
@@ -354,6 +418,9 @@ impl ParallelExecutor {
             block_gas_limit: 0,
             contract_engine: ContractEngine::new(),
             script_engine: ScriptEngine::new(),
+            privacy_executor: crate::privacy_exec::PrivacyExecutor::new(),
+            deferred_queue: crate::temporal::DeferredQueue::new(),
+            decay_watchers: crate::temporal::DecayWatcherEngine::new(),
         }
     }
 
@@ -369,6 +436,9 @@ impl ParallelExecutor {
             block_gas_limit,
             contract_engine: ContractEngine::new(),
             script_engine: ScriptEngine::new(),
+            privacy_executor: crate::privacy_exec::PrivacyExecutor::new(),
+            deferred_queue: crate::temporal::DeferredQueue::new(),
+            decay_watchers: crate::temporal::DecayWatcherEngine::new(),
         }
     }
 
@@ -393,11 +463,24 @@ impl ParallelExecutor {
             Transaction::CallScript(_) => GAS_CALL_SCRIPT,
             Transaction::ValidatorStake(_) => GAS_VALIDATOR_STAKE,
             Transaction::ValidatorExit(_) => GAS_VALIDATOR_EXIT,
+            Transaction::Shield(_) => crate::privacy_exec::GAS_SHIELD,
+            Transaction::Unshield(_) => crate::privacy_exec::GAS_UNSHIELD,
+            Transaction::PrivateTransfer(ptx) => {
+                crate::privacy_exec::PrivacyExecutor::estimate_private_transfer_gas(ptx)
+            }
+            Transaction::Deferred(dtx) => {
+                crate::temporal::GAS_DEFERRED_SUBMIT
+                    + crate::temporal::GAS_PER_GUARD * dtx.guards.len() as u64
+            }
         }
     }
 
     pub fn verify_tx_signature(verify: bool, tx: &Transaction) -> Result<(), ExecutionError> {
         if !verify {
+            return Ok(());
+        }
+        // ZK-authenticated transactions don't use signatures
+        if matches!(tx, Transaction::Unshield(_) | Transaction::PrivateTransfer(_)) {
             return Ok(());
         }
         let sig = tx.signature().ok_or(ExecutionError::MissingSignature)?;
@@ -492,9 +575,13 @@ impl ParallelExecutor {
                 Transaction::DeployContract(_)
                 | Transaction::CallContract(_)
                 | Transaction::DeployScript(_)
-                | Transaction::CallScript(_) => {
+                | Transaction::CallScript(_)
+                | Transaction::Shield(_)
+                | Transaction::Unshield(_)
+                | Transaction::PrivateTransfer(_)
+                | Transaction::Deferred(_) => {
                     Err(ExecutionError::ContractError(
-                        "contract/script txs execute in serial phase".into(),
+                        "contract/script/privacy/deferred txs execute in serial phase".into(),
                     ))
                 }
             };
@@ -699,7 +786,11 @@ impl ExecutionEngine for ParallelExecutor {
                 Transaction::DeployContract(_)
                 | Transaction::CallContract(_)
                 | Transaction::DeployScript(_)
-                | Transaction::CallScript(_) => serial_txs.push((i, tx)),
+                | Transaction::CallScript(_)
+                | Transaction::Shield(_)
+                | Transaction::Unshield(_)
+                | Transaction::PrivateTransfer(_)
+                | Transaction::Deferred(_) => serial_txs.push((i, tx)),
                 _ => parallel_txs.push((i, tx)),
             }
         }
@@ -910,7 +1001,34 @@ impl ExecutionEngine for ParallelExecutor {
                         .map(|_| ())
                         .map_err(|e| ExecutionError::ScriptError(e.to_string()))
                 }
-                _ => unreachable!("only contract/script txs in serial phase"),
+                Transaction::Shield(shield) => {
+                    self.privacy_executor.set_epoch(block.epoch);
+                    self.privacy_executor
+                        .execute_shield(db, shield)
+                        .map(|_| ())
+                        .map_err(|e| ExecutionError::ContractError(e.to_string()))
+                }
+                Transaction::Unshield(unshield) => {
+                    self.privacy_executor.set_epoch(block.epoch);
+                    self.privacy_executor
+                        .execute_unshield(db, unshield)
+                        .map(|_| ())
+                        .map_err(|e| ExecutionError::ContractError(e.to_string()))
+                }
+                Transaction::PrivateTransfer(ptx) => {
+                    self.privacy_executor.set_epoch(block.epoch);
+                    self.privacy_executor
+                        .execute_private_transfer(db, ptx)
+                        .map(|_| ())
+                        .map_err(|e| ExecutionError::ContractError(e.to_string()))
+                }
+                Transaction::Deferred(dtx) => {
+                    self.deferred_queue
+                        .submit(dtx.clone())
+                        .map(|_| ())
+                        .map_err(|e| ExecutionError::ContractError(e.to_string()))
+                }
+                _ => unreachable!("only contract/script/privacy/deferred txs in serial phase"),
             };
 
             match result {
@@ -1011,6 +1129,8 @@ mod tests {
             transactions: txs,
             timestamp: 0,
             producer_id: None,
+            vrf_output: None,
+            vrf_proof: None,
         }
     }
 
@@ -1220,7 +1340,7 @@ mod tests {
             ],
         );
 
-        let mut executor = ParallelExecutor::new(100);
+        let mut executor = ParallelExecutor::new_for_test(100);
         let result = executor.execute_block(&mut db, &block).unwrap();
 
         assert_eq!(result.txs_executed, 2);
@@ -1295,7 +1415,7 @@ mod tests {
             grace_epoch: None,
             data: vec![],
         });
-        let mut seq_executor = crate::SimpleExecutor::new(100);
+        let mut seq_executor = crate::SimpleExecutor::new_for_test(100);
         let seq_result = seq_executor.execute_block(&mut db_seq, &block).unwrap();
 
         // Parallel
@@ -1314,7 +1434,7 @@ mod tests {
             grace_epoch: None,
             data: vec![],
         });
-        let mut par_executor = ParallelExecutor::new(100);
+        let mut par_executor = ParallelExecutor::new_for_test(100);
         let par_result = par_executor.execute_block(&mut db_par, &block).unwrap();
 
         // Compare results
@@ -1373,7 +1493,7 @@ mod tests {
             ],
         );
 
-        let mut executor = ParallelExecutor::new(100);
+        let mut executor = ParallelExecutor::new_for_test(100);
         let result = executor.execute_block(&mut db, &block).unwrap();
 
         // Both should execute: A sends 200 to B (B now 700), B sends 600 to C
@@ -1401,7 +1521,7 @@ mod tests {
             })],
         );
 
-        let mut executor = ParallelExecutor::new(100);
+        let mut executor = ParallelExecutor::new_for_test(100);
         let result = executor.execute_block(&mut db, &block).unwrap();
 
         assert_eq!(result.txs_executed, 0);
@@ -1469,7 +1589,7 @@ mod tests {
             ],
         );
 
-        let mut executor = ParallelExecutor::new(100);
+        let mut executor = ParallelExecutor::new_for_test(100);
         let result = executor.execute_block(&mut db, &block).unwrap();
 
         assert_eq!(result.txs_executed, 4);
@@ -1513,7 +1633,7 @@ mod tests {
         assert!((ratio - n as f64).abs() < f64::EPSILON);
 
         // Execute
-        let mut executor = ParallelExecutor::new(100);
+        let mut executor = ParallelExecutor::new_for_test(100);
         let result = executor.execute_block(&mut db, &block).unwrap();
         assert_eq!(result.txs_executed, n);
         assert_eq!(result.txs_failed, 0);
@@ -1535,6 +1655,7 @@ mod tests {
                     validator_id: 1,
                     nonce: 0,
                     bls_public_key: None,
+                    vrf_public_key: None,
                     signature: None,
                     public_key: None,
                 }),
@@ -1544,13 +1665,14 @@ mod tests {
                     validator_id: 2,
                     nonce: 0,
                     bls_public_key: None,
+                    vrf_public_key: None,
                     signature: None,
                     public_key: None,
                 }),
             ],
         );
 
-        let mut executor = ParallelExecutor::new(100);
+        let mut executor = ParallelExecutor::new_for_test(100);
         let result = executor.execute_block(&mut db, &block).unwrap();
 
         assert_eq!(result.txs_executed, 2);

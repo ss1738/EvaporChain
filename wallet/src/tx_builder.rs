@@ -151,6 +151,7 @@ impl TxBuilder {
             validator_id,
             nonce,
             bls_public_key,
+            vrf_public_key: None,
             signature: None,
             public_key: None,
         })

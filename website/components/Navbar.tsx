@@ -17,7 +17,7 @@ const productLinks = [
 
 const navLinks = [
   { label: "Technology", href: "/#technology" },
-  { label: "Developers", href: "/#contracts" },
+  { label: "Developers", href: "/developers" },
   { label: "Roadmap", href: "/#roadmap" },
   { label: "Whitepaper", href: "/whitepaper" },
 ];

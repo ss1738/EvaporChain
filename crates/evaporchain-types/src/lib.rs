@@ -90,6 +90,12 @@ pub struct Block {
     /// Validator ID that produced this block (None for single-node mode).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub producer_id: Option<u64>,
+    /// VRF output from the block proposer (32-byte verifiable randomness).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vrf_output: Option<[u8; 32]>,
+    /// VRF proof (ML-DSA signature, ~3293 bytes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vrf_proof: Option<Vec<u8>>,
 }
 
 /// An account with a balance.
@@ -112,6 +118,14 @@ pub enum Transaction {
     CallScript(CallScriptTx),
     ValidatorStake(ValidatorStakeTx),
     ValidatorExit(ValidatorExitTx),
+    /// Shield: transparent → private (burns balance, creates note).
+    Shield(ShieldTx),
+    /// Unshield: private → transparent (spends note, credits balance).
+    Unshield(UnshieldTx),
+    /// Private transfer: private → private (spends notes, creates notes).
+    PrivateTransfer(PrivateTransferTx),
+    /// Deferred: time-locked transaction that executes when temporal conditions are met.
+    Deferred(DeferredTx),
 }
 
 impl Transaction {
@@ -189,6 +203,9 @@ impl Transaction {
                 buf.extend_from_slice(&tx.stake_amount.to_le_bytes());
                 buf.extend_from_slice(&tx.validator_id.to_le_bytes());
                 buf.extend_from_slice(&tx.nonce.to_le_bytes());
+                if let Some(ref vrf_pk) = tx.vrf_public_key {
+                    buf.extend_from_slice(vrf_pk);
+                }
                 buf
             }
             Transaction::ValidatorExit(tx) => {
@@ -197,6 +214,85 @@ impl Transaction {
                 buf.extend_from_slice(&tx.validator_address);
                 buf.extend_from_slice(&tx.validator_id.to_le_bytes());
                 buf.extend_from_slice(&tx.nonce.to_le_bytes());
+                buf
+            }
+            Transaction::Shield(tx) => {
+                let mut buf = Vec::with_capacity(1 + 32 + 8 + 8 + 32 + 32 + 8);
+                buf.push(0x0A);
+                buf.extend_from_slice(&tx.from);
+                buf.extend_from_slice(&tx.amount.to_le_bytes());
+                buf.extend_from_slice(&tx.nonce.to_le_bytes());
+                buf.extend_from_slice(&tx.note_owner_hash);
+                buf.extend_from_slice(&tx.value_blinding);
+                buf.extend_from_slice(&tx.half_life.to_le_bytes());
+                buf
+            }
+            Transaction::Unshield(tx) => {
+                let mut buf = Vec::new();
+                buf.push(0x0B);
+                buf.extend_from_slice(&tx.to);
+                buf.extend_from_slice(&tx.amount.to_le_bytes());
+                buf.extend_from_slice(&tx.anchor);
+                for nf in &tx.input_nullifiers {
+                    buf.extend_from_slice(nf);
+                }
+                buf.extend_from_slice(&tx.balance_binding);
+                buf
+            }
+            Transaction::PrivateTransfer(tx) => {
+                let mut buf = Vec::new();
+                buf.push(0x0C);
+                buf.extend_from_slice(&tx.anchor);
+                buf.extend_from_slice(&tx.fee.to_le_bytes());
+                for nf in &tx.input_nullifiers {
+                    buf.extend_from_slice(nf);
+                }
+                for oc in &tx.output_commitments {
+                    buf.extend_from_slice(oc);
+                }
+                buf.extend_from_slice(&tx.balance_binding);
+                buf
+            }
+            Transaction::Deferred(tx) => {
+                let mut buf = Vec::new();
+                buf.push(0x0D);
+                buf.extend_from_slice(&tx.submitter);
+                buf.extend_from_slice(&tx.nonce.to_le_bytes());
+                buf.extend_from_slice(&tx.deposit.to_le_bytes());
+                // Serialize guards.
+                for guard in &tx.guards {
+                    match guard {
+                        TemporalGuard::AfterEpoch(e) => {
+                            buf.push(0x01);
+                            buf.extend_from_slice(&e.to_le_bytes());
+                        }
+                        TemporalGuard::BeforeEpoch(e) => {
+                            buf.push(0x02);
+                            buf.extend_from_slice(&e.to_le_bytes());
+                        }
+                        TemporalGuard::EnergyBelow(id, thresh) => {
+                            buf.push(0x03);
+                            buf.extend_from_slice(id);
+                            buf.extend_from_slice(&thresh.to_le_bytes());
+                        }
+                        TemporalGuard::EnergyAbove(id, thresh) => {
+                            buf.push(0x04);
+                            buf.extend_from_slice(id);
+                            buf.extend_from_slice(&thresh.to_le_bytes());
+                        }
+                        TemporalGuard::ObjectEvaporated(id) => {
+                            buf.push(0x05);
+                            buf.extend_from_slice(id);
+                        }
+                        TemporalGuard::ContractInPhase(cid, phase) => {
+                            buf.push(0x06);
+                            buf.extend_from_slice(&cid.to_le_bytes());
+                            buf.extend_from_slice(phase.as_bytes());
+                        }
+                    }
+                }
+                // Serialize inner tx.
+                buf.extend_from_slice(&tx.inner_tx_bytes);
                 buf
             }
         }
@@ -214,6 +310,11 @@ impl Transaction {
             Transaction::CallScript(tx) => tx.signature.as_deref(),
             Transaction::ValidatorStake(tx) => tx.signature.as_deref(),
             Transaction::ValidatorExit(tx) => tx.signature.as_deref(),
+            Transaction::Shield(tx) => tx.signature.as_deref(),
+            // Unshield and PrivateTransfer are authenticated by ZK proofs, not signatures.
+            Transaction::Unshield(_) => None,
+            Transaction::PrivateTransfer(_) => None,
+            Transaction::Deferred(tx) => tx.signature.as_deref(),
         }
     }
 
@@ -229,6 +330,10 @@ impl Transaction {
             Transaction::CallScript(tx) => tx.public_key.as_deref(),
             Transaction::ValidatorStake(tx) => tx.public_key.as_deref(),
             Transaction::ValidatorExit(tx) => tx.public_key.as_deref(),
+            Transaction::Shield(tx) => tx.public_key.as_deref(),
+            Transaction::Unshield(_) => None,
+            Transaction::PrivateTransfer(_) => None,
+            Transaction::Deferred(tx) => tx.public_key.as_deref(),
         }
     }
 
@@ -245,6 +350,11 @@ impl Transaction {
             Transaction::Refresh(_) => None, // Refresh has no sender address field
             Transaction::ValidatorStake(tx) => Some(&tx.validator_address),
             Transaction::ValidatorExit(tx) => Some(&tx.validator_address),
+            Transaction::Shield(tx) => Some(&tx.from),
+            // Unshield/PrivateTransfer have no transparent sender — fees come from the shielded pool.
+            Transaction::Unshield(_) => None,
+            Transaction::PrivateTransfer(_) => None,
+            Transaction::Deferred(tx) => Some(&tx.submitter),
         }
     }
 }
@@ -371,6 +481,9 @@ pub struct ValidatorStakeTx {
     /// BLS12-381 public key for consensus (hex-encoded, 48 bytes).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bls_public_key: Option<Vec<u8>>,
+    /// Post-quantum VRF public key (ML-DSA, 1952 bytes) for leader election.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vrf_public_key: Option<Vec<u8>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<Vec<u8>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -391,6 +504,188 @@ pub struct ValidatorExitTx {
     pub signature: Option<Vec<u8>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_key: Option<Vec<u8>>,
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Zero-Knowledge Privacy Types
+// ═══════════════════════════════════════════════════════════════════
+
+/// On-chain nullifier hash (32 bytes). Published when a private note is spent.
+pub type NullifierHash = [u8; 32];
+
+/// On-chain note commitment (32 bytes). Stored in the Merkle note tree.
+pub type NoteCommitment = [u8; 32];
+
+/// On-chain energy decay proof data (no crypto logic — just the proof payload).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnergyDecayProofData {
+    /// Commitment to energy at start epoch.
+    pub old_energy_commitment: [u8; 32],
+    /// Commitment to energy at end epoch.
+    pub new_energy_commitment: [u8; 32],
+    /// Binding hash proving correct decay computation.
+    pub decay_binding: [u8; 32],
+    /// Public: half-life of the object.
+    pub half_life: u64,
+    /// Public: start epoch.
+    pub epoch_start: u64,
+    /// Public: end epoch.
+    pub epoch_end: u64,
+    /// Whether the object has evaporated (energy reached 0).
+    pub is_evaporated: bool,
+}
+
+/// Shield transaction: move transparent funds into the private pool.
+/// Burns `amount` from `from`'s balance and creates a private note.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShieldTx {
+    /// Sender's transparent address (balance is debited).
+    pub from: AccountAddress,
+    /// Amount to shield (burned from transparent balance).
+    pub amount: u64,
+    /// Sender nonce.
+    pub nonce: u64,
+    /// Poseidon hash of the recipient's spending public key.
+    pub note_owner_hash: [u8; 32],
+    /// Random blinding factor for the value commitment.
+    pub value_blinding: [u8; 32],
+    /// Optional energy to attach (for object-backed private notes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub energy: Option<u64>,
+    /// Blinding factor for the energy commitment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub energy_blinding: Option<[u8; 32]>,
+    /// Half-life for energy decay (0 = pure value, no energy).
+    pub half_life: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<Vec<u8>>,
+}
+
+/// Unshield transaction: move private funds back to the transparent pool.
+/// Spends private note(s) and credits `to`'s transparent balance.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnshieldTx {
+    /// Recipient's transparent address (balance is credited).
+    pub to: AccountAddress,
+    /// Amount to unshield (credited to transparent balance).
+    pub amount: u64,
+    /// Nullifiers of input notes being spent.
+    pub input_nullifiers: Vec<NullifierHash>,
+    /// Merkle root the input proofs are valid against.
+    pub anchor: [u8; 32],
+    /// Balance binding hash proving conservation.
+    pub balance_binding: [u8; 32],
+    /// Optional change outputs (remaining private balance).
+    #[serde(default)]
+    pub change_commitments: Vec<NoteCommitment>,
+    /// Energy decay proofs for object-backed notes.
+    #[serde(default)]
+    pub energy_proofs: Vec<EnergyDecayProofData>,
+    // No signature — the ZK proof itself authenticates the spender.
+}
+
+/// Private transfer: spend private notes and create new private notes.
+/// Everything happens in the shielded pool — no transparent amounts visible.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrivateTransferTx {
+    /// Nullifiers of input notes being spent.
+    pub input_nullifiers: Vec<NullifierHash>,
+    /// Commitments of output notes being created.
+    pub output_commitments: Vec<NoteCommitment>,
+    /// Merkle root the input proofs are valid against.
+    pub anchor: [u8; 32],
+    /// Balance binding hash proving sum(inputs) = sum(outputs) + fee.
+    pub balance_binding: [u8; 32],
+    /// Transparent fee paid to validators.
+    pub fee: u64,
+    /// Energy decay proofs for object-backed notes.
+    #[serde(default)]
+    pub energy_proofs: Vec<EnergyDecayProofData>,
+    // No signature — ZK proof authenticates.
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Temporal Smart Contract Types
+// ═══════════════════════════════════════════════════════════════════
+
+/// Temporal guard: a condition that must be met for a deferred transaction to execute.
+/// Guards are evaluated each block — when ALL guards pass, the inner tx fires.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TemporalGuard {
+    /// Execute only after this epoch (inclusive).
+    AfterEpoch(Epoch),
+    /// Execute only before this epoch (exclusive). If epoch passes, tx expires and deposit refunds.
+    BeforeEpoch(Epoch),
+    /// Execute when the specified object's energy drops below the threshold.
+    EnergyBelow(ObjectId, Energy),
+    /// Execute when the specified object's energy is above the threshold.
+    EnergyAbove(ObjectId, Energy),
+    /// Execute when the specified object has evaporated (entered Ghost state).
+    ObjectEvaporated(ObjectId),
+    /// Execute when the specified contract is in the named phase.
+    ContractInPhase(u64, String),
+}
+
+/// Deferred transaction: submitted now, executes when temporal conditions are satisfied.
+///
+/// The submitter pays a deposit (covers gas + queue storage). When all guards are
+/// satisfied, the inner transaction is deserialized and executed. If the `BeforeEpoch`
+/// guard expires, the deferred tx is cancelled and the deposit refunds (minus queue fee).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeferredTx {
+    /// Account that submitted the deferred tx and pays the deposit.
+    pub submitter: AccountAddress,
+    /// Submitter nonce (prevents replay).
+    pub nonce: u64,
+    /// Deposit amount (covers execution gas + queue storage fee).
+    pub deposit: u64,
+    /// Temporal guards — ALL must be satisfied for inner tx to fire.
+    pub guards: Vec<TemporalGuard>,
+    /// Serialized inner transaction bytes (deserialized and executed when guards pass).
+    pub inner_tx_bytes: Vec<u8>,
+    /// Maximum gas the inner transaction may consume.
+    pub gas_limit: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<Vec<u8>>,
+}
+
+/// Energy watcher: monitors an object and fires a callback when energy crosses a threshold.
+/// Registered by contracts to react to thermodynamic state changes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnergyWatcher {
+    /// Unique watcher ID.
+    pub id: u64,
+    /// Object being watched.
+    pub object_id: ObjectId,
+    /// Energy threshold.
+    pub threshold: Energy,
+    /// Direction: true = fire when energy drops BELOW, false = fire when ABOVE.
+    pub fire_below: bool,
+    /// Contract to notify when triggered.
+    pub callback_contract_id: u64,
+    /// Method to call on the contract.
+    pub callback_method: String,
+    /// JSON args for the callback.
+    pub callback_args: String,
+    /// Whether this watcher has already fired (one-shot by default).
+    pub fired: bool,
+    /// Epoch when this watcher was registered.
+    pub registered_epoch: Epoch,
+}
+
+/// Result of VRF-based committee sortition for a validator.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SortitionResult {
+    pub validator_id: u64,
+    pub vrf_output: [u8; 32],
+    pub vrf_proof: Vec<u8>,
+    pub is_selected: bool,
+    /// Number of virtual committee seats won (0 = not selected).
+    pub selection_weight: u64,
 }
 
 /// Commitment to the global state.

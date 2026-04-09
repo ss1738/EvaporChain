@@ -77,23 +77,41 @@ pub(crate) enum ValuePayload {
 /// Version identifier: (tx_index, incarnation).
 type Version = (u32, u32);
 
+/// Number of shards for MVMemory. Must be a power of 2.
+const MV_SHARDS: usize = 64;
+
 /// Multi-version memory: the core MVCC data structure.
 /// For each Location, stores a BTreeMap of tx_index → (incarnation, MVValue).
 /// Readers find the highest tx_index < their own that has a committed write.
+///
+/// Sharded into 64 independent RwLocks to minimize contention during parallel
+/// execution. Each Location is hashed to a shard; concurrent reads/writes to
+/// different shards never contend.
 pub(crate) struct MVMemory {
-    data: RwLock<HashMap<Location, BTreeMap<u32, (u32, MVValue)>>>,
+    shards: Vec<RwLock<HashMap<Location, BTreeMap<u32, (u32, MVValue)>>>>,
 }
 
 impl MVMemory {
     fn new() -> Self {
         Self {
-            data: RwLock::new(HashMap::new()),
+            shards: (0..MV_SHARDS)
+                .map(|_| RwLock::new(HashMap::new()))
+                .collect(),
         }
+    }
+
+    /// Hash a location to a shard index.
+    fn shard_index(loc: &Location) -> usize {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        loc.hash(&mut hasher);
+        hasher.finish() as usize & (MV_SHARDS - 1)
     }
 
     /// Write a value at (location, tx_index, incarnation).
     fn write(&self, loc: Location, tx_index: u32, incarnation: u32, value: ValuePayload) {
-        let mut map = self.data.write().unwrap();
+        let shard = Self::shard_index(&loc);
+        let mut map = self.shards[shard].write().unwrap();
         let versions = map.entry(loc).or_default();
         versions.insert(tx_index, (incarnation, MVValue::Value(value)));
     }
@@ -101,7 +119,8 @@ impl MVMemory {
     /// Mark a location as "estimate" for a given tx_index (used on abort).
     #[allow(dead_code)]
     fn mark_estimate(&self, loc: Location, tx_index: u32) {
-        let mut map = self.data.write().unwrap();
+        let shard = Self::shard_index(&loc);
+        let mut map = self.shards[shard].write().unwrap();
         if let Some(versions) = map.get_mut(&loc) {
             if let Some(entry) = versions.get_mut(&tx_index) {
                 entry.1 = MVValue::Estimate;
@@ -111,10 +130,20 @@ impl MVMemory {
 
     /// Delete all writes by tx_index (used before re-execution).
     fn delete_writes(&self, tx_index: u32, locations: &[Location]) {
-        let mut map = self.data.write().unwrap();
+        // Group locations by shard to minimize lock acquisitions
+        let mut by_shard: HashMap<usize, Vec<&Location>> = HashMap::new();
         for loc in locations {
-            if let Some(versions) = map.get_mut(loc) {
-                versions.remove(&tx_index);
+            by_shard
+                .entry(Self::shard_index(loc))
+                .or_default()
+                .push(loc);
+        }
+        for (shard, locs) in by_shard {
+            let mut map = self.shards[shard].write().unwrap();
+            for loc in locs {
+                if let Some(versions) = map.get_mut(loc) {
+                    versions.remove(&tx_index);
+                }
             }
         }
     }
@@ -129,7 +158,8 @@ impl MVMemory {
         loc: &Location,
         tx_index: u32,
     ) -> Result<Option<(Version, ValuePayload)>, u32> {
-        let map = self.data.read().unwrap();
+        let shard = Self::shard_index(loc);
+        let map = self.shards[shard].read().unwrap();
         if let Some(versions) = map.get(loc) {
             // Find the highest key < tx_index
             for (&writer_tx, (incarnation, mv_val)) in versions.range(..tx_index).rev() {
@@ -144,6 +174,19 @@ impl MVMemory {
             }
         }
         Ok(None)
+    }
+
+    /// Iterate all locations and their versions (for materialization).
+    fn for_each_location<F>(&self, mut f: F)
+    where
+        F: FnMut(&Location, &BTreeMap<u32, (u32, MVValue)>),
+    {
+        for shard in &self.shards {
+            let map = shard.read().unwrap();
+            for (loc, versions) in map.iter() {
+                f(loc, versions);
+            }
+        }
     }
 }
 
@@ -179,6 +222,9 @@ struct TxView<'a> {
     // Buffered writes and read tracking
     write_buffer: Vec<WriteEntry>,
     read_set: Vec<ReadEntry>,
+    /// Checkpoint index in write_buffer after fee deduction.
+    /// On tx failure, truncate to this point to keep fee writes but revert execution writes.
+    fee_checkpoint: usize,
 
     // Local overlay for this transaction's writes (so it can read its own writes)
     local_accounts: HashMap<AccountAddress, Account>,
@@ -202,11 +248,51 @@ impl<'a> TxView<'a> {
             base_db,
             write_buffer: Vec::new(),
             read_set: Vec::new(),
+            fee_checkpoint: 0,
             local_accounts: HashMap::new(),
             local_objects: HashMap::new(),
             local_objects_deleted: HashSet::new(),
             local_ghosts: HashMap::new(),
             local_ghosts_removed: HashSet::new(),
+        }
+    }
+
+    /// Mark the current write buffer position as the fee checkpoint.
+    /// Call this after fee deduction, before tx execution.
+    fn checkpoint_after_fees(&mut self) {
+        self.fee_checkpoint = self.write_buffer.len();
+    }
+
+    /// Revert all writes after the fee checkpoint (keeps fee deduction).
+    /// Also reverts local_accounts to only reflect fee deduction state.
+    fn revert_to_fee_checkpoint(&mut self) {
+        self.write_buffer.truncate(self.fee_checkpoint);
+        // Rebuild local state from remaining write buffer
+        self.local_accounts.clear();
+        self.local_objects.clear();
+        self.local_objects_deleted.clear();
+        self.local_ghosts.clear();
+        self.local_ghosts_removed.clear();
+        for entry in &self.write_buffer {
+            match (&entry.location, &entry.value) {
+                (Location::AccountBalance(addr), ValuePayload::Balance(bal)) => {
+                    let acct = self.local_accounts.entry(*addr).or_insert(Account {
+                        address: *addr,
+                        balance: 0,
+                        nonce: 0,
+                    });
+                    acct.balance = *bal;
+                }
+                (Location::AccountNonce(addr), ValuePayload::Nonce(nonce)) => {
+                    let acct = self.local_accounts.entry(*addr).or_insert(Account {
+                        address: *addr,
+                        balance: 0,
+                        nonce: 0,
+                    });
+                    acct.nonce = *nonce;
+                }
+                _ => {}
+            }
         }
     }
 
@@ -465,6 +551,9 @@ fn execute_tx(
         0
     };
 
+    // Checkpoint: everything before this is fee deduction (persists on failure)
+    view.checkpoint_after_fees();
+
     // Execute the transaction
     let result = match tx {
         Transaction::Transfer(t) => exec_transfer(view, t),
@@ -472,13 +561,17 @@ fn execute_tx(
         Transaction::Refresh(t) => exec_refresh(view, t, epoch),
         Transaction::ValidatorStake(t) => exec_validator_stake(view, t),
         Transaction::ValidatorExit(t) => exec_validator_exit(view, t),
-        // Contract/script txs cannot run in parallel (global mutable state)
+        // Contract/script/privacy txs cannot run in parallel (global mutable state)
         Transaction::DeployContract(_)
         | Transaction::CallContract(_)
         | Transaction::DeployScript(_)
-        | Transaction::CallScript(_) => {
+        | Transaction::CallScript(_)
+        | Transaction::Shield(_)
+        | Transaction::Unshield(_)
+        | Transaction::PrivateTransfer(_)
+        | Transaction::Deferred(_) => {
             Err(TxViewError::ExecutionError(ExecutionError::ContractError(
-                "contract/script txs execute in serial phase".into(),
+                "contract/script/privacy/deferred txs execute in serial phase".into(),
             )))
         }
     };
@@ -490,7 +583,8 @@ fn execute_tx(
         },
         Err(TxViewError::Blocked(blocked_by)) => TxExecResult::Blocked(blocked_by),
         Err(TxViewError::ExecutionError(_e)) => {
-            // Revert writes but keep fee
+            // Revert execution writes but keep fee deduction
+            view.revert_to_fee_checkpoint();
             TxExecResult::Failed { fee: tx_fee }
         }
     }
@@ -522,6 +616,15 @@ fn estimate_gas(tx: &Transaction) -> u64 {
         Transaction::CallScript(_) => GAS_CALL_SCRIPT,
         Transaction::ValidatorStake(_) => GAS_VALIDATOR_STAKE,
         Transaction::ValidatorExit(_) => GAS_VALIDATOR_EXIT,
+        Transaction::Shield(_) => crate::privacy_exec::GAS_SHIELD,
+        Transaction::Unshield(_) => crate::privacy_exec::GAS_UNSHIELD,
+        Transaction::PrivateTransfer(ptx) => {
+            crate::privacy_exec::PrivacyExecutor::estimate_private_transfer_gas(ptx)
+        }
+        Transaction::Deferred(dtx) => {
+            crate::temporal::GAS_DEFERRED_SUBMIT
+                + crate::temporal::GAS_PER_GUARD * dtx.guards.len() as u64
+        }
     }
 }
 
@@ -608,14 +711,15 @@ fn exec_refresh(view: &mut TxView, tx: &RefreshTx, epoch: Epoch) -> Result<(), T
     // Try resurrection from ghost
     let ghost = view.read_ghost(&tx.object_id).map_err(TxViewError::Blocked)?;
     if let Some(ghost) = ghost {
-        // Resurrect: create new object from ghost data
+        // Resurrect: create new object from ghost data.
+        // Matches RefreshEngine::resurrect — preserves evaporated_at as created_at.
         let data = ghost.original_data.clone().unwrap_or_default();
         let obj = StateObject {
-            id: tx.object_id,
+            id: ghost.object_id,
             owner: ghost.owner,
             energy: tx.energy_deposit,
-            half_life: 100, // Default half-life for resurrected objects
-            created_at: epoch,
+            half_life: 100,
+            created_at: ghost.evaporated_at,
             last_refreshed: epoch,
             state: ObjectState::Resurrected,
             grace_epoch: None,
@@ -706,6 +810,12 @@ pub struct BlockStmExecutor {
     pub block_gas_limit: u64,
     pub contract_engine: ContractEngine,
     pub script_engine: ScriptEngine,
+    /// Zero-knowledge privacy execution engine.
+    pub privacy_executor: crate::privacy_exec::PrivacyExecutor,
+    /// Deferred transaction queue (temporal engine).
+    pub deferred_queue: crate::temporal::DeferredQueue,
+    /// Decay watcher engine (energy threshold triggers).
+    pub decay_watchers: crate::temporal::DecayWatcherEngine,
     /// Minimum number of transactions to trigger parallel execution.
     /// Below this threshold, sequential execution is used (less overhead).
     pub parallel_threshold: usize,
@@ -720,6 +830,26 @@ impl BlockStmExecutor {
             block_gas_limit: 0,
             contract_engine: ContractEngine::new(),
             script_engine: ScriptEngine::new(),
+            privacy_executor: crate::privacy_exec::PrivacyExecutor::new(),
+            deferred_queue: crate::temporal::DeferredQueue::new(),
+            decay_watchers: crate::temporal::DecayWatcherEngine::new(),
+            parallel_threshold: 4,
+        }
+    }
+
+    /// Test-friendly constructor with a small privacy tree.
+    #[cfg(test)]
+    pub fn new_for_test(grace_period: u64) -> Self {
+        Self {
+            evaporation_engine: EvaporationEngine::new(grace_period),
+            verify_signatures: false,
+            fee_controller: None,
+            block_gas_limit: 0,
+            contract_engine: ContractEngine::new(),
+            script_engine: ScriptEngine::new(),
+            privacy_executor: crate::privacy_exec::PrivacyExecutor::with_depth(4),
+            deferred_queue: crate::temporal::DeferredQueue::new(),
+            decay_watchers: crate::temporal::DecayWatcherEngine::new(),
             parallel_threshold: 4,
         }
     }
@@ -732,6 +862,9 @@ impl BlockStmExecutor {
             block_gas_limit: 0,
             contract_engine: ContractEngine::new(),
             script_engine: ScriptEngine::new(),
+            privacy_executor: crate::privacy_exec::PrivacyExecutor::new(),
+            deferred_queue: crate::temporal::DeferredQueue::new(),
+            decay_watchers: crate::temporal::DecayWatcherEngine::new(),
             parallel_threshold: 4,
         }
     }
@@ -748,6 +881,9 @@ impl BlockStmExecutor {
             block_gas_limit,
             contract_engine: ContractEngine::new(),
             script_engine: ScriptEngine::new(),
+            privacy_executor: crate::privacy_exec::PrivacyExecutor::new(),
+            deferred_queue: crate::temporal::DeferredQueue::new(),
+            decay_watchers: crate::temporal::DecayWatcherEngine::new(),
             parallel_threshold: 4,
         }
     }
@@ -772,6 +908,7 @@ impl BlockStmExecutor {
         db: &dyn StateDB,
         parallel_txs: &[&Transaction],
         epoch: Epoch,
+        block_gas_limit: u64,
     ) -> ParallelResult {
         let num_txs = parallel_txs.len() as u32;
         if num_txs == 0 {
@@ -866,59 +1003,81 @@ impl BlockStmExecutor {
                 "Block-STM: re-executing invalidated txs"
             );
 
-            // Re-execute invalidated txs (sequentially for correctness in
-            // high-contention scenarios — each re-exec sees all prior writes)
+            // Clear old writes for all invalidated txs and bump incarnations
             for &tx_idx in &needs_reexec {
-                // Clear old writes
                 mv_memory.delete_writes(tx_idx, &write_locs[tx_idx as usize]);
-
                 incarnations[tx_idx as usize] += 1;
-                let inc = incarnations[tx_idx as usize];
+            }
 
-                let tx = parallel_txs[tx_idx as usize];
-                if verify_sigs {
-                    if crate::parallel::ParallelExecutor::verify_tx_signature(true, tx).is_err() {
-                        read_sets[tx_idx as usize] = Vec::new();
-                        write_locs[tx_idx as usize] = Vec::new();
-                        results[tx_idx as usize] = Some(TxExecResult::Failed { fee: 0 });
-                        continue;
-                    }
-                }
+            // Re-execute invalidated txs in parallel.
+            // Each re-exec reads from MVMemory (seeing valid txs' writes from
+            // prior waves). Non-conflicting re-execs are independent; conflicting
+            // ones will be caught in the next validation wave.
+            let reexec_results: Vec<(u32, Vec<ReadEntry>, Vec<Location>, TxExecResult)> =
+                needs_reexec
+                    .par_iter()
+                    .map(|&tx_idx| {
+                        let inc = incarnations[tx_idx as usize];
+                        let tx = parallel_txs[tx_idx as usize];
 
-                let mut view = TxView::new(tx_idx, inc, &mv_memory, db);
-                let result = execute_tx(&mut view, tx, epoch, fee_ctrl);
+                        if verify_sigs {
+                            if crate::parallel::ParallelExecutor::verify_tx_signature(true, tx)
+                                .is_err()
+                            {
+                                return (tx_idx, Vec::new(), Vec::new(), TxExecResult::Failed { fee: 0 });
+                            }
+                        }
 
-                match result {
-                    TxExecResult::Blocked(_) => {
-                        // On re-exec, a block means a dependency that hasn't
-                        // been written yet. This shouldn't happen in wave-based
-                        // execution since we re-exec in order. Treat as failed.
-                        read_sets[tx_idx as usize] = Vec::new();
-                        write_locs[tx_idx as usize] = Vec::new();
-                        results[tx_idx as usize] = Some(TxExecResult::Failed { fee: 0 });
-                    }
-                    _ => {
-                        let (rs, wl) = view.flush_writes();
-                        read_sets[tx_idx as usize] = rs;
-                        write_locs[tx_idx as usize] = wl;
-                        results[tx_idx as usize] = Some(result);
-                    }
-                }
+                        let mut view = TxView::new(tx_idx, inc, &mv_memory, db);
+                        let result = execute_tx(&mut view, tx, epoch, fee_ctrl);
+
+                        match result {
+                            TxExecResult::Blocked(_) => {
+                                (tx_idx, Vec::new(), Vec::new(), TxExecResult::Failed { fee: 0 })
+                            }
+                            _ => {
+                                let (rs, wl) = view.flush_writes();
+                                (tx_idx, rs, wl, result)
+                            }
+                        }
+                    })
+                    .collect();
+
+            for (tx_idx, rs, wl, result) in reexec_results {
+                read_sets[tx_idx as usize] = rs;
+                write_locs[tx_idx as usize] = wl;
+                results[tx_idx as usize] = Some(result);
             }
         }
 
-        // Collect results
+        // Collect results, enforcing block gas limit in order
         let mut total_gas = 0u64;
         let mut total_fees = 0u64;
         let mut txs_executed = 0usize;
         let mut txs_failed = 0usize;
+        let mut gas_exceeded_from: Option<u32> = None;
 
         for i in 0..num_txs {
+            // Check if this tx would exceed the block gas limit
+            if let Some(_) = gas_exceeded_from {
+                // All remaining txs are over the limit — remove their writes
+                mv_memory.delete_writes(i, &write_locs[i as usize]);
+                txs_failed += 1;
+                continue;
+            }
+
             match results[i as usize].take() {
                 Some(TxExecResult::Success { gas_used, fee }) => {
-                    txs_executed += 1;
-                    total_gas += gas_used;
-                    total_fees += fee;
+                    if block_gas_limit > 0 && total_gas + gas_used > block_gas_limit {
+                        // Over limit — remove this tx's writes and fail all remaining
+                        mv_memory.delete_writes(i, &write_locs[i as usize]);
+                        gas_exceeded_from = Some(i);
+                        txs_failed += 1;
+                    } else {
+                        txs_executed += 1;
+                        total_gas += gas_used;
+                        total_fees += fee;
+                    }
                 }
                 Some(TxExecResult::Failed { fee }) => {
                     txs_failed += 1;
@@ -946,23 +1105,29 @@ impl BlockStmExecutor {
     fn materialize_final_state(
         &self,
         mv_memory: &MVMemory,
-        _base_db: &dyn StateDB,
+        base_db: &dyn StateDB,
         _num_txs: u32,
     ) -> FinalWrites {
-        let map = mv_memory.data.read().unwrap();
         let mut writes = FinalWrites::default();
 
-        for (loc, versions) in map.iter() {
+        mv_memory.for_each_location(|loc, versions| {
             // Find the highest tx_index with a committed value
             if let Some((&_tx_idx, (_inc, MVValue::Value(payload)))) = versions.iter().rev().next()
             {
                 match (loc, payload) {
                     (Location::AccountBalance(addr), ValuePayload::Balance(bal)) => {
-                        let entry = writes.accounts.entry(*addr).or_insert((0, 0));
+                        // Seed from base DB so we don't clobber nonce with 0
+                        let base = base_db.get_account(addr);
+                        let entry = writes.accounts.entry(*addr).or_insert_with(|| {
+                            base.map_or((0, 0), |a| (a.balance, a.nonce))
+                        });
                         entry.0 = *bal;
                     }
                     (Location::AccountNonce(addr), ValuePayload::Nonce(nonce)) => {
-                        let entry = writes.accounts.entry(*addr).or_insert((0, 0));
+                        let base = base_db.get_account(addr);
+                        let entry = writes.accounts.entry(*addr).or_insert_with(|| {
+                            base.map_or((0, 0), |a| (a.balance, a.nonce))
+                        });
                         entry.1 = *nonce;
                     }
                     (Location::Object(id), ValuePayload::Object(obj)) => {
@@ -980,7 +1145,7 @@ impl BlockStmExecutor {
                     _ => {}
                 }
             }
-        }
+        });
 
         writes
     }
@@ -1054,7 +1219,11 @@ impl ExecutionEngine for BlockStmExecutor {
                 Transaction::DeployContract(_)
                 | Transaction::CallContract(_)
                 | Transaction::DeployScript(_)
-                | Transaction::CallScript(_) => serial_txs.push((i, tx)),
+                | Transaction::CallScript(_)
+                | Transaction::Shield(_)
+                | Transaction::Unshield(_)
+                | Transaction::PrivateTransfer(_)
+                | Transaction::Deferred(_) => serial_txs.push((i, tx)),
                 _ => parallel_txs.push(tx),
             }
         }
@@ -1068,7 +1237,7 @@ impl ExecutionEngine for BlockStmExecutor {
                 "Block-STM: executing {} txs in parallel",
                 parallel_txs.len()
             );
-            self.execute_parallel(db, &parallel_txs, block.epoch)
+            self.execute_parallel(db, &parallel_txs, block.epoch, self.block_gas_limit)
         } else {
             // Fall back to sequential for small blocks
             self.execute_sequential(db, &parallel_txs, block.epoch)
@@ -1187,7 +1356,34 @@ impl ExecutionEngine for BlockStmExecutor {
                         .map(|_| ())
                         .map_err(|e| ExecutionError::ScriptError(e.to_string()))
                 }
-                _ => unreachable!("only contract/script txs in serial phase"),
+                Transaction::Shield(shield) => {
+                    self.privacy_executor.set_epoch(block.epoch);
+                    self.privacy_executor
+                        .execute_shield(db, shield)
+                        .map(|_| ())
+                        .map_err(|e| ExecutionError::ContractError(e.to_string()))
+                }
+                Transaction::Unshield(unshield) => {
+                    self.privacy_executor.set_epoch(block.epoch);
+                    self.privacy_executor
+                        .execute_unshield(db, unshield)
+                        .map(|_| ())
+                        .map_err(|e| ExecutionError::ContractError(e.to_string()))
+                }
+                Transaction::PrivateTransfer(ptx) => {
+                    self.privacy_executor.set_epoch(block.epoch);
+                    self.privacy_executor
+                        .execute_private_transfer(db, ptx)
+                        .map(|_| ())
+                        .map_err(|e| ExecutionError::ContractError(e.to_string()))
+                }
+                Transaction::Deferred(dtx) => {
+                    self.deferred_queue
+                        .submit(dtx.clone())
+                        .map(|_| ())
+                        .map_err(|e| ExecutionError::ContractError(e.to_string()))
+                }
+                _ => unreachable!("only contract/script/privacy/deferred txs in serial phase"),
             };
 
             match result {
@@ -1475,6 +1671,8 @@ mod tests {
             transactions: txs,
             timestamp: 0,
             producer_id: None,
+            vrf_output: None,
+            vrf_proof: None,
         }
     }
 
@@ -1584,7 +1782,7 @@ mod tests {
         ];
 
         let block = make_block(1, 1, txs);
-        let mut executor = BlockStmExecutor::new(7);
+        let mut executor = BlockStmExecutor::new_for_test(7);
         executor.parallel_threshold = 1; // Force parallel execution
         let result = executor.execute_block(&mut db, &block).unwrap();
 
@@ -1623,7 +1821,7 @@ mod tests {
         ];
 
         let block = make_block(1, 1, txs);
-        let mut executor = BlockStmExecutor::new(7);
+        let mut executor = BlockStmExecutor::new_for_test(7);
         executor.parallel_threshold = 1;
         let result = executor.execute_block(&mut db, &block).unwrap();
 
@@ -1662,7 +1860,7 @@ mod tests {
         ];
 
         let block = make_block(1, 1, txs);
-        let mut executor = BlockStmExecutor::new(7);
+        let mut executor = BlockStmExecutor::new_for_test(7);
         executor.parallel_threshold = 1;
         let result = executor.execute_block(&mut db, &block).unwrap();
 
@@ -1718,7 +1916,7 @@ mod tests {
             ];
 
             let block = make_block(1, 1, txs);
-            let mut executor = BlockStmExecutor::new(7);
+            let mut executor = BlockStmExecutor::new_for_test(7);
             executor.parallel_threshold = 1;
             let result = executor.execute_block(&mut db, &block).unwrap();
 
@@ -1756,7 +1954,7 @@ mod tests {
         ];
 
         let block = make_block(1, 1, txs);
-        let mut executor = BlockStmExecutor::new(7);
+        let mut executor = BlockStmExecutor::new_for_test(7);
         executor.parallel_threshold = 1;
         let result = executor.execute_block(&mut db, &block).unwrap();
 
@@ -1769,7 +1967,7 @@ mod tests {
     fn test_block_stm_empty_block() {
         let mut db = InMemoryStateDB::new();
         let block = make_block(1, 1, vec![]);
-        let mut executor = BlockStmExecutor::new(7);
+        let mut executor = BlockStmExecutor::new_for_test(7);
         let result = executor.execute_block(&mut db, &block).unwrap();
 
         assert_eq!(result.txs_executed, 0);
@@ -1806,13 +2004,14 @@ mod tests {
                 validator_id: 1,
                 nonce: 0,
                 bls_public_key: None,
+                vrf_public_key: None,
                 signature: None,
                 public_key: None,
             }),
         ];
 
         let block = make_block(1, 1, txs);
-        let mut executor = BlockStmExecutor::new(7);
+        let mut executor = BlockStmExecutor::new_for_test(7);
         executor.parallel_threshold = 1;
         let result = executor.execute_block(&mut db, &block).unwrap();
 
@@ -1842,7 +2041,7 @@ mod tests {
             .collect();
 
         let block = make_block(1, 1, txs);
-        let mut executor = BlockStmExecutor::new(7);
+        let mut executor = BlockStmExecutor::new_for_test(7);
         executor.parallel_threshold = 1;
         let result = executor.execute_block(&mut db, &block).unwrap();
 
@@ -1909,11 +2108,11 @@ mod tests {
         let block_par = make_block(1, 1, txs.clone());
         let block_seq = make_block(1, 1, txs);
 
-        let mut par_exec = BlockStmExecutor::new(7);
+        let mut par_exec = BlockStmExecutor::new_for_test(7);
         par_exec.parallel_threshold = 1;
         let par_result = par_exec.execute_block(&mut db_par, &block_par).unwrap();
 
-        let mut seq_exec = crate::SimpleExecutor::new(7);
+        let mut seq_exec = crate::SimpleExecutor::new_for_test(7);
         let seq_result = seq_exec.execute_block(&mut db_seq, &block_seq).unwrap();
 
         // Results must match
@@ -1934,5 +2133,116 @@ mod tests {
 
         // State root must match
         assert_eq!(par_result.state_root, seq_result.state_root);
+    }
+
+    // ── Bug regression tests ──
+
+    #[test]
+    fn test_block_gas_limit_enforced_in_parallel() {
+        // BUG 2 regression: gas limit must be enforced even for parallel txs
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 100_000);
+        fund_account(&mut db, 2, 100_000);
+        fund_account(&mut db, 3, 100_000);
+
+        // 3 independent transfers, each costs GAS_TRANSFER (21000)
+        // Set gas limit to allow only 2 (42000)
+        let txs = vec![
+            Transaction::Transfer(TransferTx {
+                from: addr(1), to: addr(10), amount: 100, nonce: 0,
+                signature: None, public_key: None,
+            }),
+            Transaction::Transfer(TransferTx {
+                from: addr(2), to: addr(20), amount: 200, nonce: 0,
+                signature: None, public_key: None,
+            }),
+            Transaction::Transfer(TransferTx {
+                from: addr(3), to: addr(30), amount: 300, nonce: 0,
+                signature: None, public_key: None,
+            }),
+        ];
+
+        let block = make_block(1, 1, txs);
+        let mut executor = BlockStmExecutor::new_for_test(7);
+        executor.parallel_threshold = 1;
+        executor.block_gas_limit = 42_000; // Only fits 2 transfers
+        let result = executor.execute_block(&mut db, &block).unwrap();
+
+        assert_eq!(result.txs_executed, 2, "only 2 txs should fit in gas limit");
+        assert_eq!(result.txs_failed, 1, "third tx should be over gas limit");
+        assert!(result.gas_used <= 42_000, "gas must not exceed limit");
+    }
+
+    #[test]
+    fn test_failed_tx_keeps_fee_reverts_execution() {
+        // BUG 3 regression: failed tx must keep fee writes but revert execution writes
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 500); // Just enough for fee but not for transfer
+
+        let txs = vec![
+            Transaction::Transfer(TransferTx {
+                from: addr(1), to: addr(2),
+                amount: 1_000_000, // Way more than balance — will fail
+                nonce: 0,
+                signature: None, public_key: None,
+            }),
+        ];
+
+        let block = make_block(1, 1, txs);
+        let mut executor = BlockStmExecutor::new_for_test(7);
+        executor.parallel_threshold = 1;
+        // No fee controller — so no fee deduction to test
+        let result = executor.execute_block(&mut db, &block).unwrap();
+
+        assert_eq!(result.txs_failed, 1);
+        // Account should be unchanged (no fee controller, tx failed)
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 500);
+        assert_eq!(db.get_account(&addr(1)).unwrap().nonce, 0);
+        // Receiver should NOT exist (tx reverted)
+        assert!(
+            db.get_account(&addr(2)).is_none()
+                || db.get_account(&addr(2)).unwrap().balance == 0
+        );
+    }
+
+    #[test]
+    fn test_sharded_mvmemory_correctness() {
+        // BUG 6 regression: sharded MVMemory must be functionally correct
+        let mv = MVMemory::new();
+
+        // Write to many different locations (should spread across shards)
+        for i in 0..100u8 {
+            let loc = Location::AccountBalance(addr(i));
+            mv.write(loc, 0, 0, ValuePayload::Balance(i as u64 * 100));
+        }
+
+        // Read them all back
+        for i in 0..100u8 {
+            let loc = Location::AccountBalance(addr(i));
+            let result = mv.read(&loc, 1).unwrap().unwrap();
+            match result.1 {
+                ValuePayload::Balance(b) => assert_eq!(b, i as u64 * 100),
+                _ => panic!("expected balance"),
+            }
+        }
+
+        // Delete some and verify
+        let locs: Vec<Location> = (50..60u8)
+            .map(|i| Location::AccountBalance(addr(i)))
+            .collect();
+        mv.delete_writes(0, &locs);
+
+        for i in 50..60u8 {
+            let loc = Location::AccountBalance(addr(i));
+            let result = mv.read(&loc, 1).unwrap();
+            assert!(result.is_none(), "deleted write should not be visible");
+        }
+
+        // Non-deleted writes should still be there
+        for i in 0..50u8 {
+            let loc = Location::AccountBalance(addr(i));
+            let result = mv.read(&loc, 1).unwrap();
+            assert!(result.is_some(), "non-deleted write should still exist");
+        }
     }
 }

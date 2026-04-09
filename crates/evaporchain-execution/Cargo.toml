@@ -11,8 +11,10 @@ evaporchain-state = { path = "../evaporchain-state" }
 evaporchain-crypto = { path = "../evaporchain-crypto" }
 evaporchain-contracts = { path = "../evaporchain-contracts" }
 evaporchain-script = { path = "../evaporchain-script" }
+evaporchain-proving = { path = "../evaporchain-proving" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 hex = { workspace = true }
+rayon = "1.10"

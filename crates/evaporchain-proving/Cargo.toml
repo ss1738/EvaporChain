@@ -11,6 +11,7 @@ nova = ["dep:nova-snark", "dep:ff", "dep:bincode"]
 
 [dependencies]
 evaporchain-types = { path = "../evaporchain-types" }
+evaporchain-crypto = { path = "../evaporchain-crypto" }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }

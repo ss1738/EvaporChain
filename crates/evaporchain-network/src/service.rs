@@ -554,6 +554,8 @@ mod tests {
             transactions: vec![],
             timestamp: 0,
             producer_id: None,
+            vrf_output: None,
+            vrf_proof: None,
         }
     }
 

@@ -66,6 +66,28 @@ pub enum Op {
     Return,
     /// Halt execution.
     Halt,
+
+    // ── Temporal Opcodes ──
+
+    /// Push the current epoch onto the stack.
+    EpochNow,
+    /// Push the current block number onto the stack.
+    BlockNum,
+    /// Pop object_id (string), push its current energy onto the stack.
+    EnergyOf,
+    /// Pop max_epoch, pop min_epoch. Require current epoch is in [min, max).
+    RequireEpochRange,
+    /// Pop half_life, pop initial_energy, pop epochs_elapsed. Push decayed energy.
+    ComputeDecay,
+
+    // ── VRF / Randomness Opcodes ──
+
+    /// Push the current block's VRF randomness beacon value (truncated to u64).
+    VrfRandomness,
+    /// Pop a domain string, push domain-separated randomness from the beacon.
+    VrfDomainRandomness,
+    /// Pop max (exclusive), push random u64 in [0, max) derived from beacon.
+    RandomRange,
 }
 
 // ─── Bytecode ───────────────────────────────────────────────────────────────

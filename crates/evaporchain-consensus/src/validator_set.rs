@@ -51,6 +51,10 @@ pub struct ValidatorInfo {
     /// None if the validator hasn't registered a BLS key yet.
     #[serde(default)]
     pub bls_public_key: Option<Vec<u8>>,
+    /// Post-quantum VRF public key (ML-DSA, 1952 bytes) for VRF-based
+    /// leader election and randomness generation.
+    #[serde(default)]
+    pub vrf_public_key: Option<Vec<u8>>,
     /// Total blocks produced by this validator.
     pub blocks_produced: u64,
     /// Total evaporations processed across all blocks.
@@ -73,6 +77,7 @@ impl ValidatorInfo {
             stake,
             address,
             bls_public_key: None,
+            vrf_public_key: None,
             blocks_produced: 0,
             evaporations_processed: 0,
             health_score: 0.0,
@@ -85,6 +90,21 @@ impl ValidatorInfo {
     pub fn with_bls_key(id: u64, stake: u64, address: [u8; 32], bls_pk: Vec<u8>) -> Self {
         Self {
             bls_public_key: Some(bls_pk),
+            ..Self::new(id, stake, address)
+        }
+    }
+
+    /// Create a validator with both BLS and VRF public keys.
+    pub fn with_keys(
+        id: u64,
+        stake: u64,
+        address: [u8; 32],
+        bls_pk: Option<Vec<u8>>,
+        vrf_pk: Option<Vec<u8>>,
+    ) -> Self {
+        Self {
+            bls_public_key: bls_pk,
+            vrf_public_key: vrf_pk,
             ..Self::new(id, stake, address)
         }
     }
@@ -364,6 +384,93 @@ impl ValidatorSet {
             }
         }
         false
+    }
+
+    // ─────────────────── VRF-Based Leader Election ──────────────────────────
+
+    /// Verify that a block's VRF proof is valid for the claimed proposer.
+    ///
+    /// Checks:
+    /// 1. The proposer has a registered VRF public key
+    /// 2. The VRF proof verifies against `leader_vrf_input(height, round)`
+    /// 3. The VRF output matches the proof
+    pub fn verify_vrf_proposal(
+        &self,
+        proposer_id: u64,
+        height: u64,
+        round: u32,
+        vrf_output: &[u8; 32],
+        vrf_proof: &[u8],
+    ) -> bool {
+        let validator = match self.get(proposer_id) {
+            Some(v) => v,
+            None => return false,
+        };
+
+        let vrf_pk = match &validator.vrf_public_key {
+            Some(pk) => pk,
+            None => return false,
+        };
+
+        let alpha = evaporchain_crypto::vrf::leader_vrf_input(height, round);
+        evaporchain_crypto::vrf::vrf_verify(
+            vrf_pk,
+            &alpha,
+            &evaporchain_crypto::vrf::VrfOutput(*vrf_output),
+            &evaporchain_crypto::vrf::VrfProof(vrf_proof.to_vec()),
+        )
+    }
+
+    /// Check if a validator's VRF output qualifies them as leader.
+    /// Uses stake-weighted threshold: probability proportional to stake.
+    pub fn vrf_leader_qualifies(
+        &self,
+        validator_id: u64,
+        vrf_output: &[u8; 32],
+    ) -> bool {
+        let validator = match self.get(validator_id) {
+            Some(v) if !v.jailed => v,
+            _ => return false,
+        };
+        let total = self.total_stake();
+        evaporchain_crypto::vrf::vrf_leader_check(
+            &evaporchain_crypto::vrf::VrfOutput(*vrf_output),
+            validator.stake,
+            total,
+        )
+    }
+
+    /// Compute committee seats for a validator using VRF sortition.
+    pub fn vrf_sortition(
+        &self,
+        validator_id: u64,
+        vrf_output: &[u8; 32],
+        expected_committee_size: u64,
+    ) -> u64 {
+        let validator = match self.get(validator_id) {
+            Some(v) if !v.jailed => v,
+            _ => return 0,
+        };
+        let total = self.total_stake();
+        evaporchain_crypto::vrf::sortition(
+            &evaporchain_crypto::vrf::VrfOutput(*vrf_output),
+            validator.stake,
+            total,
+            expected_committee_size,
+        )
+    }
+
+    /// Total raw stake across all active (non-jailed) validators.
+    pub fn total_stake(&self) -> u64 {
+        self.validators.iter()
+            .filter(|v| !v.jailed)
+            .map(|v| v.stake)
+            .sum()
+    }
+
+    /// Check if any validator has a VRF key registered (enables VRF mode).
+    pub fn has_vrf_keys(&self) -> bool {
+        self.validators.iter().any(|v| v.vrf_public_key.is_some())
     }
 
     /// Compute a deterministic hash for an epoch (used for leader selection).

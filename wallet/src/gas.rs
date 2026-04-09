@@ -102,6 +102,15 @@ impl GasEstimator {
             Transaction::CallScript(_) => GAS_CALL_CONTRACT, // same cost as CallContract
             Transaction::ValidatorStake(_) => GAS_VALIDATOR_STAKE,
             Transaction::ValidatorExit(_) => GAS_VALIDATOR_EXIT,
+            Transaction::Shield(_) => 60_000,
+            Transaction::Unshield(_) => 80_000,
+            Transaction::PrivateTransfer(ptx) => {
+                100_000 + 20_000 * ptx.input_nullifiers.len() as u64
+                    + 15_000 * ptx.output_commitments.len() as u64
+            }
+            Transaction::Deferred(dtx) => {
+                75_000 + 5_000 * dtx.guards.len() as u64
+            }
         }
     }
 

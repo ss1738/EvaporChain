@@ -5,7 +5,8 @@ pub mod validator_set;
 
 use encrypted_mempool::EncryptedMempool;
 use evaporchain_crypto::hash::blake3_hash;
-use evaporchain_execution::{fees::PidFeeController, BlockExecutionResult, ExecutionEngine, SimpleExecutor};
+use evaporchain_execution::{fees::PidFeeController, BlockExecutionResult, ExecutionEngine};
+use evaporchain_execution::parallel::ParallelExecutor;
 use evaporchain_state::db::StateDB;
 use evaporchain_types::{Block, Epoch, Transaction};
 use mempool::Mempool;
@@ -48,7 +49,7 @@ pub struct MockConsensus {
     block_number: u64,
     epoch: Epoch,
     parent_hash: [u8; 32],
-    pub executor: SimpleExecutor,
+    pub executor: ParallelExecutor,
     pub mempool: Mempool,
     /// MEV-protected encrypted mempool (enabled with --mev-protection).
     pub encrypted_mempool: Option<EncryptedMempool>,
@@ -65,7 +66,7 @@ impl MockConsensus {
             block_number: 0,
             epoch: 0,
             parent_hash: [0u8; 32],
-            executor: SimpleExecutor::new_production(
+            executor: ParallelExecutor::new_production(
                 grace_period,
                 PidFeeController::testnet_config(),
                 block_gas_limit,
@@ -81,9 +82,22 @@ impl MockConsensus {
             block_number: 0,
             epoch: 0,
             parent_hash: [0u8; 32],
-            executor: SimpleExecutor::new_with_sig_verification(grace_period),
+            executor: ParallelExecutor::new_with_sig_verification(grace_period),
             mempool: Mempool::new(),
             encrypted_mempool: Some(EncryptedMempool::new(reveal_delay)),
+        }
+    }
+
+    /// Create a test-friendly consensus engine with a small privacy tree.
+    #[cfg(test)]
+    pub fn new_for_test(grace_period: u64) -> Self {
+        Self {
+            block_number: 0,
+            epoch: 0,
+            parent_hash: [0u8; 32],
+            executor: ParallelExecutor::new_with_sig_verification_for_test(grace_period),
+            mempool: Mempool::new(),
+            encrypted_mempool: None,
         }
     }
 
@@ -120,7 +134,7 @@ impl MockConsensus {
         let execution = self
             .executor
             .execute_block(db, block)
-            .map_err(|e| ConsensusError::ExecutionFailed(e.to_string()))?;
+            .map_err(|e: evaporchain_execution::ExecutionError| ConsensusError::ExecutionFailed(e.to_string()))?;
 
         // Advance local tracking to stay in sync
         self.block_number = block.number;
@@ -171,12 +185,14 @@ impl MockConsensus {
             transactions: txs,
             timestamp,
             producer_id: None,
+            vrf_output: None,
+            vrf_proof: None,
         };
 
         let execution = self
             .executor
             .execute_block(db, &block)
-            .map_err(|e| ConsensusError::ExecutionFailed(e.to_string()))?;
+            .map_err(|e: evaporchain_execution::ExecutionError| ConsensusError::ExecutionFailed(e.to_string()))?;
 
         block.state_root = execution.state_root;
 
@@ -234,12 +250,14 @@ impl MockConsensus {
             transactions: txs,
             timestamp,
             producer_id: None,
+            vrf_output: None,
+            vrf_proof: None,
         };
 
         let execution = self
             .executor
             .execute_block(db, &block)
-            .map_err(|e| ConsensusError::ExecutionFailed(e.to_string()))?;
+            .map_err(|e: evaporchain_execution::ExecutionError| ConsensusError::ExecutionFailed(e.to_string()))?;
 
         block.state_root = execution.state_root;
 
@@ -276,7 +294,7 @@ pub struct RotatingConsensus {
     block_number: u64,
     epoch: Epoch,
     parent_hash: [u8; 32],
-    executor: SimpleExecutor,
+    executor: ParallelExecutor,
     pub mempool: Mempool,
     pub encrypted_mempool: Option<EncryptedMempool>,
     pub validator_set: ValidatorSet,
@@ -291,11 +309,26 @@ impl RotatingConsensus {
             block_number: 0,
             epoch: 0,
             parent_hash: [0u8; 32],
-            executor: SimpleExecutor::new_production(
+            executor: ParallelExecutor::new_production(
                 grace_period,
                 PidFeeController::testnet_config(),
                 block_gas_limit,
             ),
+            mempool: Mempool::new(),
+            encrypted_mempool: None,
+            validator_set,
+        }
+    }
+
+    /// Create a test-friendly engine with a small privacy tree.
+    #[cfg(test)]
+    pub fn new_for_test(my_id: u64, grace_period: u64, validator_set: ValidatorSet) -> Self {
+        Self {
+            my_id,
+            block_number: 0,
+            epoch: 0,
+            parent_hash: [0u8; 32],
+            executor: ParallelExecutor::new_for_test(grace_period),
             mempool: Mempool::new(),
             encrypted_mempool: None,
             validator_set,
@@ -314,7 +347,7 @@ impl RotatingConsensus {
             block_number: 0,
             epoch: 0,
             parent_hash: [0u8; 32],
-            executor: SimpleExecutor::new_with_sig_verification(grace_period),
+            executor: ParallelExecutor::new_with_sig_verification(grace_period),
             mempool: Mempool::new(),
             encrypted_mempool: Some(EncryptedMempool::new(reveal_delay)),
             validator_set,
@@ -373,12 +406,14 @@ impl RotatingConsensus {
             transactions: txs,
             timestamp,
             producer_id: Some(self.my_id),
+            vrf_output: None,
+            vrf_proof: None,
         };
 
         let execution = self
             .executor
             .execute_block(db, &block)
-            .map_err(|e| ConsensusError::ExecutionFailed(e.to_string()))?;
+            .map_err(|e: evaporchain_execution::ExecutionError| ConsensusError::ExecutionFailed(e.to_string()))?;
 
         block.state_root = execution.state_root;
 
@@ -444,7 +479,7 @@ impl RotatingConsensus {
         let execution = self
             .executor
             .execute_block(db, block)
-            .map_err(|e| ConsensusError::ExecutionFailed(e.to_string()))?;
+            .map_err(|e: evaporchain_execution::ExecutionError| ConsensusError::ExecutionFailed(e.to_string()))?;
 
         // Update health score for the block producer
         if let Some(producer_id) = block.producer_id {
@@ -548,13 +583,22 @@ mod tests {
                 inner.signature = Some(sig);
                 inner.public_key = Some(pk);
             }
+            Transaction::Shield(ref mut inner) => {
+                inner.signature = Some(sig);
+                inner.public_key = Some(pk);
+            }
+            Transaction::Unshield(_) | Transaction::PrivateTransfer(_) => {}
+            Transaction::Deferred(ref mut inner) => {
+                inner.signature = Some(sig);
+                inner.public_key = Some(pk);
+            }
         }
     }
 
     #[test]
     fn test_produce_empty_block() {
         let mut db = InMemoryStateDB::new();
-        let mut consensus = MockConsensus::new(5);
+        let mut consensus = MockConsensus::new_for_test(5);
 
         let result = consensus.produce_block(&mut db).unwrap();
         assert_eq!(result.block.number, 1);
@@ -565,7 +609,7 @@ mod tests {
     #[test]
     fn test_epoch_advances() {
         let mut db = InMemoryStateDB::new();
-        let mut consensus = MockConsensus::new(5);
+        let mut consensus = MockConsensus::new_for_test(5);
 
         consensus.produce_block(&mut db).unwrap();
         consensus.produce_block(&mut db).unwrap();
@@ -579,7 +623,7 @@ mod tests {
     #[test]
     fn test_parent_hash_chains() {
         let mut db = InMemoryStateDB::new();
-        let mut consensus = MockConsensus::new(5);
+        let mut consensus = MockConsensus::new_for_test(5);
 
         let r1 = consensus.produce_block(&mut db).unwrap();
         let r2 = consensus.produce_block(&mut db).unwrap();
@@ -598,7 +642,7 @@ mod tests {
         });
 
         let kp = MlDsaKeypair::generate();
-        let mut consensus = MockConsensus::new(5);
+        let mut consensus = MockConsensus::new_for_test(5);
         let mut tx = Transaction::Transfer(TransferTx {
             from: addr(1),
             to: addr(2),
@@ -635,7 +679,7 @@ mod tests {
             data: vec![0xAB],
         });
 
-        let mut consensus = MockConsensus::new(2); // 2-epoch grace
+        let mut consensus = MockConsensus::new_for_test(2); // 2-epoch grace
 
         // Epoch 1: energy = 2>>1 = 1, still alive
         let r1 = consensus.produce_block(&mut db).unwrap();
@@ -665,7 +709,7 @@ mod tests {
             nonce: 0,
         });
         let kp = MlDsaKeypair::generate();
-        let mut consensus = MockConsensus::new(5);
+        let mut consensus = MockConsensus::new_for_test(5);
 
         let mut tx = Transaction::CreateObject(CreateObjectTx {
             creator: addr(1),
@@ -698,7 +742,7 @@ mod tests {
             nonce: 0,
         });
         let kp = MlDsaKeypair::generate();
-        let mut producer = MockConsensus::new(5);
+        let mut producer = MockConsensus::new_for_test(5);
         let mut tx = Transaction::Transfer(TransferTx {
             from: addr(1),
             to: addr(2),
@@ -718,7 +762,7 @@ mod tests {
             balance: 1_000_000,
             nonce: 0,
         });
-        let mut follower = MockConsensus::new(5);
+        let mut follower = MockConsensus::new_for_test(5);
         let applied = follower.apply_block(&mut follower_db, &produced.block).unwrap();
 
         // State roots must match
@@ -761,7 +805,7 @@ mod tests {
 
         let kp1 = MlDsaKeypair::generate();
         let kp2 = MlDsaKeypair::generate();
-        let mut producer = MockConsensus::new(3);
+        let mut producer = MockConsensus::new_for_test(3);
         let mut blocks = Vec::new();
 
         // Block 1: transfer
@@ -812,7 +856,7 @@ mod tests {
             grace_epoch: None,
             data: vec![0xAA],
         });
-        let mut follower = MockConsensus::new(3);
+        let mut follower = MockConsensus::new_for_test(3);
 
         for block in &blocks {
             follower.apply_block(&mut follower_db, block).unwrap();
@@ -841,7 +885,7 @@ mod tests {
             .iter()
             .map(|&id| make_validator(id, 1000))
             .collect();
-        RotatingConsensus::new(my_id, 5, ValidatorSet::with_validators(validators))
+        RotatingConsensus::new_for_test(my_id, 5, ValidatorSet::with_validators(validators))
     }
 
     #[test]
@@ -918,6 +962,8 @@ mod tests {
             transactions: vec![],
             timestamp: 0,
             producer_id: Some(wrong_id),
+            vrf_output: None,
+            vrf_proof: None,
         };
 
         let result = rc.validate_received_block(&block);
@@ -942,6 +988,8 @@ mod tests {
             transactions: vec![],
             timestamp: 0,
             producer_id: None,
+            vrf_output: None,
+            vrf_proof: None,
         };
         assert!(rc.validate_received_block(&block).is_err());
     }
@@ -997,6 +1045,8 @@ mod tests {
             transactions: vec![],
             timestamp: 0,
             producer_id: Some(wrong_id),
+            vrf_output: None,
+            vrf_proof: None,
         };
 
         assert!(follower.apply_block(&mut db, &block).is_err());

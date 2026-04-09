@@ -2,6 +2,7 @@ pub mod accumulator;
 pub mod hash;
 pub mod signatures;
 pub mod verkle;
+pub mod vrf;
 
 pub use accumulator::{
     Accumulator, EnergyStampedNullifier, InMemoryAccumulator, MMRPosition, MMRProof,
@@ -13,3 +14,7 @@ pub use signatures::{
     MlDsaKeypair, MlDsaVerifier, Signer, Verifier,
 };
 pub use verkle::{VerkleProof, VerkleTrie};
+pub use vrf::{
+    RandomnessBeacon, VrfKeypair, VrfOutput, VrfProof,
+    leader_vrf_input, sortition, sortition_vrf_input, vrf_leader_check, vrf_verify,
+};

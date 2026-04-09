@@ -129,6 +129,9 @@ pub struct ExecutionContext {
     pub owner: AccountAddress,
     pub epoch: Epoch,
     pub energy: Energy,
+    /// VRF randomness beacon value for this block (32 bytes).
+    /// Deterministic: same block = same randomness for all nodes.
+    pub vrf_randomness: [u8; 32],
 }
 
 // ─── Script Engine ──────────────────────────────────────────────────────────
@@ -180,6 +183,8 @@ pub struct ScriptTickResult {
 pub struct ScriptEngine {
     contracts: HashMap<u64, ScriptContract>,
     next_id: u64,
+    /// VRF randomness beacon for the current block. Set before executing txs.
+    pub vrf_randomness: [u8; 32],
 }
 
 impl ScriptEngine {
@@ -187,6 +192,7 @@ impl ScriptEngine {
         Self {
             contracts: HashMap::new(),
             next_id: 1,
+            vrf_randomness: [0u8; 32],
         }
     }
 
@@ -273,6 +279,7 @@ impl ScriptEngine {
             owner: contract.creator,
             epoch: current_epoch,
             energy: current_energy,
+            vrf_randomness: self.vrf_randomness,
         };
 
         let bytecode = contract.bytecode.clone();
@@ -317,6 +324,7 @@ impl ScriptEngine {
             owner: contract.creator,
             epoch: current_epoch,
             energy: contract.energy_at(current_epoch),
+            vrf_randomness: self.vrf_randomness,
         };
 
         let bytecode = contract.bytecode.clone();
