@@ -1,42 +1,75 @@
 /**
  * @evaporchain/wallet-sdk
  *
- * Zero-dependency SDK for integrating dApps with the EvaporChain
- * browser wallet extension. Supports post-quantum ML-DSA signatures
- * and energy-based state decay.
+ * Complete SDK for building dApps on EvaporChain.
+ * Two main components:
+ *
+ * 1. **Provider** — wallet connection, signing, sending transactions
+ *    via the browser extension (window.evaporchain)
+ *
+ * 2. **API client** — typed REST client for reading chain data
+ *    (balances, objects, NFTs, staking, pools, messages)
  *
  * @example
  * ```ts
- * import { EvaporChainProvider } from "@evaporchain/wallet-sdk";
+ * import { EvaporChainProvider, EvaporChainAPI } from "@evaporchain/wallet-sdk";
  *
+ * // Wallet connection
  * const provider = new EvaporChainProvider();
  * const { address } = await provider.connect();
- * const { balance } = await provider.getBalance();
+ *
+ * // Chain data
+ * const api = new EvaporChainAPI();
+ * const balance = await api.getBalance(address);
+ * const objects = await api.getObjects(address);
  * ```
  *
  * For React hooks, import from the /react subpath:
  * ```ts
- * import { useEvaporChain } from "@evaporchain/wallet-sdk/react";
+ * import { useEvaporChain, useObjects, useStaking } from "@evaporchain/wallet-sdk/react";
  * ```
  */
 
+// ── Provider ──
+
 export { EvaporChainProvider } from "./provider";
+
+// ── API Client ──
+
+export { EvaporChainAPI, type ApiClientOptions } from "./api";
+
+// ── Types ──
 
 export {
   EvaporChainError,
   EvaporChainErrorCode,
+  type ObjectState,
   type EvaporObject,
   type Nft,
+  type NftCollection,
+  type MintNftParams,
   type Balance,
   type ChainStatus,
   type TransactionRequest,
   type SignMessageRequest,
   type ConnectResult,
   type TransactionResult,
+  type TxResult,
+  type Transaction,
   type CreateObjectParams,
+  type StakingInfo,
+  type Validator,
+  type SwapQuote,
+  type EnergyPool,
+  type PoolContribution,
+  type MortalMessage,
   type InjectedProvider,
   type EvaporChainEvent,
+  type NetworkId,
+  type NetworkConfig,
 } from "./types";
+
+// ── Utilities ──
 
 export {
   isEvaporChainInstalled,

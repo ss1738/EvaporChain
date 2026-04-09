@@ -1,8 +1,11 @@
 /**
- * Hook to connect to the EvaporChain browser extension wallet.
+ * Wallet connection hook — powered by @evaporchain/wallet-sdk.
+ *
+ * Thin wrapper that maintains the same interface for backward compatibility.
+ * All wallet logic now lives in the SDK instead of being reimplemented per-dApp.
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useEvaporChain } from "@evaporchain/wallet-sdk/react";
 
 interface WalletState {
   connected: boolean;
@@ -13,82 +16,15 @@ interface WalletState {
   disconnect: () => void;
 }
 
-declare global {
-  interface Window {
-    evaporchain?: {
-      isEvaporChain: true;
-      isConnected: boolean;
-      connect(): Promise<string[]>;
-      disconnect(): Promise<void>;
-      getAccounts(): Promise<string[]>;
-      sendTransaction(params: { to: string; amount: number }): Promise<{ success: boolean; message: string }>;
-      signMessage(message: string): Promise<string>;
-      on(event: string, cb: (...args: unknown[]) => void): void;
-      off(event: string, cb: (...args: unknown[]) => void): void;
-    };
-  }
-}
-
 export function useWalletConnect(): WalletState {
-  const [connected, setConnected] = useState(false);
-  const [address, setAddress] = useState<string | null>(null);
-  const [connecting, setConnecting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { address, connected, connecting, error, connect, disconnect } = useEvaporChain();
 
-  // Check for existing connection on mount
-  useEffect(() => {
-    const check = async () => {
-      if (window.evaporchain?.isConnected) {
-        try {
-          const accounts = await window.evaporchain.getAccounts();
-          if (accounts.length > 0) {
-            setAddress(accounts[0]);
-            setConnected(true);
-          }
-        } catch {
-          // Not connected
-        }
-      }
-    };
-
-    if (window.evaporchain) {
-      check();
-    } else {
-      // Wait for provider injection
-      const handler = () => check();
-      window.addEventListener("evaporchain#initialized", handler);
-      return () => window.removeEventListener("evaporchain#initialized", handler);
-    }
-  }, []);
-
-  const connect = useCallback(async () => {
-    setConnecting(true);
-    setError(null);
-
-    if (!window.evaporchain) {
-      setError("EvaporChain Wallet extension not found. Please install it first.");
-      setConnecting(false);
-      return;
-    }
-
-    try {
-      const accounts = await window.evaporchain.connect();
-      if (accounts.length > 0) {
-        setAddress(accounts[0]);
-        setConnected(true);
-      }
-    } catch (err: any) {
-      setError(err.message ?? "Connection failed");
-    } finally {
-      setConnecting(false);
-    }
-  }, []);
-
-  const disconnect = useCallback(() => {
-    window.evaporchain?.disconnect();
-    setConnected(false);
-    setAddress(null);
-  }, []);
-
-  return { connected, address, connecting, error, connect, disconnect };
+  return {
+    connected,
+    address,
+    connecting,
+    error,
+    connect: async () => { await connect(); },
+    disconnect: () => { disconnect(); },
+  };
 }

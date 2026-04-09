@@ -1,6 +1,6 @@
 # @evaporchain/wallet-sdk
 
-Zero-dependency SDK for integrating dApps with the EvaporChain browser wallet extension. Supports post-quantum ML-DSA signatures and energy-based state decay.
+Complete SDK for building dApps on EvaporChain. Provides wallet connection, a typed REST API client, React hooks, and utility functions. Zero external dependencies.
 
 ## Installation
 
@@ -8,133 +8,230 @@ Zero-dependency SDK for integrating dApps with the EvaporChain browser wallet ex
 npm install @evaporchain/wallet-sdk
 ```
 
-## Quick Start (5 minutes)
+## What's Included
 
-### 1. Connect to the wallet
+| Module | Import | Purpose |
+|--------|--------|---------|
+| **Provider** | `@evaporchain/wallet-sdk` | Wallet connection, signing, sending transactions |
+| **API Client** | `@evaporchain/wallet-sdk` | Typed REST client for reading chain data |
+| **React Hooks** | `@evaporchain/wallet-sdk/react` | Hooks for wallet, objects, NFTs, staking, messages |
+| **Utilities** | `@evaporchain/wallet-sdk` | Balance formatting, decay calculation, address display |
+
+## Quick Start
+
+### Wallet Connection + API Client
 
 ```ts
-import { EvaporChainProvider, isEvaporChainInstalled } from "@evaporchain/wallet-sdk";
+import { EvaporChainProvider, EvaporChainAPI } from "@evaporchain/wallet-sdk";
 
-if (!isEvaporChainInstalled()) {
-  console.log("Please install the EvaporChain wallet extension");
-}
-
+// Connect to wallet (browser extension)
 const provider = new EvaporChainProvider();
-const { address, publicKey } = await provider.connect();
-console.log("Connected:", address);
+const { address } = await provider.connect();
+
+// Read chain data via API
+const api = new EvaporChainAPI(); // defaults to testnet
+const balance = await api.getBalance(address);
+const objects = await api.getObjects(address);
+const staking = await api.getStakingInfo(address);
 ```
 
-### 2. Get balance
-
-```ts
-const { balance, nonce } = await provider.getBalance();
-console.log("Balance:", balance, "EVAP");
-```
-
-### 3. Send a transaction
-
-```ts
-const { hash, status } = await provider.sendTransaction({
-  to: "0x1a2b3c...",
-  amount: 1000,
-});
-console.log("TX:", hash, status);
-```
-
-### 4. Refresh a decaying object
-
-This is unique to EvaporChain — objects lose energy over time and must be refreshed to prevent evaporation.
-
-```ts
-const { hash } = await provider.refreshObject("0xobject_id...", 500);
-console.log("Refreshed, tx:", hash);
-```
-
-### 5. Create a new object
-
-```ts
-const { hash, objectId } = await provider.createObject({
-  name: "My Decaying NFT",
-  energy: 5000,
-  halfLife: 100, // epochs
-});
-console.log("Created object:", objectId);
-```
-
-## React Hooks
-
-Import from the `/react` subpath:
+### React (Recommended for dApps)
 
 ```tsx
-import { useEvaporChain, useObjects, useNfts, useChainStatus } from "@evaporchain/wallet-sdk/react";
-```
+import { useEvaporChain, useObjects, useStaking } from "@evaporchain/wallet-sdk/react";
 
-### useEvaporChain
-
-```tsx
 function App() {
-  const { address, balance, connected, connect, disconnect, error } = useEvaporChain();
+  const { address, balance, connected, connect, disconnect } = useEvaporChain();
+  const { objects, loading } = useObjects(address ?? undefined);
 
   if (!connected) {
-    return <button onClick={connect}>Connect EvaporChain Wallet</button>;
+    return <button onClick={connect}>Connect Wallet</button>;
   }
 
   return (
     <div>
-      <p>Address: {address}</p>
-      <p>Balance: {balance} EVAP</p>
+      <p>{address} — {balance} EVAP</p>
+      {objects.map(obj => (
+        <div key={obj.id}>{obj.name}: {obj.currentEnergy}/{obj.maxEnergy}</div>
+      ))}
       <button onClick={disconnect}>Disconnect</button>
     </div>
   );
 }
 ```
 
-### useObjects
+## API Client
+
+The API client provides typed access to all EvaporChain REST endpoints. No wallet connection required for reading data.
+
+```ts
+import { EvaporChainAPI } from "@evaporchain/wallet-sdk";
+
+const api = new EvaporChainAPI(); // testnet
+// or: new EvaporChainAPI({ network: "mainnet" })
+// or: new EvaporChainAPI({ rpcUrl: "http://localhost:3000" })
+```
+
+### Chain & Accounts
+
+```ts
+const status = await api.getChainStatus();     // block height, epoch, peers
+const balance = await api.getBalance(address);  // balance, nonce
+const txns = await api.getTransactions(address, 20); // transaction history
+```
+
+### Objects (Decaying State)
+
+```ts
+const objects = await api.getObjects(address);        // all objects
+const critical = await api.getObjectsByState(address, "Grace"); // filter by state
+const single = await api.getObject(objectId);         // single object
+await api.refreshObject(objectId, 1000);              // deposit energy
+await api.batchRefresh([                               // batch refresh
+  { id: "0xabc...", energy: 500 },
+  { id: "0xdef...", energy: 500 },
+]);
+```
+
+### NFTs
+
+```ts
+const nfts = await api.getNFTs(address);
+const collections = await api.getCollections();
+await api.mintNFT({ name: "My NFT", collection: "col_id", energy: 5000, halfLife: 100 });
+await api.refreshNFT(nftId, 500);
+await api.transferNFT(nftId, recipientAddress);
+```
+
+### Staking
+
+```ts
+const info = await api.getStakingInfo(address);
+const validators = await api.getValidators();
+await api.stake(address, 10000, nonce);
+await api.unstake(address, 5000, nonce);
+await api.claimRewards(address, nonce);
+```
+
+### Token Swap
+
+```ts
+const quote = await api.getSwapQuote("EVAP", "wETH", 1000);
+await api.executeSwap("EVAP", "wETH", 1000, 0.5); // 0.5% slippage
+```
+
+### Energy Pools
+
+```ts
+const pools = await api.getPools();
+const pool = await api.getPool(poolId);
+const contributors = await api.getPoolContributors(poolId);
+await api.createPool("My Pool", creatorAddress);
+await api.stakeToPool(poolId, address, 500);
+```
+
+### Mortal Messages
+
+```ts
+await api.sendMessage(from, to, "Hello!", 1000);
+const inbox = await api.getInbox(address);
+const sent = await api.getSentMessages(address);
+await api.boostMessage(messageId, 500);
+```
+
+### Faucet (Testnet)
+
+```ts
+await api.claimFaucet(address);
+```
+
+## React Hooks
+
+All hooks are available from `@evaporchain/wallet-sdk/react`:
 
 ```tsx
-function ObjectList() {
-  const { objects, loading, refresh } = useObjects();
+import {
+  useEvaporChain,     // wallet connection + balance
+  useObjects,         // decaying state objects
+  useNfts,            // NFTs with decay
+  useChainStatus,     // block height, epoch (auto-polls)
+  useTransactions,    // transaction history
+  useStaking,         // staking info + actions
+  useSwap,            // swap quotes + execution
+  usePools,           // energy pools
+  useMessages,        // mortal messages
+  useCollections,     // NFT collections
+  configureApi,       // configure API endpoint
+} from "@evaporchain/wallet-sdk/react";
+```
 
-  if (loading) return <p>Loading objects...</p>;
+### Hook Examples
+
+```tsx
+// Staking with actions
+function StakingPanel() {
+  const { address } = useEvaporChain();
+  const { info, validators, stake, unstake, claimRewards } = useStaking(address);
 
   return (
-    <ul>
-      {objects.map(obj => (
-        <li key={obj.id}>
-          {obj.name}: {obj.currentEnergy}/{obj.maxEnergy} energy
-          ({obj.state})
-        </li>
-      ))}
-      <button onClick={refresh}>Refresh</button>
-    </ul>
+    <div>
+      <p>Staked: {info?.staked} EVAP</p>
+      <p>Rewards: {info?.rewards} EVAP</p>
+      <button onClick={() => stake(1000)}>Stake 1000</button>
+      <button onClick={() => claimRewards()}>Claim</button>
+    </div>
+  );
+}
+
+// Transaction history
+function History() {
+  const { address } = useEvaporChain();
+  const { transactions, loading } = useTransactions(address, 50);
+
+  return transactions.map(tx => (
+    <div key={tx.hash}>{tx.type}: {tx.amount} EVAP</div>
+  ));
+}
+
+// Swap
+function SwapWidget() {
+  const { quote, getQuote, execute } = useSwap();
+
+  return (
+    <div>
+      <button onClick={() => getQuote("EVAP", "wETH", 100)}>Get Quote</button>
+      {quote && <p>Rate: {quote.rate}</p>}
+      <button onClick={() => execute("EVAP", "wETH", 100, 0.5)}>Swap</button>
+    </div>
   );
 }
 ```
 
-### useNfts
+## Wallet Provider
 
-```tsx
-function NftGallery() {
-  const { nfts, loading } = useNfts();
+For direct wallet interaction (signing, sending transactions):
 
-  if (loading) return <p>Loading NFTs...</p>;
+```ts
+import { EvaporChainProvider } from "@evaporchain/wallet-sdk";
 
-  return nfts.map(nft => (
-    <div key={nft.id}>
-      <img src={nft.imageUrl} alt={nft.name} />
-      <p>{nft.name} — {nft.currentEnergy} energy</p>
-    </div>
-  ));
-}
-```
+const provider = new EvaporChainProvider();
+const { address } = await provider.connect();
 
-### useChainStatus
+// Send transaction (opens wallet popup)
+const { hash } = await provider.sendTransaction({ to: "0x...", amount: 1000 });
 
-```tsx
-function StatusBar() {
-  const { blockHeight, epoch } = useChainStatus();
-  return <p>Block {blockHeight} | Epoch {epoch}</p>;
-}
+// Sign message (ML-DSA post-quantum signature)
+const { signature } = await provider.signMessage("Hello EvaporChain");
+
+// Refresh decaying object
+await provider.refreshObject("0xobject_id", 500);
+
+// Create new object
+const { objectId } = await provider.createObject({
+  name: "My Object",
+  energy: 5000,
+  halfLife: 100,
+});
 ```
 
 ## Utility Functions
@@ -148,48 +245,14 @@ import {
   estimateEvaporation,
 } from "@evaporchain/wallet-sdk";
 
-// Check if wallet is installed
-isEvaporChainInstalled(); // true | false
-
-// Format raw balance
-formatBalance(1_500_000_000); // "1.5"
-formatBalance(123456, 4);     // "12.3456"
-
-// Shorten address for display
-shortenAddress("0x1a2b3c4d5e6f7890abcdef1234567890abcd9f0e");
-// "0x1a2b...9f0e"
-
-// Calculate energy after decay
-calculateDecay(1000, 10, 10); // 500 (one half-life)
-calculateDecay(1000, 10, 20); // 250 (two half-lives)
-
-// Estimate epochs until evaporation
-estimateEvaporation(1000, 10); // ~100 epochs
-```
-
-## TypeScript Types
-
-All types are exported from the main entry point:
-
-```ts
-import type {
-  EvaporObject,     // Decaying state object
-  Nft,              // NFT with energy/decay
-  Balance,          // { balance, nonce }
-  ChainStatus,      // { blockHeight, epoch, ... }
-  TransactionRequest,
-  TransactionResult,
-  ConnectResult,
-  CreateObjectParams,
-  SignMessageRequest,
-  EvaporChainEvent,
-  InjectedProvider, // window.evaporchain interface
-} from "@evaporchain/wallet-sdk";
+isEvaporChainInstalled();          // true | false
+formatBalance(1_500_000_000);      // "1.5"
+shortenAddress("0x1a2b...9f0e");   // "0x1a2b...9f0e"
+calculateDecay(1000, 10, 10);      // 500 (one half-life)
+estimateEvaporation(1000, 10);     // ~100 epochs
 ```
 
 ## Error Handling
-
-The SDK throws `EvaporChainError` with typed error codes:
 
 ```ts
 import { EvaporChainError, EvaporChainErrorCode } from "@evaporchain/wallet-sdk";
@@ -200,49 +263,65 @@ try {
   if (err instanceof EvaporChainError) {
     switch (err.code) {
       case EvaporChainErrorCode.NOT_INSTALLED:
-        // Wallet extension not found
         showInstallPrompt();
         break;
       case EvaporChainErrorCode.USER_REJECTED:
-        // User denied the request
+        // User denied
         break;
       case EvaporChainErrorCode.NETWORK_ERROR:
-        // RPC / network failure
+        // RPC failure
         break;
       case EvaporChainErrorCode.INSUFFICIENT_BALANCE:
         // Not enough EVAP
         break;
       case EvaporChainErrorCode.OBJECT_NOT_FOUND:
-        // Object doesn't exist on-chain
+        // Object doesn't exist
         break;
     }
   }
 }
 ```
 
-## Provider Events
+## Network Configuration
 
 ```ts
-provider.on("connect", (result) => {
-  console.log("Connected:", result.address);
-});
+import { EvaporChainAPI } from "@evaporchain/wallet-sdk";
 
-provider.on("disconnect", () => {
-  console.log("Disconnected");
-});
+const api = new EvaporChainAPI({ network: "testnet" });  // default
+api.setNetwork("mainnet");                                 // switch at runtime
 
-provider.on("accountsChanged", (accounts) => {
-  console.log("Active account changed:", accounts[0]);
-});
-
-provider.on("chainChanged", (chainId) => {
-  console.log("Network changed:", chainId);
-});
+// Custom RPC
+const localApi = new EvaporChainAPI({ rpcUrl: "http://localhost:3000" });
 ```
+
+For React hooks, configure once at app startup:
+
+```ts
+import { configureApi } from "@evaporchain/wallet-sdk/react";
+configureApi({ network: "mainnet" });
+```
+
+## Migrating from Custom Hooks
+
+If your dApp uses a custom `useWalletConnect` hook that calls `window.evaporchain` directly, replace it with the SDK:
+
+```ts
+// Before (custom hook)
+import { useWalletConnect } from "./hooks/useWalletConnect";
+const { address, connected, connect, disconnect } = useWalletConnect();
+
+// After (SDK hook)
+import { useEvaporChain } from "@evaporchain/wallet-sdk/react";
+const { address, connected, connect, disconnect } = useEvaporChain();
+```
+
+The SDK handles provider detection, event forwarding, reconnection, and type safety — all the boilerplate that custom hooks reimplement inconsistently.
 
 ## How It Works
 
-The SDK detects the `window.evaporchain` provider injected by the EvaporChain browser extension. All signing happens inside the extension using ML-DSA post-quantum signatures — private keys never leave the wallet.
+- **Provider**: Detects `window.evaporchain` injected by the browser extension. All signing uses ML-DSA post-quantum signatures inside the extension — private keys never leave the wallet.
+- **API Client**: Makes typed HTTP requests to EvaporChain RPC nodes. Snake_case responses are automatically converted to camelCase.
+- **React Hooks**: Singleton provider + API client shared across all hook instances. Auto-cleanup on unmount.
 
 ## License
 

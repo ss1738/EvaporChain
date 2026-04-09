@@ -3,6 +3,10 @@
  * Zero-dependency — no external imports.
  */
 
+// ── Object states ──
+
+export type ObjectState = "Active" | "Grace" | "Ghost" | "Risen";
+
 // ── Chain objects ──
 
 /** A decaying state object on the EvaporChain network. */
@@ -13,9 +17,10 @@ export interface EvaporObject {
   energy: number;
   maxEnergy: number;
   halfLife: number;
-  state: "Active" | "Grace" | "Ghost" | "Risen";
+  state: ObjectState;
   currentEnergy: number;
   decayPercentage: number;
+  estimatedGhostTime: number;
   createdEpoch: number;
   lastRefreshed: number;
 }
@@ -25,26 +30,31 @@ export interface Nft {
   id: string;
   name: string;
   collection: string;
+  collectionName: string;
   owner: string;
-  imageUrl?: string;
+  imageUri?: string;
   energy: number;
   maxEnergy: number;
   currentEnergy: number;
   halfLife: number;
   decayPercentage: number;
-  state: "Active" | "Grace" | "Ghost";
+  state: ObjectState;
+  estimatedGhostTime: number;
   epochsRemaining: number;
   createdEpoch: number;
 }
 
 /** Account balance and nonce. */
 export interface Balance {
+  address: string;
   balance: number;
   nonce: number;
 }
 
 /** Chain status snapshot. */
 export interface ChainStatus {
+  chainName: string;
+  version: string;
   blockHeight: number;
   epoch: number;
   activeObjects: number;
@@ -55,7 +65,7 @@ export interface ChainStatus {
 
 // ── Transactions ──
 
-/** Transaction request to be signed and submitted. */
+/** Transaction request to be signed and submitted via wallet. */
 export interface TransactionRequest {
   to: string;
   amount: number;
@@ -76,15 +86,124 @@ export interface ConnectResult {
   publicKey: string;
 }
 
-/** Result of a submitted transaction. */
+/** Result of a submitted transaction (wallet-signed). */
 export interface TransactionResult {
   hash: string;
   status: "pending" | "confirmed" | "failed";
 }
 
+/** Result of an API-submitted transaction. */
+export interface TxResult {
+  success: boolean;
+  message: string;
+  txHash?: string;
+}
+
+/** A historical transaction record from the chain. */
+export interface Transaction {
+  hash: string;
+  type: string;
+  detail: string;
+  from: string;
+  to: string;
+  amount: string;
+  timestamp: number;
+}
+
 /** Parameters for creating a new decaying object. */
 export interface CreateObjectParams {
   name: string;
+  energy: number;
+  halfLife: number;
+  data?: Record<string, unknown>;
+}
+
+// ── Staking ──
+
+/** Staking status for an address. */
+export interface StakingInfo {
+  staked: number;
+  rewards: number;
+  isValidator: boolean;
+  epoch: number;
+  stakingStartEpoch?: number;
+  unbondingAmount?: number;
+  unbondingCompleteEpoch?: number;
+}
+
+/** A validator on the network. */
+export interface Validator {
+  address: string;
+  name: string;
+  stake: number;
+  commission: number;
+  uptime: number;
+  status: "active" | "jailed" | "inactive";
+}
+
+// ── Swap ──
+
+/** Quote for a token swap. */
+export interface SwapQuote {
+  fromToken: string;
+  toToken: string;
+  amountIn: number;
+  amountOut: number;
+  rate: number;
+  priceImpact: number;
+}
+
+// ── Energy Pools ──
+
+/** A community energy pool. */
+export interface EnergyPool {
+  id: string;
+  name: string;
+  creator: string;
+  totalEnergy: number;
+  contributors: number;
+  targetObject?: string;
+  createdEpoch: number;
+}
+
+/** A contribution to an energy pool. */
+export interface PoolContribution {
+  address: string;
+  amount: number;
+  timestamp: number;
+}
+
+// ── Messages ──
+
+/** A mortal message (decays over time). */
+export interface MortalMessage {
+  id: string;
+  from: string;
+  to: string;
+  content: string;
+  energy: number;
+  maxEnergy: number;
+  currentEnergy: number;
+  state: ObjectState;
+  timestamp: number;
+}
+
+// ── NFT Collections ──
+
+/** An NFT collection. */
+export interface NftCollection {
+  id: string;
+  name: string;
+  creator: string;
+  count: number;
+  floorEnergy: number;
+}
+
+/** Parameters for minting an NFT. */
+export interface MintNftParams {
+  name: string;
+  collection: string;
+  imageUri?: string;
   energy: number;
   halfLife: number;
   data?: Record<string, unknown>;
@@ -124,6 +243,9 @@ export class EvaporChainError extends Error {
 /**
  * The provider interface injected into `window.evaporchain` by the
  * EvaporChain browser extension. The SDK wraps this into a cleaner API.
+ *
+ * Canonical shape — all dApps should use the SDK instead of accessing
+ * window.evaporchain directly to avoid interface mismatches.
  */
 export interface InjectedProvider {
   isEvaporChain: true;
@@ -156,3 +278,13 @@ export type EvaporChainEvent =
   | "disconnect"
   | "accountsChanged"
   | "chainChanged";
+
+// ── Network configuration ──
+
+export type NetworkId = "testnet" | "mainnet";
+
+export interface NetworkConfig {
+  id: NetworkId;
+  name: string;
+  rpcUrl: string;
+}
