@@ -29,9 +29,9 @@ type Props = {
 const QUICK_ACTIONS = [
   { label: 'Send', screen: 'Send' as const, color: '#06b6d4', icon: 'S' },
   { label: 'Receive', screen: 'Receive' as const, color: '#8b5cf6', icon: 'R' },
-  { label: 'Swap', screen: 'Swap' as const, color: '#22c55e', icon: 'W' },
   { label: 'Objects', screen: 'Objects' as const, color: '#f59e0b', icon: 'O' },
   { label: 'NFTs', screen: 'NFTs' as const, color: '#ef4444', icon: 'N' },
+  { label: 'Stake', screen: 'Staking' as const, color: '#22c55e', icon: 'V' },
 ];
 
 const HomeScreen: React.FC<Props> = ({ navigation }) => {

@@ -68,6 +68,25 @@ export interface NFT {
   estimatedGhostTime: number;
 }
 
+export interface StakingInfo {
+  staked: number;
+  rewards: number;
+  isValidator: boolean;
+  epoch: number;
+  stakingStartEpoch?: number;
+  unbondingAmount?: number;
+  unbondingCompleteEpoch?: number;
+}
+
+export interface Validator {
+  address: string;
+  name: string;
+  stake: number;
+  commission: number;
+  uptime: number;
+  status: 'active' | 'jailed' | 'inactive';
+}
+
 export interface SwapQuote {
   from_token: string;
   to_token: string;
@@ -194,6 +213,28 @@ class EvaporChainAPI {
 
   async executeSwap(fromToken: string, toToken: string, amount: number, slippage: number): Promise<TxResult> {
     return this.post('/api/swap/execute', { from_token: fromToken, to_token: toToken, amount, slippage });
+  }
+
+  // ── Staking ──
+
+  async getStakingInfo(address: string): Promise<StakingInfo> {
+    return this.get(`/api/staking/${address}`);
+  }
+
+  async getValidators(): Promise<Validator[]> {
+    return this.get('/api/validators');
+  }
+
+  async stake(from: string, amount: number, nonce: number): Promise<TxResult> {
+    return this.post('/api/tx/stake', { from, amount, nonce });
+  }
+
+  async unstake(from: string, amount: number, nonce: number): Promise<TxResult> {
+    return this.post('/api/tx/unstake', { from, amount, nonce });
+  }
+
+  async claimRewards(from: string, nonce: number): Promise<TxResult> {
+    return this.post('/api/tx/claim-rewards', { from, nonce });
   }
 }
 

@@ -20,6 +20,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as Clipboard from 'expo-clipboard';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { RootStackParamList } from '../navigation/AppNavigator';
 import { api } from '../utils/api';
 import { keystore } from '../utils/keystore';
 
@@ -29,6 +32,7 @@ const AUTO_LOCK_OPTIONS = [1, 5, 15, 30] as const;
 type PinModalMode = 'export' | 'change-current' | 'change-new' | 'change-confirm' | null;
 
 const SettingsScreen: React.FC = () => {
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [network, setNetwork] = useState<string>(api.getNetwork());
   const [autoLockMinutes, setAutoLockMinutes] = useState(5);
   const [pushEnabled, setPushEnabled] = useState(true);
@@ -167,6 +171,30 @@ const SettingsScreen: React.FC = () => {
       case 'change-confirm': return 'Confirm New PIN';
       default: return '';
     }
+  };
+
+  const handleDeleteWallet = () => {
+    Alert.alert(
+      'Delete Wallet',
+      'This will permanently remove your wallet from this device. Make sure you have your seed phrase backed up. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            const auth = await LocalAuthentication.authenticateAsync({
+              promptMessage: 'Confirm wallet deletion',
+              cancelLabel: 'Cancel',
+            });
+            if (!auth.success) return;
+
+            await keystore.deleteWallet();
+            navigation.reset({ index: 0, routes: [{ name: 'Welcome' }] });
+          },
+        },
+      ]
+    );
   };
 
   const handleAutoLockChange = (minutes: number) => {
@@ -324,6 +352,22 @@ const SettingsScreen: React.FC = () => {
               disabled={!pushEnabled}
             />
           </View>
+        </View>
+
+        {/* Danger Zone */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: '#ef4444' }]}>Danger Zone</Text>
+          <TouchableOpacity
+            style={styles.deleteRow}
+            onPress={handleDeleteWallet}
+            activeOpacity={0.7}
+          >
+            <View style={styles.settingLeft}>
+              <Text style={styles.deleteLabel}>Delete Wallet</Text>
+              <Text style={styles.settingSubtext}>Remove all data from this device</Text>
+            </View>
+            <Text style={styles.settingArrow}>{'>'}</Text>
+          </TouchableOpacity>
         </View>
 
         {/* App Info */}
@@ -516,6 +560,23 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#d1d5db',
     marginTop: 4,
+  },
+  deleteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 8,
+    minHeight: 56,
+  },
+  deleteLabel: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#ef4444',
   },
   // PIN Modal
   modalOverlay: {

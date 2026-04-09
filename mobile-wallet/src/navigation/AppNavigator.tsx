@@ -11,7 +11,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { ActivityIndicator, View, Text, StyleSheet } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, type NavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { keystore } from '../utils/keystore';
@@ -32,6 +32,7 @@ import SettingsScreen from '../screens/SettingsScreen';
 import HistoryScreen from '../screens/HistoryScreen';
 import FaucetScreen from '../screens/FaucetScreen';
 import EnergyDashboardScreen from '../screens/EnergyDashboardScreen';
+import StakingScreen from '../screens/StakingScreen';
 
 // ── Types ──
 
@@ -49,6 +50,7 @@ export type RootStackParamList = {
   NftDetail: { nftId: string };
   History: undefined;
   Faucet: undefined;
+  Staking: undefined;
 };
 
 export type TabParamList = {
@@ -152,7 +154,11 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 const headerStyle = { backgroundColor: '#ffffff' };
 const headerTintColor = '#111827';
 
-export const AppNavigator: React.FC = () => {
+interface AppNavigatorProps {
+  navigationRef?: React.RefObject<NavigationContainerRef<RootStackParamList> | null>;
+}
+
+export const AppNavigator: React.FC<AppNavigatorProps> = ({ navigationRef }) => {
   const [loading, setLoading] = useState(true);
   const [hasWallet, setHasWallet] = useState(false);
 
@@ -172,7 +178,7 @@ export const AppNavigator: React.FC = () => {
   }
 
   return (
-    <NavigationContainer>
+    <NavigationContainer ref={navigationRef}>
       <Stack.Navigator
         initialRouteName={hasWallet ? 'Unlock' : 'Welcome'}
         screenOptions={{
@@ -209,6 +215,7 @@ export const AppNavigator: React.FC = () => {
         <Stack.Screen name="NftDetail" component={NftDetailScreen} options={{ title: 'NFT' }} />
         <Stack.Screen name="History" component={HistoryScreen} options={{ title: 'Transaction History' }} />
         <Stack.Screen name="Faucet" component={FaucetScreen} options={{ title: 'Testnet Faucet' }} />
+        <Stack.Screen name="Staking" component={StakingScreen} options={{ title: 'Staking' }} />
       </Stack.Navigator>
     </NavigationContainer>
   );
