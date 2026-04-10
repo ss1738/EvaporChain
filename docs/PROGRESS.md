@@ -32,10 +32,18 @@ Novel L1 blockchain with energy-based state decay. 13 Rust crates, post-quantum 
 - Run stress test on live devnet and tune timeouts
 - End-to-end multi-node block finality verification
 
-### Phase 3: Complete Nova Proving System — NOT STARTED
-- Wire recursive proof generation into block pipeline
-- Proof verification in consensus
-- Light client proof support
+### Phase 3: Complete Nova Proving System — COMPLETE (2026-04-10)
+| Task | Status | Details |
+|------|--------|---------|
+| nova_proof field on Block | Done | `Option<Vec<u8>>` on Block struct, serde-gated |
+| ChainProver in block pipeline | Done | Wraps ProvingEngine with checkpointing (every 100 blocks), replaces raw prover in all 3 commit paths |
+| Proof generation on commit | Done | Compressed Nova proof attached to block.nova_proof after execution |
+| ProofVerifier trait in consensus | Done | Validators verify nova_proof on proposals; reject invalid proofs |
+| Light client API | Done | `/api/proof/latest`, `/api/proof/status`, `/api/proof/verify` |
+| Proof metadata in BlockRecord | Done | `has_nova_proof`, `nova_proof_size` exposed in API |
+| Tests | Done | 3 new consensus tests (valid proof, invalid proof, no-verifier fallback) |
+
+**Test count:** 99 tests in consensus crate (3 new), 46 in proving, 25 in types
 
 ### Phase 4: Smart Contract Story — NOT STARTED
 - Pick ONE VM (WASM vs EvaporScript)
@@ -65,7 +73,7 @@ Novel L1 blockchain with energy-based state decay. 13 Rust crates, post-quantum 
 |---------|--------|
 | Parallel execution (Block-STM) | Implemented |
 | ZK privacy layer | Partial (Shield/Unshield txs exist) |
-| Recursive proof compression (Nova) | Scaffolded, not wired |
+| Recursive proof compression (Nova) | Wired into block pipeline, light client API |
 | Temporal smart contracts | Implemented (DeferredTx, TemporalGuard) |
 | Post-quantum VRF | Implemented (ML-DSA VRF) |
 | Data availability sampling | In progress (erasure coding exists) |
@@ -88,4 +96,4 @@ Novel L1 blockchain with energy-based state decay. 13 Rust crates, post-quantum 
 
 ---
 
-*Last updated: 2026-04-10*
+*Last updated: 2026-04-10 (Phase 3 complete)*
