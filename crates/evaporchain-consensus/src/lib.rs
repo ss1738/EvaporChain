@@ -605,10 +605,6 @@ mod tests {
                 inner.signature = Some(sig);
                 inner.public_key = Some(pk);
             }
-            Transaction::Blob(ref mut inner) => {
-                inner.signature = Some(sig);
-                inner.public_key = Some(pk);
-            }
         }
     }
 
