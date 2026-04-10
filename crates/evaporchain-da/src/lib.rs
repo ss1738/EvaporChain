@@ -7,9 +7,12 @@
 //! - Evaporation-specific DA proofs (unique to EvaporChain)
 
 pub mod erasure;
+pub mod erasure2d;
 pub mod sampling;
 pub mod block_da;
 pub mod evaporation_da;
+pub mod commitments;
+pub mod certificate;
 
 pub use erasure::ErasureEncoder;
 pub use sampling::{DASampler, DAProof, SampleQuery, SampleResponse};

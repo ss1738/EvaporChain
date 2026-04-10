@@ -1,6 +1,8 @@
 pub mod compiler;
 pub mod parser;
 pub mod vm;
+#[cfg(test)]
+mod audit_tests;
 
 use evaporchain_types::{energy_at_epoch, AccountAddress, Energy, Epoch, HalfLife};
 use serde::{Deserialize, Serialize};

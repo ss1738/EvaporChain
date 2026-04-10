@@ -96,6 +96,9 @@ fn extract_access_keys(tx: &Transaction) -> Vec<AccessKey> {
         Transaction::Deferred(dtx) => {
             vec![AccessKey::Account(dtx.submitter), AccessKey::TemporalEngine]
         }
+        Transaction::Blob(tx) => {
+            vec![AccessKey::Account(tx.submitter)]
+        }
     }
 }
 
@@ -472,6 +475,9 @@ impl ParallelExecutor {
                 crate::temporal::GAS_DEFERRED_SUBMIT
                     + crate::temporal::GAS_PER_GUARD * dtx.guards.len() as u64
             }
+            Transaction::Blob(tx) => {
+                crate::GAS_CREATE_OBJECT_BASE + crate::GAS_CREATE_OBJECT_PER_BYTE * tx.data.len() as u64
+            }
         }
     }
 
@@ -583,6 +589,10 @@ impl ParallelExecutor {
                     Err(ExecutionError::ContractError(
                         "contract/script/privacy/deferred txs execute in serial phase".into(),
                     ))
+                }
+                Transaction::Blob(_) => {
+                    // Blob transactions are handled by the DA layer
+                    Ok(())
                 }
             };
 

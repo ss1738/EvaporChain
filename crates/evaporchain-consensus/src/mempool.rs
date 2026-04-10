@@ -186,6 +186,11 @@ impl Mempool {
             Transaction::Deferred(dtx) => {
                 32 + 8 + 8 + dtx.guards.len() * 50 + dtx.inner_tx_bytes.len()
             }
+            Transaction::Blob(tx) => {
+                32 + tx.data.len() + 8 + 8
+                    + tx.signature.as_ref().map_or(0, |s| s.len())
+                    + tx.public_key.as_ref().map_or(0, |p| p.len())
+            }
         }
     }
 }

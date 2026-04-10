@@ -83,10 +83,25 @@ Novel L1 blockchain with energy-based state decay. 13 Rust crates, post-quantum 
 - Decay engine: 351M objects/s
 - Block execution: 1.72ms/block
 
-### Phase 6: Audit Prep — NOT STARTED
-- Docs: AUDIT_SCOPE.md, CRYPTO_SPEC.md, THREAT_MODEL.md already written
-- Formal verification of consensus safety
-- Fuzzing campaign
+### Phase 6: Audit Prep — COMPLETE (2026-04-10)
+
+| Task | Status | Details |
+|------|--------|---------|
+| Security documentation | Done (pre-existing) | AUDIT_SCOPE.md, CRYPTO_SPEC.md, THREAT_MODEL.md |
+| Proptest expansion | Done | Property-based testing added to consensus, execution, script crates (was only in crypto+types) |
+| Byzantine fault tests | Done | Silent validators (1/4, 2/4), equivocation detection, unknown validator rejection |
+| Consensus safety invariants | Done | All-nodes-same-block, multi-height liveness, height/round monotonicity, nil vote safety |
+| Message attack resistance | Done | Wrong height, past height, duplicate vote, mempool flooding tests |
+| Execution invariants | Done | Balance conservation, replay prevention, nonce gaps, overdraft, gas limit enforcement |
+| Energy decay invariants | Done | Monotonic decay, evaporation-to-ghost lifecycle |
+| VM safety tests | Done | Gas exhaustion, loop iteration cap, malformed input, stack isolation, state isolation |
+| Parser fuzzing | Done | Random string fuzzing (proptest), garbage input, empty source, large energy values |
+| Determinism verification | Done | Same inputs → same state root (proptest) |
+
+**New tests added:** 30+ audit-specific tests across 3 crates
+- Consensus: 14 tests (11 adversarial + 3 proptest)
+- Execution: 12 tests (8 invariant + 4 proptest)
+- Script: 12 tests (9 VM safety + 3 proptest)
 
 ### Phase 7: Mainnet Genesis — NOT STARTED
 - Genesis config finalized
@@ -124,4 +139,4 @@ Novel L1 blockchain with energy-based state decay. 13 Rust crates, post-quantum 
 
 ---
 
-*Last updated: 2026-04-10 (Phase 5 complete)*
+*Last updated: 2026-04-10 (Phase 6 complete)*

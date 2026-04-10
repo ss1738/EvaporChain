@@ -12,3 +12,6 @@ thiserror = { workspace = true }
 hex = { workspace = true }
 evaporchain-types = { path = "../evaporchain-types" }
 blake3 = "1"
+
+[dev-dependencies]
+proptest = "1"

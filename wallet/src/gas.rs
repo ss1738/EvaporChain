@@ -111,6 +111,9 @@ impl GasEstimator {
             Transaction::Deferred(dtx) => {
                 75_000 + 5_000 * dtx.guards.len() as u64
             }
+            Transaction::Blob(tx) => {
+                50_000 + 10 * tx.data.len() as u64
+            }
         }
     }
 

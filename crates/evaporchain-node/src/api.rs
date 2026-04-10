@@ -688,6 +688,7 @@ fn set_tx_signature(tx: &mut Transaction, sig: Vec<u8>, pk: Vec<u8>) {
         Transaction::Shield(t) => { t.signature = Some(sig); t.public_key = Some(pk); }
         Transaction::Unshield(_) | Transaction::PrivateTransfer(_) => {} // ZK-authenticated
         Transaction::Deferred(d) => { d.signature = Some(sig); d.public_key = Some(pk); }
+        Transaction::Blob(b) => { b.signature = Some(sig); b.public_key = Some(pk); }
     }
 }
 
@@ -2905,6 +2906,9 @@ fn estimate_tx_gas(tx: &Transaction) -> u64 {
         Transaction::Deferred(dtx) => {
             75_000 + 5_000 * dtx.guards.len() as u64
         }
+        Transaction::Blob(tx) => {
+            50_000 + 10 * tx.data.len() as u64
+        }
     }
 }
 
@@ -3102,6 +3106,21 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     from: account_full(&dtx.submitter),
                     to: String::new(),
                     amount: Some(dtx.deposit),
+                    object_id: None,
+                    energy: None,
+                    half_life: None,
+                    method: None,
+                    gas,
+                    block_number: block.number,
+                    epoch: block.epoch,
+                    status: "success".to_string(),
+                },
+                Transaction::Blob(tx) => TxRecord {
+                    hash,
+                    tx_type: "blob".to_string(),
+                    from: account_full(&tx.submitter),
+                    to: String::new(),
+                    amount: None,
                     object_id: None,
                     energy: None,
                     half_life: None,

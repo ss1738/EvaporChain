@@ -128,6 +128,10 @@ fn set_signature(tx: &mut Transaction, sig: Vec<u8>, pk: Vec<u8>) {
             d.signature = Some(sig);
             d.public_key = Some(pk);
         }
+        Transaction::Blob(b) => {
+            b.signature = Some(sig);
+            b.public_key = Some(pk);
+        }
     }
 }
 

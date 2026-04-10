@@ -14,7 +14,7 @@ use crate::{BlockProductionResult, ConsensusError};
 
 use evaporchain_crypto::hash::blake3_hash;
 use evaporchain_crypto::signatures::{BlsKeypair, BlsPublicKey, BlsSignature, BlsVerifier};
-use evaporchain_crypto::vrf::{RandomnessBeacon, VrfKeypair, leader_vrf_input};
+use evaporchain_crypto::vrf::{RandomnessBeacon, VrfKeypair, VrfOutput, VrfProof, leader_vrf_input, vrf_verify};
 use evaporchain_execution::fees::PidFeeController;
 use evaporchain_execution::ExecutionEngine;
 use evaporchain_execution::parallel::ParallelExecutor;
@@ -665,6 +665,33 @@ impl TendermintConsensus {
                         return actions;
                     }
                     debug!(height = height, "Nova proof verified on proposal");
+                }
+
+                // ── VRF proof verification ──
+                // If the proposer has a VRF public key and the block includes
+                // a VRF proof, verify that the VRF output is valid for this
+                // (height, round). This proves the proposer legitimately won
+                // the leader election lottery.
+                if let (Some(ref vrf_out), Some(ref vrf_proof)) =
+                    (&block.vrf_output, &block.vrf_proof)
+                {
+                    if let Some(proposer_info) = self.validator_set.get(proposer_id) {
+                        if let Some(ref vrf_pk) = proposer_info.vrf_public_key {
+                            let alpha = leader_vrf_input(height, round);
+                            let output = VrfOutput(*vrf_out);
+                            let proof = VrfProof(vrf_proof.clone());
+                            if !vrf_verify(vrf_pk, &alpha, &output, &proof) {
+                                warn!(
+                                    height = height,
+                                    round = round,
+                                    proposer = proposer_id,
+                                    "Rejected proposal: invalid VRF proof"
+                                );
+                                return actions;
+                            }
+                            debug!(height = height, "VRF proof verified on proposal");
+                        }
+                    }
                 }
 
                 self.round_state.proposed_block = Some(block);
@@ -1885,5 +1912,884 @@ mod tests {
         let actions = tc.on_message(msg);
         let has_prevote = actions.iter().any(|a| matches!(a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. })));
         assert!(has_prevote, "Without verifier, block should be accepted");
+    }
+}
+
+// ─────────────────────────── Integration Tests ─────────────────────────────
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use evaporchain_state::InMemoryStateDB;
+    use evaporchain_types::{Account, BlobTx, Transaction};
+
+    fn addr(b: u8) -> [u8; 32] {
+        let mut a = [0u8; 32];
+        a[0] = b;
+        a
+    }
+
+    /// Create a 4-validator network with BLS keypairs, synchronized public keys.
+    fn make_bls_network(ids: &[u64]) -> Vec<TendermintConsensus> {
+        let bls_keypairs: Vec<_> = ids.iter().map(|_| BlsKeypair::generate()).collect();
+        let validators: Vec<_> = ids
+            .iter()
+            .zip(bls_keypairs.iter())
+            .map(|(&id, kp)| {
+                let mut address = [0u8; 32];
+                address[0] = id as u8;
+                ValidatorInfo::with_bls_key(id, 1000, address, kp.public_key_bytes().0)
+            })
+            .collect();
+        let vs = ValidatorSet::with_validators(validators);
+
+        let mut nodes: Vec<_> = ids
+            .iter()
+            .map(|&id| {
+                let mut tc = TendermintConsensus::new_for_test(id, 5, vs.clone());
+                let kp = BlsKeypair::generate();
+                tc.validator_set
+                    .get_mut(id)
+                    .unwrap()
+                    .bls_public_key = Some(kp.public_key_bytes().0);
+                tc.set_bls_keypair(kp);
+                tc
+            })
+            .collect();
+
+        // Synchronize BLS public keys across all nodes
+        let pks: Vec<(u64, Vec<u8>)> = nodes
+            .iter()
+            .map(|n| {
+                let pk = n
+                    .validator_set
+                    .get(n.my_id)
+                    .unwrap()
+                    .bls_public_key
+                    .clone()
+                    .unwrap();
+                (n.my_id, pk)
+            })
+            .collect();
+        for node in &mut nodes {
+            for (id, pk) in &pks {
+                node.validator_set
+                    .get_mut(*id)
+                    .unwrap()
+                    .bls_public_key = Some(pk.clone());
+            }
+        }
+        nodes
+    }
+
+    /// Run one consensus round: tick all nodes, relay messages, repeat until a block commits.
+    /// Returns committed blocks.
+    fn run_consensus_round(
+        nodes: &mut [TendermintConsensus],
+        db: &mut InMemoryStateDB,
+        max_iterations: usize,
+    ) -> Vec<Block> {
+        let mut messages = Vec::new();
+        let mut committed = Vec::new();
+
+        // Initial tick
+        for v in nodes.iter_mut() {
+            for a in v.tick(db) {
+                match a {
+                    ConsensusAction::BroadcastMessage(m) => messages.push(m),
+                    ConsensusAction::CommitBlock(b) => committed.push(b),
+                }
+            }
+        }
+
+        for _ in 0..max_iterations {
+            if !committed.is_empty() {
+                break;
+            }
+            let current: Vec<_> = messages.drain(..).collect();
+            for msg in &current {
+                for v in nodes.iter_mut() {
+                    for a in v.on_message(msg.clone()) {
+                        match a {
+                            ConsensusAction::BroadcastMessage(m) => messages.push(m),
+                            ConsensusAction::CommitBlock(b) => committed.push(b),
+                        }
+                    }
+                }
+            }
+            for v in nodes.iter_mut() {
+                for a in v.tick(db) {
+                    match a {
+                        ConsensusAction::BroadcastMessage(m) => messages.push(m),
+                        ConsensusAction::CommitBlock(b) => committed.push(b),
+                    }
+                }
+            }
+        }
+        committed
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Test 1: Multi-height consensus with BLS certificates
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_multi_height_bls_consensus() {
+        let ids = &[1u64, 2, 3, 4];
+        let mut nodes = make_bls_network(ids);
+        let mut db = InMemoryStateDB::new();
+        db.put_account(Account {
+            address: addr(1),
+            balance: 10_000_000,
+            nonce: 0,
+        });
+
+        // Run 3 consecutive heights
+        for expected_height in 1..=3 {
+            let committed = run_consensus_round(&mut nodes, &mut db, 30);
+            assert!(
+                !committed.is_empty(),
+                "Height {} should reach consensus",
+                expected_height
+            );
+
+            let block = &committed[0];
+            assert_eq!(block.number, expected_height);
+
+            // Verify BLS commit certificate
+            assert!(
+                block.commit_certificate.is_some(),
+                "Height {} should have BLS commit certificate",
+                expected_height
+            );
+            let cert = block.commit_certificate.as_ref().unwrap();
+            assert!(
+                cert.signer_ids.len() >= 3,
+                "Certificate needs >= 2f+1 signers, got {}",
+                cert.signer_ids.len()
+            );
+            assert!(
+                nodes[0].verify_commit_certificate(cert),
+                "Certificate should verify at height {}",
+                expected_height
+            );
+
+            // Advance all nodes to next height
+            let state_root = [expected_height as u8; 32];
+            for node in nodes.iter_mut() {
+                node.on_block_committed(block, state_root, 0);
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Test 2: Blob transactions included in block with DA fields
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_blob_tx_in_consensus_block() {
+        let ids = &[1u64, 2, 3, 4];
+        let mut nodes = make_bls_network(ids);
+        let mut db = InMemoryStateDB::new();
+        db.put_account(Account {
+            address: addr(1),
+            balance: 10_000_000,
+            nonce: 0,
+        });
+
+        // Submit a blob transaction to the proposer's mempool
+        let blob_tx = Transaction::Blob(BlobTx {
+            submitter: addr(1),
+            data: vec![0xDE; 256], // 256 bytes of blob data
+            nonce: 0,
+            namespace_id: 42,
+            signature: None,
+            public_key: None,
+        });
+
+        // Add to all nodes' mempools so whoever is proposer has it
+        for node in nodes.iter_mut() {
+            node.mempool.submit(blob_tx.clone());
+        }
+
+        let committed = run_consensus_round(&mut nodes, &mut db, 30);
+        assert!(!committed.is_empty(), "Should commit a block with blob tx");
+
+        let block = &committed[0];
+        // The blob tx should be in the block's transactions
+        let has_blob = block.transactions.iter().any(|tx| {
+            matches!(tx, Transaction::Blob(_))
+        });
+        assert!(has_blob, "Block should contain the blob transaction");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Test 3: Byzantine tolerance — 1 of 4 validators offline
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_consensus_with_one_offline_validator() {
+        let ids = &[1u64, 2, 3, 4];
+        let mut nodes = make_bls_network(ids);
+        let mut db = InMemoryStateDB::new();
+        db.put_account(Account {
+            address: addr(1),
+            balance: 10_000_000,
+            nonce: 0,
+        });
+
+        // Remove validator 4 from the active set (simulate offline)
+        let mut active_nodes: Vec<_> = nodes.drain(..3).collect(); // Only 3 of 4
+
+        let committed = run_consensus_round(&mut active_nodes, &mut db, 30);
+        assert!(
+            !committed.is_empty(),
+            "3 of 4 validators (>= 2f+1) should still reach consensus"
+        );
+
+        let block = &committed[0];
+        assert!(
+            block.commit_certificate.is_some(),
+            "Should still produce BLS certificate with 3 signers"
+        );
+        let cert = block.commit_certificate.as_ref().unwrap();
+        assert_eq!(cert.signer_ids.len(), 3);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Test 4: Certificate cross-validation across nodes
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_certificate_cross_validation() {
+        let ids = &[1u64, 2, 3, 4];
+        let mut nodes = make_bls_network(ids);
+        let mut db = InMemoryStateDB::new();
+        db.put_account(Account {
+            address: addr(1),
+            balance: 10_000_000,
+            nonce: 0,
+        });
+
+        let committed = run_consensus_round(&mut nodes, &mut db, 30);
+        assert!(!committed.is_empty());
+
+        let cert = committed[0].commit_certificate.as_ref().unwrap();
+
+        // Every node should be able to verify the certificate
+        for (i, node) in nodes.iter().enumerate() {
+            assert!(
+                node.verify_commit_certificate(cert),
+                "Node {} should verify the commit certificate",
+                ids[i]
+            );
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Test 5: DA + BLS full pipeline
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_da_commitment_pipeline() {
+        use evaporchain_da::erasure2d::ErasureEncoder2D;
+        use evaporchain_da::commitments::{RowColumnCommitments, generate_2d_queries};
+        use evaporchain_da::certificate::{CertificateBuilder, create_attestation};
+
+        // Simulate what happens when a proposer encodes blob data for DA
+        let blob_data = vec![0xABu8; 512];
+        let encoder = ErasureEncoder2D::with_cell_size(32);
+        let matrix = encoder.encode_2d(&blob_data).unwrap();
+        let commitments = RowColumnCommitments::from_matrix(&matrix);
+
+        // data_root goes in the block header
+        let data_root = commitments.data_root;
+        assert_ne!(data_root, [0u8; 32], "data_root should be non-zero");
+
+        // Validators sample random cells and verify proofs
+        let num_validators = 4u64;
+        let num_samples = 8;
+        let mut builder = CertificateBuilder::new(
+            1,     // block_number
+            data_root,
+            num_validators * 1000, // total_stake
+        );
+
+        for vid in 1..=num_validators {
+            let seed = blake3::hash(&vid.to_le_bytes());
+            let queries = generate_2d_queries(1, matrix.extended_dim(), num_samples, seed.as_bytes());
+
+            // Verify each sampled cell
+            let mut all_valid = true;
+            for q in &queries {
+                let proof = commitments
+                    .generate_cell_proof(&matrix, q.row, q.col)
+                    .unwrap();
+                if !commitments.verify_cell_proof(&proof) {
+                    all_valid = false;
+                    break;
+                }
+            }
+            assert!(all_valid, "All sampled cells should verify for validator {}", vid);
+
+            // Create BLS attestation
+            let kp = BlsKeypair::generate();
+            let attestation = create_attestation(
+                1,         // block_number
+                &data_root,
+                vid,
+                num_samples as u32,
+                1000,      // stake
+                &kp,
+            );
+            builder.add_attestation(attestation);
+        }
+
+        // Build DA certificate
+        let da_cert = builder.try_build();
+        assert!(
+            da_cert.is_some(),
+            "With all 4 validators attesting, DA certificate should be built"
+        );
+
+        let cert = da_cert.unwrap();
+        assert_eq!(cert.block_number, 1);
+        assert_eq!(cert.data_root, data_root);
+        assert_eq!(cert.attestations.len(), 4);
+        assert!(
+            cert.is_supermajority(),
+            "4/4 validators = supermajority"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Test 6: Full end-to-end — consensus + DA + BLS + multi-height
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_full_e2e_consensus_da_bls() {
+        use evaporchain_da::erasure2d::ErasureEncoder2D;
+        use evaporchain_da::commitments::RowColumnCommitments;
+        use evaporchain_da::certificate::{CertificateBuilder, create_attestation};
+
+        let ids = &[1u64, 2, 3, 4];
+        let mut nodes = make_bls_network(ids);
+        let mut db = InMemoryStateDB::new();
+        db.put_account(Account {
+            address: addr(1),
+            balance: 10_000_000,
+            nonce: 0,
+        });
+
+        // === Height 1: Commit a block with BLS certificate ===
+        let committed = run_consensus_round(&mut nodes, &mut db, 30);
+        assert!(!committed.is_empty(), "Height 1 should commit");
+        let block1 = &committed[0];
+        assert_eq!(block1.number, 1);
+        assert!(block1.commit_certificate.is_some());
+
+        // Verify certificate
+        let cert1 = block1.commit_certificate.as_ref().unwrap();
+        assert!(nodes[0].verify_commit_certificate(cert1));
+
+        // === Simulate DA attestation for the committed block ===
+        let blob_data = vec![0xFFu8; 256];
+        let encoder = ErasureEncoder2D::with_cell_size(32);
+        let matrix = encoder.encode_2d(&blob_data).unwrap();
+        let rc = RowColumnCommitments::from_matrix(&matrix);
+
+        let mut builder = CertificateBuilder::new(1, rc.data_root, 4000);
+        for &vid in ids {
+            let kp = BlsKeypair::generate();
+            let att = create_attestation(1, &rc.data_root, vid, 8, 1000, &kp);
+            builder.add_attestation(att);
+        }
+        let da_cert = builder.try_build().expect("DA cert should build");
+        assert!(da_cert.is_supermajority());
+
+        // === Height 2: Advance and commit again ===
+        let state_root = [1u8; 32];
+        for node in nodes.iter_mut() {
+            node.on_block_committed(block1, state_root, 0);
+        }
+
+        let committed2 = run_consensus_round(&mut nodes, &mut db, 30);
+        assert!(!committed2.is_empty(), "Height 2 should commit");
+        let block2 = &committed2[0];
+        assert_eq!(block2.number, 2);
+        assert!(block2.commit_certificate.is_some());
+
+        // Verify cross-node certificate verification
+        let cert2 = block2.commit_certificate.as_ref().unwrap();
+        for node in &nodes {
+            assert!(node.verify_commit_certificate(cert2));
+        }
+
+        // === Verify chain integrity ===
+        assert_ne!(
+            cert1.block_hash, cert2.block_hash,
+            "Different heights should have different block hashes"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Test 7: Prevote/Precommit BLS signatures are present in messages
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_bls_signatures_in_all_vote_phases() {
+        let ids = &[1u64, 2, 3, 4];
+        let mut nodes = make_bls_network(ids);
+        let mut db = InMemoryStateDB::new();
+        db.put_account(Account {
+            address: addr(1),
+            balance: 10_000_000,
+            nonce: 0,
+        });
+
+        let mut all_messages = Vec::new();
+        let mut messages = Vec::new();
+
+        // Initial tick
+        for v in nodes.iter_mut() {
+            for a in v.tick(&mut db) {
+                if let ConsensusAction::BroadcastMessage(m) = a {
+                    messages.push(m.clone());
+                    all_messages.push(m);
+                }
+            }
+        }
+
+        // Run a few rounds to collect prevotes and precommits
+        for _ in 0..20 {
+            let current: Vec<_> = messages.drain(..).collect();
+            for msg in &current {
+                for v in nodes.iter_mut() {
+                    for a in v.on_message(msg.clone()) {
+                        if let ConsensusAction::BroadcastMessage(m) = a {
+                            messages.push(m.clone());
+                            all_messages.push(m);
+                        }
+                    }
+                }
+            }
+            for v in nodes.iter_mut() {
+                for a in v.tick(&mut db) {
+                    if let ConsensusAction::BroadcastMessage(m) = a {
+                        messages.push(m.clone());
+                        all_messages.push(m);
+                    }
+                }
+            }
+        }
+
+        // Check that prevotes have BLS signatures
+        let bls_prevotes = all_messages.iter().filter(|m| {
+            matches!(m, ConsensusMessage::Prevote { bls_signature: Some(_), .. })
+        }).count();
+
+        let bls_precommits = all_messages.iter().filter(|m| {
+            matches!(m, ConsensusMessage::Precommit { bls_signature: Some(_), .. })
+        }).count();
+
+        assert!(
+            bls_prevotes >= 1,
+            "Should have at least one BLS-signed prevote, got {}",
+            bls_prevotes
+        );
+        // In a full network simulation, all 4 would produce BLS prevotes.
+        // In our test relay loop the proposer's self-prevote is guaranteed.
+        // Precommits require 2f+1 prevotes first, so we just check they exist.
+        assert!(
+            bls_precommits >= 1,
+            "Should have at least one BLS-signed precommit, got {}",
+            bls_precommits
+        );
+
+        // Verify total BLS participation: prevotes + precommits combined
+        let total_bls = bls_prevotes + bls_precommits;
+        assert!(
+            total_bls >= 4,
+            "Should have >= 4 total BLS-signed votes across phases, got {}",
+            total_bls
+        );
+    }
+}
+
+#[cfg(test)]
+mod vrf_tests {
+    use super::*;
+    use evaporchain_crypto::vrf::{VrfKeypair, VrfOutput, VrfProof, leader_vrf_input, vrf_verify, vrf_leader_check};
+    use evaporchain_state::InMemoryStateDB;
+    use evaporchain_types::Account;
+
+    fn addr(b: u8) -> [u8; 32] {
+        let mut a = [0u8; 32];
+        a[0] = b;
+        a
+    }
+
+    /// Create a network where all validators have both BLS and VRF keys.
+    fn make_full_crypto_network(ids: &[u64]) -> Vec<TendermintConsensus> {
+        let bls_keypairs: Vec<_> = ids.iter().map(|_| BlsKeypair::generate()).collect();
+        let vrf_keypairs: Vec<_> = ids.iter().map(|_| VrfKeypair::generate()).collect();
+
+        let validators: Vec<_> = ids
+            .iter()
+            .zip(bls_keypairs.iter())
+            .zip(vrf_keypairs.iter())
+            .map(|((&id, bls_kp), vrf_kp)| {
+                let mut address = [0u8; 32];
+                address[0] = id as u8;
+                ValidatorInfo::with_keys(
+                    id,
+                    1000,
+                    address,
+                    Some(bls_kp.public_key_bytes().0),
+                    Some(vrf_kp.public_key_bytes()),
+                )
+            })
+            .collect();
+        let vs = ValidatorSet::with_validators(validators);
+
+        let mut nodes: Vec<_> = ids
+            .iter()
+            .map(|&id| {
+                let mut tc = TendermintConsensus::new_for_test(id, 5, vs.clone());
+                // Set BLS keypair
+                let bls_kp = BlsKeypair::generate();
+                tc.validator_set
+                    .get_mut(id)
+                    .unwrap()
+                    .bls_public_key = Some(bls_kp.public_key_bytes().0);
+                tc.set_bls_keypair(bls_kp);
+                // Set VRF keypair
+                let vrf_kp = VrfKeypair::generate();
+                tc.validator_set
+                    .get_mut(id)
+                    .unwrap()
+                    .vrf_public_key = Some(vrf_kp.public_key_bytes());
+                tc.set_vrf_keypair(vrf_kp);
+                tc
+            })
+            .collect();
+
+        // Synchronize all public keys across nodes
+        let keys: Vec<(u64, Vec<u8>, Vec<u8>)> = nodes
+            .iter()
+            .map(|n| {
+                let v = n.validator_set.get(n.my_id).unwrap();
+                (
+                    n.my_id,
+                    v.bls_public_key.clone().unwrap(),
+                    v.vrf_public_key.clone().unwrap(),
+                )
+            })
+            .collect();
+        for node in &mut nodes {
+            for (id, bls_pk, vrf_pk) in &keys {
+                let v = node.validator_set.get_mut(*id).unwrap();
+                v.bls_public_key = Some(bls_pk.clone());
+                v.vrf_public_key = Some(vrf_pk.clone());
+            }
+        }
+        nodes
+    }
+
+    #[test]
+    fn test_vrf_output_in_proposed_block() {
+        let ids = &[1u64, 2, 3, 4];
+        let mut nodes = make_full_crypto_network(ids);
+        let mut db = InMemoryStateDB::new();
+        db.put_account(Account {
+            address: addr(1),
+            balance: 10_000_000,
+            nonce: 0,
+        });
+
+        // Tick to get the proposer to create a block
+        let mut proposal = None;
+        for v in nodes.iter_mut() {
+            for a in v.tick(&mut db) {
+                if let ConsensusAction::BroadcastMessage(
+                    ConsensusMessage::Proposal { ref block, .. }
+                ) = a
+                {
+                    proposal = Some(block.clone());
+                }
+            }
+        }
+
+        let block = proposal.expect("One node should produce a proposal");
+        assert!(
+            block.vrf_output.is_some(),
+            "Block should contain VRF output"
+        );
+        assert!(
+            block.vrf_proof.is_some(),
+            "Block should contain VRF proof"
+        );
+
+        // Verify VRF proof
+        let proposer_id = block.producer_id.unwrap();
+        let proposer_vrf_pk = nodes[0]
+            .validator_set
+            .get(proposer_id)
+            .unwrap()
+            .vrf_public_key
+            .as_ref()
+            .unwrap();
+
+        let alpha = leader_vrf_input(block.number, 0);
+        let output = VrfOutput(block.vrf_output.unwrap());
+        let proof = VrfProof(block.vrf_proof.clone().unwrap());
+        assert!(
+            vrf_verify(proposer_vrf_pk, &alpha, &output, &proof),
+            "VRF proof should verify against proposer's public key"
+        );
+    }
+
+    #[test]
+    fn test_vrf_consensus_with_verification() {
+        let ids = &[1u64, 2, 3, 4];
+        let mut nodes = make_full_crypto_network(ids);
+        let mut db = InMemoryStateDB::new();
+        db.put_account(Account {
+            address: addr(1),
+            balance: 10_000_000,
+            nonce: 0,
+        });
+
+        // Run full consensus round with VRF-enabled validators
+        let mut messages = Vec::new();
+        let mut committed = Vec::new();
+
+        for v in nodes.iter_mut() {
+            for a in v.tick(&mut db) {
+                match a {
+                    ConsensusAction::BroadcastMessage(m) => messages.push(m),
+                    ConsensusAction::CommitBlock(b) => committed.push(b),
+                }
+            }
+        }
+
+        for _ in 0..30 {
+            if !committed.is_empty() {
+                break;
+            }
+            let current: Vec<_> = messages.drain(..).collect();
+            for msg in &current {
+                for v in nodes.iter_mut() {
+                    for a in v.on_message(msg.clone()) {
+                        match a {
+                            ConsensusAction::BroadcastMessage(m) => messages.push(m),
+                            ConsensusAction::CommitBlock(b) => committed.push(b),
+                        }
+                    }
+                }
+            }
+            for v in nodes.iter_mut() {
+                for a in v.tick(&mut db) {
+                    match a {
+                        ConsensusAction::BroadcastMessage(m) => messages.push(m),
+                        ConsensusAction::CommitBlock(b) => committed.push(b),
+                    }
+                }
+            }
+        }
+
+        assert!(!committed.is_empty(), "VRF-enabled network should reach consensus");
+        let block = &committed[0];
+        assert!(block.vrf_output.is_some());
+        assert!(block.vrf_proof.is_some());
+        assert!(block.commit_certificate.is_some());
+    }
+
+    #[test]
+    fn test_invalid_vrf_proof_rejected() {
+        let ids = &[1u64, 2, 3, 4];
+        let mut nodes = make_full_crypto_network(ids);
+
+        let proposer_id = nodes[0].proposer_for_round(1, 0).unwrap().id;
+        let non_proposer_idx = ids.iter().position(|&id| id != proposer_id).unwrap();
+
+        // Create a block with an invalid VRF proof
+        let block = Block {
+            number: 1,
+            epoch: 1,
+            parent_hash: nodes[non_proposer_idx].parent_hash,
+            state_root: [0u8; 32],
+            transactions: vec![],
+            timestamp: 0,
+            producer_id: Some(proposer_id),
+            vrf_output: Some([0xAA; 32]),    // Fake VRF output
+            vrf_proof: Some(vec![0xBB; 100]), // Fake VRF proof
+            data_root: None,
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
+            nova_proof: None,
+        };
+
+        let msg = ConsensusMessage::Proposal {
+            height: 1,
+            round: 0,
+            block,
+            proposer_id,
+        };
+
+        // Non-proposer should reject the invalid VRF proof
+        let actions = nodes[non_proposer_idx].on_message(msg);
+        let has_prevote = actions.iter().any(|a| {
+            matches!(a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. }))
+        });
+        assert!(
+            !has_prevote,
+            "Should reject proposal with invalid VRF proof"
+        );
+    }
+
+    #[test]
+    fn test_vrf_leader_check_stake_weighted() {
+        // VRF leader check should be proportional to stake
+        let kp = VrfKeypair::generate();
+        let alpha = leader_vrf_input(1, 0);
+        let (output, _proof) = kp.evaluate(&alpha);
+
+        // With 100% of stake, should always be leader
+        assert!(vrf_leader_check(&output, 1000, 1000));
+
+        // With 0 stake, should never be leader
+        assert!(!vrf_leader_check(&output, 0, 1000));
+    }
+
+    #[test]
+    fn test_vrf_randomness_beacon_advances() {
+        let ids = &[1u64, 2, 3, 4];
+        let mut nodes = make_full_crypto_network(ids);
+        let mut db = InMemoryStateDB::new();
+        db.put_account(Account {
+            address: addr(1),
+            balance: 10_000_000,
+            nonce: 0,
+        });
+
+        let beacon_before = nodes[0].randomness_beacon().current();
+
+        // Run consensus to commit a block
+        let mut messages = Vec::new();
+        let mut committed = Vec::new();
+        for v in nodes.iter_mut() {
+            for a in v.tick(&mut db) {
+                match a {
+                    ConsensusAction::BroadcastMessage(m) => messages.push(m),
+                    ConsensusAction::CommitBlock(b) => committed.push(b),
+                }
+            }
+        }
+        for _ in 0..30 {
+            if !committed.is_empty() { break; }
+            let current: Vec<_> = messages.drain(..).collect();
+            for msg in &current {
+                for v in nodes.iter_mut() {
+                    for a in v.on_message(msg.clone()) {
+                        match a {
+                            ConsensusAction::BroadcastMessage(m) => messages.push(m),
+                            ConsensusAction::CommitBlock(b) => committed.push(b),
+                        }
+                    }
+                }
+            }
+            for v in nodes.iter_mut() {
+                for a in v.tick(&mut db) {
+                    match a {
+                        ConsensusAction::BroadcastMessage(m) => messages.push(m),
+                        ConsensusAction::CommitBlock(b) => committed.push(b),
+                    }
+                }
+            }
+        }
+
+        assert!(!committed.is_empty());
+        let block = &committed[0];
+
+        // Advance beacon
+        nodes[0].on_block_committed(block, [1u8; 32], 0);
+        let beacon_after = nodes[0].randomness_beacon().current();
+
+        // If block had VRF output, beacon should advance
+        if block.vrf_output.is_some() {
+            assert_ne!(
+                beacon_before, beacon_after,
+                "Beacon should advance when VRF output is present"
+            );
+        }
+    }
+
+    #[test]
+    fn test_multi_height_vrf_chain() {
+        let ids = &[1u64, 2, 3, 4];
+        let mut nodes = make_full_crypto_network(ids);
+        let mut db = InMemoryStateDB::new();
+        db.put_account(Account {
+            address: addr(1),
+            balance: 10_000_000,
+            nonce: 0,
+        });
+
+        let mut vrf_outputs = Vec::new();
+
+        for height in 1..=3 {
+            let mut messages = Vec::new();
+            let mut committed = Vec::new();
+
+            for v in nodes.iter_mut() {
+                for a in v.tick(&mut db) {
+                    match a {
+                        ConsensusAction::BroadcastMessage(m) => messages.push(m),
+                        ConsensusAction::CommitBlock(b) => committed.push(b),
+                    }
+                }
+            }
+
+            for _ in 0..30 {
+                if !committed.is_empty() { break; }
+                let current: Vec<_> = messages.drain(..).collect();
+                for msg in &current {
+                    for v in nodes.iter_mut() {
+                        for a in v.on_message(msg.clone()) {
+                            match a {
+                                ConsensusAction::BroadcastMessage(m) => messages.push(m),
+                                ConsensusAction::CommitBlock(b) => committed.push(b),
+                            }
+                        }
+                    }
+                }
+                for v in nodes.iter_mut() {
+                    for a in v.tick(&mut db) {
+                        match a {
+                            ConsensusAction::BroadcastMessage(m) => messages.push(m),
+                            ConsensusAction::CommitBlock(b) => committed.push(b),
+                        }
+                    }
+                }
+            }
+
+            assert!(!committed.is_empty(), "Height {} should commit", height);
+            let block = &committed[0];
+            assert_eq!(block.number, height);
+            assert!(block.vrf_output.is_some(), "Height {} should have VRF output", height);
+            vrf_outputs.push(block.vrf_output.unwrap());
+
+            let state_root = [height as u8; 32];
+            for node in nodes.iter_mut() {
+                node.on_block_committed(block, state_root, 0);
+            }
+        }
+
+        // All VRF outputs should be unique (different height = different input)
+        assert_ne!(vrf_outputs[0], vrf_outputs[1]);
+        assert_ne!(vrf_outputs[1], vrf_outputs[2]);
+        assert_ne!(vrf_outputs[0], vrf_outputs[2]);
     }
 }

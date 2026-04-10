@@ -140,6 +140,17 @@ pub struct Account {
     pub nonce: u64,
 }
 
+/// Blob transaction for data availability layer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlobTx {
+    pub submitter: [u8; 32],
+    pub data: Vec<u8>,
+    pub nonce: u64,
+    pub namespace_id: u64,
+    pub signature: Option<Vec<u8>>,
+    pub public_key: Option<Vec<u8>>,
+}
+
 /// Transaction types.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Transaction {
@@ -160,6 +171,8 @@ pub enum Transaction {
     PrivateTransfer(PrivateTransferTx),
     /// Deferred: time-locked transaction that executes when temporal conditions are met.
     Deferred(DeferredTx),
+    /// Blob: data availability blob submission.
+    Blob(BlobTx),
 }
 
 impl Transaction {
@@ -329,6 +342,15 @@ impl Transaction {
                 buf.extend_from_slice(&tx.inner_tx_bytes);
                 buf
             }
+            Transaction::Blob(tx) => {
+                let mut buf = Vec::new();
+                buf.push(0x0E);
+                buf.extend_from_slice(&tx.submitter);
+                buf.extend_from_slice(&tx.nonce.to_le_bytes());
+                buf.extend_from_slice(&tx.namespace_id.to_le_bytes());
+                buf.extend_from_slice(&tx.data);
+                buf
+            }
         }
     }
 
@@ -349,6 +371,7 @@ impl Transaction {
             Transaction::Unshield(_) => None,
             Transaction::PrivateTransfer(_) => None,
             Transaction::Deferred(tx) => tx.signature.as_deref(),
+            Transaction::Blob(tx) => tx.signature.as_deref(),
         }
     }
 
@@ -368,6 +391,7 @@ impl Transaction {
             Transaction::Unshield(_) => None,
             Transaction::PrivateTransfer(_) => None,
             Transaction::Deferred(tx) => tx.public_key.as_deref(),
+            Transaction::Blob(tx) => tx.public_key.as_deref(),
         }
     }
 
@@ -389,6 +413,7 @@ impl Transaction {
             Transaction::Unshield(_) => None,
             Transaction::PrivateTransfer(_) => None,
             Transaction::Deferred(tx) => Some(&tx.submitter),
+            Transaction::Blob(tx) => Some(&tx.submitter),
         }
     }
 }

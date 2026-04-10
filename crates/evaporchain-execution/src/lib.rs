@@ -5,6 +5,8 @@ pub mod parallel;
 pub mod privacy_exec;
 pub mod rewards;
 pub mod temporal;
+#[cfg(test)]
+mod audit_tests;
 
 use evaporchain_contracts::{ContractEngine, ContractTemplate};
 use evaporchain_crypto::signatures::{MlDsaVerifier, Verifier};
@@ -235,6 +237,9 @@ impl SimpleExecutor {
             Transaction::Deferred(dtx) => {
                 temporal::GAS_DEFERRED_SUBMIT
                     + temporal::GAS_PER_GUARD * dtx.guards.len() as u64
+            }
+            Transaction::Blob(tx) => {
+                GAS_CREATE_OBJECT_BASE + GAS_CREATE_OBJECT_PER_BYTE * tx.data.len() as u64
             }
         }
     }
@@ -656,6 +661,10 @@ impl ExecutionEngine for SimpleExecutor {
                         .map(|_| ())
                         .map_err(|e| ExecutionError::ContractError(e.to_string()))
                 }
+                Transaction::Blob(_) => {
+                    // Blob transactions are handled by the DA layer, not execution
+                    Ok(())
+                }
             };
 
             match result {
@@ -841,6 +850,10 @@ mod tests {
             Transaction::Deferred(d) => {
                 d.signature = Some(sig);
                 d.public_key = Some(pk);
+            }
+            Transaction::Blob(b) => {
+                b.signature = Some(sig);
+                b.public_key = Some(pk);
             }
         }
     }

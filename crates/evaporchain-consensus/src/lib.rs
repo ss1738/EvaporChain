@@ -3,6 +3,8 @@ pub mod mempool;
 pub mod persistence;
 pub mod tendermint;
 pub mod validator_set;
+#[cfg(test)]
+mod audit_tests;
 
 use encrypted_mempool::EncryptedMempool;
 use evaporchain_crypto::hash::blake3_hash;
@@ -608,6 +610,10 @@ mod tests {
             }
             Transaction::Unshield(_) | Transaction::PrivateTransfer(_) => {}
             Transaction::Deferred(ref mut inner) => {
+                inner.signature = Some(sig);
+                inner.public_key = Some(pk);
+            }
+            Transaction::Blob(ref mut inner) => {
                 inner.signature = Some(sig);
                 inner.public_key = Some(pk);
             }
