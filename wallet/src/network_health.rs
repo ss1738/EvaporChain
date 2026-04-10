@@ -4,7 +4,6 @@
 // counts to give operators an at-a-glance view of chain liveness.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::Path;
 
 #[derive(Debug, thiserror::Error)]

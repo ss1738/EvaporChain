@@ -291,7 +291,7 @@ impl CommandPalette {
 // Helper for tests
 // ---------------------------------------------------------------------------
 
-fn make_command(id: &str, name: &str, desc: &str, cat: CommandCategory, tags: &[&str]) -> PaletteCommand {
+fn _make_command(id: &str, name: &str, desc: &str, cat: CommandCategory, tags: &[&str]) -> PaletteCommand {
     PaletteCommand {
         id: id.to_string(),
         name: name.to_string(),

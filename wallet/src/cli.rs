@@ -12306,7 +12306,7 @@ fn cmd_whale(action: WhaleAction) -> Result<(), Box<dyn std::error::Error>> {
 // ──────────────────────── Tier 19 handlers ────────────────────────────
 
 fn cmd_energy_opt(action: EnergyOptAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::energy_optimizer::{EnergyOptimizer, TrackedObject, ObjectState, RefreshStrategy};
+    use crate::energy_optimizer::{EnergyOptimizer, TrackedObject, ObjectState};
     let dir = crate::config::default_data_dir();
     let path = dir.join("energy_optimizer.json");
     let mut opt = EnergyOptimizer::load_or_default(&path);
@@ -12952,7 +12952,7 @@ fn cmd_diag(action: DiagAction) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn cmd_ws(action: WsAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::ws_subscriber::{WsSubscriber, Subscription, SubStatus, EventType};
+    use crate::ws_subscriber::{WsSubscriber, Subscription, SubStatus};
     let dir = crate::config::default_data_dir();
     let path = dir.join("ws_subscriber.json");
     let mut ws = WsSubscriber::load_or_default(&path);
@@ -13180,7 +13180,7 @@ fn cmd_event_bus(action: EventBusAction) -> Result<(), Box<dyn std::error::Error
 }
 
 fn cmd_receipts(action: ReceiptAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::tx_receipt_store::{TxReceiptStore, TxReceipt, TxReceiptStatus, TxType2};
+    use crate::tx_receipt_store::{TxReceiptStore, TxReceipt};
     let dir = crate::config::default_data_dir();
     let path = dir.join("tx_receipts.json");
     let mut store = TxReceiptStore::load_or_default(&path);
@@ -13482,7 +13482,7 @@ fn cmd_state_sync(action: StateSyncAction) -> Result<(), Box<dyn std::error::Err
 }
 
 fn cmd_debug(action: DebugAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::debug_console::{DebugConsole, Breakpoint, BreakpointType, BreakpointStatus};
+    use crate::debug_console::{DebugConsole, Breakpoint, BreakpointStatus};
     let dir = crate::config::default_data_dir();
     let path = dir.join("debug_console.json");
     let mut console = DebugConsole::load_or_default(&path);
@@ -13954,7 +13954,7 @@ fn cmd_simulate2(action: SimAction) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn cmd_audit_trail(action: AuditTrailAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::audit_trail::{AuditTrail, AuditAction, AuditSeverity};
+    use crate::audit_trail::{AuditTrail, AuditSeverity};
     let dir = crate::config::default_data_dir();
     let path = dir.join("audit_trail.json");
     let mut trail = AuditTrail::load_or_default(&path);
@@ -14068,7 +14068,7 @@ fn parse_audit_action(s: &str) -> crate::audit_trail::AuditAction {
 }
 
 fn cmd_anomaly(action: AnomalyAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::anomaly_detector::{AnomalyDetector, DetectionRule, AnomalyType, RuleStatus};
+    use crate::anomaly_detector::{AnomalyDetector, DetectionRule, RuleStatus};
     let dir = crate::config::default_data_dir();
     let path = dir.join("anomaly_detector.json");
     let mut detector = AnomalyDetector::load_or_default(&path);
@@ -14273,7 +14273,7 @@ fn cmd_enclave(action: EnclaveAction) -> Result<(), Box<dyn std::error::Error>> 
 }
 
 fn cmd_perms(action: PermAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::permission_manager::{PermissionManager, Permission, PermissionType, PermissionStatus3, SpendLimit};
+    use crate::permission_manager::{PermissionManager, Permission, PermissionStatus3, SpendLimit};
     let dir = crate::config::default_data_dir();
     let path = dir.join("permission_manager.json");
     let mut mgr = PermissionManager::load_or_default(&path);
@@ -14515,7 +14515,7 @@ fn cmd_theme(action: ThemeAction) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn cmd_palette(action: PaletteAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::command_palette::{CommandPalette, PaletteCommand, CommandCategory};
+    use crate::command_palette::{CommandPalette, PaletteCommand};
     let dir = crate::config::default_data_dir();
     let path = dir.join("command_palette.json");
     let mut palette = CommandPalette::load_or_default(&path);
@@ -14722,7 +14722,7 @@ fn cmd_onboard(action: OnboardAction) -> Result<(), Box<dyn std::error::Error>> 
 }
 
 fn cmd_help(action: HelpAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::help_system::{HelpSystem, HelpCategory2, Difficulty};
+    use crate::help_system::{HelpSystem, Difficulty};
     let dir = crate::config::default_data_dir();
     let path = dir.join("help_system.json");
     let mut help = HelpSystem::load_or_default(&path);

@@ -7,7 +7,7 @@
 //!    and stakers according to tokenomics parameters.
 
 use evaporchain_state::db::StateDB;
-use evaporchain_types::genesis::{FeeDistribution, Tokenomics};
+use evaporchain_types::genesis::Tokenomics;
 use evaporchain_types::{AccountAddress, Epoch};
 use tracing::{debug, info};
 

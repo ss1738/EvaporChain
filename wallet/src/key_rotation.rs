@@ -402,7 +402,8 @@ impl KeyRotationManager {
     /// Follow the predecessor chain backwards to build the full key history.
     pub fn key_chain(&self, key_id: &str) -> Vec<&ManagedKey> {
         let mut chain = Vec::new();
-        let mut current_id = Some(key_id.to_string());
+        #[allow(unused_assignments)]
+        let mut current_id: Option<String> = None;
 
         // First, walk backwards to find the root
         let mut ids_back = Vec::new();
