@@ -5,7 +5,7 @@ mod persistence;
 mod user_db;
 
 use anyhow::Result;
-use api::{ApiState, BlockRecord, ChainStats, EpochSnapshot, EventRecord, NftStore, NftToken, TokenStore, DeployedToken, StakingStore, StakingPool, Staker, DAOStore, DAOProposal, DAOVote};
+use api::{ApiState, BlockRecord, ChainStats, EpochSnapshot, EventRecord, NftStore, NftToken, TokenStore, DeployedToken, StakingStore, StakingPool, Staker, DAOStore, DAOProposal, DAOVote, ThroughputTracker};
 use evaporchain_consensus::MockConsensus;
 use evaporchain_consensus::tendermint::{TendermintConsensus, ConsensusMessage, ConsensusAction, ProofVerifier};
 use evaporchain_consensus::validator_set::{ValidatorInfo, ValidatorSet};
@@ -460,6 +460,10 @@ struct NodeArgs {
     validator_count: u64,
     /// Stake for each validator (default 1000).
     validator_stake: u64,
+    /// Block gas limit (default 500_000; use --high-throughput for 10M).
+    block_gas_limit: u64,
+    /// High-throughput mode: 10M gas limit, 200ms blocks.
+    high_throughput: bool,
 }
 
 fn parse_args() -> NodeArgs {
@@ -526,6 +530,21 @@ fn parse_args() -> NodeArgs {
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(1000);
 
+    let high_throughput = args.iter().any(|a| a == "--high-throughput");
+    let block_gas_limit = args
+        .iter()
+        .position(|a| a == "--block-gas-limit")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(if high_throughput { 10_000_000 } else { 500_000 });
+
+    // High-throughput mode overrides block interval
+    let block_ms = if high_throughput && block_ms == BLOCK_INTERVAL_MS {
+        200 // 5 blocks/sec
+    } else {
+        block_ms
+    };
+
     let mut bootstrap_peers = Vec::new();
     let mut i = 0;
     while i < args.len() {
@@ -555,6 +574,8 @@ fn parse_args() -> NodeArgs {
         validator_id,
         validator_count,
         validator_stake,
+        block_gas_limit,
+        high_throughput,
     }
 }
 
@@ -585,11 +606,18 @@ fn record_block(
     block_history: &Arc<Mutex<VecDeque<BlockRecord>>>,
     chain_stats: &Arc<Mutex<ChainStats>>,
     events: &Arc<Mutex<VecDeque<api::EventRecord>>>,
+    throughput: &Arc<Mutex<ThroughputTracker>>,
     block: &evaporchain_types::Block,
     execution: &BlockExecutionResult,
     active_objects: usize,
     ghost_count: usize,
+    exec_time_us: u64,
 ) {
+    // Record throughput metrics
+    {
+        let mut t = safe_lock(throughput);
+        t.record_block(block.timestamp, block.transactions.len(), exec_time_us, execution.gas_used);
+    }
     // Compute total energy from block txs for stats
     let mut tx_creates = 0u64;
     let mut tx_refreshes = 0u64;
@@ -1085,6 +1113,14 @@ async fn main() -> Result<()> {
     // Determine role
     let is_producer = args.demo_mode || !args.network_mode;
 
+    if args.high_throughput {
+        println!(
+            "{} \x1b[1;33mHigh-throughput mode\x1b[0m — gas_limit={} interval={}ms (~{} transfers/block)",
+            node_tag, args.block_gas_limit, args.block_ms,
+            args.block_gas_limit / 21_000,
+        );
+    }
+
     if args.demo_mode {
         println!(
             "{} \x1b[1;33mDemo mode active\x1b[0m — auto-generating transactions",
@@ -1138,7 +1174,7 @@ async fn main() -> Result<()> {
     }
 
     // ── Shared consensus ──
-    let consensus = Arc::new(Mutex::new(MockConsensus::new(GRACE_PERIOD)));
+    let consensus = Arc::new(Mutex::new(MockConsensus::new_with_gas_limit(GRACE_PERIOD, args.block_gas_limit)));
 
     // Build Tendermint consensus if enabled
     let tendermint = if args.tendermint_mode {
@@ -1149,7 +1185,7 @@ async fn main() -> Result<()> {
             validators.push(ValidatorInfo::new(vid, args.validator_stake, address));
         }
         let vs = ValidatorSet::with_validators(validators);
-        let mut tc = TendermintConsensus::new(args.validator_id, GRACE_PERIOD, vs);
+        let mut tc = TendermintConsensus::new_with_gas_limit(args.validator_id, GRACE_PERIOD, vs, args.block_gas_limit);
         // Inject Nova proof verifier into consensus
         tc.set_proof_verifier(
             Box::new(ChainProofVerifier {
@@ -1204,6 +1240,7 @@ async fn main() -> Result<()> {
             chain_store.load_chain_stats().unwrap_or_else(ChainStats::new)
         }
     ));
+    let throughput: Arc<Mutex<ThroughputTracker>> = Arc::new(Mutex::new(ThroughputTracker::new()));
     let events: Arc<Mutex<VecDeque<EventRecord>>> = Arc::new(Mutex::new(
         if is_fresh {
             VecDeque::with_capacity(200)
@@ -1278,6 +1315,7 @@ async fn main() -> Result<()> {
             tendermint: tendermint.as_ref().map(Arc::clone),
             tx_broadcast: Some(api_tx_sender.clone()),
             chain_prover: Arc::clone(&chain_prover),
+            throughput: Arc::clone(&throughput),
         });
         let api_port = args.api_port;
         tokio::spawn(async move {
@@ -1388,10 +1426,12 @@ async fn main() -> Result<()> {
         block_history: &Arc<Mutex<VecDeque<BlockRecord>>>,
         chain_stats: &Arc<Mutex<ChainStats>>,
         events: &Arc<Mutex<VecDeque<EventRecord>>>,
+        throughput: &Arc<Mutex<ThroughputTracker>>,
         chain_store: &Arc<ChainStore>,
         peer_count: &Arc<std::sync::atomic::AtomicUsize>,
         block_cache: &Option<evaporchain_network::service::BlockCache>,
     ) -> Option<(usize, usize)> {
+        let exec_start = Instant::now();
         let mut c = safe_lock(&consensus);
         let mut db_guard = safe_lock(&db);
 
@@ -1425,10 +1465,11 @@ async fn main() -> Result<()> {
                 let ghost_count_val = db_guard.ghost_count();
                 let peers = peer_count.load(std::sync::atomic::Ordering::Relaxed);
 
+                let exec_elapsed_us = exec_start.elapsed().as_micros() as u64;
                 record_block(
-                    block_history, chain_stats, events,
+                    block_history, chain_stats, events, throughput,
                     &result.block, &result.execution,
-                    obj_count, ghost_count_val,
+                    obj_count, ghost_count_val, exec_elapsed_us,
                 );
 
                 chain_store.save_consensus_meta(
@@ -1586,6 +1627,7 @@ async fn main() -> Result<()> {
                 for action in commits.drain(..) {
                     if let ConsensusAction::CommitBlock(mut block) = action {
                         // Execute the block to get state root
+                        let exec_start = Instant::now();
                         let result = {
                             let mut tc = safe_lock(&tc_ref);
                             let mut db_guard = safe_lock(&db);
@@ -1637,10 +1679,11 @@ async fn main() -> Result<()> {
                                 }
 
                                 // Record for API
+                                let exec_elapsed_us = exec_start.elapsed().as_micros() as u64;
                                 record_block(
-                                    &block_history, &chain_stats, &events,
+                                    &block_history, &chain_stats, &events, &throughput,
                                     &block, &result.execution,
-                                    obj_count, ghost_count,
+                                    obj_count, ghost_count, exec_elapsed_us,
                                 );
 
                                 // Persist
@@ -1716,6 +1759,7 @@ async fn main() -> Result<()> {
                     // Handle any commits from message processing
                     for action in commits.drain(..) {
                         if let ConsensusAction::CommitBlock(mut block) = action {
+                            let exec_start = Instant::now();
                             let result = {
                                 let mut tc = safe_lock(&tc_ref);
                                 let mut db_guard = safe_lock(&db);
@@ -1757,10 +1801,11 @@ async fn main() -> Result<()> {
                                         let _ = sender.send(block.clone()).await;
                                     }
 
+                                    let exec_elapsed_us = exec_start.elapsed().as_micros() as u64;
                                     record_block(
-                                        &block_history, &chain_stats, &events,
+                                        &block_history, &chain_stats, &events, &throughput,
                                         &block, &result.execution,
-                                        obj_count, ghost_count,
+                                        obj_count, ghost_count, exec_elapsed_us,
                                     );
                                     chain_store.save_consensus_meta(block.number, block.epoch, block.parent_hash);
                                     {
@@ -1837,6 +1882,7 @@ async fn main() -> Result<()> {
                 }
 
                 // Produce block — all synchronous work under locks, then drop before await
+                let exec_start = Instant::now();
                 let produced = {
                     let mut c = safe_lock(&consensus);
                     let mut db_guard = safe_lock(&db);
@@ -1892,14 +1938,17 @@ async fn main() -> Result<()> {
                     }
 
                     // Record block for API
+                    let exec_elapsed_us = exec_start.elapsed().as_micros() as u64;
                     record_block(
                         &block_history,
                         &chain_stats,
                         &events,
+                        &throughput,
                         &result.block,
                         &result.execution,
                         obj_count,
                         ghost_count,
+                        exec_elapsed_us,
                     );
 
                     // Persist chain data to disk
@@ -1975,7 +2024,7 @@ async fn main() -> Result<()> {
                     apply_follower_block(
                         &node_tag, &block, &consensus, &db, &chain_prover,
                         args.prove_mode, &block_history, &chain_stats, &events,
-                        &chain_store, &peer_count, &block_cache,
+                        &throughput, &chain_store, &peer_count, &block_cache,
                     );
 
                     // After applying, drain any pending blocks that are now in sequence
@@ -1988,7 +2037,7 @@ async fn main() -> Result<()> {
                             apply_follower_block(
                                 &node_tag, &queued, &consensus, &db, &chain_prover,
                                 args.prove_mode, &block_history, &chain_stats, &events,
-                                &chain_store, &peer_count, &block_cache,
+                                &throughput, &chain_store, &peer_count, &block_cache,
                             );
                         } else {
                             break;
@@ -2134,7 +2183,7 @@ async fn main() -> Result<()> {
                             apply_follower_block(
                                 &node_tag, block, &consensus, &db, &chain_prover,
                                 args.prove_mode, &block_history, &chain_stats, &events,
-                                &chain_store, &peer_count, &block_cache,
+                                &throughput, &chain_store, &peer_count, &block_cache,
                             );
                         }
                     }
@@ -2165,7 +2214,7 @@ async fn main() -> Result<()> {
                                 apply_follower_block(
                                     &node_tag, &queued, &consensus, &db, &chain_prover,
                                     args.prove_mode, &block_history, &chain_stats, &events,
-                                    &chain_store, &peer_count, &block_cache,
+                                    &throughput, &chain_store, &peer_count, &block_cache,
                                 );
                             }
                         } else {

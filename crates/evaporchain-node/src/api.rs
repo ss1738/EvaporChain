@@ -69,6 +69,8 @@ pub struct ApiState {
     pub tx_broadcast: Option<tokio::sync::mpsc::Sender<Transaction>>,
     /// Chain prover for Nova IVC proof generation and light client sync.
     pub chain_prover: Arc<Mutex<evaporchain_proving::chain_proof::ChainProver>>,
+    /// Rolling throughput metrics (TPS, block exec time, gas).
+    pub throughput: Arc<Mutex<ThroughputTracker>>,
 }
 
 impl ApiState {
@@ -254,6 +256,78 @@ impl ChainStats {
             total_transactions: 0,
             state_size_trend: Vec::new(),
         }
+    }
+}
+
+/// Rolling throughput metrics for TPS measurement.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ThroughputTracker {
+    /// Recent block records: (timestamp_ms, tx_count, exec_time_us, gas_used).
+    recent_blocks: VecDeque<(u64, usize, u64, u64)>,
+    /// Peak TPS observed.
+    pub peak_tps: f64,
+}
+
+impl ThroughputTracker {
+    pub fn new() -> Self {
+        Self {
+            recent_blocks: VecDeque::new(),
+            peak_tps: 0.0,
+        }
+    }
+
+    /// Record a new block's throughput data.
+    pub fn record_block(&mut self, timestamp_ms: u64, tx_count: usize, exec_time_us: u64, gas_used: u64) {
+        self.recent_blocks.push_back((timestamp_ms, tx_count, exec_time_us, gas_used));
+        // Keep last 100 blocks
+        while self.recent_blocks.len() > 100 {
+            self.recent_blocks.pop_front();
+        }
+        let tps = self.current_tps();
+        if tps > self.peak_tps {
+            self.peak_tps = tps;
+        }
+    }
+
+    /// Calculate TPS over recent blocks (last 10 seconds window).
+    pub fn current_tps(&self) -> f64 {
+        if self.recent_blocks.len() < 2 {
+            return 0.0;
+        }
+        let now = self.recent_blocks.back().unwrap().0;
+        let window_ms = 10_000; // 10-second window
+        let cutoff = now.saturating_sub(window_ms);
+        let in_window: Vec<_> = self.recent_blocks.iter()
+            .filter(|(ts, _, _, _)| *ts >= cutoff)
+            .collect();
+        if in_window.len() < 2 {
+            return 0.0;
+        }
+        let total_txs: usize = in_window.iter().map(|(_, tc, _, _)| tc).sum();
+        let span_ms = in_window.last().unwrap().0 - in_window.first().unwrap().0;
+        if span_ms == 0 { return 0.0; }
+        total_txs as f64 / (span_ms as f64 / 1000.0)
+    }
+
+    /// Average block execution time (microseconds) over recent blocks.
+    pub fn avg_exec_time_us(&self) -> u64 {
+        if self.recent_blocks.is_empty() { return 0; }
+        let total: u64 = self.recent_blocks.iter().map(|(_, _, t, _)| t).sum();
+        total / self.recent_blocks.len() as u64
+    }
+
+    /// Average gas used per block.
+    pub fn avg_gas_per_block(&self) -> u64 {
+        if self.recent_blocks.is_empty() { return 0; }
+        let total: u64 = self.recent_blocks.iter().map(|(_, _, _, g)| g).sum();
+        total / self.recent_blocks.len() as u64
+    }
+
+    /// Average txs per block.
+    pub fn avg_txs_per_block(&self) -> f64 {
+        if self.recent_blocks.is_empty() { return 0.0; }
+        let total: usize = self.recent_blocks.iter().map(|(_, tc, _, _)| tc).sum();
+        total as f64 / self.recent_blocks.len() as f64
     }
 }
 
@@ -2540,6 +2614,34 @@ struct ProverStatusResponse {
     prove_mode: bool,
 }
 
+/// GET /api/metrics — real-time throughput and performance metrics.
+#[derive(Serialize)]
+struct MetricsResponse {
+    tps: f64,
+    peak_tps: f64,
+    avg_txs_per_block: f64,
+    avg_block_exec_time_ms: f64,
+    avg_gas_per_block: u64,
+    total_transactions: u64,
+    blocks_tracked: usize,
+}
+
+async fn get_metrics(
+    State(state): State<Arc<ApiState>>,
+) -> Json<MetricsResponse> {
+    let t = safe_lock(&state.throughput);
+    let stats = safe_lock(&state.stats);
+    Json(MetricsResponse {
+        tps: t.current_tps(),
+        peak_tps: t.peak_tps,
+        avg_txs_per_block: t.avg_txs_per_block(),
+        avg_block_exec_time_ms: t.avg_exec_time_us() as f64 / 1000.0,
+        avg_gas_per_block: t.avg_gas_per_block(),
+        total_transactions: stats.total_transactions,
+        blocks_tracked: t.recent_blocks.len(),
+    })
+}
+
 /// GET /api/proof/latest — generate and return the latest chain proof.
 async fn get_proof_latest(
     State(state): State<Arc<ApiState>>,
@@ -2746,6 +2848,8 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/faucet", get(faucet_html))
         .route("/docs", get(docs_html))
         .route("/api/faucet", post(post_faucet))
+        // Metrics / Throughput
+        .route("/api/metrics", get(get_metrics))
         // Nova Proofs / Light Client
         .route("/api/proof/latest", get(get_proof_latest))
         .route("/api/proof/status", get(get_proof_status))

@@ -61,8 +61,11 @@ impl MockConsensus {
     ///
     /// `grace_period` is forwarded to the evaporation engine inside the executor.
     pub fn new(grace_period: u64) -> Self {
-        // Block gas limit: ~20 transfers per block (21000 gas each)
-        let block_gas_limit = 500_000;
+        Self::new_with_gas_limit(grace_period, 500_000)
+    }
+
+    /// Create with a custom block gas limit (for high-throughput mode).
+    pub fn new_with_gas_limit(grace_period: u64, block_gas_limit: u64) -> Self {
         Self {
             block_number: 0,
             epoch: 0,

@@ -231,7 +231,12 @@ pub struct TendermintConsensus {
 impl TendermintConsensus {
     /// Create a new Tendermint consensus engine.
     pub fn new(my_id: u64, grace_period: u64, validator_set: ValidatorSet) -> Self {
-        let block_gas_limit = 500_000;
+        Self::new_with_gas_limit(my_id, grace_period, validator_set, 500_000)
+    }
+
+    /// Create with a custom block gas limit (for high-throughput mode).
+    pub fn new_with_gas_limit(my_id: u64, grace_period: u64, validator_set: ValidatorSet, block_gas_limit: u64) -> Self {
+        let block_gas_limit = block_gas_limit;
         Self {
             my_id,
             height: 1, // Start at height 1 (genesis is 0)
