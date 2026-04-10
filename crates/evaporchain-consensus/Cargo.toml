@@ -10,6 +10,8 @@ evaporchain-types = { path = "../evaporchain-types" }
 evaporchain-state = { path = "../evaporchain-state" }
 evaporchain-execution = { path = "../evaporchain-execution" }
 evaporchain-crypto = { path = "../evaporchain-crypto" }
+evaporchain-da = { path = "../evaporchain-da" }
+blake3 = "1"
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -18,3 +20,6 @@ thiserror = { workspace = true }
 hex = { workspace = true }
 rand = { workspace = true }
 aes-gcm = "0.10"
+
+[dev-dependencies]
+tempfile = "3"
