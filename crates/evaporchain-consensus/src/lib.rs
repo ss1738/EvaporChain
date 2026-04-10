@@ -187,6 +187,10 @@ impl MockConsensus {
             producer_id: None,
             vrf_output: None,
             vrf_proof: None,
+            data_root: None,
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
         };
 
         let execution = self
@@ -252,6 +256,10 @@ impl MockConsensus {
             producer_id: None,
             vrf_output: None,
             vrf_proof: None,
+            data_root: None,
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
         };
 
         let execution = self
@@ -408,6 +416,10 @@ impl RotatingConsensus {
             producer_id: Some(self.my_id),
             vrf_output: None,
             vrf_proof: None,
+            data_root: None,
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
         };
 
         let execution = self
@@ -964,6 +976,10 @@ mod tests {
             producer_id: Some(wrong_id),
             vrf_output: None,
             vrf_proof: None,
+            data_root: None,
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
         };
 
         let result = rc.validate_received_block(&block);
@@ -990,6 +1006,10 @@ mod tests {
             producer_id: None,
             vrf_output: None,
             vrf_proof: None,
+            data_root: None,
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
         };
         assert!(rc.validate_received_block(&block).is_err());
     }
@@ -1047,6 +1067,10 @@ mod tests {
             producer_id: Some(wrong_id),
             vrf_output: None,
             vrf_proof: None,
+            data_root: None,
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
         };
 
         assert!(follower.apply_block(&mut db, &block).is_err());

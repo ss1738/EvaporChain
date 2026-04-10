@@ -96,6 +96,36 @@ pub struct Block {
     /// VRF proof (ML-DSA signature, ~3293 bytes).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vrf_proof: Option<Vec<u8>>,
+    /// Merkle root over all row/column roots of the erasure-coded data matrix.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_root: Option<[u8; 32]>,
+    /// Per-blob namespace commitments for data availability.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blob_commitments: Vec<[u8; 32]>,
+    /// Serialized DA certificate (BLS-aggregated validator attestations).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub da_certificate: Option<Vec<u8>>,
+    /// BLS aggregate commit certificate proving 2f+1 validators precommitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_certificate: Option<CommitCertificate>,
+}
+
+/// BLS aggregate signature certificate proving consensus finality.
+///
+/// Contains the aggregated BLS12-381 signature from 2f+1 precommitting
+/// validators, plus a bitfield indicating which validators participated.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitCertificate {
+    /// Height this certificate attests to.
+    pub height: u64,
+    /// Round in which consensus was reached.
+    pub round: u32,
+    /// Block hash that was committed.
+    pub block_hash: [u8; 32],
+    /// Aggregated BLS12-381 signature (96 bytes).
+    pub aggregate_signature: Vec<u8>,
+    /// Validator IDs that contributed to the aggregate.
+    pub signer_ids: Vec<u64>,
 }
 
 /// An account with a balance.

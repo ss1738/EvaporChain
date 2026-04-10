@@ -1602,6 +1602,10 @@ mod tests {
             producer_id: None,
             vrf_output: None,
             vrf_proof: None,
+            data_root: None,
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
         }
     }
 
@@ -1718,6 +1722,10 @@ mod tests {
             producer_id: None,
             vrf_output: None,
             vrf_proof: None,
+            data_root: None,
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
         }
     }
 
