@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-integration-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+evaporchain-types = { path = "../../crates/evaporchain-types" }
+evaporchain-crypto = { path = "../../crates/evaporchain-crypto" }
+evaporchain-consensus = { path = "../../crates/evaporchain-consensus" }
+evaporchain-execution = { path = "../../crates/evaporchain-execution" }
+evaporchain-state = { path = "../../crates/evaporchain-state" }
+evaporchain-da = { path = "../../crates/evaporchain-da" }
+evaporchain-proving = { path = "../../crates/evaporchain-proving" }
+evaporchain-contracts = { path = "../../crates/evaporchain-contracts" }
+serde_json = "1"
+hex = "0.4"

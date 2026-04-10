@@ -103,10 +103,20 @@ Novel L1 blockchain with energy-based state decay. 13 Rust crates, post-quantum 
 - Execution: 12 tests (8 invariant + 4 proptest)
 - Script: 12 tests (9 VM safety + 3 proptest)
 
-### Phase 7: Mainnet Genesis — NOT STARTED
-- Genesis config finalized
-- Validator onboarding
-- Launch
+### Phase 7: Mainnet Genesis — COMPLETE (2026-04-10)
+| Task | Status | Details |
+|------|--------|---------|
+| Genesis config (genesis-mainnet.json) | Done | 4 validators (250K stake each), 8 accounts (1B supply), chain params, tokenomics |
+| Genesis block generation | Done | Deterministic `initialize_genesis()`, offline `genesis init` command, state root verification |
+| CLI genesis tools | Done | `genesis validate`, `genesis show`, `genesis init` — offline config validation and block generation |
+| CLI keygen | Done | `keygen` — generates BLS + ML-DSA + VRF keypair bundle for validator onboarding |
+| Node `--genesis-config` flag | Done | Node bootstraps from JSON genesis config instead of hardcoded state |
+| Mainnet launch script | Done | `scripts/launch-mainnet.sh` — validator launcher with genesis config, bootstrap peers |
+| Devnet genesis support | Done | `GENESIS_CONFIG=path launch-devnet.sh` — devnet can use custom genesis |
+| Validator stake/exit execution | Done (pre-existing) | `execute_validator_stake()`, `execute_validator_exit()`, epoch transitions |
+
+**New tests added:** 10 CLI tests (genesis validate/show/init, keygen, determinism)
+**Test count:** 28 CLI tests, 12 node tests (all passing)
 
 ---
 
@@ -139,4 +149,4 @@ Novel L1 blockchain with energy-based state decay. 13 Rust crates, post-quantum 
 
 ---
 
-*Last updated: 2026-04-10 (Phase 6 complete)*
+*Last updated: 2026-04-10 (Phase 7 complete — all 7 phases done)*

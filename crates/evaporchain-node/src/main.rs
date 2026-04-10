@@ -464,6 +464,8 @@ struct NodeArgs {
     block_gas_limit: u64,
     /// High-throughput mode: 10M gas limit, 200ms blocks.
     high_throughput: bool,
+    /// Path to a genesis JSON config file (overrides hardcoded genesis).
+    genesis_config: Option<String>,
 }
 
 fn parse_args() -> NodeArgs {
@@ -545,6 +547,12 @@ fn parse_args() -> NodeArgs {
         block_ms
     };
 
+    let genesis_config = args
+        .iter()
+        .position(|a| a == "--genesis-config")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
+
     let mut bootstrap_peers = Vec::new();
     let mut i = 0;
     while i < args.len() {
@@ -576,6 +584,7 @@ fn parse_args() -> NodeArgs {
         validator_stake,
         block_gas_limit,
         high_throughput,
+        genesis_config,
     }
 }
 
@@ -1010,9 +1019,22 @@ async fn main() -> Result<()> {
     let db = Arc::new(Mutex::new(state_db));
 
     if is_fresh {
-        println!("{} \x1b[1mFresh start — loading genesis state:\x1b[0m", node_tag);
         let mut db = safe_lock(&db);
-        initialize_genesis(&mut db, &node_tag);
+        if let Some(ref genesis_path) = args.genesis_config {
+            println!("{} \x1b[1mFresh start — loading genesis from config: {}\x1b[0m", node_tag, genesis_path);
+            let json = std::fs::read_to_string(genesis_path)
+                .unwrap_or_else(|e| panic!("Failed to read genesis config {}: {}", genesis_path, e));
+            let config = evaporchain_execution::genesis::load_genesis_config(&json)
+                .unwrap_or_else(|e| panic!("Invalid genesis config: {}", e));
+            let result = evaporchain_execution::genesis::initialize_genesis(&mut *db, &config)
+                .unwrap_or_else(|e| panic!("Genesis initialization failed: {}", e));
+            println!("{} \x1b[1;32mGenesis block #{} created\x1b[0m — {} accounts, {} validators, state_root={}",
+                node_tag, result.block.number, result.accounts_created, result.validators_registered,
+                hex::encode(&result.state_root[..8]));
+        } else {
+            println!("{} \x1b[1mFresh start — loading genesis state:\x1b[0m", node_tag);
+            initialize_genesis(&mut db, &node_tag);
+        }
     } else {
         println!("{} \x1b[1;32mResuming from persistent state\x1b[0m", node_tag);
         let db = safe_lock(&db);

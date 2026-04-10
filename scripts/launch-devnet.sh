@@ -24,6 +24,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BINARY="$ROOT_DIR/target/release/evaporchain-node"
 INTERVAL="${EVAPORCHAIN_INTERVAL:-2000}"
+GENESIS_CONFIG="${GENESIS_CONFIG:-}"
 PRODUCER_PORT=9001
 
 # ── Build ──
@@ -51,6 +52,12 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # ── Launch mode ──
+GENESIS_ARGS=""
+if [[ -n "$GENESIS_CONFIG" ]]; then
+    GENESIS_ARGS="--genesis-config $GENESIS_CONFIG"
+    echo "Using genesis config: $GENESIS_CONFIG"
+fi
+
 SPLIT_MODE=false
 LOG_DIR=""
 if [[ "${1:-}" == "--split" ]]; then
@@ -90,6 +97,7 @@ if $SPLIT_MODE; then
         --validators "$NUM_VALIDATORS" \
         --stake "$VALIDATOR_STAKE" \
         --demo \
+        $GENESIS_ARGS \
         > "$LOG_DIR/node-1.log" 2>&1 &
 else
     "$BINARY" \
@@ -101,7 +109,8 @@ else
         --validator-id 1 \
         --validators "$NUM_VALIDATORS" \
         --stake "$VALIDATOR_STAKE" \
-        --demo &
+        --demo \
+        $GENESIS_ARGS &
 fi
 PIDS+=($!)
 echo "  Started node-1 (PID $!) on port ${PRODUCER_PORT} — validator 1 of $NUM_VALIDATORS"
@@ -127,6 +136,7 @@ for i in 2 3 4; do
             --validators "$NUM_VALIDATORS" \
             --stake "$VALIDATOR_STAKE" \
             --bootstrap "$BOOTSTRAP" \
+            $GENESIS_ARGS \
             > "$LOG_DIR/${NODE_ID}.log" 2>&1 &
     else
         "$BINARY" \
@@ -138,7 +148,8 @@ for i in 2 3 4; do
             --validator-id "$i" \
             --validators "$NUM_VALIDATORS" \
             --stake "$VALIDATOR_STAKE" \
-            --bootstrap "$BOOTSTRAP" &
+            --bootstrap "$BOOTSTRAP" \
+            $GENESIS_ARGS &
     fi
     PIDS+=($!)
     echo "  Started $NODE_ID (PID $!) on port $PORT — validator $i of $NUM_VALIDATORS"

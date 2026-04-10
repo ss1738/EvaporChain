@@ -3,6 +3,10 @@ use clap::{Parser, Subcommand};
 use colored::*;
 use serde::{Deserialize, Serialize};
 
+use evaporchain_crypto::{BlsKeypair, MlDsaKeypair, VrfKeypair};
+use evaporchain_execution::genesis::{initialize_genesis, load_genesis_config};
+use evaporchain_types::genesis::GenesisConfig;
+
 // ──────────────────────────── CLI Arguments ──────────────────────────────
 
 #[derive(Parser)]
@@ -122,6 +126,43 @@ pub enum Commands {
         /// Enable demo mode (auto-generate transactions)
         #[arg(long)]
         demo: bool,
+    },
+
+    /// Genesis config tools (validate, show)
+    Genesis {
+        #[command(subcommand)]
+        action: GenesisAction,
+    },
+
+    /// Generate a validator keypair bundle (BLS + ML-DSA + VRF)
+    Keygen {
+        /// Output file path (default: stdout)
+        #[arg(long)]
+        output: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum GenesisAction {
+    /// Validate a genesis JSON config file
+    Validate {
+        /// Path to genesis JSON file
+        #[arg()]
+        path: String,
+    },
+
+    /// Show a summary of a genesis config
+    Show {
+        /// Path to genesis JSON file
+        #[arg()]
+        path: String,
+    },
+
+    /// Generate the genesis block and print its hash (offline, deterministic)
+    Init {
+        /// Path to genesis JSON file
+        #[arg()]
+        path: String,
     },
 }
 
@@ -732,6 +773,210 @@ async fn cmd_devnet(validators: u32, demo: bool) -> Result<()> {
     Ok(())
 }
 
+// ──────────────────────────── Genesis ───────────────────────────────────
+
+fn load_genesis_file(path: &str) -> Result<GenesisConfig> {
+    let json = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read genesis file: {}", path))?;
+    load_genesis_config(&json).map_err(|e| anyhow::anyhow!("Invalid genesis config: {}", e))
+}
+
+fn cmd_genesis_validate(path: &str, json_mode: bool) -> Result<()> {
+    let config = load_genesis_file(path)?;
+
+    // Run initialize_genesis with a temp in-memory DB to validate
+    let mut db = evaporchain_state::InMemoryStateDB::new();
+    let result = initialize_genesis(&mut db, &config)
+        .map_err(|e| anyhow::anyhow!("Genesis validation failed: {}", e))?;
+
+    if json_mode {
+        let out = serde_json::json!({
+            "valid": true,
+            "chain_id": config.chain_params.chain_id,
+            "validators": config.validators.len(),
+            "accounts": config.accounts.len(),
+            "objects": config.objects.len(),
+            "genesis_block_number": result.block.number,
+            "state_root": hex::encode(&result.state_root),
+        });
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
+    }
+
+    println!("  {} Genesis config is valid!", "\u{2714}".green().bold());
+    println!();
+    println!("  {}  {}", "Chain:".truecolor(140, 150, 170), config.chain_params.chain_id.white().bold());
+    println!("  {}  {} validators", "Vals: ".truecolor(140, 150, 170), config.validators.len().to_string().cyan());
+    println!("  {}  {} accounts", "Accts:".truecolor(140, 150, 170), config.accounts.len().to_string().cyan());
+    println!("  {}  {} objects", "Objs: ".truecolor(140, 150, 170), config.objects.len().to_string().cyan());
+    println!("  {}  {}", "Root: ".truecolor(140, 150, 170), hex::encode(&result.state_root).truecolor(100, 110, 130));
+    println!();
+
+    Ok(())
+}
+
+fn cmd_genesis_show(path: &str, json_mode: bool) -> Result<()> {
+    let config = load_genesis_file(path)?;
+
+    if json_mode {
+        println!("{}", serde_json::to_string_pretty(&config)?);
+        return Ok(());
+    }
+
+    print_header("Genesis Configuration");
+
+    // Chain params
+    println!("  {}  {}", "Chain ID:".truecolor(140, 150, 170), config.chain_params.chain_id.white().bold());
+    println!("  {}  {} ms", "Block:   ".truecolor(140, 150, 170), config.chain_params.block_interval_ms);
+    println!("  {}  {}", "Time:    ".truecolor(140, 150, 170), config.genesis_time.truecolor(180, 190, 200));
+
+    // Tokenomics
+    println!();
+    println!("  {}", "Tokenomics".bold());
+    println!("  {}  {} EVAP", "Supply:  ".truecolor(140, 150, 170), config.tokenomics.total_supply.to_string().green().bold());
+    println!("  {}  {}%", "Fee Brn: ".truecolor(140, 150, 170), config.tokenomics.fee_burn_rate);
+    println!("  {}  {} EVAP", "Block Rw:".truecolor(140, 150, 170), config.tokenomics.block_reward);
+
+    // Validators
+    println!();
+    println!("  {} ({})", "Validators".bold(), config.validators.len());
+    println!("  {}", separator());
+    for v in &config.validators {
+        let addr_hex = hex::encode(&v.address);
+        let addr_short = format!("{}...", &addr_hex[..16]);
+        let bls = v.bls_public_key.as_deref().unwrap_or("none");
+        let bls_short = if bls.len() > 16 { format!("{}...", &bls[..16]) } else { bls.to_string() };
+        println!(
+            "  V{:<3} {:<12} {:>10} EVAP  addr={}  bls={}",
+            v.id,
+            v.name.cyan().bold(),
+            v.stake.to_string().green(),
+            addr_short.truecolor(100, 110, 130),
+            bls_short.truecolor(100, 110, 130),
+        );
+    }
+
+    // Accounts
+    println!();
+    println!("  {} ({})", "Accounts".bold(), config.accounts.len());
+    println!("  {}", separator());
+    for a in &config.accounts {
+        let addr_hex = hex::encode(&a.address);
+        let addr_short = format!("{}...", &addr_hex[..16]);
+        println!(
+            "  {:<14} {:>12} EVAP  {}",
+            a.label.white().bold(),
+            a.balance.to_string().green(),
+            addr_short.truecolor(100, 110, 130),
+        );
+    }
+
+    // Bootstrap peers
+    if !config.bootstrap_peers.is_empty() {
+        println!();
+        println!("  {} ({})", "Bootstrap Peers".bold(), config.bootstrap_peers.len());
+        for p in &config.bootstrap_peers {
+            println!("  - {}", p.truecolor(140, 150, 170));
+        }
+    }
+
+    println!();
+    Ok(())
+}
+
+fn cmd_genesis_init(path: &str, json_mode: bool) -> Result<()> {
+    let config = load_genesis_file(path)?;
+
+    let mut db = evaporchain_state::InMemoryStateDB::new();
+    let result = initialize_genesis(&mut db, &config)
+        .map_err(|e| anyhow::anyhow!("Genesis initialization failed: {}", e))?;
+
+    let block_hash = hex::encode(evaporchain_crypto::blake3_hash(
+        &serde_json::to_vec(&result.block).unwrap_or_default(),
+    ));
+
+    if json_mode {
+        let out = serde_json::json!({
+            "genesis_block": {
+                "number": result.block.number,
+                "epoch": result.block.epoch,
+                "state_root": hex::encode(&result.state_root),
+                "block_hash": block_hash,
+            },
+            "accounts_created": result.accounts_created,
+            "objects_created": result.objects_created,
+            "validators_registered": result.validators_registered,
+        });
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
+    }
+
+    print_header("Genesis Block Generated");
+    println!("  {}  #{}", "Block: ".truecolor(140, 150, 170), "0".cyan().bold());
+    println!("  {}  {}", "Hash:  ".truecolor(140, 150, 170), block_hash.truecolor(100, 110, 130));
+    println!("  {}  {}", "Root:  ".truecolor(140, 150, 170), hex::encode(&result.state_root).truecolor(100, 110, 130));
+    println!("  {}  {} accounts, {} validators, {} objects",
+        "State: ".truecolor(140, 150, 170),
+        result.accounts_created.to_string().green(),
+        result.validators_registered.to_string().cyan(),
+        result.objects_created.to_string().yellow(),
+    );
+    println!();
+    println!("  All nodes must produce this exact state root to join the network.");
+    println!();
+
+    Ok(())
+}
+
+// ──────────────────────────── Keygen ────────────────────────────────────
+
+fn cmd_keygen(output: Option<&str>, json_mode: bool) -> Result<()> {
+    let bls = BlsKeypair::generate();
+    let mldsa = MlDsaKeypair::generate();
+    let vrf = VrfKeypair::generate();
+
+    let bundle = serde_json::json!({
+        "bls": {
+            "public_key": hex::encode(&bls.public_key_bytes().0),
+            "secret_key": hex::encode(&bls.secret_key_bytes().0),
+        },
+        "ml_dsa": {
+            "public_key": hex::encode(mldsa.public_key()),
+            "secret_key": hex::encode(mldsa.secret_key()),
+        },
+        "vrf": {
+            "public_key": hex::encode(vrf.public_key_bytes()),
+        },
+    });
+
+    let pretty = serde_json::to_string_pretty(&bundle)?;
+
+    if let Some(path) = output {
+        std::fs::write(path, &pretty)
+            .with_context(|| format!("Failed to write keypair to {}", path))?;
+
+        if !json_mode {
+            println!("  {} Validator keypair written to {}", "\u{2714}".green().bold(), path);
+            println!();
+            println!("  {}  {}", "BLS pk:".truecolor(140, 150, 170),
+                     hex::encode(&bls.public_key_bytes().0)[..32].truecolor(100, 110, 130));
+            println!("  {}  {}...", "ML-DSA:".truecolor(140, 150, 170),
+                     hex::encode(&mldsa.public_key()[..16]).truecolor(100, 110, 130));
+            println!("  {}  {}...", "VRF pk:".truecolor(140, 150, 170),
+                     hex::encode(&vrf.public_key_bytes()[..16]).truecolor(100, 110, 130));
+            println!();
+            println!("  {} Keep the secret keys safe!", "\u{26A0}".yellow().bold());
+        } else {
+            println!("{}", pretty);
+        }
+    } else {
+        println!("{}", pretty);
+    }
+
+    println!();
+    Ok(())
+}
+
 // ──────────────────────────── Main ───────────────────────────────────────
 
 #[tokio::main]
@@ -768,6 +1013,16 @@ async fn main() -> Result<()> {
         }
         Commands::Devnet { validators, demo } => {
             cmd_devnet(validators, demo).await
+        }
+        Commands::Genesis { action } => {
+            match action {
+                GenesisAction::Validate { path } => cmd_genesis_validate(&path, cli.json),
+                GenesisAction::Show { path } => cmd_genesis_show(&path, cli.json),
+                GenesisAction::Init { path } => cmd_genesis_init(&path, cli.json),
+            }
+        }
+        Commands::Keygen { output } => {
+            cmd_keygen(output.as_deref(), cli.json)
         }
     };
 
@@ -972,6 +1227,111 @@ mod tests {
     fn test_cli_help_does_not_panic() {
         // Verify the command structure is valid
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn test_cli_parses_genesis_validate() {
+        let cli = Cli::parse_from(["evaporchain", "genesis", "validate", "genesis.json"]);
+        if let Commands::Genesis { action: GenesisAction::Validate { path } } = cli.command {
+            assert_eq!(path, "genesis.json");
+        } else {
+            panic!("Expected Genesis Validate command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_genesis_show() {
+        let cli = Cli::parse_from(["evaporchain", "genesis", "show", "genesis.json"]);
+        if let Commands::Genesis { action: GenesisAction::Show { path } } = cli.command {
+            assert_eq!(path, "genesis.json");
+        } else {
+            panic!("Expected Genesis Show command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_genesis_init() {
+        let cli = Cli::parse_from(["evaporchain", "genesis", "init", "genesis.json"]);
+        if let Commands::Genesis { action: GenesisAction::Init { path } } = cli.command {
+            assert_eq!(path, "genesis.json");
+        } else {
+            panic!("Expected Genesis Init command");
+        }
+    }
+
+    #[test]
+    fn test_genesis_init_deterministic() {
+        let genesis_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../genesis-mainnet.json");
+        if std::path::Path::new(genesis_path).exists() {
+            // Run twice — must produce the same state root
+            let result1 = {
+                let json = std::fs::read_to_string(genesis_path).unwrap();
+                let config = load_genesis_config(&json).unwrap();
+                let mut db = evaporchain_state::InMemoryStateDB::new();
+                initialize_genesis(&mut db, &config).unwrap()
+            };
+            let result2 = {
+                let json = std::fs::read_to_string(genesis_path).unwrap();
+                let config = load_genesis_config(&json).unwrap();
+                let mut db = evaporchain_state::InMemoryStateDB::new();
+                initialize_genesis(&mut db, &config).unwrap()
+            };
+            assert_eq!(result1.state_root, result2.state_root, "Genesis must be deterministic");
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_keygen() {
+        let cli = Cli::parse_from(["evaporchain", "keygen"]);
+        if let Commands::Keygen { output } = cli.command {
+            assert!(output.is_none());
+        } else {
+            panic!("Expected Keygen command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_keygen_with_output() {
+        let cli = Cli::parse_from(["evaporchain", "keygen", "--output", "keys.json"]);
+        if let Commands::Keygen { output } = cli.command {
+            assert_eq!(output.as_deref(), Some("keys.json"));
+        } else {
+            panic!("Expected Keygen command");
+        }
+    }
+
+    #[test]
+    fn test_genesis_validate_with_mainnet_config() {
+        let genesis_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../genesis-mainnet.json");
+        if std::path::Path::new(genesis_path).exists() {
+            let result = cmd_genesis_validate(genesis_path, true);
+            assert!(result.is_ok(), "Genesis validation failed: {:?}", result.err());
+        }
+    }
+
+    #[test]
+    fn test_genesis_validate_missing_file() {
+        let result = cmd_genesis_validate("/nonexistent/path.json", true);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_keygen_generates_valid_bundle() {
+        let tmp = std::env::temp_dir().join("evaporchain-test-keygen.json");
+        let result = cmd_keygen(Some(tmp.to_str().unwrap()), true);
+        assert!(result.is_ok());
+
+        let contents = std::fs::read_to_string(&tmp).unwrap();
+        let bundle: serde_json::Value = serde_json::from_str(&contents).unwrap();
+        assert!(bundle.get("bls").is_some());
+        assert!(bundle.get("ml_dsa").is_some());
+        assert!(bundle.get("vrf").is_some());
+
+        // BLS public key should be 96 hex chars (48 bytes)
+        let bls_pk = bundle["bls"]["public_key"].as_str().unwrap();
+        assert_eq!(bls_pk.len(), 96);
+
+        let _ = std::fs::remove_file(&tmp);
     }
 
     #[test]

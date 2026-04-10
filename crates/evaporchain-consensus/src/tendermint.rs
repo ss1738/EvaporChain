@@ -9,7 +9,7 @@
 //! - Nil votes for safety (lock on first valid proposal)
 
 use crate::mempool::Mempool;
-use crate::validator_set::{ValidatorInfo, ValidatorSet};
+use crate::validator_set::{ValidatorInfo, ValidatorSet, EpochTransitionManager, ValidatorSetChange};
 use crate::{BlockProductionResult, ConsensusError};
 
 use evaporchain_crypto::hash::blake3_hash;
@@ -226,6 +226,8 @@ pub struct TendermintConsensus {
     proof_verifier: Option<Box<dyn ProofVerifier>>,
     /// Genesis state root needed for proof verification.
     genesis_state_root: [u8; 32],
+    /// Epoch transition manager for validator set changes.
+    epoch_manager: EpochTransitionManager,
 }
 
 impl TendermintConsensus {
@@ -267,6 +269,7 @@ impl TendermintConsensus {
             randomness_beacon: RandomnessBeacon::new(),
             proof_verifier: None,
             genesis_state_root: [0u8; 32],
+            epoch_manager: EpochTransitionManager::new(),
         }
     }
 
@@ -321,6 +324,7 @@ impl TendermintConsensus {
             randomness_beacon: RandomnessBeacon::new(),
             proof_verifier: None,
             genesis_state_root: [0u8; 32],
+            epoch_manager: EpochTransitionManager::new(),
         }
     }
 
@@ -820,6 +824,61 @@ impl TendermintConsensus {
                 total_checkpoints = self.weak_subjectivity_checkpoints.len(),
                 "Weak subjectivity checkpoint created"
             );
+        }
+
+        // ── Epoch Transition ──
+        // Scan committed block for validator stake/exit transactions
+        // and queue them for the epoch transition manager.
+        for tx in &block.transactions {
+            match tx {
+                Transaction::ValidatorStake(ref stake_tx) => {
+                    let info = ValidatorInfo::new(
+                        stake_tx.validator_id,
+                        stake_tx.stake_amount,
+                        stake_tx.validator_address,
+                    );
+                    self.epoch_manager.queue_change(
+                        ValidatorSetChange::Join(info),
+                        block.epoch,
+                    );
+                    debug!(
+                        validator = stake_tx.validator_id,
+                        stake = stake_tx.stake_amount,
+                        "Queued validator join for next epoch boundary"
+                    );
+                }
+                Transaction::ValidatorExit(ref exit_tx) => {
+                    self.epoch_manager.queue_change(
+                        ValidatorSetChange::Leave {
+                            validator_id: exit_tx.validator_id,
+                        },
+                        block.epoch,
+                    );
+                    debug!(
+                        validator = exit_tx.validator_id,
+                        "Queued validator leave for next epoch boundary"
+                    );
+                }
+                _ => {}
+            }
+        }
+
+        // Apply epoch transitions at epoch boundaries
+        if EpochTransitionManager::is_epoch_boundary(block.number) {
+            let result = self
+                .epoch_manager
+                .apply_epoch_transition(&mut self.validator_set, block.epoch);
+            if !result.applied.is_empty() {
+                info!(
+                    epoch = block.epoch,
+                    height = block.number,
+                    applied = ?result.applied,
+                    deferred = ?result.deferred,
+                    rejected = ?result.rejected,
+                    validators = self.validator_set.active_count(),
+                    "Epoch transition applied"
+                );
+            }
         }
 
         // Clean up old proposal evidence (keep only last 10 heights)
@@ -2793,3 +2852,276 @@ mod vrf_tests {
         assert_ne!(vrf_outputs[0], vrf_outputs[2]);
     }
 }
+
+
+#[cfg(test)]
+mod epoch_tests {
+    use super::*;
+    use crate::validator_set::{ValidatorInfo, ValidatorSet, EpochTransitionManager};
+    use evaporchain_types::{Transaction, ValidatorStakeTx, ValidatorExitTx, Block};
+
+    fn make_validator_set(n: u64, stake: u64) -> ValidatorSet {
+        let mut vs = ValidatorSet::new();
+        for i in 0..n {
+            let mut addr = [0u8; 32];
+            addr[0] = i as u8;
+            vs.add_validator(ValidatorInfo::new(i, stake, addr));
+        }
+        vs
+    }
+
+    fn make_block_at_height(height: u64, txs: Vec<Transaction>) -> Block {
+        Block {
+            number: height,
+            epoch: height / 100,
+            parent_hash: [0u8; 32],
+            state_root: [0u8; 32],
+            transactions: txs,
+            producer_id: Some(0),
+            timestamp: 0,
+            commit_certificate: None,
+            nova_proof: None,
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            blob_commitments: vec![],
+            da_certificate: None,
+        }
+    }
+
+    #[test]
+    fn test_epoch_boundary_detection() {
+        // Height 0 is NOT a boundary (genesis)
+        assert!(!EpochTransitionManager::is_epoch_boundary(0));
+        // Heights 1-99 are not boundaries
+        for h in 1..100u64 {
+            assert!(!EpochTransitionManager::is_epoch_boundary(h));
+        }
+        // Height 100 IS a boundary
+        assert!(EpochTransitionManager::is_epoch_boundary(100));
+        assert!(EpochTransitionManager::is_epoch_boundary(200));
+        assert!(EpochTransitionManager::is_epoch_boundary(300));
+        // 150 is not
+        assert!(!EpochTransitionManager::is_epoch_boundary(150));
+    }
+
+    #[test]
+    fn test_validator_join_queued_on_stake_tx() {
+        let vs = make_validator_set(4, 1000);
+        let mut tc = TendermintConsensus::new_for_test(0, 0, vs);
+
+        // Create a ValidatorStake tx for a new validator (id=10)
+        let stake_tx = ValidatorStakeTx {
+            validator_address: [10u8; 32],
+            stake_amount: 500,
+            validator_id: 10,
+            nonce: 0,
+            bls_public_key: None,
+            vrf_public_key: None,
+            signature: None,
+            public_key: None,
+        };
+
+        let block = make_block_at_height(50, vec![Transaction::ValidatorStake(stake_tx)]);
+        tc.on_block_committed(&block, [1u8; 32], 0);
+
+        // Change should be queued but NOT applied yet (not at epoch boundary)
+        assert_eq!(tc.epoch_manager.pending_count(), 1);
+        assert_eq!(tc.validator_set.active_count(), 4); // unchanged
+    }
+
+    #[test]
+    fn test_validator_join_applied_after_bonding_period() {
+        let vs = make_validator_set(4, 1000);
+        let mut tc = TendermintConsensus::new_for_test(0, 0, vs);
+
+        // Queue a join at epoch 0 — ready at epoch 2 (bonding period = 2)
+        let stake_tx = ValidatorStakeTx {
+            validator_address: [10u8; 32],
+            stake_amount: 500,
+            validator_id: 10,
+            nonce: 0,
+            bls_public_key: None,
+            vrf_public_key: None,
+            signature: None,
+            public_key: None,
+        };
+
+        let block = make_block_at_height(50, vec![Transaction::ValidatorStake(stake_tx)]);
+        tc.on_block_committed(&block, [1u8; 32], 0);
+
+        // Commit blocks up to height 100 (epoch boundary, epoch=1)
+        // But bonding period is 2 epochs, so still deferred
+        let boundary1 = make_block_at_height(100, vec![]);
+        tc.height = 100;
+        tc.on_block_committed(&boundary1, [2u8; 32], 0);
+        // Validator should NOT have joined yet (ready_at_epoch=2, current=1)
+        assert_eq!(tc.validator_set.active_count(), 4);
+
+        // Commit at height 200 (epoch boundary, epoch=2) — now bonding is complete
+        let boundary2 = make_block_at_height(200, vec![]);
+        tc.height = 200;
+        tc.on_block_committed(&boundary2, [3u8; 32], 0);
+        assert_eq!(tc.validator_set.active_count(), 5);
+    }
+
+    #[test]
+    fn test_validator_exit_queued_and_applied() {
+        let vs = make_validator_set(5, 1000);
+        let mut tc = TendermintConsensus::new_for_test(0, 0, vs);
+
+        let exit_tx = ValidatorExitTx {
+            validator_address: [4u8; 32],
+            validator_id: 4,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        };
+
+        let block = make_block_at_height(50, vec![Transaction::ValidatorExit(exit_tx)]);
+        tc.on_block_committed(&block, [1u8; 32], 0);
+        assert_eq!(tc.epoch_manager.pending_count(), 1);
+        assert_eq!(tc.validator_set.active_count(), 5); // not removed yet
+
+        // Unbonding period = 4 epochs. At epoch 4 boundary (height 400), removal applies.
+        // Heights 100, 200, 300 — still deferred
+        for h in [100u64, 200, 300] {
+            let b = make_block_at_height(h, vec![]);
+            tc.height = h;
+            tc.on_block_committed(&b, [h as u8; 32], 0);
+        }
+        assert_eq!(tc.validator_set.active_count(), 5); // still 5
+
+        // Height 400 (epoch=4) — unbonding complete
+        let b400 = make_block_at_height(400, vec![]);
+        tc.height = 400;
+        tc.on_block_committed(&b400, [4u8; 32], 0);
+        assert_eq!(tc.validator_set.active_count(), 4); // removed
+    }
+
+    #[test]
+    fn test_min_validators_safety() {
+        // Start with exactly 3 validators (MIN_VALIDATORS)
+        let vs = make_validator_set(3, 1000);
+        let mut tc = TendermintConsensus::new_for_test(0, 0, vs);
+
+        // Try to remove one
+        let exit_tx = ValidatorExitTx {
+            validator_address: [2u8; 32],
+            validator_id: 2,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        };
+
+        let block = make_block_at_height(50, vec![Transaction::ValidatorExit(exit_tx)]);
+        tc.on_block_committed(&block, [1u8; 32], 0);
+
+        // Fast-forward to epoch 4 boundary
+        for h in [100u64, 200, 300, 400] {
+            let b = make_block_at_height(h, vec![]);
+            tc.height = h;
+            tc.on_block_committed(&b, [h as u8; 32], 0);
+        }
+
+        // Should still have 3 validators — removal rejected
+        assert_eq!(tc.validator_set.active_count(), 3);
+    }
+
+    #[test]
+    fn test_multiple_joins_and_exits_in_single_epoch() {
+        let vs = make_validator_set(6, 1000);
+        let mut tc = TendermintConsensus::new_for_test(0, 0, vs);
+
+        // Queue 2 joins and 1 exit at epoch 0
+        let stake1 = Transaction::ValidatorStake(ValidatorStakeTx {
+            validator_address: [10u8; 32],
+            stake_amount: 500,
+            validator_id: 10,
+            nonce: 0,
+            bls_public_key: None,
+            vrf_public_key: None,
+            signature: None,
+            public_key: None,
+        });
+        let stake2 = Transaction::ValidatorStake(ValidatorStakeTx {
+            validator_address: [11u8; 32],
+            stake_amount: 500,
+            validator_id: 11,
+            nonce: 0,
+            bls_public_key: None,
+            vrf_public_key: None,
+            signature: None,
+            public_key: None,
+        });
+        let exit1 = Transaction::ValidatorExit(ValidatorExitTx {
+            validator_address: [5u8; 32],
+            validator_id: 5,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        });
+
+        let block = make_block_at_height(50, vec![stake1, stake2, exit1]);
+        tc.on_block_committed(&block, [1u8; 32], 0);
+        assert_eq!(tc.epoch_manager.pending_count(), 3);
+
+        // At epoch 2 boundary (height 200) — joins are ready (bonding=2 epochs)
+        // Exit still deferred (unbonding=4 epochs)
+        for h in [100u64, 200] {
+            let b = make_block_at_height(h, vec![]);
+            tc.height = h;
+            tc.on_block_committed(&b, [h as u8; 32], 0);
+        }
+        // max_churn = ceil(6 * 0.33) = 2. Two joins can apply.
+        assert_eq!(tc.validator_set.active_count(), 8); // 6 + 2 joins
+
+        // At epoch 4 boundary (height 400) — exit is ready
+        for h in [300u64, 400] {
+            let b = make_block_at_height(h, vec![]);
+            tc.height = h;
+            tc.on_block_committed(&b, [h as u8; 32], 0);
+        }
+        assert_eq!(tc.validator_set.active_count(), 7); // 8 - 1 exit
+    }
+
+    #[test]
+    fn test_max_churn_enforcement() {
+        // 4 validators, max_churn = ceil(4 * 0.33) = ceil(1.32) = 2
+        let vs = make_validator_set(4, 1000);
+        let mut tc = TendermintConsensus::new_for_test(0, 0, vs);
+
+        // Queue 3 joins (more than max_churn)
+        for i in 10..13u64 {
+            let stake = Transaction::ValidatorStake(ValidatorStakeTx {
+                validator_address: [i as u8; 32],
+                stake_amount: 500,
+                validator_id: i,
+                nonce: 0,
+                bls_public_key: None,
+                vrf_public_key: None,
+                signature: None,
+                public_key: None,
+            });
+            let block = make_block_at_height(50 + i, vec![stake]);
+            tc.on_block_committed(&block, [i as u8; 32], 0);
+        }
+        assert_eq!(tc.epoch_manager.pending_count(), 3);
+
+        // At epoch 2 boundary — only 2 should join (max_churn)
+        for h in [100u64, 200] {
+            let b = make_block_at_height(h, vec![]);
+            tc.height = h;
+            tc.on_block_committed(&b, [h as u8; 32], 0);
+        }
+        assert_eq!(tc.validator_set.active_count(), 6); // 4 + 2 (capped)
+        assert!(tc.epoch_manager.pending_count() >= 1); // 1 deferred
+
+        // At epoch 3 boundary — the deferred one joins
+        let b300 = make_block_at_height(300, vec![]);
+        tc.height = 300;
+        tc.on_block_committed(&b300, [3u8; 32], 0);
+        assert_eq!(tc.validator_set.active_count(), 7); // 6 + 1
+    }
+}
+

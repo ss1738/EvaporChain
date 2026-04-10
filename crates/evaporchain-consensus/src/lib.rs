@@ -1,5 +1,7 @@
 pub mod encrypted_mempool;
+pub mod light_client;
 pub mod mempool;
+pub mod state_sync;
 pub mod persistence;
 pub mod tendermint;
 pub mod validator_set;
