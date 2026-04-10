@@ -81,6 +81,10 @@ fn bench_transaction_throughput() -> f64 {
         producer_id: None,
         vrf_output: None,
         vrf_proof: None,
+            data_root: None,
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
     };
 
     let mut executor = ParallelExecutor::new(5);
@@ -142,6 +146,10 @@ fn bench_block_execution() -> f64 {
             producer_id: None,
             vrf_output: None,
             vrf_proof: None,
+            data_root: None,
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
         };
 
         let _ = executor.execute_block(&mut db, &block);
@@ -236,6 +244,10 @@ fn bench_object_creation() -> f64 {
         producer_id: None,
         vrf_output: None,
         vrf_proof: None,
+            data_root: None,
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
     };
 
     let mut executor = ParallelExecutor::new(5);
@@ -301,6 +313,10 @@ fn bench_refresh_throughput() -> f64 {
         producer_id: None,
         vrf_output: None,
         vrf_proof: None,
+            data_root: None,
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
     };
 
     let mut executor = ParallelExecutor::new(5);

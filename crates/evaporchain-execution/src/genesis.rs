@@ -86,6 +86,10 @@ pub fn initialize_genesis(
         producer_id: None,
         vrf_output: None,
         vrf_proof: None,
+            data_root: None,
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
     };
 
     Ok(GenesisResult {
