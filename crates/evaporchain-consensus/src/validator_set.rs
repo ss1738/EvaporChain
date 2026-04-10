@@ -468,6 +468,11 @@ impl ValidatorSet {
             .sum()
     }
 
+    /// Get a validator by ID.
+    pub fn get_validator(&self, id: u64) -> Option<&ValidatorInfo> {
+        self.validators.iter().find(|v| v.id == id)
+    }
+
     /// Check if any validator has a VRF key registered (enables VRF mode).
     pub fn has_vrf_keys(&self) -> bool {
         self.validators.iter().any(|v| v.vrf_public_key.is_some())
@@ -485,6 +490,254 @@ impl ValidatorSet {
 }
 
 impl Default for ValidatorSet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ─────────────────────── Epoch Transition Manager ───────────────────────
+
+/// Minimum number of active validators (safety floor).
+const MIN_VALIDATORS: usize = 3;
+
+/// Maximum fraction of validators that can change per epoch (1/3).
+const MAX_CHURN_FRACTION: f64 = 0.33;
+
+/// Epochs a new validator must wait before entering the active set.
+const BONDING_PERIOD_EPOCHS: u64 = 2;
+
+/// Epochs an exiting validator must wait before their stake unlocks.
+const UNBONDING_PERIOD_EPOCHS: u64 = 4;
+
+/// Blocks per epoch (used to detect epoch boundaries).
+const EPOCH_LENGTH: u64 = 100;
+
+/// A requested change to the validator set.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ValidatorSetChange {
+    /// A new validator wants to join.
+    Join(ValidatorInfo),
+    /// A validator wants to leave.
+    Leave { validator_id: u64 },
+    /// A validator's stake changed (on-chain staking tx).
+    StakeUpdate { validator_id: u64, new_stake: u64 },
+}
+
+/// Result of applying epoch transitions.
+#[derive(Debug, Default)]
+pub struct EpochTransitionResult {
+    /// Changes that were applied this epoch.
+    pub applied: Vec<String>,
+    /// Changes deferred to a future epoch (bonding/unbonding period).
+    pub deferred: Vec<String>,
+    /// Changes rejected (safety constraints).
+    pub rejected: Vec<String>,
+}
+
+/// Pending join with bonding countdown.
+#[derive(Debug, Clone)]
+struct PendingJoin {
+    info: ValidatorInfo,
+    ready_at_epoch: u64,
+}
+
+/// Pending leave with unbonding countdown.
+#[derive(Debug, Clone)]
+struct PendingLeave {
+    validator_id: u64,
+    unlock_at_epoch: u64,
+}
+
+/// Manages validator set transitions at epoch boundaries.
+///
+/// Safety invariants:
+/// - Validator set never drops below `MIN_VALIDATORS`
+/// - At most `MAX_CHURN_FRACTION` of validators change per epoch
+/// - Joins require a bonding period; leaves require an unbonding period
+pub struct EpochTransitionManager {
+    /// Queued changes waiting to be applied.
+    pending_joins: Vec<PendingJoin>,
+    pending_leaves: Vec<PendingLeave>,
+    pending_stake_updates: Vec<(u64, u64)>, // (validator_id, new_stake)
+    /// Current epoch (updated on each transition).
+    current_epoch: u64,
+}
+
+impl EpochTransitionManager {
+    pub fn new() -> Self {
+        Self {
+            pending_joins: Vec::new(),
+            pending_leaves: Vec::new(),
+            pending_stake_updates: Vec::new(),
+            current_epoch: 0,
+        }
+    }
+
+    /// Queue a validator set change. It will be processed at the next epoch boundary.
+    pub fn queue_change(&mut self, change: ValidatorSetChange, current_epoch: u64) {
+        match change {
+            ValidatorSetChange::Join(info) => {
+                self.pending_joins.push(PendingJoin {
+                    info,
+                    ready_at_epoch: current_epoch + BONDING_PERIOD_EPOCHS,
+                });
+            }
+            ValidatorSetChange::Leave { validator_id } => {
+                self.pending_leaves.push(PendingLeave {
+                    validator_id,
+                    unlock_at_epoch: current_epoch + UNBONDING_PERIOD_EPOCHS,
+                });
+            }
+            ValidatorSetChange::StakeUpdate {
+                validator_id,
+                new_stake,
+            } => {
+                self.pending_stake_updates.push((validator_id, new_stake));
+            }
+        }
+    }
+
+    /// Returns true if the given block height is an epoch boundary.
+    pub fn is_epoch_boundary(height: u64) -> bool {
+        height > 0 && height % EPOCH_LENGTH == 0
+    }
+
+    /// Apply pending transitions to the validator set at an epoch boundary.
+    ///
+    /// Returns a summary of what was applied, deferred, and rejected.
+    pub fn apply_epoch_transition(
+        &mut self,
+        validator_set: &mut ValidatorSet,
+        epoch: u64,
+    ) -> EpochTransitionResult {
+        self.current_epoch = epoch;
+        let mut result = EpochTransitionResult::default();
+
+        let max_churn = ((validator_set.active_count() as f64) * MAX_CHURN_FRACTION).ceil() as usize;
+        let max_churn = max_churn.max(1); // at least 1 change allowed
+        let mut changes_this_epoch = 0usize;
+
+        // 1. Apply stake updates first (no churn cost).
+        let updates: Vec<_> = self.pending_stake_updates.drain(..).collect();
+        for (vid, new_stake) in updates {
+            if new_stake < MIN_STAKE {
+                result.rejected.push(format!(
+                    "StakeUpdate for validator {} rejected: {} < MIN_STAKE {}",
+                    vid, new_stake, MIN_STAKE
+                ));
+                continue;
+            }
+            if let Some(v) = validator_set.get_mut(vid) {
+                let old = v.stake;
+                v.stake = new_stake;
+                result.applied.push(format!(
+                    "Validator {} stake updated: {} → {}",
+                    vid, old, new_stake
+                ));
+            } else {
+                result.rejected.push(format!(
+                    "StakeUpdate for validator {} rejected: not found",
+                    vid
+                ));
+            }
+        }
+
+        // 2. Process ready joins (bonding period elapsed).
+        let (ready, not_ready): (Vec<_>, Vec<_>) = self
+            .pending_joins
+            .drain(..)
+            .partition(|p| p.ready_at_epoch <= epoch);
+
+        self.pending_joins = not_ready;
+        for pj in &self.pending_joins {
+            result.deferred.push(format!(
+                "Join for validator {} deferred until epoch {}",
+                pj.info.id, pj.ready_at_epoch
+            ));
+        }
+
+        for pj in ready {
+            if changes_this_epoch >= max_churn {
+                // Re-queue with immediate readiness for next epoch.
+                self.pending_joins.push(PendingJoin {
+                    info: pj.info.clone(),
+                    ready_at_epoch: epoch + 1,
+                });
+                result.deferred.push(format!(
+                    "Join for validator {} deferred: max churn reached",
+                    pj.info.id
+                ));
+                continue;
+            }
+            if validator_set.validators().iter().any(|v| v.id == pj.info.id) {
+                result.rejected.push(format!(
+                    "Join for validator {} rejected: already exists",
+                    pj.info.id
+                ));
+                continue;
+            }
+            let vid = pj.info.id;
+            validator_set.add_validator(pj.info);
+            changes_this_epoch += 1;
+            result.applied.push(format!("Validator {} joined", vid));
+        }
+
+        // 3. Process leaves (unbonding period — validator removed immediately,
+        //    but stake is locked until unlock_at_epoch).
+        let (ready_leaves, not_ready_leaves): (Vec<_>, Vec<_>) = self
+            .pending_leaves
+            .drain(..)
+            .partition(|p| p.unlock_at_epoch <= epoch);
+
+        self.pending_leaves = not_ready_leaves;
+        for pl in &self.pending_leaves {
+            result.deferred.push(format!(
+                "Leave for validator {} deferred: unbonding until epoch {}",
+                pl.validator_id, pl.unlock_at_epoch
+            ));
+        }
+
+        for pl in ready_leaves {
+            if changes_this_epoch >= max_churn {
+                self.pending_leaves.push(PendingLeave {
+                    validator_id: pl.validator_id,
+                    unlock_at_epoch: epoch + 1,
+                });
+                result.deferred.push(format!(
+                    "Leave for validator {} deferred: max churn reached",
+                    pl.validator_id
+                ));
+                continue;
+            }
+            // Safety: don't drop below minimum
+            if validator_set.active_count() <= MIN_VALIDATORS {
+                result.rejected.push(format!(
+                    "Leave for validator {} rejected: would drop below MIN_VALIDATORS ({})",
+                    pl.validator_id, MIN_VALIDATORS
+                ));
+                continue;
+            }
+            if validator_set.remove_validator(pl.validator_id) {
+                changes_this_epoch += 1;
+                result.applied.push(format!("Validator {} left", pl.validator_id));
+            } else {
+                result.rejected.push(format!(
+                    "Leave for validator {} rejected: not found",
+                    pl.validator_id
+                ));
+            }
+        }
+
+        result
+    }
+
+    /// Number of pending changes (joins + leaves + stake updates).
+    pub fn pending_count(&self) -> usize {
+        self.pending_joins.len() + self.pending_leaves.len() + self.pending_stake_updates.len()
+    }
+}
+
+impl Default for EpochTransitionManager {
     fn default() -> Self {
         Self::new()
     }
@@ -850,5 +1103,169 @@ mod tests {
         vs.slash_equivocation(1);
         let total_after = vs.total_weight();
         assert!(total_after < total_before, "Jailed validator weight should be excluded");
+    }
+
+    // ─── Epoch Transition Manager Tests ─────────────────────────────
+
+    #[test]
+    fn test_epoch_boundary_detection() {
+        assert!(!EpochTransitionManager::is_epoch_boundary(0));
+        assert!(!EpochTransitionManager::is_epoch_boundary(50));
+        assert!(EpochTransitionManager::is_epoch_boundary(100));
+        assert!(EpochTransitionManager::is_epoch_boundary(200));
+        assert!(!EpochTransitionManager::is_epoch_boundary(101));
+    }
+
+    #[test]
+    fn test_join_with_bonding_period() {
+        let mut vs = make_validator_set(4, 1000);
+        let mut mgr = EpochTransitionManager::new();
+
+        // Queue join at epoch 5
+        mgr.queue_change(
+            ValidatorSetChange::Join(make_validator(5, 1000)),
+            5,
+        );
+        assert_eq!(mgr.pending_count(), 1);
+
+        // Epoch 6: bonding not elapsed (needs epoch 7)
+        let result = mgr.apply_epoch_transition(&mut vs, 6);
+        assert_eq!(vs.len(), 4, "Should not join yet");
+        assert_eq!(result.deferred.len(), 1);
+
+        // Epoch 7: bonding elapsed
+        let result = mgr.apply_epoch_transition(&mut vs, 7);
+        assert_eq!(vs.len(), 5);
+        assert_eq!(result.applied.len(), 1);
+        assert!(result.applied[0].contains("joined"));
+    }
+
+    #[test]
+    fn test_leave_with_unbonding_period() {
+        let mut vs = make_validator_set(5, 1000);
+        let mut mgr = EpochTransitionManager::new();
+
+        // Queue leave at epoch 10
+        mgr.queue_change(ValidatorSetChange::Leave { validator_id: 5 }, 10);
+
+        // Epoch 13: not yet (needs 14)
+        let result = mgr.apply_epoch_transition(&mut vs, 13);
+        assert_eq!(vs.len(), 5);
+        assert_eq!(result.deferred.len(), 1);
+
+        // Epoch 14: unbonding elapsed
+        let result = mgr.apply_epoch_transition(&mut vs, 14);
+        assert_eq!(vs.len(), 4);
+        assert!(result.applied[0].contains("left"));
+    }
+
+    #[test]
+    fn test_leave_rejected_below_minimum() {
+        let mut vs = make_validator_set(3, 1000); // exactly MIN_VALIDATORS
+        let mut mgr = EpochTransitionManager::new();
+
+        mgr.queue_change(ValidatorSetChange::Leave { validator_id: 1 }, 0);
+
+        let result = mgr.apply_epoch_transition(&mut vs, 10);
+        assert_eq!(vs.len(), 3, "Should not drop below MIN_VALIDATORS");
+        assert_eq!(result.rejected.len(), 1);
+        assert!(result.rejected[0].contains("MIN_VALIDATORS"));
+    }
+
+    #[test]
+    fn test_stake_update() {
+        let mut vs = make_validator_set(4, 1000);
+        let mut mgr = EpochTransitionManager::new();
+
+        mgr.queue_change(
+            ValidatorSetChange::StakeUpdate {
+                validator_id: 2,
+                new_stake: 5000,
+            },
+            0,
+        );
+
+        let result = mgr.apply_epoch_transition(&mut vs, 1);
+        assert_eq!(vs.get(2).unwrap().stake, 5000);
+        assert_eq!(result.applied.len(), 1);
+    }
+
+    #[test]
+    fn test_stake_update_below_min_rejected() {
+        let mut vs = make_validator_set(4, 1000);
+        let mut mgr = EpochTransitionManager::new();
+
+        mgr.queue_change(
+            ValidatorSetChange::StakeUpdate {
+                validator_id: 1,
+                new_stake: 10, // below MIN_STAKE
+            },
+            0,
+        );
+
+        let result = mgr.apply_epoch_transition(&mut vs, 1);
+        assert_eq!(vs.get(1).unwrap().stake, 1000, "Stake should be unchanged");
+        assert_eq!(result.rejected.len(), 1);
+    }
+
+    #[test]
+    fn test_max_churn_limit() {
+        let mut vs = make_validator_set(4, 1000);
+        let mut mgr = EpochTransitionManager::new();
+
+        // Queue 3 joins at epoch 0 — max churn for 4 validators is ceil(4*0.33)=2
+        for id in 5..=7 {
+            mgr.queue_change(
+                ValidatorSetChange::Join(make_validator(id, 1000)),
+                0,
+            );
+        }
+
+        let result = mgr.apply_epoch_transition(&mut vs, 2);
+        // Should apply at most 2 joins, defer the rest
+        assert!(vs.len() <= 6, "Max churn should limit joins");
+        assert!(!result.deferred.is_empty(), "Excess joins should be deferred");
+    }
+
+    #[test]
+    fn test_duplicate_join_rejected() {
+        let mut vs = make_validator_set(4, 1000);
+        let mut mgr = EpochTransitionManager::new();
+
+        // Try to join with id=1 which already exists
+        mgr.queue_change(
+            ValidatorSetChange::Join(make_validator(1, 2000)),
+            0,
+        );
+
+        let result = mgr.apply_epoch_transition(&mut vs, 2);
+        assert_eq!(vs.len(), 4);
+        assert_eq!(result.rejected.len(), 1);
+        assert!(result.rejected[0].contains("already exists"));
+    }
+
+    #[test]
+    fn test_combined_transitions() {
+        let mut vs = make_validator_set(5, 1000);
+        let mut mgr = EpochTransitionManager::new();
+
+        // Simultaneously: join 6, leave 5, update stake of 1
+        mgr.queue_change(ValidatorSetChange::Join(make_validator(6, 1500)), 0);
+        mgr.queue_change(ValidatorSetChange::Leave { validator_id: 5 }, 0);
+        mgr.queue_change(
+            ValidatorSetChange::StakeUpdate {
+                validator_id: 1,
+                new_stake: 3000,
+            },
+            0,
+        );
+
+        // Epoch 4: leave unbonding done, join bonding done at epoch 2
+        let result = mgr.apply_epoch_transition(&mut vs, 4);
+
+        // Stake update should apply
+        assert_eq!(vs.get(1).unwrap().stake, 3000);
+        // Join and leave depend on churn limits, but both should be processable
+        assert!(result.applied.len() >= 2, "Stake update + at least one more: {:?}", result);
     }
 }
