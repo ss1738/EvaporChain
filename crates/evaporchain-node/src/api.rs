@@ -1230,6 +1230,139 @@ async fn get_contract(
     }
 }
 
+// ── EvaporScript handlers ──
+
+#[derive(Deserialize)]
+struct DeployScriptRequest {
+    deployer: u8,
+    source_code: String,
+    energy: u64,
+    half_life: u64,
+}
+
+#[derive(Deserialize)]
+struct CallScriptRequest {
+    caller: u8,
+    contract_id: u64,
+    method: String,
+    args: serde_json::Value,
+    epoch: u64,
+}
+
+async fn post_deploy_script(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Json(req): Json<DeployScriptRequest>,
+) -> Json<TxResultResponse> {
+    if let Err(resp) = require_tx_auth(&headers, &state, false) { return resp; }
+    let mut tx = Transaction::DeployScript(evaporchain_types::DeployScriptTx {
+        deployer: addr_from_byte(req.deployer),
+        source_code: req.source_code.clone(),
+        energy: req.energy,
+        half_life: req.half_life,
+        signature: None,
+        public_key: None,
+    });
+    sign_transaction(&mut tx, &state, None);
+    state.submit_tx(tx);
+    let hash = tx_hash(&format!("deploy-script:{}:{}", req.energy, req.half_life));
+    Json(TxResultResponse {
+        success: true,
+        message: format!(
+            "Script deploy queued: energy={} hl={} source={}B (mempool={})",
+            req.energy, req.half_life, req.source_code.len(), state.mempool_len()
+        ),
+        tx_hash: Some(hash),
+    })
+}
+
+async fn post_call_script(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Json(req): Json<CallScriptRequest>,
+) -> Json<TxResultResponse> {
+    if let Err(resp) = require_tx_auth(&headers, &state, false) { return resp; }
+    let mut tx = Transaction::CallScript(evaporchain_types::CallScriptTx {
+        caller: addr_from_byte(req.caller),
+        contract_id: req.contract_id,
+        method: req.method.clone(),
+        args: serde_json::to_string(&req.args).unwrap_or_default(),
+        epoch: req.epoch,
+        signature: None,
+        public_key: None,
+    });
+    sign_transaction(&mut tx, &state, None);
+    state.submit_tx(tx);
+    let hash = tx_hash(&format!("call-script:{}:{}:{}", req.contract_id, req.method, state.mempool_len()));
+    Json(TxResultResponse {
+        success: true,
+        message: format!(
+            "Script call queued: contract={} method={} (mempool={})",
+            req.contract_id, req.method, state.mempool_len()
+        ),
+        tx_hash: Some(hash),
+    })
+}
+
+async fn get_scripts(
+    State(state): State<Arc<ApiState>>,
+) -> Json<serde_json::Value> {
+    let c = safe_lock(&state.consensus);
+    let scripts = c.executor.script_engine.list();
+    let list: Vec<serde_json::Value> = scripts
+        .iter()
+        .map(|sc| {
+            serde_json::json!({
+                "id": sc.id,
+                "name": sc.name,
+                "creator": account_name(&sc.creator),
+                "energy": sc.energy,
+                "half_life": sc.half_life,
+                "created_epoch": sc.created_epoch,
+                "evaporated": sc.evaporated,
+                "methods": sc.bytecode.methods.keys().collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    Json(serde_json::json!({ "scripts": list, "count": list.len() }))
+}
+
+async fn get_script(
+    State(state): State<Arc<ApiState>>,
+    Path(id): Path<u64>,
+) -> impl IntoResponse {
+    let c = safe_lock(&state.consensus);
+    match c.executor.script_engine.get(id) {
+        Some(sc) => {
+            let resp = serde_json::json!({
+                "id": sc.id,
+                "name": sc.name,
+                "creator": account_name(&sc.creator),
+                "energy": sc.energy,
+                "half_life": sc.half_life,
+                "created_epoch": sc.created_epoch,
+                "last_refreshed": sc.last_refreshed,
+                "evaporated": sc.evaporated,
+                "methods": sc.bytecode.methods.keys().collect::<Vec<_>>(),
+                "state_schema": sc.bytecode.state_schema.fields.iter().map(|f| {
+                    serde_json::json!({
+                        "name": f.name,
+                        "type": format!("{:?}", f.ty),
+                    })
+                }).collect::<Vec<_>>(),
+                "state": sc.state,
+                "opcode_count": sc.bytecode.opcodes.len(),
+            });
+            (StatusCode::OK, Json(resp)).into_response()
+        }
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "script not found" })),
+        )
+            .into_response(),
+    }
+}
+
 async fn dashboard_html() -> impl IntoResponse {
     // Serve the bundled dashboard (built React app)
     // Falls back to a simple redirect message if no build exists
@@ -2570,6 +2703,11 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/contract/:id", get(get_contract))
         .route("/api/tx/deploy-contract", post(post_deploy_contract))
         .route("/api/tx/call-contract", post(post_call_contract))
+        // EvaporScript Contracts
+        .route("/api/scripts", get(get_scripts))
+        .route("/api/script/:id", get(get_script))
+        .route("/api/tx/deploy-script", post(post_deploy_script))
+        .route("/api/tx/call-script", post(post_call_script))
         // NFT Marketplace
         .route("/nft", get(nft_html))
         .route("/api/nfts", get(get_nfts))

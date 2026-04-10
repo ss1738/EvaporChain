@@ -386,6 +386,13 @@ impl ScriptEngine {
         self.contracts.get(&id)
     }
 
+    /// List all deployed script contracts.
+    pub fn list(&self) -> Vec<&ScriptContract> {
+        let mut contracts: Vec<_> = self.contracts.values().collect();
+        contracts.sort_by_key(|c| c.id);
+        contracts
+    }
+
     /// Refresh a script contract's energy.
     pub fn refresh_contract(
         &mut self,

@@ -45,10 +45,22 @@ Novel L1 blockchain with energy-based state decay. 13 Rust crates, post-quantum 
 
 **Test count:** 99 tests in consensus crate (3 new), 46 in proving, 25 in types
 
-### Phase 4: Smart Contract Story — NOT STARTED
-- Pick ONE VM (WASM vs EvaporScript)
-- Deploy/call lifecycle
-- Gas metering
+### Phase 4: Smart Contract Story — COMPLETE (2026-04-10)
+**Decision: EvaporScript** (custom non-Turing-complete VM, already built)
+
+| Task | Status | Details |
+|------|--------|---------|
+| VM choice | Done | EvaporScript — 91 opcodes, stack-based, deterministic, energy-aware |
+| Parser + Compiler | Done (pre-existing) | Source → AST → bytecode, state schema declaration |
+| EvaporVM execution | Done (pre-existing) | Gas-metered, bounded loops (100K), max stack 1024 |
+| Template contracts | Done (pre-existing) | 7 templates (DecayingToken, MortalNFT, Escrow, Auction, Staking, DAO, Temporal) |
+| Deploy/call lifecycle | Done | Full end-to-end: API → mempool → executor → VM → state |
+| Script API endpoints | Done | `/api/tx/deploy-script`, `/api/tx/call-script`, `/api/scripts`, `/api/script/:id` |
+| Gas metering | Done (pre-existing) | Per-opcode costs, GAS_DEPLOY_SCRIPT=150K, GAS_CALL_SCRIPT=50K |
+| Lifecycle hooks | Done (pre-existing) | `on_evaporate()`, `on_grace()`, `on_refresh()` |
+| list() for ScriptEngine | Done | Query all deployed scripts via API |
+
+**Test count:** 53 script VM tests, 99 consensus tests
 
 ### Phase 5: Stress Testing — NOT STARTED
 - Target: 1000+ TPS sustained
