@@ -451,7 +451,7 @@ impl SocialRecoveryManager {
 
 // ── Helper ───────────────────────────────────────────────────────────
 
-fn _make_guardian(id: &str) -> Guardian {
+fn make_guardian(id: &str) -> Guardian {
     Guardian {
         id: id.to_string(),
         name: format!("Guardian {}", id),

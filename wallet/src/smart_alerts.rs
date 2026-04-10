@@ -382,7 +382,7 @@ impl SmartAlertEngine {
 // Helpers for tests
 // ---------------------------------------------------------------------------
 
-fn _make_alert(id: &str, name: &str) -> SmartAlert {
+fn make_alert(id: &str, name: &str) -> SmartAlert {
     SmartAlert {
         id: id.to_string(),
         name: name.to_string(),
@@ -399,7 +399,7 @@ fn _make_alert(id: &str, name: &str) -> SmartAlert {
     }
 }
 
-fn _make_context() -> AlertContext {
+fn make_context() -> AlertContext {
     AlertContext {
         prices: HashMap::new(),
         volumes: HashMap::new(),

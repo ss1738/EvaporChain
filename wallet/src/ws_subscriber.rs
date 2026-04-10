@@ -367,7 +367,7 @@ impl WsSubscriber {
 // ──────────────────────────── Helpers ──────────────────────────────────
 
 /// Create a subscription with sensible defaults.
-fn _make_sub(id: &str, event_type: EventType, endpoint: &str) -> Subscription {
+fn make_sub(id: &str, event_type: EventType, endpoint: &str) -> Subscription {
     Subscription {
         id: id.to_string(),
         event_type,
@@ -382,7 +382,7 @@ fn _make_sub(id: &str, event_type: EventType, endpoint: &str) -> Subscription {
 }
 
 /// Create a received event with minimal fields.
-fn _make_event(sub_id: &str, event_type: EventType) -> ReceivedEvent {
+fn make_event(sub_id: &str, event_type: EventType) -> ReceivedEvent {
     ReceivedEvent {
         subscription_id: sub_id.to_string(),
         event_type,

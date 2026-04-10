@@ -7,10 +7,11 @@ mod user_db;
 use anyhow::Result;
 use api::{ApiState, BlockRecord, ChainStats, EpochSnapshot, EventRecord, NftStore, NftToken, TokenStore, DeployedToken, StakingStore, StakingPool, Staker, DAOStore, DAOProposal, DAOVote};
 use evaporchain_consensus::MockConsensus;
-use evaporchain_consensus::tendermint::{TendermintConsensus, ConsensusMessage, ConsensusAction};
+use evaporchain_consensus::tendermint::{TendermintConsensus, ConsensusMessage, ConsensusAction, ProofVerifier};
 use evaporchain_consensus::validator_set::{ValidatorInfo, ValidatorSet};
 use evaporchain_network::service::{cache_block, NetworkConfig, P2pNetworkService};
 use evaporchain_proving::{MockProver, ProvingEngine};
+use evaporchain_proving::chain_proof::ChainProver;
 use evaporchain_state::db::StateDB;
 use evaporchain_state::RocksDBStateDB;
 use evaporchain_crypto::signatures::{MlDsaKeypair, Signer};
@@ -35,6 +36,45 @@ fn safe_lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
         tracing::warn!("Recovered poisoned mutex lock");
         poisoned.into_inner()
     })
+}
+
+// ──────────────── Nova Proof Verifier (bridge to ChainProver) ───────────
+
+/// Implements `ProofVerifier` for consensus by delegating to a `ChainProver`.
+struct ChainProofVerifier {
+    prover: Arc<Mutex<ChainProver>>,
+}
+
+impl ProofVerifier for ChainProofVerifier {
+    fn verify_block_proof(
+        &self,
+        proof_bytes: &[u8],
+        block_height: u64,
+        genesis_state_root: [u8; 32],
+    ) -> bool {
+        let p = safe_lock(&self.prover);
+        let proof = evaporchain_proving::CompressedProof {
+            proof_bytes: proof_bytes.to_vec(),
+            num_steps: block_height as usize,
+            z0_bytes: genesis_state_root.to_vec(),
+        };
+        match p.verify_chain_proof(&evaporchain_proving::chain_proof::ChainProof {
+            proof,
+            genesis_state_root,
+            final_state_root: [0u8; 32], // not checked in verify path
+            block_height,
+            final_epoch: 0,
+            created_at: 0,
+            proof_size_bytes: proof_bytes.len(),
+            num_steps: block_height as usize,
+        }) {
+            Ok(valid) => valid,
+            Err(e) => {
+                tracing::warn!("Proof verification error: {}", e);
+                false
+            }
+        }
+    }
 }
 
 // ──────────────────────────── Configuration ─────────────────────────────
@@ -576,6 +616,8 @@ fn record_block(
         base_fee: execution.base_fee,
         total_fees: execution.total_fees,
         transactions: api::tx_records_from_block(block),
+        has_nova_proof: block.nova_proof.is_some(),
+        nova_proof_size: block.nova_proof.as_ref().map_or(0, |p| p.len()),
     };
 
     // Push to block history
@@ -957,7 +999,13 @@ async fn main() -> Result<()> {
     println!();
 
     // ── Prover setup ──
-    let prover: Arc<Mutex<Box<dyn ProvingEngine>>> = if args.prove_mode {
+    // Wrap the proving engine in a ChainProver for checkpointing, chain proof
+    // generation, and light-client support.  Checkpoint every 100 blocks.
+    let genesis_state_root = {
+        let db_guard = safe_lock(&db);
+        db_guard.compute_state_root()
+    };
+    let chain_prover: Arc<Mutex<ChainProver>> = if args.prove_mode {
         #[cfg(feature = "prove")]
         {
             println!(
@@ -967,7 +1015,7 @@ async fn main() -> Result<()> {
             let genesis_commitment = {
                 let db = safe_lock(&db);
                 evaporchain_types::DualCommitment {
-                    verkle_root: db.compute_state_root(),
+                    verkle_root: genesis_state_root,
                     mmr_root: [0u8; 32],
                     epoch: 0,
                     active_count: db.object_count(),
@@ -981,9 +1029,11 @@ async fn main() -> Result<()> {
                 "{}   Nova ready (real blocks): {} primary, {} secondary constraints",
                 node_tag, primary, secondary
             );
-            Arc::new(Mutex::new(
-                Box::new(real_prover) as Box<dyn ProvingEngine>
-            ))
+            Arc::new(Mutex::new(ChainProver::new(
+                Box::new(real_prover) as Box<dyn ProvingEngine>,
+                genesis_state_root,
+                100, // checkpoint every 100 blocks
+            )))
         }
         #[cfg(not(feature = "prove"))]
         {
@@ -991,9 +1041,11 @@ async fn main() -> Result<()> {
             std::process::exit(1);
         }
     } else {
-        Arc::new(Mutex::new(
-            Box::new(MockProver::new()) as Box<dyn ProvingEngine>
-        ))
+        Arc::new(Mutex::new(ChainProver::new(
+            Box::new(MockProver::new()) as Box<dyn ProvingEngine>,
+            genesis_state_root,
+            100,
+        )))
     };
 
     // ── Network setup ──
@@ -1097,7 +1149,14 @@ async fn main() -> Result<()> {
             validators.push(ValidatorInfo::new(vid, args.validator_stake, address));
         }
         let vs = ValidatorSet::with_validators(validators);
-        let tc = TendermintConsensus::new(args.validator_id, GRACE_PERIOD, vs);
+        let mut tc = TendermintConsensus::new(args.validator_id, GRACE_PERIOD, vs);
+        // Inject Nova proof verifier into consensus
+        tc.set_proof_verifier(
+            Box::new(ChainProofVerifier {
+                prover: chain_prover.clone(),
+            }),
+            genesis_state_root,
+        );
         println!(
             "{} \x1b[1;35mTendermint BFT consensus\x1b[0m — validator_id={}, validators={}, stake={}",
             node_tag, args.validator_id, args.validator_count, args.validator_stake
@@ -1218,6 +1277,7 @@ async fn main() -> Result<()> {
             node_keypair,
             tendermint: tendermint.as_ref().map(Arc::clone),
             tx_broadcast: Some(api_tx_sender.clone()),
+            chain_prover: Arc::clone(&chain_prover),
         });
         let api_port = args.api_port;
         tokio::spawn(async move {
@@ -1323,7 +1383,7 @@ async fn main() -> Result<()> {
         block: &evaporchain_types::Block,
         consensus: &Arc<Mutex<MockConsensus>>,
         db: &Arc<Mutex<RocksDBStateDB>>,
-        prover: &Arc<Mutex<Box<dyn ProvingEngine>>>,
+        prover: &Arc<Mutex<ChainProver>>,
         prove_mode: bool,
         block_history: &Arc<Mutex<VecDeque<BlockRecord>>>,
         chain_stats: &Arc<Mutex<ChainStats>>,
@@ -1345,19 +1405,19 @@ async fn main() -> Result<()> {
                 db_guard.flush_accounts();
                 db_guard.flush_objects();
 
-                let old_root = block.parent_hash;
-                let new_root = result.execution.state_root;
                 let mut p = safe_lock(&prover);
-                if let Err(e) = p.fold_block(&result.block, old_root, new_root) {
-                    eprintln!("{} \x1b[31mProving error: {}\x1b[0m", node_tag, e);
-                } else if prove_mode {
-                    println!(
-                        "{}   \x1b[35mProof: fold={:.1}ms  acc={}B  folded={}\x1b[0m",
-                        node_tag,
-                        p.last_fold_time_us() as f64 / 1000.0,
-                        p.accumulator_size(),
-                        p.num_blocks_folded(),
-                    );
+                match p.fold_block(&result.block, result.execution.state_root) {
+                    Ok(fold_res) if prove_mode => {
+                        println!(
+                            "{}   \x1b[35mProof: fold={:.1}ms  acc={}B  folded={}\x1b[0m",
+                            node_tag,
+                            fold_res.fold_time_us as f64 / 1000.0,
+                            fold_res.accumulator_size,
+                            p.blocks_folded(),
+                        );
+                    }
+                    Err(e) => eprintln!("{} \x1b[31mProving error: {}\x1b[0m", node_tag, e),
+                    _ => {}
                 }
                 drop(p);
 
@@ -1543,11 +1603,16 @@ async fn main() -> Result<()> {
                                     db_guard.flush_objects();
                                 }
 
-                                // Fold proof
+                                // Fold proof & attach to block
                                 {
-                                    let mut p = safe_lock(&prover);
-                                    if let Err(e) = p.fold_block(&block, block.parent_hash, result.execution.state_root) {
-                                        eprintln!("{} \x1b[31mProving error: {}\x1b[0m", node_tag, e);
+                                    let mut p = safe_lock(&chain_prover);
+                                    match p.fold_block(&block, result.execution.state_root) {
+                                        Ok(_fold_res) => {
+                                            if let Ok(chain_proof) = p.generate_chain_proof() {
+                                                block.nova_proof = Some(chain_proof.proof.proof_bytes);
+                                            }
+                                        }
+                                        Err(e) => eprintln!("{} \x1b[31mProving error: {}\x1b[0m", node_tag, e),
                                     }
                                 }
 
@@ -1666,8 +1731,12 @@ async fn main() -> Result<()> {
                                         db_guard.flush_objects();
                                     }
                                     {
-                                        let mut p = safe_lock(&prover);
-                                        let _ = p.fold_block(&block, block.parent_hash, result.execution.state_root);
+                                        let mut p = safe_lock(&chain_prover);
+                                        if let Ok(_) = p.fold_block(&block, result.execution.state_root) {
+                                            if let Ok(chain_proof) = p.generate_chain_proof() {
+                                                block.nova_proof = Some(chain_proof.proof.proof_bytes);
+                                            }
+                                        }
                                     }
 
                                     let (obj_count, ghost_count) = {
@@ -1773,20 +1842,24 @@ async fn main() -> Result<()> {
                     let mut db_guard = safe_lock(&db);
 
                     match c.produce_block(&mut *db_guard) {
-                        Ok(result) => {
-                            let old_root = result.block.parent_hash;
-                            let new_root = result.execution.state_root;
-                            let mut p = safe_lock(&prover);
-                            if let Err(e) = p.fold_block(&result.block, old_root, new_root) {
-                                eprintln!("{} \x1b[31mProving error: {}\x1b[0m", node_tag, e);
-                            } else if args.prove_mode {
-                                println!(
-                                    "{}   \x1b[35mProof: fold={:.1}ms  acc={}B  folded={}\x1b[0m",
-                                    node_tag,
-                                    p.last_fold_time_us() as f64 / 1000.0,
-                                    p.accumulator_size(),
-                                    p.num_blocks_folded(),
-                                );
+                        Ok(mut result) => {
+                            let mut p = safe_lock(&chain_prover);
+                            match p.fold_block(&result.block, result.execution.state_root) {
+                                Ok(fold_res) => {
+                                    if args.prove_mode {
+                                        println!(
+                                            "{}   \x1b[35mProof: fold={:.1}ms  acc={}B  folded={}\x1b[0m",
+                                            node_tag,
+                                            fold_res.fold_time_us as f64 / 1000.0,
+                                            fold_res.accumulator_size,
+                                            p.blocks_folded(),
+                                        );
+                                    }
+                                    if let Ok(chain_proof) = p.generate_chain_proof() {
+                                        result.block.nova_proof = Some(chain_proof.proof.proof_bytes);
+                                    }
+                                }
+                                Err(e) => eprintln!("{} \x1b[31mProving error: {}\x1b[0m", node_tag, e),
                             }
                             drop(p);
 
@@ -1900,7 +1973,7 @@ async fn main() -> Result<()> {
                 if block.number == expected_next {
                     // Perfect: next block in sequence — apply it
                     apply_follower_block(
-                        &node_tag, &block, &consensus, &db, &prover,
+                        &node_tag, &block, &consensus, &db, &chain_prover,
                         args.prove_mode, &block_history, &chain_stats, &events,
                         &chain_store, &peer_count, &block_cache,
                     );
@@ -1913,7 +1986,7 @@ async fn main() -> Result<()> {
                         };
                         if let Some(queued) = pending_blocks.remove(&next) {
                             apply_follower_block(
-                                &node_tag, &queued, &consensus, &db, &prover,
+                                &node_tag, &queued, &consensus, &db, &chain_prover,
                                 args.prove_mode, &block_history, &chain_stats, &events,
                                 &chain_store, &peer_count, &block_cache,
                             );
@@ -2007,8 +2080,8 @@ async fn main() -> Result<()> {
                                         db_guard.flush_objects();
                                     }
                                     {
-                                        let mut p = safe_lock(&prover);
-                                        let _ = p.fold_block(block, block.parent_hash, result.execution.state_root);
+                                        let mut p = safe_lock(&chain_prover);
+                                        let _ = p.fold_block(block, result.execution.state_root);
                                     }
                                     let (obj_count, ghost_count) = {
                                         let db_guard = safe_lock(&db);
@@ -2035,6 +2108,8 @@ async fn main() -> Result<()> {
                                             base_fee: result.execution.base_fee,
                                             total_fees: result.execution.total_fees,
                                             transactions: api::tx_records_from_block(block),
+                                            has_nova_proof: block.nova_proof.is_some(),
+                                            nova_proof_size: block.nova_proof.as_ref().map_or(0, |p| p.len()),
                                         };
                                         let mut history = safe_lock(&block_history);
                                         history.push_back(record.clone());
@@ -2057,7 +2132,7 @@ async fn main() -> Result<()> {
                             }
                         } else {
                             apply_follower_block(
-                                &node_tag, block, &consensus, &db, &prover,
+                                &node_tag, block, &consensus, &db, &chain_prover,
                                 args.prove_mode, &block_history, &chain_stats, &events,
                                 &chain_store, &peer_count, &block_cache,
                             );
@@ -2084,11 +2159,11 @@ async fn main() -> Result<()> {
                                     let db_guard = safe_lock(&db);
                                     db_guard.flush_accounts();
                                     db_guard.flush_objects();
-                                    let _ = safe_lock(&prover).fold_block(&queued, queued.parent_hash, result.execution.state_root);
+                                    let _ = safe_lock(&chain_prover).fold_block(&queued, result.execution.state_root);
                                 }
                             } else {
                                 apply_follower_block(
-                                    &node_tag, &queued, &consensus, &db, &prover,
+                                    &node_tag, &queued, &consensus, &db, &chain_prover,
                                     args.prove_mode, &block_history, &chain_stats, &events,
                                     &chain_store, &peer_count, &block_cache,
                                 );

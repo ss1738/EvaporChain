@@ -85,6 +85,7 @@ fn bench_transaction_throughput() -> f64 {
             blob_commitments: vec![],
             da_certificate: None,
             commit_certificate: None,
+            nova_proof: None,
     };
 
     let mut executor = ParallelExecutor::new(5);
@@ -150,6 +151,7 @@ fn bench_block_execution() -> f64 {
             blob_commitments: vec![],
             da_certificate: None,
             commit_certificate: None,
+            nova_proof: None,
         };
 
         let _ = executor.execute_block(&mut db, &block);
@@ -248,6 +250,7 @@ fn bench_object_creation() -> f64 {
             blob_commitments: vec![],
             da_certificate: None,
             commit_certificate: None,
+            nova_proof: None,
     };
 
     let mut executor = ParallelExecutor::new(5);
@@ -317,6 +320,7 @@ fn bench_refresh_throughput() -> f64 {
             blob_commitments: vec![],
             da_certificate: None,
             commit_certificate: None,
+            nova_proof: None,
     };
 
     let mut executor = ParallelExecutor::new(5);

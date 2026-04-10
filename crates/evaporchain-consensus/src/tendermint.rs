@@ -26,6 +26,21 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing::{debug, info, warn};
 
+// ─────────────────────── Proof Verification ─────────────────────────────
+
+/// Trait for verifying Nova IVC proofs on proposed blocks.
+/// Injected by the node so that consensus doesn't depend on the proving crate.
+pub trait ProofVerifier: Send + Sync {
+    /// Verify the proof bytes from a block.  Returns `true` if valid (or if
+    /// proof is absent and proof-requirement is not enforced).
+    fn verify_block_proof(
+        &self,
+        proof_bytes: &[u8],
+        block_height: u64,
+        genesis_state_root: [u8; 32],
+    ) -> bool;
+}
+
 // ─────────────────────── Configuration ───────────────────────────────────
 
 /// Default timeout for each consensus phase.
@@ -207,6 +222,10 @@ pub struct TendermintConsensus {
     vrf_keypair: Option<VrfKeypair>,
     /// On-chain randomness beacon (chains VRF outputs across blocks).
     randomness_beacon: RandomnessBeacon,
+    /// Optional proof verifier for validating Nova IVC proofs on proposed blocks.
+    proof_verifier: Option<Box<dyn ProofVerifier>>,
+    /// Genesis state root needed for proof verification.
+    genesis_state_root: [u8; 32],
 }
 
 impl TendermintConsensus {
@@ -241,7 +260,15 @@ impl TendermintConsensus {
             bls_keypair: None,
             vrf_keypair: None,
             randomness_beacon: RandomnessBeacon::new(),
+            proof_verifier: None,
+            genesis_state_root: [0u8; 32],
         }
+    }
+
+    /// Set the proof verifier for validating Nova IVC proofs on proposed blocks.
+    pub fn set_proof_verifier(&mut self, verifier: Box<dyn ProofVerifier>, genesis_state_root: [u8; 32]) {
+        self.proof_verifier = Some(verifier);
+        self.genesis_state_root = genesis_state_root;
     }
 
     /// Set the BLS keypair for this validator (enables aggregate signatures).
@@ -287,6 +314,8 @@ impl TendermintConsensus {
             bls_keypair: None,
             vrf_keypair: None,
             randomness_beacon: RandomnessBeacon::new(),
+            proof_verifier: None,
+            genesis_state_root: [0u8; 32],
         }
     }
 
@@ -611,6 +640,28 @@ impl TendermintConsensus {
                     entry.push((proposer_id, hash));
                 }
 
+                // ── Nova proof verification ──
+                // If a proof verifier is configured, validate the block's nova_proof.
+                // Blocks without proofs are accepted (proof may be generated async).
+                if let (Some(ref verifier), Some(ref proof_bytes)) =
+                    (&self.proof_verifier, &block.nova_proof)
+                {
+                    if !verifier.verify_block_proof(
+                        proof_bytes,
+                        block.number,
+                        self.genesis_state_root,
+                    ) {
+                        warn!(
+                            height = height,
+                            round = round,
+                            proposer = proposer_id,
+                            "Rejected proposal: invalid Nova proof"
+                        );
+                        return actions;
+                    }
+                    debug!(height = height, "Nova proof verified on proposal");
+                }
+
                 self.round_state.proposed_block = Some(block);
                 self.round_state.proposed_hash = Some(hash);
 
@@ -874,6 +925,7 @@ impl TendermintConsensus {
             blob_commitments: vec![],
             da_certificate: None,
             commit_certificate: None,
+            nova_proof: None,
         };
 
         info!(
@@ -982,6 +1034,7 @@ impl TendermintConsensus {
                 blob_commitments: vec![],
                 da_certificate: None,
                 commit_certificate: None,
+            nova_proof: None,
             };
             self.round_state = RoundState::new(0);
             self.round_state.phase = Phase::Commit;
@@ -1267,6 +1320,7 @@ mod tests {
             blob_commitments: vec![],
             da_certificate: None,
             commit_certificate: None,
+            nova_proof: None,
         };
 
         tc.on_block_committed(&block, [1u8; 32], 0);
@@ -1290,6 +1344,7 @@ mod tests {
             blob_commitments: vec![],
             da_certificate: None,
             commit_certificate: None,
+            nova_proof: None,
         };
 
         let h1 = TendermintConsensus::block_hash(&block);
@@ -1426,6 +1481,7 @@ mod tests {
             blob_commitments: vec![],
             da_certificate: None,
             commit_certificate: None,
+            nova_proof: None,
         };
 
         let fake_proposal = ConsensusMessage::Proposal {
@@ -1698,5 +1754,131 @@ mod tests {
             committed_blocks[0].commit_certificate.is_none(),
             "Without BLS keys, commit_certificate should be None"
         );
+    }
+
+    // ── Nova proof verification tests ────────────────────────────────────
+
+    /// A mock proof verifier that rejects any proof containing [0xff; 4].
+    struct RejectBadProofVerifier;
+
+    impl ProofVerifier for RejectBadProofVerifier {
+        fn verify_block_proof(&self, proof_bytes: &[u8], _height: u64, _genesis: [u8; 32]) -> bool {
+            // Reject proofs that start with 0xff (simulates "bad proof")
+            !proof_bytes.starts_with(&[0xff, 0xff, 0xff, 0xff])
+        }
+    }
+
+    #[test]
+    fn test_valid_nova_proof_accepted() {
+        let ids = &[1, 2, 3, 4];
+        let mut tc = make_consensus(2, ids);
+        tc.set_proof_verifier(Box::new(RejectBadProofVerifier), [0u8; 32]);
+
+        let proposer_id = tc.proposer_for_round(1, 0).unwrap().id;
+
+        let block = Block {
+            number: 1,
+            epoch: 1,
+            parent_hash: tc.parent_hash,
+            state_root: [0u8; 32],
+            transactions: vec![],
+            timestamp: 0,
+            producer_id: Some(proposer_id),
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
+            nova_proof: Some(vec![0x01, 0x02, 0x03]), // valid proof
+        };
+
+        let msg = ConsensusMessage::Proposal {
+            height: 1,
+            round: 0,
+            block,
+            proposer_id,
+        };
+
+        let actions = tc.on_message(msg);
+        // Should generate a prevote (proof accepted)
+        let has_prevote = actions.iter().any(|a| matches!(a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. })));
+        assert!(has_prevote, "Valid proof should result in prevote");
+    }
+
+    #[test]
+    fn test_invalid_nova_proof_rejected() {
+        let ids = &[1, 2, 3, 4];
+        let mut tc = make_consensus(2, ids);
+        tc.set_proof_verifier(Box::new(RejectBadProofVerifier), [0u8; 32]);
+
+        let proposer_id = tc.proposer_for_round(1, 0).unwrap().id;
+
+        let block = Block {
+            number: 1,
+            epoch: 1,
+            parent_hash: tc.parent_hash,
+            state_root: [0u8; 32],
+            transactions: vec![],
+            timestamp: 0,
+            producer_id: Some(proposer_id),
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
+            nova_proof: Some(vec![0xff, 0xff, 0xff, 0xff, 0x00]), // bad proof
+        };
+
+        let msg = ConsensusMessage::Proposal {
+            height: 1,
+            round: 0,
+            block,
+            proposer_id,
+        };
+
+        let actions = tc.on_message(msg);
+        // Should NOT generate a prevote (proof rejected)
+        let has_prevote = actions.iter().any(|a| matches!(a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. })));
+        assert!(!has_prevote, "Invalid proof should prevent prevote");
+    }
+
+    #[test]
+    fn test_no_proof_accepted_without_verifier() {
+        // Without a proof verifier, blocks with no proof should be accepted
+        let ids = &[1, 2, 3, 4];
+        let mut tc = make_consensus(2, ids);
+        // No proof verifier set
+
+        let proposer_id = tc.proposer_for_round(1, 0).unwrap().id;
+
+        let block = Block {
+            number: 1,
+            epoch: 1,
+            parent_hash: tc.parent_hash,
+            state_root: [0u8; 32],
+            transactions: vec![],
+            timestamp: 0,
+            producer_id: Some(proposer_id),
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
+            nova_proof: None,
+        };
+
+        let msg = ConsensusMessage::Proposal {
+            height: 1,
+            round: 0,
+            block,
+            proposer_id,
+        };
+
+        let actions = tc.on_message(msg);
+        let has_prevote = actions.iter().any(|a| matches!(a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. })));
+        assert!(has_prevote, "Without verifier, block should be accepted");
     }
 }

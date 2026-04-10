@@ -451,7 +451,7 @@ impl FeeOptimizer {
 // Helper: create a test entry
 // ---------------------------------------------------------------------------
 
-fn _make_entry(gas_price: u64, utilization: f64, tx_count: u32) -> FeeHistoryEntry {
+fn make_entry(gas_price: u64, utilization: f64, tx_count: u32) -> FeeHistoryEntry {
     FeeHistoryEntry {
         timestamp: chrono::Utc::now().to_rfc3339(),
         gas_price,

@@ -192,6 +192,7 @@ impl MockConsensus {
             blob_commitments: vec![],
             da_certificate: None,
             commit_certificate: None,
+            nova_proof: None,
         };
 
         let execution = self
@@ -261,6 +262,7 @@ impl MockConsensus {
             blob_commitments: vec![],
             da_certificate: None,
             commit_certificate: None,
+            nova_proof: None,
         };
 
         let execution = self
@@ -421,6 +423,7 @@ impl RotatingConsensus {
             blob_commitments: vec![],
             da_certificate: None,
             commit_certificate: None,
+            nova_proof: None,
         };
 
         let execution = self
@@ -981,6 +984,7 @@ mod tests {
             blob_commitments: vec![],
             da_certificate: None,
             commit_certificate: None,
+            nova_proof: None,
         };
 
         let result = rc.validate_received_block(&block);
@@ -1011,6 +1015,7 @@ mod tests {
             blob_commitments: vec![],
             da_certificate: None,
             commit_certificate: None,
+            nova_proof: None,
         };
         assert!(rc.validate_received_block(&block).is_err());
     }
@@ -1072,6 +1077,7 @@ mod tests {
             blob_commitments: vec![],
             da_certificate: None,
             commit_certificate: None,
+            nova_proof: None,
         };
 
         assert!(follower.apply_block(&mut db, &block).is_err());

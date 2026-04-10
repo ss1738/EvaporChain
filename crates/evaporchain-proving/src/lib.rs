@@ -162,6 +162,7 @@ mod tests {
             blob_commitments: vec![],
             da_certificate: None,
             commit_certificate: None,
+            nova_proof: None,
         }
     }
 

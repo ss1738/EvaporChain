@@ -67,6 +67,8 @@ pub struct ApiState {
     /// P2P transaction broadcast sender. When present, API-submitted transactions
     /// are also broadcast to the network so other validators can include them.
     pub tx_broadcast: Option<tokio::sync::mpsc::Sender<Transaction>>,
+    /// Chain prover for Nova IVC proof generation and light client sync.
+    pub chain_prover: Arc<Mutex<evaporchain_proving::chain_proof::ChainProver>>,
 }
 
 impl ApiState {
@@ -191,6 +193,12 @@ pub struct BlockRecord {
     pub base_fee: u64,
     pub total_fees: u64,
     pub transactions: Vec<TxRecord>,
+    /// Whether this block has a Nova IVC proof attached.
+    #[serde(default)]
+    pub has_nova_proof: bool,
+    /// Nova proof size in bytes (0 if no proof).
+    #[serde(default)]
+    pub nova_proof_size: usize,
 }
 
 /// Transaction record with hash and structured data.
@@ -2371,6 +2379,121 @@ async fn get_nft_collections(State(state): State<Arc<ApiState>>) -> Json<serde_j
     Json(serde_json::json!(result))
 }
 
+// ─────────────────── Nova Proof / Light Client Endpoints ──────────────────
+
+/// Response for `/api/proof/latest` — returns the latest chain proof for light client sync.
+#[derive(Serialize)]
+struct ChainProofResponse {
+    genesis_state_root: String,
+    final_state_root: String,
+    block_height: u64,
+    final_epoch: u64,
+    proof_size_bytes: usize,
+    num_steps: usize,
+    proof_hex: String,
+}
+
+/// Response for `/api/proof/status` — prover metrics.
+#[derive(Serialize)]
+struct ProverStatusResponse {
+    block_height: u64,
+    epoch: u64,
+    blocks_folded: usize,
+    accumulator_size_bytes: usize,
+    total_prove_time_ms: f64,
+    avg_fold_time_ms: f64,
+    last_fold_time_ms: f64,
+    num_checkpoints: usize,
+    prove_mode: bool,
+}
+
+/// GET /api/proof/latest — generate and return the latest chain proof.
+async fn get_proof_latest(
+    State(state): State<Arc<ApiState>>,
+) -> Result<Json<ChainProofResponse>, StatusCode> {
+    let p = safe_lock(&state.chain_prover);
+    let chain_proof = p.generate_chain_proof().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+
+    Ok(Json(ChainProofResponse {
+        genesis_state_root: hex::encode(chain_proof.genesis_state_root),
+        final_state_root: hex::encode(chain_proof.final_state_root),
+        block_height: chain_proof.block_height,
+        final_epoch: chain_proof.final_epoch,
+        proof_size_bytes: chain_proof.proof_size_bytes,
+        num_steps: chain_proof.num_steps,
+        proof_hex: hex::encode(&chain_proof.proof.proof_bytes),
+    }))
+}
+
+/// GET /api/proof/status — prover metrics and health.
+async fn get_proof_status(
+    State(state): State<Arc<ApiState>>,
+) -> Json<ProverStatusResponse> {
+    let p = safe_lock(&state.chain_prover);
+    let m = p.metrics();
+
+    Json(ProverStatusResponse {
+        block_height: m.block_height,
+        epoch: m.epoch,
+        blocks_folded: m.blocks_folded,
+        accumulator_size_bytes: m.accumulator_size_bytes,
+        total_prove_time_ms: m.total_prove_time_us as f64 / 1000.0,
+        avg_fold_time_ms: m.avg_fold_time_us as f64 / 1000.0,
+        last_fold_time_ms: m.last_fold_time_us as f64 / 1000.0,
+        num_checkpoints: m.num_checkpoints,
+        prove_mode: state.prove_mode,
+    })
+}
+
+/// GET /api/proof/verify — verify a chain proof submitted as hex in query param.
+#[derive(Deserialize)]
+struct VerifyProofQuery {
+    proof_hex: String,
+    num_steps: usize,
+    genesis_state_root: String,
+}
+
+#[derive(Serialize)]
+struct VerifyProofResponse {
+    valid: bool,
+}
+
+async fn get_proof_verify(
+    State(state): State<Arc<ApiState>>,
+    Query(q): Query<VerifyProofQuery>,
+) -> Result<Json<VerifyProofResponse>, StatusCode> {
+    let genesis = hex::decode(&q.genesis_state_root)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    if genesis.len() != 32 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let proof_bytes = hex::decode(&q.proof_hex)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let mut genesis_arr = [0u8; 32];
+    genesis_arr.copy_from_slice(&genesis);
+
+    let chain_proof = evaporchain_proving::chain_proof::ChainProof {
+        proof: evaporchain_proving::CompressedProof {
+            proof_bytes,
+            num_steps: q.num_steps,
+            z0_bytes: genesis_arr.to_vec(),
+        },
+        genesis_state_root: genesis_arr,
+        final_state_root: [0u8; 32],
+        block_height: q.num_steps as u64,
+        final_epoch: 0,
+        created_at: 0,
+        proof_size_bytes: 0,
+        num_steps: q.num_steps,
+    };
+
+    let p = safe_lock(&state.chain_prover);
+    let valid = p.verify_chain_proof(&chain_proof).unwrap_or(false);
+
+    Ok(Json(VerifyProofResponse { valid }))
+}
+
 /// JSON 404 fallback handler.
 async fn fallback_404() -> impl IntoResponse {
     (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Not found"})))
@@ -2485,6 +2608,10 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/faucet", get(faucet_html))
         .route("/docs", get(docs_html))
         .route("/api/faucet", post(post_faucet))
+        // Nova Proofs / Light Client
+        .route("/api/proof/latest", get(get_proof_latest))
+        .route("/api/proof/status", get(get_proof_status))
+        .route("/api/proof/verify", get(get_proof_verify))
         // PWA
         .route("/manifest.json", get(manifest_json))
         .route("/sw.js", get(service_worker_js))

@@ -90,6 +90,7 @@ pub fn initialize_genesis(
             blob_commitments: vec![],
             da_certificate: None,
             commit_certificate: None,
+            nova_proof: None,
     };
 
     Ok(GenesisResult {
