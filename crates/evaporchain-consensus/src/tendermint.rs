@@ -91,6 +91,18 @@ pub enum ConsensusMessage {
         /// BLS12-381 compressed public key (48 bytes).
         bls_public_key: Vec<u8>,
     },
+    /// Validator attests to data availability for a committed block.
+    DAAttestation {
+        block_number: u64,
+        data_root: [u8; 32],
+        validator_id: u64,
+        samples_verified: u32,
+        stake: u64,
+        /// BLS signature over (block_number || data_root || validator_id || samples_verified).
+        signature: Vec<u8>,
+        /// BLS public key of the signer.
+        public_key: Vec<u8>,
+    },
 }
 
 impl ConsensusMessage {
@@ -99,7 +111,8 @@ impl ConsensusMessage {
             Self::Proposal { height, .. } => *height,
             Self::Prevote { height, .. } => *height,
             Self::Precommit { height, .. } => *height,
-            Self::KeyAnnounce { .. } => 0, // key announcements are height-independent
+            Self::KeyAnnounce { .. } => 0,
+            Self::DAAttestation { block_number, .. } => *block_number,
         }
     }
 
@@ -109,6 +122,7 @@ impl ConsensusMessage {
             Self::Prevote { round, .. } => *round,
             Self::Precommit { round, .. } => *round,
             Self::KeyAnnounce { .. } => 0,
+            Self::DAAttestation { .. } => 0,
         }
     }
 }
@@ -240,6 +254,8 @@ pub struct TendermintConsensus {
     genesis_state_root: [u8; 32],
     /// Epoch transition manager for validator set changes.
     epoch_manager: EpochTransitionManager,
+    /// DA attestations collected per block number.
+    da_attestations: HashMap<u64, Vec<evaporchain_da::certificate::DAAttestation>>,
 }
 
 impl TendermintConsensus {
@@ -282,6 +298,7 @@ impl TendermintConsensus {
             proof_verifier: None,
             genesis_state_root: [0u8; 32],
             epoch_manager: EpochTransitionManager::new(),
+            da_attestations: HashMap::new(),
         }
     }
 
@@ -620,6 +637,33 @@ impl TendermintConsensus {
             return actions;
         }
 
+        // Handle DA attestations (height-independent — may arrive after block commit)
+        if let ConsensusMessage::DAAttestation {
+            block_number, data_root, validator_id, samples_verified, stake, ref signature, ref public_key,
+        } = msg {
+            let att = evaporchain_da::certificate::DAAttestation {
+                block_number,
+                data_root,
+                validator_id,
+                samples_verified,
+                stake,
+                signature: signature.clone(),
+                public_key: public_key.clone(),
+            };
+            let atts = self.da_attestations.entry(block_number).or_default();
+            // Deduplicate by validator_id
+            if !atts.iter().any(|a| a.validator_id == validator_id) {
+                atts.push(att);
+                debug!(
+                    block = block_number,
+                    validator = validator_id,
+                    total_atts = atts.len(),
+                    "DA attestation received"
+                );
+            }
+            return actions;
+        }
+
         // Ignore messages for old heights
         if msg.height() < self.height {
             return actions;
@@ -833,8 +877,9 @@ impl TendermintConsensus {
                     }
                 }
             }
-            // KeyAnnounce is handled before height filters above — unreachable here
+            // KeyAnnounce and DAAttestation are handled before height filters — unreachable here
             ConsensusMessage::KeyAnnounce { .. } => {}
+            ConsensusMessage::DAAttestation { .. } => {}
         }
 
         actions
@@ -1293,6 +1338,51 @@ impl TendermintConsensus {
         let msg = Self::bls_vote_message(cert.height, cert.round, &Some(cert.block_hash), "precommit");
         let agg_sig = BlsSignature(cert.aggregate_signature.clone());
         BlsVerifier::aggregate_verify(&msg, &agg_sig, &pks)
+    }
+
+    /// Create a DA attestation message for a committed block.
+    /// Returns None if this validator has no BLS keypair.
+    pub fn make_da_attestation(&self, block_number: u64, data_root: [u8; 32], shards_verified: u32) -> Option<ConsensusMessage> {
+        let kp = self.bls_keypair.as_ref()?;
+        let stake = self.validator_set.get(self.my_id)
+            .map(|v| v.stake)
+            .unwrap_or(0);
+        let att = evaporchain_da::certificate::create_attestation(
+            block_number, &data_root, self.my_id, shards_verified, stake, kp,
+        );
+        Some(ConsensusMessage::DAAttestation {
+            block_number: att.block_number,
+            data_root: att.data_root,
+            validator_id: att.validator_id,
+            samples_verified: att.samples_verified,
+            stake: att.stake,
+            signature: att.signature,
+            public_key: att.public_key,
+        })
+    }
+
+    /// Try to build a DA certificate from collected attestations for a block.
+    /// Returns serialized certificate bytes if supermajority is reached.
+    pub fn try_build_da_certificate(&mut self, block_number: u64, data_root: [u8; 32]) -> Option<Vec<u8>> {
+        let atts = self.da_attestations.get(&block_number)?;
+        let total_stake = self.validator_set.total_stake();
+        let mut builder = evaporchain_da::certificate::CertificateBuilder::new(
+            block_number, data_root, total_stake,
+        );
+        for att in atts {
+            builder.add_attestation(att.clone());
+        }
+        let cert = builder.try_build()?;
+        // Serialize to bytes for the block field
+        serde_json::to_vec(&cert).ok()
+    }
+
+    /// Clean up old DA attestations (keep only last 64 blocks).
+    pub fn prune_da_attestations(&mut self) {
+        if self.da_attestations.len() > 64 {
+            let cutoff = self.height.saturating_sub(64);
+            self.da_attestations.retain(|&k, _| k > cutoff);
+        }
     }
 }
 

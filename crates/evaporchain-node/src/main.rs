@@ -1771,10 +1771,11 @@ async fn main() -> Result<()> {
                                     if let Ok(block_bytes) = serde_json::to_vec(&block) {
                                         if let Ok(da) = BlockDA::new() {
                                             if let Ok(package) = da.encode_block(&block_bytes) {
+                                                let shard_count = package.shards.len() as u32;
                                                 println!(
                                                     "{}   \x1b[36mDA: {} shards, root={}\x1b[0m",
                                                     node_tag,
-                                                    package.shards.len(),
+                                                    shard_count,
                                                     &hex::encode(package.header.commitment_root)[..16],
                                                 );
                                                 let mut store = safe_lock(&da_store);
@@ -1783,6 +1784,32 @@ async fn main() -> Result<()> {
                                                 while store.len() > 64 {
                                                     if let Some(&oldest) = store.keys().next() {
                                                         store.remove(&oldest);
+                                                    }
+                                                }
+                                                drop(store);
+
+                                                // Create and broadcast DA attestation
+                                                if let Some(data_root) = block.data_root {
+                                                    let mut tc = safe_lock(&tc_ref);
+                                                    if let Some(att_msg) = tc.make_da_attestation(block.number, data_root, shard_count) {
+                                                        // Self-register the attestation
+                                                        tc.on_message(att_msg.clone());
+                                                        // Try to build certificate
+                                                        if let Some(cert_bytes) = tc.try_build_da_certificate(block.number, data_root) {
+                                                            block.da_certificate = Some(cert_bytes);
+                                                            println!(
+                                                                "{}   \x1b[1;35mDA Certificate: block #{}, supermajority reached\x1b[0m",
+                                                                node_tag, block.number,
+                                                            );
+                                                        }
+                                                        tc.prune_da_attestations();
+                                                        drop(tc);
+                                                        // Broadcast attestation to peers
+                                                        if let Some(ref sender) = consensus_net_sender {
+                                                            if let Ok(data) = serde_json::to_vec(&att_msg) {
+                                                                let _ = sender.send(data).await;
+                                                            }
+                                                        }
                                                     }
                                                 }
                                             }
@@ -1885,12 +1912,30 @@ async fn main() -> Result<()> {
                             ConsensusMessage::Prevote { .. } => "Prevote",
                             ConsensusMessage::Precommit { .. } => "Precommit",
                             ConsensusMessage::KeyAnnounce { .. } => "KeyAnnounce",
+                            ConsensusMessage::DAAttestation { .. } => "DAAttestation",
                         }
                     );
+                    // Check if this is a DA attestation that might complete a certificate
+                    let da_att_info = if let ConsensusMessage::DAAttestation { block_number, data_root, .. } = &msg {
+                        Some((*block_number, *data_root))
+                    } else {
+                        None
+                    };
+
                     let tc_ref = tendermint.as_ref().unwrap();
                     let actions = {
                         let mut tc = safe_lock(&tc_ref);
-                        tc.on_message(msg)
+                        let actions = tc.on_message(msg);
+                        // If DA attestation, check if supermajority now reached
+                        if let Some((bn, dr)) = da_att_info {
+                            if let Some(_cert_bytes) = tc.try_build_da_certificate(bn, dr) {
+                                println!(
+                                    "{}   \x1b[1;35mDA Certificate: block #{}, supermajority reached (from peer attestation)\x1b[0m",
+                                    node_tag, bn,
+                                );
+                            }
+                        }
+                        actions
                     };
                     let mut commits = broadcast_consensus_actions(
                         actions, &consensus_net_sender, &node_tag,
@@ -1941,10 +1986,11 @@ async fn main() -> Result<()> {
                                         if let Ok(block_bytes) = serde_json::to_vec(&block) {
                                             if let Ok(da) = BlockDA::new() {
                                                 if let Ok(package) = da.encode_block(&block_bytes) {
+                                                    let shard_count = package.shards.len() as u32;
                                                     println!(
                                                         "{}   \x1b[36mDA: {} shards, root={}\x1b[0m",
                                                         node_tag,
-                                                        package.shards.len(),
+                                                        shard_count,
                                                         &hex::encode(package.header.commitment_root)[..16],
                                                     );
                                                     let mut store = safe_lock(&da_store);
@@ -1952,6 +1998,29 @@ async fn main() -> Result<()> {
                                                     while store.len() > 64 {
                                                         if let Some(&oldest) = store.keys().next() {
                                                             store.remove(&oldest);
+                                                        }
+                                                    }
+                                                    drop(store);
+
+                                                    // Create and broadcast DA attestation
+                                                    if let Some(data_root) = block.data_root {
+                                                        let mut tc = safe_lock(&tc_ref);
+                                                        if let Some(att_msg) = tc.make_da_attestation(block.number, data_root, shard_count) {
+                                                            tc.on_message(att_msg.clone());
+                                                            if let Some(cert_bytes) = tc.try_build_da_certificate(block.number, data_root) {
+                                                                block.da_certificate = Some(cert_bytes);
+                                                                println!(
+                                                                    "{}   \x1b[1;35mDA Certificate: block #{}, supermajority reached\x1b[0m",
+                                                                    node_tag, block.number,
+                                                                );
+                                                            }
+                                                            tc.prune_da_attestations();
+                                                            drop(tc);
+                                                            if let Some(ref sender) = consensus_net_sender {
+                                                                if let Ok(data) = serde_json::to_vec(&att_msg) {
+                                                                    let _ = sender.send(data).await;
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                 }
