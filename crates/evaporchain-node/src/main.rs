@@ -1215,8 +1215,15 @@ async fn main() -> Result<()> {
             }),
             genesis_state_root,
         );
+        // Generate and set BLS12-381 keypair for aggregate signature consensus
+        let bls_kp = evaporchain_crypto::signatures::BlsKeypair::generate();
         println!(
-            "{} \x1b[1;35mTendermint BFT consensus\x1b[0m — validator_id={}, validators={}, stake={}",
+            "{} \x1b[1;36mBLS12-381 keypair generated\x1b[0m (pk={}B)",
+            node_tag, bls_kp.public_key_bytes().0.len()
+        );
+        tc.set_bls_keypair(bls_kp);
+        println!(
+            "{} \x1b[1;35mTendermint BFT consensus\x1b[0m — validator_id={}, validators={}, stake={}, BLS=enabled",
             node_tag, args.validator_id, args.validator_count, args.validator_stake
         );
         Some(Arc::new(Mutex::new(tc)))
@@ -1760,6 +1767,13 @@ async fn main() -> Result<()> {
                                     &result.execution.state_root,
                                     peers,
                                 );
+                                // Log BLS aggregate signature status
+                                if let Some(ref cert) = block.commit_certificate {
+                                    println!(
+                                        "{}   \x1b[1;36mBLS CommitCertificate: {} signers, agg_sig={}B\x1b[0m",
+                                        node_tag, cert.signer_ids.len(), cert.aggregate_signature.len()
+                                    );
+                                }
                             }
                             Err(e) => {
                                 eprintln!("{} \x1b[31mBlock execution error: {}\x1b[0m", node_tag, e);
