@@ -83,6 +83,12 @@ pub enum ConsensusMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         bls_signature: Option<Vec<u8>>,
     },
+    /// Validator announces its BLS public key to peers.
+    KeyAnnounce {
+        validator_id: u64,
+        /// BLS12-381 compressed public key (48 bytes).
+        bls_public_key: Vec<u8>,
+    },
 }
 
 impl ConsensusMessage {
@@ -91,6 +97,7 @@ impl ConsensusMessage {
             Self::Proposal { height, .. } => *height,
             Self::Prevote { height, .. } => *height,
             Self::Precommit { height, .. } => *height,
+            Self::KeyAnnounce { .. } => 0, // key announcements are height-independent
         }
     }
 
@@ -99,6 +106,7 @@ impl ConsensusMessage {
             Self::Proposal { round, .. } => *round,
             Self::Prevote { round, .. } => *round,
             Self::Precommit { round, .. } => *round,
+            Self::KeyAnnounce { .. } => 0,
         }
     }
 }
@@ -283,7 +291,20 @@ impl TendermintConsensus {
 
     /// Set the BLS keypair for this validator (enables aggregate signatures).
     pub fn set_bls_keypair(&mut self, keypair: BlsKeypair) {
+        // Also register our own BLS public key in the validator set
+        let pk_bytes = keypair.public_key_bytes().0.clone();
+        if let Some(vi) = self.validator_set.get_mut(self.my_id) {
+            vi.bls_public_key = Some(pk_bytes);
+        }
         self.bls_keypair = Some(keypair);
+    }
+
+    /// Generate a KeyAnnounce message for broadcasting our BLS public key.
+    pub fn make_key_announce(&self) -> Option<ConsensusMessage> {
+        self.bls_keypair.as_ref().map(|kp| ConsensusMessage::KeyAnnounce {
+            validator_id: self.my_id,
+            bls_public_key: kp.public_key_bytes().0.clone(),
+        })
     }
 
     /// Set the VRF keypair for this validator (enables VRF-based leader election).
@@ -571,6 +592,25 @@ impl TendermintConsensus {
     pub fn on_message(&mut self, msg: ConsensusMessage) -> Vec<ConsensusAction> {
         let mut actions = Vec::new();
 
+        // Handle KeyAnnounce before height filters (height-independent)
+        if let ConsensusMessage::KeyAnnounce { validator_id, ref bls_public_key } = msg {
+            if bls_public_key.len() == 48 {
+                if let Some(vi) = self.validator_set.get_mut(validator_id) {
+                    if vi.bls_public_key.is_none() || vi.bls_public_key.as_ref() != Some(bls_public_key) {
+                        vi.bls_public_key = Some(bls_public_key.clone());
+                        info!(
+                            validator = validator_id,
+                            pk_prefix = %hex::encode(&bls_public_key[..8]),
+                            "Registered BLS public key from peer"
+                        );
+                    }
+                }
+            } else {
+                warn!(validator_id, len = bls_public_key.len(), "Invalid BLS key length (expected 48)");
+            }
+            return actions;
+        }
+
         // Ignore messages for old heights
         if msg.height() < self.height {
             return actions;
@@ -784,6 +824,8 @@ impl TendermintConsensus {
                     }
                 }
             }
+            // KeyAnnounce is handled before height filters above — unreachable here
+            ConsensusMessage::KeyAnnounce { .. } => {}
         }
 
         actions

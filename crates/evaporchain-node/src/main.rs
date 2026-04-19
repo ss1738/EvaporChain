@@ -1215,12 +1215,40 @@ async fn main() -> Result<()> {
             }),
             genesis_state_root,
         );
-        // Generate and set BLS12-381 keypair for aggregate signature consensus
-        let bls_kp = evaporchain_crypto::signatures::BlsKeypair::generate();
-        println!(
-            "{} \x1b[1;36mBLS12-381 keypair generated\x1b[0m (pk={}B)",
-            node_tag, bls_kp.public_key_bytes().0.len()
-        );
+        // Load or generate BLS12-381 keypair (persisted to data dir)
+        let bls_key_path = format!("{}/bls_key.bin", args.data_dir);
+        let bls_kp = if let Ok(secret_bytes) = std::fs::read(&bls_key_path) {
+            if secret_bytes.len() == 32 {
+                match evaporchain_crypto::signatures::BlsKeypair::from_secret_bytes(&secret_bytes) {
+                    Ok(kp) => {
+                        println!(
+                            "{} \x1b[1;36mBLS12-381 keypair loaded from disk\x1b[0m (pk={}B)",
+                            node_tag, kp.public_key_bytes().0.len()
+                        );
+                        kp
+                    }
+                    Err(e) => {
+                        eprintln!("{} BLS key file corrupt ({}), regenerating", node_tag, e);
+                        let kp = evaporchain_crypto::signatures::BlsKeypair::generate();
+                        let _ = std::fs::write(&bls_key_path, kp.secret_key_bytes().0);
+                        kp
+                    }
+                }
+            } else {
+                eprintln!("{} BLS key file wrong size ({}B), regenerating", node_tag, secret_bytes.len());
+                let kp = evaporchain_crypto::signatures::BlsKeypair::generate();
+                let _ = std::fs::write(&bls_key_path, kp.secret_key_bytes().0);
+                kp
+            }
+        } else {
+            let kp = evaporchain_crypto::signatures::BlsKeypair::generate();
+            let _ = std::fs::write(&bls_key_path, kp.secret_key_bytes().0);
+            println!(
+                "{} \x1b[1;36mBLS12-381 keypair generated & saved\x1b[0m (pk={}B)",
+                node_tag, kp.public_key_bytes().0.len()
+            );
+            kp
+        };
         tc.set_bls_keypair(bls_kp);
         println!(
             "{} \x1b[1;35mTendermint BFT consensus\x1b[0m — validator_id={}, validators={}, stake={}, BLS=enabled",
@@ -1412,6 +1440,19 @@ async fn main() -> Result<()> {
     } else {
         (None, None, None, None, None, None, None, None, None, None)
     };
+
+    // Broadcast our BLS KeyAnnounce to peers once network is ready
+    if let Some(ref tc_ref) = tendermint {
+        let tc = safe_lock(tc_ref);
+        if let Some(key_msg) = tc.make_key_announce() {
+            if let Some(ref sender) = consensus_net_sender {
+                if let Ok(data) = serde_json::to_vec(&key_msg) {
+                    let _ = sender.try_send(data);
+                    println!("{} \x1b[1;36mBLS KeyAnnounce broadcast to peers\x1b[0m", node_tag);
+                }
+            }
+        }
+    }
 
     // Block queue for out-of-order blocks (gap filling)
     let mut pending_blocks: BTreeMap<u64, evaporchain_types::Block> = BTreeMap::new();
@@ -1798,6 +1839,7 @@ async fn main() -> Result<()> {
                             ConsensusMessage::Proposal { .. } => "Proposal",
                             ConsensusMessage::Prevote { .. } => "Prevote",
                             ConsensusMessage::Precommit { .. } => "Precommit",
+                            ConsensusMessage::KeyAnnounce { .. } => "KeyAnnounce",
                         }
                     );
                     let tc_ref = tendermint.as_ref().unwrap();
