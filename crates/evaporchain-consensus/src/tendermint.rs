@@ -417,7 +417,7 @@ impl TendermintConsensus {
     }
 
     /// Am I the proposer for the current height/round?
-    fn am_i_proposer(&self) -> bool {
+    pub fn am_i_proposer(&self) -> bool {
         self.proposer_for_round(self.height, self.round_state.round)
             .map_or(false, |v| v.id == self.my_id)
     }

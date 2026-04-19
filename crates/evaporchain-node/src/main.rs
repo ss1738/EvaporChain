@@ -327,18 +327,37 @@ fn generate_demo_tx(
     epoch: u64,
     nonces: &mut [u64; 4],
     keypairs: &[MlDsaKeypair; 6],
+    validator_id: u64,
+    validator_count: u64,
+    db: &Arc<Mutex<evaporchain_state::RocksDBStateDB>>,
 ) -> Option<Transaction> {
     use api::{GENESIS_FOUNDATION, GENESIS_CORE_DEV, GENESIS_VALIDATOR1, GENESIS_VALIDATOR2, GENESIS_ECOSYSTEM, GENESIS_COMMUNITY, parse_hex_address};
+    use evaporchain_state::db::StateDB;
 
     let roll: f64 = rng.gen();
     if roll > DEMO_TX_CHANCE {
         return None;
     }
 
-    let acct_hexes: [&str; 6] = [
+    let all_hexes: [&str; 6] = [
         GENESIS_FOUNDATION, GENESIS_CORE_DEV, GENESIS_VALIDATOR1,
         GENESIS_VALIDATOR2, GENESIS_ECOSYSTEM, GENESIS_COMMUNITY,
     ];
+
+    // Partition accounts by validator_id to prevent nonce/duplicate collisions.
+    let per_validator = (all_hexes.len() as u64 / validator_count.max(1)) as usize;
+    let start = ((validator_id - 1) as usize) * per_validator;
+    let end = if validator_id == validator_count {
+        all_hexes.len()
+    } else {
+        start + per_validator
+    };
+    let my_accts = &all_hexes[start..end];
+    let my_keypairs = &keypairs[start..end];
+    if my_accts.is_empty() {
+        return None;
+    }
+
     let obj_ids: [u8; 8] = [0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17];
     let prefixes = ["swap:", "lock:", "vote:", "proof:", "cert:", "stream:", "relay:", "index:"];
 
@@ -346,14 +365,21 @@ fn generate_demo_tx(
 
     match action {
         0..=4 => {
-            let fi = rng.gen_range(0..acct_hexes.len());
-            let mut ti = rng.gen_range(0..acct_hexes.len());
-            while ti == fi { ti = rng.gen_range(0..acct_hexes.len()); }
-            let from = parse_hex_address(acct_hexes[fi]).unwrap();
-            let to = parse_hex_address(acct_hexes[ti]).unwrap();
+            let fi = rng.gen_range(0..my_accts.len());
+            let mut ti = rng.gen_range(0..all_hexes.len());
+            let from_global = start + fi;
+            while ti == from_global { ti = rng.gen_range(0..all_hexes.len()); }
+            let from = parse_hex_address(my_accts[fi]).unwrap();
+            let to = parse_hex_address(all_hexes[ti]).unwrap();
             let amount = rng.gen_range(100..5000);
-            let slot = (fi % 4) as usize;
-            let nonce = nonces[slot];
+            // Read on-chain nonce to avoid collisions across validators
+            let nonce = {
+                let db_guard = safe_lock(db);
+                db_guard.get_account(&from).map(|a| a.nonce).unwrap_or(0)
+            };
+            let slot = (from_global % 4) as usize;
+            // Track locally in case multiple txs from same account in one block
+            let nonce = nonce + nonces[slot];
             nonces[slot] += 1;
             let mut tx = Transaction::Transfer(TransferTx {
                 from,
@@ -363,10 +389,9 @@ fn generate_demo_tx(
                 signature: None,
                 public_key: None,
             });
-            // Sign with sender's keypair
             let msg = tx.signable_bytes();
-            let sig = keypairs[fi].sign(&msg);
-            let pk = keypairs[fi].public_key_bytes();
+            let sig = my_keypairs[fi].sign(&msg);
+            let pk = my_keypairs[fi].public_key_bytes();
             if let Transaction::Transfer(ref mut inner) = tx {
                 inner.signature = Some(sig);
                 inner.public_key = Some(pk);
@@ -374,13 +399,14 @@ fn generate_demo_tx(
             Some(tx)
         }
         5 | 6 => {
-            let oid = 0x20 + (epoch % 200) as u8;
+            // CreateObject: include validator_id in object ID to avoid collisions
+            let oid = 0x20 + ((epoch * validator_count + validator_id) % 200) as u8;
             let energy = rng.gen_range(15..120);
             let half_life = rng.gen_range(500..5000);
-            let ci = rng.gen_range(0..acct_hexes.len());
-            let creator = parse_hex_address(acct_hexes[ci]).unwrap();
+            let ci = rng.gen_range(0..my_accts.len());
+            let creator = parse_hex_address(my_accts[ci]).unwrap();
             let prefix = prefixes[rng.gen_range(0..prefixes.len())];
-            let name = format!("{}0x{:02x}{:02x}", prefix, oid, (epoch % 256) as u8);
+            let name = format!("{}v{}:0x{:02x}{:02x}", prefix, validator_id, oid, (epoch % 256) as u8);
             let mut tx = Transaction::CreateObject(CreateObjectTx {
                 creator,
                 object_id: obj_id(oid),
@@ -391,8 +417,8 @@ fn generate_demo_tx(
                 public_key: None,
             });
             let msg = tx.signable_bytes();
-            let sig = keypairs[ci].sign(&msg);
-            let pk = keypairs[ci].public_key_bytes();
+            let sig = my_keypairs[ci].sign(&msg);
+            let pk = my_keypairs[ci].public_key_bytes();
             if let Transaction::CreateObject(ref mut inner) = tx {
                 inner.signature = Some(sig);
                 inner.public_key = Some(pk);
@@ -402,7 +428,7 @@ fn generate_demo_tx(
         7 | 8 => {
             let target = obj_ids[rng.gen_range(0..obj_ids.len())];
             let deposit = rng.gen_range(100..800);
-            let si = rng.gen_range(0..keypairs.len());
+            let si = rng.gen_range(0..my_keypairs.len());
             let mut tx = Transaction::Refresh(RefreshTx {
                 object_id: obj_id(target),
                 energy_deposit: deposit,
@@ -410,8 +436,8 @@ fn generate_demo_tx(
                 public_key: None,
             });
             let msg = tx.signable_bytes();
-            let sig = keypairs[si].sign(&msg);
-            let pk = keypairs[si].public_key_bytes();
+            let sig = my_keypairs[si].sign(&msg);
+            let pk = my_keypairs[si].public_key_bytes();
             if let Transaction::Refresh(ref mut inner) = tx {
                 inner.signature = Some(sig);
                 inner.public_key = Some(pk);
@@ -420,7 +446,7 @@ fn generate_demo_tx(
         }
         _ => {
             let target = obj_ids[rng.gen_range(0..5)];
-            let si = rng.gen_range(0..keypairs.len());
+            let si = rng.gen_range(0..my_keypairs.len());
             let mut tx = Transaction::Refresh(RefreshTx {
                 object_id: obj_id(target),
                 energy_deposit: rng.gen_range(500..5000),
@@ -428,8 +454,8 @@ fn generate_demo_tx(
                 public_key: None,
             });
             let msg = tx.signable_bytes();
-            let sig = keypairs[si].sign(&msg);
-            let pk = keypairs[si].public_key_bytes();
+            let sig = my_keypairs[si].sign(&msg);
+            let pk = my_keypairs[si].public_key_bytes();
             if let Transaction::Refresh(ref mut inner) = tx {
                 inner.signature = Some(sig);
                 inner.public_key = Some(pk);
@@ -1681,18 +1707,17 @@ async fn main() -> Result<()> {
                     }
                 }
 
-                // Also drain demo txs
+                // Generate demo txs only when we're the proposer (avoids stale nonce accumulation)
                 if args.demo_mode {
-                    let epoch = {
+                    let (epoch, is_proposer) = {
                         let tc = safe_lock(&tc_ref);
-                        tc.epoch() + 1
+                        (tc.epoch() + 1, tc.am_i_proposer())
                     };
-                    if let Some(tx) = generate_demo_tx(&mut rng, epoch, &mut demo_nonces, &demo_keypairs) {
-                        if let Some(ref sender) = net_tx_sender {
-                            let _ = sender.send(tx.clone()).await;
+                    if is_proposer {
+                        if let Some(tx) = generate_demo_tx(&mut rng, epoch, &mut demo_nonces, &demo_keypairs, args.validator_id, args.validator_count, &db) {
+                            let mut tc = safe_lock(&tc_ref);
+                            tc.mempool.submit(tx);
                         }
-                        let mut tc = safe_lock(&tc_ref);
-                        tc.mempool.submit(tx);
                     }
                 }
 
@@ -1828,6 +1853,8 @@ async fn main() -> Result<()> {
                                     let mut tc = safe_lock(&tc_ref);
                                     tc.on_block_committed(&block, result.execution.state_root, result.execution.objects_evaporated);
                                 }
+                                // Reset demo nonce offsets — on-chain nonces are now updated
+                                demo_nonces = [0u64; 4];
 
                                 // Cache and broadcast the committed block
                                 if let Some(ref cache) = block_cache {
@@ -2101,11 +2128,7 @@ async fn main() -> Result<()> {
                         let c = safe_lock(&consensus);
                         c.epoch() + 1
                     };
-                    if let Some(tx) = generate_demo_tx(&mut rng, epoch, &mut demo_nonces, &demo_keypairs) {
-                        // Also broadcast the tx to peers
-                        if let Some(ref sender) = net_tx_sender {
-                            let _ = sender.send(tx.clone()).await;
-                        }
+                    if let Some(tx) = generate_demo_tx(&mut rng, epoch, &mut demo_nonces, &demo_keypairs, args.validator_id, args.validator_count, &db) {
                         let mut c = safe_lock(&consensus);
                         c.mempool.submit(tx);
                     }
