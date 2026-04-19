@@ -1500,7 +1500,22 @@ async fn main() -> Result<()> {
         chain_store: &Arc<ChainStore>,
         peer_count: &Arc<std::sync::atomic::AtomicUsize>,
         block_cache: &Option<evaporchain_network::service::BlockCache>,
+        tendermint: &Option<Arc<Mutex<TendermintConsensus>>>,
     ) -> Option<(usize, usize)> {
+        // Verify CommitCertificate before applying
+        if let Some(ref cert) = block.commit_certificate {
+            if let Some(ref tc_ref) = tendermint {
+                let tc = safe_lock(tc_ref);
+                if !tc.verify_commit_certificate(cert) {
+                    eprintln!(
+                        "{} \x1b[31m⚠ REJECTED block #{} — invalid BLS CommitCertificate\x1b[0m",
+                        node_tag, block.number
+                    );
+                    return None;
+                }
+            }
+        }
+
         let exec_start = Instant::now();
         let mut c = safe_lock(&consensus);
         let mut db_guard = safe_lock(&db);
@@ -2170,6 +2185,7 @@ async fn main() -> Result<()> {
                         &node_tag, &block, &consensus, &db, &chain_prover,
                         args.prove_mode, &block_history, &chain_stats, &events,
                         &throughput, &chain_store, &peer_count, &block_cache,
+                        &tendermint,
                     );
 
                     // After applying, drain any pending blocks that are now in sequence
@@ -2183,6 +2199,7 @@ async fn main() -> Result<()> {
                                 &node_tag, &queued, &consensus, &db, &chain_prover,
                                 args.prove_mode, &block_history, &chain_stats, &events,
                                 &throughput, &chain_store, &peer_count, &block_cache,
+                                &tendermint,
                             );
                         } else {
                             break;
@@ -2259,6 +2276,20 @@ async fn main() -> Result<()> {
                         }
 
                         // block.number == local_height + 1
+                        // Verify CommitCertificate before applying sync block
+                        if let Some(ref cert) = block.commit_certificate {
+                            if let Some(ref tc_ref) = tendermint {
+                                let tc = safe_lock(tc_ref);
+                                if !tc.verify_commit_certificate(cert) {
+                                    eprintln!(
+                                        "{} \x1b[31m⚠ REJECTED sync block #{} — invalid BLS CommitCertificate\x1b[0m",
+                                        node_tag, block.number
+                                    );
+                                    continue;
+                                }
+                            }
+                        }
+
                         if let Some(ref tc_ref) = tendermint {
                             // Apply via Tendermint consensus for state consistency
                             let result = {
@@ -2329,6 +2360,7 @@ async fn main() -> Result<()> {
                                 &node_tag, block, &consensus, &db, &chain_prover,
                                 args.prove_mode, &block_history, &chain_stats, &events,
                                 &throughput, &chain_store, &peer_count, &block_cache,
+                                &tendermint,
                             );
                         }
                     }
@@ -2343,6 +2375,19 @@ async fn main() -> Result<()> {
                             c.block_number() + 1
                         };
                         if let Some(queued) = pending_blocks.remove(&next) {
+                            // Verify CommitCertificate on queued block
+                            if let Some(ref cert) = queued.commit_certificate {
+                                if let Some(ref tc_ref) = tendermint {
+                                    let tc = safe_lock(tc_ref);
+                                    if !tc.verify_commit_certificate(cert) {
+                                        eprintln!(
+                                            "{} \x1b[31m⚠ REJECTED queued block #{} — invalid BLS CommitCertificate\x1b[0m",
+                                            node_tag, queued.number
+                                        );
+                                        continue;
+                                    }
+                                }
+                            }
                             if let Some(ref tc_ref) = tendermint {
                                 let result = {
                                     let mut tc = safe_lock(tc_ref);
@@ -2360,6 +2405,7 @@ async fn main() -> Result<()> {
                                     &node_tag, &queued, &consensus, &db, &chain_prover,
                                     args.prove_mode, &block_history, &chain_stats, &events,
                                     &throughput, &chain_store, &peer_count, &block_cache,
+                                    &tendermint,
                                 );
                             }
                         } else {

@@ -428,6 +428,13 @@ impl TendermintConsensus {
     pub fn tick(&mut self, db: &mut dyn StateDB) -> Vec<ConsensusAction> {
         let mut actions = Vec::new();
 
+        // Re-broadcast BLS KeyAnnounce every 50 blocks so late-joining peers get our key
+        if self.height > 0 && self.height % 50 == 0 && self.round_state.phase == Phase::Propose && self.round_state.round == 0 {
+            if let Some(msg) = self.make_key_announce() {
+                actions.push(ConsensusAction::BroadcastMessage(msg));
+            }
+        }
+
         match self.round_state.phase {
             Phase::Propose => {
                 // If I'm the proposer and haven't proposed yet, propose
