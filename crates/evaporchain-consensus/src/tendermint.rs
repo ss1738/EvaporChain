@@ -772,7 +772,18 @@ impl TendermintConsensus {
 
                 // Verify block connects to our chain
                 if block.parent_hash != self.parent_hash {
-                    debug!("Proposal parent hash mismatch — ignoring");
+                    warn!(
+                        height = height,
+                        round = round,
+                        local_parent = %hex::encode(&self.parent_hash[..8]),
+                        proposal_parent = %hex::encode(&block.parent_hash[..8]),
+                        "Proposal parent hash mismatch — requesting sync"
+                    );
+                    // Our parent hash doesn't match the network's. Request
+                    // recent blocks so we can re-derive the correct chain tip.
+                    // Ask for the last few blocks leading up to this height.
+                    let sync_from = self.height.saturating_sub(5);
+                    actions.push(ConsensusAction::RequestSync(sync_from, height));
                     return actions;
                 }
 

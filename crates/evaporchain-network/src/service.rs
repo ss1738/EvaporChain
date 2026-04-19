@@ -392,14 +392,35 @@ impl P2pNetworkService {
             sample_response_receiver: sample_resp_receiver,
         };
 
+        // Clone bootstrap addrs for periodic re-dial inside the event loop
+        let bootstrap_addrs: Vec<Multiaddr> = config.bootstrap_peers.iter()
+            .filter_map(|s| s.parse::<Multiaddr>().ok())
+            .collect();
+
         // Spawn the event loop
         tokio::spawn(async move {
             let tx_topic_hash = tx_topic.hash();
             let block_topic_hash = block_topic.hash();
             let consensus_topic_hash = consensus_topic.hash();
 
+            // Re-dial bootstrap peers every 30s if we have fewer than expected
+            let mut redial_timer = tokio::time::interval(Duration::from_secs(30));
+            redial_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
             loop {
                 tokio::select! {
+                    // Periodic bootstrap re-dial for peers that weren't reachable at startup
+                    _ = redial_timer.tick() => {
+                        let connected = swarm.connected_peers().count();
+                        if connected < bootstrap_addrs.len() {
+                            for addr in &bootstrap_addrs {
+                                if let Err(e) = swarm.dial(addr.clone()) {
+                                    debug!("Re-dial {addr}: {e}");
+                                }
+                            }
+                            info!("Re-dialing {} bootstrap peers (currently {} connected)", bootstrap_addrs.len(), connected);
+                        }
+                    }
                     // App wants to broadcast a transaction
                     Some(tx) = net_tx_receiver.recv() => {
                         match serde_json::to_vec(&tx) {

@@ -1517,6 +1517,23 @@ async fn main() -> Result<()> {
     // Track whether we have an outstanding sync request to avoid duplicate requests
     let mut sync_in_flight = false;
 
+    // ── Populate block cache from persistence (enables sync after restart) ──
+    if let Some(ref cache) = block_cache {
+        let recent = chain_store.load_recent_full_blocks(2000);
+        if !recent.is_empty() {
+            let count = recent.len();
+            let min_h = recent.first().map(|b| b.number).unwrap_or(0);
+            let max_h = recent.last().map(|b| b.number).unwrap_or(0);
+            for block in &recent {
+                cache_block(cache, block);
+            }
+            println!(
+                "{} \x1b[36mPopulated block cache from persistence: {} blocks ({}..{})\x1b[0m",
+                node_tag, count, min_h, max_h
+            );
+        }
+    }
+
     // ── Generate demo signing keypairs (ML-DSA / Dilithium3) ──
     let demo_keypairs: [MlDsaKeypair; 6] = if args.demo_mode {
         println!("{} \x1b[36mGenerating 6 ML-DSA keypairs for demo signatures...\x1b[0m", node_tag);
@@ -1618,6 +1635,7 @@ async fn main() -> Result<()> {
                 chain_store.save_consensus_meta(
                     result.block.number, result.block.epoch, result.block.parent_hash,
                 );
+                chain_store.save_full_block(&result.block);
                 {
                     let history = safe_lock(&block_history);
                     if let Some(record) = history.back() {
@@ -1912,6 +1930,7 @@ async fn main() -> Result<()> {
 
                                 // Persist
                                 chain_store.save_consensus_meta(block.number, block.epoch, block.parent_hash);
+                                chain_store.save_full_block(&block);
                                 {
                                     let history = safe_lock(&block_history);
                                     if let Some(record) = history.back() {
@@ -1976,6 +1995,7 @@ async fn main() -> Result<()> {
                                 // Prune old blocks and snapshots every 100 blocks
                                 if block.number % 100 == 0 && block.number > 1000 {
                                     let pruned = chain_store.prune_blocks(block.number, 1000);
+                                    chain_store.prune_full_blocks(block.number, 2000);
                                     chain_store.prune_old_snapshots(block.number, 200);
                                     if pruned > 0 {
                                         tracing::info!("Pruned {} old block records (retain last 1000)", pruned);
@@ -2173,6 +2193,7 @@ async fn main() -> Result<()> {
                                         obj_count, ghost_count, exec_elapsed_us,
                                     );
                                     chain_store.save_consensus_meta(block.number, block.epoch, block.parent_hash);
+                                    chain_store.save_full_block(&block);
                                     {
                                         let history = safe_lock(&block_history);
                                         if let Some(record) = history.back() {
@@ -2338,6 +2359,7 @@ async fn main() -> Result<()> {
                         result.block.epoch,
                         result.block.parent_hash,
                     );
+                    chain_store.save_full_block(&result.block);
                     {
                         let history = safe_lock(&block_history);
                         if let Some(record) = history.back() {
@@ -2362,6 +2384,7 @@ async fn main() -> Result<()> {
                     // Prune old blocks every 100 blocks
                     if result.block.number % 100 == 0 && result.block.number > 1000 {
                         let pruned = chain_store.prune_blocks(result.block.number, 1000);
+                        chain_store.prune_full_blocks(result.block.number, 2000);
                         chain_store.prune_old_snapshots(result.block.number, 200);
                         if pruned > 0 {
                             tracing::info!("Pruned {} old block records (retain last 1000)", pruned);
@@ -2614,6 +2637,7 @@ async fn main() -> Result<()> {
                                         history.push_back(record.clone());
                                         if history.len() > 500 { history.pop_front(); }
                                         chain_store.save_block(&record);
+                                        chain_store.save_full_block(block);
                                     }
                                     println!(
                                         "\n{} \x1b[1;32m━━━ Block #{:<4} │ Epoch {:<4} ━━━ SYNCED ━━━━━━━━━━━━━━━━━━━━━━\x1b[0m",

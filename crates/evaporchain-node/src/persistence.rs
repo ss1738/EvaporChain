@@ -3,6 +3,7 @@
 use crate::api::{
     BlockRecord, ChainStats, DAOStore, EventRecord, NftStore, StakingStore, TokenStore,
 };
+use evaporchain_types::Block;
 use rocksdb::{ColumnFamilyDescriptor, Options, DB};
 use std::collections::VecDeque;
 use std::path::Path;
@@ -10,6 +11,8 @@ use std::path::Path;
 const CF_BLOCKS: &str = "blocks";
 const CF_META: &str = "chain_meta";
 const CF_STORES: &str = "stores";
+/// Full serialized Block objects for sync protocol (separate from BlockRecord summaries).
+const CF_FULL_BLOCKS: &str = "full_blocks";
 
 /// Persistent storage for chain data beyond the state DB.
 pub struct ChainStore {
@@ -26,6 +29,7 @@ impl ChainStore {
             ColumnFamilyDescriptor::new(CF_BLOCKS, Options::default()),
             ColumnFamilyDescriptor::new(CF_META, Options::default()),
             ColumnFamilyDescriptor::new(CF_STORES, Options::default()),
+            ColumnFamilyDescriptor::new(CF_FULL_BLOCKS, Options::default()),
         ];
 
         let db = DB::open_cf_descriptors(&opts, path, cf_descriptors)
@@ -262,5 +266,68 @@ impl ChainStore {
             .flatten()
             .and_then(|data| serde_json::from_slice(&data).ok())
             .unwrap_or_default()
+    }
+
+    // ─── Full block storage (for sync protocol) ───
+
+    /// Store a complete Block object for serving sync requests after restart.
+    pub fn save_full_block(&self, block: &Block) {
+        let cf = self.db.cf_handle(CF_FULL_BLOCKS).unwrap();
+        let key = block.number.to_be_bytes();
+        let value = serde_json::to_vec(block).expect("serialize full block");
+        self.db.put_cf(cf, key, value).unwrap();
+    }
+
+    /// Load a single full block by height.
+    pub fn load_full_block(&self, height: u64) -> Option<Block> {
+        let cf = self.db.cf_handle(CF_FULL_BLOCKS).unwrap();
+        let key = height.to_be_bytes();
+        let data = self.db.get_cf(cf, key).ok()??;
+        serde_json::from_slice(&data).ok()
+    }
+
+    /// Load the most recent `limit` full blocks (for populating BlockCache on startup).
+    pub fn load_recent_full_blocks(&self, limit: usize) -> Vec<Block> {
+        let cf = self.db.cf_handle(CF_FULL_BLOCKS).unwrap();
+        let mut blocks = Vec::new();
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::End);
+        for item in iter {
+            if blocks.len() >= limit {
+                break;
+            }
+            if let Ok((_, value)) = item {
+                if let Ok(block) = serde_json::from_slice::<Block>(&value) {
+                    blocks.push(block);
+                }
+            }
+        }
+        blocks.reverse(); // Return in ascending order
+        blocks
+    }
+
+    /// Prune full blocks older than `current_height - retain`.
+    pub fn prune_full_blocks(&self, current_height: u64, retain: u64) -> usize {
+        if current_height <= retain {
+            return 0;
+        }
+        let cutoff = current_height - retain;
+        let cf = self.db.cf_handle(CF_FULL_BLOCKS).unwrap();
+        let mut pruned = 0;
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+        for item in iter {
+            if let Ok((key, _)) = item {
+                if key.len() >= 8 {
+                    let block_num = u64::from_be_bytes(key[..8].try_into().unwrap());
+                    if block_num >= cutoff {
+                        break;
+                    }
+                    let _ = self.db.delete_cf(cf, &key);
+                    pruned += 1;
+                }
+            } else {
+                break;
+            }
+        }
+        pruned
     }
 }
