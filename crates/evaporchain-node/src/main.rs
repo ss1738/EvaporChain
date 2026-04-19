@@ -1577,11 +1577,15 @@ async fn main() -> Result<()> {
         block_cache: &Option<evaporchain_network::service::BlockCache>,
         tendermint: &Option<Arc<Mutex<TendermintConsensus>>>,
     ) -> Option<(usize, usize)> {
-        // Verify CommitCertificate before applying
+        // Verify CommitCertificate before applying (lenient if BLS keys not yet received)
         if let Some(ref cert) = block.commit_certificate {
             if let Some(ref tc_ref) = tendermint {
                 let tc = safe_lock(tc_ref);
-                if !tc.verify_commit_certificate(cert) {
+                let has_all_keys = cert.signer_ids.iter().all(|&vid| {
+                    tc.validator_set().get(vid)
+                        .map_or(false, |v| v.bls_public_key.is_some())
+                });
+                if has_all_keys && !tc.verify_commit_certificate(cert) {
                     eprintln!(
                         "{} \x1b[31m⚠ REJECTED block #{} — invalid BLS CommitCertificate\x1b[0m",
                         node_tag, block.number
