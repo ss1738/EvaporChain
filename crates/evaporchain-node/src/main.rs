@@ -1308,6 +1308,25 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Restore mempool from disk
+    if !is_fresh {
+        let saved_txs = chain_store.load_mempool();
+        if !saved_txs.is_empty() {
+            if let Some(ref tc) = tendermint {
+                let mut c = safe_lock(&tc);
+                for tx in &saved_txs {
+                    c.mempool.submit(tx.clone());
+                }
+            } else {
+                let mut c = safe_lock(&consensus);
+                for tx in &saved_txs {
+                    c.mempool.submit(tx.clone());
+                }
+            }
+            println!("{} \x1b[32mRestored {} transactions from mempool\x1b[0m", node_tag, saved_txs.len());
+        }
+    }
+
     // ── API shared state ──
     let block_history: Arc<Mutex<VecDeque<BlockRecord>>> = Arc::new(Mutex::new(
         if is_fresh {
@@ -1613,6 +1632,17 @@ async fn main() -> Result<()> {
                     let ev = safe_lock(&events);
                     chain_store.save_events(&ev);
                 }
+                // Persist mempool
+                {
+                    let pending: Vec<evaporchain_types::Transaction> = if let Some(ref tc_ref) = tendermint {
+                        let c = safe_lock(tc_ref);
+                        c.mempool.pending().iter().cloned().collect()
+                    } else {
+                        let c = safe_lock(consensus);
+                        c.mempool.pending().iter().cloned().collect()
+                    };
+                    chain_store.save_mempool(&pending);
+                }
 
                 // Cache block for serving to peers
                 if let Some(ref cache) = block_cache {
@@ -1896,6 +1926,12 @@ async fn main() -> Result<()> {
                                     let ev = safe_lock(&events);
                                     chain_store.save_events(&ev);
                                 }
+                                // Persist mempool
+                                {
+                                    let tc = safe_lock(&tc_ref);
+                                    let pending: Vec<evaporchain_types::Transaction> = tc.mempool.pending().iter().cloned().collect();
+                                    chain_store.save_mempool(&pending);
+                                }
 
                                 // DA encode the block for light client sampling
                                 if let Ok(da) = evaporchain_da::block_da::BlockDA::new() {
@@ -1934,6 +1970,15 @@ async fn main() -> Result<()> {
                                             }
                                         }
                                         Err(e) => eprintln!("{} \x1b[31mSnapshot error: {}\x1b[0m", node_tag, e),
+                                    }
+                                }
+
+                                // Prune old blocks and snapshots every 100 blocks
+                                if block.number % 100 == 0 && block.number > 1000 {
+                                    let pruned = chain_store.prune_blocks(block.number, 1000);
+                                    chain_store.prune_old_snapshots(block.number, 200);
+                                    if pruned > 0 {
+                                        tracing::info!("Pruned {} old block records (retain last 1000)", pruned);
                                     }
                                 }
 
@@ -2142,6 +2187,12 @@ async fn main() -> Result<()> {
                                         let ev = safe_lock(&events);
                                         chain_store.save_events(&ev);
                                     }
+                                    // Persist mempool
+                                    {
+                                        let tc = safe_lock(&tc_ref);
+                                        let pending: Vec<evaporchain_types::Transaction> = tc.mempool.pending().iter().cloned().collect();
+                                        chain_store.save_mempool(&pending);
+                                    }
 
                                     // DA encode (follower path)
                                     if let Ok(da) = evaporchain_da::block_da::BlockDA::new() {
@@ -2300,6 +2351,21 @@ async fn main() -> Result<()> {
                     {
                         let ev = safe_lock(&events);
                         chain_store.save_events(&ev);
+                    }
+                    // Persist mempool
+                    {
+                        let c = safe_lock(&consensus);
+                        let pending: Vec<evaporchain_types::Transaction> = c.mempool.pending().iter().cloned().collect();
+                        chain_store.save_mempool(&pending);
+                    }
+
+                    // Prune old blocks every 100 blocks
+                    if result.block.number % 100 == 0 && result.block.number > 1000 {
+                        let pruned = chain_store.prune_blocks(result.block.number, 1000);
+                        chain_store.prune_old_snapshots(result.block.number, 200);
+                        if pruned > 0 {
+                            tracing::info!("Pruned {} old block records (retain last 1000)", pruned);
+                        }
                     }
 
                     print_block_result(

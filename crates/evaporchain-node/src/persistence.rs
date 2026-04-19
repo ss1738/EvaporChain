@@ -89,6 +89,58 @@ impl ChainStore {
         blocks
     }
 
+    /// Prune block records older than `current_height - retain`.
+    /// Returns the number of blocks pruned.
+    pub fn prune_blocks(&self, current_height: u64, retain: u64) -> usize {
+        if current_height <= retain {
+            return 0;
+        }
+        let cutoff = current_height - retain;
+        let cf = self.db.cf_handle(CF_BLOCKS).unwrap();
+        let mut pruned = 0;
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+        for item in iter {
+            if let Ok((key, _)) = item {
+                if key.len() >= 8 {
+                    let block_num = u64::from_be_bytes(key[..8].try_into().unwrap());
+                    if block_num >= cutoff {
+                        break;
+                    }
+                    let _ = self.db.delete_cf(cf, &key);
+                    pruned += 1;
+                }
+            } else {
+                break;
+            }
+        }
+        pruned
+    }
+
+    /// Prune old snapshots, keeping only the latest.
+    pub fn prune_old_snapshots(&self, current_height: u64, retain: u64) {
+        let cf = self.db.cf_handle(CF_META).unwrap();
+        if current_height <= retain {
+            return;
+        }
+        let cutoff = current_height - retain;
+        // Scan for snapshot:N keys where N < cutoff
+        let prefix = b"snapshot:";
+        let iter = self.db.prefix_iterator_cf(cf, prefix);
+        for item in iter {
+            if let Ok((key, _)) = item {
+                if let Ok(key_str) = std::str::from_utf8(&key) {
+                    if let Some(height_str) = key_str.strip_prefix("snapshot:") {
+                        if let Ok(h) = height_str.parse::<u64>() {
+                            if h < cutoff {
+                                let _ = self.db.delete_cf(cf, &key);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // ─── Chain stats ───
 
     pub fn save_chain_stats(&self, stats: &ChainStats) {
@@ -178,6 +230,22 @@ impl ChainStore {
         let key = format!("snapshot:{}", height);
         let data = self.db.get_cf(cf, key.as_bytes()).ok()??;
         Some((height, state_root, data))
+    }
+
+    // ─── Mempool persistence ───
+
+    pub fn save_mempool(&self, txs: &[evaporchain_types::Transaction]) {
+        let cf = self.db.cf_handle(CF_META).unwrap();
+        let value = serde_json::to_vec(txs).expect("serialize mempool");
+        self.db.put_cf(cf, b"mempool", value).unwrap();
+    }
+
+    pub fn load_mempool(&self) -> Vec<evaporchain_types::Transaction> {
+        let cf = self.db.cf_handle(CF_META).unwrap();
+        self.db.get_cf(cf, b"mempool").ok()
+            .flatten()
+            .and_then(|data| serde_json::from_slice(&data).ok())
+            .unwrap_or_default()
     }
 
     // ─── Events ───
