@@ -13,8 +13,10 @@ pub mod block_da;
 pub mod evaporation_da;
 pub mod commitments;
 pub mod certificate;
+pub mod namespace;
 
 pub use erasure::ErasureEncoder;
 pub use sampling::{DASampler, DAProof, SampleQuery, SampleResponse};
 pub use block_da::BlockDA;
 pub use evaporation_da::EvaporationDAProof;
+pub use namespace::{NamespaceMerkleTree, NamespacedBlob, NamespaceId, NamespaceProof};

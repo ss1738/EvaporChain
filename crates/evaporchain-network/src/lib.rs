@@ -4,7 +4,7 @@ use thiserror::Error;
 
 pub mod service;
 
-pub use service::{NetworkConfig, P2pNetworkService};
+pub use service::{NetworkConfig, P2pNetworkService, ShardCache, cache_da_package};
 
 /// Errors that can occur in the network layer.
 #[derive(Debug, Error)]

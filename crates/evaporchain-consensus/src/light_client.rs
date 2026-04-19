@@ -13,6 +13,7 @@
 
 use evaporchain_crypto::signatures::{BlsPublicKey, BlsSignature, BlsVerifier};
 use evaporchain_crypto::hash::blake3_hash;
+use evaporchain_da::sampling::{DASampler, SampleQuery, SampleResponse};
 use evaporchain_types::CommitCertificate;
 use std::collections::BTreeMap;
 use tracing::debug;
@@ -22,7 +23,7 @@ use crate::validator_set::ValidatorSet;
 // ─────────────────────── Types ───────────────────────────────────────
 
 /// A light block header — the minimal data needed to verify consensus.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LightBlockHeader {
     pub height: u64,
     pub epoch: u64,
@@ -360,6 +361,99 @@ fn bls_vote_message(height: u64, round: u32, block_hash: &[u8; 32]) -> Vec<u8> {
     msg
 }
 
+// ─────────────────────── DA Sampling Verifier ───────────────────────
+
+/// Minimum number of valid shard samples needed for DA confidence.
+const MIN_DA_SAMPLES: usize = 4;
+
+/// Result of data availability verification.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DAVerificationResult {
+    /// Sufficient samples verified — data is available with high probability.
+    Available { samples_verified: usize },
+    /// Not enough valid samples — data may be unavailable.
+    Unavailable { valid: usize, required: usize },
+    /// No data_root in block header — nothing to verify.
+    NoDataRoot,
+}
+
+/// Data availability sampling verifier for light clients.
+///
+/// Given a block's `data_root` (commitment over erasure-coded shards),
+/// the light client requests random shard samples from full nodes via P2P
+/// and verifies each sample's Merkle proof against the data_root.
+pub struct DASVerifier;
+
+impl DASVerifier {
+    /// Generate random shard sample queries for a block.
+    ///
+    /// The light client sends these queries to full nodes via the
+    /// P2P shard sampling protocol.
+    pub fn generate_queries(
+        block_number: u64,
+        total_shards: usize,
+        num_samples: usize,
+        seed: &[u8],
+    ) -> Vec<SampleQuery> {
+        DASampler::generate_queries(block_number, total_shards, num_samples, seed)
+    }
+
+    /// Verify shard sample responses against a block's data_root.
+    ///
+    /// Each response contains shard data + Merkle proof. The verifier checks:
+    /// 1. Shard hash matches the data (not tampered)
+    /// 2. Merkle proof verifies against data_root
+    /// 3. Sufficient samples pass (≥ MIN_DA_SAMPLES)
+    pub fn verify_samples(
+        data_root: &[u8; 32],
+        responses: &[SampleResponse],
+    ) -> DAVerificationResult {
+        let mut valid_count = 0;
+
+        for response in responses {
+            // Check shard hash integrity
+            let computed_hash: [u8; 32] = blake3::hash(&response.shard.data).into();
+            if computed_hash != response.shard.hash {
+                continue;
+            }
+
+            // Check Merkle proof root matches block data_root
+            if response.proof.root != *data_root {
+                continue;
+            }
+
+            // Verify Merkle proof
+            if DASampler::verify_proof(&response.shard, &response.proof) {
+                valid_count += 1;
+            }
+        }
+
+        if valid_count >= MIN_DA_SAMPLES {
+            DAVerificationResult::Available {
+                samples_verified: valid_count,
+            }
+        } else {
+            DAVerificationResult::Unavailable {
+                valid: valid_count,
+                required: MIN_DA_SAMPLES,
+            }
+        }
+    }
+
+    /// Verify data availability for a block header.
+    ///
+    /// Returns `NoDataRoot` if the block has no DA commitment (empty block).
+    pub fn verify_block_da(
+        data_root: Option<&[u8; 32]>,
+        responses: &[SampleResponse],
+    ) -> DAVerificationResult {
+        match data_root {
+            Some(root) => Self::verify_samples(root, responses),
+            None => DAVerificationResult::NoDataRoot,
+        }
+    }
+}
+
 // ─────────────────────── Tests ───────────────────────────────────────
 
 #[cfg(test)]
@@ -656,5 +750,145 @@ mod tests {
             }
             other => panic!("Expected Invalid, got {:?}", other),
         }
+    }
+
+    // ── DAS Verifier Tests ──
+
+    #[test]
+    fn test_das_verifier_valid_samples() {
+        use evaporchain_da::block_da::BlockDA;
+
+        let da = BlockDA::new().unwrap();
+        let data = b"light client DAS verification test data";
+        let package = da.encode_block(data).unwrap();
+        let data_root = package.header.commitment_root;
+
+        // Generate valid sample responses (at least MIN_DA_SAMPLES)
+        let mut responses = Vec::new();
+        for i in 0..6 {
+            let response = da.prove_shard(&package, i % package.shards.len()).unwrap();
+            responses.push(response);
+        }
+
+        let result = DASVerifier::verify_samples(&data_root, &responses);
+        assert_eq!(
+            result,
+            DAVerificationResult::Available { samples_verified: 6 }
+        );
+    }
+
+    #[test]
+    fn test_das_verifier_insufficient_samples() {
+        use evaporchain_da::block_da::BlockDA;
+
+        let da = BlockDA::new().unwrap();
+        let data = b"test data for insufficient sampling";
+        let package = da.encode_block(data).unwrap();
+        let data_root = package.header.commitment_root;
+
+        // Only 2 samples — below MIN_DA_SAMPLES (4)
+        let responses: Vec<SampleResponse> = (0..2)
+            .map(|i| da.prove_shard(&package, i).unwrap())
+            .collect();
+
+        let result = DASVerifier::verify_samples(&data_root, &responses);
+        assert_eq!(
+            result,
+            DAVerificationResult::Unavailable { valid: 2, required: 4 }
+        );
+    }
+
+    #[test]
+    fn test_das_verifier_tampered_shard_rejected() {
+        use evaporchain_da::block_da::BlockDA;
+
+        let da = BlockDA::new().unwrap();
+        let data = b"tamper detection test";
+        let package = da.encode_block(data).unwrap();
+        let data_root = package.header.commitment_root;
+
+        // Get valid responses then tamper one
+        let mut responses: Vec<SampleResponse> = (0..5)
+            .map(|i| da.prove_shard(&package, i % package.shards.len()).unwrap())
+            .collect();
+
+        // Tamper with the first shard's data
+        responses[0].shard.data[0] ^= 0xFF;
+
+        let result = DASVerifier::verify_samples(&data_root, &responses);
+        // One tampered sample fails, but 4 valid ones still pass
+        assert_eq!(
+            result,
+            DAVerificationResult::Available { samples_verified: 4 }
+        );
+    }
+
+    #[test]
+    fn test_das_verifier_wrong_data_root() {
+        use evaporchain_da::block_da::BlockDA;
+
+        let da = BlockDA::new().unwrap();
+        let data = b"wrong root test";
+        let package = da.encode_block(data).unwrap();
+
+        let wrong_root = [0xAA; 32];
+        let responses: Vec<SampleResponse> = (0..5)
+            .map(|i| da.prove_shard(&package, i % package.shards.len()).unwrap())
+            .collect();
+
+        let result = DASVerifier::verify_samples(&wrong_root, &responses);
+        assert_eq!(
+            result,
+            DAVerificationResult::Unavailable { valid: 0, required: 4 }
+        );
+    }
+
+    #[test]
+    fn test_das_verifier_no_data_root() {
+        let result = DASVerifier::verify_block_da(None, &[]);
+        assert_eq!(result, DAVerificationResult::NoDataRoot);
+    }
+
+    #[test]
+    fn test_das_query_generation() {
+        let queries = DASVerifier::generate_queries(42, 8, 6, b"light-client-seed");
+        assert_eq!(queries.len(), 6);
+        for q in &queries {
+            assert_eq!(q.block_number, 42);
+            assert!(q.shard_index < 8);
+        }
+    }
+
+    #[test]
+    fn test_das_e2e_light_client_flow() {
+        use evaporchain_da::block_da::BlockDA;
+
+        // Simulate complete light client DAS flow:
+        // 1. Block producer encodes data
+        let da = BlockDA::new().unwrap();
+        let block_data = b"full e2e light client DAS verification flow test";
+        let package = da.encode_block(block_data).unwrap();
+        let data_root = package.header.commitment_root;
+
+        // 2. Light client generates random queries
+        let queries = DASVerifier::generate_queries(
+            100,
+            package.header.total_shards,
+            6,
+            b"lc-sampling-seed",
+        );
+
+        // 3. Full node responds with shard proofs
+        let responses: Vec<SampleResponse> = queries
+            .iter()
+            .map(|q| da.prove_shard(&package, q.shard_index).unwrap())
+            .collect();
+
+        // 4. Light client verifies samples against data_root from block header
+        let result = DASVerifier::verify_block_da(Some(&data_root), &responses);
+        assert_eq!(
+            result,
+            DAVerificationResult::Available { samples_verified: 6 }
+        );
     }
 }

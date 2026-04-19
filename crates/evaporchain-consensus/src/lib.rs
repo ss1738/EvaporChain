@@ -1,4 +1,7 @@
+pub mod bridge;
+pub mod da_attestation;
 pub mod encrypted_mempool;
+pub mod finality;
 pub mod light_client;
 pub mod mempool;
 pub mod state_sync;

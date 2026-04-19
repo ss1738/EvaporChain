@@ -2,6 +2,7 @@ pub mod db;
 pub mod evaporation;
 pub mod refresh;
 pub mod rocksdb_backend;
+pub mod snapshot;
 
 pub use db::{InMemoryStateDB, StateDB};
 pub use evaporation::{EvaporationEngine, EvaporationResult};

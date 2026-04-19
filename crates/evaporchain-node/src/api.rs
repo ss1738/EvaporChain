@@ -72,8 +72,10 @@ pub struct ApiState {
     pub chain_prover: Arc<Mutex<evaporchain_proving::chain_proof::ChainProver>>,
     /// Rolling throughput metrics (TPS, block exec time, gas).
     pub throughput: Arc<Mutex<ThroughputTracker>>,
-    /// DA shard store: block_number -> BlockDAPackage (last 64 blocks).
+    /// DA packages per block number (ring buffer, last 256 blocks).
     pub da_store: Arc<Mutex<BTreeMap<u64, BlockDAPackage>>>,
+    /// Latest state snapshot metadata (height, state_root, data_len).
+    pub snapshot_info: Arc<Mutex<Option<(u64, [u8; 32], usize)>>>,
 }
 
 impl ApiState {
@@ -2739,56 +2741,6 @@ async fn get_proof_verify(
 // ──────────────────────── DA Sampling Endpoints ─────────────────────────
 
 #[derive(Serialize)]
-struct DAStatusResponse {
-    blocks_available: usize,
-    oldest_block: Option<u64>,
-    newest_block: Option<u64>,
-}
-
-/// GET /api/da/status — how many blocks have DA shards stored.
-async fn get_da_status(
-    State(state): State<Arc<ApiState>>,
-) -> Json<DAStatusResponse> {
-    let store = safe_lock(&state.da_store);
-    let oldest = store.keys().next().copied();
-    let newest = store.keys().next_back().copied();
-    Json(DAStatusResponse {
-        blocks_available: store.len(),
-        oldest_block: oldest,
-        newest_block: newest,
-    })
-}
-
-#[derive(Serialize)]
-struct DAShardResponse {
-    block_number: u64,
-    shard_index: usize,
-    total_shards: usize,
-    commitment_root: String,
-    shard_data_hex: String,
-    shard_size_bytes: usize,
-}
-
-/// GET /api/da/sample/:block/:shard_index — retrieve a specific shard for DA sampling.
-async fn get_da_sample(
-    State(state): State<Arc<ApiState>>,
-    Path((block_number, shard_index)): Path<(u64, usize)>,
-) -> Result<Json<DAShardResponse>, StatusCode> {
-    let store = safe_lock(&state.da_store);
-    let package = store.get(&block_number).ok_or(StatusCode::NOT_FOUND)?;
-    let shard = package.shards.get(shard_index).ok_or(StatusCode::NOT_FOUND)?;
-
-    Ok(Json(DAShardResponse {
-        block_number,
-        shard_index,
-        total_shards: package.shards.len(),
-        commitment_root: hex::encode(package.header.commitment_root),
-        shard_data_hex: hex::encode(&shard.data),
-        shard_size_bytes: shard.data.len(),
-    }))
-}
-
-#[derive(Serialize)]
 struct DABlockInfoResponse {
     block_number: u64,
     total_shards: usize,
@@ -2822,6 +2774,135 @@ fn security_headers(response: &mut axum::http::Response<axum::body::Body>) {
     let h = response.headers_mut();
     // Only set headers not already handled by nginx reverse proxy
     h.insert("Permissions-Policy", "camera=(), microphone=(), geolocation=()".parse().unwrap());
+}
+
+// ─────────────── Data Availability Sampling ───────────────────────────────
+
+async fn get_da_status(
+    State(state): State<Arc<ApiState>>,
+) -> impl IntoResponse {
+    let store = state.da_store.lock().unwrap();
+    let blocks_with_da: Vec<u64> = store.keys().cloned().collect();
+    let total = blocks_with_da.len();
+    let latest = blocks_with_da.last().copied();
+    Json(serde_json::json!({
+        "da_enabled": true,
+        "blocks_cached": total,
+        "latest_da_block": latest,
+        "erasure_scheme": "reed_solomon_4+4",
+    }))
+}
+
+async fn get_da_sample(
+    State(state): State<Arc<ApiState>>,
+    Path((block, shard_index)): Path<(u64, usize)>,
+) -> impl IntoResponse {
+    let store = state.da_store.lock().unwrap();
+    let Some(package) = store.get(&block) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": format!("no DA data for block {}", block)})),
+        ).into_response();
+    };
+
+    if shard_index >= package.shards.len() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": format!("shard_index {} out of range (total: {})", shard_index, package.shards.len())
+            })),
+        ).into_response();
+    }
+
+    let da = evaporchain_da::block_da::BlockDA::new().unwrap();
+    match da.prove_shard(package, shard_index) {
+        Ok(response) => Json(serde_json::json!({
+            "block": block,
+            "shard_index": shard_index,
+            "shard_data": hex::encode(&response.shard.data),
+            "shard_hash": hex::encode(response.shard.hash),
+            "proof": {
+                "siblings": response.proof.siblings.iter().map(hex::encode).collect::<Vec<_>>(),
+                "leaf_index": response.proof.leaf_index,
+                "root": hex::encode(response.proof.root),
+            },
+            "commitment_root": hex::encode(package.header.commitment_root),
+            "total_shards": package.header.total_shards,
+        })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("{}", e)})),
+        ).into_response(),
+    }
+}
+
+async fn get_da_light_sample(
+    State(state): State<Arc<ApiState>>,
+    Path(block): Path<u64>,
+) -> impl IntoResponse {
+    let store = state.da_store.lock().unwrap();
+    let Some(package) = store.get(&block) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": format!("no DA data for block {}", block)})),
+        ).into_response();
+    };
+
+    // Generate 4 random sample queries using block hash as seed
+    let seed = blake3::hash(&block.to_le_bytes());
+    let queries = evaporchain_da::block_da::BlockDA::generate_sample_queries(
+        block, &package.header, 4, seed.as_bytes(),
+    );
+
+    let da = evaporchain_da::block_da::BlockDA::new().unwrap();
+    let mut samples = Vec::new();
+    let mut all_valid = true;
+
+    for query in &queries {
+        if let Ok(response) = da.prove_shard(package, query.shard_index) {
+            let valid = evaporchain_da::block_da::BlockDA::verify_shard_sample(
+                &package.header, &response,
+            );
+            if !valid {
+                all_valid = false;
+            }
+            samples.push(serde_json::json!({
+                "shard_index": query.shard_index,
+                "shard_hash": hex::encode(response.shard.hash),
+                "proof_root": hex::encode(response.proof.root),
+                "valid": valid,
+            }));
+        }
+    }
+
+    Json(serde_json::json!({
+        "block": block,
+        "commitment_root": hex::encode(package.header.commitment_root),
+        "total_shards": package.header.total_shards,
+        "samples_requested": queries.len(),
+        "samples_verified": samples.len(),
+        "all_valid": all_valid,
+        "samples": samples,
+    })).into_response()
+}
+
+// ─────────────── State Sync ───────────────────────────────────────────
+
+async fn get_sync_snapshot_info(
+    State(state): State<Arc<ApiState>>,
+) -> impl IntoResponse {
+    let info = state.snapshot_info.lock().unwrap();
+    match *info {
+        Some((height, state_root, data_len)) => Json(serde_json::json!({
+            "available": true,
+            "height": height,
+            "state_root": hex::encode(state_root),
+            "data_bytes": data_len,
+        })),
+        None => Json(serde_json::json!({
+            "available": false,
+        })),
+    }
 }
 
 pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthState>) -> Router {
@@ -2937,10 +3018,13 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/proof/latest", get(get_proof_latest))
         .route("/api/proof/status", get(get_proof_status))
         .route("/api/proof/verify", get(get_proof_verify))
-        // DA sampling
+        // Data Availability sampling
         .route("/api/da/status", get(get_da_status))
         .route("/api/da/block/:number", get(get_da_block))
         .route("/api/da/sample/:block/:shard_index", get(get_da_sample))
+        .route("/api/da/light-sample/:block", get(get_da_light_sample))
+        // State sync
+        .route("/api/sync/snapshot-info", get(get_sync_snapshot_info))
         // PWA
         .route("/manifest.json", get(manifest_json))
         .route("/sw.js", get(service_worker_js))

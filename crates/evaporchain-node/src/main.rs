@@ -1341,6 +1341,12 @@ async fn main() -> Result<()> {
     // Channel for API-submitted transactions to reach P2P network & all mempools
     let (api_tx_sender, mut api_tx_receiver) = tokio::sync::mpsc::channel::<Transaction>(256);
 
+    // DA store and snapshot info — shared between API server and commit loop
+    let da_store: Arc<Mutex<std::collections::BTreeMap<u64, evaporchain_da::block_da::BlockDAPackage>>> =
+        Arc::new(Mutex::new(std::collections::BTreeMap::new()));
+    let snapshot_info: Arc<Mutex<Option<(u64, [u8; 32], usize)>>> =
+        Arc::new(Mutex::new(None));
+
     // ── API server ──
     if args.api_mode {
         // Initialize user database for wallet/auth system
@@ -1405,6 +1411,7 @@ async fn main() -> Result<()> {
             chain_prover: Arc::clone(&chain_prover),
             throughput: Arc::clone(&throughput),
             da_store: Arc::clone(&da_store),
+            snapshot_info: Arc::clone(&snapshot_info),
         });
         let api_port = args.api_port;
         tokio::spawn(async move {
@@ -1669,8 +1676,9 @@ async fn main() -> Result<()> {
                     commit_actions.push(action);
                 }
                 ConsensusAction::RequestSync(from, to) => {
-                    // Consensus detected it is behind — signal sync needed
-                    commit_actions.push(ConsensusAction::RequestSync(from, to));
+                    tracing::info!("State sync requested: height {} -> {}", from, to);
+                    // State sync is handled via the sync API endpoints;
+                    // the node will initiate sync on the next tick.
                 }
             }
         }
@@ -1889,6 +1897,46 @@ async fn main() -> Result<()> {
                                     chain_store.save_events(&ev);
                                 }
 
+                                // DA encode the block for light client sampling
+                                if let Ok(da) = evaporchain_da::block_da::BlockDA::new() {
+                                    let block_bytes = serde_json::to_vec(&block).unwrap_or_default();
+                                    if let Ok(package) = da.encode_block(&block_bytes) {
+                                        let mut store = da_store.lock().unwrap();
+                                        store.insert(block.number, package);
+                                        // Keep only last 256 blocks
+                                        while store.len() > 256 {
+                                            if let Some(&oldest) = store.keys().next() {
+                                                store.remove(&oldest);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Create state snapshot every 100 blocks for state sync
+                                if block.number % 100 == 0 && block.number > 0 {
+                                    let db_guard = safe_lock(&db);
+                                    match evaporchain_state::snapshot::SnapshotBuilder::create(
+                                        &*db_guard, block.number, block.epoch,
+                                    ) {
+                                        Ok(snapshot) => {
+                                            if let Ok(bytes) = evaporchain_state::snapshot::serialize_snapshot(&snapshot) {
+                                                let size = bytes.len();
+                                                chain_store.save_snapshot(block.number, &bytes, result.execution.state_root);
+                                                {
+                                                    let mut info = snapshot_info.lock().unwrap();
+                                                    *info = Some((block.number, result.execution.state_root, size));
+                                                }
+                                                eprintln!(
+                                                    "{} \x1b[1;35mSnapshot created at height {} ({} bytes, {} accounts, {} objects)\x1b[0m",
+                                                    node_tag, block.number, size,
+                                                    snapshot.header.account_count, snapshot.header.object_count,
+                                                );
+                                            }
+                                        }
+                                        Err(e) => eprintln!("{} \x1b[31mSnapshot error: {}\x1b[0m", node_tag, e),
+                                    }
+                                }
+
                                 let producer_str = block.producer_id
                                     .map(|id| format!("validator-{}", id))
                                     .unwrap_or_else(|| "unknown".to_string());
@@ -2093,6 +2141,20 @@ async fn main() -> Result<()> {
                                     {
                                         let ev = safe_lock(&events);
                                         chain_store.save_events(&ev);
+                                    }
+
+                                    // DA encode (follower path)
+                                    if let Ok(da) = evaporchain_da::block_da::BlockDA::new() {
+                                        let block_bytes = serde_json::to_vec(&block).unwrap_or_default();
+                                        if let Ok(package) = da.encode_block(&block_bytes) {
+                                            let mut store = da_store.lock().unwrap();
+                                            store.insert(block.number, package);
+                                            while store.len() > 256 {
+                                                if let Some(&oldest) = store.keys().next() {
+                                                    store.remove(&oldest);
+                                                }
+                                            }
+                                        }
                                     }
 
                                     let producer_str = block.producer_id

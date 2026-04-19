@@ -19,6 +19,8 @@ use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 use crate::{NetworkError, NetworkService};
+use evaporchain_da::block_da::BlockDAPackage;
+use evaporchain_da::sampling::{SampleQuery, SampleResponse, DASampler};
 use evaporchain_types::{Block, Transaction};
 
 // ─────────────────────────── Topics ──────────────────────────────────────
@@ -27,6 +29,7 @@ const TX_TOPIC: &str = "evaporchain/txs/1";
 const BLOCK_TOPIC: &str = "evaporchain/blocks/1";
 const CONSENSUS_TOPIC: &str = "evaporchain/consensus/1";
 const BLOCK_SYNC_PROTOCOL: &str = "/evaporchain/blocksync/1";
+const SHARD_SAMPLE_PROTOCOL: &str = "/evaporchain/shardsample/1";
 
 // ─────────────────────────── Block Sync Types ────────────────────────────
 
@@ -48,6 +51,29 @@ pub struct BlockSyncResponse {
 /// Shared block cache for serving sync requests. The app inserts produced/applied blocks;
 /// the network layer reads from it to serve peer requests.
 pub type BlockCache = Arc<RwLock<BTreeMap<u64, Block>>>;
+
+/// Shared DA shard cache — full nodes store BlockDAPackages so they can
+/// serve shard sample requests from light clients.
+pub type ShardCache = Arc<RwLock<BTreeMap<u64, BlockDAPackage>>>;
+
+/// Maximum number of DA packages to keep in the shard cache.
+const MAX_SHARD_CACHE_SIZE: usize = 500;
+
+// ─────────────────────────── Shard Sample Types ─────────────────────────
+
+/// Request a DA shard sample from a peer (light client → full node).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShardSampleRequest {
+    /// Queries for specific shards.
+    pub queries: Vec<SampleQuery>,
+}
+
+/// Response containing shard samples with proofs (full node → light client).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShardSampleResponse {
+    /// Shard data + Merkle proofs for each requested shard.
+    pub samples: Vec<Option<SampleResponse>>,
+}
 
 /// Maximum number of blocks to serve in a single sync response.
 const MAX_SYNC_BATCH: u64 = 100;
@@ -90,6 +116,7 @@ struct EvaporBehaviour {
     mdns: mdns::tokio::Behaviour,
     identify: identify::Behaviour,
     block_sync: request_response::json::Behaviour<BlockSyncRequest, BlockSyncResponse>,
+    shard_sample: request_response::json::Behaviour<ShardSampleRequest, ShardSampleResponse>,
 }
 
 // ─────────────────────────── Service ─────────────────────────────────────
@@ -119,6 +146,12 @@ pub struct NetworkChannels {
     pub consensus_sender: mpsc::Sender<Vec<u8>>,
     /// Receive consensus messages from the network (network → app).
     pub consensus_receiver: mpsc::Receiver<Vec<u8>>,
+    /// Shared DA shard cache — app inserts BlockDAPackages, network serves sample requests.
+    pub shard_cache: ShardCache,
+    /// Send shard sample requests to peers (light client → network).
+    pub sample_request_sender: mpsc::Sender<Vec<SampleQuery>>,
+    /// Receive shard sample responses from peers (network → light client).
+    pub sample_response_receiver: mpsc::Receiver<Vec<SampleResponse>>,
 }
 
 /// Handle for broadcasting to a running network service.
@@ -173,6 +206,20 @@ pub fn cache_block(cache: &BlockCache, block: &Block) {
     }
 }
 
+/// Insert a DA package into the shard cache for serving sample requests.
+pub fn cache_da_package(cache: &ShardCache, block_number: u64, package: BlockDAPackage) {
+    let mut c = cache.write().unwrap_or_else(|poisoned| {
+        warn!("Recovered poisoned shard cache write lock");
+        poisoned.into_inner()
+    });
+    c.insert(block_number, package);
+    while c.len() > MAX_SHARD_CACHE_SIZE {
+        if let Some(&oldest) = c.keys().next() {
+            c.remove(&oldest);
+        }
+    }
+}
+
 /// P2P network service using libp2p with GossipSub + mDNS + block sync.
 pub struct P2pNetworkService;
 
@@ -186,6 +233,8 @@ impl P2pNetworkService {
     ) -> Result<(NetworkChannels, NetworkHandle, PeerId), NetworkError> {
         let block_cache: BlockCache = Arc::new(RwLock::new(BTreeMap::new()));
         let block_cache_inner = Arc::clone(&block_cache);
+        let shard_cache: ShardCache = Arc::new(RwLock::new(BTreeMap::new()));
+        let shard_cache_inner = Arc::clone(&shard_cache);
 
         // Build the swarm
         let mut swarm = SwarmBuilder::with_new_identity()
@@ -237,11 +286,21 @@ impl P2pNetworkService {
                         .with_request_timeout(Duration::from_secs(30)),
                 );
 
+                let shard_sample = request_response::json::Behaviour::new(
+                    [(
+                        StreamProtocol::new(SHARD_SAMPLE_PROTOCOL),
+                        ProtocolSupport::Full,
+                    )],
+                    request_response::Config::default()
+                        .with_request_timeout(Duration::from_secs(10)),
+                );
+
                 EvaporBehaviour {
                     gossipsub,
                     mdns,
                     identify,
                     block_sync,
+                    shard_sample,
                 }
             })
             .map_err(|e| NetworkError::ConnectionError(format!("behaviour: {e}")))?
@@ -304,6 +363,10 @@ impl P2pNetworkService {
         let (sync_blocks_sender, sync_blocks_receiver) = mpsc::channel::<Vec<Block>>(32);
         let (tip_sender, tip_receiver) = mpsc::channel::<u64>(32);
 
+        // Shard sample channels
+        let (sample_req_sender, mut sample_req_receiver) = mpsc::channel::<Vec<SampleQuery>>(32);
+        let (sample_resp_sender, sample_resp_receiver) = mpsc::channel::<Vec<SampleResponse>>(32);
+
         let peer_count = Arc::new(AtomicUsize::new(0));
         let peer_count_inner = Arc::clone(&peer_count);
 
@@ -324,6 +387,9 @@ impl P2pNetworkService {
             tip_receiver,
             consensus_sender: app_consensus_sender,
             consensus_receiver: app_consensus_receiver,
+            shard_cache: Arc::clone(&shard_cache),
+            sample_request_sender: sample_req_sender,
+            sample_response_receiver: sample_resp_receiver,
         };
 
         // Spawn the event loop
@@ -360,6 +426,20 @@ impl P2pNetworkService {
                     Some(data) = net_consensus_receiver.recv() => {
                         if let Err(e) = swarm.behaviour_mut().gossipsub.publish(consensus_topic.clone(), data) {
                             debug!("Failed to publish consensus msg: {e}");
+                        }
+                    }
+                    // App requests shard samples from peers (light client DAS)
+                    Some(queries) = sample_req_receiver.recv() => {
+                        let peers: Vec<PeerId> = swarm.connected_peers().cloned().collect();
+                        if peers.is_empty() {
+                            warn!("No peers available for shard sample request");
+                        } else {
+                            let target = peers[0];
+                            debug!("Requesting {} shard samples from peer {target}", queries.len());
+                            swarm.behaviour_mut().shard_sample.send_request(
+                                &target,
+                                ShardSampleRequest { queries },
+                            );
                         }
                     }
                     // App requests block sync from peers
@@ -464,6 +544,67 @@ impl P2pNetworkService {
                                 debug!("Inbound sync from {peer} failed: {error}");
                             }
                             SwarmEvent::Behaviour(EvaporBehaviourEvent::BlockSync(
+                                request_response::Event::ResponseSent { .. },
+                            )) => {}
+                            // ── Shard sample: inbound request (serve shard proofs) ──
+                            SwarmEvent::Behaviour(EvaporBehaviourEvent::ShardSample(
+                                request_response::Event::Message {
+                                    peer,
+                                    message: request_response::Message::Request { request, channel, .. },
+                                },
+                            )) => {
+                                debug!("Peer {peer} requested {} shard samples", request.queries.len());
+                                let cache = shard_cache_inner.read().unwrap_or_else(|p| {
+                                    warn!("Recovered poisoned shard cache read lock");
+                                    p.into_inner()
+                                });
+                                let mut samples = Vec::with_capacity(request.queries.len());
+                                for query in &request.queries {
+                                    let sample = cache.get(&query.block_number).and_then(|pkg| {
+                                        if query.shard_index < pkg.shards.len() {
+                                            DASampler::generate_proof(&pkg.shards, query.shard_index)
+                                                .ok()
+                                                .map(|proof| SampleResponse {
+                                                    shard: pkg.shards[query.shard_index].clone(),
+                                                    proof,
+                                                })
+                                        } else {
+                                            None
+                                        }
+                                    });
+                                    samples.push(sample);
+                                }
+                                drop(cache);
+                                let response = ShardSampleResponse { samples };
+                                if let Err(e) = swarm.behaviour_mut().shard_sample.send_response(channel, response) {
+                                    warn!("Failed to send shard sample response to {peer}: {e:?}");
+                                }
+                            }
+                            // ── Shard sample: outbound response (received samples) ──
+                            SwarmEvent::Behaviour(EvaporBehaviourEvent::ShardSample(
+                                request_response::Event::Message {
+                                    peer,
+                                    message: request_response::Message::Response { response, .. },
+                                },
+                            )) => {
+                                let valid: Vec<SampleResponse> = response.samples.into_iter().flatten().collect();
+                                debug!("Received {} shard samples from peer {peer}", valid.len());
+                                if !valid.is_empty() {
+                                    let _ = sample_resp_sender.send(valid).await;
+                                }
+                            }
+                            // ── Shard sample failures ──
+                            SwarmEvent::Behaviour(EvaporBehaviourEvent::ShardSample(
+                                request_response::Event::OutboundFailure { peer, error, .. },
+                            )) => {
+                                warn!("Shard sample request to {peer} failed: {error}");
+                            }
+                            SwarmEvent::Behaviour(EvaporBehaviourEvent::ShardSample(
+                                request_response::Event::InboundFailure { peer, error, .. },
+                            )) => {
+                                debug!("Inbound shard sample from {peer} failed: {error}");
+                            }
+                            SwarmEvent::Behaviour(EvaporBehaviourEvent::ShardSample(
                                 request_response::Event::ResponseSent { .. },
                             )) => {}
                             // ── mDNS discovery ──
@@ -738,6 +879,75 @@ mod tests {
             }
             Err(_) => {
                 eprintln!("block sync timed out (mDNS may not be available)");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_shard_cache_insert_and_evict() {
+        use evaporchain_da::block_da::BlockDA;
+
+        let cache: ShardCache = Arc::new(RwLock::new(BTreeMap::new()));
+        let da = BlockDA::new().expect("create BlockDA");
+        let data = b"test block data for erasure coding";
+        let package = da.encode_block(data).expect("encode");
+
+        cache_da_package(&cache, 1, package.clone());
+        cache_da_package(&cache, 2, package);
+
+        let c = cache.read().unwrap();
+        assert_eq!(c.len(), 2);
+        assert!(c.contains_key(&1));
+        assert!(c.contains_key(&2));
+    }
+
+    #[tokio::test]
+    async fn test_shard_sample_request_response() {
+        use evaporchain_da::block_da::BlockDA;
+        use evaporchain_da::sampling::SampleQuery;
+
+        // Start two nodes
+        let (ch1, _h1, _pid1) = P2pNetworkService::start(make_config(0))
+            .await
+            .expect("node1");
+        let (mut ch2, _h2, _pid2) = P2pNetworkService::start(make_config(0))
+            .await
+            .expect("node2");
+
+        // Populate node1's shard cache with DA-encoded block
+        let da = BlockDA::new().expect("create BlockDA");
+        let data = b"hello world block data for shard sampling test";
+        let package = da.encode_block(data).expect("encode");
+        let commitment_root = package.header.commitment_root;
+        cache_da_package(&ch1.shard_cache, 42, package);
+
+        // Wait for mDNS discovery
+        wait_for_discovery(Duration::from_secs(3)).await;
+
+        // Node 2 requests shard samples for block 42
+        let queries = vec![
+            SampleQuery { block_number: 42, shard_index: 0 },
+            SampleQuery { block_number: 42, shard_index: 1 },
+        ];
+        ch2.sample_request_sender.send(queries).await.expect("send sample request");
+
+        // Node 2 should receive shard samples
+        let result = timeout(Duration::from_secs(5), ch2.sample_response_receiver.recv()).await;
+        match result {
+            Ok(Some(samples)) => {
+                assert!(!samples.is_empty(), "should receive shard samples");
+                // Verify each sample's proof is valid against the commitment root
+                for sample in &samples {
+                    assert_eq!(sample.proof.root, commitment_root);
+                    assert!(DASampler::verify_proof(&sample.shard, &sample.proof));
+                }
+                info!("Received {} verified shard samples", samples.len());
+            }
+            Ok(None) => {
+                eprintln!("sample_response_receiver closed (mDNS may not have connected)");
+            }
+            Err(_) => {
+                eprintln!("shard sample timed out (mDNS may not be available)");
             }
         }
     }

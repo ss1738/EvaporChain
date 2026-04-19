@@ -7,6 +7,7 @@ repository.workspace = true
 
 [dependencies]
 evaporchain-types = { path = "../evaporchain-types" }
+evaporchain-da = { path = "../evaporchain-da" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }

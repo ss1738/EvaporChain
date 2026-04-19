@@ -153,6 +153,33 @@ impl ChainStore {
         serde_json::from_slice(&data).ok()
     }
 
+    // ─── State snapshots ───
+
+    pub fn save_snapshot(&self, height: u64, data: &[u8], state_root: [u8; 32]) {
+        let cf = self.db.cf_handle(CF_META).unwrap();
+        // Store the snapshot data keyed by height
+        let key = format!("snapshot:{}", height);
+        self.db.put_cf(cf, key.as_bytes(), data).unwrap();
+        // Store metadata: latest snapshot height + state root
+        self.db.put_cf(cf, b"snapshot_latest_height", height.to_le_bytes()).unwrap();
+        self.db.put_cf(cf, b"snapshot_latest_root", state_root).unwrap();
+    }
+
+    pub fn load_latest_snapshot(&self) -> Option<(u64, [u8; 32], Vec<u8>)> {
+        let cf = self.db.cf_handle(CF_META).unwrap();
+        let height_bytes = self.db.get_cf(cf, b"snapshot_latest_height").ok()??;
+        let root_bytes = self.db.get_cf(cf, b"snapshot_latest_root").ok()??;
+        if height_bytes.len() < 8 || root_bytes.len() < 32 {
+            return None;
+        }
+        let height = u64::from_le_bytes(height_bytes[..8].try_into().ok()?);
+        let mut state_root = [0u8; 32];
+        state_root.copy_from_slice(&root_bytes[..32]);
+        let key = format!("snapshot:{}", height);
+        let data = self.db.get_cf(cf, key.as_bytes()).ok()??;
+        Some((height, state_root, data))
+    }
+
     // ─── Events ───
 
     pub fn save_events(&self, events: &VecDeque<EventRecord>) {

@@ -121,7 +121,7 @@ impl ValidatorInfo {
 // ─────────────────────── ValidatorSet ─────────────────────────────────────
 
 /// Set of validators with energy-weighted leader selection.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ValidatorSet {
     validators: Vec<ValidatorInfo>,
 }

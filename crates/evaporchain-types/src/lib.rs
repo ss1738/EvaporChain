@@ -575,6 +575,17 @@ pub type NullifierHash = [u8; 32];
 /// On-chain note commitment (32 bytes). Stored in the Merkle note tree.
 pub type NoteCommitment = [u8; 32];
 
+/// Serializable Merkle membership proof for a note in the tree.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MerkleProofData {
+    /// Sibling hashes from leaf to root.
+    pub siblings: Vec<[u8; 32]>,
+    /// Leaf index in the tree.
+    pub leaf_index: usize,
+    /// Root hash this proof is valid against.
+    pub root: [u8; 32],
+}
+
 /// On-chain energy decay proof data (no crypto logic — just the proof payload).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnergyDecayProofData {
@@ -636,6 +647,24 @@ pub struct UnshieldTx {
     pub anchor: [u8; 32],
     /// Balance binding hash proving conservation.
     pub balance_binding: [u8; 32],
+    /// Input amounts (one per input nullifier, for balance verification).
+    #[serde(default)]
+    pub input_amounts: Vec<u64>,
+    /// Input blinding factors (one per input nullifier, for commitment/binding verification).
+    #[serde(default)]
+    pub input_blindings: Vec<[u8; 32]>,
+    /// Input value commitments: Poseidon(amount || blinding) per input.
+    #[serde(default)]
+    pub input_value_commitments: Vec<NoteCommitment>,
+    /// Input note commitments: the actual Merkle tree leaves. Poseidon(value_commitment || owner_hash || epoch || half_life).
+    #[serde(default)]
+    pub input_note_commitments: Vec<NoteCommitment>,
+    /// Input Merkle proofs (one per input, for note membership verification).
+    #[serde(default)]
+    pub input_merkle_proofs: Vec<MerkleProofData>,
+    /// Output blinding factors (one per change commitment, for binding verification).
+    #[serde(default)]
+    pub output_blindings: Vec<[u8; 32]>,
     /// Optional change outputs (remaining private balance).
     #[serde(default)]
     pub change_commitments: Vec<NoteCommitment>,
@@ -659,6 +688,27 @@ pub struct PrivateTransferTx {
     pub balance_binding: [u8; 32],
     /// Transparent fee paid to validators.
     pub fee: u64,
+    /// Input amounts (one per input nullifier, for balance verification).
+    #[serde(default)]
+    pub input_amounts: Vec<u64>,
+    /// Input blinding factors (one per input nullifier, for binding verification).
+    #[serde(default)]
+    pub input_blindings: Vec<[u8; 32]>,
+    /// Input value commitments: Poseidon(amount || blinding) per input.
+    #[serde(default)]
+    pub input_value_commitments: Vec<NoteCommitment>,
+    /// Input note commitments: the actual Merkle tree leaves.
+    #[serde(default)]
+    pub input_note_commitments: Vec<NoteCommitment>,
+    /// Input Merkle proofs (one per input, for note membership verification).
+    #[serde(default)]
+    pub input_merkle_proofs: Vec<MerkleProofData>,
+    /// Output amounts (one per output commitment, for balance verification).
+    #[serde(default)]
+    pub output_amounts: Vec<u64>,
+    /// Output blinding factors (one per output commitment, for binding verification).
+    #[serde(default)]
+    pub output_blindings: Vec<[u8; 32]>,
     /// Energy decay proofs for object-backed notes.
     #[serde(default)]
     pub energy_proofs: Vec<EnergyDecayProofData>,

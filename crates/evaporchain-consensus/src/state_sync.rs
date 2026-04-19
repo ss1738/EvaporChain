@@ -55,7 +55,7 @@ pub enum SyncPhase {
 }
 
 /// A chunk of the state snapshot.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SnapshotChunk {
     /// Height this snapshot belongs to.
     pub height: u64,
@@ -70,7 +70,7 @@ pub struct SnapshotChunk {
 }
 
 /// Metadata about a state snapshot offered by a peer.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SnapshotMetadata {
     /// Block height of the snapshot.
     pub height: u64,
@@ -102,7 +102,7 @@ impl SnapshotMetadata {
 }
 
 /// Messages exchanged during state sync.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum SyncMessage {
     /// Request: "What's your latest committed height?"
     TipRequest,
@@ -139,7 +139,7 @@ pub enum SyncMessage {
 }
 
 /// Actions the sync manager wants the node to perform.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum SyncAction {
     /// Send a message to a specific peer.
     SendToPeer { peer_id: u64, message: SyncMessage },

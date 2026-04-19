@@ -17,6 +17,7 @@ members = [
     "crates/evaporchain-mcp",
     "prototypes/fold-a-block",
     "wallet",
+    "tests/integration",
 ]
 
 [workspace.package]

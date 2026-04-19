@@ -8,6 +8,11 @@
 //! - Timeout-based round advancement when proposer is offline
 //! - Nil votes for safety (lock on first valid proposal)
 
+use crate::da_attestation::DAAttestationManager;
+use crate::encrypted_mempool::{EncryptedMempool, EncryptedTransaction};
+use evaporchain_da::block_da::BlockDA;
+use evaporchain_da::namespace::{NamespaceMerkleTree, NamespacedBlob};
+use crate::finality::FinalityTracker;
 use crate::mempool::Mempool;
 use crate::validator_set::{ValidatorInfo, ValidatorSet, EpochTransitionManager, ValidatorSetChange};
 use crate::{BlockProductionResult, ConsensusError};
@@ -194,7 +199,7 @@ pub enum ConsensusAction {
     BroadcastMessage(ConsensusMessage),
     /// Commit this block — apply it to state and advance height.
     CommitBlock(Block),
-    /// Request block sync from peers: (from_height, to_height).
+    /// Request state sync from peers (from_height, to_height).
     RequestSync(u64, u64),
 }
 
@@ -256,6 +261,14 @@ pub struct TendermintConsensus {
     epoch_manager: EpochTransitionManager,
     /// DA attestations collected per block number.
     da_attestations: HashMap<u64, Vec<evaporchain_da::certificate::DAAttestation>>,
+    /// Finality tracker for bridges, exchanges, and light clients.
+    pub finality_tracker: FinalityTracker,
+    /// DA attestation manager for data availability certificates.
+    pub da_attestation: DAAttestationManager,
+    /// MEV-protected encrypted mempool (commit-reveal scheme).
+    pub encrypted_mempool: EncryptedMempool,
+    /// Pending reveal nonces: (commitment, nonce) pairs submitted by users.
+    pending_reveals: Vec<([u8; 32], [u8; 32])>,
 }
 
 impl TendermintConsensus {
@@ -299,6 +312,10 @@ impl TendermintConsensus {
             genesis_state_root: [0u8; 32],
             epoch_manager: EpochTransitionManager::new(),
             da_attestations: HashMap::new(),
+            finality_tracker: FinalityTracker::new(),
+            da_attestation: DAAttestationManager::new(),
+            encrypted_mempool: EncryptedMempool::new(2),
+            pending_reveals: Vec::new(),
         }
     }
 
@@ -331,6 +348,33 @@ impl TendermintConsensus {
         self.vrf_keypair = Some(keypair);
     }
 
+
+    /// Submit an encrypted transaction to the MEV-protected mempool.
+    pub fn submit_encrypted_tx(&mut self, encrypted_tx: EncryptedTransaction) {
+        debug!(
+            commitment = hex::encode(encrypted_tx.commitment),
+            submitted_epoch = encrypted_tx.submitted_epoch,
+            "Encrypted tx submitted to MEV-protected pool"
+        );
+        self.encrypted_mempool.submit_encrypted(encrypted_tx);
+    }
+
+    /// Submit a reveal nonce for a previously committed encrypted transaction.
+    /// The nonce will be used at the next block production to decrypt and include the tx.
+    pub fn submit_reveal(&mut self, commitment: [u8; 32], nonce: [u8; 32]) {
+        debug!(
+            commitment = hex::encode(commitment),
+            "Reveal nonce submitted for encrypted tx"
+        );
+        self.pending_reveals.push((commitment, nonce));
+    }
+
+    /// Get pending counts: (plain_mempool, encrypted_pending, reveals_pending).
+    pub fn mempool_stats(&self) -> (usize, usize, usize) {
+        let (enc, _plain) = self.encrypted_mempool.pending_count();
+        (self.mempool.len(), enc, self.pending_reveals.len())
+    }
+
     /// Get a reference to the randomness beacon.
     pub fn randomness_beacon(&self) -> &RandomnessBeacon {
         &self.randomness_beacon
@@ -338,7 +382,6 @@ impl TendermintConsensus {
 
     /// Create a test-friendly consensus engine with a small privacy tree (depth 4)
     /// to avoid the ~60s initialization of the full 2^20 Merkle tree.
-    #[cfg(test)]
     pub fn new_for_test(my_id: u64, grace_period: u64, validator_set: ValidatorSet) -> Self {
         Self {
             my_id,
@@ -368,6 +411,10 @@ impl TendermintConsensus {
             genesis_state_root: [0u8; 32],
             epoch_manager: EpochTransitionManager::new(),
             da_attestations: HashMap::new(),
+            finality_tracker: FinalityTracker::new(),
+            da_attestation: DAAttestationManager::new(),
+            encrypted_mempool: EncryptedMempool::new(2),
+            pending_reveals: Vec::new(),
         }
     }
 
@@ -989,6 +1036,54 @@ impl TendermintConsensus {
             }
         }
 
+
+        // ── Finality Tracking ──
+        // Record finality if we have a commit certificate (single-slot finality).
+        if let Some(ref cert) = block.commit_certificate {
+            let block_hash = self.parent_hash; // Hash we just computed above
+            let total_stake = self.validator_set.total_stake();
+            let signing_stake = cert.signer_ids.iter()
+                .filter_map(|id| self.validator_set.get_validator(*id))
+                .map(|v| v.stake)
+                .sum::<u64>();
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            self.finality_tracker.on_block_finalized(
+                block.number,
+                block_hash,
+                state_root,
+                block.epoch,
+                cert.clone(),
+                signing_stake,
+                total_stake,
+                timestamp,
+            );
+        }
+
+        // ── DA Attestation Round ──
+        // Start a new DA attestation round if the block has a data_root.
+        // Validators will sample shards and submit attestations.
+        if let Some(data_root) = block.data_root {
+            let total_stake = self.validator_set.total_stake();
+            self.da_attestation.start_round(block.number, data_root, total_stake);
+
+            // If we have a BLS keypair, create our own attestation immediately
+            if let Some(ref bls_kp) = self.bls_keypair {
+                if let Some(my_validator) = self.validator_set.get_validator(self.my_id) {
+                    let att = self.da_attestation.create_own_attestation(
+                        self.my_id,
+                        my_validator.stake,
+                        bls_kp,
+                    );
+                    if let Some(attestation) = att {
+                        let _ = self.da_attestation.add_attestation(attestation);
+                    }
+                }
+            }
+        }
+
         // Clean up old proposal evidence (keep only last 10 heights)
         let cutoff = self.height.saturating_sub(10);
         self.proposals_seen.retain(|(h, _), _| *h >= cutoff);
@@ -1094,7 +1189,29 @@ impl TendermintConsensus {
     fn create_proposal(&mut self, _db: &mut dyn StateDB) -> Option<Block> {
         const MAX_TXS_PER_BLOCK: usize = 50;
         let next_epoch = self.epoch + 1;
-        let txs: Vec<Transaction> = self.mempool.take(MAX_TXS_PER_BLOCK);
+
+        // Process encrypted mempool reveals first (MEV-protected txs get priority)
+        let reveals: Vec<([u8; 32], [u8; 32])> = self.pending_reveals.drain(..).collect();
+        let mut txs: Vec<Transaction> = if !reveals.is_empty() {
+            let revealed = self.encrypted_mempool.process_reveals(self.epoch, &reveals);
+            if !revealed.is_empty() {
+                debug!(
+                    revealed_count = revealed.len(),
+                    epoch = self.epoch,
+                    "Included MEV-protected revealed transactions"
+                );
+            }
+            revealed
+        } else {
+            // Even without explicit reveals, drain any plaintext txs from encrypted pool
+            self.encrypted_mempool.process_reveals(self.epoch, &[])
+        };
+
+        // Fill remaining capacity from plain mempool
+        let remaining = MAX_TXS_PER_BLOCK.saturating_sub(txs.len());
+        if remaining > 0 {
+            txs.extend(self.mempool.take(remaining));
+        }
 
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1110,7 +1227,67 @@ impl TendermintConsensus {
             (None, None)
         };
 
-        let mut block = Block {
+        // Compute DA commitment (data_root) over transaction data
+        let data_root = if !txs.is_empty() {
+            match serde_json::to_vec(&txs) {
+                Ok(tx_bytes) => {
+                    match BlockDA::new() {
+                        Ok(da) => {
+                            match da.encode_block(&tx_bytes) {
+                                Ok(package) => {
+                                    debug!(
+                                        height = self.height,
+                                        shards = package.shards.len(),
+                                        data_bytes = tx_bytes.len(),
+                                        "DA erasure-coded block data"
+                                    );
+                                    Some(package.header.commitment_root)
+                                }
+                                Err(e) => {
+                                    warn!("DA encoding failed: {e} — block produced without data_root");
+                                    None
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            warn!("DA init failed: {e} — block produced without data_root");
+                            None
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("TX serialization failed: {e} — block produced without data_root");
+                    None
+                }
+            }
+        } else {
+            None // Empty blocks have no data_root
+        };
+
+        // Build namespace Merkle tree for blob commitments
+        let blob_commitments = if !txs.is_empty() {
+            let namespaced_blobs: Vec<NamespacedBlob> = txs.iter().map(|tx| {
+                let (ns_id, data) = match tx {
+                    Transaction::Blob(blob_tx) => {
+                        (blob_tx.namespace_id, blob_tx.data.clone())
+                    }
+                    _ => {
+                        // Non-blob txs go into namespace 0 (core transactions)
+                        let data = serde_json::to_vec(tx).unwrap_or_default();
+                        (0u64, data)
+                    }
+                };
+                let mut namespace = [0u8; 8];
+                namespace.copy_from_slice(&ns_id.to_be_bytes());
+                NamespacedBlob { namespace, data }
+            }).collect();
+            let nmt = NamespaceMerkleTree::from_blobs(&namespaced_blobs);
+            nmt.blob_commitment_hashes()
+        } else {
+            vec![]
+        };
+
+        let block = Block {
             number: self.height,
             epoch: next_epoch,
             parent_hash: self.parent_hash,
@@ -1120,21 +1297,12 @@ impl TendermintConsensus {
             producer_id: Some(self.my_id),
             vrf_output: vrf_out,
             vrf_proof: vrf_prf,
-            data_root: None,
-            blob_commitments: vec![],
+            data_root,
+            blob_commitments,
             da_certificate: None,
             commit_certificate: None,
             nova_proof: None,
         };
-
-        // Compute DA data_root: 2D erasure-encode the block, compute row/column commitments
-        if let Ok(block_bytes) = serde_json::to_vec(&block) {
-            let encoder = ErasureEncoder2D::with_cell_size(256);
-            if let Ok(matrix) = encoder.encode_2d(&block_bytes) {
-                let commitments = RowColumnCommitments::from_matrix(&matrix);
-                block.data_root = Some(commitments.data_root);
-            }
-        }
 
         info!(
             height = self.height,
@@ -1540,7 +1708,7 @@ mod tests {
                     match a {
                         ConsensusAction::BroadcastMessage(m) => messages.push(m),
                         ConsensusAction::CommitBlock(b) => commit_actions.push(b),
-                            _ => {}
+                        _ => {}
                     }
                 }
             }
@@ -3306,3 +3474,428 @@ mod epoch_tests {
     }
 }
 
+
+// ─────────────── MEV-Protected Mempool Tests ──────────────────────────
+
+#[cfg(test)]
+mod mev_tests {
+    use super::*;
+    use crate::encrypted_mempool::encrypt_transaction;
+    use crate::validator_set::ValidatorInfo;
+    use evaporchain_state::db::InMemoryStateDB;
+    use evaporchain_types::TransferTx;
+    use rand::RngCore;
+
+    fn make_test_tc() -> TendermintConsensus {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        vs.add_validator(ValidatorInfo::new(4, 1000, [4u8; 32]));
+        TendermintConsensus::new_for_test(1, 100, vs)
+    }
+
+    fn dummy_transfer(amount: u64) -> Transaction {
+        Transaction::Transfer(TransferTx {
+            from: [0xAA; 32],
+            to: [0xBB; 32],
+            amount,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        })
+    }
+
+    fn random_nonce() -> [u8; 32] {
+        let mut nonce = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut nonce);
+        nonce
+    }
+
+    #[test]
+    fn test_submit_encrypted_tx() {
+        let mut tc = make_test_tc();
+        let tx = dummy_transfer(500);
+        let nonce = random_nonce();
+        let enc = encrypt_transaction(&tx, &nonce, 0);
+
+        tc.submit_encrypted_tx(enc);
+
+        let (plain, enc_count, reveals) = tc.mempool_stats();
+        assert_eq!(plain, 0);
+        assert_eq!(enc_count, 1);
+        assert_eq!(reveals, 0);
+    }
+
+    #[test]
+    fn test_submit_reveal_nonce() {
+        let mut tc = make_test_tc();
+        let tx = dummy_transfer(500);
+        let nonce = random_nonce();
+        let enc = encrypt_transaction(&tx, &nonce, 0);
+        let commitment = enc.commitment;
+
+        tc.submit_encrypted_tx(enc);
+        tc.submit_reveal(commitment, nonce);
+
+        let (_, _, reveals) = tc.mempool_stats();
+        assert_eq!(reveals, 1);
+    }
+
+    #[test]
+    fn test_revealed_txs_included_in_proposal() {
+        let mut tc = make_test_tc();
+        let mut db = InMemoryStateDB::new();
+
+        // Submit encrypted tx at epoch 0
+        let tx = dummy_transfer(777);
+        let nonce = random_nonce();
+        let enc = encrypt_transaction(&tx, &nonce, 0);
+        let commitment = enc.commitment;
+        tc.submit_encrypted_tx(enc);
+
+        // Advance epoch past reveal delay (default 2 epochs)
+        // epoch starts at 0, reveal_delay=2, so we need epoch >= 2
+        tc.epoch = 2;
+
+        // Submit reveal nonce
+        tc.submit_reveal(commitment, nonce);
+
+        // Create proposal — should include the revealed tx
+        let block = tc.create_proposal(&mut db).unwrap();
+        assert_eq!(block.transactions.len(), 1);
+
+        // Verify the tx is our transfer
+        match &block.transactions[0] {
+            Transaction::Transfer(t) => assert_eq!(t.amount, 777),
+            _ => panic!("expected transfer tx"),
+        }
+
+        // Reveals should be drained
+        let (_, enc_count, reveals) = tc.mempool_stats();
+        assert_eq!(enc_count, 0); // encrypted tx consumed
+        assert_eq!(reveals, 0);   // reveals consumed
+    }
+
+    #[test]
+    fn test_encrypted_tx_not_revealed_too_early() {
+        let mut tc = make_test_tc();
+        let mut db = InMemoryStateDB::new();
+
+        // Submit encrypted tx at epoch 5
+        let tx = dummy_transfer(100);
+        let nonce = random_nonce();
+        let enc = encrypt_transaction(&tx, &nonce, 5);
+        let commitment = enc.commitment;
+        tc.submit_encrypted_tx(enc);
+
+        // Current epoch is 0 (well before reveal_delay of 2 past submission)
+        tc.epoch = 6; // 5 + 2 = 7 needed, 6 is too early
+
+        tc.submit_reveal(commitment, nonce);
+
+        let block = tc.create_proposal(&mut db).unwrap();
+        // Should NOT include the encrypted tx (too early to reveal)
+        assert_eq!(block.transactions.len(), 0);
+
+        // Encrypted tx should still be pending
+        let (_, enc_count, _) = tc.mempool_stats();
+        assert_eq!(enc_count, 1);
+    }
+
+    #[test]
+    fn test_mixed_plain_and_encrypted_proposal() {
+        let mut tc = make_test_tc();
+        let mut db = InMemoryStateDB::new();
+
+        // Submit 2 plain txs
+        tc.mempool.submit(dummy_transfer(100));
+        tc.mempool.submit(dummy_transfer(200));
+
+        // Submit 1 encrypted tx at epoch 0
+        let tx = dummy_transfer(999);
+        let nonce = random_nonce();
+        let enc = encrypt_transaction(&tx, &nonce, 0);
+        let commitment = enc.commitment;
+        tc.submit_encrypted_tx(enc);
+
+        // Advance past reveal delay
+        tc.epoch = 2;
+        tc.submit_reveal(commitment, nonce);
+
+        let block = tc.create_proposal(&mut db).unwrap();
+        // Should have 3 txs: 1 revealed + 2 plain
+        assert_eq!(block.transactions.len(), 3);
+
+        // First tx should be the revealed one (MEV-protected txs get priority)
+        match &block.transactions[0] {
+            Transaction::Transfer(t) => assert_eq!(t.amount, 999),
+            _ => panic!("expected revealed transfer first"),
+        }
+    }
+
+    #[test]
+    fn test_max_txs_respected_with_encrypted() {
+        let mut tc = make_test_tc();
+        let mut db = InMemoryStateDB::new();
+
+        // Submit 60 plain txs (over MAX_TXS_PER_BLOCK = 50)
+        for i in 0..60 {
+            tc.mempool.submit(dummy_transfer(i));
+        }
+
+        // Submit 5 encrypted txs
+        let mut nonces = Vec::new();
+        for i in 0..5u64 {
+            let tx = dummy_transfer(1000 + i);
+            let nonce = random_nonce();
+            let enc = encrypt_transaction(&tx, &nonce, 0);
+            nonces.push((enc.commitment, nonce));
+            tc.submit_encrypted_tx(enc);
+        }
+
+        // Advance and reveal all
+        tc.epoch = 2;
+        for (commitment, nonce) in &nonces {
+            tc.submit_reveal(*commitment, *nonce);
+        }
+
+        let block = tc.create_proposal(&mut db).unwrap();
+        // Should be capped at 50 (5 revealed + 45 plain)
+        assert_eq!(block.transactions.len(), 50);
+    }
+
+    #[test]
+    fn test_no_reveal_without_nonce_expires() {
+        let mut tc = make_test_tc();
+        let mut db = InMemoryStateDB::new();
+
+        // Submit encrypted tx but don't provide reveal nonce
+        let tx = dummy_transfer(500);
+        let nonce = random_nonce();
+        let enc = encrypt_transaction(&tx, &nonce, 0);
+        tc.submit_encrypted_tx(enc);
+
+        tc.epoch = 2;
+        // No submit_reveal call
+
+        let block = tc.create_proposal(&mut db).unwrap();
+        // Should be empty — no nonce means tx can't decrypt
+        assert_eq!(block.transactions.len(), 0);
+
+        // Encrypted tx expires after reveal window (no nonce = user abandoned it)
+        let (_, enc_count, _) = tc.mempool_stats();
+        assert_eq!(enc_count, 0); // expired and dropped
+    }
+
+    #[test]
+    fn test_unrevealed_tx_kept_before_delay() {
+        let mut tc = make_test_tc();
+        let mut db = InMemoryStateDB::new();
+
+        // Submit encrypted tx at epoch 5
+        let tx = dummy_transfer(500);
+        let nonce = random_nonce();
+        let enc = encrypt_transaction(&tx, &nonce, 5);
+        tc.submit_encrypted_tx(enc);
+
+        // Epoch 6 — before reveal delay (5 + 2 = 7)
+        tc.epoch = 6;
+
+        let block = tc.create_proposal(&mut db).unwrap();
+        assert_eq!(block.transactions.len(), 0);
+
+        // Should still be pending (not yet past reveal delay)
+        let (_, enc_count, _) = tc.mempool_stats();
+        assert_eq!(enc_count, 1);
+    }
+}
+
+
+// ─────────────── DA Integration Tests ─────────────────────────────────
+
+#[cfg(test)]
+mod da_tests {
+    use super::*;
+    use crate::validator_set::ValidatorInfo;
+    use evaporchain_da::block_da::BlockDA;
+    use evaporchain_state::db::InMemoryStateDB;
+    use evaporchain_types::{BlobTx, TransferTx};
+
+    fn make_test_tc() -> TendermintConsensus {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        vs.add_validator(ValidatorInfo::new(4, 1000, [4u8; 32]));
+        TendermintConsensus::new_for_test(1, 100, vs)
+    }
+
+    fn dummy_transfer(amount: u64) -> Transaction {
+        Transaction::Transfer(TransferTx {
+            from: [0xAA; 32],
+            to: [0xBB; 32],
+            amount,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        })
+    }
+
+    #[test]
+    fn test_proposal_with_txs_has_data_root() {
+        let mut tc = make_test_tc();
+        let mut db = InMemoryStateDB::new();
+
+        // Add transactions
+        tc.mempool.submit(dummy_transfer(100));
+        tc.mempool.submit(dummy_transfer(200));
+        tc.mempool.submit(dummy_transfer(300));
+
+        let block = tc.create_proposal(&mut db).unwrap();
+        assert_eq!(block.transactions.len(), 3);
+        assert!(block.data_root.is_some(), "block with txs should have data_root");
+
+        // Verify the data_root is a valid commitment
+        let data_root = block.data_root.unwrap();
+        assert_ne!(data_root, [0u8; 32], "data_root should not be all zeros");
+    }
+
+    #[test]
+    fn test_empty_proposal_has_no_data_root() {
+        let mut tc = make_test_tc();
+        let mut db = InMemoryStateDB::new();
+
+        // No transactions in mempool
+        let block = tc.create_proposal(&mut db).unwrap();
+        assert_eq!(block.transactions.len(), 0);
+        assert!(block.data_root.is_none(), "empty block should have no data_root");
+    }
+
+    #[test]
+    fn test_data_root_matches_independent_encoding() {
+        let mut tc = make_test_tc();
+        let mut db = InMemoryStateDB::new();
+
+        tc.mempool.submit(dummy_transfer(500));
+        tc.mempool.submit(dummy_transfer(600));
+
+        let block = tc.create_proposal(&mut db).unwrap();
+        let data_root = block.data_root.unwrap();
+
+        // Independently encode the same tx data and verify roots match
+        let tx_bytes = serde_json::to_vec(&block.transactions).unwrap();
+        let da = BlockDA::new().unwrap();
+        let package = da.encode_block(&tx_bytes).unwrap();
+
+        assert_eq!(
+            data_root, package.header.commitment_root,
+            "data_root should match independent DA encoding"
+        );
+    }
+
+    #[test]
+    fn test_different_txs_produce_different_data_roots() {
+        let mut db = InMemoryStateDB::new();
+
+        // Block 1
+        let mut tc1 = make_test_tc();
+        tc1.mempool.submit(dummy_transfer(100));
+        let block1 = tc1.create_proposal(&mut db).unwrap();
+
+        // Block 2 with different tx
+        let mut tc2 = make_test_tc();
+        tc2.mempool.submit(dummy_transfer(999));
+        let block2 = tc2.create_proposal(&mut db).unwrap();
+
+        assert_ne!(
+            block1.data_root.unwrap(),
+            block2.data_root.unwrap(),
+            "different transactions should produce different data_roots"
+        );
+    }
+
+    #[test]
+    fn test_data_root_verifiable_by_light_client() {
+        let mut tc = make_test_tc();
+        let mut db = InMemoryStateDB::new();
+
+        tc.mempool.submit(dummy_transfer(42));
+
+        let block = tc.create_proposal(&mut db).unwrap();
+        let data_root = block.data_root.unwrap();
+
+        // A light client can verify individual shards against this root
+        let tx_bytes = serde_json::to_vec(&block.transactions).unwrap();
+        let da = BlockDA::new().unwrap();
+        let package = da.encode_block(&tx_bytes).unwrap();
+
+        // Verify each shard proves against the data_root
+        for i in 0..package.shards.len() {
+            let proof = da.prove_shard(&package, i).unwrap();
+            assert!(
+                BlockDA::verify_shard_sample(&package.header, &proof),
+                "shard {} should verify against data_root", i
+            );
+            assert_eq!(package.header.commitment_root, data_root);
+        }
+    }
+
+    #[test]
+    fn test_proposal_populates_blob_commitments() {
+        let mut tc = make_test_tc();
+        let mut db = InMemoryStateDB::new();
+
+        // Add regular transfers and a blob tx
+        tc.mempool.submit(dummy_transfer(100));
+        tc.mempool.submit(Transaction::Blob(BlobTx {
+            submitter: [0xCC; 32],
+            data: b"blob data for namespace 42".to_vec(),
+            nonce: 0,
+            namespace_id: 42,
+            signature: None,
+            public_key: None,
+        }));
+        tc.mempool.submit(dummy_transfer(200));
+
+        let block = tc.create_proposal(&mut db).unwrap();
+        assert_eq!(block.transactions.len(), 3);
+        // blob_commitments should have one entry per tx
+        assert_eq!(block.blob_commitments.len(), 3);
+        // Each commitment should be non-zero
+        for (i, commitment) in block.blob_commitments.iter().enumerate() {
+            assert_ne!(*commitment, [0u8; 32], "blob_commitment[{i}] should not be zero");
+        }
+    }
+
+    #[test]
+    fn test_blob_commitments_deterministic() {
+        let mut db = InMemoryStateDB::new();
+
+        let make_tc_with_txs = || {
+            let mut tc = make_test_tc();
+            tc.mempool.submit(dummy_transfer(100));
+            tc.mempool.submit(Transaction::Blob(BlobTx {
+                submitter: [0xDD; 32],
+                data: b"deterministic blob".to_vec(),
+                nonce: 0,
+                namespace_id: 7,
+                signature: None,
+                public_key: None,
+            }));
+            tc
+        };
+
+        let block1 = make_tc_with_txs().create_proposal(&mut db).unwrap();
+        let block2 = make_tc_with_txs().create_proposal(&mut db).unwrap();
+        assert_eq!(block1.blob_commitments, block2.blob_commitments);
+    }
+
+    #[test]
+    fn test_empty_block_has_no_blob_commitments() {
+        let mut tc = make_test_tc();
+        let mut db = InMemoryStateDB::new();
+        let block = tc.create_proposal(&mut db).unwrap();
+        assert!(block.blob_commitments.is_empty());
+    }
+}

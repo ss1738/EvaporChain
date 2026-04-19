@@ -499,6 +499,44 @@ impl PrivateTransferWitness {
     }
 }
 
+// ─── Balance Binding Verification ─────────────────────────────────────────
+
+/// Compute a balance binding hash from the given amounts and blinding factors.
+/// `binding = Poseidon(sum_in || sum_out || fee || input_blindings... || output_blindings...)`
+pub fn compute_balance_binding(
+    sum_in: u64,
+    sum_out: u64,
+    fee: u64,
+    input_blindings: &[[u8; 32]],
+    output_blindings: &[[u8; 32]],
+) -> [u8; 32] {
+    let mut preimage = Vec::with_capacity(24 + 32 * (input_blindings.len() + output_blindings.len()));
+    preimage.extend_from_slice(&sum_in.to_le_bytes());
+    preimage.extend_from_slice(&sum_out.to_le_bytes());
+    preimage.extend_from_slice(&fee.to_le_bytes());
+    for b in input_blindings {
+        preimage.extend_from_slice(b);
+    }
+    for b in output_blindings {
+        preimage.extend_from_slice(b);
+    }
+    poseidon_hash(&preimage)
+}
+
+/// Verify that a balance binding hash matches the claimed amounts and blindings.
+/// Returns `true` if `binding == Poseidon(sum_in || sum_out || fee || all_blindings...)`.
+pub fn verify_balance_binding(
+    binding: &[u8; 32],
+    sum_in: u64,
+    sum_out: u64,
+    fee: u64,
+    input_blindings: &[[u8; 32]],
+    output_blindings: &[[u8; 32]],
+) -> bool {
+    let expected = compute_balance_binding(sum_in, sum_out, fee, input_blindings, output_blindings);
+    *binding == expected
+}
+
 // ─── Nullifier Set ─────────────────────────────────────────────────────────
 
 /// Tracks spent nullifiers to prevent double-spending.
@@ -1323,5 +1361,57 @@ mod tests {
         assert_eq!(result.nullifiers_spent, 2);
         assert_eq!(result.fee, 50);
         assert_eq!(engine.nullifier_count(), 2);
+    }
+
+    // ── Balance Binding Verification Tests ──
+
+    #[test]
+    fn test_balance_binding_correct() {
+        let ib = [test_blinding(1), test_blinding(2)];
+        let ob = [test_blinding(3)];
+        let binding = compute_balance_binding(1000, 900, 100, &ib, &ob);
+        assert!(verify_balance_binding(&binding, 1000, 900, 100, &ib, &ob));
+    }
+
+    #[test]
+    fn test_balance_binding_wrong_fee() {
+        let ib = [test_blinding(1)];
+        let ob = [test_blinding(2)];
+        let binding = compute_balance_binding(1000, 900, 100, &ib, &ob);
+        // Wrong fee
+        assert!(!verify_balance_binding(&binding, 1000, 900, 50, &ib, &ob));
+    }
+
+    #[test]
+    fn test_balance_binding_wrong_amounts() {
+        let ib = [test_blinding(1)];
+        let ob = [test_blinding(2)];
+        let binding = compute_balance_binding(1000, 900, 100, &ib, &ob);
+        // Wrong sum_in
+        assert!(!verify_balance_binding(&binding, 999, 900, 100, &ib, &ob));
+        // Wrong sum_out
+        assert!(!verify_balance_binding(&binding, 1000, 901, 100, &ib, &ob));
+    }
+
+    #[test]
+    fn test_balance_binding_wrong_blindings() {
+        let ib = [test_blinding(1)];
+        let ob = [test_blinding(2)];
+        let binding = compute_balance_binding(1000, 900, 100, &ib, &ob);
+        // Tampered input blinding
+        let tampered_ib = [test_blinding(99)];
+        assert!(!verify_balance_binding(&binding, 1000, 900, 100, &tampered_ib, &ob));
+        // Tampered output blinding
+        let tampered_ob = [test_blinding(99)];
+        assert!(!verify_balance_binding(&binding, 1000, 900, 100, &ib, &tampered_ob));
+    }
+
+    #[test]
+    fn test_balance_binding_deterministic() {
+        let ib = [test_blinding(5)];
+        let ob = [test_blinding(6), test_blinding(7)];
+        let b1 = compute_balance_binding(500, 400, 100, &ib, &ob);
+        let b2 = compute_balance_binding(500, 400, 100, &ib, &ob);
+        assert_eq!(b1, b2);
     }
 }
