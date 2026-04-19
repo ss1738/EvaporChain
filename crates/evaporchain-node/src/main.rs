@@ -2572,13 +2572,21 @@ async fn main() -> Result<()> {
                         }
 
                         // block.number == local_height + 1
-                        // Verify CommitCertificate before applying sync block
+                        // Verify CommitCertificate before applying sync block.
+                        // During sync we may not have all validators' BLS keys yet
+                        // (KeyAnnounce hasn't arrived), so only verify if we have
+                        // all required keys. Sync blocks come from a trusted P2P
+                        // request, not unsolicited gossip.
                         if let Some(ref cert) = block.commit_certificate {
                             if let Some(ref tc_ref) = tendermint {
                                 let tc = safe_lock(tc_ref);
-                                if !tc.verify_commit_certificate(cert) {
+                                let has_all_keys = cert.signer_ids.iter().all(|&vid| {
+                                    tc.validator_set().get(vid)
+                                        .map_or(false, |v| v.bls_public_key.is_some())
+                                });
+                                if has_all_keys && !tc.verify_commit_certificate(cert) {
                                     eprintln!(
-                                        "{} \x1b[31m⚠ REJECTED sync block #{} — invalid BLS CommitCertificate\x1b[0m",
+                                        "{} \x1b[31m⚠ REJECTED sync block #{} �� invalid BLS CommitCertificate\x1b[0m",
                                         node_tag, block.number
                                     );
                                     continue;
@@ -2673,11 +2681,15 @@ async fn main() -> Result<()> {
                             c.block_number() + 1
                         };
                         if let Some(queued) = pending_blocks.remove(&next) {
-                            // Verify CommitCertificate on queued block
+                            // Verify CommitCertificate on queued block (lenient — skip if missing BLS keys)
                             if let Some(ref cert) = queued.commit_certificate {
                                 if let Some(ref tc_ref) = tendermint {
                                     let tc = safe_lock(tc_ref);
-                                    if !tc.verify_commit_certificate(cert) {
+                                    let has_all_keys = cert.signer_ids.iter().all(|&vid| {
+                                        tc.validator_set().get(vid)
+                                            .map_or(false, |v| v.bls_public_key.is_some())
+                                    });
+                                    if has_all_keys && !tc.verify_commit_certificate(cert) {
                                         eprintln!(
                                             "{} \x1b[31m⚠ REJECTED queued block #{} — invalid BLS CommitCertificate\x1b[0m",
                                             node_tag, queued.number

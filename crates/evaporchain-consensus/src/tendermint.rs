@@ -438,6 +438,10 @@ impl TendermintConsensus {
         self.epoch
     }
 
+    pub fn validator_set(&self) -> &ValidatorSet {
+        &self.validator_set
+    }
+
     pub fn block_number(&self) -> u64 {
         self.height.saturating_sub(1)
     }
