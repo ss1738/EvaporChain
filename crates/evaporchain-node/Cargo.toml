@@ -17,6 +17,7 @@ evaporchain-consensus = { path = "../evaporchain-consensus" }
 evaporchain-execution = { path = "../evaporchain-execution" }
 evaporchain-proving = { path = "../evaporchain-proving" }
 evaporchain-network = { path = "../evaporchain-network" }
+evaporchain-da = { path = "../evaporchain-da" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

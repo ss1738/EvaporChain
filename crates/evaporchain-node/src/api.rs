@@ -9,6 +9,7 @@ use axum::http::HeaderMap;
 use evaporchain_consensus::MockConsensus;
 use evaporchain_consensus::tendermint::TendermintConsensus;
 use evaporchain_crypto::signatures::{MlDsaKeypair, Signer};
+use evaporchain_da::block_da::BlockDAPackage;
 use evaporchain_state::db::StateDB;
 use evaporchain_state::RocksDBStateDB;
 use evaporchain_types::{
@@ -16,7 +17,7 @@ use evaporchain_types::{
     TransferTx,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::{atomic::AtomicUsize, Arc, Mutex};
 use std::time::Instant;
 use tower_http::cors::CorsLayer;
@@ -71,6 +72,8 @@ pub struct ApiState {
     pub chain_prover: Arc<Mutex<evaporchain_proving::chain_proof::ChainProver>>,
     /// Rolling throughput metrics (TPS, block exec time, gas).
     pub throughput: Arc<Mutex<ThroughputTracker>>,
+    /// DA shard store: block_number -> BlockDAPackage (last 64 blocks).
+    pub da_store: Arc<Mutex<BTreeMap<u64, BlockDAPackage>>>,
 }
 
 impl ApiState {
@@ -201,6 +204,9 @@ pub struct BlockRecord {
     /// Nova proof size in bytes (0 if no proof).
     #[serde(default)]
     pub nova_proof_size: usize,
+    /// DA data root (hex-encoded blake3 hash of 2D erasure commitments).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_root: Option<String>,
 }
 
 /// Transaction record with hash and structured data.
@@ -2730,6 +2736,82 @@ async fn get_proof_verify(
     Ok(Json(VerifyProofResponse { valid }))
 }
 
+// ──────────────────────── DA Sampling Endpoints ─────────────────────────
+
+#[derive(Serialize)]
+struct DAStatusResponse {
+    blocks_available: usize,
+    oldest_block: Option<u64>,
+    newest_block: Option<u64>,
+}
+
+/// GET /api/da/status — how many blocks have DA shards stored.
+async fn get_da_status(
+    State(state): State<Arc<ApiState>>,
+) -> Json<DAStatusResponse> {
+    let store = safe_lock(&state.da_store);
+    let oldest = store.keys().next().copied();
+    let newest = store.keys().next_back().copied();
+    Json(DAStatusResponse {
+        blocks_available: store.len(),
+        oldest_block: oldest,
+        newest_block: newest,
+    })
+}
+
+#[derive(Serialize)]
+struct DAShardResponse {
+    block_number: u64,
+    shard_index: usize,
+    total_shards: usize,
+    commitment_root: String,
+    shard_data_hex: String,
+    shard_size_bytes: usize,
+}
+
+/// GET /api/da/sample/:block/:shard_index — retrieve a specific shard for DA sampling.
+async fn get_da_sample(
+    State(state): State<Arc<ApiState>>,
+    Path((block_number, shard_index)): Path<(u64, usize)>,
+) -> Result<Json<DAShardResponse>, StatusCode> {
+    let store = safe_lock(&state.da_store);
+    let package = store.get(&block_number).ok_or(StatusCode::NOT_FOUND)?;
+    let shard = package.shards.get(shard_index).ok_or(StatusCode::NOT_FOUND)?;
+
+    Ok(Json(DAShardResponse {
+        block_number,
+        shard_index,
+        total_shards: package.shards.len(),
+        commitment_root: hex::encode(package.header.commitment_root),
+        shard_data_hex: hex::encode(&shard.data),
+        shard_size_bytes: shard.data.len(),
+    }))
+}
+
+#[derive(Serialize)]
+struct DABlockInfoResponse {
+    block_number: u64,
+    total_shards: usize,
+    commitment_root: String,
+    original_size_bytes: usize,
+}
+
+/// GET /api/da/block/:number — DA info for a specific block.
+async fn get_da_block(
+    State(state): State<Arc<ApiState>>,
+    Path(block_number): Path<u64>,
+) -> Result<Json<DABlockInfoResponse>, StatusCode> {
+    let store = safe_lock(&state.da_store);
+    let package = store.get(&block_number).ok_or(StatusCode::NOT_FOUND)?;
+
+    Ok(Json(DABlockInfoResponse {
+        block_number,
+        total_shards: package.shards.len(),
+        commitment_root: hex::encode(package.header.commitment_root),
+        original_size_bytes: package.header.original_len,
+    }))
+}
+
 /// JSON 404 fallback handler.
 async fn fallback_404() -> impl IntoResponse {
     (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Not found"})))
@@ -2855,6 +2937,10 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/proof/latest", get(get_proof_latest))
         .route("/api/proof/status", get(get_proof_status))
         .route("/api/proof/verify", get(get_proof_verify))
+        // DA sampling
+        .route("/api/da/status", get(get_da_status))
+        .route("/api/da/block/:number", get(get_da_block))
+        .route("/api/da/sample/:block/:shard_index", get(get_da_sample))
         // PWA
         .route("/manifest.json", get(manifest_json))
         .route("/sw.js", get(service_worker_js))

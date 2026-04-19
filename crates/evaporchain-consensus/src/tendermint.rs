@@ -19,6 +19,8 @@ use evaporchain_execution::fees::PidFeeController;
 use evaporchain_execution::ExecutionEngine;
 use evaporchain_execution::parallel::ParallelExecutor;
 use evaporchain_state::db::StateDB;
+use evaporchain_da::erasure2d::ErasureEncoder2D;
+use evaporchain_da::commitments::RowColumnCommitments;
 use evaporchain_types::{Block, CommitCertificate, Epoch, Transaction};
 
 use serde::{Deserialize, Serialize};
@@ -1062,7 +1064,7 @@ impl TendermintConsensus {
             (None, None)
         };
 
-        let block = Block {
+        let mut block = Block {
             number: self.height,
             epoch: next_epoch,
             parent_hash: self.parent_hash,
@@ -1079,10 +1081,20 @@ impl TendermintConsensus {
             nova_proof: None,
         };
 
+        // Compute DA data_root: 2D erasure-encode the block, compute row/column commitments
+        if let Ok(block_bytes) = serde_json::to_vec(&block) {
+            let encoder = ErasureEncoder2D::with_cell_size(256);
+            if let Ok(matrix) = encoder.encode_2d(&block_bytes) {
+                let commitments = RowColumnCommitments::from_matrix(&matrix);
+                block.data_root = Some(commitments.data_root);
+            }
+        }
+
         info!(
             height = self.height,
             round = self.round_state.round,
             txs = block.transactions.len(),
+            has_data_root = block.data_root.is_some(),
             "Created proposal"
         );
 

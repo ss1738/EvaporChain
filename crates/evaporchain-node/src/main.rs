@@ -15,6 +15,7 @@ use evaporchain_proving::chain_proof::ChainProver;
 use evaporchain_state::db::StateDB;
 use evaporchain_state::RocksDBStateDB;
 use evaporchain_crypto::signatures::{MlDsaKeypair, Signer};
+use evaporchain_da::block_da::{BlockDA, BlockDAPackage};
 use evaporchain_types::{
     Account, CreateObjectTx, ObjectState, RefreshTx, StateObject, Transaction, TransferTx,
 };
@@ -655,6 +656,7 @@ fn record_block(
         transactions: api::tx_records_from_block(block),
         has_nova_proof: block.nova_proof.is_some(),
         nova_proof_size: block.nova_proof.as_ref().map_or(0, |p| p.len()),
+        data_root: block.data_root.map(hex::encode),
     };
 
     // Push to block history
@@ -1307,6 +1309,9 @@ async fn main() -> Result<()> {
     ));
     let start_time = Instant::now();
 
+    // DA shard store: block_number -> BlockDAPackage (keep last 64 blocks)
+    let da_store: Arc<Mutex<BTreeMap<u64, BlockDAPackage>>> = Arc::new(Mutex::new(BTreeMap::new()));
+
     // Channel for API-submitted transactions to reach P2P network & all mempools
     let (api_tx_sender, mut api_tx_receiver) = tokio::sync::mpsc::channel::<Transaction>(256);
 
@@ -1373,6 +1378,7 @@ async fn main() -> Result<()> {
             tx_broadcast: Some(api_tx_sender.clone()),
             chain_prover: Arc::clone(&chain_prover),
             throughput: Arc::clone(&throughput),
+            da_store: Arc::clone(&da_store),
         });
         let api_port = args.api_port;
         tokio::spawn(async move {
@@ -1760,6 +1766,30 @@ async fn main() -> Result<()> {
                                     }
                                 }
 
+                                // DA: erasure-encode block and store shards
+                                if block.data_root.is_some() {
+                                    if let Ok(block_bytes) = serde_json::to_vec(&block) {
+                                        if let Ok(da) = BlockDA::new() {
+                                            if let Ok(package) = da.encode_block(&block_bytes) {
+                                                println!(
+                                                    "{}   \x1b[36mDA: {} shards, root={}\x1b[0m",
+                                                    node_tag,
+                                                    package.shards.len(),
+                                                    &hex::encode(package.header.commitment_root)[..16],
+                                                );
+                                                let mut store = safe_lock(&da_store);
+                                                store.insert(block.number, package);
+                                                // Keep only last 64 blocks
+                                                while store.len() > 64 {
+                                                    if let Some(&oldest) = store.keys().next() {
+                                                        store.remove(&oldest);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
                                 let (obj_count, ghost_count) = {
                                     let db_guard = safe_lock(&db);
                                     (db_guard.object_count(), db_guard.ghost_count())
@@ -1902,6 +1932,29 @@ async fn main() -> Result<()> {
                                         if let Ok(_) = p.fold_block(&block, result.execution.state_root) {
                                             if let Ok(chain_proof) = p.generate_chain_proof() {
                                                 block.nova_proof = Some(chain_proof.proof.proof_bytes);
+                                            }
+                                        }
+                                    }
+
+                                    // DA: erasure-encode block and store shards
+                                    if block.data_root.is_some() {
+                                        if let Ok(block_bytes) = serde_json::to_vec(&block) {
+                                            if let Ok(da) = BlockDA::new() {
+                                                if let Ok(package) = da.encode_block(&block_bytes) {
+                                                    println!(
+                                                        "{}   \x1b[36mDA: {} shards, root={}\x1b[0m",
+                                                        node_tag,
+                                                        package.shards.len(),
+                                                        &hex::encode(package.header.commitment_root)[..16],
+                                                    );
+                                                    let mut store = safe_lock(&da_store);
+                                                    store.insert(block.number, package);
+                                                    while store.len() > 64 {
+                                                        if let Some(&oldest) = store.keys().next() {
+                                                            store.remove(&oldest);
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -2335,6 +2388,7 @@ async fn main() -> Result<()> {
                                             transactions: api::tx_records_from_block(block),
                                             has_nova_proof: block.nova_proof.is_some(),
                                             nova_proof_size: block.nova_proof.as_ref().map_or(0, |p| p.len()),
+                                            data_root: block.data_root.map(hex::encode),
                                         };
                                         let mut history = safe_lock(&block_history);
                                         history.push_back(record.clone());
