@@ -508,7 +508,7 @@ impl ParallelExecutor {
         verify_signatures: bool,
         _base_fee: u64,
         fee_controller: &Option<fees::PidFeeController>,
-        block_gas_limit: u64,
+        _block_gas_limit: u64,
         gas_budget: &mut u64,
     ) -> PartitionResult {
         let mut txs_executed = 0;
@@ -527,7 +527,7 @@ impl ParallelExecutor {
             let tx_gas = Self::estimate_gas(tx);
 
             // Block gas limit check (using shared budget)
-            if block_gas_limit > 0 && *gas_budget < tx_gas {
+            if *gas_budget < tx_gas {
                 debug!(tx_idx = idx, "Parallel: block gas limit exceeded");
                 txs_failed += 1;
                 continue;
@@ -857,11 +857,10 @@ impl ExecutionEngine for ParallelExecutor {
 
         // ── Phase 4: Execute partitions in parallel ──
 
-        // Gas budget: track remaining block gas across partitions.
-        // For simplicity, give each partition the full remaining budget.
-        // After parallel execution, enforce the global limit.
-        let remaining_gas = if self.block_gas_limit > 0 {
-            self.block_gas_limit
+        // Gas budget: divide evenly across partitions so total cannot exceed limit.
+        let num_partitions = partition_data.len().max(1) as u64;
+        let per_partition_gas = if self.block_gas_limit > 0 {
+            self.block_gas_limit / num_partitions
         } else {
             u64::MAX
         };
@@ -872,7 +871,7 @@ impl ExecutionEngine for ParallelExecutor {
         let partition_results: Vec<PartitionResult> = partition_data
             .par_iter_mut()
             .map(|(group, overlay)| {
-                let mut gas_budget = remaining_gas;
+                let mut gas_budget = per_partition_gas;
                 Self::execute_partition(
                     group,
                     overlay,
@@ -880,7 +879,7 @@ impl ExecutionEngine for ParallelExecutor {
                     verify_sigs,
                     base_fee,
                     &fee_ctrl,
-                    0, // Don't enforce per-partition gas limit; we check globally after
+                    0,
                     &mut gas_budget,
                 )
             })
