@@ -43,6 +43,7 @@ mod adversarial_tests {
                 match a {
                     ConsensusAction::BroadcastMessage(m) => messages.push(m),
                     ConsensusAction::CommitBlock(b) => committed.push(b),
+                    _ => {}
                 }
             }
         }
@@ -58,6 +59,7 @@ mod adversarial_tests {
                         match a {
                             ConsensusAction::BroadcastMessage(m) => messages.push(m),
                             ConsensusAction::CommitBlock(b) => committed.push(b),
+                            _ => {}
                         }
                     }
                 }
@@ -67,6 +69,7 @@ mod adversarial_tests {
                     match a {
                         ConsensusAction::BroadcastMessage(m) => messages.push(m),
                         ConsensusAction::CommitBlock(b) => committed.push(b),
+                        _ => {}
                     }
                 }
             }
@@ -249,6 +252,7 @@ mod adversarial_tests {
                 match a {
                     ConsensusAction::BroadcastMessage(m) => messages.push(m),
                     ConsensusAction::CommitBlock(b) => all_committed.push(b),
+                    _ => {}
                 }
             }
         }
@@ -261,6 +265,7 @@ mod adversarial_tests {
                         match a {
                             ConsensusAction::BroadcastMessage(m) => messages.push(m),
                             ConsensusAction::CommitBlock(b) => all_committed.push(b),
+                            _ => {}
                         }
                     }
                 }
@@ -270,6 +275,7 @@ mod adversarial_tests {
                     match a {
                         ConsensusAction::BroadcastMessage(m) => messages.push(m),
                         ConsensusAction::CommitBlock(b) => all_committed.push(b),
+                        _ => {}
                     }
                 }
             }

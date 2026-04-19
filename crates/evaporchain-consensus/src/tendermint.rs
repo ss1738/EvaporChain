@@ -367,6 +367,7 @@ impl TendermintConsensus {
             proof_verifier: None,
             genesis_state_root: [0u8; 32],
             epoch_manager: EpochTransitionManager::new(),
+            da_attestations: HashMap::new(),
         }
     }
 
@@ -1526,6 +1527,7 @@ mod tests {
                         match a {
                             ConsensusAction::BroadcastMessage(m) => messages.push(m),
                             ConsensusAction::CommitBlock(b) => commit_actions.push(b),
+                            _ => {}
                         }
                     }
                 }
@@ -1538,6 +1540,7 @@ mod tests {
                     match a {
                         ConsensusAction::BroadcastMessage(m) => messages.push(m),
                         ConsensusAction::CommitBlock(b) => commit_actions.push(b),
+                            _ => {}
                     }
                 }
             }
@@ -1913,6 +1916,7 @@ mod tests {
                         match a {
                             ConsensusAction::BroadcastMessage(m) => messages.push(m),
                             ConsensusAction::CommitBlock(b) => committed_blocks.push(b),
+                            _ => {}
                         }
                     }
                 }
@@ -1923,6 +1927,7 @@ mod tests {
                     match a {
                         ConsensusAction::BroadcastMessage(m) => messages.push(m),
                         ConsensusAction::CommitBlock(b) => committed_blocks.push(b),
+                        _ => {}
                     }
                 }
             }
@@ -1983,6 +1988,7 @@ mod tests {
                         match a {
                             ConsensusAction::BroadcastMessage(m) => messages.push(m),
                             ConsensusAction::CommitBlock(b) => committed_blocks.push(b),
+                            _ => {}
                         }
                     }
                 }
@@ -1993,6 +1999,7 @@ mod tests {
                     match a {
                         ConsensusAction::BroadcastMessage(m) => messages.push(m),
                         ConsensusAction::CommitBlock(b) => committed_blocks.push(b),
+                        _ => {}
                     }
                 }
             }
@@ -2219,6 +2226,7 @@ mod integration_tests {
                 match a {
                     ConsensusAction::BroadcastMessage(m) => messages.push(m),
                     ConsensusAction::CommitBlock(b) => committed.push(b),
+                    _ => {}
                 }
             }
         }
@@ -2234,6 +2242,7 @@ mod integration_tests {
                         match a {
                             ConsensusAction::BroadcastMessage(m) => messages.push(m),
                             ConsensusAction::CommitBlock(b) => committed.push(b),
+                            _ => {}
                         }
                     }
                 }
@@ -2243,6 +2252,7 @@ mod integration_tests {
                     match a {
                         ConsensusAction::BroadcastMessage(m) => messages.push(m),
                         ConsensusAction::CommitBlock(b) => committed.push(b),
+                        _ => {}
                     }
                 }
             }
@@ -2790,6 +2800,7 @@ mod vrf_tests {
                 match a {
                     ConsensusAction::BroadcastMessage(m) => messages.push(m),
                     ConsensusAction::CommitBlock(b) => committed.push(b),
+                    _ => {}
                 }
             }
         }
@@ -2805,6 +2816,7 @@ mod vrf_tests {
                         match a {
                             ConsensusAction::BroadcastMessage(m) => messages.push(m),
                             ConsensusAction::CommitBlock(b) => committed.push(b),
+                            _ => {}
                         }
                     }
                 }
@@ -2814,6 +2826,7 @@ mod vrf_tests {
                     match a {
                         ConsensusAction::BroadcastMessage(m) => messages.push(m),
                         ConsensusAction::CommitBlock(b) => committed.push(b),
+                        _ => {}
                     }
                 }
             }
@@ -2905,6 +2918,7 @@ mod vrf_tests {
                 match a {
                     ConsensusAction::BroadcastMessage(m) => messages.push(m),
                     ConsensusAction::CommitBlock(b) => committed.push(b),
+                    _ => {}
                 }
             }
         }
@@ -2917,6 +2931,7 @@ mod vrf_tests {
                         match a {
                             ConsensusAction::BroadcastMessage(m) => messages.push(m),
                             ConsensusAction::CommitBlock(b) => committed.push(b),
+                            _ => {}
                         }
                     }
                 }
@@ -2926,6 +2941,7 @@ mod vrf_tests {
                     match a {
                         ConsensusAction::BroadcastMessage(m) => messages.push(m),
                         ConsensusAction::CommitBlock(b) => committed.push(b),
+                        _ => {}
                     }
                 }
             }
@@ -2969,6 +2985,7 @@ mod vrf_tests {
                     match a {
                         ConsensusAction::BroadcastMessage(m) => messages.push(m),
                         ConsensusAction::CommitBlock(b) => committed.push(b),
+                        _ => {}
                     }
                 }
             }
@@ -2982,6 +2999,7 @@ mod vrf_tests {
                             match a {
                                 ConsensusAction::BroadcastMessage(m) => messages.push(m),
                                 ConsensusAction::CommitBlock(b) => committed.push(b),
+                                _ => {}
                             }
                         }
                     }
@@ -2991,6 +3009,7 @@ mod vrf_tests {
                         match a {
                             ConsensusAction::BroadcastMessage(m) => messages.push(m),
                             ConsensusAction::CommitBlock(b) => committed.push(b),
+                            _ => {}
                         }
                     }
                 }
