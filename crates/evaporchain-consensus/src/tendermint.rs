@@ -170,6 +170,8 @@ pub enum ConsensusAction {
     BroadcastMessage(ConsensusMessage),
     /// Commit this block — apply it to state and advance height.
     CommitBlock(Block),
+    /// Request block sync from peers: (from_height, to_height).
+    RequestSync(u64, u64),
 }
 
 // ─────────────────────── TendermintConsensus ─────────────────────────────
@@ -574,8 +576,17 @@ impl TendermintConsensus {
             return actions;
         }
 
-        // Ignore messages for future heights (we'll catch up via block sync)
+        // If we receive a message for a future height, we are behind — request sync
         if msg.height() > self.height {
+            if msg.height() > self.height + 1 {
+                tracing::warn!(
+                    local_height = self.height,
+                    msg_height = msg.height(),
+                    "Behind by {} blocks — requesting sync",
+                    msg.height() - self.height
+                );
+                actions.push(ConsensusAction::RequestSync(self.height + 1, msg.height().saturating_sub(1)));
+            }
             return actions;
         }
 

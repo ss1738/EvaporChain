@@ -1573,6 +1573,10 @@ async fn main() -> Result<()> {
                 ConsensusAction::CommitBlock(_) => {
                     commit_actions.push(action);
                 }
+                ConsensusAction::RequestSync(from, to) => {
+                    // Consensus detected it is behind — signal sync needed
+                    commit_actions.push(ConsensusAction::RequestSync(from, to));
+                }
             }
         }
         commit_actions
@@ -1647,6 +1651,19 @@ async fn main() -> Result<()> {
 
                 // Handle commits
                 for action in commits.drain(..) {
+                    if let ConsensusAction::RequestSync(from, to) = action {
+                        if !sync_in_flight {
+                            println!(
+                                "{} \x1b[36mConsensus requests sync: blocks {}..{}\x1b[0m",
+                                node_tag, from, to
+                            );
+                            if let Some(ref sender) = sync_request_sender {
+                                let _ = sender.send((from, to)).await;
+                                sync_in_flight = true;
+                            }
+                        }
+                        continue;
+                    }
                     if let ConsensusAction::CommitBlock(mut block) = action {
                         // Execute the block to get state root
                         let exec_start = Instant::now();
@@ -1780,6 +1797,19 @@ async fn main() -> Result<()> {
 
                     // Handle any commits from message processing
                     for action in commits.drain(..) {
+                        if let ConsensusAction::RequestSync(from, to) = action {
+                            if !sync_in_flight {
+                                println!(
+                                    "{} \x1b[36mConsensus requests sync (msg): blocks {}..{}\x1b[0m",
+                                    node_tag, from, to
+                                );
+                                if let Some(ref sender) = sync_request_sender {
+                                    let _ = sender.send((from, to)).await;
+                                    sync_in_flight = true;
+                                }
+                            }
+                            continue;
+                        }
                         if let ConsensusAction::CommitBlock(mut block) = action {
                             let exec_start = Instant::now();
                             let result = {
@@ -2033,9 +2063,46 @@ async fn main() -> Result<()> {
                     continue;
                 }
 
-                // In Tendermint mode, skip — consensus handles block application.
-                // (Block sync for gap-fill is handled by consensus catch-up.)
+                // In Tendermint mode: if this block is ahead of us, trigger sync
+                // instead of blindly skipping. This fixes the state-sync-on-rejoin bug
+                // where a late-joining node never catches up.
                 if tendermint.is_some() {
+                    let expected_next = local_height + 1;
+                    if block.number > expected_next && !sync_in_flight {
+                        println!(
+                            "{} [33m⚠ Tendermint sync gap: at #{}, received #{} — requesting backfill[0m",
+                            node_tag, local_height, block.number
+                        );
+                        // Queue this block for later
+                        let block_num = block.number;
+                        pending_blocks.insert(block_num, block);
+                        while pending_blocks.len() > 500 {
+                            if let Some(&oldest) = pending_blocks.keys().next() {
+                                pending_blocks.remove(&oldest);
+                            }
+                        }
+                        // Request missing blocks
+                        if let Some(ref sender) = sync_request_sender {
+                            let gap_end = block_num.saturating_sub(1);
+                            println!(
+                                "{} [36mRequesting blocks {}..{} from peers[0m",
+                                node_tag, expected_next, gap_end
+                            );
+                            let _ = sender.send((expected_next, gap_end)).await;
+                            sync_in_flight = true;
+                        }
+                    } else if block.number > expected_next {
+                        // Already have a sync in flight, just queue
+                        let block_num = block.number;
+                        pending_blocks.insert(block_num, block);
+                        while pending_blocks.len() > 500 {
+                            if let Some(&oldest) = pending_blocks.keys().next() {
+                                pending_blocks.remove(&oldest);
+                            }
+                        }
+                    }
+                    // For blocks at expected_next in Tendermint mode,
+                    // consensus round handles them — skip to avoid double-apply
                     continue;
                 }
 
