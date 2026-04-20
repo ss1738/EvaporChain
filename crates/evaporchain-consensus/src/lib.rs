@@ -1,3 +1,4 @@
+pub mod anchor;
 pub mod bridge;
 pub mod da_attestation;
 pub mod encrypted_mempool;
