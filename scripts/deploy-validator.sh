@@ -61,7 +61,7 @@ After=network.target
 [Service]
 Type=simple
 ExecStart=${REMOTE_DIR}/target/release/evaporchain-node \\
-    --tendermint --network --api --demo \\
+    --network --api --demo \\
     --validator-id ${VALIDATOR_ID} --validators ${VALIDATORS} \\
     --node-id node-${VALIDATOR_ID} \\
     --port ${P2P_PORT} --api-port ${API_PORT} \\

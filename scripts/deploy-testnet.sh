@@ -81,9 +81,9 @@ run_node1() {
         --node-id validator-1 \
         --network \
         --interval 3000 \
-        --bootstrap "${NODE2_IP}:9002" \
-        --bootstrap "${NODE3_IP}:9003" \
-        --bootstrap "${NODE4_IP}:9004"
+        --bootstrap "/ip4/${NODE2_IP}/tcp/9002" \
+        --bootstrap "/ip4/${NODE3_IP}/tcp/9003" \
+        --bootstrap "/ip4/${NODE4_IP}/tcp/9004"
 }
 
 # Run on Node 2:
@@ -94,9 +94,9 @@ run_node2() {
         --node-id validator-2 \
         --network \
         --interval 3000 \
-        --bootstrap "${NODE1_IP}:9001" \
-        --bootstrap "${NODE3_IP}:9003" \
-        --bootstrap "${NODE4_IP}:9004"
+        --bootstrap "/ip4/${NODE1_IP}/tcp/9001" \
+        --bootstrap "/ip4/${NODE3_IP}/tcp/9003" \
+        --bootstrap "/ip4/${NODE4_IP}/tcp/9004"
 }
 
 # Run on Node 3:
@@ -107,9 +107,9 @@ run_node3() {
         --node-id validator-3 \
         --network \
         --interval 3000 \
-        --bootstrap "${NODE1_IP}:9001" \
-        --bootstrap "${NODE2_IP}:9002" \
-        --bootstrap "${NODE4_IP}:9004"
+        --bootstrap "/ip4/${NODE1_IP}/tcp/9001" \
+        --bootstrap "/ip4/${NODE2_IP}/tcp/9002" \
+        --bootstrap "/ip4/${NODE4_IP}/tcp/9004"
 }
 
 # Run on Node 4:
@@ -120,9 +120,9 @@ run_node4() {
         --node-id validator-4 \
         --network \
         --interval 3000 \
-        --bootstrap "${NODE1_IP}:9001" \
-        --bootstrap "${NODE2_IP}:9002" \
-        --bootstrap "${NODE3_IP}:9003"
+        --bootstrap "/ip4/${NODE1_IP}/tcp/9001" \
+        --bootstrap "/ip4/${NODE2_IP}/tcp/9002" \
+        --bootstrap "/ip4/${NODE3_IP}/tcp/9003"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -140,7 +140,7 @@ install_systemd_service() {
             local VAR="NODE${i}_IP"
             local PEER_IP="${!VAR}"
             local PEER_PORT=$((9000 + i))
-            BOOTSTRAP_ARGS="$BOOTSTRAP_ARGS --bootstrap ${PEER_IP}:${PEER_PORT}"
+            BOOTSTRAP_ARGS="$BOOTSTRAP_ARGS --bootstrap /ip4/${PEER_IP}/tcp/${PEER_PORT}"
         fi
     done
 

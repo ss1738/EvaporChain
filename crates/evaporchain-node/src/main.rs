@@ -346,9 +346,14 @@ fn generate_demo_tx(
     ];
 
     // Partition accounts by validator_id to prevent nonce/duplicate collisions.
+    // validator_id can be 0-indexed or 1-indexed depending on CLI usage.
     let per_validator = (all_hexes.len() as u64 / validator_count.max(1)) as usize;
-    let start = ((validator_id - 1) as usize) * per_validator;
-    let end = if validator_id == validator_count {
+    if per_validator == 0 {
+        return None;
+    }
+    let idx = if validator_id == 0 { 0 } else { (validator_id - 1) as usize };
+    let start = idx * per_validator;
+    let end = if start + per_validator >= all_hexes.len() {
         all_hexes.len()
     } else {
         start + per_validator
