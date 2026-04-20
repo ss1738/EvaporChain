@@ -67,6 +67,13 @@ pub struct ValidatorInfo {
     /// Total stake slashed historically.
     #[serde(default)]
     pub total_slashed: u64,
+    /// BLS proof-of-possession (signature over pk with POP DST).
+    /// Prevents rogue-key attack on aggregate signatures.
+    #[serde(default)]
+    pub bls_pop: Option<Vec<u8>>,
+    /// Whether the BLS proof-of-possession has been verified.
+    #[serde(default)]
+    pub pop_verified: bool,
 }
 
 impl ValidatorInfo {
@@ -83,13 +90,31 @@ impl ValidatorInfo {
             health_score: 0.0,
             jailed: false,
             total_slashed: 0,
+            bls_pop: None,
+            pop_verified: false,
         }
     }
 
-    /// Create a validator with a BLS public key.
+    /// Create a validator with a BLS public key and proof-of-possession.
     pub fn with_bls_key(id: u64, stake: u64, address: [u8; 32], bls_pk: Vec<u8>) -> Self {
         Self {
             bls_public_key: Some(bls_pk),
+            ..Self::new(id, stake, address)
+        }
+    }
+
+    /// Create a validator with a BLS key + verified proof-of-possession.
+    pub fn with_bls_pop(
+        id: u64,
+        stake: u64,
+        address: [u8; 32],
+        bls_pk: Vec<u8>,
+        pop: Vec<u8>,
+    ) -> Self {
+        Self {
+            bls_public_key: Some(bls_pk),
+            bls_pop: Some(pop),
+            pop_verified: false, // Caller must verify via ValidatorSet::verify_pop
             ..Self::new(id, stake, address)
         }
     }
@@ -176,50 +201,29 @@ impl ValidatorSet {
             _ => return false,
         };
 
-        // Verify proof-of-possession: sig = BLS.Sign(sk, pk_bytes)
+        // Verify proof-of-possession: sig = BLS.Sign(sk, pk_bytes, DST=POP)
         // The message being signed IS the public key itself.
         if !Self::verify_bls_pop(bls_pk_bytes, proof_of_possession) {
             return false;
         }
 
-        self.validators.push(info);
+        let mut validated = info;
+        validated.bls_pop = Some(proof_of_possession.to_vec());
+        validated.pop_verified = true;
+        self.validators.push(validated);
         true
     }
 
-    /// Verify a BLS proof-of-possession.
-    /// PoP = BLS.Sign(secret_key, public_key_bytes)
-    /// Verify: BLS.Verify(public_key, public_key_bytes, pop_signature)
+    /// Verify a BLS proof-of-possession using real BLS12-381 signature
+    /// verification with the POP domain separation tag.
+    /// PoP = BLS.Sign(sk, pk_bytes, DST=BLS_POP_DST)
+    /// Verify: BLS.Verify(pk, pk_bytes, pop_sig, DST=BLS_POP_DST)
     fn verify_bls_pop(public_key_bytes: &[u8], pop_signature: &[u8]) -> bool {
-        // Attempt to deserialize and verify using blst
-        use evaporchain_crypto::hash::blake3_hash;
+        use evaporchain_crypto::signatures::{BlsPublicKey, BlsSignature, BlsVerifier};
 
-        // Minimum length checks (BLS12-381: 48-byte compressed pubkey, 96-byte signature)
-        if public_key_bytes.len() < 48 || pop_signature.len() < 96 {
-            return false;
-        }
-
-        // For the PoP, the message is the hash of the public key bytes.
-        // This binds the key to the proof irrevocably.
-        let msg_hash = blake3_hash(public_key_bytes);
-
-        // Use blst to verify the signature over the key hash.
-        // If blst is not available at runtime, fall back to a hash-based check
-        // that at least ensures the pop was computed from the same key material.
-        let pop_check = blake3_hash(pop_signature);
-        // Verify structural integrity: the PoP must reference the same key
-        let key_hash = blake3_hash(public_key_bytes);
-        // Cross-reference: PoP hash XOR key hash should not be all zeros
-        // (trivial forgery prevention)
-        let xor_result: Vec<u8> = pop_check
-            .iter()
-            .zip(key_hash.iter())
-            .map(|(a, b)| a ^ b)
-            .collect();
-        let all_zero = xor_result.iter().all(|&b| b == 0);
-        let all_same = pop_check == key_hash;
-
-        // Valid PoP: signature exists, minimum lengths met, not trivially forged
-        !all_zero && !all_same && !msg_hash.is_empty()
+        let pk = BlsPublicKey(public_key_bytes.to_vec());
+        let pop = BlsSignature(pop_signature.to_vec());
+        BlsVerifier::verify_proof_of_possession(&pk, &pop)
     }
 
     /// Remove a validator by id.

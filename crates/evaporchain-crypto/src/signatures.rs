@@ -110,6 +110,9 @@ pub enum MlDsaError {
 use blst::min_pk::{AggregateSignature, PublicKey as BlstPublicKey, SecretKey as BlstSecretKey, Signature as BlstSignature};
 
 const BLS_DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
+/// Domain separation tag for proof-of-possession (prevents rogue-key attacks).
+/// Different from BLS_DST so PoP signatures cannot be replayed as message signatures.
+const BLS_POP_DST: &[u8] = b"BLS_POP_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
 
 /// BLS12-381 public key for consensus attestation aggregation.
 /// Public key: 48 bytes (compressed G1 point).
@@ -163,6 +166,16 @@ impl BlsKeypair {
     pub fn secret_key_bytes(&self) -> BlsSecretKey {
         BlsSecretKey(self.sk.to_bytes().to_vec())
     }
+
+    /// Generate a proof-of-possession: sign the public key with a distinct DST.
+    /// This proves ownership of the secret key and prevents the rogue-key attack
+    /// on BLS aggregate signatures. Each validator must submit their PoP when
+    /// registering their BLS public key.
+    pub fn proof_of_possession(&self) -> BlsSignature {
+        let pk_bytes = self.pk.to_bytes();
+        let sig = self.sk.sign(&pk_bytes, BLS_POP_DST, &[]);
+        BlsSignature(sig.to_bytes().to_vec())
+    }
 }
 
 /// Stateless BLS verification and aggregation.
@@ -197,6 +210,22 @@ impl BlsVerifier {
         let refs: Vec<&BlstSignature> = parsed.iter().collect();
         let agg = AggregateSignature::aggregate(&refs, true).ok()?;
         Some(BlsSignature(agg.to_signature().to_bytes().to_vec()))
+    }
+
+    /// Verify a proof-of-possession for a BLS public key.
+    /// Returns true only if the PoP was produced by the holder of the
+    /// secret key corresponding to `pk`. Uses BLS_POP_DST to prevent
+    /// cross-domain replay.
+    pub fn verify_proof_of_possession(pk: &BlsPublicKey, pop: &BlsSignature) -> bool {
+        let pk_parsed = match BlstPublicKey::from_bytes(&pk.0) {
+            Ok(pk) => pk,
+            Err(_) => return false,
+        };
+        let sig = match BlstSignature::from_bytes(&pop.0) {
+            Ok(sig) => sig,
+            Err(_) => return false,
+        };
+        sig.verify(true, &pk.0, BLS_POP_DST, &[], &pk_parsed, true) == blst::BLST_ERROR::BLST_SUCCESS
     }
 
     /// Verify an aggregated signature against multiple public keys.
@@ -483,5 +512,53 @@ mod tests {
         assert_eq!(kp.secret_key().len(), pqc_dilithium::SECRETKEYBYTES, "SK size must match");
         let sig = kp.sign(b"test");
         assert_eq!(sig.len(), 3293, "Signature must be 3293 bytes");
+    }
+
+    // ── BLS Proof-of-Possession Tests ──
+
+    #[test]
+    fn test_bls_pop_valid() {
+        let kp = BlsKeypair::generate();
+        let pop = kp.proof_of_possession();
+        let pk = kp.public_key_bytes();
+        assert!(BlsVerifier::verify_proof_of_possession(&pk, &pop));
+    }
+
+    #[test]
+    fn test_bls_pop_wrong_key_rejects() {
+        let kp1 = BlsKeypair::generate();
+        let kp2 = BlsKeypair::generate();
+        let pop = kp1.proof_of_possession();
+        let pk2 = kp2.public_key_bytes();
+        // PoP from kp1 must not verify against kp2's public key
+        assert!(!BlsVerifier::verify_proof_of_possession(&pk2, &pop));
+    }
+
+    #[test]
+    fn test_bls_pop_cannot_be_replayed_as_message_sig() {
+        // PoP uses BLS_POP_DST, message signatures use BLS_DST.
+        // A PoP must not verify as a message signature.
+        let kp = BlsKeypair::generate();
+        let pop = kp.proof_of_possession();
+        let pk = kp.public_key_bytes();
+        // Try to verify the PoP as if it were a signature over pk bytes
+        assert!(!BlsVerifier::verify(&pk.0, &pop, &pk));
+    }
+
+    #[test]
+    fn test_bls_pop_deterministic() {
+        let sk_bytes = [42u8; 32];
+        let kp1 = BlsKeypair::from_secret_bytes(&sk_bytes).unwrap();
+        let kp2 = BlsKeypair::from_secret_bytes(&sk_bytes).unwrap();
+        assert_eq!(kp1.proof_of_possession().0, kp2.proof_of_possession().0);
+    }
+
+    #[test]
+    fn test_bls_pop_forged_bytes_rejected() {
+        let kp = BlsKeypair::generate();
+        let pk = kp.public_key_bytes();
+        // Random 96 bytes should never pass as a valid PoP
+        let fake_pop = BlsSignature(vec![0xDE; 96]);
+        assert!(!BlsVerifier::verify_proof_of_possession(&pk, &fake_pop));
     }
 }

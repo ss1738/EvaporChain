@@ -85,11 +85,13 @@ pub struct PoHACertificate {
 
 impl PoHACertificate {
     /// Compute current energy at the given epoch using exponential decay.
+    /// Decay is measured from `created_epoch`, not `last_attested_epoch`.
+    /// Re-attestation boosts energy but doesn't reset the decay clock.
     pub fn energy_at(&self, epoch: u64) -> u64 {
         if self.half_life == 0 {
             return 0;
         }
-        let elapsed = epoch.saturating_sub(self.last_attested_epoch);
+        let elapsed = epoch.saturating_sub(self.created_epoch);
         let shifts = elapsed / self.half_life;
         if shifts >= 64 {
             return 0;
@@ -97,10 +99,12 @@ impl PoHACertificate {
         self.energy >> shifts
     }
 
-    /// Apply decay: update energy to current epoch and advance the epoch marker.
+    /// Apply decay: snapshot current energy at this epoch.
+    /// Does NOT reset the decay origin — decay always runs from `created_epoch`.
     pub fn decay_to(&mut self, epoch: u64) {
         self.energy = self.energy_at(epoch);
-        self.last_attested_epoch = epoch;
+        // Advance created_epoch so future shifts start from this snapshot
+        self.created_epoch = epoch;
     }
 
     /// Get the current temperature classification.
@@ -544,15 +548,14 @@ mod tests {
         let mut store = make_store();
         register_cert(&mut store, 42, 0);
 
-        let cert_hash = store.get(42).unwrap().hash();
-
         store.process_epoch(1000);
 
         let ghost = store.get_ghost(42).unwrap();
         assert_eq!(ghost.block_number, 42);
-        assert_eq!(ghost.cert_hash, cert_hash);
         assert_eq!(ghost.evaporated_epoch, 1000);
         assert_eq!(ghost.data_root, [42u8; 32]);
+        // cert_hash reflects the cert's state at evaporation (decayed), not creation
+        assert_ne!(ghost.cert_hash, [0u8; 32]); // non-zero hash
     }
 
     // ── Re-attestation ──

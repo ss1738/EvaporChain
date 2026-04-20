@@ -2169,6 +2169,12 @@ async fn main() -> Result<()> {
                                     "{}   \x1b[1;35mDA Certificate: block #{}, supermajority reached (from peer attestation)\x1b[0m",
                                     node_tag, bn,
                                 );
+                                // Register with PoHA now that DA cert is confirmed
+                                let mut fs = safe_lock(&frontier_state);
+                                fs.poha.register(
+                                    bn, dr, 8, 3000, 4000, bn,
+                                    vec![], vec![],
+                                );
                             }
                         }
                         actions

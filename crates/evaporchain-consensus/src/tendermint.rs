@@ -95,6 +95,10 @@ pub enum ConsensusMessage {
         validator_id: u64,
         /// BLS12-381 compressed public key (48 bytes).
         bls_public_key: Vec<u8>,
+        /// Proof-of-possession: BLS.Sign(sk, pk, DST=POP).
+        /// Prevents rogue-key attacks on aggregate signatures.
+        #[serde(default)]
+        proof_of_possession: Vec<u8>,
     },
     /// Validator attests to data availability for a committed block.
     DAAttestation {
@@ -335,11 +339,13 @@ impl TendermintConsensus {
         self.bls_keypair = Some(keypair);
     }
 
-    /// Generate a KeyAnnounce message for broadcasting our BLS public key.
+    /// Generate a KeyAnnounce message for broadcasting our BLS public key
+    /// along with a proof-of-possession (prevents rogue-key attacks).
     pub fn make_key_announce(&self) -> Option<ConsensusMessage> {
         self.bls_keypair.as_ref().map(|kp| ConsensusMessage::KeyAnnounce {
             validator_id: self.my_id,
             bls_public_key: kp.public_key_bytes().0.clone(),
+            proof_of_possession: kp.proof_of_possession().0.clone(),
         })
     }
 
@@ -671,20 +677,38 @@ impl TendermintConsensus {
         let mut actions = Vec::new();
 
         // Handle KeyAnnounce before height filters (height-independent)
-        if let ConsensusMessage::KeyAnnounce { validator_id, ref bls_public_key } = msg {
-            if bls_public_key.len() == 48 {
-                if let Some(vi) = self.validator_set.get_mut(validator_id) {
-                    if vi.bls_public_key.is_none() || vi.bls_public_key.as_ref() != Some(bls_public_key) {
-                        vi.bls_public_key = Some(bls_public_key.clone());
-                        info!(
-                            validator = validator_id,
-                            pk_prefix = %hex::encode(&bls_public_key[..8]),
-                            "Registered BLS public key from peer"
-                        );
-                    }
-                }
-            } else {
+        if let ConsensusMessage::KeyAnnounce { validator_id, ref bls_public_key, ref proof_of_possession } = msg {
+            if bls_public_key.len() != 48 {
                 warn!(validator_id, len = bls_public_key.len(), "Invalid BLS key length (expected 48)");
+                return actions;
+            }
+
+            // Verify proof-of-possession (prevents rogue-key attack)
+            if !proof_of_possession.is_empty() {
+                use evaporchain_crypto::signatures::{BlsPublicKey, BlsSignature, BlsVerifier};
+                let pk = BlsPublicKey(bls_public_key.clone());
+                let pop = BlsSignature(proof_of_possession.clone());
+                if !BlsVerifier::verify_proof_of_possession(&pk, &pop) {
+                    warn!(
+                        validator = validator_id,
+                        "REJECTED BLS key: proof-of-possession verification failed (possible rogue-key attack)"
+                    );
+                    return actions;
+                }
+            }
+
+            if let Some(vi) = self.validator_set.get_mut(validator_id) {
+                if vi.bls_public_key.is_none() || vi.bls_public_key.as_ref() != Some(bls_public_key) {
+                    vi.bls_public_key = Some(bls_public_key.clone());
+                    vi.bls_pop = if proof_of_possession.is_empty() { None } else { Some(proof_of_possession.clone()) };
+                    vi.pop_verified = !proof_of_possession.is_empty();
+                    info!(
+                        validator = validator_id,
+                        pk_prefix = %hex::encode(&bls_public_key[..8]),
+                        pop_verified = vi.pop_verified,
+                        "Registered BLS public key from peer"
+                    );
+                }
             }
             return actions;
         }
@@ -908,6 +932,20 @@ impl TendermintConsensus {
                 bls_signature,
             } => {
                 if round == self.round_state.round {
+                    // ── Vote Equivocation Detection ──
+                    if let Some(&existing_hash) = self.round_state.prevotes.get(&validator_id) {
+                        if existing_hash != block_hash {
+                            let slashed = self.validator_set.slash_equivocation(validator_id);
+                            warn!(
+                                validator = validator_id,
+                                slashed_amount = slashed,
+                                height = self.height,
+                                round = round,
+                                "SLASHED for prevote equivocation (double-voting)"
+                            );
+                            return actions; // Reject the conflicting prevote
+                        }
+                    }
                     self.round_state.prevotes.insert(validator_id, block_hash);
                     if let Some(sig) = bls_signature {
                         self.round_state.prevote_bls_sigs.insert(validator_id, sig);
@@ -923,6 +961,20 @@ impl TendermintConsensus {
                 bls_signature,
             } => {
                 if round == self.round_state.round {
+                    // ── Vote Equivocation Detection ──
+                    if let Some(&existing_hash) = self.round_state.precommits.get(&validator_id) {
+                        if existing_hash != block_hash {
+                            let slashed = self.validator_set.slash_equivocation(validator_id);
+                            warn!(
+                                validator = validator_id,
+                                slashed_amount = slashed,
+                                height = self.height,
+                                round = round,
+                                "SLASHED for precommit equivocation (double-voting)"
+                            );
+                            return actions; // Reject the conflicting precommit
+                        }
+                    }
                     self.round_state.precommits.insert(validator_id, block_hash);
                     if let Some(sig) = bls_signature {
                         self.round_state.precommit_bls_sigs.insert(validator_id, sig);
@@ -3912,5 +3964,151 @@ mod da_tests {
         let mut db = InMemoryStateDB::new();
         let block = tc.create_proposal(&mut db).unwrap();
         assert!(block.blob_commitments.is_empty());
+    }
+
+    // ── Vote Equivocation Detection Tests ──
+
+    #[test]
+    fn test_prevote_equivocation_slashes_validator() {
+        let mut tc = make_test_tc();
+        let hash_a = [0xAA; 32];
+        let hash_b = [0xBB; 32];
+
+        // First prevote from validator 2: vote for hash_a
+        tc.on_message(ConsensusMessage::Prevote {
+            height: tc.height,
+            round: 0,
+            block_hash: Some(hash_a),
+            validator_id: 2,
+            bls_signature: None,
+        });
+
+        // Second prevote from same validator 2: different hash → equivocation
+        let actions = tc.on_message(ConsensusMessage::Prevote {
+            height: tc.height,
+            round: 0,
+            block_hash: Some(hash_b),
+            validator_id: 2,
+            bls_signature: None,
+        });
+
+        // Should return early (empty actions = rejected)
+        assert!(actions.is_empty(), "equivocating prevote should be rejected");
+        // Validator 2 should be jailed
+        let v = tc.validator_set.get(2).unwrap();
+        assert!(v.jailed, "equivocating validator should be jailed");
+        assert_eq!(v.total_slashed, 100); // 10% of 1000
+        assert_eq!(v.stake, 900);
+    }
+
+    #[test]
+    fn test_precommit_equivocation_slashes_validator() {
+        let mut tc = make_test_tc();
+        let hash_a = [0xCC; 32];
+        let hash_b = [0xDD; 32];
+
+        // First precommit from validator 3
+        tc.on_message(ConsensusMessage::Precommit {
+            height: tc.height,
+            round: 0,
+            block_hash: Some(hash_a),
+            validator_id: 3,
+            bls_signature: None,
+        });
+
+        // Conflicting precommit → equivocation
+        let actions = tc.on_message(ConsensusMessage::Precommit {
+            height: tc.height,
+            round: 0,
+            block_hash: Some(hash_b),
+            validator_id: 3,
+            bls_signature: None,
+        });
+
+        assert!(actions.is_empty(), "equivocating precommit should be rejected");
+        let v = tc.validator_set.get(3).unwrap();
+        assert!(v.jailed);
+        assert_eq!(v.total_slashed, 100);
+    }
+
+    #[test]
+    fn test_duplicate_identical_vote_is_accepted() {
+        let mut tc = make_test_tc();
+        let hash = [0xEE; 32];
+
+        // Same vote twice — should NOT slash (idempotent)
+        tc.on_message(ConsensusMessage::Prevote {
+            height: tc.height,
+            round: 0,
+            block_hash: Some(hash),
+            validator_id: 2,
+            bls_signature: None,
+        });
+        tc.on_message(ConsensusMessage::Prevote {
+            height: tc.height,
+            round: 0,
+            block_hash: Some(hash),
+            validator_id: 2,
+            bls_signature: None,
+        });
+
+        let v = tc.validator_set.get(2).unwrap();
+        assert!(!v.jailed, "identical duplicate vote should not slash");
+        assert_eq!(v.total_slashed, 0);
+    }
+
+    #[test]
+    fn test_nil_to_value_vote_is_equivocation() {
+        let mut tc = make_test_tc();
+
+        // First: nil prevote
+        tc.on_message(ConsensusMessage::Prevote {
+            height: tc.height,
+            round: 0,
+            block_hash: None,
+            validator_id: 4,
+            bls_signature: None,
+        });
+
+        // Then: vote for a hash → equivocation (nil ≠ Some)
+        let actions = tc.on_message(ConsensusMessage::Prevote {
+            height: tc.height,
+            round: 0,
+            block_hash: Some([0xFF; 32]),
+            validator_id: 4,
+            bls_signature: None,
+        });
+
+        assert!(actions.is_empty());
+        let v = tc.validator_set.get(4).unwrap();
+        assert!(v.jailed);
+    }
+
+    #[test]
+    fn test_jailed_validator_excluded_after_vote_equivocation() {
+        let mut tc = make_test_tc();
+
+        // Slash validator 2 via prevote equivocation
+        tc.on_message(ConsensusMessage::Prevote {
+            height: tc.height,
+            round: 0,
+            block_hash: Some([0xAA; 32]),
+            validator_id: 2,
+            bls_signature: None,
+        });
+        tc.on_message(ConsensusMessage::Prevote {
+            height: tc.height,
+            round: 0,
+            block_hash: Some([0xBB; 32]),
+            validator_id: 2,
+            bls_signature: None,
+        });
+
+        // Validator 2 should never be leader
+        for epoch in 0..20 {
+            if let Some(leader) = tc.validator_set.leader_for_epoch(epoch) {
+                assert_ne!(leader.id, 2, "Jailed validator should not lead at epoch {}", epoch);
+            }
+        }
     }
 }

@@ -79,6 +79,8 @@ impl ValidatorInfoSnapshot {
             health_score: self.health_score,
             jailed: self.jailed,
             total_slashed: self.total_slashed,
+            bls_pop: None,
+            pop_verified: false,
         }
     }
 }
