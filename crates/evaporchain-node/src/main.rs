@@ -1,6 +1,7 @@
 mod api;
 mod auth;
 mod bench;
+mod frontier;
 mod persistence;
 mod user_db;
 
@@ -1357,6 +1358,16 @@ async fn main() -> Result<()> {
     // DA shard store: block_number -> BlockDAPackage (keep last 64 blocks)
     let da_store: Arc<Mutex<BTreeMap<u64, BlockDAPackage>>> = Arc::new(Mutex::new(BTreeMap::new()));
 
+    // ── Frontier Primitives ──
+    // Energy-Annotated Verkle Trie + PoHA + Anchor-based consensus
+    let frontier_state: Arc<Mutex<frontier::FrontierState>> = Arc::new(Mutex::new(
+        frontier::FrontierState::new(frontier::FrontierConfig::default()),
+    ));
+    println!(
+        "{} \x1b[1;35mFrontier primitives active\x1b[0m — anchors(every 100), PoHA, energy-trie",
+        node_tag,
+    );
+
     // Channel for API-submitted transactions to reach P2P network & all mempools
     let (api_tx_sender, mut api_tx_receiver) = tokio::sync::mpsc::channel::<Transaction>(256);
 
@@ -1938,6 +1949,54 @@ async fn main() -> Result<()> {
                                     let mut tc = safe_lock(&tc_ref);
                                     tc.on_block_committed(&block, result.execution.state_root, result.execution.objects_evaporated);
                                 }
+
+                                // ── Frontier primitives update ──
+                                {
+                                    let da_info = block.da_certificate.as_ref().and_then(|_| {
+                                        block.data_root.map(|dr| frontier::DACertInfo {
+                                            data_root: dr,
+                                            shard_count: 8,
+                                            attested_stake: 3000,
+                                            total_stake: 4000,
+                                            aggregate_signature: vec![],
+                                            signer_ids: vec![],
+                                        })
+                                    });
+                                    let mmr_root = [0u8; 32]; // TODO: wire real MMR root
+                                    let db_guard = safe_lock(&db);
+                                    let mut fs = safe_lock(&frontier_state);
+                                    let fu = fs.on_block_committed(
+                                        block.number,
+                                        block.epoch,
+                                        result.execution.state_root,
+                                        obj_count as u64,
+                                        ghost_count as u64,
+                                        mmr_root,
+                                        da_info.as_ref(),
+                                        &*db_guard,
+                                    );
+                                    if let Some(ref anchor) = fu.anchor_created {
+                                        println!(
+                                            "{} \x1b[1;35mAnchor #{}\x1b[0m state_root={} objects={} ghosts={}",
+                                            node_tag, anchor.height,
+                                            &hex::encode(anchor.hash)[..16],
+                                            anchor.active_objects, anchor.ghost_count,
+                                        );
+                                    }
+                                    if fu.poha_evaporated > 0 {
+                                        println!(
+                                            "{} \x1b[33mPoHA: {} certs evaporated\x1b[0m",
+                                            node_tag, fu.poha_evaporated,
+                                        );
+                                    }
+                                    if block.number % 50 == 0 {
+                                        println!(
+                                            "{} \x1b[35m[frontier] {}\x1b[0m",
+                                            node_tag, fs.status_line(),
+                                        );
+                                    }
+                                }
+
                                 // Reset demo nonce offsets — on-chain nonces are now updated
                                 demo_nonces = [0u64; 4];
 
@@ -2229,6 +2288,46 @@ async fn main() -> Result<()> {
                                     {
                                         let mut tc = safe_lock(&tc_ref);
                                         tc.on_block_committed(&block, result.execution.state_root, result.execution.objects_evaporated);
+                                    }
+
+                                    // ── Frontier primitives update (gossip path) ──
+                                    {
+                                        let da_info = block.da_certificate.as_ref().and_then(|_| {
+                                            block.data_root.map(|dr| frontier::DACertInfo {
+                                                data_root: dr,
+                                                shard_count: 8,
+                                                attested_stake: 3000,
+                                                total_stake: 4000,
+                                                aggregate_signature: vec![],
+                                                signer_ids: vec![],
+                                            })
+                                        });
+                                        let db_guard = safe_lock(&db);
+                                        let mut fs = safe_lock(&frontier_state);
+                                        let fu = fs.on_block_committed(
+                                            block.number,
+                                            block.epoch,
+                                            result.execution.state_root,
+                                            obj_count as u64,
+                                            ghost_count as u64,
+                                            [0u8; 32],
+                                            da_info.as_ref(),
+                                            &*db_guard,
+                                        );
+                                        if let Some(ref anchor) = fu.anchor_created {
+                                            println!(
+                                                "{} \x1b[1;35mAnchor #{}\x1b[0m hash={} objects={} ghosts={}",
+                                                node_tag, anchor.height,
+                                                &hex::encode(anchor.hash)[..16],
+                                                anchor.active_objects, anchor.ghost_count,
+                                            );
+                                        }
+                                        if block.number % 50 == 0 {
+                                            println!(
+                                                "{} \x1b[35m[frontier] {}\x1b[0m",
+                                                node_tag, fs.status_line(),
+                                            );
+                                        }
                                     }
 
                                     if let Some(ref cache) = block_cache {

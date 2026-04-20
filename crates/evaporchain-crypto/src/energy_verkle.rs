@@ -835,7 +835,7 @@ impl Default for EnergyVerkleTrie {
 }
 
 /// Summary of the trie's thermodynamic health.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TrieHealth {
     pub active_leaves: u32,
     pub compressed_leaves: u32,
