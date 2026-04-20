@@ -1229,9 +1229,9 @@ async fn main() -> Result<()> {
     // Build Tendermint consensus if enabled
     let tendermint = if args.tendermint_mode {
         let mut validators = Vec::new();
-        for vid in 1..=args.validator_count {
+        for vid in 0..args.validator_count {
             let mut address = [0u8; 32];
-            address[0] = vid as u8;
+            address[0] = (vid + 1) as u8;
             validators.push(ValidatorInfo::new(vid, args.validator_stake, address));
         }
         let vs = ValidatorSet::with_validators(validators);
@@ -1482,6 +1482,9 @@ async fn main() -> Result<()> {
         mut tip_receiver,
         consensus_net_sender,
         mut consensus_net_receiver,
+        mut sample_request_sender,
+        mut sample_response_receiver,
+        shard_cache,
     ) = if let Some(ch) = net_channels {
         (
             Some(ch.tx_sender),
@@ -1494,9 +1497,12 @@ async fn main() -> Result<()> {
             Some(ch.tip_receiver),
             Some(ch.consensus_sender),
             Some(ch.consensus_receiver),
+            Some(ch.sample_request_sender),
+            Some(ch.sample_response_receiver),
+            Some(ch.shard_cache),
         )
     } else {
-        (None, None, None, None, None, None, None, None, None, None)
+        (None, None, None, None, None, None, None, None, None, None, None, None, None)
     };
 
     // Broadcast our BLS KeyAnnounce to peers once network is ready
@@ -1864,7 +1870,7 @@ async fn main() -> Result<()> {
                                                     &hex::encode(package.header.commitment_root)[..16],
                                                 );
                                                 let mut store = safe_lock(&da_store);
-                                                store.insert(block.number, package);
+                                                store.insert(block.number, package.clone());
                                                 // Keep only last 64 blocks
                                                 while store.len() > 64 {
                                                     if let Some(&oldest) = store.keys().next() {
@@ -1873,8 +1879,27 @@ async fn main() -> Result<()> {
                                                 }
                                                 drop(store);
 
-                                                // Create and broadcast DA attestation
+                                                // Also populate the network shard cache so peers can sample from us
+                                                if let Some(ref sc) = shard_cache {
+                                                    let mut cache = sc.write().unwrap_or_else(|p| p.into_inner());
+                                                    cache.insert(block.number, package.clone());
+                                                    while cache.len() > 500 {
+                                                        if let Some(&oldest) = cache.keys().next() {
+                                                            cache.remove(&oldest);
+                                                        }
+                                                    }
+                                                }
+
+                                                // Request shard samples from peers for DA verification
                                                 if let Some(data_root) = block.data_root {
+                                                    let queries = evaporchain_da::sampling::DASampler::generate_queries(
+                                                        block.number, shard_count as usize, 4, &data_root,
+                                                    );
+                                                    if let Some(ref sender) = sample_request_sender {
+                                                        let _ = sender.try_send(queries);
+                                                    }
+
+                                                    // Attest with local verification (peer sample results handled async below)
                                                     let mut tc = safe_lock(&tc_ref);
                                                     if let Some(att_msg) = tc.make_da_attestation(block.number, data_root, shard_count) {
                                                         // Self-register the attestation
@@ -1960,9 +1985,17 @@ async fn main() -> Result<()> {
                                 if let Ok(da) = evaporchain_da::block_da::BlockDA::new() {
                                     let block_bytes = serde_json::to_vec(&block).unwrap_or_default();
                                     if let Ok(package) = da.encode_block(&block_bytes) {
+                                        if let Some(ref sc) = shard_cache {
+                                            let mut cache = sc.write().unwrap_or_else(|p| p.into_inner());
+                                            cache.insert(block.number, package.clone());
+                                            while cache.len() > 500 {
+                                                if let Some(&oldest) = cache.keys().next() {
+                                                    cache.remove(&oldest);
+                                                }
+                                            }
+                                        }
                                         let mut store = da_store.lock().unwrap();
                                         store.insert(block.number, package);
-                                        // Keep only last 256 blocks
                                         while store.len() > 256 {
                                             if let Some(&oldest) = store.keys().next() {
                                                 store.remove(&oldest);
@@ -2138,16 +2171,31 @@ async fn main() -> Result<()> {
                                                         &hex::encode(package.header.commitment_root)[..16],
                                                     );
                                                     let mut store = safe_lock(&da_store);
-                                                    store.insert(block.number, package);
+                                                    store.insert(block.number, package.clone());
                                                     while store.len() > 64 {
                                                         if let Some(&oldest) = store.keys().next() {
                                                             store.remove(&oldest);
                                                         }
                                                     }
                                                     drop(store);
+                                                    if let Some(ref sc) = shard_cache {
+                                                        let mut cache = sc.write().unwrap_or_else(|p| p.into_inner());
+                                                        cache.insert(block.number, package.clone());
+                                                        while cache.len() > 500 {
+                                                            if let Some(&oldest) = cache.keys().next() {
+                                                                cache.remove(&oldest);
+                                                            }
+                                                        }
+                                                    }
 
-                                                    // Create and broadcast DA attestation
+                                                    // Request peer shard samples + create DA attestation
                                                     if let Some(data_root) = block.data_root {
+                                                        let queries = evaporchain_da::sampling::DASampler::generate_queries(
+                                                            block.number, shard_count as usize, 4, &data_root,
+                                                        );
+                                                        if let Some(ref sender) = sample_request_sender {
+                                                            let _ = sender.try_send(queries);
+                                                        }
                                                         let mut tc = safe_lock(&tc_ref);
                                                         if let Some(att_msg) = tc.make_da_attestation(block.number, data_root, shard_count) {
                                                             tc.on_message(att_msg.clone());
@@ -2223,6 +2271,15 @@ async fn main() -> Result<()> {
                                     if let Ok(da) = evaporchain_da::block_da::BlockDA::new() {
                                         let block_bytes = serde_json::to_vec(&block).unwrap_or_default();
                                         if let Ok(package) = da.encode_block(&block_bytes) {
+                                            if let Some(ref sc) = shard_cache {
+                                                let mut cache = sc.write().unwrap_or_else(|p| p.into_inner());
+                                                cache.insert(block.number, package.clone());
+                                                while cache.len() > 500 {
+                                                    if let Some(&oldest) = cache.keys().next() {
+                                                        cache.remove(&oldest);
+                                                    }
+                                                }
+                                            }
                                             let mut store = da_store.lock().unwrap();
                                             store.insert(block.number, package);
                                             while store.len() > 256 {
@@ -2794,6 +2851,30 @@ async fn main() -> Result<()> {
             } => {
                 let mut c = safe_lock(&consensus);
                 c.mempool.submit(tx);
+            }
+
+            // ── Receive DA shard sample responses from peers ──
+            Some(samples) = async {
+                match sample_response_receiver.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending::<Option<Vec<evaporchain_da::sampling::SampleResponse>>>().await,
+                }
+            } => {
+                let verified = samples.iter().all(|s| {
+                    let computed: [u8; 32] = blake3::hash(&s.shard.data).into();
+                    computed == s.shard.hash && evaporchain_da::sampling::DASampler::verify_proof(&s.shard, &s.proof)
+                });
+                if verified && !samples.is_empty() {
+                    println!(
+                        "{} \x1b[36mDA: verified {} peer shard samples\x1b[0m",
+                        node_tag, samples.len()
+                    );
+                } else if !samples.is_empty() {
+                    eprintln!(
+                        "{} \x1b[31mDA: peer shard sample verification FAILED ({} samples)\x1b[0m",
+                        node_tag, samples.len()
+                    );
+                }
             }
         }
     }

@@ -547,6 +547,10 @@ struct CreateObjectRequest {
     object_id: serde_json::Value,
     energy: u64,
     half_life: u64,
+    /// Optional data payload (hex-encoded or UTF-8 string). Used by oracles
+    /// to attach sensor readings, metadata, etc. to on-chain objects.
+    #[serde(default)]
+    data: Option<String>,
     #[serde(default)]
     signature: Option<String>,
     #[serde(default)]
@@ -1111,9 +1115,11 @@ async fn post_create_object(
     };
     let hash = tx_hash(&format!("create:{}:{}:{}", hex::encode(&obj_id_val[..8]), req.energy, req.half_life));
     let obj_label = hex::encode(&obj_id_val[..4]);
+    let data = req.data.map(|d| d.into_bytes())
+        .unwrap_or_else(|| format!("obj-0x{}", &obj_label).into_bytes());
     let mut tx = Transaction::CreateObject(CreateObjectTx {
         creator, object_id: obj_id_val, energy: req.energy, half_life: req.half_life,
-        data: format!("obj-0x{}", &obj_label).into_bytes(),
+        data,
         signature: req.signature.and_then(|s| hex::decode(s).ok()),
         public_key: req.public_key.and_then(|s| hex::decode(s).ok()),
     });
@@ -1640,6 +1646,60 @@ async fn post_faucet(
         balance,
         message: Some("Faucet transaction submitted to consensus — balance updates after next block".into()),
     }))
+}
+
+// ──────────────────────────── Oracle Ingest ──────────────────────────────
+
+/// Oracle ingest endpoint — no auth required (node-operator function).
+/// Creates on-chain objects with sensor data, energy, and half-life.
+/// Used by evaporchain-oracle to publish real-world data feeds.
+#[derive(Deserialize)]
+struct OracleIngestRequest {
+    /// Source identifier (e.g. "nasa:iss", "usgs:quake")
+    source: String,
+    /// Unique object ID (hex address)
+    object_id: String,
+    /// Initial energy
+    energy: u64,
+    /// Half-life in epochs
+    half_life: u64,
+    /// Sensor data payload (JSON string)
+    data: String,
+}
+
+async fn post_oracle_ingest(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<OracleIngestRequest>,
+) -> Json<TxResultResponse> {
+    // Oracle uses faucet address as creator (special system address)
+    let creator = [0u8; 32];
+    let obj_id_val = match parse_address_value(&serde_json::Value::String(req.object_id.clone())) {
+        Ok(a) => a,
+        Err(e) => return Json(TxResultResponse { success: false, message: e, tx_hash: None }),
+    };
+
+    let hash = tx_hash(&format!("oracle:{}:{}:{}", req.source, hex::encode(&obj_id_val[..8]), req.energy));
+
+    // Prepend source tag to data
+    let data_str = format!("[{}] {}", req.source, req.data);
+
+    let mut tx = Transaction::CreateObject(CreateObjectTx {
+        creator,
+        object_id: obj_id_val,
+        energy: req.energy,
+        half_life: req.half_life,
+        data: data_str.into_bytes(),
+        signature: None,
+        public_key: None,
+    });
+    sign_transaction(&mut tx, &state, None);
+    state.submit_tx(tx);
+
+    Json(TxResultResponse {
+        success: true,
+        message: format!("Oracle data ingested: {} (energy={}, half_life={})", req.source, req.energy, req.half_life),
+        tx_hash: Some(hash),
+    })
 }
 
 // ──────────────────────────── NFT Handlers ─────────────────────────────
@@ -3012,6 +3072,8 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/faucet", get(faucet_html))
         .route("/docs", get(docs_html))
         .route("/api/faucet", post(post_faucet))
+        // Oracle (no auth — node-operator data ingestion)
+        .route("/api/oracle/ingest", post(post_oracle_ingest))
         // Metrics / Throughput
         .route("/api/metrics", get(get_metrics))
         // Nova Proofs / Light Client

@@ -15,6 +15,7 @@ members = [
     "crates/evaporchain-cli",
     "crates/evaporchain-script",
     "crates/evaporchain-mcp",
+    "crates/evaporchain-oracle",
     "prototypes/fold-a-block",
     "wallet",
     "tests/integration",
