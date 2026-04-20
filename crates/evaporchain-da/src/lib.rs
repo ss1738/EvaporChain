@@ -14,9 +14,11 @@ pub mod evaporation_da;
 pub mod commitments;
 pub mod certificate;
 pub mod namespace;
+pub mod poha;
 
 pub use erasure::ErasureEncoder;
 pub use sampling::{DASampler, DAProof, SampleQuery, SampleResponse};
 pub use block_da::BlockDA;
 pub use evaporation_da::EvaporationDAProof;
 pub use namespace::{NamespaceMerkleTree, NamespacedBlob, NamespaceId, NamespaceProof};
+pub use poha::{PoHACertificate, PoHAStore, PoHASampler, CertTemperature, TemperatureDistribution};
