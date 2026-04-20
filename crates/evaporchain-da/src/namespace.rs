@@ -263,10 +263,39 @@ impl NamespaceMerkleTree {
     /// Verify a namespace proof against a root.
     pub fn verify_namespace_proof(proof: &NamespaceProof) -> bool {
         if proof.is_absence {
-            // For absence proofs, verify the root matches
-            // A full implementation would recompute the root from siblings
-            // For now, verify structural consistency
-            return true;
+            // Absence proof: the queried namespace must NOT fall within the root range,
+            // OR the siblings must recompute to the claimed root proving a gap exists.
+            if proof.namespace < proof.root.min_namespace
+                || proof.namespace > proof.root.max_namespace
+            {
+                // Namespace is entirely outside the tree's range — trivially absent.
+                // Still verify siblings recompute to root if provided.
+                if !proof.siblings.is_empty() {
+                    return Self::verify_siblings_to_root(proof);
+                }
+                return true;
+            }
+
+            // Namespace is within root range — must verify the gap via siblings.
+            if proof.siblings.is_empty() {
+                return false;
+            }
+
+            // Verify the sibling path proves a gap at the insertion point.
+            // The siblings around the insertion point must show that the left
+            // neighbor has max_namespace < queried and right neighbor has
+            // min_namespace > queried.
+            if proof.siblings.len() >= 2 {
+                let left = &proof.siblings[0];
+                let right = &proof.siblings[1];
+                if left.max_namespace >= proof.namespace
+                    || right.min_namespace <= proof.namespace
+                {
+                    return false;
+                }
+            }
+
+            return Self::verify_siblings_to_root(proof);
         }
 
         // For inclusion proofs, verify the range is non-empty
@@ -281,7 +310,38 @@ impl NamespaceMerkleTree {
             return false;
         }
 
+        // Verify sibling path recomputes to root
+        if !proof.siblings.is_empty() {
+            return Self::verify_siblings_to_root(proof);
+        }
+
         true
+    }
+
+    /// Verify that the sibling nodes in a proof recompute to the claimed root hash.
+    fn verify_siblings_to_root(proof: &NamespaceProof) -> bool {
+        if proof.siblings.is_empty() {
+            return true;
+        }
+
+        // Recompute root from the bottom-most sibling pair upwards.
+        // Walk the siblings pairwise, computing parent nodes.
+        let mut current_nodes = proof.siblings.clone();
+
+        while current_nodes.len() > 1 {
+            let mut next = Vec::with_capacity((current_nodes.len() + 1) / 2);
+            for pair in current_nodes.chunks(2) {
+                if pair.len() == 2 {
+                    next.push(NmtNode::internal(&pair[0], &pair[1]));
+                } else {
+                    next.push(pair[0].clone());
+                }
+            }
+            current_nodes = next;
+        }
+
+        // The final computed node's hash must match the root hash
+        current_nodes[0].hash == proof.root.hash
     }
 
     /// Collect sibling nodes needed to prove a range of leaves.

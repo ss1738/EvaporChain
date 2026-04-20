@@ -1280,19 +1280,19 @@ async fn main() -> Result<()> {
                     Err(e) => {
                         eprintln!("{} BLS key file corrupt ({}), regenerating", node_tag, e);
                         let kp = evaporchain_crypto::signatures::BlsKeypair::generate();
-                        let _ = std::fs::write(&bls_key_path, kp.secret_key_bytes().0);
+                        let _ = std::fs::write(&bls_key_path, kp.secret_key_bytes().as_bytes());
                         kp
                     }
                 }
             } else {
                 eprintln!("{} BLS key file wrong size ({}B), regenerating", node_tag, secret_bytes.len());
                 let kp = evaporchain_crypto::signatures::BlsKeypair::generate();
-                let _ = std::fs::write(&bls_key_path, kp.secret_key_bytes().0);
+                let _ = std::fs::write(&bls_key_path, kp.secret_key_bytes().as_bytes());
                 kp
             }
         } else {
             let kp = evaporchain_crypto::signatures::BlsKeypair::generate();
-            let _ = std::fs::write(&bls_key_path, kp.secret_key_bytes().0);
+            let _ = std::fs::write(&bls_key_path, kp.secret_key_bytes().as_bytes());
             println!(
                 "{} \x1b[1;36mBLS12-381 keypair generated & saved\x1b[0m (pk={}B)",
                 node_tag, kp.public_key_bytes().0.len()
@@ -2768,20 +2768,32 @@ async fn main() -> Result<()> {
 
                         // block.number == local_height + 1
                         // Verify CommitCertificate before applying sync block.
-                        // During sync we may not have all validators' BLS keys yet
-                        // (KeyAnnounce hasn't arrived), so only verify if we have
-                        // all required keys. Sync blocks come from a trusted P2P
-                        // request, not unsolicited gossip.
-                        if let Some(ref cert) = block.commit_certificate {
-                            if let Some(ref tc_ref) = tendermint {
-                                let tc = safe_lock(tc_ref);
-                                let has_all_keys = cert.signer_ids.iter().all(|&vid| {
-                                    tc.validator_set().get(vid)
-                                        .map_or(false, |v| v.bls_public_key.is_some())
-                                });
-                                if has_all_keys && !tc.verify_commit_certificate(cert) {
+                        // Require valid certificate — never apply unverified blocks.
+                        if let Some(ref tc_ref) = tendermint {
+                            let tc = safe_lock(tc_ref);
+                            match &block.commit_certificate {
+                                Some(cert) => {
+                                    let has_all_keys = cert.signer_ids.iter().all(|&vid| {
+                                        tc.validator_set().get(vid)
+                                            .map_or(false, |v| v.bls_public_key.is_some())
+                                    });
+                                    if !has_all_keys {
+                                        // Missing keys — defer until KeyAnnounce arrives
+                                        drop(tc);
+                                        pending_blocks.insert(block.number, block.clone());
+                                        continue;
+                                    }
+                                    if !tc.verify_commit_certificate(cert) {
+                                        eprintln!(
+                                            "{} \x1b[31mREJECTED sync block #{} - invalid BLS CommitCertificate\x1b[0m",
+                                            node_tag, block.number
+                                        );
+                                        continue;
+                                    }
+                                }
+                                None => {
                                     eprintln!(
-                                        "{} \x1b[31m⚠ REJECTED sync block #{} �� invalid BLS CommitCertificate\x1b[0m",
+                                        "{} \x1b[31mREJECTED sync block #{} - missing CommitCertificate\x1b[0m",
                                         node_tag, block.number
                                     );
                                     continue;

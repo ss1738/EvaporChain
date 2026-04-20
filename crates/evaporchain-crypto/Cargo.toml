@@ -15,6 +15,7 @@ sha2 = "0.10"
 pasta_curves = "0.5"
 pqc_dilithium = { version = "0.2", features = ["mode3"] }
 blst = "0.3"
+zeroize = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 proptest = "1"

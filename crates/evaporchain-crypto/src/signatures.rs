@@ -1,4 +1,5 @@
 use pqc_dilithium::Keypair;
+use zeroize::Zeroize;
 
 // ─────────────────────────── Traits ─────────────────────────────────────
 
@@ -27,6 +28,18 @@ pub trait Verifier: Send + Sync {
 /// ensuring byte-level compatibility between node and browser extension.
 pub struct MlDsaKeypair {
     inner: Keypair,
+}
+
+impl Drop for MlDsaKeypair {
+    fn drop(&mut self) {
+        // Zeroize the secret key portion of the keypair.
+        // Keypair layout: { public: [u8; PK], secret: [u8; SK] }
+        unsafe {
+            let ptr = &mut self.inner as *mut Keypair as *mut u8;
+            let sk_ptr = ptr.add(pqc_dilithium::PUBLICKEYBYTES);
+            std::ptr::write_bytes(sk_ptr, 0, pqc_dilithium::SECRETKEYBYTES);
+        }
+    }
 }
 
 impl MlDsaKeypair {
@@ -119,9 +132,27 @@ const BLS_POP_DST: &[u8] = b"BLS_POP_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
 #[derive(Debug, Clone, PartialEq)]
 pub struct BlsPublicKey(pub Vec<u8>);
 
-/// BLS12-381 secret key (32 bytes scalar).
-#[derive(Debug, Clone)]
+/// BLS12-381 secret key (32 bytes scalar). Zeroized on drop.
+#[derive(Clone)]
 pub struct BlsSecretKey(pub Vec<u8>);
+
+impl BlsSecretKey {
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl Drop for BlsSecretKey {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+impl std::fmt::Debug for BlsSecretKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("BlsSecretKey([REDACTED])")
+    }
+}
 
 /// BLS12-381 signature (96 bytes compressed G2 point). Aggregatable.
 #[derive(Debug, Clone, PartialEq)]
@@ -139,6 +170,7 @@ impl BlsKeypair {
         let mut ikm = [0u8; 32];
         rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut ikm);
         let sk = BlstSecretKey::key_gen(&ikm, &[]).expect("BLS key generation failed");
+        ikm.zeroize();
         let pk = sk.sk_to_pk();
         Self { sk, pk }
     }

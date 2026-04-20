@@ -272,6 +272,8 @@ pub struct TendermintConsensus {
     epoch_manager: EpochTransitionManager,
     /// DA attestations collected per block number.
     da_attestations: HashMap<u64, Vec<evaporchain_da::certificate::DAAttestation>>,
+    /// Proposer of each committed block — used to exclude self-attestation from DA certificates.
+    da_block_proposers: HashMap<u64, u64>,
     /// Finality tracker for bridges, exchanges, and light clients.
     pub finality_tracker: FinalityTracker,
     /// DA attestation manager for data availability certificates.
@@ -325,6 +327,7 @@ impl TendermintConsensus {
             genesis_state_root: [0u8; 32],
             epoch_manager: EpochTransitionManager::new(),
             da_attestations: HashMap::new(),
+            da_block_proposers: HashMap::new(),
             finality_tracker: FinalityTracker::new(),
             da_attestation: DAAttestationManager::new(),
             encrypted_mempool: EncryptedMempool::new(2),
@@ -432,6 +435,7 @@ impl TendermintConsensus {
             genesis_state_root: [0u8; 32],
             epoch_manager: EpochTransitionManager::new(),
             da_attestations: HashMap::new(),
+            da_block_proposers: HashMap::new(),
             finality_tracker: FinalityTracker::new(),
             da_attestation: DAAttestationManager::new(),
             encrypted_mempool: EncryptedMempool::new(2),
@@ -1065,6 +1069,9 @@ impl TendermintConsensus {
 
         self.epoch = block.epoch;
         self.committed_heights.insert(self.height);
+        if let Some(pid) = block.producer_id {
+            self.da_block_proposers.insert(block.number, pid);
+        }
         self.height += 1;
 
         // Advance randomness beacon with this block's VRF output.
@@ -1644,11 +1651,16 @@ impl TendermintConsensus {
     /// Returns serialized certificate bytes if supermajority is reached.
     pub fn try_build_da_certificate(&mut self, block_number: u64, data_root: [u8; 32]) -> Option<Vec<u8>> {
         let atts = self.da_attestations.get(&block_number)?;
+        let proposer = self.da_block_proposers.get(&block_number).copied();
         let total_stake = self.validator_set.total_stake();
         let mut builder = evaporchain_da::certificate::CertificateBuilder::new(
             block_number, data_root, total_stake,
         );
         for att in atts {
+            // Exclude the block proposer — they cannot attest to their own block's DA
+            if Some(att.validator_id) == proposer {
+                continue;
+            }
             builder.add_attestation(att.clone());
         }
         let cert = builder.try_build()?;
@@ -1661,6 +1673,7 @@ impl TendermintConsensus {
         if self.da_attestations.len() > 64 {
             let cutoff = self.height.saturating_sub(64);
             self.da_attestations.retain(|&k, _| k > cutoff);
+            self.da_block_proposers.retain(|&k, _| k > cutoff);
         }
     }
 }
