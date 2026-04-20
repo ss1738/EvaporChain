@@ -33,6 +33,7 @@ mod invariant_tests {
             da_certificate: None,
             commit_certificate: None,
             nova_proof: None,
+            anchor_hash: None,
         }
     }
 
@@ -374,6 +375,7 @@ mod proptest_execution {
             da_certificate: None,
             commit_certificate: None,
             nova_proof: None,
+            anchor_hash: None,
         }
     }
 

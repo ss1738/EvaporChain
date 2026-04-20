@@ -1607,6 +1607,7 @@ mod tests {
             da_certificate: None,
             commit_certificate: None,
             nova_proof: None,
+            anchor_hash: None,
         }
     }
 
@@ -1728,6 +1729,7 @@ mod tests {
             da_certificate: None,
             commit_certificate: None,
             nova_proof: None,
+            anchor_hash: None,
         }
     }
 

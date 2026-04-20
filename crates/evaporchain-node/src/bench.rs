@@ -100,6 +100,7 @@ fn bench_transaction_throughput() -> f64 {
             da_certificate: None,
             commit_certificate: None,
             nova_proof: None,
+            anchor_hash: None,
     };
 
     let mut executor = ParallelExecutor::new(5);
@@ -166,6 +167,7 @@ fn bench_block_execution() -> f64 {
             da_certificate: None,
             commit_certificate: None,
             nova_proof: None,
+            anchor_hash: None,
         };
 
         let _ = executor.execute_block(&mut db, &block);
@@ -265,6 +267,7 @@ fn bench_object_creation() -> f64 {
             da_certificate: None,
             commit_certificate: None,
             nova_proof: None,
+            anchor_hash: None,
     };
 
     let mut executor = ParallelExecutor::new(5);
@@ -335,6 +338,7 @@ fn bench_refresh_throughput() -> f64 {
             da_certificate: None,
             commit_certificate: None,
             nova_proof: None,
+            anchor_hash: None,
     };
 
     let mut executor = ParallelExecutor::new(5);
@@ -398,6 +402,7 @@ fn bench_stress_test() -> f64 {
         da_certificate: None,
         commit_certificate: None,
         nova_proof: None,
+        anchor_hash: None,
     };
 
     let mut executor = ParallelExecutor::new(5);
@@ -510,6 +515,7 @@ fn bench_mixed_workload() -> f64 {
         da_certificate: None,
         commit_certificate: None,
         nova_proof: None,
+        anchor_hash: None,
     };
 
     let mut executor = ParallelExecutor::new(5);
@@ -579,6 +585,7 @@ fn bench_multi_block_sustained() -> f64 {
             da_certificate: None,
             commit_certificate: None,
             nova_proof: None,
+            anchor_hash: None,
         };
 
         let result = executor.execute_block(&mut db, &block);

@@ -8,7 +8,7 @@ mod user_db;
 use anyhow::Result;
 use api::{ApiState, BlockRecord, ChainStats, EpochSnapshot, EventRecord, NftStore, NftToken, TokenStore, DeployedToken, StakingStore, StakingPool, Staker, DAOStore, DAOProposal, DAOVote, ThroughputTracker};
 use evaporchain_consensus::MockConsensus;
-use evaporchain_consensus::tendermint::{TendermintConsensus, ConsensusMessage, ConsensusAction, ProofVerifier};
+use evaporchain_consensus::tendermint::{TendermintConsensus, ConsensusMessage, ConsensusAction, ProofVerifier, AnchorHashProvider};
 use evaporchain_consensus::validator_set::{ValidatorInfo, ValidatorSet};
 use evaporchain_network::service::{cache_block, NetworkConfig, P2pNetworkService};
 use evaporchain_proving::{MockProver, ProvingEngine};
@@ -75,6 +75,22 @@ impl ProofVerifier for ChainProofVerifier {
                 tracing::warn!("Proof verification error: {}", e);
                 false
             }
+        }
+    }
+}
+
+/// Implements `AnchorHashProvider` by reading the latest anchor from FrontierState.
+struct FrontierAnchorProvider {
+    frontier: Arc<Mutex<frontier::FrontierState>>,
+}
+
+impl AnchorHashProvider for FrontierAnchorProvider {
+    fn anchor_hash_for_height(&self, height: u64) -> Option<[u8; 32]> {
+        let fs = safe_lock(&self.frontier);
+        if fs.anchors.is_anchor_height(height) {
+            Some(fs.anchors.latest_anchor_hash())
+        } else {
+            None
         }
     }
 }
@@ -1372,6 +1388,14 @@ async fn main() -> Result<()> {
         "{} \x1b[1;35mFrontier primitives active\x1b[0m — anchors(every 100), PoHA, energy-trie",
         node_tag,
     );
+
+    // Wire anchor hash provider into Tendermint consensus
+    if let Some(ref tc) = tendermint {
+        let mut c = safe_lock(tc);
+        c.set_anchor_provider(Box::new(FrontierAnchorProvider {
+            frontier: frontier_state.clone(),
+        }));
+    }
 
     // Channel for API-submitted transactions to reach P2P network & all mempools
     let (api_tx_sender, mut api_tx_receiver) = tokio::sync::mpsc::channel::<Transaction>(256);

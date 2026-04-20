@@ -35,6 +35,13 @@ use tracing::{debug, info, warn};
 
 // ─────────────────────── Proof Verification ─────────────────────────────
 
+/// Trait for providing anchor hashes at anchor heights.
+/// Injected by the node so consensus can enforce state-anchor agreement
+/// without depending on the frontier module directly.
+pub trait AnchorHashProvider: Send + Sync {
+    fn anchor_hash_for_height(&self, height: u64) -> Option<[u8; 32]>;
+}
+
 /// Trait for verifying Nova IVC proofs on proposed blocks.
 /// Injected by the node so that consensus doesn't depend on the proving crate.
 pub trait ProofVerifier: Send + Sync {
@@ -273,6 +280,8 @@ pub struct TendermintConsensus {
     pub encrypted_mempool: EncryptedMempool,
     /// Pending reveal nonces: (commitment, nonce) pairs submitted by users.
     pending_reveals: Vec<([u8; 32], [u8; 32])>,
+    /// Anchor hash provider for rule-based consensus enforcement.
+    anchor_provider: Option<Box<dyn AnchorHashProvider>>,
 }
 
 impl TendermintConsensus {
@@ -320,6 +329,7 @@ impl TendermintConsensus {
             da_attestation: DAAttestationManager::new(),
             encrypted_mempool: EncryptedMempool::new(2),
             pending_reveals: Vec::new(),
+            anchor_provider: None,
         }
     }
 
@@ -327,6 +337,11 @@ impl TendermintConsensus {
     pub fn set_proof_verifier(&mut self, verifier: Box<dyn ProofVerifier>, genesis_state_root: [u8; 32]) {
         self.proof_verifier = Some(verifier);
         self.genesis_state_root = genesis_state_root;
+    }
+
+    /// Set the anchor hash provider for rule-based consensus enforcement.
+    pub fn set_anchor_provider(&mut self, provider: Box<dyn AnchorHashProvider>) {
+        self.anchor_provider = Some(provider);
     }
 
     /// Set the BLS keypair for this validator (enables aggregate signatures).
@@ -421,6 +436,7 @@ impl TendermintConsensus {
             da_attestation: DAAttestationManager::new(),
             encrypted_mempool: EncryptedMempool::new(2),
             pending_reveals: Vec::new(),
+            anchor_provider: None,
         }
     }
 
@@ -885,6 +901,28 @@ impl TendermintConsensus {
                                 return actions;
                             }
                             debug!(height = height, "VRF proof verified on proposal");
+                        }
+                    }
+                }
+
+                // ── Anchor hash verification ──
+                // At anchor heights, verify the proposed anchor_hash matches
+                // our locally computed anchor to prevent state root divergence.
+                if let Some(ref provider) = self.anchor_provider {
+                    if let Some(proposed_anchor) = block.anchor_hash {
+                        if let Some(local_anchor) = provider.anchor_hash_for_height(height) {
+                            if proposed_anchor != local_anchor {
+                                warn!(
+                                    height = height,
+                                    round = round,
+                                    proposer = proposer_id,
+                                    local = %hex::encode(&local_anchor[..8]),
+                                    proposed = %hex::encode(&proposed_anchor[..8]),
+                                    "Rejected proposal: anchor hash mismatch"
+                                );
+                                return actions;
+                            }
+                            debug!(height = height, "Anchor hash verified on proposal");
                         }
                     }
                 }
@@ -1354,6 +1392,9 @@ impl TendermintConsensus {
             vec![]
         };
 
+        let anchor_hash = self.anchor_provider.as_ref()
+            .and_then(|p| p.anchor_hash_for_height(self.height));
+
         let block = Block {
             number: self.height,
             epoch: next_epoch,
@@ -1369,6 +1410,7 @@ impl TendermintConsensus {
             da_certificate: None,
             commit_certificate: None,
             nova_proof: None,
+            anchor_hash,
         };
 
         info!(
@@ -1479,6 +1521,7 @@ impl TendermintConsensus {
                 da_certificate: None,
                 commit_certificate: None,
             nova_proof: None,
+            anchor_hash: None,
             };
             self.round_state = RoundState::new(0);
             self.round_state.phase = Phase::Commit;
@@ -1812,6 +1855,7 @@ mod tests {
             da_certificate: None,
             commit_certificate: None,
             nova_proof: None,
+            anchor_hash: None,
         };
 
         tc.on_block_committed(&block, [1u8; 32], 0);
@@ -1836,6 +1880,7 @@ mod tests {
             da_certificate: None,
             commit_certificate: None,
             nova_proof: None,
+            anchor_hash: None,
         };
 
         let h1 = TendermintConsensus::block_hash(&block);
@@ -1973,6 +2018,7 @@ mod tests {
             da_certificate: None,
             commit_certificate: None,
             nova_proof: None,
+            anchor_hash: None,
         };
 
         let fake_proposal = ConsensusMessage::Proposal {
@@ -2286,6 +2332,7 @@ mod tests {
             da_certificate: None,
             commit_certificate: None,
             nova_proof: Some(vec![0x01, 0x02, 0x03]), // valid proof
+            anchor_hash: None,
         };
 
         let msg = ConsensusMessage::Proposal {
@@ -2324,6 +2371,7 @@ mod tests {
             da_certificate: None,
             commit_certificate: None,
             nova_proof: Some(vec![0xff, 0xff, 0xff, 0xff, 0x00]), // bad proof
+            anchor_hash: None,
         };
 
         let msg = ConsensusMessage::Proposal {
@@ -2363,6 +2411,7 @@ mod tests {
             da_certificate: None,
             commit_certificate: None,
             nova_proof: None,
+            anchor_hash: None,
         };
 
         let msg = ConsensusMessage::Proposal {
@@ -3098,6 +3147,7 @@ mod vrf_tests {
             da_certificate: None,
             commit_certificate: None,
             nova_proof: None,
+            anchor_hash: None,
         };
 
         let msg = ConsensusMessage::Proposal {
@@ -3297,6 +3347,7 @@ mod epoch_tests {
             timestamp: 0,
             commit_certificate: None,
             nova_proof: None,
+            anchor_hash: None,
             vrf_output: None,
             vrf_proof: None,
             data_root: None,

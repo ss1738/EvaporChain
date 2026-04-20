@@ -91,6 +91,7 @@ pub fn initialize_genesis(
             da_certificate: None,
             commit_certificate: None,
             nova_proof: None,
+            anchor_hash: None,
     };
 
     Ok(GenesisResult {
