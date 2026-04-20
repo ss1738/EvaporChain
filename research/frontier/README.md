@@ -5,11 +5,11 @@ Target: unified paper at ACM CCS 2026 or USENIX Security 2027.
 
 ## Primitives
 
-| # | Primitive | Status | Est. | Doc |
-|---|-----------|--------|------|-----|
-| 1 | [Proof-of-Historical-Availability (PoHA)](01-poha-decaying-da.md) | Not started | 3-4 mo | Decaying DA certificates |
-| 2 | [Energy-Annotated Verkle Trie](02-energy-verkle-trie.md) | Not started | 2-3 mo | Self-pruning state tree |
-| 3 | [Rule-Based Consensus](03-rule-based-consensus.md) | Not started | 3-4 mo | Consensus over decay rules, not state snapshots |
+| # | Primitive | Status | Tests | Doc |
+|---|-----------|--------|-------|-----|
+| 1 | [Proof-of-Historical-Availability (PoHA)](01-poha-decaying-da.md) | **Done** | 19 | Decaying DA certificates |
+| 2 | [Energy-Annotated Verkle Trie](02-energy-verkle-trie.md) | **Done** | 26 | Self-pruning state tree |
+| 3 | [Rule-Based Consensus](03-rule-based-consensus.md) | **Done** | 28 | Consensus over decay rules, not state snapshots |
 
 ## Build Order
 
