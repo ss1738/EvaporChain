@@ -15,6 +15,8 @@ pub struct EvaporationResult {
     pub decayed: usize,
     /// Objects already in Ghost state (no-op).
     pub already_ghost: usize,
+    /// Cold subtrees compressed in the energy-annotated Verkle trie.
+    pub compressed_subtrees: u32,
 }
 
 /// Engine that processes thermodynamic energy decay and object evaporation.
@@ -118,12 +120,17 @@ impl EvaporationEngine {
             }
         }
 
+        if !result.evaporated.is_empty() {
+            result.compressed_subtrees = db.compress_cold_subtrees();
+        }
+
         if !result.entered_grace.is_empty() || !result.evaporated.is_empty() {
             info!(
                 epoch = current_epoch,
                 entered_grace = result.entered_grace.len(),
                 evaporated = result.evaporated.len(),
                 decayed = result.decayed,
+                compressed = result.compressed_subtrees,
                 "Epoch evaporation complete"
             );
         }

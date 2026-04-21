@@ -318,8 +318,16 @@ impl StateDB for OverlayStateDB {
     }
 
     fn compute_state_root(&self) -> [u8; 32] {
-        // Overlay doesn't compute state root — that happens on the merged main DB.
         [0u8; 32]
+    }
+
+    fn compress_cold_subtrees(&mut self) -> u32 { 0 }
+    fn trie_health(&self) -> evaporchain_crypto::TrieHealth {
+        evaporchain_crypto::TrieHealth {
+            active_leaves: 0, compressed_leaves: 0, total_nodes: 0,
+            max_energy: 0, min_half_life: u64::MAX, last_activity_epoch: 0,
+            compressions: 0, decompressions: 0,
+        }
     }
 
     // Privacy methods — overlay doesn't handle privacy state (it's in the serial phase).

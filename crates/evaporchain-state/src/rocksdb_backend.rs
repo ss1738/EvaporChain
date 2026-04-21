@@ -4,9 +4,8 @@
 //! every mutation to RocksDB. On startup, all data is loaded from disk
 //! into the cache, so the node resumes exactly where it left off.
 
-use crate::db::{object_state_to_u8, StateDB};
-use evaporchain_crypto::hash::blake3_hash;
-use evaporchain_crypto::VerkleTrie;
+use crate::db::{build_energy_trie, StateDB};
+use evaporchain_crypto::TrieHealth;
 use evaporchain_types::{Account, AccountAddress, GhostRecord, ObjectId, StateObject};
 use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, Options, DB};
 use std::collections::HashMap;
@@ -338,38 +337,31 @@ impl StateDB for RocksDBStateDB {
         if self.objects.is_empty() && self.accounts.is_empty() {
             return [0u8; 32];
         }
+        build_energy_trie(&self.objects, &self.accounts).root()
+    }
 
-        let mut trie = VerkleTrie::new();
-
-        for (addr, acc) in &self.accounts {
-            let mut key_input = Vec::with_capacity(36);
-            key_input.extend_from_slice(b"acct");
-            key_input.extend_from_slice(addr);
-            let key = blake3_hash(&key_input);
-
-            let mut val_input = Vec::with_capacity(16);
-            val_input.extend_from_slice(&acc.balance.to_le_bytes());
-            val_input.extend_from_slice(&acc.nonce.to_le_bytes());
-            let value = blake3_hash(&val_input);
-
-            trie.insert(key, value);
+    fn compress_cold_subtrees(&mut self) -> u32 {
+        if self.objects.is_empty() && self.accounts.is_empty() {
+            return 0;
         }
+        let mut trie = build_energy_trie(&self.objects, &self.accounts);
+        trie.compress_cold()
+    }
 
-        for (id, obj) in &self.objects {
-            let mut key_input = Vec::with_capacity(35);
-            key_input.extend_from_slice(b"obj");
-            key_input.extend_from_slice(id);
-            let key = blake3_hash(&key_input);
-
-            let mut val_input = Vec::with_capacity(9);
-            val_input.extend_from_slice(&obj.energy.to_le_bytes());
-            val_input.push(object_state_to_u8(&obj.state));
-            let value = blake3_hash(&val_input);
-
-            trie.insert(key, value);
+    fn trie_health(&self) -> TrieHealth {
+        if self.objects.is_empty() && self.accounts.is_empty() {
+            return TrieHealth {
+                active_leaves: 0,
+                compressed_leaves: 0,
+                total_nodes: 0,
+                max_energy: 0,
+                min_half_life: u64::MAX,
+                last_activity_epoch: 0,
+                compressions: 0,
+                decompressions: 0,
+            };
         }
-
-        trie.root()
+        build_energy_trie(&self.objects, &self.accounts).health()
     }
 
     fn put_note_tree_root(&mut self, root: [u8; 32]) {

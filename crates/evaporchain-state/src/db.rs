@@ -1,8 +1,67 @@
 use evaporchain_crypto::hash::blake3_hash;
-use evaporchain_crypto::VerkleTrie;
+use evaporchain_crypto::{EnergyVerkleTrie, TrieHealth};
 
 use evaporchain_types::{Account, AccountAddress, GhostRecord, ObjectId, StateObject};
 use std::collections::HashMap;
+
+// ─── Trie key/value derivation (shared by all StateDB backends) ─────────
+
+pub fn trie_key_for_account(addr: &AccountAddress) -> [u8; 32] {
+    let mut buf = Vec::with_capacity(36);
+    buf.extend_from_slice(b"acct");
+    buf.extend_from_slice(addr);
+    blake3_hash(&buf)
+}
+
+pub fn trie_value_for_account(acc: &Account) -> [u8; 32] {
+    let mut buf = Vec::with_capacity(16);
+    buf.extend_from_slice(&acc.balance.to_le_bytes());
+    buf.extend_from_slice(&acc.nonce.to_le_bytes());
+    blake3_hash(&buf)
+}
+
+pub fn trie_key_for_object(id: &ObjectId) -> [u8; 32] {
+    let mut buf = Vec::with_capacity(35);
+    buf.extend_from_slice(b"obj");
+    buf.extend_from_slice(id);
+    blake3_hash(&buf)
+}
+
+pub fn trie_value_for_object(obj: &StateObject) -> [u8; 32] {
+    let mut buf = Vec::with_capacity(9);
+    buf.extend_from_slice(&obj.energy.to_le_bytes());
+    buf.push(object_state_to_u8(&obj.state));
+    blake3_hash(&buf)
+}
+
+pub fn build_energy_trie(
+    objects: &HashMap<ObjectId, StateObject>,
+    accounts: &HashMap<AccountAddress, Account>,
+) -> EnergyVerkleTrie {
+    let mut trie = EnergyVerkleTrie::new();
+
+    for (addr, acc) in accounts {
+        trie.insert(
+            trie_key_for_account(addr),
+            trie_value_for_account(acc),
+            u64::MAX,
+            u64::MAX,
+            0,
+        );
+    }
+
+    for (_id, obj) in objects {
+        trie.insert(
+            trie_key_for_object(&obj.id),
+            trie_value_for_object(obj),
+            obj.energy,
+            obj.half_life,
+            obj.last_refreshed,
+        );
+    }
+
+    trie
+}
 
 /// Trait for state database backends.
 pub trait StateDB: Send + Sync {
@@ -56,6 +115,13 @@ pub trait StateDB: Send + Sync {
 
     /// Compute the state root hash over all objects and accounts.
     fn compute_state_root(&self) -> [u8; 32];
+
+    /// Compress cold subtrees in the energy-annotated Verkle trie.
+    /// Returns the number of subtrees compressed.
+    fn compress_cold_subtrees(&mut self) -> u32;
+
+    /// Report health of the energy-annotated Verkle trie.
+    fn trie_health(&self) -> TrieHealth;
 
     // ─── Privacy Layer State ──────────────────────────────────────────────
 
@@ -228,40 +294,31 @@ impl StateDB for InMemoryStateDB {
         if self.objects.is_empty() && self.accounts.is_empty() {
             return [0u8; 32];
         }
+        build_energy_trie(&self.objects, &self.accounts).root()
+    }
 
-        let mut trie = VerkleTrie::new();
-
-        // Insert accounts into trie: key = blake3("acct" || address), value = hash(balance || nonce)
-        for (addr, acc) in &self.accounts {
-            let mut key_input = Vec::with_capacity(36);
-            key_input.extend_from_slice(b"acct");
-            key_input.extend_from_slice(addr);
-            let key = blake3_hash(&key_input);
-
-            let mut val_input = Vec::with_capacity(16);
-            val_input.extend_from_slice(&acc.balance.to_le_bytes());
-            val_input.extend_from_slice(&acc.nonce.to_le_bytes());
-            let value = blake3_hash(&val_input);
-
-            trie.insert(key, value);
+    fn compress_cold_subtrees(&mut self) -> u32 {
+        if self.objects.is_empty() && self.accounts.is_empty() {
+            return 0;
         }
+        let mut trie = build_energy_trie(&self.objects, &self.accounts);
+        trie.compress_cold()
+    }
 
-        // Insert objects into trie: key = blake3("obj" || id), value = hash(energy || state)
-        for (id, obj) in &self.objects {
-            let mut key_input = Vec::with_capacity(35);
-            key_input.extend_from_slice(b"obj");
-            key_input.extend_from_slice(id);
-            let key = blake3_hash(&key_input);
-
-            let mut val_input = Vec::with_capacity(9);
-            val_input.extend_from_slice(&obj.energy.to_le_bytes());
-            val_input.push(object_state_to_u8(&obj.state));
-            let value = blake3_hash(&val_input);
-
-            trie.insert(key, value);
+    fn trie_health(&self) -> TrieHealth {
+        if self.objects.is_empty() && self.accounts.is_empty() {
+            return TrieHealth {
+                active_leaves: 0,
+                compressed_leaves: 0,
+                total_nodes: 0,
+                max_energy: 0,
+                min_half_life: u64::MAX,
+                last_activity_epoch: 0,
+                compressions: 0,
+                decompressions: 0,
+            };
         }
-
-        trie.root()
+        build_energy_trie(&self.objects, &self.accounts).health()
     }
 }
 
@@ -371,5 +428,49 @@ mod tests {
     fn test_empty_state_root() {
         let db = InMemoryStateDB::new();
         assert_eq!(db.compute_state_root(), [0u8; 32]);
+    }
+
+    #[test]
+    fn test_trie_health_reflects_state() {
+        let mut db = InMemoryStateDB::new();
+        db.put_object(make_object(1, 1000));
+        db.put_object(make_object(2, 500));
+
+        let health = db.trie_health();
+        assert_eq!(health.active_leaves, 2);
+        assert_eq!(health.max_energy, 1000);
+        assert_eq!(health.min_half_life, 100);
+        assert_eq!(health.compressed_leaves, 0);
+    }
+
+    #[test]
+    fn test_trie_health_with_accounts() {
+        let mut db = InMemoryStateDB::new();
+        db.put_account(Account { address: [1u8; 32], balance: 100, nonce: 0 });
+        db.put_object(make_object(1, 500));
+
+        let health = db.trie_health();
+        assert_eq!(health.active_leaves, 2);
+    }
+
+    #[test]
+    fn test_compress_cold_subtrees_with_zero_energy() {
+        let mut db = InMemoryStateDB::new();
+        let mut obj = make_object(1, 0);
+        obj.state = ObjectState::Grace;
+        obj.energy = 0;
+        db.put_object(obj);
+        db.put_object(make_object(2, 1000));
+
+        let compressed = db.compress_cold_subtrees();
+        assert!(compressed >= 0);
+    }
+
+    #[test]
+    fn test_empty_trie_health() {
+        let db = InMemoryStateDB::new();
+        let health = db.trie_health();
+        assert_eq!(health.active_leaves, 0);
+        assert_eq!(health.total_nodes, 0);
     }
 }
