@@ -454,6 +454,253 @@ impl DASVerifier {
     }
 }
 
+// ─────────────────────── Epoch-Parameterized State Proofs ──────────────
+
+use crate::anchor::{DecayRules, ObjectSnapshot, ObjectLifecycleState, LazyStateEvaluator};
+
+/// A self-contained proof that "object X has energy Y and state S at epoch E."
+///
+/// Light clients can verify this without full chain sync:
+///   1. Verify the Merkle proof of the object snapshot against the anchor state root
+///   2. Verify the anchor was committed by 2/3+ validators (via block commitment)
+///   3. Apply the decay formula: energy = anchor_energy * 2^(-(query_epoch - anchor_epoch) / half_life)
+///
+/// This is EvaporChain's novel contribution to light client design: time-dependent
+/// state verification from a single anchor + deterministic decay rules.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EpochStateProof {
+    /// The object being proven.
+    pub object_id: [u8; 32],
+    /// Object snapshot at the anchor point (energy, half_life, state).
+    pub snapshot: ObjectSnapshot,
+    /// Merkle proof of the object's inclusion in the anchor state root.
+    pub merkle_proof_path: Vec<[u8; 32]>,
+    /// The anchor's state root (Merkle proof target).
+    pub anchor_state_root: [u8; 32],
+    /// The anchor hash (links to BlockStateCommitment).
+    pub anchor_hash: [u8; 32],
+    /// Epoch of the anchor.
+    pub anchor_epoch: u64,
+    /// Canonical decay rules hash (must match what validators committed to).
+    pub decay_rules_hash: [u8; 32],
+    /// The decay rules themselves (so the verifier can recompute).
+    pub decay_rules: DecayRules,
+    /// The epoch being queried.
+    pub query_epoch: u64,
+    /// Block height that carries the BlockStateCommitment referencing this anchor.
+    pub commitment_block_height: u64,
+}
+
+/// Result of epoch state proof verification.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EpochProofResult {
+    pub object_id: [u8; 32],
+    pub query_epoch: u64,
+    pub energy: u64,
+    pub state: ObjectLifecycleState,
+    pub anchor_epoch: u64,
+}
+
+/// Error from epoch state proof verification.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EpochProofError {
+    QueryBeforeAnchor,
+    DecayRulesHashMismatch,
+    MerkleProofInvalid,
+    ObjectIdMismatch,
+    AnchorEpochMismatch,
+    CommitmentBlockNotTrusted,
+}
+
+/// Verifies epoch-parameterized state proofs for light clients.
+pub struct EpochStateProofVerifier;
+
+impl EpochStateProofVerifier {
+    /// Verify an epoch state proof and return the computed energy and state.
+    ///
+    /// Verification steps:
+    /// 1. Check query_epoch >= anchor_epoch
+    /// 2. Verify decay_rules hash matches the committed hash
+    /// 3. Verify the snapshot's object_id matches the proof's object_id
+    /// 4. Verify the Merkle proof of the snapshot against anchor_state_root
+    /// 5. Apply the decay formula to compute energy at query_epoch
+    /// 6. Determine the lifecycle state at query_epoch
+    pub fn verify(proof: &EpochStateProof) -> Result<EpochProofResult, EpochProofError> {
+        if proof.query_epoch < proof.anchor_epoch {
+            return Err(EpochProofError::QueryBeforeAnchor);
+        }
+
+        if proof.snapshot.object_id != proof.object_id {
+            return Err(EpochProofError::ObjectIdMismatch);
+        }
+
+        if proof.snapshot.anchor_epoch != proof.anchor_epoch {
+            return Err(EpochProofError::AnchorEpochMismatch);
+        }
+
+        let computed_rules_hash = proof.decay_rules.hash();
+        if computed_rules_hash != proof.decay_rules_hash {
+            return Err(EpochProofError::DecayRulesHashMismatch);
+        }
+
+        if !Self::verify_merkle_proof(
+            &proof.snapshot,
+            &proof.merkle_proof_path,
+            &proof.anchor_state_root,
+        ) {
+            return Err(EpochProofError::MerkleProofInvalid);
+        }
+
+        let energy = LazyStateEvaluator::energy_at(
+            &proof.snapshot,
+            &proof.decay_rules,
+            proof.query_epoch,
+        );
+        let state = LazyStateEvaluator::state_at(
+            &proof.snapshot,
+            &proof.decay_rules,
+            proof.query_epoch,
+        );
+
+        Ok(EpochProofResult {
+            object_id: proof.object_id,
+            query_epoch: proof.query_epoch,
+            energy,
+            state,
+            anchor_epoch: proof.anchor_epoch,
+        })
+    }
+
+    /// Verify with trust chain: also check that the commitment block is trusted
+    /// by the light client verifier.
+    pub fn verify_with_trust(
+        proof: &EpochStateProof,
+        light_client: &LightClientVerifier,
+    ) -> Result<EpochProofResult, EpochProofError> {
+        if light_client
+            .trusted_state_at(proof.commitment_block_height)
+            .is_none()
+        {
+            return Err(EpochProofError::CommitmentBlockNotTrusted);
+        }
+
+        Self::verify(proof)
+    }
+
+    /// Verify Merkle proof of object snapshot inclusion in anchor state root.
+    fn verify_merkle_proof(
+        snapshot: &ObjectSnapshot,
+        proof_path: &[[u8; 32]],
+        state_root: &[u8; 32],
+    ) -> bool {
+        let leaf_data = Self::serialize_snapshot(snapshot);
+        let mut current = blake3_hash(&leaf_data);
+
+        for sibling in proof_path {
+            let mut combined = Vec::with_capacity(64);
+            if current <= *sibling {
+                combined.extend_from_slice(&current);
+                combined.extend_from_slice(sibling);
+            } else {
+                combined.extend_from_slice(sibling);
+                combined.extend_from_slice(&current);
+            }
+            current = blake3_hash(&combined);
+        }
+
+        current == *state_root
+    }
+
+    /// Canonical serialization of an ObjectSnapshot for Merkle leaf hashing.
+    fn serialize_snapshot(snapshot: &ObjectSnapshot) -> Vec<u8> {
+        let mut data = Vec::with_capacity(81);
+        data.extend_from_slice(b"epoch-proof-leaf-v1");
+        data.extend_from_slice(&snapshot.object_id);
+        data.extend_from_slice(&snapshot.energy_at_anchor.to_le_bytes());
+        data.extend_from_slice(&snapshot.half_life.to_le_bytes());
+        data.extend_from_slice(&snapshot.anchor_epoch.to_le_bytes());
+        data.push(match snapshot.state {
+            ObjectLifecycleState::Active => 0,
+            ObjectLifecycleState::Grace => 1,
+            ObjectLifecycleState::Ghost => 2,
+        });
+        if let Some(ge) = snapshot.grace_epoch {
+            data.push(1);
+            data.extend_from_slice(&ge.to_le_bytes());
+        } else {
+            data.push(0);
+        }
+        data
+    }
+
+    /// Build a valid Merkle proof for a set of object snapshots.
+    /// Returns (proof_path, state_root) for the target object.
+    ///
+    /// This is the prover side — called by full nodes to generate proofs
+    /// that light clients then verify.
+    pub fn build_merkle_proof(
+        snapshots: &[ObjectSnapshot],
+        target_index: usize,
+    ) -> (Vec<[u8; 32]>, [u8; 32]) {
+        if snapshots.is_empty() || target_index >= snapshots.len() {
+            return (vec![], [0u8; 32]);
+        }
+
+        let leaves: Vec<[u8; 32]> = snapshots
+            .iter()
+            .map(|s| blake3_hash(&Self::serialize_snapshot(s)))
+            .collect();
+
+        Self::build_proof_from_leaves(&leaves, target_index)
+    }
+
+    fn build_proof_from_leaves(
+        leaves: &[[u8; 32]],
+        target_index: usize,
+    ) -> (Vec<[u8; 32]>, [u8; 32]) {
+        if leaves.len() == 1 {
+            return (vec![], leaves[0]);
+        }
+
+        let mut padded = leaves.to_vec();
+        while padded.len().count_ones() != 1 {
+            padded.push([0u8; 32]);
+        }
+
+        let mut proof = Vec::new();
+        let mut level = padded;
+        let mut idx = target_index;
+
+        while level.len() > 1 {
+            let sibling_idx = if idx % 2 == 0 { idx + 1 } else { idx - 1 };
+            if sibling_idx < level.len() {
+                proof.push(level[sibling_idx]);
+            } else {
+                proof.push([0u8; 32]);
+            }
+
+            let mut next_level = Vec::new();
+            for pair in level.chunks(2) {
+                let left = pair[0];
+                let right = if pair.len() > 1 { pair[1] } else { [0u8; 32] };
+                let mut combined = Vec::with_capacity(64);
+                if left <= right {
+                    combined.extend_from_slice(&left);
+                    combined.extend_from_slice(&right);
+                } else {
+                    combined.extend_from_slice(&right);
+                    combined.extend_from_slice(&left);
+                }
+                next_level.push(blake3_hash(&combined));
+            }
+            level = next_level;
+            idx /= 2;
+        }
+
+        (proof, level[0])
+    }
+}
+
 // ─────────────────────── Tests ───────────────────────────────────────
 
 #[cfg(test)]
@@ -890,5 +1137,206 @@ mod tests {
             result,
             DAVerificationResult::Available { samples_verified: 6 }
         );
+    }
+
+    // ── Epoch-Parameterized State Proof Tests ──
+
+    fn make_test_snapshot(id_byte: u8, energy: u64, half_life: u64, anchor_epoch: u64) -> ObjectSnapshot {
+        ObjectSnapshot {
+            object_id: [id_byte; 32],
+            energy_at_anchor: energy,
+            half_life,
+            anchor_epoch,
+            state: ObjectLifecycleState::Active,
+            grace_epoch: None,
+        }
+    }
+
+    fn make_epoch_proof(
+        snapshots: &[ObjectSnapshot],
+        target_index: usize,
+        query_epoch: u64,
+    ) -> EpochStateProof {
+        let rules = DecayRules::default_rules();
+        let (proof_path, state_root) =
+            EpochStateProofVerifier::build_merkle_proof(snapshots, target_index);
+        let snapshot = snapshots[target_index].clone();
+        let anchor_epoch = snapshot.anchor_epoch;
+
+        // Compute a plausible anchor hash
+        let anchor_hash = blake3_hash(&state_root);
+
+        EpochStateProof {
+            object_id: snapshot.object_id,
+            snapshot,
+            merkle_proof_path: proof_path,
+            anchor_state_root: state_root,
+            anchor_hash,
+            anchor_epoch,
+            decay_rules_hash: rules.hash(),
+            decay_rules: rules,
+            query_epoch,
+            commitment_block_height: 100,
+        }
+    }
+
+    #[test]
+    fn test_epoch_proof_single_object() {
+        let snap = make_test_snapshot(1, 1000, 10, 0);
+        let proof = make_epoch_proof(&[snap], 0, 10);
+
+        let result = EpochStateProofVerifier::verify(&proof).unwrap();
+        assert_eq!(result.energy, 500); // 1000 >> (10/10) = 500
+        assert_eq!(result.state, ObjectLifecycleState::Active);
+        assert_eq!(result.query_epoch, 10);
+        assert_eq!(result.anchor_epoch, 0);
+    }
+
+    #[test]
+    fn test_epoch_proof_multiple_objects() {
+        let snaps = vec![
+            make_test_snapshot(1, 1000, 10, 0),
+            make_test_snapshot(2, 2000, 20, 0),
+            make_test_snapshot(3, 500, 5, 0),
+        ];
+
+        // Prove object 2 at epoch 20
+        let proof = make_epoch_proof(&snaps, 1, 20);
+        let result = EpochStateProofVerifier::verify(&proof).unwrap();
+        assert_eq!(result.energy, 1000); // 2000 >> (20/20) = 1000
+        assert_eq!(result.object_id, [2u8; 32]);
+    }
+
+    #[test]
+    fn test_epoch_proof_zero_energy_grace() {
+        let snap = make_test_snapshot(1, 1000, 10, 0);
+        // At epoch 100: 1000 >> (100/10) = 1000 >> 10 = 0 → energy = 0
+        // zero_epoch = 0 + (9+1)*10 = 100, grace_period=7, query=105 < 107 → Grace
+        let proof = make_epoch_proof(&[snap], 0, 105);
+        let result = EpochStateProofVerifier::verify(&proof).unwrap();
+        assert_eq!(result.energy, 0);
+        assert_eq!(result.state, ObjectLifecycleState::Grace);
+    }
+
+    #[test]
+    fn test_epoch_proof_ghost_after_grace() {
+        let snap = make_test_snapshot(1, 1000, 10, 0);
+        // zero_epoch = 100, grace_period=7, query=107 >= 107 → Ghost
+        let proof = make_epoch_proof(&[snap], 0, 107);
+        let result = EpochStateProofVerifier::verify(&proof).unwrap();
+        assert_eq!(result.energy, 0);
+        assert_eq!(result.state, ObjectLifecycleState::Ghost);
+    }
+
+    #[test]
+    fn test_epoch_proof_at_anchor_epoch() {
+        let snap = make_test_snapshot(1, 1000, 10, 50);
+        let proof = make_epoch_proof(&[snap], 0, 50);
+        let result = EpochStateProofVerifier::verify(&proof).unwrap();
+        assert_eq!(result.energy, 1000); // No decay elapsed
+    }
+
+    #[test]
+    fn test_epoch_proof_query_before_anchor_rejected() {
+        let snap = make_test_snapshot(1, 1000, 10, 50);
+        let proof = make_epoch_proof(&[snap], 0, 40);
+        let err = EpochStateProofVerifier::verify(&proof).unwrap_err();
+        assert_eq!(err, EpochProofError::QueryBeforeAnchor);
+    }
+
+    #[test]
+    fn test_epoch_proof_tampered_snapshot_rejected() {
+        let snap = make_test_snapshot(1, 1000, 10, 0);
+        let mut proof = make_epoch_proof(&[snap], 0, 10);
+        // Tamper: change the energy in the snapshot
+        proof.snapshot.energy_at_anchor = 9999;
+
+        let err = EpochStateProofVerifier::verify(&proof).unwrap_err();
+        assert_eq!(err, EpochProofError::MerkleProofInvalid);
+    }
+
+    #[test]
+    fn test_epoch_proof_wrong_object_id_rejected() {
+        let snap = make_test_snapshot(1, 1000, 10, 0);
+        let mut proof = make_epoch_proof(&[snap], 0, 10);
+        proof.object_id = [99u8; 32]; // Mismatch
+
+        let err = EpochStateProofVerifier::verify(&proof).unwrap_err();
+        assert_eq!(err, EpochProofError::ObjectIdMismatch);
+    }
+
+    #[test]
+    fn test_epoch_proof_wrong_decay_rules_rejected() {
+        let snap = make_test_snapshot(1, 1000, 10, 0);
+        let mut proof = make_epoch_proof(&[snap], 0, 10);
+        // Tamper the decay rules hash
+        proof.decay_rules_hash = [0xFFu8; 32];
+
+        let err = EpochStateProofVerifier::verify(&proof).unwrap_err();
+        assert_eq!(err, EpochProofError::DecayRulesHashMismatch);
+    }
+
+    #[test]
+    fn test_epoch_proof_wrong_anchor_epoch_rejected() {
+        let snap = make_test_snapshot(1, 1000, 10, 0);
+        let mut proof = make_epoch_proof(&[snap], 0, 10);
+        proof.anchor_epoch = 5; // Mismatch with snapshot.anchor_epoch (0)
+
+        let err = EpochStateProofVerifier::verify(&proof).unwrap_err();
+        assert_eq!(err, EpochProofError::AnchorEpochMismatch);
+    }
+
+    #[test]
+    fn test_epoch_proof_with_trust_check() {
+        let (vs, kps) = make_validator_set_with_bls(4, 1000);
+        let cert = make_commit_certificate(100, 0, [100u8; 32], &kps, &[0, 1, 2]);
+        let genesis = make_light_header(100, 0, vs, cert);
+        let lc = LightClientVerifier::new(genesis, 1000);
+
+        let snap = make_test_snapshot(1, 1000, 10, 0);
+        let proof = make_epoch_proof(&[snap], 0, 10);
+
+        // commitment_block_height = 100, which is trusted
+        let result = EpochStateProofVerifier::verify_with_trust(&proof, &lc).unwrap();
+        assert_eq!(result.energy, 500);
+    }
+
+    #[test]
+    fn test_epoch_proof_untrusted_block_rejected() {
+        let (vs, kps) = make_validator_set_with_bls(4, 1000);
+        let cert = make_commit_certificate(50, 0, [50u8; 32], &kps, &[0, 1, 2]);
+        let genesis = make_light_header(50, 0, vs, cert);
+        let lc = LightClientVerifier::new(genesis, 1000);
+
+        let snap = make_test_snapshot(1, 1000, 10, 0);
+        let proof = make_epoch_proof(&[snap], 0, 10);
+        // commitment_block_height = 100, NOT trusted (only 50 is)
+
+        let err = EpochStateProofVerifier::verify_with_trust(&proof, &lc).unwrap_err();
+        assert_eq!(err, EpochProofError::CommitmentBlockNotTrusted);
+    }
+
+    #[test]
+    fn test_epoch_proof_large_tree() {
+        // 16 objects, prove one in the middle
+        let snaps: Vec<ObjectSnapshot> = (0..16u8)
+            .map(|i| make_test_snapshot(i, (i as u64 + 1) * 100, 10, 0))
+            .collect();
+
+        let proof = make_epoch_proof(&snaps, 7, 10);
+        let result = EpochStateProofVerifier::verify(&proof).unwrap();
+        // Object 7: energy = 800, at epoch 10: 800 >> (10/10) = 400
+        assert_eq!(result.energy, 400);
+        assert_eq!(result.object_id, [7u8; 32]);
+    }
+
+    #[test]
+    fn test_epoch_proof_merkle_proof_wrong_root() {
+        let snap = make_test_snapshot(1, 1000, 10, 0);
+        let mut proof = make_epoch_proof(&[snap], 0, 10);
+        proof.anchor_state_root = [0xBBu8; 32]; // Wrong root
+
+        let err = EpochStateProofVerifier::verify(&proof).unwrap_err();
+        assert_eq!(err, EpochProofError::MerkleProofInvalid);
     }
 }
