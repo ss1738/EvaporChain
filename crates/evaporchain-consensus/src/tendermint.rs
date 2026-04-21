@@ -568,6 +568,13 @@ impl TendermintConsensus {
                             bls_signature: bls_sig,
                         };
                         actions.push(ConsensusAction::BroadcastMessage(prevote));
+
+                        // Proposer DA self-attestation: sample our own block's data
+                        self.da_block_proposers.insert(proposal.number, self.my_id);
+                        if let Some(att_msg) = self.perform_da_sampling(&proposal) {
+                            actions.push(ConsensusAction::BroadcastMessage(att_msg));
+                        }
+
                         self.round_state.phase = Phase::Prevote;
                         self.round_state.phase_start = Instant::now();
                     }
@@ -991,6 +998,20 @@ impl TendermintConsensus {
                             bls_signature: None,
                         };
                     actions.push(ConsensusAction::BroadcastMessage(prevote));
+
+                    // DA sampling: if we voted for the block, sample its data availability
+                    // and broadcast an attestation so the next proposer can build a certificate.
+                    if vote_hash.is_some() {
+                        if let Some(ref proposed) = self.round_state.proposed_block {
+                            if let Some(pid) = proposed.producer_id {
+                                self.da_block_proposers.insert(proposed.number, pid);
+                            }
+                            if let Some(att_msg) = self.perform_da_sampling(proposed) {
+                                actions.push(ConsensusAction::BroadcastMessage(att_msg));
+                            }
+                        }
+                    }
+
                     self.round_state.phase = Phase::Prevote;
                     self.round_state.phase_start = Instant::now();
                 }
@@ -1768,6 +1789,70 @@ impl TendermintConsensus {
             }
         }
         None
+    }
+
+    /// Perform DA sampling on a proposed block and return an attestation if valid.
+    ///
+    /// The validator re-encodes the block's transaction data, verifies the data_root
+    /// matches the proposer's commitment, then samples random shards and verifies
+    /// their Merkle proofs. If all checks pass, a signed DA attestation is produced.
+    pub fn perform_da_sampling(&self, block: &Block) -> Option<ConsensusMessage> {
+        let data_root = block.data_root?;
+
+        let tx_bytes = serde_json::to_vec(&block.transactions).ok()?;
+        let da = BlockDA::new().ok()?;
+        let package = da.encode_block(&tx_bytes).ok()?;
+
+        if package.header.commitment_root != data_root {
+            warn!(
+                height = block.number,
+                "DA sampling: data_root mismatch — local encoding differs from proposer's commitment"
+            );
+            return None;
+        }
+
+        let seed = {
+            let mut s = Vec::with_capacity(40);
+            s.extend_from_slice(b"da-sample");
+            s.extend_from_slice(&block.number.to_le_bytes());
+            s.extend_from_slice(&self.my_id.to_le_bytes());
+            s
+        };
+        let num_samples = 6usize.min(package.shards.len());
+        let queries = BlockDA::generate_sample_queries(
+            block.number,
+            &package.header,
+            num_samples,
+            &seed,
+        );
+
+        let mut verified = 0u32;
+        for q in &queries {
+            if let Ok(response) = da.prove_shard(&package, q.shard_index) {
+                if BlockDA::verify_shard_sample(&package.header, &response) {
+                    verified += 1;
+                }
+            }
+        }
+
+        if verified < 4.min(num_samples as u32) {
+            warn!(
+                height = block.number,
+                verified,
+                required = 4.min(num_samples as u32),
+                "DA sampling failed: insufficient verified shards"
+            );
+            return None;
+        }
+
+        debug!(
+            height = block.number,
+            verified,
+            total_samples = num_samples,
+            "DA sampling passed"
+        );
+
+        self.make_da_attestation(block.number, data_root, verified)
     }
 
     /// Verify a DA certificate included in a received block.
@@ -4307,5 +4392,145 @@ mod da_tests {
                 assert_ne!(leader.id, 2, "Jailed validator should not lead at epoch {}", epoch);
             }
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // DA Sampling Wiring Tests
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_da_sampling_on_proposal_with_txs() {
+        let mut tc = make_test_tc();
+        let mut db = InMemoryStateDB::new();
+
+        // Give the consensus engine a BLS keypair for attestation signing
+        let kp = BlsKeypair::generate();
+        tc.set_bls_keypair(kp);
+
+        tc.mempool.submit(dummy_transfer(42));
+        let block = tc.create_proposal(&mut db).unwrap();
+        assert!(block.data_root.is_some(), "Block with txs should have data_root");
+
+        let att = tc.perform_da_sampling(&block);
+        assert!(att.is_some(), "DA sampling should produce an attestation for a valid block");
+
+        if let Some(ConsensusMessage::DAAttestation { block_number, samples_verified, .. }) = att {
+            assert_eq!(block_number, block.number);
+            assert!(samples_verified >= 4, "Should verify at least 4 samples");
+        } else {
+            panic!("Expected DAAttestation message");
+        }
+    }
+
+    #[test]
+    fn test_da_sampling_empty_block_returns_none() {
+        let mut tc = make_test_tc();
+        let mut db = InMemoryStateDB::new();
+
+        let kp = BlsKeypair::generate();
+        tc.set_bls_keypair(kp);
+
+        let block = tc.create_proposal(&mut db).unwrap();
+        assert!(block.data_root.is_none(), "Empty block should have no data_root");
+
+        let att = tc.perform_da_sampling(&block);
+        assert!(att.is_none(), "No attestation for empty blocks");
+    }
+
+    #[test]
+    fn test_da_sampling_tampered_data_root_returns_none() {
+        let mut tc = make_test_tc();
+        let mut db = InMemoryStateDB::new();
+
+        let kp = BlsKeypair::generate();
+        tc.set_bls_keypair(kp);
+
+        tc.mempool.submit(dummy_transfer(42));
+        let mut block = tc.create_proposal(&mut db).unwrap();
+        block.data_root = Some([0xFFu8; 32]); // Tamper
+
+        let att = tc.perform_da_sampling(&block);
+        assert!(att.is_none(), "Tampered data_root should fail DA sampling");
+    }
+
+    #[test]
+    fn test_proposer_broadcasts_da_attestation() {
+        let mut tc = make_test_tc();
+        let mut db = InMemoryStateDB::new();
+
+        let kp = BlsKeypair::generate();
+        tc.set_bls_keypair(kp);
+
+        tc.mempool.submit(dummy_transfer(42));
+        let actions = tc.tick(&mut db);
+
+        // Should have: Proposal + Prevote + DAAttestation
+        let has_proposal = actions.iter().any(|a| matches!(a, ConsensusAction::BroadcastMessage(ConsensusMessage::Proposal { .. })));
+        let has_prevote = actions.iter().any(|a| matches!(a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. })));
+        let has_da_att = actions.iter().any(|a| matches!(a, ConsensusAction::BroadcastMessage(ConsensusMessage::DAAttestation { .. })));
+
+        assert!(has_proposal, "Proposer should broadcast proposal");
+        assert!(has_prevote, "Proposer should broadcast prevote");
+        assert!(has_da_att, "Proposer should broadcast DA attestation");
+    }
+
+    #[test]
+    fn test_validator_da_sampling_on_received_proposal() {
+        let vs = {
+            let mut vs = ValidatorSet::new();
+            vs.add_validator(ValidatorInfo::new(0, 1000, [0u8; 32]));
+            vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+            vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+            vs
+        };
+
+        // Validator 1 (not the proposer for height 0)
+        let mut tc1 = TendermintConsensus::new(1, 7, vs.clone());
+        let kp1 = BlsKeypair::generate();
+        tc1.set_bls_keypair(kp1);
+
+        // Validator 0 creates proposal
+        let mut tc0 = TendermintConsensus::new(0, 7, vs);
+        let kp0 = BlsKeypair::generate();
+        tc0.set_bls_keypair(kp0);
+        tc0.mempool.submit(dummy_transfer(42));
+        let mut db = InMemoryStateDB::new();
+        let block = tc0.create_proposal(&mut db).unwrap();
+        assert!(block.data_root.is_some());
+
+        // Send proposal to validator 1
+        let proposal_msg = ConsensusMessage::Proposal {
+            height: 0,
+            round: 0,
+            block: block,
+            proposer_id: 0,
+        };
+        let actions = tc1.on_message(proposal_msg);
+
+        let has_prevote = actions.iter().any(|a| matches!(a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { block_hash: Some(_), .. })));
+        let has_da_att = actions.iter().any(|a| matches!(a, ConsensusAction::BroadcastMessage(ConsensusMessage::DAAttestation { .. })));
+
+        assert!(has_prevote, "Validator should prevote for valid proposal");
+        assert!(has_da_att, "Validator should broadcast DA attestation after sampling");
+    }
+
+    #[test]
+    fn test_da_proposer_tracked_for_exclusion() {
+        let vs = {
+            let mut vs = ValidatorSet::new();
+            vs.add_validator(ValidatorInfo::new(0, 1000, [0u8; 32]));
+            vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+            vs
+        };
+
+        let mut tc = TendermintConsensus::new(0, 7, vs);
+        let kp = BlsKeypair::generate();
+        tc.set_bls_keypair(kp);
+        tc.mempool.submit(dummy_transfer(42));
+        let mut db = InMemoryStateDB::new();
+        tc.tick(&mut db);
+
+        // Proposer should be recorded for self-attestation exclusion
+        assert_eq!(tc.da_block_proposers.get(&0), Some(&0));
     }
 }
