@@ -845,38 +845,32 @@ mod tests {
     }
 
     #[test]
-    fn test_health_score_bonus_increases_turns() {
-        // Two validators with equal stake
+    fn test_health_score_does_not_affect_leader_selection() {
+        // Leader selection uses base stake, not health-weighted effective_weight,
+        // to prevent inter-node divergence when health scores lag.
         let mut vs = ValidatorSet::with_validators(vec![
             make_validator(1, 1000),
             make_validator(2, 1000),
         ]);
 
-        // Count turns with no health bonus
         let mut base_counts = [0u64; 2];
         for epoch in 1..=5000 {
             let leader = vs.leader_for_epoch(epoch).unwrap().id;
             base_counts[(leader - 1) as usize] += 1;
         }
 
-        // Give validator 1 max health score
+        // Give validator 1 max health score — should NOT change leader turns
         vs.get_mut(1).unwrap().health_score = 1.0;
 
-        // Count turns with health bonus
         let mut bonus_counts = [0u64; 2];
         for epoch in 1..=5000 {
             let leader = vs.leader_for_epoch(epoch).unwrap().id;
             bonus_counts[(leader - 1) as usize] += 1;
         }
 
-        // Validator 1 should get MORE turns with health bonus
-        // effective_weight(1) = 1000 * 1.2 = 1200, effective_weight(2) = 1000
-        // ratio should be ~1.2
-        assert!(
-            bonus_counts[0] > base_counts[0],
-            "Health bonus should increase turns: {} vs {}",
-            bonus_counts[0],
-            base_counts[0]
+        assert_eq!(
+            base_counts, bonus_counts,
+            "Health bonus must not affect leader selection (determinism requirement)"
         );
     }
 
