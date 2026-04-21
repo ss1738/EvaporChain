@@ -390,6 +390,11 @@ impl Transaction {
         }
     }
 
+    /// Canonical BLAKE3 hash of this transaction (over signable_bytes).
+    pub fn tx_hash(&self) -> [u8; 32] {
+        *blake3::hash(&self.signable_bytes()).as_bytes()
+    }
+
     /// Get the signature bytes (if present on the inner tx).
     pub fn signature(&self) -> Option<&[u8]> {
         match self {
