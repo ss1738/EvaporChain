@@ -705,6 +705,9 @@ fn record_block(
         has_nova_proof: block.nova_proof.is_some(),
         nova_proof_size: block.nova_proof.as_ref().map_or(0, |p| p.len()),
         data_root: block.data_root.map(hex::encode),
+        has_state_commitment: block.state_function_commitment.is_some(),
+        is_anchor: block.state_function_commitment.as_ref().map_or(false, |c| c.is_anchor),
+        anchor_epoch: block.state_function_commitment.as_ref().map_or(0, |c| c.anchor_epoch),
     };
 
     // Push to block history
@@ -2050,6 +2053,16 @@ async fn main() -> Result<()> {
                                     }
                                 }
 
+                                // Attach Rule-Based Consensus state function commitment
+                                {
+                                    let fs = safe_lock(&frontier_state);
+                                    let commitment = fs.anchors.build_block_commitment(
+                                        block.number,
+                                        obj_count as u64,
+                                    );
+                                    block.state_function_commitment = Some(commitment);
+                                }
+
                                 // Reset demo nonce offsets — on-chain nonces are now updated
                                 demo_nonces = [0u64; 4];
 
@@ -2387,6 +2400,13 @@ async fn main() -> Result<()> {
                                                 node_tag, fs.status_line(),
                                             );
                                         }
+
+                                        // Attach Rule-Based Consensus state function commitment
+                                        let commitment = fs.anchors.build_block_commitment(
+                                            block.number,
+                                            obj_count as u64,
+                                        );
+                                        block.state_function_commitment = Some(commitment);
                                     }
 
                                     if let Some(ref cache) = block_cache {
@@ -2871,6 +2891,9 @@ async fn main() -> Result<()> {
                                             has_nova_proof: block.nova_proof.is_some(),
                                             nova_proof_size: block.nova_proof.as_ref().map_or(0, |p| p.len()),
                                             data_root: block.data_root.map(hex::encode),
+                                            has_state_commitment: block.state_function_commitment.is_some(),
+                                            is_anchor: block.state_function_commitment.as_ref().map_or(false, |c| c.is_anchor),
+                                            anchor_epoch: block.state_function_commitment.as_ref().map_or(0, |c| c.anchor_epoch),
                                         };
                                         let mut history = safe_lock(&block_history);
                                         history.push_back(record.clone());

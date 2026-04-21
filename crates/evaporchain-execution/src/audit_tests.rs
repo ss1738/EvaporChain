@@ -34,6 +34,7 @@ mod invariant_tests {
             commit_certificate: None,
             nova_proof: None,
             anchor_hash: None,
+            state_function_commitment: None,
         }
     }
 
@@ -376,6 +377,7 @@ mod proptest_execution {
             commit_certificate: None,
             nova_proof: None,
             anchor_hash: None,
+            state_function_commitment: None,
         }
     }
 

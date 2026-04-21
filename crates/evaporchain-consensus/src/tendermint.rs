@@ -512,6 +512,10 @@ impl TendermintConsensus {
         if let Some(ref vrf_out) = block.vrf_output {
             input.extend_from_slice(vrf_out);
         }
+        // Include state function commitment hash (Rule-Based Consensus).
+        if let Some(ref sfc) = block.state_function_commitment {
+            input.extend_from_slice(&sfc.commitment_hash);
+        }
         for tx in &block.transactions {
             input.extend_from_slice(&serde_json::to_vec(tx).unwrap_or_default());
         }
@@ -1466,6 +1470,7 @@ impl TendermintConsensus {
             commit_certificate: None,
             nova_proof: None,
             anchor_hash,
+            state_function_commitment: None, // Filled after execution by the node
         };
 
         info!(
@@ -1593,6 +1598,7 @@ impl TendermintConsensus {
                 commit_certificate: None,
             nova_proof: None,
             anchor_hash: None,
+            state_function_commitment: None,
             };
             self.round_state = RoundState::new(0);
             self.round_state.phase = Phase::Commit;
@@ -1988,6 +1994,7 @@ mod tests {
             commit_certificate: None,
             nova_proof: None,
             anchor_hash: None,
+            state_function_commitment: None,
         };
 
         tc.on_block_committed(&block, [1u8; 32], 0);
@@ -2013,6 +2020,7 @@ mod tests {
             commit_certificate: None,
             nova_proof: None,
             anchor_hash: None,
+            state_function_commitment: None,
         };
 
         let h1 = TendermintConsensus::block_hash(&block);
@@ -2151,6 +2159,7 @@ mod tests {
             commit_certificate: None,
             nova_proof: None,
             anchor_hash: None,
+            state_function_commitment: None,
         };
 
         let fake_proposal = ConsensusMessage::Proposal {
@@ -2465,6 +2474,7 @@ mod tests {
             commit_certificate: None,
             nova_proof: Some(vec![0x01, 0x02, 0x03]), // valid proof
             anchor_hash: None,
+            state_function_commitment: None,
         };
 
         let msg = ConsensusMessage::Proposal {
@@ -2504,6 +2514,7 @@ mod tests {
             commit_certificate: None,
             nova_proof: Some(vec![0xff, 0xff, 0xff, 0xff, 0x00]), // bad proof
             anchor_hash: None,
+            state_function_commitment: None,
         };
 
         let msg = ConsensusMessage::Proposal {
@@ -2544,6 +2555,7 @@ mod tests {
             commit_certificate: None,
             nova_proof: None,
             anchor_hash: None,
+            state_function_commitment: None,
         };
 
         let msg = ConsensusMessage::Proposal {
@@ -3280,6 +3292,7 @@ mod vrf_tests {
             commit_certificate: None,
             nova_proof: None,
             anchor_hash: None,
+            state_function_commitment: None,
         };
 
         let msg = ConsensusMessage::Proposal {
@@ -3485,6 +3498,7 @@ mod epoch_tests {
             data_root: None,
             blob_commitments: vec![],
             da_certificate: None,
+            state_function_commitment: None,
         }
     }
 

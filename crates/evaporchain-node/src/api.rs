@@ -211,6 +211,15 @@ pub struct BlockRecord {
     /// DA data root (hex-encoded blake3 hash of 2D erasure commitments).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data_root: Option<String>,
+    /// Rule-Based Consensus: whether this block carries a state function commitment.
+    #[serde(default)]
+    pub has_state_commitment: bool,
+    /// Whether this block is an anchor point (full state materialization).
+    #[serde(default)]
+    pub is_anchor: bool,
+    /// Anchor epoch referenced by this block's state commitment.
+    #[serde(default)]
+    pub anchor_epoch: u64,
 }
 
 /// Transaction record with hash and structured data.

@@ -1701,6 +1701,7 @@ mod tests {
             commit_certificate: None,
             nova_proof: None,
             anchor_hash: None,
+            state_function_commitment: None,
         }
     }
 

@@ -419,6 +419,82 @@ impl AnchorManager {
         }
     }
 
+    /// Build a BlockStateCommitment for inclusion in the block header.
+    /// This is the serializable form that goes into the Block struct.
+    pub fn build_block_commitment(
+        &self,
+        block_height: u64,
+        active_objects: u64,
+    ) -> evaporchain_types::BlockStateCommitment {
+        let is_anchor = self.is_anchor_height(block_height);
+        let (anchor_hash, anchor_epoch) = if is_anchor {
+            if let Some(anchor) = self.get_anchor(block_height) {
+                (anchor.hash(), anchor.epoch)
+            } else if let Some(anchor) = self.latest_anchor() {
+                (anchor.hash(), anchor.epoch)
+            } else {
+                ([0u8; 32], 0)
+            }
+        } else if let Some(anchor) = self.latest_anchor() {
+            (anchor.hash(), anchor.epoch)
+        } else {
+            ([0u8; 32], 0)
+        };
+
+        let decay_rules_hash = self.rules.hash();
+
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"block-state-commit-v1");
+        hasher.update(&anchor_hash);
+        hasher.update(&anchor_epoch.to_le_bytes());
+        hasher.update(&decay_rules_hash);
+        hasher.update(&active_objects.to_le_bytes());
+        hasher.update(&[is_anchor as u8]);
+        let commitment_hash = hasher.finalize().into();
+
+        evaporchain_types::BlockStateCommitment {
+            anchor_hash,
+            anchor_epoch,
+            decay_rules_hash,
+            active_objects,
+            is_anchor,
+            commitment_hash,
+        }
+    }
+
+    /// Verify a BlockStateCommitment from a received block.
+    pub fn verify_block_commitment(
+        &self,
+        commitment: &evaporchain_types::BlockStateCommitment,
+    ) -> bool {
+        if commitment.decay_rules_hash != self.rules.hash() {
+            return false;
+        }
+
+        // Verify commitment hash integrity
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"block-state-commit-v1");
+        hasher.update(&commitment.anchor_hash);
+        hasher.update(&commitment.anchor_epoch.to_le_bytes());
+        hasher.update(&commitment.decay_rules_hash);
+        hasher.update(&commitment.active_objects.to_le_bytes());
+        hasher.update(&[commitment.is_anchor as u8]);
+        let expected: [u8; 32] = hasher.finalize().into();
+        if commitment.commitment_hash != expected {
+            return false;
+        }
+
+        // Genesis reference is always valid
+        if commitment.anchor_hash == [0u8; 32] {
+            return true;
+        }
+
+        // Anchor reference must exist in our store
+        self.anchors
+            .values()
+            .any(|a| a.hash() == commitment.anchor_hash)
+    }
+
     /// Verify that a state function commitment is consistent with our anchors.
     pub fn verify_commitment(&self, commitment: &StateFunctionCommitment) -> bool {
         // Check decay rules match
@@ -993,6 +1069,61 @@ mod tests {
         assert_eq!(commitment.anchor_hash, [0u8; 32]);
         assert_eq!(commitment.anchor_epoch, 0);
         assert!(mgr.verify_commitment(&commitment));
+    }
+
+    // ── Block State Commitment (Rule-Based Consensus header change) ──
+
+    #[test]
+    fn test_block_commitment_non_anchor() {
+        let mut mgr = AnchorManager::new(100, default_rules());
+        mgr.create_anchor(100, 100, [1u8; 32], 500, 10, [0u8; 32]);
+
+        let commitment = mgr.build_block_commitment(150, 505);
+        assert!(!commitment.is_anchor);
+        assert_eq!(commitment.anchor_epoch, 100);
+        assert_ne!(commitment.commitment_hash, [0u8; 32]);
+        assert!(mgr.verify_block_commitment(&commitment));
+    }
+
+    #[test]
+    fn test_block_commitment_at_anchor() {
+        let mut mgr = AnchorManager::new(100, default_rules());
+        mgr.create_anchor(100, 100, [1u8; 32], 500, 10, [0u8; 32]);
+
+        let commitment = mgr.build_block_commitment(100, 500);
+        assert!(commitment.is_anchor);
+        assert_eq!(commitment.anchor_epoch, 100);
+        assert!(mgr.verify_block_commitment(&commitment));
+    }
+
+    #[test]
+    fn test_block_commitment_genesis() {
+        let mgr = AnchorManager::new(100, default_rules());
+        let commitment = mgr.build_block_commitment(1, 0);
+        assert!(!commitment.is_anchor);
+        assert_eq!(commitment.anchor_hash, [0u8; 32]);
+        assert_eq!(commitment.anchor_epoch, 0);
+        assert!(mgr.verify_block_commitment(&commitment));
+    }
+
+    #[test]
+    fn test_block_commitment_tampered_hash_fails() {
+        let mut mgr = AnchorManager::new(100, default_rules());
+        mgr.create_anchor(100, 100, [1u8; 32], 500, 10, [0u8; 32]);
+
+        let mut commitment = mgr.build_block_commitment(150, 505);
+        commitment.commitment_hash[0] ^= 0xFF;
+        assert!(!mgr.verify_block_commitment(&commitment));
+    }
+
+    #[test]
+    fn test_block_commitment_wrong_rules_fails() {
+        let mut mgr = AnchorManager::new(100, default_rules());
+        mgr.create_anchor(100, 100, [1u8; 32], 500, 10, [0u8; 32]);
+
+        let mut commitment = mgr.build_block_commitment(150, 505);
+        commitment.decay_rules_hash[0] ^= 0xFF;
+        assert!(!mgr.verify_block_commitment(&commitment));
     }
 
     // ── Lazy State Cache ──

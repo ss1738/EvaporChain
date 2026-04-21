@@ -783,6 +783,7 @@ mod tests {
             commit_certificate: None,
             nova_proof: None,
             anchor_hash: None,
+            state_function_commitment: None,
         };
 
         // Execute with sig verification — should skip the bad tx

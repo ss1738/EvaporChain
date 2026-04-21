@@ -117,6 +117,37 @@ pub struct Block {
     /// state root agreement despite time-dependent decay.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anchor_hash: Option<[u8; 32]>,
+    /// Rule-Based Consensus commitment: replaces per-block state root semantics.
+    /// Between anchor points, validators agree on the decay function commitment
+    /// rather than an eagerly-computed state root. Any verifier can derive the
+    /// state at any epoch >= anchor_epoch using: anchor_state + decay_rules.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_function_commitment: Option<BlockStateCommitment>,
+}
+
+/// Commitment to the state function for Rule-Based Consensus.
+///
+/// Instead of committing to a per-block state root (which is time-dependent
+/// and causes divergence), blocks commit to the state *function*:
+/// the anchor reference + decay rules that deterministically define state
+/// at any epoch >= anchor_epoch.
+///
+/// Anchor blocks carry `is_anchor: true` and a full state materialization.
+/// Non-anchor blocks reference the last anchor and carry only the decay rules hash.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockStateCommitment {
+    /// Hash of the referenced anchor's full state.
+    pub anchor_hash: [u8; 32],
+    /// Epoch at which the anchor was created.
+    pub anchor_epoch: u64,
+    /// Blake3 hash of the canonical decay rules (formula + grace_period + min_half_life + version).
+    pub decay_rules_hash: [u8; 32],
+    /// Number of active objects at execution time.
+    pub active_objects: u64,
+    /// Whether this block IS an anchor point (full state materialization).
+    pub is_anchor: bool,
+    /// Hash of this commitment (anchor_hash || anchor_epoch || decay_rules_hash || active_objects).
+    pub commitment_hash: [u8; 32],
 }
 
 /// BLS aggregate signature certificate proving consensus finality.
