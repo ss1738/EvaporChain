@@ -1476,6 +1476,7 @@ async fn main() -> Result<()> {
             throughput: Arc::clone(&throughput),
             da_store: Arc::clone(&da_store),
             snapshot_info: Arc::clone(&snapshot_info),
+            frontier_state: Some(Arc::clone(&frontier_state)),
         });
         let api_port = args.api_port;
         tokio::spawn(async move {

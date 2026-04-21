@@ -76,6 +76,8 @@ pub struct ApiState {
     pub da_store: Arc<Mutex<BTreeMap<u64, BlockDAPackage>>>,
     /// Latest state snapshot metadata (height, state_root, data_len).
     pub snapshot_info: Arc<Mutex<Option<(u64, [u8; 32], usize)>>>,
+    /// Frontier primitives state (anchors, PoHA, energy trie).
+    pub frontier_state: Option<Arc<Mutex<crate::frontier::FrontierState>>>,
 }
 
 impl ApiState {
@@ -2836,6 +2838,40 @@ fn security_headers(response: &mut axum::http::Response<axum::body::Body>) {
     h.insert("Permissions-Policy", "camera=(), microphone=(), geolocation=()".parse().unwrap());
 }
 
+// ─────────────── Frontier Primitives ─────────────────────────────────────
+
+async fn get_frontier_status(
+    State(state): State<Arc<ApiState>>,
+) -> impl IntoResponse {
+    let Some(ref fs_arc) = state.frontier_state else {
+        return Json(serde_json::json!({"error": "frontier not enabled"}));
+    };
+    let fs = fs_arc.lock().unwrap();
+    let health = fs.energy_trie.health();
+    let poha_dist = fs.poha.temperature_distribution();
+
+    Json(serde_json::json!({
+        "anchors": fs.anchors.anchor_count(),
+        "poha": {
+            "active": fs.poha.active_count(),
+            "ghosts": fs.poha.ghost_count(),
+            "hot": poha_dist.hot,
+            "warm": poha_dist.warm,
+            "cold": poha_dist.cold,
+        },
+        "energy_trie": {
+            "active_leaves": health.active_leaves,
+            "compressed_leaves": health.compressed_leaves,
+            "total_nodes": health.total_nodes,
+            "max_energy": health.max_energy,
+            "min_half_life": health.min_half_life,
+            "last_activity_epoch": health.last_activity_epoch,
+            "compressions": health.compressions,
+            "decompressions": health.decompressions,
+        }
+    }))
+}
+
 // ─────────────── Data Availability Sampling ───────────────────────────────
 
 async fn get_da_status(
@@ -3081,6 +3117,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/proof/status", get(get_proof_status))
         .route("/api/proof/verify", get(get_proof_verify))
         // Data Availability sampling
+        .route("/api/frontier", get(get_frontier_status))
         .route("/api/da/status", get(get_da_status))
         .route("/api/da/block/:number", get(get_da_block))
         .route("/api/da/sample/:block/:shard_index", get(get_da_sample))
