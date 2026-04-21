@@ -2854,6 +2854,33 @@ async fn main() -> Result<()> {
                                         chain_store.save_block(&record);
                                         chain_store.save_full_block(block);
                                     }
+                                    // Update chain stats (same as record_block_production)
+                                    {
+                                        let mut tx_creates = 0u64;
+                                        let mut tx_refreshes = 0u64;
+                                        for tx in &block.transactions {
+                                            match tx {
+                                                Transaction::CreateObject(_) => tx_creates += 1,
+                                                Transaction::Refresh(_) => tx_refreshes += 1,
+                                                _ => {}
+                                            }
+                                        }
+                                        let mut stats = safe_lock(&chain_stats);
+                                        stats.total_objects_created += tx_creates;
+                                        stats.total_refreshed += tx_refreshes;
+                                        stats.total_evaporated += result.execution.objects_evaporated as u64;
+                                        stats.total_transactions += block.transactions.len() as u64;
+                                        stats.state_size_trend.push(api::EpochSnapshot {
+                                            epoch: block.epoch,
+                                            active_count: obj_count,
+                                            ghost_count,
+                                            total_energy: 0,
+                                        });
+                                        if stats.state_size_trend.len() > 1000 {
+                                            let excess = stats.state_size_trend.len() - 1000;
+                                            stats.state_size_trend.drain(..excess);
+                                        }
+                                    }
                                     println!(
                                         "\n{} \x1b[1;32m━━━ Block #{:<4} │ Epoch {:<4} ━━━ SYNCED ━━━━━━━━━━━━━━━━━━━━━━\x1b[0m",
                                         node_tag, block.number, block.epoch,
@@ -2915,7 +2942,37 @@ async fn main() -> Result<()> {
                                     let db_guard = safe_lock(&db);
                                     db_guard.flush_accounts();
                                     db_guard.flush_objects();
+                                    let obj_count = db_guard.object_count();
+                                    let gh_count = db_guard.ghost_count();
+                                    drop(db_guard);
                                     let _ = safe_lock(&chain_prover).fold_block(&queued, result.execution.state_root);
+                                    // Update stats for queued/pending blocks
+                                    {
+                                        let mut tx_creates = 0u64;
+                                        let mut tx_refreshes = 0u64;
+                                        for tx in &queued.transactions {
+                                            match tx {
+                                                Transaction::CreateObject(_) => tx_creates += 1,
+                                                Transaction::Refresh(_) => tx_refreshes += 1,
+                                                _ => {}
+                                            }
+                                        }
+                                        let mut stats = safe_lock(&chain_stats);
+                                        stats.total_objects_created += tx_creates;
+                                        stats.total_refreshed += tx_refreshes;
+                                        stats.total_evaporated += result.execution.objects_evaporated as u64;
+                                        stats.total_transactions += queued.transactions.len() as u64;
+                                        stats.state_size_trend.push(api::EpochSnapshot {
+                                            epoch: queued.epoch,
+                                            active_count: obj_count,
+                                            ghost_count: gh_count,
+                                            total_energy: 0,
+                                        });
+                                        if stats.state_size_trend.len() > 1000 {
+                                            let excess = stats.state_size_trend.len() - 1000;
+                                            stats.state_size_trend.drain(..excess);
+                                        }
+                                    }
                                 }
                             } else {
                                 apply_follower_block(
