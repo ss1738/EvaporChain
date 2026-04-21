@@ -11,7 +11,7 @@
 
 API="${1:-http://127.0.0.1:8080}"
 CREATOR="0xfeed000000000000000000000000000000000000000000000000000000000001"
-SEQ=0
+SEQ=$(date +%s)
 
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
 
@@ -58,13 +58,13 @@ feed_weather() {
         local lon="${coords##*,}"
 
         local weather
-        weather=$(curl -s "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current=temperature_2m,relative_humidity_2m,wind_speed_10m,pressure_msl" 2>&1)
+        weather=$(curl -s --max-time 5 "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current=temperature_2m,relative_humidity_2m,wind_speed_10m,pressure_msl" 2>&1)
 
         local temp humidity wind pressure
-        temp=$(echo "$weather" | grep -o '"temperature_2m":[0-9.-]*' | head -1 | cut -d: -f2)
-        humidity=$(echo "$weather" | grep -o '"relative_humidity_2m":[0-9.-]*' | head -1 | cut -d: -f2)
-        wind=$(echo "$weather" | grep -o '"wind_speed_10m":[0-9.-]*' | head -1 | cut -d: -f2)
-        pressure=$(echo "$weather" | grep -o '"pressure_msl":[0-9.-]*' | head -1 | cut -d: -f2)
+        temp=$(echo "$weather" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['current']['temperature_2m'])" 2>/dev/null)
+        humidity=$(echo "$weather" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['current']['relative_humidity_2m'])" 2>/dev/null)
+        wind=$(echo "$weather" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['current']['wind_speed_10m'])" 2>/dev/null)
+        pressure=$(echo "$weather" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['current']['pressure_msl'])" 2>/dev/null)
 
         if [ -n "$temp" ]; then
             local data_str="weather:${city}:temp=${temp}C,humidity=${humidity}%,wind=${wind}kmh,pressure=${pressure}hPa"
@@ -86,14 +86,14 @@ feed_air_quality() {
         local lon="${coords##*,}"
 
         local aq
-        aq=$(curl -s "https://air-quality-api.open-meteo.com/v1/air-quality?latitude=$lat&longitude=$lon&current=pm2_5,pm10,nitrogen_dioxide,ozone,carbon_monoxide" 2>&1)
+        aq=$(curl -s --max-time 5 "https://air-quality-api.open-meteo.com/v1/air-quality?latitude=$lat&longitude=$lon&current=pm2_5,pm10,nitrogen_dioxide,ozone,carbon_monoxide" 2>&1)
 
         local pm25 pm10 no2 o3 co
-        pm25=$(echo "$aq" | grep -o '"pm2_5":[0-9.-]*' | head -1 | cut -d: -f2)
-        pm10=$(echo "$aq" | grep -o '"pm10":[0-9.-]*' | head -1 | cut -d: -f2)
-        no2=$(echo "$aq" | grep -o '"nitrogen_dioxide":[0-9.-]*' | head -1 | cut -d: -f2)
-        o3=$(echo "$aq" | grep -o '"ozone":[0-9.-]*' | head -1 | cut -d: -f2)
-        co=$(echo "$aq" | grep -o '"carbon_monoxide":[0-9.-]*' | head -1 | cut -d: -f2)
+        pm25=$(echo "$aq" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['current']['pm2_5'])" 2>/dev/null)
+        pm10=$(echo "$aq" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['current']['pm10'])" 2>/dev/null)
+        no2=$(echo "$aq" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['current']['nitrogen_dioxide'])" 2>/dev/null)
+        o3=$(echo "$aq" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['current']['ozone'])" 2>/dev/null)
+        co=$(echo "$aq" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['current']['carbon_monoxide'])" 2>/dev/null)
 
         if [ -n "$pm25" ]; then
             local data_str="airquality:${city}:pm2.5=${pm25},pm10=${pm10},no2=${no2},o3=${o3},co=${co}"
