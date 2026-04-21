@@ -1031,10 +1031,10 @@ mod tests {
         let result = cache.query(&[1u8; 32], 200).unwrap();
         assert_eq!(result.energy, 2500);
 
-        // Object 2: after 10 half-lives → 0
+        // Object 2: after 10 half-lives → 0, grace period (7) also elapsed → Ghost
         let result = cache.query(&[2u8; 32], 200).unwrap();
         assert_eq!(result.energy, 0);
-        assert_eq!(result.state, ObjectLifecycleState::Grace);
+        assert_eq!(result.state, ObjectLifecycleState::Ghost);
     }
 
     #[test]
