@@ -1443,6 +1443,14 @@ impl ExecutionEngine for BlockStmExecutor {
             total_fees,
         })
     }
+
+    fn mmr_root(&self) -> [u8; 32] {
+        self.mmr.root()
+    }
+
+    fn mmr_size(&self) -> usize {
+        self.mmr.size()
+    }
 }
 
 impl BlockStmExecutor {

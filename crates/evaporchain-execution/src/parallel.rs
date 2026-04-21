@@ -1103,6 +1103,14 @@ impl ExecutionEngine for ParallelExecutor {
             total_fees,
         })
     }
+
+    fn mmr_root(&self) -> [u8; 32] {
+        self.mmr.root()
+    }
+
+    fn mmr_size(&self) -> usize {
+        self.mmr.size()
+    }
 }
 
 // ─── Metrics ───────────────────────────────────────────────────────────────

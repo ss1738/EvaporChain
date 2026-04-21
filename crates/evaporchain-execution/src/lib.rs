@@ -86,6 +86,12 @@ pub trait ExecutionEngine: Send + Sync {
         db: &mut dyn StateDB,
         block: &Block,
     ) -> Result<BlockExecutionResult, ExecutionError>;
+
+    /// Current MMR root (evaporation nullifier accumulator).
+    fn mmr_root(&self) -> [u8; 32];
+
+    /// Number of nullifiers in the MMR.
+    fn mmr_size(&self) -> usize;
 }
 
 /// Gas cost constants for transaction types.
@@ -760,6 +766,14 @@ impl ExecutionEngine for SimpleExecutor {
             base_fee,
             total_fees,
         })
+    }
+
+    fn mmr_root(&self) -> [u8; 32] {
+        self.mmr.root()
+    }
+
+    fn mmr_size(&self) -> usize {
+        self.mmr.size()
     }
 }
 

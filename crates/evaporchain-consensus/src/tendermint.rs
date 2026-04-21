@@ -1328,6 +1328,16 @@ impl TendermintConsensus {
         })
     }
 
+    /// Current MMR root from the execution engine.
+    pub fn mmr_root(&self) -> [u8; 32] {
+        self.executor.mmr_root()
+    }
+
+    /// Number of nullifiers in the execution engine's MMR.
+    pub fn mmr_size(&self) -> usize {
+        self.executor.mmr_size()
+    }
+
     // ──────────────── Internal Helpers ───────────────────────────────────
 
     /// Create a block proposal from the current mempool.
