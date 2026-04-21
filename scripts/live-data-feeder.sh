@@ -10,6 +10,8 @@
 # Default API: http://127.0.0.1:8080
 
 API="${1:-http://127.0.0.1:8080}"
+# Submit to all reachable validators so the proposer always has the tx
+API_NODES=("${API}" "http://100.119.53.101:8080" "http://100.103.216.125:8080" "http://100.113.253.72:8080")
 CREATOR="0xfeed000000000000000000000000000000000000000000000000000000000001"
 SEQ=$(date +%s)
 
@@ -33,17 +35,18 @@ create_object() {
 }
 ENDJSON
 )
-    local resp
-    resp=$(curl -s -X POST "$API/api/tx/create-object" \
-        -H "Content-Type: application/json" \
-        -d "$payload" 2>&1)
+    # Submit to all validators so the current proposer always has the tx
+    local created=false
+    for node in "${API_NODES[@]}"; do
+        curl -s --max-time 2 -X POST "$node/api/tx/create-object" \
+            -H "Content-Type: application/json" \
+            -d "$payload" >/dev/null 2>&1 && created=true
+    done
 
-    local ok
-    ok=$(echo "$resp" | grep -o '"success":true')
-    if [ -n "$ok" ]; then
-        log "CREATED $name | energy=$energy half_life=$half_life | $oid"
+    if [ "$created" = true ]; then
+        log "CREATED $name | energy=$energy half_life=$half_life"
     else
-        log "FAILED  $name | $resp"
+        log "FAILED  $name | no node accepted"
     fi
 }
 
