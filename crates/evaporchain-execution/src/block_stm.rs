@@ -22,6 +22,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::RwLock;
 
 use evaporchain_contracts::{ContractEngine, ContractTemplate};
+use evaporchain_crypto::MerkleMountainRange;
 use evaporchain_script::ScriptEngine;
 use evaporchain_state::db::StateDB;
 use evaporchain_state::EvaporationEngine;
@@ -812,6 +813,7 @@ fn exec_validator_exit(view: &mut TxView, tx: &ValidatorExitTx) -> Result<(), Tx
 /// dynamically rather than conservatively grouping by access keys.
 pub struct BlockStmExecutor {
     evaporation_engine: EvaporationEngine,
+    mmr: MerkleMountainRange,
     verify_signatures: bool,
     fee_controller: Option<fees::PidFeeController>,
     pub block_gas_limit: u64,
@@ -832,6 +834,7 @@ impl BlockStmExecutor {
     pub fn new(grace_period: u64) -> Self {
         Self {
             evaporation_engine: EvaporationEngine::new(grace_period),
+            mmr: MerkleMountainRange::new(),
             verify_signatures: false,
             fee_controller: None,
             block_gas_limit: 0,
@@ -849,6 +852,7 @@ impl BlockStmExecutor {
     pub fn new_for_test(grace_period: u64) -> Self {
         Self {
             evaporation_engine: EvaporationEngine::new(grace_period),
+            mmr: MerkleMountainRange::new(),
             verify_signatures: false,
             fee_controller: None,
             block_gas_limit: 0,
@@ -864,6 +868,7 @@ impl BlockStmExecutor {
     pub fn new_with_sig_verification(grace_period: u64) -> Self {
         Self {
             evaporation_engine: EvaporationEngine::new(grace_period),
+            mmr: MerkleMountainRange::new(),
             verify_signatures: true,
             fee_controller: None,
             block_gas_limit: 0,
@@ -883,6 +888,7 @@ impl BlockStmExecutor {
     ) -> Self {
         Self {
             evaporation_engine: EvaporationEngine::new(grace_period),
+            mmr: MerkleMountainRange::new(),
             verify_signatures: true,
             fee_controller: Some(fee_controller),
             block_gas_limit,
@@ -1408,7 +1414,7 @@ impl ExecutionEngine for BlockStmExecutor {
         }
 
         // ── Phase 4: Evaporation + contract/script ticks ──
-        let evap_result = self.evaporation_engine.process_epoch(db, block.epoch);
+        let evap_result = self.evaporation_engine.process_epoch_with_mmr(db, block.epoch, &mut self.mmr);
         self.contract_engine.tick(block.epoch);
         self.script_engine.tick(block.epoch);
 
@@ -1427,6 +1433,7 @@ impl ExecutionEngine for BlockStmExecutor {
 
         Ok(BlockExecutionResult {
             state_root,
+            mmr_root: self.mmr.root(),
             txs_executed: total_txs_executed,
             txs_failed: total_txs_failed,
             objects_entered_grace: evap_result.entered_grace.len(),

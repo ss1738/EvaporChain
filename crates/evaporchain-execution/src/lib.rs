@@ -10,6 +10,7 @@ mod audit_tests;
 
 use evaporchain_contracts::{ContractEngine, ContractTemplate};
 use evaporchain_crypto::signatures::{MlDsaVerifier, Verifier};
+use evaporchain_crypto::MerkleMountainRange;
 use evaporchain_script::ScriptEngine;
 use evaporchain_state::db::StateDB;
 use evaporchain_state::{EvaporationEngine, RefreshEngine};
@@ -64,6 +65,7 @@ pub enum ExecutionError {
 #[derive(Debug)]
 pub struct BlockExecutionResult {
     pub state_root: [u8; 32],
+    pub mmr_root: [u8; 32],
     pub txs_executed: usize,
     pub txs_failed: usize,
     pub objects_entered_grace: usize,
@@ -102,6 +104,7 @@ pub(crate) const GAS_VALIDATOR_EXIT: u64 = 30_000;
 /// evaporation at the end of each block.
 pub struct SimpleExecutor {
     evaporation_engine: EvaporationEngine,
+    mmr: MerkleMountainRange,
     verify_signatures: bool,
     fee_controller: Option<fees::PidFeeController>,
     /// Gas limit per block (0 = unlimited). Transactions exceeding this limit are skipped.
@@ -124,6 +127,7 @@ impl SimpleExecutor {
     pub fn new(grace_period: u64) -> Self {
         Self {
             evaporation_engine: EvaporationEngine::new(grace_period),
+            mmr: MerkleMountainRange::new(),
             verify_signatures: false,
             fee_controller: None,
             block_gas_limit: 0,
@@ -140,6 +144,7 @@ impl SimpleExecutor {
     pub fn new_for_test(grace_period: u64) -> Self {
         Self {
             evaporation_engine: EvaporationEngine::new(grace_period),
+            mmr: MerkleMountainRange::new(),
             verify_signatures: false,
             fee_controller: None,
             block_gas_limit: 0,
@@ -155,6 +160,7 @@ impl SimpleExecutor {
     pub fn new_with_sig_verification(grace_period: u64) -> Self {
         Self {
             evaporation_engine: EvaporationEngine::new(grace_period),
+            mmr: MerkleMountainRange::new(),
             verify_signatures: true,
             fee_controller: None,
             block_gas_limit: 0,
@@ -174,6 +180,7 @@ impl SimpleExecutor {
     ) -> Self {
         Self {
             evaporation_engine: EvaporationEngine::new(grace_period),
+            mmr: MerkleMountainRange::new(),
             verify_signatures: false,
             fee_controller: Some(fee_controller),
             block_gas_limit,
@@ -194,6 +201,7 @@ impl SimpleExecutor {
     ) -> Self {
         Self {
             evaporation_engine: EvaporationEngine::new(grace_period),
+            mmr: MerkleMountainRange::new(),
             verify_signatures: true,
             fee_controller: Some(fee_controller),
             block_gas_limit,
@@ -691,8 +699,8 @@ impl ExecutionEngine for SimpleExecutor {
             }
         }
 
-        // Run evaporation at end of block
-        let evap_result = self.evaporation_engine.process_epoch(db, block.epoch);
+        // Run evaporation at end of block (with MMR nullifier accumulation)
+        let evap_result = self.evaporation_engine.process_epoch_with_mmr(db, block.epoch, &mut self.mmr);
 
         // Tick all contracts (energy decay, auto-finalize, etc.)
         self.contract_engine.tick(block.epoch);
@@ -743,6 +751,7 @@ impl ExecutionEngine for SimpleExecutor {
 
         Ok(BlockExecutionResult {
             state_root,
+            mmr_root: self.mmr.root(),
             txs_executed,
             txs_failed,
             objects_entered_grace: evap_result.entered_grace.len(),

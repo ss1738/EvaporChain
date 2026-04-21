@@ -2002,7 +2002,7 @@ async fn main() -> Result<()> {
                                             signer_ids: vec![],
                                         })
                                     });
-                                    let mmr_root = [0u8; 32]; // TODO: wire real MMR root
+                                    let mmr_root = result.execution.mmr_root;
                                     let db_guard = safe_lock(&db);
                                     let mut fs = safe_lock(&frontier_state);
                                     let fu = fs.on_block_committed(
@@ -2369,7 +2369,7 @@ async fn main() -> Result<()> {
                                             result.execution.state_root,
                                             obj_count as u64,
                                             ghost_count as u64,
-                                            [0u8; 32],
+                                            result.execution.mmr_root,
                                             da_info.as_ref(),
                                             &*db_guard,
                                         );
