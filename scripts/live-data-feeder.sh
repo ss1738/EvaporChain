@@ -12,7 +12,6 @@
 API="${1:-http://127.0.0.1:8080}"
 # Submit to all reachable validators so the proposer always has the tx
 API_NODES=("${API}" "http://100.119.53.101:8080" "http://100.103.216.125:8080" "http://100.113.253.72:8080")
-CREATOR="0xfeed000000000000000000000000000000000000000000000000000000000001"
 SEQ=$(date +%s)
 
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
@@ -26,19 +25,18 @@ create_object() {
     local payload
     payload=$(cat <<ENDJSON
 {
-  "creator": "$CREATOR",
+  "source": "$name",
   "object_id": "$oid",
   "energy": $energy,
   "half_life": $half_life,
-  "data": "$data",
-  "signature": "0x00"
+  "data": "$data"
 }
 ENDJSON
 )
-    # Submit to all validators so the current proposer always has the tx
+    # Use oracle/ingest endpoint — uses the funded system address as creator
     local created=false
     for node in "${API_NODES[@]}"; do
-        curl -s --max-time 2 -X POST "$node/api/tx/create-object" \
+        curl -s --max-time 2 -X POST "$node/api/oracle/ingest" \
             -H "Content-Type: application/json" \
             -d "$payload" >/dev/null 2>&1 && created=true
     done

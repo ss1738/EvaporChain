@@ -655,12 +655,27 @@ impl TendermintConsensus {
                 if let Some(Some(hash)) = self.check_precommit_quorum() {
                     // 2f+1 precommits for a block → commit!
                     if let Some(mut block) = self.round_state.proposed_block.take() {
-                        // Try to attach BLS aggregate commit certificate.
-                        if block.commit_certificate.is_none() {
-                            block.commit_certificate = self.try_build_commit_certificate(hash);
+                        // Verify the proposed block matches the quorum hash
+                        let block_hash = Self::block_hash(&block);
+                        if block_hash != hash {
+                            warn!(
+                                height = self.height,
+                                round = self.round_state.round,
+                                "Precommit quorum hash mismatch — our block differs from network consensus"
+                            );
+                            // Return txs to mempool since our block won't be committed
+                            for tx in block.transactions.iter().rev() {
+                                self.mempool.submit_priority(tx.clone());
+                            }
+                            // We don't have the correct block — request sync
+                            actions.push(ConsensusAction::RequestSync(self.height, self.height + 1));
+                        } else {
+                            if block.commit_certificate.is_none() {
+                                block.commit_certificate = self.try_build_commit_certificate(hash);
+                            }
+                            self.round_state.phase = Phase::Commit;
+                            actions.push(ConsensusAction::CommitBlock(block));
                         }
-                        self.round_state.phase = Phase::Commit;
-                        actions.push(ConsensusAction::CommitBlock(block));
                     }
                 }
 
@@ -1025,11 +1040,19 @@ impl TendermintConsensus {
                     // Check if we can commit now
                     if let Some(Some(hash)) = self.check_precommit_quorum() {
                         if let Some(mut block) = self.round_state.proposed_block.take() {
-                            if block.commit_certificate.is_none() {
-                                block.commit_certificate = self.try_build_commit_certificate(hash);
+                            let block_hash = Self::block_hash(&block);
+                            if block_hash != hash {
+                                for tx in block.transactions.iter().rev() {
+                                    self.mempool.submit_priority(tx.clone());
+                                }
+                                actions.push(ConsensusAction::RequestSync(self.height, self.height + 1));
+                            } else {
+                                if block.commit_certificate.is_none() {
+                                    block.commit_certificate = self.try_build_commit_certificate(hash);
+                                }
+                                self.round_state.phase = Phase::Commit;
+                                actions.push(ConsensusAction::CommitBlock(block));
                             }
-                            self.round_state.phase = Phase::Commit;
-                            actions.push(ConsensusAction::CommitBlock(block));
                         }
                     }
                 }
@@ -1502,13 +1525,29 @@ impl TendermintConsensus {
             }
         }
 
+        // Return transactions from the uncommitted proposal back to the mempool
+        // so they can be included in a future proposal.
+        if let Some(ref block) = self.round_state.proposed_block {
+            if !block.transactions.is_empty() {
+                let recovered = block.transactions.len();
+                for tx in block.transactions.iter().rev() {
+                    self.mempool.submit_priority(tx.clone());
+                }
+                debug!(
+                    height = self.height,
+                    round = self.round_state.round,
+                    recovered_txs = recovered,
+                    "Returned uncommitted txs to mempool"
+                );
+            }
+        }
+
         let next_round = self.round_state.round + 1;
         if next_round >= MAX_ROUNDS_PER_HEIGHT {
             warn!(
                 height = self.height,
                 "Max rounds reached — forcing empty block commit"
             );
-            // Force an empty block to make progress
             let timestamp = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()

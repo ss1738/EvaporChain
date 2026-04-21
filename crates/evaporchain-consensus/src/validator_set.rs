@@ -278,9 +278,11 @@ impl ValidatorSet {
             return None;
         }
 
-        let total: u64 = active.iter().map(|v| v.effective_weight()).sum();
+        // Use base stake (NOT health-weighted effective_weight) for leader selection.
+        // Health scores can diverge by 1-2 blocks between nodes, causing different
+        // nodes to compute different proposers — breaking consensus.
+        let total: u64 = active.iter().map(|v| v.stake).sum();
         if total == 0 {
-            // Fallback to simple round-robin if all weights are zero
             let idx = epoch as usize % active.len();
             return Some(active[idx]);
         }
@@ -289,7 +291,7 @@ impl ValidatorSet {
         let mut accumulated = 0u64;
 
         for validator in &active {
-            accumulated += validator.effective_weight();
+            accumulated += validator.stake;
             if accumulated > weighted_index {
                 return Some(validator);
             }
