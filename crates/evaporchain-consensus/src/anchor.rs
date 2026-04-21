@@ -465,6 +465,131 @@ impl AnchorManager {
     }
 }
 
+// ─────────────────────── Lazy State Cache ───────────────────────────────
+
+/// Caches object snapshots at anchor points for lazy state evaluation.
+///
+/// At each anchor epoch, the node takes a full snapshot of all active objects.
+/// Between anchors, any state query can be answered by looking up the snapshot
+/// and applying the decay formula — no need to touch the state DB.
+pub struct LazyStateCache {
+    /// Object snapshots keyed by (anchor_epoch, object_id).
+    snapshots: BTreeMap<u64, std::collections::HashMap<[u8; 32], ObjectSnapshot>>,
+    /// Decay rules for evaluation.
+    rules: DecayRules,
+    /// Maximum number of anchor snapshots to retain.
+    max_anchors: usize,
+}
+
+/// Result of a lazy state query.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LazyQueryResult {
+    pub object_id: [u8; 32],
+    pub query_epoch: u64,
+    pub anchor_epoch: u64,
+    pub energy: u64,
+    pub state: ObjectLifecycleState,
+    pub energy_at_anchor: u64,
+    pub half_life: u64,
+}
+
+impl LazyStateCache {
+    pub fn new(rules: DecayRules, max_anchors: usize) -> Self {
+        Self {
+            snapshots: BTreeMap::new(),
+            rules,
+            max_anchors,
+        }
+    }
+
+    /// Capture a snapshot of all active objects at an anchor point.
+    /// Called by the node after creating a state anchor.
+    pub fn capture_anchor(
+        &mut self,
+        anchor_epoch: u64,
+        objects: Vec<ObjectSnapshot>,
+    ) {
+        let map: std::collections::HashMap<[u8; 32], ObjectSnapshot> = objects
+            .into_iter()
+            .map(|s| (s.object_id, s))
+            .collect();
+        self.snapshots.insert(anchor_epoch, map);
+
+        while self.snapshots.len() > self.max_anchors {
+            if let Some(&oldest) = self.snapshots.keys().next() {
+                self.snapshots.remove(&oldest);
+            }
+        }
+    }
+
+    /// Query an object's state at any epoch using lazy evaluation.
+    /// Finds the most recent anchor <= query_epoch and applies decay.
+    pub fn query(
+        &self,
+        object_id: &[u8; 32],
+        query_epoch: u64,
+    ) -> Option<LazyQueryResult> {
+        // Find the most recent anchor at or before the query epoch
+        let (&anchor_epoch, anchor_map) = self.snapshots
+            .range(..=query_epoch)
+            .next_back()?;
+
+        let snapshot = anchor_map.get(object_id)?;
+
+        let energy = LazyStateEvaluator::energy_at(snapshot, &self.rules, query_epoch);
+        let state = LazyStateEvaluator::state_at(snapshot, &self.rules, query_epoch);
+
+        Some(LazyQueryResult {
+            object_id: *object_id,
+            query_epoch,
+            anchor_epoch,
+            energy,
+            state,
+            energy_at_anchor: snapshot.energy_at_anchor,
+            half_life: snapshot.half_life,
+        })
+    }
+
+    /// Batch query: evaluate all objects at a given epoch.
+    pub fn query_all(&self, query_epoch: u64) -> Vec<LazyQueryResult> {
+        let Some((&anchor_epoch, anchor_map)) = self.snapshots
+            .range(..=query_epoch)
+            .next_back()
+        else {
+            return Vec::new();
+        };
+
+        anchor_map.values().map(|snapshot| {
+            let energy = LazyStateEvaluator::energy_at(snapshot, &self.rules, query_epoch);
+            let state = LazyStateEvaluator::state_at(snapshot, &self.rules, query_epoch);
+            LazyQueryResult {
+                object_id: snapshot.object_id,
+                query_epoch,
+                anchor_epoch,
+                energy,
+                state,
+                energy_at_anchor: snapshot.energy_at_anchor,
+                half_life: snapshot.half_life,
+            }
+        }).collect()
+    }
+
+    /// Number of anchor snapshots stored.
+    pub fn snapshot_count(&self) -> usize {
+        self.snapshots.len()
+    }
+
+    /// Total objects across all snapshots.
+    pub fn total_objects(&self) -> usize {
+        self.snapshots.values().map(|m| m.len()).sum()
+    }
+
+    /// Most recent anchor epoch, if any.
+    pub fn latest_anchor_epoch(&self) -> Option<u64> {
+        self.snapshots.keys().next_back().copied()
+    }
+}
+
 // ─────────────────────── Tests ───────────────────────────────────────────
 
 #[cfg(test)]
@@ -868,6 +993,127 @@ mod tests {
         assert_eq!(commitment.anchor_hash, [0u8; 32]);
         assert_eq!(commitment.anchor_epoch, 0);
         assert!(mgr.verify_commitment(&commitment));
+    }
+
+    // ── Lazy State Cache ──
+
+    #[test]
+    fn test_lazy_cache_capture_and_query() {
+        let rules = default_rules();
+        let mut cache = LazyStateCache::new(rules, 10);
+
+        let snapshots = vec![
+            make_snapshot(10000, 50, 100),
+            ObjectSnapshot {
+                object_id: [2u8; 32],
+                energy_at_anchor: 500,
+                half_life: 10,
+                anchor_epoch: 100,
+                state: ObjectLifecycleState::Active,
+                grace_epoch: None,
+            },
+        ];
+
+        cache.capture_anchor(100, snapshots);
+        assert_eq!(cache.snapshot_count(), 1);
+        assert_eq!(cache.total_objects(), 2);
+
+        // Query at anchor epoch: exact energy
+        let result = cache.query(&[1u8; 32], 100).unwrap();
+        assert_eq!(result.energy, 10000);
+        assert_eq!(result.anchor_epoch, 100);
+
+        // Query at epoch 150: 1 half-life elapsed (half_life=50)
+        let result = cache.query(&[1u8; 32], 150).unwrap();
+        assert_eq!(result.energy, 5000);
+
+        // Query at epoch 200: 2 half-lives elapsed
+        let result = cache.query(&[1u8; 32], 200).unwrap();
+        assert_eq!(result.energy, 2500);
+
+        // Object 2: after 10 half-lives → 0
+        let result = cache.query(&[2u8; 32], 200).unwrap();
+        assert_eq!(result.energy, 0);
+        assert_eq!(result.state, ObjectLifecycleState::Grace);
+    }
+
+    #[test]
+    fn test_lazy_cache_uses_latest_anchor() {
+        let rules = default_rules();
+        let mut cache = LazyStateCache::new(rules, 10);
+
+        // Anchor at 100: energy = 10000
+        cache.capture_anchor(100, vec![make_snapshot(10000, 50, 100)]);
+
+        // Anchor at 200: energy = 8000 (object was refreshed)
+        cache.capture_anchor(200, vec![ObjectSnapshot {
+            object_id: [1u8; 32],
+            energy_at_anchor: 8000,
+            half_life: 50,
+            anchor_epoch: 200,
+            state: ObjectLifecycleState::Active,
+            grace_epoch: None,
+        }]);
+
+        // Query at 250: should use anchor 200, not 100
+        let result = cache.query(&[1u8; 32], 250).unwrap();
+        assert_eq!(result.anchor_epoch, 200);
+        assert_eq!(result.energy, 4000); // 8000 >> 1
+
+        // Query at 150: should use anchor 100 (only one available before 150)
+        let result = cache.query(&[1u8; 32], 150).unwrap();
+        assert_eq!(result.anchor_epoch, 100);
+        assert_eq!(result.energy, 5000); // 10000 >> 1
+    }
+
+    #[test]
+    fn test_lazy_cache_query_nonexistent() {
+        let rules = default_rules();
+        let mut cache = LazyStateCache::new(rules, 10);
+        cache.capture_anchor(100, vec![make_snapshot(10000, 50, 100)]);
+
+        // Unknown object
+        assert!(cache.query(&[99u8; 32], 150).is_none());
+
+        // Query before any anchor
+        assert!(cache.query(&[1u8; 32], 50).is_none());
+    }
+
+    #[test]
+    fn test_lazy_cache_eviction() {
+        let rules = default_rules();
+        let mut cache = LazyStateCache::new(rules, 3);
+
+        for i in 1..=5u64 {
+            cache.capture_anchor(i * 100, vec![make_snapshot(10000, 50, i * 100)]);
+        }
+
+        assert_eq!(cache.snapshot_count(), 3);
+        assert!(cache.query(&[1u8; 32], 100).is_none()); // evicted
+        assert!(cache.query(&[1u8; 32], 200).is_none()); // evicted
+        assert!(cache.query(&[1u8; 32], 300).is_some()); // still there
+    }
+
+    #[test]
+    fn test_lazy_cache_batch_query() {
+        let rules = default_rules();
+        let mut cache = LazyStateCache::new(rules, 10);
+
+        let snapshots = vec![
+            make_snapshot(10000, 50, 100),
+            ObjectSnapshot {
+                object_id: [2u8; 32],
+                energy_at_anchor: 500,
+                half_life: 10,
+                anchor_epoch: 100,
+                state: ObjectLifecycleState::Active,
+                grace_epoch: None,
+            },
+        ];
+        cache.capture_anchor(100, snapshots);
+
+        let results = cache.query_all(150);
+        assert_eq!(results.len(), 2);
     }
 }
 
