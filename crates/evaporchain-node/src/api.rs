@@ -2868,8 +2868,80 @@ async fn get_frontier_status(
             "last_activity_epoch": health.last_activity_epoch,
             "compressions": health.compressions,
             "decompressions": health.decompressions,
+        },
+        "lazy_cache": {
+            "snapshots": fs.lazy_cache.snapshot_count(),
+            "total_objects": fs.lazy_cache.total_objects(),
+            "latest_anchor_epoch": fs.lazy_cache.latest_anchor_epoch(),
         }
     }))
+}
+
+async fn get_lazy_eval(
+    State(state): State<Arc<ApiState>>,
+    Query(params): Query<LazyEvalParams>,
+) -> impl IntoResponse {
+    let Some(ref fs_arc) = state.frontier_state else {
+        return Json(serde_json::json!({"error": "frontier not enabled"}));
+    };
+    let fs = fs_arc.lock().unwrap();
+
+    if let Some(object_id_hex) = params.object_id {
+        let Ok(bytes) = hex::decode(&object_id_hex) else {
+            return Json(serde_json::json!({"error": "invalid hex object_id"}));
+        };
+        if bytes.len() != 32 {
+            return Json(serde_json::json!({"error": "object_id must be 32 bytes"}));
+        }
+        let mut id = [0u8; 32];
+        id.copy_from_slice(&bytes);
+
+        let epoch = params.epoch.unwrap_or_else(|| {
+            fs.lazy_cache.latest_anchor_epoch().unwrap_or(0)
+        });
+
+        match fs.query_lazy(&id, epoch) {
+            Some(result) => Json(serde_json::json!({
+                "object_id": hex::encode(result.object_id),
+                "query_epoch": result.query_epoch,
+                "anchor_epoch": result.anchor_epoch,
+                "energy": result.energy,
+                "state": format!("{:?}", result.state),
+                "energy_at_anchor": result.energy_at_anchor,
+                "half_life": result.half_life,
+            })),
+            None => Json(serde_json::json!({"error": "object not found in lazy cache"})),
+        }
+    } else {
+        let epoch = params.epoch.unwrap_or_else(|| {
+            fs.lazy_cache.latest_anchor_epoch().unwrap_or(0)
+        });
+
+        let results = fs.query_all_lazy(epoch);
+        let items: Vec<_> = results.iter().map(|r| {
+            serde_json::json!({
+                "object_id": hex::encode(r.object_id),
+                "energy": r.energy,
+                "state": format!("{:?}", r.state),
+                "half_life": r.half_life,
+            })
+        }).collect();
+
+        Json(serde_json::json!({
+            "epoch": epoch,
+            "anchor_epoch": results.first().map(|r| r.anchor_epoch),
+            "count": items.len(),
+            "objects": items,
+            "cache_snapshots": fs.lazy_cache.snapshot_count(),
+            "cache_total_objects": fs.lazy_cache.total_objects(),
+        }))
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct LazyEvalParams {
+    object_id: Option<String>,
+    epoch: Option<u64>,
 }
 
 // ─────────────── Data Availability Sampling ───────────────────────────────
@@ -3118,6 +3190,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/proof/verify", get(get_proof_verify))
         // Data Availability sampling
         .route("/api/frontier", get(get_frontier_status))
+        .route("/api/lazy-eval", get(get_lazy_eval))
         .route("/api/da/status", get(get_da_status))
         .route("/api/da/block/:number", get(get_da_block))
         .route("/api/da/sample/:block/:shard_index", get(get_da_sample))
