@@ -4399,12 +4399,12 @@ mod da_tests {
     // ═══════════════════════════════════════════════════════════════════════
 
     fn make_proposer_tc() -> TendermintConsensus {
-        // Find which validator is proposer at height 0, round 0
+        // new_for_test starts at height 1, so find proposer for height=1, round=0
         let mut vs = ValidatorSet::new();
         vs.add_validator(ValidatorInfo::new(0, 1000, [0u8; 32]));
         vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
         vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
-        let virtual_epoch = 0u64.wrapping_mul(100).wrapping_add(0);
+        let virtual_epoch = 1u64.wrapping_mul(100).wrapping_add(0);
         let proposer_id = vs.leader_for_epoch(virtual_epoch).unwrap().id;
         TendermintConsensus::new_for_test(proposer_id, 100, vs)
     }
@@ -4491,13 +4491,12 @@ mod da_tests {
         vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
         vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
 
-        // Find proposer at height 0, round 0
-        let virtual_epoch = 0u64.wrapping_mul(100).wrapping_add(0);
+        // Both new() and new_for_test() start at height 1
+        let virtual_epoch = 1u64.wrapping_mul(100).wrapping_add(0);
         let proposer_id = vs.leader_for_epoch(virtual_epoch).unwrap().id;
-        // Pick a different validator as receiver
         let receiver_id = if proposer_id == 0 { 1 } else { 0 };
 
-        let mut tc_proposer = TendermintConsensus::new(proposer_id, 7, vs.clone());
+        let mut tc_proposer = TendermintConsensus::new_for_test(proposer_id, 7, vs.clone());
         let kp0 = BlsKeypair::generate();
         tc_proposer.set_bls_keypair(kp0);
         tc_proposer.mempool.submit(dummy_transfer(42));
@@ -4505,12 +4504,12 @@ mod da_tests {
         let block = tc_proposer.create_proposal(&mut db).unwrap();
         assert!(block.data_root.is_some());
 
-        let mut tc_receiver = TendermintConsensus::new(receiver_id, 7, vs);
+        let mut tc_receiver = TendermintConsensus::new_for_test(receiver_id, 7, vs);
         let kp1 = BlsKeypair::generate();
         tc_receiver.set_bls_keypair(kp1);
 
         let proposal_msg = ConsensusMessage::Proposal {
-            height: 0,
+            height: 1,
             round: 0,
             block: block,
             proposer_id,
@@ -4528,12 +4527,13 @@ mod da_tests {
     fn test_da_proposer_tracked_for_exclusion() {
         let mut tc = make_proposer_tc();
         let proposer_id = tc.my_id;
+        let height = tc.height();
         let kp = BlsKeypair::generate();
         tc.set_bls_keypair(kp);
         tc.mempool.submit(dummy_transfer(42));
         let mut db = InMemoryStateDB::new();
         tc.tick(&mut db);
 
-        assert_eq!(tc.da_block_proposers.get(&0), Some(&proposer_id));
+        assert_eq!(tc.da_block_proposers.get(&height), Some(&proposer_id));
     }
 }
