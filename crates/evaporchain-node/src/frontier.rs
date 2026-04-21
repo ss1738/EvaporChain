@@ -8,7 +8,10 @@
 //! This module provides a single `FrontierState` struct that the node
 //! updates after each block commit.
 
-use evaporchain_consensus::anchor::{AnchorManager, DecayRules, StateAnchor};
+use evaporchain_consensus::anchor::{
+    AnchorManager, DecayRules, LazyQueryResult, LazyStateCache, ObjectLifecycleState,
+    ObjectSnapshot,
+};
 use evaporchain_crypto::energy_verkle::{EnergyVerkleTrie, TrieHealth};
 use evaporchain_da::poha::{CertTemperature, PoHACertificate, PoHAStore, TemperatureDistribution};
 use evaporchain_state::db::StateDB;
@@ -41,6 +44,8 @@ pub struct FrontierState {
     pub poha: PoHAStore,
     /// Energy-annotated Verkle trie (shadow copy tracking live state).
     pub energy_trie: EnergyVerkleTrie,
+    /// Lazy state cache for inter-anchor queries without DB access.
+    pub lazy_cache: LazyStateCache,
     /// Last anchor height for quick checks.
     last_anchor_height: u64,
 }
@@ -48,10 +53,12 @@ pub struct FrontierState {
 impl FrontierState {
     /// Create a new frontier state with the given config.
     pub fn new(config: FrontierConfig) -> Self {
+        let rules = DecayRules::default_rules();
         Self {
-            anchors: AnchorManager::new(config.anchor_interval, DecayRules::default_rules()),
+            anchors: AnchorManager::new(config.anchor_interval, rules.clone()),
             poha: PoHAStore::new(config.poha_energy, config.poha_half_life),
             energy_trie: EnergyVerkleTrie::new(),
+            lazy_cache: LazyStateCache::new(rules, 10),
             last_anchor_height: 0,
         }
     }
@@ -76,7 +83,7 @@ impl FrontierState {
     ) -> FrontierUpdate {
         let mut update = FrontierUpdate::default();
 
-        // ── 1. State Anchor ──
+        // ── 1. State Anchor + Lazy Cache Snapshot ──
         if self.anchors.is_anchor_height(block_number) {
             let anchor = self.anchors.create_anchor(
                 block_number,
@@ -87,6 +94,31 @@ impl FrontierState {
                 mmr_root,
             );
             self.last_anchor_height = block_number;
+
+            // Capture object snapshots for lazy evaluation between anchors
+            let object_ids = db.all_object_ids();
+            let snapshots: Vec<ObjectSnapshot> = object_ids
+                .iter()
+                .filter_map(|id| {
+                    let obj = db.get_object(id)?;
+                    let lifecycle_state = match obj.state {
+                        evaporchain_types::ObjectState::Active
+                        | evaporchain_types::ObjectState::Resurrected => ObjectLifecycleState::Active,
+                        evaporchain_types::ObjectState::Grace => ObjectLifecycleState::Grace,
+                        evaporchain_types::ObjectState::Ghost => ObjectLifecycleState::Ghost,
+                    };
+                    Some(ObjectSnapshot {
+                        object_id: *id,
+                        energy_at_anchor: obj.energy_at(epoch),
+                        half_life: obj.half_life,
+                        anchor_epoch: epoch,
+                        state: lifecycle_state,
+                        grace_epoch: obj.grace_epoch,
+                    })
+                })
+                .collect();
+            self.lazy_cache.capture_anchor(epoch, snapshots);
+
             update.anchor_created = Some(AnchorSummary {
                 height: anchor.height,
                 hash: anchor.hash(),
@@ -152,6 +184,16 @@ impl FrontierState {
         update
     }
 
+    /// Query an object's state lazily without touching the DB.
+    pub fn query_lazy(&self, object_id: &[u8; 32], epoch: u64) -> Option<LazyQueryResult> {
+        self.lazy_cache.query(object_id, epoch)
+    }
+
+    /// Query all objects' state lazily at a given epoch.
+    pub fn query_all_lazy(&self, epoch: u64) -> Vec<LazyQueryResult> {
+        self.lazy_cache.query_all(epoch)
+    }
+
     /// Get a compact status summary for logging.
     pub fn status_line(&self) -> String {
         let anchor_count = self.anchors.anchor_count();
@@ -160,8 +202,11 @@ impl FrontierState {
         let dist = self.poha.temperature_distribution();
         let health = self.energy_trie.health();
 
+        let lazy_anchors = self.lazy_cache.snapshot_count();
+        let lazy_objects = self.lazy_cache.total_objects();
+
         format!(
-            "anchors={} poha={}({}h/{}w/{}c) etrie={}active/{}compressed",
+            "anchors={} poha={}({}h/{}w/{}c) etrie={}active/{}compressed lazy={}snap/{}obj",
             anchor_count,
             poha_active,
             dist.hot,
@@ -169,6 +214,8 @@ impl FrontierState {
             dist.cold,
             health.active_leaves,
             health.compressed_leaves,
+            lazy_anchors,
+            lazy_objects,
         )
     }
 }
@@ -362,11 +409,61 @@ mod tests {
     }
 
     #[test]
+    fn test_lazy_cache_populated_at_anchor() {
+        let mut fs = FrontierState::new(FrontierConfig {
+            anchor_interval: 10,
+            ..FrontierConfig::default()
+        });
+        let mut db = InMemoryStateDB::new();
+
+        db.put_object(make_object(1, 1000, 50));
+        db.put_object(make_object(2, 500, 25));
+
+        // Block 5: no anchor → lazy cache empty
+        fs.on_block_committed(5, 5, [1u8; 32], 2, 0, [0u8; 32], None, &db);
+        assert_eq!(fs.lazy_cache.snapshot_count(), 0);
+
+        // Block 10: anchor → lazy cache captures 2 objects
+        fs.on_block_committed(10, 10, [2u8; 32], 2, 0, [0u8; 32], None, &db);
+        assert_eq!(fs.lazy_cache.snapshot_count(), 1);
+        assert_eq!(fs.lazy_cache.total_objects(), 2);
+
+        // Query object 1 lazily at epoch 60 (1 half-life past anchor at 10)
+        let mut id = [0u8; 32];
+        id[0] = 1;
+        let result = fs.query_lazy(&id, 60).unwrap();
+        assert_eq!(result.anchor_epoch, 10);
+        assert!(result.energy < 1000); // decayed
+    }
+
+    #[test]
+    fn test_lazy_query_all() {
+        let mut fs = FrontierState::new(FrontierConfig {
+            anchor_interval: 10,
+            ..FrontierConfig::default()
+        });
+        let mut db = InMemoryStateDB::new();
+
+        for i in 1..=5u8 {
+            db.put_object(make_object(i, 1000, 50));
+        }
+
+        fs.on_block_committed(10, 10, [1u8; 32], 5, 0, [0u8; 32], None, &db);
+
+        let results = fs.query_all_lazy(15);
+        assert_eq!(results.len(), 5);
+        for r in &results {
+            assert!(r.energy <= 1000);
+        }
+    }
+
+    #[test]
     fn test_status_line() {
         let fs = FrontierState::new(FrontierConfig::default());
         let status = fs.status_line();
         assert!(status.contains("anchors=0"));
         assert!(status.contains("poha=0"));
         assert!(status.contains("etrie=0active"));
+        assert!(status.contains("lazy=0snap/0obj"));
     }
 }
