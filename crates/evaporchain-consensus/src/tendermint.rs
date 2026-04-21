@@ -4398,12 +4398,22 @@ mod da_tests {
     // DA Sampling Wiring Tests
     // ═══════════════════════════════════════════════════════════════════════
 
+    fn make_proposer_tc() -> TendermintConsensus {
+        // Find which validator is proposer at height 0, round 0
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(0, 1000, [0u8; 32]));
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        let virtual_epoch = 0u64.wrapping_mul(100).wrapping_add(0);
+        let proposer_id = vs.leader_for_epoch(virtual_epoch).unwrap().id;
+        TendermintConsensus::new_for_test(proposer_id, 100, vs)
+    }
+
     #[test]
     fn test_da_sampling_on_proposal_with_txs() {
-        let mut tc = make_test_tc();
+        let mut tc = make_proposer_tc();
         let mut db = InMemoryStateDB::new();
 
-        // Give the consensus engine a BLS keypair for attestation signing
         let kp = BlsKeypair::generate();
         tc.set_bls_keypair(kp);
 
@@ -4424,7 +4434,7 @@ mod da_tests {
 
     #[test]
     fn test_da_sampling_empty_block_returns_none() {
-        let mut tc = make_test_tc();
+        let mut tc = make_proposer_tc();
         let mut db = InMemoryStateDB::new();
 
         let kp = BlsKeypair::generate();
@@ -4439,7 +4449,7 @@ mod da_tests {
 
     #[test]
     fn test_da_sampling_tampered_data_root_returns_none() {
-        let mut tc = make_test_tc();
+        let mut tc = make_proposer_tc();
         let mut db = InMemoryStateDB::new();
 
         let kp = BlsKeypair::generate();
@@ -4455,7 +4465,7 @@ mod da_tests {
 
     #[test]
     fn test_proposer_broadcasts_da_attestation() {
-        let mut tc = make_test_tc();
+        let mut tc = make_proposer_tc();
         let mut db = InMemoryStateDB::new();
 
         let kp = BlsKeypair::generate();
@@ -4476,36 +4486,36 @@ mod da_tests {
 
     #[test]
     fn test_validator_da_sampling_on_received_proposal() {
-        let vs = {
-            let mut vs = ValidatorSet::new();
-            vs.add_validator(ValidatorInfo::new(0, 1000, [0u8; 32]));
-            vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
-            vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
-            vs
-        };
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(0, 1000, [0u8; 32]));
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
 
-        // Validator 1 (not the proposer for height 0)
-        let mut tc1 = TendermintConsensus::new(1, 7, vs.clone());
-        let kp1 = BlsKeypair::generate();
-        tc1.set_bls_keypair(kp1);
+        // Find proposer at height 0, round 0
+        let virtual_epoch = 0u64.wrapping_mul(100).wrapping_add(0);
+        let proposer_id = vs.leader_for_epoch(virtual_epoch).unwrap().id;
+        // Pick a different validator as receiver
+        let receiver_id = if proposer_id == 0 { 1 } else { 0 };
 
-        // Validator 0 creates proposal
-        let mut tc0 = TendermintConsensus::new(0, 7, vs);
+        let mut tc_proposer = TendermintConsensus::new(proposer_id, 7, vs.clone());
         let kp0 = BlsKeypair::generate();
-        tc0.set_bls_keypair(kp0);
-        tc0.mempool.submit(dummy_transfer(42));
+        tc_proposer.set_bls_keypair(kp0);
+        tc_proposer.mempool.submit(dummy_transfer(42));
         let mut db = InMemoryStateDB::new();
-        let block = tc0.create_proposal(&mut db).unwrap();
+        let block = tc_proposer.create_proposal(&mut db).unwrap();
         assert!(block.data_root.is_some());
 
-        // Send proposal to validator 1
+        let mut tc_receiver = TendermintConsensus::new(receiver_id, 7, vs);
+        let kp1 = BlsKeypair::generate();
+        tc_receiver.set_bls_keypair(kp1);
+
         let proposal_msg = ConsensusMessage::Proposal {
             height: 0,
             round: 0,
             block: block,
-            proposer_id: 0,
+            proposer_id,
         };
-        let actions = tc1.on_message(proposal_msg);
+        let actions = tc_receiver.on_message(proposal_msg);
 
         let has_prevote = actions.iter().any(|a| matches!(a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { block_hash: Some(_), .. })));
         let has_da_att = actions.iter().any(|a| matches!(a, ConsensusAction::BroadcastMessage(ConsensusMessage::DAAttestation { .. })));
@@ -4516,21 +4526,14 @@ mod da_tests {
 
     #[test]
     fn test_da_proposer_tracked_for_exclusion() {
-        let vs = {
-            let mut vs = ValidatorSet::new();
-            vs.add_validator(ValidatorInfo::new(0, 1000, [0u8; 32]));
-            vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
-            vs
-        };
-
-        let mut tc = TendermintConsensus::new(0, 7, vs);
+        let mut tc = make_proposer_tc();
+        let proposer_id = tc.my_id;
         let kp = BlsKeypair::generate();
         tc.set_bls_keypair(kp);
         tc.mempool.submit(dummy_transfer(42));
         let mut db = InMemoryStateDB::new();
         tc.tick(&mut db);
 
-        // Proposer should be recorded for self-attestation exclusion
-        assert_eq!(tc.da_block_proposers.get(&0), Some(&0));
+        assert_eq!(tc.da_block_proposers.get(&0), Some(&proposer_id));
     }
 }
