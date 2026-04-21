@@ -2345,4 +2345,83 @@ contract Counter {
         assert!(ghosts > 0, "Some objects should have evaporated");
         assert!(active > 0, "Some refreshed objects should survive");
     }
+
+    #[test]
+    fn test_mmr_accumulates_on_evaporation() {
+        let mut db = InMemoryStateDB::new();
+        let mut executor = SimpleExecutor::new_for_test(7);
+
+        let owner = addr(1);
+        db.put_account(Account { address: owner, balance: 1_000_000, nonce: 0 });
+        let obj = evaporchain_types::StateObject {
+            id: obj_id(1),
+            owner,
+            energy: 1,
+            half_life: 1,
+            created_at: 0,
+            last_refreshed: 0,
+            state: ObjectState::Active,
+            grace_epoch: None,
+            data: b"short-lived".to_vec(),
+        };
+        db.put_object(obj);
+
+        assert_eq!(executor.mmr_root(), [0u8; 32], "MMR should be empty at start");
+        assert_eq!(executor.mmr_size(), 0);
+
+        for epoch in 1..=20 {
+            let block = make_block(epoch, epoch, vec![]);
+            let result = executor.execute_block(&mut db, &block).unwrap();
+            if result.objects_evaporated > 0 {
+                assert_ne!(result.mmr_root, [0u8; 32], "MMR root should be non-zero after evaporation");
+                assert_eq!(executor.mmr_size(), 1, "Exactly one nullifier in MMR");
+                assert_eq!(executor.mmr_root(), result.mmr_root, "Trait accessor matches result");
+                return;
+            }
+        }
+        panic!("Object should have evaporated within 20 epochs");
+    }
+
+    #[test]
+    fn test_mmr_root_persists_across_blocks() {
+        let mut db = InMemoryStateDB::new();
+        let mut executor = SimpleExecutor::new_for_test(7);
+
+        let owner = addr(1);
+        db.put_account(Account { address: owner, balance: 1_000_000, nonce: 0 });
+
+        for i in 1..=3u8 {
+            let obj = evaporchain_types::StateObject {
+                id: obj_id(i),
+                owner,
+                energy: i as u64,
+                half_life: 1,
+                created_at: 0,
+                last_refreshed: 0,
+                state: ObjectState::Active,
+                grace_epoch: None,
+                data: vec![i],
+            };
+            db.put_object(obj);
+        }
+
+        let mut prev_root = [0u8; 32];
+        let mut total_evaporated = 0usize;
+
+        for epoch in 1..=30 {
+            let block = make_block(epoch, epoch, vec![]);
+            let result = executor.execute_block(&mut db, &block).unwrap();
+            total_evaporated += result.objects_evaporated;
+
+            if result.objects_evaporated > 0 {
+                assert_ne!(result.mmr_root, prev_root, "MMR root should change on evaporation");
+            } else {
+                assert_eq!(result.mmr_root, prev_root, "MMR root should not change without evaporation");
+            }
+            prev_root = result.mmr_root;
+        }
+
+        assert_eq!(total_evaporated, 3, "All 3 objects should have evaporated");
+        assert_eq!(executor.mmr_size(), 3, "MMR should have 3 nullifiers");
+    }
 }
