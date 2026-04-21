@@ -276,15 +276,19 @@ mod tests {
     use super::*;
     use evaporchain_types::TransferTx;
 
-    fn dummy_tx() -> Transaction {
+    fn dummy_tx_with_nonce(nonce: u64) -> Transaction {
         Transaction::Transfer(TransferTx {
             from: [1u8; 32],
             to: [2u8; 32],
             amount: 100,
-            nonce: 0,
+            nonce,
             signature: None,
             public_key: None,
         })
+    }
+
+    fn dummy_tx() -> Transaction {
+        dummy_tx_with_nonce(0)
     }
 
     #[test]
@@ -292,8 +296,8 @@ mod tests {
         let mut pool = Mempool::new();
         assert!(pool.is_empty());
 
-        assert!(pool.submit(dummy_tx()));
-        assert!(pool.submit(dummy_tx()));
+        assert!(pool.submit(dummy_tx_with_nonce(0)));
+        assert!(pool.submit(dummy_tx_with_nonce(1)));
         assert_eq!(pool.len(), 2);
 
         let txs = pool.drain();
@@ -311,10 +315,10 @@ mod tests {
     #[test]
     fn test_max_size_rejection() {
         let mut pool = Mempool::with_max_size(2);
-        assert!(pool.submit(dummy_tx()));
-        assert!(pool.submit(dummy_tx()));
-        // Third should be rejected
-        assert!(!pool.submit(dummy_tx()));
+        assert!(pool.submit(dummy_tx_with_nonce(0)));
+        assert!(pool.submit(dummy_tx_with_nonce(1)));
+        // Third should be rejected (pool full)
+        assert!(!pool.submit(dummy_tx_with_nonce(2)));
         assert_eq!(pool.len(), 2);
         assert_eq!(pool.rejected_count(), 1);
     }
