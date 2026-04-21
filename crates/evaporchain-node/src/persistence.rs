@@ -3,9 +3,10 @@
 use crate::api::{
     BlockRecord, ChainStats, DAOStore, EventRecord, NftStore, StakingStore, TokenStore,
 };
+use evaporchain_da::block_da::BlockDAPackage;
 use evaporchain_types::Block;
 use rocksdb::{ColumnFamilyDescriptor, Options, DB};
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::Path;
 
 const CF_BLOCKS: &str = "blocks";
@@ -13,6 +14,8 @@ const CF_META: &str = "chain_meta";
 const CF_STORES: &str = "stores";
 /// Full serialized Block objects for sync protocol (separate from BlockRecord summaries).
 const CF_FULL_BLOCKS: &str = "full_blocks";
+/// DA shard packages keyed by block number.
+const CF_DA_SHARDS: &str = "da_shards";
 
 /// Persistent storage for chain data beyond the state DB.
 pub struct ChainStore {
@@ -30,6 +33,7 @@ impl ChainStore {
             ColumnFamilyDescriptor::new(CF_META, Options::default()),
             ColumnFamilyDescriptor::new(CF_STORES, Options::default()),
             ColumnFamilyDescriptor::new(CF_FULL_BLOCKS, Options::default()),
+            ColumnFamilyDescriptor::new(CF_DA_SHARDS, Options::default()),
         ];
 
         let db = DB::open_cf_descriptors(&opts, path, cf_descriptors)
@@ -312,6 +316,67 @@ impl ChainStore {
         }
         let cutoff = current_height - retain;
         let cf = self.db.cf_handle(CF_FULL_BLOCKS).unwrap();
+        let mut pruned = 0;
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+        for item in iter {
+            if let Ok((key, _)) = item {
+                if key.len() >= 8 {
+                    let block_num = u64::from_be_bytes(key[..8].try_into().unwrap());
+                    if block_num >= cutoff {
+                        break;
+                    }
+                    let _ = self.db.delete_cf(cf, &key);
+                    pruned += 1;
+                }
+            } else {
+                break;
+            }
+        }
+        pruned
+    }
+
+    // ─── DA shard persistence ───
+
+    pub fn save_da_package(&self, block_number: u64, package: &BlockDAPackage) {
+        let cf = self.db.cf_handle(CF_DA_SHARDS).unwrap();
+        let key = block_number.to_be_bytes();
+        let value = serde_json::to_vec(package).expect("serialize DA package");
+        self.db.put_cf(cf, key, value).unwrap();
+    }
+
+    pub fn load_da_package(&self, block_number: u64) -> Option<BlockDAPackage> {
+        let cf = self.db.cf_handle(CF_DA_SHARDS).unwrap();
+        let key = block_number.to_be_bytes();
+        let data = self.db.get_cf(cf, key).ok()??;
+        serde_json::from_slice(&data).ok()
+    }
+
+    pub fn load_recent_da_packages(&self, limit: usize) -> BTreeMap<u64, BlockDAPackage> {
+        let cf = self.db.cf_handle(CF_DA_SHARDS).unwrap();
+        let mut packages = BTreeMap::new();
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::End);
+        for item in iter {
+            if packages.len() >= limit {
+                break;
+            }
+            if let Ok((key, value)) = item {
+                if key.len() >= 8 {
+                    let bn = u64::from_be_bytes(key[..8].try_into().unwrap());
+                    if let Ok(pkg) = serde_json::from_slice::<BlockDAPackage>(&value) {
+                        packages.insert(bn, pkg);
+                    }
+                }
+            }
+        }
+        packages
+    }
+
+    pub fn prune_da_packages(&self, current_height: u64, retain: u64) -> usize {
+        if current_height <= retain {
+            return 0;
+        }
+        let cutoff = current_height - retain;
+        let cf = self.db.cf_handle(CF_DA_SHARDS).unwrap();
         let mut pruned = 0;
         let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
         for item in iter {

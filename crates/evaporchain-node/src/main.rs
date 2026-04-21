@@ -1377,7 +1377,12 @@ async fn main() -> Result<()> {
     let start_time = Instant::now();
 
     // DA shard store: block_number -> BlockDAPackage (keep last 64 blocks)
-    let da_store: Arc<Mutex<BTreeMap<u64, BlockDAPackage>>> = Arc::new(Mutex::new(BTreeMap::new()));
+    let restored_da = chain_store.load_recent_da_packages(64);
+    let da_restored_count = restored_da.len();
+    let da_store: Arc<Mutex<BTreeMap<u64, BlockDAPackage>>> = Arc::new(Mutex::new(restored_da));
+    if da_restored_count > 0 {
+        println!("{} \x1b[36mDA: restored {} shard packages from disk\x1b[0m", node_tag, da_restored_count);
+    }
 
     // ── Frontier Primitives ──
     // Energy-Annotated Verkle Trie + PoHA + Anchor-based consensus
@@ -1911,13 +1916,18 @@ async fn main() -> Result<()> {
                                                 );
                                                 let mut store = safe_lock(&da_store);
                                                 store.insert(block.number, package.clone());
-                                                // Keep only last 64 blocks
+                                                // Keep only last 64 blocks in memory
                                                 while store.len() > 64 {
                                                     if let Some(&oldest) = store.keys().next() {
                                                         store.remove(&oldest);
                                                     }
                                                 }
                                                 drop(store);
+                                                // Persist to disk
+                                                chain_store.save_da_package(block.number, &package);
+                                                if block.number % 100 == 0 {
+                                                    chain_store.prune_da_packages(block.number, 500);
+                                                }
 
                                                 // Also populate the network shard cache so peers can sample from us
                                                 if let Some(ref sc) = shard_cache {
@@ -2017,6 +2027,19 @@ async fn main() -> Result<()> {
                                             "{} \x1b[33mPoHA: {} certs evaporated\x1b[0m",
                                             node_tag, fu.poha_evaporated,
                                         );
+                                    }
+                                    // PoHA re-attestation: boost decaying certificates every 50 blocks
+                                    if block.number % 50 == 0 {
+                                        let to_reattest = fs.poha.select_for_re_attestation(block.epoch, 5);
+                                        for bn in &to_reattest {
+                                            fs.poha.re_attest(*bn, block.epoch);
+                                        }
+                                        if !to_reattest.is_empty() {
+                                            println!(
+                                                "{} \x1b[35mPoHA: re-attested {} certificates\x1b[0m",
+                                                node_tag, to_reattest.len(),
+                                            );
+                                        }
                                     }
                                     if block.number % 50 == 0 {
                                         println!(
@@ -3072,6 +3095,40 @@ async fn main() -> Result<()> {
                         "{} \x1b[36mDA: verified {} peer shard samples\x1b[0m",
                         node_tag, samples.len()
                     );
+                    // Create and broadcast DA attestation based on verified peer samples
+                    if let Some(ref tc_ref) = tendermint {
+                        let mut tc = safe_lock(tc_ref);
+                        let current_height = tc.height();
+                        // Attest to the previous block (the one we just sampled)
+                        let sampled_block = current_height.saturating_sub(1);
+                        if let Some(data_root) = {
+                            let store = safe_lock(&da_store);
+                            store.get(&sampled_block).map(|p| p.header.commitment_root)
+                        } {
+                            let shard_count = {
+                                let store = safe_lock(&da_store);
+                                store.get(&sampled_block).map(|p| p.shards.len() as u32).unwrap_or(8)
+                            };
+                            if let Some(att_msg) = tc.make_da_attestation(sampled_block, data_root, shard_count) {
+                                tc.on_message(att_msg.clone());
+                                if let Some(cert_bytes) = tc.try_build_da_certificate(sampled_block, data_root) {
+                                    println!(
+                                        "{}   \x1b[1;35mDA Certificate: block #{}, supermajority via peer samples\x1b[0m",
+                                        node_tag, sampled_block,
+                                    );
+                                    let mut fs = safe_lock(&frontier_state);
+                                    fs.poha.register(sampled_block, data_root, 8, 3000, 4000, sampled_block, vec![], vec![]);
+                                    drop(fs);
+                                }
+                                drop(tc);
+                                if let Some(ref sender) = consensus_net_sender {
+                                    if let Ok(data) = serde_json::to_vec(&att_msg) {
+                                        let _ = sender.send(data).await;
+                                    }
+                                }
+                            }
+                        }
+                    }
                 } else if !samples.is_empty() {
                     eprintln!(
                         "{} \x1b[31mDA: peer shard sample verification FAILED ({} samples)\x1b[0m",

@@ -946,6 +946,17 @@ impl TendermintConsensus {
                     }
                 }
 
+                // ── DA certificate verification ──
+                if !self.verify_da_certificate(&block) {
+                    warn!(
+                        height = height,
+                        round = round,
+                        proposer = proposer_id,
+                        "Rejected proposal: invalid DA certificate"
+                    );
+                    return actions;
+                }
+
                 self.round_state.proposed_block = Some(block);
                 self.round_state.proposed_hash = Some(hash);
 
@@ -1425,6 +1436,10 @@ impl TendermintConsensus {
         let anchor_hash = self.anchor_provider.as_ref()
             .and_then(|p| p.anchor_hash_for_height(self.height));
 
+        // Attach DA certificate from the previous block if supermajority was reached
+        // (certificates are built asynchronously as attestations arrive from peers)
+        let da_certificate = self.try_attach_pending_da_certificate();
+
         let block = Block {
             number: self.height,
             epoch: next_epoch,
@@ -1437,7 +1452,7 @@ impl TendermintConsensus {
             vrf_proof: vrf_prf,
             data_root,
             blob_commitments,
-            da_certificate: None,
+            da_certificate,
             commit_certificate: None,
             nova_proof: None,
             anchor_hash,
@@ -1714,6 +1729,61 @@ impl TendermintConsensus {
             self.da_attestations.retain(|&k, _| k > cutoff);
             self.da_block_proposers.retain(|&k, _| k > cutoff);
         }
+    }
+
+    /// Try to find a pending DA certificate from recent blocks to include in a new proposal.
+    /// Scans the last 10 blocks for any that reached supermajority but weren't included yet.
+    fn try_attach_pending_da_certificate(&mut self) -> Option<Vec<u8>> {
+        let start = self.height.saturating_sub(10);
+        for bn in (start..self.height).rev() {
+            if let Some(atts) = self.da_attestations.get(&bn) {
+                if atts.is_empty() { continue; }
+                if let Some(&data_root) = atts.first().map(|a| &a.data_root) {
+                    if let Some(cert_bytes) = self.try_build_da_certificate(bn, data_root) {
+                        info!(
+                            block = bn,
+                            current_height = self.height,
+                            "Attaching pending DA certificate from block #{} to new proposal",
+                            bn,
+                        );
+                        return Some(cert_bytes);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Verify a DA certificate included in a received block.
+    /// Returns true if the certificate is valid or absent (absent = not yet enforced).
+    pub fn verify_da_certificate(&self, block: &Block) -> bool {
+        let cert_bytes = match &block.da_certificate {
+            Some(bytes) => bytes,
+            None => return true, // DA certificate not yet mandatory
+        };
+        let cert: evaporchain_da::certificate::DACertificate = match serde_json::from_slice(cert_bytes) {
+            Ok(c) => c,
+            Err(_) => {
+                warn!(block = block.number, "DA certificate deserialization failed");
+                return false;
+            }
+        };
+        // Verify supermajority stake
+        if !cert.is_supermajority() {
+            warn!(
+                block = block.number,
+                attested = cert.attested_stake,
+                total = cert.total_stake,
+                "DA certificate does not have supermajority"
+            );
+            return false;
+        }
+        // Verify attestation count is non-trivial
+        if cert.attestations.is_empty() {
+            warn!(block = block.number, "DA certificate has zero attestations");
+            return false;
+        }
+        true
     }
 }
 
