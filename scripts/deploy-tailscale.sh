@@ -16,13 +16,13 @@
 set -euo pipefail
 
 # ─────────────────────── Tailscale IPs ──────────────────────────────────
-MINI1_IP="100.119.53.101"    # satyawans-mac-mini
-MINI2_IP="100.113.253.72"    # satyawan-mini-2
-MINI3_IP="100.103.216.125"   # satyawan-mini-2s-mac-mini
+MINI1_IP="100.119.53.101"    # satyawan (SSH alias: satyawan)
+MINI2_IP="100.113.253.72"    # apsarth  (SSH alias: apsarth)
+MINI3_IP="100.103.216.125"   # ironman  (SSH alias: ironman)
 
 MINI_IPS=("$MINI1_IP" "$MINI2_IP" "$MINI3_IP")
-MINI_NAMES=("mini-1" "mini-2" "mini-3")
-MINI_USERS=("satyawansingh" "satyawan-mini-1" "satyawan-mini-2")
+MINI_NAMES=("satyawan" "apsarth" "ironman")
+MINI_SSH=("satyawan" "apsarth" "ironman")
 MINI_HOMES=("/Users/satyawansingh" "/Users/satyawan-mini-1" "/Users/satyawan-mini-2")
 
 # ─────────────────────── Ports ──────────────────────────────────────────
@@ -34,12 +34,11 @@ BINARY="target/release/evaporchain-node"
 GENESIS="genesis-tailscale-3node.json"
 
 # ─────────────────────── SSH ────────────────────────────────────────────
-SSH_OPTS="-o ConnectTimeout=5 -o StrictHostKeyChecking=no"
-
+# Uses SSH config aliases (satyawan/apsarth/ironman) to avoid auth failures.
 ssh_mini() {
     local idx=$1
     shift
-    ssh $SSH_OPTS "${MINI_USERS[$idx]}@${MINI_IPS[$idx]}" "$@"
+    ssh -o ConnectTimeout=5 "${MINI_SSH[$idx]}" "$@"
 }
 
 remote_dir() { echo "${MINI_HOMES[$1]}/EvaporChain"; }
@@ -58,7 +57,7 @@ cmd_setup() {
         local ddir=$(data_dir $i)
         local ldir=$(log_dir $i)
         echo ""
-        echo "── ${MINI_NAMES[$i]} (${MINI_IPS[$i]}, user=${MINI_USERS[$i]}) ──"
+        echo "── ${MINI_NAMES[$i]} (${MINI_SSH[$i]} → ${MINI_IPS[$i]}) ──"
 
         # Check SSH
         if ! ssh_mini $i "echo ok" >/dev/null 2>&1; then
@@ -66,15 +65,9 @@ cmd_setup() {
             continue
         fi
 
-        # Sync repo
-        echo "  Syncing code..."
-        rsync -az --delete \
-            --exclude target \
-            --exclude .git \
-            --exclude evaporchain-data \
-            -e "ssh $SSH_OPTS" \
-            "$(dirname "$0")/../" \
-            "${MINI_USERS[$i]}@${MINI_IPS[$i]}:${rdir}/"
+        # Sync repo via git pull (all Minis already have the repo)
+        echo "  Pulling latest code..."
+        ssh_mini $i "cd ${rdir} && git pull"
 
         # Build
         echo "  Building release binary (this may take a while)..."
@@ -96,12 +89,12 @@ cmd_start() {
     echo "══════════════════════════════════════════════════════"
 
     for i in 0 1 2; do
-        local vid=$((i + 1))
+        local vid=$i  # 0-indexed to match Tendermint validator set
         local rdir=$(remote_dir $i)
         local ddir=$(data_dir $i)
         local ldir=$(log_dir $i)
         echo ""
-        echo "── Starting validator ${vid} on ${MINI_NAMES[$i]} (${MINI_IPS[$i]}) ──"
+        echo "── Starting validator ${vid} on ${MINI_NAMES[$i]} (${MINI_SSH[$i]} → ${MINI_IPS[$i]}) ──"
 
         if ! ssh_mini $i "echo ok" >/dev/null 2>&1; then
             echo "  SKIP: SSH failed"
@@ -186,8 +179,8 @@ cmd_status() {
 }
 
 cmd_logs() {
-    local node_num="${1:?Usage: $0 logs <1|2|3>}"
-    local idx=$((node_num - 1))
+    local node_num="${1:?Usage: $0 logs <0|1|2>}"
+    local idx=$node_num
     local ldir=$(log_dir $idx)
     echo "Tailing logs for validator ${node_num} on ${MINI_NAMES[$idx]}..."
     ssh_mini $idx "tail -f ${ldir}/validator-${node_num}.log"
