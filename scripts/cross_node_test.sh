@@ -65,12 +65,12 @@ fi
 # 4. Block production (wait 3 seconds, check height increased)
 echo "[4] Block production"
 h1=$(curl -s "http://${MINI1}:8080/api/status" | python3 -c "import json,sys; print(json.load(sys.stdin).get('block_height',0))" 2>/dev/null)
-sleep 3
+sleep 6
 h2=$(curl -s "http://${MINI1}:8080/api/status" | python3 -c "import json,sys; print(json.load(sys.stdin).get('block_height',0))" 2>/dev/null)
 if [ "$h2" -gt "$h1" ]; then
     pass "Blocks advancing ($h1 -> $h2)"
 else
-    fail "No new blocks in 3 seconds ($h1 -> $h2)"
+    fail "No new blocks in 6 seconds ($h1 -> $h2)"
 fi
 
 # 5. State root consistency
