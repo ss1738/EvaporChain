@@ -211,6 +211,12 @@ pub struct BlockRecord {
     /// DA data root (hex-encoded blake3 hash of 2D erasure commitments).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data_root: Option<String>,
+    /// 2D DA: number of row/column roots in the extended data square.
+    #[serde(default)]
+    pub da_square_size: usize,
+    /// Number of namespace blob commitments in this block.
+    #[serde(default)]
+    pub blob_count: usize,
     /// Rule-Based Consensus: whether this block carries a state function commitment.
     #[serde(default)]
     pub has_state_commitment: bool,

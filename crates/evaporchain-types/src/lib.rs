@@ -102,6 +102,12 @@ pub struct Block {
     /// Merkle root over all row/column roots of the erasure-coded data matrix.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data_root: Option<[u8; 32]>,
+    /// Row Merkle roots from 2D erasure-coded extended data square.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub da_row_roots: Vec<[u8; 32]>,
+    /// Column Merkle roots from 2D erasure-coded extended data square.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub da_col_roots: Vec<[u8; 32]>,
     /// Per-blob namespace commitments for data availability.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub blob_commitments: Vec<[u8; 32]>,

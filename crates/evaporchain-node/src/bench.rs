@@ -102,6 +102,8 @@ fn bench_transaction_throughput() -> f64 {
             nova_proof: None,
             anchor_hash: None,
             state_function_commitment: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
     };
 
     let mut executor = ParallelExecutor::new(5);
@@ -170,6 +172,8 @@ fn bench_block_execution() -> f64 {
             nova_proof: None,
             anchor_hash: None,
             state_function_commitment: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
         };
 
         let _ = executor.execute_block(&mut db, &block);
@@ -271,6 +275,8 @@ fn bench_object_creation() -> f64 {
             nova_proof: None,
             anchor_hash: None,
             state_function_commitment: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
     };
 
     let mut executor = ParallelExecutor::new(5);
@@ -343,6 +349,8 @@ fn bench_refresh_throughput() -> f64 {
             nova_proof: None,
             anchor_hash: None,
             state_function_commitment: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
     };
 
     let mut executor = ParallelExecutor::new(5);
@@ -408,6 +416,8 @@ fn bench_stress_test() -> f64 {
         nova_proof: None,
         anchor_hash: None,
         state_function_commitment: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
     };
 
     let mut executor = ParallelExecutor::new(5);
@@ -522,6 +532,8 @@ fn bench_mixed_workload() -> f64 {
         nova_proof: None,
         anchor_hash: None,
         state_function_commitment: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
     };
 
     let mut executor = ParallelExecutor::new(5);
@@ -593,6 +605,8 @@ fn bench_multi_block_sustained() -> f64 {
             nova_proof: None,
             anchor_hash: None,
             state_function_commitment: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
         };
 
         let result = executor.execute_block(&mut db, &block);

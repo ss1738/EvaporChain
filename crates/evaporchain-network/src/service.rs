@@ -725,6 +725,8 @@ mod tests {
             nova_proof: None,
             anchor_hash: None,
             state_function_commitment: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
         }
     }
 

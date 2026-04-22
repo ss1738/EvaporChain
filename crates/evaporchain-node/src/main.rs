@@ -17,6 +17,7 @@ use evaporchain_state::db::StateDB;
 use evaporchain_state::RocksDBStateDB;
 use evaporchain_crypto::signatures::{MlDsaKeypair, Signer};
 use evaporchain_da::block_da::{BlockDA, BlockDAPackage};
+use evaporchain_da::block_da_2d::BlockDA2D;
 use evaporchain_types::{
     Account, CreateObjectTx, ObjectState, RefreshTx, StateObject, Transaction, TransferTx,
 };
@@ -139,6 +140,40 @@ fn seed_demo_accounts(db: &mut RocksDBStateDB, node_tag: &str) {
         }
     }
     println!("{} \x1b[36mDemo accounts seeded (6 accounts for demo tx generation)\x1b[0m", node_tag);
+}
+
+/// Produce 2D erasure encoding with NMT blob commitments for a block.
+/// Populates `block.da_row_roots`, `block.da_col_roots`, and `block.blob_commitments`.
+/// Returns the 2D data_root which replaces the 1D commitment root in the block header.
+fn encode_block_2d(block: &mut evaporchain_types::Block, block_bytes: &[u8]) -> Option<[u8; 32]> {
+    use evaporchain_da::block_da_2d::{BlockDA2D, namespace_for_tx_type};
+    use evaporchain_da::namespace::NamespacedBlob;
+
+    let da2d = BlockDA2D::new();
+
+    // Build namespace-tagged blobs from transactions
+    let blobs: Vec<NamespacedBlob> = block.transactions.iter().filter_map(|tx| {
+        let (ns_type, data) = match tx {
+            Transaction::Transfer(t) => ("transfer", serde_json::to_vec(t).ok()?),
+            Transaction::CreateObject(t) => ("create_object", serde_json::to_vec(t).ok()?),
+            Transaction::Refresh(t) => ("refresh", serde_json::to_vec(t).ok()?),
+            _ => return None,
+        };
+        Some(NamespacedBlob {
+            namespace: namespace_for_tx_type(ns_type),
+            data,
+        })
+    }).collect();
+
+    match da2d.encode_block_with_blobs(block_bytes, &blobs) {
+        Ok(package) => {
+            block.da_row_roots = package.header.row_roots;
+            block.da_col_roots = package.header.col_roots;
+            block.blob_commitments = package.header.blob_commitments;
+            Some(package.header.data_root)
+        }
+        Err(_) => None,
+    }
 }
 
 fn initialize_genesis(db: &mut RocksDBStateDB, node_tag: &str) {
@@ -731,6 +766,8 @@ fn record_block(
         has_nova_proof: block.nova_proof.is_some(),
         nova_proof_size: block.nova_proof.as_ref().map_or(0, |p| p.len()),
         data_root: block.data_root.map(hex::encode),
+        da_square_size: block.da_row_roots.len(),
+        blob_count: block.blob_commitments.len(),
         has_state_commitment: block.state_function_commitment.is_some(),
         is_anchor: block.state_function_commitment.as_ref().map_or(false, |c| c.is_anchor),
         anchor_epoch: block.state_function_commitment.as_ref().map_or(0, |c| c.anchor_epoch),
@@ -1947,6 +1984,16 @@ async fn main() -> Result<()> {
                                 // DA: erasure-encode block and store shards
                                 if block.data_root.is_some() {
                                     if let Ok(block_bytes) = serde_json::to_vec(&block) {
+                                        // 2D encoding: populate row/col roots and NMT blob commitments
+                                        if let Some(data_root_2d) = encode_block_2d(&mut block, &block_bytes) {
+                                            println!(
+                                                "{}   \x1b[36mDA-2D: {}x{} matrix, data_root={}\x1b[0m",
+                                                node_tag,
+                                                block.da_row_roots.len(),
+                                                block.da_col_roots.len(),
+                                                &hex::encode(data_root_2d)[..16],
+                                            );
+                                        }
                                         if let Ok(da) = BlockDA::new() {
                                             if let Ok(package) = da.encode_block(&block_bytes) {
                                                 let shard_count = package.shards.len() as u32;
@@ -2161,6 +2208,8 @@ async fn main() -> Result<()> {
                                 // DA encode the block for light client sampling
                                 if let Ok(da) = evaporchain_da::block_da::BlockDA::new() {
                                     let block_bytes = serde_json::to_vec(&block).unwrap_or_default();
+                                    // 2D encoding: populate row/col roots and NMT
+                                    encode_block_2d(&mut block, &block_bytes);
                                     if let Ok(package) = da.encode_block(&block_bytes) {
                                         if let Some(ref sc) = shard_cache {
                                             let mut cache = sc.write().unwrap_or_else(|p| p.into_inner());
@@ -2349,6 +2398,8 @@ async fn main() -> Result<()> {
                                     // DA: erasure-encode block and store shards
                                     if block.data_root.is_some() {
                                         if let Ok(block_bytes) = serde_json::to_vec(&block) {
+                                            // 2D encoding: populate row/col roots and NMT
+                                            encode_block_2d(&mut block, &block_bytes);
                                             if let Ok(da) = BlockDA::new() {
                                                 if let Ok(package) = da.encode_block(&block_bytes) {
                                                     let shard_count = package.shards.len() as u32;
@@ -2505,6 +2556,8 @@ async fn main() -> Result<()> {
                                     // DA encode (follower path)
                                     if let Ok(da) = evaporchain_da::block_da::BlockDA::new() {
                                         let block_bytes = serde_json::to_vec(&block).unwrap_or_default();
+                                        // 2D encoding: populate row/col roots and NMT
+                                        encode_block_2d(&mut block, &block_bytes);
                                         if let Ok(package) = da.encode_block(&block_bytes) {
                                             if let Some(ref sc) = shard_cache {
                                                 let mut cache = sc.write().unwrap_or_else(|p| p.into_inner());
@@ -2954,6 +3007,8 @@ async fn main() -> Result<()> {
                                             has_nova_proof: block.nova_proof.is_some(),
                                             nova_proof_size: block.nova_proof.as_ref().map_or(0, |p| p.len()),
                                             data_root: block.data_root.map(hex::encode),
+                                            da_square_size: block.da_row_roots.len(),
+                                            blob_count: block.blob_commitments.len(),
                                             has_state_commitment: block.state_function_commitment.is_some(),
                                             is_anchor: block.state_function_commitment.as_ref().map_or(false, |c| c.is_anchor),
                                             anchor_epoch: block.state_function_commitment.as_ref().map_or(0, |c| c.anchor_epoch),
