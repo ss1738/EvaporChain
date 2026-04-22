@@ -765,7 +765,7 @@ mod tests {
     #[tokio::test]
     async fn test_tx_gossip_roundtrip() {
         // Start two nodes
-        let (mut ch1, _h1, _pid1) = P2pNetworkService::start(make_config(0))
+        let (ch1, _h1, _pid1) = P2pNetworkService::start(make_config(0))
             .await
             .expect("node1");
         let (mut ch2, _h2, _pid2) = P2pNetworkService::start(make_config(0))
@@ -803,7 +803,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_block_gossip_roundtrip() {
-        let (mut ch1, _h1, _pid1) = P2pNetworkService::start(make_config(0))
+        let (ch1, _h1, _pid1) = P2pNetworkService::start(make_config(0))
             .await
             .expect("node1");
         let (mut ch2, _h2, _pid2) = P2pNetworkService::start(make_config(0))
