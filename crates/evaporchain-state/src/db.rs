@@ -485,7 +485,7 @@ mod tests {
 
     #[test]
     fn test_empty_state_root() {
-        let db = InMemoryStateDB::new();
+        let mut db = InMemoryStateDB::new();
         assert_eq!(db.compute_state_root(), [0u8; 32]);
     }
 
@@ -527,7 +527,7 @@ mod tests {
 
     #[test]
     fn test_empty_trie_health() {
-        let db = InMemoryStateDB::new();
+        let mut db = InMemoryStateDB::new();
         let health = db.trie_health();
         assert_eq!(health.active_leaves, 0);
         assert_eq!(health.total_nodes, 0);
