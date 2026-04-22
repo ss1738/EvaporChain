@@ -121,6 +121,26 @@ fn obj_id(b: u8) -> [u8; 32] {
     id
 }
 
+fn seed_demo_accounts(db: &mut RocksDBStateDB, node_tag: &str) {
+    use api::{GENESIS_FOUNDATION, GENESIS_CORE_DEV, GENESIS_VALIDATOR1, GENESIS_VALIDATOR2, GENESIS_ECOSYSTEM, GENESIS_COMMUNITY, parse_hex_address};
+    use evaporchain_state::db::StateDB;
+    let accounts: [(&str, u64); 6] = [
+        (GENESIS_FOUNDATION, 487_293),
+        (GENESIS_CORE_DEV,   234_851),
+        (GENESIS_VALIDATOR1,  128_472),
+        (GENESIS_VALIDATOR2,   91_337),
+        (GENESIS_ECOSYSTEM,    52_184),
+        (GENESIS_COMMUNITY,    38_916),
+    ];
+    for (hex, balance) in &accounts {
+        let address = parse_hex_address(hex).expect("invalid demo address");
+        if db.get_account(&address).is_none() {
+            db.put_account(Account { address, balance: *balance, nonce: 0 });
+        }
+    }
+    println!("{} \x1b[36mDemo accounts seeded (6 accounts for demo tx generation)\x1b[0m", node_tag);
+}
+
 fn initialize_genesis(db: &mut RocksDBStateDB, node_tag: &str) {
     use api::{GENESIS_FOUNDATION, GENESIS_CORE_DEV, GENESIS_VALIDATOR1, GENESIS_VALIDATOR2, GENESIS_ECOSYSTEM, GENESIS_COMMUNITY, parse_hex_address};
 
@@ -1090,6 +1110,9 @@ async fn main() -> Result<()> {
             println!("{} \x1b[1;32mGenesis block #{} created\x1b[0m — {} accounts, {} validators, state_root={}",
                 node_tag, result.block.number, result.accounts_created, result.validators_registered,
                 hex::encode(&result.state_root[..8]));
+            if args.demo_mode {
+                seed_demo_accounts(&mut *db, &node_tag);
+            }
         } else {
             println!("{} \x1b[1mFresh start — loading genesis state:\x1b[0m", node_tag);
             initialize_genesis(&mut db, &node_tag);
