@@ -318,18 +318,20 @@ impl StateDB for OverlayStateDB {
         self.accounts.keys().copied().collect()
     }
 
-    fn compute_state_root(&self) -> [u8; 32] {
+    fn compute_state_root(&mut self) -> [u8; 32] {
         [0u8; 32]
     }
 
     fn compress_cold_subtrees(&mut self) -> u32 { 0 }
-    fn trie_health(&self) -> evaporchain_crypto::TrieHealth {
+    fn trie_health(&mut self) -> evaporchain_crypto::TrieHealth {
         evaporchain_crypto::TrieHealth {
             active_leaves: 0, compressed_leaves: 0, total_nodes: 0,
             max_energy: 0, min_half_life: u64::MAX, last_activity_epoch: 0,
             compressions: 0, decompressions: 0,
         }
     }
+    fn trie_snapshot(&mut self) -> Vec<u8> { Vec::new() }
+    fn load_trie_snapshot(&mut self, _bytes: &[u8]) -> Result<(), String> { Ok(()) }
 
     // Privacy methods — overlay doesn't handle privacy state (it's in the serial phase).
     fn put_note_tree_root(&mut self, _root: [u8; 32]) {}

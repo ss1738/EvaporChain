@@ -114,14 +114,20 @@ pub trait StateDB: Send + Sync {
     fn all_account_addresses(&self) -> Vec<AccountAddress>;
 
     /// Compute the state root hash over all objects and accounts.
-    fn compute_state_root(&self) -> [u8; 32];
+    fn compute_state_root(&mut self) -> [u8; 32];
 
     /// Compress cold subtrees in the energy-annotated Verkle trie.
     /// Returns the number of subtrees compressed.
     fn compress_cold_subtrees(&mut self) -> u32;
 
     /// Report health of the energy-annotated Verkle trie.
-    fn trie_health(&self) -> TrieHealth;
+    fn trie_health(&mut self) -> TrieHealth;
+
+    /// Serialize the current trie state to bytes for persistence.
+    fn trie_snapshot(&mut self) -> Vec<u8>;
+
+    /// Restore the trie from a previously serialized snapshot.
+    fn load_trie_snapshot(&mut self, bytes: &[u8]) -> Result<(), String>;
 
     // ─── Privacy Layer State ──────────────────────────────────────────────
 
@@ -158,6 +164,12 @@ pub struct InMemoryStateDB {
     objects: HashMap<ObjectId, StateObject>,
     ghosts: HashMap<ObjectId, GhostRecord>,
     accounts: HashMap<AccountAddress, Account>,
+    /// Persistent incremental trie — mutated on each state change.
+    trie: EnergyVerkleTrie,
+    /// Object IDs modified via mutable reference (trie update deferred until root computation).
+    dirty_objects: std::collections::HashSet<ObjectId>,
+    /// Account addresses modified via mutable reference.
+    dirty_accounts: std::collections::HashSet<AccountAddress>,
     // Privacy layer state
     note_tree_root: [u8; 32],
     spent_nullifiers: std::collections::HashSet<[u8; 32]>,
@@ -171,10 +183,37 @@ impl InMemoryStateDB {
             objects: HashMap::new(),
             ghosts: HashMap::new(),
             accounts: HashMap::new(),
+            trie: EnergyVerkleTrie::new(),
+            dirty_objects: std::collections::HashSet::new(),
+            dirty_accounts: std::collections::HashSet::new(),
             note_tree_root: [0u8; 32],
             spent_nullifiers: std::collections::HashSet::new(),
             shielded_pool_balance: 0,
             note_count: 0,
+        }
+    }
+
+    /// Sync dirty entries into the trie (O(dirty) not O(n)).
+    fn sync_dirty_to_trie(&mut self) {
+        for id in self.dirty_objects.drain() {
+            let key = trie_key_for_object(&id);
+            if let Some(obj) = self.objects.get(&id) {
+                self.trie.insert(
+                    key,
+                    trie_value_for_object(obj),
+                    obj.energy,
+                    obj.half_life,
+                    obj.last_refreshed,
+                );
+            } else {
+                self.trie.delete(&key);
+            }
+        }
+        for addr in self.dirty_accounts.drain() {
+            let key = trie_key_for_account(&addr);
+            if let Some(acc) = self.accounts.get(&addr) {
+                self.trie.insert(key, trie_value_for_account(acc), u64::MAX, u64::MAX, 0);
+            }
         }
     }
 }
@@ -191,14 +230,22 @@ impl StateDB for InMemoryStateDB {
     }
 
     fn get_object_mut(&mut self, id: &ObjectId) -> Option<&mut StateObject> {
+        if self.objects.contains_key(id) {
+            self.dirty_objects.insert(*id);
+        }
         self.objects.get_mut(id)
     }
 
     fn put_object(&mut self, obj: StateObject) {
+        let key = trie_key_for_object(&obj.id);
+        let value = trie_value_for_object(&obj);
+        self.trie.insert(key, value, obj.energy, obj.half_life, obj.last_refreshed);
         self.objects.insert(obj.id, obj);
     }
 
     fn delete_object(&mut self, id: &ObjectId) -> Option<StateObject> {
+        let key = trie_key_for_object(id);
+        self.trie.delete(&key);
         self.objects.remove(id)
     }
 
@@ -235,19 +282,35 @@ impl StateDB for InMemoryStateDB {
     }
 
     fn get_account_mut(&mut self, addr: &AccountAddress) -> Option<&mut Account> {
+        if self.accounts.contains_key(addr) {
+            self.dirty_accounts.insert(*addr);
+        }
         self.accounts.get_mut(addr)
     }
 
     fn put_account(&mut self, account: Account) {
+        let key = trie_key_for_account(&account.address);
+        let value = trie_value_for_account(&account);
+        self.trie.insert(key, value, u64::MAX, u64::MAX, 0);
         self.accounts.insert(account.address, account);
     }
 
     fn get_or_create_account(&mut self, addr: &AccountAddress) -> &mut Account {
-        self.accounts.entry(*addr).or_insert_with(|| Account {
-            address: *addr,
-            balance: 0,
-            nonce: 0,
-        })
+        if !self.accounts.contains_key(addr) {
+            let account = Account {
+                address: *addr,
+                balance: 0,
+                nonce: 0,
+            };
+            let key = trie_key_for_account(&account.address);
+            let value = trie_value_for_account(&account);
+            self.trie.insert(key, value, u64::MAX, u64::MAX, 0);
+            self.accounts.insert(*addr, account);
+        }
+        self.dirty_accounts.insert(*addr);
+        self.accounts
+            .get_mut(addr)
+            .expect("account must exist: just inserted above")
     }
 
     fn all_account_addresses(&self) -> Vec<AccountAddress> {
@@ -290,35 +353,31 @@ impl StateDB for InMemoryStateDB {
         self.note_count
     }
 
-    fn compute_state_root(&self) -> [u8; 32] {
-        if self.objects.is_empty() && self.accounts.is_empty() {
-            return [0u8; 32];
-        }
-        build_energy_trie(&self.objects, &self.accounts).root()
+    fn compute_state_root(&mut self) -> [u8; 32] {
+        self.sync_dirty_to_trie();
+        self.trie.root()
     }
 
     fn compress_cold_subtrees(&mut self) -> u32 {
-        if self.objects.is_empty() && self.accounts.is_empty() {
-            return 0;
-        }
-        let mut trie = build_energy_trie(&self.objects, &self.accounts);
-        trie.compress_cold()
+        self.sync_dirty_to_trie();
+        self.trie.compress_cold()
     }
 
-    fn trie_health(&self) -> TrieHealth {
-        if self.objects.is_empty() && self.accounts.is_empty() {
-            return TrieHealth {
-                active_leaves: 0,
-                compressed_leaves: 0,
-                total_nodes: 0,
-                max_energy: 0,
-                min_half_life: u64::MAX,
-                last_activity_epoch: 0,
-                compressions: 0,
-                decompressions: 0,
-            };
-        }
-        build_energy_trie(&self.objects, &self.accounts).health()
+    fn trie_health(&mut self) -> TrieHealth {
+        self.sync_dirty_to_trie();
+        self.trie.health()
+    }
+
+    fn trie_snapshot(&mut self) -> Vec<u8> {
+        self.sync_dirty_to_trie();
+        self.trie.to_bytes()
+    }
+
+    fn load_trie_snapshot(&mut self, bytes: &[u8]) -> Result<(), String> {
+        self.trie = EnergyVerkleTrie::from_bytes(bytes)?;
+        self.dirty_objects.clear();
+        self.dirty_accounts.clear();
+        Ok(())
     }
 }
 

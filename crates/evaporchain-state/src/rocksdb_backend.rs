@@ -4,16 +4,18 @@
 //! every mutation to RocksDB. On startup, all data is loaded from disk
 //! into the cache, so the node resumes exactly where it left off.
 
-use crate::db::{build_energy_trie, StateDB};
-use evaporchain_crypto::TrieHealth;
+use crate::db::{build_energy_trie, trie_key_for_account, trie_key_for_object, trie_value_for_account, trie_value_for_object, StateDB};
+use evaporchain_crypto::{EnergyVerkleTrie, TrieHealth};
 use evaporchain_types::{Account, AccountAddress, GhostRecord, ObjectId, StateObject};
 use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, Options, DB};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 const CF_OBJECTS: &str = "objects";
 const CF_GHOSTS: &str = "ghosts";
 const CF_ACCOUNTS: &str = "accounts";
+const CF_TRIE: &str = "trie";
+const TRIE_SNAPSHOT_KEY: &[u8] = b"__energy_verkle_trie__";
 
 /// RocksDB-backed state database with in-memory write-through cache.
 pub struct RocksDBStateDB {
@@ -21,6 +23,9 @@ pub struct RocksDBStateDB {
     objects: HashMap<ObjectId, StateObject>,
     ghosts: HashMap<ObjectId, GhostRecord>,
     accounts: HashMap<AccountAddress, Account>,
+    trie: EnergyVerkleTrie,
+    dirty_objects: HashSet<ObjectId>,
+    dirty_accounts: HashSet<AccountAddress>,
     // Privacy layer state (in-memory; RocksDB persistence in future pass)
     note_tree_root: [u8; 32],
     spent_nullifiers: std::collections::HashSet<[u8; 32]>,
@@ -40,6 +45,7 @@ impl RocksDBStateDB {
             ColumnFamilyDescriptor::new(CF_OBJECTS, Options::default()),
             ColumnFamilyDescriptor::new(CF_GHOSTS, Options::default()),
             ColumnFamilyDescriptor::new(CF_ACCOUNTS, Options::default()),
+            ColumnFamilyDescriptor::new(CF_TRIE, Options::default()),
         ];
 
         let db = DB::open_cf_descriptors(&opts, path, cf_descriptors)
@@ -136,11 +142,42 @@ impl RocksDBStateDB {
             );
         }
 
+        // Load persisted trie or rebuild from scratch
+        let trie = {
+            let cf_trie = db.cf_handle(CF_TRIE)
+                .ok_or_else(|| format!("missing column family: {CF_TRIE}"))?;
+            match db.get_cf(cf_trie, TRIE_SNAPSHOT_KEY) {
+                Ok(Some(bytes)) => {
+                    match EnergyVerkleTrie::from_bytes(&bytes) {
+                        Ok(t) => {
+                            println!("  RocksDB: loaded energy-verkle trie from disk ({} bytes)", bytes.len());
+                            t
+                        }
+                        Err(e) => {
+                            eprintln!("  Warning: trie snapshot corrupt ({}), rebuilding", e);
+                            build_energy_trie(&objects, &accounts)
+                        }
+                    }
+                }
+                _ => {
+                    if !objects.is_empty() || !accounts.is_empty() {
+                        println!("  RocksDB: no trie snapshot found, rebuilding from state");
+                        build_energy_trie(&objects, &accounts)
+                    } else {
+                        EnergyVerkleTrie::new()
+                    }
+                }
+            }
+        };
+
         Ok(Self {
             db,
             objects,
             ghosts,
             accounts,
+            trie,
+            dirty_objects: HashSet::new(),
+            dirty_accounts: HashSet::new(),
             note_tree_root: [0u8; 32],
             spent_nullifiers: std::collections::HashSet::new(),
             shielded_pool_balance: 0,
@@ -192,6 +229,29 @@ impl RocksDBStateDB {
         let cf = self.cf(CF_ACCOUNTS);
         let value = bincode::serialize(account).expect("serialize account");
         self.db.put_cf(cf, account.address, value).expect("write account to RocksDB");
+    }
+
+    fn sync_dirty_to_trie(&mut self) {
+        for id in self.dirty_objects.drain() {
+            let key = trie_key_for_object(&id);
+            if let Some(obj) = self.objects.get(&id) {
+                self.trie.insert(key, trie_value_for_object(obj), obj.energy, obj.half_life, obj.last_refreshed);
+            } else {
+                self.trie.delete(&key);
+            }
+        }
+        for addr in self.dirty_accounts.drain() {
+            let key = trie_key_for_account(&addr);
+            if let Some(acc) = self.accounts.get(&addr) {
+                self.trie.insert(key, trie_value_for_account(acc), u64::MAX, u64::MAX, 0);
+            }
+        }
+    }
+
+    fn persist_trie(&self) {
+        let cf = self.cf(CF_TRIE);
+        let bytes = self.trie.to_bytes();
+        self.db.put_cf(cf, TRIE_SNAPSHOT_KEY, bytes).expect("write trie snapshot to RocksDB");
     }
 }
 
@@ -258,16 +318,26 @@ impl StateDB for RocksDBStateDB {
     }
 
     fn get_object_mut(&mut self, id: &ObjectId) -> Option<&mut StateObject> {
+        if self.objects.contains_key(id) {
+            self.dirty_objects.insert(*id);
+        }
         self.objects.get_mut(id)
     }
 
     fn put_object(&mut self, obj: StateObject) {
         self.persist_object(&obj);
+        let key = trie_key_for_object(&obj.id);
+        let value = trie_value_for_object(&obj);
+        self.trie.insert(key, value, obj.energy, obj.half_life, obj.last_refreshed);
+        self.dirty_objects.remove(&obj.id);
         self.objects.insert(obj.id, obj);
     }
 
     fn delete_object(&mut self, id: &ObjectId) -> Option<StateObject> {
         self.delete_object_disk(id);
+        let key = trie_key_for_object(id);
+        self.trie.delete(&key);
+        self.dirty_objects.remove(id);
         self.objects.remove(id)
     }
 
@@ -306,11 +376,18 @@ impl StateDB for RocksDBStateDB {
     }
 
     fn get_account_mut(&mut self, addr: &AccountAddress) -> Option<&mut Account> {
+        if self.accounts.contains_key(addr) {
+            self.dirty_accounts.insert(*addr);
+        }
         self.accounts.get_mut(addr)
     }
 
     fn put_account(&mut self, account: Account) {
         self.persist_account(&account);
+        let key = trie_key_for_account(&account.address);
+        let value = trie_value_for_account(&account);
+        self.trie.insert(key, value, u64::MAX, u64::MAX, 0);
+        self.dirty_accounts.remove(&account.address);
         self.accounts.insert(account.address, account);
     }
 
@@ -322,8 +399,12 @@ impl StateDB for RocksDBStateDB {
                 nonce: 0,
             };
             self.persist_account(&account);
+            let key = trie_key_for_account(&account.address);
+            let value = trie_value_for_account(&account);
+            self.trie.insert(key, value, u64::MAX, u64::MAX, 0);
             self.accounts.insert(*addr, account);
         }
+        self.dirty_accounts.insert(*addr);
         self.accounts
             .get_mut(addr)
             .expect("account must exist: just inserted above")
@@ -333,35 +414,19 @@ impl StateDB for RocksDBStateDB {
         self.accounts.keys().copied().collect()
     }
 
-    fn compute_state_root(&self) -> [u8; 32] {
-        if self.objects.is_empty() && self.accounts.is_empty() {
-            return [0u8; 32];
-        }
-        build_energy_trie(&self.objects, &self.accounts).root()
+    fn compute_state_root(&mut self) -> [u8; 32] {
+        self.sync_dirty_to_trie();
+        self.trie.root()
     }
 
     fn compress_cold_subtrees(&mut self) -> u32 {
-        if self.objects.is_empty() && self.accounts.is_empty() {
-            return 0;
-        }
-        let mut trie = build_energy_trie(&self.objects, &self.accounts);
-        trie.compress_cold()
+        self.sync_dirty_to_trie();
+        self.trie.compress_cold()
     }
 
-    fn trie_health(&self) -> TrieHealth {
-        if self.objects.is_empty() && self.accounts.is_empty() {
-            return TrieHealth {
-                active_leaves: 0,
-                compressed_leaves: 0,
-                total_nodes: 0,
-                max_energy: 0,
-                min_half_life: u64::MAX,
-                last_activity_epoch: 0,
-                compressions: 0,
-                decompressions: 0,
-            };
-        }
-        build_energy_trie(&self.objects, &self.accounts).health()
+    fn trie_health(&mut self) -> TrieHealth {
+        self.sync_dirty_to_trie();
+        self.trie.health()
     }
 
     fn put_note_tree_root(&mut self, root: [u8; 32]) {
@@ -399,25 +464,41 @@ impl StateDB for RocksDBStateDB {
     fn get_note_count(&self) -> u64 {
         self.note_count
     }
+
+    fn trie_snapshot(&mut self) -> Vec<u8> {
+        self.sync_dirty_to_trie();
+        self.trie.to_bytes()
+    }
+
+    fn load_trie_snapshot(&mut self, bytes: &[u8]) -> Result<(), String> {
+        self.trie = EnergyVerkleTrie::from_bytes(bytes)?;
+        self.dirty_objects.clear();
+        self.dirty_accounts.clear();
+        Ok(())
+    }
 }
 
 /// Flush account changes back to RocksDB after mutable borrows.
 /// Call this after any block execution that modifies accounts via get_account_mut()
 /// or get_or_create_account() followed by balance/nonce changes.
 impl RocksDBStateDB {
-    pub fn flush_accounts(&self) {
+    pub fn flush_accounts(&mut self) {
         let cf = self.cf(CF_ACCOUNTS);
         for (_, account) in &self.accounts {
             let value = bincode::serialize(account).expect("serialize account");
             self.db.put_cf(cf, account.address, value).expect("flush account to RocksDB");
         }
+        self.sync_dirty_to_trie();
+        self.persist_trie();
     }
 
-    pub fn flush_objects(&self) {
+    pub fn flush_objects(&mut self) {
         let cf = self.cf(CF_OBJECTS);
         for (_, obj) in &self.objects {
             let value = bincode::serialize(obj).expect("serialize object");
             self.db.put_cf(cf, obj.id, value).expect("flush object to RocksDB");
         }
+        self.sync_dirty_to_trie();
+        self.persist_trie();
     }
 }

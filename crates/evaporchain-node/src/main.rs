@@ -1105,7 +1105,7 @@ async fn main() -> Result<()> {
     // Wrap the proving engine in a ChainProver for checkpointing, chain proof
     // generation, and light-client support.  Checkpoint every 100 blocks.
     let genesis_state_root = {
-        let db_guard = safe_lock(&db);
+        let mut db_guard = safe_lock(&db);
         db_guard.compute_state_root()
     };
     let chain_prover: Arc<Mutex<ChainProver>> = if args.prove_mode {
@@ -1888,7 +1888,7 @@ async fn main() -> Result<()> {
 
                                 // Flush state
                                 {
-                                    let db_guard = safe_lock(&db);
+                                    let mut db_guard = safe_lock(&db);
                                     db_guard.flush_accounts();
                                     db_guard.flush_objects();
                                 }
@@ -2131,9 +2131,9 @@ async fn main() -> Result<()> {
 
                                 // Create state snapshot every 100 blocks for state sync
                                 if block.number % 100 == 0 && block.number > 0 {
-                                    let db_guard = safe_lock(&db);
+                                    let mut db_guard = safe_lock(&db);
                                     match evaporchain_state::snapshot::SnapshotBuilder::create(
-                                        &*db_guard, block.number, block.epoch,
+                                        &mut *db_guard, block.number, block.epoch,
                                     ) {
                                         Ok(snapshot) => {
                                             if let Ok(bytes) = evaporchain_state::snapshot::serialize_snapshot(&snapshot) {
@@ -2276,7 +2276,7 @@ async fn main() -> Result<()> {
                                 Ok(result) => {
                                     block.state_root = result.execution.state_root;
                                     {
-                                        let db_guard = safe_lock(&db);
+                                        let mut db_guard = safe_lock(&db);
                                         db_guard.flush_accounts();
                                         db_guard.flush_objects();
                                     }
@@ -2855,7 +2855,7 @@ async fn main() -> Result<()> {
                             match result {
                                 Ok(result) => {
                                     {
-                                        let db_guard = safe_lock(&db);
+                                        let mut db_guard = safe_lock(&db);
                                         db_guard.flush_accounts();
                                         db_guard.flush_objects();
                                     }
@@ -2986,7 +2986,7 @@ async fn main() -> Result<()> {
                                     tc.apply_block(&mut *db_guard, &queued)
                                 };
                                 if let Ok(result) = result {
-                                    let db_guard = safe_lock(&db);
+                                    let mut db_guard = safe_lock(&db);
                                     db_guard.flush_accounts();
                                     db_guard.flush_objects();
                                     let obj_count = db_guard.object_count();

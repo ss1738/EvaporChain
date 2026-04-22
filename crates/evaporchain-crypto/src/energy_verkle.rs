@@ -113,7 +113,7 @@ impl EnergyMeta {
 // ─────────────────────── Node Types ──────────────────────────────────────
 
 /// Leaf: stores key, value, and energy metadata.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct EnergyLeaf {
     key: [u8; 32],
     value: [u8; 32],
@@ -123,7 +123,7 @@ struct EnergyLeaf {
 }
 
 /// Internal node with energy-annotated children.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct EnergyInternal {
     children: BTreeMap<u8, EnergyNode>,
     /// Cached metadata aggregated from children.
@@ -132,7 +132,7 @@ struct EnergyInternal {
 
 /// A compressed subtree — replaces an entire dead subtree with a single node.
 /// Stores the commitment over the dead leaves so proofs can reference it.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct CompressedNode {
     /// Commitment hash of the subtree that was compressed.
     commitment: [u8; 32],
@@ -142,7 +142,7 @@ struct CompressedNode {
     last_activity_epoch: u64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 enum EnergyNode {
     Internal(Box<EnergyInternal>),
     Leaf(EnergyLeaf),
@@ -241,6 +241,7 @@ pub struct EnergyVerkleProof {
 /// A self-shrinking authenticated data structure where the trie physically
 /// contracts as objects lose energy and evaporate. Cold subtrees (max_energy=0)
 /// are compressed to single commitment nodes.
+#[derive(Clone, Serialize, Deserialize)]
 pub struct EnergyVerkleTrie {
     root: EnergyNode,
     /// Total number of compressions performed.
@@ -825,6 +826,18 @@ impl EnergyVerkleTrie {
             compressions: self.compressions,
             decompressions: self.decompressions,
         }
+    }
+}
+
+impl EnergyVerkleTrie {
+    /// Serialize the entire trie to bytes (bincode).
+    pub fn to_bytes(&self) -> Vec<u8> {
+        bincode::serialize(self).expect("trie serialization should not fail")
+    }
+
+    /// Deserialize a trie from bytes.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
+        bincode::deserialize(bytes).map_err(|e| format!("trie deserialization failed: {}", e))
     }
 }
 

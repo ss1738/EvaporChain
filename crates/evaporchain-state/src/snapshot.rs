@@ -111,7 +111,7 @@ pub struct SnapshotBuilder;
 impl SnapshotBuilder {
     /// Create a snapshot from the current state database.
     pub fn create(
-        db: &dyn StateDB,
+        db: &mut dyn StateDB,
         block_height: u64,
         epoch: u64,
     ) -> Result<StateSnapshot, SnapshotError> {
@@ -559,7 +559,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         populate_db(&mut db);
 
-        let snapshot = SnapshotBuilder::create(&db, 100, 5).unwrap();
+        let snapshot = SnapshotBuilder::create(&mut db, 100, 5).unwrap();
 
         assert_eq!(snapshot.header.version, SNAPSHOT_VERSION);
         assert_eq!(snapshot.header.block_height, 100);
@@ -579,7 +579,7 @@ mod tests {
         db.put_account(make_account(1, 100));
         db.put_account(make_account(2, 200));
 
-        let snapshot = SnapshotBuilder::create(&db, 1, 0).unwrap();
+        let snapshot = SnapshotBuilder::create(&mut db, 1, 0).unwrap();
 
         // Should be sorted by address
         assert!(snapshot.accounts[0].address < snapshot.accounts[1].address);
@@ -591,7 +591,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         populate_db(&mut db);
 
-        let snapshot = SnapshotBuilder::create(&db, 100, 5).unwrap();
+        let snapshot = SnapshotBuilder::create(&mut db, 100, 5).unwrap();
 
         // Apply to a fresh DB
         let mut new_db = InMemoryStateDB::new();
@@ -620,7 +620,7 @@ mod tests {
         populate_db(&mut db);
 
         let original_root = db.compute_state_root();
-        let snapshot = SnapshotBuilder::create(&db, 100, 5).unwrap();
+        let snapshot = SnapshotBuilder::create(&mut db, 100, 5).unwrap();
 
         assert_eq!(snapshot.header.state_root, original_root);
 
@@ -635,7 +635,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         populate_db(&mut db);
 
-        let mut snapshot = SnapshotBuilder::create(&db, 100, 5).unwrap();
+        let mut snapshot = SnapshotBuilder::create(&mut db, 100, 5).unwrap();
 
         // Tamper with an account balance
         snapshot.accounts[0].balance = 999_999_999;
@@ -649,7 +649,7 @@ mod tests {
     #[test]
     fn test_empty_snapshot() {
         let db = InMemoryStateDB::new();
-        let snapshot = SnapshotBuilder::create(&db, 0, 0).unwrap();
+        let snapshot = SnapshotBuilder::create(&mut db, 0, 0).unwrap();
 
         assert_eq!(snapshot.header.account_count, 0);
         assert_eq!(snapshot.header.object_count, 0);
@@ -666,7 +666,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         populate_db(&mut db);
 
-        let snapshot = SnapshotBuilder::create(&db, 100, 5).unwrap();
+        let snapshot = SnapshotBuilder::create(&mut db, 100, 5).unwrap();
         let bytes = serialize_snapshot(&snapshot).unwrap();
         let decoded = deserialize_snapshot(&bytes).unwrap();
 
@@ -684,7 +684,7 @@ mod tests {
         db1.put_account(make_account(1, 1000));
         db1.put_account(make_account(2, 2000));
         db1.put_object(make_object(1, 100));
-        let snap1 = SnapshotBuilder::create(&db1, 1, 0).unwrap();
+        let snap1 = SnapshotBuilder::create(&mut db1, 1, 0).unwrap();
 
         let mut db2 = InMemoryStateDB::new();
         db2.put_account(make_account(1, 1500)); // changed balance
@@ -692,7 +692,7 @@ mod tests {
         // account 2 removed
         db2.put_object(make_object(1, 100)); // unchanged
         db2.put_object(make_object(2, 200)); // new object
-        let snap2 = SnapshotBuilder::create(&db2, 2, 0).unwrap();
+        let snap2 = SnapshotBuilder::create(&mut db2, 2, 0).unwrap();
 
         let diff = SnapshotDiff::compute(&snap1, &snap2);
 
@@ -710,8 +710,8 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         populate_db(&mut db);
 
-        let snap1 = SnapshotBuilder::create(&db, 1, 0).unwrap();
-        let snap2 = SnapshotBuilder::create(&db, 2, 0).unwrap();
+        let snap1 = SnapshotBuilder::create(&mut db, 1, 0).unwrap();
+        let snap2 = SnapshotBuilder::create(&mut db, 2, 0).unwrap();
 
         let diff = SnapshotDiff::compute(&snap1, &snap2);
         assert!(diff.is_empty());
@@ -722,12 +722,12 @@ mod tests {
     fn test_snapshot_diff_ghost_tracking() {
         let mut db1 = InMemoryStateDB::new();
         db1.put_object(make_object(1, 100));
-        let snap1 = SnapshotBuilder::create(&db1, 1, 0).unwrap();
+        let snap1 = SnapshotBuilder::create(&mut db1, 1, 0).unwrap();
 
         // Object 1 evaporated → became ghost
         let mut db2 = InMemoryStateDB::new();
         db2.put_ghost(make_ghost(1, 10));
-        let snap2 = SnapshotBuilder::create(&db2, 2, 1).unwrap();
+        let snap2 = SnapshotBuilder::create(&mut db2, 2, 1).unwrap();
 
         let diff = SnapshotDiff::compute(&snap1, &snap2);
         assert_eq!(diff.objects_removed.len(), 1); // object 1 gone from active
@@ -744,7 +744,7 @@ mod tests {
         db.spend_nullifier(&[0x01; 32]);
         db.spend_nullifier(&[0x02; 32]);
 
-        let snapshot = SnapshotBuilder::create(&db, 10, 1).unwrap();
+        let snapshot = SnapshotBuilder::create(&mut db, 10, 1).unwrap();
 
         assert_eq!(snapshot.privacy.note_tree_root, [0xAB; 32]);
         assert_eq!(snapshot.privacy.shielded_pool_balance, 50_000);
@@ -764,7 +764,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         db.put_account(make_account(1, 1000));
 
-        let mut snapshot = SnapshotBuilder::create(&db, 1, 0).unwrap();
+        let mut snapshot = SnapshotBuilder::create(&mut db, 1, 0).unwrap();
         snapshot.header.version = 999;
 
         let mut new_db = InMemoryStateDB::new();
@@ -777,8 +777,8 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         populate_db(&mut db);
 
-        let snap1 = SnapshotBuilder::create(&db, 100, 5).unwrap();
-        let snap2 = SnapshotBuilder::create(&db, 100, 5).unwrap();
+        let snap1 = SnapshotBuilder::create(&mut db, 100, 5).unwrap();
+        let snap2 = SnapshotBuilder::create(&mut db, 100, 5).unwrap();
 
         assert_eq!(snap1.header.body_hash, snap2.header.body_hash);
         assert_eq!(snap1.header.state_root, snap2.header.state_root);
@@ -808,7 +808,7 @@ mod tests {
             db.put_ghost(make_ghost(i, i as u64));
         }
 
-        let snapshot = SnapshotBuilder::create(&db, 500, 25).unwrap();
+        let snapshot = SnapshotBuilder::create(&mut db, 500, 25).unwrap();
         assert_eq!(snapshot.header.account_count, 100);
         assert_eq!(snapshot.header.object_count, 50);
         assert_eq!(snapshot.header.ghost_count, 10);

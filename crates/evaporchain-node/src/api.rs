@@ -757,7 +757,7 @@ pub fn is_valid_email(email: &str) -> bool {
 // ──────────────────────────── Handlers ─────────────────────────────────
 
 async fn get_status(State(state): State<Arc<ApiState>>) -> Json<StatusResponse> {
-    let db = safe_lock(&state.db);
+    let mut db = safe_lock(&state.db);
     let history = safe_lock(&state.block_history);
     let stats = safe_lock(&state.stats);
     let latest = history.back();
