@@ -40,6 +40,12 @@ fn safe_lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     })
 }
 
+fn log_persist_err(op: &str, r: Result<(), String>) {
+    if let Err(e) = r {
+        eprintln!("\x1b[31mPersistence error ({}): {}\x1b[0m", op, e);
+    }
+}
+
 // ──────────────── Nova Proof Verifier (bridge to ChainProver) ───────────
 
 /// Implements `ProofVerifier` for consensus by delegating to a `ChainProver`.
@@ -1436,10 +1442,10 @@ async fn main() -> Result<()> {
             let ss = initialize_staking_store();
             let ds = initialize_dao_store();
             // Persist genesis DeFi stores
-            chain_store.save_nft_store(&ns);
-            chain_store.save_token_store(&ts);
-            chain_store.save_staking_store(&ss);
-            chain_store.save_dao_store(&ds);
+            log_persist_err("nft_store", chain_store.save_nft_store(&ns));
+            log_persist_err("token_store", chain_store.save_token_store(&ts));
+            log_persist_err("staking_store", chain_store.save_staking_store(&ss));
+            log_persist_err("dao_store", chain_store.save_dao_store(&ds));
             (Arc::new(Mutex::new(ns)), Arc::new(Mutex::new(ts)), Arc::new(Mutex::new(ss)), Arc::new(Mutex::new(ds)))
         } else {
             let ns = chain_store.load_nft_store().unwrap_or_else(|| initialize_nft_store());
@@ -1691,23 +1697,23 @@ async fn main() -> Result<()> {
                     obj_count, ghost_count_val, exec_elapsed_us,
                 );
 
-                chain_store.save_consensus_meta(
+                log_persist_err("consensus_meta", chain_store.save_consensus_meta(
                     result.block.number, result.block.epoch, result.block.parent_hash,
-                );
-                chain_store.save_full_block(&result.block);
+                ));
+                log_persist_err("full_block", chain_store.save_full_block(&result.block));
                 {
                     let history = safe_lock(&block_history);
                     if let Some(record) = history.back() {
-                        chain_store.save_block(record);
+                        log_persist_err("block", chain_store.save_block(record));
                     }
                 }
                 {
                     let stats = safe_lock(&chain_stats);
-                    chain_store.save_chain_stats(&stats);
+                    log_persist_err("chain_stats", chain_store.save_chain_stats(&stats));
                 }
                 {
                     let ev = safe_lock(&events);
-                    chain_store.save_events(&ev);
+                    log_persist_err("events", chain_store.save_events(&ev));
                 }
                 // Persist mempool
                 {
@@ -1718,7 +1724,7 @@ async fn main() -> Result<()> {
                         let c = safe_lock(consensus);
                         c.mempool.pending().iter().cloned().collect()
                     };
-                    chain_store.save_mempool(&pending);
+                    log_persist_err("mempool", chain_store.save_mempool(&pending));
                 }
 
                 // Cache block for serving to peers
@@ -1928,7 +1934,7 @@ async fn main() -> Result<()> {
                                                 }
                                                 drop(store);
                                                 // Persist to disk
-                                                chain_store.save_da_package(block.number, &package);
+                                                log_persist_err("da_package", chain_store.save_da_package(block.number, &package));
                                                 if block.number % 100 == 0 {
                                                     chain_store.prune_da_packages(block.number, 500);
                                                 }
@@ -2083,27 +2089,27 @@ async fn main() -> Result<()> {
                                 );
 
                                 // Persist
-                                chain_store.save_consensus_meta(block.number, block.epoch, block.parent_hash);
-                                chain_store.save_full_block(&block);
+                                log_persist_err("consensus_meta", chain_store.save_consensus_meta(block.number, block.epoch, block.parent_hash));
+                                log_persist_err("full_block", chain_store.save_full_block(&block));
                                 {
                                     let history = safe_lock(&block_history);
                                     if let Some(record) = history.back() {
-                                        chain_store.save_block(record);
+                                        log_persist_err("block", chain_store.save_block(record));
                                     }
                                 }
                                 {
                                     let stats = safe_lock(&chain_stats);
-                                    chain_store.save_chain_stats(&stats);
+                                    log_persist_err("chain_stats", chain_store.save_chain_stats(&stats));
                                 }
                                 {
                                     let ev = safe_lock(&events);
-                                    chain_store.save_events(&ev);
+                                    log_persist_err("events", chain_store.save_events(&ev));
                                 }
                                 // Persist mempool
                                 {
                                     let tc = safe_lock(&tc_ref);
                                     let pending: Vec<evaporchain_types::Transaction> = tc.mempool.pending().iter().cloned().collect();
-                                    chain_store.save_mempool(&pending);
+                                    log_persist_err("mempool", chain_store.save_mempool(&pending));
                                 }
 
                                 // DA encode the block for light client sampling
@@ -2138,7 +2144,7 @@ async fn main() -> Result<()> {
                                         Ok(snapshot) => {
                                             if let Ok(bytes) = evaporchain_state::snapshot::serialize_snapshot(&snapshot) {
                                                 let size = bytes.len();
-                                                chain_store.save_snapshot(block.number, &bytes, result.execution.state_root);
+                                                log_persist_err("snapshot", chain_store.save_snapshot(block.number, &bytes, result.execution.state_root));
                                                 {
                                                     let mut info = snapshot_info.lock().unwrap();
                                                     *info = Some((block.number, result.execution.state_root, size));
@@ -2422,27 +2428,27 @@ async fn main() -> Result<()> {
                                         &block, &result.execution,
                                         obj_count, ghost_count, exec_elapsed_us,
                                     );
-                                    chain_store.save_consensus_meta(block.number, block.epoch, block.parent_hash);
-                                    chain_store.save_full_block(&block);
+                                    log_persist_err("consensus_meta", chain_store.save_consensus_meta(block.number, block.epoch, block.parent_hash));
+                                    log_persist_err("full_block", chain_store.save_full_block(&block));
                                     {
                                         let history = safe_lock(&block_history);
                                         if let Some(record) = history.back() {
-                                            chain_store.save_block(record);
+                                            log_persist_err("block", chain_store.save_block(record));
                                         }
                                     }
                                     {
                                         let stats = safe_lock(&chain_stats);
-                                        chain_store.save_chain_stats(&stats);
+                                        log_persist_err("chain_stats", chain_store.save_chain_stats(&stats));
                                     }
                                     {
                                         let ev = safe_lock(&events);
-                                        chain_store.save_events(&ev);
+                                        log_persist_err("events", chain_store.save_events(&ev));
                                     }
                                     // Persist mempool
                                     {
                                         let tc = safe_lock(&tc_ref);
                                         let pending: Vec<evaporchain_types::Transaction> = tc.mempool.pending().iter().cloned().collect();
-                                        chain_store.save_mempool(&pending);
+                                        log_persist_err("mempool", chain_store.save_mempool(&pending));
                                     }
 
                                     // DA encode (follower path)
@@ -2593,31 +2599,31 @@ async fn main() -> Result<()> {
                     );
 
                     // Persist chain data to disk
-                    chain_store.save_consensus_meta(
+                    log_persist_err("consensus_meta", chain_store.save_consensus_meta(
                         result.block.number,
                         result.block.epoch,
                         result.block.parent_hash,
-                    );
-                    chain_store.save_full_block(&result.block);
+                    ));
+                    log_persist_err("full_block", chain_store.save_full_block(&result.block));
                     {
                         let history = safe_lock(&block_history);
                         if let Some(record) = history.back() {
-                            chain_store.save_block(record);
+                            log_persist_err("block", chain_store.save_block(record));
                         }
                     }
                     {
                         let stats = safe_lock(&chain_stats);
-                        chain_store.save_chain_stats(&stats);
+                        log_persist_err("chain_stats", chain_store.save_chain_stats(&stats));
                     }
                     {
                         let ev = safe_lock(&events);
-                        chain_store.save_events(&ev);
+                        log_persist_err("events", chain_store.save_events(&ev));
                     }
                     // Persist mempool
                     {
                         let c = safe_lock(&consensus);
                         let pending: Vec<evaporchain_types::Transaction> = c.mempool.pending().iter().cloned().collect();
-                        chain_store.save_mempool(&pending);
+                        log_persist_err("mempool", chain_store.save_mempool(&pending));
                     }
 
                     // Prune old blocks every 100 blocks
@@ -2898,8 +2904,8 @@ async fn main() -> Result<()> {
                                         let mut history = safe_lock(&block_history);
                                         history.push_back(record.clone());
                                         if history.len() > 500 { history.pop_front(); }
-                                        chain_store.save_block(&record);
-                                        chain_store.save_full_block(block);
+                                        log_persist_err("block", chain_store.save_block(&record));
+                                        log_persist_err("full_block", chain_store.save_full_block(block));
                                     }
                                     // Update chain stats (same as record_block_production)
                                     {

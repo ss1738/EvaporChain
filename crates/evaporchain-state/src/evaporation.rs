@@ -177,6 +177,7 @@ impl EvaporationEngine {
             data_hash,
             original_data: Some(obj.data.clone()),
             mmr_position,
+            original_half_life: Some(obj.half_life),
         };
 
         db.delete_object(&obj.id);

@@ -76,6 +76,9 @@ pub struct GhostRecord {
     /// Position in the MMR nullifier accumulator (None for legacy ghosts).
     #[serde(default)]
     pub mmr_position: Option<u64>,
+    /// Original half-life preserved for resurrection (None for legacy ghosts).
+    #[serde(default)]
+    pub original_half_life: Option<u64>,
 }
 
 /// A block in the chain.

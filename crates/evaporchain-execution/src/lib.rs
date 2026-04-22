@@ -1311,6 +1311,7 @@ mod tests {
             data_hash: [0u8; 32],
             original_data: Some(vec![0xCA, 0xFE]),
             mmr_position: None,
+            original_half_life: Some(100),
         });
 
         let mut executor = SimpleExecutor::new_for_test(5);

@@ -44,11 +44,12 @@ impl ChainStore {
 
     // ─── Consensus metadata ───
 
-    pub fn save_consensus_meta(&self, block_number: u64, epoch: u64, parent_hash: [u8; 32]) {
+    pub fn save_consensus_meta(&self, block_number: u64, epoch: u64, parent_hash: [u8; 32]) -> Result<(), String> {
         let cf = self.db.cf_handle(CF_META).unwrap();
-        self.db.put_cf(cf, b"block_number", block_number.to_le_bytes()).unwrap();
-        self.db.put_cf(cf, b"epoch", epoch.to_le_bytes()).unwrap();
-        self.db.put_cf(cf, b"parent_hash", parent_hash).unwrap();
+        self.db.put_cf(cf, b"block_number", block_number.to_le_bytes()).map_err(|e| e.to_string())?;
+        self.db.put_cf(cf, b"epoch", epoch.to_le_bytes()).map_err(|e| e.to_string())?;
+        self.db.put_cf(cf, b"parent_hash", parent_hash).map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     pub fn load_consensus_meta(&self) -> Option<(u64, u64, [u8; 32])> {
@@ -71,11 +72,11 @@ impl ChainStore {
 
     // ─── Block history ───
 
-    pub fn save_block(&self, record: &BlockRecord) {
+    pub fn save_block(&self, record: &BlockRecord) -> Result<(), String> {
         let cf = self.db.cf_handle(CF_BLOCKS).unwrap();
         let key = record.number.to_be_bytes();
-        let value = serde_json::to_vec(record).expect("serialize block record");
-        self.db.put_cf(cf, key, value).unwrap();
+        let value = serde_json::to_vec(record).map_err(|e| e.to_string())?;
+        self.db.put_cf(cf, key, value).map_err(|e| e.to_string())
     }
 
     pub fn load_block_history(&self, limit: usize) -> VecDeque<BlockRecord> {
@@ -151,10 +152,10 @@ impl ChainStore {
 
     // ─── Chain stats ───
 
-    pub fn save_chain_stats(&self, stats: &ChainStats) {
+    pub fn save_chain_stats(&self, stats: &ChainStats) -> Result<(), String> {
         let cf = self.db.cf_handle(CF_META).unwrap();
-        let value = serde_json::to_vec(stats).expect("serialize chain stats");
-        self.db.put_cf(cf, b"chain_stats", value).unwrap();
+        let value = serde_json::to_vec(stats).map_err(|e| e.to_string())?;
+        self.db.put_cf(cf, b"chain_stats", value).map_err(|e| e.to_string())
     }
 
     pub fn load_chain_stats(&self) -> Option<ChainStats> {
@@ -165,10 +166,10 @@ impl ChainStore {
 
     // ─── DeFi stores (serialized as complete JSON blobs) ───
 
-    pub fn save_nft_store(&self, store: &NftStore) {
+    pub fn save_nft_store(&self, store: &NftStore) -> Result<(), String> {
         let cf = self.db.cf_handle(CF_STORES).unwrap();
-        let value = serde_json::to_vec(store).expect("serialize nft store");
-        self.db.put_cf(cf, b"nft_store", value).unwrap();
+        let value = serde_json::to_vec(store).map_err(|e| e.to_string())?;
+        self.db.put_cf(cf, b"nft_store", value).map_err(|e| e.to_string())
     }
 
     pub fn load_nft_store(&self) -> Option<NftStore> {
@@ -177,10 +178,10 @@ impl ChainStore {
         serde_json::from_slice(&data).ok()
     }
 
-    pub fn save_token_store(&self, store: &TokenStore) {
+    pub fn save_token_store(&self, store: &TokenStore) -> Result<(), String> {
         let cf = self.db.cf_handle(CF_STORES).unwrap();
-        let value = serde_json::to_vec(store).expect("serialize token store");
-        self.db.put_cf(cf, b"token_store", value).unwrap();
+        let value = serde_json::to_vec(store).map_err(|e| e.to_string())?;
+        self.db.put_cf(cf, b"token_store", value).map_err(|e| e.to_string())
     }
 
     pub fn load_token_store(&self) -> Option<TokenStore> {
@@ -189,10 +190,10 @@ impl ChainStore {
         serde_json::from_slice(&data).ok()
     }
 
-    pub fn save_staking_store(&self, store: &StakingStore) {
+    pub fn save_staking_store(&self, store: &StakingStore) -> Result<(), String> {
         let cf = self.db.cf_handle(CF_STORES).unwrap();
-        let value = serde_json::to_vec(store).expect("serialize staking store");
-        self.db.put_cf(cf, b"staking_store", value).unwrap();
+        let value = serde_json::to_vec(store).map_err(|e| e.to_string())?;
+        self.db.put_cf(cf, b"staking_store", value).map_err(|e| e.to_string())
     }
 
     pub fn load_staking_store(&self) -> Option<StakingStore> {
@@ -201,10 +202,10 @@ impl ChainStore {
         serde_json::from_slice(&data).ok()
     }
 
-    pub fn save_dao_store(&self, store: &DAOStore) {
+    pub fn save_dao_store(&self, store: &DAOStore) -> Result<(), String> {
         let cf = self.db.cf_handle(CF_STORES).unwrap();
-        let value = serde_json::to_vec(store).expect("serialize dao store");
-        self.db.put_cf(cf, b"dao_store", value).unwrap();
+        let value = serde_json::to_vec(store).map_err(|e| e.to_string())?;
+        self.db.put_cf(cf, b"dao_store", value).map_err(|e| e.to_string())
     }
 
     pub fn load_dao_store(&self) -> Option<DAOStore> {
@@ -215,14 +216,12 @@ impl ChainStore {
 
     // ─── State snapshots ───
 
-    pub fn save_snapshot(&self, height: u64, data: &[u8], state_root: [u8; 32]) {
+    pub fn save_snapshot(&self, height: u64, data: &[u8], state_root: [u8; 32]) -> Result<(), String> {
         let cf = self.db.cf_handle(CF_META).unwrap();
-        // Store the snapshot data keyed by height
         let key = format!("snapshot:{}", height);
-        self.db.put_cf(cf, key.as_bytes(), data).unwrap();
-        // Store metadata: latest snapshot height + state root
-        self.db.put_cf(cf, b"snapshot_latest_height", height.to_le_bytes()).unwrap();
-        self.db.put_cf(cf, b"snapshot_latest_root", state_root).unwrap();
+        self.db.put_cf(cf, key.as_bytes(), data).map_err(|e| e.to_string())?;
+        self.db.put_cf(cf, b"snapshot_latest_height", height.to_le_bytes()).map_err(|e| e.to_string())?;
+        self.db.put_cf(cf, b"snapshot_latest_root", state_root).map_err(|e| e.to_string())
     }
 
     pub fn load_latest_snapshot(&self) -> Option<(u64, [u8; 32], Vec<u8>)> {
@@ -242,10 +241,10 @@ impl ChainStore {
 
     // ─── Mempool persistence ───
 
-    pub fn save_mempool(&self, txs: &[evaporchain_types::Transaction]) {
+    pub fn save_mempool(&self, txs: &[evaporchain_types::Transaction]) -> Result<(), String> {
         let cf = self.db.cf_handle(CF_META).unwrap();
-        let value = serde_json::to_vec(txs).expect("serialize mempool");
-        self.db.put_cf(cf, b"mempool", value).unwrap();
+        let value = serde_json::to_vec(txs).map_err(|e| e.to_string())?;
+        self.db.put_cf(cf, b"mempool", value).map_err(|e| e.to_string())
     }
 
     pub fn load_mempool(&self) -> Vec<evaporchain_types::Transaction> {
@@ -258,10 +257,10 @@ impl ChainStore {
 
     // ─── Events ───
 
-    pub fn save_events(&self, events: &VecDeque<EventRecord>) {
+    pub fn save_events(&self, events: &VecDeque<EventRecord>) -> Result<(), String> {
         let cf = self.db.cf_handle(CF_META).unwrap();
-        let value = serde_json::to_vec(events).expect("serialize events");
-        self.db.put_cf(cf, b"events", value).unwrap();
+        let value = serde_json::to_vec(events).map_err(|e| e.to_string())?;
+        self.db.put_cf(cf, b"events", value).map_err(|e| e.to_string())
     }
 
     pub fn load_events(&self) -> VecDeque<EventRecord> {
@@ -275,11 +274,11 @@ impl ChainStore {
     // ─── Full block storage (for sync protocol) ───
 
     /// Store a complete Block object for serving sync requests after restart.
-    pub fn save_full_block(&self, block: &Block) {
+    pub fn save_full_block(&self, block: &Block) -> Result<(), String> {
         let cf = self.db.cf_handle(CF_FULL_BLOCKS).unwrap();
         let key = block.number.to_be_bytes();
-        let value = serde_json::to_vec(block).expect("serialize full block");
-        self.db.put_cf(cf, key, value).unwrap();
+        let value = serde_json::to_vec(block).map_err(|e| e.to_string())?;
+        self.db.put_cf(cf, key, value).map_err(|e| e.to_string())
     }
 
     /// Load a single full block by height.
@@ -337,11 +336,11 @@ impl ChainStore {
 
     // ─── DA shard persistence ───
 
-    pub fn save_da_package(&self, block_number: u64, package: &BlockDAPackage) {
+    pub fn save_da_package(&self, block_number: u64, package: &BlockDAPackage) -> Result<(), String> {
         let cf = self.db.cf_handle(CF_DA_SHARDS).unwrap();
         let key = block_number.to_be_bytes();
-        let value = serde_json::to_vec(package).expect("serialize DA package");
-        self.db.put_cf(cf, key, value).unwrap();
+        let value = serde_json::to_vec(package).map_err(|e| e.to_string())?;
+        self.db.put_cf(cf, key, value).map_err(|e| e.to_string())
     }
 
     pub fn load_da_package(&self, block_number: u64) -> Option<BlockDAPackage> {

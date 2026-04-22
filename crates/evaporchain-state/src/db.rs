@@ -451,6 +451,7 @@ mod tests {
             data_hash: [0u8; 32],
             original_data: Some(vec![1, 2, 3]),
             mmr_position: None,
+            original_half_life: None,
         };
         db.put_ghost(ghost.clone());
         assert_eq!(db.ghost_count(), 1);

@@ -104,7 +104,7 @@ impl RefreshEngine {
             id: ghost.object_id,
             owner: ghost.owner,
             energy: energy_deposit,
-            half_life: 100, // Default half-life for resurrected objects
+            half_life: ghost.original_half_life.unwrap_or(100),
             created_at: ghost.evaporated_at, // Track original creation separately if needed
             last_refreshed: current_epoch,
             state: ObjectState::Resurrected,
@@ -210,6 +210,7 @@ mod tests {
             data_hash: [0u8; 32],
             original_data: Some(vec![1, 2, 3]),
             mmr_position: None,
+            original_half_life: Some(100),
         });
 
         assert_eq!(db.ghost_count(), 1);

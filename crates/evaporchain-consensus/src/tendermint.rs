@@ -1907,17 +1907,25 @@ mod tests {
         let tc = make_consensus(1, &[1]);
         assert_eq!(tc.quorum_size(), 1);
 
-        // 3 validators: quorum = 2 (tolerates 1 failure)
+        // 3 validators: quorum = 3 (strict >2/3 majority)
         let tc = make_consensus(1, &[1, 2, 3]);
-        assert_eq!(tc.quorum_size(), 2);
+        assert_eq!(tc.quorum_size(), 3);
 
         // 4 validators: quorum = 3
         let tc = make_consensus(1, &[1, 2, 3, 4]);
         assert_eq!(tc.quorum_size(), 3);
 
+        // 6 validators: quorum = 5 (strict >2/3)
+        let tc = make_consensus(1, &[1, 2, 3, 4, 5, 6]);
+        assert_eq!(tc.quorum_size(), 5);
+
         // 7 validators: quorum = 5
         let tc = make_consensus(1, &[1, 2, 3, 4, 5, 6, 7]);
         assert_eq!(tc.quorum_size(), 5);
+
+        // 2 validators: quorum = 2
+        let tc = make_consensus(1, &[1, 2]);
+        assert_eq!(tc.quorum_size(), 2);
     }
 
     #[test]

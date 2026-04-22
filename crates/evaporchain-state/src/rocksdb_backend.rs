@@ -309,6 +309,7 @@ fn deserialize_legacy_ghost(data: &[u8], id: &ObjectId) -> Result<GhostRecord, B
         data_hash,
         original_data: Some(original_data),
         mmr_position: None,
+        original_half_life: None,
     })
 }
 

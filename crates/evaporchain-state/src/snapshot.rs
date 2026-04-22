@@ -542,6 +542,7 @@ mod tests {
             evaporated_at: evap_epoch,
             original_data: None,
             mmr_position: None,
+            original_half_life: None,
         }
     }
 
