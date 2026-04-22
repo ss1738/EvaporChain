@@ -561,3 +561,158 @@ impl RocksDBStateDB {
         self.persist_trie();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use evaporchain_types::{Account, ObjectState, StateObject};
+
+    fn tmp_db() -> RocksDBStateDB {
+        let dir = tempfile::tempdir().unwrap();
+        RocksDBStateDB::open(dir.path()).unwrap()
+    }
+
+    fn make_obj(b: u8, energy: u64) -> StateObject {
+        let mut id = [0u8; 32];
+        id[0] = b;
+        StateObject {
+            id,
+            owner: [0u8; 32],
+            energy,
+            half_life: 100,
+            created_at: 0,
+            last_refreshed: 0,
+            state: ObjectState::Active,
+            grace_epoch: None,
+            data: vec![b],
+        }
+    }
+
+    fn make_account(b: u8, balance: u64) -> Account {
+        let mut addr = [0u8; 32];
+        addr[0] = b;
+        Account { address: addr, balance, nonce: 0 }
+    }
+
+    #[test]
+    fn test_object_roundtrip() {
+        let mut db = tmp_db();
+        let obj = make_obj(1, 500);
+        db.put_object(obj.clone());
+        let loaded = db.get_object(&obj.id).unwrap();
+        assert_eq!(loaded.energy, 500);
+        assert_eq!(loaded.data, vec![1]);
+    }
+
+    #[test]
+    fn test_account_roundtrip() {
+        let mut db = tmp_db();
+        let acc = make_account(1, 1000);
+        db.put_account(acc.clone());
+        let loaded = db.get_account(&acc.address).unwrap();
+        assert_eq!(loaded.balance, 1000);
+    }
+
+    #[test]
+    fn test_ghost_roundtrip() {
+        let mut db = tmp_db();
+        let ghost = GhostRecord {
+            object_id: [5u8; 32],
+            owner: [1u8; 32],
+            evaporated_at: 42,
+            data_hash: [0xAA; 32],
+            original_data: Some(vec![1, 2, 3]),
+            mmr_position: None,
+            original_half_life: Some(200),
+        };
+        db.put_ghost(ghost.clone());
+        assert_eq!(db.ghost_count(), 1);
+        let loaded = db.get_ghost(&ghost.object_id).unwrap();
+        assert_eq!(loaded.evaporated_at, 42);
+        assert_eq!(loaded.original_half_life, Some(200));
+    }
+
+    #[test]
+    fn test_write_batch_atomic_commit() {
+        let mut db = tmp_db();
+        db.begin_batch();
+        db.put_object(make_obj(1, 100));
+        db.put_object(make_obj(2, 200));
+        db.put_account(make_account(1, 500));
+        db.commit_batch().unwrap();
+
+        assert_eq!(db.object_count(), 2);
+        assert_eq!(db.get_object(&make_obj(1, 0).id).unwrap().energy, 100);
+        assert_eq!(db.get_account(&make_account(1, 0).address).unwrap().balance, 500);
+    }
+
+    #[test]
+    fn test_write_batch_rollback() {
+        let mut db = tmp_db();
+        db.put_object(make_obj(1, 100));
+        assert_eq!(db.object_count(), 1);
+
+        db.begin_batch();
+        db.put_object(make_obj(2, 200));
+        db.rollback_batch();
+
+        // Object 2 is in memory (cache was updated) but batch was rolled back
+        // The in-memory cache still has it — rollback only affects the disk batch
+        assert_eq!(db.object_count(), 2);
+    }
+
+    #[test]
+    fn test_persistence_across_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let mut db = RocksDBStateDB::open(dir.path()).unwrap();
+            db.put_object(make_obj(1, 999));
+            db.put_account(make_account(1, 777));
+        }
+        {
+            let db = RocksDBStateDB::open(dir.path()).unwrap();
+            assert_eq!(db.get_object(&make_obj(1, 0).id).unwrap().energy, 999);
+            assert_eq!(db.get_account(&make_account(1, 0).address).unwrap().balance, 777);
+        }
+    }
+
+    #[test]
+    fn test_delete_object() {
+        let mut db = tmp_db();
+        let obj = make_obj(1, 100);
+        db.put_object(obj.clone());
+        assert_eq!(db.object_count(), 1);
+        db.delete_object(&obj.id);
+        assert_eq!(db.object_count(), 0);
+        assert!(db.get_object(&obj.id).is_none());
+    }
+
+    #[test]
+    fn test_nullifier_operations() {
+        let mut db = tmp_db();
+        let nf = [0xAA; 32];
+        assert!(!db.is_nullifier_spent(&nf));
+        assert!(db.spend_nullifier(&nf));
+        assert!(db.is_nullifier_spent(&nf));
+        assert!(!db.spend_nullifier(&nf)); // already spent
+        assert_eq!(db.nullifier_count(), 1);
+        assert_eq!(db.all_nullifiers().len(), 1);
+    }
+
+    #[test]
+    fn test_state_root_deterministic() {
+        let mut db = tmp_db();
+        db.put_object(make_obj(1, 100));
+        db.put_object(make_obj(2, 200));
+        let root1 = db.compute_state_root();
+        let root2 = db.compute_state_root();
+        assert_eq!(root1, root2);
+        assert_ne!(root1, [0u8; 32]);
+    }
+
+    #[test]
+    fn test_commit_batch_without_begin_fails() {
+        let db = tmp_db();
+        assert!(db.commit_batch().is_err());
+    }
+}
