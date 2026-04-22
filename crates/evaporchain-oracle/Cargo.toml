@@ -3,6 +3,10 @@ name = "evaporchain-oracle"
 version.workspace = true
 edition = "2021"
 
+[lib]
+name = "evaporchain_oracle"
+path = "src/lib.rs"
+
 [[bin]]
 name = "evaporchain-oracle"
 path = "src/main.rs"
