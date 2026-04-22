@@ -9,7 +9,7 @@ MINI1="100.119.53.101"
 MINI2="100.113.253.72"
 MINI3="100.103.216.125"
 NODES=("$MINI1" "$MINI2" "$MINI3")
-NAMES=("Mini1" "Mini2" "Mini3")
+NAMES=("Satyawan" "Apsarth" "Ironman")
 
 PASS=0
 FAIL=0
