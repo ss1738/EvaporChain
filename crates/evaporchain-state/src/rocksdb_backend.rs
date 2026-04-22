@@ -30,7 +30,7 @@ pub struct RocksDBStateDB {
     trie: EnergyVerkleTrie,
     dirty_objects: HashSet<ObjectId>,
     dirty_accounts: HashSet<AccountAddress>,
-    // Privacy layer state (in-memory; RocksDB persistence in future pass)
+    // Privacy layer state (write-through to RocksDB)
     note_tree_root: [u8; 32],
     spent_nullifiers: std::collections::HashSet<[u8; 32]>,
     shielded_pool_balance: u64,

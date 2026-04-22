@@ -111,16 +111,19 @@ impl EvaporationEngine {
 
                     if current_energy == 0 {
                         // Energy depleted → enter grace period
-                        let obj_mut = db.get_object_mut(&id).unwrap();
-                        obj_mut.state = ObjectState::Grace;
-                        obj_mut.grace_epoch = Some(current_epoch);
-                        obj_mut.energy = 0;
-                        result.entered_grace.push(id);
-                        debug!(
-                            object_id = hex::encode(id),
-                            epoch = current_epoch,
-                            "Object entered grace period (Active → Grace)"
-                        );
+                        if let Some(obj_mut) = db.get_object_mut(&id) {
+                            obj_mut.state = ObjectState::Grace;
+                            obj_mut.grace_epoch = Some(current_epoch);
+                            obj_mut.energy = 0;
+                            result.entered_grace.push(id);
+                            debug!(
+                                object_id = hex::encode(id),
+                                epoch = current_epoch,
+                                "Object entered grace period (Active → Grace)"
+                            );
+                        } else {
+                            continue;
+                        }
                     } else {
                         result.decayed += 1;
                     }

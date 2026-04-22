@@ -612,7 +612,7 @@ fn estimate_gas(tx: &Transaction) -> u64 {
     match tx {
         Transaction::Transfer(_) => GAS_TRANSFER,
         Transaction::CreateObject(create) => {
-            GAS_CREATE_OBJECT_BASE + GAS_CREATE_OBJECT_PER_BYTE * create.data.len() as u64
+            GAS_CREATE_OBJECT_BASE.saturating_add(GAS_CREATE_OBJECT_PER_BYTE.saturating_mul(create.data.len() as u64))
         }
         Transaction::Refresh(_) => GAS_REFRESH,
         Transaction::DeployContract(_) => GAS_DEPLOY_CONTRACT,
@@ -628,10 +628,10 @@ fn estimate_gas(tx: &Transaction) -> u64 {
         }
         Transaction::Deferred(dtx) => {
             crate::temporal::GAS_DEFERRED_SUBMIT
-                + crate::temporal::GAS_PER_GUARD * dtx.guards.len() as u64
+                .saturating_add(crate::temporal::GAS_PER_GUARD.saturating_mul(dtx.guards.len() as u64))
         }
         Transaction::Blob(tx) => {
-            crate::GAS_CREATE_OBJECT_BASE + crate::GAS_CREATE_OBJECT_PER_BYTE * tx.data.len() as u64
+            crate::GAS_CREATE_OBJECT_BASE.saturating_add(crate::GAS_CREATE_OBJECT_PER_BYTE.saturating_mul(tx.data.len() as u64))
         }
     }
 }
