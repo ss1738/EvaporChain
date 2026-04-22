@@ -648,7 +648,7 @@ mod tests {
 
     #[test]
     fn test_empty_snapshot() {
-        let db = InMemoryStateDB::new();
+        let mut db = InMemoryStateDB::new();
         let snapshot = SnapshotBuilder::create(&mut db, 0, 0).unwrap();
 
         assert_eq!(snapshot.header.account_count, 0);
