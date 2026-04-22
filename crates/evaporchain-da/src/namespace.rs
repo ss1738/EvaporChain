@@ -334,8 +334,8 @@ impl NamespaceMerkleTree {
         }
 
         let mut siblings = Vec::new();
-        let mut s = start;
-        let mut e = end.max(start);
+        let s = start;
+        let e = end.max(start);
         let leaf_count = self.layers[0].len();
 
         // Clamp to valid range

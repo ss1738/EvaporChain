@@ -572,10 +572,10 @@ mod tests {
     use super::*;
     use evaporchain_proving::privacy::compute_balance_binding;
     use evaporchain_proving::privacy::{
-        Commitment, ConfidentialNote, Nullifier,
+        Commitment, Nullifier,
     };
     use evaporchain_state::InMemoryStateDB;
-    use evaporchain_types::{Account, AccountAddress, EnergyDecayProofData};
+    use evaporchain_types::{Account, AccountAddress};
 
     fn test_blinding(seed: u8) -> [u8; 32] {
         let mut b = [0u8; 32];
@@ -604,7 +604,7 @@ mod tests {
     struct ShieldedNote {
         amount: u64,
         blinding: [u8; 32],
-        owner_hash: [u8; 32],
+        _owner_hash: [u8; 32],
         spending_secret: [u8; 32],
         tree_index: usize,
         value_commitment: [u8; 32],
@@ -638,7 +638,7 @@ mod tests {
         ShieldedNote {
             amount,
             blinding,
-            owner_hash,
+            _owner_hash: owner_hash,
             spending_secret,
             tree_index: result.tree_index.unwrap(),
             value_commitment: result.value_commitment.unwrap(),

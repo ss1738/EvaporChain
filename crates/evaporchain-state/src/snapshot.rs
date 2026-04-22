@@ -20,7 +20,7 @@ use evaporchain_types::{Account, AccountAddress, GhostRecord, ObjectId, StateObj
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use thiserror::Error;
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::db::StateDB;
 
@@ -142,7 +142,7 @@ impl SnapshotBuilder {
         ghosts.sort_by(|a, b| a.object_id.cmp(&b.object_id));
 
         // Collect privacy state
-        let mut nullifiers: Vec<[u8; 32]> = Vec::new();
+        let nullifiers: Vec<[u8; 32]> = Vec::new();
         // Note: We can't iterate nullifiers from the trait, so we store what we can
         let privacy = PrivacySnapshot {
             note_tree_root: db.get_note_tree_root(),
