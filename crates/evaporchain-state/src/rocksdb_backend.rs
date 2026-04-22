@@ -7,7 +7,7 @@
 use crate::db::{build_energy_trie, trie_key_for_account, trie_key_for_object, trie_value_for_account, trie_value_for_object, StateDB};
 use evaporchain_crypto::{EnergyVerkleTrie, TrieHealth};
 use evaporchain_types::{Account, AccountAddress, GhostRecord, ObjectId, StateObject};
-use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, Options, DB};
+use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, Options, WriteBatch, DB};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -31,6 +31,8 @@ pub struct RocksDBStateDB {
     spent_nullifiers: std::collections::HashSet<[u8; 32]>,
     shielded_pool_balance: u64,
     note_count: u64,
+    // Batch mode: buffer writes for atomic commit (Mutex for Sync)
+    pending_batch: std::sync::Mutex<Option<WriteBatch>>,
 }
 
 impl RocksDBStateDB {
@@ -182,7 +184,24 @@ impl RocksDBStateDB {
             spent_nullifiers: std::collections::HashSet::new(),
             shielded_pool_balance: 0,
             note_count: 0,
+            pending_batch: std::sync::Mutex::new(None),
         })
+    }
+
+    /// Start buffering writes for atomic commit. Call `commit_batch()` to flush.
+    pub fn begin_batch(&self) {
+        *self.pending_batch.lock().unwrap() = Some(WriteBatch::default());
+    }
+
+    /// Atomically write all buffered mutations to disk.
+    pub fn commit_batch(&self) -> Result<(), String> {
+        let batch = self.pending_batch.lock().unwrap().take().ok_or("no active batch")?;
+        self.db.write(batch).map_err(|e| format!("WriteBatch commit failed: {e}"))
+    }
+
+    /// Discard any buffered writes without flushing.
+    pub fn rollback_batch(&self) {
+        *self.pending_batch.lock().unwrap() = None;
     }
 
     /// Returns true if the database has any accounts (i.e., not a fresh start).
@@ -204,31 +223,66 @@ impl RocksDBStateDB {
     }
 
     fn persist_object(&self, obj: &StateObject) {
-        let cf = self.cf(CF_OBJECTS);
         let value = bincode::serialize(obj).expect("serialize object");
-        self.db.put_cf(cf, obj.id, value).expect("write object to RocksDB");
+        let mut guard = self.pending_batch.lock().unwrap();
+        if let Some(ref mut batch) = *guard {
+            let cf = self.db.cf_handle(CF_OBJECTS).unwrap();
+            batch.put_cf(cf, obj.id, &value);
+        } else {
+            drop(guard);
+            let cf = self.cf(CF_OBJECTS);
+            self.db.put_cf(cf, obj.id, value).expect("write object to RocksDB");
+        }
     }
 
     fn delete_object_disk(&self, id: &ObjectId) {
-        let cf = self.cf(CF_OBJECTS);
-        self.db.delete_cf(cf, id).expect("delete object from RocksDB");
+        let mut guard = self.pending_batch.lock().unwrap();
+        if let Some(ref mut batch) = *guard {
+            let cf = self.db.cf_handle(CF_OBJECTS).unwrap();
+            batch.delete_cf(cf, id);
+        } else {
+            drop(guard);
+            let cf = self.cf(CF_OBJECTS);
+            self.db.delete_cf(cf, id).expect("delete object from RocksDB");
+        }
     }
 
     fn persist_ghost(&self, ghost: &GhostRecord) {
-        let cf = self.cf(CF_GHOSTS);
         let value = bincode::serialize(ghost).expect("serialize ghost");
-        self.db.put_cf(cf, ghost.object_id, value).expect("write ghost to RocksDB");
+        let mut guard = self.pending_batch.lock().unwrap();
+        if let Some(ref mut batch) = *guard {
+            let cf = self.db.cf_handle(CF_GHOSTS).unwrap();
+            batch.put_cf(cf, ghost.object_id, &value);
+        } else {
+            drop(guard);
+            let cf = self.cf(CF_GHOSTS);
+            self.db.put_cf(cf, ghost.object_id, value).expect("write ghost to RocksDB");
+        }
     }
 
     fn delete_ghost_disk(&self, id: &ObjectId) {
-        let cf = self.cf(CF_GHOSTS);
-        self.db.delete_cf(cf, id).expect("delete ghost from RocksDB");
+        let mut guard = self.pending_batch.lock().unwrap();
+        if let Some(ref mut batch) = *guard {
+            let cf = self.db.cf_handle(CF_GHOSTS).unwrap();
+            batch.delete_cf(cf, id);
+        } else {
+            drop(guard);
+            let cf = self.cf(CF_GHOSTS);
+            self.db.delete_cf(cf, id).expect("delete ghost from RocksDB");
+        }
     }
 
     fn persist_account(&self, account: &Account) {
-        let cf = self.cf(CF_ACCOUNTS);
         let value = bincode::serialize(account).expect("serialize account");
-        self.db.put_cf(cf, account.address, value).expect("write account to RocksDB");
+        let mut guard = self.pending_batch.lock().unwrap();
+        if let Some(ref mut batch) = *guard {
+            let cf = self.db.cf_handle(CF_ACCOUNTS).unwrap();
+            batch.put_cf(cf, account.address, &value);
+        } else {
+            drop(guard);
+            let cf = self.cf(CF_ACCOUNTS);
+            self.db.put_cf(cf, account.address, value).expect("write account to RocksDB");
+        }
     }
 
     fn sync_dirty_to_trie(&mut self) {
