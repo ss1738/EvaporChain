@@ -1251,6 +1251,71 @@ mod tests {
         // The trie should have shrunk
         assert!(trie.node_count() <= nodes_before, "trie should not grow");
     }
+
+    #[test]
+    fn test_serialize_deserialize_roundtrip() {
+        let mut trie = EnergyVerkleTrie::new();
+        for i in 0u8..50 {
+            trie.insert(make_key_full(i), make_value(i), (i as u64) * 100, 10 + i as u64, i as u64);
+        }
+        let root_before = trie.root();
+        let health_before = trie.health();
+
+        let bytes = trie.to_bytes();
+        assert!(bytes.len() > 0);
+
+        let restored = EnergyVerkleTrie::from_bytes(&bytes).expect("deserialization should succeed");
+        assert_eq!(restored.root(), root_before);
+        let health_after = restored.health();
+        assert_eq!(health_after.active_leaves, health_before.active_leaves);
+        assert_eq!(health_after.max_energy, health_before.max_energy);
+        assert_eq!(health_after.total_nodes, health_before.total_nodes);
+    }
+
+    #[test]
+    fn test_serialize_after_compression() {
+        let mut trie = EnergyVerkleTrie::new();
+        for i in 0u8..20 {
+            let energy = if i < 10 { 0 } else { 1000 };
+            trie.insert(make_key_full(i), make_value(i), energy, 100, i as u64);
+        }
+        trie.compress_cold();
+        let root_before = trie.root();
+
+        let bytes = trie.to_bytes();
+        let restored = EnergyVerkleTrie::from_bytes(&bytes).expect("deserialization should succeed");
+        assert_eq!(restored.root(), root_before);
+        assert_eq!(restored.compressed_leaf_count(), trie.compressed_leaf_count());
+    }
+
+    #[test]
+    fn test_serialize_empty_trie() {
+        let trie = EnergyVerkleTrie::new();
+        let bytes = trie.to_bytes();
+        let restored = EnergyVerkleTrie::from_bytes(&bytes).expect("deserialization should succeed");
+        assert_eq!(restored.root(), [0u8; 32]);
+        assert!(restored.is_empty());
+    }
+
+    #[test]
+    fn test_incremental_update_after_deserialize() {
+        let mut trie = EnergyVerkleTrie::new();
+        for i in 0u8..10 {
+            trie.insert(make_key_full(i), make_value(i), 500, 100, 0);
+        }
+        let bytes = trie.to_bytes();
+        let mut restored = EnergyVerkleTrie::from_bytes(&bytes).expect("deser ok");
+
+        // Incremental update on the restored trie
+        restored.insert(make_key_full(10), make_value(10), 500, 100, 0);
+        restored.update_energy(&make_key_full(0), 0, 1);
+
+        // Same operations on original
+        trie.insert(make_key_full(10), make_value(10), 500, 100, 0);
+        trie.update_energy(&make_key_full(0), 0, 1);
+
+        assert_eq!(restored.root(), trie.root());
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
