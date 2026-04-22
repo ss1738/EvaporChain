@@ -1885,6 +1885,7 @@ async fn main() -> Result<()> {
                         let result = {
                             let mut tc = safe_lock(&tc_ref);
                             let mut db_guard = safe_lock(&db);
+                            db_guard.begin_batch();
                             tc.execute_block(&mut *db_guard, &block)
                         };
 
@@ -1892,11 +1893,14 @@ async fn main() -> Result<()> {
                             Ok(result) => {
                                 block.state_root = result.execution.state_root;
 
-                                // Flush state
+                                // Flush state atomically
                                 {
                                     let mut db_guard = safe_lock(&db);
                                     db_guard.flush_accounts();
                                     db_guard.flush_objects();
+                                    if let Err(e) = db_guard.commit_batch() {
+                                        eprintln!("\x1b[31mFATAL: state batch commit failed: {}\x1b[0m", e);
+                                    }
                                 }
 
                                 // Fold proof & attach to block
@@ -2197,6 +2201,7 @@ async fn main() -> Result<()> {
                                 }
                             }
                             Err(e) => {
+                                safe_lock(&db).rollback_batch();
                                 eprintln!("{} \x1b[31mBlock execution error: {}\x1b[0m", node_tag, e);
                             }
                         }
@@ -2275,6 +2280,7 @@ async fn main() -> Result<()> {
                             let result = {
                                 let mut tc = safe_lock(&tc_ref);
                                 let mut db_guard = safe_lock(&db);
+                                db_guard.begin_batch();
                                 tc.execute_block(&mut *db_guard, &block)
                             };
 
@@ -2285,6 +2291,9 @@ async fn main() -> Result<()> {
                                         let mut db_guard = safe_lock(&db);
                                         db_guard.flush_accounts();
                                         db_guard.flush_objects();
+                                        if let Err(e) = db_guard.commit_batch() {
+                                            eprintln!("\x1b[31mFATAL: state batch commit failed: {}\x1b[0m", e);
+                                        }
                                     }
                                     {
                                         let mut p = safe_lock(&chain_prover);
@@ -2491,6 +2500,7 @@ async fn main() -> Result<()> {
                                     );
                                 }
                                 Err(e) => {
+                                    safe_lock(&db).rollback_batch();
                                     eprintln!("{} \x1b[31mBlock execution error: {}\x1b[0m", node_tag, e);
                                 }
                             }
@@ -2533,6 +2543,7 @@ async fn main() -> Result<()> {
                 let produced = {
                     let mut c = safe_lock(&consensus);
                     let mut db_guard = safe_lock(&db);
+                    db_guard.begin_batch();
 
                     match c.produce_block(&mut *db_guard) {
                         Ok(mut result) => {
@@ -2556,15 +2567,19 @@ async fn main() -> Result<()> {
                             }
                             drop(p);
 
-                            // Flush mutated state to RocksDB
+                            // Flush mutated state to RocksDB atomically
                             db_guard.flush_accounts();
                             db_guard.flush_objects();
+                            if let Err(e) = db_guard.commit_batch() {
+                                eprintln!("\x1b[31mFATAL: state batch commit failed: {}\x1b[0m", e);
+                            }
 
                             let obj_count = db_guard.object_count();
                             let ghost_count = db_guard.ghost_count();
                             Some((result, obj_count, ghost_count))
                         }
                         Err(e) => {
+                            db_guard.rollback_batch();
                             eprintln!("{} \x1b[31mBlock production error: {}\x1b[0m", node_tag, e);
                             None
                         }
