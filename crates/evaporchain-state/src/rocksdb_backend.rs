@@ -15,7 +15,11 @@ const CF_OBJECTS: &str = "objects";
 const CF_GHOSTS: &str = "ghosts";
 const CF_ACCOUNTS: &str = "accounts";
 const CF_TRIE: &str = "trie";
+const CF_NULLIFIERS: &str = "nullifiers";
 const TRIE_SNAPSHOT_KEY: &[u8] = b"__energy_verkle_trie__";
+const PRIVACY_NOTE_ROOT_KEY: &[u8] = b"__note_tree_root__";
+const PRIVACY_POOL_BALANCE_KEY: &[u8] = b"__shielded_pool_balance__";
+const PRIVACY_NOTE_COUNT_KEY: &[u8] = b"__note_count__";
 
 /// RocksDB-backed state database with in-memory write-through cache.
 pub struct RocksDBStateDB {
@@ -48,6 +52,7 @@ impl RocksDBStateDB {
             ColumnFamilyDescriptor::new(CF_GHOSTS, Options::default()),
             ColumnFamilyDescriptor::new(CF_ACCOUNTS, Options::default()),
             ColumnFamilyDescriptor::new(CF_TRIE, Options::default()),
+            ColumnFamilyDescriptor::new(CF_NULLIFIERS, Options::default()),
         ];
 
         let db = DB::open_cf_descriptors(&opts, path, cf_descriptors)
@@ -144,6 +149,43 @@ impl RocksDBStateDB {
             );
         }
 
+        // Load nullifiers
+        let mut spent_nullifiers = std::collections::HashSet::new();
+        let cf_null = db.cf_handle(CF_NULLIFIERS)
+            .ok_or_else(|| format!("missing column family: {CF_NULLIFIERS}"))?;
+        let iter = db.iterator_cf(cf_null, rocksdb::IteratorMode::Start);
+        for item in iter {
+            let (key, _value) = item.map_err(|e| format!("RocksDB iterator error: {}", e))?;
+            if key.len() == 32 {
+                let mut nul = [0u8; 32];
+                nul.copy_from_slice(&key);
+                spent_nullifiers.insert(nul);
+            }
+        }
+
+        // Load privacy metadata from trie CF
+        let cf_trie_meta = db.cf_handle(CF_TRIE)
+            .ok_or_else(|| format!("missing column family: {CF_TRIE}"))?;
+        let note_tree_root = match db.get_cf(cf_trie_meta, PRIVACY_NOTE_ROOT_KEY) {
+            Ok(Some(bytes)) if bytes.len() == 32 => {
+                let mut root = [0u8; 32];
+                root.copy_from_slice(&bytes);
+                root
+            }
+            _ => [0u8; 32],
+        };
+        let shielded_pool_balance = match db.get_cf(cf_trie_meta, PRIVACY_POOL_BALANCE_KEY) {
+            Ok(Some(bytes)) if bytes.len() == 8 => u64::from_le_bytes(bytes[..8].try_into().unwrap()),
+            _ => 0,
+        };
+        let note_count = match db.get_cf(cf_trie_meta, PRIVACY_NOTE_COUNT_KEY) {
+            Ok(Some(bytes)) if bytes.len() == 8 => u64::from_le_bytes(bytes[..8].try_into().unwrap()),
+            _ => 0,
+        };
+        if !spent_nullifiers.is_empty() {
+            println!("  RocksDB: loaded {} nullifiers, pool_balance={}, note_count={}", spent_nullifiers.len(), shielded_pool_balance, note_count);
+        }
+
         // Load persisted trie or rebuild from scratch
         let trie = {
             let cf_trie = db.cf_handle(CF_TRIE)
@@ -180,10 +222,10 @@ impl RocksDBStateDB {
             trie,
             dirty_objects: HashSet::new(),
             dirty_accounts: HashSet::new(),
-            note_tree_root: [0u8; 32],
-            spent_nullifiers: std::collections::HashSet::new(),
-            shielded_pool_balance: 0,
-            note_count: 0,
+            note_tree_root,
+            spent_nullifiers,
+            shielded_pool_balance,
+            note_count,
             pending_batch: std::sync::Mutex::new(None),
         })
     }
@@ -306,6 +348,25 @@ impl RocksDBStateDB {
         let cf = self.cf(CF_TRIE);
         let bytes = self.trie.to_bytes();
         self.db.put_cf(cf, TRIE_SNAPSHOT_KEY, bytes).expect("write trie snapshot to RocksDB");
+    }
+
+    fn persist_nullifier(&self, nullifier: &[u8; 32]) {
+        let mut guard = self.pending_batch.lock().unwrap();
+        if let Some(ref mut batch) = *guard {
+            let cf = self.db.cf_handle(CF_NULLIFIERS).unwrap();
+            batch.put_cf(cf, nullifier, &[1u8]);
+        } else {
+            drop(guard);
+            let cf = self.cf(CF_NULLIFIERS);
+            self.db.put_cf(cf, nullifier, [1u8]).expect("write nullifier to RocksDB");
+        }
+    }
+
+    fn persist_privacy_metadata(&self) {
+        let cf = self.cf(CF_TRIE);
+        self.db.put_cf(cf, PRIVACY_NOTE_ROOT_KEY, self.note_tree_root).expect("write note_tree_root");
+        self.db.put_cf(cf, PRIVACY_POOL_BALANCE_KEY, self.shielded_pool_balance.to_le_bytes()).expect("write pool_balance");
+        self.db.put_cf(cf, PRIVACY_NOTE_COUNT_KEY, self.note_count.to_le_bytes()).expect("write note_count");
     }
 }
 
@@ -486,6 +547,7 @@ impl StateDB for RocksDBStateDB {
 
     fn put_note_tree_root(&mut self, root: [u8; 32]) {
         self.note_tree_root = root;
+        self.persist_privacy_metadata();
     }
 
     fn get_note_tree_root(&self) -> [u8; 32] {
@@ -493,7 +555,11 @@ impl StateDB for RocksDBStateDB {
     }
 
     fn spend_nullifier(&mut self, nullifier: &[u8; 32]) -> bool {
-        self.spent_nullifiers.insert(*nullifier)
+        let is_new = self.spent_nullifiers.insert(*nullifier);
+        if is_new {
+            self.persist_nullifier(nullifier);
+        }
+        is_new
     }
 
     fn is_nullifier_spent(&self, nullifier: &[u8; 32]) -> bool {
@@ -510,6 +576,7 @@ impl StateDB for RocksDBStateDB {
 
     fn put_shielded_pool_balance(&mut self, balance: u64) {
         self.shielded_pool_balance = balance;
+        self.persist_privacy_metadata();
     }
 
     fn get_shielded_pool_balance(&self) -> u64 {
@@ -518,6 +585,7 @@ impl StateDB for RocksDBStateDB {
 
     fn put_note_count(&mut self, count: u64) {
         self.note_count = count;
+        self.persist_privacy_metadata();
     }
 
     fn get_note_count(&self) -> u64 {
@@ -714,5 +782,35 @@ mod tests {
     fn test_commit_batch_without_begin_fails() {
         let db = tmp_db();
         assert!(db.commit_batch().is_err());
+    }
+
+    #[test]
+    fn test_privacy_state_persistence() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+
+        let nul1 = [0xAAu8; 32];
+        let nul2 = [0xBBu8; 32];
+        let root = [0xCCu8; 32];
+
+        {
+            let mut db = RocksDBStateDB::open(&path).unwrap();
+            db.put_note_tree_root(root);
+            db.put_shielded_pool_balance(42_000);
+            db.put_note_count(7);
+            assert!(db.spend_nullifier(&nul1));
+            assert!(db.spend_nullifier(&nul2));
+            assert!(!db.spend_nullifier(&nul1)); // duplicate
+        }
+
+        // Reopen and verify everything survived
+        let db = RocksDBStateDB::open(&path).unwrap();
+        assert_eq!(db.get_note_tree_root(), root);
+        assert_eq!(db.get_shielded_pool_balance(), 42_000);
+        assert_eq!(db.get_note_count(), 7);
+        assert!(db.is_nullifier_spent(&nul1));
+        assert!(db.is_nullifier_spent(&nul2));
+        assert!(!db.is_nullifier_spent(&[0xDD; 32]));
+        assert_eq!(db.nullifier_count(), 2);
     }
 }
