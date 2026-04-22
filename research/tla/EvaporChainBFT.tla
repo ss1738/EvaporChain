@@ -302,7 +302,7 @@ PrecommitQuorumCommit(v) ==
            /\ UNCHANGED <<prevotes, precommits, proposals, daAttested,
                            stateCommitment, equivocations, slashed>>
 
-\* 2f+1 nil precommits → advance round
+\* 2f+1 nil precommits → advance round (or reset at max)
 \* Matches advance_round() when check_precommit_quorum() returns Some(None)
 PrecommitNilAdvanceRound(v) ==
     /\ v \in Honest
@@ -310,45 +310,28 @@ PrecommitNilAdvanceRound(v) ==
     /\ phase[v] = "Precommit"
     /\ LET h == height[v]
            r == round[v]
+           nextR == IF r + 1 >= MaxRound THEN 0 ELSE r + 1
        IN
        /\ HasNilQuorum(precommits[h][r])
-       /\ round' = [round EXCEPT ![v] = r + 1]
+       /\ round' = [round EXCEPT ![v] = nextR]
        /\ phase' = [phase EXCEPT ![v] = "Propose"]
        /\ UNCHANGED <<height, lockedBlock, lockedRound, validBlock, validRound,
                        prevotes, precommits, proposals, committed, daAttested,
                        stateCommitment, equivocations, slashed>>
 
-\* Precommit timeout → advance round
-\* Matches tick() precommit_timeout path
+\* Precommit timeout → advance round (or reset at max)
+\* Matches tick() precommit_timeout path + advance_round() max-round reset
 PrecommitTimeout(v) ==
     /\ v \in Honest
     /\ height[v] <= MaxHeight
     /\ phase[v] = "Precommit"
     /\ LET r == round[v]
+           nextR == IF r + 1 >= MaxRound THEN 0 ELSE r + 1
        IN
-       /\ round' = [round EXCEPT ![v] = r + 1]
+       /\ round' = [round EXCEPT ![v] = nextR]
        /\ phase' = [phase EXCEPT ![v] = "Propose"]
        /\ UNCHANGED <<height, lockedBlock, lockedRound, validBlock, validRound,
                        prevotes, precommits, proposals, committed, daAttested,
-                       stateCommitment, equivocations, slashed>>
-
-\* Max rounds reached — force empty block commit
-\* Matches advance_round() when next_round >= MAX_ROUNDS_PER_HEIGHT
-MaxRoundForceCommit(v) ==
-    /\ v \in Honest
-    /\ height[v] <= MaxHeight
-    /\ round[v] >= MaxRound
-    /\ LET h == height[v]
-       IN
-       /\ committed' = [committed EXCEPT ![v] = Append(@, <<h, "EmptyBlock">>)]
-       /\ height' = [height EXCEPT ![v] = h + 1]
-       /\ round' = [round EXCEPT ![v] = 0]
-       /\ phase' = [phase EXCEPT ![v] = "Propose"]
-       /\ lockedBlock' = [lockedBlock EXCEPT ![v] = "Nil"]
-       /\ lockedRound' = [lockedRound EXCEPT ![v] = -1]
-       /\ validBlock' = [validBlock EXCEPT ![v] = "Nil"]
-       /\ validRound' = [validRound EXCEPT ![v] = -1]
-       /\ UNCHANGED <<prevotes, precommits, proposals, daAttested,
                        stateCommitment, equivocations, slashed>>
 
 \* ─────────────────── Byzantine actions ──────────────────────────────────
@@ -444,7 +427,6 @@ Next ==
         \/ PrecommitQuorumCommit(v)
         \/ PrecommitNilAdvanceRound(v)
         \/ PrecommitTimeout(v)
-        \/ MaxRoundForceCommit(v)
         \/ ByzantinePrevote(v)
         \/ ByzantinePrecommit(v)
         \/ DetectEquivocation(v)
@@ -473,8 +455,7 @@ Validity ==
             LET h == committed[v][i][1]
                 b == committed[v][i][2]
             IN
-            b = "EmptyBlock"  \* Force-committed at max round
-            \/ \E r \in 0..MaxRound :
+            \E r \in 0..MaxRound :
                 \E p \in Validators : <<p, b>> \in proposals[h][r]
 
 \* SAFETY 3: No commit without quorum — a block is committed only if
@@ -485,8 +466,7 @@ CommitRequiresQuorum ==
             LET h == committed[v][i][1]
                 b == committed[v][i][2]
             IN
-            b = "EmptyBlock"
-            \/ \E r \in 0..MaxRound : HasQuorumFor(precommits[h][r], b)
+            \E r \in 0..MaxRound : HasQuorumFor(precommits[h][r], b)
 
 \* SAFETY 4: Lock safety — if an honest validator locks on block B in round R,
 \* then no quorum of prevotes can form for a different block B' in any
@@ -516,7 +496,7 @@ StateCommitmentIntegrity ==
             LET h == committed[v][i][1]
                 b == committed[v][i][2]
             IN
-            b = "EmptyBlock" \/ stateCommitment[h] = "Committed"
+            stateCommitment[h] = "Committed"
 
 \* Combined safety invariant
 SafetyInvariant ==
@@ -558,7 +538,6 @@ Fairness ==
         /\ WF_vars(PrecommitQuorumCommit(v))
         /\ WF_vars(PrecommitNilAdvanceRound(v))
         /\ WF_vars(PrecommitTimeout(v))
-        /\ WF_vars(MaxRoundForceCommit(v))
 
 LiveSpec == Spec /\ Fairness
 
@@ -568,7 +547,7 @@ LiveSpec == Spec /\ Fairness
 
 TypeOK ==
     /\ height \in [Validators -> 1..(MaxHeight + 1)]
-    /\ round \in [Validators -> 0..(MaxRound + 1)]
+    /\ round \in [Validators -> 0..MaxRound]
     /\ phase \in [Validators -> Phases]
     /\ lockedBlock \in [Validators -> BlockValues]
     /\ lockedRound \in [Validators -> -1..MaxRound]

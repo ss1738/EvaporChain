@@ -1597,33 +1597,15 @@ impl TendermintConsensus {
         if next_round >= MAX_ROUNDS_PER_HEIGHT {
             warn!(
                 height = self.height,
-                "Max rounds reached — forcing empty block commit"
+                "Max rounds reached — resetting to round 0 (empty block will go through normal consensus)"
             );
-            let timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            let block = Block {
-                number: self.height,
-                epoch: self.epoch + 1,
-                parent_hash: self.parent_hash,
-                state_root: [0u8; 32],
-                transactions: vec![],
-                timestamp,
-                producer_id: Some(self.my_id),
-                vrf_output: None,
-                vrf_proof: None,
-                data_root: None,
-                blob_commitments: vec![],
-                da_certificate: None,
-                commit_certificate: None,
-            nova_proof: None,
-            anchor_hash: None,
-            state_function_commitment: None,
-            };
+            // Do NOT force-commit: that bypasses quorum and breaks safety.
+            // Instead reset to round 0 so the next proposer can propose an
+            // empty block through normal Propose → Prevote → Precommit → Commit.
+            // The mempool was already drained above, so the next proposal will
+            // be empty (or near-empty), achieving the same livelock-prevention
+            // goal without violating Agreement.
             self.round_state = RoundState::new(0);
-            self.round_state.phase = Phase::Commit;
-            self.round_state.proposed_block = Some(block);
             return;
         }
 
