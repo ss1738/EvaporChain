@@ -925,6 +925,195 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_block_cache_eviction_at_max() {
+        let cache: BlockCache = Arc::new(RwLock::new(BTreeMap::new()));
+
+        // Fill to exactly MAX_CACHE_SIZE + 50
+        for i in 0..(MAX_CACHE_SIZE as u64 + 50) {
+            cache_block(&cache, &dummy_block(i));
+        }
+
+        let c = cache.read().unwrap();
+        assert_eq!(c.len(), MAX_CACHE_SIZE);
+        // Oldest blocks (0..50) should have been evicted
+        assert!(!c.contains_key(&0));
+        assert!(!c.contains_key(&49));
+        // Newest blocks should remain
+        assert!(c.contains_key(&50));
+        assert!(c.contains_key(&(MAX_CACHE_SIZE as u64 + 49)));
+    }
+
+    #[tokio::test]
+    async fn test_shard_cache_eviction_at_max() {
+        use evaporchain_da::block_da::BlockDA;
+
+        let cache: ShardCache = Arc::new(RwLock::new(BTreeMap::new()));
+        let da = BlockDA::new().expect("create BlockDA");
+        let data = b"eviction test data for shard cache";
+        let package = da.encode_block(data).expect("encode");
+
+        for i in 0..(MAX_SHARD_CACHE_SIZE as u64 + 20) {
+            cache_da_package(&cache, i, package.clone());
+        }
+
+        let c = cache.read().unwrap();
+        assert_eq!(c.len(), MAX_SHARD_CACHE_SIZE);
+        assert!(!c.contains_key(&0));
+        assert!(!c.contains_key(&19));
+        assert!(c.contains_key(&20));
+        assert!(c.contains_key(&(MAX_SHARD_CACHE_SIZE as u64 + 19)));
+    }
+
+    #[tokio::test]
+    async fn test_block_cache_overwrite_same_height() {
+        let cache: BlockCache = Arc::new(RwLock::new(BTreeMap::new()));
+
+        let mut b1 = dummy_block(5);
+        b1.timestamp = 100;
+        cache_block(&cache, &b1);
+
+        let mut b2 = dummy_block(5);
+        b2.timestamp = 200;
+        cache_block(&cache, &b2);
+
+        let c = cache.read().unwrap();
+        assert_eq!(c.len(), 1);
+        assert_eq!(c.get(&5).unwrap().timestamp, 200);
+    }
+
+    #[test]
+    fn test_block_sync_request_serialization() {
+        let req = BlockSyncRequest { from_height: 100, to_height: 200 };
+        let bytes = serde_json::to_vec(&req).expect("serialize");
+        let decoded: BlockSyncRequest = serde_json::from_slice(&bytes).expect("deserialize");
+        assert_eq!(decoded.from_height, 100);
+        assert_eq!(decoded.to_height, 200);
+    }
+
+    #[test]
+    fn test_block_sync_response_serialization() {
+        let resp = BlockSyncResponse {
+            blocks: vec![dummy_block(1), dummy_block(2)],
+            tip_height: 99,
+        };
+        let bytes = serde_json::to_vec(&resp).expect("serialize");
+        let decoded: BlockSyncResponse = serde_json::from_slice(&bytes).expect("deserialize");
+        assert_eq!(decoded.blocks.len(), 2);
+        assert_eq!(decoded.blocks[0].number, 1);
+        assert_eq!(decoded.blocks[1].number, 2);
+        assert_eq!(decoded.tip_height, 99);
+    }
+
+    #[test]
+    fn test_shard_sample_request_serialization() {
+        use evaporchain_da::sampling::SampleQuery;
+
+        let req = ShardSampleRequest {
+            queries: vec![
+                SampleQuery { block_number: 10, shard_index: 0 },
+                SampleQuery { block_number: 10, shard_index: 3 },
+            ],
+        };
+        let bytes = serde_json::to_vec(&req).expect("serialize");
+        let decoded: ShardSampleRequest = serde_json::from_slice(&bytes).expect("deserialize");
+        assert_eq!(decoded.queries.len(), 2);
+        assert_eq!(decoded.queries[0].shard_index, 0);
+        assert_eq!(decoded.queries[1].shard_index, 3);
+    }
+
+    #[test]
+    fn test_network_config_defaults() {
+        let cfg = NetworkConfig::default();
+        assert_eq!(cfg.listen_address, "/ip4/0.0.0.0/tcp/0");
+        assert!(cfg.bootstrap_peers.is_empty());
+        assert_eq!(cfg.channel_buffer, 256);
+    }
+
+    #[test]
+    fn test_constants_sane() {
+        assert_eq!(MAX_GOSSIP_MESSAGE_SIZE, 10 * 1024 * 1024);
+        assert_eq!(MAX_CACHE_SIZE, 2000);
+        assert_eq!(MAX_SHARD_CACHE_SIZE, 500);
+        assert_eq!(MAX_SYNC_BATCH, 100);
+    }
+
+    #[test]
+    fn test_sync_batch_cap_arithmetic() {
+        // Simulates the capping logic from the event loop:
+        // let capped_to = from + MAX_SYNC_BATCH.min(to - from);
+        let from = 50u64;
+        let to = 500u64;
+        let capped_to = from + MAX_SYNC_BATCH.min(to - from);
+        assert_eq!(capped_to, 150); // 50 + 100
+
+        // Small range should not be capped
+        let to_small = 60u64;
+        let capped_small = from + MAX_SYNC_BATCH.min(to_small - from);
+        assert_eq!(capped_small, 60); // 50 + 10
+    }
+
+    #[test]
+    fn test_block_cache_empty_read() {
+        let cache: BlockCache = Arc::new(RwLock::new(BTreeMap::new()));
+        let c = safe_read(&cache);
+        assert!(c.is_empty());
+        assert_eq!(c.keys().last().copied().unwrap_or(0), 0);
+    }
+
+    #[test]
+    fn test_block_cache_poison_recovery() {
+        let cache: BlockCache = Arc::new(RwLock::new(BTreeMap::new()));
+
+        // Insert a block normally
+        cache_block(&cache, &dummy_block(1));
+
+        // Poison the lock by panicking inside a write guard
+        let cache_clone = Arc::clone(&cache);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = cache_clone.write().unwrap();
+            panic!("intentional poison");
+        }));
+        assert!(result.is_err());
+
+        // Lock is now poisoned — safe_read and safe_write should recover
+        let c = safe_read(&cache);
+        assert_eq!(c.len(), 1);
+        assert!(c.contains_key(&1));
+        drop(c);
+
+        // safe_write via cache_block should also recover
+        cache_block(&cache, &dummy_block(2));
+        let c = safe_read(&cache);
+        assert_eq!(c.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_network_handle_is_clone() {
+        let (_ch, handle, _pid) = P2pNetworkService::start(NetworkConfig::default())
+            .await
+            .expect("start");
+
+        let handle2 = handle.clone();
+        let tx = dummy_tx(77);
+        assert!(handle2.broadcast_tx(&tx).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_block_cache_maintains_order() {
+        let cache: BlockCache = Arc::new(RwLock::new(BTreeMap::new()));
+
+        // Insert out of order
+        cache_block(&cache, &dummy_block(5));
+        cache_block(&cache, &dummy_block(1));
+        cache_block(&cache, &dummy_block(10));
+        cache_block(&cache, &dummy_block(3));
+
+        let c = cache.read().unwrap();
+        let keys: Vec<u64> = c.keys().copied().collect();
+        assert_eq!(keys, vec![1, 3, 5, 10]);
+    }
+
+    #[tokio::test]
     async fn test_shard_sample_request_response() {
         use evaporchain_da::block_da::BlockDA;
         use evaporchain_da::sampling::SampleQuery;
