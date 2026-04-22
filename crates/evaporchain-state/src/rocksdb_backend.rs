@@ -449,6 +449,10 @@ impl StateDB for RocksDBStateDB {
         self.spent_nullifiers.len()
     }
 
+    fn all_nullifiers(&self) -> Vec<[u8; 32]> {
+        self.spent_nullifiers.iter().copied().collect()
+    }
+
     fn put_shielded_pool_balance(&mut self, balance: u64) {
         self.shielded_pool_balance = balance;
     }

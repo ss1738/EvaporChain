@@ -483,8 +483,8 @@ impl TendermintConsensus {
     /// Number of validators needed for a 2f+1 quorum.
     fn quorum_size(&self) -> usize {
         let n = self.validator_set.len();
-        // 2f+1 where f = (n-1)/3
-        (n * 2 + 2) / 3
+        // Strict >2/3 majority: floor(2n/3) + 1
+        n * 2 / 3 + 1
     }
 
     /// Who is the proposer for the current height/round?
@@ -517,7 +517,9 @@ impl TendermintConsensus {
             input.extend_from_slice(&sfc.commitment_hash);
         }
         for tx in &block.transactions {
-            input.extend_from_slice(&serde_json::to_vec(tx).unwrap_or_default());
+            input.extend_from_slice(
+                &serde_json::to_vec(tx).expect("transaction serialization must not fail"),
+            );
         }
         blake3_hash(&input)
     }

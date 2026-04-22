@@ -90,6 +90,9 @@ impl BlockDA {
         shards: Vec<Option<Vec<u8>>>,
     ) -> Result<Vec<u8>, BlockDAError> {
         let recovered = self.encoder.reconstruct(shards)?;
+        if header.original_len > recovered.len() {
+            return Err(BlockDAError::ReconstructionHashMismatch);
+        }
         let truncated = &recovered[..header.original_len];
 
         // Verify hash

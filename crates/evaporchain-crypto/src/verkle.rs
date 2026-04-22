@@ -390,6 +390,9 @@ impl VerkleTrie {
 
     /// Verify a Verkle proof against a root commitment.
     pub fn verify(proof: &VerkleProof, expected_root: &[u8; 32]) -> bool {
+        if proof.depth > MAX_DEPTH {
+            return false;
+        }
         if proof.depth == 0 {
             if proof.value.is_none() {
                 // Empty trie: root should be the empty hash

@@ -146,6 +146,9 @@ pub trait StateDB: Send + Sync {
     /// Number of spent nullifiers.
     fn nullifier_count(&self) -> usize;
 
+    /// Return all spent nullifiers (for snapshots).
+    fn all_nullifiers(&self) -> Vec<[u8; 32]>;
+
     /// Store the total shielded pool balance (for auditing / invariant checks).
     fn put_shielded_pool_balance(&mut self, balance: u64);
 
@@ -335,6 +338,10 @@ impl StateDB for InMemoryStateDB {
 
     fn nullifier_count(&self) -> usize {
         self.spent_nullifiers.len()
+    }
+
+    fn all_nullifiers(&self) -> Vec<[u8; 32]> {
+        self.spent_nullifiers.iter().copied().collect()
     }
 
     fn put_shielded_pool_balance(&mut self, balance: u64) {

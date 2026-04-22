@@ -145,6 +145,9 @@ impl DASampler {
         num_samples: usize,
         seed: &[u8],
     ) -> Vec<SampleQuery> {
+        if total_shards == 0 {
+            return Vec::new();
+        }
         let mut queries = Vec::with_capacity(num_samples);
         for i in 0..num_samples {
             let mut hasher = blake3::Hasher::new();

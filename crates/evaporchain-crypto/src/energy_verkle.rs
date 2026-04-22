@@ -731,6 +731,9 @@ impl EnergyVerkleTrie {
 
     /// Verify a proof against a root commitment.
     pub fn verify(proof: &EnergyVerkleProof, expected_root: &[u8; 32]) -> bool {
+        if proof.depth > MAX_DEPTH {
+            return false;
+        }
         if proof.depth == 0 {
             if proof.value.is_none() {
                 return *expected_root == [0u8; 32] || proof.hit_compressed;

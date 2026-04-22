@@ -288,7 +288,7 @@ impl NamespaceMerkleTree {
                 // and right neighbor's min must be greater.
                 if !left.is_empty() && !right.is_empty() {
                     if left.max_namespace >= proof.namespace
-                        && right.min_namespace <= proof.namespace
+                        || right.min_namespace <= proof.namespace
                     {
                         return false;
                     }

@@ -491,7 +491,9 @@ impl ValidatorSet {
         input.extend_from_slice(b"leader");
         let hash = blake3_hash(&input);
         // Use first 8 bytes as u64
-        u64::from_le_bytes(hash[..8].try_into().unwrap())
+        let mut buf = [0u8; 8];
+        buf.copy_from_slice(&hash[..8]);
+        u64::from_le_bytes(buf)
     }
 }
 

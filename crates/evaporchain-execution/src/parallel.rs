@@ -339,6 +339,7 @@ impl StateDB for OverlayStateDB {
     fn spend_nullifier(&mut self, _nullifier: &[u8; 32]) -> bool { false }
     fn is_nullifier_spent(&self, _nullifier: &[u8; 32]) -> bool { false }
     fn nullifier_count(&self) -> usize { 0 }
+    fn all_nullifiers(&self) -> Vec<[u8; 32]> { Vec::new() }
     fn put_shielded_pool_balance(&mut self, _balance: u64) {}
     fn get_shielded_pool_balance(&self) -> u64 { 0 }
     fn put_note_count(&mut self, _count: u64) {}

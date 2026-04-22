@@ -781,8 +781,13 @@ fn exec_token(
         "mint" => {
             let to = get_str(args, "to")?;
             let amount = get_u64(args, "amount")?;
-            *ts.balances.entry(to).or_insert(0) += amount;
-            ts.total_minted += amount;
+            let bal = ts.balances.entry(to).or_insert(0);
+            *bal = bal.checked_add(amount).ok_or_else(|| {
+                ContractError::StateError("balance overflow".into())
+            })?;
+            ts.total_minted = ts.total_minted.checked_add(amount).ok_or_else(|| {
+                ContractError::StateError("total_minted overflow".into())
+            })?;
             serde_json::json!({ "minted": amount })
         }
         "transfer" => {
@@ -796,8 +801,12 @@ fn exec_token(
                     required: amount,
                 });
             }
+            let to_bal = ts.balances.get(&to).copied().unwrap_or(0);
+            let new_to_bal = to_bal.checked_add(amount).ok_or_else(|| {
+                ContractError::StateError("balance overflow".into())
+            })?;
             *ts.balances.entry(from).or_insert(0) -= amount;
-            *ts.balances.entry(to).or_insert(0) += amount;
+            *ts.balances.entry(to).or_insert(0) = new_to_bal;
             serde_json::json!({ "transferred": amount })
         }
         "balance_of" => {

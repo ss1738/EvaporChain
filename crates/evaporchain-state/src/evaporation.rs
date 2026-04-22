@@ -83,8 +83,16 @@ impl EvaporationEngine {
                 }
 
                 ObjectState::Grace => {
-                    // Check if grace period has expired
-                    let grace_start = obj.grace_epoch.unwrap_or(current_epoch);
+                    let grace_start = match obj.grace_epoch {
+                        Some(e) => e,
+                        None => {
+                            // Data integrity: Grace object missing grace_epoch — set it now
+                            if let Some(obj_mut) = db.get_object_mut(&id) {
+                                obj_mut.grace_epoch = Some(current_epoch);
+                            }
+                            current_epoch
+                        }
+                    };
                     if current_epoch >= grace_start + self.grace_period {
                         // Grace period expired → evaporate (Ghost)
                         self.evaporate_object(db, &obj, current_epoch, mmr.as_deref_mut());

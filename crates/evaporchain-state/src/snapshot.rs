@@ -142,8 +142,8 @@ impl SnapshotBuilder {
         ghosts.sort_by(|a, b| a.object_id.cmp(&b.object_id));
 
         // Collect privacy state
-        let nullifiers: Vec<[u8; 32]> = Vec::new();
-        // Note: We can't iterate nullifiers from the trait, so we store what we can
+        let mut nullifiers = db.all_nullifiers();
+        nullifiers.sort();
         let privacy = PrivacySnapshot {
             note_tree_root: db.get_note_tree_root(),
             spent_nullifiers: nullifiers,
