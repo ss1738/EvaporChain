@@ -16,6 +16,8 @@ const CF_STORES: &str = "stores";
 const CF_FULL_BLOCKS: &str = "full_blocks";
 /// DA shard packages keyed by block number.
 const CF_DA_SHARDS: &str = "da_shards";
+/// PoHA certificate store (serialized PoHAStore state).
+const CF_POHA: &str = "poha";
 
 /// Persistent storage for chain data beyond the state DB.
 pub struct ChainStore {
@@ -34,6 +36,7 @@ impl ChainStore {
             ColumnFamilyDescriptor::new(CF_STORES, Options::default()),
             ColumnFamilyDescriptor::new(CF_FULL_BLOCKS, Options::default()),
             ColumnFamilyDescriptor::new(CF_DA_SHARDS, Options::default()),
+            ColumnFamilyDescriptor::new(CF_POHA, Options::default()),
         ];
 
         let db = DB::open_cf_descriptors(&opts, path, cf_descriptors)
@@ -368,6 +371,51 @@ impl ChainStore {
             }
         }
         packages
+    }
+
+    // ─── PoHA persistence ───
+
+    pub fn save_poha_state(&self, store: &evaporchain_da::poha::PoHAStore) -> Result<(), String> {
+        let cf = self.db.cf_handle(CF_POHA).unwrap();
+        // Save each active certificate keyed by block number
+        for (&block_number, cert) in store.all_active() {
+            let key = block_number.to_be_bytes();
+            let value = serde_json::to_vec(cert).map_err(|e| e.to_string())?;
+            self.db.put_cf(cf, key, value).map_err(|e| e.to_string())?;
+        }
+        // Save ghost records with a prefix
+        for (&block_number, ghost) in store.all_ghosts() {
+            let mut key = Vec::with_capacity(9);
+            key.push(b'G');
+            key.extend_from_slice(&block_number.to_be_bytes());
+            let value = serde_json::to_vec(ghost).map_err(|e| e.to_string())?;
+            self.db.put_cf(cf, key, value).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    pub fn load_poha_state(&self, store: &mut evaporchain_da::poha::PoHAStore) -> usize {
+        let cf = self.db.cf_handle(CF_POHA).unwrap();
+        let mut loaded = 0usize;
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+        for item in iter {
+            if let Ok((key, value)) = item {
+                if key.starts_with(&[b'G']) && key.len() >= 9 {
+                    // Ghost record
+                    if let Ok(ghost) = serde_json::from_slice::<evaporchain_da::poha::CertGhost>(&value) {
+                        store.insert_ghost(ghost);
+                        loaded += 1;
+                    }
+                } else if key.len() >= 8 {
+                    // Active certificate
+                    if let Ok(cert) = serde_json::from_slice::<evaporchain_da::poha::PoHACertificate>(&value) {
+                        store.insert_certificate(cert);
+                        loaded += 1;
+                    }
+                }
+            }
+        }
+        loaded
     }
 
     pub fn prune_da_packages(&self, current_height: u64, retain: u64) -> usize {

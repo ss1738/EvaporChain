@@ -1421,6 +1421,13 @@ async fn main() -> Result<()> {
     let frontier_state: Arc<Mutex<frontier::FrontierState>> = Arc::new(Mutex::new(
         frontier::FrontierState::new(frontier::FrontierConfig::default()),
     ));
+    {
+        let mut fs = safe_lock(&frontier_state);
+        let poha_loaded = chain_store.load_poha_state(&mut fs.poha);
+        if poha_loaded > 0 {
+            println!("{} \x1b[35mPoHA: restored {} certs/ghosts from disk\x1b[0m", node_tag, poha_loaded);
+        }
+    }
     println!(
         "{} \x1b[1;35mFrontier primitives active\x1b[0m — anchors(every 100), PoHA, energy-trie",
         node_tag,
@@ -1437,9 +1444,7 @@ async fn main() -> Result<()> {
     // Channel for API-submitted transactions to reach P2P network & all mempools
     let (api_tx_sender, mut api_tx_receiver) = tokio::sync::mpsc::channel::<Transaction>(256);
 
-    // DA store and snapshot info — shared between API server and commit loop
-    let da_store: Arc<Mutex<std::collections::BTreeMap<u64, evaporchain_da::block_da::BlockDAPackage>>> =
-        Arc::new(Mutex::new(std::collections::BTreeMap::new()));
+    // Snapshot info — shared between API server and commit loop
     let snapshot_info: Arc<Mutex<Option<(u64, [u8; 32], usize)>>> =
         Arc::new(Mutex::new(None));
 
@@ -2079,6 +2084,20 @@ async fn main() -> Result<()> {
                                         }
                                     }
                                     if block.number % 50 == 0 {
+                                        // Persist PoHA state and run temperature-based shard pruning
+                                        log_persist_err("poha", chain_store.save_poha_state(&fs.poha));
+                                        {
+                                            let mut da_guard = safe_lock(&da_store);
+                                            let prune_result = evaporchain_da::pruning::prune_by_temperature(&mut da_guard, &fs.poha);
+                                            if prune_result.shards_pruned > 0 {
+                                                println!(
+                                                    "{} \x1b[33mDA prune: {} shards pruned ({} blocks removed, {} parity-pruned)\x1b[0m",
+                                                    node_tag, prune_result.shards_pruned,
+                                                    prune_result.blocks_fully_pruned,
+                                                    prune_result.blocks_parity_pruned,
+                                                );
+                                            }
+                                        }
                                         println!(
                                             "{} \x1b[35m[frontier] {}\x1b[0m",
                                             node_tag, fs.status_line(),

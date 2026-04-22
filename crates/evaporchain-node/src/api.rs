@@ -3063,6 +3063,81 @@ async fn get_da_light_sample(
     })).into_response()
 }
 
+// ─────────────── PoHA Certificate Detail ─────────────────────────────
+
+async fn get_poha_certificate(
+    State(state): State<Arc<ApiState>>,
+    Path(block_number): Path<u64>,
+) -> impl IntoResponse {
+    let Some(ref fs_arc) = state.frontier_state else {
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": "frontier not enabled"}))).into_response();
+    };
+    let fs = fs_arc.lock().unwrap();
+
+    if let Some(cert) = fs.poha.get(block_number) {
+        let temp = cert.temperature();
+        Json(serde_json::json!({
+            "block_number": cert.block_number,
+            "data_root": hex::encode(cert.data_root),
+            "shard_count": cert.shard_count,
+            "energy": cert.energy,
+            "initial_energy": cert.initial_energy,
+            "half_life": cert.half_life,
+            "temperature": format!("{:?}", temp),
+            "created_epoch": cert.created_epoch,
+            "last_attested_epoch": cert.last_attested_epoch,
+            "re_attestation_count": cert.re_attestation_count,
+            "is_supermajority": cert.is_supermajority(),
+            "signer_count": cert.signer_ids.len(),
+        })).into_response()
+    } else if let Some(ghost) = fs.poha.get_ghost(block_number) {
+        Json(serde_json::json!({
+            "block_number": ghost.block_number,
+            "data_root": hex::encode(ghost.data_root),
+            "cert_hash": hex::encode(ghost.cert_hash),
+            "evaporated_epoch": ghost.evaporated_epoch,
+            "total_re_attestations": ghost.total_re_attestations,
+            "temperature": "Evaporated",
+            "is_ghost": true,
+        })).into_response()
+    } else {
+        (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "no PoHA certificate for this block"}))).into_response()
+    }
+}
+
+async fn get_poha_certificates(
+    State(state): State<Arc<ApiState>>,
+) -> impl IntoResponse {
+    let Some(ref fs_arc) = state.frontier_state else {
+        return Json(serde_json::json!({"error": "frontier not enabled"}));
+    };
+    let fs = fs_arc.lock().unwrap();
+    let dist = fs.poha.temperature_distribution();
+
+    let certs: Vec<_> = fs.poha.all_active().map(|(&bn, cert)| {
+        serde_json::json!({
+            "block_number": bn,
+            "energy": cert.energy,
+            "initial_energy": cert.initial_energy,
+            "temperature": format!("{:?}", cert.temperature()),
+            "re_attestations": cert.re_attestation_count,
+        })
+    }).collect();
+
+    Json(serde_json::json!({
+        "active_count": certs.len(),
+        "ghost_count": fs.poha.ghost_count(),
+        "distribution": {
+            "hot": dist.hot,
+            "warm": dist.warm,
+            "cold": dist.cold,
+            "evaporated": dist.evaporated,
+            "ghosts": dist.ghosts,
+        },
+        "certificates": certs,
+    }))
+}
+
 // ─────────────── State Sync ───────────────────────────────────────────
 
 async fn get_sync_snapshot_info(
@@ -3204,6 +3279,9 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/da/block/:number", get(get_da_block))
         .route("/api/da/sample/:block/:shard_index", get(get_da_sample))
         .route("/api/da/light-sample/:block", get(get_da_light_sample))
+        // PoHA certificates
+        .route("/api/da/poha", get(get_poha_certificates))
+        .route("/api/da/poha/:block", get(get_poha_certificate))
         // State sync
         .route("/api/sync/snapshot-info", get(get_sync_snapshot_info))
         // PWA

@@ -14,6 +14,7 @@ serde_json = { workspace = true }
 rand = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
+hex = { workspace = true }
 evaporchain-types = { path = "../evaporchain-types" }
 evaporchain-crypto = { path = "../evaporchain-crypto" }
 

@@ -396,6 +396,21 @@ impl PoHAStore {
         self.certificates.iter()
     }
 
+    /// Get all ghost records as an iterator.
+    pub fn all_ghosts(&self) -> impl Iterator<Item = (&u64, &CertGhost)> {
+        self.ghosts.iter()
+    }
+
+    /// Insert a pre-built certificate (for persistence restore).
+    pub fn insert_certificate(&mut self, cert: PoHACertificate) {
+        self.certificates.insert(cert.block_number, cert);
+    }
+
+    /// Insert a pre-built ghost record (for persistence restore).
+    pub fn insert_ghost(&mut self, ghost: CertGhost) {
+        self.ghosts.insert(ghost.block_number, ghost);
+    }
+
     /// Prune ghost records older than the given epoch.
     pub fn prune_ghosts(&mut self, before_epoch: u64) -> usize {
         let to_remove: Vec<u64> = self
