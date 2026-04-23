@@ -201,6 +201,26 @@ impl SimpleExecutor {
         }
     }
 
+    #[cfg(test)]
+    pub fn new_with_fees_for_test(
+        grace_period: u64,
+        fee_controller: fees::PidFeeController,
+        block_gas_limit: u64,
+    ) -> Self {
+        Self {
+            evaporation_engine: EvaporationEngine::new(grace_period),
+            mmr: MerkleMountainRange::new(),
+            verify_signatures: false,
+            fee_controller: Some(fee_controller),
+            block_gas_limit,
+            contract_engine: ContractEngine::new(),
+            script_engine: ScriptEngine::new(),
+            privacy_executor: privacy_exec::PrivacyExecutor::with_depth(4),
+            deferred_queue: temporal::DeferredQueue::new(),
+            decay_watchers: temporal::DecayWatcherEngine::new(),
+        }
+    }
+
     /// Create a new executor with signature verification AND fee deduction enabled.
     /// This is the production configuration.
     pub fn new_production(
@@ -2021,7 +2041,7 @@ contract Counter {
         fund_account(&mut db, 1, 1_000_000);
 
         let fc = fees::PidFeeController::testnet_config();
-        let mut executor = SimpleExecutor::new_with_fees(7, fc, 500_000);
+        let mut executor = SimpleExecutor::new_with_fees_for_test(7, fc, 500_000);
 
         let block = make_block(1, 1, vec![
             Transaction::Transfer(TransferTx {
@@ -2045,7 +2065,7 @@ contract Counter {
         fund_account(&mut db, 1, 10);
 
         let fc = fees::PidFeeController::testnet_config();
-        let mut executor = SimpleExecutor::new_with_fees(7, fc, 500_000);
+        let mut executor = SimpleExecutor::new_with_fees_for_test(7, fc, 500_000);
 
         let block = make_block(1, 1, vec![
             Transaction::Transfer(TransferTx {
@@ -2068,7 +2088,7 @@ contract Counter {
         fund_account(&mut db, 1, 50_000);
 
         let fc = fees::PidFeeController::testnet_config();
-        let mut executor = SimpleExecutor::new_with_fees(7, fc, 500_000);
+        let mut executor = SimpleExecutor::new_with_fees_for_test(7, fc, 500_000);
 
         let block = make_block(1, 1, vec![
             Transaction::Transfer(TransferTx {
@@ -2092,7 +2112,7 @@ contract Counter {
         fund_account(&mut db, 1, 1_000_000);
 
         let fc = fees::PidFeeController::testnet_config();
-        let mut executor = SimpleExecutor::new_with_fees(7, fc, 500_000);
+        let mut executor = SimpleExecutor::new_with_fees_for_test(7, fc, 500_000);
 
         let block = make_block(1, 1, vec![
             Transaction::CreateObject(CreateObjectTx {
@@ -2124,7 +2144,7 @@ contract Counter {
         fund_account(&mut db, 1, 100_000);
 
         let fc = fees::PidFeeController::testnet_config();
-        let mut executor = SimpleExecutor::new_with_fees(7, fc, 500_000);
+        let mut executor = SimpleExecutor::new_with_fees_for_test(7, fc, 500_000);
 
         let block = make_block(1, 1, vec![
             Transaction::Transfer(TransferTx {
@@ -2343,7 +2363,7 @@ contract Counter {
     fn stress_block_gas_limit_enforcement() {
         let mut db = InMemoryStateDB::new();
         let fee_controller = crate::fees::PidFeeController::new(0.5, 0.1, 0.01, 0.05, 1000, 1, 1_000_000_000);
-        let mut executor = SimpleExecutor::new_with_fees(7, fee_controller, 100_000);
+        let mut executor = SimpleExecutor::new_with_fees_for_test(7, fee_controller, 100_000);
 
         fund_account(&mut db, 1, 10_000_000);
 

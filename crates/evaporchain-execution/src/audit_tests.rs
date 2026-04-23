@@ -78,7 +78,7 @@ mod invariant_tests {
             })
             .collect();
 
-        let mut executor = ParallelExecutor::new(5);
+        let mut executor = ParallelExecutor::new_for_test(5);
         let result = executor.execute_block(&mut db, &make_block(1, 1, txs)).unwrap();
 
         let total_after: u64 = (0..5u8).map(|i| db.get_account(&addr(i)).unwrap().balance).sum();
@@ -108,7 +108,7 @@ mod invariant_tests {
             public_key: None,
         })];
 
-        let mut executor = ParallelExecutor::new(5);
+        let mut executor = ParallelExecutor::new_for_test(5);
         let result = executor.execute_block(&mut db, &make_block(1, 1, txs)).unwrap();
         let balance_after = db.get_account(&addr(1)).unwrap().balance;
 
@@ -141,7 +141,7 @@ mod invariant_tests {
         });
 
         // First execution succeeds
-        let mut executor = ParallelExecutor::new(5);
+        let mut executor = ParallelExecutor::new_for_test(5);
         let result1 = executor.execute_block(&mut db, &make_block(1, 1, vec![tx.clone()])).unwrap();
         assert_eq!(result1.txs_executed, 1);
 
@@ -165,7 +165,7 @@ mod invariant_tests {
             public_key: None,
         });
 
-        let mut executor = ParallelExecutor::new(5);
+        let mut executor = ParallelExecutor::new_for_test(5);
         let result = executor.execute_block(&mut db, &make_block(1, 1, vec![tx])).unwrap();
         assert_eq!(result.txs_failed, 1, "nonce gap must cause rejection");
     }
@@ -189,7 +189,7 @@ mod invariant_tests {
             public_key: None,
         });
 
-        let mut executor = ParallelExecutor::new(5);
+        let mut executor = ParallelExecutor::new_for_test(5);
         let result = executor.execute_block(&mut db, &make_block(1, 1, vec![tx])).unwrap();
         assert_eq!(result.txs_failed, 1, "overdraft must be rejected");
 
@@ -214,7 +214,7 @@ mod invariant_tests {
             public_key: None,
         });
 
-        let mut executor = ParallelExecutor::new(5);
+        let mut executor = ParallelExecutor::new_for_test(5);
         let result = executor.execute_block(&mut db, &make_block(1, 1, vec![tx])).unwrap();
         assert_eq!(result.txs_executed, 1);
     }
@@ -252,7 +252,7 @@ mod invariant_tests {
             .collect();
 
         // Use a tight gas limit
-        let mut executor = ParallelExecutor::new(5);
+        let mut executor = ParallelExecutor::new_for_test(5);
         executor.block_gas_limit = 100_000;
         let result = executor.execute_block(&mut db, &make_block(1, 1, txs)).unwrap();
 
@@ -291,7 +291,7 @@ mod invariant_tests {
             public_key: None,
         });
 
-        let mut executor = ParallelExecutor::new(5);
+        let mut executor = ParallelExecutor::new_for_test(5);
         let _ = executor.execute_block(&mut db, &make_block(1, 1, vec![create_tx])).unwrap();
 
         // Execute empty blocks at increasing epochs and verify energy never increases
@@ -331,7 +331,7 @@ mod invariant_tests {
             public_key: None,
         });
 
-        let mut executor = ParallelExecutor::new(5);
+        let mut executor = ParallelExecutor::new_for_test(5);
         let _ = executor.execute_block(&mut db, &make_block(1, 1, vec![create_tx])).unwrap();
 
         // Advance many epochs to ensure evaporation
@@ -411,7 +411,7 @@ mod proptest_execution {
                 public_key: None,
             });
 
-            let mut executor = ParallelExecutor::new(5);
+            let mut executor = ParallelExecutor::new_for_test(5);
             // Should never panic regardless of input
             let _ = executor.execute_block(&mut db, &make_block(1, 1, vec![tx]));
         }
@@ -440,7 +440,7 @@ mod proptest_execution {
                 })
                 .collect();
 
-            let mut executor = ParallelExecutor::new(5);
+            let mut executor = ParallelExecutor::new_for_test(5);
             let _ = executor.execute_block(&mut db, &make_block(1, 1, txs));
 
             // Check no balance is "negative" (would be very large u64)
@@ -473,7 +473,7 @@ mod proptest_execution {
                 })
                 .collect();
 
-            let mut executor = ParallelExecutor::new(5);
+            let mut executor = ParallelExecutor::new_for_test(5);
             let result = executor.execute_block(&mut db, &make_block(1, 1, txs));
 
             if let Ok(r) = result {
@@ -502,12 +502,12 @@ mod proptest_execution {
 
             let mut db1 = InMemoryStateDB::new();
             setup(&mut db1);
-            let mut executor1 = ParallelExecutor::new(5);
+            let mut executor1 = ParallelExecutor::new_for_test(5);
             let r1 = executor1.execute_block(&mut db1, &make_block(1, 1, txs.clone())).unwrap();
 
             let mut db2 = InMemoryStateDB::new();
             setup(&mut db2);
-            let mut executor2 = ParallelExecutor::new(5);
+            let mut executor2 = ParallelExecutor::new_for_test(5);
             let r2 = executor2.execute_block(&mut db2, &make_block(1, 1, txs)).unwrap();
 
             prop_assert_eq!(r1.state_root, r2.state_root,
