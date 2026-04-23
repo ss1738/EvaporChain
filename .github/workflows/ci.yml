@@ -33,6 +33,15 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
+  deny:
+    name: Security — license & ban check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v1
+        with:
+          command: check all
+
   coverage:
     name: Coverage — tarpaulin
     runs-on: ubuntu-latest

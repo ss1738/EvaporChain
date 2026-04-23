@@ -1471,6 +1471,30 @@ async fn health() -> impl IntoResponse {
     (StatusCode::OK, "ok")
 }
 
+async fn healthz() -> impl IntoResponse {
+    (StatusCode::OK, Json(serde_json::json!({"status": "alive"})))
+}
+
+async fn readyz(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
+    let block_history = state.block_history.lock().unwrap();
+    let has_blocks = !block_history.is_empty();
+    let tip_height = block_history.back().map(|b| b.height).unwrap_or(0);
+    drop(block_history);
+
+    let peer_count = state.peer_count.load(std::sync::atomic::Ordering::Relaxed);
+    let uptime_secs = state.start_time.elapsed().as_secs();
+
+    let ready = has_blocks && uptime_secs > 5;
+    let status = if ready { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE };
+
+    (status, Json(serde_json::json!({
+        "ready": ready,
+        "block_height": tip_height,
+        "peers": peer_count,
+        "uptime_secs": uptime_secs,
+    })))
+}
+
 // ──────────────────────────── Address Detail ─────────────────────────────
 
 async fn address_html() -> impl IntoResponse {
@@ -3382,6 +3406,8 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         // Explorer (developer dashboard)
         .route("/explorer", get(dashboard_html))
         .route("/health", get(health))
+        .route("/healthz", get(healthz))
+        .route("/readyz", get(readyz))
         // Chain metadata
         .route("/api/chain", get(get_chain))
         // Explorer

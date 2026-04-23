@@ -58,7 +58,7 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 
 - [x] **Code coverage** — DONE: `cargo-tarpaulin` in CI with Codecov upload (`.github/workflows/ci.yml`)
 - [x] **Cargo-audit in CI** — DONE: `rustsec/audit-check@v2.0.0` on every push/PR
-- [ ] **Cargo-deny** — License compliance and duplicate dependency checking.
+- [x] **Cargo-deny** — DONE: `deny.toml` config + `cargo-deny-action` in CI
 - [x] **Integration tests in CI** — DONE: `cargo test -p integration-tests -- --include-ignored` with 15min timeout
 - [ ] **Benchmark regression tracking** — Run benchmarks in CI, flag regressions >10%.
 - [ ] **Fuzzing harnesses** — Wire `wallet/src/fuzzer.rs` to `cargo-fuzz`. Add harnesses for Poseidon, EvaporScript parser, bincode deserialization.
@@ -70,9 +70,9 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 
 - [ ] **Terraform/IaC** — Modules for Hetzner/AWS/GCP. Reproducible infrastructure.
 - [ ] **Expanded devnet** — 10-20 validators on Hetzner (€5/mo CX21 each). Scripts exist at `scripts/deploy-testnet.sh`.
-- [ ] **Log aggregation** — Structured JSON logging (tracing-subscriber) + Loki/ELK.
+- [x] **Log aggregation** — DONE: `--json-log` flag for structured JSON output via tracing-subscriber, RUST_LOG env filter support
 - [ ] **Alerting rules** — AlertManager for: consensus stalled, peer count drop, block production stopped, disk >80%.
-- [ ] **Health check endpoints** — `/healthz` (liveness) and `/readyz` (readiness) for k8s probes.
+- [x] **Health check endpoints** — DONE: `/healthz` (liveness) and `/readyz` (readiness with block height, peers, uptime) in `api.rs`
 - [ ] **Backup strategy** — Automated RocksDB snapshots. Define RTO/RPO.
 - [ ] **Disaster recovery plan** — Documented procedures for node failure, state corruption, network partition.
 - [ ] **Runbooks** — Validator onboarding, emergency procedures, network upgrades, state sync.

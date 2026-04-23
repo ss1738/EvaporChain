@@ -1141,6 +1141,24 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Initialize structured logging
+    let json_log = std::env::args().any(|a| a == "--json-log");
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    if json_log {
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .json()
+            .with_target(true)
+            .with_thread_ids(true)
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_target(false)
+            .init();
+    }
+
     let args = parse_args();
     let node_tag = make_tag(&args.node_id);
 
