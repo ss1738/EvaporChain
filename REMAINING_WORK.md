@@ -23,9 +23,9 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 - [x] **Dockerfile** — Multi-stage build (builder + slim runtime), healthcheck, non-root user
 - [x] **docker-compose.yml** — 4-validator local devnet with persistent volumes
 - [x] **.dockerignore** — Excludes target/, website/, extension/, docs/, research/
-- [ ] **Kubernetes manifests** — Deployment, Service, PVC (RocksDB), ConfigMap (genesis), NetworkPolicy.
-- [x] **Prometheus metrics exporter** — `/metrics` endpoint with 12 gauges/counters (block_height, epoch, tps, peak_tps, total_transactions, active_objects, ghost_count, accounts, peer_count, avg_block_exec_ms, avg_gas_per_block, uptime_seconds)
-- [ ] **Grafana dashboard templates** — Pre-built dashboards for node health, consensus, execution.
+- [x] **Kubernetes manifests** — StatefulSet (4 replicas, auto-peer-discovery), headless Service, LoadBalancer Service, ConfigMap (genesis), NetworkPolicy, PVC (10Gi per validator), liveness/readiness probes
+- [x] **Prometheus metrics exporter** — `/metrics` endpoint with 12 gauges/counters + `deploy/prometheus.yml` scrape config
+- [x] **Grafana dashboard templates** — 12-panel dashboard (block height, TPS, peak TPS, objects, ghosts, peers, time series for all) at `deploy/grafana/evaporchain-dashboard.json`
 - [ ] **API rate limiting** — Per-IP rate limits on all public endpoints. DoS risk today.
 - [ ] **TLS/mTLS** — Certificate automation between validators. MITM risk today.
 - [ ] **Secrets management** — Validator keys in Kubernetes Secrets or HashiCorp Vault. Not hardcoded.

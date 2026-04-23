@@ -1,0 +1,115 @@
+{
+  "dashboard": {
+    "title": "EvaporChain Node Health",
+    "uid": "evaporchain-health",
+    "tags": ["evaporchain", "blockchain"],
+    "timezone": "browser",
+    "refresh": "10s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Block Height",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+        "targets": [{ "expr": "evaporchain_block_height", "legendFormat": "{{instance}}" }],
+        "fieldConfig": { "defaults": { "unit": "none" } }
+      },
+      {
+        "id": 2,
+        "title": "Current TPS",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+        "targets": [{ "expr": "evaporchain_tps", "legendFormat": "{{instance}}" }],
+        "fieldConfig": { "defaults": { "unit": "ops", "thresholds": { "steps": [{ "value": 0, "color": "red" }, { "value": 100, "color": "yellow" }, { "value": 1000, "color": "green" }] } } }
+      },
+      {
+        "id": 3,
+        "title": "Peak TPS",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+        "targets": [{ "expr": "evaporchain_peak_tps", "legendFormat": "{{instance}}" }]
+      },
+      {
+        "id": 4,
+        "title": "Active Objects",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+        "targets": [{ "expr": "evaporchain_active_objects", "legendFormat": "{{instance}}" }]
+      },
+      {
+        "id": 5,
+        "title": "Ghost Count",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+        "targets": [{ "expr": "evaporchain_ghost_count", "legendFormat": "{{instance}}" }]
+      },
+      {
+        "id": 6,
+        "title": "Peer Count",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+        "targets": [{ "expr": "evaporchain_peer_count", "legendFormat": "{{instance}}" }],
+        "fieldConfig": { "defaults": { "thresholds": { "steps": [{ "value": 0, "color": "red" }, { "value": 1, "color": "yellow" }, { "value": 3, "color": "green" }] } } }
+      },
+      {
+        "id": 7,
+        "title": "Block Height Over Time",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+        "targets": [{ "expr": "evaporchain_block_height", "legendFormat": "{{instance}}" }]
+      },
+      {
+        "id": 8,
+        "title": "TPS Over Time",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+        "targets": [
+          { "expr": "evaporchain_tps", "legendFormat": "current {{instance}}" },
+          { "expr": "evaporchain_peak_tps", "legendFormat": "peak {{instance}}" }
+        ]
+      },
+      {
+        "id": 9,
+        "title": "State Objects vs Ghosts",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+        "targets": [
+          { "expr": "evaporchain_active_objects", "legendFormat": "active {{instance}}" },
+          { "expr": "evaporchain_ghost_count", "legendFormat": "ghosts {{instance}}" }
+        ]
+      },
+      {
+        "id": 10,
+        "title": "Block Execution Time (ms)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+        "targets": [{ "expr": "evaporchain_avg_block_exec_ms", "legendFormat": "{{instance}}" }],
+        "fieldConfig": { "defaults": { "unit": "ms" } }
+      },
+      {
+        "id": 11,
+        "title": "Total Transactions",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+        "targets": [{ "expr": "rate(evaporchain_total_transactions[5m])", "legendFormat": "tx/s {{instance}}" }]
+      },
+      {
+        "id": 12,
+        "title": "Gas Per Block",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+        "targets": [{ "expr": "evaporchain_avg_gas_per_block", "legendFormat": "{{instance}}" }]
+      }
+    ],
+    "templating": {
+      "list": [
+        {
+          "name": "instance",
+          "type": "query",
+          "query": "label_values(evaporchain_block_height, instance)",
+          "refresh": 2
+        }
+      ]
+    }
+  }
+}

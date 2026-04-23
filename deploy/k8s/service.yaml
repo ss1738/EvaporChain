@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: evaporchain-validators
+  namespace: evaporchain
+  labels:
+    app.kubernetes.io/name: evaporchain
+    app.kubernetes.io/component: validator
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: evaporchain
+    app.kubernetes.io/component: validator
+  ports:
+    - name: api
+      port: 8080
+      targetPort: api
+    - name: p2p
+      port: 26656
+      targetPort: p2p
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: evaporchain-api
+  namespace: evaporchain
+  labels:
+    app.kubernetes.io/name: evaporchain
+    app.kubernetes.io/component: api
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: evaporchain
+    app.kubernetes.io/component: validator
+  ports:
+    - name: http
+      port: 80
+      targetPort: api

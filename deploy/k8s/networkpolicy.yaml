@@ -1,0 +1,47 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: evaporchain-validator-policy
+  namespace: evaporchain
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: evaporchain
+      app.kubernetes.io/component: validator
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow P2P between validators
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: validator
+      ports:
+        - port: 26656
+          protocol: TCP
+    # Allow API from anywhere (LoadBalancer)
+    - ports:
+        - port: 8080
+          protocol: TCP
+  egress:
+    # Allow P2P to other validators
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: validator
+      ports:
+        - port: 26656
+          protocol: TCP
+    # Allow DNS
+    - to: []
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Allow HTTPS (for external APIs if needed)
+    - to: []
+      ports:
+        - port: 443
+          protocol: TCP

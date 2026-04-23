@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: evaporchain-genesis
+  namespace: evaporchain
+data:
+  genesis.json: |
+    {
+      "chain_params": {
+        "chain_id": "evaporchain-testnet-1",
+        "block_interval_ms": 2000,
+        "grace_period": 5,
+        "block_gas_limit": 500000,
+        "max_tx_size": 1048576,
+        "max_txs_per_block": 10000,
+        "min_validator_stake": 100000,
+        "unbonding_period": 100
+      }
+    }

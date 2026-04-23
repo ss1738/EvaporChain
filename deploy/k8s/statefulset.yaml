@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: evaporchain-validator
+  namespace: evaporchain
+  labels:
+    app.kubernetes.io/name: evaporchain
+    app.kubernetes.io/component: validator
+spec:
+  serviceName: evaporchain-validators
+  replicas: 4
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: evaporchain
+      app.kubernetes.io/component: validator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: evaporchain
+        app.kubernetes.io/component: validator
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: validator
+          image: ghcr.io/ss1738/evaporchain:latest
+          ports:
+            - name: api
+              containerPort: 8080
+              protocol: TCP
+            - name: p2p
+              containerPort: 26656
+              protocol: TCP
+          env:
+            - name: RUST_LOG
+              value: "info"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          command:
+            - /bin/sh
+            - -c
+            - |
+              ORDINAL=${POD_NAME##*-}
+              PEERS=""
+              for i in $(seq 0 3); do
+                if [ "$i" != "$ORDINAL" ]; then
+                  [ -n "$PEERS" ] && PEERS="${PEERS},"
+                  PEERS="${PEERS}evaporchain-validator-${i}.evaporchain-validators:26656"
+                fi
+              done
+              exec evaporchain-node \
+                --api --api-port 8080 \
+                --network --tendermint \
+                --port 26656 \
+                --node-id "validator-${ORDINAL}" \
+                --validator-id "${ORDINAL}" \
+                --validators 4 \
+                --data-dir /data/evaporchain \
+                --genesis-config /etc/evaporchain/genesis.json \
+                --demo \
+                --bootstrap-peers "${PEERS}"
+          volumeMounts:
+            - name: data
+              mountPath: /data/evaporchain
+            - name: genesis
+              mountPath: /etc/evaporchain
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: api
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /api/status
+              port: api
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+      volumes:
+        - name: genesis
+          configMap:
+            name: evaporchain-genesis
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
