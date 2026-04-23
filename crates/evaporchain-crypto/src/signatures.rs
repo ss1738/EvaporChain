@@ -30,6 +30,11 @@ pub struct MlDsaKeypair {
     inner: Keypair,
 }
 
+const _: () = assert!(
+    std::mem::size_of::<Keypair>() == pqc_dilithium::PUBLICKEYBYTES + pqc_dilithium::SECRETKEYBYTES,
+    "Keypair layout assumption violated — unsafe zeroize/reconstruct will break"
+);
+
 impl Drop for MlDsaKeypair {
     fn drop(&mut self) {
         // Zeroize the secret key portion of the keypair.

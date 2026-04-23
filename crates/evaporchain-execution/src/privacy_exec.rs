@@ -64,6 +64,8 @@ pub enum PrivacyExecError {
     NoOutputs,
     #[error("energy decay proof references future epoch {epoch}, current is {current}")]
     FutureEpochInDecayProof { epoch: u64, current: u64 },
+    #[error("balance overflow: operation would exceed u64::MAX")]
+    BalanceOverflow,
     #[error("privacy engine error: {0}")]
     EngineError(String),
 }
@@ -198,7 +200,11 @@ impl PrivacyExecutor {
 
         // 3. Update StateDB privacy state
         let pool_balance = db.get_shielded_pool_balance();
-        db.put_shielded_pool_balance(pool_balance + tx.amount);
+        db.put_shielded_pool_balance(
+            pool_balance
+                .checked_add(tx.amount)
+                .ok_or(PrivacyExecError::BalanceOverflow)?,
+        );
         db.put_note_tree_root(self.engine.merkle_root());
         db.put_note_count(self.engine.note_count() as u64);
 
@@ -347,7 +353,10 @@ impl PrivacyExecutor {
 
         // 9. Credit transparent balance
         let receiver = db.get_or_create_account(&tx.to);
-        receiver.balance += tx.amount;
+        receiver.balance = receiver
+            .balance
+            .checked_add(tx.amount)
+            .ok_or(PrivacyExecError::BalanceOverflow)?;
 
         // 10. Update pool balance
         let pool_balance = db.get_shielded_pool_balance();
@@ -501,7 +510,7 @@ impl PrivacyExecutor {
         ) {
             return Err(PrivacyExecError::InvalidBalanceBinding);
         }
-        if sum_in != sum_out + tx.fee {
+        if sum_in != sum_out.checked_add(tx.fee).ok_or(PrivacyExecError::BalanceOverflow)? {
             return Err(PrivacyExecError::UnshieldBalanceMismatch);
         }
 

@@ -355,7 +355,7 @@ impl SimpleExecutor {
 
         // Credit receiver
         let receiver = db.get_or_create_account(&tx.to);
-        receiver.balance += tx.amount;
+        receiver.balance = receiver.balance.saturating_add(tx.amount);
 
         debug!(
             from = hex::encode(tx.from),
@@ -810,7 +810,7 @@ impl ExecutionEngine for SimpleExecutor {
         // Refund expired deferred tx deposits.
         for (addr, refund) in &deferred_result.refunds {
             if let Some(acct) = db.get_account_mut(addr) {
-                acct.balance += refund;
+                acct.balance = acct.balance.saturating_add(*refund);
             }
         }
 

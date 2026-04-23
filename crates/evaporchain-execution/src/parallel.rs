@@ -705,7 +705,7 @@ impl ParallelExecutor {
         sender.nonce += 1;
 
         let receiver = db.get_or_create_account(&tx.to);
-        receiver.balance += tx.amount;
+        receiver.balance = receiver.balance.saturating_add(tx.amount);
 
         Ok(())
     }

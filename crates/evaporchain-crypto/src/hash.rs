@@ -94,6 +94,7 @@ impl PoseidonParams {
             for (j, cell) in row.iter_mut().enumerate() {
                 let x = Fp::from_u128(i as u128);
                 let y = Fp::from_u128((WIDTH + j) as u128);
+                // SAFETY: x ∈ {0,1,2}, y ∈ {3,4,5}, so x+y ∈ {3..7} — never zero in Fp
                 *cell = (x + y).invert().unwrap();
             }
         }
@@ -111,7 +112,7 @@ fn bytes_to_field(bytes: &[u8; 32]) -> Fp {
     let mut repr = *bytes;
     // Pallas base field modulus p starts with 0x40... in big-endian.
     // In little-endian repr, byte 31 is the MSB. Clear bits 6,7 so value < p.
-    repr[31] &= 0x3F;
+    repr[31] &= 0x3F; // Clears bits 6-7 → value < 2^254 < p ≈ 2^254.97
     Fp::from_repr(repr).unwrap()
 }
 
@@ -193,7 +194,7 @@ pub fn poseidon_hash(data: &[u8]) -> [u8; 32] {
     for chunk in data.chunks(31) {
         let mut padded = [0u8; 32];
         padded[..chunk.len()].copy_from_slice(chunk);
-        // No need to clear top bits — 31 bytes max means byte 31 is always 0
+        // 31 bytes max → byte 31 is always 0 → value < 2^248 < p, always valid
         elements.push(Fp::from_repr(padded).unwrap());
     }
     if elements.is_empty() {

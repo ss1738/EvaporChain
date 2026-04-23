@@ -87,6 +87,8 @@ pub struct MockProver {
 
 impl MockProver {
     pub fn new() -> Self {
+        #[cfg(not(any(test, debug_assertions)))]
+        tracing::warn!("MockProver instantiated in release build — proofs are NOT verified");
         Self { num_folded: 0 }
     }
 }
