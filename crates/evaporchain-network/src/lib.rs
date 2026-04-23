@@ -5,6 +5,7 @@ use thiserror::Error;
 pub mod service;
 pub mod tls;
 
+pub use libp2p::PeerId;
 pub use service::{NetworkConfig, P2pNetworkService, ShardCache, cache_da_package};
 pub use tls::{PeerAuthority, TlsConfig};
 

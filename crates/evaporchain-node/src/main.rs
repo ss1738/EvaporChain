@@ -1248,10 +1248,10 @@ async fn main() -> Result<()> {
         let peer_authority = if args.allowed_peers.is_empty() {
             evaporchain_network::PeerAuthority::permissionless()
         } else {
-            let peer_ids: Vec<libp2p::PeerId> = args
+            let peer_ids: Vec<evaporchain_network::PeerId> = args
                 .allowed_peers
                 .iter()
-                .filter_map(|s| s.parse::<libp2p::PeerId>().ok())
+                .filter_map(|s| s.parse::<evaporchain_network::PeerId>().ok())
                 .collect();
             println!(
                 "{} \x1b[1;36mPeer allowlist\x1b[0m — {} authorized peers",

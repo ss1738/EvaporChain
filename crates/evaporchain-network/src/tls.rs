@@ -108,7 +108,7 @@ pub fn generate_ca(output_dir: &Path) -> Result<(), String> {
 /// Requires the CA cert and key PEM strings from `generate_ca()`.
 pub fn generate_validator_cert(
     validator_name: &str,
-    ca_cert_pem: &str,
+    _ca_cert_pem: &str,
     ca_key_pem: &str,
     output_dir: &Path,
 ) -> Result<(), String> {
