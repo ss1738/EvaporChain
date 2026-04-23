@@ -592,6 +592,18 @@ impl StateDB for RocksDBStateDB {
         self.note_count
     }
 
+    fn prove_account(&mut self, addr: &AccountAddress) -> evaporchain_crypto::EnergyVerkleProof {
+        self.sync_dirty_to_trie();
+        let key = trie_key_for_account(addr);
+        self.trie.prove(&key)
+    }
+
+    fn prove_object(&mut self, id: &ObjectId) -> evaporchain_crypto::EnergyVerkleProof {
+        self.sync_dirty_to_trie();
+        let key = trie_key_for_object(id);
+        self.trie.prove(&key)
+    }
+
     fn trie_snapshot(&mut self) -> Vec<u8> {
         self.sync_dirty_to_trie();
         self.trie.to_bytes()
