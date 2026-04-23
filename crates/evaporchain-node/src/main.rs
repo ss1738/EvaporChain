@@ -2,7 +2,9 @@ mod api;
 mod auth;
 mod bench;
 mod frontier;
+mod oracle_bridge;
 mod persistence;
+mod shard_bridge;
 mod user_db;
 
 use anyhow::Result;

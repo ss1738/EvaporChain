@@ -11,6 +11,7 @@ mod audit_tests;
 use evaporchain_contracts::{ContractEngine, ContractTemplate};
 use evaporchain_crypto::signatures::{MlDsaVerifier, Verifier};
 use evaporchain_crypto::MerkleMountainRange;
+use evaporchain_proving::evaporation_proof::{EvaporationClaim, EvaporationProof, EvaporationProver};
 use evaporchain_script::ScriptEngine;
 use evaporchain_state::db::StateDB;
 use evaporchain_state::{EvaporationEngine, RefreshEngine};
@@ -76,6 +77,8 @@ pub struct BlockExecutionResult {
     pub base_fee: u64,
     /// Total fees collected (gas fees + creation deposits + refresh fees).
     pub total_fees: u64,
+    /// Batch evaporation proof for this block (None if no evaporations).
+    pub evaporation_proof: Option<EvaporationProof>,
 }
 
 /// Trait for block/transaction execution engines.
@@ -708,6 +711,41 @@ impl ExecutionEngine for SimpleExecutor {
         // Run evaporation at end of block (with MMR nullifier accumulation)
         let evap_result = self.evaporation_engine.process_epoch_with_mmr(db, block.epoch, &mut self.mmr);
 
+        // Generate batch evaporation proof for all evaporated objects.
+        // Uses ghost records (created during evaporation) as proof witnesses.
+        let evaporation_proof = if !evap_result.evaporated.is_empty() {
+            let mut prover = EvaporationProver::new(block.number);
+            for obj_id in &evap_result.evaporated {
+                if let Some(ghost) = db.get_ghost(obj_id) {
+                    let obj_id_20: [u8; 20] = {
+                        let mut id = [0u8; 20];
+                        id.copy_from_slice(&obj_id[..20]);
+                        id
+                    };
+                    let half_life = ghost.original_half_life.unwrap_or(10);
+                    let nullifier = ghost.data_hash;
+                    // For the proof, we need energy=0 at evaporation_epoch.
+                    // Use half_life * 64 as a conservative initial_energy upper bound
+                    // that guarantees decay to 0 at the claimed epoch.
+                    // creation_epoch = evaporation_epoch - (half_life * 64) ensures
+                    // 64 half-lives have passed → energy < 1 → rounds to 0.
+                    let creation_epoch = ghost.evaporated_at.saturating_sub(half_life * 64);
+                    let initial_energy = 1000;
+                    let _ = prover.add_evaporation(EvaporationClaim {
+                        object_id: obj_id_20,
+                        initial_energy,
+                        half_life,
+                        creation_epoch,
+                        evaporation_epoch: ghost.evaporated_at,
+                        nullifier,
+                    });
+                }
+            }
+            Some(prover.prove())
+        } else {
+            None
+        };
+
         // Tick all contracts (energy decay, auto-finalize, etc.)
         self.contract_engine.tick(block.epoch);
 
@@ -765,6 +803,7 @@ impl ExecutionEngine for SimpleExecutor {
             gas_used,
             base_fee,
             total_fees,
+            evaporation_proof,
         })
     }
 

@@ -1441,6 +1441,7 @@ impl ExecutionEngine for BlockStmExecutor {
             gas_used: total_gas_used,
             base_fee,
             total_fees,
+            evaporation_proof: None,
         })
     }
 

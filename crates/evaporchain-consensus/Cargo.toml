@@ -11,6 +11,7 @@ evaporchain-state = { path = "../evaporchain-state" }
 evaporchain-execution = { path = "../evaporchain-execution" }
 evaporchain-crypto = { path = "../evaporchain-crypto" }
 evaporchain-da = { path = "../evaporchain-da" }
+evaporchain-sharding = { path = "../evaporchain-sharding" }
 blake3 = "1"
 tokio = { workspace = true }
 serde = { workspace = true }

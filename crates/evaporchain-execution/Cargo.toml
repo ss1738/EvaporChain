@@ -12,6 +12,8 @@ evaporchain-crypto = { path = "../evaporchain-crypto" }
 evaporchain-contracts = { path = "../evaporchain-contracts" }
 evaporchain-script = { path = "../evaporchain-script" }
 evaporchain-proving = { path = "../evaporchain-proving" }
+evaporchain-sharding = { path = "../evaporchain-sharding" }
+blake3 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
