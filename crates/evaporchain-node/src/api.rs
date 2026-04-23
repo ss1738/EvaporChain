@@ -478,6 +478,8 @@ struct ObjectResponse {
     grace_epoch: Option<u64>,
     current_energy: u64,
     decay_percentage: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    decay_curve: Option<evaporchain_types::DecayCurve>,
 }
 
 #[derive(Serialize)]
@@ -568,10 +570,10 @@ struct CreateObjectRequest {
     object_id: serde_json::Value,
     energy: u64,
     half_life: u64,
-    /// Optional data payload (hex-encoded or UTF-8 string). Used by oracles
-    /// to attach sensor readings, metadata, etc. to on-chain objects.
     #[serde(default)]
     data: Option<String>,
+    #[serde(default)]
+    decay_curve: Option<evaporchain_types::DecayCurve>,
     #[serde(default)]
     signature: Option<String>,
     #[serde(default)]
@@ -823,6 +825,7 @@ async fn get_objects(State(state): State<Arc<ApiState>>) -> Json<Vec<ObjectRespo
                 grace_epoch: obj.grace_epoch,
                 current_energy,
                 decay_percentage: (decay_pct * 10.0).round() / 10.0,
+                decay_curve: obj.decay_curve.clone(),
             })
         })
         .collect();
@@ -886,6 +889,7 @@ async fn get_single_object(
         grace_epoch: obj.grace_epoch,
         current_energy,
         decay_percentage: (decay_pct * 10.0).round() / 10.0,
+        decay_curve: obj.decay_curve.clone(),
     }))
 }
 
@@ -1141,7 +1145,7 @@ async fn post_create_object(
     let mut tx = Transaction::CreateObject(CreateObjectTx {
         creator, object_id: obj_id_val, energy: req.energy, half_life: req.half_life,
         data,
-        decay_curve: None,
+        decay_curve: req.decay_curve,
         signature: req.signature.and_then(|s| hex::decode(s).ok()),
         public_key: req.public_key.and_then(|s| hex::decode(s).ok()),
     });
@@ -1547,6 +1551,7 @@ async fn get_address_detail(
             state: state_str.to_string(), created_epoch: obj.created_at,
             last_refreshed: obj.last_refreshed, grace_epoch: obj.grace_epoch,
             current_energy, decay_percentage: (decay_pct * 10.0).round() / 10.0,
+            decay_curve: obj.decay_curve.clone(),
         })
     }).collect();
     drop(history);
