@@ -122,6 +122,37 @@ pub struct StateFieldSchema {
     pub default: Option<Value>,
 }
 
+// ─── Contract ABI ──────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContractAbi {
+    pub name: String,
+    pub methods: Vec<AbiMethod>,
+    pub state: Vec<AbiStateField>,
+    pub lifecycle_hooks: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AbiMethod {
+    pub name: String,
+    pub params: Vec<AbiParam>,
+    pub return_type: Option<ScriptType>,
+    pub mutates_state: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AbiParam {
+    pub name: String,
+    pub ty: ScriptType,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AbiStateField {
+    pub name: String,
+    pub ty: ScriptType,
+    pub has_default: bool,
+}
+
 // ─── Contract Events ───────────────────────────────────────────────────────
 
 /// Structured contract event for indexed querying.
@@ -178,6 +209,7 @@ pub struct ScriptContract {
     pub id: u64,
     pub name: String,
     pub bytecode: compiler::EvaporBytecode,
+    pub abi: ContractAbi,
     pub state: HashMap<String, Value>,
     pub creator: AccountAddress,
     pub created_epoch: Epoch,
@@ -334,6 +366,7 @@ impl ScriptEngine {
 
         // Compile
         let bytecode = compiler::compile(&contract_ast)?;
+        let abi = compiler::generate_abi(&contract_ast);
 
         // Initialize state from schema defaults
         let mut state = HashMap::new();
@@ -357,6 +390,7 @@ impl ScriptEngine {
                 id,
                 name: contract_name,
                 bytecode,
+                abi,
                 state,
                 creator,
                 created_epoch: current_epoch,
@@ -562,6 +596,16 @@ impl ScriptEngine {
             contract.evaporated = false;
         }
         Ok(())
+    }
+
+    pub fn get_abi(&self, contract_id: u64) -> Result<&ContractAbi, ScriptError> {
+        let contract = self.contracts.get(&contract_id)
+            .ok_or_else(|| ScriptError::Runtime(format!("contract {contract_id} not found")))?;
+        Ok(&contract.abi)
+    }
+
+    pub fn get_contract(&self, contract_id: u64) -> Option<&ScriptContract> {
+        self.contracts.get(&contract_id)
     }
 }
 

@@ -464,6 +464,66 @@ pub fn compile(contract: &Contract) -> Result<EvaporBytecode, ScriptError> {
     })
 }
 
+/// Generate ABI from a parsed contract AST.
+pub fn generate_abi(contract: &Contract) -> crate::ContractAbi {
+    use crate::{AbiMethod, AbiParam, AbiStateField, ContractAbi};
+
+    let methods = contract.functions.iter().map(|f| {
+        let mutates = fn_mutates_state(&f.body);
+        AbiMethod {
+            name: f.name.clone(),
+            params: f.params.iter().map(|(name, ty)| AbiParam {
+                name: name.clone(),
+                ty: ty.clone(),
+            }).collect(),
+            return_type: f.return_type.clone(),
+            mutates_state: mutates,
+        }
+    }).collect();
+
+    let state = contract.state_fields.iter().map(|f| AbiStateField {
+        name: f.name.clone(),
+        ty: f.ty.clone(),
+        has_default: f.default.is_some(),
+    }).collect();
+
+    let lifecycle_hooks = contract.lifecycle_hooks.iter().map(|h| match h {
+        LifecycleHook::OnEvaporate(_) => "on_evaporate".to_string(),
+        LifecycleHook::OnGrace(_) => "on_grace".to_string(),
+        LifecycleHook::OnRefresh(_) => "on_refresh".to_string(),
+    }).collect();
+
+    ContractAbi {
+        name: contract.name.clone(),
+        methods,
+        state,
+        lifecycle_hooks,
+    }
+}
+
+fn fn_mutates_state(stmts: &[Stmt]) -> bool {
+    use crate::parser::AssignTarget;
+    for stmt in stmts {
+        match stmt {
+            Stmt::Assign { target: AssignTarget::StateField(_), .. }
+            | Stmt::CompoundAssign { target: AssignTarget::StateField(_), .. }
+            | Stmt::Assign { target: AssignTarget::MapEntry(_, _), .. }
+            | Stmt::CompoundAssign { target: AssignTarget::MapEntry(_, _), .. } => return true,
+            Stmt::If { then_body, else_body, .. } => {
+                if fn_mutates_state(then_body) { return true; }
+                if let Some(eb) = else_body {
+                    if fn_mutates_state(eb) { return true; }
+                }
+            }
+            Stmt::While { body, .. } => {
+                if fn_mutates_state(body) { return true; }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -664,5 +724,80 @@ contract LoyaltyPoints {
         assert!(bytecode.methods.contains_key("balance"));
         assert!(bytecode.methods.contains_key("on_evaporate"));
         assert!(bytecode.opcodes.len() > 20);
+    }
+
+    #[test]
+    fn test_generate_abi() {
+        let src = r#"
+contract Token {
+    state {
+        name: string = "MyToken"
+        balances: map[address -> u64]
+        total: u64 = 0
+    }
+
+    fn mint(to: address, amount: u64) {
+        require(caller == owner, "only owner")
+        self.balances[to] += amount
+        self.total += amount
+    }
+
+    fn balance_of(addr: address) -> u64 {
+        return self.balances[addr]
+    }
+
+    on_evaporate() {
+        emit("token evaporated")
+    }
+}
+"#;
+        let ast = parser::parse(src).unwrap();
+        let abi = generate_abi(&ast);
+
+        assert_eq!(abi.name, "Token");
+        assert_eq!(abi.methods.len(), 2);
+
+        let mint = &abi.methods[0];
+        assert_eq!(mint.name, "mint");
+        assert_eq!(mint.params.len(), 2);
+        assert_eq!(mint.params[0].name, "to");
+        assert_eq!(mint.params[0].ty, crate::ScriptType::Address);
+        assert_eq!(mint.params[1].name, "amount");
+        assert_eq!(mint.params[1].ty, crate::ScriptType::U64);
+        assert!(mint.return_type.is_none());
+        assert!(mint.mutates_state);
+
+        let balance = &abi.methods[1];
+        assert_eq!(balance.name, "balance_of");
+        assert_eq!(balance.params.len(), 1);
+        assert_eq!(balance.return_type, Some(crate::ScriptType::U64));
+        assert!(!balance.mutates_state);
+
+        assert_eq!(abi.state.len(), 3);
+        assert_eq!(abi.state[0].name, "name");
+        assert!(abi.state[0].has_default);
+        assert_eq!(abi.state[1].name, "balances");
+        assert!(!abi.state[1].has_default);
+
+        assert_eq!(abi.lifecycle_hooks, vec!["on_evaporate"]);
+    }
+
+    #[test]
+    fn test_abi_json_serialization() {
+        let src = r#"
+contract Simple {
+    state { v: u64 = 0 }
+    fn get() -> u64 { return self.v }
+    fn set(x: u64) { self.v = x }
+}
+"#;
+        let ast = parser::parse(src).unwrap();
+        let abi = generate_abi(&ast);
+        let json = serde_json::to_string_pretty(&abi).unwrap();
+        assert!(json.contains("\"name\": \"Simple\""));
+        assert!(json.contains("\"get\""));
+        assert!(json.contains("\"set\""));
+        assert!(json.contains("\"mutates_state\": true"));
+        assert!(json.contains("\"mutates_state\": false"));
     }
 }

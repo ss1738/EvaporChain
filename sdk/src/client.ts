@@ -18,6 +18,7 @@ import type {
   WsEvent,
   WsTopic,
   ContractEventLog,
+  ContractAbi,
   StateProofResponse,
   TxInclusionProof,
   CompactHeader,
@@ -380,6 +381,13 @@ export class EvaporChain {
    */
   async getEventIndexStats(): Promise<{ indexed_events: number; indexed_transactions: number }> {
     return this.request<{ indexed_events: number; indexed_transactions: number }>("/api/event-index/stats");
+  }
+
+  /**
+   * Get the ABI (typed interface) of a deployed EvaporScript contract.
+   */
+  async getScriptAbi(contractId: number): Promise<ContractAbi> {
+    return this.request<ContractAbi>(`/api/script/${contractId}/abi`);
   }
 
   // ── Light Client Verification ──

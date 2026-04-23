@@ -296,6 +296,32 @@ export interface CompactHeader {
   has_nova_proof: boolean;
 }
 
+/** Contract ABI — describes the contract's typed interface */
+export interface ContractAbi {
+  name: string;
+  methods: AbiMethod[];
+  state: AbiStateField[];
+  lifecycle_hooks: string[];
+}
+
+export interface AbiMethod {
+  name: string;
+  params: AbiParam[];
+  return_type: string | null;
+  mutates_state: boolean;
+}
+
+export interface AbiParam {
+  name: string;
+  ty: string;
+}
+
+export interface AbiStateField {
+  name: string;
+  ty: string;
+  has_default: boolean;
+}
+
 /** Contract event log from the indexer */
 export interface ContractEventLog {
   contract_id: number;

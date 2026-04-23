@@ -1666,6 +1666,7 @@ async fn get_script(
                 "last_refreshed": sc.last_refreshed,
                 "evaporated": sc.evaporated,
                 "methods": sc.bytecode.methods.keys().collect::<Vec<_>>(),
+                "abi": sc.abi,
                 "state_schema": sc.bytecode.state_schema.fields.iter().map(|f| {
                     serde_json::json!({
                         "name": f.name,
@@ -1676,6 +1677,23 @@ async fn get_script(
                 "opcode_count": sc.bytecode.opcodes.len(),
             });
             (StatusCode::OK, Json(resp)).into_response()
+        }
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "script not found" })),
+        )
+            .into_response(),
+    }
+}
+
+async fn get_script_abi(
+    State(state): State<Arc<ApiState>>,
+    Path(id): Path<u64>,
+) -> impl IntoResponse {
+    let c = safe_lock(&state.consensus);
+    match c.executor.script_engine.get(id) {
+        Some(sc) => {
+            (StatusCode::OK, Json(serde_json::to_value(&sc.abi).unwrap())).into_response()
         }
         None => (
             StatusCode::NOT_FOUND,
@@ -3981,6 +3999,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         // EvaporScript Contracts
         .route("/api/scripts", get(get_scripts))
         .route("/api/script/:id", get(get_script))
+        .route("/api/script/:id/abi", get(get_script_abi))
         .route("/api/tx/deploy-script", post(post_deploy_script))
         .route("/api/tx/call-script", post(post_call_script))
         // NFT Marketplace
