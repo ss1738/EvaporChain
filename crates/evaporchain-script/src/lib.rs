@@ -122,6 +122,20 @@ pub struct StateFieldSchema {
     pub default: Option<Value>,
 }
 
+// ─── Contract Events ───────────────────────────────────────────────────────
+
+/// Structured contract event for indexed querying.
+/// Similar to Ethereum logs but with EvaporChain's Value type system.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContractEvent {
+    /// Event name (e.g., "Transfer", "Approval", "Swap").
+    pub name: String,
+    /// Indexed fields — up to 4 topics for efficient filtering.
+    pub topics: Vec<Value>,
+    /// Non-indexed payload data.
+    pub data: Vec<Value>,
+}
+
 // ─── Execution Context ──────────────────────────────────────────────────────
 
 /// Context passed to the VM for built-in function access.
@@ -169,6 +183,7 @@ impl ScriptContract {
 pub struct ScriptCallResult {
     pub return_value: Value,
     pub events: Vec<String>,
+    pub structured_events: Vec<ContractEvent>,
     pub gas_used: u64,
     pub state_changes: HashMap<String, Value>,
 }
@@ -179,6 +194,7 @@ pub struct ScriptTickResult {
     pub contracts_ticked: usize,
     pub contracts_evaporated: Vec<u64>,
     pub events: Vec<String>,
+    pub structured_events: Vec<ContractEvent>,
 }
 
 /// Engine managing all deployed script contracts.
@@ -316,6 +332,7 @@ impl ScriptEngine {
             return Ok(ScriptCallResult {
                 return_value: Value::Null,
                 events: vec![],
+                structured_events: vec![],
                 gas_used: 0,
                 state_changes: HashMap::new(),
             });
@@ -347,6 +364,7 @@ impl ScriptEngine {
         let mut ticked = 0;
         let mut evaporated = Vec::new();
         let mut events = Vec::new();
+        let mut structured_events = Vec::new();
 
         let ids: Vec<u64> = self.contracts.keys().copied().collect();
 
@@ -367,6 +385,7 @@ impl ScriptEngine {
                         self.call_lifecycle_hook(id, "on_evaporate", creator, current_epoch)
                     {
                         events.extend(result.events);
+                        structured_events.extend(result.structured_events);
                     }
                 }
 
@@ -380,6 +399,7 @@ impl ScriptEngine {
             contracts_ticked: ticked,
             contracts_evaporated: evaporated,
             events,
+            structured_events,
         }
     }
 

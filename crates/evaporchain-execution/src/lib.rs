@@ -62,6 +62,14 @@ pub enum ExecutionError {
     BlockGasLimitExceeded { used: u64, limit: u64 },
 }
 
+/// Contract event emitted during block execution, tagged with origin.
+#[derive(Debug, Clone)]
+pub struct BlockContractEvent {
+    pub contract_id: u64,
+    pub tx_index: usize,
+    pub event: evaporchain_script::ContractEvent,
+}
+
 /// Result of executing a single block.
 #[derive(Debug)]
 pub struct BlockExecutionResult {
@@ -75,6 +83,8 @@ pub struct BlockExecutionResult {
     pub gas_used: u64,
     /// Base fee that was active during this block.
     pub base_fee: u64,
+    /// Structured contract events emitted during this block.
+    pub contract_events: Vec<BlockContractEvent>,
     /// Total fees collected (gas fees + creation deposits + refresh fees).
     pub total_fees: u64,
     /// Batch evaporation proof for this block (None if no evaporations).
@@ -128,6 +138,8 @@ pub struct SimpleExecutor {
     pub deferred_queue: temporal::DeferredQueue,
     /// Decay watcher engine (energy threshold triggers).
     pub decay_watchers: temporal::DecayWatcherEngine,
+    /// Pending structured events from script calls (drained per block).
+    pending_events: Vec<(u64, evaporchain_script::ContractEvent)>,
 }
 
 impl SimpleExecutor {
@@ -145,6 +157,7 @@ impl SimpleExecutor {
             privacy_executor: privacy_exec::PrivacyExecutor::new(),
             deferred_queue: temporal::DeferredQueue::new(),
             decay_watchers: temporal::DecayWatcherEngine::new(),
+            pending_events: Vec::new(),
         }
     }
 
@@ -162,6 +175,7 @@ impl SimpleExecutor {
             privacy_executor: privacy_exec::PrivacyExecutor::with_depth(4),
             deferred_queue: temporal::DeferredQueue::new(),
             decay_watchers: temporal::DecayWatcherEngine::new(),
+            pending_events: Vec::new(),
         }
     }
 
@@ -178,6 +192,7 @@ impl SimpleExecutor {
             privacy_executor: privacy_exec::PrivacyExecutor::new(),
             deferred_queue: temporal::DeferredQueue::new(),
             decay_watchers: temporal::DecayWatcherEngine::new(),
+            pending_events: Vec::new(),
         }
     }
 
@@ -194,6 +209,7 @@ impl SimpleExecutor {
             privacy_executor: privacy_exec::PrivacyExecutor::with_depth(4),
             deferred_queue: temporal::DeferredQueue::new(),
             decay_watchers: temporal::DecayWatcherEngine::new(),
+            pending_events: Vec::new(),
         }
     }
 
@@ -214,6 +230,7 @@ impl SimpleExecutor {
             privacy_executor: privacy_exec::PrivacyExecutor::new(),
             deferred_queue: temporal::DeferredQueue::new(),
             decay_watchers: temporal::DecayWatcherEngine::new(),
+            pending_events: Vec::new(),
         }
     }
 
@@ -234,6 +251,7 @@ impl SimpleExecutor {
             privacy_executor: privacy_exec::PrivacyExecutor::with_depth(4),
             deferred_queue: temporal::DeferredQueue::new(),
             decay_watchers: temporal::DecayWatcherEngine::new(),
+            pending_events: Vec::new(),
         }
     }
 
@@ -255,6 +273,7 @@ impl SimpleExecutor {
             privacy_executor: privacy_exec::PrivacyExecutor::new(),
             deferred_queue: temporal::DeferredQueue::new(),
             decay_watchers: temporal::DecayWatcherEngine::new(),
+            pending_events: Vec::new(),
         }
     }
 
@@ -519,10 +538,18 @@ impl SimpleExecutor {
                 .map_err(|e| ExecutionError::ScriptError(format!("invalid args JSON: {e}")))?
         };
 
-        let _result = self
+        let result = self
             .script_engine
             .call(tx.contract_id, &tx.method, args, tx.caller, tx.epoch)
             .map_err(|e| ExecutionError::ScriptError(e.to_string()))?;
+
+        if !result.structured_events.is_empty() {
+            self.pending_events.extend(
+                result.structured_events.into_iter().map(|event| {
+                    (tx.contract_id, event)
+                })
+            );
+        }
 
         debug!(
             script_id = tx.contract_id,
@@ -830,6 +857,15 @@ impl ExecutionEngine for SimpleExecutor {
             "Block executed"
         );
 
+        let contract_events: Vec<BlockContractEvent> = self.pending_events.drain(..)
+            .enumerate()
+            .map(|(_, (contract_id, event))| BlockContractEvent {
+                contract_id,
+                tx_index: 0,
+                event,
+            })
+            .collect();
+
         Ok(BlockExecutionResult {
             state_root,
             mmr_root: self.mmr.root(),
@@ -841,6 +877,7 @@ impl ExecutionEngine for SimpleExecutor {
             base_fee,
             total_fees,
             evaporation_proof,
+            contract_events,
         })
     }
 

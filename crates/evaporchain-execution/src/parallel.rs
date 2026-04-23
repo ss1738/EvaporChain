@@ -1106,6 +1106,7 @@ impl ExecutionEngine for ParallelExecutor {
             base_fee,
             total_fees,
             evaporation_proof: None,
+            contract_events: Vec::new(),
         })
     }
 

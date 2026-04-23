@@ -62,6 +62,8 @@ pub enum Op {
     Require,
     /// Pop string, emit event.
     Emit,
+    /// Emit a structured event: pop `topic_count` topics + 1 data value.
+    EmitEvent { name: String, topic_count: usize },
     /// Return top of stack.
     Return,
     /// Halt execution.

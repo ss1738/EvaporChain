@@ -1,5 +1,5 @@
 use crate::compiler::{EvaporBytecode, Op};
-use crate::{ExecutionContext, ScriptCallResult, ScriptError, Value};
+use crate::{ContractEvent, ExecutionContext, ScriptCallResult, ScriptError, Value};
 use std::collections::HashMap;
 
 // ─── Gas Costs ──────────────────────────────────────────────────────────────
@@ -22,6 +22,7 @@ const GAS_MAP_GET: u64 = 10;
 const GAS_MAP_SET: u64 = 20;
 const GAS_REQUIRE: u64 = 5;
 const GAS_EMIT: u64 = 8;
+const GAS_EMIT_EVENT: u64 = 20;
 const GAS_RETURN: u64 = 1;
 const GAS_MOD: u64 = 5;
 
@@ -38,6 +39,7 @@ pub struct EvaporVM {
     locals: HashMap<String, Value>,
     state: HashMap<String, Value>,
     events: Vec<String>,
+    structured_events: Vec<ContractEvent>,
     gas_used: u64,
     gas_limit: u64,
 }
@@ -49,6 +51,7 @@ impl EvaporVM {
             locals: HashMap::new(),
             state,
             events: Vec::new(),
+            structured_events: Vec::new(),
             gas_used: 0,
             gas_limit,
         }
@@ -378,7 +381,30 @@ impl EvaporVM {
                         Value::Str(s) => s,
                         other => format!("{other}"),
                     };
-                    self.events.push(msg);
+                    self.events.push(msg.clone());
+                    self.structured_events.push(ContractEvent {
+                        name: "Log".into(),
+                        topics: vec![],
+                        data: vec![Value::Str(msg)],
+                    });
+                }
+
+                Op::EmitEvent { name, topic_count } => {
+                    self.charge_gas(GAS_EMIT_EVENT)?;
+                    let total = topic_count + 1; // topics + 1 data value
+                    let mut values = Vec::with_capacity(total);
+                    for _ in 0..total {
+                        values.push(self.pop()?);
+                    }
+                    values.reverse();
+                    let topics = values[..topic_count].to_vec();
+                    let data = values[topic_count..].to_vec();
+                    self.events.push(format!("event:{name}"));
+                    self.structured_events.push(ContractEvent {
+                        name: name.clone(),
+                        topics,
+                        data,
+                    });
                 }
 
                 Op::Return => {
@@ -532,6 +558,28 @@ impl EvaporVM {
                 Ok(Value::Null)
             }
 
+            "emit_event" => {
+                if arg_count < 2 {
+                    return Err(ScriptError::Runtime(
+                        "emit_event() takes at least 2 arguments: name, data, [topics...]".into(),
+                    ));
+                }
+                let name = self.pop()?.as_str()?.to_string();
+                let data_val = self.pop()?;
+                let mut topics = Vec::new();
+                for _ in 0..(arg_count - 2) {
+                    topics.push(self.pop()?);
+                }
+                topics.reverse();
+                self.events.push(format!("event:{name}"));
+                self.structured_events.push(ContractEvent {
+                    name,
+                    topics,
+                    data: vec![data_val],
+                });
+                Ok(Value::Null)
+            }
+
             "require" => {
                 if arg_count != 2 {
                     return Err(ScriptError::Runtime(
@@ -661,6 +709,7 @@ impl EvaporVM {
         Ok(ScriptCallResult {
             return_value,
             events: vm.events,
+            structured_events: vm.structured_events,
             gas_used: vm.gas_used,
             state_changes: vm.state,
         })

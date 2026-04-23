@@ -946,6 +946,55 @@ fn record_block(
     }
 }
 
+/// Index structured contract events from a block execution result into RocksDB
+/// and broadcast them via WebSocket.
+fn index_contract_events_from_exec(
+    chain_store: &persistence::ChainStore,
+    block: &evaporchain_types::Block,
+    execution: &BlockExecutionResult,
+) {
+    if execution.contract_events.is_empty() {
+        return;
+    }
+    // Group events by contract_id
+    let mut grouped: std::collections::HashMap<u64, Vec<&evaporchain_script::ContractEvent>> =
+        std::collections::HashMap::new();
+    for bce in &execution.contract_events {
+        grouped.entry(bce.contract_id).or_default().push(&bce.event);
+    }
+    for (contract_id, events) in &grouped {
+        let tx_hash = format!("block_{}", block.number);
+        let owned: Vec<evaporchain_script::ContractEvent> = events.iter().map(|e| (*e).clone()).collect();
+        log_persist_err(
+            "contract_events",
+            chain_store.index_contract_events(
+                block.number,
+                block.epoch,
+                block.timestamp,
+                *contract_id,
+                &tx_hash,
+                &owned,
+            ).map(|_| ()),
+        );
+    }
+}
+
+fn broadcast_contract_events(
+    ws_broadcaster: &ws::WsBroadcaster,
+    block: &evaporchain_types::Block,
+    execution: &BlockExecutionResult,
+) {
+    for bce in &execution.contract_events {
+        ws_broadcaster.publish(ws::WsEvent::ContractLog {
+            contract_id: bce.contract_id,
+            block_number: block.number,
+            event_name: bce.event.name.clone(),
+            topics: bce.event.topics.iter().map(|v| format!("{v}")).collect(),
+            data: bce.event.data.iter().map(|v| format!("{v}")).collect(),
+        });
+    }
+}
+
 // ──────────────────────────── Genesis NFTs ───────────────────────────────
 
 fn initialize_nft_store() -> NftStore {
@@ -1916,6 +1965,7 @@ async fn main() -> Result<()> {
                 ));
                 log_persist_err("full_block", chain_store.save_full_block(&result.block));
                 log_persist_err("tx_index", chain_store.index_block_transactions(&result.block).map(|_| ()));
+                index_contract_events_from_exec(&chain_store, &result.block, &result.execution);
                 {
                     let history = safe_lock(&block_history);
                     if let Some(record) = history.back() {
@@ -2766,6 +2816,7 @@ async fn main() -> Result<()> {
                                     log_persist_err("consensus_meta", chain_store.save_consensus_meta(block.number, block.epoch, block.parent_hash));
                                     log_persist_err("full_block", chain_store.save_full_block(&block));
                                     log_persist_err("tx_index", chain_store.index_block_transactions(&block).map(|_| ()));
+                                    index_contract_events_from_exec(&chain_store, &block, &result.execution);
                                     {
                                         let history = safe_lock(&block_history);
                                         if let Some(record) = history.back() {
@@ -2951,6 +3002,7 @@ async fn main() -> Result<()> {
                     ));
                     log_persist_err("full_block", chain_store.save_full_block(&result.block));
                 log_persist_err("tx_index", chain_store.index_block_transactions(&result.block).map(|_| ()));
+                    index_contract_events_from_exec(&chain_store, &result.block, &result.execution);
                     {
                         let history = safe_lock(&block_history);
                         if let Some(record) = history.back() {

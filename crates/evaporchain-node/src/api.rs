@@ -3089,6 +3089,61 @@ struct PaginationParams {
     limit: Option<usize>,
 }
 
+#[derive(Deserialize)]
+struct EventQueryParams {
+    event_name: Option<String>,
+    from_block: Option<u64>,
+    to_block: Option<u64>,
+    limit: Option<usize>,
+}
+
+/// Contract event logs by contract ID.
+async fn get_contract_events(
+    State(state): State<Arc<ApiState>>,
+    Path(contract_id): Path<u64>,
+    Query(params): Query<EventQueryParams>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = state.chain_store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let limit = params.limit.unwrap_or(100).min(1000);
+    let events = store.get_contract_events(
+        contract_id,
+        params.event_name.as_deref(),
+        params.from_block,
+        params.to_block,
+        limit,
+    );
+    Ok(Json(serde_json::json!({
+        "contract_id": contract_id,
+        "count": events.len(),
+        "events": events,
+    })))
+}
+
+/// All contract events in a specific block.
+async fn get_block_contract_events(
+    State(state): State<Arc<ApiState>>,
+    Path(block_number): Path<u64>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = state.chain_store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let events = store.get_block_events(block_number, 1000);
+    Ok(Json(serde_json::json!({
+        "block_number": block_number,
+        "count": events.len(),
+        "events": events,
+    })))
+}
+
+/// Contract event index stats.
+async fn get_event_index_stats(
+    State(state): State<Arc<ApiState>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = state.chain_store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    Ok(Json(serde_json::json!({
+        "indexed_events": store.contract_event_count(),
+        "indexed_transactions": store.tx_index_count(),
+    })))
+}
+
 /// NFT collections endpoint.
 async fn get_nft_collections(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
     let store = safe_lock(&state.nft_store);
@@ -3718,6 +3773,9 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/tx/:hash", get(get_tx_receipt))
         .route("/api/address/:addr/transactions", get(get_address_txs))
         .route("/api/tx-index/stats", get(get_tx_index_stats))
+        .route("/api/contract/:id/events", get(get_contract_events))
+        .route("/api/block/:number/events", get(get_block_contract_events))
+        .route("/api/event-index/stats", get(get_event_index_stats))
         // Contracts
         .route("/api/contracts", get(get_contracts))
         .route("/api/contract/:id", get(get_contract))

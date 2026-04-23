@@ -48,6 +48,14 @@ pub enum WsEvent {
     },
     #[serde(rename = "peer_update")]
     PeerUpdate { connected: usize },
+    #[serde(rename = "contract_event")]
+    ContractLog {
+        contract_id: u64,
+        block_number: u64,
+        event_name: String,
+        topics: Vec<String>,
+        data: Vec<String>,
+    },
 }
 
 // ──────────────────────────── Subscription Filter ───────────────────────
@@ -55,7 +63,7 @@ pub enum WsEvent {
 #[derive(Debug, Deserialize)]
 pub struct WsSubscribeParams {
     /// Comma-separated event types to subscribe to.
-    /// Options: blocks, transactions, evaporations, events, peers, all
+    /// Options: blocks, transactions, evaporations, events, peers, contract_events, all
     /// Default: all
     pub subscribe: Option<String>,
 }
@@ -67,6 +75,7 @@ struct SubscriptionFilter {
     evaporations: bool,
     events: bool,
     peers: bool,
+    contract_events: bool,
 }
 
 impl SubscriptionFilter {
@@ -82,6 +91,7 @@ impl SubscriptionFilter {
                     evaporations: topics.contains(&"evaporations"),
                     events: topics.contains(&"events"),
                     peers: topics.contains(&"peers"),
+                    contract_events: topics.contains(&"contract_events"),
                 }
             }
         }
@@ -94,6 +104,7 @@ impl SubscriptionFilter {
             evaporations: true,
             events: true,
             peers: true,
+            contract_events: true,
         }
     }
 
@@ -104,6 +115,7 @@ impl SubscriptionFilter {
             WsEvent::Evaporation { .. } | WsEvent::GracePeriod { .. } => self.evaporations,
             WsEvent::ChainEvent { .. } => self.events,
             WsEvent::PeerUpdate { .. } => self.peers,
+            WsEvent::ContractLog { .. } => self.contract_events,
         }
     }
 }

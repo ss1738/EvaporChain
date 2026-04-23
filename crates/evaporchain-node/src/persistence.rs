@@ -23,6 +23,8 @@ const CF_POHA: &str = "poha";
 const CF_TX_INDEX: &str = "tx_index";
 /// Address transaction history: address_hex:block_number:tx_index → tx_hash.
 const CF_ADDR_HISTORY: &str = "addr_history";
+/// Contract event logs: contract_id:block_number:log_index → ContractEventLog JSON.
+const CF_CONTRACT_EVENTS: &str = "contract_events";
 
 /// Persistent storage for chain data beyond the state DB.
 pub struct ChainStore {
@@ -44,6 +46,7 @@ impl ChainStore {
             ColumnFamilyDescriptor::new(CF_POHA, Options::default()),
             ColumnFamilyDescriptor::new(CF_TX_INDEX, Options::default()),
             ColumnFamilyDescriptor::new(CF_ADDR_HISTORY, Options::default()),
+            ColumnFamilyDescriptor::new(CF_CONTRACT_EVENTS, Options::default()),
         ];
 
         let db = DB::open_cf_descriptors(&opts, path, cf_descriptors)
@@ -516,6 +519,123 @@ impl ChainStore {
         iter.count()
     }
 
+    // ─── Contract event log indexing ───
+
+    /// Store contract events emitted during a block.
+    pub fn index_contract_events(
+        &self,
+        block_number: u64,
+        epoch: u64,
+        timestamp: u64,
+        contract_id: u64,
+        tx_hash: &str,
+        events: &[evaporchain_script::ContractEvent],
+    ) -> Result<usize, String> {
+        let cf = self.db.cf_handle(CF_CONTRACT_EVENTS).unwrap();
+        let mut indexed = 0;
+
+        for (log_idx, event) in events.iter().enumerate() {
+            let log = ContractEventLog {
+                contract_id,
+                block_number,
+                log_index: log_idx as u32,
+                epoch,
+                timestamp,
+                tx_hash: tx_hash.to_string(),
+                event_name: event.name.clone(),
+                topics: event.topics.iter().map(|v| format!("{v}")).collect(),
+                data: event.data.iter().map(|v| format!("{v}")).collect(),
+            };
+            // Key format: contract_id(8 bytes) + block_number(8 bytes) + log_index(4 bytes)
+            let mut key = Vec::with_capacity(20);
+            key.extend_from_slice(&contract_id.to_be_bytes());
+            key.extend_from_slice(&block_number.to_be_bytes());
+            key.extend_from_slice(&(log_idx as u32).to_be_bytes());
+            let value = serde_json::to_vec(&log).map_err(|e| e.to_string())?;
+            self.db.put_cf(cf, &key, &value).map_err(|e| e.to_string())?;
+            indexed += 1;
+        }
+        Ok(indexed)
+    }
+
+    /// Query contract events by contract ID, with optional event name filter and block range.
+    pub fn get_contract_events(
+        &self,
+        contract_id: u64,
+        event_name: Option<&str>,
+        from_block: Option<u64>,
+        to_block: Option<u64>,
+        limit: usize,
+    ) -> Vec<ContractEventLog> {
+        let cf = self.db.cf_handle(CF_CONTRACT_EVENTS).unwrap();
+        let prefix = contract_id.to_be_bytes();
+        let iter = self.db.prefix_iterator_cf(cf, &prefix);
+        let mut results = Vec::new();
+
+        for item in iter {
+            if results.len() >= limit {
+                break;
+            }
+            if let Ok((key, value)) = item {
+                if !key.starts_with(&prefix) {
+                    break;
+                }
+                if let Ok(log) = serde_json::from_slice::<ContractEventLog>(&value) {
+                    if let Some(from) = from_block {
+                        if log.block_number < from {
+                            continue;
+                        }
+                    }
+                    if let Some(to) = to_block {
+                        if log.block_number > to {
+                            continue;
+                        }
+                    }
+                    if let Some(name) = event_name {
+                        if log.event_name != name {
+                            continue;
+                        }
+                    }
+                    results.push(log);
+                }
+            } else {
+                break;
+            }
+        }
+        results
+    }
+
+    /// Get all events in a specific block (across all contracts).
+    pub fn get_block_events(&self, block_number: u64, limit: usize) -> Vec<ContractEventLog> {
+        let cf = self.db.cf_handle(CF_CONTRACT_EVENTS).unwrap();
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+        let mut results = Vec::new();
+
+        for item in iter {
+            if results.len() >= limit {
+                break;
+            }
+            if let Ok((_key, value)) = item {
+                if let Ok(log) = serde_json::from_slice::<ContractEventLog>(&value) {
+                    if log.block_number == block_number {
+                        results.push(log);
+                    } else if log.block_number > block_number {
+                        break;
+                    }
+                }
+            } else {
+                break;
+            }
+        }
+        results
+    }
+
+    /// Count total indexed contract events.
+    pub fn contract_event_count(&self) -> usize {
+        let cf = self.db.cf_handle(CF_CONTRACT_EVENTS).unwrap();
+        self.db.iterator_cf(cf, rocksdb::IteratorMode::Start).count()
+    }
+
     pub fn prune_da_packages(&self, current_height: u64, retain: u64) -> usize {
         if current_height <= retain {
             return 0;
@@ -555,6 +675,20 @@ pub struct TxReceipt {
     pub from: Option<String>,
     pub to: Option<String>,
     pub status: String,
+}
+
+/// Persisted contract event log entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContractEventLog {
+    pub contract_id: u64,
+    pub block_number: u64,
+    pub log_index: u32,
+    pub epoch: u64,
+    pub timestamp: u64,
+    pub tx_hash: String,
+    pub event_name: String,
+    pub topics: Vec<String>,
+    pub data: Vec<String>,
 }
 
 fn tx_type_name(tx: &Transaction) -> &'static str {

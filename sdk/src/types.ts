@@ -235,6 +235,15 @@ export interface WsWarning {
   message: string;
 }
 
+export interface WsContractLog {
+  type: "contract_event";
+  contract_id: number;
+  block_number: number;
+  event_name: string;
+  topics: string[];
+  data: string[];
+}
+
 export type WsEvent =
   | WsNewBlock
   | WsNewTransaction
@@ -243,6 +252,20 @@ export type WsEvent =
   | WsChainEvent
   | WsPeerUpdate
   | WsConnected
-  | WsWarning;
+  | WsWarning
+  | WsContractLog;
 
-export type WsTopic = "blocks" | "transactions" | "evaporations" | "events" | "peers" | "all";
+export type WsTopic = "blocks" | "transactions" | "evaporations" | "events" | "peers" | "contract_events" | "all";
+
+/** Contract event log from the indexer */
+export interface ContractEventLog {
+  contract_id: number;
+  block_number: number;
+  log_index: number;
+  epoch: number;
+  timestamp: number;
+  tx_hash: string;
+  event_name: string;
+  topics: string[];
+  data: string[];
+}

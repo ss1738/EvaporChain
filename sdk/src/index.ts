@@ -28,5 +28,7 @@ export type {
   WsPeerUpdate,
   WsConnected,
   WsWarning,
+  WsContractLog,
   WsTopic,
+  ContractEventLog,
 } from "./types";

@@ -1444,6 +1444,7 @@ impl ExecutionEngine for BlockStmExecutor {
             base_fee,
             total_fees,
             evaporation_proof: None,
+            contract_events: Vec::new(),
         })
     }
 

@@ -17,6 +17,7 @@ import type {
   BatchResponse,
   WsEvent,
   WsTopic,
+  ContractEventLog,
 } from "./types";
 import { EventEmitter } from "events";
 
@@ -338,6 +339,44 @@ export class EvaporChain {
    */
   async batch(transactions: BatchTxItem[]): Promise<BatchResponse> {
     return this.post<BatchResponse>("/api/tx/batch", { transactions });
+  }
+
+  // ── Contract Event Logs ──
+
+  /**
+   * Query contract event logs by contract ID.
+   * @param contractId - Contract ID
+   * @param options - Optional filters: eventName, fromBlock, toBlock, limit
+   */
+  async getContractEvents(
+    contractId: number,
+    options?: { eventName?: string; fromBlock?: number; toBlock?: number; limit?: number },
+  ): Promise<{ contract_id: number; count: number; events: ContractEventLog[] }> {
+    const params = new URLSearchParams();
+    if (options?.eventName) params.set("event_name", options.eventName);
+    if (options?.fromBlock !== undefined) params.set("from_block", String(options.fromBlock));
+    if (options?.toBlock !== undefined) params.set("to_block", String(options.toBlock));
+    if (options?.limit !== undefined) params.set("limit", String(options.limit));
+    const qs = params.toString();
+    return this.request<{ contract_id: number; count: number; events: ContractEventLog[] }>(
+      `/api/contract/${contractId}/events${qs ? `?${qs}` : ""}`,
+    );
+  }
+
+  /**
+   * Get all contract events in a specific block.
+   */
+  async getBlockEvents(blockNumber: number): Promise<{ block_number: number; count: number; events: ContractEventLog[] }> {
+    return this.request<{ block_number: number; count: number; events: ContractEventLog[] }>(
+      `/api/block/${blockNumber}/events`,
+    );
+  }
+
+  /**
+   * Get event index stats.
+   */
+  async getEventIndexStats(): Promise<{ indexed_events: number; indexed_transactions: number }> {
+    return this.request<{ indexed_events: number; indexed_transactions: number }>("/api/event-index/stats");
   }
 
   // ── Faucet ──
