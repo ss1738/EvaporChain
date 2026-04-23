@@ -506,14 +506,17 @@ impl EvaporVM {
                             "cross-contract call depth exceeded (max {})", MAX_CALL_DEPTH
                         )));
                     }
-                    let contract_id = self.pop()?.as_u64()?;
-                    let method = self.pop()?.as_str()?.to_string();
                     let ac = *arg_count;
-                    let mut args = Vec::with_capacity(ac);
-                    for _ in 0..ac {
+                    // Stack: [contract_id, method, arg0, arg1, ...] (bottom to top)
+                    // arg_count includes contract_id and method, so actual args = ac - 2
+                    let extra_args = if ac >= 2 { ac - 2 } else { 0 };
+                    let mut args = Vec::with_capacity(extra_args);
+                    for _ in 0..extra_args {
                         args.push(self.pop()?);
                     }
                     args.reverse();
+                    let method = self.pop()?.as_str()?.to_string();
+                    let contract_id = self.pop()?.as_u64()?;
 
                     let gas_remaining = if self.gas_limit > 0 {
                         self.gas_limit.saturating_sub(self.gas_used)
