@@ -32,7 +32,7 @@ pub struct StateObject {
     pub state: ObjectState,
     pub grace_epoch: Option<Epoch>,
     pub data: Vec<u8>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub decay_curve: Option<DecayCurve>,
 }
 

@@ -472,9 +472,9 @@ mod tests {
 
     #[test]
     fn test_linear_vs_exponential_linear_faster_early() {
-        let linear = DecayCurve::Linear { rate_per_epoch: 50 };
+        let linear = DecayCurve::Linear { rate_per_epoch: 100 };
         let exp = DecayCurve::Exponential { half_life: 10 };
-        // At epoch 1, linear drops 50, exponential drops ~5%
+        // At epoch 1, linear drops 100 (900 remaining), exponential drops ~50 (950 remaining)
         let lin_1 = compute_energy(&linear, 1000, 1, None);
         let exp_1 = compute_energy(&exp, 1000, 1, None);
         assert!(lin_1 < exp_1, "linear should decay faster at epoch 1: lin={} exp={}", lin_1, exp_1);
