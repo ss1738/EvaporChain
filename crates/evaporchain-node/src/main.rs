@@ -1455,6 +1455,18 @@ async fn main() -> Result<()> {
         println!("{} \x1b[36mDA: restored {} shard packages from disk\x1b[0m", node_tag, da_restored_count);
     }
 
+    // ── Oracle + Sharding Bridges ──
+    let oracle_bridge: Arc<Mutex<oracle_bridge::OracleBridge>> = Arc::new(Mutex::new(
+        oracle_bridge::OracleBridge::new(if args.validator_count > 0 {
+            ((2 * args.validator_count as usize) / 3) + 1
+        } else {
+            1
+        }),
+    ));
+    let shard_bridge: Arc<Mutex<shard_bridge::ShardBridge>> = Arc::new(Mutex::new(
+        shard_bridge::ShardBridge::new(16),
+    ));
+
     // ── Frontier Primitives ──
     // Energy-Annotated Verkle Trie + PoHA + Anchor-based consensus
     let frontier_state: Arc<Mutex<frontier::FrontierState>> = Arc::new(Mutex::new(
@@ -1553,6 +1565,8 @@ async fn main() -> Result<()> {
             da_store: Arc::clone(&da_store),
             snapshot_info: Arc::clone(&snapshot_info),
             frontier_state: Some(Arc::clone(&frontier_state)),
+            oracle_bridge: Some(Arc::clone(&oracle_bridge)),
+            shard_bridge: Some(Arc::clone(&shard_bridge)),
         });
         let api_port = args.api_port;
         tokio::spawn(async move {

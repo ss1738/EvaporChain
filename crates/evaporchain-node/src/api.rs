@@ -78,6 +78,10 @@ pub struct ApiState {
     pub snapshot_info: Arc<Mutex<Option<(u64, [u8; 32], usize)>>>,
     /// Frontier primitives state (anchors, PoHA, energy trie).
     pub frontier_state: Option<Arc<Mutex<crate::frontier::FrontierState>>>,
+    /// Oracle consensus bridge (validator-signed feeds with TWAP).
+    pub oracle_bridge: Option<Arc<Mutex<crate::oracle_bridge::OracleBridge>>>,
+    /// Shard health and cross-shard routing bridge.
+    pub shard_bridge: Option<Arc<Mutex<crate::shard_bridge::ShardBridge>>>,
 }
 
 impl ApiState {
@@ -1719,6 +1723,88 @@ async fn post_oracle_ingest(
     })
 }
 
+// ──────────────────── Oracle Consensus Handlers ──────────────────────────
+
+async fn get_oracle_status(
+    State(state): State<Arc<ApiState>>,
+) -> Json<serde_json::Value> {
+    if let Some(ref ob) = state.oracle_bridge {
+        let bridge = safe_lock(ob);
+        Json(serde_json::json!({
+            "active": true,
+            "feeds": bridge.feed_count(),
+            "active_rounds": bridge.active_rounds_count(),
+            "oracle_state_root": hex::encode(bridge.oracle_state_root()),
+        }))
+    } else {
+        Json(serde_json::json!({ "active": false }))
+    }
+}
+
+async fn get_oracle_feed(
+    State(state): State<Arc<ApiState>>,
+    Path(key): Path<String>,
+) -> Json<serde_json::Value> {
+    if let Some(ref ob) = state.oracle_bridge {
+        let bridge = safe_lock(ob);
+        let value = bridge.get_value(&key);
+        let twap = bridge.get_twap(&key);
+        let proof = bridge.generate_proof(&key);
+        Json(serde_json::json!({
+            "key": key,
+            "value": value,
+            "twap": twap,
+            "has_proof": proof.is_some(),
+            "proof_hash": proof.map(|p| hex::encode(p.proof_hash)),
+        }))
+    } else {
+        Json(serde_json::json!({ "error": "oracle not active" }))
+    }
+}
+
+// ──────────────────── Shard Status Handlers ──────────────────────────────
+
+async fn get_shard_status(
+    State(state): State<Arc<ApiState>>,
+) -> Json<serde_json::Value> {
+    if let Some(ref sb) = state.shard_bridge {
+        let bridge = safe_lock(sb);
+        Json(serde_json::json!({
+            "active": true,
+            "num_shards": bridge.num_shards(),
+            "pending_cross_shard_messages": bridge.pending_messages(),
+        }))
+    } else {
+        Json(serde_json::json!({ "active": false }))
+    }
+}
+
+async fn get_shard_health(
+    State(state): State<Arc<ApiState>>,
+) -> Json<serde_json::Value> {
+    if let Some(ref sb) = state.shard_bridge {
+        let bridge = safe_lock(sb);
+        let healths = bridge.shard_healths();
+        let candidates = bridge.find_compaction_candidates();
+        let shard_data: Vec<serde_json::Value> = healths.iter().map(|h| {
+            serde_json::json!({
+                "shard_id": h.shard_id.0,
+                "total_objects": h.total_objects,
+                "live_objects": h.live_objects,
+                "total_energy": h.total_energy,
+                "liveness_ratio": h.liveness_ratio(),
+                "is_dead": h.is_dead(),
+            })
+        }).collect();
+        Json(serde_json::json!({
+            "shards": shard_data,
+            "compaction_candidates": candidates.len(),
+        }))
+    } else {
+        Json(serde_json::json!({ "active": false }))
+    }
+}
+
 // ──────────────────────────── NFT Handlers ─────────────────────────────
 
 async fn nft_html() -> impl IntoResponse {
@@ -3272,6 +3358,11 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/faucet", post(post_faucet))
         // Oracle (no auth — node-operator data ingestion)
         .route("/api/oracle/ingest", post(post_oracle_ingest))
+        .route("/api/oracle/status", get(get_oracle_status))
+        .route("/api/oracle/feed/:key", get(get_oracle_feed))
+        // Sharding
+        .route("/api/shards", get(get_shard_status))
+        .route("/api/shards/health", get(get_shard_health))
         // Metrics / Throughput
         .route("/api/metrics", get(get_metrics))
         // Nova Proofs / Light Client
