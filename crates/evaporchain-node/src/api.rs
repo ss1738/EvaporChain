@@ -613,6 +613,42 @@ struct FaucetResponse {
     message: Option<String>,
 }
 
+// ──────────────────────────── Batch Transactions ──────────────────────
+
+#[derive(Deserialize)]
+#[serde(tag = "type")]
+enum BatchTxItem {
+    #[serde(rename = "transfer")]
+    Transfer { from: serde_json::Value, to: serde_json::Value, amount: u64, nonce: u64 },
+    #[serde(rename = "create_object")]
+    CreateObject { creator: serde_json::Value, object_id: serde_json::Value, energy: u64, half_life: u64 },
+    #[serde(rename = "refresh")]
+    Refresh { object_id: serde_json::Value, energy_deposit: u64 },
+    #[serde(rename = "resurrect")]
+    Resurrect { object_id: serde_json::Value, energy_deposit: u64 },
+}
+
+#[derive(Deserialize)]
+struct BatchRequest {
+    transactions: Vec<BatchTxItem>,
+}
+
+#[derive(Serialize)]
+struct BatchItemResult {
+    index: usize,
+    success: bool,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tx_hash: Option<String>,
+}
+
+#[derive(Serialize)]
+struct BatchResponse {
+    submitted: usize,
+    failed: usize,
+    results: Vec<BatchItemResult>,
+}
+
 // ──────────────────────────── Auth check for tx endpoints ──────────────
 
 /// Require a valid auth token OR a valid signature for transaction endpoints.
@@ -1196,6 +1232,118 @@ async fn post_resurrect(
         message: format!("Resurrect queued: obj=0x{} energy_deposit={}", hex::encode(&obj_id_val[..4]), req.energy_deposit),
         tx_hash: Some(hash),
     })
+}
+
+// ── Batch transaction handler ──
+
+async fn post_batch(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Json(req): Json<BatchRequest>,
+) -> Json<BatchResponse> {
+    if req.transactions.is_empty() {
+        return Json(BatchResponse { submitted: 0, failed: 0, results: vec![] });
+    }
+    if req.transactions.len() > 100 {
+        return Json(BatchResponse {
+            submitted: 0,
+            failed: 1,
+            results: vec![BatchItemResult {
+                index: 0, success: false,
+                message: "Batch too large: max 100 transactions".into(),
+                tx_hash: None,
+            }],
+        });
+    }
+
+    let auth_ok = require_tx_auth(&headers, &state, false).is_ok();
+    if !auth_ok {
+        return Json(BatchResponse {
+            submitted: 0,
+            failed: 1,
+            results: vec![BatchItemResult {
+                index: 0, success: false,
+                message: "Authentication required".into(),
+                tx_hash: None,
+            }],
+        });
+    }
+
+    let mut results = Vec::with_capacity(req.transactions.len());
+    let mut submitted = 0usize;
+    let mut failed = 0usize;
+
+    for (i, item) in req.transactions.into_iter().enumerate() {
+        let result = match item {
+            BatchTxItem::Transfer { from, to, amount, nonce } => {
+                match (parse_address_value(&from), parse_address_value(&to)) {
+                    (Ok(f), Ok(t)) if f != t && amount > 0 => {
+                        let hash = tx_hash(&format!("transfer:{}:{}:{}", hex::encode(&f[..20]), hex::encode(&t[..20]), amount));
+                        let mut tx = Transaction::Transfer(TransferTx {
+                            from: f, to: t, amount, nonce,
+                            signature: None, public_key: None,
+                        });
+                        sign_transaction(&mut tx, &state, None);
+                        state.submit_tx(tx);
+                        BatchItemResult { index: i, success: true, message: "Transfer queued".into(), tx_hash: Some(hash) }
+                    }
+                    (Err(e), _) | (_, Err(e)) => BatchItemResult { index: i, success: false, message: e, tx_hash: None },
+                    _ => BatchItemResult { index: i, success: false, message: "Invalid transfer parameters".into(), tx_hash: None },
+                }
+            }
+            BatchTxItem::CreateObject { creator, object_id, energy, half_life } => {
+                match (parse_address_value(&creator), parse_address_value(&object_id)) {
+                    (Ok(c), Ok(oid)) => {
+                        let hash = tx_hash(&format!("create:{}:{}:{}", hex::encode(&oid[..8]), energy, half_life));
+                        let mut tx = Transaction::CreateObject(CreateObjectTx {
+                            creator: c, object_id: oid, energy, half_life,
+                            data: None, decay_curve: None,
+                            signature: None, public_key: None,
+                        });
+                        sign_transaction(&mut tx, &state, None);
+                        state.submit_tx(tx);
+                        BatchItemResult { index: i, success: true, message: "CreateObject queued".into(), tx_hash: Some(hash) }
+                    }
+                    (Err(e), _) | (_, Err(e)) => BatchItemResult { index: i, success: false, message: e, tx_hash: None },
+                }
+            }
+            BatchTxItem::Refresh { object_id, energy_deposit } => {
+                match parse_address_value(&object_id) {
+                    Ok(oid) => {
+                        let hash = tx_hash(&format!("refresh:{}:{}", hex::encode(&oid[..8]), energy_deposit));
+                        let mut tx = Transaction::Refresh(RefreshTx {
+                            object_id: oid, energy_deposit,
+                            signature: None, public_key: None,
+                        });
+                        sign_transaction(&mut tx, &state, None);
+                        state.submit_tx(tx);
+                        BatchItemResult { index: i, success: true, message: "Refresh queued".into(), tx_hash: Some(hash) }
+                    }
+                    Err(e) => BatchItemResult { index: i, success: false, message: e, tx_hash: None },
+                }
+            }
+            BatchTxItem::Resurrect { object_id, energy_deposit } => {
+                match parse_address_value(&object_id) {
+                    Ok(oid) => {
+                        let hash = tx_hash(&format!("resurrect:{}:{}", hex::encode(&oid[..8]), energy_deposit));
+                        let mut tx = Transaction::Refresh(RefreshTx {
+                            object_id: oid, energy_deposit,
+                            signature: None, public_key: None,
+                        });
+                        sign_transaction(&mut tx, &state, None);
+                        state.submit_tx(tx);
+                        BatchItemResult { index: i, success: true, message: "Resurrect queued".into(), tx_hash: Some(hash) }
+                    }
+                    Err(e) => BatchItemResult { index: i, success: false, message: e, tx_hash: None },
+                }
+            }
+        };
+
+        if result.success { submitted += 1; } else { failed += 1; }
+        results.push(result);
+    }
+
+    Json(BatchResponse { submitted, failed, results })
 }
 
 // ── Contract request types ──
@@ -3449,6 +3597,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/tx/create-object", post(post_create_object))
         .route("/api/tx/refresh", post(post_refresh))
         .route("/api/tx/resurrect", post(post_resurrect))
+        .route("/api/tx/batch", post(post_batch))
         // Contracts
         .route("/api/contracts", get(get_contracts))
         .route("/api/contract/:id", get(get_contract))

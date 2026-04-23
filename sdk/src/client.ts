@@ -13,6 +13,8 @@ import type {
   NetworkInfo,
   EventRecord,
   ClientOptions,
+  BatchTxItem,
+  BatchResponse,
   WsEvent,
   WsTopic,
 } from "./types";
@@ -290,6 +292,24 @@ export class EvaporChain {
       args,
       epoch,
     });
+  }
+
+  // ── Batch Transactions ──
+
+  /**
+   * Submit multiple transactions in a single request (max 100).
+   *
+   * ```ts
+   * const result = await chain.batch([
+   *   { type: "transfer", from: 0, to: 1, amount: 500, nonce: 0 },
+   *   { type: "create_object", creator: 0, object_id: 10, energy: 1000, half_life: 50 },
+   *   { type: "refresh", object_id: 5, energy_deposit: 200 },
+   * ]);
+   * console.log(`${result.submitted} submitted, ${result.failed} failed`);
+   * ```
+   */
+  async batch(transactions: BatchTxItem[]): Promise<BatchResponse> {
+    return this.post<BatchResponse>("/api/tx/batch", { transactions });
   }
 
   // ── Faucet ──

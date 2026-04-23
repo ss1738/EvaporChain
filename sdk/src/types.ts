@@ -139,6 +139,27 @@ export interface EventRecord {
   timestamp_ms: number;
 }
 
+// ── Batch Transaction Types ──
+
+export type BatchTxItem =
+  | { type: "transfer"; from: number; to: number; amount: number; nonce: number }
+  | { type: "create_object"; creator: number; object_id: number; energy: number; half_life: number }
+  | { type: "refresh"; object_id: number; energy_deposit: number }
+  | { type: "resurrect"; object_id: number; energy_deposit: number };
+
+export interface BatchItemResult {
+  index: number;
+  success: boolean;
+  message: string;
+  tx_hash?: string;
+}
+
+export interface BatchResponse {
+  submitted: number;
+  failed: number;
+  results: BatchItemResult[];
+}
+
 /** Options for the EvaporChain client */
 export interface ClientOptions {
   /** Base URL of the EvaporChain node (default: https://testnet.evaporchain.com) */
