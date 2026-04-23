@@ -166,6 +166,10 @@ export interface ClientOptions {
   baseUrl?: string;
   /** Request timeout in ms (default: 10000) */
   timeout?: number;
+  /** Max retries for failed requests (default: 3, 0 = no retries) */
+  maxRetries?: number;
+  /** Initial retry delay in ms, doubles each attempt (default: 500) */
+  retryDelay?: number;
   /** WebSocket reconnect delay in ms (default: 3000) */
   wsReconnectDelay?: number;
   /** Maximum WebSocket reconnect attempts (default: 10, 0 = infinite) */

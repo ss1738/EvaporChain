@@ -44,6 +44,8 @@ export class EvaporChainError extends Error {
 export class EvaporChain {
   private baseUrl: string;
   private timeout: number;
+  private maxRetries: number;
+  private retryDelay: number;
   private wsReconnectDelay: number;
   private wsMaxReconnects: number;
   private ws: WebSocket | null = null;
@@ -57,11 +59,15 @@ export class EvaporChain {
     if (typeof urlOrOptions === "string") {
       this.baseUrl = urlOrOptions.replace(/\/+$/, "");
       this.timeout = 10_000;
+      this.maxRetries = 3;
+      this.retryDelay = 500;
       this.wsReconnectDelay = 3_000;
       this.wsMaxReconnects = 10;
     } else {
       this.baseUrl = (urlOrOptions?.baseUrl ?? "https://testnet.evaporchain.com").replace(/\/+$/, "");
       this.timeout = urlOrOptions?.timeout ?? 10_000;
+      this.maxRetries = urlOrOptions?.maxRetries ?? 3;
+      this.retryDelay = urlOrOptions?.retryDelay ?? 500;
       this.wsReconnectDelay = urlOrOptions?.wsReconnectDelay ?? 3_000;
       this.wsMaxReconnects = urlOrOptions?.wsMaxReconnects ?? 10;
     }
@@ -70,31 +76,53 @@ export class EvaporChain {
   // ── Internal helpers ──
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeout);
+    let lastError: Error | null = null;
 
-    try {
-      const res = await fetch(`${this.baseUrl}${path}`, {
-        ...init,
-        signal: controller.signal,
-        headers: {
-          "Content-Type": "application/json",
-          ...init?.headers,
-        },
-      });
-
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new EvaporChainError(
-          `HTTP ${res.status}: ${text || res.statusText}`,
-          res.status
-        );
+    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      if (attempt > 0) {
+        const delay = this.retryDelay * Math.pow(2, attempt - 1);
+        await new Promise((r) => setTimeout(r, delay));
       }
 
-      return (await res.json()) as T;
-    } finally {
-      clearTimeout(timer);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.timeout);
+
+      try {
+        const res = await fetch(`${this.baseUrl}${path}`, {
+          ...init,
+          signal: controller.signal,
+          headers: {
+            "Content-Type": "application/json",
+            ...init?.headers,
+          },
+        });
+
+        if (!res.ok) {
+          const text = await res.text().catch(() => "");
+          const err = new EvaporChainError(
+            `HTTP ${res.status}: ${text || res.statusText}`,
+            res.status
+          );
+          if (res.status === 429 || res.status >= 500) {
+            lastError = err;
+            continue;
+          }
+          throw err;
+        }
+
+        return (await res.json()) as T;
+      } catch (err) {
+        if (err instanceof EvaporChainError && err.status > 0 && err.status < 500 && err.status !== 429) {
+          throw err;
+        }
+        lastError = err as Error;
+        if (attempt === this.maxRetries) break;
+      } finally {
+        clearTimeout(timer);
+      }
     }
+
+    throw lastError ?? new EvaporChainError("Request failed after retries", 0);
   }
 
   private get<T>(path: string): Promise<T> {
