@@ -113,7 +113,7 @@ fn bench_poseidon_hash(c: &mut Criterion) {
 }
 
 fn bench_signature(c: &mut Criterion) {
-    use evaporchain_crypto::signatures::{MlDsaKeypair, Signer, Verifier};
+    use evaporchain_crypto::signatures::{MlDsaKeypair, MlDsaVerifier, Signer, Verifier};
     let kp = MlDsaKeypair::generate();
     let msg = b"benchmark message for signing";
 
@@ -125,7 +125,7 @@ fn bench_signature(c: &mut Criterion) {
     let sig = kp.sign(msg);
     let pk = kp.public_key_bytes();
     group.bench_function("verify", |b| {
-        b.iter(|| black_box(MlDsaKeypair::verify(msg, &sig, &pk)))
+        b.iter(|| black_box(MlDsaVerifier::verify(msg, &sig, &pk)))
     });
     group.finish();
 }
