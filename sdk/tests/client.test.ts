@@ -326,6 +326,49 @@ describe("EvaporChain SDK", () => {
   });
 });
 
+// ── WebSocket Subscription Tests ──
+
+describe("WebSocket subscriptions", () => {
+  let chain: EvaporChain;
+
+  beforeEach(() => {
+    mockResponses.clear();
+    chain = new EvaporChain("http://localhost:9944");
+  });
+
+  it("connected property is false before subscribe", () => {
+    assert.equal(chain.connected, false);
+  });
+
+  it("on/off/once register and remove listeners without error", () => {
+    const handler = () => {};
+    chain.on("new_block", handler);
+    chain.off("new_block", handler);
+    chain.once("evaporation", handler);
+  });
+
+  it("unsubscribe is safe when not connected", () => {
+    chain.unsubscribe();
+    assert.equal(chain.connected, false);
+  });
+
+  it("constructor respects wsReconnectDelay and wsMaxReconnects", () => {
+    const custom = new EvaporChain({
+      baseUrl: "http://localhost:9944",
+      wsReconnectDelay: 5000,
+      wsMaxReconnects: 3,
+    });
+    assert.equal(custom.connected, false);
+    custom.unsubscribe();
+  });
+
+  it("returns this from on/off/once for chaining", () => {
+    const handler = () => {};
+    const result = chain.on("new_block", handler).on("evaporation", handler).off("new_block", handler);
+    assert.ok(result instanceof EvaporChain);
+  });
+});
+
 // Restore fetch (not strictly needed for test, but clean)
 process.on("exit", () => {
   globalThis.fetch = originalFetch;

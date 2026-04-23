@@ -13,7 +13,10 @@ import type {
   NetworkInfo,
   EventRecord,
   ClientOptions,
+  WsEvent,
+  WsTopic,
 } from "./types";
+import { EventEmitter } from "events";
 
 /** Error thrown by the EvaporChain client. */
 export class EvaporChainError extends Error {
@@ -39,14 +42,26 @@ export class EvaporChainError extends Error {
 export class EvaporChain {
   private baseUrl: string;
   private timeout: number;
+  private wsReconnectDelay: number;
+  private wsMaxReconnects: number;
+  private ws: WebSocket | null = null;
+  private wsReconnectCount = 0;
+  private wsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private wsShouldReconnect = false;
+  private wsTopics: WsTopic[] = ["all"];
+  private emitter = new EventEmitter();
 
   constructor(urlOrOptions?: string | ClientOptions) {
     if (typeof urlOrOptions === "string") {
       this.baseUrl = urlOrOptions.replace(/\/+$/, "");
       this.timeout = 10_000;
+      this.wsReconnectDelay = 3_000;
+      this.wsMaxReconnects = 10;
     } else {
       this.baseUrl = (urlOrOptions?.baseUrl ?? "https://testnet.evaporchain.com").replace(/\/+$/, "");
       this.timeout = urlOrOptions?.timeout ?? 10_000;
+      this.wsReconnectDelay = urlOrOptions?.wsReconnectDelay ?? 3_000;
+      this.wsMaxReconnects = urlOrOptions?.wsMaxReconnects ?? 10;
     }
   }
 
@@ -429,5 +444,137 @@ export class EvaporChain {
 
     poll();
     return () => { running = false; };
+  }
+
+  // ── WebSocket Real-Time Subscriptions ──
+
+  private get wsUrl(): string {
+    const url = this.baseUrl.replace(/^http/, "ws");
+    const topics = this.wsTopics.join(",");
+    return `${url}/ws?subscribe=${topics}`;
+  }
+
+  /**
+   * Connect to the WebSocket for real-time event streaming.
+   * Listen for events with `.on()`.
+   *
+   * ```ts
+   * const chain = new EvaporChain("http://localhost:9944");
+   * chain.subscribe(["blocks", "evaporations"]);
+   *
+   * chain.on("new_block", (block) => {
+   *   console.log(`Block #${block.number} with ${block.tx_count} txs`);
+   * });
+   *
+   * chain.on("evaporation", (ev) => {
+   *   console.log(`Object ${ev.object_id} evaporated`);
+   * });
+   *
+   * // Later:
+   * chain.unsubscribe();
+   * ```
+   *
+   * @param topics - Topics to subscribe to (default: ["all"])
+   */
+  subscribe(topics: WsTopic[] = ["all"]): void {
+    this.wsTopics = topics;
+    this.wsShouldReconnect = true;
+    this.wsReconnectCount = 0;
+    this.connectWs();
+  }
+
+  /** Disconnect the WebSocket and stop reconnecting. */
+  unsubscribe(): void {
+    this.wsShouldReconnect = false;
+    if (this.wsReconnectTimer) {
+      clearTimeout(this.wsReconnectTimer);
+      this.wsReconnectTimer = null;
+    }
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
+  }
+
+  /** Whether the WebSocket is currently connected. */
+  get connected(): boolean {
+    return this.ws?.readyState === WebSocket.OPEN;
+  }
+
+  /**
+   * Register an event handler for WebSocket events.
+   *
+   * Event names match the `type` field: `new_block`, `new_transaction`,
+   * `evaporation`, `grace_period`, `chain_event`, `peer_update`,
+   * `connected`, `warning`.
+   *
+   * Special events: `ws_error`, `ws_close`, `ws_reconnect`.
+   */
+  on(event: string, listener: (...args: unknown[]) => void): this {
+    this.emitter.on(event, listener);
+    return this;
+  }
+
+  /** Remove a specific event handler. */
+  off(event: string, listener: (...args: unknown[]) => void): this {
+    this.emitter.off(event, listener);
+    return this;
+  }
+
+  /** Register a one-time event handler. */
+  once(event: string, listener: (...args: unknown[]) => void): this {
+    this.emitter.once(event, listener);
+    return this;
+  }
+
+  private connectWs(): void {
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
+
+    const ws = new WebSocket(this.wsUrl);
+
+    ws.onopen = () => {
+      this.wsReconnectCount = 0;
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(typeof event.data === "string" ? event.data : "") as WsEvent;
+        this.emitter.emit(data.type, data);
+      } catch {
+        // Ignore malformed messages
+      }
+    };
+
+    ws.onerror = (event) => {
+      this.emitter.emit("ws_error", event);
+    };
+
+    ws.onclose = () => {
+      this.ws = null;
+      this.emitter.emit("ws_close");
+      this.scheduleReconnect();
+    };
+
+    this.ws = ws;
+  }
+
+  private scheduleReconnect(): void {
+    if (!this.wsShouldReconnect) return;
+    if (this.wsMaxReconnects > 0 && this.wsReconnectCount >= this.wsMaxReconnects) {
+      this.emitter.emit("ws_error", new Error(`Max reconnect attempts (${this.wsMaxReconnects}) reached`));
+      return;
+    }
+
+    this.wsReconnectCount++;
+    const delay = this.wsReconnectDelay * Math.min(this.wsReconnectCount, 5);
+    this.emitter.emit("ws_reconnect", { attempt: this.wsReconnectCount, delay });
+
+    this.wsReconnectTimer = setTimeout(() => {
+      this.wsReconnectTimer = null;
+      this.connectWs();
+    }, delay);
   }
 }

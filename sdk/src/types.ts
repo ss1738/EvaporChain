@@ -145,4 +145,79 @@ export interface ClientOptions {
   baseUrl?: string;
   /** Request timeout in ms (default: 10000) */
   timeout?: number;
+  /** WebSocket reconnect delay in ms (default: 3000) */
+  wsReconnectDelay?: number;
+  /** Maximum WebSocket reconnect attempts (default: 10, 0 = infinite) */
+  wsMaxReconnects?: number;
 }
+
+// ── WebSocket Event Types ──
+
+export interface WsNewBlock {
+  type: "new_block";
+  number: number;
+  epoch: number;
+  tx_count: number;
+  timestamp: number;
+  state_root: string;
+  producer: string | null;
+}
+
+export interface WsNewTransaction {
+  type: "new_transaction";
+  hash: string;
+  tx_type: string;
+  from: string;
+  to: string | null;
+  amount: number | null;
+}
+
+export interface WsEvaporation {
+  type: "evaporation";
+  object_id: string;
+  energy: number;
+  block_number: number;
+}
+
+export interface WsGracePeriod {
+  type: "grace_period";
+  object_id: string;
+  remaining_energy: number;
+  block_number: number;
+}
+
+export interface WsChainEvent {
+  type: "chain_event";
+  event_type: string;
+  message: string;
+  epoch: number;
+  timestamp_ms: number;
+}
+
+export interface WsPeerUpdate {
+  type: "peer_update";
+  connected: number;
+}
+
+export interface WsConnected {
+  type: "connected";
+  message: string;
+  subscribers: number;
+}
+
+export interface WsWarning {
+  type: "warning";
+  message: string;
+}
+
+export type WsEvent =
+  | WsNewBlock
+  | WsNewTransaction
+  | WsEvaporation
+  | WsGracePeriod
+  | WsChainEvent
+  | WsPeerUpdate
+  | WsConnected
+  | WsWarning;
+
+export type WsTopic = "blocks" | "transactions" | "evaporations" | "events" | "peers" | "all";
