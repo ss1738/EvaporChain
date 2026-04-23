@@ -73,9 +73,9 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 - [x] **Log aggregation** — DONE: `--json-log` flag for structured JSON output via tracing-subscriber, RUST_LOG env filter support
 - [x] **Alerting rules** — DONE: 10 Prometheus alert rules at `deploy/alertmanager-rules.yaml` (consensus stalled, no peers, disk, memory, validator down)
 - [x] **Health check endpoints** — DONE: `/healthz` (liveness) and `/readyz` (readiness with block height, peers, uptime) in `api.rs`
-- [ ] **Backup strategy** — Automated RocksDB snapshots. Define RTO/RPO.
-- [ ] **Disaster recovery plan** — Documented procedures for node failure, state corruption, network partition.
-- [ ] **Runbooks** — Validator onboarding, emergency procedures, network upgrades, state sync.
+- [x] **Backup strategy** — DONE: `scripts/backup-state.sh` with RocksDB checkpoints, rsync fallback, retention pruning (RTO ~5min, RPO per schedule)
+- [x] **Disaster recovery plan** — DONE: `docs/runbooks/disaster-recovery.md` with 4 scenarios, RTO/RPO, backup schedule
+- [x] **Runbooks** — DONE: `docs/runbooks/` — validator onboarding, emergency procedures, network upgrades
 - [x] **Environment configs** — DONE: `configs/dev.json`, `configs/staging.json`, `configs/prod.json` with env-specific parameters
 
 ---
@@ -128,7 +128,7 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 
 - [x] **Update test count in docs** — DONE: Updated to 4,159 tests across README, CLAUDE.md, grants, announcement
 - [x] **Criterion.rs benchmarks** — DONE: `benches/core_benchmarks.rs` with transfer throughput, block exec, Poseidon hash, ML-DSA sign/verify
-- [ ] **Config validation** — JSON Schema for genesis configs.
+- [x] **Config validation** — DONE: JSON Schema at `configs/genesis-schema.json` with full validation rules
 - [ ] **Hybrid post-quantum scheme** — Optional ECDSA fallback alongside ML-DSA.
 - [ ] **Version pinning** — Cargo.toml uses range specifiers. Pin exact versions for reproducibility.
 - [ ] **ADRs (Architecture Decision Records)** — Document key design decisions.
