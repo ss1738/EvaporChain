@@ -47,6 +47,7 @@ impl TxBuilder {
             energy,
             half_life,
             data,
+            decay_curve: None,
             signature: None,
             public_key: None,
         })

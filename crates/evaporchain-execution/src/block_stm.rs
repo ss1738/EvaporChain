@@ -696,6 +696,7 @@ fn exec_create_object(
         state: ObjectState::Active,
         grace_epoch: None,
         data: tx.data.clone(),
+        decay_curve: None,
     });
 
     Ok(())
@@ -732,6 +733,7 @@ fn exec_refresh(view: &mut TxView, tx: &RefreshTx, epoch: Epoch) -> Result<(), T
             state: ObjectState::Resurrected,
             grace_epoch: None,
             data,
+            decay_curve: None,
         };
         view.write_object(obj);
         view.remove_ghost(tx.object_id);
@@ -1576,6 +1578,7 @@ impl BlockStmExecutor {
                                 state: ObjectState::Active,
                                 grace_epoch: None,
                                 data: t.data.clone(),
+                                decay_curve: None,
                             }),
                         );
                         true
@@ -1877,6 +1880,7 @@ mod tests {
                 energy: 1000,
                 half_life: 100,
                 data: vec![1, 2, 3],
+                decay_curve: None,
                 signature: None,
                 public_key: None,
             }),
@@ -1886,6 +1890,7 @@ mod tests {
                 energy: 2000,
                 half_life: 200,
                 data: vec![4, 5, 6],
+                decay_curve: None,
                 signature: None,
                 public_key: None,
             }),
@@ -2027,6 +2032,7 @@ mod tests {
                 energy: 1000,
                 half_life: 100,
                 data: vec![0xDE, 0xAD],
+                decay_curve: None,
                 signature: None,
                 public_key: None,
             }),
@@ -2132,6 +2138,7 @@ mod tests {
                 energy: 500,
                 half_life: 50,
                 data: vec![1, 2, 3, 4],
+                decay_curve: None,
                 signature: None,
                 public_key: None,
             }),

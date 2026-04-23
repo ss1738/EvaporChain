@@ -4,46 +4,8 @@
 //! extends the original fixed exponential decay with configurable curves:
 //! linear, stepped, conditional, asymptotic, and custom bytecode.
 
+pub use evaporchain_types::DecayCurve;
 use evaporchain_types::energy_at_epoch;
-use serde::{Deserialize, Serialize};
-
-/// A configurable decay curve that determines how an object's energy
-/// decreases over time.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum DecayCurve {
-    /// Original exponential decay: E₀ · 2^(−t/τ)
-    Exponential { half_life: u64 },
-
-    /// Linear decay: E₀ − rate × t, clamped to 0
-    Linear { rate_per_epoch: u64 },
-
-    /// Discrete energy levels at epoch thresholds.
-    /// Vec of (epoch_threshold, energy_level), sorted ascending by threshold.
-    /// Energy is the level whose threshold ≤ elapsed_epochs.
-    Stepped { thresholds: Vec<(u64, u64)> },
-
-    /// Decay pauses while the object is being actively accessed.
-    /// `effective_elapsed = elapsed - time_since_last_access` when paused.
-    Conditional {
-        base: Box<DecayCurve>,
-        grace_epochs: u64,
-    },
-
-    /// Decays toward a floor instead of 0:
-    /// floor + (E₀ − floor) · 2^(−t/τ)
-    Asymptotic { floor: u64, half_life: u64 },
-
-    /// Custom bytecode (EvaporScript) evaluated per epoch.
-    /// Stack receives: [initial_energy, elapsed_epochs]
-    /// Must leave exactly one u64 on stack.
-    Custom { bytecode: Vec<u8> },
-}
-
-impl Default for DecayCurve {
-    fn default() -> Self {
-        DecayCurve::Exponential { half_life: 100 }
-    }
-}
 
 /// Compute the current energy for an object given its decay curve.
 ///

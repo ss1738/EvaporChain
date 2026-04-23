@@ -353,6 +353,7 @@ impl SimpleExecutor {
             state: ObjectState::Active,
             grace_epoch: None,
             data: tx.data.clone(),
+            decay_curve: tx.decay_curve.clone(),
         };
 
         db.put_object(obj);
@@ -1099,6 +1100,7 @@ mod tests {
                 energy: 5000,
                 half_life: 100,
                 data: vec![0xDE, 0xAD],
+                decay_curve: None,
                 signature: None,
                 public_key: None,
             })],
@@ -1130,6 +1132,7 @@ mod tests {
             energy: 1000,
             half_life: 50,
             data: vec![],
+            decay_curve: None,
             signature: None,
             public_key: None,
         });
@@ -1178,6 +1181,7 @@ mod tests {
                     energy: 500,
                     half_life: 50,
                     data: vec![1],
+                    decay_curve: None,
                     signature: None,
                     public_key: None,
                 }),
@@ -1265,6 +1269,7 @@ mod tests {
             state: ObjectState::Active,
             grace_epoch: None,
             data: vec![0xAB],
+            decay_curve: None,
         });
 
         let mut executor = SimpleExecutor::new_for_test(3);
@@ -1307,6 +1312,7 @@ mod tests {
             state: ObjectState::Active,
             grace_epoch: None,
             data: vec![],
+            decay_curve: None,
         });
 
         let mut executor = SimpleExecutor::new_for_test(5);
@@ -1593,6 +1599,7 @@ mod tests {
             energy: 5000,
             half_life: 100,
             data: vec![0xDE, 0xAD],
+            decay_curve: None,
             signature: None,
             public_key: None,
         });
@@ -1617,6 +1624,7 @@ mod tests {
             state: ObjectState::Active,
             grace_epoch: None,
             data: vec![],
+            decay_curve: None,
         });
 
         let mut executor = SimpleExecutor::new_with_sig_verification(7);
@@ -2061,6 +2069,7 @@ contract Counter {
                 energy: 5000,
                 half_life: 100,
                 data: vec![1, 2, 3, 4, 5],
+                decay_curve: None,
                 signature: None,
                 public_key: None,
             }),
@@ -2193,6 +2202,7 @@ contract Counter {
                 last_refreshed: 0,
                 state: ObjectState::Active,
                 grace_epoch: None,
+                decay_curve: None,
             });
         }
 
@@ -2406,6 +2416,7 @@ contract Counter {
             state: ObjectState::Active,
             grace_epoch: None,
             data: b"short-lived".to_vec(),
+            decay_curve: None,
         };
         db.put_object(obj);
 
@@ -2444,6 +2455,7 @@ contract Counter {
                 state: ObjectState::Active,
                 grace_epoch: None,
                 data: vec![i],
+                decay_curve: None,
             };
             db.put_object(obj);
         }

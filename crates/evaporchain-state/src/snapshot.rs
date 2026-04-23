@@ -531,6 +531,7 @@ mod tests {
             state: ObjectState::Active,
             grace_epoch: None,
             data: format!("object-{}", b).into_bytes(),
+            decay_curve: None,
         }
     }
 

@@ -284,6 +284,7 @@ mod invariant_tests {
             energy: 10_000,
             half_life: 10,
             data: vec![0u8; 16],
+            decay_curve: None,
             signature: None,
             public_key: None,
         });
@@ -323,6 +324,7 @@ mod invariant_tests {
             energy: 100,
             half_life: 1, // decays very fast
             data: vec![],
+            decay_curve: None,
             signature: None,
             public_key: None,
         });

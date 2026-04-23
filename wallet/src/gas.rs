@@ -303,6 +303,7 @@ mod tests {
             energy: 100,
             half_life: 10,
             data: vec![0u8; 50],
+            decay_curve: None,
             signature: None,
             public_key: None,
         });

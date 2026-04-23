@@ -105,11 +105,12 @@ impl RefreshEngine {
             owner: ghost.owner,
             energy: energy_deposit,
             half_life: ghost.original_half_life.unwrap_or(100),
-            created_at: ghost.evaporated_at, // Track original creation separately if needed
+            created_at: ghost.evaporated_at,
             last_refreshed: current_epoch,
             state: ObjectState::Resurrected,
             grace_epoch: None,
             data,
+            decay_curve: None,
         };
 
         db.put_object(resurrected);
@@ -146,6 +147,7 @@ mod tests {
             state: ObjectState::Active,
             grace_epoch: None,
             data: vec![id_byte],
+            decay_curve: None,
         }
     }
 

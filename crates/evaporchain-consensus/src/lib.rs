@@ -720,6 +720,7 @@ mod tests {
             state: ObjectState::Active,
             grace_epoch: None,
             data: vec![0xAB],
+            decay_curve: None,
         });
 
         let mut consensus = MockConsensus::new_for_test(2); // 2-epoch grace
@@ -760,6 +761,7 @@ mod tests {
             energy: 5000,
             half_life: 100,
             data: vec![1, 2, 3],
+            decay_curve: None,
             signature: None,
             public_key: None,
         });
@@ -844,6 +846,7 @@ mod tests {
             state: ObjectState::Active,
             grace_epoch: None,
             data: vec![0xAA],
+            decay_curve: None,
         });
 
         let kp1 = MlDsaKeypair::generate();
@@ -871,6 +874,7 @@ mod tests {
             energy: 500,
             half_life: 10,
             data: vec![0xBB],
+            decay_curve: None,
             signature: None,
             public_key: None,
         });
@@ -898,6 +902,7 @@ mod tests {
             state: ObjectState::Active,
             grace_epoch: None,
             data: vec![0xAA],
+            decay_curve: None,
         });
         let mut follower = MockConsensus::new_for_test(3);
 
@@ -1152,6 +1157,7 @@ mod tests {
             state: ObjectState::Active,
             grace_epoch: None,
             data: vec![0xAB],
+            decay_curve: None,
         });
 
         let mut rc = make_rotating(1, &[1, 2]);

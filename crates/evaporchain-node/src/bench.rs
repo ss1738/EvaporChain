@@ -204,6 +204,7 @@ fn bench_decay_engine() -> f64 {
                 state: evaporchain_types::ObjectState::Active,
                 grace_epoch: None,
                 data: vec![0u8; 64],
+                decay_curve: None,
             }
         })
         .collect();
@@ -252,6 +253,7 @@ fn bench_object_creation() -> f64 {
                 energy: 10_000,
                 half_life: 100,
                 data: vec![0u8; 32],
+                decay_curve: None,
                 signature: None,
                 public_key: None,
             })
@@ -316,6 +318,7 @@ fn bench_refresh_throughput() -> f64 {
             state: evaporchain_types::ObjectState::Active,
             grace_epoch: None,
             data: vec![],
+            decay_curve: None,
         });
     }
 
@@ -462,6 +465,7 @@ fn bench_mixed_workload() -> f64 {
             state: ObjectState::Active,
             grace_epoch: None,
             data: vec![],
+            decay_curve: None,
         });
     }
 
@@ -497,6 +501,7 @@ fn bench_mixed_workload() -> f64 {
             energy: 5_000,
             half_life: 100,
             data: vec![0u8; 16],
+            decay_curve: None,
             signature: None,
             public_key: None,
         }));

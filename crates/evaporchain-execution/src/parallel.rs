@@ -728,6 +728,7 @@ impl ParallelExecutor {
             state: ObjectState::Active,
             grace_epoch: None,
             data: tx.data.clone(),
+            decay_curve: None,
         });
         Ok(())
     }
@@ -1431,6 +1432,7 @@ mod tests {
                 energy: 1000,
                 half_life: 10,
                 data: vec![1, 2, 3],
+                decay_curve: None,
                 signature: None,
                 public_key: None,
             }),
@@ -1460,6 +1462,7 @@ mod tests {
             state: ObjectState::Active,
             grace_epoch: None,
             data: vec![],
+            decay_curve: None,
         });
         let mut seq_executor = crate::SimpleExecutor::new_for_test(100);
         let seq_result = seq_executor.execute_block(&mut db_seq, &block).unwrap();
@@ -1479,6 +1482,7 @@ mod tests {
             state: ObjectState::Active,
             grace_epoch: None,
             data: vec![],
+            decay_curve: None,
         });
         let mut par_executor = ParallelExecutor::new_for_test(100);
         let par_result = par_executor.execute_block(&mut db_par, &block).unwrap();
@@ -1591,6 +1595,7 @@ mod tests {
             state: ObjectState::Active,
             grace_epoch: None,
             data: vec![],
+            decay_curve: None,
         });
 
         let block = make_block(
@@ -1629,6 +1634,7 @@ mod tests {
                     energy: 1000,
                     half_life: 5,
                     data: vec![0xDE, 0xAD],
+                    decay_curve: None,
                     signature: None,
                     public_key: None,
                 }),

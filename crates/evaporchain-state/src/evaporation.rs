@@ -1,4 +1,5 @@
 use crate::db::StateDB;
+use crate::decay_curves::compute_energy;
 use evaporchain_crypto::hash::blake3_hash;
 use evaporchain_crypto::{EnergyStampedNullifier, MerkleMountainRange};
 use evaporchain_types::{Epoch, GhostRecord, HalfLife, ObjectState};
@@ -107,7 +108,12 @@ impl EvaporationEngine {
                 }
 
                 ObjectState::Active | ObjectState::Resurrected => {
-                    let current_energy = obj.energy_at(current_epoch);
+                    let current_energy = if let Some(ref curve) = obj.decay_curve {
+                        let elapsed = current_epoch.saturating_sub(obj.last_refreshed);
+                        compute_energy(curve, obj.energy, elapsed, Some(obj.last_refreshed))
+                    } else {
+                        obj.energy_at(current_epoch)
+                    };
 
                     if current_energy == 0 {
                         // Energy depleted → enter grace period
@@ -223,6 +229,7 @@ mod tests {
             state: ObjectState::Active,
             grace_epoch: None,
             data: vec![id_byte, id_byte],
+            decay_curve: None,
         }
     }
 

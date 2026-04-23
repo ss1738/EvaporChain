@@ -32,6 +32,8 @@ pub struct StateObject {
     pub state: ObjectState,
     pub grace_epoch: Option<Epoch>,
     pub data: Vec<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decay_curve: Option<DecayCurve>,
 }
 
 impl StateObject {
@@ -249,6 +251,11 @@ impl Transaction {
                 buf.extend_from_slice(&tx.energy.to_le_bytes());
                 buf.extend_from_slice(&tx.half_life.to_le_bytes());
                 buf.extend_from_slice(&tx.data);
+                if let Some(ref curve) = tx.decay_curve {
+                    if let Ok(curve_bytes) = serde_json::to_vec(curve) {
+                        buf.extend_from_slice(&curve_bytes);
+                    }
+                }
                 buf
             }
             Transaction::DeployContract(tx) => {
@@ -500,6 +507,8 @@ pub struct CreateObjectTx {
     pub energy: Energy,
     pub half_life: HalfLife,
     pub data: Vec<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decay_curve: Option<DecayCurve>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<Vec<u8>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -871,6 +880,27 @@ pub struct DualCommitment {
     pub ghost_count: usize,
 }
 
+/// A configurable decay curve that determines how an object's energy
+/// decreases over time. Stored on-chain per object when non-default.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum DecayCurve {
+    Exponential { half_life: u64 },
+    Linear { rate_per_epoch: u64 },
+    Stepped { thresholds: Vec<(u64, u64)> },
+    Conditional {
+        base: Box<DecayCurve>,
+        grace_epochs: u64,
+    },
+    Asymptotic { floor: u64, half_life: u64 },
+    Custom { bytecode: Vec<u8> },
+}
+
+impl Default for DecayCurve {
+    fn default() -> Self {
+        DecayCurve::Exponential { half_life: 100 }
+    }
+}
+
 /// Compute remaining energy after exponential decay using integer math.
 ///
 /// Uses the approximation: energy * 2^(-epochs_elapsed / half_life)
@@ -943,6 +973,7 @@ mod tests {
             state: ObjectState::Active,
             grace_epoch: None,
             data: vec![],
+            decay_curve: None,
         };
         // At epoch 15, 10 epochs since refresh -> one half-life -> 500
         assert_eq!(obj.energy_at(15), 500);

@@ -235,6 +235,7 @@ fn initialize_genesis(db: &mut RocksDBStateDB, node_tag: &str) {
             state: ObjectState::Active,
             grace_epoch: None,
             data: label.as_bytes().to_vec(),
+            decay_curve: None,
         });
         println!(
             "{} \x1b[33m{}\x1b[0m  id=0x{:02x}..  energy={:<6} half_life={}",
@@ -370,6 +371,7 @@ fn parse_stdin_command(line: &str, signer: &MlDsaKeypair) -> Option<Transaction>
                 energy,
                 half_life,
                 data: format!("UserObj-{}", object_id).into_bytes(),
+                decay_curve: None,
                 signature: None,
                 public_key: None,
             }),
@@ -498,6 +500,7 @@ fn generate_demo_tx(
                 energy,
                 half_life,
                 data: name.into_bytes(),
+                decay_curve: None,
                 signature: None,
                 public_key: None,
             });
@@ -2178,6 +2181,33 @@ async fn main() -> Result<()> {
                                     block.state_function_commitment = Some(commitment);
                                 }
 
+                                // ── Oracle finalization per block ──
+                                {
+                                    let mut ob = safe_lock(&oracle_bridge);
+                                    let finalized = ob.finalize_all();
+                                    if !finalized.is_empty() {
+                                        println!(
+                                            "{} \x1b[36mOracle: {} feeds finalized\x1b[0m",
+                                            node_tag, finalized.len(),
+                                        );
+                                    }
+                                }
+
+                                // ── Shard metrics recording ──
+                                {
+                                    let mut sb = safe_lock(&shard_bridge);
+                                    let db_guard = safe_lock(&db);
+                                    for oid in db_guard.all_object_ids().iter().take(100) {
+                                        if let Some(obj) = db_guard.get_object(oid) {
+                                            let mut short_id = [0u8; 20];
+                                            short_id.copy_from_slice(&oid[..20]);
+                                            let alive = obj.state == evaporchain_types::ObjectState::Active
+                                                || obj.state == evaporchain_types::ObjectState::Resurrected;
+                                            sb.record_object(&short_id, obj.energy, obj.half_life, alive);
+                                        }
+                                    }
+                                }
+
                                 // Reset demo nonce offsets — on-chain nonces are now updated
                                 demo_nonces = [0u64; 4];
 
@@ -2531,6 +2561,33 @@ async fn main() -> Result<()> {
                                             obj_count as u64,
                                         );
                                         block.state_function_commitment = Some(commitment);
+                                    }
+
+                                    // ── Oracle finalization (gossip path) ──
+                                    {
+                                        let mut ob = safe_lock(&oracle_bridge);
+                                        let finalized = ob.finalize_all();
+                                        if !finalized.is_empty() {
+                                            println!(
+                                                "{} \x1b[36mOracle: {} feeds finalized\x1b[0m",
+                                                node_tag, finalized.len(),
+                                            );
+                                        }
+                                    }
+
+                                    // ── Shard metrics (gossip path) ──
+                                    {
+                                        let mut sb = safe_lock(&shard_bridge);
+                                        let db_guard = safe_lock(&db);
+                                        for oid in db_guard.all_object_ids().iter().take(100) {
+                                            if let Some(obj) = db_guard.get_object(oid) {
+                                                let mut short_id = [0u8; 20];
+                                                short_id.copy_from_slice(&oid[..20]);
+                                                let alive = obj.state == evaporchain_types::ObjectState::Active
+                                                    || obj.state == evaporchain_types::ObjectState::Resurrected;
+                                                sb.record_object(&short_id, obj.energy, obj.half_life, alive);
+                                            }
+                                        }
                                     }
 
                                     if let Some(ref cache) = block_cache {

@@ -653,6 +653,7 @@ mod tests {
             state: ObjectState::Active,
             grace_epoch: None,
             data: vec![b],
+            decay_curve: None,
         }
     }
 

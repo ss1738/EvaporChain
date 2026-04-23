@@ -278,6 +278,7 @@ mod tests {
             state: ObjectState::Active,
             grace_epoch: None,
             data: vec![id_byte],
+            decay_curve: None,
         }
     }
 

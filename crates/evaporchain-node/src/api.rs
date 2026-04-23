@@ -1141,6 +1141,7 @@ async fn post_create_object(
     let mut tx = Transaction::CreateObject(CreateObjectTx {
         creator, object_id: obj_id_val, energy: req.energy, half_life: req.half_life,
         data,
+        decay_curve: None,
         signature: req.signature.and_then(|s| hex::decode(s).ok()),
         public_key: req.public_key.and_then(|s| hex::decode(s).ok()),
     });
@@ -1710,6 +1711,7 @@ async fn post_oracle_ingest(
         energy: req.energy,
         half_life: req.half_life,
         data: data_str.into_bytes(),
+        decay_curve: None,
         signature: None,
         public_key: None,
     });
@@ -1802,6 +1804,59 @@ async fn get_shard_health(
         }))
     } else {
         Json(serde_json::json!({ "active": false }))
+    }
+}
+
+// ──────────────────────────── Ghost Bridge Handlers ─────────────────────
+
+async fn get_ghost_list(
+    State(state): State<Arc<ApiState>>,
+) -> Json<serde_json::Value> {
+    let db = safe_lock(&state.db);
+    let ghost_ids = db.all_ghost_ids();
+    let ghosts: Vec<serde_json::Value> = ghost_ids.iter().take(100).filter_map(|id| {
+        db.get_ghost(id).map(|g| {
+            serde_json::json!({
+                "object_id": hex::encode(g.object_id),
+                "owner": hex::encode(g.owner),
+                "evaporated_at": g.evaporated_at,
+                "data_hash": hex::encode(g.data_hash),
+                "has_original_data": g.original_data.is_some(),
+                "mmr_position": g.mmr_position,
+                "original_half_life": g.original_half_life,
+            })
+        })
+    }).collect();
+    Json(serde_json::json!({
+        "total": ghost_ids.len(),
+        "ghosts": ghosts,
+    }))
+}
+
+async fn get_ghost_detail(
+    State(state): State<Arc<ApiState>>,
+    Path(id): Path<String>,
+) -> Json<serde_json::Value> {
+    let mut obj_id = [0u8; 32];
+    if let Ok(bytes) = hex::decode(&id) {
+        let len = bytes.len().min(32);
+        obj_id[..len].copy_from_slice(&bytes[..len]);
+    }
+    let db = safe_lock(&state.db);
+    if let Some(ghost) = db.get_ghost(&obj_id) {
+        Json(serde_json::json!({
+            "found": true,
+            "object_id": hex::encode(ghost.object_id),
+            "owner": hex::encode(ghost.owner),
+            "evaporated_at": ghost.evaporated_at,
+            "data_hash": hex::encode(ghost.data_hash),
+            "has_original_data": ghost.original_data.is_some(),
+            "data_size": ghost.original_data.as_ref().map(|d| d.len()),
+            "mmr_position": ghost.mmr_position,
+            "original_half_life": ghost.original_half_life,
+        }))
+    } else {
+        Json(serde_json::json!({ "found": false, "object_id": id }))
     }
 }
 
@@ -3363,6 +3418,9 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         // Sharding
         .route("/api/shards", get(get_shard_status))
         .route("/api/shards/health", get(get_shard_health))
+        // Ghost bridges
+        .route("/api/ghosts", get(get_ghost_list))
+        .route("/api/ghosts/:id", get(get_ghost_detail))
         // Metrics / Throughput
         .route("/api/metrics", get(get_metrics))
         // Nova Proofs / Light Client

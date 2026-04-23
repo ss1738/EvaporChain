@@ -68,6 +68,7 @@ pub fn initialize_genesis(
             state: ObjectState::Active,
             grace_epoch: None,
             data: go.data.clone(),
+            decay_curve: None,
         };
         db.put_object(obj);
     }
