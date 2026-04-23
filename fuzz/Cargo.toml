@@ -1,0 +1,43 @@
+[package]
+name = "evaporchain-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+evaporchain-crypto = { path = "../crates/evaporchain-crypto" }
+evaporchain-script = { path = "../crates/evaporchain-script" }
+evaporchain-types = { path = "../crates/evaporchain-types" }
+arbitrary = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[workspace]
+
+[[bin]]
+name = "fuzz_poseidon"
+path = "fuzz_targets/poseidon.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_evaporscript_parser"
+path = "fuzz_targets/evaporscript_parser.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_transaction_deser"
+path = "fuzz_targets/transaction_deser.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_evaporscript_compiler"
+path = "fuzz_targets/evaporscript_compiler.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_block_deser"
+path = "fuzz_targets/block_deser.rs"
+doc = false
