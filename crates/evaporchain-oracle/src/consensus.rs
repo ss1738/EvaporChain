@@ -399,7 +399,8 @@ mod tests {
         let mut twap = TwapAccumulator::new(100);
         twap.push(1000, 50000.0);
         twap.push(1050, 55000.0);
-        twap.push(1200, 60000.0);
+        twap.push(1120, 60000.0);
+        // Window=100, latest=1120, cutoff=1020. Entry at 1000 evicted, 1050+1120 remain.
         assert_eq!(twap.len(), 2);
     }
 
