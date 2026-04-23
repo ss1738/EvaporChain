@@ -696,7 +696,7 @@ fn exec_create_object(
         state: ObjectState::Active,
         grace_epoch: None,
         data: tx.data.clone(),
-        decay_curve: None,
+        decay_curve: tx.decay_curve.clone(),
     });
 
     Ok(())
@@ -1578,7 +1578,7 @@ impl BlockStmExecutor {
                                 state: ObjectState::Active,
                                 grace_epoch: None,
                                 data: t.data.clone(),
-                                decay_curve: None,
+                                decay_curve: t.decay_curve.clone(),
                             }),
                         );
                         true

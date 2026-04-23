@@ -728,7 +728,7 @@ impl ParallelExecutor {
             state: ObjectState::Active,
             grace_epoch: None,
             data: tx.data.clone(),
-            decay_curve: None,
+            decay_curve: tx.decay_curve.clone(),
         });
         Ok(())
     }
