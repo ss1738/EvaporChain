@@ -123,6 +123,12 @@ pub trait StateDB: Send + Sync {
     /// Report health of the energy-annotated Verkle trie.
     fn trie_health(&mut self) -> TrieHealth;
 
+    /// Generate a Verkle inclusion proof for an account.
+    fn prove_account(&mut self, addr: &AccountAddress) -> evaporchain_crypto::EnergyVerkleProof;
+
+    /// Generate a Verkle inclusion proof for a state object.
+    fn prove_object(&mut self, id: &ObjectId) -> evaporchain_crypto::EnergyVerkleProof;
+
     /// Serialize the current trie state to bytes for persistence.
     fn trie_snapshot(&mut self) -> Vec<u8>;
 
@@ -373,6 +379,18 @@ impl StateDB for InMemoryStateDB {
     fn trie_health(&mut self) -> TrieHealth {
         self.sync_dirty_to_trie();
         self.trie.health()
+    }
+
+    fn prove_account(&mut self, addr: &AccountAddress) -> evaporchain_crypto::EnergyVerkleProof {
+        self.sync_dirty_to_trie();
+        let key = trie_key_for_account(addr);
+        self.trie.prove(&key)
+    }
+
+    fn prove_object(&mut self, id: &ObjectId) -> evaporchain_crypto::EnergyVerkleProof {
+        self.sync_dirty_to_trie();
+        let key = trie_key_for_object(id);
+        self.trie.prove(&key)
     }
 
     fn trie_snapshot(&mut self) -> Vec<u8> {

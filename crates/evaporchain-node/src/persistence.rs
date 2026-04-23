@@ -691,6 +691,122 @@ pub struct ContractEventLog {
     pub data: Vec<String>,
 }
 
+/// Merkle tree over transaction hashes in a block for inclusion proofs.
+pub fn compute_tx_merkle_root(txs: &[Transaction]) -> [u8; 32] {
+    if txs.is_empty() {
+        return [0u8; 32];
+    }
+    let mut layer: Vec<[u8; 32]> = txs.iter().map(|tx| ChainStore::compute_tx_hash(tx)).collect();
+    while layer.len() > 1 {
+        let mut next = Vec::with_capacity((layer.len() + 1) / 2);
+        for chunk in layer.chunks(2) {
+            if chunk.len() == 2 {
+                let mut hasher = blake3::Hasher::new();
+                hasher.update(&chunk[0]);
+                hasher.update(&chunk[1]);
+                next.push(*hasher.finalize().as_bytes());
+            } else {
+                next.push(chunk[0]);
+            }
+        }
+        layer = next;
+    }
+    layer[0]
+}
+
+/// Transaction inclusion proof: Merkle siblings from leaf to root.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TxInclusionProof {
+    pub tx_hash: String,
+    pub tx_index: usize,
+    pub block_number: u64,
+    pub merkle_root: String,
+    pub siblings: Vec<TxMerkleSibling>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TxMerkleSibling {
+    pub hash: String,
+    pub position: String, // "left" or "right"
+}
+
+/// Generate a Merkle inclusion proof for a tx at `tx_index` in the block's txs.
+pub fn prove_tx_inclusion(txs: &[Transaction], tx_index: usize, block_number: u64) -> Option<TxInclusionProof> {
+    if tx_index >= txs.len() {
+        return None;
+    }
+    let hashes: Vec<[u8; 32]> = txs.iter().map(|tx| ChainStore::compute_tx_hash(tx)).collect();
+    let tx_hash = hashes[tx_index];
+    let mut layer = hashes;
+    let mut siblings = Vec::new();
+    let mut idx = tx_index;
+
+    while layer.len() > 1 {
+        let sibling_idx = if idx % 2 == 0 { idx + 1 } else { idx - 1 };
+        if sibling_idx < layer.len() {
+            siblings.push(TxMerkleSibling {
+                hash: hex::encode(layer[sibling_idx]),
+                position: if idx % 2 == 0 { "right".into() } else { "left".into() },
+            });
+        }
+        let mut next = Vec::with_capacity((layer.len() + 1) / 2);
+        for chunk in layer.chunks(2) {
+            if chunk.len() == 2 {
+                let mut hasher = blake3::Hasher::new();
+                hasher.update(&chunk[0]);
+                hasher.update(&chunk[1]);
+                next.push(*hasher.finalize().as_bytes());
+            } else {
+                next.push(chunk[0]);
+            }
+        }
+        layer = next;
+        idx /= 2;
+    }
+
+    Some(TxInclusionProof {
+        tx_hash: hex::encode(tx_hash),
+        tx_index,
+        block_number,
+        merkle_root: hex::encode(layer[0]),
+        siblings,
+    })
+}
+
+/// Verify a tx inclusion proof.
+pub fn verify_tx_inclusion(proof: &TxInclusionProof) -> bool {
+    let mut current = match hex::decode(&proof.tx_hash) {
+        Ok(h) if h.len() == 32 => {
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&h);
+            arr
+        }
+        _ => return false,
+    };
+
+    for sibling in &proof.siblings {
+        let sibling_hash = match hex::decode(&sibling.hash) {
+            Ok(h) if h.len() == 32 => {
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(&h);
+                arr
+            }
+            _ => return false,
+        };
+        let mut hasher = blake3::Hasher::new();
+        if sibling.position == "left" {
+            hasher.update(&sibling_hash);
+            hasher.update(&current);
+        } else {
+            hasher.update(&current);
+            hasher.update(&sibling_hash);
+        }
+        current = *hasher.finalize().as_bytes();
+    }
+
+    hex::encode(current) == proof.merkle_root
+}
+
 fn tx_type_name(tx: &Transaction) -> &'static str {
     match tx {
         Transaction::Transfer(_) => "transfer",

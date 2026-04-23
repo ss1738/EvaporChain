@@ -391,14 +391,15 @@ impl EvaporVM {
 
                 Op::EmitEvent { name, topic_count } => {
                     self.charge_gas(GAS_EMIT_EVENT)?;
-                    let total = topic_count + 1; // topics + 1 data value
+                    let tc = *topic_count;
+                    let total = tc + 1; // topics + 1 data value
                     let mut values = Vec::with_capacity(total);
                     for _ in 0..total {
                         values.push(self.pop()?);
                     }
                     values.reverse();
-                    let topics = values[..topic_count].to_vec();
-                    let data = values[topic_count..].to_vec();
+                    let topics = values[..tc].to_vec();
+                    let data = values[tc..].to_vec();
                     self.events.push(format!("event:{name}"));
                     self.structured_events.push(ContractEvent {
                         name: name.clone(),

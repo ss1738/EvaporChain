@@ -3361,6 +3361,203 @@ async fn get_proof_verify(
     Ok(Json(VerifyProofResponse { valid }))
 }
 
+// ──────────────────── Light Client Verification ─────────────────────────
+
+/// GET /api/light/state-proof/account/:addr — Verkle inclusion proof for an account.
+async fn get_account_state_proof(
+    State(state): State<Arc<ApiState>>,
+    Path(addr_hex): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let addr_bytes = hex::decode(&addr_hex).map_err(|_| StatusCode::BAD_REQUEST)?;
+    if addr_bytes.len() != 32 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let mut addr = [0u8; 32];
+    addr.copy_from_slice(&addr_bytes);
+
+    let mut db = safe_lock(&state.db);
+    let state_root = db.compute_state_root();
+    let proof = db.prove_account(&addr);
+    let account = db.get_account(&addr).cloned();
+    drop(db);
+
+    Ok(Json(serde_json::json!({
+        "type": "account",
+        "address": addr_hex,
+        "state_root": hex::encode(state_root),
+        "exists": proof.value.is_some(),
+        "account": account.map(|a| serde_json::json!({
+            "balance": a.balance,
+            "nonce": a.nonce,
+        })),
+        "proof": {
+            "key": hex::encode(proof.key),
+            "value": proof.value.map(hex::encode),
+            "depth": proof.depth,
+            "commitments": proof.commitments.iter().map(hex::encode).collect::<Vec<_>>(),
+            "path_indices": proof.path_indices,
+            "siblings": proof.siblings.iter().map(|s| s.iter().map(hex::encode).collect::<Vec<_>>()).collect::<Vec<_>>(),
+            "hit_compressed": proof.hit_compressed,
+        },
+    })))
+}
+
+/// GET /api/light/state-proof/object/:id — Verkle inclusion proof for a state object.
+async fn get_object_state_proof(
+    State(state): State<Arc<ApiState>>,
+    Path(obj_id_hex): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let id_bytes = hex::decode(&obj_id_hex).map_err(|_| StatusCode::BAD_REQUEST)?;
+    if id_bytes.len() != 32 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let mut id = [0u8; 32];
+    id.copy_from_slice(&id_bytes);
+
+    let mut db = safe_lock(&state.db);
+    let state_root = db.compute_state_root();
+    let proof = db.prove_object(&id);
+    let obj = db.get_object(&id).cloned();
+    drop(db);
+
+    Ok(Json(serde_json::json!({
+        "type": "object",
+        "object_id": obj_id_hex,
+        "state_root": hex::encode(state_root),
+        "exists": proof.value.is_some(),
+        "object": obj.map(|o| serde_json::json!({
+            "energy": o.energy,
+            "half_life": o.half_life,
+            "state": format!("{:?}", o.state),
+            "created_epoch": o.created_epoch,
+            "last_refreshed": o.last_refreshed,
+        })),
+        "proof": {
+            "key": hex::encode(proof.key),
+            "value": proof.value.map(hex::encode),
+            "depth": proof.depth,
+            "commitments": proof.commitments.iter().map(hex::encode).collect::<Vec<_>>(),
+            "path_indices": proof.path_indices,
+            "siblings": proof.siblings.iter().map(|s| s.iter().map(hex::encode).collect::<Vec<_>>()).collect::<Vec<_>>(),
+            "hit_compressed": proof.hit_compressed,
+        },
+    })))
+}
+
+/// GET /api/light/tx-proof/:block/:tx_index — transaction inclusion proof.
+async fn get_tx_inclusion_proof(
+    State(state): State<Arc<ApiState>>,
+    Path((block_number, tx_index)): Path<(u64, usize)>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = state.chain_store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let block = store.load_full_block(block_number).ok_or(StatusCode::NOT_FOUND)?;
+    let proof = crate::persistence::prove_tx_inclusion(&block.transactions, tx_index, block_number)
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    Ok(Json(serde_json::json!({
+        "proof": proof,
+        "valid": crate::persistence::verify_tx_inclusion(&proof),
+    })))
+}
+
+/// POST /api/light/verify-tx-proof — verify a submitted tx inclusion proof.
+async fn post_verify_tx_proof(
+    Json(proof): Json<crate::persistence::TxInclusionProof>,
+) -> Json<serde_json::Value> {
+    let valid = crate::persistence::verify_tx_inclusion(&proof);
+    Json(serde_json::json!({ "valid": valid }))
+}
+
+/// GET /api/light/verify-state-proof — verify a Verkle proof against a state root.
+#[derive(Deserialize)]
+struct VerifyStateProofQuery {
+    state_root: String,
+    proof_json: String,
+}
+
+async fn get_verify_state_proof(
+    Query(q): Query<VerifyStateProofQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let root_bytes = hex::decode(&q.state_root).map_err(|_| StatusCode::BAD_REQUEST)?;
+    if root_bytes.len() != 32 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let mut root = [0u8; 32];
+    root.copy_from_slice(&root_bytes);
+
+    let proof: evaporchain_crypto::EnergyVerkleProof =
+        serde_json::from_str(&q.proof_json).map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let valid = evaporchain_crypto::EnergyVerkleTrie::verify(&proof, &root);
+
+    Ok(Json(serde_json::json!({
+        "valid": valid,
+        "key": hex::encode(proof.key),
+        "value_exists": proof.value.is_some(),
+    })))
+}
+
+/// GET /api/light/headers — compact block headers for light client sync.
+#[derive(Deserialize)]
+struct HeadersQuery {
+    from: Option<u64>,
+    to: Option<u64>,
+    limit: Option<usize>,
+}
+
+#[derive(Serialize)]
+struct CompactHeader {
+    number: u64,
+    epoch: u64,
+    parent_hash: String,
+    state_root: String,
+    tx_count: usize,
+    tx_merkle_root: String,
+    timestamp: u64,
+    has_nova_proof: bool,
+}
+
+async fn get_light_headers(
+    State(state): State<Arc<ApiState>>,
+    Query(params): Query<HeadersQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = state.chain_store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let history = safe_lock(&state.block_history);
+    let latest = history.back().map(|b| b.number).unwrap_or(0);
+    drop(history);
+
+    let from = params.from.unwrap_or(0);
+    let to = params.to.unwrap_or(latest).min(latest);
+    let limit = params.limit.unwrap_or(100).min(500);
+
+    let mut headers = Vec::new();
+    for bn in from..=to {
+        if headers.len() >= limit {
+            break;
+        }
+        if let Some(block) = store.load_full_block(bn) {
+            let tx_merkle_root = crate::persistence::compute_tx_merkle_root(&block.transactions);
+            headers.push(CompactHeader {
+                number: block.number,
+                epoch: block.epoch,
+                parent_hash: hex::encode(block.parent_hash),
+                state_root: hex::encode(block.state_root),
+                tx_count: block.transactions.len(),
+                tx_merkle_root: hex::encode(tx_merkle_root),
+                timestamp: block.timestamp,
+                has_nova_proof: block.nova_proof.is_some(),
+            });
+        }
+    }
+
+    Ok(Json(serde_json::json!({
+        "count": headers.len(),
+        "from": from,
+        "to": to,
+        "headers": headers,
+    })))
+}
+
 // ──────────────────────── DA Sampling Endpoints ─────────────────────────
 
 #[derive(Serialize)]
@@ -3842,6 +4039,12 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/proof/status", get(get_proof_status))
         .route("/api/proof/verify", get(get_proof_verify))
         // Data Availability sampling
+        .route("/api/light/state-proof/account/:addr", get(get_account_state_proof))
+        .route("/api/light/state-proof/object/:id", get(get_object_state_proof))
+        .route("/api/light/tx-proof/:block/:tx_index", get(get_tx_inclusion_proof))
+        .route("/api/light/verify-tx-proof", post(post_verify_tx_proof))
+        .route("/api/light/verify-state-proof", get(get_verify_state_proof))
+        .route("/api/light/headers", get(get_light_headers))
         .route("/api/frontier", get(get_frontier_status))
         .route("/api/lazy-eval", get(get_lazy_eval))
         .route("/api/da/status", get(get_da_status))
