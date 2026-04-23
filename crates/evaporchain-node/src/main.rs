@@ -6,6 +6,7 @@ mod oracle_bridge;
 mod persistence;
 mod shard_bridge;
 mod user_db;
+mod ws;
 
 use anyhow::Result;
 use api::{ApiState, BlockRecord, ChainStats, EpochSnapshot, EventRecord, NftStore, NftToken, TokenStore, DeployedToken, StakingStore, StakingPool, Staker, DAOStore, DAOProposal, DAOVote, ThroughputTracker};
@@ -751,6 +752,7 @@ fn record_block(
     chain_stats: &Arc<Mutex<ChainStats>>,
     events: &Arc<Mutex<VecDeque<api::EventRecord>>>,
     throughput: &Arc<Mutex<ThroughputTracker>>,
+    ws_broadcaster: Option<&Arc<ws::WsBroadcaster>>,
     block: &evaporchain_types::Block,
     execution: &BlockExecutionResult,
     active_objects: usize,
@@ -879,6 +881,68 @@ fn record_block(
                 block.number, execution.txs_executed, execution.objects_evaporated
             ),
         );
+    }
+
+    // Publish to WebSocket subscribers
+    if let Some(broadcaster) = ws_broadcaster {
+        broadcaster.publish(ws::WsEvent::NewBlock {
+            number: block.number,
+            epoch: block.epoch,
+            tx_count: block.transactions.len(),
+            timestamp: block.timestamp,
+            state_root: hex::encode(execution.state_root),
+            producer: block.producer_id.clone(),
+        });
+
+        for tx in &block.transactions {
+            let (tx_type, from, to, amount) = match tx {
+                Transaction::Transfer(t) => (
+                    "transfer",
+                    hex::encode(t.from),
+                    Some(hex::encode(t.to)),
+                    Some(t.amount),
+                ),
+                Transaction::CreateObject(t) => (
+                    "create_object",
+                    hex::encode(t.creator),
+                    None,
+                    None,
+                ),
+                Transaction::Refresh(t) => (
+                    "refresh",
+                    hex::encode(t.refresher),
+                    None,
+                    None,
+                ),
+                _ => continue,
+            };
+            let hash = hex::encode(blake3::hash(&bincode::serialize(tx).unwrap_or_default()).as_bytes());
+            broadcaster.publish(ws::WsEvent::NewTransaction {
+                hash,
+                tx_type: tx_type.to_string(),
+                from,
+                to,
+                amount,
+            });
+        }
+
+        if execution.objects_evaporated > 0 {
+            broadcaster.publish(ws::WsEvent::ChainEvent {
+                event_type: "evaporated".to_string(),
+                message: format!("{} object(s) evaporated", execution.objects_evaporated),
+                epoch: block.epoch,
+                timestamp_ms: block.timestamp,
+            });
+        }
+
+        if execution.objects_entered_grace > 0 {
+            broadcaster.publish(ws::WsEvent::ChainEvent {
+                event_type: "grace".to_string(),
+                message: format!("{} object(s) entered grace period", execution.objects_entered_grace),
+                epoch: block.epoch,
+                timestamp_ms: block.timestamp,
+            });
+        }
     }
 }
 
@@ -1510,6 +1574,7 @@ async fn main() -> Result<()> {
         }
     ));
     let start_time = Instant::now();
+    let ws_broadcaster = Arc::new(ws::WsBroadcaster::new(1024));
 
     // DA shard store: block_number -> BlockDAPackage (keep last 64 blocks)
     let restored_da = chain_store.load_recent_da_packages(64);
@@ -1631,6 +1696,7 @@ async fn main() -> Result<()> {
             frontier_state: Some(Arc::clone(&frontier_state)),
             oracle_bridge: Some(Arc::clone(&oracle_bridge)),
             shard_bridge: Some(Arc::clone(&shard_bridge)),
+            ws_broadcaster: Arc::clone(&ws_broadcaster),
         });
         let api_port = args.api_port;
         tokio::spawn(async move {
@@ -1838,6 +1904,7 @@ async fn main() -> Result<()> {
                 let exec_elapsed_us = exec_start.elapsed().as_micros() as u64;
                 record_block(
                     block_history, chain_stats, events, throughput,
+                    Some(&ws_broadcaster),
                     &result.block, &result.execution,
                     obj_count, ghost_count_val, exec_elapsed_us,
                 );
@@ -2305,6 +2372,7 @@ async fn main() -> Result<()> {
                                 let exec_elapsed_us = exec_start.elapsed().as_micros() as u64;
                                 record_block(
                                     &block_history, &chain_stats, &events, &throughput,
+                                    Some(&ws_broadcaster),
                                     &block, &result.execution,
                                     obj_count, ghost_count, exec_elapsed_us,
                                 );
@@ -2687,6 +2755,7 @@ async fn main() -> Result<()> {
                                     let exec_elapsed_us = exec_start.elapsed().as_micros() as u64;
                                     record_block(
                                         &block_history, &chain_stats, &events, &throughput,
+                                        Some(&ws_broadcaster),
                                         &block, &result.execution,
                                         obj_count, ghost_count, exec_elapsed_us,
                                     );
@@ -2861,6 +2930,7 @@ async fn main() -> Result<()> {
                         &chain_stats,
                         &events,
                         &throughput,
+                        Some(&ws_broadcaster),
                         &result.block,
                         &result.execution,
                         obj_count,

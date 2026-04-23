@@ -68,6 +68,8 @@ pub struct ApiState {
     /// P2P transaction broadcast sender. When present, API-submitted transactions
     /// are also broadcast to the network so other validators can include them.
     pub tx_broadcast: Option<tokio::sync::mpsc::Sender<Transaction>>,
+    /// WebSocket event broadcaster for real-time subscriptions.
+    pub ws_broadcaster: Arc<crate::ws::WsBroadcaster>,
     /// Chain prover for Nova IVC proof generation and light client sync.
     pub chain_prover: Arc<Mutex<evaporchain_proving::chain_proof::ChainProver>>,
     /// Rolling throughput metrics (TPS, block exec time, gas).
@@ -1469,6 +1471,17 @@ async fn dashboard_html() -> impl IntoResponse {
 
 async fn health() -> impl IntoResponse {
     (StatusCode::OK, "ok")
+}
+
+async fn ws_upgrade_handler(
+    ws: axum::extract::ws::WebSocketUpgrade,
+    State(state): State<Arc<ApiState>>,
+    Query(params): Query<crate::ws::WsSubscribeParams>,
+) -> impl IntoResponse {
+    let broadcaster = state.ws_broadcaster.clone();
+    let topics = params.subscribe.clone().unwrap_or_else(|| "all".to_string());
+    tracing::info!("WebSocket upgrade request (subscribe: {topics})");
+    ws.on_upgrade(move |socket| crate::ws::handle_ws_connection(socket, broadcaster, params))
 }
 
 async fn healthz() -> impl IntoResponse {
@@ -3516,6 +3529,8 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         // PWA
         .route("/manifest.json", get(manifest_json))
         .route("/sw.js", get(service_worker_js))
+        // WebSocket subscriptions
+        .route("/ws", get(ws_upgrade_handler))
         .with_state(state)
         // Merge auth routes (different state type)
         .merge(auth_router)
