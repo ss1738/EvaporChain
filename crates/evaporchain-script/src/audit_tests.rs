@@ -16,6 +16,7 @@ mod vm_safety_tests {
             epoch: 100,
             energy: 5000,
             vrf_randomness: [42u8; 32],
+            call_depth: 0,
         }
     }
 

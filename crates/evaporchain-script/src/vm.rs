@@ -1,5 +1,5 @@
 use crate::compiler::{EvaporBytecode, Op};
-use crate::{ContractEvent, ExecutionContext, ScriptCallResult, ScriptError, Value};
+use crate::{ContractEvent, ExecutionContext, ExternalCaller, ScriptCallResult, ScriptError, Value, MAX_CALL_DEPTH};
 use std::collections::HashMap;
 
 // ─── Gas Costs ──────────────────────────────────────────────────────────────
@@ -23,6 +23,7 @@ const GAS_MAP_SET: u64 = 20;
 const GAS_REQUIRE: u64 = 5;
 const GAS_EMIT: u64 = 8;
 const GAS_EMIT_EVENT: u64 = 20;
+const GAS_CALL_EXTERNAL: u64 = 100;
 const GAS_RETURN: u64 = 1;
 const GAS_MOD: u64 = 5;
 
@@ -90,6 +91,7 @@ impl EvaporVM {
         method: &str,
         args: Vec<Value>,
         ctx: &ExecutionContext,
+        external: &mut Option<&mut dyn ExternalCaller>,
     ) -> Result<Value, ScriptError> {
         let start_offset = bytecode
             .methods
@@ -498,6 +500,49 @@ impl EvaporVM {
                 }
             }
 
+                Op::CallExternal { arg_count } => {
+                    self.charge_gas(GAS_CALL_EXTERNAL)?;
+                    if ctx.call_depth >= MAX_CALL_DEPTH {
+                        return Err(ScriptError::Runtime(format!(
+                            "cross-contract call depth exceeded (max {})", MAX_CALL_DEPTH
+                        )));
+                    }
+                    let contract_id = self.pop()?.as_u64()?;
+                    let method = self.pop()?.as_str()?.to_string();
+                    let ac = *arg_count;
+                    let mut args = Vec::with_capacity(ac);
+                    for _ in 0..ac {
+                        args.push(self.pop()?);
+                    }
+                    args.reverse();
+
+                    let gas_remaining = if self.gas_limit > 0 {
+                        self.gas_limit.saturating_sub(self.gas_used)
+                    } else {
+                        0
+                    };
+
+                    if let Some(ext) = external.as_mut() {
+                        let (return_val, events, gas_used) = ext.call_external(
+                            contract_id,
+                            &method,
+                            args,
+                            ctx.caller,
+                            ctx.epoch,
+                            ctx.call_depth + 1,
+                            gas_remaining,
+                        )?;
+                        self.gas_used += gas_used;
+                        self.structured_events.extend(events);
+                        self.push(return_val)?;
+                    } else {
+                        return Err(ScriptError::Runtime(
+                            "cross-contract calls not available in this context".into(),
+                        ));
+                    }
+                }
+            }
+
             ip += 1;
         }
     }
@@ -692,7 +737,7 @@ impl EvaporVM {
         state: HashMap<String, Value>,
         ctx: &ExecutionContext,
     ) -> Result<ScriptCallResult, ScriptError> {
-        Self::execute_with_gas_limit(bytecode, method, args, state, ctx, 0)
+        Self::execute_full(bytecode, method, args, state, ctx, 0, None)
     }
 
     /// Execute with an explicit gas limit (0 = unlimited).
@@ -704,8 +749,21 @@ impl EvaporVM {
         ctx: &ExecutionContext,
         gas_limit: u64,
     ) -> Result<ScriptCallResult, ScriptError> {
+        Self::execute_full(bytecode, method, args, state, ctx, gas_limit, None)
+    }
+
+    /// Execute with full options including cross-contract call support.
+    pub fn execute_full(
+        bytecode: &EvaporBytecode,
+        method: &str,
+        args: Vec<Value>,
+        state: HashMap<String, Value>,
+        ctx: &ExecutionContext,
+        gas_limit: u64,
+        mut external: Option<&mut dyn ExternalCaller>,
+    ) -> Result<ScriptCallResult, ScriptError> {
         let mut vm = Self::new(state, gas_limit);
-        let return_value = vm.execute_method(bytecode, method, args, ctx)?;
+        let return_value = vm.execute_method(bytecode, method, args, ctx, &mut external)?;
 
         Ok(ScriptCallResult {
             return_value,
@@ -731,6 +789,7 @@ mod tests {
             epoch: 100,
             energy: 5000,
             vrf_randomness: [42u8; 32],
+            call_depth: 0,
         }
     }
 

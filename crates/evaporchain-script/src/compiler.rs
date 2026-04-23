@@ -90,6 +90,12 @@ pub enum Op {
     VrfDomainRandomness,
     /// Pop max (exclusive), push random u64 in [0, max) derived from beacon.
     RandomRange,
+
+    // ── Cross-Contract Call ──
+
+    /// Pop contract_id (u64), method name (string), then `arg_count` args.
+    /// Calls the target contract and pushes the return value.
+    CallExternal { arg_count: usize },
 }
 
 // ─── Bytecode ───────────────────────────────────────────────────────────────
@@ -384,7 +390,11 @@ impl Compiler {
                 for arg in args {
                     self.compile_expr(arg)?;
                 }
-                self.emit(Op::Call(name.clone(), args.len()));
+                if name == "call_contract" {
+                    self.emit(Op::CallExternal { arg_count: args.len() });
+                } else {
+                    self.emit(Op::Call(name.clone(), args.len()));
+                }
             }
         }
 

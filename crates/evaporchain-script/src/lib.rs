@@ -148,6 +148,26 @@ pub struct ExecutionContext {
     /// VRF randomness beacon value for this block (32 bytes).
     /// Deterministic: same block = same randomness for all nodes.
     pub vrf_randomness: [u8; 32],
+    /// Current call depth (0 = top-level call). Max depth = 8.
+    pub call_depth: u8,
+}
+
+/// Maximum cross-contract call depth to prevent unbounded recursion.
+pub const MAX_CALL_DEPTH: u8 = 8;
+
+/// Callback for cross-contract calls. The ScriptEngine implements this
+/// so the VM can invoke other contracts during execution.
+pub trait ExternalCaller: Send {
+    fn call_external(
+        &mut self,
+        contract_id: u64,
+        method: &str,
+        args: Vec<Value>,
+        caller: AccountAddress,
+        epoch: Epoch,
+        call_depth: u8,
+        gas_remaining: u64,
+    ) -> Result<(Value, Vec<ContractEvent>, u64), ScriptError>;
 }
 
 // ─── Script Engine ──────────────────────────────────────────────────────────
@@ -195,6 +215,91 @@ pub struct ScriptTickResult {
     pub contracts_evaporated: Vec<u64>,
     pub events: Vec<String>,
     pub structured_events: Vec<ContractEvent>,
+}
+
+/// Snapshot of contract data for cross-contract call routing.
+/// Avoids `&mut` aliasing issues by cloning the registry for the call stack.
+struct ContractCallRouter {
+    contracts: HashMap<u64, (compiler::EvaporBytecode, HashMap<String, Value>, AccountAddress, Epoch, Energy, HalfLife, Epoch, bool)>,
+    vrf_randomness: [u8; 32],
+    state_patches: Vec<(u64, HashMap<String, Value>)>,
+    collected_events: Vec<ContractEvent>,
+}
+
+impl ContractCallRouter {
+    fn from_engine(engine: &ScriptEngine) -> Self {
+        let mut contracts = HashMap::new();
+        for (id, c) in &engine.contracts {
+            contracts.insert(*id, (
+                c.bytecode.clone(),
+                c.state.clone(),
+                c.creator,
+                c.created_epoch,
+                c.energy,
+                c.half_life,
+                c.last_refreshed,
+                c.evaporated,
+            ));
+        }
+        Self {
+            contracts,
+            vrf_randomness: engine.vrf_randomness,
+            state_patches: Vec::new(),
+            collected_events: Vec::new(),
+        }
+    }
+}
+
+impl ExternalCaller for ContractCallRouter {
+    fn call_external(
+        &mut self,
+        contract_id: u64,
+        method: &str,
+        args: Vec<Value>,
+        caller: AccountAddress,
+        epoch: Epoch,
+        call_depth: u8,
+        gas_remaining: u64,
+    ) -> Result<(Value, Vec<ContractEvent>, u64), ScriptError> {
+        if call_depth >= MAX_CALL_DEPTH {
+            return Err(ScriptError::Runtime(format!(
+                "cross-contract call depth exceeded (max {})", MAX_CALL_DEPTH
+            )));
+        }
+
+        let (bytecode, state, creator, _created, energy, half_life, last_refreshed, evaporated) =
+            self.contracts.get(&contract_id)
+                .ok_or_else(|| ScriptError::Runtime(format!("contract {contract_id} not found")))?
+                .clone();
+
+        if evaporated {
+            return Err(ScriptError::Runtime(format!("contract {contract_id} has evaporated")));
+        }
+
+        let current_energy = energy_at_epoch(energy, half_life, epoch.saturating_sub(last_refreshed));
+        if current_energy == 0 {
+            return Err(ScriptError::Runtime(format!("contract {contract_id} has no energy")));
+        }
+
+        let ctx = ExecutionContext {
+            caller,
+            owner: creator,
+            epoch,
+            energy: current_energy,
+            vrf_randomness: self.vrf_randomness,
+            call_depth,
+        };
+
+        let result = vm::EvaporVM::execute_full(
+            &bytecode, method, args, state, &ctx, gas_remaining, Some(self),
+        )?;
+
+        // Collect state changes for later application
+        self.state_patches.push((contract_id, result.state_changes));
+        self.collected_events.extend(result.structured_events.clone());
+
+        Ok((result.return_value, result.structured_events, result.gas_used))
+    }
 }
 
 /// Engine managing all deployed script contracts.
@@ -298,20 +403,43 @@ impl ScriptEngine {
             epoch: current_epoch,
             energy: current_energy,
             vrf_randomness: self.vrf_randomness,
+            call_depth: 0,
         };
 
         let bytecode = contract.bytecode.clone();
         let state = contract.state.clone();
 
-        let result = vm::EvaporVM::execute(&bytecode, method, args, state, &ctx)?;
+        let mut router = ContractCallRouter::from_engine(self);
+        let result = vm::EvaporVM::execute_full(
+            &bytecode, method, args, state, &ctx, 0, Some(&mut router),
+        )?;
 
-        // Apply state changes
+        // Apply state changes from this contract
         let contract = self.contracts.get_mut(&contract_id).unwrap();
         for (key, value) in &result.state_changes {
             contract.state.insert(key.clone(), value.clone());
         }
 
-        Ok(result)
+        // Apply state changes from cross-contract calls
+        for (target_id, patches) in router.state_patches {
+            if let Some(target) = self.contracts.get_mut(&target_id) {
+                for (key, value) in patches {
+                    target.state.insert(key, value);
+                }
+            }
+        }
+
+        // Merge events from sub-calls
+        let mut all_structured = result.structured_events.clone();
+        all_structured.extend(router.collected_events);
+
+        Ok(ScriptCallResult {
+            return_value: result.return_value,
+            events: result.events,
+            structured_events: all_structured,
+            gas_used: result.gas_used,
+            state_changes: result.state_changes,
+        })
     }
 
     /// Call a lifecycle hook (on_evaporate, on_grace, on_refresh) on a contract.
@@ -344,6 +472,7 @@ impl ScriptEngine {
             epoch: current_epoch,
             energy: contract.energy_at(current_epoch),
             vrf_randomness: self.vrf_randomness,
+            call_depth: 0,
         };
 
         let bytecode = contract.bytecode.clone();
