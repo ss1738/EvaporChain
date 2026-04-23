@@ -1,0 +1,92 @@
+groups:
+  - name: evaporchain-critical
+    rules:
+      - alert: ConsensusStalled
+        expr: increase(evaporchain_block_height[5m]) == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Block production has stopped"
+          description: "No new blocks in the last 5 minutes on {{ $labels.instance }}"
+
+      - alert: NoPeersConnected
+        expr: evaporchain_peer_count == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Validator has no peers"
+          description: "{{ $labels.instance }} has 0 connected peers for 2+ minutes"
+
+      - alert: PeerCountLow
+        expr: evaporchain_peer_count < 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low peer count"
+          description: "{{ $labels.instance }} has only {{ $value }} peers (expected >= 2)"
+
+      - alert: BlockProductionSlow
+        expr: rate(evaporchain_block_height[5m]) < 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Block production rate is very low"
+          description: "{{ $labels.instance }} producing fewer than 1 block per 20 seconds"
+
+      - alert: HighTransactionRate
+        expr: rate(evaporchain_total_transactions[1m]) > 10000
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Unusually high transaction rate"
+          description: "{{ $labels.instance }} processing {{ $value }} tx/sec — possible spam"
+
+      - alert: DiskSpaceHigh
+        expr: (node_filesystem_avail_bytes{mountpoint="/data"} / node_filesystem_size_bytes{mountpoint="/data"}) < 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk space above 80%"
+          description: "{{ $labels.instance }} has {{ $value | humanizePercentage }} free disk space"
+
+      - alert: DiskSpaceCritical
+        expr: (node_filesystem_avail_bytes{mountpoint="/data"} / node_filesystem_size_bytes{mountpoint="/data"}) < 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Disk space above 90%"
+          description: "{{ $labels.instance }} has {{ $value | humanizePercentage }} free disk space — urgent action needed"
+
+      - alert: HighEvaporationRate
+        expr: rate(evaporchain_total_evaporated[5m]) > 100
+        for: 5m
+        labels:
+          severity: info
+        annotations:
+          summary: "High evaporation rate"
+          description: "{{ $labels.instance }} evaporating {{ $value }} objects/sec — check if decay parameters are correct"
+
+      - alert: ValidatorDown
+        expr: up{job="evaporchain"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Validator instance unreachable"
+          description: "{{ $labels.instance }} has been unreachable for 1+ minute"
+
+      - alert: HighMemoryUsage
+        expr: container_memory_usage_bytes{container="validator"} > 1.5e9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Validator memory usage above 1.5GB"
+          description: "{{ $labels.instance }} using {{ $value | humanize }}B memory"

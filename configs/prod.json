@@ -1,0 +1,48 @@
+{
+  "chain_id": "evaporchain-mainnet-1",
+  "genesis_time": "2026-10-01T00:00:00Z",
+  "consensus": {
+    "type": "tendermint",
+    "block_interval_ms": 2000,
+    "grace_period": 10,
+    "max_rounds_per_height": 15
+  },
+  "validators": [
+    {
+      "id": 0,
+      "name": "mainnet-validator-0",
+      "stake": 100000,
+      "address": "0x01",
+      "p2p_address": "/ip4/0.0.0.0/tcp/26656"
+    },
+    {
+      "id": 1,
+      "name": "mainnet-validator-1",
+      "stake": 100000,
+      "address": "0x02",
+      "p2p_address": "/ip4/0.0.0.0/tcp/26656"
+    },
+    {
+      "id": 2,
+      "name": "mainnet-validator-2",
+      "stake": 100000,
+      "address": "0x03",
+      "p2p_address": "/ip4/0.0.0.0/tcp/26656"
+    },
+    {
+      "id": 3,
+      "name": "mainnet-validator-3",
+      "stake": 100000,
+      "address": "0x04",
+      "p2p_address": "/ip4/0.0.0.0/tcp/26656"
+    }
+  ],
+  "bootstrap_peers": [],
+  "accounts": [
+    { "address": "0xa1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2", "balance": 487293, "label": "Foundation" },
+    { "address": "0xb2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3", "balance": 234851, "label": "Core Dev" },
+    { "address": "0xc3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4", "balance": 128472, "label": "Validator Reserve" },
+    { "address": "0xe5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6", "balance": 52184, "label": "Ecosystem" },
+    { "address": "0xf6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1", "balance": 38916, "label": "Community" }
+  ]
+}

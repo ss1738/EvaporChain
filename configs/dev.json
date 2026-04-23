@@ -1,0 +1,24 @@
+{
+  "chain_id": "evaporchain-dev",
+  "genesis_time": "2026-01-01T00:00:00Z",
+  "consensus": {
+    "type": "tendermint",
+    "block_interval_ms": 500,
+    "grace_period": 3,
+    "max_rounds_per_height": 5
+  },
+  "validators": [
+    {
+      "id": 0,
+      "name": "dev-validator-0",
+      "stake": 1000,
+      "address": "0x01",
+      "p2p_address": "/ip4/127.0.0.1/tcp/26656"
+    }
+  ],
+  "bootstrap_peers": [],
+  "accounts": [
+    { "address": "0xa1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2", "balance": 10000000, "label": "Dev Faucet" },
+    { "address": "0xb2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3", "balance": 1000000, "label": "Dev Test" }
+  ]
+}

@@ -62,7 +62,7 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 - [x] **Integration tests in CI** — DONE: `cargo test -p integration-tests -- --include-ignored` with 15min timeout
 - [ ] **Benchmark regression tracking** — Run benchmarks in CI, flag regressions >10%.
 - [ ] **Fuzzing harnesses** — Wire `wallet/src/fuzzer.rs` to `cargo-fuzz`. Add harnesses for Poseidon, EvaporScript parser, bincode deserialization.
-- [ ] **Release automation** — `cargo-release` or GitHub Actions for tagged binary releases.
+- [x] **Release automation** — DONE: `.github/workflows/release.yml` builds linux/mac amd64/arm64 on tag push, creates GitHub Release
 
 ---
 
@@ -71,12 +71,12 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 - [ ] **Terraform/IaC** — Modules for Hetzner/AWS/GCP. Reproducible infrastructure.
 - [ ] **Expanded devnet** — 10-20 validators on Hetzner (€5/mo CX21 each). Scripts exist at `scripts/deploy-testnet.sh`.
 - [x] **Log aggregation** — DONE: `--json-log` flag for structured JSON output via tracing-subscriber, RUST_LOG env filter support
-- [ ] **Alerting rules** — AlertManager for: consensus stalled, peer count drop, block production stopped, disk >80%.
+- [x] **Alerting rules** — DONE: 10 Prometheus alert rules at `deploy/alertmanager-rules.yaml` (consensus stalled, no peers, disk, memory, validator down)
 - [x] **Health check endpoints** — DONE: `/healthz` (liveness) and `/readyz` (readiness with block height, peers, uptime) in `api.rs`
 - [ ] **Backup strategy** — Automated RocksDB snapshots. Define RTO/RPO.
 - [ ] **Disaster recovery plan** — Documented procedures for node failure, state corruption, network partition.
 - [ ] **Runbooks** — Validator onboarding, emergency procedures, network upgrades, state sync.
-- [ ] **Environment configs** — Separate genesis/config for dev, staging, prod. No env-specific separation today.
+- [x] **Environment configs** — DONE: `configs/dev.json`, `configs/staging.json`, `configs/prod.json` with env-specific parameters
 
 ---
 
