@@ -18,6 +18,9 @@ serde = { workspace = true }
 hex = { workspace = true }
 blake3 = { workspace = true }
 
+[dev-dependencies]
+serde_json = { workspace = true }
+
 # Heavy deps — only compiled with the "nova" feature
 nova-snark = { version = "0.68", features = ["test-utils"], optional = true }
 ff = { version = "0.13", optional = true }
