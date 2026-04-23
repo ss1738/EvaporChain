@@ -478,11 +478,8 @@ mod tests {
     fn test_mmr_root_single() {
         let leaf = make_nullifier(42);
         let root = compute_mmr_root(&[leaf]);
-        // Single leaf: hash(leaf || leaf)
-        let mut h = blake3::Hasher::new();
-        h.update(&leaf);
-        h.update(&leaf);
-        assert_eq!(root, *h.finalize().as_bytes());
+        // Single leaf: root = leaf itself (no hashing needed)
+        assert_eq!(root, leaf);
     }
 
     #[test]
