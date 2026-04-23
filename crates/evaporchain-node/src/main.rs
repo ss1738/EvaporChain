@@ -586,6 +586,10 @@ struct NodeArgs {
     high_throughput: bool,
     /// Path to a genesis JSON config file (overrides hardcoded genesis).
     genesis_config: Option<String>,
+    /// Enable TLS 1.3 transport for peer connections (libp2p-tls).
+    use_tls: bool,
+    /// Comma-separated list of authorized PeerIds (empty = permissionless).
+    allowed_peers: Vec<String>,
 }
 
 fn parse_args() -> NodeArgs {
@@ -673,6 +677,15 @@ fn parse_args() -> NodeArgs {
         .and_then(|i| args.get(i + 1))
         .cloned();
 
+    let use_tls = args.iter().any(|a| a == "--tls");
+
+    let allowed_peers: Vec<String> = args
+        .iter()
+        .position(|a| a == "--allowed-peers")
+        .and_then(|i| args.get(i + 1))
+        .map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+        .unwrap_or_default();
+
     let mut bootstrap_peers = Vec::new();
     let mut i = 0;
     while i < args.len() {
@@ -705,6 +718,8 @@ fn parse_args() -> NodeArgs {
         block_gas_limit,
         high_throughput,
         genesis_config,
+        use_tls,
+        allowed_peers,
     }
 }
 
@@ -1230,10 +1245,33 @@ async fn main() -> Result<()> {
     // ── Network setup ──
     let mut peer_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let net_channels = if args.network_mode {
+        let peer_authority = if args.allowed_peers.is_empty() {
+            evaporchain_network::PeerAuthority::permissionless()
+        } else {
+            let peer_ids: Vec<libp2p::PeerId> = args
+                .allowed_peers
+                .iter()
+                .filter_map(|s| s.parse::<libp2p::PeerId>().ok())
+                .collect();
+            println!(
+                "{} \x1b[1;36mPeer allowlist\x1b[0m — {} authorized peers",
+                node_tag,
+                peer_ids.len()
+            );
+            evaporchain_network::PeerAuthority::with_allowlist(peer_ids)
+        };
+
+        if args.use_tls {
+            println!("{} \x1b[1;32mTLS 1.3 transport enabled\x1b[0m", node_tag);
+        }
+
         let net_config = NetworkConfig {
             listen_address: format!("/ip4/0.0.0.0/tcp/{}", args.port),
             bootstrap_peers: args.bootstrap_peers.clone(),
             channel_buffer: 256,
+            use_tls: args.use_tls,
+            tls_certs: None,
+            peer_authority,
         };
         println!(
             "{} \x1b[1;33mNetwork mode active\x1b[0m — listening on port {}, {} bootstrap peer(s)",

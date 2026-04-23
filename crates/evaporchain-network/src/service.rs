@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use libp2p::{
     gossipsub::{self, IdentTopic, MessageAuthenticity},
-    identify, mdns, noise,
+    identify, mdns, noise, tls,
     request_response::{self, ProtocolSupport},
     swarm::{NetworkBehaviour, SwarmEvent},
     tcp, yamux, Multiaddr, PeerId, StreamProtocol, SwarmBuilder,
@@ -96,6 +96,13 @@ pub struct NetworkConfig {
     pub bootstrap_peers: Vec<String>,
     /// Channel buffer size for tx/block channels.
     pub channel_buffer: usize,
+    /// Use TLS 1.3 transport instead of Noise. libp2p-tls generates
+    /// self-signed certs from the node's identity key automatically.
+    pub use_tls: bool,
+    /// External TLS certificate config (for API server mTLS, not p2p).
+    pub tls_certs: Option<crate::tls::TlsConfig>,
+    /// Peer authorization policy. Controls which peers can connect.
+    pub peer_authority: crate::tls::PeerAuthority,
 }
 
 impl Default for NetworkConfig {
@@ -104,6 +111,9 @@ impl Default for NetworkConfig {
             listen_address: "/ip4/0.0.0.0/tcp/0".to_string(),
             bootstrap_peers: vec![],
             channel_buffer: 256,
+            use_tls: false,
+            tls_certs: None,
+            peer_authority: crate::tls::PeerAuthority::permissionless(),
         }
     }
 }
@@ -236,15 +246,34 @@ impl P2pNetworkService {
         let shard_cache: ShardCache = Arc::new(RwLock::new(BTreeMap::new()));
         let shard_cache_inner = Arc::clone(&shard_cache);
 
-        // Build the swarm
-        let mut swarm = SwarmBuilder::with_new_identity()
-            .with_tokio()
-            .with_tcp(
-                tcp::Config::default(),
-                noise::Config::new,
-                yamux::Config::default,
-            )
-            .map_err(|e| NetworkError::ConnectionError(format!("tcp transport: {e}")))?
+        // Build the swarm — use TLS when configured, Noise otherwise
+        let peer_authority = config.peer_authority.clone();
+        let use_tls = config.use_tls;
+        let builder = SwarmBuilder::with_new_identity().with_tokio();
+
+        // libp2p-tls provides TLS 1.3 with peer identity verification via
+        // self-signed certs embedding the libp2p PeerId. This gives us mTLS
+        // between validators without external CA infrastructure.
+        let swarm_result = if use_tls {
+            info!("Using TLS 1.3 transport (libp2p-tls)");
+            builder
+                .with_tcp(
+                    tcp::Config::default(),
+                    tls::Config::new,
+                    yamux::Config::default,
+                )
+                .map_err(|e| NetworkError::ConnectionError(format!("tls transport: {e}")))
+        } else {
+            builder
+                .with_tcp(
+                    tcp::Config::default(),
+                    noise::Config::new,
+                    yamux::Config::default,
+                )
+                .map_err(|e| NetworkError::ConnectionError(format!("tcp transport: {e}")))
+        };
+
+        let mut swarm = swarm_result?
             .with_behaviour(|key| {
                 // GossipSub with message dedup by content hash
                 let message_id_fn = |message: &gossipsub::Message| {
@@ -651,6 +680,11 @@ impl P2pNetworkService {
                             }
                             // ── Connection events ──
                             SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+                                if !peer_authority.is_authorized(&peer_id) {
+                                    warn!("Unauthorized peer {peer_id} — disconnecting");
+                                    let _ = swarm.disconnect_peer_id(peer_id);
+                                    continue;
+                                }
                                 let count = swarm.connected_peers().count();
                                 peer_count_inner.store(count, Ordering::Relaxed);
                                 info!("Connection established with {peer_id} (total: {count})");
@@ -693,6 +727,9 @@ mod tests {
             listen_address: format!("/ip4/127.0.0.1/tcp/{port}"),
             bootstrap_peers: vec![],
             channel_buffer: 64,
+            use_tls: false,
+            tls_certs: None,
+            peer_authority: crate::tls::PeerAuthority::permissionless(),
         }
     }
 

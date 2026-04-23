@@ -9,6 +9,26 @@
 //! - Public key:  1952 bytes
 //! - Secret key:  4000 bytes
 //! - Signature:   3293 bytes
+//!
+//! # Security — Browser Isolation Requirements
+//!
+//! Secret keys are exposed to JavaScript as `Uint8Array` via `ml_dsa_keygen()`.
+//! WASM linear memory is readable by any JS in the same origin. This is safe
+//! **only** under the browser extension's isolated execution context:
+//!
+//! 1. The extension runs in its own origin (`chrome-extension://<id>`), isolated
+//!    from web page JS by the Same-Origin Policy.
+//! 2. Content scripts run in an isolated world — page JS cannot read extension
+//!    memory or call extension APIs.
+//! 3. The `manifest.json` `content_security_policy` must forbid `unsafe-eval`
+//!    and restrict script sources to `self` only.
+//! 4. Secret keys should be stored in `chrome.storage.session` (memory-only,
+//!    cleared on browser close) — NOT `chrome.storage.local` (persisted to disk).
+//! 5. After signing, the caller should zero the `Uint8Array` holding the secret
+//!    key (`secretKey.fill(0)`) to minimize the exposure window.
+//!
+//! **Do NOT use this module in regular web pages** — any same-origin script
+//! could read the WASM linear memory and extract secret keys.
 
 use pqc_dilithium::Keypair;
 use sha2::{Digest, Sha256};

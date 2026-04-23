@@ -3,8 +3,10 @@ use evaporchain_types::{Block, Transaction};
 use thiserror::Error;
 
 pub mod service;
+pub mod tls;
 
 pub use service::{NetworkConfig, P2pNetworkService, ShardCache, cache_da_package};
+pub use tls::{PeerAuthority, TlsConfig};
 
 /// Errors that can occur in the network layer.
 #[derive(Debug, Error)]

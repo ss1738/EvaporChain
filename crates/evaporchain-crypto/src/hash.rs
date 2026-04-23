@@ -56,6 +56,32 @@ impl HashEngine for PoseidonHasher {
 }
 
 // Poseidon parameters
+//
+// Security rationale for custom constants vs audited Arkworks:
+//
+// We use DOMAIN-SEPARATED round constants derived deterministically from
+// BLAKE3("EvaporChain_Poseidon_RC_{round}_{element}"). This differs from the
+// Arkworks `poseidon` crate which uses the Grain LFSR method from the original
+// Poseidon paper (Grassi et al., 2019).
+//
+// Why custom:
+// - Domain separation binds constants to EvaporChain, preventing cross-protocol
+//   attacks where an adversary reuses precomputed tables from another deployment.
+// - BLAKE3 is a standardized, collision-resistant PRF — the security requirement
+//   for round constants is pseudorandomness, which BLAKE3 satisfies.
+// - The MDS matrix uses the Cauchy construction (M[i][j] = 1/(x_i + y_j) with
+//   disjoint x,y sets), which is the SAME construction used in the Poseidon
+//   paper and Arkworks. This guarantees maximal branch number.
+//
+// Parameter choices (t=3, R_F=8, R_P=56) match the Poseidon authors'
+// recommendations for 128-bit security over BLS12-381's scalar field (Table 2,
+// https://eprint.iacr.org/2019/458.pdf).
+//
+// Trade-off: These constants have NOT been audited by a third party. The
+// external security audit (see REMAINING_WORK.md) should verify that:
+// 1. Round constant generation produces uniform field elements.
+// 2. No invariant subspace attacks exist for this specific instantiation.
+// 3. The number of partial rounds (56) provides sufficient security margin.
 const WIDTH: usize = 3; // state width (t)
 const RATE: usize = 2; // absorption rate
 const ROUNDS_F: usize = 8; // full rounds

@@ -1105,6 +1105,9 @@ async fn main() -> Result<()> {
             listen_address: format!("/ip4/0.0.0.0/tcp/{}", args.port),
             bootstrap_peers: args.bootstrap_peers.clone(),
             channel_buffer: 256,
+            use_tls: false,
+            tls_certs: None,
+            peer_authority: evaporchain_network::PeerAuthority::permissionless(),
         };
         println!(
             "{} \x1b[1;33mNetwork mode active\x1b[0m — listening on port {}, {} bootstrap peer(s)",

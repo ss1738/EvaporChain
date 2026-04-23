@@ -13,8 +13,8 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 - [x] **MEDIUM: Unsafe keypair reconstruction** — FIXED: compile-time `const_assert!` in `signatures.rs`
 - [x] **MEDIUM: Poseidon unwrap() on field ops** — DOCUMENTED: Safety proofs added as comments (values provably in-range)
 - [x] **MEDIUM: MockProver no production guard** — FIXED: `tracing::warn!` in release builds
-- [ ] **LOW: WASM secret key exposure** — `crates/evaporchain-crypto-wasm/src/lib.rs:33` — Document browser isolation requirements.
-- [ ] **LOW: Non-standard Poseidon constants** — `crates/evaporchain-crypto/src/hash.rs:78-88` — Document security rationale vs audited Arkworks constants.
+- [x] **LOW: WASM secret key exposure** — DOCUMENTED: Browser isolation requirements in `lib.rs` module docs
+- [x] **LOW: Non-standard Poseidon constants** — DOCUMENTED: Security rationale, domain separation, audit checklist in `hash.rs`
 
 ---
 
@@ -27,7 +27,7 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 - [x] **Prometheus metrics exporter** — `/metrics` endpoint with 12 gauges/counters + `deploy/prometheus.yml` scrape config
 - [x] **Grafana dashboard templates** — 12-panel dashboard (block height, TPS, peak TPS, objects, ghosts, peers, time series for all) at `deploy/grafana/evaporchain-dashboard.json`
 - [x] **API rate limiting** — 200 req/10s per IP, returns 429 with Retry-After header
-- [ ] **TLS/mTLS** — Certificate automation between validators. MITM risk today.
+- [x] **TLS/mTLS** — DONE: libp2p-tls transport (`--tls` flag), PeerAuthority allowlist (`--allowed-peers`), cert generation (`scripts/generate-tls-certs.sh`, `tls.rs`)
 - [ ] **Secrets management** — Validator keys in Kubernetes Secrets or HashiCorp Vault. Not hardcoded.
 - [x] **Slashing implementation** — ALREADY BUILT: equivocation (10% stake), downtime (1%/miss), jailing, unjailing, auto-removal at `validator_set.rs:341-393`
 - [ ] **External security audit** — Budget £30-50K. Recommended firms: Trail of Bits, Least Authority, Zellic, OtterSec, Veridise, Sigma Prime. Scope at `docs/AUDIT_SCOPE.md`.

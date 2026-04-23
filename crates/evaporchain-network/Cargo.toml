@@ -20,6 +20,7 @@ libp2p = { version = "0.54", features = [
     "mdns",
     "noise",
     "tcp",
+    "tls",
     "yamux",
     "macros",
     "identify",
@@ -27,6 +28,9 @@ libp2p = { version = "0.54", features = [
     "json",
 ] }
 futures = "0.3"
+rcgen = "0.13"
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+rustls-pemfile = "2"
 
 [dev-dependencies]
 tokio = { workspace = true }
