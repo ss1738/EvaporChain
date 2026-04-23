@@ -213,12 +213,8 @@ mod tests {
             processed_at: 100,
         };
         let root = CrossShardRouter::receipts_root(&[r.clone()]);
-        // Single receipt: root = hash(receipt_hash || receipt_hash)
         let h = r.receipt_hash();
-        let mut combined = Vec::new();
-        combined.extend_from_slice(&h);
-        combined.extend_from_slice(&h);
-        assert_eq!(root, *blake3::hash(&combined).as_bytes());
+        assert_eq!(root, h);
     }
 
     #[test]
