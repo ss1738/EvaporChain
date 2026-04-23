@@ -35,6 +35,8 @@ mod invariant_tests {
             nova_proof: None,
             anchor_hash: None,
             state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
             da_row_roots: vec![],
             da_col_roots: vec![],
         }
@@ -382,6 +384,8 @@ mod proptest_execution {
             nova_proof: None,
             anchor_hash: None,
             state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
             da_row_roots: vec![],
             da_col_roots: vec![],
         }

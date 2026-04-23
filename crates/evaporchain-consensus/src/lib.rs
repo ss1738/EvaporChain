@@ -208,6 +208,8 @@ impl MockConsensus {
             nova_proof: None,
             anchor_hash: None,
             state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
         };
 
         let execution = self
@@ -282,6 +284,8 @@ impl MockConsensus {
             nova_proof: None,
             anchor_hash: None,
             state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
         };
 
         let execution = self
@@ -447,6 +451,8 @@ impl RotatingConsensus {
             nova_proof: None,
             anchor_hash: None,
             state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
         };
 
         let execution = self
@@ -1021,6 +1027,8 @@ mod tests {
             nova_proof: None,
             anchor_hash: None,
             state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
         };
 
         let result = rc.validate_received_block(&block);
@@ -1056,6 +1064,8 @@ mod tests {
             nova_proof: None,
             anchor_hash: None,
             state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
         };
         assert!(rc.validate_received_block(&block).is_err());
     }
@@ -1122,6 +1132,8 @@ mod tests {
             nova_proof: None,
             anchor_hash: None,
             state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
         };
 
         assert!(follower.apply_block(&mut db, &block).is_err());

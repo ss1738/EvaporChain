@@ -1626,6 +1626,8 @@ mod tests {
             nova_proof: None,
             anchor_hash: None,
             state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
         }
     }
 
@@ -1749,6 +1751,8 @@ mod tests {
             nova_proof: None,
             anchor_hash: None,
             state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
         }
     }
 

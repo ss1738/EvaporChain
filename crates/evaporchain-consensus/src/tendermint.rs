@@ -1493,7 +1493,9 @@ impl TendermintConsensus {
             commit_certificate: None,
             nova_proof: None,
             anchor_hash,
-            state_function_commitment: None, // Filled after execution by the node
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None, // Filled after execution by the node
             da_row_roots: vec![],
             da_col_roots: vec![],
         };
@@ -2076,6 +2078,8 @@ mod tests {
             nova_proof: None,
             anchor_hash: None,
             state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
         };
 
         tc.on_block_committed(&block, [1u8; 32], 0);
@@ -2104,6 +2108,8 @@ mod tests {
             nova_proof: None,
             anchor_hash: None,
             state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
         };
 
         let h1 = TendermintConsensus::block_hash(&block);
@@ -2245,6 +2251,8 @@ mod tests {
             nova_proof: None,
             anchor_hash: None,
             state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
         };
 
         let fake_proposal = ConsensusMessage::Proposal {
@@ -2562,6 +2570,8 @@ mod tests {
             nova_proof: Some(vec![0x01, 0x02, 0x03]), // valid proof
             anchor_hash: None,
             state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
         };
 
         let msg = ConsensusMessage::Proposal {
@@ -2604,6 +2614,8 @@ mod tests {
             nova_proof: Some(vec![0xff, 0xff, 0xff, 0xff, 0x00]), // bad proof
             anchor_hash: None,
             state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
         };
 
         let msg = ConsensusMessage::Proposal {
@@ -2647,6 +2659,8 @@ mod tests {
             nova_proof: None,
             anchor_hash: None,
             state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
         };
 
         let msg = ConsensusMessage::Proposal {
@@ -3386,6 +3400,8 @@ mod vrf_tests {
             nova_proof: None,
             anchor_hash: None,
             state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
         };
 
         let msg = ConsensusMessage::Proposal {
@@ -3594,6 +3610,8 @@ mod epoch_tests {
             blob_commitments: vec![],
             da_certificate: None,
             state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
         }
     }
 
