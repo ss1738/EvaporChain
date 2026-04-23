@@ -127,7 +127,7 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 ## LOW — Code Quality
 
 - [x] **Update test count in docs** — DONE: Updated to 4,159 tests across README, CLAUDE.md, grants, announcement
-- [ ] **Criterion.rs benchmarks** — Replace ad-hoc benchmarks with criterion for statistical rigor.
+- [x] **Criterion.rs benchmarks** — DONE: `benches/core_benchmarks.rs` with transfer throughput, block exec, Poseidon hash, ML-DSA sign/verify
 - [ ] **Config validation** — JSON Schema for genesis configs.
 - [ ] **Hybrid post-quantum scheme** — Optional ECDSA fallback alongside ML-DSA.
 - [ ] **Version pinning** — Cargo.toml uses range specifiers. Pin exact versions for reproducibility.

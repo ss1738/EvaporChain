@@ -9,6 +9,10 @@ repository.workspace = true
 default = []
 prove = ["evaporchain-proving/nova"]
 
+[[bench]]
+name = "core_benchmarks"
+harness = false
+
 [dependencies]
 evaporchain-types = { path = "../evaporchain-types" }
 evaporchain-crypto = { path = "../evaporchain-crypto" }
@@ -38,3 +42,6 @@ chrono = { version = "0.4", features = ["serde"] }
 blake3 = "1"
 rocksdb = { workspace = true }
 bincode = { workspace = true }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
