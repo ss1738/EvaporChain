@@ -18,6 +18,9 @@ import type {
   WsEvent,
   WsTopic,
   ContractEventLog,
+  StateProofResponse,
+  TxInclusionProof,
+  CompactHeader,
 } from "./types";
 import { EventEmitter } from "events";
 
@@ -377,6 +380,55 @@ export class EvaporChain {
    */
   async getEventIndexStats(): Promise<{ indexed_events: number; indexed_transactions: number }> {
     return this.request<{ indexed_events: number; indexed_transactions: number }>("/api/event-index/stats");
+  }
+
+  // ── Light Client Verification ──
+
+  /**
+   * Get a Verkle state proof for an account.
+   */
+  async getAccountStateProof(addressHex: string): Promise<StateProofResponse> {
+    return this.request<StateProofResponse>(`/api/light/state-proof/account/${addressHex}`);
+  }
+
+  /**
+   * Get a Verkle state proof for a state object.
+   */
+  async getObjectStateProof(objectIdHex: string): Promise<StateProofResponse> {
+    return this.request<StateProofResponse>(`/api/light/state-proof/object/${objectIdHex}`);
+  }
+
+  /**
+   * Get a transaction inclusion proof (Merkle proof within block).
+   */
+  async getTxInclusionProof(blockNumber: number, txIndex: number): Promise<{ proof: TxInclusionProof; valid: boolean }> {
+    return this.request<{ proof: TxInclusionProof; valid: boolean }>(
+      `/api/light/tx-proof/${blockNumber}/${txIndex}`,
+    );
+  }
+
+  /**
+   * Verify a transaction inclusion proof.
+   */
+  async verifyTxProof(proof: TxInclusionProof): Promise<{ valid: boolean }> {
+    return this.post<{ valid: boolean }>("/api/light/verify-tx-proof", proof);
+  }
+
+  /**
+   * Get compact block headers for light client sync.
+   */
+  async getLightHeaders(options?: { from?: number; to?: number; limit?: number }): Promise<{
+    count: number;
+    from: number;
+    to: number;
+    headers: CompactHeader[];
+  }> {
+    const params = new URLSearchParams();
+    if (options?.from !== undefined) params.set("from", String(options.from));
+    if (options?.to !== undefined) params.set("to", String(options.to));
+    if (options?.limit !== undefined) params.set("limit", String(options.limit));
+    const qs = params.toString();
+    return this.request(`/api/light/headers${qs ? `?${qs}` : ""}`);
   }
 
   // ── Faucet ──

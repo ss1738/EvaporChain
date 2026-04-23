@@ -257,6 +257,45 @@ export type WsEvent =
 
 export type WsTopic = "blocks" | "transactions" | "evaporations" | "events" | "peers" | "contract_events" | "all";
 
+/** Verkle state proof for light client verification */
+export interface StateProofResponse {
+  type: "account" | "object";
+  state_root: string;
+  exists: boolean;
+  account?: { balance: number; nonce: number };
+  object?: { energy: number; half_life: number; state: string; created_at: number; last_refreshed: number };
+  proof: {
+    key: string;
+    value: string | null;
+    depth: number;
+    commitments: string[];
+    path_indices: number[];
+    siblings: Array<Array<{ index: number; hash: string }>>;
+    hit_compressed: boolean;
+  };
+}
+
+/** Transaction inclusion proof */
+export interface TxInclusionProof {
+  tx_hash: string;
+  tx_index: number;
+  block_number: number;
+  merkle_root: string;
+  siblings: Array<{ hash: string; position: "left" | "right" }>;
+}
+
+/** Compact block header for light client sync */
+export interface CompactHeader {
+  number: number;
+  epoch: number;
+  parent_hash: string;
+  state_root: string;
+  tx_count: number;
+  tx_merkle_root: string;
+  timestamp: number;
+  has_nova_proof: boolean;
+}
+
 /** Contract event log from the indexer */
 export interface ContractEventLog {
   contract_id: number;

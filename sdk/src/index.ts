@@ -31,4 +31,7 @@ export type {
   WsContractLog,
   WsTopic,
   ContractEventLog,
+  StateProofResponse,
+  TxInclusionProof,
+  CompactHeader,
 } from "./types";
