@@ -181,6 +181,22 @@ impl SimpleExecutor {
         }
     }
 
+    #[cfg(test)]
+    pub fn new_with_sig_verification_for_test(grace_period: u64) -> Self {
+        Self {
+            evaporation_engine: EvaporationEngine::new(grace_period),
+            mmr: MerkleMountainRange::new(),
+            verify_signatures: true,
+            fee_controller: None,
+            block_gas_limit: 0,
+            contract_engine: ContractEngine::new(),
+            script_engine: ScriptEngine::new(),
+            privacy_executor: privacy_exec::PrivacyExecutor::with_depth(4),
+            deferred_queue: temporal::DeferredQueue::new(),
+            decay_watchers: temporal::DecayWatcherEngine::new(),
+        }
+    }
+
     /// Create a new executor with PID fee controller.
     pub fn new_with_fees(
         grace_period: u64,
@@ -1532,7 +1548,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 1000);
 
-        let mut executor = SimpleExecutor::new_with_sig_verification(7);
+        let mut executor = SimpleExecutor::new_with_sig_verification_for_test(7);
         let kp = MlDsaKeypair::generate();
 
         let mut tx = Transaction::Transfer(TransferTx {
@@ -1557,7 +1573,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 1000);
 
-        let mut executor = SimpleExecutor::new_with_sig_verification(7);
+        let mut executor = SimpleExecutor::new_with_sig_verification_for_test(7);
 
         let block = make_block(
             1,
@@ -1584,7 +1600,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 1000);
 
-        let mut executor = SimpleExecutor::new_with_sig_verification(7);
+        let mut executor = SimpleExecutor::new_with_sig_verification_for_test(7);
         let kp = MlDsaKeypair::generate();
 
         let mut tx = Transaction::Transfer(TransferTx {
@@ -1616,7 +1632,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 1000);
 
-        let mut executor = SimpleExecutor::new_with_sig_verification(7);
+        let mut executor = SimpleExecutor::new_with_sig_verification_for_test(7);
         let kp1 = MlDsaKeypair::generate();
         let kp2 = MlDsaKeypair::generate();
 
@@ -1642,7 +1658,7 @@ mod tests {
     #[test]
     fn test_signed_create_object_succeeds() {
         let mut db = InMemoryStateDB::new();
-        let mut executor = SimpleExecutor::new_with_sig_verification(7);
+        let mut executor = SimpleExecutor::new_with_sig_verification_for_test(7);
         let kp = MlDsaKeypair::generate();
 
         let mut tx = Transaction::CreateObject(CreateObjectTx {
@@ -1679,7 +1695,7 @@ mod tests {
             decay_curve: None,
         });
 
-        let mut executor = SimpleExecutor::new_with_sig_verification(7);
+        let mut executor = SimpleExecutor::new_with_sig_verification_for_test(7);
         let kp = MlDsaKeypair::generate();
 
         let mut tx = Transaction::Refresh(RefreshTx {
@@ -1914,7 +1930,7 @@ contract Counter {
         });
         sign_tx(&mut tx, &kp);
 
-        let mut executor = SimpleExecutor::new_with_sig_verification(7);
+        let mut executor = SimpleExecutor::new_with_sig_verification_for_test(7);
         let block = make_block(1, 1, vec![tx]);
         let result = executor.execute_block(&mut db, &block).unwrap();
         assert_eq!(result.txs_executed, 1);
@@ -1931,7 +1947,7 @@ contract Counter {
             signature: None, public_key: None,
         });
 
-        let mut executor = SimpleExecutor::new_with_sig_verification(7);
+        let mut executor = SimpleExecutor::new_with_sig_verification_for_test(7);
         let block = make_block(1, 1, vec![tx]);
         let result = executor.execute_block(&mut db, &block).unwrap();
         assert_eq!(result.txs_executed, 0);
@@ -1957,7 +1973,7 @@ contract Counter {
             }
         }
 
-        let mut executor = SimpleExecutor::new_with_sig_verification(7);
+        let mut executor = SimpleExecutor::new_with_sig_verification_for_test(7);
         let block = make_block(1, 1, vec![tx]);
         let result = executor.execute_block(&mut db, &block).unwrap();
         assert_eq!(result.txs_executed, 0);
@@ -1984,7 +2000,7 @@ contract Counter {
             t.public_key = Some(pk);
         }
 
-        let mut executor = SimpleExecutor::new_with_sig_verification(7);
+        let mut executor = SimpleExecutor::new_with_sig_verification_for_test(7);
         let block = make_block(1, 1, vec![tx]);
         let result = executor.execute_block(&mut db, &block).unwrap();
         assert_eq!(result.txs_executed, 0);
@@ -2008,7 +2024,7 @@ contract Counter {
             t.amount = 999;
         }
 
-        let mut executor = SimpleExecutor::new_with_sig_verification(7);
+        let mut executor = SimpleExecutor::new_with_sig_verification_for_test(7);
         let block = make_block(1, 1, vec![tx]);
         let result = executor.execute_block(&mut db, &block).unwrap();
         assert_eq!(result.txs_executed, 0);
