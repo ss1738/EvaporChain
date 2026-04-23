@@ -2863,9 +2863,12 @@ async fn get_prometheus_metrics(
     let t = safe_lock(&state.throughput);
     let stats = safe_lock(&state.stats);
     let db = safe_lock(&state.db);
+    let history = safe_lock(&state.block_history);
     let peer_count = state.peer_count.load(std::sync::atomic::Ordering::Relaxed);
     let uptime = state.start_time.elapsed().as_secs();
 
+    let block_height = history.back().map(|b| b.number).unwrap_or(0);
+    let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
     let active_objects = db.object_count();
     let ghost_count = db.ghost_count();
     let account_count = db.all_account_addresses().len();
@@ -2873,10 +2876,10 @@ async fn get_prometheus_metrics(
     let mut out = String::with_capacity(2048);
     out.push_str("# HELP evaporchain_block_height Current block height\n");
     out.push_str("# TYPE evaporchain_block_height gauge\n");
-    out.push_str(&format!("evaporchain_block_height {}\n", stats.block_height));
+    out.push_str(&format!("evaporchain_block_height {}\n", block_height));
     out.push_str("# HELP evaporchain_epoch Current epoch\n");
     out.push_str("# TYPE evaporchain_epoch gauge\n");
-    out.push_str(&format!("evaporchain_epoch {}\n", stats.epoch));
+    out.push_str(&format!("evaporchain_epoch {}\n", epoch));
     out.push_str("# HELP evaporchain_tps Current transactions per second\n");
     out.push_str("# TYPE evaporchain_tps gauge\n");
     out.push_str(&format!("evaporchain_tps {:.2}\n", t.current_tps()));
