@@ -3498,9 +3498,61 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         }))
 }
 
+// ──────────────────────────── Rate Limiter ────────────────────────────
+
+/// Simple in-memory IP rate limiter: max `limit` requests per `window` per IP.
+struct RateLimiter {
+    requests: Mutex<HashMap<std::net::IpAddr, Vec<Instant>>>,
+    limit: usize,
+    window: std::time::Duration,
+}
+
+impl RateLimiter {
+    fn new(limit: usize, window_secs: u64) -> Self {
+        Self {
+            requests: Mutex::new(HashMap::new()),
+            limit,
+            window: std::time::Duration::from_secs(window_secs),
+        }
+    }
+
+    fn check(&self, ip: std::net::IpAddr) -> bool {
+        let mut map = self.requests.lock().unwrap_or_else(|p| p.into_inner());
+        let now = Instant::now();
+        let timestamps = map.entry(ip).or_default();
+        timestamps.retain(|t| now.duration_since(*t) < self.window);
+        if timestamps.len() >= self.limit {
+            return false;
+        }
+        timestamps.push(now);
+        true
+    }
+}
+
+async fn rate_limit_middleware(
+    axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    axum::extract::Extension(limiter): axum::extract::Extension<Arc<RateLimiter>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    if !limiter.check(addr.ip()) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            [("Retry-After", "10")],
+            "Rate limit exceeded",
+        )
+            .into_response();
+    }
+    next.run(request).await
+}
+
 /// Start the API server on the given port.
 pub async fn start_api_server(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthState>, port: u16) -> anyhow::Result<()> {
-    let app = create_router(state, auth_state);
+    let limiter = Arc::new(RateLimiter::new(200, 10));
+    let app = create_router(state, auth_state)
+        .layer(axum::Extension(limiter))
+        .layer(axum::middleware::from_fn(rate_limit_middleware))
+        .into_make_service_with_connect_info::<std::net::SocketAddr>();
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
     println!(

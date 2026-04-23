@@ -26,7 +26,7 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 - [x] **Kubernetes manifests** — StatefulSet (4 replicas, auto-peer-discovery), headless Service, LoadBalancer Service, ConfigMap (genesis), NetworkPolicy, PVC (10Gi per validator), liveness/readiness probes
 - [x] **Prometheus metrics exporter** — `/metrics` endpoint with 12 gauges/counters + `deploy/prometheus.yml` scrape config
 - [x] **Grafana dashboard templates** — 12-panel dashboard (block height, TPS, peak TPS, objects, ghosts, peers, time series for all) at `deploy/grafana/evaporchain-dashboard.json`
-- [ ] **API rate limiting** — Per-IP rate limits on all public endpoints. DoS risk today.
+- [x] **API rate limiting** — 200 req/10s per IP, returns 429 with Retry-After header
 - [ ] **TLS/mTLS** — Certificate automation between validators. MITM risk today.
 - [ ] **Secrets management** — Validator keys in Kubernetes Secrets or HashiCorp Vault. Not hardcoded.
 - [ ] **Slashing implementation** — Planned Phase 7 but not built. Required for economic security.
