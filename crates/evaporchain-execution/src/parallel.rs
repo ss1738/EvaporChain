@@ -243,6 +243,15 @@ impl OverlayStateDB {
     }
 }
 
+fn empty_verkle_proof() -> evaporchain_crypto::EnergyVerkleProof {
+    evaporchain_crypto::EnergyVerkleProof {
+        key: [0u8; 32], value: None, depth: 0,
+        commitments: vec![], path_indices: vec![],
+        siblings: vec![], energy_path: vec![],
+        hit_compressed: false,
+    }
+}
+
 impl StateDB for OverlayStateDB {
     fn get_object(&self, id: &ObjectId) -> Option<&StateObject> {
         self.objects.get(id)
@@ -329,6 +338,12 @@ impl StateDB for OverlayStateDB {
             max_energy: 0, min_half_life: u64::MAX, last_activity_epoch: 0,
             compressions: 0, decompressions: 0,
         }
+    }
+    fn prove_account(&mut self, _addr: &AccountAddress) -> evaporchain_crypto::EnergyVerkleProof {
+        empty_verkle_proof()
+    }
+    fn prove_object(&mut self, _id: &ObjectId) -> evaporchain_crypto::EnergyVerkleProof {
+        empty_verkle_proof()
     }
     fn trie_snapshot(&mut self) -> Vec<u8> { Vec::new() }
     fn load_trie_snapshot(&mut self, _bytes: &[u8]) -> Result<(), String> { Ok(()) }

@@ -3396,7 +3396,7 @@ async fn get_account_state_proof(
             "depth": proof.depth,
             "commitments": proof.commitments.iter().map(hex::encode).collect::<Vec<_>>(),
             "path_indices": proof.path_indices,
-            "siblings": proof.siblings.iter().map(|s| s.iter().map(hex::encode).collect::<Vec<_>>()).collect::<Vec<_>>(),
+            "siblings": proof.siblings.iter().map(|level| level.iter().map(|(idx, hash)| serde_json::json!({"index": idx, "hash": hex::encode(hash)})).collect::<Vec<_>>()).collect::<Vec<_>>(),
             "hit_compressed": proof.hit_compressed,
         },
     })))
@@ -3438,7 +3438,7 @@ async fn get_object_state_proof(
             "depth": proof.depth,
             "commitments": proof.commitments.iter().map(hex::encode).collect::<Vec<_>>(),
             "path_indices": proof.path_indices,
-            "siblings": proof.siblings.iter().map(|s| s.iter().map(hex::encode).collect::<Vec<_>>()).collect::<Vec<_>>(),
+            "siblings": proof.siblings.iter().map(|level| level.iter().map(|(idx, hash)| serde_json::json!({"index": idx, "hash": hex::encode(hash)})).collect::<Vec<_>>()).collect::<Vec<_>>(),
             "hit_compressed": proof.hit_compressed,
         },
     })))
