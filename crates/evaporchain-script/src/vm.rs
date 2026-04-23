@@ -1125,6 +1125,7 @@ contract Context {
             epoch: 0,
             energy: 0,
             vrf_randomness: [0u8; 32],
+            call_depth: 0,
         };
         let r1 =
             EvaporVM::execute(&bytecode, "is_owner", vec![], empty_state(), &ctx1).unwrap();
@@ -1137,6 +1138,7 @@ contract Context {
             epoch: 0,
             energy: 0,
             vrf_randomness: [0u8; 32],
+            call_depth: 0,
         };
         let r2 =
             EvaporVM::execute(&bytecode, "is_owner", vec![], empty_state(), &ctx2).unwrap();
@@ -1235,6 +1237,7 @@ contract LoyaltyPoints {
             epoch: 100,
             energy: 5000,
             vrf_randomness: [0u8; 32],
+            call_depth: 0,
         };
 
         // Initialize state
@@ -1306,6 +1309,7 @@ contract LoyaltyPoints {
             epoch: 100,
             energy: 5000,
             vrf_randomness: [0u8; 32],
+            call_depth: 0,
         };
         let ctx_user = ExecutionContext {
             caller: user,
@@ -1313,6 +1317,7 @@ contract LoyaltyPoints {
             epoch: 100,
             energy: 5000,
             vrf_randomness: [0u8; 32],
+            call_depth: 0,
         };
 
         let mut state = HashMap::new();
