@@ -891,7 +891,7 @@ fn record_block(
             tx_count: block.transactions.len(),
             timestamp: block.timestamp,
             state_root: hex::encode(execution.state_root),
-            producer: block.producer_id.clone(),
+            producer: block.producer_id.map(|id| format!("validator_{}", id)),
         });
 
         for tx in &block.transactions {
@@ -910,13 +910,13 @@ fn record_block(
                 ),
                 Transaction::Refresh(t) => (
                     "refresh",
-                    hex::encode(t.refresher),
+                    hex::encode(t.object_id),
                     None,
-                    None,
+                    Some(t.energy_deposit),
                 ),
                 _ => continue,
             };
-            let hash = hex::encode(blake3::hash(&bincode::serialize(tx).unwrap_or_default()).as_bytes());
+            let hash = hex::encode(blake3::hash(&serde_json::to_vec(tx).unwrap_or_default()).as_bytes());
             broadcaster.publish(ws::WsEvent::NewTransaction {
                 hash,
                 tx_type: tx_type.to_string(),
@@ -1848,6 +1848,7 @@ async fn main() -> Result<()> {
         peer_count: &Arc<std::sync::atomic::AtomicUsize>,
         block_cache: &Option<evaporchain_network::service::BlockCache>,
         tendermint: &Option<Arc<Mutex<TendermintConsensus>>>,
+        ws_broadcaster: &Arc<ws::WsBroadcaster>,
     ) -> Option<(usize, usize)> {
         // Verify CommitCertificate before applying (lenient if BLS keys not yet received)
         if let Some(ref cert) = block.commit_certificate {
@@ -3066,7 +3067,7 @@ async fn main() -> Result<()> {
                         &node_tag, &block, &consensus, &db, &chain_prover,
                         args.prove_mode, &block_history, &chain_stats, &events,
                         &throughput, &chain_store, &peer_count, &block_cache,
-                        &tendermint,
+                        &tendermint, &ws_broadcaster,
                     );
 
                     // After applying, drain any pending blocks that are now in sequence

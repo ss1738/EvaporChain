@@ -4,8 +4,9 @@ use crate::api::{
     BlockRecord, ChainStats, DAOStore, EventRecord, NftStore, StakingStore, TokenStore,
 };
 use evaporchain_da::block_da::BlockDAPackage;
-use evaporchain_types::Block;
+use evaporchain_types::{Block, Transaction};
 use rocksdb::{ColumnFamilyDescriptor, Options, DB};
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
 use std::path::Path;
 
@@ -18,6 +19,10 @@ const CF_FULL_BLOCKS: &str = "full_blocks";
 const CF_DA_SHARDS: &str = "da_shards";
 /// PoHA certificate store (serialized PoHAStore state).
 const CF_POHA: &str = "poha";
+/// Transaction index: tx_hash (32 bytes) → TxReceipt JSON.
+const CF_TX_INDEX: &str = "tx_index";
+/// Address transaction history: address_hex:block_number:tx_index → tx_hash.
+const CF_ADDR_HISTORY: &str = "addr_history";
 
 /// Persistent storage for chain data beyond the state DB.
 pub struct ChainStore {
@@ -37,6 +42,8 @@ impl ChainStore {
             ColumnFamilyDescriptor::new(CF_FULL_BLOCKS, Options::default()),
             ColumnFamilyDescriptor::new(CF_DA_SHARDS, Options::default()),
             ColumnFamilyDescriptor::new(CF_POHA, Options::default()),
+            ColumnFamilyDescriptor::new(CF_TX_INDEX, Options::default()),
+            ColumnFamilyDescriptor::new(CF_ADDR_HISTORY, Options::default()),
         ];
 
         let db = DB::open_cf_descriptors(&opts, path, cf_descriptors)
@@ -418,6 +425,97 @@ impl ChainStore {
         loaded
     }
 
+    // ─── Transaction receipt indexing ───
+
+    /// Compute a deterministic blake3 hash for a transaction.
+    pub fn compute_tx_hash(tx: &evaporchain_types::Transaction) -> [u8; 32] {
+        let serialized = serde_json::to_vec(tx).unwrap_or_default();
+        *blake3::hash(&serialized).as_bytes()
+    }
+
+    /// Index all transactions in a block. Call after save_full_block().
+    pub fn index_block_transactions(&self, block: &Block) -> Result<usize, String> {
+        let tx_cf = self.db.cf_handle(CF_TX_INDEX).unwrap();
+        let addr_cf = self.db.cf_handle(CF_ADDR_HISTORY).unwrap();
+        let mut indexed = 0;
+
+        for (tx_idx, tx) in block.transactions.iter().enumerate() {
+            let tx_hash = Self::compute_tx_hash(tx);
+            let receipt = TxReceipt {
+                tx_hash: hex::encode(tx_hash),
+                block_number: block.number,
+                tx_index: tx_idx as u32,
+                epoch: block.epoch,
+                timestamp: block.timestamp,
+                tx_type: tx_type_name(tx).to_string(),
+                from: tx_sender_hex(tx),
+                to: tx_receiver_hex(tx),
+                status: "confirmed".to_string(),
+            };
+            let value = serde_json::to_vec(&receipt).map_err(|e| e.to_string())?;
+            self.db.put_cf(tx_cf, tx_hash, &value).map_err(|e| e.to_string())?;
+
+            // Index by sender address
+            if let Some(ref addr) = receipt.from {
+                let addr_key = format!("{}:{:016x}:{:04x}", addr, block.number, tx_idx);
+                self.db.put_cf(addr_cf, addr_key.as_bytes(), tx_hash).map_err(|e| e.to_string())?;
+            }
+            // Index by receiver address
+            if let Some(ref addr) = receipt.to {
+                if receipt.from.as_deref() != Some(addr) {
+                    let addr_key = format!("{}:{:016x}:{:04x}", addr, block.number, tx_idx);
+                    self.db.put_cf(addr_cf, addr_key.as_bytes(), tx_hash).map_err(|e| e.to_string())?;
+                }
+            }
+
+            indexed += 1;
+        }
+        Ok(indexed)
+    }
+
+    /// Look up a transaction receipt by its blake3 hash (hex string or raw bytes).
+    pub fn get_tx_receipt(&self, hash_hex: &str) -> Option<TxReceipt> {
+        let hash_bytes = hex::decode(hash_hex).ok()?;
+        if hash_bytes.len() != 32 { return None; }
+        let cf = self.db.cf_handle(CF_TX_INDEX).unwrap();
+        let data = self.db.get_cf(cf, &hash_bytes).ok()??;
+        serde_json::from_slice(&data).ok()
+    }
+
+    /// Get transaction history for an address (hex prefix, e.g. "0x01000000").
+    /// Returns receipts in reverse chronological order, up to `limit`.
+    pub fn get_address_transactions(&self, addr_hex: &str, limit: usize) -> Vec<TxReceipt> {
+        let addr_cf = self.db.cf_handle(CF_ADDR_HISTORY).unwrap();
+        let tx_cf = self.db.cf_handle(CF_TX_INDEX).unwrap();
+        let prefix = format!("{}:", addr_hex);
+        let mut receipts = Vec::new();
+
+        // Scan in reverse to get most recent first
+        let mut iter = self.db.prefix_iterator_cf(addr_cf, prefix.as_bytes());
+        let mut all_entries: Vec<Vec<u8>> = Vec::new();
+        while let Some(Ok((key, value))) = iter.next() {
+            if !key.starts_with(prefix.as_bytes()) { break; }
+            all_entries.push(value.to_vec());
+        }
+
+        // Reverse for chronological order (newest first)
+        for tx_hash in all_entries.into_iter().rev().take(limit) {
+            if let Ok(Some(data)) = self.db.get_cf(tx_cf, &tx_hash) {
+                if let Ok(receipt) = serde_json::from_slice::<TxReceipt>(&data) {
+                    receipts.push(receipt);
+                }
+            }
+        }
+        receipts
+    }
+
+    /// Count total indexed transactions.
+    pub fn tx_index_count(&self) -> usize {
+        let cf = self.db.cf_handle(CF_TX_INDEX).unwrap();
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+        iter.count()
+    }
+
     pub fn prune_da_packages(&self, current_height: u64, retain: u64) -> usize {
         if current_height <= retain {
             return 0;
@@ -441,5 +539,66 @@ impl ChainStore {
             }
         }
         pruned
+    }
+}
+
+// ─── Transaction Receipt ───
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TxReceipt {
+    pub tx_hash: String,
+    pub block_number: u64,
+    pub tx_index: u32,
+    pub epoch: u64,
+    pub timestamp: u64,
+    pub tx_type: String,
+    pub from: Option<String>,
+    pub to: Option<String>,
+    pub status: String,
+}
+
+fn tx_type_name(tx: &Transaction) -> &'static str {
+    match tx {
+        Transaction::Transfer(_) => "transfer",
+        Transaction::CreateObject(_) => "create_object",
+        Transaction::Refresh(_) => "refresh",
+        Transaction::DeployContract(_) => "deploy_contract",
+        Transaction::CallContract(_) => "call_contract",
+        Transaction::DeployScript(_) => "deploy_script",
+        Transaction::CallScript(_) => "call_script",
+        Transaction::ValidatorStake(_) => "validator_stake",
+        Transaction::ValidatorExit(_) => "validator_exit",
+        Transaction::Shield(_) => "shield",
+        Transaction::Unshield(_) => "unshield",
+        Transaction::PrivateTransfer(_) => "private_transfer",
+        Transaction::Deferred(_) => "deferred",
+        Transaction::Blob(_) => "blob",
+    }
+}
+
+fn addr_hex(addr: &[u8; 32]) -> String {
+    format!("0x{}", hex::encode(&addr[..4]))
+}
+
+fn tx_sender_hex(tx: &Transaction) -> Option<String> {
+    match tx {
+        Transaction::Transfer(t) => Some(addr_hex(&t.from)),
+        Transaction::CreateObject(t) => Some(addr_hex(&t.creator)),
+        Transaction::Refresh(_) => None,
+        Transaction::DeployContract(t) => Some(addr_hex(&t.deployer)),
+        Transaction::CallContract(t) => Some(addr_hex(&t.caller)),
+        Transaction::DeployScript(t) => Some(addr_hex(&t.deployer)),
+        Transaction::CallScript(t) => Some(addr_hex(&t.caller)),
+        Transaction::ValidatorStake(t) => Some(addr_hex(&t.validator_address)),
+        Transaction::ValidatorExit(t) => Some(addr_hex(&t.validator_address)),
+        Transaction::Shield(_) | Transaction::Unshield(_) | Transaction::PrivateTransfer(_)
+        | Transaction::Deferred(_) | Transaction::Blob(_) => None,
+    }
+}
+
+fn tx_receiver_hex(tx: &Transaction) -> Option<String> {
+    match tx {
+        Transaction::Transfer(t) => Some(addr_hex(&t.to)),
+        _ => None,
     }
 }

@@ -516,6 +516,8 @@ fn tx_to_json(tx: &Transaction) -> serde_json::Value {
         Transaction::Shield(_) => serde_json::json!({ "type": "shield" }),
         Transaction::Unshield(_) => serde_json::json!({ "type": "unshield" }),
         Transaction::PrivateTransfer(_) => serde_json::json!({ "type": "private_transfer" }),
+        Transaction::Deferred(_) => serde_json::json!({ "type": "deferred" }),
+        Transaction::Blob(_) => serde_json::json!({ "type": "blob" }),
     }
 }
 
@@ -1368,7 +1370,7 @@ async fn post_batch(
                         let hash = tx_hash(&format!("create:{}:{}:{}", hex::encode(&oid[..8]), energy, half_life));
                         let mut tx = Transaction::CreateObject(CreateObjectTx {
                             creator: c, object_id: oid, energy, half_life,
-                            data: None, decay_curve: None,
+                            data: Vec::new(), decay_curve: None,
                             signature: None, public_key: None,
                         });
                         sign_transaction(&mut tx, &state, None);
