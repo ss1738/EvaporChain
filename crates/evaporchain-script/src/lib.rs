@@ -570,3 +570,156 @@ impl Default for ScriptEngine {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod cross_contract_tests {
+    use super::*;
+
+    #[test]
+    fn test_cross_contract_call_basic() {
+        let adder_src = r#"
+contract Adder {
+    state { total: u64 = 0 }
+    fn add(x: u64) -> u64 {
+        self.total = self.total + x
+        return self.total
+    }
+    fn get_total() -> u64 {
+        return self.total
+    }
+}
+"#;
+        let caller_src = r#"
+contract Caller {
+    state { last_result: u64 = 0 }
+    fn call_add(target: u64, amount: u64) -> u64 {
+        let result: u64 = call_contract(target, "add", amount)
+        self.last_result = result
+        return result
+    }
+}
+"#;
+        let mut engine = ScriptEngine::new();
+        let creator = [1u8; 32];
+
+        let adder_id = engine.deploy(adder_src, creator, 10_000, 100, 1).unwrap();
+        let caller_id = engine.deploy(caller_src, creator, 10_000, 100, 1).unwrap();
+
+        let result = engine.call(
+            caller_id, "call_add",
+            vec![Value::U64(adder_id), Value::U64(42)],
+            creator, 10,
+        ).unwrap();
+
+        assert_eq!(result.return_value, Value::U64(42));
+
+        let adder_total = engine.call(adder_id, "get_total", vec![], creator, 10).unwrap();
+        assert_eq!(adder_total.return_value, Value::U64(42));
+    }
+
+    #[test]
+    fn test_cross_contract_call_depth_limit() {
+        let src = r#"
+contract Recurse {
+    state { v: u64 = 0 }
+    fn recurse(self_id: u64) -> u64 {
+        return call_contract(self_id, "recurse", self_id)
+    }
+}
+"#;
+        let mut engine = ScriptEngine::new();
+        let creator = [1u8; 32];
+        let id = engine.deploy(src, creator, 10_000, 100, 1).unwrap();
+
+        let result = engine.call(id, "recurse", vec![Value::U64(id)], creator, 10);
+        assert!(result.is_err(), "recursive calls must hit depth limit");
+        let err = format!("{:?}", result.unwrap_err());
+        assert!(err.contains("depth"), "error should mention depth: {err}");
+    }
+
+    #[test]
+    fn test_cross_contract_call_nonexistent_target() {
+        let src = r#"
+contract Caller {
+    state { v: u64 = 0 }
+    fn call_missing() -> u64 {
+        return call_contract(999, "get", 0)
+    }
+}
+"#;
+        let mut engine = ScriptEngine::new();
+        let creator = [1u8; 32];
+        let id = engine.deploy(src, creator, 10_000, 100, 1).unwrap();
+
+        let result = engine.call(id, "call_missing", vec![], creator, 10);
+        assert!(result.is_err(), "calling nonexistent contract must error");
+    }
+
+    #[test]
+    fn test_cross_contract_state_isolation() {
+        let storage_src = r#"
+contract Storage {
+    state { value: u64 = 0 }
+    fn set(x: u64) -> u64 {
+        self.value = x
+        return self.value
+    }
+    fn get() -> u64 {
+        return self.value
+    }
+}
+"#;
+        let mut engine = ScriptEngine::new();
+        let creator = [1u8; 32];
+
+        let s1 = engine.deploy(storage_src, creator, 10_000, 100, 1).unwrap();
+        let s2 = engine.deploy(storage_src, creator, 10_000, 100, 1).unwrap();
+
+        engine.call(s1, "set", vec![Value::U64(100)], creator, 10).unwrap();
+        engine.call(s2, "set", vec![Value::U64(200)], creator, 10).unwrap();
+
+        let v1 = engine.call(s1, "get", vec![], creator, 10).unwrap();
+        let v2 = engine.call(s2, "get", vec![], creator, 10).unwrap();
+
+        assert_eq!(v1.return_value, Value::U64(100));
+        assert_eq!(v2.return_value, Value::U64(200));
+    }
+
+    #[test]
+    fn test_cross_contract_gas_forwarding() {
+        let work_src = r#"
+contract Worker {
+    state { v: u64 = 0 }
+    fn work() -> u64 {
+        let i: u64 = 0
+        while i < 50 {
+            i = i + 1
+            self.v = self.v + 1
+        }
+        return self.v
+    }
+}
+"#;
+        let caller_src = r#"
+contract Boss {
+    state { result: u64 = 0 }
+    fn delegate(target: u64) -> u64 {
+        let r: u64 = call_contract(target, "work")
+        self.result = r
+        return r
+    }
+}
+"#;
+        let mut engine = ScriptEngine::new();
+        let creator = [1u8; 32];
+
+        let worker = engine.deploy(work_src, creator, 10_000, 100, 1).unwrap();
+        let boss = engine.deploy(caller_src, creator, 10_000, 100, 1).unwrap();
+
+        let result = engine.call(
+            boss, "delegate", vec![Value::U64(worker)], creator, 10,
+        ).unwrap();
+        assert_eq!(result.return_value, Value::U64(50));
+        assert!(result.gas_used > 0);
+    }
+}
