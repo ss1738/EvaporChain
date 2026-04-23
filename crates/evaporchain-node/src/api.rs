@@ -70,6 +70,8 @@ pub struct ApiState {
     pub tx_broadcast: Option<tokio::sync::mpsc::Sender<Transaction>>,
     /// WebSocket event broadcaster for real-time subscriptions.
     pub ws_broadcaster: Arc<crate::ws::WsBroadcaster>,
+    /// Persistent chain store for tx receipt lookups.
+    pub chain_store: Option<Arc<crate::persistence::ChainStore>>,
     /// Chain prover for Nova IVC proof generation and light client sync.
     pub chain_prover: Arc<Mutex<evaporchain_proving::chain_proof::ChainProver>>,
     /// Rolling throughput metrics (TPS, block exec time, gas).
@@ -3047,6 +3049,46 @@ async fn get_mempool(State(state): State<Arc<ApiState>>) -> Json<serde_json::Val
     }))
 }
 
+/// Transaction receipt lookup by hash.
+async fn get_tx_receipt(
+    State(state): State<Arc<ApiState>>,
+    Path(hash): Path<String>,
+) -> Result<Json<crate::persistence::TxReceipt>, StatusCode> {
+    let store = state.chain_store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    store.get_tx_receipt(&hash).map(Json).ok_or(StatusCode::NOT_FOUND)
+}
+
+/// Address transaction history.
+async fn get_address_txs(
+    State(state): State<Arc<ApiState>>,
+    Path(addr): Path<String>,
+    Query(params): Query<PaginationParams>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = state.chain_store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let limit = params.limit.unwrap_or(50).min(200);
+    let receipts = store.get_address_transactions(&addr, limit);
+    Ok(Json(serde_json::json!({
+        "address": addr,
+        "count": receipts.len(),
+        "transactions": receipts,
+    })))
+}
+
+/// Transaction index stats.
+async fn get_tx_index_stats(
+    State(state): State<Arc<ApiState>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = state.chain_store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    Ok(Json(serde_json::json!({
+        "indexed_transactions": store.tx_index_count(),
+    })))
+}
+
+#[derive(Deserialize)]
+struct PaginationParams {
+    limit: Option<usize>,
+}
+
 /// NFT collections endpoint.
 async fn get_nft_collections(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
     let store = safe_lock(&state.nft_store);
@@ -3673,6 +3715,9 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/tx/refresh", post(post_refresh))
         .route("/api/tx/resurrect", post(post_resurrect))
         .route("/api/tx/batch", post(post_batch))
+        .route("/api/tx/:hash", get(get_tx_receipt))
+        .route("/api/address/:addr/transactions", get(get_address_txs))
+        .route("/api/tx-index/stats", get(get_tx_index_stats))
         // Contracts
         .route("/api/contracts", get(get_contracts))
         .route("/api/contract/:id", get(get_contract))

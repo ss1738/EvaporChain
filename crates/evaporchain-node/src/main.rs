@@ -1697,6 +1697,7 @@ async fn main() -> Result<()> {
             oracle_bridge: Some(Arc::clone(&oracle_bridge)),
             shard_bridge: Some(Arc::clone(&shard_bridge)),
             ws_broadcaster: Arc::clone(&ws_broadcaster),
+            chain_store: Some(Arc::clone(&chain_store)),
         });
         let api_port = args.api_port;
         tokio::spawn(async move {
@@ -1914,6 +1915,7 @@ async fn main() -> Result<()> {
                     result.block.number, result.block.epoch, result.block.parent_hash,
                 ));
                 log_persist_err("full_block", chain_store.save_full_block(&result.block));
+                log_persist_err("tx_index", chain_store.index_block_transactions(&result.block).map(|_| ()));
                 {
                     let history = safe_lock(&block_history);
                     if let Some(record) = history.back() {
@@ -2381,6 +2383,7 @@ async fn main() -> Result<()> {
                                 // Persist
                                 log_persist_err("consensus_meta", chain_store.save_consensus_meta(block.number, block.epoch, block.parent_hash));
                                 log_persist_err("full_block", chain_store.save_full_block(&block));
+                                log_persist_err("tx_index", chain_store.index_block_transactions(&block).map(|_| ()));
                                 {
                                     let history = safe_lock(&block_history);
                                     if let Some(record) = history.back() {
@@ -2762,6 +2765,7 @@ async fn main() -> Result<()> {
                                     );
                                     log_persist_err("consensus_meta", chain_store.save_consensus_meta(block.number, block.epoch, block.parent_hash));
                                     log_persist_err("full_block", chain_store.save_full_block(&block));
+                                    log_persist_err("tx_index", chain_store.index_block_transactions(&block).map(|_| ()));
                                     {
                                         let history = safe_lock(&block_history);
                                         if let Some(record) = history.back() {
@@ -2946,6 +2950,7 @@ async fn main() -> Result<()> {
                         result.block.parent_hash,
                     ));
                     log_persist_err("full_block", chain_store.save_full_block(&result.block));
+                log_persist_err("tx_index", chain_store.index_block_transactions(&result.block).map(|_| ()));
                     {
                         let history = safe_lock(&block_history);
                         if let Some(record) = history.back() {
@@ -3081,7 +3086,7 @@ async fn main() -> Result<()> {
                                 &node_tag, &queued, &consensus, &db, &chain_prover,
                                 args.prove_mode, &block_history, &chain_stats, &events,
                                 &throughput, &chain_store, &peer_count, &block_cache,
-                                &tendermint,
+                                &tendermint, &ws_broadcaster,
                             );
                         } else {
                             break;
@@ -3249,6 +3254,7 @@ async fn main() -> Result<()> {
                                         if history.len() > 500 { history.pop_front(); }
                                         log_persist_err("block", chain_store.save_block(&record));
                                         log_persist_err("full_block", chain_store.save_full_block(block));
+                                        log_persist_err("tx_index", chain_store.index_block_transactions(block).map(|_| ()));
                                     }
                                     // Update chain stats (same as record_block_production)
                                     {
@@ -3296,7 +3302,7 @@ async fn main() -> Result<()> {
                                 &node_tag, block, &consensus, &db, &chain_prover,
                                 args.prove_mode, &block_history, &chain_stats, &events,
                                 &throughput, &chain_store, &peer_count, &block_cache,
-                                &tendermint,
+                                &tendermint, &ws_broadcaster,
                             );
                         }
                     }
@@ -3375,7 +3381,7 @@ async fn main() -> Result<()> {
                                     &node_tag, &queued, &consensus, &db, &chain_prover,
                                     args.prove_mode, &block_history, &chain_stats, &events,
                                     &throughput, &chain_store, &peer_count, &block_cache,
-                                    &tendermint,
+                                    &tendermint, &ws_broadcaster,
                                 );
                             }
                         } else {
