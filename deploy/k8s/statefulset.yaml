@@ -56,7 +56,7 @@ spec:
               done
               exec evaporchain-node \
                 --api --api-port 8080 \
-                --network --tendermint \
+                --network --tendermint --tls \
                 --port 26656 \
                 --node-id "validator-${ORDINAL}" \
                 --validator-id "${ORDINAL}" \
@@ -70,6 +70,12 @@ spec:
               mountPath: /data/evaporchain
             - name: genesis
               mountPath: /etc/evaporchain
+            - name: validator-keys
+              mountPath: /etc/evaporchain/keys
+              readOnly: true
+            - name: ca-cert
+              mountPath: /etc/evaporchain/ca
+              readOnly: true
           resources:
             requests:
               cpu: "500m"
@@ -97,6 +103,19 @@ spec:
         - name: genesis
           configMap:
             name: evaporchain-genesis
+        - name: validator-keys
+          secret:
+            secretName: ""  # Overridden per-pod below
+            optional: true
+        - name: ca-cert
+          secret:
+            secretName: evaporchain-ca
+            optional: true
+      # Per-pod secret selection: the init container or a mutating webhook
+      # should set the secret name to "validator-{ORDINAL}-keys" based on
+      # the pod's ordinal index. For manual deployment, use:
+      #   kubectl patch statefulset evaporchain-validator -p '...'
+      # or use a VolumeClaimTemplate with projected volumes.
   volumeClaimTemplates:
     - metadata:
         name: data

@@ -28,7 +28,7 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 - [x] **Grafana dashboard templates** — 12-panel dashboard (block height, TPS, peak TPS, objects, ghosts, peers, time series for all) at `deploy/grafana/evaporchain-dashboard.json`
 - [x] **API rate limiting** — 200 req/10s per IP, returns 429 with Retry-After header
 - [x] **TLS/mTLS** — DONE: libp2p-tls transport (`--tls` flag), PeerAuthority allowlist (`--allowed-peers`), cert generation (`scripts/generate-tls-certs.sh`, `tls.rs`)
-- [ ] **Secrets management** — Validator keys in Kubernetes Secrets or HashiCorp Vault. Not hardcoded.
+- [x] **Secrets management** — DONE: K8s Secret manifests (`deploy/k8s/secrets.yaml`), per-validator key mounts in StatefulSet, upload script (`scripts/k8s-upload-secrets.sh`)
 - [x] **Slashing implementation** — ALREADY BUILT: equivocation (10% stake), downtime (1%/miss), jailing, unjailing, auto-removal at `validator_set.rs:341-393`
 - [ ] **External security audit** — Budget £30-50K. Recommended firms: Trail of Bits, Least Authority, Zellic, OtterSec, Veridise, Sigma Prime. Scope at `docs/AUDIT_SCOPE.md`.
 
