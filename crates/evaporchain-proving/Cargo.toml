@@ -16,6 +16,7 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 hex = { workspace = true }
+blake3 = { workspace = true }
 
 # Heavy deps — only compiled with the "nova" feature
 nova-snark = { version = "0.68", features = ["test-utils"], optional = true }

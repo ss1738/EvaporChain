@@ -1,4 +1,5 @@
 pub mod db;
+pub mod decay_curves;
 pub mod evaporation;
 pub mod refresh;
 pub mod rocksdb_backend;

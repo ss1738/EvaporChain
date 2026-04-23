@@ -1,4 +1,5 @@
 pub mod chain_proof;
+pub mod evaporation_proof;
 #[cfg(feature = "nova")]
 pub mod nova;
 pub mod privacy;

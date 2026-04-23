@@ -16,6 +16,7 @@ members = [
     "crates/evaporchain-script",
     "crates/evaporchain-mcp",
     "crates/evaporchain-oracle",
+    "crates/evaporchain-sharding",
     "prototypes/fold-a-block",
     "wallet",
     "tests/integration",
@@ -39,3 +40,4 @@ rand = "0.8"
 hex = "0.4"
 rocksdb = "0.22"
 bincode = "1"
+blake3 = "1"

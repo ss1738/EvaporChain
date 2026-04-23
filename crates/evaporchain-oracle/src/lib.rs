@@ -1,6 +1,9 @@
 //! EvaporChain Oracle Library — secure oracle data ingestion with
 //! cryptographic signing, multi-source aggregation, and freshness proofs.
 
+pub mod consensus;
+pub mod state;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
