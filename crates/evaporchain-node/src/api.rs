@@ -3553,8 +3553,8 @@ async fn rate_limit_middleware(
 pub async fn start_api_server(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthState>, port: u16) -> anyhow::Result<()> {
     let limiter = Arc::new(RateLimiter::new(200, 10));
     let app = create_router(state, auth_state)
-        .layer(axum::Extension(limiter))
         .layer(axum::middleware::from_fn(rate_limit_middleware))
+        .layer(axum::Extension(limiter))
         .into_make_service_with_connect_info::<std::net::SocketAddr>();
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
