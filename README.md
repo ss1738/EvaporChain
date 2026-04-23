@@ -17,7 +17,7 @@ EvaporChain introduces thermodynamic state decay — every piece of on-chain sta
 - [x] ZK proving (Nova recursive proof folding)
 - [x] P2P networking (block propagation, tx gossip)
 - [x] Full node with API, dashboard, faucet, and CLI
-- [x] **298 tests passing**
+- [x] **4,159 tests passing**
 - [ ] Public testnet deployment
 
 ## Run Locally
@@ -85,11 +85,11 @@ evaporchain-cli         Command-line interface
 
 ## Test Coverage
 
-**298 tests** across 12 crates — all passing.
+**4,159 tests** across 13 crates — all passing.
 
 ```bash
-cargo test
-# test result: ok. 298 passed; 0 failed
+cargo test --workspace
+# 4,159 passed; 0 failed
 ```
 
 ## License

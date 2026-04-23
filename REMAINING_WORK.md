@@ -126,7 +126,7 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 
 ## LOW — Code Quality
 
-- [ ] **Update test count in docs** — README/PROGRESS.md say 298 tests. Actual: 1,155+.
+- [x] **Update test count in docs** — DONE: Updated to 4,159 tests across README, CLAUDE.md, grants, announcement
 - [ ] **Criterion.rs benchmarks** — Replace ad-hoc benchmarks with criterion for statistical rigor.
 - [ ] **Config validation** — JSON Schema for genesis configs.
 - [ ] **Hybrid post-quantum scheme** — Optional ECDSA fallback alongside ML-DSA.

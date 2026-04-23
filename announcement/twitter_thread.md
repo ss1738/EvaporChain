@@ -71,7 +71,7 @@ EvaporChain is already safe. From day one.
 ## Tweet 8 (Built Solo):
 I built this alone.
 
-298 tests. 12 Rust crates. Verkle trie. MMR accumulator.
+4,159 tests. 13 Rust crates. Verkle trie. MMR accumulator.
 ZK proofs. Encrypted mempool. PID fee controller.
 Custom scripting language. 4-node devnet. Web dashboard.
 
