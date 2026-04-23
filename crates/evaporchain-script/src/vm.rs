@@ -498,7 +498,6 @@ impl EvaporVM {
                     );
                     self.push(Value::U64(raw % max))?;
                 }
-            }
 
                 Op::CallExternal { arg_count } => {
                     self.charge_gas(GAS_CALL_EXTERNAL)?;
