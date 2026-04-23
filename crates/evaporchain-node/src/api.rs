@@ -912,24 +912,6 @@ async fn get_accounts(State(state): State<Arc<ApiState>>) -> Json<Vec<AccountRes
     Json(accounts)
 }
 
-async fn get_ghosts(State(state): State<Arc<ApiState>>) -> Json<Vec<GhostResponse>> {
-    let db = safe_lock(&state.db);
-    let ghost_ids = db.all_ghost_ids();
-    let ghosts: Vec<GhostResponse> = ghost_ids
-        .iter()
-        .filter_map(|id| {
-            let g = db.get_ghost(id)?;
-            Some(GhostResponse {
-                id: hex::encode(g.object_id),
-                original_owner: hex::encode(g.owner),
-                evaporated_epoch: g.evaporated_at,
-                data_hash: hex::encode(g.data_hash),
-            })
-        })
-        .collect();
-    Json(ghosts)
-}
-
 async fn get_blocks(
     State(state): State<Arc<ApiState>>,
     Query(params): Query<BlocksQuery>,
@@ -3346,7 +3328,6 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/objects", get(get_objects))
         .route("/api/object/:id", get(get_single_object))
         .route("/api/accounts", get(get_accounts))
-        .route("/api/ghosts", get(get_ghosts))
         .route("/api/blocks", get(get_blocks))
         .route("/api/blocks/latest", get(get_latest_block))
         .route("/api/block/latest", get(get_latest_block))
