@@ -1119,6 +1119,36 @@ mod tests {
         assert_eq!(obj.owner, addr(1));
     }
 
+    #[test]
+    fn test_create_object_with_decay_curve() {
+        let mut db = InMemoryStateDB::new();
+        let mut executor = SimpleExecutor::new_for_test(7);
+
+        let block = make_block(
+            1,
+            10,
+            vec![Transaction::CreateObject(CreateObjectTx {
+                creator: addr(1),
+                object_id: obj_id(77),
+                energy: 10_000,
+                half_life: 50,
+                data: vec![0xCA, 0xFE],
+                decay_curve: Some(evaporchain_types::DecayCurve::Linear { rate_per_epoch: 100 }),
+                signature: None,
+                public_key: None,
+            })],
+        );
+
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_executed, 1);
+
+        let obj = db.get_object(&obj_id(77)).unwrap();
+        assert_eq!(
+            obj.decay_curve,
+            Some(evaporchain_types::DecayCurve::Linear { rate_per_epoch: 100 })
+        );
+    }
+
     // ─── Duplicate Object Creation Fails ───
 
     #[test]
@@ -2360,6 +2390,7 @@ contract Counter {
                     data: vec![0xAB; 32],
                     energy: 500,
                     half_life: 5,
+                    decay_curve: None,
                     signature: None,
                     public_key: None,
                 })

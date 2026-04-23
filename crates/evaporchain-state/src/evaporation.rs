@@ -607,4 +607,46 @@ mod tests {
         assert_eq!(h.active_leaves, 1);
         assert_eq!(h.max_energy, 2000);
     }
+
+    #[test]
+    fn test_linear_decay_curve_evaporation() {
+        use evaporchain_types::DecayCurve;
+
+        let mut db = InMemoryStateDB::new();
+        let mut obj = make_object(42, 100, 999);
+        obj.decay_curve = Some(DecayCurve::Linear { rate_per_epoch: 10 });
+        db.put_object(obj);
+
+        let engine = EvaporationEngine::new(3);
+
+        // At epoch 5: energy = 100 - 10*5 = 50 (still alive)
+        let r = engine.process_epoch(&mut db, 5);
+        assert_eq!(r.decayed, 1);
+        assert!(r.entered_grace.is_empty());
+
+        // At epoch 10: energy = 100 - 10*10 = 0 → enters grace
+        let r = engine.process_epoch(&mut db, 10);
+        assert_eq!(r.entered_grace.len(), 1);
+
+        // At epoch 13: grace_period=3, so 10+3=13 → evaporates
+        let r = engine.process_epoch(&mut db, 13);
+        assert_eq!(r.evaporated.len(), 1);
+    }
+
+    #[test]
+    fn test_asymptotic_decay_never_reaches_zero() {
+        use evaporchain_types::DecayCurve;
+
+        let mut db = InMemoryStateDB::new();
+        let mut obj = make_object(99, 1000, 999);
+        obj.decay_curve = Some(DecayCurve::Asymptotic { floor: 100, half_life: 5 });
+        db.put_object(obj);
+
+        let engine = EvaporationEngine::new(3);
+
+        // Even after 1000 epochs, energy never reaches 0 (floor=100)
+        let r = engine.process_epoch(&mut db, 1000);
+        assert_eq!(r.decayed, 1);
+        assert!(r.entered_grace.is_empty());
+    }
 }
