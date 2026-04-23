@@ -1478,7 +1478,7 @@ async fn healthz() -> impl IntoResponse {
 async fn readyz(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
     let block_history = state.block_history.lock().unwrap();
     let has_blocks = !block_history.is_empty();
-    let tip_height = block_history.back().map(|b| b.height).unwrap_or(0);
+    let tip_height = block_history.back().map(|b| b.number).unwrap_or(0);
     drop(block_history);
 
     let peer_count = state.peer_count.load(std::sync::atomic::Ordering::Relaxed);
