@@ -3429,7 +3429,7 @@ async fn get_object_state_proof(
             "energy": o.energy,
             "half_life": o.half_life,
             "state": format!("{:?}", o.state),
-            "created_epoch": o.created_epoch,
+            "created_at": o.created_at,
             "last_refreshed": o.last_refreshed,
         })),
         "proof": {
