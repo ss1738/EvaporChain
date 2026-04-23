@@ -22,6 +22,7 @@ pub struct TlsConfig {
 /// In permissioned mode (validator networks), only peers in the allowlist
 /// can establish connections. In permissionless mode, all peers are accepted.
 #[derive(Clone)]
+#[derive(Debug)]
 pub struct PeerAuthority {
     allowlist: Arc<RwLock<HashSet<PeerId>>>,
     enforcing: bool,
@@ -103,17 +104,22 @@ pub fn generate_ca(output_dir: &Path) -> Result<(), String> {
 }
 
 /// Generate a validator certificate signed by the CA.
+///
+/// Requires the CA cert and key PEM strings from `generate_ca()`.
 pub fn generate_validator_cert(
     validator_name: &str,
     ca_cert_pem: &str,
     ca_key_pem: &str,
     output_dir: &Path,
 ) -> Result<(), String> {
-    use rcgen::{CertificateParams, CertificateSigningRequestParams, KeyPair};
+    use rcgen::{CertificateParams, KeyPair};
 
+    // Reconstruct the CA from its key (we re-sign with the same key)
     let ca_key = KeyPair::from_pem(ca_key_pem).map_err(|e| format!("parse CA key: {e}"))?;
-    let ca_params = CertificateParams::from_ca_cert_pem(ca_cert_pem)
-        .map_err(|e| format!("parse CA cert: {e}"))?;
+
+    let mut ca_params = CertificateParams::new(vec!["EvaporChain Validator CA".to_string()])
+        .map_err(|e| format!("CA params: {e}"))?;
+    ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
     let ca_cert = ca_params
         .self_signed(&ca_key)
         .map_err(|e| format!("reconstruct CA: {e}"))?;
@@ -146,7 +152,6 @@ pub fn generate_validator_cert(
 mod tests {
     use super::*;
     use libp2p::identity::Keypair;
-    use std::str::FromStr;
 
     #[test]
     fn permissionless_allows_all() {

@@ -246,36 +246,12 @@ impl P2pNetworkService {
         let shard_cache: ShardCache = Arc::new(RwLock::new(BTreeMap::new()));
         let shard_cache_inner = Arc::clone(&shard_cache);
 
-        // Build the swarm — use TLS when configured, Noise otherwise
         let peer_authority = config.peer_authority.clone();
         let use_tls = config.use_tls;
-        let builder = SwarmBuilder::with_new_identity().with_tokio();
 
-        // libp2p-tls provides TLS 1.3 with peer identity verification via
-        // self-signed certs embedding the libp2p PeerId. This gives us mTLS
-        // between validators without external CA infrastructure.
-        let swarm_result = if use_tls {
-            info!("Using TLS 1.3 transport (libp2p-tls)");
-            builder
-                .with_tcp(
-                    tcp::Config::default(),
-                    tls::Config::new,
-                    yamux::Config::default,
-                )
-                .map_err(|e| NetworkError::ConnectionError(format!("tls transport: {e}")))
-        } else {
-            builder
-                .with_tcp(
-                    tcp::Config::default(),
-                    noise::Config::new,
-                    yamux::Config::default,
-                )
-                .map_err(|e| NetworkError::ConnectionError(format!("tcp transport: {e}")))
-        };
-
-        let mut swarm = swarm_result?
-            .with_behaviour(|key| {
-                // GossipSub with message dedup by content hash
+        // Behaviour constructor shared by both transport paths
+        macro_rules! build_behaviour {
+            ($key:ident) => {{
                 let message_id_fn = |message: &gossipsub::Message| {
                     let mut s = DefaultHasher::new();
                     message.data.hash(&mut s);
@@ -286,24 +262,24 @@ impl P2pNetworkService {
                     .heartbeat_interval(Duration::from_millis(500))
                     .validation_mode(gossipsub::ValidationMode::Strict)
                     .message_id_fn(message_id_fn)
-                    .max_transmit_size(4 * 1024 * 1024) // 4MB — consensus proposals with ML-DSA sigs can be large
+                    .max_transmit_size(4 * 1024 * 1024)
                     .build()
                     .expect("valid gossipsub config");
                 let gossipsub = gossipsub::Behaviour::new(
-                    MessageAuthenticity::Signed(key.clone()),
+                    MessageAuthenticity::Signed($key.clone()),
                     gossipsub_config,
                 )
                 .expect("valid gossipsub behaviour");
 
                 let mdns = mdns::tokio::Behaviour::new(
                     mdns::Config::default(),
-                    key.public().to_peer_id(),
+                    $key.public().to_peer_id(),
                 )
                 .expect("valid mdns behaviour");
 
                 let identify = identify::Behaviour::new(identify::Config::new(
                     "/evaporchain/1.0.0".to_string(),
-                    key.public(),
+                    $key.public(),
                 ));
 
                 let block_sync = request_response::json::Behaviour::new(
@@ -331,10 +307,38 @@ impl P2pNetworkService {
                     block_sync,
                     shard_sample,
                 }
-            })
-            .map_err(|e| NetworkError::ConnectionError(format!("behaviour: {e}")))?
-            .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(60)))
-            .build();
+            }};
+        }
+
+        // Build the swarm — TLS 1.3 or Noise, selected at startup
+        let mut swarm = if use_tls {
+            info!("Using TLS 1.3 transport (libp2p-tls)");
+            SwarmBuilder::with_new_identity()
+                .with_tokio()
+                .with_tcp(
+                    tcp::Config::default(),
+                    tls::Config::new,
+                    yamux::Config::default,
+                )
+                .map_err(|e| NetworkError::ConnectionError(format!("tls transport: {e}")))?
+                .with_behaviour(|key| build_behaviour!(key))
+                .map_err(|e| NetworkError::ConnectionError(format!("behaviour: {e}")))?
+                .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(60)))
+                .build()
+        } else {
+            SwarmBuilder::with_new_identity()
+                .with_tokio()
+                .with_tcp(
+                    tcp::Config::default(),
+                    noise::Config::new,
+                    yamux::Config::default,
+                )
+                .map_err(|e| NetworkError::ConnectionError(format!("tcp transport: {e}")))?
+                .with_behaviour(|key| build_behaviour!(key))
+                .map_err(|e| NetworkError::ConnectionError(format!("behaviour: {e}")))?
+                .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(60)))
+                .build()
+        };
 
         let local_peer_id = *swarm.local_peer_id();
 
