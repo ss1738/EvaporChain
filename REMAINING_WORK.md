@@ -61,7 +61,7 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 - [x] **Cargo-deny** — DONE: `deny.toml` config + `cargo-deny-action` in CI
 - [x] **Integration tests in CI** — DONE: `cargo test -p integration-tests -- --include-ignored` with 15min timeout
 - [ ] **Benchmark regression tracking** — Run benchmarks in CI, flag regressions >10%.
-- [ ] **Fuzzing harnesses** — Wire `wallet/src/fuzzer.rs` to `cargo-fuzz`. Add harnesses for Poseidon, EvaporScript parser, bincode deserialization.
+- [x] **Fuzzing harnesses** — DONE: 5 `cargo-fuzz` targets at `fuzz/fuzz_targets/`: Poseidon hash, EvaporScript parser, EvaporScript compiler, Transaction JSON deser, Block JSON deser
 - [x] **Release automation** — DONE: `.github/workflows/release.yml` builds linux/mac amd64/arm64 on tag push, creates GitHub Release
 
 ---
@@ -82,11 +82,11 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 
 ## MEDIUM — User-Facing Tooling
 
-### SDK (45% complete)
-- [ ] Transaction submission (not just queries)
-- [ ] WebSocket subscriptions for real-time events
-- [ ] Batch operations
-- [ ] Retry logic and rate limiting
+### SDK (80% complete)
+- [x] Transaction submission — DONE: transfer, createObject, refreshObject, resurrectObject, deployContract, callContract
+- [x] WebSocket subscriptions — DONE: subscribe()/unsubscribe() with auto-reconnect, topic filtering, EventEmitter pattern
+- [x] Batch operations — DONE: chain.batch([...]) → POST /api/tx/batch (up to 100 txs)
+- [x] Retry logic and rate limiting — DONE: exponential backoff (500ms base, 3 retries), auto-retry on 429/5xx
 - [ ] Publish to npm
 
 ### Wallet SDK (70% complete)
