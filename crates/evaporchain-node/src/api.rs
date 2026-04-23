@@ -125,6 +125,18 @@ impl ApiState {
             c.mempool.len()
         }
     }
+
+    /// Get pending transactions from mempool as JSON summaries.
+    pub fn mempool_transactions(&self) -> Vec<serde_json::Value> {
+        let txs: Vec<Transaction> = if let Some(ref tc) = self.tendermint {
+            let c = safe_lock(tc);
+            c.mempool.pending().iter().cloned().collect()
+        } else {
+            let c = safe_lock(&self.consensus);
+            c.mempool.pending().iter().cloned().collect()
+        };
+        txs.iter().map(|tx| tx_to_json(tx)).collect()
+    }
 }
 
 // ──────────────────────────── NFT Store ────────────────────────────────
@@ -446,6 +458,65 @@ fn tx_hash(content: &str) -> String {
         .as_nanos();
     let input = format!("{}:{}", content, ts);
     blake3::hash(input.as_bytes()).to_hex().to_string()
+}
+
+fn tx_to_json(tx: &Transaction) -> serde_json::Value {
+    match tx {
+        Transaction::Transfer(t) => serde_json::json!({
+            "type": "transfer",
+            "from": format!("0x{}", hex::encode(&t.from[..4])),
+            "to": format!("0x{}", hex::encode(&t.to[..4])),
+            "amount": t.amount,
+            "nonce": t.nonce,
+        }),
+        Transaction::CreateObject(t) => serde_json::json!({
+            "type": "create_object",
+            "creator": format!("0x{}", hex::encode(&t.creator[..4])),
+            "object_id": format!("0x{}", hex::encode(&t.object_id[..8])),
+            "energy": t.energy,
+            "half_life": t.half_life,
+        }),
+        Transaction::Refresh(t) => serde_json::json!({
+            "type": "refresh",
+            "object_id": format!("0x{}", hex::encode(&t.object_id[..8])),
+            "energy_deposit": t.energy_deposit,
+        }),
+        Transaction::DeployContract(t) => serde_json::json!({
+            "type": "deploy_contract",
+            "deployer": format!("0x{}", hex::encode(&t.deployer[..4])),
+            "template": t.template,
+            "energy": t.energy,
+        }),
+        Transaction::CallContract(t) => serde_json::json!({
+            "type": "call_contract",
+            "caller": format!("0x{}", hex::encode(&t.caller[..4])),
+            "contract_id": t.contract_id,
+            "method": t.method,
+        }),
+        Transaction::DeployScript(t) => serde_json::json!({
+            "type": "deploy_script",
+            "deployer": format!("0x{}", hex::encode(&t.deployer[..4])),
+            "energy": t.energy,
+        }),
+        Transaction::CallScript(t) => serde_json::json!({
+            "type": "call_script",
+            "caller": format!("0x{}", hex::encode(&t.caller[..4])),
+            "contract_id": t.contract_id,
+            "method": t.method,
+        }),
+        Transaction::ValidatorStake(t) => serde_json::json!({
+            "type": "validator_stake",
+            "validator": format!("0x{}", hex::encode(&t.validator_address[..4])),
+            "amount": t.stake_amount,
+        }),
+        Transaction::ValidatorExit(t) => serde_json::json!({
+            "type": "validator_exit",
+            "validator": format!("0x{}", hex::encode(&t.validator_address[..4])),
+        }),
+        Transaction::Shield(_) => serde_json::json!({ "type": "shield" }),
+        Transaction::Unshield(_) => serde_json::json!({ "type": "unshield" }),
+        Transaction::PrivateTransfer(_) => serde_json::json!({ "type": "private_transfer" }),
+    }
 }
 
 // ──────────────────────────── Response Types ──────────────────────────
@@ -2965,10 +3036,12 @@ async fn get_latest_block(State(state): State<Arc<ApiState>>) -> Result<Json<Blo
     history.back().cloned().ok_or(StatusCode::NOT_FOUND).map(Json)
 }
 
-/// Mempool endpoint.
+/// Mempool endpoint with transaction details.
 async fn get_mempool(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
+    let txs = state.mempool_transactions();
     Json(serde_json::json!({
-        "pending": state.mempool_len(),
+        "pending": txs.len(),
+        "transactions": txs,
     }))
 }
 
