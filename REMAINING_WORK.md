@@ -56,10 +56,10 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 
 ## MEDIUM — CI/CD & Testing
 
-- [ ] **Code coverage** — Add `cargo-tarpaulin` or `llvm-cov` to CI. Report to Codecov.
-- [ ] **Cargo-audit in CI** — Dependency vulnerability scanning on every PR.
+- [x] **Code coverage** — DONE: `cargo-tarpaulin` in CI with Codecov upload (`.github/workflows/ci.yml`)
+- [x] **Cargo-audit in CI** — DONE: `rustsec/audit-check@v2.0.0` on every push/PR
 - [ ] **Cargo-deny** — License compliance and duplicate dependency checking.
-- [ ] **Integration tests in CI** — Currently only unit tests run. Add `tests/integration` to CI pipeline.
+- [x] **Integration tests in CI** — DONE: `cargo test -p integration-tests -- --include-ignored` with 15min timeout
 - [ ] **Benchmark regression tracking** — Run benchmarks in CI, flag regressions >10%.
 - [ ] **Fuzzing harnesses** — Wire `wallet/src/fuzzer.rs` to `cargo-fuzz`. Add harnesses for Poseidon, EvaporScript parser, bincode deserialization.
 - [ ] **Release automation** — `cargo-release` or GitHub Actions for tagged binary releases.

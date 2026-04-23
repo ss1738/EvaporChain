@@ -14,6 +14,41 @@ jobs:
       - run: cargo clippy --workspace -- -D warnings
       - run: cargo fmt --check
 
+  integration:
+    name: Rust — integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p integration-tests -- --include-ignored
+        timeout-minutes: 15
+
+  audit:
+    name: Security — dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  coverage:
+    name: Coverage — tarpaulin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-tarpaulin
+      - run: cargo tarpaulin --workspace --out xml --skip-clean --timeout 300
+        timeout-minutes: 20
+      - uses: codecov/codecov-action@v4
+        with:
+          files: cobertura.xml
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
   wasm:
     name: WASM — build ML-DSA crypto
     runs-on: ubuntu-latest
