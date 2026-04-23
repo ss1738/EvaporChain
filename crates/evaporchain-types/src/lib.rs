@@ -134,6 +134,12 @@ pub struct Block {
     /// state at any epoch >= anchor_epoch using: anchor_state + decay_rules.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_function_commitment: Option<BlockStateCommitment>,
+    /// Oracle state root — SHA-256 commitment over all finalized oracle feeds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oracle_state_root: Option<[u8; 32]>,
+    /// Shard health summary — number of active shards and compaction candidates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shard_count: Option<u16>,
 }
 
 /// Commitment to the state function for Rule-Based Consensus.

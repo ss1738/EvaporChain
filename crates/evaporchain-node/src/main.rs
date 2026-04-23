@@ -494,13 +494,18 @@ fn generate_demo_tx(
             let creator = parse_hex_address(my_accts[ci]).unwrap();
             let prefix = prefixes[rng.gen_range(0..prefixes.len())];
             let name = format!("{}v{}:0x{:02x}{:02x}", prefix, validator_id, oid, (epoch % 256) as u8);
+            let curve = match rng.gen_range(0u8..5) {
+                0 => Some(evaporchain_types::DecayCurve::Linear { rate_per_epoch: rng.gen_range(1..10) }),
+                1 => Some(evaporchain_types::DecayCurve::Asymptotic { floor: rng.gen_range(5..20), half_life: half_life }),
+                _ => None, // default exponential
+            };
             let mut tx = Transaction::CreateObject(CreateObjectTx {
                 creator,
                 object_id: obj_id(oid),
                 energy,
                 half_life,
                 data: name.into_bytes(),
-                decay_curve: None,
+                decay_curve: curve,
                 signature: None,
                 public_key: None,
             });
@@ -1923,6 +1928,22 @@ async fn main() -> Result<()> {
                             let mut tc = safe_lock(&tc_ref);
                             tc.mempool.submit(tx);
                         }
+                        // Submit oracle votes for demo price feeds
+                        if epoch % 10 == 0 {
+                            let mut ob = safe_lock(&oracle_bridge);
+                            let ts = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs();
+                            for (key, base_price) in &[("btc_usd", 60000.0f64), ("eth_usd", 3000.0), ("evap_usd", 0.50)] {
+                                let round_id = ob.start_round(key);
+                                let jitter = (rng.gen::<f64>() - 0.5) * base_price * 0.02;
+                                let vote = evaporchain_oracle::consensus::make_vote(
+                                    args.validator_id, key, base_price + jitter, round_id, ts,
+                                );
+                                let _ = ob.submit_vote(key, vote);
+                            }
+                        }
                     }
                 }
 
@@ -2191,6 +2212,10 @@ async fn main() -> Result<()> {
                                             node_tag, finalized.len(),
                                         );
                                     }
+                                    let root = ob.oracle_state_root();
+                                    if root != [0u8; 32] {
+                                        block.oracle_state_root = Some(root);
+                                    }
                                 }
 
                                 // ── Shard metrics recording ──
@@ -2206,6 +2231,7 @@ async fn main() -> Result<()> {
                                             sb.record_object(&short_id, obj.energy, obj.half_life, alive);
                                         }
                                     }
+                                    block.shard_count = Some(sb.shard_healths().len() as u16);
                                 }
 
                                 // Reset demo nonce offsets — on-chain nonces are now updated
@@ -2573,6 +2599,10 @@ async fn main() -> Result<()> {
                                                 node_tag, finalized.len(),
                                             );
                                         }
+                                        let root = ob.oracle_state_root();
+                                        if root != [0u8; 32] {
+                                            block.oracle_state_root = Some(root);
+                                        }
                                     }
 
                                     // ── Shard metrics (gossip path) ──
@@ -2588,6 +2618,7 @@ async fn main() -> Result<()> {
                                                 sb.record_object(&short_id, obj.energy, obj.half_life, alive);
                                             }
                                         }
+                                        block.shard_count = Some(sb.shard_healths().len() as u16);
                                     }
 
                                     if let Some(ref cache) = block_cache {
