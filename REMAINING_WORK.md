@@ -29,7 +29,7 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 - [x] **API rate limiting** — 200 req/10s per IP, returns 429 with Retry-After header
 - [ ] **TLS/mTLS** — Certificate automation between validators. MITM risk today.
 - [ ] **Secrets management** — Validator keys in Kubernetes Secrets or HashiCorp Vault. Not hardcoded.
-- [ ] **Slashing implementation** — Planned Phase 7 but not built. Required for economic security.
+- [x] **Slashing implementation** — ALREADY BUILT: equivocation (10% stake), downtime (1%/miss), jailing, unjailing, auto-removal at `validator_set.rs:341-393`
 - [ ] **External security audit** — Budget £30-50K. Recommended firms: Trail of Bits, Least Authority, Zellic, OtterSec, Veridise, Sigma Prime. Scope at `docs/AUDIT_SCOPE.md`.
 
 ---
@@ -37,8 +37,8 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 ## HIGH — Protocol & Consensus
 
 - [ ] **3-node Tendermint deployment** — Apsarth Mini needs SSH key added (physical visit to cousin's). Currently 2-node.
-- [ ] **Weak subjectivity** — No implementation. Needed pre-mainnet to prevent long-range attacks.
-- [ ] **BLS proof-of-possession** — Prevent rogue-key attacks. Add PoP verification on validator registration.
+- [x] **Weak subjectivity** — ALREADY BUILT: checkpoints every 1000 blocks, reorg protection, persistence at `tendermint.rs:1146-1302`
+- [x] **BLS proof-of-possession** — ALREADY BUILT: `add_validator_with_pop()`, `verify_bls_pop()` with real BLS12-381 at `validator_set.rs:188-227`
 - [ ] **Formal verification** — Coq/Lean proofs for evaporation engine, Verkle trie, MMR accumulator. TLA+ spec exists but no mechanized proofs.
 
 ---
