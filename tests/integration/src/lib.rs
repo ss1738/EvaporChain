@@ -786,6 +786,8 @@ mod tests {
             state_function_commitment: None,
             da_row_roots: vec![],
             da_col_roots: vec![],
+            oracle_state_root: None,
+            shard_count: None,
         };
 
         // Execute with sig verification — should skip the bad tx
