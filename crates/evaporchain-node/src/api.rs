@@ -2856,6 +2856,64 @@ async fn get_metrics(
     })
 }
 
+/// GET /metrics — Prometheus text exposition format for scraping.
+async fn get_prometheus_metrics(
+    State(state): State<Arc<ApiState>>,
+) -> impl IntoResponse {
+    let t = safe_lock(&state.throughput);
+    let stats = safe_lock(&state.stats);
+    let db = safe_lock(&state.db);
+    let peer_count = state.peer_count.load(std::sync::atomic::Ordering::Relaxed);
+    let uptime = state.start_time.elapsed().as_secs();
+
+    let active_objects = db.object_count();
+    let ghost_count = db.ghost_count();
+    let account_count = db.all_account_addresses().len();
+
+    let mut out = String::with_capacity(2048);
+    out.push_str("# HELP evaporchain_block_height Current block height\n");
+    out.push_str("# TYPE evaporchain_block_height gauge\n");
+    out.push_str(&format!("evaporchain_block_height {}\n", stats.block_height));
+    out.push_str("# HELP evaporchain_epoch Current epoch\n");
+    out.push_str("# TYPE evaporchain_epoch gauge\n");
+    out.push_str(&format!("evaporchain_epoch {}\n", stats.epoch));
+    out.push_str("# HELP evaporchain_tps Current transactions per second\n");
+    out.push_str("# TYPE evaporchain_tps gauge\n");
+    out.push_str(&format!("evaporchain_tps {:.2}\n", t.current_tps()));
+    out.push_str("# HELP evaporchain_peak_tps Peak TPS observed\n");
+    out.push_str("# TYPE evaporchain_peak_tps gauge\n");
+    out.push_str(&format!("evaporchain_peak_tps {:.2}\n", t.peak_tps));
+    out.push_str("# HELP evaporchain_total_transactions Total transactions processed\n");
+    out.push_str("# TYPE evaporchain_total_transactions counter\n");
+    out.push_str(&format!("evaporchain_total_transactions {}\n", stats.total_transactions));
+    out.push_str("# HELP evaporchain_active_objects Number of active state objects\n");
+    out.push_str("# TYPE evaporchain_active_objects gauge\n");
+    out.push_str(&format!("evaporchain_active_objects {}\n", active_objects));
+    out.push_str("# HELP evaporchain_ghost_count Number of evaporated ghost records\n");
+    out.push_str("# TYPE evaporchain_ghost_count gauge\n");
+    out.push_str(&format!("evaporchain_ghost_count {}\n", ghost_count));
+    out.push_str("# HELP evaporchain_accounts Total accounts\n");
+    out.push_str("# TYPE evaporchain_accounts gauge\n");
+    out.push_str(&format!("evaporchain_accounts {}\n", account_count));
+    out.push_str("# HELP evaporchain_peer_count Connected peers\n");
+    out.push_str("# TYPE evaporchain_peer_count gauge\n");
+    out.push_str(&format!("evaporchain_peer_count {}\n", peer_count));
+    out.push_str("# HELP evaporchain_avg_block_exec_ms Average block execution time in ms\n");
+    out.push_str("# TYPE evaporchain_avg_block_exec_ms gauge\n");
+    out.push_str(&format!("evaporchain_avg_block_exec_ms {:.2}\n", t.avg_exec_time_us() as f64 / 1000.0));
+    out.push_str("# HELP evaporchain_avg_gas_per_block Average gas used per block\n");
+    out.push_str("# TYPE evaporchain_avg_gas_per_block gauge\n");
+    out.push_str(&format!("evaporchain_avg_gas_per_block {}\n", t.avg_gas_per_block()));
+    out.push_str("# HELP evaporchain_uptime_seconds Node uptime in seconds\n");
+    out.push_str("# TYPE evaporchain_uptime_seconds counter\n");
+    out.push_str(&format!("evaporchain_uptime_seconds {}\n", uptime));
+
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
+        out,
+    )
+}
+
 /// GET /api/proof/latest — generate and return the latest chain proof.
 async fn get_proof_latest(
     State(state): State<Arc<ApiState>>,
@@ -3409,6 +3467,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/ghosts/:id", get(get_ghost_detail))
         // Metrics / Throughput
         .route("/api/metrics", get(get_metrics))
+        .route("/metrics", get(get_prometheus_metrics))
         // Nova Proofs / Light Client
         .route("/api/proof/latest", get(get_proof_latest))
         .route("/api/proof/status", get(get_proof_status))

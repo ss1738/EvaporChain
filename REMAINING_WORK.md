@@ -20,10 +20,11 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 
 ## CRITICAL — Infrastructure (Must-Have for Mainnet)
 
-- [ ] **Dockerfile** — Multi-stage build (builder + runtime). No container support exists today.
-- [ ] **docker-compose.yml** — 4-node local devnet in containers.
+- [x] **Dockerfile** — Multi-stage build (builder + slim runtime), healthcheck, non-root user
+- [x] **docker-compose.yml** — 4-validator local devnet with persistent volumes
+- [x] **.dockerignore** — Excludes target/, website/, extension/, docs/, research/
 - [ ] **Kubernetes manifests** — Deployment, Service, PVC (RocksDB), ConfigMap (genesis), NetworkPolicy.
-- [ ] **Prometheus metrics exporter** — Instrument node with `/metrics` endpoint. Expose block height, TPS, peer count, consensus round, gas usage.
+- [x] **Prometheus metrics exporter** — `/metrics` endpoint with 12 gauges/counters (block_height, epoch, tps, peak_tps, total_transactions, active_objects, ghost_count, accounts, peer_count, avg_block_exec_ms, avg_gas_per_block, uptime_seconds)
 - [ ] **Grafana dashboard templates** — Pre-built dashboards for node health, consensus, execution.
 - [ ] **API rate limiting** — Per-IP rate limits on all public endpoints. DoS risk today.
 - [ ] **TLS/mTLS** — Certificate automation between validators. MITM risk today.
