@@ -4,6 +4,8 @@
 //! from block producers. Each sample includes a Merkle proof against the
 //! shard commitment root.
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -59,6 +61,75 @@ pub struct DAProof {
     pub total_shards: usize,
     /// Number of data shards.
     pub data_shards: usize,
+}
+
+/// Result of batch-verifying multiple Merkle proofs.
+#[derive(Debug, Clone)]
+pub struct BatchVerifyResult {
+    /// True if every proof verified successfully.
+    pub all_valid: bool,
+    /// Number of proofs that were verified (including invalid ones).
+    pub verified_count: usize,
+    /// Indices (into the original slice) of proofs that failed verification.
+    pub invalid_indices: Vec<usize>,
+}
+
+/// Batch-verify a slice of Merkle proofs.
+///
+/// Proofs are grouped by root hash so that proofs against the same tree are
+/// checked together. Verification short-circuits on the first invalid proof
+/// within each group: once a failure is found the remaining proofs in that
+/// group are skipped, but other groups are still checked so the caller gets
+/// a complete picture of which indices failed.
+pub fn batch_verify_proofs(proofs: &[&MerkleProof], shard_hashes: &[[u8; 32]]) -> BatchVerifyResult {
+    if proofs.len() != shard_hashes.len() {
+        return BatchVerifyResult {
+            all_valid: false,
+            verified_count: 0,
+            invalid_indices: (0..proofs.len()).collect(),
+        };
+    }
+
+    // Group proof indices by root hash.
+    let mut groups: HashMap<[u8; 32], Vec<usize>> = HashMap::new();
+    for (i, proof) in proofs.iter().enumerate() {
+        groups.entry(proof.root).or_default().push(i);
+    }
+
+    let mut invalid_indices: Vec<usize> = Vec::new();
+    let mut verified_count: usize = 0;
+
+    for (_root, indices) in &groups {
+        for &idx in indices {
+            verified_count += 1;
+
+            // Reconstruct root from leaf + siblings.
+            let mut current = shard_hashes[idx];
+            let mut leaf_idx = proofs[idx].leaf_index;
+            for sibling in &proofs[idx].siblings {
+                current = if leaf_idx % 2 == 0 {
+                    DASampler::hash_pair(&current, sibling)
+                } else {
+                    DASampler::hash_pair(sibling, &current)
+                };
+                leaf_idx /= 2;
+            }
+
+            if current != proofs[idx].root {
+                invalid_indices.push(idx);
+                // Short-circuit: skip remaining proofs in this root group.
+                break;
+            }
+        }
+    }
+
+    invalid_indices.sort_unstable();
+
+    BatchVerifyResult {
+        all_valid: invalid_indices.is_empty(),
+        verified_count,
+        invalid_indices,
+    }
 }
 
 /// Data availability sampler — generates commitments and proofs,
@@ -199,6 +270,59 @@ impl DASampler {
         }
 
         Ok(true)
+    }
+
+    /// Batch-verify a set of sample responses against a DA proof.
+    ///
+    /// Unlike `verify_samples` which returns a simple bool, this returns a
+    /// `BatchVerifyResult` with per-index failure information — useful for
+    /// light clients verifying 100+ samples and wanting to know *which*
+    /// responses are bad rather than just "something failed".
+    pub fn verify_samples_batch(
+        proof: &DAProof,
+        responses: &[SampleResponse],
+        min_samples: usize,
+    ) -> Result<BatchVerifyResult, SamplingError> {
+        if responses.len() < min_samples {
+            return Err(SamplingError::InsufficientSamples {
+                got: responses.len(),
+                need: min_samples,
+            });
+        }
+
+        let mut invalid_indices: Vec<usize> = Vec::new();
+        let mut verified_count: usize = 0;
+
+        // Pre-check: all responses must reference the correct commitment root,
+        // and shard hashes must match their data.
+        for (i, response) in responses.iter().enumerate() {
+            verified_count += 1;
+
+            // Check shard data integrity.
+            let computed_hash: [u8; 32] = blake3::hash(&response.shard.data).into();
+            if computed_hash != response.shard.hash {
+                invalid_indices.push(i);
+                continue;
+            }
+
+            // Check root matches expected commitment.
+            if response.proof.root != proof.commitment_root {
+                invalid_indices.push(i);
+                continue;
+            }
+
+            // Verify Merkle proof.
+            if !Self::verify_proof(&response.shard, &response.proof) {
+                invalid_indices.push(i);
+                continue;
+            }
+        }
+
+        Ok(BatchVerifyResult {
+            all_valid: invalid_indices.is_empty(),
+            verified_count,
+            invalid_indices,
+        })
     }
 
     // ── Internal Merkle helpers ──
@@ -393,5 +517,131 @@ mod tests {
         let shards = make_test_shards();
         let result = DASampler::generate_proof(&shards, 100);
         assert!(result.is_err());
+    }
+
+    // ── Batch verification tests ──
+
+    #[test]
+    fn test_batch_verify_all_valid() {
+        let shards = make_test_shards();
+
+        // Generate proofs for every shard.
+        let proofs: Vec<MerkleProof> = (0..shards.len())
+            .map(|i| DASampler::generate_proof(&shards, i).unwrap())
+            .collect();
+        let proof_refs: Vec<&MerkleProof> = proofs.iter().collect();
+        let shard_hashes: Vec<[u8; 32]> = shards.iter().map(|s| s.hash).collect();
+
+        let result = batch_verify_proofs(&proof_refs, &shard_hashes);
+        assert!(result.all_valid);
+        assert_eq!(result.verified_count, shards.len());
+        assert!(result.invalid_indices.is_empty());
+
+        // Also verify via verify_samples_batch.
+        let da_proof = DASampler::compute_commitment(&shards).unwrap();
+        let responses: Vec<SampleResponse> = shards
+            .iter()
+            .enumerate()
+            .map(|(i, s)| SampleResponse {
+                shard: s.clone(),
+                proof: proofs[i].clone(),
+            })
+            .collect();
+
+        let batch_result =
+            DASampler::verify_samples_batch(&da_proof, &responses, 1).unwrap();
+        assert!(batch_result.all_valid);
+        assert_eq!(batch_result.verified_count, shards.len());
+        assert!(batch_result.invalid_indices.is_empty());
+    }
+
+    #[test]
+    fn test_batch_verify_one_invalid() {
+        let shards = make_test_shards();
+
+        let proofs: Vec<MerkleProof> = (0..shards.len())
+            .map(|i| DASampler::generate_proof(&shards, i).unwrap())
+            .collect();
+
+        // Tamper with one shard hash so its proof fails.
+        let mut shard_hashes: Vec<[u8; 32]> = shards.iter().map(|s| s.hash).collect();
+        shard_hashes[2] = [0xFFu8; 32]; // corrupt index 2
+
+        let proof_refs: Vec<&MerkleProof> = proofs.iter().collect();
+        let result = batch_verify_proofs(&proof_refs, &shard_hashes);
+        assert!(!result.all_valid);
+        assert!(result.invalid_indices.contains(&2));
+
+        // Also verify via verify_samples_batch with a tampered shard.
+        let da_proof = DASampler::compute_commitment(&shards).unwrap();
+        let mut responses: Vec<SampleResponse> = shards
+            .iter()
+            .enumerate()
+            .map(|(i, s)| SampleResponse {
+                shard: s.clone(),
+                proof: proofs[i].clone(),
+            })
+            .collect();
+        // Tamper the data of response[3] so hash check fails.
+        responses[3].shard.data[0] ^= 0xFF;
+
+        let batch_result =
+            DASampler::verify_samples_batch(&da_proof, &responses, 1).unwrap();
+        assert!(!batch_result.all_valid);
+        assert!(batch_result.invalid_indices.contains(&3));
+    }
+
+    #[test]
+    fn test_batch_verify_mixed_roots() {
+        // Build two independent shard sets with different Merkle roots.
+        let shards_a = make_test_shards();
+        let shards_b = {
+            let encoder = ErasureEncoder::new(ErasureConfig {
+                data_shards: 4,
+                parity_shards: 4,
+            })
+            .unwrap();
+            encoder.encode(b"Different data for second tree").unwrap().shards
+        };
+
+        let proof_a0 = DASampler::generate_proof(&shards_a, 0).unwrap();
+        let proof_b0 = DASampler::generate_proof(&shards_b, 0).unwrap();
+
+        // Sanity: different roots.
+        assert_ne!(proof_a0.root, proof_b0.root);
+
+        // batch_verify_proofs with proofs from two trees and correct hashes.
+        let proof_refs: Vec<&MerkleProof> = vec![&proof_a0, &proof_b0];
+        let shard_hashes = vec![shards_a[0].hash, shards_b[0].hash];
+        let result = batch_verify_proofs(&proof_refs, &shard_hashes);
+        assert!(result.all_valid);
+        assert_eq!(result.verified_count, 2);
+
+        // Now swap the hashes so each proof gets the wrong leaf — both should fail.
+        let shard_hashes_swapped = vec![shards_b[0].hash, shards_a[0].hash];
+        let result_bad = batch_verify_proofs(&proof_refs, &shard_hashes_swapped);
+        assert!(!result_bad.all_valid);
+        assert_eq!(result_bad.invalid_indices.len(), 2);
+
+        // verify_samples_batch: mix a response whose proof.root differs from
+        // the DA commitment root — should be caught as invalid.
+        let da_proof_a = DASampler::compute_commitment(&shards_a).unwrap();
+        let responses = vec![
+            SampleResponse {
+                shard: shards_a[0].clone(),
+                proof: proof_a0.clone(),
+            },
+            SampleResponse {
+                shard: shards_b[0].clone(),
+                proof: proof_b0.clone(), // root != da_proof_a.commitment_root
+            },
+        ];
+        let batch_result =
+            DASampler::verify_samples_batch(&da_proof_a, &responses, 1).unwrap();
+        assert!(!batch_result.all_valid);
+        // Index 1 should be invalid (wrong root).
+        assert!(batch_result.invalid_indices.contains(&1));
+        // Index 0 should be valid.
+        assert!(!batch_result.invalid_indices.contains(&0));
     }
 }

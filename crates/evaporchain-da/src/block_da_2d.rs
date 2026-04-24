@@ -6,6 +6,8 @@
 //! Light clients can verify availability by sampling random cells and
 //! checking proofs against both row and column commitments.
 
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::commitments::{CellProof, RowColumnCommitments, generate_2d_queries, CellQuery};
@@ -64,6 +66,74 @@ pub struct CellSampleResult {
     pub row_root: String,
     pub col_root: String,
     pub valid: bool,
+}
+
+/// Availability scoring metrics for DAS light-client sampling.
+///
+/// Given a set of `CellSampleResult`s from `light_client_sample()`, this struct
+/// computes recovery feasibility and a confidence score using the standard DAS
+/// confidence bound (as used by Celestia): `confidence = 1 - 2^(-valid_samples)`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AvailabilityMetrics {
+    /// Total number of samples attempted.
+    pub total_samples: usize,
+    /// Number of samples that verified successfully.
+    pub valid_samples: usize,
+    /// Number of unique rows containing at least one valid sample.
+    pub unique_rows_hit: usize,
+    /// Number of unique columns containing at least one valid sample.
+    pub unique_cols_hit: usize,
+    /// Extended matrix dimension (2k).
+    pub extended_dim: usize,
+    /// Whether recovery is possible: true if unique_rows_hit >= k OR unique_cols_hit >= k.
+    pub recovery_possible: bool,
+    /// DAS confidence that >= 50% of cells are available: `1 - 2^(-valid_samples)`.
+    pub confidence: f64,
+}
+
+impl AvailabilityMetrics {
+    /// Compute availability metrics from a set of cell sample results.
+    ///
+    /// `extended_dim` is the 2k dimension of the extended data square.
+    /// The original dimension k = extended_dim / 2. Recovery requires at least k
+    /// unique rows OR k unique columns with valid samples (sufficient for
+    /// Reed-Solomon reconstruction along that axis).
+    pub fn from_samples(samples: &[CellSampleResult], extended_dim: usize) -> Self {
+        let mut valid_rows: HashSet<usize> = HashSet::new();
+        let mut valid_cols: HashSet<usize> = HashSet::new();
+        let mut valid_samples = 0usize;
+
+        for s in samples {
+            if s.valid {
+                valid_samples += 1;
+                valid_rows.insert(s.row);
+                valid_cols.insert(s.col);
+            }
+        }
+
+        let unique_rows_hit = valid_rows.len();
+        let unique_cols_hit = valid_cols.len();
+        let k = extended_dim / 2;
+        let recovery_possible = unique_rows_hit >= k || unique_cols_hit >= k;
+
+        // Standard DAS confidence bound: probability that >= 50% of cells are
+        // available given S valid random samples is 1 - (1/2)^S.
+        let confidence = if valid_samples == 0 {
+            0.0
+        } else {
+            1.0 - 2.0_f64.powi(-(valid_samples as i32))
+        };
+
+        Self {
+            total_samples: samples.len(),
+            valid_samples,
+            unique_rows_hit,
+            unique_cols_hit,
+            extended_dim,
+            recovery_possible,
+            confidence,
+        }
+    }
 }
 
 /// 2D block DA encoder with Celestia-style cell sampling.
@@ -217,6 +287,16 @@ impl BlockDA2D {
 
         (results, all_valid)
     }
+
+    /// Compute availability metrics from cell sample results.
+    ///
+    /// Convenience method that delegates to `AvailabilityMetrics::from_samples`.
+    pub fn availability_score(
+        samples: &[CellSampleResult],
+        extended_dim: usize,
+    ) -> AvailabilityMetrics {
+        AvailabilityMetrics::from_samples(samples, extended_dim)
+    }
 }
 
 // ─────────────── Namespace helpers ──────────────────────────────────────
@@ -361,5 +441,117 @@ mod tests {
         assert_eq!(namespace_for_tx_type("create_object"), NS_CREATE_OBJECT);
         assert_eq!(namespace_for_tx_type("refresh"), NS_REFRESH);
         assert_eq!(namespace_for_tx_type("unknown"), NS_SYSTEM);
+    }
+
+    // ─────────────── Availability scoring tests ──────────────────────────
+
+    #[test]
+    fn test_availability_all_valid() {
+        // 16 valid samples across a 2k=8 matrix (k=4).
+        // Spread across 4 rows and 4 cols so recovery is possible.
+        let extended_dim = 8;
+        let samples: Vec<CellSampleResult> = (0..16)
+            .map(|i| CellSampleResult {
+                row: i % extended_dim,
+                col: (i * 3) % extended_dim,
+                cell_hash: format!("hash_{}", i),
+                row_root: format!("rr_{}", i % extended_dim),
+                col_root: format!("cr_{}", (i * 3) % extended_dim),
+                valid: true,
+            })
+            .collect();
+
+        let metrics = BlockDA2D::availability_score(&samples, extended_dim);
+        assert_eq!(metrics.total_samples, 16);
+        assert_eq!(metrics.valid_samples, 16);
+        assert_eq!(metrics.extended_dim, 8);
+        // confidence = 1 - 2^(-16) ≈ 0.999985
+        assert!(metrics.confidence > 0.9999, "confidence should be very high: {}", metrics.confidence);
+        // 16 samples mod 8 rows => hits all 8 rows, k=4, so recovery_possible
+        assert!(metrics.recovery_possible, "recovery should be possible with all rows hit");
+    }
+
+    #[test]
+    fn test_availability_some_invalid() {
+        let extended_dim = 8;
+        let mut samples: Vec<CellSampleResult> = Vec::new();
+
+        // 10 valid
+        for i in 0..10 {
+            samples.push(CellSampleResult {
+                row: i % extended_dim,
+                col: i % extended_dim,
+                cell_hash: format!("hash_{}", i),
+                row_root: format!("rr_{}", i),
+                col_root: format!("cr_{}", i),
+                valid: true,
+            });
+        }
+        // 6 invalid
+        for i in 10..16 {
+            samples.push(CellSampleResult {
+                row: i % extended_dim,
+                col: i % extended_dim,
+                cell_hash: String::new(),
+                row_root: String::new(),
+                col_root: String::new(),
+                valid: false,
+            });
+        }
+
+        let metrics = BlockDA2D::availability_score(&samples, extended_dim);
+        assert_eq!(metrics.total_samples, 16);
+        assert_eq!(metrics.valid_samples, 10);
+        // confidence = 1 - 2^(-10) ≈ 0.999
+        assert!(metrics.confidence > 0.999, "confidence based on valid count: {}", metrics.confidence);
+        assert!(metrics.confidence < 1.0);
+        // Invalid samples don't count toward unique rows/cols
+        // valid rows: 0..10 mod 8 => {0,1,2,3,4,5,6,7} = 8, invalid not counted
+        assert_eq!(metrics.unique_rows_hit, 8);
+    }
+
+    #[test]
+    fn test_availability_recovery_possible() {
+        // extended_dim = 6, k = 3. Need >= 3 unique rows OR >= 3 unique cols.
+        let extended_dim = 6;
+
+        // 4 valid samples hitting rows {0, 1, 2} — that's >= k=3
+        let samples = vec![
+            CellSampleResult { row: 0, col: 0, cell_hash: "h0".into(), row_root: "r0".into(), col_root: "c0".into(), valid: true },
+            CellSampleResult { row: 1, col: 0, cell_hash: "h1".into(), row_root: "r1".into(), col_root: "c0".into(), valid: true },
+            CellSampleResult { row: 2, col: 1, cell_hash: "h2".into(), row_root: "r2".into(), col_root: "c1".into(), valid: true },
+            CellSampleResult { row: 2, col: 2, cell_hash: "h3".into(), row_root: "r2".into(), col_root: "c2".into(), valid: true },
+        ];
+
+        let metrics = AvailabilityMetrics::from_samples(&samples, extended_dim);
+        assert_eq!(metrics.unique_rows_hit, 3); // rows 0, 1, 2
+        assert_eq!(metrics.unique_cols_hit, 3); // cols 0, 1, 2
+        assert!(metrics.recovery_possible, "3 unique rows >= k=3, recovery should be possible");
+        assert_eq!(metrics.valid_samples, 4);
+        // confidence = 1 - 2^(-4) = 0.9375
+        let expected = 1.0 - 2.0_f64.powi(-4);
+        assert!((metrics.confidence - expected).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_availability_insufficient() {
+        // extended_dim = 8, k = 4. Only 2 valid samples hitting 2 unique rows/cols.
+        let extended_dim = 8;
+
+        let samples = vec![
+            CellSampleResult { row: 0, col: 0, cell_hash: "h0".into(), row_root: "r0".into(), col_root: "c0".into(), valid: true },
+            CellSampleResult { row: 1, col: 1, cell_hash: "h1".into(), row_root: "r1".into(), col_root: "c1".into(), valid: true },
+            CellSampleResult { row: 5, col: 5, cell_hash: String::new(), row_root: String::new(), col_root: String::new(), valid: false },
+        ];
+
+        let metrics = BlockDA2D::availability_score(&samples, extended_dim);
+        assert_eq!(metrics.total_samples, 3);
+        assert_eq!(metrics.valid_samples, 2);
+        assert_eq!(metrics.unique_rows_hit, 2);
+        assert_eq!(metrics.unique_cols_hit, 2);
+        assert!(!metrics.recovery_possible, "2 rows/cols < k=4, recovery should NOT be possible");
+        // confidence = 1 - 2^(-2) = 0.75
+        let expected = 1.0 - 2.0_f64.powi(-2);
+        assert!((metrics.confidence - expected).abs() < 1e-12);
     }
 }
