@@ -2148,10 +2148,8 @@ async fn main() -> Result<()> {
                 ConsensusAction::CommitBlock(_) => {
                     commit_actions.push(action);
                 }
-                ConsensusAction::RequestSync(from, to) => {
-                    tracing::info!("State sync requested: height {} -> {}", from, to);
-                    // State sync is handled via the sync API endpoints;
-                    // the node will initiate sync on the next tick.
+                ConsensusAction::RequestSync(_, _) => {
+                    commit_actions.push(action);
                 }
             }
         }
