@@ -668,29 +668,35 @@ impl ParallelExecutor {
     }
 
     /// Merge an overlay's state changes back into the main DB.
+    /// Sorted iteration for deterministic state across nodes.
     fn merge_overlay(db: &mut dyn StateDB, overlay: OverlayStateDB) {
-        // Merge accounts (all modified accounts in overlay replace base).
-        for (_, acct) in overlay.accounts {
+        let mut accounts: Vec<_> = overlay.accounts.into_iter().collect();
+        accounts.sort_by_key(|(addr, _)| *addr);
+        for (_, acct) in accounts {
             db.put_account(acct);
         }
 
-        // Merge deleted objects.
-        for id in &overlay.deleted_objects {
+        let mut deleted: Vec<_> = overlay.deleted_objects.into_iter().collect();
+        deleted.sort();
+        for id in &deleted {
             db.delete_object(id);
         }
 
-        // Merge created/modified objects.
-        for (_, obj) in overlay.objects {
+        let mut objects: Vec<_> = overlay.objects.into_iter().collect();
+        objects.sort_by_key(|(id, _)| *id);
+        for (_, obj) in objects {
             db.put_object(obj);
         }
 
-        // Merge removed ghosts.
-        for id in &overlay.removed_ghosts {
+        let mut removed: Vec<_> = overlay.removed_ghosts.into_iter().collect();
+        removed.sort();
+        for id in &removed {
             db.remove_ghost(id);
         }
 
-        // Merge created ghosts.
-        for (_, ghost) in overlay.ghosts {
+        let mut ghosts: Vec<_> = overlay.ghosts.into_iter().collect();
+        ghosts.sort_by_key(|(id, _)| *id);
+        for (_, ghost) in ghosts {
             db.put_ghost(ghost);
         }
     }

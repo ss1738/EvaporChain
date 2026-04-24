@@ -479,6 +479,10 @@ impl TendermintConsensus {
         self.round_state.round
     }
 
+    pub fn parent_hash(&self) -> [u8; 32] {
+        self.parent_hash
+    }
+
     pub fn phase(&self) -> Phase {
         self.round_state.phase
     }

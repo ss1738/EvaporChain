@@ -376,7 +376,9 @@ impl RocksDBStateDB {
     }
 
     fn sync_dirty_to_trie(&mut self) {
-        for id in self.dirty_objects.drain() {
+        let mut dirty_objs: Vec<_> = self.dirty_objects.drain().collect();
+        dirty_objs.sort();
+        for id in dirty_objs {
             let key = trie_key_for_object(&id);
             if let Some(obj) = self.objects.get(&id) {
                 self.trie.insert(key, trie_value_for_object(obj), obj.energy, obj.half_life, obj.last_refreshed);
@@ -384,7 +386,9 @@ impl RocksDBStateDB {
                 self.trie.delete(&key);
             }
         }
-        for addr in self.dirty_accounts.drain() {
+        let mut dirty_accts: Vec<_> = self.dirty_accounts.drain().collect();
+        dirty_accts.sort();
+        for addr in dirty_accts {
             let key = trie_key_for_account(&addr);
             if let Some(acc) = self.accounts.get(&addr) {
                 self.trie.insert(key, trie_value_for_account(acc), u64::MAX, u64::MAX, 0);

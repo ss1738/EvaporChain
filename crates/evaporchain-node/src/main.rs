@@ -2386,10 +2386,11 @@ async fn main() -> Result<()> {
                                 let peers = peer_count.load(std::sync::atomic::Ordering::Relaxed);
 
                                 // Advance consensus state
-                                {
+                                let consensus_parent_hash = {
                                     let mut tc = safe_lock(&tc_ref);
                                     tc.on_block_committed(&block, result.execution.state_root, result.execution.objects_evaporated);
-                                }
+                                    tc.parent_hash()
+                                };
 
                                 // ── Frontier primitives update ──
                                 {
@@ -2528,7 +2529,7 @@ async fn main() -> Result<()> {
                                 );
 
                                 // Persist
-                                log_persist_err("consensus_meta", chain_store.save_consensus_meta(block.number, block.epoch, block.parent_hash));
+                                log_persist_err("consensus_meta", chain_store.save_consensus_meta(block.number, block.epoch, consensus_parent_hash));
                                 log_persist_err("full_block", chain_store.save_full_block(&block));
                                 log_persist_err("tx_index", chain_store.index_block_transactions(&block).map(|_| ()));
                                 {
@@ -2872,10 +2873,11 @@ async fn main() -> Result<()> {
                                     };
                                     let peers = peer_count.load(std::sync::atomic::Ordering::Relaxed);
 
-                                    {
+                                    let consensus_parent_hash = {
                                         let mut tc = safe_lock(&tc_ref);
                                         tc.on_block_committed(&block, result.execution.state_root, result.execution.objects_evaporated);
-                                    }
+                                        tc.parent_hash()
+                                    };
 
                                     // ── Frontier primitives update (gossip path) ──
                                     {
@@ -2970,7 +2972,7 @@ async fn main() -> Result<()> {
                                         &block, &result.execution,
                                         obj_count, ghost_count, exec_elapsed_us,
                                     );
-                                    log_persist_err("consensus_meta", chain_store.save_consensus_meta(block.number, block.epoch, block.parent_hash));
+                                    log_persist_err("consensus_meta", chain_store.save_consensus_meta(block.number, block.epoch, consensus_parent_hash));
                                     log_persist_err("full_block", chain_store.save_full_block(&block));
                                     log_persist_err("tx_index", chain_store.index_block_transactions(&block).map(|_| ()));
                                     index_contract_events_from_exec(&chain_store, &block, &result.execution);
