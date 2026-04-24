@@ -450,6 +450,9 @@ impl TendermintConsensus {
         self.epoch = epoch;
         self.parent_hash = parent_hash;
         self.round_state = RoundState::new(0);
+        self.propose_timeout = Duration::from_millis(PROPOSE_TIMEOUT_MS);
+        self.prevote_timeout = Duration::from_millis(PREVOTE_TIMEOUT_MS);
+        self.precommit_timeout = Duration::from_millis(PRECOMMIT_TIMEOUT_MS);
         self.locked_block = None;
         self.locked_round = None;
         self.valid_block = None;
@@ -828,6 +831,9 @@ impl TendermintConsensus {
                 "Round-skipping to match peer"
             );
             self.round_state = RoundState::new(msg.round());
+            self.propose_timeout = Duration::from_millis(PROPOSE_TIMEOUT_MS);
+            self.prevote_timeout = Duration::from_millis(PREVOTE_TIMEOUT_MS);
+            self.precommit_timeout = Duration::from_millis(PRECOMMIT_TIMEOUT_MS);
         }
 
         match msg {
@@ -1088,6 +1094,35 @@ impl TendermintConsensus {
                     if let Some(sig) = bls_signature {
                         self.round_state.prevote_bls_sigs.insert(validator_id, sig);
                     }
+
+                    if self.round_state.phase == Phase::Prevote {
+                        if let Some(hash) = self.check_prevote_quorum() {
+                            if !self.round_state.precommitted {
+                                self.round_state.precommitted = true;
+                                if hash.is_some() {
+                                    self.locked_block = self.round_state.proposed_block.clone();
+                                    self.locked_round = Some(self.round_state.round);
+                                    self.valid_block = self.round_state.proposed_block.clone();
+                                    self.valid_round = Some(self.round_state.round);
+                                }
+                                let bls_sig = self.bls_sign_vote(self.height, self.round_state.round, &hash, "precommit");
+                                if let Some(ref sig) = bls_sig {
+                                    self.round_state.precommit_bls_sigs.insert(self.my_id, sig.clone());
+                                }
+                                let precommit = ConsensusMessage::Precommit {
+                                    height: self.height,
+                                    round: self.round_state.round,
+                                    block_hash: hash,
+                                    validator_id: self.my_id,
+                                    bls_signature: bls_sig,
+                                };
+                                actions.push(ConsensusAction::BroadcastMessage(precommit));
+                                self.round_state.precommits.insert(self.my_id, hash);
+                            }
+                            self.round_state.phase = Phase::Precommit;
+                            self.round_state.phase_start = Instant::now();
+                        }
+                    }
                 }
             }
 
@@ -1332,8 +1367,11 @@ impl TendermintConsensus {
         let cutoff = self.height.saturating_sub(10);
         self.proposals_seen.retain(|(h, _), _| *h >= cutoff);
 
-        // Reset round state for new height
+        // Reset round state and timeouts for new height
         self.round_state = RoundState::new(0);
+        self.propose_timeout = Duration::from_millis(PROPOSE_TIMEOUT_MS);
+        self.prevote_timeout = Duration::from_millis(PREVOTE_TIMEOUT_MS);
+        self.precommit_timeout = Duration::from_millis(PRECOMMIT_TIMEOUT_MS);
         self.locked_block = None;
         self.locked_round = None;
         self.valid_block = None;
@@ -1729,6 +1767,9 @@ impl TendermintConsensus {
             // be empty (or near-empty), achieving the same livelock-prevention
             // goal without violating Agreement.
             self.round_state = RoundState::new(0);
+            self.propose_timeout = Duration::from_millis(PROPOSE_TIMEOUT_MS);
+            self.prevote_timeout = Duration::from_millis(PREVOTE_TIMEOUT_MS);
+            self.precommit_timeout = Duration::from_millis(PRECOMMIT_TIMEOUT_MS);
             return;
         }
 
