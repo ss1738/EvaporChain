@@ -9,7 +9,9 @@ pub use accumulator::{
     Accumulator, EnergyStampedNullifier, InMemoryAccumulator, MMRPosition, MMRProof,
     MembershipProof, MerkleMountainRange, NonMembershipProof,
 };
-pub use energy_verkle::{EnergyMeta, EnergyVerkleProof, EnergyVerkleTrie, TrieHealth};
+pub use energy_verkle::{
+    EnergyMeta, EnergyVerkleMultiProof, EnergyVerkleProof, EnergyVerkleTrie, TrieHealth,
+};
 pub use hash::{blake3_hash, poseidon_hash, Blake3Hasher, HashEngine, PoseidonHasher};
 pub use signatures::{
     BlsError, BlsKeypair, BlsPublicKey, BlsSecretKey, BlsSignature, BlsVerifier,

@@ -869,6 +869,267 @@ pub struct TrieHealth {
     pub decompressions: u64,
 }
 
+// ─────────────────────── Multiproof ─────────────────────────────────────
+
+/// Compact proof for multiple keys sharing common trie structure.
+/// Deduplicates sibling hashes at shared internal nodes — for N keys
+/// sharing m prefix levels, saves ~m × N × 33 bytes vs individual proofs.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EnergyVerkleMultiProof {
+    /// Keys being proved.
+    pub keys: Vec<[u8; 32]>,
+    /// Values for each key (None = absent or compressed).
+    pub values: Vec<Option<[u8; 32]>>,
+    /// Depth of each key's resolution point in the trie.
+    pub depths: Vec<usize>,
+    /// Sibling hashes at each unique internal node, keyed by path prefix.
+    pub siblings: BTreeMap<Vec<u8>, Vec<(u8, [u8; 32])>>,
+    /// Energy metadata at each visited internal node.
+    pub energy_data: BTreeMap<Vec<u8>, EnergyMeta>,
+    /// Whether each key hit a compressed (dead) region.
+    pub compressed: Vec<bool>,
+}
+
+impl EnergyVerkleMultiProof {
+    /// Number of unique internal nodes in the proof.
+    pub fn node_count(&self) -> usize {
+        self.energy_data.len()
+    }
+
+    /// Total sibling hashes stored.
+    pub fn sibling_count(&self) -> usize {
+        self.siblings.values().map(|v| v.len()).sum()
+    }
+}
+
+impl EnergyVerkleTrie {
+    /// Generate a multiproof for the given keys.
+    pub fn prove_multi(&self, keys: &[[u8; 32]]) -> EnergyVerkleMultiProof {
+        let n = keys.len();
+        let mut values = vec![None; n];
+        let mut depths = vec![0usize; n];
+        let mut compressed = vec![false; n];
+        let mut siblings = BTreeMap::new();
+        let mut energy_data = BTreeMap::new();
+        let all: Vec<usize> = (0..n).collect();
+        let mut path = Vec::new();
+        Self::collect_mp(
+            &self.root,
+            keys,
+            &all,
+            0,
+            &mut path,
+            &mut values,
+            &mut depths,
+            &mut compressed,
+            &mut siblings,
+            &mut energy_data,
+        );
+        EnergyVerkleMultiProof {
+            keys: keys.to_vec(),
+            values,
+            depths,
+            siblings,
+            energy_data,
+            compressed,
+        }
+    }
+
+    fn collect_mp(
+        node: &EnergyNode,
+        keys: &[[u8; 32]],
+        indices: &[usize],
+        depth: usize,
+        path: &mut Vec<u8>,
+        values: &mut Vec<Option<[u8; 32]>>,
+        depths: &mut [usize],
+        compressed: &mut [bool],
+        siblings: &mut BTreeMap<Vec<u8>, Vec<(u8, [u8; 32])>>,
+        energy_data: &mut BTreeMap<Vec<u8>, EnergyMeta>,
+    ) {
+        match node {
+            EnergyNode::Empty => {
+                for &i in indices {
+                    depths[i] = depth;
+                }
+            }
+            EnergyNode::Leaf(leaf) => {
+                for &i in indices {
+                    depths[i] = depth;
+                    if keys[i] == leaf.key {
+                        values[i] = Some(leaf.value);
+                    }
+                }
+            }
+            EnergyNode::Compressed(_) => {
+                for &i in indices {
+                    depths[i] = depth;
+                    compressed[i] = true;
+                }
+            }
+            EnergyNode::Internal(internal) => {
+                if depth >= MAX_DEPTH {
+                    for &i in indices {
+                        depths[i] = depth;
+                    }
+                    return;
+                }
+
+                energy_data.insert(path.clone(), internal.meta.clone());
+
+                let mut groups: BTreeMap<u8, Vec<usize>> = BTreeMap::new();
+                for &i in indices {
+                    groups.entry(keys[i][depth]).or_default().push(i);
+                }
+
+                let mut sib_list: Vec<(u8, [u8; 32])> = Vec::new();
+
+                // Children not on any key's path are siblings
+                for (&ci, child) in &internal.children {
+                    if !groups.contains_key(&ci) {
+                        sib_list.push((ci, child.hash()));
+                    }
+                }
+
+                for (&byte, gi) in &groups {
+                    match internal.children.get(&byte) {
+                        Some(child) => {
+                            // Non-matching leaf: treat as sibling
+                            if let EnergyNode::Leaf(leaf) = child {
+                                if !gi.iter().any(|&i| keys[i] == leaf.key) {
+                                    sib_list.push((byte, child.hash()));
+                                    for &i in gi {
+                                        depths[i] = depth + 1;
+                                    }
+                                    continue;
+                                }
+                            }
+                            // Compressed child: treat as sibling (no live data)
+                            if let EnergyNode::Compressed(c) = child {
+                                sib_list.push((byte, c.commitment));
+                                for &i in gi {
+                                    depths[i] = depth + 1;
+                                    compressed[i] = true;
+                                }
+                                continue;
+                            }
+                            path.push(byte);
+                            Self::collect_mp(
+                                child, keys, gi, depth + 1, path, values, depths,
+                                compressed, siblings, energy_data,
+                            );
+                            path.pop();
+                        }
+                        None => {
+                            for &i in gi {
+                                depths[i] = depth + 1;
+                            }
+                        }
+                    }
+                }
+
+                if !sib_list.is_empty() {
+                    siblings.insert(path.clone(), sib_list);
+                }
+            }
+        }
+    }
+
+    /// Verify a multiproof against an expected root commitment.
+    pub fn verify_multi(proof: &EnergyVerkleMultiProof, expected_root: &[u8; 32]) -> bool {
+        if proof.keys.is_empty() {
+            return *expected_root == [0u8; 32];
+        }
+        let all: Vec<usize> = (0..proof.keys.len()).collect();
+        Self::reconstruct_mp(proof, &all, 0, &[]).map_or(false, |h| h == *expected_root)
+    }
+
+    fn reconstruct_mp(
+        proof: &EnergyVerkleMultiProof,
+        indices: &[usize],
+        depth: usize,
+        path: &[u8],
+    ) -> Option<[u8; 32]> {
+        if indices.is_empty() {
+            return Some([0u8; 32]);
+        }
+
+        // Terminal: all keys resolved at or above this depth
+        if indices.iter().all(|&i| proof.depths[i] <= depth) {
+            let mut hash = [0u8; 32];
+            let mut found = false;
+            for &i in indices {
+                if let Some(v) = &proof.values[i] {
+                    if found {
+                        return None;
+                    }
+                    let mut data = Vec::with_capacity(64);
+                    data.extend_from_slice(&proof.keys[i]);
+                    data.extend_from_slice(v);
+                    hash = *blake3::hash(&data).as_bytes();
+                    found = true;
+                }
+            }
+            return Some(hash);
+        }
+
+        if depth >= MAX_DEPTH {
+            return None;
+        }
+
+        // Internal node: group by byte at this depth
+        let mut groups: BTreeMap<u8, Vec<usize>> = BTreeMap::new();
+        for &i in indices {
+            if proof.depths[i] > depth {
+                groups.entry(proof.keys[i][depth]).or_default().push(i);
+            }
+        }
+        let grouped: usize = groups.values().map(|v| v.len()).sum();
+        if grouped != indices.len() {
+            return None;
+        }
+
+        let gens = generators();
+        let mut commitment = Ep::identity();
+
+        for (&byte, gi) in &groups {
+            let mut cp = path.to_vec();
+            cp.push(byte);
+            let ch = Self::reconstruct_mp(proof, gi, depth + 1, &cp)?;
+            let scalar = bytes_to_scalar(&ch);
+            commitment = commitment + gens[byte as usize] * scalar;
+        }
+
+        let path_vec = path.to_vec();
+        if let Some(sibs) = proof.siblings.get(&path_vec) {
+            for &(idx, ref hash) in sibs {
+                let scalar = bytes_to_scalar(hash);
+                commitment = commitment + gens[idx as usize] * scalar;
+            }
+        }
+
+        Some(point_to_bytes(&commitment))
+    }
+
+    /// Insert multiple entries at once.
+    pub fn insert_batch(&mut self, entries: &[([u8; 32], [u8; 32], u64, u64, u64)]) {
+        for &(key, value, energy, half_life, epoch) in entries {
+            self.insert(key, value, energy, half_life, epoch);
+        }
+    }
+
+    /// Update energy for multiple keys at once. Returns number of keys found.
+    pub fn update_energy_batch(&mut self, updates: &[([u8; 32], u64, u64)]) -> usize {
+        let mut count = 0;
+        for &(ref key, energy, epoch) in updates {
+            if self.update_energy(key, energy, epoch) {
+                count += 1;
+            }
+        }
+        count
+    }
+}
+
 // ─────────────────────── Tests ───────────────────────────────────────────
 
 #[cfg(test)]
@@ -1325,6 +1586,220 @@ mod tests {
 
         assert_eq!(restored.root(), trie.root());
     }
+
+    // ── Multiproof ──
+
+    #[test]
+    fn test_multiproof_basic() {
+        let mut trie = EnergyVerkleTrie::new();
+        for i in 0..10u8 {
+            trie.insert(make_key_full(i), make_value(i * 10), 1000, 100, 0);
+        }
+        let root = trie.root();
+        let keys: Vec<[u8; 32]> = (0..5u8).map(make_key_full).collect();
+        let proof = trie.prove_multi(&keys);
+        assert!(EnergyVerkleTrie::verify_multi(&proof, &root));
+        for i in 0..5u8 {
+            assert_eq!(proof.values[i as usize], Some(make_value(i * 10)));
+        }
+    }
+
+    #[test]
+    fn test_multiproof_all_keys() {
+        let mut trie = EnergyVerkleTrie::new();
+        for i in 0..20u8 {
+            trie.insert(make_key_full(i), make_value(i), 500, 50, 0);
+        }
+        let root = trie.root();
+        let keys: Vec<[u8; 32]> = (0..20u8).map(make_key_full).collect();
+        let proof = trie.prove_multi(&keys);
+        assert!(EnergyVerkleTrie::verify_multi(&proof, &root));
+        assert_eq!(proof.sibling_count(), 0);
+    }
+
+    #[test]
+    fn test_multiproof_absent_key() {
+        let mut trie = EnergyVerkleTrie::new();
+        for i in 0..5u8 {
+            trie.insert(make_key_full(i), make_value(i), 500, 50, 0);
+        }
+        let root = trie.root();
+        let keys = vec![make_key_full(0), make_key_full(200)];
+        let proof = trie.prove_multi(&keys);
+        assert!(EnergyVerkleTrie::verify_multi(&proof, &root));
+        assert_eq!(proof.values[0], Some(make_value(0)));
+        assert_eq!(proof.values[1], None);
+    }
+
+    #[test]
+    fn test_multiproof_tampered_value_fails() {
+        let mut trie = EnergyVerkleTrie::new();
+        for i in 0..5u8 {
+            trie.insert(make_key_full(i), make_value(i * 10), 1000, 100, 0);
+        }
+        let root = trie.root();
+        let keys: Vec<[u8; 32]> = (0..3u8).map(make_key_full).collect();
+        let mut proof = trie.prove_multi(&keys);
+        proof.values[1] = Some(make_value(99));
+        assert!(!EnergyVerkleTrie::verify_multi(&proof, &root));
+    }
+
+    #[test]
+    fn test_multiproof_matches_individual() {
+        let mut trie = EnergyVerkleTrie::new();
+        for i in 0..10u8 {
+            trie.insert(make_key_full(i), make_value(i), 500, 50, 0);
+        }
+        let root = trie.root();
+        for i in 0..10u8 {
+            let key = make_key_full(i);
+            let proof = trie.prove(&key);
+            assert!(EnergyVerkleTrie::verify(&proof, &root));
+        }
+        let keys: Vec<[u8; 32]> = (0..10u8).map(make_key_full).collect();
+        let mp = trie.prove_multi(&keys);
+        assert!(EnergyVerkleTrie::verify_multi(&mp, &root));
+    }
+
+    #[test]
+    fn test_multiproof_fewer_siblings_than_individual() {
+        let mut trie = EnergyVerkleTrie::new();
+        for i in 0..50u8 {
+            trie.insert(make_key_full(i), make_value(i), 500, 50, 0);
+        }
+        let keys: Vec<[u8; 32]> = (0..25u8).map(make_key_full).collect();
+        let mp = trie.prove_multi(&keys);
+        let total_individual: usize = keys
+            .iter()
+            .map(|k| trie.prove(k).siblings.iter().map(|s| s.len()).sum::<usize>())
+            .sum();
+        assert!(
+            mp.sibling_count() <= total_individual,
+            "multiproof {} siblings vs individual {} total",
+            mp.sibling_count(),
+            total_individual,
+        );
+    }
+
+    #[test]
+    fn test_multiproof_with_compression() {
+        let mut trie = EnergyVerkleTrie::new();
+        for i in 0..20u8 {
+            let energy = if i < 10 { 0 } else { 1000 };
+            trie.insert(make_key_full(i), make_value(i), energy, 100, 0);
+        }
+        trie.compress_cold();
+        let root = trie.root();
+        let keys = vec![make_key_full(15), make_key_full(3)];
+        let proof = trie.prove_multi(&keys);
+        assert!(EnergyVerkleTrie::verify_multi(&proof, &root));
+        assert_eq!(proof.values[0], Some(make_value(15)));
+        // Key 3 is dead (energy=0). If it's a standalone leaf child it
+        // retains its value; only dead internal subtrees get compressed.
+        // Either way the proof must verify against the root.
+    }
+
+    #[test]
+    fn test_multiproof_single_key() {
+        let mut trie = EnergyVerkleTrie::new();
+        for i in 0..5u8 {
+            trie.insert(make_key_full(i), make_value(i * 10), 1000, 100, 0);
+        }
+        let root = trie.root();
+        let mp = trie.prove_multi(&[make_key_full(2)]);
+        assert!(EnergyVerkleTrie::verify_multi(&mp, &root));
+        assert_eq!(mp.values[0], Some(make_value(20)));
+    }
+
+    #[test]
+    fn test_multiproof_energy_metadata() {
+        let mut trie = EnergyVerkleTrie::new();
+        trie.insert(make_key_full(1), make_value(1), 1000, 50, 10);
+        trie.insert(make_key_full(2), make_value(2), 500, 100, 20);
+        let keys = vec![make_key_full(1), make_key_full(2)];
+        let mp = trie.prove_multi(&keys);
+        assert!(!mp.energy_data.is_empty());
+        if let Some(root_meta) = mp.energy_data.get(&vec![]) {
+            assert_eq!(root_meta.max_energy, 1000);
+            assert_eq!(root_meta.min_half_life, 50);
+        }
+    }
+
+    #[test]
+    fn test_multiproof_wrong_root_fails() {
+        let mut trie = EnergyVerkleTrie::new();
+        for i in 0..5u8 {
+            trie.insert(make_key_full(i), make_value(i), 500, 50, 0);
+        }
+        let keys: Vec<[u8; 32]> = (0..3u8).map(make_key_full).collect();
+        let proof = trie.prove_multi(&keys);
+        let wrong_root = [0xFFu8; 32];
+        assert!(!EnergyVerkleTrie::verify_multi(&proof, &wrong_root));
+    }
+
+    #[test]
+    fn test_multiproof_empty_trie() {
+        let trie = EnergyVerkleTrie::new();
+        let mp = trie.prove_multi(&[]);
+        assert!(EnergyVerkleTrie::verify_multi(&mp, &[0u8; 32]));
+    }
+
+    #[test]
+    fn test_multiproof_scale_100_keys() {
+        let mut trie = EnergyVerkleTrie::new();
+        for i in 0u16..200 {
+            let key = {
+                let mut input = [0u8; 4];
+                input[..2].copy_from_slice(&i.to_le_bytes());
+                *blake3::hash(&input).as_bytes()
+            };
+            let mut val = [0u8; 32];
+            val[0] = (i & 0xFF) as u8;
+            val[1] = (i >> 8) as u8;
+            trie.insert(key, val, 1000 + i as u64, 100, 0);
+        }
+        let root = trie.root();
+        let keys: Vec<[u8; 32]> = (0u16..100)
+            .map(|i| {
+                let mut input = [0u8; 4];
+                input[..2].copy_from_slice(&i.to_le_bytes());
+                *blake3::hash(&input).as_bytes()
+            })
+            .collect();
+        let mp = trie.prove_multi(&keys);
+        assert!(EnergyVerkleTrie::verify_multi(&mp, &root));
+        assert!(mp.node_count() > 0);
+    }
+
+    // ── Batch operations ──
+
+    #[test]
+    fn test_batch_insert() {
+        let mut trie1 = EnergyVerkleTrie::new();
+        let mut trie2 = EnergyVerkleTrie::new();
+        let entries: Vec<_> = (0..10u8)
+            .map(|i| (make_key_full(i), make_value(i), 500u64, 50u64, i as u64))
+            .collect();
+        for &(k, v, e, h, ep) in &entries {
+            trie1.insert(k, v, e, h, ep);
+        }
+        trie2.insert_batch(&entries);
+        assert_eq!(trie1.root(), trie2.root());
+    }
+
+    #[test]
+    fn test_batch_update_energy() {
+        let mut trie = EnergyVerkleTrie::new();
+        for i in 0..5u8 {
+            trie.insert(make_key_full(i), make_value(i), 1000, 100, 0);
+        }
+        let updates: Vec<_> = (0..5u8)
+            .map(|i| (make_key_full(i), 0u64, 50u64))
+            .collect();
+        let count = trie.update_energy_batch(&updates);
+        assert_eq!(count, 5);
+        assert_eq!(trie.root_meta().max_energy, 0);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1464,6 +1939,46 @@ mod proptests {
 
             prop_assert_eq!(trie.root_meta().max_energy, expected_max);
             prop_assert_eq!(trie.root_meta().min_half_life, expected_min_hl);
+        }
+
+        #[test]
+        fn multiproof_verifies(
+            entries in proptest::collection::vec(
+                (arb_key(), arb_value(), 0u64..10000, 1u64..1000),
+                2..20
+            ),
+            prove_count in 1usize..20,
+        ) {
+            let mut trie = EnergyVerkleTrie::new();
+            for (k, v, e, h) in &entries {
+                trie.insert(*k, *v, *e, *h, 0);
+            }
+            let root = trie.root();
+            let n = prove_count.min(entries.len());
+            let keys: Vec<[u8; 32]> = entries.iter().take(n).map(|(k,_,_,_)| *k).collect();
+            let mp = trie.prove_multi(&keys);
+            prop_assert!(EnergyVerkleTrie::verify_multi(&mp, &root));
+        }
+
+        #[test]
+        fn multiproof_tamper_detected(
+            entries in proptest::collection::vec(
+                (arb_key(), arb_value(), 1u64..10000, 1u64..1000),
+                3..15
+            ),
+        ) {
+            let mut trie = EnergyVerkleTrie::new();
+            for (k, v, e, h) in &entries {
+                trie.insert(*k, *v, *e, *h, 0);
+            }
+            let root = trie.root();
+            let keys: Vec<[u8; 32]> = entries.iter().map(|(k,_,_,_)| *k).collect();
+            let mut mp = trie.prove_multi(&keys);
+            // Tamper with first value
+            if let Some(ref mut v) = mp.values[0] {
+                v[0] ^= 0xFF;
+            }
+            prop_assert!(!EnergyVerkleTrie::verify_multi(&mp, &root));
         }
     }
 }
