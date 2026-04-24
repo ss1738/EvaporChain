@@ -106,6 +106,8 @@ impl ProvingEngine for MockProver {
         _old_state_root: [u8; 32],
         _new_state_root: [u8; 32],
     ) -> Result<(), ProvingError> {
+        #[cfg(not(any(test, debug_assertions)))]
+        tracing::warn!("MockProver::fold_block in release build — no real proof generated");
         self.num_folded += 1;
         Ok(())
     }
@@ -114,6 +116,8 @@ impl ProvingEngine for MockProver {
         if self.num_folded == 0 {
             return Err(ProvingError::NoBlocksFolded);
         }
+        #[cfg(not(any(test, debug_assertions)))]
+        tracing::warn!("MockProver::get_proof in release build — proof is a placeholder");
         Ok(CompressedProof {
             proof_bytes: vec![0u8; 32],
             num_steps: self.num_folded,

@@ -423,6 +423,19 @@ impl BridgeVerifier {
             return VerifyResult::Invalid("commit certificate lacks supermajority".into());
         }
 
+        // 6b. Verify BLS aggregate signature on the commit certificate
+        let vote_msg = crate::tendermint::TendermintConsensus::bls_vote_message(
+            msg.commit_certificate.height,
+            msg.commit_certificate.round,
+            &Some(msg.commit_certificate.block_hash),
+            "precommit",
+        );
+        if !commitment.verify_certificate_signature(&msg.commit_certificate, &vote_msg) {
+            return VerifyResult::Invalid(
+                "commit certificate has invalid BLS aggregate signature".into(),
+            );
+        }
+
         // 7. Verify state proofs (if any)
         for (i, proof) in msg.state_proofs.iter().enumerate() {
             if proof.state_root != msg.state_root {

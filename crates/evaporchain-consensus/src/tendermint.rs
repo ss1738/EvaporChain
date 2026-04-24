@@ -1808,7 +1808,7 @@ impl TendermintConsensus {
     // ──────────────── BLS Aggregate Signatures ─────────────────────────
 
     /// Construct the canonical message to BLS-sign for a vote.
-    fn bls_vote_message(height: u64, round: u32, block_hash: &Option<[u8; 32]>, phase: &str) -> Vec<u8> {
+    pub fn bls_vote_message(height: u64, round: u32, block_hash: &Option<[u8; 32]>, phase: &str) -> Vec<u8> {
         let mut msg = Vec::with_capacity(48);
         msg.extend_from_slice(phase.as_bytes());
         msg.extend_from_slice(&height.to_le_bytes());

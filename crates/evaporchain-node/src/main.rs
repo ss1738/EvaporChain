@@ -54,6 +54,19 @@ fn log_persist_err(op: &str, r: Result<(), String>) {
     }
 }
 
+fn write_secret_file(path: impl AsRef<std::path::Path>, data: &[u8]) {
+    let path = path.as_ref();
+    if let Err(e) = std::fs::write(path, data) {
+        eprintln!("Failed to write secret file {}: {}", path.display(), e);
+        return;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+}
+
 fn persist_contracts(
     chain_store: &persistence::ChainStore,
     tendermint: &Option<Arc<Mutex<evaporchain_consensus::tendermint::TendermintConsensus>>>,
@@ -1387,6 +1400,12 @@ async fn main() -> Result<()> {
             std::process::exit(1);
         }
     } else {
+        eprintln!(
+            "\x1b[33m⚠ WARNING: Running without --prove flag. MockProver active — proofs are NOT cryptographically verified.\x1b[0m"
+        );
+        eprintln!(
+            "\x1b[33m  For production, recompile with: cargo build -p evaporchain-node --features prove --release\x1b[0m"
+        );
         Arc::new(Mutex::new(ChainProver::new(
             Box::new(MockProver::new()) as Box<dyn ProvingEngine>,
             genesis_state_root,
@@ -1549,19 +1568,19 @@ async fn main() -> Result<()> {
                     Err(e) => {
                         eprintln!("{} BLS key file corrupt ({}), regenerating", node_tag, e);
                         let kp = evaporchain_crypto::signatures::BlsKeypair::generate();
-                        let _ = std::fs::write(&bls_key_path, kp.secret_key_bytes().as_bytes());
+                        write_secret_file(&bls_key_path, kp.secret_key_bytes().as_bytes());
                         kp
                     }
                 }
             } else {
                 eprintln!("{} BLS key file wrong size ({}B), regenerating", node_tag, secret_bytes.len());
                 let kp = evaporchain_crypto::signatures::BlsKeypair::generate();
-                let _ = std::fs::write(&bls_key_path, kp.secret_key_bytes().as_bytes());
+                write_secret_file(&bls_key_path, kp.secret_key_bytes().as_bytes());
                 kp
             }
         } else {
             let kp = evaporchain_crypto::signatures::BlsKeypair::generate();
-            let _ = std::fs::write(&bls_key_path, kp.secret_key_bytes().as_bytes());
+            write_secret_file(&bls_key_path, kp.secret_key_bytes().as_bytes());
             println!(
                 "{} \x1b[1;36mBLS12-381 keypair generated & saved\x1b[0m (pk={}B)",
                 node_tag, kp.public_key_bytes().0.len()

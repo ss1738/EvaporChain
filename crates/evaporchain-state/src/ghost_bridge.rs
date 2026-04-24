@@ -10,8 +10,10 @@
 //! prior existence on EvaporChain. Use cases: cross-chain NFT history,
 //! reputation scores that survive evaporation, insurance claims.
 
+use evaporchain_crypto::signatures::{BlsPublicKey, BlsSignature, BlsVerifier};
 use evaporchain_types::{GhostRecord, ObjectId};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 // ─── Ghost Bridge Proof ─────────────────────────────────────────────────
 
@@ -135,6 +137,13 @@ impl Default for GhostBridgeBuilder {
 // ─── Verification ───────────────────────────────────────────────────────
 
 pub fn verify_ghost_bridge_proof(proof: &GhostBridgeProof) -> GhostBridgeVerification {
+    verify_ghost_bridge_proof_with_keys(proof, None)
+}
+
+pub fn verify_ghost_bridge_proof_with_keys(
+    proof: &GhostBridgeProof,
+    validator_pubkeys: Option<&BTreeMap<u64, Vec<u8>>>,
+) -> GhostBridgeVerification {
     let mut checks = GhostBridgeVerification::default();
 
     // Check 1: ghost data_hash is non-zero (object existed)
@@ -148,14 +157,30 @@ pub fn verify_ghost_bridge_proof(proof: &GhostBridgeProof) -> GhostBridgeVerific
         &proof.mmr_inclusion.mmr_root,
     );
 
-    // Check 3: State root attestation has validator signatures with valid data
-    checks.attestation_valid = proof.state_root_proof.validator_signatures.len() >= 2
+    // Check 3: State root attestation — structural + cryptographic verification
+    let structural_valid = proof.state_root_proof.validator_signatures.len() >= 2
         && proof.state_root_proof.state_root == proof.state_root
+        && has_unique_validator_ids(&proof.state_root_proof.validator_signatures)
         && proof.state_root_proof.validator_signatures.iter().all(|sig| {
-            !sig.signature.is_empty()
-                && sig.signature.len() >= 48
-                && has_unique_validator_ids(&proof.state_root_proof.validator_signatures)
+            !sig.signature.is_empty() && sig.signature.len() >= 48
         });
+
+    checks.attestation_valid = if structural_valid {
+        match validator_pubkeys {
+            Some(keys) => {
+                proof.state_root_proof.validator_signatures.iter().all(|sig| {
+                    keys.get(&sig.validator_id).map_or(false, |pk_bytes| {
+                        let pk = BlsPublicKey(pk_bytes.clone());
+                        let bls_sig = BlsSignature(sig.signature.clone());
+                        BlsVerifier::verify(&proof.state_root, &bls_sig, &pk)
+                    })
+                })
+            }
+            None => true,
+        }
+    } else {
+        false
+    };
 
     // Check 4: State roots match
     checks.state_root_matches = proof.state_root == proof.state_root_proof.state_root;

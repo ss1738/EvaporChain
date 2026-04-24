@@ -1,7 +1,7 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -82,6 +82,47 @@ const MAX_CACHE_SIZE: usize = 2000;
 /// Maximum allowed gossip message size (10 MB). Messages exceeding this
 /// are dropped before deserialization to prevent OOM attacks.
 const MAX_GOSSIP_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
+
+/// Maximum gossip messages per peer per window before throttling.
+const PEER_MSG_LIMIT: u64 = 500;
+/// Rate limit window duration.
+const PEER_MSG_WINDOW: Duration = Duration::from_secs(10);
+/// Maximum tracked peers (LRU eviction beyond this).
+const MAX_TRACKED_PEERS: usize = 1024;
+
+struct PeerRateLimiter {
+    counters: HashMap<PeerId, (u64, Instant)>,
+}
+
+impl PeerRateLimiter {
+    fn new() -> Self {
+        Self {
+            counters: HashMap::new(),
+        }
+    }
+
+    fn check_and_increment(&mut self, peer: &PeerId) -> bool {
+        let now = Instant::now();
+        let entry = self.counters.entry(*peer).or_insert((0, now));
+        if now.duration_since(entry.1) >= PEER_MSG_WINDOW {
+            entry.0 = 1;
+            entry.1 = now;
+            return true;
+        }
+        entry.0 += 1;
+        if entry.0 > PEER_MSG_LIMIT {
+            return false;
+        }
+        true
+    }
+
+    fn maybe_gc(&mut self) {
+        if self.counters.len() > MAX_TRACKED_PEERS {
+            let cutoff = Instant::now() - PEER_MSG_WINDOW * 2;
+            self.counters.retain(|_, (_, ts)| *ts > cutoff);
+        }
+    }
+}
 
 // ─────────────────────────── Config ──────────────────────────────────────
 
@@ -438,6 +479,9 @@ impl P2pNetworkService {
             let mut redial_timer = tokio::time::interval(Duration::from_secs(30));
             redial_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+            let mut rate_limiter = PeerRateLimiter::new();
+            let mut gc_counter: u64 = 0;
+
             loop {
                 tokio::select! {
                     // Periodic bootstrap re-dial for peers that weren't reachable at startup
@@ -518,6 +562,21 @@ impl P2pNetworkService {
                             SwarmEvent::Behaviour(EvaporBehaviourEvent::Gossipsub(
                                 gossipsub::Event::Message { message, .. },
                             )) => {
+                                // Per-peer rate limiting
+                                if let Some(ref source) = message.source {
+                                    if !rate_limiter.check_and_increment(source) {
+                                        debug!("Rate-limited peer {source} — dropping gossip message");
+                                        gc_counter += 1;
+                                        if gc_counter % 100 == 0 {
+                                            rate_limiter.maybe_gc();
+                                        }
+                                        continue;
+                                    }
+                                }
+                                gc_counter += 1;
+                                if gc_counter % 1000 == 0 {
+                                    rate_limiter.maybe_gc();
+                                }
                                 // Drop oversized messages before deserialization (DoS protection)
                                 if message.data.len() > MAX_GOSSIP_MESSAGE_SIZE {
                                     warn!(
@@ -551,6 +610,10 @@ impl P2pNetworkService {
                                     message: request_response::Message::Request { request, channel, .. },
                                 },
                             )) => {
+                                if !rate_limiter.check_and_increment(&peer) {
+                                    warn!("Rate-limited peer {peer} — dropping sync request");
+                                    continue;
+                                }
                                 let from = request.from_height;
                                 let to = request.to_height.min(from + MAX_SYNC_BATCH);
                                 info!("Peer {peer} requested blocks {from}..{to}");

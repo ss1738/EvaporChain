@@ -1991,19 +1991,27 @@ async fn post_oracle_ingest(
     headers: HeaderMap,
     Json(req): Json<OracleIngestRequest>,
 ) -> Json<TxResultResponse> {
-    if let Ok(expected) = std::env::var("EVAPORCHAIN_ORACLE_KEY") {
-        let provided = headers
-            .get("authorization")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .unwrap_or("");
-        if provided != expected {
+    let expected = match std::env::var("EVAPORCHAIN_ORACLE_KEY") {
+        Ok(key) if !key.is_empty() => key,
+        _ => {
             return Json(TxResultResponse {
                 success: false,
-                message: "unauthorized: invalid oracle key".into(),
+                message: "oracle endpoint disabled: EVAPORCHAIN_ORACLE_KEY not configured".into(),
                 tx_hash: None,
             });
         }
+    };
+    let provided = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .unwrap_or("");
+    if provided != expected {
+        return Json(TxResultResponse {
+            success: false,
+            message: "unauthorized: invalid oracle key".into(),
+            tx_hash: None,
+        });
     }
     // Oracle uses faucet address as creator (special system address)
     let creator = [0u8; 32];
