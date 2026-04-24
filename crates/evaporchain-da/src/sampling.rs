@@ -644,4 +644,44 @@ mod tests {
         // Index 0 should be valid.
         assert!(!batch_result.invalid_indices.contains(&0));
     }
+
+    #[test]
+    fn test_per_validator_da_seeds_produce_different_queries() {
+        let block_number: u64 = 42;
+        let total_shards = 64;
+        let num_samples = 8;
+
+        let make_seed = |validator_id: u64| -> Vec<u8> {
+            let mut seed = Vec::with_capacity(40);
+            seed.extend_from_slice(b"da-sample");
+            seed.extend_from_slice(&block_number.to_le_bytes());
+            seed.extend_from_slice(&validator_id.to_le_bytes());
+            seed
+        };
+
+        let queries_v0 = DASampler::generate_queries(block_number, total_shards, num_samples, &make_seed(0));
+        let queries_v1 = DASampler::generate_queries(block_number, total_shards, num_samples, &make_seed(1));
+        let queries_v2 = DASampler::generate_queries(block_number, total_shards, num_samples, &make_seed(2));
+
+        let indices = |qs: &[SampleQuery]| -> Vec<usize> { qs.iter().map(|q| q.shard_index).collect() };
+
+        assert_ne!(indices(&queries_v0), indices(&queries_v1));
+        assert_ne!(indices(&queries_v1), indices(&queries_v2));
+        assert_ne!(indices(&queries_v0), indices(&queries_v2));
+    }
+
+    #[test]
+    fn test_same_validator_same_block_is_deterministic() {
+        let seed = {
+            let mut s = Vec::new();
+            s.extend_from_slice(b"da-sample");
+            s.extend_from_slice(&100u64.to_le_bytes());
+            s.extend_from_slice(&5u64.to_le_bytes());
+            s
+        };
+        let q1 = DASampler::generate_queries(100, 32, 4, &seed);
+        let q2 = DASampler::generate_queries(100, 32, 4, &seed);
+        let indices = |qs: &[SampleQuery]| -> Vec<usize> { qs.iter().map(|q| q.shard_index).collect() };
+        assert_eq!(indices(&q1), indices(&q2));
+    }
 }

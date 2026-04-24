@@ -2282,8 +2282,12 @@ async fn main() -> Result<()> {
 
                                                 // Request shard samples from peers for DA verification
                                                 if let Some(data_root) = block.data_root {
+                                                    let mut da_seed = Vec::with_capacity(40);
+                                                    da_seed.extend_from_slice(b"da-sample");
+                                                    da_seed.extend_from_slice(&block.number.to_le_bytes());
+                                                    da_seed.extend_from_slice(&args.validator_id.to_le_bytes());
                                                     let queries = evaporchain_da::sampling::DASampler::generate_queries(
-                                                        block.number, shard_count as usize, 4, &data_root,
+                                                        block.number, shard_count as usize, 4, &da_seed,
                                                     );
                                                     if let Some(ref sender) = sample_request_sender {
                                                         let _ = sender.try_send(queries);
@@ -2715,8 +2719,12 @@ async fn main() -> Result<()> {
 
                                                     // Request peer shard samples + create DA attestation
                                                     if let Some(data_root) = block.data_root {
+                                                        let mut da_seed = Vec::with_capacity(40);
+                                                        da_seed.extend_from_slice(b"da-sample");
+                                                        da_seed.extend_from_slice(&block.number.to_le_bytes());
+                                                        da_seed.extend_from_slice(&args.validator_id.to_le_bytes());
                                                         let queries = evaporchain_da::sampling::DASampler::generate_queries(
-                                                            block.number, shard_count as usize, 4, &data_root,
+                                                            block.number, shard_count as usize, 4, &da_seed,
                                                         );
                                                         if let Some(ref sender) = sample_request_sender {
                                                             let _ = sender.try_send(queries);
