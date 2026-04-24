@@ -4310,7 +4310,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/tx/refresh", post(post_refresh))
         .route("/api/tx/resurrect", post(post_resurrect))
         .route("/api/tx/batch", post(post_batch))
-        .route("/api/tx/:hash", get(get_tx_receipt))
+        .route("/api/receipt/:hash", get(get_tx_receipt))
         .route("/api/address/:addr/transactions", get(get_address_txs))
         .route("/api/tx-index/stats", get(get_tx_index_stats))
         .route("/api/contract/:id/events", get(get_contract_events))
