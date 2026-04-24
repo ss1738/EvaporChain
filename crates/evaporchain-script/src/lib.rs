@@ -232,7 +232,7 @@ pub trait ExternalCaller: Send {
 // ─── Script Engine ──────────────────────────────────────────────────────────
 
 /// A deployed script contract.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScriptContract {
     pub id: u64,
     pub name: String,
@@ -648,6 +648,20 @@ impl ScriptEngine {
 
     pub fn get_contract(&self, contract_id: u64) -> Option<&ScriptContract> {
         self.contracts.get(&contract_id)
+    }
+
+    /// Return references to all deployed contracts (unordered).
+    pub fn all_contracts(&self) -> Vec<&ScriptContract> {
+        self.contracts.values().collect()
+    }
+
+    /// Restore a previously-serialized contract into the engine.
+    /// Adjusts `next_id` so future deploys never collide.
+    pub fn restore_contract(&mut self, contract: ScriptContract) {
+        if contract.id >= self.next_id {
+            self.next_id = contract.id + 1;
+        }
+        self.contracts.insert(contract.id, contract);
     }
 }
 

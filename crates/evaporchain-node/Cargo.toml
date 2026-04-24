@@ -23,6 +23,7 @@ evaporchain-proving = { path = "../evaporchain-proving" }
 evaporchain-network = { path = "../evaporchain-network" }
 evaporchain-da = { path = "../evaporchain-da" }
 evaporchain-script = { path = "../evaporchain-script" }
+evaporchain-contracts = { path = "../evaporchain-contracts" }
 evaporchain-sharding = { path = "../evaporchain-sharding" }
 evaporchain-oracle = { path = "../evaporchain-oracle" }
 tokio = { workspace = true }

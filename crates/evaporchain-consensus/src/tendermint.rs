@@ -1436,6 +1436,22 @@ impl TendermintConsensus {
         self.executor.mmr_size()
     }
 
+    pub fn script_engine(&self) -> &evaporchain_script::ScriptEngine {
+        &self.executor.script_engine
+    }
+
+    pub fn script_engine_mut(&mut self) -> &mut evaporchain_script::ScriptEngine {
+        &mut self.executor.script_engine
+    }
+
+    pub fn contract_engine(&self) -> &evaporchain_contracts::ContractEngine {
+        &self.executor.contract_engine
+    }
+
+    pub fn contract_engine_mut(&mut self) -> &mut evaporchain_contracts::ContractEngine {
+        &mut self.executor.contract_engine
+    }
+
     // ──────────────── Internal Helpers ───────────────────────────────────
 
     /// Create a block proposal from the current mempool.

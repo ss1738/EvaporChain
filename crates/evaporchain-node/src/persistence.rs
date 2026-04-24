@@ -25,6 +25,10 @@ const CF_TX_INDEX: &str = "tx_index";
 const CF_ADDR_HISTORY: &str = "addr_history";
 /// Contract event logs: contract_id:block_number:log_index → ContractEventLog JSON.
 const CF_CONTRACT_EVENTS: &str = "contract_events";
+/// EvaporScript contracts keyed by ID.
+const CF_SCRIPT_CONTRACTS: &str = "script_contracts";
+/// Template-based ContractInstance objects keyed by ID.
+const CF_TEMPLATE_CONTRACTS: &str = "template_contracts";
 
 /// Persistent storage for chain data beyond the state DB.
 pub struct ChainStore {
@@ -47,6 +51,8 @@ impl ChainStore {
             ColumnFamilyDescriptor::new(CF_TX_INDEX, Options::default()),
             ColumnFamilyDescriptor::new(CF_ADDR_HISTORY, Options::default()),
             ColumnFamilyDescriptor::new(CF_CONTRACT_EVENTS, Options::default()),
+            ColumnFamilyDescriptor::new(CF_SCRIPT_CONTRACTS, Options::default()),
+            ColumnFamilyDescriptor::new(CF_TEMPLATE_CONTRACTS, Options::default()),
         ];
 
         let db = DB::open_cf_descriptors(&opts, path, cf_descriptors)
@@ -659,6 +665,62 @@ impl ChainStore {
             }
         }
         pruned
+    }
+
+    // ─── Script contract persistence ───
+
+    pub fn save_script_contracts(&self, contracts: &[&evaporchain_script::ScriptContract]) -> Result<(), String> {
+        let cf = self.db.cf_handle(CF_SCRIPT_CONTRACTS).ok_or("missing CF")?;
+        for c in contracts {
+            let data = serde_json::to_vec(c).map_err(|e| e.to_string())?;
+            self.db.put_cf(cf, c.id.to_le_bytes(), data).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    pub fn load_all_script_contracts(&self) -> Vec<evaporchain_script::ScriptContract> {
+        let cf = match self.db.cf_handle(CF_SCRIPT_CONTRACTS) {
+            Some(cf) => cf,
+            None => return vec![],
+        };
+        let mut contracts = vec![];
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+        for item in iter {
+            if let Ok((_key, value)) = item {
+                if let Ok(c) = serde_json::from_slice(&value) {
+                    contracts.push(c);
+                }
+            }
+        }
+        contracts
+    }
+
+    // ─── Template contract persistence ───
+
+    pub fn save_template_contracts(&self, contracts: &[&evaporchain_contracts::ContractInstance]) -> Result<(), String> {
+        let cf = self.db.cf_handle(CF_TEMPLATE_CONTRACTS).ok_or("missing CF")?;
+        for c in contracts {
+            let data = serde_json::to_vec(c).map_err(|e| e.to_string())?;
+            self.db.put_cf(cf, c.id.to_le_bytes(), data).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    pub fn load_all_template_contracts(&self) -> Vec<evaporchain_contracts::ContractInstance> {
+        let cf = match self.db.cf_handle(CF_TEMPLATE_CONTRACTS) {
+            Some(cf) => cf,
+            None => return vec![],
+        };
+        let mut contracts = vec![];
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+        for item in iter {
+            if let Ok((_key, value)) = item {
+                if let Ok(c) = serde_json::from_slice(&value) {
+                    contracts.push(c);
+                }
+            }
+        }
+        contracts
     }
 }
 

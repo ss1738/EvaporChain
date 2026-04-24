@@ -50,6 +50,19 @@ fn log_persist_err(op: &str, r: Result<(), String>) {
     }
 }
 
+fn persist_contracts(
+    chain_store: &persistence::ChainStore,
+    tendermint: &Option<Arc<Mutex<evaporchain_consensus::tendermint::TendermintConsensus>>>,
+) {
+    if let Some(ref tc_ref) = tendermint {
+        let tc = safe_lock(tc_ref);
+        let scripts: Vec<_> = tc.script_engine().all_contracts().into_iter().collect();
+        let templates: Vec<_> = tc.contract_engine().all_contracts().into_iter().collect();
+        log_persist_err("script_contracts", chain_store.save_script_contracts(&scripts));
+        log_persist_err("template_contracts", chain_store.save_template_contracts(&templates));
+    }
+}
+
 // ──────────────── Nova Proof Verifier (bridge to ChainProver) ───────────
 
 /// Implements `ProofVerifier` for consensus by delegating to a `ChainProver`.
@@ -1670,6 +1683,27 @@ async fn main() -> Result<()> {
         }));
     }
 
+    // Restore deployed contracts from disk
+    if !is_fresh {
+        if let Some(ref tc) = tendermint {
+            let mut c = safe_lock(tc);
+            let scripts = chain_store.load_all_script_contracts();
+            let templates = chain_store.load_all_template_contracts();
+            for sc in scripts.iter() {
+                c.script_engine_mut().restore_contract(sc.clone());
+            }
+            for ti in templates.iter() {
+                c.contract_engine_mut().restore_contract(ti.clone());
+            }
+            if !scripts.is_empty() || !templates.is_empty() {
+                println!(
+                    "{} \x1b[32mContracts restored: {} scripts, {} templates\x1b[0m",
+                    node_tag, scripts.len(), templates.len()
+                );
+            }
+        }
+    }
+
     // Channel for API-submitted transactions to reach P2P network & all mempools
     let (api_tx_sender, mut api_tx_receiver) = tokio::sync::mpsc::channel::<Transaction>(256);
 
@@ -1991,6 +2025,7 @@ async fn main() -> Result<()> {
                     };
                     log_persist_err("mempool", chain_store.save_mempool(&pending));
                 }
+                persist_contracts(&chain_store, &tendermint);
 
                 // Cache block for serving to peers
                 if let Some(ref cache) = block_cache {
@@ -2454,6 +2489,7 @@ async fn main() -> Result<()> {
                                     let pending: Vec<evaporchain_types::Transaction> = tc.mempool.pending().iter().cloned().collect();
                                     log_persist_err("mempool", chain_store.save_mempool(&pending));
                                 }
+                                persist_contracts(&chain_store, &tendermint);
 
                                 // DA encode the block for light client sampling
                                 if let Ok(da) = evaporchain_da::block_da::BlockDA::new() {
@@ -2837,6 +2873,7 @@ async fn main() -> Result<()> {
                                         let pending: Vec<evaporchain_types::Transaction> = tc.mempool.pending().iter().cloned().collect();
                                         log_persist_err("mempool", chain_store.save_mempool(&pending));
                                     }
+                                    persist_contracts(&chain_store, &tendermint);
 
                                     // DA encode (follower path)
                                     if let Ok(da) = evaporchain_da::block_da::BlockDA::new() {

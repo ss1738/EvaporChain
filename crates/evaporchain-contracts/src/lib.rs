@@ -352,6 +352,19 @@ impl ContractEngine {
         }
     }
 
+    /// Return references to all deployed contract instances.
+    pub fn all_contracts(&self) -> Vec<&ContractInstance> {
+        self.contracts.values().collect()
+    }
+
+    /// Re-insert a previously persisted contract, adjusting next_id to avoid collisions.
+    pub fn restore_contract(&mut self, instance: ContractInstance) {
+        if instance.id >= self.next_id {
+            self.next_id = instance.id + 1;
+        }
+        self.contracts.insert(instance.id, instance);
+    }
+
     /// Deploy a new contract. Returns the contract ID.
     pub fn deploy(
         &mut self,
