@@ -3411,10 +3411,12 @@ async fn main() -> Result<()> {
 
                         if let Some(ref tc_ref) = tendermint {
                             // Apply via Tendermint consensus for state consistency
-                            let result = {
+                            let (result, consensus_parent_hash) = {
                                 let mut tc = safe_lock(tc_ref);
                                 let mut db_guard = safe_lock(&db);
-                                tc.apply_block(&mut *db_guard, block)
+                                let r = tc.apply_block(&mut *db_guard, block);
+                                let ph = tc.parent_hash();
+                                (r, ph)
                             };
                             match result {
                                 Ok(result) => {
@@ -3435,6 +3437,7 @@ async fn main() -> Result<()> {
                                     if let Some(ref cache) = block_cache {
                                         cache_block(cache, block);
                                     }
+                                    log_persist_err("consensus_meta", chain_store.save_consensus_meta(block.number, block.epoch, consensus_parent_hash));
                                     // Record in block history & chain store
                                     {
                                         let record = BlockRecord {
@@ -3547,10 +3550,12 @@ async fn main() -> Result<()> {
                                 }
                             }
                             if let Some(ref tc_ref) = tendermint {
-                                let result = {
+                                let (result, consensus_parent_hash) = {
                                     let mut tc = safe_lock(tc_ref);
                                     let mut db_guard = safe_lock(&db);
-                                    tc.apply_block(&mut *db_guard, &queued)
+                                    let r = tc.apply_block(&mut *db_guard, &queued);
+                                    let ph = tc.parent_hash();
+                                    (r, ph)
                                 };
                                 if let Ok(result) = result {
                                     let mut db_guard = safe_lock(&db);
@@ -3560,6 +3565,7 @@ async fn main() -> Result<()> {
                                     let gh_count = db_guard.ghost_count();
                                     drop(db_guard);
                                     let _ = safe_lock(&chain_prover).fold_block(&queued, result.execution.state_root);
+                                    log_persist_err("consensus_meta", chain_store.save_consensus_meta(queued.number, queued.epoch, consensus_parent_hash));
                                     // Update stats for queued/pending blocks
                                     {
                                         let mut tx_creates = 0u64;
