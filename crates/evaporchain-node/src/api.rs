@@ -88,6 +88,8 @@ pub struct ApiState {
     pub shard_bridge: Option<Arc<Mutex<crate::shard_bridge::ShardBridge>>>,
     /// Finality tracker — records BLS-certified finality for each block.
     pub finality_tracker: Arc<Mutex<evaporchain_consensus::finality::FinalityTracker>>,
+    /// MEV-protected encrypted mempool (commit-reveal scheme).
+    pub encrypted_mempool: Arc<Mutex<evaporchain_consensus::encrypted_mempool::EncryptedMempool>>,
 }
 
 impl ApiState {
@@ -3956,6 +3958,136 @@ async fn get_poha_certificates(
 
 // ─────────────── State Sync ───────────────────────────────────────────
 
+// ─────────────────── Encrypted Mempool (MEV Protection) ─────────────────
+
+#[derive(Deserialize)]
+struct EncryptedTxRequest {
+    commitment: String,
+    encrypted_payload: String,
+    nonce_hash: String,
+}
+
+async fn post_submit_encrypted_tx(
+    State(state): State<Arc<ApiState>>,
+    Json(body): Json<EncryptedTxRequest>,
+) -> impl IntoResponse {
+    let commitment = match hex_to_32(&body.commitment) {
+        Some(c) => c,
+        None => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "success": false, "message": "invalid commitment hex (need 64 chars)"
+        }))),
+    };
+    let nonce_hash = match hex_to_32(&body.nonce_hash) {
+        Some(n) => n,
+        None => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "success": false, "message": "invalid nonce_hash hex (need 64 chars)"
+        }))),
+    };
+    let encrypted_payload = match hex::decode(&body.encrypted_payload) {
+        Ok(p) => p,
+        Err(_) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "success": false, "message": "invalid encrypted_payload hex"
+        }))),
+    };
+
+    let current_epoch = if let Some(ref tc) = state.tendermint {
+        safe_lock(tc).epoch()
+    } else {
+        safe_lock(&state.consensus).epoch()
+    };
+
+    let enc_tx = evaporchain_consensus::encrypted_mempool::EncryptedTransaction {
+        commitment,
+        encrypted_payload,
+        nonce_hash,
+        submitted_epoch: current_epoch,
+    };
+
+    {
+        let mut pool = state.encrypted_mempool.lock().unwrap();
+        pool.submit_encrypted(enc_tx);
+    }
+
+    (StatusCode::OK, Json(serde_json::json!({
+        "success": true,
+        "message": "encrypted transaction submitted",
+        "commitment": body.commitment,
+        "reveal_epoch": current_epoch + state.encrypted_mempool.lock().unwrap().reveal_delay(),
+    })))
+}
+
+#[derive(Deserialize)]
+struct RevealRequest {
+    commitment: String,
+    nonce: String,
+}
+
+async fn post_reveal_encrypted_tx(
+    State(state): State<Arc<ApiState>>,
+    Json(body): Json<RevealRequest>,
+) -> impl IntoResponse {
+    let commitment = match hex_to_32(&body.commitment) {
+        Some(c) => c,
+        None => return Json(serde_json::json!({
+            "success": false, "message": "invalid commitment hex"
+        })),
+    };
+    let nonce = match hex_to_32(&body.nonce) {
+        Some(n) => n,
+        None => return Json(serde_json::json!({
+            "success": false, "message": "invalid nonce hex"
+        })),
+    };
+
+    let current_epoch = if let Some(ref tc) = state.tendermint {
+        safe_lock(tc).epoch()
+    } else {
+        safe_lock(&state.consensus).epoch()
+    };
+
+    let mut pool = state.encrypted_mempool.lock().unwrap();
+    let revealed = pool.process_reveals(current_epoch, &[(commitment, nonce)]);
+
+    if revealed.is_empty() {
+        return Json(serde_json::json!({
+            "success": false,
+            "message": "no transaction revealed — either too early, wrong nonce, or not found",
+        }));
+    }
+
+    for tx in &revealed {
+        state.submit_tx(tx.clone());
+    }
+
+    Json(serde_json::json!({
+        "success": true,
+        "revealed_count": revealed.len(),
+    }))
+}
+
+async fn get_encrypted_mempool_status(
+    State(state): State<Arc<ApiState>>,
+) -> impl IntoResponse {
+    let pool = state.encrypted_mempool.lock().unwrap();
+    let (encrypted, plaintext) = pool.pending_count();
+    Json(serde_json::json!({
+        "encrypted_pending": encrypted,
+        "plaintext_pending": plaintext,
+        "total": pool.len(),
+        "reveal_delay_epochs": pool.reveal_delay(),
+    }))
+}
+
+fn hex_to_32(s: &str) -> Option<[u8; 32]> {
+    let bytes = hex::decode(s).ok()?;
+    if bytes.len() != 32 { return None; }
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&bytes);
+    Some(arr)
+}
+
+// ─────────────────── Finality ───────────────────────────────────────────
+
 async fn get_finality(
     State(state): State<Arc<ApiState>>,
 ) -> impl IntoResponse {
@@ -4177,6 +4309,10 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         // PoHA certificates
         .route("/api/da/poha", get(get_poha_certificates))
         .route("/api/da/poha/:block", get(get_poha_certificate))
+        // MEV-protected encrypted mempool
+        .route("/api/mev/submit", post(post_submit_encrypted_tx))
+        .route("/api/mev/reveal", post(post_reveal_encrypted_tx))
+        .route("/api/mev/status", get(get_encrypted_mempool_status))
         // Finality
         .route("/api/finality", get(get_finality))
         .route("/api/finality/proof/:height", get(get_finality_proof))

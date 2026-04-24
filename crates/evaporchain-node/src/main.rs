@@ -12,6 +12,7 @@ mod ws;
 use anyhow::Result;
 use api::{ApiState, BlockRecord, ChainStats, EpochSnapshot, EventRecord, NftStore, NftToken, TokenStore, DeployedToken, StakingStore, StakingPool, Staker, DAOStore, DAOProposal, DAOVote, ThroughputTracker};
 use evaporchain_consensus::MockConsensus;
+use evaporchain_consensus::encrypted_mempool::EncryptedMempool;
 use evaporchain_consensus::finality::FinalityTracker;
 use evaporchain_consensus::tendermint::{TendermintConsensus, ConsensusMessage, ConsensusAction, ProofVerifier, AnchorHashProvider};
 use evaporchain_consensus::validator_set::{ValidatorInfo, ValidatorSet};
@@ -1731,6 +1732,10 @@ async fn main() -> Result<()> {
     let finality_tracker: Arc<Mutex<FinalityTracker>> =
         Arc::new(Mutex::new(FinalityTracker::new()));
 
+    // Encrypted mempool — MEV protection via commit-reveal (2-epoch delay)
+    let encrypted_mempool: Arc<Mutex<EncryptedMempool>> =
+        Arc::new(Mutex::new(EncryptedMempool::new(2)));
+
     // ── API server ──
     if args.api_mode {
         // Initialize user database for wallet/auth system
@@ -1802,6 +1807,7 @@ async fn main() -> Result<()> {
             ws_broadcaster: Arc::clone(&ws_broadcaster),
             chain_store: Some(Arc::clone(&chain_store)),
             finality_tracker: Arc::clone(&finality_tracker),
+            encrypted_mempool: Arc::clone(&encrypted_mempool),
         });
         let api_port = args.api_port;
         tokio::spawn(async move {
