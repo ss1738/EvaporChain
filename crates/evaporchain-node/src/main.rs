@@ -5,6 +5,7 @@ mod frontier;
 mod oracle_bridge;
 mod persistence;
 mod shard_bridge;
+mod sync;
 mod user_db;
 mod ws;
 
@@ -1303,9 +1304,13 @@ async fn main() -> Result<()> {
 
     let db = Arc::new(Mutex::new(state_db));
 
+    let mut restored_height: Option<u64> = None;
     if is_fresh {
         let mut db = safe_lock(&db);
-        if let Some(ref genesis_path) = args.genesis_config {
+        // Try restoring from a local snapshot first (e.g., from a previous sync)
+        if let Some((height, _epoch, _root)) = sync::try_restore_from_snapshot(&mut *db, &chain_store, &node_tag) {
+            restored_height = Some(height);
+        } else if let Some(ref genesis_path) = args.genesis_config {
             println!("{} \x1b[1mFresh start — loading genesis from config: {}\x1b[0m", node_tag, genesis_path);
             let json = std::fs::read_to_string(genesis_path)
                 .unwrap_or_else(|e| panic!("Failed to read genesis config {}: {}", genesis_path, e));
@@ -1710,6 +1715,16 @@ async fn main() -> Result<()> {
     // Snapshot info — shared between API server and commit loop
     let snapshot_info: Arc<Mutex<Option<(u64, [u8; 32], usize)>>> =
         Arc::new(Mutex::new(None));
+
+    // State sync server — serves snapshots to syncing peers
+    let sync_server: Arc<Mutex<sync::SyncServer>> = {
+        let mut srv = sync::SyncServer::new();
+        srv.load_from_store(&chain_store);
+        if let Some(h) = restored_height {
+            srv.set_height(h);
+        }
+        Arc::new(Mutex::new(srv))
+    };
 
     // ── API server ──
     if args.api_mode {
@@ -2533,6 +2548,10 @@ async fn main() -> Result<()> {
                                                 {
                                                     let mut info = snapshot_info.lock().unwrap();
                                                     *info = Some((block.number, result.execution.state_root, size));
+                                                }
+                                                // Feed to sync server for serving to peers
+                                                if let Ok(mut srv) = sync_server.lock() {
+                                                    srv.register_snapshot(block.number, block.epoch, result.execution.state_root, &bytes);
                                                 }
                                                 eprintln!(
                                                     "{} \x1b[1;35mSnapshot created at height {} ({} bytes, {} accounts, {} objects)\x1b[0m",
