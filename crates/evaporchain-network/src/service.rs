@@ -1,6 +1,4 @@
-use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeMap;
-use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -252,25 +250,17 @@ impl P2pNetworkService {
         // Behaviour constructor shared by both transport paths
         macro_rules! build_behaviour {
             ($key:ident) => {{
-                let message_id_fn = |message: &gossipsub::Message| {
-                    let mut s = DefaultHasher::new();
-                    message.data.hash(&mut s);
-                    message.topic.hash(&mut s);
-                    gossipsub::MessageId::from(s.finish().to_string())
-                };
-                // TODO(M-22): Configure GossipSub PeerScoreParams to penalise
-                // peers that send invalid messages and reward active validators.
+                // Use default message ID (source + seq_no) so each validator's
+                // consensus votes get unique IDs even across rounds.
                 let gossipsub_config = gossipsub::ConfigBuilder::default()
                     .heartbeat_interval(Duration::from_millis(500))
-                    .validation_mode(gossipsub::ValidationMode::Strict)
-                    .message_id_fn(message_id_fn)
+                    .validation_mode(gossipsub::ValidationMode::Permissive)
                     .max_transmit_size(4 * 1024 * 1024)
                     .mesh_n(3)
                     .mesh_n_low(2)
                     .mesh_n_high(6)
                     .mesh_outbound_min(1)
                     .gossip_lazy(3)
-                    .duplicate_cache_time(Duration::from_secs(10))
                     .build()
                     .expect("valid gossipsub config");
                 let gossipsub = gossipsub::Behaviour::new(
