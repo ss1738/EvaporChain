@@ -265,6 +265,12 @@ impl P2pNetworkService {
                     .validation_mode(gossipsub::ValidationMode::Strict)
                     .message_id_fn(message_id_fn)
                     .max_transmit_size(4 * 1024 * 1024)
+                    .mesh_n(3)
+                    .mesh_n_low(2)
+                    .mesh_n_high(6)
+                    .mesh_outbound_min(1)
+                    .gossip_lazy(3)
+                    .duplicate_cache_time(Duration::from_secs(10))
                     .build()
                     .expect("valid gossipsub config");
                 let gossipsub = gossipsub::Behaviour::new(
