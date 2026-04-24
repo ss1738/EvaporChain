@@ -294,6 +294,21 @@ impl SnapshotApplier {
 
         let start = std::time::Instant::now();
 
+        // Clear existing state so stale entries don't persist after restore.
+        for id in db.all_object_ids() {
+            db.delete_object(&id);
+        }
+        for id in db.all_ghost_ids() {
+            db.remove_ghost(&id);
+        }
+        let snapshot_addrs: std::collections::HashSet<AccountAddress> =
+            snapshot.accounts.iter().map(|a| a.address).collect();
+        for addr in db.all_account_addresses() {
+            if !snapshot_addrs.contains(&addr) {
+                db.delete_account(&addr);
+            }
+        }
+
         // Apply accounts
         for acc in &snapshot.accounts {
             db.put_account(acc.clone());
@@ -826,5 +841,25 @@ mod tests {
         assert_eq!(result.accounts_restored, 100);
         assert_eq!(result.objects_restored, 50);
         assert_eq!(result.state_root, snapshot.header.state_root);
+    }
+
+    #[test]
+    fn test_apply_snapshot_clears_stale_entries() {
+        // DB has objects/ghosts NOT in the snapshot — they must be removed
+        let mut source_db = InMemoryStateDB::new();
+        source_db.put_account(make_account(1, 1000));
+        source_db.put_object(make_object(1, 100));
+        let snapshot = SnapshotBuilder::create(&mut source_db, 10, 1).unwrap();
+
+        let mut target_db = InMemoryStateDB::new();
+        target_db.put_account(make_account(99, 999_999));
+        target_db.put_object(make_object(99, 9999));
+        target_db.put_ghost(make_ghost(99, 5));
+
+        SnapshotApplier::apply(&mut target_db, &snapshot).unwrap();
+
+        assert!(target_db.get_object(&obj_id(99)).is_none(), "stale object must be cleared");
+        assert!(target_db.get_ghost(&obj_id(99)).is_none(), "stale ghost must be cleared");
+        assert!(target_db.get_account(&addr(99)).is_none(), "stale account must be deleted");
     }
 }

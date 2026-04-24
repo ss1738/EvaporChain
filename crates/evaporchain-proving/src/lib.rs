@@ -127,6 +127,12 @@ impl ProvingEngine for MockProver {
         num_blocks: usize,
         _genesis_state: [u8; 32],
     ) -> Result<bool, ProvingError> {
+        #[cfg(not(any(test, debug_assertions)))]
+        {
+            tracing::error!("MockProver::verify_proof called in release build — rejecting");
+            return Ok(false);
+        }
+        #[cfg(any(test, debug_assertions))]
         Ok(proof.num_steps == num_blocks)
     }
 

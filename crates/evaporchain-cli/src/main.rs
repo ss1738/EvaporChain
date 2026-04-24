@@ -954,6 +954,13 @@ fn cmd_keygen(output: Option<&str>, json_mode: bool) -> Result<()> {
     if let Some(path) = output {
         std::fs::write(path, &pretty)
             .with_context(|| format!("Failed to write keypair to {}", path))?;
+        // Restrict file permissions to owner-only (0600) to protect secret keys
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+                .with_context(|| format!("Failed to set permissions on {}", path))?;
+        }
 
         if !json_mode {
             println!("  {} Validator keypair written to {}", "\u{2714}".green().bold(), path);

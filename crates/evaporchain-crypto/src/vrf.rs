@@ -23,6 +23,7 @@
 //! per (height, round) and commit. The proof is always verifiable.
 
 use crate::signatures::{MlDsaKeypair, MlDsaVerifier, Signer, Verifier};
+use subtle::ConstantTimeEq;
 
 /// Domain separation tag to prevent cross-protocol signature reuse.
 const VRF_DOMAIN_SEP: &[u8] = b"EvaporChain_VRF_v1";
@@ -94,9 +95,9 @@ pub fn vrf_verify(pk: &[u8], alpha: &[u8], output: &VrfOutput, proof: &VrfProof)
     if !MlDsaVerifier::verify(&msg, &proof.0, pk) {
         return false;
     }
-    // Step 2: check output consistency
+    // Step 2: check output consistency (constant-time to prevent timing side-channel)
     let expected = vrf_hash(alpha, &proof.0);
-    expected == output.0
+    bool::from(expected.ct_eq(&output.0))
 }
 
 /// Construct the domain-separated message for signing/verification.

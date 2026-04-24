@@ -98,6 +98,9 @@ impl OracleState {
         self.entries.get(key).and_then(|e| e.current_twap)
     }
 
+    /// NOTE (M-06): Clones all keys into a Vec. Acceptable because this is only
+    /// called in tests and the oracle key set is small (tens of price feeds, not
+    /// thousands). If the oracle grows to high cardinality, return an iterator.
     pub fn keys(&self) -> Vec<String> {
         self.entries.keys().cloned().collect()
     }

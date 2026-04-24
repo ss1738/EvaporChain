@@ -1,6 +1,10 @@
 //! Authentication and wallet API endpoints.
 
 use axum::{extract::State, http::HeaderMap, Json};
+use chacha20poly1305::{
+    aead::{Aead, KeyInit},
+    XChaCha20Poly1305, XNonce,
+};
 use evaporchain_crypto::signatures::MlDsaKeypair;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -115,14 +119,60 @@ fn generate_address_from_pubkey(pk_bytes: &[u8]) -> String {
     format!("0x{}", hex::encode(hash.as_bytes()))
 }
 
+/// Derive the 32-byte master encryption key for wallet private keys.
+/// Uses EVAPORCHAIN_KEY_MASTER env var if set, otherwise a dev-only fallback.
+fn master_encryption_key() -> [u8; 32] {
+    let seed = std::env::var("EVAPORCHAIN_KEY_MASTER")
+        .unwrap_or_else(|_| "EVAPORCHAIN_DEV_KEY_DO_NOT_USE_IN_PRODUCTION".to_string());
+    blake3::derive_key("evaporchain wallet key encryption", seed.as_bytes())
+}
+
+/// Encrypt a hex-encoded secret key with XChaCha20-Poly1305.
+/// Returns hex(nonce || ciphertext).
+fn encrypt_secret_key(sk_hex: &str) -> Result<String, String> {
+    let key = master_encryption_key();
+    let cipher = XChaCha20Poly1305::new_from_slice(&key)
+        .map_err(|e| format!("invalid key: {e}"))?;
+    let mut nonce_bytes = [0u8; 24];
+    rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce_bytes);
+    let nonce = XNonce::from_slice(&nonce_bytes);
+    let ciphertext = cipher
+        .encrypt(nonce, sk_hex.as_bytes())
+        .map_err(|e| format!("encryption failed: {e}"))?;
+    let mut out = Vec::with_capacity(24 + ciphertext.len());
+    out.extend_from_slice(&nonce_bytes);
+    out.extend_from_slice(&ciphertext);
+    Ok(hex::encode(out))
+}
+
+/// Decrypt a hex-encoded encrypted secret key. Returns the plaintext hex SK.
+#[allow(dead_code)]
+fn decrypt_secret_key(encrypted_hex: &str) -> Result<String, String> {
+    let data = hex::decode(encrypted_hex).map_err(|e| format!("hex decode: {e}"))?;
+    if data.len() < 24 {
+        return Err("encrypted key too short".into());
+    }
+    let (nonce_bytes, ciphertext) = data.split_at(24);
+    let key = master_encryption_key();
+    let cipher = XChaCha20Poly1305::new_from_slice(&key)
+        .map_err(|_| "invalid key".to_string())?;
+    let nonce = XNonce::from_slice(nonce_bytes);
+    let plaintext = cipher
+        .decrypt(nonce, ciphertext)
+        .map_err(|_| "decryption failed — wrong key or corrupted data".to_string())?;
+    String::from_utf8(plaintext).map_err(|e| format!("invalid UTF-8: {e}"))
+}
+
 /// Generate a real ML-DSA (Dilithium3) keypair.
-/// Returns (public_key_hex, secret_key_hex).
+/// Returns (address, public_key_hex, encrypted_secret_key_hex).
 fn generate_keypair() -> (String, String, String) {
     let kp = MlDsaKeypair::generate();
     let pk_hex = hex::encode(kp.public_key());
     let sk_hex = hex::encode(kp.secret_key());
     let address = generate_address_from_pubkey(kp.public_key());
-    (address, pk_hex, sk_hex)
+    let encrypted_sk = encrypt_secret_key(&sk_hex)
+        .expect("wallet key encryption must not fail");
+    (address, pk_hex, encrypted_sk)
 }
 
 /// Extract user_id from Authorization header token.
@@ -390,17 +440,40 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_keypair_produces_real_mldsa() {
-        let (address, pk_hex, sk_hex) = generate_keypair();
+    fn test_generate_keypair_produces_encrypted_mldsa() {
+        let (address, pk_hex, encrypted_sk) = generate_keypair();
         assert!(address.starts_with("0x"));
-        assert_eq!(address.len(), 66); // "0x" + 64 hex chars (blake3 hash)
-        // ML-DSA Dilithium3: public key = 1952 bytes, secret key = 4000 bytes
-        assert_eq!(pk_hex.len(), 1952 * 2); // hex-encoded
-        assert!(sk_hex.len() > 1000); // secret key is large
-        // Verify the address is derived from the public key
+        assert_eq!(address.len(), 66);
+        assert_eq!(pk_hex.len(), 1952 * 2);
+        // Encrypted key is NOT the raw hex SK — it's longer due to nonce + tag
+        assert!(encrypted_sk.len() > 4000 * 2);
+        // Verify roundtrip: decrypt should recover a valid SK hex
+        let sk_hex = decrypt_secret_key(&encrypted_sk).unwrap();
+        assert_eq!(sk_hex.len(), 4000 * 2); // 4000 bytes hex-encoded
+        // Verify address derivation
         let pk_bytes = hex::decode(&pk_hex).unwrap();
-        let expected_addr = generate_address_from_pubkey(&pk_bytes);
-        assert_eq!(address, expected_addr);
+        assert_eq!(address, generate_address_from_pubkey(&pk_bytes));
+    }
+
+    #[test]
+    fn test_encrypt_decrypt_roundtrip() {
+        let plaintext = "deadbeef".repeat(100);
+        let encrypted = encrypt_secret_key(&plaintext).unwrap();
+        assert_ne!(encrypted, plaintext);
+        let decrypted = decrypt_secret_key(&encrypted).unwrap();
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn test_decrypt_tampered_fails() {
+        let encrypted = encrypt_secret_key("secret_data_here").unwrap();
+        let mut bytes = hex::decode(&encrypted).unwrap();
+        // Tamper with the ciphertext
+        if let Some(last) = bytes.last_mut() {
+            *last ^= 0xFF;
+        }
+        let tampered = hex::encode(&bytes);
+        assert!(decrypt_secret_key(&tampered).is_err());
     }
 
     #[test]

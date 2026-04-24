@@ -26,11 +26,23 @@ const GAS_EMIT_EVENT: u64 = 20;
 const GAS_CALL_EXTERNAL: u64 = 100;
 const GAS_RETURN: u64 = 1;
 const GAS_MOD: u64 = 5;
+const GAS_ARRAY_NEW: u64 = 5;
+const GAS_ARRAY_GET: u64 = 5;
+const GAS_ARRAY_SET: u64 = 10;
 
 /// Maximum stack depth to prevent OOM.
 const MAX_STACK_DEPTH: usize = 1024;
 /// Maximum loop iterations per method call (gas also limits this, but this is a hard cap).
 const MAX_LOOP_ITERATIONS: u64 = 100_000;
+/// Maximum string length in bytes to prevent OOM via concatenation.
+const MAX_STRING_LEN: usize = 1_048_576; // 1 MiB
+/// Maximum entries in a single map to prevent OOM.
+const MAX_MAP_ENTRIES: usize = 10_000;
+/// Maximum elements in a single array to prevent OOM.
+const MAX_ARRAY_SIZE: usize = 10_000;
+/// Hard step limit: maximum number of opcodes executed per method call.
+/// Independent of gas — prevents infinite loops even if gas accounting has bugs.
+const MAX_STEPS: u64 = 10_000_000;
 
 // ─── VM ─────────────────────────────────────────────────────────────────────
 
@@ -43,6 +55,8 @@ pub struct EvaporVM {
     structured_events: Vec<ContractEvent>,
     gas_used: u64,
     gas_limit: u64,
+    /// Hard step counter: incremented on every opcode, independent of gas.
+    step_count: u64,
 }
 
 impl EvaporVM {
@@ -55,6 +69,7 @@ impl EvaporVM {
             structured_events: Vec::new(),
             gas_used: 0,
             gas_limit,
+            step_count: 0,
         }
     }
 
@@ -109,6 +124,15 @@ impl EvaporVM {
         loop {
             if ip >= bytecode.opcodes.len() {
                 return Ok(Value::Null);
+            }
+
+            // Hard step limit: prevents infinite loops independent of gas accounting.
+            self.step_count += 1;
+            if self.step_count > MAX_STEPS {
+                return Err(ScriptError::StepLimitExceeded {
+                    steps: self.step_count,
+                    limit: MAX_STEPS,
+                });
             }
 
             let op = &bytecode.opcodes[ip];
@@ -166,7 +190,17 @@ impl EvaporVM {
                                 ScriptError::Runtime("arithmetic overflow: addition".into())
                             })?,
                         ),
-                        (Value::Str(x), Value::Str(y)) => Value::Str(format!("{x}{y}")),
+                        (Value::Str(x), Value::Str(y)) => {
+                            let concat_len = x.len() + y.len();
+                            self.charge_gas(concat_len as u64)?;
+                            if concat_len > MAX_STRING_LEN {
+                                return Err(ScriptError::Runtime(format!(
+                                    "string too large: {} bytes exceeds limit of {MAX_STRING_LEN}",
+                                    concat_len
+                                )));
+                            }
+                            Value::Str(format!("{x}{y}"))
+                        }
                         _ => {
                             return Err(ScriptError::Runtime(format!(
                                 "cannot add {a:?} and {b:?}"
@@ -280,13 +314,29 @@ impl EvaporVM {
 
                 Op::Neg => {
                     self.charge_gas(GAS_SUB)?;
-                    let a = self.pop()?.as_u64()?;
-                    if a > 0 {
-                        return Err(ScriptError::Runtime(
-                            "arithmetic underflow: negation of positive u64".into(),
-                        ));
+                    let val = self.pop()?;
+                    match val {
+                        Value::U64(0) => self.push(Value::U64(0))?,
+                        Value::U64(n) => {
+                            return Err(ScriptError::Runtime(format!(
+                                "cannot negate unsigned integer {n}: EvaporScript uses u64 only"
+                            )));
+                        }
+                        Value::Bool(b) => self.push(Value::Bool(!b))?,
+                        other => {
+                            return Err(ScriptError::Runtime(format!(
+                                "cannot negate value of type {}: expected number or bool",
+                                match other {
+                                    Value::Str(_) => "string",
+                                    Value::Null => "null",
+                                    Value::Map(_) => "map",
+                                    Value::Array(_) => "array",
+                                    Value::Address(_) => "address",
+                                    _ => "unknown",
+                                }
+                            )));
+                        }
                     }
-                    self.push(Value::U64(0))?;
                 }
 
                 Op::Jump(target) => {
@@ -308,6 +358,14 @@ impl EvaporVM {
                     self.charge_gas(GAS_JUMP)?;
                     let cond = self.pop()?.as_bool()?;
                     if cond {
+                        if *target <= ip {
+                            loop_counter += 1;
+                            if loop_counter > MAX_LOOP_ITERATIONS {
+                                return Err(ScriptError::Runtime(format!(
+                                    "loop iteration limit exceeded ({MAX_LOOP_ITERATIONS})"
+                                )));
+                            }
+                        }
                         ip = *target;
                         continue;
                     }
@@ -317,6 +375,14 @@ impl EvaporVM {
                     self.charge_gas(GAS_JUMP)?;
                     let cond = self.pop()?.as_bool()?;
                     if !cond {
+                        if *target <= ip {
+                            loop_counter += 1;
+                            if loop_counter > MAX_LOOP_ITERATIONS {
+                                return Err(ScriptError::Runtime(format!(
+                                    "loop iteration limit exceeded ({MAX_LOOP_ITERATIONS})"
+                                )));
+                            }
+                        }
                         ip = *target;
                         continue;
                     }
@@ -328,13 +394,87 @@ impl EvaporVM {
                     self.push(result)?;
                 }
 
+                Op::ArrayNew(count) => {
+                    self.charge_gas(GAS_ARRAY_NEW)?;
+                    let count = *count;
+                    if count > MAX_ARRAY_SIZE {
+                        return Err(ScriptError::Runtime(format!(
+                            "array size limit exceeded ({MAX_ARRAY_SIZE})"
+                        )));
+                    }
+                    self.charge_gas(count as u64)?;
+                    let mut elements = Vec::with_capacity(count);
+                    for _ in 0..count {
+                        elements.push(self.pop()?);
+                    }
+                    elements.reverse();
+                    self.push(Value::Array(elements))?;
+                }
+
+                Op::ArrayGet => {
+                    self.charge_gas(GAS_ARRAY_GET)?;
+                    let index = self.pop()?.as_u64()? as usize;
+                    let array = self.pop()?;
+                    match array {
+                        Value::Array(arr) => {
+                            if index >= arr.len() {
+                                return Err(ScriptError::Runtime(format!(
+                                    "array index out of bounds: index {index}, length {}",
+                                    arr.len()
+                                )));
+                            }
+                            self.push(arr[index].clone())?;
+                        }
+                        other => {
+                            return Err(ScriptError::Runtime(format!(
+                                "expected array, got {other:?}"
+                            )))
+                        }
+                    }
+                }
+
+                Op::ArraySet(name) => {
+                    self.charge_gas(GAS_ARRAY_SET)?;
+                    let index = self.pop()?.as_u64()? as usize;
+                    let value = self.pop()?;
+                    let arr = self.locals.get_mut(name).ok_or_else(|| {
+                        ScriptError::Runtime(format!("undefined variable: {name}"))
+                    })?;
+                    match arr {
+                        Value::Array(ref mut vec) => {
+                            if index >= vec.len() {
+                                return Err(ScriptError::Runtime(format!(
+                                    "array index out of bounds: index {index}, length {}",
+                                    vec.len()
+                                )));
+                            }
+                            vec[index] = value;
+                        }
+                        other => {
+                            return Err(ScriptError::Runtime(format!(
+                                "expected array for '{name}', got {other:?}"
+                            )))
+                        }
+                    }
+                }
+
                 Op::MapGet(field) => {
                     self.charge_gas(GAS_MAP_GET)?;
                     let key = self.pop()?;
-                    let key_str = key.to_map_key();
                     let val = match self.state.get(field) {
                         Some(Value::Map(map)) => {
+                            let key_str = key.to_map_key();
                             map.get(&key_str).cloned().unwrap_or(Value::U64(0))
+                        }
+                        Some(Value::Array(arr)) => {
+                            let index = key.as_u64()? as usize;
+                            if index >= arr.len() {
+                                return Err(ScriptError::Runtime(format!(
+                                    "array index out of bounds: index {index}, length {}",
+                                    arr.len()
+                                )));
+                            }
+                            arr[index].clone()
                         }
                         _ => Value::U64(0),
                     };
@@ -345,19 +485,34 @@ impl EvaporVM {
                     self.charge_gas(GAS_MAP_SET)?;
                     let val = self.pop()?;
                     let key = self.pop()?;
-                    let key_str = key.to_map_key();
 
-                    let map = self
+                    let entry = self
                         .state
                         .entry(field.clone())
                         .or_insert_with(|| Value::Map(HashMap::new()));
-                    match map {
+                    match entry {
                         Value::Map(m) => {
+                            let key_str = key.to_map_key();
+                            if !m.contains_key(&key_str) && m.len() >= MAX_MAP_ENTRIES {
+                                return Err(ScriptError::Runtime(format!(
+                                    "map entry limit exceeded ({MAX_MAP_ENTRIES})"
+                                )));
+                            }
                             m.insert(key_str, val);
+                        }
+                        Value::Array(arr) => {
+                            let index = key.as_u64()? as usize;
+                            if index >= arr.len() {
+                                return Err(ScriptError::Runtime(format!(
+                                    "array index out of bounds: index {index}, length {}",
+                                    arr.len()
+                                )));
+                            }
+                            arr[index] = val;
                         }
                         _ => {
                             return Err(ScriptError::Runtime(format!(
-                                "state field '{field}' is not a map"
+                                "state field '{field}' is not a map or array"
                             )))
                         }
                     }
@@ -698,6 +853,7 @@ impl EvaporVM {
                 let length = match &val {
                     Value::Str(s) => s.len() as u64,
                     Value::Map(m) => m.len() as u64,
+                    Value::Array(a) => a.len() as u64,
                     _ => {
                         return Err(ScriptError::Runtime(format!(
                             "len() not supported for {val:?}"
@@ -715,12 +871,8 @@ impl EvaporVM {
                 }
                 let val = self.pop()?;
                 let s = match val {
-                    Value::U64(n) => n.to_string(),
-                    Value::Bool(b) => b.to_string(),
                     Value::Str(s) => s,
-                    Value::Address(a) => format!("0x{}", hex::encode(a)),
-                    Value::Null => "null".to_string(),
-                    Value::Map(_) => "<map>".to_string(),
+                    other => format!("{other}"),
                 };
                 Ok(Value::Str(s))
             }
@@ -1705,5 +1857,159 @@ contract Vault {
             &ctx,
         );
         assert!(r2.is_err(), "should fail: 100 - 200 underflows");
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Array Tests
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_array_literal_and_access() {
+        let src = r#"
+contract Arrays {
+    state { x: u64 = 0 }
+    fn get_second() -> u64 {
+        let arr = [10, 20, 30]
+        return arr[1]
+    }
+}
+"#;
+        let bytecode = compile_src(src);
+        let ctx = test_ctx();
+        let result =
+            EvaporVM::execute(&bytecode, "get_second", vec![], empty_state(), &ctx).unwrap();
+        assert_eq!(result.return_value, Value::U64(20));
+    }
+
+    #[test]
+    fn test_array_set_element() {
+        let src = r#"
+contract Arrays {
+    state { x: u64 = 0 }
+    fn modify() -> u64 {
+        let arr = [1, 2, 3]
+        arr[0] = 99
+        return arr[0]
+    }
+}
+"#;
+        let bytecode = compile_src(src);
+        let ctx = test_ctx();
+        let result =
+            EvaporVM::execute(&bytecode, "modify", vec![], empty_state(), &ctx).unwrap();
+        assert_eq!(result.return_value, Value::U64(99));
+    }
+
+    #[test]
+    fn test_array_compound_assign() {
+        let src = r#"
+contract Arrays {
+    state { x: u64 = 0 }
+    fn add_to_element() -> u64 {
+        let arr = [10, 20, 30]
+        arr[1] += 5
+        return arr[1]
+    }
+}
+"#;
+        let bytecode = compile_src(src);
+        let ctx = test_ctx();
+        let result = EvaporVM::execute(
+            &bytecode, "add_to_element", vec![], empty_state(), &ctx,
+        ).unwrap();
+        assert_eq!(result.return_value, Value::U64(25));
+    }
+
+    #[test]
+    fn test_array_len_builtin() {
+        let src = r#"
+contract Arrays {
+    state { x: u64 = 0 }
+    fn count() -> u64 {
+        let arr = [1, 2, 3, 4, 5]
+        return len(arr)
+    }
+}
+"#;
+        let bytecode = compile_src(src);
+        let ctx = test_ctx();
+        let result =
+            EvaporVM::execute(&bytecode, "count", vec![], empty_state(), &ctx).unwrap();
+        assert_eq!(result.return_value, Value::U64(5));
+    }
+
+    #[test]
+    fn test_array_out_of_bounds() {
+        let src = r#"
+contract Arrays {
+    state { x: u64 = 0 }
+    fn oob() -> u64 {
+        let arr = [1, 2, 3]
+        return arr[5]
+    }
+}
+"#;
+        let bytecode = compile_src(src);
+        let ctx = test_ctx();
+        let result = EvaporVM::execute(&bytecode, "oob", vec![], empty_state(), &ctx);
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(err.contains("out of bounds"), "got: {err}");
+    }
+
+    #[test]
+    fn test_array_empty_literal() {
+        let src = r#"
+contract Arrays {
+    state { x: u64 = 0 }
+    fn empty_len() -> u64 {
+        let arr = []
+        return len(arr)
+    }
+}
+"#;
+        let bytecode = compile_src(src);
+        let ctx = test_ctx();
+        let result =
+            EvaporVM::execute(&bytecode, "empty_len", vec![], empty_state(), &ctx).unwrap();
+        assert_eq!(result.return_value, Value::U64(0));
+    }
+
+    #[test]
+    fn test_state_array_access() {
+        let src = r#"
+contract WithStateArray {
+    state {
+        items: array[u64]
+    }
+    fn get_item(idx: u64) -> u64 {
+        return self.items[idx]
+    }
+    fn set_item(idx: u64, val: u64) {
+        self.items[idx] = val
+    }
+}
+"#;
+        let bytecode = compile_src(src);
+        let ctx = test_ctx();
+
+        let mut state = HashMap::new();
+        state.insert("items".into(), Value::Array(vec![
+            Value::U64(100), Value::U64(200), Value::U64(300),
+        ]));
+
+        let r1 = EvaporVM::execute(
+            &bytecode, "get_item", vec![Value::U64(1)], state.clone(), &ctx,
+        ).unwrap();
+        assert_eq!(r1.return_value, Value::U64(200));
+
+        let r2 = EvaporVM::execute(
+            &bytecode, "set_item", vec![Value::U64(0), Value::U64(999)], state, &ctx,
+        ).unwrap();
+        let updated_items = r2.state_changes.get("items").unwrap();
+        match updated_items {
+            Value::Array(arr) => assert_eq!(arr[0], Value::U64(999)),
+            other => panic!("expected array, got {other:?}"),
+        }
     }
 }

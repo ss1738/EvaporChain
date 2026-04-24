@@ -378,6 +378,25 @@ impl StateSyncManager {
             return vec![];
         }
 
+        // Cross-check: metadata state_root must match the light-client-verified header
+        if let Some(ref lc) = self.light_client {
+            if let Some(trusted) = lc.trusted_state_at(target) {
+                if trusted.header.state_root != metadata.state_root {
+                    warn!(
+                        expected = hex::encode(trusted.header.state_root),
+                        got = hex::encode(metadata.state_root),
+                        "Snapshot state root doesn't match verified header — rejecting"
+                    );
+                    return vec![];
+                }
+            }
+        }
+
+        if metadata.chunk_hashes.len() != metadata.total_chunks {
+            warn!("Chunk hash count doesn't match total_chunks — rejecting");
+            return vec![];
+        }
+
         info!(
             height = target,
             chunks = metadata.total_chunks,
@@ -718,6 +737,10 @@ mod tests {
     }
 
     fn make_header(height: u64, vs: &ValidatorSet, kps: &[BlsKeypair]) -> LightBlockHeader {
+        make_header_with_state_root(height, vs, kps, blake3_hash(&vec![height as u8; 64]))
+    }
+
+    fn make_header_with_state_root(height: u64, vs: &ValidatorSet, kps: &[BlsKeypair], state_root: [u8; 32]) -> LightBlockHeader {
         let hash = [height as u8; 32];
         let cert = make_cert(height, hash, kps, &(0..vs.active_count() as u64).collect::<Vec<_>>());
         LightBlockHeader {
@@ -725,7 +748,7 @@ mod tests {
             epoch: height / 100,
             block_hash: hash,
             parent_hash: [(height - 1) as u8; 32],
-            state_root: blake3_hash(&vec![height as u8; 64]),
+            state_root,
             timestamp: height * 10,
             validator_set: vs.clone(),
             commit_certificate: cert,
@@ -922,8 +945,8 @@ mod tests {
         );
         assert_eq!(*sync.phase(), SyncPhase::VerifyingHeader);
 
-        // Simulate header response (bootstrap light client)
-        let header = make_header(100, &vs, &kps);
+        // Simulate header response — state_root must match the snapshot
+        let header = make_header_with_state_root(100, &vs, &kps, state_root);
         let actions = sync.on_message(1, SyncMessage::HeaderResponse { header });
 
         // Should now request snapshot metadata
@@ -1011,5 +1034,33 @@ mod tests {
 
         sync.phase = SyncPhase::Complete { synced_height: 100 };
         assert_eq!(sync.download_progress(), 1.0);
+    }
+
+    #[test]
+    fn test_snapshot_metadata_state_root_mismatch_rejected() {
+        let (vs, kps) = make_vs_with_bls(4, 1000);
+        let mut sync = StateSyncManager::new(0);
+        sync.start();
+
+        sync.on_message(1, SyncMessage::TipResponse { height: 100, block_hash: [100u8; 32] });
+        sync.on_message(2, SyncMessage::TipResponse { height: 100, block_hash: [100u8; 32] });
+
+        // Header has state_root = blake3([100; 64])
+        let header = make_header(100, &vs, &kps);
+        let header_state_root = header.state_root;
+        sync.on_message(1, SyncMessage::HeaderResponse { header });
+
+        // Metadata with DIFFERENT state_root
+        let bad_meta = SnapshotMetadata {
+            height: 100,
+            epoch: 1,
+            state_root: [0xFF; 32],
+            total_chunks: 1,
+            chunk_hashes: vec![[0xAA; 32]],
+            total_size: 1024,
+        };
+        assert_ne!([0xFF; 32], header_state_root);
+        let actions = sync.on_message(1, SyncMessage::SnapshotMetadataResponse { metadata: bad_meta });
+        assert!(actions.is_empty(), "mismatched state_root must be rejected");
     }
 }

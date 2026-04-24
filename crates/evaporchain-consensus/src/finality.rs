@@ -231,16 +231,36 @@ impl FinalityTracker {
         self.records.get(&height)
     }
 
+    /// Compute the canonical proof hash covering all certificate fields.
+    fn compute_proof_hash(
+        height: u64,
+        block_hash: &[u8; 32],
+        state_root: &[u8; 32],
+        cert: &CommitCertificate,
+    ) -> [u8; 32] {
+        let mut proof_input = Vec::new();
+        proof_input.extend_from_slice(&height.to_le_bytes());
+        proof_input.extend_from_slice(&cert.round.to_le_bytes());
+        proof_input.extend_from_slice(block_hash);
+        proof_input.extend_from_slice(state_root);
+        proof_input.extend_from_slice(&(cert.signer_ids.len() as u64).to_le_bytes());
+        for signer in &cert.signer_ids {
+            proof_input.extend_from_slice(&signer.to_le_bytes());
+        }
+        proof_input.extend_from_slice(&cert.aggregate_signature);
+        blake3_hash(&proof_input)
+    }
+
     /// Generate a finality proof for a specific height.
     pub fn generate_proof(&self, height: u64) -> Option<FinalityProof> {
         let record = self.records.get(&height)?;
 
-        let mut proof_input = Vec::new();
-        proof_input.extend_from_slice(&record.height.to_le_bytes());
-        proof_input.extend_from_slice(&record.block_hash);
-        proof_input.extend_from_slice(&record.state_root);
-        proof_input.extend_from_slice(&record.certificate.aggregate_signature);
-        let proof_hash = blake3_hash(&proof_input);
+        let proof_hash = Self::compute_proof_hash(
+            record.height,
+            &record.block_hash,
+            &record.state_root,
+            &record.certificate,
+        );
 
         Some(FinalityProof {
             height: record.height,
@@ -317,13 +337,12 @@ impl FinalityTracker {
 
     /// Verify that a finality proof is internally consistent.
     pub fn verify_proof(proof: &FinalityProof) -> bool {
-        // Verify proof hash
-        let mut proof_input = Vec::new();
-        proof_input.extend_from_slice(&proof.height.to_le_bytes());
-        proof_input.extend_from_slice(&proof.block_hash);
-        proof_input.extend_from_slice(&proof.state_root);
-        proof_input.extend_from_slice(&proof.certificate.aggregate_signature);
-        let expected_hash = blake3_hash(&proof_input);
+        let expected_hash = Self::compute_proof_hash(
+            proof.height,
+            &proof.block_hash,
+            &proof.state_root,
+            &proof.certificate,
+        );
 
         if expected_hash != proof.proof_hash {
             return false;
@@ -334,6 +353,11 @@ impl FinalityTracker {
             return false;
         }
         if proof.certificate.block_hash != proof.block_hash {
+            return false;
+        }
+
+        // Reject empty signer sets
+        if proof.certificate.signer_ids.is_empty() {
             return false;
         }
 
@@ -551,5 +575,37 @@ mod tests {
         // Latest should still be 5
         assert_eq!(ft.latest_finalized_height(), 5);
         assert_eq!(ft.record_count(), 2);
+    }
+
+    #[test]
+    fn test_proof_hash_includes_round_and_signers() {
+        let mut ft = FinalityTracker::new();
+        let cert = make_cert(1, [1u8; 32], vec![0, 1, 2]);
+        ft.on_block_finalized(1, [1u8; 32], [0xAA; 32], 0, cert, 3000, 4000, 100);
+        let proof = ft.generate_proof(1).unwrap();
+
+        // Changing the round in the certificate should invalidate the proof
+        let mut tampered = proof.clone();
+        tampered.certificate.round = 5;
+        assert!(!FinalityTracker::verify_proof(&tampered));
+
+        // Changing the signer set should invalidate the proof
+        let mut tampered2 = proof.clone();
+        tampered2.certificate.signer_ids = vec![0, 1, 2, 99];
+        assert!(!FinalityTracker::verify_proof(&tampered2));
+    }
+
+    #[test]
+    fn test_proof_rejects_empty_signers() {
+        let mut ft = FinalityTracker::new();
+        let cert = make_cert(1, [1u8; 32], vec![0, 1, 2]);
+        ft.on_block_finalized(1, [1u8; 32], [0xAA; 32], 0, cert, 3000, 4000, 100);
+        let mut proof = ft.generate_proof(1).unwrap();
+        proof.certificate.signer_ids.clear();
+        // Recompute proof hash to isolate the empty-signer check
+        proof.proof_hash = FinalityTracker::compute_proof_hash(
+            proof.height, &proof.block_hash, &proof.state_root, &proof.certificate,
+        );
+        assert!(!FinalityTracker::verify_proof(&proof));
     }
 }

@@ -60,6 +60,13 @@ pub enum Op {
 
     /// Pop bool + message string. Revert if false.
     Require,
+    /// Pop N values, create Array, push onto stack.
+    ArrayNew(usize),
+    /// Pop index (u64), pop array, push array[index].
+    ArrayGet,
+    /// Pop index (u64), pop value, modify local variable's array at index.
+    ArraySet(String),
+
     /// Pop string, emit event.
     Emit,
     /// Emit a structured event: pop `topic_count` topics + 1 data value.
@@ -215,6 +222,11 @@ impl Compiler {
                         self.compile_expr(value)?;
                         self.emit(Op::MapSet(field.clone()));
                     }
+                    AssignTarget::ArrayElement(name, index) => {
+                        self.compile_expr(value)?;
+                        self.compile_expr(index)?;
+                        self.emit(Op::ArraySet(name.clone()));
+                    }
                 }
             }
 
@@ -228,23 +240,16 @@ impl Compiler {
                         self.emit(Op::StateStore(field.clone()));
                     }
                     AssignTarget::MapEntry(field, key) => {
-                        // Load current: push key, MapGet
+                        // Evaluate key once to avoid double side-effects
                         self.compile_expr(key)?;
+                        self.emit(Op::Store("__map_key_tmp".into()));
+                        // Load current: push cached key, MapGet
+                        self.emit(Op::Load("__map_key_tmp".into()));
                         self.emit(Op::MapGet(field.clone()));
                         // Compute new value
                         self.compile_expr(value)?;
                         self.emit_binop(*op);
-                        // Store back: push key, push value (value is on stack), MapSet
-                        // We need key again — compile it again
-                        // Stack has: new_value
-                        // We need: key, new_value for MapSet
-                        self.compile_expr(key)?;
-                        // Swap: we have new_value, key on stack but need key, new_value
-                        // Actually MapSet pops: value first, then key
-                        // So stack should be: key (bottom), value (top) — which means
-                        // we push key first, but value is already there...
-                        // Let's use Store/Load to shuffle
-                        self.emit(Op::Store("__map_key_tmp".into()));
+                        // Store back: need key, value on stack for MapSet
                         self.emit(Op::Store("__map_val_tmp".into()));
                         self.emit(Op::Load("__map_key_tmp".into()));
                         self.emit(Op::Load("__map_val_tmp".into()));
@@ -255,6 +260,17 @@ impl Compiler {
                         self.compile_expr(value)?;
                         self.emit_binop(*op);
                         self.emit(Op::Store(name.clone()));
+                    }
+                    AssignTarget::ArrayElement(name, index) => {
+                        self.compile_expr(index)?;
+                        self.emit(Op::Store("__arr_idx_tmp".into()));
+                        self.emit(Op::Load(name.clone()));
+                        self.emit(Op::Load("__arr_idx_tmp".into()));
+                        self.emit(Op::ArrayGet);
+                        self.compile_expr(value)?;
+                        self.emit_binop(*op);
+                        self.emit(Op::Load("__arr_idx_tmp".into()));
+                        self.emit(Op::ArraySet(name.clone()));
                     }
                 }
             }
@@ -396,6 +412,19 @@ impl Compiler {
                     self.emit(Op::Call(name.clone(), args.len()));
                 }
             }
+
+            Expr::ArrayLiteral(elements) => {
+                for elem in elements {
+                    self.compile_expr(elem)?;
+                }
+                self.emit(Op::ArrayNew(elements.len()));
+            }
+
+            Expr::ArrayAccess(array, index) => {
+                self.compile_expr(array)?;
+                self.compile_expr(index)?;
+                self.emit(Op::ArrayGet);
+            }
         }
 
         Ok(())
@@ -443,11 +472,18 @@ fn extract_state_schema(contract: &Contract) -> StateSchema {
 fn eval_const_expr(expr: &Expr) -> Option<Value> {
     match expr {
         Expr::Literal(val) => Some(val.clone()),
+        Expr::ArrayLiteral(elements) => {
+            let vals: Option<Vec<Value>> = elements.iter().map(eval_const_expr).collect();
+            vals.map(Value::Array)
+        }
         _ => None,
     }
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
+
+// TODO(M-11): dead code elimination — detect unreachable code after Return/Halt.
+// TODO(M-12): constant folding — evaluate constant BinaryOp at compile time.
 
 /// Compile a parsed Contract AST into EvaporBytecode.
 pub fn compile(contract: &Contract) -> Result<EvaporBytecode, ScriptError> {

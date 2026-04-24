@@ -671,7 +671,14 @@ fn exec_transfer(view: &mut TxView, tx: &TransferTx) -> Result<(), TxViewError> 
 
     let recv_balance = view.read_balance(&tx.to).map_err(TxViewError::Blocked)?;
     let recv_nonce = view.read_nonce(&tx.to).map_err(TxViewError::Blocked)?;
-    view.write_account(tx.to, recv_balance + tx.amount, recv_nonce);
+    let new_recv_balance = recv_balance.checked_add(tx.amount).ok_or_else(|| {
+        TxViewError::ExecutionError(ExecutionError::InsufficientBalance {
+            account: hex::encode(tx.to),
+            available: recv_balance,
+            required: tx.amount,
+        })
+    })?;
+    view.write_account(tx.to, new_recv_balance, recv_nonce);
 
     Ok(())
 }
@@ -977,6 +984,8 @@ impl BlockStmExecutor {
         }
 
         // ── Wave 2+: Validate and re-execute until convergence ──
+        // TODO(M-20): sort needs_reexec by dependency depth; serial fallback for
+        // txs that abort repeatedly across waves.
         let max_waves = num_txs + 2; // Convergence bound
         for wave in 0..max_waves {
             let mut needs_reexec: Vec<u32> = Vec::new();

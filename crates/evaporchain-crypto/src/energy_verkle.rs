@@ -786,6 +786,12 @@ impl EnergyVerkleTrie {
 
     /// Query all keys with energy above a threshold.
     /// Skips subtrees where max_energy <= threshold (the key optimization).
+    ///
+    /// NOTE (M-06): Allocates a full Vec of matching keys. This is acceptable
+    /// because the method is only used in tests and diagnostic queries, not in
+    /// the consensus hot path. The subtree-pruning optimisation already limits
+    /// the scan to live regions. If this ever lands on a hot path, convert to
+    /// an iterator via `collect_above` yielding items lazily.
     pub fn keys_above_energy(&self, threshold: u64) -> Vec<([u8; 32], u64)> {
         let mut results = Vec::new();
         Self::collect_above(&self.root, threshold, &mut results);

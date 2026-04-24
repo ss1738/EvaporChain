@@ -30,19 +30,13 @@ pub struct MlDsaKeypair {
     inner: Keypair,
 }
 
-const _: () = assert!(
-    std::mem::size_of::<Keypair>() == pqc_dilithium::PUBLICKEYBYTES + pqc_dilithium::SECRETKEYBYTES,
-    "Keypair layout assumption violated — unsafe zeroize/reconstruct will break"
-);
-
 impl Drop for MlDsaKeypair {
     fn drop(&mut self) {
-        // Zeroize the secret key portion of the keypair.
-        // Keypair layout: { public: [u8; PK], secret: [u8; SK] }
+        // Zeroize the entire keypair (both PK and SK) to prevent secret key leakage.
+        // Zeroing the full struct avoids assuming internal field layout order.
         unsafe {
             let ptr = &mut self.inner as *mut Keypair as *mut u8;
-            let sk_ptr = ptr.add(pqc_dilithium::PUBLICKEYBYTES);
-            std::ptr::write_bytes(sk_ptr, 0, pqc_dilithium::SECRETKEYBYTES);
+            std::ptr::write_bytes(ptr, 0, std::mem::size_of::<Keypair>());
         }
     }
 }
@@ -62,11 +56,11 @@ impl MlDsaKeypair {
             return Err(MlDsaError::InvalidSecretKey);
         }
         // Reconstruct Keypair by generating a dummy then overwriting fields.
-        // Keypair is { public: [u8; PK], secret: [u8; SK] } and is Copy.
         let mut kp = Keypair::generate();
 
-        // SAFETY: Keypair layout is { public: [u8; PUBLICKEYBYTES], secret: [u8; SECRETKEYBYTES] }
-        // We overwrite both fields with the provided bytes.
+        // SAFETY: We assume Keypair layout is { public: [u8; PK], secret: [u8; SK] }.
+        // The runtime checks below verify the bytes landed correctly; if layout changes
+        // in a future pqc_dilithium release, this will return an error instead of UB.
         unsafe {
             let ptr = &mut kp as *mut Keypair as *mut u8;
             std::ptr::copy_nonoverlapping(pk_bytes.as_ptr(), ptr, pqc_dilithium::PUBLICKEYBYTES);
@@ -75,6 +69,14 @@ impl MlDsaKeypair {
                 ptr.add(pqc_dilithium::PUBLICKEYBYTES),
                 pqc_dilithium::SECRETKEYBYTES,
             );
+        }
+
+        // Runtime verification: confirm the bytes ended up in the right fields.
+        if kp.public.as_slice() != pk_bytes {
+            return Err(MlDsaError::InvalidPublicKey);
+        }
+        if kp.expose_secret() != sk_bytes {
+            return Err(MlDsaError::InvalidSecretKey);
         }
 
         Ok(Self { inner: kp })

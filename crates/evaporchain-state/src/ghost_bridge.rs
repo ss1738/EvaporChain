@@ -148,9 +148,14 @@ pub fn verify_ghost_bridge_proof(proof: &GhostBridgeProof) -> GhostBridgeVerific
         &proof.mmr_inclusion.mmr_root,
     );
 
-    // Check 3: State root attestation has validator signatures
-    checks.attestation_valid = !proof.state_root_proof.validator_signatures.is_empty()
-        && proof.state_root_proof.state_root == proof.state_root;
+    // Check 3: State root attestation has validator signatures with valid data
+    checks.attestation_valid = proof.state_root_proof.validator_signatures.len() >= 2
+        && proof.state_root_proof.state_root == proof.state_root
+        && proof.state_root_proof.validator_signatures.iter().all(|sig| {
+            !sig.signature.is_empty()
+                && sig.signature.len() >= 48
+                && has_unique_validator_ids(&proof.state_root_proof.validator_signatures)
+        });
 
     // Check 4: State roots match
     checks.state_root_matches = proof.state_root == proof.state_root_proof.state_root;
@@ -175,6 +180,11 @@ pub struct GhostBridgeVerification {
     pub state_root_matches: bool,
     pub nonce_valid: bool,
     pub overall_valid: bool,
+}
+
+fn has_unique_validator_ids(sigs: &[ValidatorSig]) -> bool {
+    let mut seen = std::collections::HashSet::new();
+    sigs.iter().all(|s| seen.insert(s.validator_id))
 }
 
 fn verify_mmr_path(
@@ -282,10 +292,16 @@ mod tests {
                 block_number: 100,
                 epoch: 50,
                 state_root,
-                validator_signatures: vec![ValidatorSig {
-                    validator_id: 0,
-                    signature: vec![1, 2, 3],
-                }],
+                validator_signatures: vec![
+                    ValidatorSig {
+                        validator_id: 0,
+                        signature: vec![0xAA; 96],
+                    },
+                    ValidatorSig {
+                        validator_id: 1,
+                        signature: vec![0xBB; 96],
+                    },
+                ],
             },
             target_chain_id: chain_id,
             bridge_nonce: 1,
@@ -416,6 +432,43 @@ mod tests {
         let leaf = [0xAB; 32];
         let sibling = [0xCD; 32];
         assert!(!verify_mmr_path(&leaf, 0, &[sibling], &[0xFF; 32]));
+    }
+
+    #[test]
+    fn test_single_validator_sig_fails() {
+        let ghost = make_ghost(1, 50);
+        let mut proof = make_bridge_proof(ghost, 42);
+        proof.state_root_proof.validator_signatures = vec![ValidatorSig {
+            validator_id: 0,
+            signature: vec![0xAA; 96],
+        }];
+        let result = verify_ghost_bridge_proof(&proof);
+        assert!(!result.attestation_valid, "need >=2 validator signatures");
+        assert!(!result.overall_valid);
+    }
+
+    #[test]
+    fn test_short_signature_fails() {
+        let ghost = make_ghost(1, 50);
+        let mut proof = make_bridge_proof(ghost, 42);
+        proof.state_root_proof.validator_signatures = vec![
+            ValidatorSig { validator_id: 0, signature: vec![0xAA; 96] },
+            ValidatorSig { validator_id: 1, signature: vec![0xBB; 10] }, // too short
+        ];
+        let result = verify_ghost_bridge_proof(&proof);
+        assert!(!result.attestation_valid, "signature must be >= 48 bytes");
+    }
+
+    #[test]
+    fn test_duplicate_validator_ids_fails() {
+        let ghost = make_ghost(1, 50);
+        let mut proof = make_bridge_proof(ghost, 42);
+        proof.state_root_proof.validator_signatures = vec![
+            ValidatorSig { validator_id: 0, signature: vec![0xAA; 96] },
+            ValidatorSig { validator_id: 0, signature: vec![0xBB; 96] }, // duplicate
+        ];
+        let result = verify_ghost_bridge_proof(&proof);
+        assert!(!result.attestation_valid, "duplicate validator IDs");
     }
 
     #[test]

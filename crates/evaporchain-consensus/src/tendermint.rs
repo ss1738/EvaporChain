@@ -480,11 +480,16 @@ impl TendermintConsensus {
         self.round_state.phase
     }
 
-    /// Number of validators needed for a 2f+1 quorum.
+    /// Number of validators needed for a 2f+1 quorum (count-based, for certificate signer checks).
     fn quorum_size(&self) -> usize {
         let n = self.validator_set.len();
-        // Strict >2/3 majority: floor(2n/3) + 1
         n * 2 / 3 + 1
+    }
+
+    /// Stake threshold for a 2f+1 quorum (stake-weighted).
+    fn stake_quorum_threshold(&self) -> u64 {
+        let total = self.validator_set.total_stake();
+        total * 2 / 3 + 1
     }
 
     /// Who is the proposer for the current height/round?
@@ -910,6 +915,10 @@ impl TendermintConsensus {
                     debug!(height = height, "Nova proof verified on proposal");
                 }
 
+                // C-03 TODO: state_root is currently [0u8;32] in proposals and computed
+                // post-execution. A proper fix requires computing state_root in
+                // create_proposal() before broadcasting. Tracked as a follow-up.
+
                 // ── VRF proof verification ──
                 // If the proposer has a VRF public key and the block includes
                 // a VRF proof, verify that the VRF output is valid for this
@@ -977,28 +986,34 @@ impl TendermintConsensus {
                 if !self.round_state.prevoted {
                     self.round_state.prevoted = true;
 
-                    // If locked on a different block, vote nil
-                    let vote_hash = if let (Some(ref locked), Some(lr)) =
+                    // Tendermint lock rule: once locked on a block, only vote
+                    // for that block. Voting for a different block just because
+                    // `locked_round < current_round` violates safety.
+                    let vote_hash = if let (Some(ref locked), Some(_lr)) =
                         (&self.locked_block, self.locked_round)
                     {
                         let locked_hash = Self::block_hash(locked);
-                        if locked_hash == hash || lr < round {
+                        if locked_hash == hash {
                             Some(hash)
                         } else {
-                            None // locked on different block
+                            None // locked on different block — vote nil
                         }
                     } else {
                         Some(hash) // not locked, vote for proposal
                     };
 
                     self.round_state.prevotes.insert(self.my_id, vote_hash);
+                    let bls_sig = self.bls_sign_vote(self.height, self.round_state.round, &vote_hash, "prevote");
+                    if let Some(ref sig) = bls_sig {
+                        self.round_state.prevote_bls_sigs.insert(self.my_id, sig.clone());
+                    }
                     let prevote = ConsensusMessage::Prevote {
                         height: self.height,
                         round: self.round_state.round,
                         block_hash: vote_hash,
                         validator_id: self.my_id,
-                            bls_signature: None,
-                        };
+                        bls_signature: bls_sig,
+                    };
                     actions.push(ConsensusAction::BroadcastMessage(prevote));
 
                     // DA sampling: if we voted for the block, sample its data availability
@@ -1027,6 +1042,34 @@ impl TendermintConsensus {
                 bls_signature,
             } => {
                 if round == self.round_state.round {
+                    // ── Validator Membership Check ──
+                    let validator = match self.validator_set.get(validator_id) {
+                        Some(v) => v,
+                        None => {
+                            warn!(validator_id, "Rejecting prevote from unknown validator");
+                            return actions;
+                        }
+                    };
+
+                    // ── BLS Signature Verification ──
+                    if let Some(ref bls_pk_bytes) = validator.bls_public_key {
+                        let msg = Self::bls_vote_message(self.height, round, &block_hash, "prevote");
+                        match &bls_signature {
+                            Some(sig) => {
+                                let pk = BlsPublicKey(bls_pk_bytes.clone());
+                                let sig = BlsSignature(sig.clone());
+                                if !BlsVerifier::verify(&msg, &sig, &pk) {
+                                    warn!(validator_id, "Rejecting prevote with invalid BLS signature");
+                                    return actions;
+                                }
+                            }
+                            None => {
+                                warn!(validator_id, "Rejecting prevote without BLS signature");
+                                return actions;
+                            }
+                        }
+                    }
+
                     // ── Vote Equivocation Detection ──
                     if let Some(&existing_hash) = self.round_state.prevotes.get(&validator_id) {
                         if existing_hash != block_hash {
@@ -1038,7 +1081,7 @@ impl TendermintConsensus {
                                 round = round,
                                 "SLASHED for prevote equivocation (double-voting)"
                             );
-                            return actions; // Reject the conflicting prevote
+                            return actions;
                         }
                     }
                     self.round_state.prevotes.insert(validator_id, block_hash);
@@ -1056,6 +1099,34 @@ impl TendermintConsensus {
                 bls_signature,
             } => {
                 if round == self.round_state.round {
+                    // ── Validator Membership Check ──
+                    let validator = match self.validator_set.get(validator_id) {
+                        Some(v) => v,
+                        None => {
+                            warn!(validator_id, "Rejecting precommit from unknown validator");
+                            return actions;
+                        }
+                    };
+
+                    // ── BLS Signature Verification ──
+                    if let Some(ref bls_pk_bytes) = validator.bls_public_key {
+                        let msg = Self::bls_vote_message(self.height, round, &block_hash, "precommit");
+                        match &bls_signature {
+                            Some(sig) => {
+                                let pk = BlsPublicKey(bls_pk_bytes.clone());
+                                let sig = BlsSignature(sig.clone());
+                                if !BlsVerifier::verify(&msg, &sig, &pk) {
+                                    warn!(validator_id, "Rejecting precommit with invalid BLS signature");
+                                    return actions;
+                                }
+                            }
+                            None => {
+                                warn!(validator_id, "Rejecting precommit without BLS signature");
+                                return actions;
+                            }
+                        }
+                    }
+
                     // ── Vote Equivocation Detection ──
                     if let Some(&existing_hash) = self.round_state.precommits.get(&validator_id) {
                         if existing_hash != block_hash {
@@ -1067,7 +1138,7 @@ impl TendermintConsensus {
                                 round = round,
                                 "SLASHED for precommit equivocation (double-voting)"
                             );
-                            return actions; // Reject the conflicting precommit
+                            return actions;
                         }
                     }
                     self.round_state.precommits.insert(validator_id, block_hash);
@@ -1371,6 +1442,7 @@ impl TendermintConsensus {
     /// Caps transactions per block to keep proposals under gossipsub size limits.
     fn create_proposal(&mut self, _db: &mut dyn StateDB) -> Option<Block> {
         const MAX_TXS_PER_BLOCK: usize = 50;
+        const MAX_BLOCK_SIZE_BYTES: usize = 2 * 1024 * 1024; // 2 MB
         let next_epoch = self.epoch + 1;
 
         // Process encrypted mempool reveals first (MEV-protected txs get priority)
@@ -1500,6 +1572,31 @@ impl TendermintConsensus {
             da_col_roots: vec![],
         };
 
+        // Enforce max block size — drop transactions from the tail until the
+        // serialized block fits. This prevents oversized gossip messages and
+        // ensures deterministic replication limits.
+        let mut block = block;
+        if let Ok(encoded) = serde_json::to_vec(&block) {
+            if encoded.len() > MAX_BLOCK_SIZE_BYTES {
+                warn!(
+                    size = encoded.len(),
+                    max = MAX_BLOCK_SIZE_BYTES,
+                    "Block exceeds size limit — trimming transactions"
+                );
+                while block.transactions.len() > 1 {
+                    let removed = block.transactions.pop();
+                    if let Some(tx) = removed {
+                        self.mempool.submit_priority(tx);
+                    }
+                    if let Ok(enc) = serde_json::to_vec(&block) {
+                        if enc.len() <= MAX_BLOCK_SIZE_BYTES {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
         info!(
             height = self.height,
             round = self.round_state.round,
@@ -1511,20 +1608,21 @@ impl TendermintConsensus {
         Some(block)
     }
 
-    /// Check if any block hash has 2f+1 prevotes.
+    /// Check if any block hash has 2f+1 prevotes (stake-weighted).
     /// Returns Some(Some(hash)) if quorum for a block, Some(None) if quorum for nil.
     fn check_prevote_quorum(&self) -> Option<Option<[u8; 32]>> {
-        let quorum = self.quorum_size();
+        let threshold = self.stake_quorum_threshold();
 
-        // Count votes per hash
-        let mut hash_counts: HashMap<Option<[u8; 32]>, usize> = HashMap::new();
-        for (_, hash) in &self.round_state.prevotes {
-            *hash_counts.entry(*hash).or_insert(0) += 1;
+        let mut hash_stake: HashMap<Option<[u8; 32]>, u64> = HashMap::new();
+        for (vid, hash) in &self.round_state.prevotes {
+            let stake = self.validator_set.get(*vid)
+                .map(|v| v.stake)
+                .unwrap_or(0);
+            *hash_stake.entry(*hash).or_insert(0) += stake;
         }
 
-        // Check if any hash (including nil) has quorum
-        for (hash, count) in &hash_counts {
-            if *count >= quorum {
+        for (hash, stake) in &hash_stake {
+            if *stake >= threshold {
                 return Some(*hash);
             }
         }
@@ -1532,17 +1630,20 @@ impl TendermintConsensus {
         None
     }
 
-    /// Check if any block hash has 2f+1 precommits.
+    /// Check if any block hash has 2f+1 precommits (stake-weighted).
     fn check_precommit_quorum(&self) -> Option<Option<[u8; 32]>> {
-        let quorum = self.quorum_size();
+        let threshold = self.stake_quorum_threshold();
 
-        let mut hash_counts: HashMap<Option<[u8; 32]>, usize> = HashMap::new();
-        for (_, hash) in &self.round_state.precommits {
-            *hash_counts.entry(*hash).or_insert(0) += 1;
+        let mut hash_stake: HashMap<Option<[u8; 32]>, u64> = HashMap::new();
+        for (vid, hash) in &self.round_state.precommits {
+            let stake = self.validator_set.get(*vid)
+                .map(|v| v.stake)
+                .unwrap_or(0);
+            *hash_stake.entry(*hash).or_insert(0) += stake;
         }
 
-        for (hash, count) in &hash_counts {
-            if *count >= quorum {
+        for (hash, stake) in &hash_stake {
+            if *stake >= threshold {
                 return Some(*hash);
             }
         }
@@ -1622,6 +1723,16 @@ impl TendermintConsensus {
             "Advancing to next round"
         );
         self.round_state = RoundState::new(next_round);
+
+        // Exponential timeout escalation with random jitter: double timeouts
+        // each round (capped at 2^6 = 64x) to create back-pressure against
+        // livelock. Jitter (±10%) prevents synchronized retries.
+        let shift = std::cmp::min(next_round, 6) as u64;
+        let multiplier = 1u64 << shift;
+        let jitter_ms = (self.my_id.wrapping_mul(7) % 11) as u64 * multiplier;
+        self.propose_timeout = Duration::from_millis(PROPOSE_TIMEOUT_MS.saturating_mul(multiplier) + jitter_ms);
+        self.prevote_timeout = Duration::from_millis(PREVOTE_TIMEOUT_MS.saturating_mul(multiplier) + jitter_ms);
+        self.precommit_timeout = Duration::from_millis(PRECOMMIT_TIMEOUT_MS.saturating_mul(multiplier) + jitter_ms);
     }
 
     /// Get current proposer info for display.
@@ -1653,20 +1764,23 @@ impl TendermintConsensus {
 
     /// Try to build a CommitCertificate from collected BLS precommit signatures.
     fn try_build_commit_certificate(&self, block_hash: [u8; 32]) -> Option<CommitCertificate> {
-        let quorum = self.quorum_size();
+        let threshold = self.stake_quorum_threshold();
         let mut signer_ids = Vec::new();
         let mut sigs = Vec::new();
+        let mut signer_stake: u64 = 0;
 
         for (vid, vote_hash) in &self.round_state.precommits {
             if *vote_hash == Some(block_hash) {
                 if let Some(sig_bytes) = self.round_state.precommit_bls_sigs.get(vid) {
+                    let stake = self.validator_set.get(*vid).map(|v| v.stake).unwrap_or(0);
                     signer_ids.push(*vid);
                     sigs.push(BlsSignature(sig_bytes.clone()));
+                    signer_stake += stake;
                 }
             }
         }
 
-        if sigs.len() < quorum {
+        if signer_stake < threshold {
             return None;
         }
 
@@ -1682,15 +1796,19 @@ impl TendermintConsensus {
 
     /// Verify a commit certificate against the current validator set.
     pub fn verify_commit_certificate(&self, cert: &CommitCertificate) -> bool {
-        let quorum = self.quorum_size();
-        if cert.signer_ids.len() < quorum {
-            return false;
-        }
+        let threshold = self.stake_quorum_threshold();
+        let mut signer_stake: u64 = 0;
 
         let mut pks = Vec::new();
         for &vid in &cert.signer_ids {
             if let Some(validator) = self.validator_set.get(vid) {
+                signer_stake += validator.stake;
                 if let Some(ref bls_pk_bytes) = validator.bls_public_key {
+                    // Reject if PoP was submitted but failed verification
+                    if validator.bls_pop.is_some() && !validator.pop_verified {
+                        warn!(validator_id = vid, "Rejecting cert: signer has invalid PoP");
+                        return false;
+                    }
                     pks.push(BlsPublicKey(bls_pk_bytes.clone()));
                 } else {
                     return false;
@@ -1698,6 +1816,10 @@ impl TendermintConsensus {
             } else {
                 return false;
             }
+        }
+
+        if signer_stake < threshold {
+            return false;
         }
 
         let msg = Self::bls_vote_message(cert.height, cert.round, &Some(cert.block_hash), "precommit");

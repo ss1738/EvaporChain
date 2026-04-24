@@ -6,7 +6,7 @@ mod audit_tests;
 
 use evaporchain_types::{energy_at_epoch, AccountAddress, Energy, Epoch, HalfLife};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
 // ─── Shared Types ───────────────────────────────────────────────────────────
@@ -19,6 +19,7 @@ pub enum Value {
     Str(String),
     Address([u8; 32]),
     Map(HashMap<String, Value>),
+    Array(Vec<Value>),
     Null,
 }
 
@@ -56,14 +57,16 @@ impl Value {
     }
 
     /// Convert a value to a string key for map indexing.
+    /// Type-prefixed to prevent cross-type collisions (e.g. U64(42) vs Str("42")).
     pub fn to_map_key(&self) -> String {
         match self {
-            Value::U64(n) => n.to_string(),
-            Value::Bool(b) => b.to_string(),
-            Value::Str(s) => s.clone(),
-            Value::Address(a) => hex::encode(a),
-            Value::Null => "null".to_string(),
-            Value::Map(_) => "map".to_string(),
+            Value::U64(n) => format!("u:{n}"),
+            Value::Bool(b) => format!("b:{b}"),
+            Value::Str(s) => format!("s:{s}"),
+            Value::Address(a) => format!("a:{}", hex::encode(a)),
+            Value::Null => "n:null".to_string(),
+            Value::Map(_) => "m:map".to_string(),
+            Value::Array(_) => "r:array".to_string(),
         }
     }
 }
@@ -76,7 +79,29 @@ impl std::fmt::Display for Value {
             Value::Str(s) => write!(f, "{s}"),
             Value::Address(a) => write!(f, "0x{}", hex::encode(a)),
             Value::Null => write!(f, "null"),
-            Value::Map(m) => write!(f, "map({} entries)", m.len()),
+            Value::Map(m) => {
+                write!(f, "{{")?;
+                let mut sorted_keys: Vec<&String> = m.keys().collect();
+                sorted_keys.sort();
+                for (i, key) in sorted_keys.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    let val = &m[*key];
+                    write!(f, "\"{key}\": {val}")?;
+                }
+                write!(f, "}}")
+            }
+            Value::Array(a) => {
+                write!(f, "[")?;
+                for (i, elem) in a.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{elem}")?;
+                }
+                write!(f, "]")
+            }
         }
     }
 }
@@ -89,6 +114,7 @@ pub enum ScriptType {
     String,
     Address,
     Map(Box<ScriptType>, Box<ScriptType>),
+    Array(Box<ScriptType>),
 }
 
 // ─── Errors ─────────────────────────────────────────────────────────────────
@@ -103,6 +129,8 @@ pub enum ScriptError {
     Runtime(String),
     #[error("gas limit exceeded: used {used}, limit {limit}")]
     GasLimitExceeded { used: u64, limit: u64 },
+    #[error("step limit exceeded: executed {steps} opcodes (max {limit})")]
+    StepLimitExceeded { steps: u64, limit: u64 },
     #[error("require failed: {0}")]
     RequireFailed(String),
 }
@@ -256,6 +284,7 @@ struct ContractCallRouter {
     vrf_randomness: [u8; 32],
     state_patches: Vec<(u64, HashMap<String, Value>)>,
     collected_events: Vec<ContractEvent>,
+    active_calls: HashSet<u64>,
 }
 
 impl ContractCallRouter {
@@ -278,6 +307,7 @@ impl ContractCallRouter {
             vrf_randomness: engine.vrf_randomness,
             state_patches: Vec::new(),
             collected_events: Vec::new(),
+            active_calls: HashSet::new(),
         }
     }
 }
@@ -296,6 +326,12 @@ impl ExternalCaller for ContractCallRouter {
         if call_depth >= MAX_CALL_DEPTH {
             return Err(ScriptError::Runtime(format!(
                 "cross-contract call depth exceeded (max {})", MAX_CALL_DEPTH
+            )));
+        }
+
+        if self.active_calls.contains(&contract_id) {
+            return Err(ScriptError::Runtime(format!(
+                "reentrancy detected: contract {} is already in the call stack", contract_id
             )));
         }
 
@@ -322,11 +358,13 @@ impl ExternalCaller for ContractCallRouter {
             call_depth,
         };
 
+        self.active_calls.insert(contract_id);
         let result = vm::EvaporVM::execute_full(
             &bytecode, method, args, state, &ctx, gas_remaining, Some(self),
-        )?;
+        );
+        self.active_calls.remove(&contract_id);
+        let result = result?;
 
-        // Collect state changes for later application
         self.state_patches.push((contract_id, result.state_changes));
         self.collected_events.extend(result.structured_events.clone());
 
@@ -377,6 +415,7 @@ impl ScriptEngine {
                 ScriptType::String => Value::Str(String::new()),
                 ScriptType::Address => Value::Address([0u8; 32]),
                 ScriptType::Map(_, _) => Value::Map(HashMap::new()),
+                ScriptType::Array(_) => Value::Array(Vec::new()),
             });
             state.insert(field.name.clone(), default_val);
         }
@@ -444,9 +483,12 @@ impl ScriptEngine {
         let state = contract.state.clone();
 
         let mut router = ContractCallRouter::from_engine(self);
+        router.active_calls.insert(contract_id);
         let result = vm::EvaporVM::execute_full(
-            &bytecode, method, args, state, &ctx, 0, Some(&mut router),
-        )?;
+            &bytecode, method, args, state, &ctx, 10_000_000, Some(&mut router),
+        );
+        router.active_calls.remove(&contract_id);
+        let result = result?;
 
         // Apply state changes from this contract
         let contract = self.contracts.get_mut(&contract_id).unwrap();
@@ -676,9 +718,12 @@ contract Recurse {
         let id = engine.deploy(src, creator, 10_000, 100, 1).unwrap();
 
         let result = engine.call(id, "recurse", vec![Value::U64(id)], creator, 10);
-        assert!(result.is_err(), "recursive calls must hit depth limit");
+        assert!(result.is_err(), "recursive calls must be blocked");
         let err = format!("{:?}", result.unwrap_err());
-        assert!(err.contains("depth"), "error should mention depth: {err}");
+        assert!(
+            err.contains("depth") || err.contains("reentrancy"),
+            "error should mention depth or reentrancy: {err}"
+        );
     }
 
     #[test]

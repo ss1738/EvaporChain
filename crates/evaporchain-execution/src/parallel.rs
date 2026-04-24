@@ -315,6 +315,10 @@ impl StateDB for OverlayStateDB {
         self.accounts.insert(account.address, account);
     }
 
+    fn delete_account(&mut self, addr: &AccountAddress) -> Option<Account> {
+        self.accounts.remove(addr)
+    }
+
     fn get_or_create_account(&mut self, addr: &AccountAddress) -> &mut Account {
         self.accounts.entry(*addr).or_insert_with(|| Account {
             address: *addr,
@@ -330,6 +334,8 @@ impl StateDB for OverlayStateDB {
     fn compute_state_root(&mut self) -> [u8; 32] {
         [0u8; 32]
     }
+
+    fn prune_before_height(&mut self, _height: u64) -> u64 { 0 }
 
     fn compress_cold_subtrees(&mut self) -> u32 { 0 }
     fn trie_health(&mut self) -> evaporchain_crypto::TrieHealth {

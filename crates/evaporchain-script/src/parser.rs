@@ -26,6 +26,7 @@ pub enum Token {
     StringType,
     AddressType,
     MapType,
+    ArrayType,
 
     // Identifiers and literals
     Ident(String),
@@ -143,6 +144,7 @@ pub enum AssignTarget {
     Variable(String),
     StateField(String),
     MapEntry(String, Box<Expr>),
+    ArrayElement(String, Box<Expr>),
 }
 
 /// Binary operator.
@@ -190,6 +192,8 @@ pub enum Expr {
         name: String,
         args: Vec<Expr>,
     },
+    ArrayLiteral(Vec<Expr>),
+    ArrayAccess(Box<Expr>, Box<Expr>),
 }
 
 // ─── Lexer ──────────────────────────────────────────────────────────────────
@@ -252,13 +256,16 @@ impl Lexer {
         self.chars[start..self.pos].iter().collect()
     }
 
-    fn read_number(&mut self) -> u64 {
+    fn read_number(&mut self) -> Result<u64, ScriptError> {
         let start = self.pos;
         while self.peek().map_or(false, |c| c.is_ascii_digit()) {
             self.advance();
         }
         let s: String = self.chars[start..self.pos].iter().collect();
-        s.parse().unwrap_or(0)
+        s.parse().map_err(|_| ScriptError::Parse {
+            line: self.line,
+            message: format!("integer literal overflows u64: {s}"),
+        })
     }
 
     fn read_string(&mut self) -> Result<String, ScriptError> {
@@ -323,6 +330,7 @@ impl Lexer {
                 "string" => Token::StringType,
                 "address" => Token::AddressType,
                 "map" => Token::MapType,
+                "array" => Token::ArrayType,
                 _ => Token::Ident(ident),
             };
             return Ok((tok, line));
@@ -330,7 +338,7 @@ impl Lexer {
 
         // Number literals
         if ch.is_ascii_digit() {
-            let n = self.read_number();
+            let n = self.read_number()?;
             return Ok((Token::IntLit(n), line));
         }
 
@@ -456,14 +464,17 @@ impl Lexer {
 
 // ─── Parser ─────────────────────────────────────────────────────────────────
 
+const MAX_EXPR_DEPTH: usize = 64;
+
 struct Parser {
     tokens: Vec<(Token, usize)>,
     pos: usize,
+    expr_depth: usize,
 }
 
 impl Parser {
     fn new(tokens: Vec<(Token, usize)>) -> Self {
-        Self { tokens, pos: 0 }
+        Self { tokens, pos: 0, expr_depth: 0 }
     }
 
     fn peek(&self) -> &Token {
@@ -524,6 +535,11 @@ impl Parser {
         while *self.peek() != Token::RBrace && *self.peek() != Token::Eof {
             match self.peek().clone() {
                 Token::State => {
+                    if !state_fields.is_empty() {
+                        return Err(ScriptError::Compile(
+                            "duplicate state block — merge all fields into a single state {} block".into(),
+                        ));
+                    }
                     state_fields = self.parse_state_block()?;
                 }
                 Token::Fn => {
@@ -614,6 +630,12 @@ impl Parser {
                 self.expect(&Token::RBracket)?;
                 Ok(ScriptType::Map(Box::new(key_ty), Box::new(val_ty)))
             }
+            Token::ArrayType => {
+                self.expect(&Token::LBracket)?;
+                let elem_ty = self.parse_type()?;
+                self.expect(&Token::RBracket)?;
+                Ok(ScriptType::Array(Box::new(elem_ty)))
+            }
             tok => Err(ScriptError::Parse {
                 line,
                 message: format!("expected type, got {tok:?}"),
@@ -692,6 +714,45 @@ impl Parser {
     /// Handles: `x = expr`, `x += expr`, `x -= expr`, or falls back to expr statement.
     fn parse_ident_stmt(&mut self) -> Result<Stmt, ScriptError> {
         let name = self.expect_ident()?;
+
+        if *self.peek() == Token::LBracket {
+            self.advance();
+            let index = self.parse_expr()?;
+            self.expect(&Token::RBracket)?;
+            match self.peek().clone() {
+                Token::Assign => {
+                    self.advance();
+                    let value = self.parse_expr()?;
+                    return Ok(Stmt::Assign {
+                        target: AssignTarget::ArrayElement(name, Box::new(index)),
+                        value,
+                    });
+                }
+                Token::PlusAssign => {
+                    self.advance();
+                    let value = self.parse_expr()?;
+                    return Ok(Stmt::CompoundAssign {
+                        target: AssignTarget::ArrayElement(name, Box::new(index)),
+                        op: BinOp::Add,
+                        value,
+                    });
+                }
+                Token::MinusAssign => {
+                    self.advance();
+                    let value = self.parse_expr()?;
+                    return Ok(Stmt::CompoundAssign {
+                        target: AssignTarget::ArrayElement(name, Box::new(index)),
+                        op: BinOp::Sub,
+                        value,
+                    });
+                }
+                _ => {
+                    return Ok(Stmt::ExprStmt(Expr::ArrayAccess(
+                        Box::new(Expr::Variable(name)), Box::new(index),
+                    )));
+                }
+            }
+        }
 
         match self.peek().clone() {
             Token::Assign => {
@@ -923,7 +984,16 @@ impl Parser {
     // ─── Expression Parsing (Pratt parser) ───
 
     fn parse_expr(&mut self) -> Result<Expr, ScriptError> {
-        self.parse_or()
+        self.expr_depth += 1;
+        if self.expr_depth > MAX_EXPR_DEPTH {
+            return Err(ScriptError::Parse {
+                line: self.line(),
+                message: format!("expression nesting depth exceeds maximum ({MAX_EXPR_DEPTH})"),
+            });
+        }
+        let result = self.parse_or();
+        self.expr_depth -= 1;
+        result
     }
 
     fn parse_or(&mut self) -> Result<Expr, ScriptError> {
@@ -1089,7 +1159,6 @@ impl Parser {
             }
             Token::Ident(name) => {
                 self.advance();
-                // Function call?
                 if *self.peek() == Token::LParen {
                     self.advance();
                     let mut args = Vec::new();
@@ -1101,9 +1170,26 @@ impl Parser {
                     }
                     self.expect(&Token::RParen)?;
                     Ok(Expr::FunctionCall { name, args })
+                } else if *self.peek() == Token::LBracket {
+                    self.advance();
+                    let index = self.parse_expr()?;
+                    self.expect(&Token::RBracket)?;
+                    Ok(Expr::ArrayAccess(Box::new(Expr::Variable(name)), Box::new(index)))
                 } else {
                     Ok(Expr::Variable(name))
                 }
+            }
+            Token::LBracket => {
+                self.advance();
+                let mut elements = Vec::new();
+                while *self.peek() != Token::RBracket {
+                    if !elements.is_empty() {
+                        self.expect(&Token::Comma)?;
+                    }
+                    elements.push(self.parse_expr()?);
+                }
+                self.expect(&Token::RBracket)?;
+                Ok(Expr::ArrayLiteral(elements))
             }
             Token::LParen => {
                 self.advance();
@@ -1470,6 +1556,95 @@ contract Test {
                 assert_eq!(args.len(), 1);
             }
             other => panic!("expected function call, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_array_literal() {
+        let src = r#"
+contract Test {
+    state { x: u64 = 0 }
+    fn make() {
+        let arr = [1, 2, 3]
+    }
+}
+"#;
+        let contract = parse(src).unwrap();
+        match &contract.functions[0].body[0] {
+            Stmt::Let { name, value: Expr::ArrayLiteral(elems) } => {
+                assert_eq!(name, "arr");
+                assert_eq!(elems.len(), 3);
+            }
+            other => panic!("expected let with array literal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_array_access() {
+        let src = r#"
+contract Test {
+    state { x: u64 = 0 }
+    fn get() -> u64 {
+        return arr[0]
+    }
+}
+"#;
+        let contract = parse(src).unwrap();
+        match &contract.functions[0].body[0] {
+            Stmt::Return(Some(Expr::ArrayAccess(_, _))) => {}
+            other => panic!("expected return with array access, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_array_element_assign() {
+        let src = r#"
+contract Test {
+    state { x: u64 = 0 }
+    fn set() {
+        arr[0] = 42
+    }
+}
+"#;
+        let contract = parse(src).unwrap();
+        match &contract.functions[0].body[0] {
+            Stmt::Assign { target: AssignTarget::ArrayElement(name, _), .. } => {
+                assert_eq!(name, "arr");
+            }
+            other => panic!("expected array element assign, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_array_type() {
+        let src = r#"
+contract Test {
+    state { items: array[u64] }
+}
+"#;
+        let contract = parse(src).unwrap();
+        assert_eq!(
+            contract.state_fields[0].ty,
+            ScriptType::Array(Box::new(ScriptType::U64))
+        );
+    }
+
+    #[test]
+    fn test_parse_empty_array() {
+        let src = r#"
+contract Test {
+    state { x: u64 = 0 }
+    fn empty() {
+        let arr = []
+    }
+}
+"#;
+        let contract = parse(src).unwrap();
+        match &contract.functions[0].body[0] {
+            Stmt::Let { value: Expr::ArrayLiteral(elems), .. } => {
+                assert_eq!(elems.len(), 0);
+            }
+            other => panic!("expected empty array literal, got {other:?}"),
         }
     }
 }

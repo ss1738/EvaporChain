@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
 
+const MAX_CONTRACT_STATE_BYTES: usize = 1_048_576; // 1 MB per contract
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Errors
 // ═══════════════════════════════════════════════════════════════════════════
@@ -36,6 +38,8 @@ pub enum ContractError {
     StateError(String),
     #[error("deploy failed: {0}")]
     DeployFailed(String),
+    #[error("contract storage quota exceeded: {size} bytes > {max} bytes")]
+    StorageQuotaExceeded { size: usize, max: usize },
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -441,8 +445,18 @@ impl ContractEngine {
             .contracts
             .get_mut(&contract_id)
             .ok_or(ContractError::NotFound(contract_id))?;
+        let creator = contract.creator;
         let return_value =
-            execute_method(&contract.template, &mut contract.state, method, args, caller, current_epoch)?;
+            execute_method(&contract.template, &mut contract.state, method, args, caller, &creator, current_epoch)?;
+
+        // Enforce per-contract storage quota
+        let state_size = serde_json::to_vec(&contract.state).map(|v| v.len()).unwrap_or(0);
+        if state_size > MAX_CONTRACT_STATE_BYTES {
+            return Err(ContractError::StorageQuotaExceeded {
+                size: state_size,
+                max: MAX_CONTRACT_STATE_BYTES,
+            });
+        }
 
         // Deduct energy cost from contract.
         if energy_cost > 0 {
@@ -753,10 +767,11 @@ fn execute_method(
     method: &str,
     args: &serde_json::Value,
     caller: &AccountAddress,
+    creator: &AccountAddress,
     current_epoch: Epoch,
 ) -> Result<serde_json::Value, ContractError> {
     match template {
-        ContractTemplate::DecayingToken => exec_token(state, method, args, caller),
+        ContractTemplate::DecayingToken => exec_token(state, method, args, caller, creator),
         ContractTemplate::MortalNFT => exec_nft(state, method, args, caller, current_epoch),
         ContractTemplate::ThermodynamicEscrow => exec_escrow(state, method, args, caller, current_epoch),
         ContractTemplate::DecayingAuction => exec_auction(state, method, args, caller, current_epoch),
@@ -772,13 +787,19 @@ fn exec_token(
     state: &mut serde_json::Value,
     method: &str,
     args: &serde_json::Value,
-    _caller: &AccountAddress,
+    caller: &AccountAddress,
+    creator: &AccountAddress,
 ) -> Result<serde_json::Value, ContractError> {
     let mut ts: TokenState = serde_json::from_value(state.clone())
         .map_err(|e| ContractError::StateError(e.to_string()))?;
 
     let result = match method {
         "mint" => {
+            if caller != creator {
+                return Err(ContractError::PermissionDenied(
+                    "only owner can mint".into(),
+                ));
+            }
             let to = get_str(args, "to")?;
             let amount = get_u64(args, "amount")?;
             let bal = ts.balances.entry(to).or_insert(0);
@@ -819,6 +840,11 @@ fn exec_token(
             serde_json::json!({ "total_supply": total })
         }
         "burn" => {
+            if caller != creator {
+                return Err(ContractError::PermissionDenied(
+                    "only owner can burn".into(),
+                ));
+            }
             let from = get_str(args, "from")?;
             let amount = get_u64(args, "amount")?;
             let bal = ts.balances.get(&from).copied().unwrap_or(0);
@@ -832,6 +858,11 @@ fn exec_token(
             serde_json::json!({ "burned": amount })
         }
         "refresh_balance" => {
+            if caller != creator {
+                return Err(ContractError::PermissionDenied(
+                    "only owner can refresh balances".into(),
+                ));
+            }
             let addr = get_str(args, "addr")?;
             let energy = get_u64(args, "energy")?;
             *ts.balances.entry(addr).or_insert(0) += energy;

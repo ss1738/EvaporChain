@@ -27,14 +27,18 @@ pub struct EvaporationResult {
 /// 2. Transitions objects with zero energy to Grace state
 /// 3. Evaporates objects whose grace period has expired (Grace → Ghost)
 /// 4. Creates ghost records (nullifier proofs) for evaporated objects
+pub const DEFAULT_MAX_EVAP_SCAN: usize = 50_000;
+
 pub struct EvaporationEngine {
     /// Number of epochs an object stays in Grace before evaporation.
     pub grace_period: u64,
+    /// Max objects to scan per epoch (bounds O(n) sweep).
+    pub max_scan_per_epoch: usize,
 }
 
 impl EvaporationEngine {
     pub fn new(grace_period: u64) -> Self {
-        Self { grace_period }
+        Self { grace_period, max_scan_per_epoch: DEFAULT_MAX_EVAP_SCAN }
     }
 
     /// Process all objects for the given epoch (without MMR).
@@ -69,7 +73,15 @@ impl EvaporationEngine {
         mut mmr: Option<&mut MerkleMountainRange>,
     ) -> EvaporationResult {
         let mut result = EvaporationResult::default();
-        let object_ids = db.all_object_ids();
+        let mut object_ids = db.all_object_ids();
+        if object_ids.len() > self.max_scan_per_epoch {
+            info!(
+                total = object_ids.len(),
+                scan_limit = self.max_scan_per_epoch,
+                "Evaporation scan truncated to limit"
+            );
+            object_ids.truncate(self.max_scan_per_epoch);
+        }
 
         for id in object_ids {
             let obj = match db.get_object(&id) {

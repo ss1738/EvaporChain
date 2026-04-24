@@ -258,6 +258,8 @@ impl P2pNetworkService {
                     message.topic.hash(&mut s);
                     gossipsub::MessageId::from(s.finish().to_string())
                 };
+                // TODO(M-22): Configure GossipSub PeerScoreParams to penalise
+                // peers that send invalid messages and reward active validators.
                 let gossipsub_config = gossipsub::ConfigBuilder::default()
                     .heartbeat_interval(Duration::from_millis(500))
                     .validation_mode(gossipsub::ValidationMode::Strict)

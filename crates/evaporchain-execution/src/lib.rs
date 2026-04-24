@@ -119,6 +119,9 @@ pub(crate) const GAS_CALL_SCRIPT: u64 = 50_000;
 pub(crate) const GAS_VALIDATOR_STAKE: u64 = 50_000;
 pub(crate) const GAS_VALIDATOR_EXIT: u64 = 30_000;
 
+// TODO(M-19): cross-block execution cache keyed on (tx_hash, pre_state_root).
+// TODO(M-21): sort block transactions by gas_price before execution.
+
 /// Simple executor that processes transactions sequentially and runs
 /// evaporation at the end of each block.
 pub struct SimpleExecutor {

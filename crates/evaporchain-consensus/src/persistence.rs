@@ -223,10 +223,14 @@ impl FileStateStore {
         max
     }
 
-    /// Atomic write: serialize → write to temp → rename over target.
+    /// Atomic write: serialize → write to temp → fsync → rename over target.
     fn atomic_write(path: &Path, data: &[u8]) -> io::Result<()> {
         let tmp = path.with_extension("tmp");
-        fs::write(&tmp, data)?;
+        {
+            let f = fs::File::create(&tmp)?;
+            io::Write::write_all(&mut &f, data)?;
+            f.sync_all()?;
+        }
         fs::rename(&tmp, path)?;
         Ok(())
     }
@@ -261,9 +265,11 @@ impl ConsensusStateStore for FileStateStore {
         let path = self.wal_dir.join(filename);
         let data = serde_json::to_vec(entry)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-        // WAL entries don't need atomic write — partial writes are detected
-        // by JSON parse failure on recovery.
-        fs::write(&path, data)
+        // fsync WAL entries so they survive power loss.
+        let f = fs::File::create(&path)?;
+        io::Write::write_all(&mut &f, &data)?;
+        f.sync_all()?;
+        Ok(())
     }
 
     fn load_wal(&self, height: u64) -> io::Result<Vec<WalEntry>> {

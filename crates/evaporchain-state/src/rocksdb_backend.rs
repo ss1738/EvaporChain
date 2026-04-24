@@ -21,6 +21,16 @@ const PRIVACY_NOTE_ROOT_KEY: &[u8] = b"__note_tree_root__";
 const PRIVACY_POOL_BALANCE_KEY: &[u8] = b"__shielded_pool_balance__";
 const PRIVACY_NOTE_COUNT_KEY: &[u8] = b"__note_count__";
 
+/// Tracks in-memory changes during a batch for correct rollback.
+struct BatchUndoLog {
+    objects: Vec<(ObjectId, Option<StateObject>)>,
+    accounts: Vec<(AccountAddress, Option<Account>)>,
+    ghosts: Vec<(ObjectId, Option<GhostRecord>)>,
+    dirty_objects: HashSet<ObjectId>,
+    dirty_accounts: HashSet<AccountAddress>,
+    trie_snapshot: Vec<u8>,
+}
+
 /// RocksDB-backed state database with in-memory write-through cache.
 pub struct RocksDBStateDB {
     db: DB,
@@ -37,6 +47,8 @@ pub struct RocksDBStateDB {
     note_count: u64,
     // Batch mode: buffer writes for atomic commit (Mutex for Sync)
     pending_batch: std::sync::Mutex<Option<WriteBatch>>,
+    // Undo log for reverting in-memory state on rollback
+    batch_undo: Option<BatchUndoLog>,
 }
 
 impl RocksDBStateDB {
@@ -227,23 +239,59 @@ impl RocksDBStateDB {
             shielded_pool_balance,
             note_count,
             pending_batch: std::sync::Mutex::new(None),
+            batch_undo: None,
         })
     }
 
     /// Start buffering writes for atomic commit. Call `commit_batch()` to flush.
-    pub fn begin_batch(&self) {
+    pub fn begin_batch(&mut self) {
         *self.pending_batch.lock().unwrap() = Some(WriteBatch::default());
+        self.sync_dirty_to_trie();
+        self.batch_undo = Some(BatchUndoLog {
+            objects: Vec::new(),
+            accounts: Vec::new(),
+            ghosts: Vec::new(),
+            dirty_objects: self.dirty_objects.clone(),
+            dirty_accounts: self.dirty_accounts.clone(),
+            trie_snapshot: self.trie.to_bytes(),
+        });
     }
 
     /// Atomically write all buffered mutations to disk.
-    pub fn commit_batch(&self) -> Result<(), String> {
+    pub fn commit_batch(&mut self) -> Result<(), String> {
+        self.batch_undo = None;
         let batch = self.pending_batch.lock().unwrap().take().ok_or("no active batch")?;
         self.db.write(batch).map_err(|e| format!("WriteBatch commit failed: {e}"))
     }
 
-    /// Discard any buffered writes without flushing.
-    pub fn rollback_batch(&self) {
+    /// Discard any buffered writes and revert in-memory state.
+    pub fn rollback_batch(&mut self) {
         *self.pending_batch.lock().unwrap() = None;
+        if let Some(undo) = self.batch_undo.take() {
+            for (id, old_val) in undo.objects.into_iter().rev() {
+                match old_val {
+                    Some(obj) => { self.objects.insert(id, obj); }
+                    None => { self.objects.remove(&id); }
+                }
+            }
+            for (addr, old_val) in undo.accounts.into_iter().rev() {
+                match old_val {
+                    Some(acc) => { self.accounts.insert(addr, acc); }
+                    None => { self.accounts.remove(&addr); }
+                }
+            }
+            for (id, old_val) in undo.ghosts.into_iter().rev() {
+                match old_val {
+                    Some(ghost) => { self.ghosts.insert(id, ghost); }
+                    None => { self.ghosts.remove(&id); }
+                }
+            }
+            self.dirty_objects = undo.dirty_objects;
+            self.dirty_accounts = undo.dirty_accounts;
+            if let Ok(trie) = EnergyVerkleTrie::from_bytes(&undo.trie_snapshot) {
+                self.trie = trie;
+            }
+        }
     }
 
     /// Returns true if the database has any accounts (i.e., not a fresh start).
@@ -435,12 +483,18 @@ impl StateDB for RocksDBStateDB {
 
     fn get_object_mut(&mut self, id: &ObjectId) -> Option<&mut StateObject> {
         if self.objects.contains_key(id) {
+            if let Some(ref mut undo) = self.batch_undo {
+                undo.objects.push((*id, Some(self.objects[id].clone())));
+            }
             self.dirty_objects.insert(*id);
         }
         self.objects.get_mut(id)
     }
 
     fn put_object(&mut self, obj: StateObject) {
+        if let Some(ref mut undo) = self.batch_undo {
+            undo.objects.push((obj.id, self.objects.get(&obj.id).cloned()));
+        }
         self.persist_object(&obj);
         let key = trie_key_for_object(&obj.id);
         let value = trie_value_for_object(&obj);
@@ -450,6 +504,9 @@ impl StateDB for RocksDBStateDB {
     }
 
     fn delete_object(&mut self, id: &ObjectId) -> Option<StateObject> {
+        if let Some(ref mut undo) = self.batch_undo {
+            undo.objects.push((*id, self.objects.get(id).cloned()));
+        }
         self.delete_object_disk(id);
         let key = trie_key_for_object(id);
         self.trie.delete(&key);
@@ -458,6 +515,9 @@ impl StateDB for RocksDBStateDB {
     }
 
     fn put_ghost(&mut self, record: GhostRecord) {
+        if let Some(ref mut undo) = self.batch_undo {
+            undo.ghosts.push((record.object_id, self.ghosts.get(&record.object_id).cloned()));
+        }
         self.persist_ghost(&record);
         self.ghosts.insert(record.object_id, record);
     }
@@ -467,6 +527,9 @@ impl StateDB for RocksDBStateDB {
     }
 
     fn remove_ghost(&mut self, id: &ObjectId) -> Option<GhostRecord> {
+        if let Some(ref mut undo) = self.batch_undo {
+            undo.ghosts.push((*id, self.ghosts.get(id).cloned()));
+        }
         self.delete_ghost_disk(id);
         self.ghosts.remove(id)
     }
@@ -493,12 +556,18 @@ impl StateDB for RocksDBStateDB {
 
     fn get_account_mut(&mut self, addr: &AccountAddress) -> Option<&mut Account> {
         if self.accounts.contains_key(addr) {
+            if let Some(ref mut undo) = self.batch_undo {
+                undo.accounts.push((*addr, Some(self.accounts[addr].clone())));
+            }
             self.dirty_accounts.insert(*addr);
         }
         self.accounts.get_mut(addr)
     }
 
     fn put_account(&mut self, account: Account) {
+        if let Some(ref mut undo) = self.batch_undo {
+            undo.accounts.push((account.address, self.accounts.get(&account.address).cloned()));
+        }
         self.persist_account(&account);
         let key = trie_key_for_account(&account.address);
         let value = trie_value_for_account(&account);
@@ -507,8 +576,23 @@ impl StateDB for RocksDBStateDB {
         self.accounts.insert(account.address, account);
     }
 
+    fn delete_account(&mut self, addr: &AccountAddress) -> Option<Account> {
+        if let Some(ref mut undo) = self.batch_undo {
+            undo.accounts.push((*addr, self.accounts.get(addr).cloned()));
+        }
+        let key = trie_key_for_account(addr);
+        self.trie.delete(&key);
+        self.dirty_accounts.remove(addr);
+        let cf = self.db.cf_handle("accounts").unwrap();
+        let _ = self.db.delete_cf(cf, addr);
+        self.accounts.remove(addr)
+    }
+
     fn get_or_create_account(&mut self, addr: &AccountAddress) -> &mut Account {
         if !self.accounts.contains_key(addr) {
+            if let Some(ref mut undo) = self.batch_undo {
+                undo.accounts.push((*addr, None));
+            }
             let account = Account {
                 address: *addr,
                 balance: 0,
@@ -519,6 +603,8 @@ impl StateDB for RocksDBStateDB {
             let value = trie_value_for_account(&account);
             self.trie.insert(key, value, u64::MAX, u64::MAX, 0);
             self.accounts.insert(*addr, account);
+        } else if let Some(ref mut undo) = self.batch_undo {
+            undo.accounts.push((*addr, Some(self.accounts[addr].clone())));
         }
         self.dirty_accounts.insert(*addr);
         self.accounts
@@ -614,6 +700,38 @@ impl StateDB for RocksDBStateDB {
         self.dirty_objects.clear();
         self.dirty_accounts.clear();
         Ok(())
+    }
+
+    fn prune_before_height(&mut self, height: u64) -> u64 {
+        // Collect ghost IDs whose evaporated_at epoch is strictly before `height`.
+        let ids_to_prune: Vec<ObjectId> = self
+            .ghosts
+            .iter()
+            .filter(|(_, ghost)| ghost.evaporated_at < height)
+            .map(|(id, _)| *id)
+            .collect();
+
+        let count = ids_to_prune.len() as u64;
+        if count == 0 {
+            return 0;
+        }
+
+        // Delete from RocksDB in a single batch for atomicity.
+        let cf = self.db.cf_handle(CF_GHOSTS).expect("ghosts CF must exist");
+        let mut batch = WriteBatch::default();
+        for id in &ids_to_prune {
+            batch.delete_cf(cf, id);
+        }
+        self.db
+            .write(batch)
+            .expect("prune_before_height: WriteBatch commit failed");
+
+        // Remove from in-memory cache.
+        for id in &ids_to_prune {
+            self.ghosts.remove(id);
+        }
+
+        count
     }
 }
 
@@ -731,15 +849,19 @@ mod tests {
     fn test_write_batch_rollback() {
         let mut db = tmp_db();
         db.put_object(make_obj(1, 100));
+        db.put_account(make_account(1, 500));
         assert_eq!(db.object_count(), 1);
 
         db.begin_batch();
         db.put_object(make_obj(2, 200));
+        db.put_account(make_account(2, 999));
         db.rollback_batch();
 
-        // Object 2 is in memory (cache was updated) but batch was rolled back
-        // The in-memory cache still has it — rollback only affects the disk batch
-        assert_eq!(db.object_count(), 2);
+        // Rollback must revert in-memory state to pre-batch values
+        assert_eq!(db.object_count(), 1);
+        assert!(db.get_object(&make_obj(2, 0).id).is_none());
+        assert_eq!(db.get_account(&make_account(1, 0).address).unwrap().balance, 500);
+        assert!(db.get_account(&make_account(2, 0).address).is_none());
     }
 
     #[test]
@@ -793,7 +915,7 @@ mod tests {
 
     #[test]
     fn test_commit_batch_without_begin_fails() {
-        let db = tmp_db();
+        let mut db = tmp_db();
         assert!(db.commit_batch().is_err());
     }
 
@@ -825,5 +947,73 @@ mod tests {
         assert!(db.is_nullifier_spent(&nul2));
         assert!(!db.is_nullifier_spent(&[0xDD; 32]));
         assert_eq!(db.nullifier_count(), 2);
+    }
+
+    #[test]
+    fn test_prune_before_height() {
+        let mut db = tmp_db();
+
+        // Insert ghosts at epochs 10, 50, 100, 200
+        for epoch in [10u64, 50, 100, 200] {
+            let mut id = [0u8; 32];
+            id[0] = epoch as u8;
+            db.put_ghost(GhostRecord {
+                object_id: id,
+                owner: [0u8; 32],
+                evaporated_at: epoch,
+                data_hash: [0u8; 32],
+                original_data: None,
+                mmr_position: None,
+                original_half_life: None,
+            });
+        }
+        assert_eq!(db.ghost_count(), 4);
+
+        // Prune ghosts evaporated before height 100 — removes epochs 10 and 50
+        let pruned = db.prune_before_height(100);
+        assert_eq!(pruned, 2);
+        assert_eq!(db.ghost_count(), 2);
+
+        // Ghost at epoch 100 survives (strictly less than)
+        let mut id100 = [0u8; 32];
+        id100[0] = 100;
+        assert!(db.get_ghost(&id100).is_some());
+
+        // Ghost at epoch 200 survives
+        let mut id200 = [0u8; 32];
+        id200[0] = 200u8;
+        assert!(db.get_ghost(&id200).is_some());
+    }
+
+    #[test]
+    fn test_prune_before_height_persists_across_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+
+        {
+            let mut db = RocksDBStateDB::open(&path).unwrap();
+            for epoch in [10u64, 50, 100] {
+                let mut id = [0u8; 32];
+                id[0] = epoch as u8;
+                db.put_ghost(GhostRecord {
+                    object_id: id,
+                    owner: [0u8; 32],
+                    evaporated_at: epoch,
+                    data_hash: [0u8; 32],
+                    original_data: None,
+                    mmr_position: None,
+                    original_half_life: None,
+                });
+            }
+            let pruned = db.prune_before_height(100);
+            assert_eq!(pruned, 2);
+        }
+
+        // Reopen — pruned ghosts must stay deleted on disk
+        let db = RocksDBStateDB::open(&path).unwrap();
+        assert_eq!(db.ghost_count(), 1);
+        let mut id100 = [0u8; 32];
+        id100[0] = 100;
+        assert!(db.get_ghost(&id100).is_some());
     }
 }

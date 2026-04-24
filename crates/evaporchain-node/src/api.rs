@@ -785,6 +785,25 @@ fn require_wallet_ownership(state: &ApiState, user_id: Option<i64>, addr_hex: &s
 }
 
 /// Sign a transaction using the appropriate keypair.
+fn require_admin_auth(headers: &HeaderMap) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    let expected = match std::env::var("EVAPORCHAIN_ADMIN_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => return Ok(()),
+    };
+    let provided = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .unwrap_or("");
+    if provided != expected {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "unauthorized: invalid admin key"})),
+        ));
+    }
+    Ok(())
+}
+
 /// First tries the wallet's own ML-DSA keypair from the user DB.
 /// Falls back to the node-level keypair if wallet keys are unavailable or legacy (too short).
 fn sign_transaction(tx: &mut Transaction, state: &ApiState, sender_address: Option<&str>) {
@@ -1873,8 +1892,15 @@ async fn service_worker_js() -> impl IntoResponse {
 
 async fn post_faucet(
     State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
     Json(req): Json<FaucetRequest>,
 ) -> impl IntoResponse {
+    if let Err(_e) = require_admin_auth(&headers) {
+        return (StatusCode::UNAUTHORIZED, Json(FaucetResponse {
+            success: false, balance: 0,
+            message: Some("unauthorized: invalid admin key".into()),
+        }));
+    }
     let addr = match parse_address_value(&req.address) {
         Ok(a) => a,
         Err(e) => return (StatusCode::OK, Json(FaucetResponse { success: false, balance: 0, message: Some(format!("Invalid address: {}", e)) })),
@@ -1937,7 +1963,7 @@ async fn post_faucet(
 
 // ──────────────────────────── Oracle Ingest ──────────────────────────────
 
-/// Oracle ingest endpoint — no auth required (node-operator function).
+/// Oracle ingest endpoint — requires EVAPORCHAIN_ORACLE_KEY bearer token.
 /// Creates on-chain objects with sensor data, energy, and half-life.
 /// Used by evaporchain-oracle to publish real-world data feeds.
 #[derive(Deserialize)]
@@ -1956,8 +1982,23 @@ struct OracleIngestRequest {
 
 async fn post_oracle_ingest(
     State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
     Json(req): Json<OracleIngestRequest>,
 ) -> Json<TxResultResponse> {
+    if let Ok(expected) = std::env::var("EVAPORCHAIN_ORACLE_KEY") {
+        let provided = headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .unwrap_or("");
+        if provided != expected {
+            return Json(TxResultResponse {
+                success: false,
+                message: "unauthorized: invalid oracle key".into(),
+                tx_hash: None,
+            });
+        }
+    }
     // Oracle uses faucet address as creator (special system address)
     let creator = [0u8; 32];
     let obj_id_val = match parse_address_value(&serde_json::Value::String(req.object_id.clone())) {
@@ -3217,10 +3258,12 @@ struct MetricsResponse {
 
 async fn get_metrics(
     State(state): State<Arc<ApiState>>,
-) -> Json<MetricsResponse> {
+    headers: HeaderMap,
+) -> Result<Json<MetricsResponse>, (StatusCode, Json<serde_json::Value>)> {
+    require_admin_auth(&headers)?;
     let t = safe_lock(&state.throughput);
     let stats = safe_lock(&state.stats);
-    Json(MetricsResponse {
+    Ok(Json(MetricsResponse {
         tps: t.current_tps(),
         peak_tps: t.peak_tps,
         avg_txs_per_block: t.avg_txs_per_block(),
@@ -3228,13 +3271,17 @@ async fn get_metrics(
         avg_gas_per_block: t.avg_gas_per_block(),
         total_transactions: stats.total_transactions,
         blocks_tracked: t.recent_blocks.len(),
-    })
+    }))
 }
 
 /// GET /metrics — Prometheus text exposition format for scraping.
 async fn get_prometheus_metrics(
     State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
+    if let Err(e) = require_admin_auth(&headers) {
+        return e.into_response();
+    }
     let t = safe_lock(&state.throughput);
     let stats = safe_lock(&state.stats);
     let db = safe_lock(&state.db);
@@ -3289,7 +3336,7 @@ async fn get_prometheus_metrics(
     (
         [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
         out,
-    )
+    ).into_response()
 }
 
 /// GET /api/proof/latest — generate and return the latest chain proof.

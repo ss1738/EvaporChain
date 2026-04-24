@@ -87,6 +87,13 @@ pub trait StateDB: Send + Sync {
     fn remove_ghost(&mut self, id: &ObjectId) -> Option<GhostRecord>;
 
     /// Return all object IDs currently in active state.
+    ///
+    /// NOTE (M-06): Allocates a full Vec copy of all IDs. Callers include
+    /// evaporation sweeps, snapshots, and API endpoints -- all low-frequency
+    /// batch operations that need the full set (often iterating while the DB
+    /// is mutated afterwards). Converting to a trait-returned iterator would
+    /// require `Box<dyn Iterator>` with lifetime constraints for marginal
+    /// benefit at current scale. Acceptable as-is.
     fn all_object_ids(&self) -> Vec<ObjectId>;
 
     /// Return the number of active objects.
@@ -96,6 +103,7 @@ pub trait StateDB: Send + Sync {
     fn ghost_count(&self) -> usize;
 
     /// Return all ghost record object IDs.
+    /// NOTE (M-06): Same Vec-copy rationale as `all_object_ids`.
     fn all_ghost_ids(&self) -> Vec<ObjectId>;
 
     /// Retrieve an account by address.
@@ -107,10 +115,14 @@ pub trait StateDB: Send + Sync {
     /// Store or update an account.
     fn put_account(&mut self, account: Account);
 
+    /// Delete an account by address and return it.
+    fn delete_account(&mut self, addr: &AccountAddress) -> Option<Account>;
+
     /// Get or create an account (returns mutable ref). Creates with zero balance if missing.
     fn get_or_create_account(&mut self, addr: &AccountAddress) -> &mut Account;
 
     /// Return all account addresses.
+    /// NOTE (M-06): Same Vec-copy rationale as `all_object_ids`.
     fn all_account_addresses(&self) -> Vec<AccountAddress>;
 
     /// Compute the state root hash over all objects and accounts.
@@ -166,6 +178,18 @@ pub trait StateDB: Send + Sync {
 
     /// Get the note count.
     fn get_note_count(&self) -> u64;
+
+    // ─── State Pruning ───────────────────────────────────────────────────
+
+    /// Prune historical state data older than the given block height.
+    ///
+    /// Removes ghost records whose `evaporated_at` epoch is strictly less than
+    /// `height`, since those represent long-dead state that is no longer needed
+    /// for resurrection or audit. Returns the number of records pruned.
+    ///
+    /// This is a storage-management operation — it does NOT affect the current
+    /// active state (objects, accounts, trie) and is safe to call at any time.
+    fn prune_before_height(&mut self, height: u64) -> u64;
 }
 
 /// In-memory state database for development and testing.
@@ -304,6 +328,13 @@ impl StateDB for InMemoryStateDB {
         self.accounts.insert(account.address, account);
     }
 
+    fn delete_account(&mut self, addr: &AccountAddress) -> Option<Account> {
+        let key = trie_key_for_account(addr);
+        self.trie.delete(&key);
+        self.dirty_accounts.remove(addr);
+        self.accounts.remove(addr)
+    }
+
     fn get_or_create_account(&mut self, addr: &AccountAddress) -> &mut Account {
         if !self.accounts.contains_key(addr) {
             let account = Account {
@@ -403,6 +434,20 @@ impl StateDB for InMemoryStateDB {
         self.dirty_objects.clear();
         self.dirty_accounts.clear();
         Ok(())
+    }
+
+    fn prune_before_height(&mut self, height: u64) -> u64 {
+        let ids_to_prune: Vec<ObjectId> = self
+            .ghosts
+            .iter()
+            .filter(|(_, ghost)| ghost.evaporated_at < height)
+            .map(|(id, _)| *id)
+            .collect();
+        let count = ids_to_prune.len() as u64;
+        for id in ids_to_prune {
+            self.ghosts.remove(&id);
+        }
+        count
     }
 }
 
@@ -558,5 +603,55 @@ mod tests {
         let health = db.trie_health();
         assert_eq!(health.active_leaves, 0);
         assert_eq!(health.total_nodes, 0);
+    }
+
+    #[test]
+    fn test_prune_before_height_removes_old_ghosts() {
+        let mut db = InMemoryStateDB::new();
+
+        // Insert ghosts at various epochs
+        for epoch in [10u64, 50, 100, 200] {
+            db.put_ghost(GhostRecord {
+                object_id: {
+                    let mut id = [0u8; 32];
+                    id[0] = epoch as u8;
+                    id
+                },
+                owner: [0u8; 32],
+                evaporated_at: epoch,
+                data_hash: [0u8; 32],
+                original_data: None,
+                mmr_position: None,
+                original_half_life: None,
+            });
+        }
+        assert_eq!(db.ghost_count(), 4);
+
+        // Prune everything before height 100 — removes epochs 10 and 50
+        let pruned = db.prune_before_height(100);
+        assert_eq!(pruned, 2);
+        assert_eq!(db.ghost_count(), 2);
+
+        // Ghost at epoch 100 should still exist (not strictly less than 100)
+        let mut id100 = [0u8; 32];
+        id100[0] = 100;
+        assert!(db.get_ghost(&id100).is_some());
+    }
+
+    #[test]
+    fn test_prune_before_height_zero_is_noop() {
+        let mut db = InMemoryStateDB::new();
+        db.put_ghost(GhostRecord {
+            object_id: [1u8; 32],
+            owner: [0u8; 32],
+            evaporated_at: 0,
+            data_hash: [0u8; 32],
+            original_data: None,
+            mmr_position: None,
+            original_half_life: None,
+        });
+        let pruned = db.prune_before_height(0);
+        assert_eq!(pruned, 0);
+        assert_eq!(db.ghost_count(), 1);
     }
 }
