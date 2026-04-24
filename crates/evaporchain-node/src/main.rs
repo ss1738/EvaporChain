@@ -14,6 +14,7 @@ use api::{ApiState, BlockRecord, ChainStats, EpochSnapshot, EventRecord, NftStor
 use evaporchain_consensus::MockConsensus;
 use evaporchain_consensus::encrypted_mempool::EncryptedMempool;
 use evaporchain_consensus::finality::FinalityTracker;
+use evaporchain_consensus::light_client::{LightBlockHeader, LightClientVerifier};
 use evaporchain_consensus::tendermint::{TendermintConsensus, ConsensusMessage, ConsensusAction, ProofVerifier, AnchorHashProvider};
 use evaporchain_consensus::validator_set::{ValidatorInfo, ValidatorSet};
 use evaporchain_network::service::{cache_block, NetworkConfig, P2pNetworkService};
@@ -1736,6 +1737,37 @@ async fn main() -> Result<()> {
     let encrypted_mempool: Arc<Mutex<EncryptedMempool>> =
         Arc::new(Mutex::new(EncryptedMempool::new(2)));
 
+    // Light client verifier — initialized from genesis validator set
+    let light_client: Arc<Mutex<LightClientVerifier>> = {
+        let genesis_vs = if let Some(ref tc) = tendermint {
+            let tc = safe_lock(tc);
+            tc.validator_set().clone()
+        } else {
+            ValidatorSet::new()
+        };
+        let genesis_header = LightBlockHeader {
+            height: 0,
+            epoch: 0,
+            block_hash: [0u8; 32],
+            parent_hash: [0u8; 32],
+            state_root: [0u8; 32],
+            timestamp: 0,
+            validator_set: genesis_vs,
+            commit_certificate: evaporchain_types::CommitCertificate {
+                height: 0,
+                round: 0,
+                block_hash: [0u8; 32],
+                aggregate_signature: vec![],
+                signer_ids: vec![],
+            },
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        Arc::new(Mutex::new(LightClientVerifier::new(genesis_header, now)))
+    };
+
     // ── API server ──
     if args.api_mode {
         // Initialize user database for wallet/auth system
@@ -1808,6 +1840,7 @@ async fn main() -> Result<()> {
             chain_store: Some(Arc::clone(&chain_store)),
             finality_tracker: Arc::clone(&finality_tracker),
             encrypted_mempool: Arc::clone(&encrypted_mempool),
+            light_client: Arc::clone(&light_client),
         });
         let api_port = args.api_port;
         tokio::spawn(async move {
@@ -2631,6 +2664,29 @@ async fn main() -> Result<()> {
                                             total_stake,
                                             now,
                                         );
+                                    }
+                                    // Feed header to light client verifier
+                                    {
+                                        let vs = {
+                                            let tc = safe_lock(&tc_ref);
+                                            tc.validator_set().clone()
+                                        };
+                                        let now = std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap_or_default()
+                                            .as_secs();
+                                        let lbh = LightBlockHeader {
+                                            height: block.number,
+                                            epoch: block.epoch,
+                                            block_hash: cert.block_hash,
+                                            parent_hash: block.parent_hash,
+                                            state_root: result.execution.state_root,
+                                            timestamp: now,
+                                            validator_set: vs,
+                                            commit_certificate: cert.clone(),
+                                        };
+                                        let mut lc = safe_lock(&light_client);
+                                        lc.verify(&lbh, now);
                                     }
                                     println!(
                                         "{}   \x1b[1;36mBLS CommitCertificate: {} signers, agg_sig={}B, stake={}/{}({:.0}%)\x1b[0m",

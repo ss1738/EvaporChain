@@ -90,6 +90,8 @@ pub struct ApiState {
     pub finality_tracker: Arc<Mutex<evaporchain_consensus::finality::FinalityTracker>>,
     /// MEV-protected encrypted mempool (commit-reveal scheme).
     pub encrypted_mempool: Arc<Mutex<evaporchain_consensus::encrypted_mempool::EncryptedMempool>>,
+    /// Light client verifier — BLS header verification + skip/sequential modes.
+    pub light_client: Arc<Mutex<evaporchain_consensus::light_client::LightClientVerifier>>,
 }
 
 impl ApiState {
@@ -4086,6 +4088,93 @@ fn hex_to_32(s: &str) -> Option<[u8; 32]> {
     Some(arr)
 }
 
+// ─────────────────── Light Client ────────────────────────────────────────
+
+async fn get_light_client_status(
+    State(state): State<Arc<ApiState>>,
+) -> impl IntoResponse {
+    let lc = state.light_client.lock().unwrap();
+    let latest = lc.latest_trusted_height();
+    Json(serde_json::json!({
+        "latest_trusted_height": latest,
+        "trusted_headers_stored": lc.trusted_count(),
+    }))
+}
+
+#[derive(Deserialize)]
+struct VerifyHeaderRequest {
+    height: u64,
+    epoch: u64,
+    block_hash: String,
+    parent_hash: String,
+    state_root: String,
+}
+
+async fn post_verify_header(
+    State(state): State<Arc<ApiState>>,
+    Json(body): Json<VerifyHeaderRequest>,
+) -> impl IntoResponse {
+    let block_hash = match hex_to_32(&body.block_hash) {
+        Some(h) => h,
+        None => return Json(serde_json::json!({ "verified": false, "error": "invalid block_hash" })),
+    };
+    let parent_hash = match hex_to_32(&body.parent_hash) {
+        Some(h) => h,
+        None => return Json(serde_json::json!({ "verified": false, "error": "invalid parent_hash" })),
+    };
+    let state_root = match hex_to_32(&body.state_root) {
+        Some(h) => h,
+        None => return Json(serde_json::json!({ "verified": false, "error": "invalid state_root" })),
+    };
+
+    let lc = state.light_client.lock().unwrap();
+    let trusted = lc.trusted_state_at(body.height);
+    match trusted {
+        Some(ts) => {
+            let matches = ts.header.block_hash == block_hash
+                && ts.header.state_root == state_root
+                && ts.header.parent_hash == parent_hash;
+            Json(serde_json::json!({
+                "verified": matches,
+                "height": body.height,
+                "trusted": true,
+                "expires_at": ts.trust_expires_at,
+            }))
+        }
+        None => Json(serde_json::json!({
+            "verified": false,
+            "height": body.height,
+            "trusted": false,
+            "error": "height not in trusted set",
+        })),
+    }
+}
+
+async fn get_trusted_header(
+    State(state): State<Arc<ApiState>>,
+    Path(height): Path<u64>,
+) -> impl IntoResponse {
+    let lc = state.light_client.lock().unwrap();
+    match lc.trusted_state_at(height) {
+        Some(ts) => Json(serde_json::json!({
+            "found": true,
+            "height": ts.header.height,
+            "epoch": ts.header.epoch,
+            "block_hash": hex::encode(ts.header.block_hash),
+            "parent_hash": hex::encode(ts.header.parent_hash),
+            "state_root": hex::encode(ts.header.state_root),
+            "timestamp": ts.header.timestamp,
+            "trust_expires_at": ts.trust_expires_at,
+            "validator_count": ts.header.validator_set.active_count(),
+            "certificate_signers": ts.header.commit_certificate.signer_ids.len(),
+        })),
+        None => Json(serde_json::json!({
+            "found": false,
+            "height": height,
+        })),
+    }
+}
+
 // ─────────────────── Finality ───────────────────────────────────────────
 
 async fn get_finality(
@@ -4309,6 +4398,10 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         // PoHA certificates
         .route("/api/da/poha", get(get_poha_certificates))
         .route("/api/da/poha/:block", get(get_poha_certificate))
+        // Light client
+        .route("/api/light/client/status", get(get_light_client_status))
+        .route("/api/light/client/verify", post(post_verify_header))
+        .route("/api/light/client/header/:height", get(get_trusted_header))
         // MEV-protected encrypted mempool
         .route("/api/mev/submit", post(post_submit_encrypted_tx))
         .route("/api/mev/reveal", post(post_reveal_encrypted_tx))
