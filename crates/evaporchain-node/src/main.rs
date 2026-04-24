@@ -12,6 +12,7 @@ mod ws;
 use anyhow::Result;
 use api::{ApiState, BlockRecord, ChainStats, EpochSnapshot, EventRecord, NftStore, NftToken, TokenStore, DeployedToken, StakingStore, StakingPool, Staker, DAOStore, DAOProposal, DAOVote, ThroughputTracker};
 use evaporchain_consensus::MockConsensus;
+use evaporchain_consensus::finality::FinalityTracker;
 use evaporchain_consensus::tendermint::{TendermintConsensus, ConsensusMessage, ConsensusAction, ProofVerifier, AnchorHashProvider};
 use evaporchain_consensus::validator_set::{ValidatorInfo, ValidatorSet};
 use evaporchain_network::service::{cache_block, NetworkConfig, P2pNetworkService};
@@ -1726,6 +1727,10 @@ async fn main() -> Result<()> {
         Arc::new(Mutex::new(srv))
     };
 
+    // Finality tracker — records BLS-certified finality per block
+    let finality_tracker: Arc<Mutex<FinalityTracker>> =
+        Arc::new(Mutex::new(FinalityTracker::new()));
+
     // ── API server ──
     if args.api_mode {
         // Initialize user database for wallet/auth system
@@ -1796,6 +1801,7 @@ async fn main() -> Result<()> {
             shard_bridge: Some(Arc::clone(&shard_bridge)),
             ws_broadcaster: Arc::clone(&ws_broadcaster),
             chain_store: Some(Arc::clone(&chain_store)),
+            finality_tracker: Arc::clone(&finality_tracker),
         });
         let api_port = args.api_port;
         tokio::spawn(async move {
@@ -2592,11 +2598,39 @@ async fn main() -> Result<()> {
                                     &result.execution.state_root,
                                     peers,
                                 );
-                                // Log BLS aggregate signature status
+                                // Log BLS aggregate signature status and record finality
                                 if let Some(ref cert) = block.commit_certificate {
+                                    let (signing_stake, total_stake) = {
+                                        let tc = safe_lock(&tc_ref);
+                                        let vs = tc.validator_set();
+                                        let signing: u64 = cert.signer_ids.iter()
+                                            .filter_map(|&id| vs.get(id))
+                                            .map(|v| v.stake)
+                                            .sum();
+                                        (signing, vs.total_stake())
+                                    };
+                                    {
+                                        let mut ft = safe_lock(&finality_tracker);
+                                        let now = std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap_or_default()
+                                            .as_secs();
+                                        ft.on_block_finalized(
+                                            block.number,
+                                            cert.block_hash,
+                                            result.execution.state_root,
+                                            block.epoch,
+                                            cert.clone(),
+                                            signing_stake,
+                                            total_stake,
+                                            now,
+                                        );
+                                    }
                                     println!(
-                                        "{}   \x1b[1;36mBLS CommitCertificate: {} signers, agg_sig={}B\x1b[0m",
-                                        node_tag, cert.signer_ids.len(), cert.aggregate_signature.len()
+                                        "{}   \x1b[1;36mBLS CommitCertificate: {} signers, agg_sig={}B, stake={}/{}({:.0}%)\x1b[0m",
+                                        node_tag, cert.signer_ids.len(), cert.aggregate_signature.len(),
+                                        signing_stake, total_stake,
+                                        if total_stake > 0 { signing_stake as f64 / total_stake as f64 * 100.0 } else { 0.0 },
                                     );
                                 }
                             }

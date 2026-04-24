@@ -86,6 +86,8 @@ pub struct ApiState {
     pub oracle_bridge: Option<Arc<Mutex<crate::oracle_bridge::OracleBridge>>>,
     /// Shard health and cross-shard routing bridge.
     pub shard_bridge: Option<Arc<Mutex<crate::shard_bridge::ShardBridge>>>,
+    /// Finality tracker — records BLS-certified finality for each block.
+    pub finality_tracker: Arc<Mutex<evaporchain_consensus::finality::FinalityTracker>>,
 }
 
 impl ApiState {
@@ -3954,6 +3956,61 @@ async fn get_poha_certificates(
 
 // ─────────────── State Sync ───────────────────────────────────────────
 
+async fn get_finality(
+    State(state): State<Arc<ApiState>>,
+) -> impl IntoResponse {
+    let ft = state.finality_tracker.lock().unwrap();
+    let latest = ft.latest_finalized_height();
+    let stats = ft.stats(100);
+    let latest_proof = ft.generate_proof(latest);
+
+    Json(serde_json::json!({
+        "latest_finalized_height": latest,
+        "total_finalized": ft.total_finalized(),
+        "records_stored": ft.record_count(),
+        "stats_last_100": {
+            "finalized_count": stats.finalized_count,
+            "avg_participation": format!("{:.2}%", stats.avg_participation * 100.0),
+            "min_participation": format!("{:.2}%", stats.min_participation * 100.0),
+            "max_participation": format!("{:.2}%", stats.max_participation * 100.0),
+            "high_participation_count": stats.high_participation_count,
+        },
+        "latest_proof": latest_proof.map(|p| serde_json::json!({
+            "height": p.height,
+            "block_hash": hex::encode(p.block_hash),
+            "state_root": hex::encode(p.state_root),
+            "proof_hash": hex::encode(p.proof_hash),
+            "signers": p.certificate.signer_ids.len(),
+        })),
+    }))
+}
+
+async fn get_finality_proof(
+    State(state): State<Arc<ApiState>>,
+    Path(height): Path<u64>,
+) -> impl IntoResponse {
+    let ft = state.finality_tracker.lock().unwrap();
+    match ft.generate_proof(height) {
+        Some(proof) => Json(serde_json::json!({
+            "found": true,
+            "height": proof.height,
+            "block_hash": hex::encode(proof.block_hash),
+            "state_root": hex::encode(proof.state_root),
+            "proof_hash": hex::encode(proof.proof_hash),
+            "certificate": {
+                "round": proof.certificate.round,
+                "signers": proof.certificate.signer_ids,
+                "aggregate_signature": hex::encode(&proof.certificate.aggregate_signature),
+            },
+            "verified": evaporchain_consensus::finality::FinalityTracker::verify_proof(&proof),
+        })),
+        None => Json(serde_json::json!({
+            "found": false,
+            "height": height,
+        })),
+    }
+}
+
 async fn get_sync_snapshot_info(
     State(state): State<Arc<ApiState>>,
 ) -> impl IntoResponse {
@@ -4120,6 +4177,9 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         // PoHA certificates
         .route("/api/da/poha", get(get_poha_certificates))
         .route("/api/da/poha/:block", get(get_poha_certificate))
+        // Finality
+        .route("/api/finality", get(get_finality))
+        .route("/api/finality/proof/:height", get(get_finality_proof))
         // State sync
         .route("/api/sync/snapshot-info", get(get_sync_snapshot_info))
         // PWA
