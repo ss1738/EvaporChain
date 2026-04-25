@@ -51,6 +51,7 @@ done
 export RUST_LOG=info
 
 exec "${BINARY}" \
+    --demo \
     --network \
     --api \
     --node-id "node-${NODE_NUM}" \
