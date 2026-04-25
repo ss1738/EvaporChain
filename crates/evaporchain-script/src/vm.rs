@@ -40,6 +40,8 @@ const MAX_STRING_LEN: usize = 1_048_576; // 1 MiB
 const MAX_MAP_ENTRIES: usize = 10_000;
 /// Maximum elements in a single array to prevent OOM.
 const MAX_ARRAY_SIZE: usize = 10_000;
+/// Maximum state keys per contract to prevent unbounded storage growth.
+const MAX_STATE_KEYS: usize = 10_000;
 /// Hard step limit: maximum number of opcodes executed per method call.
 /// Independent of gas — prevents infinite loops even if gas accounting has bugs.
 const MAX_STEPS: u64 = 10_000_000;
@@ -177,6 +179,13 @@ impl EvaporVM {
                 Op::StateStore(field) => {
                     self.charge_gas(GAS_STATE_STORE)?;
                     let val = self.pop()?;
+                    if !self.state.contains_key(&*field)
+                        && self.state.len() >= MAX_STATE_KEYS
+                    {
+                        return Err(ScriptError::Runtime(format!(
+                            "contract storage limit exceeded ({MAX_STATE_KEYS} keys)"
+                        )));
+                    }
                     self.state.insert(field.clone(), val);
                 }
 

@@ -65,6 +65,9 @@ const PRECOMMIT_TIMEOUT_MS: u64 = 4000;
 /// Maximum rounds before forcing commit (prevents livelock).
 const MAX_ROUNDS_PER_HEIGHT: u32 = 10;
 
+/// Maximum serialized block size (2 MB). Enforced on both creation and reception.
+const MAX_BLOCK_SIZE_BYTES: usize = 2 * 1024 * 1024;
+
 // ─────────────────────── Consensus Messages ─────────────────────────────
 
 /// Messages exchanged between validators during consensus.
@@ -450,9 +453,7 @@ impl TendermintConsensus {
         self.epoch = epoch;
         self.parent_hash = parent_hash;
         self.round_state = RoundState::new(0);
-        self.propose_timeout = Duration::from_millis(PROPOSE_TIMEOUT_MS);
-        self.prevote_timeout = Duration::from_millis(PREVOTE_TIMEOUT_MS);
-        self.precommit_timeout = Duration::from_millis(PRECOMMIT_TIMEOUT_MS);
+        self.set_timeouts_for_round(0);
         self.locked_block = None;
         self.locked_round = None;
         self.valid_block = None;
@@ -835,9 +836,7 @@ impl TendermintConsensus {
                 "Round-skipping to match peer"
             );
             self.round_state = RoundState::new(msg.round());
-            self.propose_timeout = Duration::from_millis(PROPOSE_TIMEOUT_MS);
-            self.prevote_timeout = Duration::from_millis(PREVOTE_TIMEOUT_MS);
-            self.precommit_timeout = Duration::from_millis(PRECOMMIT_TIMEOUT_MS);
+            self.set_timeouts_for_round(msg.round());
         }
 
         match msg {
@@ -859,6 +858,21 @@ impl TendermintConsensus {
                         height, round
                     );
                     return actions;
+                }
+
+                // Reject oversized proposals (DoS protection)
+                if let Ok(encoded) = serde_json::to_vec(&block) {
+                    if encoded.len() > MAX_BLOCK_SIZE_BYTES {
+                        warn!(
+                            height = height,
+                            round = round,
+                            size = encoded.len(),
+                            max = MAX_BLOCK_SIZE_BYTES,
+                            "Rejected oversized proposal from validator {}",
+                            proposer_id
+                        );
+                        return actions;
+                    }
                 }
 
                 // Verify block connects to our chain
@@ -1377,9 +1391,7 @@ impl TendermintConsensus {
 
         // Reset round state and timeouts for new height
         self.round_state = RoundState::new(0);
-        self.propose_timeout = Duration::from_millis(PROPOSE_TIMEOUT_MS);
-        self.prevote_timeout = Duration::from_millis(PREVOTE_TIMEOUT_MS);
-        self.precommit_timeout = Duration::from_millis(PRECOMMIT_TIMEOUT_MS);
+        self.set_timeouts_for_round(0);
         self.locked_block = None;
         self.locked_round = None;
         self.valid_block = None;
@@ -1504,7 +1516,6 @@ impl TendermintConsensus {
     /// Caps transactions per block to keep proposals under gossipsub size limits.
     fn create_proposal(&mut self, _db: &mut dyn StateDB) -> Option<Block> {
         const MAX_TXS_PER_BLOCK: usize = 50;
-        const MAX_BLOCK_SIZE_BYTES: usize = 2 * 1024 * 1024; // 2 MB
         let next_epoch = self.epoch + 1;
 
         // Process encrypted mempool reveals first (MEV-protected txs get priority)
@@ -1775,9 +1786,7 @@ impl TendermintConsensus {
             // be empty (or near-empty), achieving the same livelock-prevention
             // goal without violating Agreement.
             self.round_state = RoundState::new(0);
-            self.propose_timeout = Duration::from_millis(PROPOSE_TIMEOUT_MS);
-            self.prevote_timeout = Duration::from_millis(PREVOTE_TIMEOUT_MS);
-            self.precommit_timeout = Duration::from_millis(PRECOMMIT_TIMEOUT_MS);
+            self.set_timeouts_for_round(0);
             return;
         }
 
@@ -1789,12 +1798,18 @@ impl TendermintConsensus {
         );
         self.round_state = RoundState::new(next_round);
 
-        // Exponential timeout escalation with random jitter: double timeouts
-        // each round (capped at 2^6 = 64x) to create back-pressure against
-        // livelock. Jitter (±10%) prevents synchronized retries.
-        let shift = std::cmp::min(next_round, 6) as u64;
+        self.set_timeouts_for_round(next_round);
+    }
+
+    fn set_timeouts_for_round(&mut self, round: u32) {
+        let shift = std::cmp::min(round, 6) as u64;
         let multiplier = 1u64 << shift;
-        let jitter_ms = (self.my_id.wrapping_mul(7) % 11) as u64 * multiplier;
+        let jitter_seed = self.height
+            .wrapping_mul(31)
+            .wrapping_add(round as u64)
+            .wrapping_mul(17)
+            .wrapping_add(self.my_id.wrapping_mul(7));
+        let jitter_ms = (jitter_seed % 11) * multiplier;
         self.propose_timeout = Duration::from_millis(PROPOSE_TIMEOUT_MS.saturating_mul(multiplier) + jitter_ms);
         self.prevote_timeout = Duration::from_millis(PREVOTE_TIMEOUT_MS.saturating_mul(multiplier) + jitter_ms);
         self.precommit_timeout = Duration::from_millis(PRECOMMIT_TIMEOUT_MS.saturating_mul(multiplier) + jitter_ms);
