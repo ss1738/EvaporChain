@@ -46,6 +46,10 @@ const MAX_STATE_KEYS: usize = 10_000;
 /// Independent of gas — prevents infinite loops even if gas accounting has bugs.
 const MAX_STEPS: u64 = 10_000_000;
 
+/// Default gas limit applied when no explicit limit is provided.
+/// Prevents unbounded execution — gas metering is ALWAYS enforced.
+pub const DEFAULT_GAS_LIMIT: u64 = 10_000_000;
+
 // ─── VM ─────────────────────────────────────────────────────────────────────
 
 /// Stack-based virtual machine for EvaporScript bytecode.
@@ -77,7 +81,7 @@ impl EvaporVM {
 
     fn charge_gas(&mut self, cost: u64) -> Result<(), ScriptError> {
         self.gas_used += cost;
-        if self.gas_limit > 0 && self.gas_used > self.gas_limit {
+        if self.gas_used > self.gas_limit {
             return Err(ScriptError::GasLimitExceeded {
                 used: self.gas_used,
                 limit: self.gas_limit,
@@ -682,11 +686,7 @@ impl EvaporVM {
                     let method = self.pop()?.as_str()?.to_string();
                     let contract_id = self.pop()?.as_u64()?;
 
-                    let gas_remaining = if self.gas_limit > 0 {
-                        self.gas_limit.saturating_sub(self.gas_used)
-                    } else {
-                        0
-                    };
+                    let gas_remaining = self.gas_limit.saturating_sub(self.gas_used);
 
                     if let Some(ext) = external.as_mut() {
                         let (return_val, events, gas_used) = ext.call_external(
@@ -892,7 +892,7 @@ impl EvaporVM {
         }
     }
 
-    /// Execute a method on compiled bytecode.
+    /// Execute a method on compiled bytecode with the default gas limit.
     pub fn execute(
         bytecode: &EvaporBytecode,
         method: &str,
@@ -900,10 +900,11 @@ impl EvaporVM {
         state: HashMap<String, Value>,
         ctx: &ExecutionContext,
     ) -> Result<ScriptCallResult, ScriptError> {
-        Self::execute_full(bytecode, method, args, state, ctx, 0, None)
+        Self::execute_full(bytecode, method, args, state, ctx, DEFAULT_GAS_LIMIT, None)
     }
 
-    /// Execute with an explicit gas limit (0 = unlimited).
+    /// Execute with an explicit gas limit. The limit is always enforced;
+    /// passing 0 will cause immediate gas exhaustion on the first opcode.
     pub fn execute_with_gas_limit(
         bytecode: &EvaporBytecode,
         method: &str,

@@ -6,7 +6,7 @@ mod vm_safety_tests {
     use crate::parser;
     use crate::compiler;
     use crate::vm::EvaporVM;
-    use crate::{ExecutionContext, ScriptEngine, Value};
+    use crate::{ExecutionContext, ScriptEngine, ScriptError, Value};
     use std::collections::HashMap;
 
     fn test_ctx() -> ExecutionContext {
@@ -234,6 +234,136 @@ contract Mortal {
     // ═══════════════════════════════════════════════════════════════════
     // Gas metering correctness
     // ═══════════════════════════════════════════════════════════════════
+
+    // ═══════════════════════════════════════════════════════════════════
+    // H-08: gas_limit=0 must NOT disable gas metering
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// H-08: EvaporVM::execute() (no explicit gas limit) must still enforce gas metering.
+    /// Before the fix, execute() passed gas_limit=0 which bypassed all gas checks.
+    #[test]
+    fn test_h08_default_execute_enforces_gas() {
+        let src = r#"
+contract GasTest {
+    state { v: u64 = 0 }
+    fn work() -> u64 {
+        let i: u64 = 0
+        while i < 100 {
+            i = i + 1
+            self.v = self.v + 1
+        }
+        return self.v
+    }
+}
+"#;
+        let bytecode = compile_src(src);
+        let ctx = test_ctx();
+        let state = HashMap::from([("v".to_string(), Value::U64(0))]);
+
+        let result = EvaporVM::execute(&bytecode, "work", vec![], state, &ctx).unwrap();
+
+        // Gas must be tracked even without explicit gas limit
+        assert!(result.gas_used > 0,
+            "H-08: execute() without explicit gas limit must still meter gas, got gas_used=0");
+    }
+
+    /// H-08: A long-running script called via execute() must eventually hit the default
+    /// gas limit and be terminated, not run forever.
+    #[test]
+    fn test_h08_default_gas_limit_terminates_runaway_script() {
+        let src = r#"
+contract RunAway {
+    state { v: u64 = 0 }
+    fn burn_all_gas() -> u64 {
+        let i: u64 = 0
+        while i < 999999999 {
+            i = i + 1
+            self.v = self.v + 1
+        }
+        return self.v
+    }
+}
+"#;
+        let bytecode = compile_src(src);
+        let ctx = test_ctx();
+        let state = HashMap::from([("v".to_string(), Value::U64(0))]);
+
+        // execute() uses DEFAULT_GAS_LIMIT; this loop would run ~1B iterations without it
+        let result = EvaporVM::execute(&bytecode, "burn_all_gas", vec![], state, &ctx);
+
+        assert!(result.is_err(),
+            "H-08: runaway script must be terminated by default gas limit");
+        match result {
+            Err(ScriptError::GasLimitExceeded { used, limit }) => {
+                assert!(used > limit,
+                    "gas_used ({used}) should exceed limit ({limit})");
+                assert!(limit > 0,
+                    "gas limit must not be zero");
+            }
+            Err(ScriptError::StepLimitExceeded { .. }) => {
+                // Step limit is also acceptable as a safety bound
+            }
+            Err(ScriptError::Runtime(msg)) if msg.contains("loop iteration limit") => {
+                // Loop iteration limit is also an acceptable safety bound
+            }
+            Err(e) => panic!("H-08: expected GasLimitExceeded, StepLimitExceeded, or loop limit, got: {e:?}"),
+            Ok(_) => unreachable!(),
+        }
+    }
+
+    /// H-08: gas_limit=0 passed to execute_with_gas_limit must NOT disable metering.
+    /// It should cause immediate exhaustion on the first opcode.
+    #[test]
+    fn test_h08_zero_gas_limit_is_not_unlimited() {
+        let src = r#"
+contract Trivial {
+    state { v: u64 = 0 }
+    fn noop() -> u64 {
+        return 1
+    }
+}
+"#;
+        let bytecode = compile_src(src);
+        let ctx = test_ctx();
+        let state = HashMap::from([("v".to_string(), Value::U64(0))]);
+
+        // Passing gas_limit=0 must NOT mean "unlimited" — it means 0 gas available
+        let result = EvaporVM::execute_with_gas_limit(
+            &bytecode, "noop", vec![], state, &ctx, 0,
+        );
+
+        assert!(result.is_err(),
+            "H-08: gas_limit=0 must cause immediate gas exhaustion, not disable metering");
+        match result {
+            Err(ScriptError::GasLimitExceeded { .. }) => {} // correct
+            Err(e) => panic!("H-08: expected GasLimitExceeded, got: {e:?}"),
+            Ok(_) => unreachable!(),
+        }
+    }
+
+    /// H-08: ScriptEngine::call() must enforce gas metering on all scripts.
+    #[test]
+    fn test_h08_engine_call_enforces_gas() {
+        let src = r#"
+contract GasCheck {
+    state { v: u64 = 0 }
+    fn small_work() -> u64 {
+        let i: u64 = 0
+        while i < 10 {
+            i = i + 1
+        }
+        return i
+    }
+}
+"#;
+        let mut engine = ScriptEngine::new();
+        let creator = [1u8; 32];
+        let id = engine.deploy(src, creator, 10_000, 100, 1).unwrap();
+
+        let result = engine.call(id, "small_work", vec![], creator, 10).unwrap();
+        assert!(result.gas_used > 0,
+            "H-08: ScriptEngine::call() must track gas usage");
+    }
 
     /// Gas used should be proportional to work done.
     #[test]

@@ -8,6 +8,7 @@ repository.workspace = true
 [features]
 default = []
 prove = ["evaporchain-proving/nova"]
+test-utils = ["evaporchain-proving/test-utils"]
 
 [[bench]]
 name = "core_benchmarks"

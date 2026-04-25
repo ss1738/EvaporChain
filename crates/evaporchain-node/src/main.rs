@@ -18,7 +18,9 @@ use evaporchain_consensus::light_client::{LightBlockHeader, LightClientVerifier}
 use evaporchain_consensus::tendermint::{TendermintConsensus, ConsensusMessage, ConsensusAction, ProofVerifier, AnchorHashProvider};
 use evaporchain_consensus::validator_set::{ValidatorInfo, ValidatorSet};
 use evaporchain_network::service::{cache_block, NetworkConfig, P2pNetworkService};
-use evaporchain_proving::{MockProver, ProvingEngine};
+use evaporchain_proving::ProvingEngine;
+#[cfg(any(test, feature = "test-utils", debug_assertions))]
+use evaporchain_proving::MockProver;
 use evaporchain_proving::chain_proof::ChainProver;
 use evaporchain_state::db::StateDB;
 use evaporchain_state::RocksDBStateDB;
@@ -1425,17 +1427,36 @@ async fn main() -> Result<()> {
             std::process::exit(1);
         }
     } else {
-        eprintln!(
-            "\x1b[33m⚠ WARNING: Running without --prove flag. MockProver active — proofs are NOT cryptographically verified.\x1b[0m"
-        );
-        eprintln!(
-            "\x1b[33m  For production, recompile with: cargo build -p evaporchain-node --features prove --release\x1b[0m"
-        );
-        Arc::new(Mutex::new(ChainProver::new(
-            Box::new(MockProver::new()) as Box<dyn ProvingEngine>,
-            genesis_state_root,
-            100,
-        )))
+        // H-19 FIX: In release builds (no debug_assertions), refuse to start
+        // without real proving. MockProver must never be used in production.
+        #[cfg(not(any(test, feature = "test-utils", debug_assertions)))]
+        {
+            eprintln!(
+                "\x1b[31mFATAL: Cannot start without --prove in release mode.\x1b[0m"
+            );
+            eprintln!(
+                "\x1b[31m  MockProver is disabled in release builds to prevent accepting unverified proofs.\x1b[0m"
+            );
+            eprintln!(
+                "\x1b[31m  Recompile with: cargo build -p evaporchain-node --features prove --release\x1b[0m"
+            );
+            std::process::exit(1);
+        }
+        // In debug builds, allow MockProver for development convenience.
+        #[cfg(any(test, feature = "test-utils", debug_assertions))]
+        {
+            eprintln!(
+                "\x1b[33m⚠ WARNING: Running without --prove flag. MockProver active — proofs are NOT cryptographically verified.\x1b[0m"
+            );
+            eprintln!(
+                "\x1b[33m  For production, recompile with: cargo build -p evaporchain-node --features prove --release\x1b[0m"
+            );
+            Arc::new(Mutex::new(ChainProver::new(
+                Box::new(MockProver::new()) as Box<dyn ProvingEngine>,
+                genesis_state_root,
+                100,
+            )))
+        }
     };
 
     // ── Network setup ──

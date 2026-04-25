@@ -8,6 +8,7 @@ repository.workspace = true
 [features]
 default = []
 nova = ["dep:nova-snark", "dep:ff", "dep:bincode"]
+test-utils = []
 
 [dependencies]
 evaporchain-types = { path = "../evaporchain-types" }
