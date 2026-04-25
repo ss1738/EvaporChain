@@ -2373,9 +2373,11 @@ mod tests {
         let mut eng = engine();
         let id = deploy_auction(&mut eng);
 
-        eng.call(id, "bid", &serde_json::json!({"bidder": "bob", "amount": 200}), &addr(2), 1)
+        let bidder2 = hex::encode(addr(2));
+        let bidder3 = hex::encode(addr(3));
+        eng.call(id, "bid", &serde_json::json!({"bidder": bidder2, "amount": 200}), &addr(2), 1)
             .unwrap();
-        eng.call(id, "bid", &serde_json::json!({"bidder": "carol", "amount": 600}), &addr(3), 2)
+        eng.call(id, "bid", &serde_json::json!({"bidder": bidder3, "amount": 600}), &addr(3), 2)
             .unwrap();
 
         let r = eng.call(id, "highest_bid", &serde_json::json!({}), &addr(1), 2).unwrap();
@@ -2387,7 +2389,8 @@ mod tests {
         let mut eng = engine();
         let id = deploy_auction(&mut eng);
 
-        eng.call(id, "bid", &serde_json::json!({"bidder": "bob", "amount": 700}), &addr(2), 1)
+        let bidder = hex::encode(addr(2));
+        eng.call(id, "bid", &serde_json::json!({"bidder": bidder, "amount": 700}), &addr(2), 1)
             .unwrap();
 
         // Tick past duration.
@@ -2397,7 +2400,7 @@ mod tests {
         let state = eng.get_state(id).unwrap();
         let aus: AuctionState = serde_json::from_value(state.clone()).unwrap();
         assert!(aus.finalized);
-        assert_eq!(aus.winner, Some("bob".into()));
+        assert_eq!(aus.winner, Some(bidder));
     }
 
     #[test]
@@ -2583,10 +2586,12 @@ mod tests {
         let mut eng = engine();
         let id = deploy_dao(&mut eng);
 
+        let voter1 = hex::encode(addr(1));
+        let voter2 = hex::encode(addr(2));
         eng.call(
             id,
             "vote",
-            &serde_json::json!({"voter": "alice", "option_idx": 0, "weight": 100}),
+            &serde_json::json!({"voter": voter1, "option_idx": 0, "weight": 100}),
             &addr(1),
             1,
         )
@@ -2594,7 +2599,7 @@ mod tests {
         eng.call(
             id,
             "vote",
-            &serde_json::json!({"voter": "bob", "option_idx": 1, "weight": 50}),
+            &serde_json::json!({"voter": voter2, "option_idx": 1, "weight": 50}),
             &addr(2),
             2,
         )
@@ -2611,10 +2616,11 @@ mod tests {
         let mut eng = engine();
         let id = deploy_dao(&mut eng);
 
+        let voter = hex::encode(addr(1));
         eng.call(
             id,
             "vote",
-            &serde_json::json!({"voter": "alice", "option_idx": 0, "weight": 100}),
+            &serde_json::json!({"voter": voter, "option_idx": 0, "weight": 100}),
             &addr(1),
             1,
         )
