@@ -29,6 +29,14 @@ import type {
   EnergyPool,
   MortalMessage,
   NftCollection,
+  ContractInfo,
+  ScriptInfo,
+  DeployContractParams,
+  CallContractParams,
+  DeployScriptParams,
+  CallScriptParams,
+  ScriptAbi,
+  ContractEvent,
 } from "./types";
 
 // ── Singletons ──
@@ -635,4 +643,167 @@ export function useCollections(): UseCollectionsResult {
   }, [refresh]);
 
   return { collections, loading, error, refresh };
+}
+
+// ── useContracts ──
+
+export interface UseContractsResult {
+  contracts: ContractInfo[];
+  loading: boolean;
+  error: string | null;
+  refresh: () => Promise<void>;
+  deploy: (params: DeployContractParams) => Promise<TxResult>;
+  call: (params: CallContractParams) => Promise<TxResult>;
+}
+
+/**
+ * Fetch deployed contracts and provide deploy/call actions.
+ * Deploy and call require a connected wallet.
+ */
+export function useContracts(): UseContractsResult {
+  const provider = getProvider();
+  const api = getApi();
+  const [contracts, setContracts] = useState<ContractInfo[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await api.getContracts();
+      if (mountedRef.current) setContracts(result.contracts);
+    } catch (err: unknown) {
+      if (mountedRef.current) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    } finally {
+      if (mountedRef.current) setLoading(false);
+    }
+  }, [api]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    refresh();
+    return () => { mountedRef.current = false; };
+  }, [refresh]);
+
+  const deploy = useCallback(async (params: DeployContractParams): Promise<TxResult> => {
+    const result = await provider.deployContract(params);
+    await refresh();
+    return result;
+  }, [provider, refresh]);
+
+  const call = useCallback(async (params: CallContractParams): Promise<TxResult> => {
+    return provider.callContract(params);
+  }, [provider]);
+
+  return { contracts, loading, error, refresh, deploy, call };
+}
+
+// ── useScripts ──
+
+export interface UseScriptsResult {
+  scripts: ScriptInfo[];
+  loading: boolean;
+  error: string | null;
+  refresh: () => Promise<void>;
+  deploy: (params: DeployScriptParams) => Promise<TxResult>;
+  call: (params: CallScriptParams) => Promise<TxResult>;
+  getAbi: (scriptId: number) => Promise<ScriptAbi>;
+}
+
+/**
+ * Fetch deployed EvaporScript programs and provide deploy/call actions.
+ * Deploy and call require a connected wallet.
+ */
+export function useScripts(): UseScriptsResult {
+  const provider = getProvider();
+  const api = getApi();
+  const [scripts, setScripts] = useState<ScriptInfo[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await api.getScripts();
+      if (mountedRef.current) setScripts(result.scripts);
+    } catch (err: unknown) {
+      if (mountedRef.current) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    } finally {
+      if (mountedRef.current) setLoading(false);
+    }
+  }, [api]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    refresh();
+    return () => { mountedRef.current = false; };
+  }, [refresh]);
+
+  const deploy = useCallback(async (params: DeployScriptParams): Promise<TxResult> => {
+    const result = await provider.deployScript(params);
+    await refresh();
+    return result;
+  }, [provider, refresh]);
+
+  const call = useCallback(async (params: CallScriptParams): Promise<TxResult> => {
+    return provider.callScript(params);
+  }, [provider]);
+
+  const getAbi = useCallback(async (scriptId: number): Promise<ScriptAbi> => {
+    return api.getScriptAbi(scriptId);
+  }, [api]);
+
+  return { scripts, loading, error, refresh, deploy, call, getAbi };
+}
+
+// ── useContractEvents ──
+
+export interface UseContractEventsResult {
+  events: ContractEvent[];
+  loading: boolean;
+  error: string | null;
+  refresh: () => Promise<void>;
+}
+
+/**
+ * Fetch event logs for a specific contract.
+ */
+export function useContractEvents(contractId?: number): UseContractEventsResult {
+  const api = getApi();
+  const [events, setEvents] = useState<ContractEvent[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+
+  const refresh = useCallback(async () => {
+    if (contractId === undefined) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await api.getContractEvents(contractId);
+      if (mountedRef.current) setEvents(result);
+    } catch (err: unknown) {
+      if (mountedRef.current) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    } finally {
+      if (mountedRef.current) setLoading(false);
+    }
+  }, [api, contractId]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    if (contractId !== undefined) refresh();
+    return () => { mountedRef.current = false; };
+  }, [contractId, refresh]);
+
+  return { events, loading, error, refresh };
 }

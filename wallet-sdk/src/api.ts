@@ -24,6 +24,14 @@ import type {
   EnergyPool,
   PoolContribution,
   MortalMessage,
+  ContractInfo,
+  ScriptInfo,
+  DeployContractParams,
+  CallContractParams,
+  DeployScriptParams,
+  CallScriptParams,
+  ScriptAbi,
+  ContractEvent,
 } from "./types";
 
 const NETWORKS: Record<NetworkId, NetworkConfig> = {
@@ -227,6 +235,84 @@ export class EvaporChainAPI {
   /** Get all NFT collections. */
   async getCollections(): Promise<NftCollection[]> {
     return this._get("/api/nft/collections");
+  }
+
+  // ── Contracts (template-based) ──
+
+  /** List all deployed contracts. */
+  async getContracts(): Promise<{ contracts: ContractInfo[] }> {
+    return this._get("/api/contracts");
+  }
+
+  /** Get a single contract by ID (includes state). */
+  async getContract(contractId: number): Promise<ContractInfo> {
+    return this._get(`/api/contract/${contractId}`);
+  }
+
+  /** Deploy a new template contract. */
+  async deployContract(deployer: string, params: DeployContractParams): Promise<TxResult> {
+    return this._post("/api/tx/deploy-contract", {
+      deployer,
+      template: params.template,
+      init_args: params.initArgs,
+      energy: params.energy,
+      half_life: params.halfLife,
+      rules: params.rules,
+    });
+  }
+
+  /** Call a method on a deployed contract. */
+  async callContract(caller: string, params: CallContractParams): Promise<TxResult> {
+    return this._post("/api/tx/call-contract", {
+      caller,
+      contract_id: params.contractId,
+      method: params.method,
+      args: params.args,
+      epoch: params.epoch,
+    });
+  }
+
+  /** Get event logs for a contract. */
+  async getContractEvents(contractId: number): Promise<ContractEvent[]> {
+    return this._get(`/api/contract/${contractId}/events`);
+  }
+
+  // ── Scripts (EvaporScript VM) ──
+
+  /** List all deployed scripts. */
+  async getScripts(): Promise<{ scripts: ScriptInfo[] }> {
+    return this._get("/api/scripts");
+  }
+
+  /** Get a single script by ID. */
+  async getScript(scriptId: number): Promise<ScriptInfo> {
+    return this._get(`/api/script/${scriptId}`);
+  }
+
+  /** Get a script's ABI (methods, state fields, lifecycle hooks). */
+  async getScriptAbi(scriptId: number): Promise<ScriptAbi> {
+    return this._get(`/api/script/${scriptId}/abi`);
+  }
+
+  /** Deploy an EvaporScript program. */
+  async deployScript(deployer: string, params: DeployScriptParams): Promise<TxResult> {
+    return this._post("/api/tx/deploy-script", {
+      deployer,
+      source_code: params.sourceCode,
+      energy: params.energy,
+      half_life: params.halfLife,
+    });
+  }
+
+  /** Call a method on a deployed script. */
+  async callScript(caller: string, params: CallScriptParams): Promise<TxResult> {
+    return this._post("/api/tx/call-script", {
+      caller,
+      contract_id: params.contractId,
+      method: params.method,
+      args: params.args,
+      epoch: params.epoch,
+    });
   }
 
   // ── Swap ──

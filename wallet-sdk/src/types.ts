@@ -118,6 +118,87 @@ export interface CreateObjectParams {
   data?: Record<string, unknown>;
 }
 
+// ── Contracts & Scripts ──
+
+/** A deployed contract (template-based). */
+export interface ContractInfo {
+  id: number;
+  template: string;
+  creator: string;
+  energy: number;
+  halfLife: number;
+  createdEpoch: number;
+  evaporated: boolean;
+  state?: Record<string, unknown>;
+}
+
+/** A deployed EvaporScript contract. */
+export interface ScriptInfo {
+  id: number;
+  creator: string;
+  energy: number;
+  halfLife: number;
+  createdEpoch: number;
+  evaporated: boolean;
+}
+
+/** Parameters for deploying a template contract. */
+export interface DeployContractParams {
+  template: string;
+  initArgs: Record<string, unknown>;
+  energy: number;
+  halfLife: number;
+  rules?: Record<string, unknown>;
+}
+
+/** Parameters for calling a contract method. */
+export interface CallContractParams {
+  contractId: number;
+  method: string;
+  args: Record<string, unknown>;
+  epoch: number;
+}
+
+/** Parameters for deploying an EvaporScript program. */
+export interface DeployScriptParams {
+  sourceCode: string;
+  energy: number;
+  halfLife: number;
+}
+
+/** Parameters for calling an EvaporScript method. */
+export interface CallScriptParams {
+  contractId: number;
+  method: string;
+  args: Record<string, unknown>;
+  epoch: number;
+}
+
+/** An ABI method descriptor from a deployed script. */
+export interface AbiMethod {
+  name: string;
+  params: Array<{ name: string; type: string }>;
+  returnType: string;
+  mutatesState: boolean;
+}
+
+/** A script's ABI (Application Binary Interface). */
+export interface ScriptAbi {
+  name: string;
+  methods: AbiMethod[];
+  state: Array<{ name: string; type: string; hasDefault: boolean }>;
+  lifecycleHooks: string[];
+}
+
+/** A contract event log entry. */
+export interface ContractEvent {
+  contractId: number;
+  event: string;
+  data: Record<string, unknown>;
+  blockNumber: number;
+  timestamp: number;
+}
+
 // ── Staking ──
 
 /** Staking status for an address. */

@@ -29,7 +29,18 @@ import {
   type ChainStatus,
   type CreateObjectParams,
   type EvaporChainEvent,
+  type DeployContractParams,
+  type CallContractParams,
+  type DeployScriptParams,
+  type CallScriptParams,
+  type TxResult,
+  type ContractInfo,
+  type ScriptInfo,
+  type ScriptAbi,
+  type ContractEvent,
 } from "./types";
+
+import { EvaporChainAPI } from "./api";
 
 type EventHandler = (...args: unknown[]) => void;
 
@@ -39,9 +50,11 @@ export class EvaporChainProvider {
   private _publicKey: string | null = null;
   private _connected = false;
   private _listeners: Map<EvaporChainEvent, Set<EventHandler>> = new Map();
+  private _api: EvaporChainAPI;
 
-  constructor() {
+  constructor(apiOptions?: { rpcUrl?: string; network?: "testnet" | "mainnet" }) {
     this._detectProvider();
+    this._api = new EvaporChainAPI(apiOptions);
   }
 
   // ── Connection ──
@@ -249,6 +262,109 @@ export class EvaporChainProvider {
     }
   }
 
+  // ── Contracts ──
+
+  /** List all deployed contracts. */
+  async getContracts(): Promise<ContractInfo[]> {
+    try {
+      const result = await this._api.getContracts();
+      return result.contracts;
+    } catch (err) {
+      throw this._wrapError(err);
+    }
+  }
+
+  /** Get a single contract by ID (includes on-chain state). */
+  async getContract(contractId: number): Promise<ContractInfo> {
+    try {
+      return await this._api.getContract(contractId);
+    } catch (err) {
+      throw this._wrapError(err);
+    }
+  }
+
+  /**
+   * Deploy a template contract.
+   * Requires wallet connection for the deployer address.
+   */
+  async deployContract(params: DeployContractParams): Promise<TxResult> {
+    this._requireConnected();
+    try {
+      return await this._api.deployContract(this._address!, params);
+    } catch (err) {
+      throw this._wrapError(err);
+    }
+  }
+
+  /**
+   * Call a method on a deployed contract.
+   * Requires wallet connection for the caller address.
+   */
+  async callContract(params: CallContractParams): Promise<TxResult> {
+    this._requireConnected();
+    try {
+      return await this._api.callContract(this._address!, params);
+    } catch (err) {
+      throw this._wrapError(err);
+    }
+  }
+
+  /** Get event logs for a contract. */
+  async getContractEvents(contractId: number): Promise<ContractEvent[]> {
+    try {
+      return await this._api.getContractEvents(contractId);
+    } catch (err) {
+      throw this._wrapError(err);
+    }
+  }
+
+  // ── Scripts (EvaporScript VM) ──
+
+  /** List all deployed EvaporScript programs. */
+  async getScripts(): Promise<ScriptInfo[]> {
+    try {
+      const result = await this._api.getScripts();
+      return result.scripts;
+    } catch (err) {
+      throw this._wrapError(err);
+    }
+  }
+
+  /** Get a script's ABI (methods, state, lifecycle hooks). */
+  async getScriptAbi(scriptId: number): Promise<ScriptAbi> {
+    try {
+      return await this._api.getScriptAbi(scriptId);
+    } catch (err) {
+      throw this._wrapError(err);
+    }
+  }
+
+  /**
+   * Deploy an EvaporScript program.
+   * Requires wallet connection for the deployer address.
+   */
+  async deployScript(params: DeployScriptParams): Promise<TxResult> {
+    this._requireConnected();
+    try {
+      return await this._api.deployScript(this._address!, params);
+    } catch (err) {
+      throw this._wrapError(err);
+    }
+  }
+
+  /**
+   * Call a method on a deployed EvaporScript program.
+   * Requires wallet connection for the caller address.
+   */
+  async callScript(params: CallScriptParams): Promise<TxResult> {
+    this._requireConnected();
+    try {
+      return await this._api.callScript(this._address!, params);
+    } catch (err) {
+      throw this._wrapError(err);
+    }
+  }
+
   // ── Chain status ──
 
   /**
@@ -303,6 +419,15 @@ export class EvaporChainProvider {
   }
 
   // ── Internal ──
+
+  private _requireConnected(): void {
+    if (!this._connected || !this._address) {
+      throw new EvaporChainError(
+        "Wallet not connected. Call connect() first.",
+        EvaporChainErrorCode.NOT_INSTALLED,
+      );
+    }
+  }
 
   private _detectProvider(): void {
     if (typeof window !== "undefined" && window.evaporchain?.isEvaporChain) {
