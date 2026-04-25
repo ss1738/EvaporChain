@@ -54,6 +54,19 @@ impl MlDsaKeypair {
     }
 
     /// Reconstruct a keypair from raw bytes.
+    ///
+    /// # Safety rationale
+    ///
+    /// `pqc_dilithium::Keypair` has a **private** `secret` field and provides no
+    /// public constructor from (pk, sk) bytes. The only way to inject key material
+    /// is via raw pointer writes. We mitigate the layout assumption with:
+    ///
+    /// 1. A compile-time assertion that `size_of::<Keypair>() == PK + SK`, which
+    ///    will fail if the crate ever adds padding, vtables, or extra fields.
+    /// 2. A runtime check that the public field and `expose_secret()` return
+    ///    exactly the bytes we wrote, catching any field-order swap.
+    /// 3. A sign-then-verify roundtrip proving the reconstructed keypair is
+    ///    functionally correct, not just byte-correct.
     pub fn from_bytes(pk_bytes: &[u8], sk_bytes: &[u8]) -> Result<Self, MlDsaError> {
         if pk_bytes.len() != pqc_dilithium::PUBLICKEYBYTES {
             return Err(MlDsaError::InvalidPublicKey);
@@ -61,12 +74,25 @@ impl MlDsaKeypair {
         if sk_bytes.len() != pqc_dilithium::SECRETKEYBYTES {
             return Err(MlDsaError::InvalidSecretKey);
         }
+
+        // Compile-time layout guard: if pqc_dilithium ever changes Keypair's
+        // internal representation (adds fields, padding, etc.) this will fail
+        // at compile time, preventing silent misuse of the unsafe block below.
+        const _: () = {
+            let expected = pqc_dilithium::PUBLICKEYBYTES + pqc_dilithium::SECRETKEYBYTES;
+            assert!(
+                std::mem::size_of::<Keypair>() == expected,
+                "pqc_dilithium::Keypair layout changed — unsafe from_bytes is invalid"
+            );
+        };
+
         // Reconstruct Keypair by generating a dummy then overwriting fields.
         let mut kp = Keypair::generate();
 
-        // SAFETY: We assume Keypair layout is { public: [u8; PK], secret: [u8; SK] }.
-        // The runtime checks below verify the bytes landed correctly; if layout changes
-        // in a future pqc_dilithium release, this will return an error instead of UB.
+        // SAFETY: Keypair layout is { public: [u8; PK], secret: [u8; SK] } with
+        // no padding (verified by the const assertion above). We write pk_bytes
+        // at offset 0 and sk_bytes at offset PUBLICKEYBYTES. The runtime checks
+        // and sign/verify roundtrip below catch any remaining layout mismatch.
         unsafe {
             let ptr = &mut kp as *mut Keypair as *mut u8;
             std::ptr::copy_nonoverlapping(pk_bytes.as_ptr(), ptr, pqc_dilithium::PUBLICKEYBYTES);
@@ -82,6 +108,15 @@ impl MlDsaKeypair {
             return Err(MlDsaError::InvalidPublicKey);
         }
         if kp.expose_secret() != sk_bytes {
+            return Err(MlDsaError::InvalidSecretKey);
+        }
+
+        // Functional roundtrip: sign a canary message and verify with the
+        // extracted public key. This catches subtle corruption where bytes
+        // landed in the right fields but produce an invalid signing state.
+        let canary_msg = b"evaporchain-keypair-integrity-check";
+        let canary_sig = kp.sign(canary_msg);
+        if pqc_dilithium::verify(&canary_sig, canary_msg, &kp.public).is_err() {
             return Err(MlDsaError::InvalidSecretKey);
         }
 
@@ -575,6 +610,54 @@ mod tests {
         let msg = b"roundtrip test";
         let sig = kp2.sign(msg);
         assert!(MlDsaVerifier::verify(msg, &sig, &pk_bytes));
+    }
+
+    #[test]
+    fn test_mldsa_keypair_layout_size_matches() {
+        // Verify that the Keypair struct is exactly PK + SK bytes, no padding.
+        // This is the assumption underlying from_bytes()'s unsafe block.
+        assert_eq!(
+            std::mem::size_of::<Keypair>(),
+            pqc_dilithium::PUBLICKEYBYTES + pqc_dilithium::SECRETKEYBYTES,
+            "Keypair size must equal PUBLICKEYBYTES + SECRETKEYBYTES — layout assumption violated"
+        );
+    }
+
+    #[test]
+    fn test_mldsa_from_bytes_rejects_wrong_pk_length() {
+        let kp = MlDsaKeypair::generate();
+        let sk = kp.secret_key().to_vec();
+        let short_pk = vec![0u8; 100]; // too short
+        assert!(MlDsaKeypair::from_bytes(&short_pk, &sk).is_err());
+    }
+
+    #[test]
+    fn test_mldsa_from_bytes_rejects_wrong_sk_length() {
+        let kp = MlDsaKeypair::generate();
+        let pk = kp.public_key().to_vec();
+        let short_sk = vec![0u8; 100]; // too short
+        assert!(MlDsaKeypair::from_bytes(&pk, &short_sk).is_err());
+    }
+
+    #[test]
+    fn test_mldsa_from_bytes_cross_verify_with_original() {
+        // Generate keypair, extract bytes, reconstruct, and verify that
+        // a signature from the reconstructed keypair verifies with the
+        // original public key — proving functional equivalence.
+        let kp1 = MlDsaKeypair::generate();
+        let pk = kp1.public_key().to_vec();
+        let sk = kp1.secret_key().to_vec();
+
+        let kp2 = MlDsaKeypair::from_bytes(&pk, &sk).unwrap();
+
+        // Sign with kp2, verify with kp1's public key
+        let msg = b"cross-verify after reconstruction";
+        let sig = kp2.sign(msg);
+        assert!(MlDsaVerifier::verify(msg, &sig, &pk));
+
+        // Sign with kp1, verify (kp2 should have same public key)
+        let sig2 = kp1.sign(msg);
+        assert!(MlDsaVerifier::verify(msg, &sig2, kp2.public_key()));
     }
 
     // ─── BLS12-381 Tests ────────────────────────────────────────────────

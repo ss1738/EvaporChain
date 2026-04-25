@@ -785,12 +785,12 @@ fn execute_method(
 ) -> Result<serde_json::Value, ContractError> {
     match template {
         ContractTemplate::DecayingToken => exec_token(state, method, args, caller, creator),
-        ContractTemplate::MortalNFT => exec_nft(state, method, args, caller, current_epoch),
+        ContractTemplate::MortalNFT => exec_nft(state, method, args, caller, creator, current_epoch),
         ContractTemplate::ThermodynamicEscrow => exec_escrow(state, method, args, caller, current_epoch),
         ContractTemplate::DecayingAuction => exec_auction(state, method, args, caller, current_epoch),
-        ContractTemplate::StakingPool => exec_staking(state, method, args, caller, current_epoch),
+        ContractTemplate::StakingPool => exec_staking(state, method, args, caller, creator, current_epoch),
         ContractTemplate::DAOVote => exec_dao(state, method, args, caller, current_epoch),
-        ContractTemplate::TemporalContract => exec_temporal(state, method, args, caller, current_epoch),
+        ContractTemplate::TemporalContract => exec_temporal(state, method, args, caller, creator, current_epoch),
     }
 }
 
@@ -828,6 +828,14 @@ fn exec_token(
             let from = get_str(args, "from")?;
             let to = get_str(args, "to")?;
             let amount = get_u64(args, "amount")?;
+            // Caller must own the tokens being transferred (sender == caller),
+            // or be the contract creator (admin authority).
+            let caller_hex = hex::encode(caller);
+            if caller_hex != from && caller != creator {
+                return Err(ContractError::PermissionDenied(
+                    "caller must be the sender or contract owner to transfer".into(),
+                ));
+            }
             let from_bal = ts.balances.get(&from).copied().unwrap_or(0);
             if from_bal < amount {
                 return Err(ContractError::InsufficientFunds {
@@ -894,14 +902,23 @@ fn exec_nft(
     state: &mut serde_json::Value,
     method: &str,
     args: &serde_json::Value,
-    _caller: &AccountAddress,
+    caller: &AccountAddress,
+    creator: &AccountAddress,
     current_epoch: Epoch,
 ) -> Result<serde_json::Value, ContractError> {
     let mut ns: NftState = serde_json::from_value(state.clone())
         .map_err(|e| ContractError::StateError(e.to_string()))?;
 
+    let caller_hex = hex::encode(caller);
+
     let result = match method {
         "mint" => {
+            // Only the contract creator can mint new NFTs.
+            if caller != creator {
+                return Err(ContractError::PermissionDenied(
+                    "only contract creator can mint NFTs".into(),
+                ));
+            }
             let to = get_str(args, "to")?;
             let metadata_hash = get_str(args, "metadata_hash")?;
             let energy = get_u64(args, "energy")?;
@@ -932,6 +949,12 @@ fn exec_nft(
                 .tokens
                 .get_mut(&token_id)
                 .ok_or_else(|| ContractError::StateError(format!("NFT {token_id} not found")))?;
+            // Only the NFT owner or contract creator can transfer it.
+            if nft.owner != caller_hex && caller != creator {
+                return Err(ContractError::PermissionDenied(
+                    format!("caller does not own NFT {token_id}"),
+                ));
+            }
             nft.owner = to;
             serde_json::json!({ "transferred": token_id })
         }
@@ -967,6 +990,12 @@ fn exec_nft(
                 .tokens
                 .get_mut(&token_id)
                 .ok_or_else(|| ContractError::StateError(format!("NFT {token_id} not found")))?;
+            // Only the NFT owner or contract creator can refresh its energy.
+            if nft.owner != caller_hex && caller != creator {
+                return Err(ContractError::PermissionDenied(
+                    format!("caller does not own NFT {token_id}"),
+                ));
+            }
             let current =
                 energy_at_epoch(nft.energy, nft.half_life, current_epoch - nft.minted_epoch);
             nft.energy = current + energy;
@@ -975,9 +1004,17 @@ fn exec_nft(
         }
         "burn" => {
             let token_id = get_u64(args, "token_id")?;
-            ns.tokens
-                .remove(&token_id)
+            let nft = ns
+                .tokens
+                .get(&token_id)
                 .ok_or_else(|| ContractError::StateError(format!("NFT {token_id} not found")))?;
+            // Only the NFT owner or contract creator can burn.
+            if nft.owner != caller_hex && caller != creator {
+                return Err(ContractError::PermissionDenied(
+                    format!("caller cannot burn NFT {token_id}"),
+                ));
+            }
+            ns.tokens.remove(&token_id);
             serde_json::json!({ "burned": token_id })
         }
         _ => return Err(ContractError::UnknownMethod(method.into())),
@@ -1136,15 +1173,24 @@ fn exec_staking(
     state: &mut serde_json::Value,
     method: &str,
     args: &serde_json::Value,
-    _caller: &AccountAddress,
+    caller: &AccountAddress,
+    creator: &AccountAddress,
     current_epoch: Epoch,
 ) -> Result<serde_json::Value, ContractError> {
     let mut ss: StakingState = serde_json::from_value(state.clone())
         .map_err(|e| ContractError::StateError(e.to_string()))?;
 
+    let caller_hex = hex::encode(caller);
+
     let result = match method {
         "stake" => {
             let staker = get_str(args, "staker")?;
+            // Caller must be the staker themselves, or the contract creator.
+            if caller_hex != staker && caller != creator {
+                return Err(ContractError::PermissionDenied(
+                    "caller must be the staker or contract owner".into(),
+                ));
+            }
             let amount = get_u64(args, "amount")?;
             ss.total_staked += amount;
             let entry = ss.stakes.entry(staker).or_insert(StakeInfo {
@@ -1158,6 +1204,12 @@ fn exec_staking(
         }
         "unstake" => {
             let staker = get_str(args, "staker")?;
+            // Caller must be the staker themselves, or the contract creator.
+            if caller_hex != staker && caller != creator {
+                return Err(ContractError::PermissionDenied(
+                    "caller must be the staker or contract owner to unstake".into(),
+                ));
+            }
             let info = ss
                 .stakes
                 .remove(&staker)
@@ -1167,6 +1219,12 @@ fn exec_staking(
         }
         "claim_rewards" => {
             let staker = get_str(args, "staker")?;
+            // Caller must be the staker themselves, or the contract creator.
+            if caller_hex != staker && caller != creator {
+                return Err(ContractError::PermissionDenied(
+                    "caller must be the staker or contract owner to claim rewards".into(),
+                ));
+            }
             let info = ss
                 .stakes
                 .get_mut(&staker)
@@ -1555,7 +1613,8 @@ fn exec_temporal(
     state: &mut serde_json::Value,
     method: &str,
     args: &serde_json::Value,
-    _caller: &AccountAddress,
+    caller: &AccountAddress,
+    creator: &AccountAddress,
     current_epoch: Epoch,
 ) -> Result<serde_json::Value, ContractError> {
     let mut ts: TemporalState = serde_json::from_value(state.clone())
@@ -1571,6 +1630,17 @@ fn exec_temporal(
         return Err(ContractError::PermissionDenied(format!(
             "method '{}' not allowed in phase '{}'",
             method, current.name
+        )));
+    }
+
+    let caller_hex = hex::encode(caller);
+
+    // Privileged methods require owner or creator authority.
+    let is_privileged = matches!(method, "advance_phase" | "set_data" | "schedule_callback");
+    if is_privileged && caller_hex != ts.owner && caller != creator {
+        return Err(ContractError::PermissionDenied(format!(
+            "only the owner can call '{}'",
+            method,
         )));
     }
 
@@ -2946,5 +3016,369 @@ mod tests {
             0,
         );
         assert!(matches!(r, Err(ContractError::InsufficientFunds { .. })));
+    }
+
+    // ─── Access Control Tests (C-11 fix) ──────────────────────────
+
+    #[test]
+    fn test_token_mint_rejected_for_non_owner() {
+        let mut eng = engine();
+        let id = deploy_token(&mut eng);
+
+        // addr(2) is NOT the creator (addr(1)), so mint should fail.
+        let r = eng.call(
+            id,
+            "mint",
+            &serde_json::json!({"to": "eve", "amount": 1000000}),
+            &addr(2),
+            0,
+        );
+        assert!(matches!(r, Err(ContractError::PermissionDenied(_))));
+    }
+
+    #[test]
+    fn test_token_burn_rejected_for_non_owner() {
+        let mut eng = engine();
+        let id = deploy_token(&mut eng);
+
+        // addr(2) is NOT the creator, so burn should fail.
+        let r = eng.call(
+            id,
+            "burn",
+            &serde_json::json!({"from": "alice", "amount": 100}),
+            &addr(2),
+            0,
+        );
+        assert!(matches!(r, Err(ContractError::PermissionDenied(_))));
+    }
+
+    #[test]
+    fn test_token_transfer_rejected_for_non_sender() {
+        let mut eng = engine();
+        let id = deploy_token(&mut eng);
+
+        // addr(3) is neither the creator nor does its hex match "alice",
+        // so transferring alice's tokens should fail.
+        let r = eng.call(
+            id,
+            "transfer",
+            &serde_json::json!({"from": "alice", "to": "eve", "amount": 100}),
+            &addr(3),
+            0,
+        );
+        assert!(matches!(r, Err(ContractError::PermissionDenied(_))));
+    }
+
+    #[test]
+    fn test_token_transfer_allowed_by_creator() {
+        let mut eng = engine();
+        let id = deploy_token(&mut eng);
+
+        // addr(1) is the creator, so admin transfer is allowed even though
+        // caller hex != "alice".
+        let r = eng.call(
+            id,
+            "transfer",
+            &serde_json::json!({"from": "alice", "to": "bob", "amount": 100}),
+            &addr(1),
+            0,
+        );
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn test_nft_mint_rejected_for_non_creator() {
+        let mut eng = engine();
+        let id = deploy_nft(&mut eng);
+
+        // addr(2) is NOT the creator, so minting should fail.
+        let r = eng.call(
+            id,
+            "mint",
+            &serde_json::json!({"to": "eve", "metadata_hash": "evil", "energy": 100, "half_life": 5}),
+            &addr(2),
+            0,
+        );
+        assert!(matches!(r, Err(ContractError::PermissionDenied(_))));
+    }
+
+    #[test]
+    fn test_nft_transfer_rejected_for_non_owner() {
+        let mut eng = engine();
+        let id = deploy_nft(&mut eng);
+
+        // Creator mints to "alice".
+        eng.call(
+            id,
+            "mint",
+            &serde_json::json!({"to": hex::encode(addr(5)), "metadata_hash": "abc", "energy": 100, "half_life": 5}),
+            &addr(1),
+            0,
+        )
+        .unwrap();
+
+        // addr(3) is neither the NFT owner (addr(5)) nor the creator (addr(1)).
+        let r = eng.call(
+            id,
+            "transfer",
+            &serde_json::json!({"token_id": 1, "to": "mallory"}),
+            &addr(3),
+            0,
+        );
+        assert!(matches!(r, Err(ContractError::PermissionDenied(_))));
+    }
+
+    #[test]
+    fn test_nft_transfer_allowed_by_nft_owner() {
+        let mut eng = engine();
+        let id = deploy_nft(&mut eng);
+
+        // Creator mints to addr(5).
+        eng.call(
+            id,
+            "mint",
+            &serde_json::json!({"to": hex::encode(addr(5)), "metadata_hash": "abc", "energy": 100, "half_life": 5}),
+            &addr(1),
+            0,
+        )
+        .unwrap();
+
+        // addr(5) IS the NFT owner, so transfer succeeds.
+        let r = eng.call(
+            id,
+            "transfer",
+            &serde_json::json!({"token_id": 1, "to": "bob"}),
+            &addr(5),
+            0,
+        );
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn test_nft_burn_rejected_for_non_owner() {
+        let mut eng = engine();
+        let id = deploy_nft(&mut eng);
+
+        // Creator mints to addr(5).
+        eng.call(
+            id,
+            "mint",
+            &serde_json::json!({"to": hex::encode(addr(5)), "metadata_hash": "abc", "energy": 100, "half_life": 5}),
+            &addr(1),
+            0,
+        )
+        .unwrap();
+
+        // addr(3) is neither the NFT owner (addr(5)) nor the creator (addr(1)).
+        let r = eng.call(
+            id,
+            "burn",
+            &serde_json::json!({"token_id": 1}),
+            &addr(3),
+            0,
+        );
+        assert!(matches!(r, Err(ContractError::PermissionDenied(_))));
+    }
+
+    #[test]
+    fn test_nft_burn_allowed_by_nft_owner() {
+        let mut eng = engine();
+        let id = deploy_nft(&mut eng);
+
+        // Creator mints to addr(5).
+        eng.call(
+            id,
+            "mint",
+            &serde_json::json!({"to": hex::encode(addr(5)), "metadata_hash": "abc", "energy": 100, "half_life": 5}),
+            &addr(1),
+            0,
+        )
+        .unwrap();
+
+        // addr(5) owns the NFT, so burn succeeds.
+        let r = eng.call(
+            id,
+            "burn",
+            &serde_json::json!({"token_id": 1}),
+            &addr(5),
+            0,
+        );
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn test_nft_burn_allowed_by_creator() {
+        let mut eng = engine();
+        let id = deploy_nft(&mut eng);
+
+        // Creator mints to addr(5).
+        eng.call(
+            id,
+            "mint",
+            &serde_json::json!({"to": hex::encode(addr(5)), "metadata_hash": "abc", "energy": 100, "half_life": 5}),
+            &addr(1),
+            0,
+        )
+        .unwrap();
+
+        // addr(1) is the creator, so burn succeeds even though they don't own the NFT.
+        let r = eng.call(
+            id,
+            "burn",
+            &serde_json::json!({"token_id": 1}),
+            &addr(1),
+            0,
+        );
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn test_staking_unstake_rejected_for_non_staker() {
+        let mut eng = engine();
+        let id = deploy_staking(&mut eng);
+
+        // Creator stakes for "alice".
+        eng.call(
+            id,
+            "stake",
+            &serde_json::json!({"staker": "alice", "amount": 1000}),
+            &addr(1),
+            0,
+        )
+        .unwrap();
+
+        // addr(3) is neither the staker ("alice") nor the creator (addr(1)).
+        let r = eng.call(
+            id,
+            "unstake",
+            &serde_json::json!({"staker": "alice"}),
+            &addr(3),
+            5,
+        );
+        assert!(matches!(r, Err(ContractError::PermissionDenied(_))));
+    }
+
+    #[test]
+    fn test_staking_claim_rewards_rejected_for_non_staker() {
+        let mut eng = engine();
+        let id = deploy_staking(&mut eng);
+
+        eng.call(
+            id,
+            "stake",
+            &serde_json::json!({"staker": "alice", "amount": 1000}),
+            &addr(1),
+            0,
+        )
+        .unwrap();
+
+        eng.tick(5);
+
+        // addr(3) is neither the staker nor the creator.
+        let r = eng.call(
+            id,
+            "claim_rewards",
+            &serde_json::json!({"staker": "alice"}),
+            &addr(3),
+            5,
+        );
+        assert!(matches!(r, Err(ContractError::PermissionDenied(_))));
+    }
+
+    #[test]
+    fn test_temporal_advance_phase_rejected_for_non_owner() {
+        let mut eng = engine();
+        let id = eng
+            .deploy(
+                ContractTemplate::TemporalContract,
+                serde_json::json!({
+                    "name": "TestTemporal",
+                    "owner": hex::encode(addr(1)),
+                    "phases": [
+                        {"name": "phase1", "duration_epochs": 10, "min_energy": 0, "auto_advance": false, "allowed_methods": [], "energy_cost_per_epoch": 0},
+                        {"name": "phase2", "duration_epochs": 10, "min_energy": 0, "auto_advance": false, "allowed_methods": [], "energy_cost_per_epoch": 0}
+                    ]
+                }),
+                vec![],
+                addr(1),
+                5000,
+                100,
+                0,
+            )
+            .unwrap();
+
+        // addr(3) is neither the owner (hex of addr(1)) nor the creator (addr(1)).
+        let r = eng.call(
+            id,
+            "advance_phase",
+            &serde_json::json!({}),
+            &addr(3),
+            5,
+        );
+        assert!(matches!(r, Err(ContractError::PermissionDenied(_))));
+    }
+
+    #[test]
+    fn test_temporal_set_data_rejected_for_non_owner() {
+        let mut eng = engine();
+        let id = eng
+            .deploy(
+                ContractTemplate::TemporalContract,
+                serde_json::json!({
+                    "name": "TestTemporal",
+                    "owner": hex::encode(addr(1)),
+                    "phases": [
+                        {"name": "phase1", "duration_epochs": 10, "min_energy": 0, "auto_advance": false, "allowed_methods": [], "energy_cost_per_epoch": 0}
+                    ]
+                }),
+                vec![],
+                addr(1),
+                5000,
+                100,
+                0,
+            )
+            .unwrap();
+
+        // addr(3) is not authorized.
+        let r = eng.call(
+            id,
+            "set_data",
+            &serde_json::json!({"key": "evil", "value": "hack"}),
+            &addr(3),
+            0,
+        );
+        assert!(matches!(r, Err(ContractError::PermissionDenied(_))));
+    }
+
+    #[test]
+    fn test_temporal_read_methods_allowed_for_anyone() {
+        let mut eng = engine();
+        let id = eng
+            .deploy(
+                ContractTemplate::TemporalContract,
+                serde_json::json!({
+                    "name": "TestTemporal",
+                    "owner": hex::encode(addr(1)),
+                    "phases": [
+                        {"name": "phase1", "duration_epochs": 10, "min_energy": 0, "auto_advance": false, "allowed_methods": [], "energy_cost_per_epoch": 0}
+                    ]
+                }),
+                vec![],
+                addr(1),
+                5000,
+                100,
+                0,
+            )
+            .unwrap();
+
+        // Read-only methods should work for any caller.
+        let r = eng.call(id, "get_phase", &serde_json::json!({}), &addr(3), 0);
+        assert!(r.is_ok());
+
+        let r = eng.call(id, "get_history", &serde_json::json!({}), &addr(3), 0);
+        assert!(r.is_ok());
+
+        let r = eng.call(id, "get_callbacks", &serde_json::json!({}), &addr(3), 0);
+        assert!(r.is_ok());
     }
 }

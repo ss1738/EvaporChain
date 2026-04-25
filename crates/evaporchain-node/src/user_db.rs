@@ -38,6 +38,32 @@ pub struct ActivityEntry {
 impl UserDb {
     pub fn open(path: &str) -> Result<Self, String> {
         let conn = Connection::open(path).map_err(|e| format!("DB open: {e}"))?;
+
+        // Set restrictive file permissions (owner-only read/write) on the SQLite
+        // database file. This protects encrypted wallet private keys from being
+        // read by other processes/users on the same machine.
+        // Skip for in-memory databases (used in tests).
+        #[cfg(unix)]
+        if path != ":memory:" {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(metadata) = std::fs::metadata(path) {
+                let mut perms = metadata.permissions();
+                perms.set_mode(0o600); // owner read/write only
+                if let Err(e) = std::fs::set_permissions(path, perms) {
+                    eprintln!("[WARN] Could not set restrictive permissions on {path}: {e}");
+                }
+                // Also set permissions on the WAL and SHM files if they exist
+                for suffix in &["-wal", "-shm"] {
+                    let wal_path = format!("{path}{suffix}");
+                    if let Ok(wal_meta) = std::fs::metadata(&wal_path) {
+                        let mut wal_perms = wal_meta.permissions();
+                        wal_perms.set_mode(0o600);
+                        let _ = std::fs::set_permissions(&wal_path, wal_perms);
+                    }
+                }
+            }
+        }
+
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
             .map_err(|e| format!("Pragma: {e}"))?;
 
@@ -325,5 +351,41 @@ mod tests {
         let hash = bcrypt::hash("mypassword123", 4).unwrap();
         assert!(bcrypt::verify("mypassword123", &hash).unwrap());
         assert!(!bcrypt::verify("wrongpassword", &hash).unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_db_file_permissions_are_restrictive() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join("evaporchain_test_perms");
+        let _ = std::fs::create_dir_all(&dir);
+        let db_path = dir.join("test_perms.db");
+        let path_str = db_path.to_str().unwrap();
+
+        // Open the database (this should set 0600 permissions)
+        let _db = UserDb::open(path_str).unwrap();
+
+        let meta = std::fs::metadata(path_str).unwrap();
+        let mode = meta.permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "Database file should have owner-only permissions (0600), got {:o}",
+            mode
+        );
+
+        // Cleanup
+        let _ = std::fs::remove_file(path_str);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_wallet_stores_encrypted_private_key() {
+        let db = temp_db();
+        let uid = db.create_user("enc@example.com", "$h", "E", "000000").unwrap();
+        let encrypted_key = "aabbccdd_encrypted_blob";
+        db.create_wallet(uid, "Secure", "0xsecure", "pub_key", encrypted_key).unwrap();
+        let keys = db.get_wallet_keys("0xsecure").unwrap().unwrap();
+        assert_eq!(keys.0, "pub_key");
+        assert_eq!(keys.1, encrypted_key, "stored key must be the encrypted blob, not plaintext");
     }
 }

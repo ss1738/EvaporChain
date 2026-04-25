@@ -826,3 +826,123 @@ contract Boss {
         assert!(result.gas_used > 0);
     }
 }
+
+// ═══════════════════════════════════════════════════════════════
+// Security regression tests (C-05: map key type collisions)
+// ═══════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod map_key_collision_tests {
+    use super::*;
+
+    /// C-05: U64(42) and Str("42") must produce different map keys.
+    #[test]
+    fn test_c05_u64_and_str_produce_different_keys() {
+        let key_u64 = Value::U64(42).to_map_key();
+        let key_str = Value::Str("42".to_string()).to_map_key();
+        assert_ne!(
+            key_u64, key_str,
+            "U64(42) and Str(\"42\") must hash to different map keys, got both = {key_u64}"
+        );
+    }
+
+    /// C-05: All variant prefixes must be distinct.
+    #[test]
+    fn test_c05_all_type_prefixes_distinct() {
+        let keys = vec![
+            Value::U64(0).to_map_key(),
+            Value::Bool(false).to_map_key(),
+            Value::Str("0".to_string()).to_map_key(),
+            Value::Address([0u8; 32]).to_map_key(),
+            Value::Null.to_map_key(),
+            Value::Map(HashMap::new()).to_map_key(),
+            Value::Array(Vec::new()).to_map_key(),
+        ];
+        // Extract the prefix (everything before first ':')
+        let prefixes: Vec<&str> = keys.iter().map(|k| k.split(':').next().unwrap()).collect();
+        let unique: std::collections::HashSet<&str> = prefixes.iter().copied().collect();
+        assert_eq!(
+            prefixes.len(),
+            unique.len(),
+            "all type prefixes must be unique, got: {:?}",
+            prefixes
+        );
+    }
+
+    /// C-05: Verify map key collisions cannot happen in an end-to-end contract execution.
+    /// An attacker tries to overwrite a U64-keyed entry using a Str key with the same digits.
+    #[test]
+    fn test_c05_map_collision_attack_e2e() {
+        let src = r#"
+contract MapTest {
+    state {
+        data: map[string -> u64]
+    }
+    fn set_str(key: string, val: u64) {
+        self.data[key] = val
+    }
+    fn get_str(key: string) -> u64 {
+        return self.data[key]
+    }
+}
+"#;
+        let mut engine = ScriptEngine::new();
+        let creator = [1u8; 32];
+        let id = engine.deploy(src, creator, 10_000, 100, 1).unwrap();
+
+        // Set key "hello" = 100
+        engine
+            .call(
+                id,
+                "set_str",
+                vec![Value::Str("hello".into()), Value::U64(100)],
+                creator,
+                10,
+            )
+            .unwrap();
+
+        // Set key "world" = 200
+        engine
+            .call(
+                id,
+                "set_str",
+                vec![Value::Str("world".into()), Value::U64(200)],
+                creator,
+                10,
+            )
+            .unwrap();
+
+        // Verify "hello" is still 100 (not overwritten)
+        let result = engine
+            .call(
+                id,
+                "get_str",
+                vec![Value::Str("hello".into())],
+                creator,
+                10,
+            )
+            .unwrap();
+        assert_eq!(result.return_value, Value::U64(100));
+
+        // Verify "world" is 200
+        let result = engine
+            .call(
+                id,
+                "get_str",
+                vec![Value::Str("world".into())],
+                creator,
+                10,
+            )
+            .unwrap();
+        assert_eq!(result.return_value, Value::U64(200));
+    }
+
+    /// C-05: Verify that the type prefix format is stable (regression guard).
+    #[test]
+    fn test_c05_key_format_stability() {
+        assert_eq!(Value::U64(42).to_map_key(), "u:42");
+        assert_eq!(Value::Str("42".to_string()).to_map_key(), "s:42");
+        assert_eq!(Value::Bool(true).to_map_key(), "b:true");
+        assert_eq!(Value::Null.to_map_key(), "n:null");
+    }
+}

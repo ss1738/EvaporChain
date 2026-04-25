@@ -2267,6 +2267,16 @@ impl TendermintConsensus {
             warn!(block = block.number, "DA certificate has zero attestations");
             return false;
         }
+        // C-09 FIX: Verify all BLS signatures on attestations and recompute
+        // attested_stake from attestation data. Without this, a forged certificate
+        // with fabricated attested_stake and garbage signatures would be accepted.
+        if !cert.verify_signatures() {
+            warn!(
+                block = block.number,
+                "DA certificate contains invalid BLS signatures or inflated stake"
+            );
+            return false;
+        }
         true
     }
 }

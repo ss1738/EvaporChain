@@ -531,7 +531,10 @@ fn execute_tx(
             Transaction::Refresh(refresh) => fc.compute_refresh_fee(refresh.energy_deposit),
             _ => 0,
         };
-        let total_tx_fee = gas_fee + extra_fee;
+        let total_tx_fee = match gas_fee.checked_add(extra_fee) {
+            Some(v) => v,
+            None => return TxExecResult::Failed { fee: 0 },
+        };
 
         if let Some(sender_addr) = tx.sender() {
             let balance = match view.read_balance(sender_addr) {
@@ -545,7 +548,11 @@ fn execute_tx(
                 Ok(n) => n,
                 Err(blocked) => return TxExecResult::Blocked(blocked),
             };
-            view.write_account(*sender_addr, balance - total_tx_fee, nonce);
+            let new_balance = match balance.checked_sub(total_tx_fee) {
+                Some(v) => v,
+                None => return TxExecResult::Failed { fee: 0 },
+            };
+            view.write_account(*sender_addr, new_balance, nonce);
         }
         total_tx_fee
     } else {
@@ -666,8 +673,19 @@ fn exec_transfer(view: &mut TxView, tx: &TransferTx) -> Result<(), TxViewError> 
     }
 
     // Note: fee was already deducted, so balance may already be reduced
-    let new_sender_balance = sender_balance - tx.amount;
-    view.write_account(tx.from, new_sender_balance, sender_nonce + 1);
+    let new_sender_balance = sender_balance.checked_sub(tx.amount).ok_or_else(|| {
+        TxViewError::ExecutionError(ExecutionError::InsufficientBalance {
+            account: hex::encode(tx.from),
+            available: sender_balance,
+            required: tx.amount,
+        })
+    })?;
+    let new_sender_nonce = sender_nonce.checked_add(1).ok_or_else(|| {
+        TxViewError::ExecutionError(ExecutionError::ContractError(
+            "nonce overflow".into(),
+        ))
+    })?;
+    view.write_account(tx.from, new_sender_balance, new_sender_nonce);
 
     let recv_balance = view.read_balance(&tx.to).map_err(TxViewError::Blocked)?;
     let recv_nonce = view.read_nonce(&tx.to).map_err(TxViewError::Blocked)?;
@@ -778,7 +796,19 @@ fn exec_validator_stake(view: &mut TxView, tx: &ValidatorStakeTx) -> Result<(), 
         .into());
     }
 
-    view.write_account(tx.validator_address, balance - tx.stake_amount, nonce + 1);
+    let new_balance = balance.checked_sub(tx.stake_amount).ok_or_else(|| {
+        TxViewError::ExecutionError(ExecutionError::InsufficientBalance {
+            account: hex::encode(tx.validator_address),
+            available: balance,
+            required: tx.stake_amount,
+        })
+    })?;
+    let new_nonce = nonce.checked_add(1).ok_or_else(|| {
+        TxViewError::ExecutionError(ExecutionError::ContractError(
+            "nonce overflow".into(),
+        ))
+    })?;
+    view.write_account(tx.validator_address, new_balance, new_nonce);
     Ok(())
 }
 
@@ -798,7 +828,12 @@ fn exec_validator_exit(view: &mut TxView, tx: &ValidatorExitTx) -> Result<(), Tx
         .into());
     }
 
-    view.write_account(tx.validator_address, balance, nonce + 1);
+    let new_nonce = nonce.checked_add(1).ok_or_else(|| {
+        TxViewError::ExecutionError(ExecutionError::ContractError(
+            "nonce overflow".into(),
+        ))
+    })?;
+    view.write_account(tx.validator_address, balance, new_nonce);
     Ok(())
 }
 
@@ -1301,7 +1336,13 @@ impl ExecutionEngine for BlockStmExecutor {
                         total_txs_failed += 1;
                         continue;
                     }
-                    sender.balance -= total_tx_fee;
+                    sender.balance = match sender.balance.checked_sub(total_tx_fee) {
+                        Some(v) => v,
+                        None => {
+                            total_txs_failed += 1;
+                            continue;
+                        }
+                    };
                 }
                 total_tx_fee
             } else {
@@ -1514,7 +1555,13 @@ impl BlockStmExecutor {
                     }
                     _ => 0,
                 };
-                let total_tx_fee = gas_fee + extra_fee;
+                let total_tx_fee = match gas_fee.checked_add(extra_fee) {
+                    Some(v) => v,
+                    None => {
+                        txs_failed += 1;
+                        continue;
+                    }
+                };
                 if let Some(sender_addr) = tx.sender() {
                     let bal = get_balance(sender_addr, &accounts);
                     if bal < total_tx_fee {
@@ -1522,11 +1569,18 @@ impl BlockStmExecutor {
                         continue;
                     }
                     let nonce = get_nonce(sender_addr, &accounts);
+                    let new_bal = match bal.checked_sub(total_tx_fee) {
+                        Some(v) => v,
+                        None => {
+                            txs_failed += 1;
+                            continue;
+                        }
+                    };
                     accounts.insert(
                         *sender_addr,
                         Account {
                             address: *sender_addr,
-                            balance: bal - total_tx_fee,
+                            balance: new_bal,
                             nonce,
                         },
                     );
@@ -1547,25 +1601,35 @@ impl BlockStmExecutor {
                         if sn != t.nonce || sb < t.amount {
                             false
                         } else {
-                            accounts.insert(
-                                t.from,
-                                Account {
-                                    address: t.from,
-                                    balance: sb - t.amount,
-                                    nonce: sn + 1,
-                                },
-                            );
-                            let rb = get_balance(&t.to, &accounts);
-                            let rn = get_nonce(&t.to, &accounts);
-                            accounts.insert(
-                                t.to,
-                                Account {
-                                    address: t.to,
-                                    balance: rb + t.amount,
-                                    nonce: rn,
-                                },
-                            );
-                            true
+                            match (sb.checked_sub(t.amount), sn.checked_add(1)) {
+                                (Some(new_sb), Some(new_sn)) => {
+                                    accounts.insert(
+                                        t.from,
+                                        Account {
+                                            address: t.from,
+                                            balance: new_sb,
+                                            nonce: new_sn,
+                                        },
+                                    );
+                                    let rb = get_balance(&t.to, &accounts);
+                                    let rn = get_nonce(&t.to, &accounts);
+                                    match rb.checked_add(t.amount) {
+                                        Some(new_rb) => {
+                                            accounts.insert(
+                                                t.to,
+                                                Account {
+                                                    address: t.to,
+                                                    balance: new_rb,
+                                                    nonce: rn,
+                                                },
+                                            );
+                                            true
+                                        }
+                                        None => false, // receiver balance overflow
+                                    }
+                                }
+                                _ => false, // arithmetic overflow
+                            }
                         }
                     }
                 }
@@ -1618,15 +1682,20 @@ impl BlockStmExecutor {
                     if t.stake_amount == 0 || nonce != t.nonce || bal < t.stake_amount {
                         false
                     } else {
-                        accounts.insert(
-                            t.validator_address,
-                            Account {
-                                address: t.validator_address,
-                                balance: bal - t.stake_amount,
-                                nonce: nonce + 1,
-                            },
-                        );
-                        true
+                        match (bal.checked_sub(t.stake_amount), nonce.checked_add(1)) {
+                            (Some(new_bal), Some(new_nonce)) => {
+                                accounts.insert(
+                                    t.validator_address,
+                                    Account {
+                                        address: t.validator_address,
+                                        balance: new_bal,
+                                        nonce: new_nonce,
+                                    },
+                                );
+                                true
+                            }
+                            _ => false, // arithmetic overflow
+                        }
                     }
                 }
                 Transaction::ValidatorExit(ref t) => {
@@ -1635,15 +1704,20 @@ impl BlockStmExecutor {
                     if nonce != t.nonce {
                         false
                     } else {
-                        accounts.insert(
-                            t.validator_address,
-                            Account {
-                                address: t.validator_address,
-                                balance: bal,
-                                nonce: nonce + 1,
-                            },
-                        );
-                        true
+                        match nonce.checked_add(1) {
+                            Some(new_nonce) => {
+                                accounts.insert(
+                                    t.validator_address,
+                                    Account {
+                                        address: t.validator_address,
+                                        balance: bal,
+                                        nonce: new_nonce,
+                                    },
+                                );
+                                true
+                            }
+                            None => false, // nonce overflow
+                        }
                     }
                 }
                 _ => false,
@@ -2295,5 +2369,192 @@ mod tests {
             let result = mv.read(&loc, 1).unwrap();
             assert!(result.is_some(), "non-deleted write should still exist");
         }
+    }
+
+    // ── C-12 regression: balance overflow protection ──
+
+    #[test]
+    fn test_receiver_balance_overflow_parallel() {
+        // C-12 regression: receiving u64::MAX + 1 must fail, not wrap to zero
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1000);
+        // Give the receiver near-max balance so adding any amount overflows
+        db.put_account(Account {
+            address: addr(2),
+            balance: u64::MAX,
+            nonce: 0,
+        });
+
+        let txs = vec![Transaction::Transfer(TransferTx {
+            from: addr(1),
+            to: addr(2),
+            amount: 1,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        })];
+
+        let block = make_block(1, 1, txs);
+        let mut executor = BlockStmExecutor::new_for_test(7);
+        executor.parallel_threshold = 1; // Force parallel path
+        let result = executor.execute_block(&mut db, &block).unwrap();
+
+        // The transfer must fail — receiver balance would overflow
+        assert_eq!(result.txs_failed, 1, "overflow transfer must fail");
+        assert_eq!(result.txs_executed, 0);
+        // Receiver balance must NOT have wrapped to zero
+        assert_eq!(
+            db.get_account(&addr(2)).unwrap().balance,
+            u64::MAX,
+            "receiver balance must not wrap on overflow"
+        );
+        // Sender balance unchanged (tx reverted)
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 1000);
+    }
+
+    #[test]
+    fn test_receiver_balance_overflow_sequential() {
+        // C-12 regression: same test but via sequential fallback path
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1000);
+        db.put_account(Account {
+            address: addr(2),
+            balance: u64::MAX,
+            nonce: 0,
+        });
+
+        let txs = vec![Transaction::Transfer(TransferTx {
+            from: addr(1),
+            to: addr(2),
+            amount: 1,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        })];
+
+        let block = make_block(1, 1, txs);
+        let mut executor = BlockStmExecutor::new_for_test(7);
+        executor.parallel_threshold = 100; // Force sequential path
+        let result = executor.execute_block(&mut db, &block).unwrap();
+
+        assert_eq!(result.txs_failed, 1, "overflow transfer must fail in sequential");
+        assert_eq!(result.txs_executed, 0);
+        assert_eq!(
+            db.get_account(&addr(2)).unwrap().balance,
+            u64::MAX,
+            "receiver balance must not wrap on overflow (sequential)"
+        );
+        let sender_bal = db.get_account(&addr(1)).unwrap().balance;
+        assert!(sender_bal >= 999 && sender_bal <= 1000, "sender balance {sender_bal} after failed tx");
+    }
+
+    #[test]
+    fn test_large_transfer_near_max_balance() {
+        // Verify that transfers near u64::MAX boundary work correctly
+        // when they don't actually overflow
+        let mut db = InMemoryStateDB::new();
+        db.put_account(Account {
+            address: addr(1),
+            balance: u64::MAX - 100,
+            nonce: 0,
+        });
+        fund_account(&mut db, 2, 0);
+
+        let txs = vec![Transaction::Transfer(TransferTx {
+            from: addr(1),
+            to: addr(2),
+            amount: 500,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        })];
+
+        let block = make_block(1, 1, txs);
+        let mut executor = BlockStmExecutor::new_for_test(7);
+        executor.parallel_threshold = 1;
+        let result = executor.execute_block(&mut db, &block).unwrap();
+
+        assert_eq!(result.txs_executed, 1);
+        assert_eq!(
+            db.get_account(&addr(1)).unwrap().balance,
+            u64::MAX - 100 - 500
+        );
+        assert_eq!(db.get_account(&addr(2)).unwrap().balance, 500);
+    }
+
+    #[test]
+    fn test_concurrent_overflow_attack() {
+        // C-12 regression: multiple concurrent transfers to a near-max receiver
+        // Only one should succeed if the second would cause overflow
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 10_000);
+        fund_account(&mut db, 3, 10_000);
+        db.put_account(Account {
+            address: addr(2),
+            balance: u64::MAX - 5_000,
+            nonce: 0,
+        });
+
+        // Two independent senders both transferring to addr(2)
+        // First: 5000 (fits exactly at u64::MAX)
+        // Second: 1 (would overflow past u64::MAX)
+        let txs = vec![
+            Transaction::Transfer(TransferTx {
+                from: addr(1),
+                to: addr(2),
+                amount: 5_000,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            }),
+            Transaction::Transfer(TransferTx {
+                from: addr(3),
+                to: addr(2),
+                amount: 1,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            }),
+        ];
+
+        let block = make_block(1, 1, txs);
+        let mut executor = BlockStmExecutor::new_for_test(7);
+        executor.parallel_threshold = 1;
+        let result = executor.execute_block(&mut db, &block).unwrap();
+
+        // First tx should succeed, second must fail (would overflow)
+        assert_eq!(result.txs_executed, 1, "only one transfer should succeed");
+        assert_eq!(result.txs_failed, 1, "overflow transfer must fail");
+        assert_eq!(
+            db.get_account(&addr(2)).unwrap().balance,
+            u64::MAX,
+            "receiver should be at max, not wrapped"
+        );
+    }
+
+    #[test]
+    fn test_validator_stake_checked_subtraction() {
+        // Verify validator stake uses checked arithmetic
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 100);
+
+        let txs = vec![Transaction::ValidatorStake(ValidatorStakeTx {
+            validator_address: addr(1),
+            stake_amount: 200, // More than balance
+            validator_id: 1,
+            nonce: 0,
+            bls_public_key: None,
+            vrf_public_key: None,
+            signature: None,
+            public_key: None,
+        })];
+
+        let block = make_block(1, 1, txs);
+        let mut executor = BlockStmExecutor::new_for_test(7);
+        executor.parallel_threshold = 1;
+        let result = executor.execute_block(&mut db, &block).unwrap();
+
+        assert_eq!(result.txs_failed, 1);
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 100);
     }
 }

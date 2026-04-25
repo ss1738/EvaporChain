@@ -1647,4 +1647,98 @@ contract Test {
             other => panic!("expected empty array literal, got {other:?}"),
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Security regression tests (C-13, C-06, C-05)
+    // ═══════════════════════════════════════════════════════════════
+
+    /// C-13: Integer literal overflow must return a parse error, never silently become 0.
+    #[test]
+    fn test_c13_integer_overflow_returns_parse_error() {
+        let src = r#"
+contract Test {
+    state { x: u64 = 0 }
+    fn set() {
+        self.x = 99999999999999999999
+    }
+}
+"#;
+        let result = parse(src);
+        assert!(result.is_err(), "parsing overflowing integer must fail, not silently become 0");
+        let err = format!("{}", result.unwrap_err());
+        assert!(
+            err.contains("overflow"),
+            "error should mention overflow, got: {err}"
+        );
+    }
+
+    /// C-13: Boundary value — u64::MAX should parse successfully.
+    #[test]
+    fn test_c13_u64_max_parses_ok() {
+        let src = format!(
+            r#"contract Test {{ state {{ x: u64 = 0 }} fn set() {{ self.x = {} }} }}"#,
+            u64::MAX
+        );
+        let result = parse(&src);
+        assert!(result.is_ok(), "u64::MAX should parse successfully");
+    }
+
+    /// C-13: u64::MAX + 1 must fail.
+    #[test]
+    fn test_c13_u64_max_plus_one_fails() {
+        // 18446744073709551616 = u64::MAX + 1
+        let src = r#"
+contract Test {
+    state { x: u64 = 0 }
+    fn set() {
+        self.x = 18446744073709551616
+    }
+}
+"#;
+        let result = parse(src);
+        assert!(result.is_err(), "u64::MAX + 1 must fail to parse");
+    }
+
+    /// C-06: Deeply nested parenthesized expressions must be rejected, not stack-overflow.
+    #[test]
+    fn test_c06_deep_nesting_rejected() {
+        // Build expression with 100 nested parens: (((((...0...)))))
+        let open = "(".repeat(100);
+        let close = ")".repeat(100);
+        let src = format!(
+            r#"contract Test {{ state {{ x: u64 = 0 }} fn f() -> u64 {{ return {open}0{close} }} }}"#,
+        );
+        let result = parse(&src);
+        assert!(result.is_err(), "deeply nested expression (100 levels) must be rejected");
+        let err = format!("{}", result.unwrap_err());
+        assert!(
+            err.contains("depth") || err.contains("nesting"),
+            "error should mention depth/nesting, got: {err}"
+        );
+    }
+
+    /// C-06: Nesting at exactly MAX_EXPR_DEPTH (64) should be rejected.
+    #[test]
+    fn test_c06_nesting_at_max_depth_rejected() {
+        let open = "(".repeat(65);
+        let close = ")".repeat(65);
+        let src = format!(
+            r#"contract Test {{ state {{ x: u64 = 0 }} fn f() -> u64 {{ return {open}0{close} }} }}"#,
+        );
+        let result = parse(&src);
+        assert!(result.is_err(), "nesting at depth 65 must be rejected");
+    }
+
+    /// C-06: Nesting below the limit should succeed.
+    #[test]
+    fn test_c06_moderate_nesting_ok() {
+        // 10 levels of nesting should be fine
+        let open = "(".repeat(10);
+        let close = ")".repeat(10);
+        let src = format!(
+            r#"contract Test {{ state {{ x: u64 = 0 }} fn f() -> u64 {{ return {open}42{close} }} }}"#,
+        );
+        let result = parse(&src);
+        assert!(result.is_ok(), "moderate nesting (10 levels) should succeed");
+    }
 }
