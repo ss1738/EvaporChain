@@ -2353,7 +2353,7 @@ async fn main() -> Result<()> {
     // Without all keys, blocks lack CommitCertificates and can't be synced.
     if let Some(ref tc_ref) = tendermint {
         if args.network_mode {
-            let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(45);
             loop {
                 // Drain incoming consensus messages to process KeyAnnounce
                 if let Some(ref mut rx) = consensus_net_receiver {
@@ -2371,7 +2371,7 @@ async fn main() -> Result<()> {
                 }
                 drop(tc);
                 if tokio::time::Instant::now() >= deadline {
-                    eprintln!("{} \x1b[33mBLS key exchange timeout (15s) — starting consensus with partial keys\x1b[0m", node_tag);
+                    eprintln!("{} \x1b[33mBLS key exchange timeout (45s) — starting consensus with partial keys\x1b[0m", node_tag);
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(200)).await;
