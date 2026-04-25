@@ -2354,6 +2354,7 @@ async fn main() -> Result<()> {
     if let Some(ref tc_ref) = tendermint {
         if args.network_mode {
             let deadline = tokio::time::Instant::now() + Duration::from_secs(45);
+            let mut last_rebroadcast = tokio::time::Instant::now();
             loop {
                 // Drain incoming consensus messages to process KeyAnnounce
                 if let Some(ref mut rx) = consensus_net_receiver {
@@ -2368,6 +2369,17 @@ async fn main() -> Result<()> {
                 if tc.validator_set().has_bls_keys() {
                     println!("{} \x1b[1;32mAll BLS keys registered — consensus ready\x1b[0m", node_tag);
                     break;
+                }
+                // Re-broadcast KeyAnnounce every 5s (gossipsub mesh may not be ready on first send)
+                if tokio::time::Instant::now().duration_since(last_rebroadcast) >= Duration::from_secs(5) {
+                    if let Some(key_msg) = tc.make_key_announce() {
+                        if let Some(ref sender) = consensus_net_sender {
+                            if let Ok(data) = serde_json::to_vec(&key_msg) {
+                                let _ = sender.try_send(data);
+                            }
+                        }
+                    }
+                    last_rebroadcast = tokio::time::Instant::now();
                 }
                 drop(tc);
                 if tokio::time::Instant::now() >= deadline {
