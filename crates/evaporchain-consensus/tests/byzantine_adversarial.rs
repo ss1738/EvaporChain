@@ -139,14 +139,12 @@ fn test_byzantine_equivocation_dual_proposals() {
         round: 0,
         block: block1,
         proposer_id: 1,
-        valid_round: None,
     };
     let msg2 = ConsensusMessage::Proposal {
         height: 1,
         round: 0,
         block: block2,
         proposer_id: 1,
-        valid_round: None,
     };
 
     let _actions1 = tc.on_message(msg1);
@@ -190,7 +188,6 @@ fn test_byzantine_proposal_wrong_height() {
         round: 0,
         block,
         proposer_id: 1,
-        valid_round: None,
     };
 
     let actions = tc.on_message(msg);
@@ -212,7 +209,6 @@ fn test_byzantine_proposal_zero_state_root_rejected() {
         round: 0,
         block,
         proposer_id: 1,
-        valid_round: None,
     };
 
     let actions = tc.on_message(msg);
@@ -231,7 +227,6 @@ fn test_byzantine_proposal_wrong_proposer() {
         round: 0,
         block,
         proposer_id: 3, // not the actual leader
-        valid_round: None,
     };
 
     let actions = tc.on_message(msg);
@@ -355,7 +350,6 @@ fn test_byzantine_stale_proposal_from_old_round() {
         round: 0,
         block,
         proposer_id: 1,
-        valid_round: None,
     };
     let actions = tc.on_message(msg);
 
