@@ -175,7 +175,7 @@ fn bench_state_root_computation(c: &mut Criterion) {
                         seed_accounts(&mut db, count as u64, 1_000_000);
                         db
                     },
-                    |db| {
+                    |mut db| {
                         let root = db.compute_state_root();
                         black_box(root)
                     },
