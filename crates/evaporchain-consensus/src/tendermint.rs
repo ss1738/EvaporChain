@@ -1006,8 +1006,11 @@ impl TendermintConsensus {
                     debug!(height = height, "Nova proof verified on proposal");
                 }
 
-                // Reject proposals with zero state_root (except genesis)
-                if block.number > 1 && block.state_root == [0u8; 32] {
+                // Reject zero state_root proposals when we have a real state root
+                if block.number > 1
+                    && block.state_root == [0u8; 32]
+                    && self.current_state_root != [0u8; 32]
+                {
                     warn!(
                         height = height,
                         round = round,
