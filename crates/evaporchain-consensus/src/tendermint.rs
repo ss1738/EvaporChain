@@ -845,6 +845,10 @@ impl TendermintConsensus {
         if let ConsensusMessage::DAAttestation {
             block_number, data_root, validator_id, samples_verified, stake, ref signature, ref public_key,
         } = msg {
+            if self.validator_set.get(validator_id).is_none() {
+                warn!(validator_id, "Rejecting DA attestation from unknown validator");
+                return actions;
+            }
             let att = evaporchain_da::certificate::DAAttestation {
                 block_number,
                 data_root,
@@ -1744,6 +1748,14 @@ impl TendermintConsensus {
     /// Create a block proposal from the current mempool.
     /// Caps transactions per block to keep proposals under gossipsub size limits.
     fn create_proposal(&mut self, _db: &mut dyn StateDB) -> Option<Block> {
+        if let Some(ref locked) = self.locked_block {
+            info!(
+                height = self.height,
+                round = self.round_state.round,
+                "Re-proposing locked block"
+            );
+            return Some(locked.clone());
+        }
         const MAX_TXS_PER_BLOCK: usize = 50;
         let next_epoch = self.epoch + 1;
 
