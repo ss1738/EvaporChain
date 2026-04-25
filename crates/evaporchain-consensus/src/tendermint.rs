@@ -501,10 +501,16 @@ impl TendermintConsensus {
     }
 
     /// Who is the proposer for the current height/round?
+    /// Uses beacon randomness when available so future leaders are unpredictable.
     fn proposer_for_round(&self, height: u64, round: u32) -> Option<&ValidatorInfo> {
-        // Mix round into epoch for leader selection diversity
         let virtual_epoch = height.wrapping_mul(100).wrapping_add(round as u64);
-        self.validator_set.leader_for_epoch(virtual_epoch)
+        let beacon = self.randomness_beacon.current();
+        if beacon == [0u8; 32] {
+            self.validator_set.leader_for_epoch(virtual_epoch)
+        } else {
+            self.validator_set
+                .leader_for_epoch_with_seed(virtual_epoch, &beacon)
+        }
     }
 
     /// Am I the proposer for the current height/round?

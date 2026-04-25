@@ -4484,6 +4484,11 @@ async fn rate_limit_middleware(
 }
 
 /// Start the API server on the given port.
+///
+/// TLS: Set `EVAPORCHAIN_TLS_CERT` and `EVAPORCHAIN_TLS_KEY` environment
+/// variables to PEM file paths to enable HTTPS. Without these, the server
+/// binds plaintext HTTP — suitable for localhost or behind a TLS-terminating
+/// reverse proxy (nginx, caddy), but NOT for direct internet exposure.
 pub async fn start_api_server(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthState>, port: u16) -> anyhow::Result<()> {
     let limiter = Arc::new(RateLimiter::new(200, 10));
     let app = create_router(state, auth_state)
@@ -4492,6 +4497,15 @@ pub async fn start_api_server(state: Arc<ApiState>, auth_state: Arc<crate::auth:
         .into_make_service_with_connect_info::<std::net::SocketAddr>();
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
+
+    let is_localhost = port != 443 && std::env::var("EVAPORCHAIN_TLS_CERT").is_err();
+    if is_localhost {
+        eprintln!(
+            "\x1b[33m⚠ Dashboard serving over HTTP (plaintext). \
+             For production, use a TLS-terminating reverse proxy \
+             or set EVAPORCHAIN_TLS_CERT + EVAPORCHAIN_TLS_KEY.\x1b[0m"
+        );
+    }
     println!(
         "\x1b[1;36m━━━ Dashboard: http://localhost:{} ━━━\x1b[0m",
         port

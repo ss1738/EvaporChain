@@ -484,13 +484,42 @@ impl ValidatorSet {
         self.validators.iter().any(|v| v.vrf_public_key.is_some())
     }
 
+    pub fn leader_for_epoch_with_seed(
+        &self,
+        epoch: u64,
+        beacon_seed: &[u8; 32],
+    ) -> Option<&ValidatorInfo> {
+        let active: Vec<&ValidatorInfo> = self.validators.iter().filter(|v| !v.jailed).collect();
+        if active.is_empty() {
+            return None;
+        }
+        let total: u64 = active.iter().map(|v| v.stake).sum();
+        if total == 0 {
+            let idx = epoch as usize % active.len();
+            return Some(active[idx]);
+        }
+        let weighted_index = Self::epoch_hash_with_seed(epoch, beacon_seed) % total;
+        let mut accumulated = 0u64;
+        for validator in &active {
+            accumulated += validator.stake;
+            if accumulated > weighted_index {
+                return Some(validator);
+            }
+        }
+        active.last().copied()
+    }
+
     /// Compute a deterministic hash for an epoch (used for leader selection).
     fn epoch_hash(epoch: u64) -> u64 {
-        let mut input = Vec::with_capacity(14);
+        Self::epoch_hash_with_seed(epoch, &[0u8; 32])
+    }
+
+    fn epoch_hash_with_seed(epoch: u64, seed: &[u8; 32]) -> u64 {
+        let mut input = Vec::with_capacity(46);
         input.extend_from_slice(&epoch.to_le_bytes());
         input.extend_from_slice(b"leader");
+        input.extend_from_slice(seed);
         let hash = blake3_hash(&input);
-        // Use first 8 bytes as u64
         let mut buf = [0u8; 8];
         buf.copy_from_slice(&hash[..8]);
         u64::from_le_bytes(buf)
