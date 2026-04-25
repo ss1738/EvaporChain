@@ -596,6 +596,7 @@ fn generate_demo_tx(
 struct NodeArgs {
     demo_mode: bool,
     prove_mode: bool,
+    mock_prove_mode: bool,
     network_mode: bool,
     api_mode: bool,
     api_port: u16,
@@ -635,6 +636,7 @@ fn parse_args() -> NodeArgs {
     let args: Vec<String> = std::env::args().collect();
     let demo_mode = args.iter().any(|a| a == "--demo");
     let prove_mode = args.iter().any(|a| a == "--prove");
+    let mock_prove_mode = args.iter().any(|a| a == "--mock-prove");
     let network_mode = args.iter().any(|a| a == "--network");
     let api_mode = args.iter().any(|a| a == "--api");
     let api_port = args
@@ -757,6 +759,7 @@ fn parse_args() -> NodeArgs {
     NodeArgs {
         demo_mode,
         prove_mode,
+        mock_prove_mode,
         network_mode,
         api_mode,
         api_port,
@@ -1427,35 +1430,48 @@ async fn main() -> Result<()> {
             std::process::exit(1);
         }
     } else {
-        // H-19 FIX: In release builds (no debug_assertions), refuse to start
-        // without real proving. MockProver must never be used in production.
-        #[cfg(not(any(test, feature = "test-utils", debug_assertions)))]
-        {
+        if args.mock_prove_mode {
             eprintln!(
-                "\x1b[31mFATAL: Cannot start without --prove in release mode.\x1b[0m"
+                "\x1b[33m⚠ WARNING: --mock-prove active. Proofs are NOT cryptographically verified.\x1b[0m"
             );
             eprintln!(
-                "\x1b[31m  MockProver is disabled in release builds to prevent accepting unverified proofs.\x1b[0m"
+                "\x1b[33m  This is acceptable for testnet/devnet. For production, use --prove.\x1b[0m"
             );
-            eprintln!(
-                "\x1b[31m  Recompile with: cargo build -p evaporchain-node --features prove --release\x1b[0m"
-            );
-            std::process::exit(1);
-        }
-        // In debug builds, allow MockProver for development convenience.
-        #[cfg(any(test, feature = "test-utils", debug_assertions))]
-        {
-            eprintln!(
-                "\x1b[33m⚠ WARNING: Running without --prove flag. MockProver active — proofs are NOT cryptographically verified.\x1b[0m"
-            );
-            eprintln!(
-                "\x1b[33m  For production, recompile with: cargo build -p evaporchain-node --features prove --release\x1b[0m"
-            );
-            Arc::new(Mutex::new(ChainProver::new(
-                Box::new(MockProver::new()) as Box<dyn ProvingEngine>,
-                genesis_state_root,
-                100,
-            )))
+            #[cfg(any(test, feature = "test-utils", debug_assertions))]
+            {
+                Arc::new(Mutex::new(ChainProver::new(
+                    Box::new(MockProver::new()) as Box<dyn ProvingEngine>,
+                    genesis_state_root,
+                    100,
+                )))
+            }
+            #[cfg(not(any(test, feature = "test-utils", debug_assertions)))]
+            {
+                eprintln!("\x1b[31mFATAL: --mock-prove requires debug build or test-utils feature.\x1b[0m");
+                std::process::exit(1);
+            }
+        } else {
+            #[cfg(not(any(test, feature = "test-utils", debug_assertions)))]
+            {
+                eprintln!(
+                    "\x1b[31mFATAL: Cannot start without --prove in release mode.\x1b[0m"
+                );
+                eprintln!(
+                    "\x1b[31m  Use --prove for production, or --mock-prove for testnet.\x1b[0m"
+                );
+                std::process::exit(1);
+            }
+            #[cfg(any(test, feature = "test-utils", debug_assertions))]
+            {
+                eprintln!(
+                    "\x1b[33m⚠ WARNING: No --prove flag. MockProver active — proofs are NOT verified.\x1b[0m"
+                );
+                Arc::new(Mutex::new(ChainProver::new(
+                    Box::new(MockProver::new()) as Box<dyn ProvingEngine>,
+                    genesis_state_root,
+                    100,
+                )))
+            }
         }
     };
 
@@ -1585,9 +1601,9 @@ async fn main() -> Result<()> {
     // Build Tendermint consensus if enabled
     let tendermint = if args.tendermint_mode {
         let mut validators = Vec::new();
-        for vid in 0..args.validator_count {
+        for vid in 1..=args.validator_count {
             let mut address = [0u8; 32];
-            address[0] = (vid + 1) as u8;
+            address[0] = vid as u8;
             validators.push(ValidatorInfo::new(vid, args.validator_stake, address));
         }
         let vs = ValidatorSet::with_validators(validators);

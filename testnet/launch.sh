@@ -9,18 +9,19 @@ NODE_NUM="${1:?Usage: ./launch.sh <1|2|3>}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 GENESIS="${SCRIPT_DIR}/genesis.json"
-BINARY="${SCRIPT_DIR}/../target/release/evaporchain-node"
-
-if [[ "$NODE_NUM" != "1" && "$NODE_NUM" != "2" && "$NODE_NUM" != "3" ]]; then
-    echo "Error: node_number must be 1, 2, or 3"
-    exit 1
+BINARY="${SCRIPT_DIR}/evaporchain-node"
+if [ ! -f "${BINARY}" ]; then
+    BINARY="${SCRIPT_DIR}/../target/release/evaporchain-node"
 fi
 
-declare -A NODE_NAMES=( [1]="satyawan" [2]="ironman" [3]="apsarth" )
-declare -A NODE_IPS=( [1]="100.119.53.101" [2]="100.103.216.125" [3]="100.113.253.72" )
+case "$NODE_NUM" in
+    1) NODE_NAME="satyawan"; NODE_IP="100.119.53.101" ;;
+    2) NODE_NAME="ironman";  NODE_IP="100.103.216.125" ;;
+    3) NODE_NAME="apsarth";  NODE_IP="100.113.253.72"  ;;
+    *) echo "Error: node_number must be 1, 2, or 3"; exit 1 ;;
+esac
 
 VALIDATOR_ID="$NODE_NUM"
-NODE_NAME="${NODE_NAMES[$NODE_NUM]}"
 P2P_PORT=$((9000 + NODE_NUM - 1))
 API_PORT=$((8080 + NODE_NUM))
 DATA_DIR="${HOME}/evaporchain-data/node-${NODE_NUM}"
@@ -35,18 +36,21 @@ echo ""
 
 mkdir -p "${DATA_DIR}"
 
+# Build bootstrap peer list (all nodes except self)
 BOOTSTRAP_ARGS=""
-for i in 1 2 3; do
-    if [[ "$i" != "$NODE_NUM" ]]; then
-        PEER_PORT=$((9000 + i - 1))
-        BOOTSTRAP_ARGS="${BOOTSTRAP_ARGS} --bootstrap /ip4/${NODE_IPS[$i]}/tcp/${PEER_PORT}"
+IPS="100.119.53.101 100.103.216.125 100.113.253.72"
+IDX=0
+for ip in $IPS; do
+    IDX=$((IDX + 1))
+    if [ "$IDX" != "$NODE_NUM" ]; then
+        PEER_PORT=$((9000 + IDX - 1))
+        BOOTSTRAP_ARGS="${BOOTSTRAP_ARGS} --bootstrap /ip4/${ip}/tcp/${PEER_PORT}"
     fi
 done
 
 export RUST_LOG=info
 
 exec "${BINARY}" \
-    --tendermint \
     --network \
     --api \
     --node-id "node-${NODE_NUM}" \
