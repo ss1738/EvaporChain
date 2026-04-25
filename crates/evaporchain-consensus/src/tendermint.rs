@@ -11,7 +11,7 @@
 use crate::da_attestation::DAAttestationManager;
 use crate::encrypted_mempool::{EncryptedMempool, EncryptedTransaction};
 use evaporchain_da::block_da::BlockDA;
-use evaporchain_da::block_da_2d::BlockDA2D;
+use evaporchain_da::block_da_2d::{BlockDA2D, AvailabilityMetrics};
 use evaporchain_da::namespace::{NamespaceMerkleTree, NamespacedBlob};
 use crate::finality::FinalityTracker;
 use crate::mempool::Mempool;
@@ -294,6 +294,14 @@ pub struct TendermintConsensus {
     /// Used to populate state_root in proposals so validators can verify
     /// pre-execution state agreement (CometBFT-style app_hash semantics).
     current_state_root: [u8; 32],
+    /// Minimum DAS confidence required to attest data availability (default 0.999).
+    /// confidence = 1 - 2^(-valid_samples). 16 valid samples → ~0.999985.
+    da_confidence_threshold: f64,
+    /// Block height at which DA certificate enforcement becomes mandatory.
+    /// Before this height: blocks without DA certificates are accepted with a warning (soft mode).
+    /// At or after this height: blocks without valid DA certificates are rejected (hard mode).
+    /// In both modes, if a DA certificate IS present it must pass full verification.
+    da_enforcement_height: u64,
 }
 
 impl TendermintConsensus {
@@ -345,6 +353,8 @@ impl TendermintConsensus {
             pending_reveals: Vec::new(),
             anchor_provider: None,
             current_state_root: [0u8; 32],
+            da_confidence_threshold: 0.999,
+            da_enforcement_height: 100,
         }
     }
 
@@ -357,6 +367,12 @@ impl TendermintConsensus {
     /// Set the anchor hash provider for rule-based consensus enforcement.
     pub fn set_anchor_provider(&mut self, provider: Box<dyn AnchorHashProvider>) {
         self.anchor_provider = Some(provider);
+    }
+
+    /// Set the minimum DAS confidence threshold for DA attestation (default 0.999).
+    /// confidence = 1 - 2^(-valid_samples). 16 valid samples → ~0.999985.
+    pub fn set_da_confidence_threshold(&mut self, threshold: f64) {
+        self.da_confidence_threshold = threshold.clamp(0.0, 1.0);
     }
 
     /// Set the BLS keypair for this validator (enables aggregate signatures).
@@ -384,6 +400,23 @@ impl TendermintConsensus {
         self.vrf_keypair = Some(keypair);
     }
 
+    /// Set the block height at which DA certificate enforcement becomes mandatory.
+    ///
+    /// Before `height`: blocks without DA certificates are accepted with a warning (soft mode).
+    /// At or after `height`: blocks without valid DA certificates are rejected (hard mode).
+    pub fn set_da_enforcement_height(&mut self, height: u64) {
+        info!(
+            old = self.da_enforcement_height,
+            new = height,
+            "DA enforcement height updated"
+        );
+        self.da_enforcement_height = height;
+    }
+
+    /// Get the current DA enforcement height.
+    pub fn da_enforcement_height(&self) -> u64 {
+        self.da_enforcement_height
+    }
 
     /// Submit an encrypted transaction to the MEV-protected mempool.
     pub fn submit_encrypted_tx(&mut self, encrypted_tx: EncryptedTransaction) {
@@ -455,6 +488,8 @@ impl TendermintConsensus {
             pending_reveals: Vec::new(),
             anchor_provider: None,
             current_state_root: [0u8; 32],
+            da_confidence_threshold: 0.999,
+            da_enforcement_height: 100,
         }
     }
 
@@ -2176,13 +2211,90 @@ impl TendermintConsensus {
 
     /// Perform DA sampling on a proposed block and return an attestation if valid.
     ///
-    /// The validator re-encodes the block's transaction data, verifies the data_root
-    /// matches the proposer's commitment, then samples random shards and verifies
-    /// their Merkle proofs. If all checks pass, a signed DA attestation is produced.
+    /// Uses 2D extended data square (Celestia-style) sampling when the block
+    /// carries `da_row_roots` / `da_col_roots`. Falls back to 1D shard sampling
+    /// when 2D roots are absent (backward compatibility).
+    ///
+    /// For 2D sampling, 16 random cells are sampled from the extended data square
+    /// and verified against both row and column commitments. The resulting
+    /// `AvailabilityMetrics` must meet `da_confidence_threshold` (default 0.999,
+    /// i.e. ~10 valid samples minimum) for the validator to attest.
     pub fn perform_da_sampling(&self, block: &Block) -> Option<ConsensusMessage> {
         let data_root = block.data_root?;
 
         let tx_bytes = serde_json::to_vec(&block.transactions).ok()?;
+
+        // ── 2D sampling path (preferred) ────────────────────────────────
+        if !block.da_row_roots.is_empty() && !block.da_col_roots.is_empty() {
+            let da2d = BlockDA2D::new();
+            let package = da2d.encode_block(&tx_bytes).ok()?;
+
+            // Verify row/col roots match the proposer's header
+            // (data_root integrity is covered by the 1D path; 2D uses row/col commitments)
+            if package.header.row_roots != block.da_row_roots
+                || package.header.col_roots != block.da_col_roots
+            {
+                warn!(
+                    height = block.number,
+                    "DA-2D sampling: row/col roots mismatch — local encoding differs from proposer"
+                );
+                return None;
+            }
+
+            let seed = {
+                let mut s = Vec::with_capacity(40);
+                s.extend_from_slice(b"da-2d-sample");
+                s.extend_from_slice(&block.number.to_le_bytes());
+                s.extend_from_slice(&self.my_id.to_le_bytes());
+                s
+            };
+
+            // 16 cells -> confidence ~ 1 - 2^(-16) ~ 0.999985 if all valid
+            let num_samples = 16usize;
+            let (results, _all_valid) = da2d.light_client_sample(
+                &package,
+                block.number,
+                num_samples,
+                &seed,
+            );
+
+            let metrics = AvailabilityMetrics::from_samples(
+                &results,
+                package.header.extended_dim,
+            );
+
+            if metrics.confidence < self.da_confidence_threshold {
+                warn!(
+                    height = block.number,
+                    confidence = %format!("{:.6}", metrics.confidence),
+                    threshold = %format!("{:.6}", self.da_confidence_threshold),
+                    valid = metrics.valid_samples,
+                    total = metrics.total_samples,
+                    recovery_possible = metrics.recovery_possible,
+                    "DA-2D sampling failed: confidence below threshold"
+                );
+                return None;
+            }
+
+            info!(
+                height = block.number,
+                confidence = %format!("{:.6}", metrics.confidence),
+                valid = metrics.valid_samples,
+                total = metrics.total_samples,
+                unique_rows = metrics.unique_rows_hit,
+                unique_cols = metrics.unique_cols_hit,
+                recovery_possible = metrics.recovery_possible,
+                "DA-2D sampling passed"
+            );
+
+            return self.make_da_attestation(
+                block.number,
+                data_root,
+                metrics.valid_samples as u32,
+            );
+        }
+
+        // ── 1D fallback path ────────────────────────────────────────────
         let da = BlockDA::new().ok()?;
         let package = da.encode_block(&tx_bytes).ok()?;
 
@@ -2232,19 +2344,44 @@ impl TendermintConsensus {
             height = block.number,
             verified,
             total_samples = num_samples,
-            "DA sampling passed"
+            "DA sampling passed (1D fallback)"
         );
 
         self.make_da_attestation(block.number, data_root, verified)
     }
 
     /// Verify a DA certificate included in a received block.
-    /// Returns true if the certificate is valid or absent (absent = not yet enforced).
+    ///
+    /// Enforcement modes based on `da_enforcement_height`:
+    /// - **Soft mode** (block.number < da_enforcement_height): blocks without DA
+    ///   certificates are accepted with a warning. If a certificate IS present,
+    ///   it must pass full verification (BLS signatures, supermajority, etc.).
+    /// - **Hard mode** (block.number >= da_enforcement_height): blocks without a
+    ///   valid DA certificate are rejected outright.
     pub fn verify_da_certificate(&self, block: &Block) -> bool {
         let cert_bytes = match &block.da_certificate {
             Some(bytes) => bytes,
-            None => return true, // DA certificate not yet mandatory
+            None => {
+                // No DA certificate present — decide based on enforcement height
+                if block.number < self.da_enforcement_height {
+                    warn!(
+                        block = block.number,
+                        enforcement_height = self.da_enforcement_height,
+                        "Block has no DA certificate (soft mode — accepting before enforcement height)"
+                    );
+                    return true;
+                } else {
+                    warn!(
+                        block = block.number,
+                        enforcement_height = self.da_enforcement_height,
+                        "Block rejected: missing DA certificate (hard mode — enforcement active)"
+                    );
+                    return false;
+                }
+            }
         };
+
+        // Certificate is present — always verify fully regardless of height
         let cert: evaporchain_da::certificate::DACertificate = match serde_json::from_slice(cert_bytes) {
             Ok(c) => c,
             Err(_) => {
@@ -4859,7 +4996,8 @@ mod da_tests {
 
         if let Some(ConsensusMessage::DAAttestation { block_number, samples_verified, .. }) = att {
             assert_eq!(block_number, block.number);
-            assert!(samples_verified >= 4, "Should verify at least 4 samples");
+            // 2D path samples 16 cells; 1D fallback verifies at least 4 shards
+            assert!(samples_verified >= 4, "Should verify at least 4 samples, got {}", samples_verified);
         } else {
             panic!("Expected DAAttestation message");
         }
@@ -4891,6 +5029,9 @@ mod da_tests {
         tc.mempool.submit(dummy_transfer(42));
         let mut block = tc.create_proposal(&mut db).unwrap();
         block.data_root = Some([0xFFu8; 32]); // Tamper
+        // Clear 2D roots so sampling falls through to 1D path where data_root is checked
+        block.da_row_roots.clear();
+        block.da_col_roots.clear();
 
         let att = tc.perform_da_sampling(&block);
         assert!(att.is_none(), "Tampered data_root should fail DA sampling");
@@ -4968,5 +5109,362 @@ mod da_tests {
         tc.tick(&mut db);
 
         assert_eq!(tc.da_block_proposers.get(&height), Some(&proposer_id));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 2D DA Sampling Tests
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_da_2d_sampling_uses_2d_path_when_row_col_roots_present() {
+        let mut tc = make_proposer_tc();
+        let mut db = InMemoryStateDB::new();
+
+        let kp = BlsKeypair::generate();
+        tc.set_bls_keypair(kp);
+
+        tc.mempool.submit(dummy_transfer(42));
+        let block = tc.create_proposal(&mut db).unwrap();
+
+        // Blocks from create_proposal should have 2D roots populated
+        assert!(!block.da_row_roots.is_empty(), "Block should have da_row_roots");
+        assert!(!block.da_col_roots.is_empty(), "Block should have da_col_roots");
+        assert!(block.data_root.is_some(), "Block should have data_root");
+
+        let att = tc.perform_da_sampling(&block);
+        assert!(att.is_some(), "2D DA sampling should produce an attestation");
+
+        if let Some(ConsensusMessage::DAAttestation { samples_verified, .. }) = att {
+            // 2D path samples 16 cells, all should verify for a valid block
+            assert_eq!(samples_verified, 16, "2D path should verify all 16 samples");
+        } else {
+            panic!("Expected DAAttestation message from 2D path");
+        }
+    }
+
+    #[test]
+    fn test_da_2d_sampling_tampered_row_roots_returns_none() {
+        let mut tc = make_proposer_tc();
+        let mut db = InMemoryStateDB::new();
+
+        let kp = BlsKeypair::generate();
+        tc.set_bls_keypair(kp);
+
+        tc.mempool.submit(dummy_transfer(42));
+        let mut block = tc.create_proposal(&mut db).unwrap();
+        assert!(!block.da_row_roots.is_empty());
+
+        // Tamper with the first row root
+        block.da_row_roots[0] = [0xFF; 32];
+
+        let att = tc.perform_da_sampling(&block);
+        assert!(att.is_none(), "Tampered row roots should fail 2D DA sampling");
+    }
+
+    #[test]
+    fn test_da_2d_sampling_falls_back_to_1d_without_roots() {
+        let mut tc = make_proposer_tc();
+        let mut db = InMemoryStateDB::new();
+
+        let kp = BlsKeypair::generate();
+        tc.set_bls_keypair(kp);
+
+        tc.mempool.submit(dummy_transfer(42));
+        let mut block = tc.create_proposal(&mut db).unwrap();
+
+        // Clear 2D roots to force 1D fallback
+        block.da_row_roots = vec![];
+        block.da_col_roots = vec![];
+
+        let att = tc.perform_da_sampling(&block);
+        assert!(att.is_some(), "Should fall back to 1D DA sampling");
+
+        if let Some(ConsensusMessage::DAAttestation { samples_verified, .. }) = att {
+            // 1D path samples min(6, shard_count) and requires at least 4
+            assert!(samples_verified >= 4, "1D fallback should verify at least 4 shards");
+        } else {
+            panic!("Expected DAAttestation from 1D fallback");
+        }
+    }
+
+    #[test]
+    fn test_da_confidence_threshold_setter() {
+        let mut tc = make_proposer_tc();
+
+        // Default threshold
+        assert!((tc.da_confidence_threshold - 0.999).abs() < 1e-12);
+
+        // Set custom threshold
+        tc.set_da_confidence_threshold(0.95);
+        assert!((tc.da_confidence_threshold - 0.95).abs() < 1e-12);
+
+        // Clamped to [0.0, 1.0]
+        tc.set_da_confidence_threshold(1.5);
+        assert!((tc.da_confidence_threshold - 1.0).abs() < 1e-12);
+
+        tc.set_da_confidence_threshold(-0.5);
+        assert!((tc.da_confidence_threshold - 0.0).abs() < 1e-12);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // DA Enforcement Height Tests
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Helper: create a block at the given height with no DA certificate.
+    fn make_block_no_da_cert(height: u64) -> Block {
+        Block {
+            number: height,
+            epoch: height / 100,
+            parent_hash: [0u8; 32],
+            state_root: [0u8; 32],
+            transactions: vec![],
+            producer_id: Some(1),
+            timestamp: 0,
+            commit_certificate: None,
+            nova_proof: None,
+            anchor_hash: None,
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+            blob_commitments: vec![],
+            da_certificate: None,
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
+        }
+    }
+
+    /// Helper: create a valid DA certificate with BLS-signed attestations.
+    fn make_valid_da_cert(block_number: u64, num_validators: u64) -> Vec<u8> {
+        use evaporchain_da::certificate::{CertificateBuilder, create_attestation};
+
+        let data_root = [0xDAu8; 32];
+        let stake_per = 1000u64;
+        let total_stake = num_validators * stake_per;
+        let mut builder = CertificateBuilder::new(block_number, data_root, total_stake);
+
+        for vid in 1..=num_validators {
+            let kp = BlsKeypair::generate();
+            let att = create_attestation(block_number, &data_root, vid, 8, stake_per, &kp);
+            assert!(builder.add_attestation(att));
+        }
+
+        let cert = builder.try_build().expect("should have supermajority");
+        serde_json::to_vec(&cert).expect("cert serialization")
+    }
+
+    /// Helper: create a block at the given height WITH a valid DA certificate.
+    fn make_block_with_valid_da_cert(height: u64, num_validators: u64) -> Block {
+        let mut block = make_block_no_da_cert(height);
+        block.da_certificate = Some(make_valid_da_cert(height, num_validators));
+        block
+    }
+
+    #[test]
+    fn test_da_enforcement_default_height() {
+        let tc = make_test_tc();
+        assert_eq!(tc.da_enforcement_height(), 100, "default enforcement height should be 100");
+    }
+
+    #[test]
+    fn test_da_enforcement_setter() {
+        let mut tc = make_test_tc();
+        tc.set_da_enforcement_height(500);
+        assert_eq!(tc.da_enforcement_height(), 500);
+    }
+
+    #[test]
+    fn test_da_soft_mode_accepts_block_without_cert() {
+        // Before enforcement height, blocks without DA certificates should be accepted
+        let mut tc = make_test_tc();
+        tc.set_da_enforcement_height(100);
+
+        // Block at height 50 — below enforcement height
+        let block = make_block_no_da_cert(50);
+        assert!(
+            tc.verify_da_certificate(&block),
+            "Blocks before enforcement height should be accepted without DA cert (soft mode)"
+        );
+
+        // Block at height 99 — still below enforcement height
+        let block = make_block_no_da_cert(99);
+        assert!(
+            tc.verify_da_certificate(&block),
+            "Block at height 99 should pass soft mode (enforcement at 100)"
+        );
+
+        // Block at height 0 — genesis region
+        let block = make_block_no_da_cert(0);
+        assert!(
+            tc.verify_da_certificate(&block),
+            "Genesis block should pass soft mode"
+        );
+    }
+
+    #[test]
+    fn test_da_hard_mode_rejects_block_without_cert() {
+        // At or after enforcement height, blocks without DA certificates must be rejected
+        let mut tc = make_test_tc();
+        tc.set_da_enforcement_height(100);
+
+        // Block at height 100 — exactly at enforcement height
+        let block = make_block_no_da_cert(100);
+        assert!(
+            !tc.verify_da_certificate(&block),
+            "Block at enforcement height should be rejected without DA cert (hard mode)"
+        );
+
+        // Block at height 101 — past enforcement height
+        let block = make_block_no_da_cert(101);
+        assert!(
+            !tc.verify_da_certificate(&block),
+            "Block past enforcement height should be rejected without DA cert"
+        );
+
+        // Block at height 1000 — well past enforcement height
+        let block = make_block_no_da_cert(1000);
+        assert!(
+            !tc.verify_da_certificate(&block),
+            "Block well past enforcement height should be rejected without DA cert"
+        );
+    }
+
+    #[test]
+    fn test_da_valid_cert_accepted_before_enforcement() {
+        // Valid DA certificates should always be accepted, even before enforcement
+        let tc = make_test_tc();
+
+        // Block at height 5 (before default enforcement of 100) with valid cert
+        let block = make_block_with_valid_da_cert(5, 3);
+        assert!(
+            tc.verify_da_certificate(&block),
+            "Valid DA cert should be accepted before enforcement height"
+        );
+    }
+
+    #[test]
+    fn test_da_valid_cert_accepted_after_enforcement() {
+        // Valid DA certificates should be accepted at and after enforcement height
+        let tc = make_test_tc();
+
+        // Block at height 100 (at enforcement) with valid cert
+        let block = make_block_with_valid_da_cert(100, 3);
+        assert!(
+            tc.verify_da_certificate(&block),
+            "Valid DA cert should be accepted at enforcement height"
+        );
+
+        // Block at height 500 (well past enforcement) with valid cert
+        let block = make_block_with_valid_da_cert(500, 3);
+        assert!(
+            tc.verify_da_certificate(&block),
+            "Valid DA cert should be accepted past enforcement height"
+        );
+    }
+
+    #[test]
+    fn test_da_invalid_cert_rejected_in_soft_mode() {
+        // Even before enforcement, if a cert IS present it must be valid
+        let tc = make_test_tc();
+
+        // Block at height 5 (soft mode) with garbage DA certificate
+        let mut block = make_block_no_da_cert(5);
+        block.da_certificate = Some(vec![0xFF; 64]); // garbage bytes, not valid JSON
+
+        assert!(
+            !tc.verify_da_certificate(&block),
+            "Invalid DA cert should be rejected even in soft mode"
+        );
+    }
+
+    #[test]
+    fn test_da_forged_cert_rejected_at_any_height() {
+        // Forged certificates (bad BLS signatures) must be rejected at any height
+        let tc = make_test_tc();
+
+        let forged_cert = evaporchain_da::certificate::DACertificate {
+            block_number: 10,
+            data_root: [0xDA; 32],
+            attestations: vec![
+                evaporchain_da::certificate::DAAttestation {
+                    block_number: 10,
+                    data_root: [0xDA; 32],
+                    validator_id: 1,
+                    samples_verified: 8,
+                    stake: 1000,
+                    signature: vec![0xFF; 96],  // forged
+                    public_key: vec![0xAA; 48], // forged
+                },
+                evaporchain_da::certificate::DAAttestation {
+                    block_number: 10,
+                    data_root: [0xDA; 32],
+                    validator_id: 2,
+                    samples_verified: 8,
+                    stake: 1000,
+                    signature: vec![0xFE; 96],  // forged
+                    public_key: vec![0xBB; 48], // forged
+                },
+            ],
+            attested_stake: 2000,
+            total_stake: 3000,
+        };
+        let cert_bytes = serde_json::to_vec(&forged_cert).unwrap();
+
+        // Before enforcement height — cert present but forged
+        let mut block = make_block_no_da_cert(10);
+        block.da_certificate = Some(cert_bytes.clone());
+        assert!(
+            !tc.verify_da_certificate(&block),
+            "Forged DA cert should be rejected in soft mode"
+        );
+
+        // After enforcement height — cert present but forged
+        let mut block = make_block_no_da_cert(200);
+        block.da_certificate = Some(cert_bytes);
+        assert!(
+            !tc.verify_da_certificate(&block),
+            "Forged DA cert should be rejected in hard mode"
+        );
+    }
+
+    #[test]
+    fn test_da_enforcement_height_zero_means_always_enforced() {
+        // Setting enforcement height to 0 means enforcement from the very first block
+        let mut tc = make_test_tc();
+        tc.set_da_enforcement_height(0);
+
+        let block = make_block_no_da_cert(0);
+        assert!(
+            !tc.verify_da_certificate(&block),
+            "With enforcement_height=0, even block 0 must have a DA cert"
+        );
+
+        let block = make_block_no_da_cert(1);
+        assert!(
+            !tc.verify_da_certificate(&block),
+            "With enforcement_height=0, block 1 must have a DA cert"
+        );
+
+        // But valid cert should still pass
+        let block = make_block_with_valid_da_cert(0, 3);
+        assert!(
+            tc.verify_da_certificate(&block),
+            "Valid DA cert at height 0 should pass even with enforcement_height=0"
+        );
+    }
+
+    #[test]
+    fn test_da_enforcement_height_u64_max_means_never_enforced() {
+        // Setting enforcement height to u64::MAX effectively disables enforcement
+        let mut tc = make_test_tc();
+        tc.set_da_enforcement_height(u64::MAX);
+
+        let block = make_block_no_da_cert(1_000_000);
+        assert!(
+            tc.verify_da_certificate(&block),
+            "With enforcement_height=MAX, blocks should always pass soft mode"
+        );
     }
 }

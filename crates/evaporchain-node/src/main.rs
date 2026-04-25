@@ -40,6 +40,25 @@ use std::time::Instant;
 use tokio::sync::mpsc;
 use tokio::time::{interval, Duration};
 
+// ──────────────────────────── DA Retry Tracking ──────────────────────────
+
+/// Tracks a pending DA sample request for retry logic.
+struct PendingSample {
+    block_number: u64,
+    query_index: usize,
+    sent_at: Instant,
+    retries: u8,
+}
+
+/// Maximum number of retry attempts for a DA sample request.
+const DA_SAMPLE_MAX_RETRIES: u8 = 2;
+
+/// Timeout before retrying a DA sample request (5 seconds).
+const DA_SAMPLE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Minimum DA confidence required before sending attestation.
+const DA_MIN_CONFIDENCE: f64 = 0.999;
+
 // ──────────────────────────── Lock Helper ──────────────────────────────
 
 /// Safely acquire a Mutex lock, recovering from poisoned state.
@@ -2291,6 +2310,12 @@ async fn main() -> Result<()> {
     // Tendermint consensus tick interval (faster than block interval)
     let mut consensus_ticker = interval(Duration::from_millis(100));
 
+    // DA sample retry tracking
+    let mut pending_da_samples: Vec<PendingSample> = Vec::new();
+    let mut da_retry_ticker = interval(Duration::from_secs(1));
+    let mut da_valid_sample_count: u64 = 0;
+    let mut da_total_sample_count: u64 = 0;
+
     loop {
         tokio::select! {
             // ── Tendermint consensus tick ──
@@ -2481,8 +2506,21 @@ async fn main() -> Result<()> {
                                                         block.number, shard_count as usize, 4, &da_seed,
                                                     );
                                                     if let Some(ref sender) = sample_request_sender {
-                                                        let _ = sender.try_send(queries);
+                                                        let _ = sender.try_send(queries.clone());
                                                     }
+
+                                                    // Track pending samples for retry
+                                                    for (idx, _q) in queries.iter().enumerate() {
+                                                        pending_da_samples.push(PendingSample {
+                                                            block_number: block.number,
+                                                            query_index: idx,
+                                                            sent_at: Instant::now(),
+                                                            retries: 0,
+                                                        });
+                                                    }
+                                                    // Reset per-block sample counters
+                                                    da_valid_sample_count = 0;
+                                                    da_total_sample_count = 0;
 
                                                     // Attest with local verification (peer sample results handled async below)
                                                     let mut tc = safe_lock(&tc_ref);
@@ -2980,8 +3018,22 @@ async fn main() -> Result<()> {
                                                             block.number, shard_count as usize, 4, &da_seed,
                                                         );
                                                         if let Some(ref sender) = sample_request_sender {
-                                                            let _ = sender.try_send(queries);
+                                                            let _ = sender.try_send(queries.clone());
                                                         }
+
+                                                        // Track pending samples for retry
+                                                        for (idx, _q) in queries.iter().enumerate() {
+                                                            pending_da_samples.push(PendingSample {
+                                                                block_number: block.number,
+                                                                query_index: idx,
+                                                                sent_at: Instant::now(),
+                                                                retries: 0,
+                                                            });
+                                                        }
+                                                        // Reset per-block sample counters
+                                                        da_valid_sample_count = 0;
+                                                        da_total_sample_count = 0;
+
                                                         let mut tc = safe_lock(&tc_ref);
                                                         if let Some(att_msg) = tc.make_da_attestation(block.number, data_root, shard_count) {
                                                             tc.on_message(att_msg.clone());
@@ -3825,54 +3877,157 @@ async fn main() -> Result<()> {
                     None => std::future::pending::<Option<Vec<evaporchain_da::sampling::SampleResponse>>>().await,
                 }
             } => {
-                let verified = samples.iter().all(|s| {
+                let valid_count = samples.iter().filter(|s| {
                     let computed: [u8; 32] = blake3::hash(&s.shard.data).into();
                     computed == s.shard.hash && evaporchain_da::sampling::DASampler::verify_proof(&s.shard, &s.proof)
-                });
-                if verified && !samples.is_empty() {
-                    println!(
-                        "{} \x1b[36mDA: verified {} peer shard samples\x1b[0m",
-                        node_tag, samples.len()
-                    );
-                    // Create and broadcast DA attestation based on verified peer samples
-                    if let Some(ref tc_ref) = tendermint {
-                        let mut tc = safe_lock(tc_ref);
-                        let current_height = tc.height();
-                        // Attest to the previous block (the one we just sampled)
-                        let sampled_block = current_height.saturating_sub(1);
-                        if let Some(data_root) = {
-                            let store = safe_lock(&da_store);
-                            store.get(&sampled_block).map(|p| p.header.commitment_root)
-                        } {
-                            let shard_count = {
+                }).count();
+                let verified = valid_count == samples.len();
+
+                if !samples.is_empty() {
+                    // Update cumulative sample counters
+                    da_valid_sample_count += valid_count as u64;
+                    da_total_sample_count += samples.len() as u64;
+
+                    // Clear matching pending samples (responses arrived)
+                    let sampled_block = if let Some(ref tc_ref) = tendermint {
+                        let tc = safe_lock(tc_ref);
+                        tc.height().saturating_sub(1)
+                    } else {
+                        0
+                    };
+                    pending_da_samples.retain(|ps| ps.block_number != sampled_block);
+
+                    // Compute DA confidence: 1 - 2^(-valid_samples)
+                    let confidence = if da_valid_sample_count == 0 {
+                        0.0
+                    } else {
+                        1.0 - 2.0_f64.powi(-(da_valid_sample_count as i32))
+                    };
+
+                    if verified {
+                        println!(
+                            "{} \x1b[36mDA: verified {} peer shard samples (confidence={:.6})\x1b[0m",
+                            node_tag, samples.len(), confidence
+                        );
+                    } else {
+                        eprintln!(
+                            "{} \x1b[33mDA: {}/{} peer shard samples valid (confidence={:.6})\x1b[0m",
+                            node_tag, valid_count, samples.len(), confidence
+                        );
+                    }
+
+                    // Only send attestation if confidence meets threshold
+                    if confidence >= DA_MIN_CONFIDENCE {
+                        if let Some(ref tc_ref) = tendermint {
+                            let mut tc = safe_lock(tc_ref);
+                            let current_height = tc.height();
+                            let sampled_block = current_height.saturating_sub(1);
+                            if let Some(data_root) = {
                                 let store = safe_lock(&da_store);
-                                store.get(&sampled_block).map(|p| p.shards.len() as u32).unwrap_or(8)
-                            };
-                            if let Some(att_msg) = tc.make_da_attestation(sampled_block, data_root, shard_count) {
-                                tc.on_message(att_msg.clone());
-                                if let Some(cert_bytes) = tc.try_build_da_certificate(sampled_block, data_root) {
+                                store.get(&sampled_block).map(|p| p.header.commitment_root)
+                            } {
+                                let shard_count = {
+                                    let store = safe_lock(&da_store);
+                                    store.get(&sampled_block).map(|p| p.shards.len() as u32).unwrap_or(8)
+                                };
+                                if let Some(att_msg) = tc.make_da_attestation(sampled_block, data_root, shard_count) {
+                                    tc.on_message(att_msg.clone());
                                     println!(
-                                        "{}   \x1b[1;35mDA Certificate: block #{}, supermajority via peer samples\x1b[0m",
-                                        node_tag, sampled_block,
+                                        "{}   \x1b[1;32mDA attestation: block #{}, confidence={:.6} >= {}\x1b[0m",
+                                        node_tag, sampled_block, confidence, DA_MIN_CONFIDENCE,
                                     );
-                                    let mut fs = safe_lock(&frontier_state);
-                                    fs.poha.register(sampled_block, data_root, 8, 3000, 4000, sampled_block, vec![], vec![]);
-                                    drop(fs);
-                                }
-                                drop(tc);
-                                if let Some(ref sender) = consensus_net_sender {
-                                    if let Ok(data) = serde_json::to_vec(&att_msg) {
-                                        let _ = sender.send(data).await;
+                                    if let Some(cert_bytes) = tc.try_build_da_certificate(sampled_block, data_root) {
+                                        println!(
+                                            "{}   \x1b[1;35mDA Certificate: block #{}, supermajority via peer samples\x1b[0m",
+                                            node_tag, sampled_block,
+                                        );
+                                        let mut fs = safe_lock(&frontier_state);
+                                        fs.poha.register(sampled_block, data_root, 8, 3000, 4000, sampled_block, vec![], vec![]);
+                                        drop(fs);
+                                    }
+                                    drop(tc);
+                                    if let Some(ref sender) = consensus_net_sender {
+                                        if let Ok(data) = serde_json::to_vec(&att_msg) {
+                                            let _ = sender.send(data).await;
+                                        }
                                     }
                                 }
                             }
                         }
+                    } else if !verified {
+                        eprintln!(
+                            "{} \x1b[31mDA: confidence {:.6} < {} — attestation withheld\x1b[0m",
+                            node_tag, confidence, DA_MIN_CONFIDENCE,
+                        );
                     }
-                } else if !samples.is_empty() {
-                    eprintln!(
-                        "{} \x1b[31mDA: peer shard sample verification FAILED ({} samples)\x1b[0m",
-                        node_tag, samples.len()
-                    );
+                }
+            }
+
+            // ── DA sample retry tick — check for timed-out pending samples ──
+            _ = da_retry_ticker.tick() => {
+                let now = Instant::now();
+                let mut retries_to_send: Vec<(u64, usize)> = Vec::new();
+                let mut failed_samples: Vec<(u64, usize)> = Vec::new();
+
+                for ps in pending_da_samples.iter_mut() {
+                    if now.duration_since(ps.sent_at) >= DA_SAMPLE_TIMEOUT {
+                        if ps.retries < DA_SAMPLE_MAX_RETRIES {
+                            ps.retries += 1;
+                            ps.sent_at = now;
+                            retries_to_send.push((ps.block_number, ps.query_index));
+                            eprintln!(
+                                "{} \x1b[33mDA: retrying sample block={} index={} (attempt {}/{})\x1b[0m",
+                                node_tag, ps.block_number, ps.query_index,
+                                ps.retries, DA_SAMPLE_MAX_RETRIES,
+                            );
+                        } else {
+                            failed_samples.push((ps.block_number, ps.query_index));
+                        }
+                    }
+                }
+
+                // Remove samples that exceeded max retries
+                if !failed_samples.is_empty() {
+                    for &(bn, qi) in &failed_samples {
+                        eprintln!(
+                            "{} \x1b[31mDA: sample FAILED after {} retries — block={} index={}\x1b[0m",
+                            node_tag, DA_SAMPLE_MAX_RETRIES, bn, qi,
+                        );
+                    }
+                    pending_da_samples.retain(|ps| {
+                        !failed_samples.iter().any(|&(bn, qi)| ps.block_number == bn && ps.query_index == qi)
+                    });
+                }
+
+                // Re-send retry queries
+                if !retries_to_send.is_empty() {
+                    // Group retries by block number and regenerate queries
+                    let mut retry_blocks: std::collections::HashMap<u64, Vec<usize>> = std::collections::HashMap::new();
+                    for (bn, qi) in retries_to_send {
+                        retry_blocks.entry(bn).or_default().push(qi);
+                    }
+                    for (block_num, indices) in retry_blocks {
+                        let mut da_seed = Vec::with_capacity(40);
+                        da_seed.extend_from_slice(b"da-sample");
+                        da_seed.extend_from_slice(&block_num.to_le_bytes());
+                        da_seed.extend_from_slice(&args.validator_id.to_le_bytes());
+                        // Re-generate queries for the specific indices we need to retry
+                        let shard_count = {
+                            let store = safe_lock(&da_store);
+                            store.get(&block_num).map(|p| p.shards.len()).unwrap_or(8)
+                        };
+                        let all_queries = evaporchain_da::sampling::DASampler::generate_queries(
+                            block_num, shard_count, 4, &da_seed,
+                        );
+                        let retry_queries: Vec<_> = indices.iter()
+                            .filter_map(|&idx| all_queries.get(idx).cloned())
+                            .collect();
+                        if !retry_queries.is_empty() {
+                            if let Some(ref sender) = sample_request_sender {
+                                let _ = sender.try_send(retry_queries);
+                            }
+                        }
+                    }
                 }
             }
         }
