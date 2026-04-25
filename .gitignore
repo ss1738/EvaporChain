@@ -38,3 +38,7 @@ Thumbs.db
 # Benchmark results (keep JSON, ignore binaries)
 benchmark_results.bin
 logs/
+evaporchain-data/
+data-v1/
+*.db-shm
+*.db-wal
