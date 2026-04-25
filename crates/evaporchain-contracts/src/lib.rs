@@ -1097,9 +1097,10 @@ fn exec_auction(
     state: &mut serde_json::Value,
     method: &str,
     args: &serde_json::Value,
-    _caller: &AccountAddress,
+    caller: &AccountAddress,
     current_epoch: Epoch,
 ) -> Result<serde_json::Value, ContractError> {
+    let caller_hex = hex::encode(caller);
     let mut aus: AuctionState = serde_json::from_value(state.clone())
         .map_err(|e| ContractError::StateError(e.to_string()))?;
 
@@ -1112,6 +1113,9 @@ fn exec_auction(
                 return Err(ContractError::StateError("auction ended".into()));
             }
             let bidder = get_str(args, "bidder")?;
+            if caller_hex != bidder {
+                return Err(ContractError::PermissionDenied("caller must be the bidder".into()));
+            }
             let amount = get_u64(args, "amount")?;
             if amount < aus.min_bid {
                 return Err(ContractError::StateError(format!(
@@ -1263,9 +1267,10 @@ fn exec_dao(
     state: &mut serde_json::Value,
     method: &str,
     args: &serde_json::Value,
-    _caller: &AccountAddress,
+    caller: &AccountAddress,
     current_epoch: Epoch,
 ) -> Result<serde_json::Value, ContractError> {
+    let caller_hex = hex::encode(caller);
     let mut ds: DaoState = serde_json::from_value(state.clone())
         .map_err(|e| ContractError::StateError(e.to_string()))?;
 
@@ -1278,6 +1283,9 @@ fn exec_dao(
                 return Err(ContractError::StateError("voting period ended".into()));
             }
             let voter = get_str(args, "voter")?;
+            if caller_hex != voter {
+                return Err(ContractError::PermissionDenied("caller must be the voter".into()));
+            }
             let option_idx = get_u64(args, "option_idx")? as usize;
             let weight = get_u64(args, "weight")?;
             if option_idx >= ds.options.len() {

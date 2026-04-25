@@ -689,12 +689,22 @@ impl TendermintConsensus {
                     if !self.round_state.precommitted {
                         self.round_state.precommitted = true;
 
-                        // Lock on this block
-                        if hash.is_some() {
-                            self.locked_block = self.round_state.proposed_block.clone();
-                            self.locked_round = Some(self.round_state.round);
-                            self.valid_block = self.round_state.proposed_block.clone();
-                            self.valid_round = Some(self.round_state.round);
+                        // Lock on this block — verify proposed block hash matches quorum hash
+                        if let Some(ref quorum_hash) = hash {
+                            let lock_ok = self.round_state.proposed_block.as_ref()
+                                .map(|b| Self::block_hash(b) == *quorum_hash)
+                                .unwrap_or(false);
+                            if lock_ok {
+                                self.locked_block = self.round_state.proposed_block.clone();
+                                self.locked_round = Some(self.round_state.round);
+                                self.valid_block = self.round_state.proposed_block.clone();
+                                self.valid_round = Some(self.round_state.round);
+                            } else {
+                                warn!(
+                                    height = self.height,
+                                    "Prevote quorum hash does not match proposed block — not locking"
+                                );
+                            }
                         }
 
                         let bls_sig = self.bls_sign_vote(self.height, self.round_state.round, &hash, "precommit");
@@ -1002,10 +1012,19 @@ impl TendermintConsensus {
                     debug!(height = height, "Nova proof verified on proposal");
                 }
 
+                // Reject proposals with zero state_root (except genesis)
+                if block.number > 1 && block.state_root == [0u8; 32] {
+                    warn!(
+                        height = height,
+                        round = round,
+                        "Rejected proposal: zero state_root on non-genesis block"
+                    );
+                    return actions;
+                }
+
                 // Verify the proposed state_root matches our local pre-execution state.
-                // The proposer sets state_root = current_state_root (post-previous-block state).
-                // All validators must agree on this before voting.
-                if block.state_root != [0u8; 32] && self.current_state_root != [0u8; 32]
+                if self.current_state_root != [0u8; 32]
+                    && block.state_root != [0u8; 32]
                     && block.state_root != self.current_state_root
                 {
                     warn!(
@@ -1230,11 +1249,21 @@ impl TendermintConsensus {
                         if let Some(hash) = self.check_prevote_quorum() {
                             if !self.round_state.precommitted {
                                 self.round_state.precommitted = true;
-                                if hash.is_some() {
-                                    self.locked_block = self.round_state.proposed_block.clone();
-                                    self.locked_round = Some(self.round_state.round);
-                                    self.valid_block = self.round_state.proposed_block.clone();
-                                    self.valid_round = Some(self.round_state.round);
+                                if let Some(ref quorum_hash) = hash {
+                                    let lock_ok = self.round_state.proposed_block.as_ref()
+                                        .map(|b| Self::block_hash(b) == *quorum_hash)
+                                        .unwrap_or(false);
+                                    if lock_ok {
+                                        self.locked_block = self.round_state.proposed_block.clone();
+                                        self.locked_round = Some(self.round_state.round);
+                                        self.valid_block = self.round_state.proposed_block.clone();
+                                        self.valid_round = Some(self.round_state.round);
+                                    } else {
+                                        warn!(
+                                            height = self.height,
+                                            "Prevote quorum hash mismatch — not locking (msg handler)"
+                                        );
+                                    }
                                 }
                                 let bls_sig = self.bls_sign_vote(self.height, self.round_state.round, &hash, "precommit");
                                 if let Some(ref sig) = bls_sig {
@@ -1456,7 +1485,15 @@ impl TendermintConsensus {
         // ── Finality Tracking ──
         // Record finality if we have a commit certificate (single-slot finality).
         if let Some(ref cert) = block.commit_certificate {
-            let block_hash = self.parent_hash; // Hash we just computed above
+            let block_hash = Self::block_hash(block);
+            if cert.block_hash != block_hash {
+                warn!(
+                    height = block.number,
+                    cert_hash = %hex::encode(&cert.block_hash[..8]),
+                    actual_hash = %hex::encode(&block_hash[..8]),
+                    "Commit certificate block_hash does not match actual block hash"
+                );
+            }
             let total_stake = self.validator_set.total_stake();
             let signing_stake = cert.signer_ids.iter()
                 .filter_map(|id| self.validator_set.get_validator(*id))

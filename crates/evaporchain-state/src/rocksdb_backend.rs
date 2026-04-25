@@ -29,6 +29,11 @@ struct BatchUndoLog {
     dirty_objects: HashSet<ObjectId>,
     dirty_accounts: HashSet<AccountAddress>,
     trie_snapshot: Vec<u8>,
+    // Privacy state snapshot for rollback
+    note_tree_root: [u8; 32],
+    nullifiers_snapshot: HashSet<[u8; 32]>,
+    shielded_pool_balance: u64,
+    note_count: u64,
 }
 
 /// RocksDB-backed state database with in-memory write-through cache.
@@ -254,6 +259,10 @@ impl RocksDBStateDB {
             dirty_objects: self.dirty_objects.clone(),
             dirty_accounts: self.dirty_accounts.clone(),
             trie_snapshot: self.trie.to_bytes(),
+            note_tree_root: self.note_tree_root,
+            nullifiers_snapshot: self.spent_nullifiers.clone(),
+            shielded_pool_balance: self.shielded_pool_balance,
+            note_count: self.note_count,
         });
     }
 
@@ -291,6 +300,11 @@ impl RocksDBStateDB {
             if let Ok(trie) = EnergyVerkleTrie::from_bytes(&undo.trie_snapshot) {
                 self.trie = trie;
             }
+            // Revert privacy state
+            self.note_tree_root = undo.note_tree_root;
+            self.spent_nullifiers = undo.nullifiers_snapshot;
+            self.shielded_pool_balance = undo.shielded_pool_balance;
+            self.note_count = undo.note_count;
         }
     }
 

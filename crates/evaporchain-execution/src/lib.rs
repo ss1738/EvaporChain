@@ -1,4 +1,5 @@
 pub mod block_stm;
+pub mod economics;
 pub mod fees;
 pub mod genesis;
 pub mod parallel;
