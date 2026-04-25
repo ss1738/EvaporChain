@@ -1742,6 +1742,14 @@ async fn main() -> Result<()> {
         }
     }
 
+    // DA certificate enforcement starts 200 blocks after the restored tip,
+    // giving time for BLS key exchange and DA attestation rounds to stabilize.
+    if let Some(ref tc) = tendermint {
+        let mut c = safe_lock(&tc);
+        let da_start = c.height().saturating_add(200);
+        c.set_da_enforcement_height(da_start);
+    }
+
     // Restore mempool from disk
     if !is_fresh {
         let saved_txs = chain_store.load_mempool();
