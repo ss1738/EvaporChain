@@ -691,19 +691,13 @@ impl TendermintConsensus {
 
                         // Lock on this block — verify proposed block hash matches quorum hash
                         if let Some(ref quorum_hash) = hash {
-                            let lock_ok = self.round_state.proposed_block.as_ref()
-                                .map(|b| Self::block_hash(b) == *quorum_hash)
-                                .unwrap_or(false);
-                            if lock_ok {
-                                self.locked_block = self.round_state.proposed_block.clone();
-                                self.locked_round = Some(self.round_state.round);
-                                self.valid_block = self.round_state.proposed_block.clone();
-                                self.valid_round = Some(self.round_state.round);
-                            } else {
-                                warn!(
-                                    height = self.height,
-                                    "Prevote quorum hash does not match proposed block — not locking"
-                                );
+                            if let Some(ref proposed) = self.round_state.proposed_block {
+                                if Self::block_hash(proposed) == *quorum_hash {
+                                    self.locked_block = self.round_state.proposed_block.clone();
+                                    self.locked_round = Some(self.round_state.round);
+                                    self.valid_block = self.round_state.proposed_block.clone();
+                                    self.valid_round = Some(self.round_state.round);
+                                }
                             }
                         }
 
@@ -1250,19 +1244,13 @@ impl TendermintConsensus {
                             if !self.round_state.precommitted {
                                 self.round_state.precommitted = true;
                                 if let Some(ref quorum_hash) = hash {
-                                    let lock_ok = self.round_state.proposed_block.as_ref()
-                                        .map(|b| Self::block_hash(b) == *quorum_hash)
-                                        .unwrap_or(false);
-                                    if lock_ok {
-                                        self.locked_block = self.round_state.proposed_block.clone();
-                                        self.locked_round = Some(self.round_state.round);
-                                        self.valid_block = self.round_state.proposed_block.clone();
-                                        self.valid_round = Some(self.round_state.round);
-                                    } else {
-                                        warn!(
-                                            height = self.height,
-                                            "Prevote quorum hash mismatch — not locking (msg handler)"
-                                        );
+                                    if let Some(ref proposed) = self.round_state.proposed_block {
+                                        if Self::block_hash(proposed) == *quorum_hash {
+                                            self.locked_block = self.round_state.proposed_block.clone();
+                                            self.locked_round = Some(self.round_state.round);
+                                            self.valid_block = self.round_state.proposed_block.clone();
+                                            self.valid_round = Some(self.round_state.round);
+                                        }
                                     }
                                 }
                                 let bls_sig = self.bls_sign_vote(self.height, self.round_state.round, &hash, "precommit");
