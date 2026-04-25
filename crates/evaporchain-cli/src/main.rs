@@ -164,6 +164,82 @@ pub enum GenesisAction {
         #[arg()]
         path: String,
     },
+
+    /// Create a new genesis config file
+    Create {
+        /// Output path for the genesis JSON file
+        #[arg()]
+        output: String,
+
+        /// Chain ID
+        #[arg(long, default_value = "evaporchain-testnet-1")]
+        chain_id: String,
+
+        /// Total token supply
+        #[arg(long, default_value = "10000000")]
+        total_supply: u64,
+
+        /// Block interval in milliseconds
+        #[arg(long, default_value = "3000")]
+        block_interval: u64,
+
+        /// Minimum validator stake
+        #[arg(long, default_value = "100")]
+        min_stake: u64,
+    },
+
+    /// Add a validator to a genesis config
+    AddValidator {
+        /// Path to genesis JSON file
+        #[arg()]
+        path: String,
+
+        /// Validator name
+        #[arg(long)]
+        name: String,
+
+        /// Validator stake
+        #[arg(long)]
+        stake: u64,
+
+        /// P2P address (multiaddr)
+        #[arg(long)]
+        p2p: Option<String>,
+
+        /// Path to keygen JSON file (from `evaporchain keygen`)
+        #[arg(long)]
+        keys: Option<String>,
+
+        /// Initial account balance for this validator
+        #[arg(long, default_value = "1000000")]
+        balance: u64,
+    },
+
+    /// Add an account to a genesis config
+    AddAccount {
+        /// Path to genesis JSON file
+        #[arg()]
+        path: String,
+
+        /// Account label
+        #[arg(long)]
+        label: String,
+
+        /// Account balance
+        #[arg(long)]
+        balance: u64,
+
+        /// Address byte (first byte, rest zeroed)
+        #[arg(long)]
+        address_byte: Option<u8>,
+    },
+
+    /// Finalize a genesis config: validate, compute genesis hash, freeze
+    Finalize {
+        /// Path to genesis JSON file
+        #[arg()]
+        path: String,
+    },
 }
 
 // ──────────────────────────── API Response Types ─────────────────────────
@@ -928,6 +1004,259 @@ fn cmd_genesis_init(path: &str, json_mode: bool) -> Result<()> {
     Ok(())
 }
 
+// ──────────────────────────── Genesis Ceremony ──────────────────────────
+
+fn cmd_genesis_create(
+    output: &str,
+    chain_id: &str,
+    total_supply: u64,
+    block_interval: u64,
+    min_stake: u64,
+    json_mode: bool,
+) -> Result<()> {
+    use evaporchain_types::genesis::*;
+
+    let config = GenesisConfig {
+        chain_params: ChainParams {
+            chain_id: chain_id.to_string(),
+            block_interval_ms: block_interval,
+            grace_period: 5,
+            block_gas_limit: 500_000,
+            max_tx_size: 1_048_576,
+            max_txs_per_block: 10_000,
+            min_validator_stake: min_stake,
+            unbonding_period: 10,
+        },
+        tokenomics: Tokenomics {
+            total_supply,
+            block_reward: 10,
+            reward_half_life: 100_000,
+            fee_burn_rate: 0.50,
+            staker_fee_share: 0.50,
+            target_staking_apy: 0.05,
+        },
+        genesis_time: {
+            let secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            format!("{}", secs)
+        },
+        validators: vec![],
+        accounts: vec![],
+        objects: vec![],
+        bootstrap_peers: vec![],
+        trusted_checkpoint: None,
+    };
+
+    let json = serde_json::to_string_pretty(&config)?;
+    std::fs::write(output, &json).with_context(|| format!("Failed to write {}", output))?;
+
+    if json_mode {
+        println!("{}", json);
+    } else {
+        println!("  {} Genesis config created at {}", "\u{2714}".green().bold(), output);
+        println!("  Chain ID:     {}", chain_id.white().bold());
+        println!("  Supply:       {} EVAP", total_supply.to_string().green());
+        println!("  Block time:   {} ms", block_interval);
+        println!("  Min stake:    {}", min_stake);
+        println!();
+        println!("  Next: add validators with `evaporchain genesis add-validator {}`", output);
+    }
+    println!();
+    Ok(())
+}
+
+fn cmd_genesis_add_validator(
+    path: &str,
+    name: &str,
+    stake: u64,
+    p2p: Option<&str>,
+    keys_path: Option<&str>,
+    balance: u64,
+    json_mode: bool,
+) -> Result<()> {
+    use evaporchain_types::genesis::*;
+
+    let json = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read {}", path))?;
+    let mut config: GenesisConfig = serde_json::from_str(&json)
+        .with_context(|| "Failed to parse genesis config")?;
+
+    let next_id = config.validators.iter().map(|v| v.id).max().unwrap_or(0) + 1;
+
+    let mut addr = [0u8; 32];
+    addr[0] = next_id as u8;
+
+    let bls_pk = if let Some(kp) = keys_path {
+        let kf = std::fs::read_to_string(kp)
+            .with_context(|| format!("Failed to read keys file {}", kp))?;
+        let bundle: serde_json::Value = serde_json::from_str(&kf)?;
+        bundle.get("bls")
+            .and_then(|b| b.get("public_key"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    } else {
+        None
+    };
+
+    config.validators.push(GenesisValidator {
+        id: next_id,
+        name: name.to_string(),
+        stake,
+        address: addr,
+        bls_public_key: bls_pk.clone(),
+        p2p_address: p2p.map(|s| s.to_string()),
+    });
+
+    config.accounts.push(GenesisAccount {
+        address: addr,
+        balance,
+        label: format!("Validator-{}", name),
+    });
+
+    let output = serde_json::to_string_pretty(&config)?;
+    std::fs::write(path, &output)?;
+
+    if json_mode {
+        let result = serde_json::json!({
+            "added": { "id": next_id, "name": name, "stake": stake, "bls": bls_pk },
+            "total_validators": config.validators.len(),
+        });
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    } else {
+        println!("  {} Validator added to {}", "\u{2714}".green().bold(), path);
+        println!("  ID:     {}", next_id.to_string().cyan().bold());
+        println!("  Name:   {}", name.white().bold());
+        println!("  Stake:  {} EVAP", stake.to_string().green());
+        println!("  Addr:   {}", hex::encode(&addr[..8]).truecolor(100, 110, 130));
+        if let Some(ref pk) = bls_pk {
+            println!("  BLS:    {}...", &pk[..32].to_string().truecolor(100, 110, 130));
+        }
+        println!("  Balance: {} EVAP", balance.to_string().green());
+        println!("  Total validators: {}", config.validators.len());
+    }
+    println!();
+    Ok(())
+}
+
+fn cmd_genesis_add_account(
+    path: &str,
+    label: &str,
+    balance: u64,
+    address_byte: Option<u8>,
+    json_mode: bool,
+) -> Result<()> {
+    use evaporchain_types::genesis::*;
+
+    let json = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read {}", path))?;
+    let mut config: GenesisConfig = serde_json::from_str(&json)
+        .with_context(|| "Failed to parse genesis config")?;
+
+    let byte = address_byte.unwrap_or_else(|| {
+        let max_byte = config.accounts.iter().map(|a| a.address[0]).max().unwrap_or(0);
+        if max_byte < 0xFE { max_byte + 1 } else { 0xFE }
+    });
+
+    let mut addr = [0u8; 32];
+    addr[0] = byte;
+
+    config.accounts.push(GenesisAccount {
+        address: addr,
+        balance,
+        label: label.to_string(),
+    });
+
+    let output = serde_json::to_string_pretty(&config)?;
+    std::fs::write(path, &output)?;
+
+    if json_mode {
+        let result = serde_json::json!({
+            "added": { "label": label, "balance": balance, "address_byte": byte },
+            "total_accounts": config.accounts.len(),
+        });
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    } else {
+        println!("  {} Account added to {}", "\u{2714}".green().bold(), path);
+        println!("  Label:   {}", label.white().bold());
+        println!("  Balance: {} EVAP", balance.to_string().green());
+        println!("  Addr:    {}", hex::encode(&addr[..8]).truecolor(100, 110, 130));
+        println!("  Total accounts: {}", config.accounts.len());
+    }
+    println!();
+    Ok(())
+}
+
+fn cmd_genesis_finalize(path: &str, json_mode: bool) -> Result<()> {
+    let config = load_genesis_file(path)?;
+
+    if let Err(errors) = config.validate() {
+        if json_mode {
+            let out = serde_json::json!({ "valid": false, "errors": errors });
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        } else {
+            println!("  {} Genesis validation failed:", "\u{2718}".red().bold());
+            for e in &errors {
+                println!("    - {}", e.red());
+            }
+        }
+        anyhow::bail!("{} validation errors", errors.len());
+    }
+
+    let mut db = evaporchain_state::InMemoryStateDB::new();
+    let result = initialize_genesis(&mut db, &config)
+        .map_err(|e| anyhow::anyhow!("Genesis initialization failed: {}", e))?;
+
+    let block_bytes = serde_json::to_vec(&result.block).unwrap_or_default();
+    let block_hash = evaporchain_crypto::blake3_hash(&block_bytes);
+    let config_bytes = serde_json::to_vec(&config).unwrap_or_default();
+    let config_hash = evaporchain_crypto::blake3_hash(&config_bytes);
+
+    if json_mode {
+        let out = serde_json::json!({
+            "valid": true,
+            "chain_id": config.chain_params.chain_id,
+            "genesis_hash": hex::encode(block_hash),
+            "config_hash": hex::encode(config_hash),
+            "state_root": hex::encode(&result.state_root),
+            "validators": config.validators.len(),
+            "accounts": config.accounts.len(),
+            "total_allocated": config.accounts.iter().map(|a| a.balance).sum::<u64>(),
+            "total_supply": config.tokenomics.total_supply,
+        });
+        println!("{}", serde_json::to_string_pretty(&out)?);
+    } else {
+        print_header("Genesis Finalized");
+        println!("  {} Genesis is valid and ready for deployment", "\u{2714}".green().bold());
+        println!();
+        println!("  {}  {}", "Chain:  ".truecolor(140, 150, 170), config.chain_params.chain_id.white().bold());
+        println!("  {}  {}", "Hash:   ".truecolor(140, 150, 170), hex::encode(block_hash).truecolor(100, 110, 130));
+        println!("  {}  {}", "Config: ".truecolor(140, 150, 170), hex::encode(config_hash).truecolor(100, 110, 130));
+        println!("  {}  {}", "Root:   ".truecolor(140, 150, 170), hex::encode(&result.state_root).truecolor(100, 110, 130));
+        println!();
+        println!("  {}  {} validators, {} accounts",
+            "State: ".truecolor(140, 150, 170),
+            config.validators.len().to_string().cyan(),
+            config.accounts.len().to_string().green(),
+        );
+
+        let total_alloc: u64 = config.accounts.iter().map(|a| a.balance).sum();
+        let remaining = config.tokenomics.total_supply.saturating_sub(total_alloc);
+        println!("  {}  {} / {} EVAP allocated ({} unallocated)",
+            "Supply:".truecolor(140, 150, 170),
+            total_alloc.to_string().green(),
+            config.tokenomics.total_supply.to_string().white(),
+            remaining.to_string().yellow(),
+        );
+        println!();
+        println!("  All nodes must initialize with this genesis file.");
+        println!("  Verify: evaporchain genesis validate {}", path);
+    }
+    println!();
+    Ok(())
+}
+
 // ──────────────────────────── Keygen ────────────────────────────────────
 
 fn cmd_keygen(output: Option<&str>, json_mode: bool) -> Result<()> {
@@ -1026,6 +1355,18 @@ async fn main() -> Result<()> {
                 GenesisAction::Validate { path } => cmd_genesis_validate(&path, cli.json),
                 GenesisAction::Show { path } => cmd_genesis_show(&path, cli.json),
                 GenesisAction::Init { path } => cmd_genesis_init(&path, cli.json),
+                GenesisAction::Create { output, chain_id, total_supply, block_interval, min_stake } => {
+                    cmd_genesis_create(&output, &chain_id, total_supply, block_interval, min_stake, cli.json)
+                }
+                GenesisAction::AddValidator { path, name, stake, p2p, keys, balance } => {
+                    cmd_genesis_add_validator(&path, &name, stake, p2p.as_deref(), keys.as_deref(), balance, cli.json)
+                }
+                GenesisAction::AddAccount { path, label, balance, address_byte } => {
+                    cmd_genesis_add_account(&path, &label, balance, address_byte, cli.json)
+                }
+                GenesisAction::Finalize { path } => {
+                    cmd_genesis_finalize(&path, cli.json)
+                }
             }
         }
         Commands::Keygen { output } => {
@@ -1366,5 +1707,100 @@ mod tests {
         assert_eq!(format_uptime(30), "30s");
         assert_eq!(format_uptime(90), "1m 30s");
         assert_eq!(format_uptime(3661), "1h 1m");
+    }
+
+    // ─── Genesis Ceremony Tests ──────────────────────────────────────
+
+    #[test]
+    fn test_cli_parses_genesis_create() {
+        let cli = Cli::parse_from([
+            "evaporchain", "genesis", "create", "out.json",
+            "--chain-id", "my-testnet",
+            "--total-supply", "5000000",
+        ]);
+        if let Commands::Genesis { action: GenesisAction::Create { output, chain_id, total_supply, .. } } = cli.command {
+            assert_eq!(output, "out.json");
+            assert_eq!(chain_id, "my-testnet");
+            assert_eq!(total_supply, 5000000);
+        } else {
+            panic!("Expected Genesis Create command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_genesis_add_validator() {
+        let cli = Cli::parse_from([
+            "evaporchain", "genesis", "add-validator", "genesis.json",
+            "--name", "node1", "--stake", "1000",
+        ]);
+        if let Commands::Genesis { action: GenesisAction::AddValidator { path, name, stake, .. } } = cli.command {
+            assert_eq!(path, "genesis.json");
+            assert_eq!(name, "node1");
+            assert_eq!(stake, 1000);
+        } else {
+            panic!("Expected Genesis AddValidator command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_genesis_add_account() {
+        let cli = Cli::parse_from([
+            "evaporchain", "genesis", "add-account", "genesis.json",
+            "--label", "Faucet", "--balance", "5000000",
+        ]);
+        if let Commands::Genesis { action: GenesisAction::AddAccount { path, label, balance, .. } } = cli.command {
+            assert_eq!(path, "genesis.json");
+            assert_eq!(label, "Faucet");
+            assert_eq!(balance, 5000000);
+        } else {
+            panic!("Expected Genesis AddAccount command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_genesis_finalize() {
+        let cli = Cli::parse_from(["evaporchain", "genesis", "finalize", "genesis.json"]);
+        if let Commands::Genesis { action: GenesisAction::Finalize { path } } = cli.command {
+            assert_eq!(path, "genesis.json");
+        } else {
+            panic!("Expected Genesis Finalize command");
+        }
+    }
+
+    #[test]
+    fn test_genesis_ceremony_full_flow() {
+        let dir = std::env::temp_dir().join("evaporchain-ceremony-test");
+        let _ = std::fs::create_dir_all(&dir);
+        let genesis_path = dir.join("genesis.json");
+        let path_str = genesis_path.to_str().unwrap();
+
+        // Step 1: Create
+        let result = cmd_genesis_create(path_str, "test-chain", 10_000_000, 3000, 100, true);
+        assert!(result.is_ok(), "Create failed: {:?}", result.err());
+        assert!(genesis_path.exists());
+
+        // Step 2: Add validators
+        let result = cmd_genesis_add_validator(path_str, "alpha", 1000, Some("/ip4/127.0.0.1/tcp/9000"), None, 1_000_000, true);
+        assert!(result.is_ok(), "Add validator 1 failed: {:?}", result.err());
+
+        let result = cmd_genesis_add_validator(path_str, "beta", 1000, Some("/ip4/127.0.0.1/tcp/9001"), None, 1_000_000, true);
+        assert!(result.is_ok(), "Add validator 2 failed: {:?}", result.err());
+
+        // Step 3: Add faucet account
+        let result = cmd_genesis_add_account(path_str, "Faucet", 5_000_000, Some(0xFF), true);
+        assert!(result.is_ok(), "Add account failed: {:?}", result.err());
+
+        // Step 4: Finalize
+        let result = cmd_genesis_finalize(path_str, true);
+        assert!(result.is_ok(), "Finalize failed: {:?}", result.err());
+
+        // Verify the config
+        let json = std::fs::read_to_string(&genesis_path).unwrap();
+        let config: GenesisConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config.validators.len(), 2);
+        assert_eq!(config.accounts.len(), 3); // 2 validator accounts + 1 faucet
+        assert_eq!(config.chain_params.chain_id, "test-chain");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

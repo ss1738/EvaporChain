@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EvaporChain Explorer</title>
+<style>
+:root {
+  --bg: #0a0e14;
+  --surface: #111820;
+  --surface2: #161e28;
+  --border: #1e2a38;
+  --text: #c8d0dc;
+  --text2: #7a8694;
+  --accent: #22d3ee;
+  --green: #34d399;
+  --yellow: #fbbf24;
+  --red: #f87171;
+  --purple: #a78bfa;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace; background: var(--bg); color: var(--text); min-height: 100vh; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 16px 24px; display: flex; align-items: center; gap: 16px; }
+header h1 { font-size: 18px; color: var(--accent); font-weight: 600; }
+header .node-url { font-size: 12px; color: var(--text2); margin-left: auto; }
+header input { background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 4px; font-family: inherit; font-size: 12px; width: 260px; }
+header button { background: var(--accent); color: var(--bg); border: none; padding: 6px 14px; border-radius: 4px; font-family: inherit; font-size: 12px; cursor: pointer; font-weight: 600; }
+header button:hover { opacity: 0.85; }
+
+nav { background: var(--surface); border-bottom: 1px solid var(--border); display: flex; gap: 0; }
+nav button { background: none; border: none; color: var(--text2); padding: 12px 20px; font-family: inherit; font-size: 13px; cursor: pointer; border-bottom: 2px solid transparent; }
+nav button:hover { color: var(--text); }
+nav button.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+.stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+.stat-card .label { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+.stat-card .value { font-size: 24px; font-weight: 700; color: var(--accent); }
+.stat-card .value.green { color: var(--green); }
+.stat-card .value.red { color: var(--red); }
+.stat-card .value.purple { color: var(--purple); }
+
+table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+table th { text-align: left; padding: 10px 14px; font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); background: var(--surface2); }
+table td { padding: 10px 14px; font-size: 13px; border-bottom: 1px solid var(--border); }
+table tr:last-child td { border-bottom: none; }
+table tr:hover td { background: var(--surface2); }
+
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.badge-active { background: #0d3320; color: var(--green); }
+.badge-grace { background: #3d2e06; color: var(--yellow); }
+.badge-ghost { background: #3d1212; color: var(--red); }
+.badge-risen { background: #2d1b69; color: var(--purple); }
+
+.energy-bar { display: inline-block; width: 100px; height: 8px; background: var(--surface2); border-radius: 4px; overflow: hidden; vertical-align: middle; }
+.energy-bar .fill { height: 100%; border-radius: 4px; transition: width 0.3s; }
+.energy-bar .fill.high { background: var(--green); }
+.energy-bar .fill.mid { background: var(--yellow); }
+.energy-bar .fill.low { background: var(--red); }
+
+.hash { color: var(--text2); font-size: 12px; }
+.section-title { font-size: 16px; font-weight: 600; margin-bottom: 16px; color: var(--text); }
+.page { display: none; }
+.page.active { display: block; }
+.error { background: #3d1212; color: var(--red); padding: 12px 16px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; }
+.loading { color: var(--text2); text-align: center; padding: 40px; font-size: 14px; }
+.refresh-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.refresh-bar .auto { font-size: 12px; color: var(--text2); }
+.tx-type { font-weight: 600; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>EvaporChain Explorer</h1>
+  <input id="nodeUrl" type="text" value="http://localhost:8080" placeholder="Node API URL">
+  <button onclick="connect()">Connect</button>
+  <span class="node-url" id="connStatus">Disconnected</span>
+</header>
+
+<nav id="nav">
+  <button class="active" data-page="dashboard">Dashboard</button>
+  <button data-page="blocks">Blocks</button>
+  <button data-page="objects">Objects</button>
+  <button data-page="accounts">Accounts</button>
+  <button data-page="validators">Validators</button>
+</nav>
+
+<div class="container">
+
+  <!-- Dashboard -->
+  <div id="page-dashboard" class="page active">
+    <div class="grid" id="stats-grid">
+      <div class="stat-card"><div class="label">Block Height</div><div class="value" id="stat-height">-</div></div>
+      <div class="stat-card"><div class="label">Epoch</div><div class="value purple" id="stat-epoch">-</div></div>
+      <div class="stat-card"><div class="label">Active Objects</div><div class="value green" id="stat-active">-</div></div>
+      <div class="stat-card"><div class="label">Ghosts</div><div class="value red" id="stat-ghosts">-</div></div>
+      <div class="stat-card"><div class="label">Total Evaporated</div><div class="value" id="stat-evaporated">-</div></div>
+      <div class="stat-card"><div class="label">Peers</div><div class="value green" id="stat-peers">-</div></div>
+    </div>
+    <div class="section-title">Recent Blocks</div>
+    <table id="recent-blocks-table">
+      <thead><tr><th>Block</th><th>Epoch</th><th>Txs</th><th>Evaporated</th><th>Grace</th><th>State Root</th></tr></thead>
+      <tbody id="recent-blocks"></tbody>
+    </table>
+  </div>
+
+  <!-- Blocks -->
+  <div id="page-blocks" class="page">
+    <div class="refresh-bar">
+      <div class="section-title">Blocks</div>
+      <div class="auto">Auto-refresh: 5s</div>
+    </div>
+    <table>
+      <thead><tr><th>Block</th><th>Epoch</th><th>Txs</th><th>Evaporated</th><th>Entered Grace</th><th>Active</th><th>Ghosts</th><th>State Root</th></tr></thead>
+      <tbody id="blocks-list"></tbody>
+    </table>
+  </div>
+
+  <!-- Objects -->
+  <div id="page-objects" class="page">
+    <div class="section-title">State Objects</div>
+    <table>
+      <thead><tr><th>Name</th><th>State</th><th>Energy</th><th>Max</th><th>Decay</th><th>Half-Life</th><th>Owner</th></tr></thead>
+      <tbody id="objects-list"></tbody>
+    </table>
+  </div>
+
+  <!-- Accounts -->
+  <div id="page-accounts" class="page">
+    <div class="section-title">Accounts</div>
+    <table>
+      <thead><tr><th>Name</th><th>Address</th><th>Balance</th><th>Nonce</th></tr></thead>
+      <tbody id="accounts-list"></tbody>
+    </table>
+  </div>
+
+  <!-- Validators -->
+  <div id="page-validators" class="page">
+    <div class="section-title">Validators</div>
+    <div id="validators-content" class="loading">Connect to a node to view validators</div>
+  </div>
+
+</div>
+
+<script>
+let BASE_URL = 'http://localhost:8080';
+let refreshInterval = null;
+
+function connect() {
+  const url = document.getElementById('nodeUrl').value.replace(/\/+$/, '');
+  BASE_URL = url;
+  document.getElementById('connStatus').textContent = 'Connecting...';
+  fetchAll();
+  if (refreshInterval) clearInterval(refreshInterval);
+  refreshInterval = setInterval(fetchAll, 5000);
+}
+
+async function api(path) {
+  const resp = await fetch(BASE_URL + path);
+  if (!resp.ok) throw new Error('API error: ' + resp.status);
+  return resp.json();
+}
+
+async function fetchAll() {
+  try {
+    await Promise.all([fetchStatus(), fetchBlocks(), fetchObjects(), fetchAccounts()]);
+    document.getElementById('connStatus').textContent = 'Connected: ' + BASE_URL;
+  } catch (e) {
+    document.getElementById('connStatus').textContent = 'Error: ' + e.message;
+  }
+}
+
+async function fetchStatus() {
+  try {
+    const s = await api('/api/status');
+    document.getElementById('stat-height').textContent = s.block_height.toLocaleString();
+    document.getElementById('stat-epoch').textContent = s.epoch.toLocaleString();
+    document.getElementById('stat-active').textContent = s.active_objects.toLocaleString();
+    document.getElementById('stat-ghosts').textContent = s.ghost_count.toLocaleString();
+    document.getElementById('stat-evaporated').textContent = s.total_evaporated.toLocaleString();
+    document.getElementById('stat-peers').textContent = s.peer_count;
+  } catch (e) {}
+}
+
+async function fetchBlocks() {
+  try {
+    const blocks = await api('/api/blocks?limit=50');
+    const recentTbody = document.getElementById('recent-blocks');
+    const fullTbody = document.getElementById('blocks-list');
+
+    const renderRow = (b, full) => {
+      const root = b.state_root ? b.state_root.substring(0, 16) + '...' : '-';
+      let cols = `<td style="color:var(--accent);font-weight:600">#${b.number}</td>
+        <td style="color:var(--purple)">E${b.epoch}</td>
+        <td>${b.tx_count}</td>
+        <td>${b.evaporations > 0 ? '<span style="color:var(--red)">' + b.evaporations + '</span>' : '-'}</td>
+        <td>${b.entered_grace > 0 ? '<span style="color:var(--yellow)">' + b.entered_grace + '</span>' : '-'}</td>`;
+      if (full) {
+        cols += `<td>${b.active_objects}</td><td>${b.ghost_count}</td>`;
+      }
+      cols += `<td class="hash">${root}</td>`;
+      return '<tr>' + cols + '</tr>';
+    };
+
+    recentTbody.innerHTML = blocks.slice(0, 10).map(b => renderRow(b, false)).join('');
+    fullTbody.innerHTML = blocks.map(b => renderRow(b, true)).join('');
+  } catch (e) {}
+}
+
+async function fetchObjects() {
+  try {
+    const objects = await api('/api/objects');
+    const tbody = document.getElementById('objects-list');
+    tbody.innerHTML = objects.map(o => {
+      const pct = o.max_energy > 0 ? (o.current_energy / o.max_energy * 100) : 0;
+      const cls = pct > 50 ? 'high' : pct > 20 ? 'mid' : 'low';
+      const stateCls = o.state.toLowerCase();
+      return `<tr>
+        <td style="font-weight:600">${esc(o.name)}</td>
+        <td><span class="badge badge-${stateCls}">${o.state}</span></td>
+        <td>${o.current_energy.toLocaleString()}</td>
+        <td style="color:var(--text2)">${o.max_energy.toLocaleString()}</td>
+        <td>
+          <div class="energy-bar"><div class="fill ${cls}" style="width:${pct}%"></div></div>
+          <span style="font-size:11px;color:var(--text2);margin-left:6px">${o.decay_percentage.toFixed(0)}%</span>
+        </td>
+        <td>${o.half_life}</td>
+        <td class="hash">${esc(o.owner_name)}</td>
+      </tr>`;
+    }).join('');
+  } catch (e) {}
+}
+
+async function fetchAccounts() {
+  try {
+    const accounts = await api('/api/accounts');
+    const tbody = document.getElementById('accounts-list');
+    tbody.innerHTML = accounts.map(a => {
+      const addr = a.address.length > 20 ? a.address.substring(0, 16) + '...' : a.address;
+      return `<tr>
+        <td style="color:var(--accent);font-weight:600">${esc(a.name)}</td>
+        <td class="hash">${esc(addr)}</td>
+        <td style="color:var(--green);font-weight:600">${a.balance.toLocaleString()}</td>
+        <td style="color:var(--text2)">${a.nonce}</td>
+      </tr>`;
+    }).join('');
+  } catch (e) {}
+}
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+document.getElementById('nav').addEventListener('click', e => {
+  if (e.target.tagName !== 'BUTTON') return;
+  const page = e.target.dataset.page;
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  e.target.classList.add('active');
+  document.getElementById('page-' + page).classList.add('active');
+});
+
+document.getElementById('nodeUrl').addEventListener('keydown', e => {
+  if (e.key === 'Enter') connect();
+});
+
+connect();
+</script>
+</body>
+</html>
