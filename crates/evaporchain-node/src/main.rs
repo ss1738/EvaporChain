@@ -196,6 +196,41 @@ fn seed_demo_accounts(db: &mut RocksDBStateDB, node_tag: &str) {
     println!("{} \x1b[36mDemo accounts seeded (6 accounts for demo tx generation)\x1b[0m", node_tag);
 }
 
+fn seed_demo_objects(db: &mut RocksDBStateDB, node_tag: &str) {
+    use api::{GENESIS_FOUNDATION, GENESIS_CORE_DEV, GENESIS_VALIDATOR1, GENESIS_VALIDATOR2, GENESIS_ECOSYSTEM, GENESIS_COMMUNITY, parse_hex_address};
+    use evaporchain_state::db::StateDB;
+    let objects: Vec<(u8, &str, u64, u64, &str)> = vec![
+        (0x10, GENESIS_FOUNDATION, 50_000, 50_000, "token:evap-governance"),
+        (0x11, GENESIS_CORE_DEV, 30_000, 50_000, "stake:validator-pool-1"),
+        (0x12, GENESIS_ECOSYSTEM, 5_000, 10_000, "nft:event-ticket-0x3f"),
+        (0x13, GENESIS_ECOSYSTEM, 8_000, 10_000, "escrow:freelance-0x8b"),
+        (0x14, GENESIS_VALIDATOR2, 2_000, 5_000, "dao:proposal-0x5e"),
+        (0x15, GENESIS_COMMUNITY, 800, 100, "session:auth-0x1a"),
+        (0x16, GENESIS_VALIDATOR1, 400, 50, "cache:price-feed-0x9c"),
+        (0x17, GENESIS_COMMUNITY, 150, 20, "msg:ephemeral-0xd7"),
+    ];
+    for (oid, owner_hex, energy, half_life, label) in &objects {
+        let id = obj_id(*oid);
+        if db.get_object(&id).is_some() {
+            continue;
+        }
+        let owner = parse_hex_address(owner_hex).unwrap();
+        db.put_object(StateObject {
+            id,
+            owner,
+            energy: *energy,
+            half_life: *half_life,
+            created_at: 0,
+            last_refreshed: 0,
+            state: ObjectState::Active,
+            grace_epoch: None,
+            data: label.as_bytes().to_vec(),
+            decay_curve: None,
+        });
+    }
+    println!("{} \x1b[36mDemo objects seeded (8 objects for demo tx generation)\x1b[0m", node_tag);
+}
+
 /// Produce 2D erasure encoding with NMT blob commitments for a block.
 /// Populates `block.da_row_roots`, `block.da_col_roots`, and `block.blob_commitments`.
 /// Returns the full 2D package (for storage) and the data_root.
@@ -510,16 +545,19 @@ fn generate_demo_tx(
             while ti == from_global { ti = rng.gen_range(0..all_hexes.len()); }
             let from = parse_hex_address(my_accts[fi]).unwrap();
             let to = parse_hex_address(all_hexes[ti]).unwrap();
-            let amount = rng.gen_range(100..5000);
-            // Read on-chain nonce to avoid collisions across validators
-            let nonce = {
+            // Read on-chain balance and nonce
+            let (balance, nonce) = {
                 let db_guard = safe_lock(db);
-                db_guard.get_account(&from).map(|a| a.nonce).unwrap_or(0)
+                db_guard.get_account(&from)
+                    .map(|a| (a.balance, a.nonce))
+                    .unwrap_or((0, 0))
             };
-            let slot = (from_global % 4) as usize;
-            // Track locally in case multiple txs from same account in one block
-            let nonce = nonce + nonces[slot];
-            nonces[slot] += 1;
+            // Cap amount to 10% of balance (leave room for fees)
+            let max_amount = (balance / 12).max(1);
+            if max_amount < 50 {
+                return None;
+            }
+            let amount = rng.gen_range(50..max_amount.min(5000));
             let mut tx = Transaction::Transfer(TransferTx {
                 from,
                 to,
@@ -1388,6 +1426,7 @@ async fn main() -> Result<()> {
                 hex::encode(&result.state_root[..8]));
             if args.demo_mode {
                 seed_demo_accounts(&mut *db, &node_tag);
+                seed_demo_objects(&mut *db, &node_tag);
             }
         } else {
             println!("{} \x1b[1mFresh start — loading genesis state:\x1b[0m", node_tag);
@@ -2310,6 +2349,36 @@ async fn main() -> Result<()> {
         commit_actions
     }
 
+    // ── Wait for BLS key exchange before starting consensus ──
+    // Without all keys, blocks lack CommitCertificates and can't be synced.
+    if let Some(ref tc_ref) = tendermint {
+        if args.network_mode {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+            loop {
+                // Drain incoming consensus messages to process KeyAnnounce
+                if let Some(ref mut rx) = consensus_net_receiver {
+                    while let Ok(data) = rx.try_recv() {
+                        if let Ok(msg) = serde_json::from_slice::<ConsensusMessage>(&data) {
+                            let mut tc = safe_lock(tc_ref);
+                            let _ = tc.on_message(msg);
+                        }
+                    }
+                }
+                let tc = safe_lock(tc_ref);
+                if tc.validator_set().has_bls_keys() {
+                    println!("{} \x1b[1;32mAll BLS keys registered — consensus ready\x1b[0m", node_tag);
+                    break;
+                }
+                drop(tc);
+                if tokio::time::Instant::now() >= deadline {
+                    eprintln!("{} \x1b[33mBLS key exchange timeout (15s) — starting consensus with partial keys\x1b[0m", node_tag);
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        }
+    }
+
     // ── Block production / follower loop ──
     let mut ticker = interval(Duration::from_millis(args.block_ms));
     let mut rng = rand::thread_rng();
@@ -2352,6 +2421,7 @@ async fn main() -> Result<()> {
                         let tc = safe_lock(&tc_ref);
                         (tc.epoch() + 1, tc.am_i_proposer())
                     };
+
                     if is_proposer {
                         if let Some(tx) = generate_demo_tx(&mut rng, epoch, &mut demo_nonces, &demo_keypairs, args.validator_id, args.validator_count, &db) {
                             let mut tc = safe_lock(&tc_ref);
