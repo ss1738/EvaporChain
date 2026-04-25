@@ -1,3 +1,9 @@
+use k256::ecdsa::{
+    signature::Signer as K256Signer,
+    signature::Verifier as K256Verifier,
+    Signature as K256Signature,
+    SigningKey, VerifyingKey,
+};
 use pqc_dilithium::Keypair;
 use zeroize::Zeroize;
 
@@ -123,6 +129,185 @@ pub enum MlDsaError {
     InvalidPublicKey,
     #[error("invalid secret key bytes")]
     InvalidSecretKey,
+}
+
+// ──────────────── ECDSA secp256k1 (Classical Signatures) ────────────────
+
+const ECDSA_COMPRESSED_PK_LEN: usize = 33;
+const ECDSA_SIGNATURE_LEN: usize = 64;
+
+pub struct EcdsaKeypair {
+    signing_key: SigningKey,
+}
+
+impl Drop for EcdsaKeypair {
+    fn drop(&mut self) {
+        let ptr = &mut self.signing_key as *mut SigningKey as *mut u8;
+        unsafe { std::ptr::write_bytes(ptr, 0, std::mem::size_of::<SigningKey>()) };
+    }
+}
+
+impl EcdsaKeypair {
+    pub fn generate() -> Self {
+        let signing_key = SigningKey::random(&mut rand::thread_rng());
+        Self { signing_key }
+    }
+
+    pub fn from_bytes(sk_bytes: &[u8]) -> Result<Self, EcdsaError> {
+        let signing_key = SigningKey::from_bytes(sk_bytes.into())
+            .map_err(|_| EcdsaError::InvalidSecretKey)?;
+        Ok(Self { signing_key })
+    }
+
+    pub fn public_key_compressed(&self) -> Vec<u8> {
+        let vk = VerifyingKey::from(&self.signing_key);
+        vk.to_encoded_point(true).as_bytes().to_vec()
+    }
+
+    pub fn secret_key_bytes(&self) -> Vec<u8> {
+        self.signing_key.to_bytes().to_vec()
+    }
+
+    pub fn sign(&self, msg: &[u8]) -> Vec<u8> {
+        let sig: K256Signature = self.signing_key.sign(msg);
+        sig.to_bytes().to_vec()
+    }
+}
+
+pub struct EcdsaVerifier;
+
+impl EcdsaVerifier {
+    pub fn verify(msg: &[u8], signature: &[u8], public_key: &[u8]) -> bool {
+        if signature.len() != ECDSA_SIGNATURE_LEN || public_key.len() != ECDSA_COMPRESSED_PK_LEN {
+            return false;
+        }
+        let vk = match VerifyingKey::from_sec1_bytes(public_key) {
+            Ok(vk) => vk,
+            Err(_) => return false,
+        };
+        let sig = match K256Signature::from_bytes(signature.into()) {
+            Ok(sig) => sig,
+            Err(_) => return false,
+        };
+        vk.verify(msg, &sig).is_ok()
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum EcdsaError {
+    #[error("invalid ECDSA secret key bytes")]
+    InvalidSecretKey,
+    #[error("invalid ECDSA public key bytes")]
+    InvalidPublicKey,
+}
+
+// ─────────────── Hybrid Post-Quantum (ECDSA + ML-DSA) ──────────────────
+//
+// Wire format (backward compatible):
+//   Public key:
+//     Legacy ML-DSA:  1952 raw bytes (no tag)
+//     Hybrid:         0x02 || 33-byte ECDSA PK || 1952-byte ML-DSA PK  = 1986 bytes
+//   Signature:
+//     Legacy ML-DSA:  3293 raw bytes (no tag)
+//     Hybrid:         0x02 || 64-byte ECDSA sig || 3293-byte ML-DSA sig = 3358 bytes
+//
+// Verification: BOTH signatures must independently verify.
+
+const HYBRID_TAG: u8 = 0x02;
+pub const HYBRID_PK_LEN: usize = 1 + ECDSA_COMPRESSED_PK_LEN + pqc_dilithium::PUBLICKEYBYTES;
+pub const HYBRID_SIG_LEN: usize = 1 + ECDSA_SIGNATURE_LEN + pqc_dilithium::SIGNBYTES;
+
+pub struct HybridKeypair {
+    pub ecdsa: EcdsaKeypair,
+    pub mldsa: MlDsaKeypair,
+}
+
+impl HybridKeypair {
+    pub fn generate() -> Self {
+        Self {
+            ecdsa: EcdsaKeypair::generate(),
+            mldsa: MlDsaKeypair::generate(),
+        }
+    }
+
+    pub fn from_parts(ecdsa: EcdsaKeypair, mldsa: MlDsaKeypair) -> Self {
+        Self { ecdsa, mldsa }
+    }
+}
+
+impl Signer for HybridKeypair {
+    fn sign(&self, msg: &[u8]) -> Vec<u8> {
+        let ecdsa_sig = self.ecdsa.sign(msg);
+        let mldsa_sig = self.mldsa.sign(msg);
+        let mut out = Vec::with_capacity(HYBRID_SIG_LEN);
+        out.push(HYBRID_TAG);
+        out.extend_from_slice(&ecdsa_sig);
+        out.extend_from_slice(&mldsa_sig);
+        out
+    }
+
+    fn public_key_bytes(&self) -> Vec<u8> {
+        let ecdsa_pk = self.ecdsa.public_key_compressed();
+        let mldsa_pk = self.mldsa.public_key_bytes();
+        let mut out = Vec::with_capacity(HYBRID_PK_LEN);
+        out.push(HYBRID_TAG);
+        out.extend_from_slice(&ecdsa_pk);
+        out.extend_from_slice(&mldsa_pk);
+        out
+    }
+}
+
+pub struct HybridVerifier;
+
+impl HybridVerifier {
+    pub fn is_hybrid_pk(public_key: &[u8]) -> bool {
+        public_key.len() == HYBRID_PK_LEN && public_key[0] == HYBRID_TAG
+    }
+
+    pub fn is_hybrid_sig(signature: &[u8]) -> bool {
+        signature.len() == HYBRID_SIG_LEN && signature[0] == HYBRID_TAG
+    }
+
+    fn split_pk(public_key: &[u8]) -> Option<(&[u8], &[u8])> {
+        if !Self::is_hybrid_pk(public_key) {
+            return None;
+        }
+        let ecdsa_pk = &public_key[1..1 + ECDSA_COMPRESSED_PK_LEN];
+        let mldsa_pk = &public_key[1 + ECDSA_COMPRESSED_PK_LEN..];
+        Some((ecdsa_pk, mldsa_pk))
+    }
+
+    fn split_sig(signature: &[u8]) -> Option<(&[u8], &[u8])> {
+        if !Self::is_hybrid_sig(signature) {
+            return None;
+        }
+        let ecdsa_sig = &signature[1..1 + ECDSA_SIGNATURE_LEN];
+        let mldsa_sig = &signature[1 + ECDSA_SIGNATURE_LEN..];
+        Some((ecdsa_sig, mldsa_sig))
+    }
+
+    pub fn verify_hybrid(msg: &[u8], signature: &[u8], public_key: &[u8]) -> bool {
+        let (ecdsa_pk, mldsa_pk) = match Self::split_pk(public_key) {
+            Some(pks) => pks,
+            None => return false,
+        };
+        let (ecdsa_sig, mldsa_sig) = match Self::split_sig(signature) {
+            Some(sigs) => sigs,
+            None => return false,
+        };
+        EcdsaVerifier::verify(msg, ecdsa_sig, ecdsa_pk)
+            && MlDsaVerifier::verify(msg, mldsa_sig, mldsa_pk)
+    }
+}
+
+impl Verifier for HybridVerifier {
+    fn verify(msg: &[u8], signature: &[u8], public_key: &[u8]) -> bool {
+        if Self::is_hybrid_pk(public_key) || Self::is_hybrid_sig(signature) {
+            Self::verify_hybrid(msg, signature, public_key)
+        } else {
+            MlDsaVerifier::verify(msg, signature, public_key)
+        }
+    }
 }
 
 // ──────────────────── BLS12-381 (Consensus Attestations) ────────────────
@@ -599,5 +784,179 @@ mod tests {
         // Random 96 bytes should never pass as a valid PoP
         let fake_pop = BlsSignature(vec![0xDE; 96]);
         assert!(!BlsVerifier::verify_proof_of_possession(&pk, &fake_pop));
+    }
+
+    // ─── ECDSA secp256k1 Tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_ecdsa_sign_verify_roundtrip() {
+        let kp = EcdsaKeypair::generate();
+        let msg = b"ecdsa signing test";
+        let sig = kp.sign(msg);
+        let pk = kp.public_key_compressed();
+        assert!(EcdsaVerifier::verify(msg, &sig, &pk));
+    }
+
+    #[test]
+    fn test_ecdsa_wrong_message_rejects() {
+        let kp = EcdsaKeypair::generate();
+        let sig = kp.sign(b"correct");
+        let pk = kp.public_key_compressed();
+        assert!(!EcdsaVerifier::verify(b"wrong", &sig, &pk));
+    }
+
+    #[test]
+    fn test_ecdsa_wrong_key_rejects() {
+        let kp1 = EcdsaKeypair::generate();
+        let kp2 = EcdsaKeypair::generate();
+        let sig = kp1.sign(b"hello");
+        assert!(!EcdsaVerifier::verify(b"hello", &sig, &kp2.public_key_compressed()));
+    }
+
+    #[test]
+    fn test_ecdsa_from_bytes_roundtrip() {
+        let kp = EcdsaKeypair::generate();
+        let sk = kp.secret_key_bytes();
+        let kp2 = EcdsaKeypair::from_bytes(&sk).unwrap();
+        let msg = b"roundtrip";
+        let sig = kp2.sign(msg);
+        assert!(EcdsaVerifier::verify(msg, &sig, &kp.public_key_compressed()));
+    }
+
+    #[test]
+    fn test_ecdsa_key_sizes() {
+        let kp = EcdsaKeypair::generate();
+        assert_eq!(kp.public_key_compressed().len(), 33);
+        assert_eq!(kp.secret_key_bytes().len(), 32);
+        assert_eq!(kp.sign(b"test").len(), 64);
+    }
+
+    #[test]
+    fn test_ecdsa_invalid_sig_length() {
+        let kp = EcdsaKeypair::generate();
+        let pk = kp.public_key_compressed();
+        assert!(!EcdsaVerifier::verify(b"test", &[0u8; 10], &pk));
+    }
+
+    #[test]
+    fn test_ecdsa_invalid_pk_length() {
+        let kp = EcdsaKeypair::generate();
+        let sig = kp.sign(b"test");
+        assert!(!EcdsaVerifier::verify(b"test", &sig, &[0u8; 10]));
+    }
+
+    // ─── Hybrid (ECDSA + ML-DSA) Tests ─────────────────────────────────
+
+    #[test]
+    fn test_hybrid_sign_verify_roundtrip() {
+        let kp = HybridKeypair::generate();
+        let msg = b"hybrid post-quantum signature";
+        let sig = kp.sign(msg);
+        let pk = kp.public_key_bytes();
+        assert!(HybridVerifier::verify(msg, &sig, &pk));
+    }
+
+    #[test]
+    fn test_hybrid_wire_format_sizes() {
+        let kp = HybridKeypair::generate();
+        let pk = kp.public_key_bytes();
+        let sig = kp.sign(b"size check");
+        assert_eq!(pk.len(), HYBRID_PK_LEN);
+        assert_eq!(sig.len(), HYBRID_SIG_LEN);
+        assert_eq!(pk[0], HYBRID_TAG);
+        assert_eq!(sig[0], HYBRID_TAG);
+    }
+
+    #[test]
+    fn test_hybrid_wrong_message_rejects() {
+        let kp = HybridKeypair::generate();
+        let sig = kp.sign(b"correct");
+        let pk = kp.public_key_bytes();
+        assert!(!HybridVerifier::verify(b"wrong", &sig, &pk));
+    }
+
+    #[test]
+    fn test_hybrid_wrong_key_rejects() {
+        let kp1 = HybridKeypair::generate();
+        let kp2 = HybridKeypair::generate();
+        let sig = kp1.sign(b"hello");
+        assert!(!HybridVerifier::verify(b"hello", &sig, &kp2.public_key_bytes()));
+    }
+
+    #[test]
+    fn test_hybrid_tampered_ecdsa_sig_rejects() {
+        let kp = HybridKeypair::generate();
+        let msg = b"tamper test";
+        let mut sig = kp.sign(msg);
+        sig[1] ^= 0xFF; // flip byte in ECDSA portion
+        assert!(!HybridVerifier::verify(msg, &sig, &kp.public_key_bytes()));
+    }
+
+    #[test]
+    fn test_hybrid_tampered_mldsa_sig_rejects() {
+        let kp = HybridKeypair::generate();
+        let msg = b"tamper test";
+        let mut sig = kp.sign(msg);
+        sig[1 + ECDSA_SIGNATURE_LEN + 10] ^= 0xFF; // flip byte in ML-DSA portion
+        assert!(!HybridVerifier::verify(msg, &sig, &kp.public_key_bytes()));
+    }
+
+    #[test]
+    fn test_hybrid_verifier_accepts_legacy_mldsa() {
+        let kp = MlDsaKeypair::generate();
+        let msg = b"legacy transaction";
+        let sig = kp.sign(msg);
+        let pk = kp.public_key_bytes();
+        assert!(HybridVerifier::verify(msg, &sig, &pk));
+    }
+
+    #[test]
+    fn test_hybrid_verifier_rejects_mixed_scheme() {
+        let hybrid_kp = HybridKeypair::generate();
+        let mldsa_kp = MlDsaKeypair::generate();
+        let msg = b"mixed";
+        let hybrid_sig = hybrid_kp.sign(msg);
+        let mldsa_pk = mldsa_kp.public_key_bytes();
+        assert!(!HybridVerifier::verify(msg, &hybrid_sig, &mldsa_pk));
+    }
+
+    #[test]
+    fn test_hybrid_split_pk_valid() {
+        let kp = HybridKeypair::generate();
+        let pk = kp.public_key_bytes();
+        let (ecdsa_pk, mldsa_pk) = HybridVerifier::split_pk(&pk).unwrap();
+        assert_eq!(ecdsa_pk.len(), ECDSA_COMPRESSED_PK_LEN);
+        assert_eq!(mldsa_pk.len(), pqc_dilithium::PUBLICKEYBYTES);
+    }
+
+    #[test]
+    fn test_hybrid_split_sig_valid() {
+        let kp = HybridKeypair::generate();
+        let sig = kp.sign(b"split");
+        let (ecdsa_sig, mldsa_sig) = HybridVerifier::split_sig(&sig).unwrap();
+        assert_eq!(ecdsa_sig.len(), ECDSA_SIGNATURE_LEN);
+        assert_eq!(mldsa_sig.len(), pqc_dilithium::SIGNBYTES);
+    }
+
+    #[test]
+    fn test_hybrid_each_component_verifies_independently() {
+        let kp = HybridKeypair::generate();
+        let msg = b"independent verification";
+        let sig = kp.sign(msg);
+        let pk = kp.public_key_bytes();
+        let (ecdsa_pk, mldsa_pk) = HybridVerifier::split_pk(&pk).unwrap();
+        let (ecdsa_sig, mldsa_sig) = HybridVerifier::split_sig(&sig).unwrap();
+        assert!(EcdsaVerifier::verify(msg, ecdsa_sig, ecdsa_pk));
+        assert!(MlDsaVerifier::verify(msg, mldsa_sig, mldsa_pk));
+    }
+
+    #[test]
+    fn test_hybrid_from_parts() {
+        let ecdsa = EcdsaKeypair::generate();
+        let mldsa = MlDsaKeypair::generate();
+        let kp = HybridKeypair::from_parts(ecdsa, mldsa);
+        let msg = b"from parts";
+        let sig = kp.sign(msg);
+        assert!(HybridVerifier::verify(msg, &sig, &kp.public_key_bytes()));
     }
 }

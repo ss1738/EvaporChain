@@ -17,7 +17,7 @@
 use std::collections::{HashMap, HashSet};
 
 use evaporchain_contracts::{ContractEngine, ContractTemplate};
-use evaporchain_crypto::signatures::{MlDsaVerifier, Verifier};
+use evaporchain_crypto::signatures::{HybridVerifier, Verifier};
 use evaporchain_crypto::MerkleMountainRange;
 use evaporchain_script::ScriptEngine;
 use evaporchain_state::db::StateDB;
@@ -531,7 +531,7 @@ impl ParallelExecutor {
         let sig = tx.signature().ok_or(ExecutionError::MissingSignature)?;
         let pk = tx.public_key().ok_or(ExecutionError::MissingSignature)?;
         let msg = tx.signable_bytes();
-        if !MlDsaVerifier::verify(&msg, sig, pk) {
+        if !HybridVerifier::verify(&msg, sig, pk) {
             return Err(ExecutionError::InvalidSignature);
         }
         Ok(())

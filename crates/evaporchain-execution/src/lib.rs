@@ -9,7 +9,7 @@ pub mod temporal;
 mod audit_tests;
 
 use evaporchain_contracts::{ContractEngine, ContractTemplate};
-use evaporchain_crypto::signatures::{MlDsaVerifier, Verifier};
+use evaporchain_crypto::signatures::{HybridVerifier, Verifier};
 use evaporchain_crypto::MerkleMountainRange;
 use evaporchain_proving::evaporation_proof::{EvaporationClaim, EvaporationProof, EvaporationProver};
 use evaporchain_script::ScriptEngine;
@@ -335,7 +335,7 @@ impl SimpleExecutor {
         let pk = tx.public_key().ok_or(ExecutionError::MissingSignature)?;
         let msg = tx.signable_bytes();
 
-        if !MlDsaVerifier::verify(&msg, sig, pk) {
+        if !HybridVerifier::verify(&msg, sig, pk) {
             return Err(ExecutionError::InvalidSignature);
         }
 

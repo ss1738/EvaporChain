@@ -15,6 +15,8 @@ pub use energy_verkle::{
 pub use hash::{blake3_hash, poseidon_hash, Blake3Hasher, HashEngine, PoseidonHasher};
 pub use signatures::{
     BlsError, BlsKeypair, BlsPublicKey, BlsSecretKey, BlsSignature, BlsVerifier,
+    EcdsaError, EcdsaKeypair, EcdsaVerifier,
+    HybridKeypair, HybridVerifier, HYBRID_PK_LEN, HYBRID_SIG_LEN,
     MlDsaKeypair, MlDsaVerifier, Signer, Verifier,
 };
 pub use verkle::{VerkleProof, VerkleTrie};

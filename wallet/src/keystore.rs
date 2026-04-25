@@ -26,7 +26,7 @@
 use crate::address::derive_address;
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
-use evaporchain_crypto::signatures::{MlDsaKeypair, Signer};
+use evaporchain_crypto::signatures::{EcdsaKeypair, HybridKeypair, MlDsaKeypair, Signer};
 use evaporchain_types::AccountAddress;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -160,6 +160,75 @@ impl KeyStore {
 
         self.entries.push(entry);
         Ok(address)
+    }
+
+    /// Generate a new Hybrid (ECDSA + ML-DSA) key pair, encrypt it, and add to the keystore.
+    /// The encrypted blob contains both secret keys concatenated: ECDSA SK (32 bytes) || ML-DSA SK (4000 bytes).
+    pub fn generate_hybrid_key(
+        &mut self,
+        name: &str,
+        password: &str,
+    ) -> Result<AccountAddress, KeyStoreError> {
+        if self.entries.iter().any(|e| e.name == name) {
+            return Err(KeyStoreError::DuplicateName(name.to_string()));
+        }
+
+        let keypair = HybridKeypair::generate();
+        let pk_bytes = keypair.public_key_bytes();
+        let ecdsa_sk = keypair.ecdsa.secret_key_bytes();
+        let mldsa_sk = keypair.mldsa.secret_key();
+
+        let mut combined_sk = Vec::with_capacity(ecdsa_sk.len() + mldsa_sk.len());
+        combined_sk.extend_from_slice(&ecdsa_sk);
+        combined_sk.extend_from_slice(mldsa_sk);
+
+        let address = derive_address(&pk_bytes);
+        let address_hex = crate::address::format_address(&address);
+
+        if self.entries.iter().any(|e| e.address == address_hex) {
+            return Err(KeyStoreError::DuplicateAddress(address_hex));
+        }
+
+        let mut salt = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut salt);
+        let mut nonce_bytes = [0u8; 12];
+        rand::thread_rng().fill_bytes(&mut nonce_bytes);
+
+        let encryption_key = derive_encryption_key(password, &salt);
+        let cipher = Aes256Gcm::new_from_slice(&encryption_key)
+            .map_err(|e| KeyStoreError::Encryption(e.to_string()))?;
+
+        let ciphertext = cipher
+            .encrypt(Nonce::from_slice(&nonce_bytes), combined_sk.as_ref())
+            .map_err(|e| KeyStoreError::Encryption(e.to_string()))?;
+
+        let entry = KeyEntry {
+            name: name.to_string(),
+            address: address_hex,
+            public_key: hex::encode(&pk_bytes),
+            encrypted_secret_key: hex::encode(&ciphertext),
+            nonce: hex::encode(nonce_bytes),
+            salt: hex::encode(salt),
+            created_at: chrono::Utc::now().to_rfc3339(),
+        };
+
+        self.entries.push(entry);
+        Ok(address)
+    }
+
+    /// Decrypt and return a Hybrid keypair for a hybrid key entry.
+    pub fn unlock_hybrid_key(
+        &self,
+        name: &str,
+        password: &str,
+    ) -> Result<HybridKeypair, KeyStoreError> {
+        let entry = self
+            .entries
+            .iter()
+            .find(|e| e.name == name)
+            .ok_or_else(|| KeyStoreError::NotFound(name.to_string()))?;
+
+        decrypt_hybrid_entry(entry, password)
     }
 
     /// Import an existing ML-DSA key pair into the keystore.
@@ -333,6 +402,45 @@ fn decrypt_entry(entry: &KeyEntry, password: &str) -> Result<MlDsaKeypair, KeySt
         .map_err(|e| KeyStoreError::KeyReconstruction(e.to_string()))
 }
 
+const ECDSA_SK_LEN: usize = 32;
+const MLDSA_SK_LEN: usize = 4000;
+
+fn decrypt_hybrid_entry(entry: &KeyEntry, password: &str) -> Result<HybridKeypair, KeyStoreError> {
+    let salt = hex::decode(&entry.salt).map_err(|e| KeyStoreError::Encryption(e.to_string()))?;
+    let nonce_bytes =
+        hex::decode(&entry.nonce).map_err(|e| KeyStoreError::Encryption(e.to_string()))?;
+    let ciphertext = hex::decode(&entry.encrypted_secret_key)
+        .map_err(|e| KeyStoreError::Encryption(e.to_string()))?;
+    let pk_bytes =
+        hex::decode(&entry.public_key).map_err(|e| KeyStoreError::Encryption(e.to_string()))?;
+
+    let encryption_key = derive_encryption_key(password, &salt);
+    let cipher = Aes256Gcm::new_from_slice(&encryption_key)
+        .map_err(|e| KeyStoreError::Encryption(e.to_string()))?;
+
+    let combined_sk = cipher
+        .decrypt(Nonce::from_slice(&nonce_bytes), ciphertext.as_ref())
+        .map_err(|_| KeyStoreError::Decryption)?;
+
+    if combined_sk.len() < ECDSA_SK_LEN + MLDSA_SK_LEN {
+        return Err(KeyStoreError::KeyReconstruction(
+            "decrypted key too short for hybrid".to_string(),
+        ));
+    }
+
+    let ecdsa_sk = &combined_sk[..ECDSA_SK_LEN];
+    let mldsa_sk = &combined_sk[ECDSA_SK_LEN..];
+
+    let ecdsa_kp = EcdsaKeypair::from_bytes(ecdsa_sk)
+        .map_err(|e| KeyStoreError::KeyReconstruction(e.to_string()))?;
+
+    let mldsa_pk = &pk_bytes[1 + 33..]; // skip tag + ECDSA PK
+    let mldsa_kp = MlDsaKeypair::from_bytes(mldsa_pk, mldsa_sk)
+        .map_err(|e| KeyStoreError::KeyReconstruction(e.to_string()))?;
+
+    Ok(HybridKeypair::from_parts(ecdsa_kp, mldsa_kp))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -458,5 +566,60 @@ mod tests {
         // Unlock and verify round-trip
         let unlocked = store.unlock_key("imported", "pass").unwrap();
         assert_eq!(unlocked.public_key_bytes(), pk);
+    }
+
+    // ─── Hybrid Keystore Tests ──────────────────────────────────────
+
+    #[test]
+    fn test_generate_hybrid_and_unlock() {
+        use evaporchain_crypto::signatures::{HybridVerifier, Verifier};
+
+        let mut store = KeyStore::new();
+        let addr = store.generate_hybrid_key("hybrid_test", "pass").unwrap();
+        assert_ne!(addr, [0u8; 32]);
+
+        let kp = store.unlock_hybrid_key("hybrid_test", "pass").unwrap();
+        let pk = kp.public_key_bytes();
+        assert_eq!(derive_address(&pk), addr);
+        assert!(HybridVerifier::is_hybrid_pk(&pk));
+
+        let msg = b"hybrid keystore roundtrip";
+        let sig = kp.sign(msg);
+        assert!(HybridVerifier::verify(msg, &sig, &pk));
+    }
+
+    #[test]
+    fn test_hybrid_wrong_password_fails() {
+        let mut store = KeyStore::new();
+        store.generate_hybrid_key("hybrid_wp", "correct").unwrap();
+        assert!(store.unlock_hybrid_key("hybrid_wp", "wrong").is_err());
+    }
+
+    #[test]
+    fn test_hybrid_json_roundtrip() {
+        use evaporchain_crypto::signatures::{HybridVerifier, Verifier};
+
+        let mut store = KeyStore::new();
+        store.generate_hybrid_key("hybrid_json", "pass").unwrap();
+
+        let json = serde_json::to_string_pretty(&store).unwrap();
+        let loaded: KeyStore = serde_json::from_str(&json).unwrap();
+
+        let kp = loaded.unlock_hybrid_key("hybrid_json", "pass").unwrap();
+        let msg = b"json roundtrip";
+        let sig = kp.sign(msg);
+        assert!(HybridVerifier::verify(msg, &sig, &kp.public_key_bytes()));
+    }
+
+    #[test]
+    fn test_mixed_keys_in_store() {
+        let mut store = KeyStore::new();
+        store.generate_key("mldsa_key", "pass1").unwrap();
+        store.generate_hybrid_key("hybrid_key", "pass2").unwrap();
+        assert_eq!(store.len(), 2);
+
+        let mldsa = store.unlock_key("mldsa_key", "pass1").unwrap();
+        let hybrid = store.unlock_hybrid_key("hybrid_key", "pass2").unwrap();
+        assert_ne!(mldsa.public_key_bytes().len(), hybrid.public_key_bytes().len());
     }
 }

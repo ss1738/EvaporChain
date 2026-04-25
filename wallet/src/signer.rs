@@ -1,9 +1,10 @@
-//! Transaction signing with ML-DSA keys.
+//! Transaction signing with ML-DSA and Hybrid (ECDSA + ML-DSA) keys.
 //!
-//! The `WalletSigner` wraps a decrypted ML-DSA keypair and provides
-//! methods to sign any EvaporChain transaction type.
+//! The `WalletSigner` wraps a signing keypair (either ML-DSA-only for legacy
+//! or Hybrid ECDSA+ML-DSA for post-quantum security) and provides methods to
+//! sign any EvaporChain transaction type.
 
-use evaporchain_crypto::signatures::{MlDsaKeypair, Signer};
+use evaporchain_crypto::signatures::{HybridKeypair, MlDsaKeypair, Signer};
 use evaporchain_types::{AccountAddress, Transaction};
 use thiserror::Error;
 
@@ -18,17 +19,44 @@ pub enum SignerError {
     AddressMismatch { signer: String, sender: String },
 }
 
-/// A wallet signer backed by an unlocked ML-DSA keypair.
+enum SignerInner {
+    MlDsa(MlDsaKeypair),
+    Hybrid(HybridKeypair),
+}
+
+impl SignerInner {
+    fn sign(&self, msg: &[u8]) -> Vec<u8> {
+        match self {
+            SignerInner::MlDsa(kp) => kp.sign(msg),
+            SignerInner::Hybrid(kp) => kp.sign(msg),
+        }
+    }
+
+    fn public_key_bytes(&self) -> Vec<u8> {
+        match self {
+            SignerInner::MlDsa(kp) => kp.public_key_bytes(),
+            SignerInner::Hybrid(kp) => kp.public_key_bytes(),
+        }
+    }
+}
+
+/// A wallet signer backed by an unlocked keypair (ML-DSA or Hybrid).
 pub struct WalletSigner {
-    keypair: MlDsaKeypair,
+    inner: SignerInner,
     address: AccountAddress,
 }
 
 impl WalletSigner {
-    /// Create a signer from a raw keypair.
+    /// Create a signer from a raw ML-DSA keypair (legacy).
     pub fn from_keypair(keypair: MlDsaKeypair) -> Self {
         let address = derive_address(&keypair.public_key_bytes());
-        Self { keypair, address }
+        Self { inner: SignerInner::MlDsa(keypair), address }
+    }
+
+    /// Create a signer from a Hybrid ECDSA+ML-DSA keypair.
+    pub fn from_hybrid(keypair: HybridKeypair) -> Self {
+        let address = derive_address(&keypair.public_key_bytes());
+        Self { inner: SignerInner::Hybrid(keypair), address }
     }
 
     /// Unlock a key from the keystore by name and create a signer.
@@ -54,20 +82,20 @@ impl WalletSigner {
 
     /// Get the signer's public key bytes.
     pub fn public_key_bytes(&self) -> Vec<u8> {
-        self.keypair.public_key_bytes()
+        self.inner.public_key_bytes()
     }
 
     /// Sign raw bytes and return the signature.
     pub fn sign_bytes(&self, msg: &[u8]) -> Vec<u8> {
-        self.keypair.sign(msg)
+        self.inner.sign(msg)
     }
 
     /// Sign a transaction in-place.
     /// Sets the `signature` and `public_key` fields on the transaction.
     pub fn sign_transaction(&self, tx: &mut Transaction) {
         let msg = tx.signable_bytes();
-        let sig = self.keypair.sign(&msg);
-        let pk = self.keypair.public_key_bytes();
+        let sig = self.inner.sign(&msg);
+        let pk = self.inner.public_key_bytes();
         set_signature(tx, sig, pk);
     }
 
@@ -138,12 +166,17 @@ fn set_signature(tx: &mut Transaction, sig: Vec<u8>, pk: Vec<u8>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use evaporchain_crypto::signatures::{MlDsaVerifier, Verifier};
+    use evaporchain_crypto::signatures::{HybridVerifier, Verifier};
     use evaporchain_types::TransferTx;
 
     fn make_signer() -> WalletSigner {
         let kp = MlDsaKeypair::generate();
         WalletSigner::from_keypair(kp)
+    }
+
+    fn make_hybrid_signer() -> WalletSigner {
+        let kp = HybridKeypair::generate();
+        WalletSigner::from_hybrid(kp)
     }
 
     #[test]
@@ -153,9 +186,8 @@ mod tests {
         let sig = signer.sign_bytes(msg);
         assert!(!sig.is_empty());
 
-        // Verify
         let pk = signer.public_key_bytes();
-        assert!(MlDsaVerifier::verify(msg, &sig, &pk));
+        assert!(HybridVerifier::verify(msg, &sig, &pk));
     }
 
     #[test]
@@ -172,15 +204,13 @@ mod tests {
 
         signer.sign_transaction(&mut tx);
 
-        // Verify signature is set
         assert!(tx.signature().is_some());
         assert!(tx.public_key().is_some());
 
-        // Verify signature is valid
         let msg = tx.signable_bytes();
         let sig = tx.signature().unwrap();
         let pk = tx.public_key().unwrap();
-        assert!(MlDsaVerifier::verify(&msg, sig, pk));
+        assert!(HybridVerifier::verify(&msg, sig, pk));
     }
 
     #[test]
@@ -196,10 +226,7 @@ mod tests {
         });
 
         let signed = signer.sign(&tx);
-
-        // Original unchanged
         assert!(tx.signature().is_none());
-        // Signed copy has signature
         assert!(signed.signature().is_some());
     }
 
@@ -211,9 +238,8 @@ mod tests {
         let signer = WalletSigner::unlock(&store, "signer_test", "pass").unwrap();
         assert_ne!(*signer.address(), [0u8; 32]);
 
-        // Sign something
         let sig = signer.sign_bytes(b"test");
-        assert!(MlDsaVerifier::verify(
+        assert!(HybridVerifier::verify(
             b"test",
             &sig,
             &signer.public_key_bytes()
@@ -225,5 +251,45 @@ mod tests {
         let signer = make_signer();
         let expected = derive_address(&signer.public_key_bytes());
         assert_eq!(*signer.address(), expected);
+    }
+
+    // ─── Hybrid Signer Tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_hybrid_sign_bytes() {
+        let signer = make_hybrid_signer();
+        let msg = b"hybrid signing";
+        let sig = signer.sign_bytes(msg);
+        let pk = signer.public_key_bytes();
+        assert!(HybridVerifier::verify(msg, &sig, &pk));
+    }
+
+    #[test]
+    fn test_hybrid_sign_transfer_transaction() {
+        let signer = make_hybrid_signer();
+        let mut tx = Transaction::Transfer(TransferTx {
+            from: *signer.address(),
+            to: [2u8; 32],
+            amount: 1000,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        });
+
+        signer.sign_transaction(&mut tx);
+
+        let msg = tx.signable_bytes();
+        let sig = tx.signature().unwrap();
+        let pk = tx.public_key().unwrap();
+        assert!(HybridVerifier::verify(&msg, sig, pk));
+        assert!(HybridVerifier::is_hybrid_sig(sig));
+        assert!(HybridVerifier::is_hybrid_pk(pk));
+    }
+
+    #[test]
+    fn test_hybrid_address_differs_from_mldsa() {
+        let mldsa_signer = make_signer();
+        let hybrid_signer = make_hybrid_signer();
+        assert_ne!(mldsa_signer.address(), hybrid_signer.address());
     }
 }

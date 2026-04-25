@@ -18,6 +18,7 @@ pqc_dilithium = { version = "0.2", features = ["mode3"] }
 blst = "0.3"
 subtle = "2"
 zeroize = { version = "1", features = ["derive"] }
+k256 = { version = "0.13", features = ["ecdsa-core", "ecdsa"] }
 
 [dev-dependencies]
 proptest = "1"
