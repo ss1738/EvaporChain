@@ -50,6 +50,9 @@ const MAX_STEPS: u64 = 10_000_000;
 /// Prevents unbounded execution — gas metering is ALWAYS enforced.
 pub const DEFAULT_GAS_LIMIT: u64 = 10_000_000;
 
+/// Maximum total heap memory a single VM execution can allocate (strings, arrays, maps).
+const MAX_MEMORY_BYTES: usize = 4_194_304; // 4 MiB
+
 // ─── VM ─────────────────────────────────────────────────────────────────────
 
 /// Stack-based virtual machine for EvaporScript bytecode.
@@ -63,6 +66,8 @@ pub struct EvaporVM {
     gas_limit: u64,
     /// Hard step counter: incremented on every opcode, independent of gas.
     step_count: u64,
+    /// Running total of heap bytes allocated (strings, arrays, maps).
+    memory_used: usize,
 }
 
 impl EvaporVM {
@@ -76,7 +81,19 @@ impl EvaporVM {
             gas_used: 0,
             gas_limit,
             step_count: 0,
+            memory_used: 0,
         }
+    }
+
+    fn track_memory(&mut self, bytes: usize) -> Result<(), ScriptError> {
+        self.memory_used = self.memory_used.saturating_add(bytes);
+        if self.memory_used > MAX_MEMORY_BYTES {
+            return Err(ScriptError::Runtime(format!(
+                "memory limit exceeded: {} bytes (limit {MAX_MEMORY_BYTES})",
+                self.memory_used
+            )));
+        }
+        Ok(())
     }
 
     fn charge_gas(&mut self, cost: u64) -> Result<(), ScriptError> {
@@ -205,13 +222,14 @@ impl EvaporVM {
                         ),
                         (Value::Str(x), Value::Str(y)) => {
                             let concat_len = x.len() + y.len();
-                            self.charge_gas(concat_len as u64)?;
+                            self.charge_gas(3 + (concat_len as u64) / 32)?;
                             if concat_len > MAX_STRING_LEN {
                                 return Err(ScriptError::Runtime(format!(
                                     "string too large: {} bytes exceeds limit of {MAX_STRING_LEN}",
                                     concat_len
                                 )));
                             }
+                            self.track_memory(concat_len)?;
                             Value::Str(format!("{x}{y}"))
                         }
                         _ => {
@@ -416,6 +434,7 @@ impl EvaporVM {
                         )));
                     }
                     self.charge_gas(count as u64)?;
+                    self.track_memory(count * 16)?; // ~16 bytes per Value slot
                     let mut elements = Vec::with_capacity(count);
                     for _ in 0..count {
                         elements.push(self.pop()?);
@@ -506,10 +525,13 @@ impl EvaporVM {
                     match entry {
                         Value::Map(m) => {
                             let key_str = key.to_map_key();
-                            if !m.contains_key(&key_str) && m.len() >= MAX_MAP_ENTRIES {
-                                return Err(ScriptError::Runtime(format!(
-                                    "map entry limit exceeded ({MAX_MAP_ENTRIES})"
-                                )));
+                            if !m.contains_key(&key_str) {
+                                if m.len() >= MAX_MAP_ENTRIES {
+                                    return Err(ScriptError::Runtime(format!(
+                                        "map entry limit exceeded ({MAX_MAP_ENTRIES})"
+                                    )));
+                                }
+                                self.track_memory(64)?; // ~64 bytes per new map entry
                             }
                             m.insert(key_str, val);
                         }

@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use evaporchain_execution::parallel::ParallelExecutor;
-use evaporchain_execution::{BlockExecutionResult, ExecutionEngine};
-use evaporchain_state::db::InMemoryStateDB;
+use evaporchain_execution::ExecutionEngine;
+use evaporchain_state::db::{InMemoryStateDB, StateDB};
 use evaporchain_types::{Account, Block, Transaction, TransferTx};
 
 fn make_address(id: u64) -> [u8; 32] {
@@ -82,7 +82,7 @@ fn bench_block_execution(c: &mut Criterion) {
                         (db, executor, block)
                     },
                     |(mut db, mut executor, block)| {
-                        let result = executor.execute_block(&mut db, &block, 1);
+                        let result = executor.execute_block(&mut db, &block);
                         black_box(result)
                     },
                 );
@@ -108,7 +108,7 @@ fn bench_parallel_vs_sequential(c: &mut Criterion) {
                 (db, executor, block)
             },
             |(mut db, mut executor, block)| {
-                let result = executor.execute_block(&mut db, &block, 1);
+                let result = executor.execute_block(&mut db, &block);
                 black_box(result)
             },
         );
@@ -152,7 +152,7 @@ fn bench_parallel_vs_sequential(c: &mut Criterion) {
                 (db, executor, block)
             },
             |(mut db, mut executor, block)| {
-                let result = executor.execute_block(&mut db, &block, 1);
+                let result = executor.execute_block(&mut db, &block);
                 black_box(result)
             },
         );
@@ -206,7 +206,7 @@ fn bench_transaction_throughput(c: &mut Criterion) {
                         (db, executor, block)
                     },
                     |(mut db, mut executor, block)| {
-                        let result = executor.execute_block(&mut db, &block, 1);
+                        let result = executor.execute_block(&mut db, &block);
                         let _root = db.compute_state_root();
                         black_box(result)
                     },

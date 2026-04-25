@@ -38,11 +38,13 @@ pub struct MlDsaKeypair {
 
 impl Drop for MlDsaKeypair {
     fn drop(&mut self) {
-        // Zeroize the entire keypair (both PK and SK) to prevent secret key leakage.
-        // Zeroing the full struct avoids assuming internal field layout order.
+        // Use volatile writes via zeroize to prevent the optimizer from
+        // removing the dead store (write_bytes can be elided).
         unsafe {
             let ptr = &mut self.inner as *mut Keypair as *mut u8;
-            std::ptr::write_bytes(ptr, 0, std::mem::size_of::<Keypair>());
+            let size = std::mem::size_of::<Keypair>();
+            let bytes = std::slice::from_raw_parts_mut(ptr, size);
+            bytes.zeroize();
         }
     }
 }
@@ -177,8 +179,12 @@ pub struct EcdsaKeypair {
 
 impl Drop for EcdsaKeypair {
     fn drop(&mut self) {
-        let ptr = &mut self.signing_key as *mut SigningKey as *mut u8;
-        unsafe { std::ptr::write_bytes(ptr, 0, std::mem::size_of::<SigningKey>()) };
+        unsafe {
+            let ptr = &mut self.signing_key as *mut SigningKey as *mut u8;
+            let size = std::mem::size_of::<SigningKey>();
+            let bytes = std::slice::from_raw_parts_mut(ptr, size);
+            bytes.zeroize();
+        }
     }
 }
 

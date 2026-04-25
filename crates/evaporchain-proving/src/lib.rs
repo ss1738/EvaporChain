@@ -89,26 +89,26 @@ pub trait ProvingEngine: Send + Sync {
 /// # Safety
 /// This prover performs NO cryptographic verification. It must NEVER be used
 /// in production. The `#[cfg]` gate enforces this at compile time.
-#[cfg(any(test, feature = "test-utils", debug_assertions))]
+#[cfg(any(test, feature = "test-utils"))]
 pub struct MockProver {
     num_folded: usize,
 }
 
-#[cfg(any(test, feature = "test-utils", debug_assertions))]
+#[cfg(any(test, feature = "test-utils"))]
 impl MockProver {
     pub fn new() -> Self {
         Self { num_folded: 0 }
     }
 }
 
-#[cfg(any(test, feature = "test-utils", debug_assertions))]
+#[cfg(any(test, feature = "test-utils"))]
 impl Default for MockProver {
     fn default() -> Self {
         Self::new()
     }
 }
 
-#[cfg(any(test, feature = "test-utils", debug_assertions))]
+#[cfg(any(test, feature = "test-utils"))]
 impl ProvingEngine for MockProver {
     fn fold_block(
         &mut self,

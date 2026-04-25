@@ -29,12 +29,31 @@ use subtle::ConstantTimeEq;
 const VRF_DOMAIN_SEP: &[u8] = b"EvaporChain_VRF_v1";
 
 /// VRF output: 32 bytes of verifiable pseudorandomness.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Hash)]
 pub struct VrfOutput(pub [u8; 32]);
 
+impl PartialEq for VrfOutput {
+    fn eq(&self, other: &Self) -> bool {
+        bool::from(self.0.ct_eq(&other.0))
+    }
+}
+
+impl Eq for VrfOutput {}
+
 /// VRF proof: the ML-DSA signature (3293 bytes for Dilithium3).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct VrfProof(pub Vec<u8>);
+
+impl PartialEq for VrfProof {
+    fn eq(&self, other: &Self) -> bool {
+        if self.0.len() != other.0.len() {
+            return false;
+        }
+        bool::from(self.0.ct_eq(&other.0))
+    }
+}
+
+impl Eq for VrfProof {}
 
 /// VRF keypair wrapping an ML-DSA keypair.
 /// Validators use this for leader election and randomness generation.

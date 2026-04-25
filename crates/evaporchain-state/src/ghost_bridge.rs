@@ -245,6 +245,7 @@ fn verify_mmr_path(
 pub struct GhostBridgeRegistry {
     active_bridges: Vec<GhostBridgeProof>,
     processed_nonces: Vec<u64>,
+    validator_pubkeys: Option<BTreeMap<u64, Vec<u8>>>,
 }
 
 impl GhostBridgeRegistry {
@@ -252,11 +253,26 @@ impl GhostBridgeRegistry {
         Self::default()
     }
 
+    pub fn with_validator_keys(keys: BTreeMap<u64, Vec<u8>>) -> Self {
+        Self {
+            active_bridges: Vec::new(),
+            processed_nonces: Vec::new(),
+            validator_pubkeys: Some(keys),
+        }
+    }
+
+    pub fn set_validator_keys(&mut self, keys: BTreeMap<u64, Vec<u8>>) {
+        self.validator_pubkeys = Some(keys);
+    }
+
     pub fn register(&mut self, proof: GhostBridgeProof) -> Result<(), &'static str> {
         if self.processed_nonces.contains(&proof.bridge_nonce) {
             return Err("bridge nonce already processed (replay)");
         }
-        let verification = verify_ghost_bridge_proof(&proof);
+        let verification = verify_ghost_bridge_proof_with_keys(
+            &proof,
+            self.validator_pubkeys.as_ref(),
+        );
         if !verification.overall_valid {
             return Err("ghost bridge proof verification failed");
         }

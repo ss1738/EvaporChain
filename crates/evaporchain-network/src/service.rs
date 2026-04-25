@@ -547,6 +547,10 @@ impl P2pNetworkService {
                         } else {
                             // Request from each peer (first responder wins)
                             let target = peers[0]; // Pick first peer
+                            if from > to {
+                                warn!("Invalid sync range: from={from} > to={to}");
+                                continue;
+                            }
                             let capped_to = from + MAX_SYNC_BATCH.min(to - from);
                             info!("Requesting blocks {from}..{capped_to} from peer {target}");
                             swarm.behaviour_mut().block_sync.send_request(
@@ -615,6 +619,10 @@ impl P2pNetworkService {
                                     continue;
                                 }
                                 let from = request.from_height;
+                                if request.from_height > request.to_height {
+                                    warn!("Peer {peer} sent invalid sync range: {}..{}", request.from_height, request.to_height);
+                                    continue;
+                                }
                                 let to = request.to_height.min(from + MAX_SYNC_BATCH);
                                 info!("Peer {peer} requested blocks {from}..{to}");
 

@@ -2009,7 +2009,15 @@ async fn post_oracle_ingest(
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .unwrap_or("");
-    if provided != expected {
+    // Constant-time comparison to prevent timing side-channel on the API key
+    let key_match = provided.len() == expected.len() && {
+        let mut acc = 0u8;
+        for (a, b) in provided.as_bytes().iter().zip(expected.as_bytes()) {
+            acc |= a ^ b;
+        }
+        acc == 0
+    };
+    if !key_match {
         return Json(TxResultResponse {
             success: false,
             message: "unauthorized: invalid oracle key".into(),
