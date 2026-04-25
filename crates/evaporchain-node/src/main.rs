@@ -2398,6 +2398,9 @@ async fn main() -> Result<()> {
 
     // Tendermint consensus tick interval (faster than block interval)
     let mut consensus_ticker = interval(Duration::from_millis(100));
+    // Periodic BLS KeyAnnounce re-broadcast (every 10s until all keys registered)
+    let mut bls_rebroadcast_ticker = interval(Duration::from_secs(10));
+    let mut all_bls_keys_registered = false;
 
     // DA sample retry tracking
     let mut pending_da_samples: Vec<PendingSample> = Vec::new();
@@ -2407,6 +2410,21 @@ async fn main() -> Result<()> {
 
     loop {
         tokio::select! {
+            // ── BLS key re-broadcast (until all validators registered) ──
+            _ = bls_rebroadcast_ticker.tick(), if tendermint.is_some() && !all_bls_keys_registered => {
+                let tc_ref = tendermint.as_ref().unwrap();
+                let tc = safe_lock(tc_ref);
+                if tc.validator_set().has_bls_keys() {
+                    all_bls_keys_registered = true;
+                } else if let Some(key_msg) = tc.make_key_announce() {
+                    if let Some(ref sender) = consensus_net_sender {
+                        if let Ok(data) = serde_json::to_vec(&key_msg) {
+                            let _ = sender.try_send(data);
+                        }
+                    }
+                }
+            }
+
             // ── Tendermint consensus tick ──
             _ = consensus_ticker.tick(), if tendermint.is_some() => {
                 let tc_ref = tendermint.as_ref().unwrap();
