@@ -2,7 +2,7 @@
 
 ## Overview
 
-Novel L1 blockchain with energy-based state decay. 16 Rust crates, ~220K LOC, 4,668+ tests, post-quantum signatures (ML-DSA), Tendermint BFT consensus with BLS12-381 aggregate signatures, browser extension, mobile wallet, SDK, 4 dApps.
+Novel L1 blockchain with energy-based state decay. 16 Rust crates, ~220K LOC, 4,234 native tests (+ 3,491 WASM), post-quantum signatures (ML-DSA), Tendermint BFT consensus with BLS12-381 aggregate signatures, browser extension, mobile wallet, SDK, 4 dApps.
 
 **Repo:** github.com/ss1738/EvaporChain
 

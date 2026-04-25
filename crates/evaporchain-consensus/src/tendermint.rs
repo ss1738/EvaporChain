@@ -11,6 +11,7 @@
 use crate::da_attestation::DAAttestationManager;
 use crate::encrypted_mempool::{EncryptedMempool, EncryptedTransaction};
 use evaporchain_da::block_da::BlockDA;
+use evaporchain_da::block_da_2d::BlockDA2D;
 use evaporchain_da::namespace::{NamespaceMerkleTree, NamespacedBlob};
 use crate::finality::FinalityTracker;
 use crate::mempool::Mempool;
@@ -24,8 +25,6 @@ use evaporchain_execution::fees::PidFeeController;
 use evaporchain_execution::ExecutionEngine;
 use evaporchain_execution::parallel::ParallelExecutor;
 use evaporchain_state::db::StateDB;
-use evaporchain_da::erasure2d::ErasureEncoder2D;
-use evaporchain_da::commitments::RowColumnCommitments;
 use evaporchain_types::{Block, CommitCertificate, Epoch, Transaction};
 
 use serde::{Deserialize, Serialize};
@@ -1013,6 +1012,26 @@ impl TendermintConsensus {
                     return actions;
                 }
 
+                // ── 2D DA row/col root verification ──
+                if !block.da_row_roots.is_empty() {
+                    if let Ok(tx_bytes) = serde_json::to_vec(&block.transactions) {
+                        let da2d = BlockDA2D::new();
+                        if let Ok(package) = da2d.encode_block(&tx_bytes) {
+                            if package.header.row_roots != block.da_row_roots
+                                || package.header.col_roots != block.da_col_roots
+                            {
+                                warn!(
+                                    height = height,
+                                    round = round,
+                                    proposer = proposer_id,
+                                    "Rejected proposal: DA-2D row/col roots mismatch"
+                                );
+                                return actions;
+                            }
+                        }
+                    }
+                }
+
                 self.round_state.proposed_block = Some(block);
                 self.round_state.proposed_hash = Some(hash);
 
@@ -1621,6 +1640,33 @@ impl TendermintConsensus {
             vec![]
         };
 
+        // 2D DA: encode transactions into extended data square for row/col commitments
+        let (da_row_roots, da_col_roots) = if !txs.is_empty() {
+            match serde_json::to_vec(&txs) {
+                Ok(tx_bytes) => {
+                    let da2d = BlockDA2D::new();
+                    match da2d.encode_block(&tx_bytes) {
+                        Ok(package) => {
+                            debug!(
+                                height = self.height,
+                                rows = package.header.row_roots.len(),
+                                cols = package.header.col_roots.len(),
+                                "DA-2D: computed row/col roots for proposal"
+                            );
+                            (package.header.row_roots, package.header.col_roots)
+                        }
+                        Err(e) => {
+                            warn!("DA-2D encoding failed: {e}");
+                            (vec![], vec![])
+                        }
+                    }
+                }
+                Err(_) => (vec![], vec![]),
+            }
+        } else {
+            (vec![], vec![])
+        };
+
         let anchor_hash = self.anchor_provider.as_ref()
             .and_then(|p| p.anchor_hash_for_height(self.height));
 
@@ -1646,9 +1692,9 @@ impl TendermintConsensus {
             anchor_hash,
             state_function_commitment: None,
             oracle_state_root: None,
-            shard_count: None, // Filled after execution by the node
-            da_row_roots: vec![],
-            da_col_roots: vec![],
+            shard_count: None,
+            da_row_roots,
+            da_col_roots,
         };
 
         // Enforce max block size — drop transactions from the tail until the

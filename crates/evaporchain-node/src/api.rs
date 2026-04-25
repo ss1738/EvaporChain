@@ -10,6 +10,7 @@ use evaporchain_consensus::MockConsensus;
 use evaporchain_consensus::tendermint::TendermintConsensus;
 use evaporchain_crypto::signatures::{MlDsaKeypair, Signer};
 use evaporchain_da::block_da::BlockDAPackage;
+use evaporchain_da::block_da_2d::BlockDA2DPackage;
 use evaporchain_state::db::StateDB;
 use evaporchain_state::RocksDBStateDB;
 use evaporchain_types::{
@@ -78,6 +79,8 @@ pub struct ApiState {
     pub throughput: Arc<Mutex<ThroughputTracker>>,
     /// DA packages per block number (ring buffer, last 256 blocks).
     pub da_store: Arc<Mutex<BTreeMap<u64, BlockDAPackage>>>,
+    /// 2D DA packages per block number (ring buffer, last 64 blocks).
+    pub da_2d_store: Arc<Mutex<BTreeMap<u64, BlockDA2DPackage>>>,
     /// Latest state snapshot metadata (height, state_root, data_len).
     pub snapshot_info: Arc<Mutex<Option<(u64, [u8; 32], usize)>>>,
     /// Frontier primitives state (anchors, PoHA, energy trie).
@@ -3891,6 +3894,191 @@ async fn get_da_light_sample(
     })).into_response()
 }
 
+// ─────────────── 2D Cell Sampling ───────────────────────────────────
+
+async fn get_da_cell_sample(
+    State(state): State<Arc<ApiState>>,
+    Path((block, row, col)): Path<(u64, usize, usize)>,
+) -> impl IntoResponse {
+    let store = state.da_2d_store.lock().unwrap();
+    let Some(package) = store.get(&block) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": format!("no 2D DA data for block {}", block)})),
+        ).into_response();
+    };
+
+    if row >= package.header.row_roots.len() || col >= package.header.col_roots.len() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": format!("cell ({},{}) out of range ({}x{})", row, col,
+                    package.header.row_roots.len(), package.header.col_roots.len())
+            })),
+        ).into_response();
+    }
+
+    let da2d = evaporchain_da::block_da_2d::BlockDA2D::new();
+    match da2d.prove_cell(package, row, col) {
+        Ok(proof) => Json(serde_json::json!({
+            "block": block,
+            "row": row,
+            "col": col,
+            "cell_hash": hex::encode(&proof.cell_hash),
+            "row_root": hex::encode(package.header.row_roots[row]),
+            "col_root": hex::encode(package.header.col_roots[col]),
+            "data_root": hex::encode(package.header.data_root),
+            "extended_dim": package.header.extended_dim,
+            "row_proof_siblings": proof.row_siblings.iter().map(hex::encode).collect::<Vec<_>>(),
+            "col_proof_siblings": proof.col_siblings.iter().map(hex::encode).collect::<Vec<_>>(),
+        })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("{}", e)})),
+        ).into_response(),
+    }
+}
+
+async fn get_da_2d_light_sample(
+    State(state): State<Arc<ApiState>>,
+    Path(block): Path<u64>,
+) -> impl IntoResponse {
+    let store = state.da_2d_store.lock().unwrap();
+    let Some(package) = store.get(&block) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": format!("no 2D DA data for block {}", block)})),
+        ).into_response();
+    };
+
+    let da2d = evaporchain_da::block_da_2d::BlockDA2D::new();
+    let seed = blake3::hash(&block.to_le_bytes());
+    let num_samples = std::cmp::min(8, package.header.extended_dim * package.header.extended_dim);
+    let queries = evaporchain_da::commitments::generate_2d_queries(
+        block, package.header.extended_dim, num_samples, seed.as_bytes(),
+    );
+
+    let commitments = evaporchain_da::commitments::RowColumnCommitments {
+        row_roots: package.header.row_roots.clone(),
+        col_roots: package.header.col_roots.clone(),
+        data_root: package.header.data_root,
+        extended_dim: package.header.extended_dim,
+    };
+
+    let mut samples = Vec::new();
+    let mut valid_count = 0usize;
+    for query in &queries {
+        if let Ok(proof) = da2d.prove_cell(package, query.row, query.col) {
+            let valid = commitments.verify_cell_proof(&proof);
+            if valid {
+                valid_count += 1;
+            }
+            samples.push(serde_json::json!({
+                "row": query.row,
+                "col": query.col,
+                "cell_hash": hex::encode(&proof.cell_hash),
+                "valid": valid,
+            }));
+        }
+    }
+
+    let total_cells = package.header.extended_dim * package.header.extended_dim;
+    let confidence = if total_cells > 0 {
+        1.0 - (1.0 - (valid_count as f64 / total_cells as f64)).powi(num_samples as i32)
+    } else {
+        0.0
+    };
+
+    Json(serde_json::json!({
+        "block": block,
+        "data_root": hex::encode(package.header.data_root),
+        "extended_dim": package.header.extended_dim,
+        "original_dim": package.header.original_dim,
+        "total_cells": total_cells,
+        "samples_requested": queries.len(),
+        "samples_valid": valid_count,
+        "confidence": confidence,
+        "samples": samples,
+    })).into_response()
+}
+
+// ─────────────── Evaporation DA Proof ────────────────────────────────
+
+async fn get_evaporation_da_proof(
+    State(state): State<Arc<ApiState>>,
+    Path(object_id_hex): Path<String>,
+) -> impl IntoResponse {
+    let object_id = match hex::decode(&object_id_hex) {
+        Ok(bytes) if bytes.len() == 32 => {
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&bytes);
+            arr
+        }
+        _ => {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid object_id hex (need 32 bytes)"}))).into_response();
+        }
+    };
+
+    let db = state.db.lock().unwrap();
+    let Some(ghost) = db.get_ghost(&object_id) else {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "object not evaporated (no ghost record)"}))).into_response();
+    };
+
+    let da_store = state.da_store.lock().unwrap();
+
+    let evap_epoch = ghost.evaporated_at;
+    let candidate_blocks: Vec<_> = da_store.keys().copied().collect();
+
+    let mut proof_result = None;
+    for &bn in candidate_blocks.iter().rev() {
+        if let Some(package) = da_store.get(&bn) {
+            if package.shards.is_empty() {
+                continue;
+            }
+            let shard_index = (u64::from_le_bytes(object_id[..8].try_into().unwrap_or([0u8; 8])) as usize) % package.shards.len();
+            let snapshot = evaporchain_da::evaporation_da::EnergySnapshot {
+                object_id,
+                energy_at_evaporation: 0,
+                evaporation_epoch: evap_epoch,
+                half_life: ghost.original_half_life.unwrap_or(10),
+                last_refreshed: 0,
+                energy_at_refresh: 0,
+            };
+            if let Ok(proof) = evaporchain_da::evaporation_da::EvaporationDAProofBuilder::create_proof(
+                object_id,
+                ghost.original_data.as_deref().unwrap_or(&ghost.data_hash),
+                snapshot,
+                &package.shards,
+                shard_index,
+            ) {
+                proof_result = Some((bn, proof));
+                break;
+            }
+        }
+    }
+
+    match proof_result {
+        Some((block_number, proof)) => {
+            Json(serde_json::json!({
+                "object_id": object_id_hex,
+                "block_number": block_number,
+                "evaporation_epoch": evap_epoch,
+                "data_hash": hex::encode(proof.pre_evaporation_data_hash),
+                "da_commitment_root": hex::encode(proof.da_commitment_root),
+                "shard_index": proof.shard_index,
+                "shard_hash": hex::encode(proof.shard_hash),
+                "proof_epoch": proof.proof_epoch,
+                "proof_siblings": proof.shard_proof.siblings.iter().map(hex::encode).collect::<Vec<_>>(),
+            })).into_response()
+        }
+        None => {
+            (StatusCode::NOT_FOUND, Json(serde_json::json!({
+                "error": "no DA package available for evaporation proof (data may have been pruned)"
+            }))).into_response()
+        }
+    }
+}
+
 // ─────────────── PoHA Certificate Detail ─────────────────────────────
 
 async fn get_poha_certificate(
@@ -4403,6 +4591,9 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/da/block/:number", get(get_da_block))
         .route("/api/da/sample/:block/:shard_index", get(get_da_sample))
         .route("/api/da/light-sample/:block", get(get_da_light_sample))
+        .route("/api/da/cell/:block/:row/:col", get(get_da_cell_sample))
+        .route("/api/da/2d-light-sample/:block", get(get_da_2d_light_sample))
+        .route("/api/da/evaporation-proof/:object_id", get(get_evaporation_da_proof))
         // PoHA certificates
         .route("/api/da/poha", get(get_poha_certificates))
         .route("/api/da/poha/:block", get(get_poha_certificate))

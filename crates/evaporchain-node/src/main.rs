@@ -177,14 +177,13 @@ fn seed_demo_accounts(db: &mut RocksDBStateDB, node_tag: &str) {
 
 /// Produce 2D erasure encoding with NMT blob commitments for a block.
 /// Populates `block.da_row_roots`, `block.da_col_roots`, and `block.blob_commitments`.
-/// Returns the 2D data_root which replaces the 1D commitment root in the block header.
-fn encode_block_2d(block: &mut evaporchain_types::Block, block_bytes: &[u8]) -> Option<[u8; 32]> {
+/// Returns the full 2D package (for storage) and the data_root.
+fn encode_block_2d(block: &mut evaporchain_types::Block, block_bytes: &[u8]) -> Option<(evaporchain_da::block_da_2d::BlockDA2DPackage, [u8; 32])> {
     use evaporchain_da::block_da_2d::{BlockDA2D, namespace_for_tx_type};
     use evaporchain_da::namespace::NamespacedBlob;
 
     let da2d = BlockDA2D::new();
 
-    // Build namespace-tagged blobs from transactions
     let blobs: Vec<NamespacedBlob> = block.transactions.iter().filter_map(|tx| {
         let (ns_type, data) = match tx {
             Transaction::Transfer(t) => ("transfer", serde_json::to_vec(t).ok()?),
@@ -200,10 +199,11 @@ fn encode_block_2d(block: &mut evaporchain_types::Block, block_bytes: &[u8]) -> 
 
     match da2d.encode_block_with_blobs(block_bytes, &blobs) {
         Ok(package) => {
-            block.da_row_roots = package.header.row_roots;
-            block.da_col_roots = package.header.col_roots;
-            block.blob_commitments = package.header.blob_commitments;
-            Some(package.header.data_root)
+            block.da_row_roots = package.header.row_roots.clone();
+            block.da_col_roots = package.header.col_roots.clone();
+            block.blob_commitments = package.header.blob_commitments.clone();
+            let data_root = package.header.data_root;
+            Some((package, data_root))
         }
         Err(_) => None,
     }
@@ -1669,6 +1669,8 @@ async fn main() -> Result<()> {
     let restored_da = chain_store.load_recent_da_packages(64);
     let da_restored_count = restored_da.len();
     let da_store: Arc<Mutex<BTreeMap<u64, BlockDAPackage>>> = Arc::new(Mutex::new(restored_da));
+    let da_2d_store: Arc<Mutex<BTreeMap<u64, evaporchain_da::block_da_2d::BlockDA2DPackage>>> =
+        Arc::new(Mutex::new(BTreeMap::new()));
     if da_restored_count > 0 {
         println!("{} \x1b[36mDA: restored {} shard packages from disk\x1b[0m", node_tag, da_restored_count);
     }
@@ -1851,6 +1853,7 @@ async fn main() -> Result<()> {
             chain_prover: Arc::clone(&chain_prover),
             throughput: Arc::clone(&throughput),
             da_store: Arc::clone(&da_store),
+            da_2d_store: Arc::clone(&da_2d_store),
             snapshot_info: Arc::clone(&snapshot_info),
             frontier_state: Some(Arc::clone(&frontier_state)),
             oracle_bridge: Some(Arc::clone(&oracle_bridge)),
@@ -2312,8 +2315,7 @@ async fn main() -> Result<()> {
                                 // DA: erasure-encode block and store shards
                                 if block.data_root.is_some() {
                                     if let Ok(block_bytes) = serde_json::to_vec(&block) {
-                                        // 2D encoding: populate row/col roots and NMT blob commitments
-                                        if let Some(data_root_2d) = encode_block_2d(&mut block, &block_bytes) {
+                                        if let Some((pkg_2d, data_root_2d)) = encode_block_2d(&mut block, &block_bytes) {
                                             println!(
                                                 "{}   \x1b[36mDA-2D: {}x{} matrix, data_root={}\x1b[0m",
                                                 node_tag,
@@ -2321,6 +2323,13 @@ async fn main() -> Result<()> {
                                                 block.da_col_roots.len(),
                                                 &hex::encode(data_root_2d)[..16],
                                             );
+                                            let mut store_2d = da_2d_store.lock().unwrap();
+                                            store_2d.insert(block.number, pkg_2d);
+                                            while store_2d.len() > 64 {
+                                                if let Some(&oldest) = store_2d.keys().next() {
+                                                    store_2d.remove(&oldest);
+                                                }
+                                            }
                                         }
                                         if let Ok(da) = BlockDA::new() {
                                             if let Ok(package) = da.encode_block(&block_bytes) {
@@ -2576,8 +2585,11 @@ async fn main() -> Result<()> {
                                 // DA encode the block for light client sampling
                                 if let Ok(da) = evaporchain_da::block_da::BlockDA::new() {
                                     let block_bytes = serde_json::to_vec(&block).unwrap_or_default();
-                                    // 2D encoding: populate row/col roots and NMT
-                                    encode_block_2d(&mut block, &block_bytes);
+                                    if let Some((pkg_2d, _)) = encode_block_2d(&mut block, &block_bytes) {
+                                        let mut s2d = da_2d_store.lock().unwrap();
+                                        s2d.insert(block.number, pkg_2d);
+                                        while s2d.len() > 64 { if let Some(&o) = s2d.keys().next() { s2d.remove(&o); } }
+                                    }
                                     if let Ok(package) = da.encode_block(&block_bytes) {
                                         if let Some(ref sc) = shard_cache {
                                             let mut cache = sc.write().unwrap_or_else(|p| p.into_inner());
@@ -2821,8 +2833,11 @@ async fn main() -> Result<()> {
                                     // DA: erasure-encode block and store shards
                                     if block.data_root.is_some() {
                                         if let Ok(block_bytes) = serde_json::to_vec(&block) {
-                                            // 2D encoding: populate row/col roots and NMT
-                                            encode_block_2d(&mut block, &block_bytes);
+                                            if let Some((pkg_2d, _)) = encode_block_2d(&mut block, &block_bytes) {
+                                                let mut s2d = da_2d_store.lock().unwrap();
+                                                s2d.insert(block.number, pkg_2d);
+                                                while s2d.len() > 64 { if let Some(&o) = s2d.keys().next() { s2d.remove(&o); } }
+                                            }
                                             if let Ok(da) = BlockDA::new() {
                                                 if let Ok(package) = da.encode_block(&block_bytes) {
                                                     let shard_count = package.shards.len() as u32;
@@ -3020,8 +3035,11 @@ async fn main() -> Result<()> {
                                     // DA encode (follower path)
                                     if let Ok(da) = evaporchain_da::block_da::BlockDA::new() {
                                         let block_bytes = serde_json::to_vec(&block).unwrap_or_default();
-                                        // 2D encoding: populate row/col roots and NMT
-                                        encode_block_2d(&mut block, &block_bytes);
+                                        if let Some((pkg_2d, _)) = encode_block_2d(&mut block, &block_bytes) {
+                                            let mut s2d = da_2d_store.lock().unwrap();
+                                            s2d.insert(block.number, pkg_2d);
+                                            while s2d.len() > 64 { if let Some(&o) = s2d.keys().next() { s2d.remove(&o); } }
+                                        }
                                         if let Ok(package) = da.encode_block(&block_bytes) {
                                             if let Some(ref sc) = shard_cache {
                                                 let mut cache = sc.write().unwrap_or_else(|p| p.into_inner());

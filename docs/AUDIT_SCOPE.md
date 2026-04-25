@@ -2,7 +2,7 @@
 
 **Prepared for:** External security auditors
 **Date:** April 2026
-**Codebase:** ~220,000 LOC Rust, 16 crates, 4,668+ test functions, zero unsafe blocks
+**Codebase:** ~220,000 LOC Rust, 16 crates, 4,234 native tests + 3,491 WASM tests, zero unsafe blocks
 
 ## 1. Engagement Overview
 
@@ -189,21 +189,29 @@ EvaporChain/
 ## 7. Test Suite
 
 ```
-Total: 408 tests
-├── evaporchain-crypto:     71 tests (hash, signatures, Verkle, MMR)
-├── evaporchain-execution:  65 tests (transfers, gas, stress tests)
-├── evaporchain-script:     53 tests (VM, parser, compiler)
-├── evaporchain-state:      40 tests (evaporation, state DB)
-├── evaporchain-consensus:  30 tests (BFT, BLS, validator set)
-├── evaporchain-proving:    24 tests (Nova circuit, range checks)
-├── evaporchain-contracts:  73 tests (template contracts)
-├── evaporchain-types:      19 tests (serialization, energy decay)
-├── evaporchain-da:         12 tests (erasure coding)
-├── evaporchain-network:     8 tests (gossip, sync)
-└── other:                  13 tests
+Total: 4,234 native tests + 3,491 WASM tests
+├── evaporchain-wallet:      2,949 tests (90+ modules, keystore, signing, tx building)
+├── evaporchain-consensus:     288 tests (BFT state machine, BLS, validator set, adversarial)
+├── evaporchain-crypto:        169 tests (hash, ML-DSA signatures, Verkle, MMR)
+├── evaporchain-execution:     163 tests (transfers, gas, stress, proptest invariants)
+├── evaporchain-da:             94 tests (erasure coding, DA certificates, sampling)
+├── evaporchain-script:         84 tests (VM, parser, compiler, gas, safety)
+├── evaporchain-state:         101 tests (evaporation, state DB, ghost bridge)
+├── evaporchain-proving:        68 tests (Nova circuit, range checks, IVC folding)
+├── evaporchain-oracle:         60 tests (data feeds, authentication)
+├── evaporchain-contracts:      40 tests (template contracts)
+├── evaporchain-node:           38 tests (API, genesis, node lifecycle)
+├── evaporchain-sharding:       30 tests (experimental sharding)
+├── evaporchain-cli:            28 tests (genesis, keygen, CLI commands)
+├── evaporchain-network:        27 tests (gossip, sync, rate limiting)
+├── evaporchain-types:          25 tests (serialization, energy decay)
+├── evaporchain-integration:    13 tests (cross-crate integration)
+├── wallet behavior tests:      57 tests (account, keystore, mnemonic, offline, signer, tx_builder)
+├── evaporchain-crypto-wasm: 3,491 tests (WASM ML-DSA bindings, via wasm-pack test)
+└── dApps/SDK/website:        ~162 tests (TypeScript integration + unit tests)
 ```
 
-All tests pass. Zero `unsafe` blocks in the codebase.
+All native tests pass. Zero `unsafe` blocks in the codebase.
 
 ## 8. Build and Test Instructions
 
