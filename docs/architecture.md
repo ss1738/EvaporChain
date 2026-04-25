@@ -8,8 +8,8 @@
                         │                                         │
   Clients ──────────────┤  ┌───────────┐    ┌──────────────────┐  │
   (curl, dashboard,     │  │  API +    │    │   Consensus      │  │
-   faucet, wallets)     │  │  Dashboard │    │   (Rotating      │  │
-                        │  │  (Axum)   │    │    Leader)        │  │
+   faucet, wallets)     │  │  Dashboard │    │   (Tendermint    │  │
+                        │  │  (Axum)   │    │    BFT)           │  │
                         │  └─────┬─────┘    └────────┬─────────┘  │
                         │        │                   │             │
                         │        ▼                   ▼             │
@@ -61,7 +61,7 @@ Cryptographic primitives: BLAKE3 hashing, ML-DSA post-quantum digital signatures
 State management layer. Contains the `StateDB` trait (with `InMemoryStateDB` implementation), the **Evaporation Engine** (processes energy decay each epoch, transitions objects through Active → Grace → Ghost lifecycle), and the **Refresh Engine** (handles energy deposits and ghost resurrection). This is where thermodynamic decay is enforced.
 
 ### evaporchain-contracts
-Template-based smart contract system. Provides 6 pre-built contract templates (DecayingToken, MortalNFT, ThermodynamicEscrow, DecayingAuction, StakingPool, DAOVote) with a rule engine for custom behavior (triggers, conditions, actions). Each contract instance has its own energy and half-life — contracts themselves evaporate when unused.
+Template-based smart contract system. Provides 7 pre-built contract templates (DecayingToken, MortalNFT, ThermodynamicEscrow, DecayingAuction, StakingPool, DAOVote, Temporal) with a rule engine for custom behavior (triggers, conditions, actions). Each contract instance has its own energy and half-life — contracts themselves evaporate when unused.
 
 ### evaporchain-script
 The EvaporScript scripting language. A non-Turing-complete language with three components: **Parser** (lexer + recursive descent parser → AST), **Compiler** (AST → stack-based bytecode with method table), and **VM** (executes bytecode with gas metering, built-in functions, state management). Includes the `ScriptEngine` for deploying and managing script contracts with full lifecycle hook support.
@@ -70,13 +70,19 @@ The EvaporScript scripting language. A non-Turing-complete language with three c
 Transaction execution engine. The `SimpleExecutor` processes blocks sequentially: verifies signatures (ML-DSA), estimates gas, dispatches to the appropriate handler (transfer, create object, refresh, deploy/call contract, deploy/call script), runs evaporation at block end, and computes fees via a PID controller. Orchestrates both the template `ContractEngine` and the `ScriptEngine`.
 
 ### evaporchain-consensus
-Consensus mechanism with rotating leader selection. Validators take turns producing blocks based on stake-weighted selection. Includes an encrypted mempool (commit-reveal scheme to prevent MEV front-running), validator health tracking, and block validation. The `MockConsensus` provides a simplified single-node mode for testnet.
+Tendermint BFT consensus with full Propose→Prevote→Precommit→Commit state machine. Validators produce blocks via stake-weighted leader election with VRF-seeded randomness from the beacon. BLS12-381 aggregate signatures for vote attestation, equivocation detection with slashing, exponential timeout escalation with per-height jitter. Includes an encrypted mempool (commit-reveal scheme to prevent MEV front-running), cross-chain bridge verifier, epoch transition manager with bonding periods, and DA certificate attestation. `MockConsensus` provides a simplified single-node mode for development.
 
 ### evaporchain-proving
 Zero-knowledge proof system based on Nova recursive proof folding. Each block's state transition (transfers, energy changes, state root updates) is expressed as an R1CS circuit and folded into a running proof. After N blocks, the proof is constant-size regardless of N — a new node can verify the entire chain history by checking a single proof.
 
 ### evaporchain-network
-P2P networking layer. Handles peer discovery, block propagation, and transaction gossip between nodes. Each node maintains connections to peers and synchronizes state through block exchange.
+P2P networking layer built on libp2p. GossipSub for transaction/block/consensus message propagation, request-response for block sync and DA shard sampling. Per-peer rate limiting (500 msgs/10s window), mDNS local discovery + bootstrap peer WAN connectivity, TLS 1.3 or Noise transport, and peer allowlist support. Includes block cache for serving sync requests and shard cache for DA light client queries.
+
+### evaporchain-oracle
+Oracle data ingestion service. Publishes real-world data feeds (sensor data, energy prices) as on-chain objects with energy and half-life. Authenticated via bearer token.
+
+### evaporchain-sharding
+Experimental sharding module for future horizontal scaling.
 
 ### evaporchain-node
 Full node implementation. Combines all layers into a runnable binary with CLI arguments, an Axum-based HTTP API with a live dashboard, faucet, block explorer endpoints, and a transaction submission interface. Supports multi-node testnet deployment with configurable validator IDs and ports.
@@ -133,17 +139,16 @@ EvaporChain uses Nova-based Incrementally Verifiable Computation (IVC) to fold e
 
 ## How Consensus Works
 
-### Rotating Leader Selection
+### Tendermint BFT
 
-The testnet uses a rotating leader consensus mechanism:
+EvaporChain uses a full Tendermint BFT state machine:
 
-1. A `ValidatorSet` tracks all validators with their stake and health scores
-2. Each epoch, a deterministic function selects the leader based on:
-   - Validator stake (higher stake = more turns)
-   - Health score (successful block production improves health)
-   - Epoch number (deterministic rotation)
-3. The leader produces a block, other validators verify and apply it
-4. If a leader misses their turn, health score decays
+1. **Propose**: The stake-weighted leader (seeded by VRF randomness beacon) creates a block proposal with BLS and VRF proofs
+2. **Prevote**: Validators verify the proposal (parent hash, block size, VRF proof, equivocation check) and broadcast BLS-signed prevotes
+3. **Precommit**: Once 2/3+ stake prevotes are collected, validators broadcast BLS-signed precommits
+4. **Commit**: Once 2/3+ stake precommits are collected, the block is committed with an aggregate BLS commit certificate
+
+Timeouts escalate exponentially (2^round, capped at 64x) with per-height jitter. Equivocation (double-signing) is detected and slashed (10% stake). Validators that miss blocks lose health score. Epoch transitions occur at height boundaries with bonding period delays.
 
 ### Encrypted Mempool (MEV Protection)
 
