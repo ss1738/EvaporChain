@@ -20,7 +20,7 @@ evaporchain-crypto = { path = "../evaporchain-crypto" }
 evaporchain-state = { path = "../evaporchain-state" }
 evaporchain-consensus = { path = "../evaporchain-consensus" }
 evaporchain-execution = { path = "../evaporchain-execution" }
-evaporchain-proving = { path = "../evaporchain-proving" }
+evaporchain-proving = { path = "../evaporchain-proving", features = ["test-utils"] }
 evaporchain-network = { path = "../evaporchain-network" }
 evaporchain-da = { path = "../evaporchain-da" }
 evaporchain-script = { path = "../evaporchain-script" }
