@@ -2,7 +2,7 @@
 
 ## Overview
 
-Novel L1 blockchain with energy-based state decay. 13 Rust crates, post-quantum signatures (ML-DSA), Tendermint BFT consensus, browser extension, mobile wallet, SDK, 3 dApps.
+Novel L1 blockchain with energy-based state decay. 16 Rust crates, ~220K LOC, 4,668+ tests, post-quantum signatures (ML-DSA), Tendermint BFT consensus with BLS12-381 aggregate signatures, browser extension, mobile wallet, SDK, 4 dApps.
 
 **Repo:** github.com/ss1738/EvaporChain
 
@@ -25,12 +25,11 @@ Novel L1 blockchain with energy-based state decay. 13 Rust crates, post-quantum 
 | 4-node devnet stress test | Done | `c9ea71a` — 5-phase stress-test.sh + check-consensus.sh |
 | libp2p networking | Done (pre-existing) | gossipsub consensus topic, mDNS, block sync |
 | Slashing (equivocation + downtime) | Done (pre-existing) | 10% equivocation slash, 1%/miss downtime, jailing |
+| 3-node BFT fault tolerance | Done (2026-04-24) | 3 Mac Minis, kill/rejoin cycle proven, identical state roots |
+| Consensus meta persistence | Done (2026-04-24) | parent_hash/height persisted across all block commit paths |
+| VRF-seeded leader selection | Done (2026-04-24) | Beacon randomness mixed into proposer selection |
 
-**Test count:** 96 tests in consensus crate (all passing)
-
-**Remaining Phase 2 work:**
-- Run stress test on live devnet and tune timeouts
-- End-to-end multi-node block finality verification
+**Test count:** 288 tests in consensus crate (all passing)
 
 ### Phase 3: Complete Nova Proving System — COMPLETE (2026-04-10)
 | Task | Status | Details |
@@ -50,7 +49,7 @@ Novel L1 blockchain with energy-based state decay. 13 Rust crates, post-quantum 
 
 | Task | Status | Details |
 |------|--------|---------|
-| VM choice | Done | EvaporScript — 91 opcodes, stack-based, deterministic, energy-aware |
+| VM choice | Done | EvaporScript — 44 opcodes, stack-based, deterministic, energy-aware |
 | Parser + Compiler | Done (pre-existing) | Source → AST → bytecode, state schema declaration |
 | EvaporVM execution | Done (pre-existing) | Gas-metered, bounded loops (100K), max stack 1024 |
 | Template contracts | Done (pre-existing) | 7 templates (DecayingToken, MortalNFT, Escrow, Auction, Staking, DAO, Temporal) |
@@ -60,7 +59,7 @@ Novel L1 blockchain with energy-based state decay. 13 Rust crates, post-quantum 
 | Lifecycle hooks | Done (pre-existing) | `on_evaporate()`, `on_grace()`, `on_refresh()` |
 | list() for ScriptEngine | Done | Query all deployed scripts via API |
 
-**Test count:** 53 script VM tests, 99 consensus tests
+**Test count:** 84 script VM tests, 288 consensus tests
 
 ### Phase 5: Stress Testing — COMPLETE (2026-04-10)
 **Target: 1000+ TPS — ACHIEVED (468,385 TPS peak, 6,978 sustained multi-block)**
@@ -149,4 +148,21 @@ Novel L1 blockchain with energy-based state decay. 13 Rust crates, post-quantum 
 
 ---
 
-*Last updated: 2026-04-10 (Phase 7 complete — all 7 phases done)*
+## Post-Phase Security Hardening (2026-04-24)
+
+Full 12-agent security audit performed. Results:
+- **13 CRITICAL** — all fixed (BLS verification, reentrancy guard, gas limits, key security, etc.)
+- **23 HIGH** — 21 fixed in code, 2 need external crypto review (pqc_dilithium crate, Poseidon constants)
+- **30+ MEDIUM** — 15 fixed, 7 acceptable, 3 design gaps (compiler evolution), 1 needs benchmarks (Verkle adversarial)
+
+Key hardening commits:
+- Bridge BLS signature verification, ghost bridge BLS verification
+- Per-peer network rate limiting (500 msgs/10s)
+- Oracle endpoint mandatory auth, contract storage cap (10K keys)
+- Timeout jitter with per-height variation, block size validation on receipt
+- VRF-seeded leader selection, keygen file permissions (0o600)
+- MockProver rejects proofs in release builds
+
+3-node BFT fault tolerance proven on physical hardware (3 Mac Mini M4s via Tailscale).
+
+*Last updated: 2026-04-24*

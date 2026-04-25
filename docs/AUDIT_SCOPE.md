@@ -2,7 +2,7 @@
 
 **Prepared for:** External security auditors
 **Date:** April 2026
-**Codebase:** ~29,000 LOC Rust, 408 tests, zero unsafe blocks
+**Codebase:** ~220,000 LOC Rust, 16 crates, 4,668+ test functions, zero unsafe blocks
 
 ## 1. Engagement Overview
 
@@ -33,9 +33,12 @@ EvaporChain/
 │   ├── evaporchain-types/       # Core types (PRIORITY 3)
 │   ├── evaporchain-network/     # libp2p networking (PRIORITY 3)
 │   ├── evaporchain-da/          # Data availability (PRIORITY 3)
+│   ├── evaporchain-oracle/      # Oracle data feeds (PRIORITY 3)
+│   ├── evaporchain-sharding/    # Sharding (experimental) (PRIORITY 4)
 │   ├── evaporchain-node/        # Node binary (PRIORITY 4)
 │   ├── evaporchain-cli/         # CLI tool (PRIORITY 4)
-│   └── evaporchain-mcp/         # MCP server (PRIORITY 4)
+│   ├── evaporchain-mcp/         # MCP server (PRIORITY 4)
+│   └── evaporchain-crypto-wasm/ # WASM crypto bindings (PRIORITY 4)
 ├── SECURITY.md                  # Vulnerability disclosure policy
 ├── docs/
 │   ├── THREAT_MODEL.md          # Threat model document

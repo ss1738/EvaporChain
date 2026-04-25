@@ -82,7 +82,7 @@ leaving only cryptographic ghost records. The system uses:
 | **Long-range attack** | Adversary forks from old state | Weak subjectivity checkpoints | Planned |
 | **Nothing-at-stake** | Validators vote on multiple forks | BFT finality (single-slot) | Implemented |
 | **Eclipse attack** | Isolate a node from honest peers | Peer diversity, gossip protocol | Partial |
-| **Double-vote** | Validator signs conflicting blocks | Equivocation detection + slashing | Detection implemented |
+| **Double-vote** | Validator signs conflicting blocks | Equivocation detection + slashing (10% stake) | Implemented |
 | **Liveness attack** | f+1 validators go offline | Consensus halts safely (BFT guarantee) | By design |
 
 ### 4.2 Transaction Execution
@@ -115,18 +115,21 @@ leaving only cryptographic ghost records. The system uses:
 | **Infinite loop** | Contract loops forever | MAX_LOOP_ITERATIONS (100,000) | Implemented |
 | **Stack overflow** | Push unbounded values | MAX_STACK_DEPTH (1,024) | Implemented |
 | **Integer overflow** | Arithmetic wraps silently | Checked arithmetic (errors on overflow) | Implemented |
-| **Gas manipulation** | Avoid gas costs | Gas deducted per opcode before execution | Implemented |
+| **Gas manipulation** | Avoid gas costs | Gas deducted per opcode, 10M gas limit per call | Implemented |
 | **Modulo by zero** | Division by zero crash | Explicit zero check, returns error | Implemented |
-| **Memory exhaustion** | Large data allocations | Gas-proportional limits | Implemented |
+| **Memory exhaustion** | Large data allocations | Hard caps: stack 1024, strings 1MiB, maps 10K, arrays 10K, state keys 10K | Implemented |
+| **Unbounded loops** | JumpIf bypasses loop limit | MAX_LOOP_ITERATIONS (100K) + MAX_STEPS (10M) on all jumps | Implemented |
+| **Contract storage growth** | Unbounded state keys | MAX_STATE_KEYS (10,000) per contract | Implemented |
 
 ### 4.5 Network Layer
 
 | Attack | Description | Mitigation | Status |
 |--------|-------------|------------|--------|
-| **Gossip flood** | Send oversized messages | MAX_GOSSIP_MESSAGE_SIZE (10MB) | Implemented |
+| **Gossip flood** | Send oversized messages | MAX_GOSSIP_MESSAGE_SIZE (10MB) + per-peer rate limiting (500/10s) | Implemented |
 | **Deserialization bomb** | Malformed data crashes node | Size check before deserialize | Implemented |
 | **RwLock poisoning** | Crash thread holding lock | safe_read/safe_write recovery | Implemented |
 | **Peer starvation** | Deny block sync to target | Multiple peer connections | Implemented |
+| **Sync poisoning** | Accept invalid blocks during sync | BLS commit certificate verification on all synced blocks | Implemented |
 
 ### 4.6 Proving System
 
@@ -142,7 +145,7 @@ leaving only cryptographic ghost records. The system uses:
 | Attack | Description | Mitigation | Status |
 |--------|-------------|------------|--------|
 | **Quantum key recovery** | Shor's algorithm on ECDSA | ML-DSA (lattice-based, NIST L3) | Implemented |
-| **BLS rogue-key** | Adversarial public key selection | Proof-of-possession on validator registration | Planned |
+| **BLS rogue-key** | Adversarial public key selection | Proof-of-possession with DST separation | Implemented |
 | **Poseidon algebraic** | GRÖBNER basis attack on S-box | 64 rounds (8F+56P), conservative | By design |
 | **Verkle binding break** | Find collision in commitments | Pallas ECDLP hardness | By design |
 | **Hash collision** | BLAKE3 collision | 256-bit output, no known attacks | By design |
