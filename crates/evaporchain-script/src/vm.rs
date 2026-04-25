@@ -518,6 +518,16 @@ impl EvaporVM {
                     let val = self.pop()?;
                     let key = self.pop()?;
 
+                    // Check if this is a new map entry — track memory before borrowing state
+                    let is_new_entry = match self.state.get(&*field) {
+                        Some(Value::Map(m)) => !m.contains_key(&key.to_map_key()),
+                        None => true,
+                        _ => false,
+                    };
+                    if is_new_entry {
+                        self.track_memory(64)?; // ~64 bytes per new map entry
+                    }
+
                     let entry = self
                         .state
                         .entry(field.clone())
@@ -525,13 +535,10 @@ impl EvaporVM {
                     match entry {
                         Value::Map(m) => {
                             let key_str = key.to_map_key();
-                            if !m.contains_key(&key_str) {
-                                if m.len() >= MAX_MAP_ENTRIES {
-                                    return Err(ScriptError::Runtime(format!(
-                                        "map entry limit exceeded ({MAX_MAP_ENTRIES})"
-                                    )));
-                                }
-                                self.track_memory(64)?; // ~64 bytes per new map entry
+                            if !m.contains_key(&key_str) && m.len() >= MAX_MAP_ENTRIES {
+                                return Err(ScriptError::Runtime(format!(
+                                    "map entry limit exceeded ({MAX_MAP_ENTRIES})"
+                                )));
                             }
                             m.insert(key_str, val);
                         }
