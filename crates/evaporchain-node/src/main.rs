@@ -519,7 +519,7 @@ fn generate_demo_tx(
     if per_validator == 0 {
         return None;
     }
-    let idx = if validator_id == 0 { 0 } else { (validator_id - 1) as usize };
+    let idx = validator_id as usize;
     let start = idx * per_validator;
     let end = if start + per_validator >= all_hexes.len() {
         all_hexes.len()
@@ -1659,7 +1659,7 @@ async fn main() -> Result<()> {
     // Build Tendermint consensus if enabled
     let tendermint = if args.tendermint_mode {
         let mut validators = Vec::new();
-        for vid in 1..=args.validator_count {
+        for vid in 0..args.validator_count {
             let mut address = [0u8; 32];
             address[0] = vid as u8;
             validators.push(ValidatorInfo::new(vid, args.validator_stake, address));
