@@ -227,6 +227,20 @@ pub struct GenesisConfig {
     /// Bootstrap peer addresses for P2P discovery.
     #[serde(default)]
     pub bootstrap_peers: Vec<String>,
+
+    /// Trusted weak subjectivity checkpoint for safe node bootstrap.
+    /// New nodes joining after genesis MUST include this to defend against long-range attacks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trusted_checkpoint: Option<GenesisCheckpoint>,
+}
+
+/// A weak subjectivity checkpoint embedded in genesis config.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenesisCheckpoint {
+    pub height: u64,
+    pub state_root: String,
+    #[serde(default)]
+    pub block_hash: String,
 }
 
 impl GenesisConfig {
@@ -362,6 +376,7 @@ impl GenesisConfig {
                 "/ip4/127.0.0.1/tcp/9000".into(),
                 "/ip4/127.0.0.1/tcp/9001".into(),
             ],
+            trusted_checkpoint: None,
         }
     }
 }

@@ -621,6 +621,12 @@ struct NodeArgs {
     use_tls: bool,
     /// Comma-separated list of authorized PeerIds (empty = permissionless).
     allowed_peers: Vec<String>,
+    /// Trusted checkpoint height for safe bootstrap (weak subjectivity).
+    checkpoint_height: Option<u64>,
+    /// Trusted checkpoint state_root hex (weak subjectivity).
+    checkpoint_state_root: Option<String>,
+    /// Trusted checkpoint block_hash hex (weak subjectivity).
+    checkpoint_block_hash: Option<String>,
 }
 
 fn parse_args() -> NodeArgs {
@@ -710,6 +716,22 @@ fn parse_args() -> NodeArgs {
 
     let use_tls = args.iter().any(|a| a == "--tls");
 
+    let checkpoint_height = args
+        .iter()
+        .position(|a| a == "--checkpoint-height")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse::<u64>().ok());
+    let checkpoint_state_root = args
+        .iter()
+        .position(|a| a == "--checkpoint-state-root")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
+    let checkpoint_block_hash = args
+        .iter()
+        .position(|a| a == "--checkpoint-block-hash")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
+
     let allowed_peers: Vec<String> = args
         .iter()
         .position(|a| a == "--allowed-peers")
@@ -751,6 +773,9 @@ fn parse_args() -> NodeArgs {
         genesis_config,
         use_tls,
         allowed_peers,
+        checkpoint_height,
+        checkpoint_state_root,
+        checkpoint_block_hash,
     }
 }
 
@@ -1588,6 +1613,49 @@ async fn main() -> Result<()> {
             kp
         };
         tc.set_bls_keypair(bls_kp);
+
+        // Trusted checkpoint for weak subjectivity (long-range attack defense)
+        if let Some(cp_height) = args.checkpoint_height {
+            let cp_root = args.checkpoint_state_root.as_deref()
+                .and_then(|h| hex::decode(h.trim_start_matches("0x")).ok())
+                .and_then(|b| if b.len() == 32 { let mut a = [0u8; 32]; a.copy_from_slice(&b); Some(a) } else { None })
+                .unwrap_or_else(|| {
+                    eprintln!("{} \x1b[31m--checkpoint-state-root required with --checkpoint-height\x1b[0m", node_tag);
+                    std::process::exit(1);
+                });
+            let cp_hash = args.checkpoint_block_hash.as_deref()
+                .and_then(|h| hex::decode(h.trim_start_matches("0x")).ok())
+                .and_then(|b| if b.len() == 32 { let mut a = [0u8; 32]; a.copy_from_slice(&b); Some(a) } else { None })
+                .unwrap_or([0u8; 32]);
+            tc.set_trusted_checkpoint(cp_height, cp_root, cp_hash);
+            println!(
+                "{} \x1b[1;33mTrusted checkpoint set:\x1b[0m height={}, state_root={}…, ws_period={}",
+                node_tag, cp_height, &hex::encode(&cp_root[..8]), tc.weak_subjectivity_period()
+            );
+        } else if let Some(ref genesis_path) = args.genesis_config {
+            // Try loading checkpoint from genesis config file
+            if let Ok(json) = std::fs::read_to_string(genesis_path) {
+                if let Ok(config) = serde_json::from_str::<evaporchain_types::genesis::GenesisConfig>(&json) {
+                    if let Some(ref cp) = config.trusted_checkpoint {
+                        let cp_root = hex::decode(cp.state_root.trim_start_matches("0x"))
+                            .ok()
+                            .and_then(|b| if b.len() == 32 { let mut a = [0u8; 32]; a.copy_from_slice(&b); Some(a) } else { None });
+                        let cp_hash = hex::decode(cp.block_hash.trim_start_matches("0x"))
+                            .ok()
+                            .and_then(|b| if b.len() == 32 { let mut a = [0u8; 32]; a.copy_from_slice(&b); Some(a) } else { None })
+                            .unwrap_or([0u8; 32]);
+                        if let Some(root) = cp_root {
+                            tc.set_trusted_checkpoint(cp.height, root, cp_hash);
+                            println!(
+                                "{} \x1b[1;33mTrusted checkpoint from genesis:\x1b[0m height={}, ws_period={}",
+                                node_tag, cp.height, tc.weak_subjectivity_period()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         println!(
             "{} \x1b[1;35mTendermint BFT consensus\x1b[0m — validator_id={}, validators={}, stake={}, BLS=enabled",
             node_tag, args.validator_id, args.validator_count, args.validator_stake

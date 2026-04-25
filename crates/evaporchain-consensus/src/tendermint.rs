@@ -260,6 +260,10 @@ pub struct TendermintConsensus {
     weak_subjectivity_checkpoints: Vec<(u64, [u8; 32])>,
     /// Interval between weak subjectivity checkpoints (in blocks).
     checkpoint_interval: u64,
+    /// Externally-provided trusted checkpoint for safe bootstrap.
+    /// A new node MUST provide this to defend against long-range attacks.
+    /// Format: (height, state_root, block_hash).
+    trusted_checkpoint: Option<(u64, [u8; 32], [u8; 32])>,
     /// BLS12-381 keypair for aggregate signature consensus (optional).
     bls_keypair: Option<BlsKeypair>,
     /// Post-quantum VRF keypair for this validator (leader election + randomness).
@@ -321,7 +325,8 @@ impl TendermintConsensus {
             proposals_seen: HashMap::new(),
             missed_proposals: HashMap::new(),
             weak_subjectivity_checkpoints: Vec::new(),
-            checkpoint_interval: 1000, // Checkpoint every 1000 blocks
+            checkpoint_interval: 1000,
+            trusted_checkpoint: None,
             bls_keypair: None,
             vrf_keypair: None,
             randomness_beacon: RandomnessBeacon::new(),
@@ -430,6 +435,7 @@ impl TendermintConsensus {
             missed_proposals: HashMap::new(),
             weak_subjectivity_checkpoints: Vec::new(),
             checkpoint_interval: 1000,
+            trusted_checkpoint: None,
             bls_keypair: None,
             vrf_keypair: None,
             randomness_beacon: RandomnessBeacon::new(),
@@ -1001,6 +1007,16 @@ impl TendermintConsensus {
                     }
                 }
 
+                // ── Weak subjectivity check ──
+                if !self.check_weak_subjectivity(&block) {
+                    warn!(
+                        height = height,
+                        round = round,
+                        "Rejected proposal: violates weak subjectivity"
+                    );
+                    return actions;
+                }
+
                 // ── DA certificate verification ──
                 if !self.verify_da_certificate(&block) {
                     warn!(
@@ -1299,10 +1315,12 @@ impl TendermintConsensus {
         if block.number > 0 && block.number % self.checkpoint_interval == 0 {
             self.weak_subjectivity_checkpoints
                 .push((block.number, state_root));
+            self.prune_old_checkpoints();
             info!(
                 height = block.number,
-                state_root = hex::encode(state_root),
-                total_checkpoints = self.weak_subjectivity_checkpoints.len(),
+                state_root = %hex::encode(&state_root[..8]),
+                ws_period = self.weak_subjectivity_period(),
+                checkpoints_kept = self.weak_subjectivity_checkpoints.len(),
                 "Weak subjectivity checkpoint created"
             );
         }
@@ -1430,19 +1448,84 @@ impl TendermintConsensus {
     }
 
     /// Verify a block does not violate weak subjectivity.
-    /// Returns false if the block tries to reorg past a checkpoint.
+    /// Checks both height ordering AND state root consistency.
     pub fn check_weak_subjectivity(&self, block: &Block) -> bool {
-        if let Some(&(cp_height, _cp_root)) = self.weak_subjectivity_checkpoints.last() {
-            if block.number <= cp_height {
+        // Check against trusted checkpoint (provided at bootstrap)
+        if let Some((cp_height, cp_root, _cp_hash)) = self.trusted_checkpoint {
+            if block.number < cp_height {
                 warn!(
                     block = block.number,
                     checkpoint = cp_height,
-                    "Block rejected: violates weak subjectivity checkpoint"
+                    "Block rejected: below trusted checkpoint"
+                );
+                return false;
+            }
+            if block.number == cp_height && block.state_root != cp_root {
+                warn!(
+                    block = block.number,
+                    expected = %hex::encode(&cp_root[..8]),
+                    got = %hex::encode(&block.state_root[..8]),
+                    "Block rejected: state_root mismatch with trusted checkpoint"
                 );
                 return false;
             }
         }
+
+        // Check against rolling checkpoints
+        for &(cp_height, cp_root) in self.weak_subjectivity_checkpoints.iter().rev() {
+            if block.number < cp_height {
+                warn!(
+                    block = block.number,
+                    checkpoint = cp_height,
+                    "Block rejected: reorg past weak subjectivity checkpoint"
+                );
+                return false;
+            }
+            if block.number == cp_height && block.state_root != cp_root {
+                warn!(
+                    block = block.number,
+                    checkpoint = cp_height,
+                    "Block rejected: state_root diverges from checkpoint"
+                );
+                return false;
+            }
+            break;
+        }
         true
+    }
+
+    /// Compute the weak subjectivity period in blocks.
+    ///
+    /// Based on: finality depth + unbonding period + churn-to-majority time + buffer.
+    /// A node offline longer than this period MUST resync with a fresh trusted checkpoint.
+    pub fn weak_subjectivity_period(&self) -> u64 {
+        let finality_depth: u64 = 1; // single-slot BFT finality
+        let unbonding_blocks: u64 = 3 * 100; // UNBONDING_PERIOD_EPOCHS * EPOCH_LENGTH
+        let validator_count = self.validator_set.active_count() as u64;
+        let max_churn_per_epoch = std::cmp::max(1, validator_count / 3);
+        let epochs_to_majority = (validator_count + max_churn_per_epoch - 1) / max_churn_per_epoch;
+        let churn_blocks = epochs_to_majority * 100; // EPOCH_LENGTH
+        let safety_margin = 200; // ~200 blocks buffer
+
+        finality_depth + unbonding_blocks + churn_blocks + safety_margin
+    }
+
+    /// Set a trusted checkpoint for safe bootstrap.
+    /// New nodes joining the network MUST call this before syncing.
+    pub fn set_trusted_checkpoint(&mut self, height: u64, state_root: [u8; 32], block_hash: [u8; 32]) {
+        info!(
+            height = height,
+            state_root = %hex::encode(&state_root[..8]),
+            block_hash = %hex::encode(&block_hash[..8]),
+            ws_period = self.weak_subjectivity_period(),
+            "Trusted checkpoint set"
+        );
+        self.trusted_checkpoint = Some((height, state_root, block_hash));
+    }
+
+    /// Get the trusted checkpoint if set.
+    pub fn trusted_checkpoint(&self) -> Option<(u64, [u8; 32], [u8; 32])> {
+        self.trusted_checkpoint
     }
 
     /// Get all weak subjectivity checkpoints.
@@ -1450,9 +1533,30 @@ impl TendermintConsensus {
         &self.weak_subjectivity_checkpoints
     }
 
+    /// Get the latest checkpoint (height, state_root).
+    pub fn latest_checkpoint(&self) -> Option<(u64, [u8; 32])> {
+        self.weak_subjectivity_checkpoints.last().copied()
+    }
+
     /// Load checkpoints from persistent storage (on restart).
     pub fn load_checkpoints(&mut self, checkpoints: Vec<(u64, [u8; 32])>) {
         self.weak_subjectivity_checkpoints = checkpoints;
+    }
+
+    /// Prune checkpoints older than the weak subjectivity period,
+    /// keeping at least the most recent one.
+    pub fn prune_old_checkpoints(&mut self) {
+        let ws_period = self.weak_subjectivity_period();
+        let cutoff = self.height.saturating_sub(ws_period);
+        if self.weak_subjectivity_checkpoints.len() > 1 {
+            let keep_from = self.weak_subjectivity_checkpoints
+                .iter()
+                .rposition(|&(h, _)| h <= cutoff)
+                .unwrap_or(0);
+            if keep_from > 0 {
+                self.weak_subjectivity_checkpoints.drain(..keep_from);
+            }
+        }
     }
 
     /// Apply a block received from block sync (not through consensus).

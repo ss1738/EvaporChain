@@ -4373,6 +4373,37 @@ async fn get_trusted_header(
 
 // ─────────────────── Finality ───────────────────────────────────────────
 
+async fn get_weak_subjectivity_checkpoint(
+    State(state): State<Arc<ApiState>>,
+) -> impl IntoResponse {
+    if let Some(ref tc_arc) = state.tendermint {
+        let tc = tc_arc.lock().unwrap();
+        let ws_period = tc.weak_subjectivity_period();
+        let trusted = tc.trusted_checkpoint();
+        let latest = tc.latest_checkpoint();
+        let all_checkpoints: Vec<_> = tc.checkpoints().iter().map(|(h, r)| {
+            serde_json::json!({"height": h, "state_root": hex::encode(r)})
+        }).collect();
+
+        Json(serde_json::json!({
+            "weak_subjectivity_period_blocks": ws_period,
+            "trusted_checkpoint": trusted.map(|(h, r, bh)| serde_json::json!({
+                "height": h,
+                "state_root": hex::encode(r),
+                "block_hash": hex::encode(bh),
+            })),
+            "latest_checkpoint": latest.map(|(h, r)| serde_json::json!({
+                "height": h,
+                "state_root": hex::encode(r),
+            })),
+            "checkpoint_count": all_checkpoints.len(),
+            "checkpoints": all_checkpoints,
+        })).into_response()
+    } else {
+        Json(serde_json::json!({"error": "consensus not in Tendermint mode"})).into_response()
+    }
+}
+
 async fn get_finality(
     State(state): State<Arc<ApiState>>,
 ) -> impl IntoResponse {
@@ -4606,6 +4637,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/mev/reveal", post(post_reveal_encrypted_tx))
         .route("/api/mev/status", get(get_encrypted_mempool_status))
         // Finality
+        .route("/api/weak-subjectivity", get(get_weak_subjectivity_checkpoint))
         .route("/api/finality", get(get_finality))
         .route("/api/finality/proof/:height", get(get_finality_proof))
         // State sync
