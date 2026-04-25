@@ -290,6 +290,10 @@ pub struct TendermintConsensus {
     pending_reveals: Vec<([u8; 32], [u8; 32])>,
     /// Anchor hash provider for rule-based consensus enforcement.
     anchor_provider: Option<Box<dyn AnchorHashProvider>>,
+    /// Current state root (updated after each committed block).
+    /// Used to populate state_root in proposals so validators can verify
+    /// pre-execution state agreement (CometBFT-style app_hash semantics).
+    current_state_root: [u8; 32],
 }
 
 impl TendermintConsensus {
@@ -340,6 +344,7 @@ impl TendermintConsensus {
             encrypted_mempool: EncryptedMempool::new(2),
             pending_reveals: Vec::new(),
             anchor_provider: None,
+            current_state_root: [0u8; 32],
         }
     }
 
@@ -449,6 +454,7 @@ impl TendermintConsensus {
             encrypted_mempool: EncryptedMempool::new(2),
             pending_reveals: Vec::new(),
             anchor_provider: None,
+            current_state_root: [0u8; 32],
         }
     }
 
@@ -463,6 +469,17 @@ impl TendermintConsensus {
         self.locked_round = None;
         self.valid_block = None;
         self.valid_round = None;
+    }
+
+    /// Restore state after a restart, including the latest committed state root.
+    pub fn restore_state_with_root(&mut self, block_number: u64, epoch: Epoch, parent_hash: [u8; 32], state_root: [u8; 32]) {
+        self.restore_state(block_number, epoch, parent_hash);
+        self.current_state_root = state_root;
+    }
+
+    /// Get the current committed state root.
+    pub fn current_state_root(&self) -> [u8; 32] {
+        self.current_state_root
     }
 
     pub fn height(&self) -> u64 {
@@ -950,9 +967,22 @@ impl TendermintConsensus {
                     debug!(height = height, "Nova proof verified on proposal");
                 }
 
-                // C-03 TODO: state_root is currently [0u8;32] in proposals and computed
-                // post-execution. A proper fix requires computing state_root in
-                // create_proposal() before broadcasting. Tracked as a follow-up.
+                // Verify the proposed state_root matches our local pre-execution state.
+                // The proposer sets state_root = current_state_root (post-previous-block state).
+                // All validators must agree on this before voting.
+                if block.state_root != [0u8; 32] && self.current_state_root != [0u8; 32]
+                    && block.state_root != self.current_state_root
+                {
+                    warn!(
+                        height = height,
+                        round = round,
+                        proposer = proposer_id,
+                        local = %hex::encode(&self.current_state_root[..8]),
+                        proposed = %hex::encode(&block.state_root[..8]),
+                        "Rejected proposal: state root mismatch (pre-execution)"
+                    );
+                    return actions;
+                }
 
                 // ── VRF proof verification ──
                 // If the proposer has a VRF public key and the block includes
@@ -1137,6 +1167,9 @@ impl TendermintConsensus {
                                 return actions;
                             }
                         }
+                    } else if self.validator_set.has_bls_keys() {
+                        warn!(validator_id, "Rejecting prevote: validator missing BLS key in BLS-enabled set");
+                        return actions;
                     }
 
                     // ── Vote Equivocation Detection ──
@@ -1223,6 +1256,9 @@ impl TendermintConsensus {
                                 return actions;
                             }
                         }
+                    } else if self.validator_set.has_bls_keys() {
+                        warn!(validator_id, "Rejecting precommit: validator missing BLS key in BLS-enabled set");
+                        return actions;
                     }
 
                     // ── Vote Equivocation Detection ──
@@ -1298,6 +1334,7 @@ impl TendermintConsensus {
         self.parent_hash = blake3_hash(&hash_input);
 
         self.epoch = block.epoch;
+        self.current_state_root = state_root;
         self.committed_heights.insert(self.height);
         if let Some(pid) = block.producer_id {
             self.da_block_proposers.insert(block.number, pid);
@@ -1782,7 +1819,7 @@ impl TendermintConsensus {
             number: self.height,
             epoch: next_epoch,
             parent_hash: self.parent_hash,
-            state_root: [0u8; 32], // Will be filled after execution
+            state_root: self.current_state_root,
             transactions: txs,
             timestamp,
             producer_id: Some(self.my_id),

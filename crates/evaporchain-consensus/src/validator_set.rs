@@ -479,6 +479,11 @@ impl ValidatorSet {
         self.validators.iter().find(|v| v.id == id)
     }
 
+    /// Check if any validator has a BLS key registered (enables BLS enforcement).
+    pub fn has_bls_keys(&self) -> bool {
+        self.validators.iter().any(|v| v.bls_public_key.is_some())
+    }
+
     /// Check if any validator has a VRF key registered (enables VRF mode).
     pub fn has_vrf_keys(&self) -> bool {
         self.validators.iter().any(|v| v.vrf_public_key.is_some())
