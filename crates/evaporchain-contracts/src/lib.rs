@@ -1134,6 +1134,10 @@ fn exec_auction(
             if aus.finalized {
                 return Err(ContractError::StateError("already finalized".into()));
             }
+            let ended = current_epoch >= aus.start_epoch + aus.duration_epochs;
+            if !ended && caller_hex != aus.seller {
+                return Err(ContractError::PermissionDenied("only seller can finalize before auction ends".into()));
+            }
             aus.finalized = true;
             if let Some((winner, amount)) = aus.bids.last() {
                 if *amount >= aus.reserve_price {
