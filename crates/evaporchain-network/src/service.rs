@@ -89,6 +89,10 @@ const PEER_MSG_LIMIT: u64 = 500;
 const PEER_MSG_WINDOW: Duration = Duration::from_secs(10);
 /// Maximum tracked peers (LRU eviction beyond this).
 const MAX_TRACKED_PEERS: usize = 1024;
+/// Violations before a peer is banned.
+const BAN_THRESHOLD: u32 = 10;
+/// How long a ban lasts.
+const BAN_DURATION: Duration = Duration::from_secs(600);
 
 struct PeerRateLimiter {
     counters: HashMap<PeerId, (u64, Instant)>,
@@ -120,6 +124,40 @@ impl PeerRateLimiter {
         if self.counters.len() > MAX_TRACKED_PEERS {
             let cutoff = Instant::now() - PEER_MSG_WINDOW * 2;
             self.counters.retain(|_, (_, ts)| *ts > cutoff);
+        }
+    }
+}
+
+struct PeerBanList {
+    violations: HashMap<PeerId, u32>,
+    banned: HashMap<PeerId, Instant>,
+}
+
+impl PeerBanList {
+    fn new() -> Self {
+        Self { violations: HashMap::new(), banned: HashMap::new() }
+    }
+
+    fn is_banned(&mut self, peer: &PeerId) -> bool {
+        if let Some(expiry) = self.banned.get(peer) {
+            if Instant::now() < *expiry {
+                return true;
+            }
+            self.banned.remove(peer);
+            self.violations.remove(peer);
+        }
+        false
+    }
+
+    fn record_violation(&mut self, peer: PeerId) -> bool {
+        let count = self.violations.entry(peer).or_insert(0);
+        *count += 1;
+        if *count >= BAN_THRESHOLD {
+            self.banned.insert(peer, Instant::now() + BAN_DURATION);
+            warn!("Banned peer {peer} for {}s after {count} violations", BAN_DURATION.as_secs());
+            true
+        } else {
+            false
         }
     }
 }
@@ -480,6 +518,7 @@ impl P2pNetworkService {
             redial_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
             let mut rate_limiter = PeerRateLimiter::new();
+            let mut ban_list = PeerBanList::new();
             let mut gc_counter: u64 = 0;
 
             loop {
@@ -566,8 +605,11 @@ impl P2pNetworkService {
                             SwarmEvent::Behaviour(EvaporBehaviourEvent::Gossipsub(
                                 gossipsub::Event::Message { message, .. },
                             )) => {
-                                // Per-peer rate limiting
+                                // Per-peer ban + rate limiting
                                 if let Some(ref source) = message.source {
+                                    if ban_list.is_banned(source) {
+                                        continue;
+                                    }
                                     if !rate_limiter.check_and_increment(source) {
                                         debug!("Rate-limited peer {source} — dropping gossip message");
                                         gc_counter += 1;
@@ -593,14 +635,24 @@ impl P2pNetworkService {
                                         Ok(tx) => {
                                             let _ = net_tx_sender.send(tx).await;
                                         }
-                                        Err(e) => debug!("Invalid tx gossip: {e}"),
+                                        Err(e) => {
+                                            debug!("Invalid tx gossip: {e}");
+                                            if let Some(ref source) = message.source {
+                                                ban_list.record_violation(*source);
+                                            }
+                                        }
                                     }
                                 } else if message.topic == block_topic_hash {
                                     match serde_json::from_slice::<Block>(&message.data) {
                                         Ok(block) => {
                                             let _ = net_block_sender.send(block).await;
                                         }
-                                        Err(e) => debug!("Invalid block gossip: {e}"),
+                                        Err(e) => {
+                                            debug!("Invalid block gossip: {e}");
+                                            if let Some(ref source) = message.source {
+                                                ban_list.record_violation(*source);
+                                            }
+                                        }
                                     }
                                 } else if message.topic == consensus_topic_hash {
                                     // Forward raw bytes — app deserializes

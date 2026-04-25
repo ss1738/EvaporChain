@@ -2898,6 +2898,13 @@ async fn main() -> Result<()> {
                                     if pruned > 0 {
                                         tracing::info!("Pruned {} old block records (retain last 1000)", pruned);
                                     }
+                                    if block.epoch > 1000 {
+                                        let mut db_guard = safe_lock(&db);
+                                        let ghosts_pruned = db_guard.prune_before_height(block.epoch - 1000);
+                                        if ghosts_pruned > 0 {
+                                            tracing::info!(ghosts_pruned, "Pruned old ghost records (retain last 1000 epochs)");
+                                        }
+                                    }
                                 }
 
                                 let producer_str = block.producer_id
@@ -3493,6 +3500,13 @@ async fn main() -> Result<()> {
                         chain_store.prune_old_snapshots(result.block.number, 200);
                         if pruned > 0 {
                             tracing::info!("Pruned {} old block records (retain last 1000)", pruned);
+                        }
+                        if result.block.epoch > 1000 {
+                            let mut db_guard = safe_lock(&db);
+                            let ghosts_pruned = db_guard.prune_before_height(result.block.epoch - 1000);
+                            if ghosts_pruned > 0 {
+                                tracing::info!(ghosts_pruned, "Pruned old ghost records (retain last 1000 epochs)");
+                            }
                         }
                     }
 

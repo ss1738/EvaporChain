@@ -67,6 +67,9 @@ const MAX_ROUNDS_PER_HEIGHT: u32 = 10;
 /// Maximum serialized block size (2 MB). Enforced on both creation and reception.
 const MAX_BLOCK_SIZE_BYTES: usize = 2 * 1024 * 1024;
 
+/// Maximum transactions per block. Enforced on both creation and reception.
+const MAX_TXS_PER_BLOCK: usize = 50;
+
 // ─────────────────────── Consensus Messages ─────────────────────────────
 
 /// Messages exchanged between validators during consensus.
@@ -946,6 +949,17 @@ impl TendermintConsensus {
                     }
                 }
 
+                if block.transactions.len() > MAX_TXS_PER_BLOCK {
+                    warn!(
+                        height = height,
+                        round = round,
+                        tx_count = block.transactions.len(),
+                        max = MAX_TXS_PER_BLOCK,
+                        "Rejected proposal: too many transactions"
+                    );
+                    return actions;
+                }
+
                 // Verify block connects to our chain
                 if block.parent_hash != self.parent_hash {
                     warn!(
@@ -1756,7 +1770,6 @@ impl TendermintConsensus {
             );
             return Some(locked.clone());
         }
-        const MAX_TXS_PER_BLOCK: usize = 50;
         let next_epoch = self.epoch + 1;
 
         // Process encrypted mempool reveals first (MEV-protected txs get priority)
@@ -2153,8 +2166,8 @@ impl TendermintConsensus {
                 signer_stake += validator.stake;
                 if let Some(ref bls_pk_bytes) = validator.bls_public_key {
                     // Reject if PoP was submitted but failed verification
-                    if validator.bls_pop.is_some() && !validator.pop_verified {
-                        warn!(validator_id = vid, "Rejecting cert: signer has invalid PoP");
+                    if !validator.pop_verified {
+                        warn!(validator_id = vid, "Rejecting cert: signer has no verified proof-of-possession");
                         return false;
                     }
                     pks.push(BlsPublicKey(bls_pk_bytes.clone()));
