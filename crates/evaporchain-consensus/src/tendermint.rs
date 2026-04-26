@@ -1571,7 +1571,6 @@ impl TendermintConsensus {
                 signing_stake,
                 total_stake,
                 timestamp,
-                chain_id: String::new(),
             );
         }
 
