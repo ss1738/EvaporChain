@@ -819,6 +819,7 @@ impl SimpleExecutor {
             let pm = db.get_or_create_account(paymaster);
             if pm.balance < tx.call_gas_limit {
                 return Err(ExecutionError::InsufficientBalance {
+                    account: hex::encode(paymaster),
                     required: tx.call_gas_limit,
                     available: pm.balance,
                 });
