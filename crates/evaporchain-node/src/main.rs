@@ -687,6 +687,8 @@ struct NodeArgs {
     checkpoint_state_root: Option<String>,
     /// Trusted checkpoint block_hash hex (weak subjectivity).
     checkpoint_block_hash: Option<String>,
+    /// Disable DA certificate enforcement (for devnets without DA layer).
+    no_da_enforcement: bool,
 }
 
 fn parse_args() -> NodeArgs {
@@ -793,6 +795,8 @@ fn parse_args() -> NodeArgs {
         .and_then(|i| args.get(i + 1))
         .cloned();
 
+    let no_da_enforcement = args.iter().any(|a| a == "--no-da-enforcement");
+
     let allowed_peers: Vec<String> = args
         .iter()
         .position(|a| a == "--allowed-peers")
@@ -838,6 +842,7 @@ fn parse_args() -> NodeArgs {
         checkpoint_height,
         checkpoint_state_root,
         checkpoint_block_hash,
+        no_da_enforcement,
     }
 }
 
@@ -1783,10 +1788,12 @@ async fn main() -> Result<()> {
 
     // DA certificate enforcement starts 200 blocks after the restored tip,
     // giving time for BLS key exchange and DA attestation rounds to stabilize.
-    if let Some(ref tc) = tendermint {
-        let mut c = safe_lock(&tc);
-        let da_start = c.height().saturating_add(200);
-        c.set_da_enforcement_height(da_start);
+    if !args.no_da_enforcement {
+        if let Some(ref tc) = tendermint {
+            let mut c = safe_lock(&tc);
+            let da_start = c.height().saturating_add(200);
+            c.set_da_enforcement_height(da_start);
+        }
     }
 
     // Restore mempool from disk
