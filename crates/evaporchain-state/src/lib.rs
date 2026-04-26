@@ -6,9 +6,11 @@ pub mod refresh;
 pub mod rocksdb_backend;
 pub mod snapshot;
 pub mod sync;
+pub mod wal;
 
 pub use db::{InMemoryStateDB, StateDB};
 pub use evaporation::{EvaporationEngine, EvaporationResult};
 pub use evaporchain_crypto::TrieHealth;
 pub use refresh::{RefreshEngine, RefreshError};
 pub use rocksdb_backend::RocksDBStateDB;
+pub use wal::{WriteAheadLog, WalEntry, WalMutation};

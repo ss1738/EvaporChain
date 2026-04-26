@@ -1070,8 +1070,10 @@ impl BlockStmExecutor {
         }
 
         // ── Wave 2+: Validate and re-execute until convergence ──
-        // TODO(M-20): sort needs_reexec by dependency depth; serial fallback for
-        // txs that abort repeatedly across waves.
+        // M-20: Track abort counts per tx for serial fallback; sort re-exec set
+        // by dependency depth (lowest tx_idx first = deepest dependency).
+        const MAX_ABORTS_BEFORE_SERIAL: u32 = 3;
+        let mut abort_counts = vec![0u32; num_txs as usize];
         let max_waves = num_txs + 2; // Convergence bound
         for wave in 0..max_waves {
             let mut needs_reexec: Vec<u32> = Vec::new();
@@ -1107,9 +1109,25 @@ impl BlockStmExecutor {
                 break;
             }
 
+            // M-20: sort by tx_idx (dependency order — lower indices first)
+            needs_reexec.sort_unstable();
+
+            // Separate serial-fallback txs from parallel re-exec
+            let mut serial_txs = Vec::new();
+            let mut parallel_reexec = Vec::new();
+            for &tx_idx in &needs_reexec {
+                abort_counts[tx_idx as usize] += 1;
+                if abort_counts[tx_idx as usize] >= MAX_ABORTS_BEFORE_SERIAL {
+                    serial_txs.push(tx_idx);
+                } else {
+                    parallel_reexec.push(tx_idx);
+                }
+            }
+
             debug!(
                 wave,
                 reexec_count = needs_reexec.len(),
+                serial_fallback = serial_txs.len(),
                 "Block-STM: re-executing invalidated txs"
             );
 
@@ -1119,12 +1137,38 @@ impl BlockStmExecutor {
                 incarnations[tx_idx as usize] += 1;
             }
 
-            // Re-execute invalidated txs in parallel.
-            // Each re-exec reads from MVMemory (seeing valid txs' writes from
-            // prior waves). Non-conflicting re-execs are independent; conflicting
-            // ones will be caught in the next validation wave.
+            // M-20: Serial fallback for repeatedly-aborting txs (ordered execution)
+            for &tx_idx in &serial_txs {
+                let inc = incarnations[tx_idx as usize];
+                let tx = parallel_txs[tx_idx as usize];
+
+                if verify_sigs {
+                    if crate::parallel::ParallelExecutor::verify_tx_signature(true, tx, &chain_id)
+                        .is_err()
+                    {
+                        results[tx_idx as usize] = Some(TxExecResult::Failed { fee: 0 });
+                        continue;
+                    }
+                }
+
+                let mut view = TxView::new(tx_idx, inc, &mv_memory, db);
+                let result = execute_tx(&mut view, tx, epoch, fee_ctrl);
+                match result {
+                    TxExecResult::Blocked(_) => {
+                        results[tx_idx as usize] = Some(TxExecResult::Failed { fee: 0 });
+                    }
+                    _ => {
+                        let (rs, wl) = view.flush_writes();
+                        read_sets[tx_idx as usize] = rs;
+                        write_locs[tx_idx as usize] = wl;
+                        results[tx_idx as usize] = Some(result);
+                    }
+                }
+            }
+
+            // Re-execute remaining invalidated txs in parallel.
             let reexec_results: Vec<(u32, Vec<ReadEntry>, Vec<Location>, TxExecResult)> =
-                needs_reexec
+                parallel_reexec
                     .par_iter()
                     .map(|&tx_idx| {
                         let inc = incarnations[tx_idx as usize];

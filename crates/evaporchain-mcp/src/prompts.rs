@@ -55,6 +55,58 @@ pub async fn get_prompt(ctx: &Context, params: &Value) -> Result<Value, String> 
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_list_prompts_returns_3() {
+        let prompts = list_prompts();
+        let list = prompts["prompts"].as_array().unwrap();
+        assert_eq!(list.len(), 3);
+    }
+
+    #[test]
+    fn test_all_prompts_have_required_fields() {
+        let prompts = list_prompts();
+        for p in prompts["prompts"].as_array().unwrap() {
+            assert!(p["name"].is_string(), "prompt missing name");
+            assert!(p["description"].is_string(), "prompt missing description");
+            assert!(p["arguments"].is_array(), "prompt missing arguments");
+        }
+    }
+
+    #[test]
+    fn test_prompt_names() {
+        let prompts = list_prompts();
+        let names: Vec<&str> = prompts["prompts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["name"].as_str().unwrap())
+            .collect();
+        assert!(names.contains(&"explore_chain"));
+        assert!(names.contains(&"create_and_watch"));
+        assert!(names.contains(&"chain_health_report"));
+    }
+
+    #[test]
+    fn test_create_and_watch_has_optional_args() {
+        let prompts = list_prompts();
+        let cw = prompts["prompts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == "create_and_watch")
+            .unwrap();
+        let args = cw["arguments"].as_array().unwrap();
+        assert_eq!(args.len(), 2);
+        for arg in args {
+            assert_eq!(arg["required"], false);
+        }
+    }
+}
+
 async fn get_explore_chain(ctx: &Context) -> Result<Value, String> {
     let status = ctx.get_json("/api/status").await?;
     let objects = ctx.get_json("/api/objects").await?;

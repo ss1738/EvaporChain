@@ -58,6 +58,58 @@ jobs:
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
+  bench:
+    name: Benchmarks — regression check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run benchmarks on PR branch
+        run: |
+          cargo bench --workspace --no-fail-fast 2>&1 | tee bench-pr.txt
+      - name: Run benchmarks on base branch
+        run: |
+          git checkout ${{ github.event.pull_request.base.sha }}
+          cargo bench --workspace --no-fail-fast 2>&1 | tee bench-base.txt
+          git checkout -
+      - name: Check for regressions (>10%)
+        run: |
+          python3 - <<'PYEOF'
+          import re, sys
+
+          def parse_bench(path):
+              results = {}
+              with open(path) as f:
+                  for line in f:
+                      m = re.match(r'^test (\S+)\s+\.\.\. bench:\s+([\d,]+) ns/iter', line)
+                      if m:
+                          name = m.group(1)
+                          ns = int(m.group(2).replace(',', ''))
+                          results[name] = ns
+              return results
+
+          base = parse_bench('bench-base.txt')
+          pr = parse_bench('bench-pr.txt')
+          regressions = []
+          for name in sorted(set(base) & set(pr)):
+              if base[name] == 0:
+                  continue
+              pct = ((pr[name] - base[name]) / base[name]) * 100
+              if pct > 10:
+                  regressions.append(f"  {name}: {base[name]}ns → {pr[name]}ns (+{pct:.1f}%)")
+          if regressions:
+              print("::warning::Benchmark regressions >10% detected:")
+              for r in regressions:
+                  print(r)
+              sys.exit(1)
+          else:
+              print("No benchmark regressions >10% detected.")
+          PYEOF
+
   wasm:
     name: WASM — build ML-DSA crypto
     runs-on: ubuntu-latest

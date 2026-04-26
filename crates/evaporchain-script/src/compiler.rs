@@ -480,10 +480,145 @@ fn eval_const_expr(expr: &Expr) -> Option<Value> {
     }
 }
 
-// ─── Public API ─────────────────────────────────────────────────────────────
+// ─── Optimization Passes ──────────────────────────────────────────────────
 
-// TODO(M-11): dead code elimination — detect unreachable code after Return/Halt.
-// TODO(M-12): constant folding — evaluate constant BinaryOp at compile time.
+/// M-12: Constant folding — evaluate constant BinaryOp/UnaryOp at compile time.
+/// Scans for patterns like `Push(a), Push(b), Add` and replaces with `Push(a+b)`.
+fn constant_fold(opcodes: &mut Vec<Op>) -> bool {
+    let mut changed = false;
+    let mut i = 0;
+    while i + 2 < opcodes.len() {
+        if let (Op::Push(ref a), Op::Push(ref b)) = (&opcodes[i], &opcodes[i + 1]) {
+            let folded = match &opcodes[i + 2] {
+                Op::Add => fold_binop(a, b, BinOp::Add),
+                Op::Sub => fold_binop(a, b, BinOp::Sub),
+                Op::Mul => fold_binop(a, b, BinOp::Mul),
+                Op::Div => fold_binop(a, b, BinOp::Div),
+                Op::Mod => fold_binop(a, b, BinOp::Mod),
+                Op::Eq => fold_binop(a, b, BinOp::Eq),
+                Op::Neq => fold_binop(a, b, BinOp::Neq),
+                Op::Gt => fold_binop(a, b, BinOp::Gt),
+                Op::Lt => fold_binop(a, b, BinOp::Lt),
+                Op::Gte => fold_binop(a, b, BinOp::Gte),
+                Op::Lte => fold_binop(a, b, BinOp::Lte),
+                Op::And => fold_binop(a, b, BinOp::And),
+                Op::Or => fold_binop(a, b, BinOp::Or),
+                _ => None,
+            };
+            if let Some(result) = folded {
+                opcodes[i] = Op::Push(result);
+                opcodes.remove(i + 2);
+                opcodes.remove(i + 1);
+                changed = true;
+                continue;
+            }
+        }
+        // Unary constant fold: Push(a), Not → Push(!a)
+        if i + 1 < opcodes.len() {
+            if let Op::Push(ref a) = opcodes[i] {
+                let folded = match &opcodes[i + 1] {
+                    Op::Not => match a {
+                        Value::Bool(b) => Some(Value::Bool(!b)),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                if let Some(result) = folded {
+                    opcodes[i] = Op::Push(result);
+                    opcodes.remove(i + 1);
+                    changed = true;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    changed
+}
+
+fn fold_binop(a: &Value, b: &Value, op: BinOp) -> Option<Value> {
+    match (a, b, op) {
+        (Value::U64(x), Value::U64(y), BinOp::Add) => Some(Value::U64(x.saturating_add(*y))),
+        (Value::U64(x), Value::U64(y), BinOp::Sub) => Some(Value::U64(x.saturating_sub(*y))),
+        (Value::U64(x), Value::U64(y), BinOp::Mul) => Some(Value::U64(x.saturating_mul(*y))),
+        (Value::U64(x), Value::U64(y), BinOp::Div) if *y != 0 => Some(Value::U64(x / y)),
+        (Value::U64(x), Value::U64(y), BinOp::Mod) if *y != 0 => Some(Value::U64(x % y)),
+        (Value::U64(x), Value::U64(y), BinOp::Eq) => Some(Value::Bool(x == y)),
+        (Value::U64(x), Value::U64(y), BinOp::Neq) => Some(Value::Bool(x != y)),
+        (Value::U64(x), Value::U64(y), BinOp::Gt) => Some(Value::Bool(x > y)),
+        (Value::U64(x), Value::U64(y), BinOp::Lt) => Some(Value::Bool(x < y)),
+        (Value::U64(x), Value::U64(y), BinOp::Gte) => Some(Value::Bool(x >= y)),
+        (Value::U64(x), Value::U64(y), BinOp::Lte) => Some(Value::Bool(x <= y)),
+        (Value::Bool(x), Value::Bool(y), BinOp::And) => Some(Value::Bool(*x && *y)),
+        (Value::Bool(x), Value::Bool(y), BinOp::Or) => Some(Value::Bool(*x || *y)),
+        (Value::Bool(x), Value::Bool(y), BinOp::Eq) => Some(Value::Bool(x == y)),
+        (Value::Bool(x), Value::Bool(y), BinOp::Neq) => Some(Value::Bool(x != y)),
+        (Value::Str(x), Value::Str(y), BinOp::Add) => {
+            let mut s = x.clone();
+            s.push_str(y);
+            Some(Value::Str(s))
+        }
+        (Value::Str(x), Value::Str(y), BinOp::Eq) => Some(Value::Bool(x == y)),
+        (Value::Str(x), Value::Str(y), BinOp::Neq) => Some(Value::Bool(x != y)),
+        _ => None,
+    }
+}
+
+/// M-11: Dead code elimination — remove unreachable opcodes after Return/Halt.
+/// Uses reachability analysis: starting from each method entry point, follow
+/// control flow; any opcode not reached is replaced with a no-op (Pop).
+fn eliminate_dead_code(opcodes: &mut Vec<Op>, methods: &HashMap<String, usize>) -> bool {
+    if opcodes.is_empty() {
+        return false;
+    }
+    let len = opcodes.len();
+    let mut reachable = vec![false; len];
+    let mut worklist: Vec<usize> = methods.values().copied().collect();
+
+    while let Some(pc) = worklist.pop() {
+        if pc >= len || reachable[pc] {
+            continue;
+        }
+        reachable[pc] = true;
+        match &opcodes[pc] {
+            Op::Return | Op::Halt => {
+                // Terminal — don't enqueue successor
+            }
+            Op::Jump(target) => {
+                worklist.push(*target);
+            }
+            Op::JumpIf(target) | Op::JumpIfFalse(target) => {
+                worklist.push(*target);
+                worklist.push(pc + 1);
+            }
+            _ => {
+                worklist.push(pc + 1);
+            }
+        }
+    }
+
+    let mut changed = false;
+    for i in 0..len {
+        if !reachable[i] && opcodes[i] != Op::Pop {
+            opcodes[i] = Op::Pop;
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// Run all optimization passes until fixpoint.
+fn optimize(opcodes: &mut Vec<Op>, methods: &HashMap<String, usize>) {
+    for _ in 0..16 {
+        let folded = constant_fold(opcodes);
+        let eliminated = eliminate_dead_code(opcodes, methods);
+        if !folded && !eliminated {
+            break;
+        }
+    }
+}
+
+// ─── Public API ─────────────────────────────────────────────────────────────
 
 /// Compile a parsed Contract AST into EvaporBytecode.
 pub fn compile(contract: &Contract) -> Result<EvaporBytecode, ScriptError> {
@@ -491,6 +626,8 @@ pub fn compile(contract: &Contract) -> Result<EvaporBytecode, ScriptError> {
     compiler.compile_contract(contract)?;
 
     let state_schema = extract_state_schema(contract);
+
+    optimize(&mut compiler.opcodes, &compiler.methods);
 
     Ok(EvaporBytecode {
         methods: compiler.methods,
@@ -835,5 +972,170 @@ contract Simple {
         assert!(json.contains("\"set\""));
         assert!(json.contains("\"mutates_state\": true"));
         assert!(json.contains("\"mutates_state\": false"));
+    }
+
+    // ── M-12: Constant folding tests ──────────────────────────────────────
+
+    #[test]
+    fn test_constant_fold_arithmetic() {
+        let mut ops = vec![
+            Op::Push(Value::U64(10)),
+            Op::Push(Value::U64(20)),
+            Op::Add,
+        ];
+        let changed = constant_fold(&mut ops);
+        assert!(changed);
+        assert_eq!(ops, vec![Op::Push(Value::U64(30))]);
+    }
+
+    #[test]
+    fn test_constant_fold_comparison() {
+        let mut ops = vec![
+            Op::Push(Value::U64(5)),
+            Op::Push(Value::U64(3)),
+            Op::Gt,
+        ];
+        constant_fold(&mut ops);
+        assert_eq!(ops, vec![Op::Push(Value::Bool(true))]);
+    }
+
+    #[test]
+    fn test_constant_fold_boolean() {
+        let mut ops = vec![
+            Op::Push(Value::Bool(true)),
+            Op::Push(Value::Bool(false)),
+            Op::And,
+        ];
+        constant_fold(&mut ops);
+        assert_eq!(ops, vec![Op::Push(Value::Bool(false))]);
+    }
+
+    #[test]
+    fn test_constant_fold_string_concat() {
+        let mut ops = vec![
+            Op::Push(Value::Str("hello ".into())),
+            Op::Push(Value::Str("world".into())),
+            Op::Add,
+        ];
+        constant_fold(&mut ops);
+        assert_eq!(ops, vec![Op::Push(Value::Str("hello world".into()))]);
+    }
+
+    #[test]
+    fn test_constant_fold_not() {
+        let mut ops = vec![Op::Push(Value::Bool(true)), Op::Not];
+        constant_fold(&mut ops);
+        assert_eq!(ops, vec![Op::Push(Value::Bool(false))]);
+    }
+
+    #[test]
+    fn test_constant_fold_no_div_by_zero() {
+        let mut ops = vec![
+            Op::Push(Value::U64(10)),
+            Op::Push(Value::U64(0)),
+            Op::Div,
+        ];
+        let changed = constant_fold(&mut ops);
+        assert!(!changed);
+        assert_eq!(ops.len(), 3);
+    }
+
+    #[test]
+    fn test_constant_fold_chained() {
+        // (2 + 3) * 4 → Push(5), Push(4), Mul → Push(20)
+        let mut ops = vec![
+            Op::Push(Value::U64(2)),
+            Op::Push(Value::U64(3)),
+            Op::Add,
+            Op::Push(Value::U64(4)),
+            Op::Mul,
+        ];
+        let mut methods = HashMap::new();
+        methods.insert("main".into(), 0);
+        optimize(&mut ops, &methods);
+        assert!(ops.contains(&Op::Push(Value::U64(20))));
+    }
+
+    #[test]
+    fn test_constant_fold_in_compiled_contract() {
+        let src = r#"
+contract ConstTest {
+    state { x: u64 = 0 }
+    fn get_const() -> u64 {
+        return 10 + 20
+    }
+}
+"#;
+        let ast = parser::parse(src).unwrap();
+        let bytecode = compile(&ast).unwrap();
+        assert!(
+            bytecode.opcodes.contains(&Op::Push(Value::U64(30))),
+            "10+20 should be folded to 30, opcodes: {:?}",
+            bytecode.opcodes
+        );
+        assert!(
+            !bytecode.opcodes.contains(&Op::Add),
+            "Add should be eliminated by constant folding"
+        );
+    }
+
+    // ── M-11: Dead code elimination tests ─────────────────────────────────
+
+    #[test]
+    fn test_dead_code_after_return() {
+        let src = r#"
+contract DeadCode {
+    state { x: u64 = 0 }
+    fn early_return() -> u64 {
+        return 42
+        self.x = 999
+    }
+}
+"#;
+        let ast = parser::parse(src).unwrap();
+        let bytecode = compile(&ast).unwrap();
+        // The StateStore("x") after return should be eliminated (replaced with Pop)
+        assert!(
+            !bytecode.opcodes.contains(&Op::StateStore("x".into())),
+            "dead code after return should be eliminated, opcodes: {:?}",
+            bytecode.opcodes
+        );
+    }
+
+    #[test]
+    fn test_reachable_code_preserved() {
+        let src = r#"
+contract Alive {
+    state { x: u64 = 0 }
+    fn set(v: u64) {
+        self.x = v
+    }
+}
+"#;
+        let ast = parser::parse(src).unwrap();
+        let bytecode = compile(&ast).unwrap();
+        assert!(bytecode.opcodes.contains(&Op::StateStore("x".into())));
+    }
+
+    #[test]
+    fn test_dce_preserves_both_branches() {
+        let src = r#"
+contract Branching {
+    state { x: u64 = 0 }
+    fn test(v: u64) {
+        if v > 0 {
+            self.x = 1
+        } else {
+            self.x = 2
+        }
+    }
+}
+"#;
+        let ast = parser::parse(src).unwrap();
+        let bytecode = compile(&ast).unwrap();
+        let state_stores: Vec<_> = bytecode.opcodes.iter()
+            .filter(|op| matches!(op, Op::StateStore(_)))
+            .collect();
+        assert_eq!(state_stores.len(), 2, "both branches should be reachable");
     }
 }

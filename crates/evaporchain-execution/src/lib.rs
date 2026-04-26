@@ -141,8 +141,88 @@ const SNAPSHOT_RETAIN_BLOCKS: u64 = 256;
 pub(crate) const MAX_CALL_DEPTH: usize = 64;
 pub(crate) const MAX_BLOB_SIZE: usize = 128 * 1024;
 
-// TODO(M-19): cross-block execution cache keyed on (tx_hash, pre_state_root).
-// TODO(M-21): sort block transactions by gas_price before execution.
+/// M-19: Cross-block execution cache keyed on (tx_hash, pre_state_root).
+/// Caches idempotent read-only results to skip re-execution of identical txs
+/// across blocks (e.g., repeated CallScript with same inputs and state).
+pub struct ExecutionCache {
+    entries: std::collections::HashMap<[u8; 32], CachedResult>,
+    max_size: usize,
+}
+
+struct CachedResult {
+    gas_used: u64,
+    success: bool,
+    last_used_height: u64,
+}
+
+impl ExecutionCache {
+    pub fn new(max_size: usize) -> Self {
+        Self {
+            entries: std::collections::HashMap::new(),
+            max_size,
+        }
+    }
+
+    fn cache_key(tx_hash: &[u8; 32], pre_state_root: &[u8; 32]) -> [u8; 32] {
+        let mut data = Vec::with_capacity(64);
+        data.extend_from_slice(tx_hash);
+        data.extend_from_slice(pre_state_root);
+        *blake3::hash(&data).as_bytes()
+    }
+
+    pub fn get(&self, tx_hash: &[u8; 32], pre_state_root: &[u8; 32]) -> Option<(u64, bool)> {
+        let key = Self::cache_key(tx_hash, pre_state_root);
+        self.entries.get(&key).map(|r| (r.gas_used, r.success))
+    }
+
+    pub fn put(
+        &mut self,
+        tx_hash: &[u8; 32],
+        pre_state_root: &[u8; 32],
+        gas_used: u64,
+        success: bool,
+        height: u64,
+    ) {
+        if self.entries.len() >= self.max_size {
+            // Evict oldest entry
+            if let Some(oldest_key) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, v)| v.last_used_height)
+                .map(|(k, _)| *k)
+            {
+                self.entries.remove(&oldest_key);
+            }
+        }
+        let key = Self::cache_key(tx_hash, pre_state_root);
+        self.entries.insert(key, CachedResult {
+            gas_used,
+            success,
+            last_used_height: height,
+        });
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+}
+
+/// M-21: Sort transactions by estimated gas cost descending.
+/// Higher-gas txs (contract deploys, scripts) get priority over simple transfers,
+/// maximising block value when gas limit is enforced.
+pub fn sort_txs_by_gas_priority(txs: &mut [Transaction]) {
+    txs.sort_by(|a, b| {
+        SimpleExecutor::estimate_gas(b).cmp(&SimpleExecutor::estimate_gas(a))
+    });
+}
 
 /// Simple executor that processes transactions sequentially and runs
 /// evaporation at the end of each block.

@@ -315,3 +315,115 @@ fn format_text_result(data: &Value) -> Value {
         }]
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_list_tools_returns_15_tools() {
+        let tools = list_tools();
+        let tool_list = tools["tools"].as_array().unwrap();
+        assert_eq!(tool_list.len(), 15);
+    }
+
+    #[test]
+    fn test_all_tools_have_required_fields() {
+        let tools = list_tools();
+        for tool in tools["tools"].as_array().unwrap() {
+            assert!(tool["name"].is_string(), "tool missing name");
+            assert!(tool["description"].is_string(), "tool missing description");
+            assert!(tool["inputSchema"].is_object(), "tool missing inputSchema");
+            assert_eq!(tool["inputSchema"]["type"], "object");
+        }
+    }
+
+    #[test]
+    fn test_tool_names_unique() {
+        let tools = list_tools();
+        let names: Vec<&str> = tools["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        let mut deduped = names.clone();
+        deduped.sort();
+        deduped.dedup();
+        assert_eq!(names.len(), deduped.len(), "duplicate tool names");
+    }
+
+    #[test]
+    fn test_read_tools_have_no_required_params_except_getters() {
+        let tools = list_tools();
+        let no_required = ["get_chain_status", "list_objects", "list_accounts",
+                          "list_ghosts", "get_recent_blocks", "get_recent_events",
+                          "list_contracts", "get_stats"];
+        for tool in tools["tools"].as_array().unwrap() {
+            let name = tool["name"].as_str().unwrap();
+            if no_required.contains(&name) {
+                let required = tool["inputSchema"]["required"].as_array().unwrap();
+                // These may have optional params but no required ones
+                // (get_recent_blocks has optional "limit")
+                assert!(
+                    required.is_empty() || name == "get_recent_blocks" || name == "get_recent_events",
+                    "{name} should have no required params"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_write_tools_have_required_params() {
+        let tools = list_tools();
+        let write_tools = ["transfer", "create_object", "refresh_object",
+                          "resurrect_object", "request_faucet"];
+        for tool in tools["tools"].as_array().unwrap() {
+            let name = tool["name"].as_str().unwrap();
+            if write_tools.contains(&name) {
+                let required = tool["inputSchema"]["required"].as_array().unwrap();
+                assert!(
+                    !required.is_empty(),
+                    "{name} should have required params"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_get_object_requires_id() {
+        let tools = list_tools();
+        let get_obj = tools["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "get_object")
+            .unwrap();
+        let required = get_obj["inputSchema"]["required"].as_array().unwrap();
+        assert!(required.contains(&json!("id")));
+    }
+
+    #[test]
+    fn test_transfer_requires_from_to_amount() {
+        let tools = list_tools();
+        let transfer = tools["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "transfer")
+            .unwrap();
+        let required = transfer["inputSchema"]["required"].as_array().unwrap();
+        assert!(required.contains(&json!("from")));
+        assert!(required.contains(&json!("to")));
+        assert!(required.contains(&json!("amount")));
+    }
+
+    #[test]
+    fn test_format_text_result() {
+        let data = json!({"block_height": 42});
+        let result = format_text_result(&data);
+        assert_eq!(result["content"][0]["type"], "text");
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("42"));
+    }
+}

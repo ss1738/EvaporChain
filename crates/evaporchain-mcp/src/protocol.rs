@@ -150,3 +150,105 @@ fn handle_initialize(_params: &Value) -> Result<Value, String> {
         }
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_ctx() -> Context {
+        Context {
+            node_url: "http://127.0.0.1:9999".into(),
+            client: reqwest::Client::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_initialize() {
+        let ctx = test_ctx();
+        let msg = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#;
+        let resp = handle_message(&ctx, msg).await.unwrap();
+        assert!(resp.result.is_some());
+        let result = resp.result.unwrap();
+        assert_eq!(result["protocolVersion"], "2024-11-05");
+        assert!(result["capabilities"]["tools"].is_object());
+        assert!(result["capabilities"]["resources"].is_object());
+        assert!(result["capabilities"]["prompts"].is_object());
+        assert_eq!(result["serverInfo"]["name"], "evaporchain-mcp");
+    }
+
+    #[tokio::test]
+    async fn test_ping() {
+        let ctx = test_ctx();
+        let msg = r#"{"jsonrpc":"2.0","id":2,"method":"ping"}"#;
+        let resp = handle_message(&ctx, msg).await.unwrap();
+        assert!(resp.result.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_tools_list() {
+        let ctx = test_ctx();
+        let msg = r#"{"jsonrpc":"2.0","id":3,"method":"tools/list"}"#;
+        let resp = handle_message(&ctx, msg).await.unwrap();
+        let result = resp.result.unwrap();
+        assert_eq!(result["tools"].as_array().unwrap().len(), 15);
+    }
+
+    #[tokio::test]
+    async fn test_resources_list() {
+        let ctx = test_ctx();
+        let msg = r#"{"jsonrpc":"2.0","id":4,"method":"resources/list"}"#;
+        let resp = handle_message(&ctx, msg).await.unwrap();
+        let result = resp.result.unwrap();
+        assert_eq!(result["resources"].as_array().unwrap().len(), 7);
+    }
+
+    #[tokio::test]
+    async fn test_prompts_list() {
+        let ctx = test_ctx();
+        let msg = r#"{"jsonrpc":"2.0","id":5,"method":"prompts/list"}"#;
+        let resp = handle_message(&ctx, msg).await.unwrap();
+        let result = resp.result.unwrap();
+        assert_eq!(result["prompts"].as_array().unwrap().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_unknown_method_returns_error() {
+        let ctx = test_ctx();
+        let msg = r#"{"jsonrpc":"2.0","id":6,"method":"nonexistent/method"}"#;
+        let resp = handle_message(&ctx, msg).await.unwrap();
+        assert!(resp.error.is_some());
+        assert_eq!(resp.error.as_ref().unwrap().code, -32603);
+    }
+
+    #[tokio::test]
+    async fn test_invalid_json_returns_parse_error() {
+        let ctx = test_ctx();
+        let resp = handle_message(&ctx, "not json").await.unwrap();
+        assert!(resp.error.is_some());
+        assert_eq!(resp.error.as_ref().unwrap().code, -32700);
+    }
+
+    #[tokio::test]
+    async fn test_notification_returns_none() {
+        let ctx = test_ctx();
+        let msg = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
+        let resp = handle_message(&ctx, msg).await;
+        assert!(resp.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_response_has_correct_id() {
+        let ctx = test_ctx();
+        let msg = r#"{"jsonrpc":"2.0","id":42,"method":"ping"}"#;
+        let resp = handle_message(&ctx, msg).await.unwrap();
+        assert_eq!(resp.id, json!(42));
+    }
+
+    #[tokio::test]
+    async fn test_null_id_handling() {
+        let ctx = test_ctx();
+        let msg = r#"{"jsonrpc":"2.0","method":"ping"}"#;
+        let resp = handle_message(&ctx, msg).await.unwrap();
+        assert_eq!(resp.id, Value::Null);
+    }
+}

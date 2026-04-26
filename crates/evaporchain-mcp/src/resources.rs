@@ -85,3 +85,53 @@ pub async fn read_resource(ctx: &Context, params: &Value) -> Result<Value, Strin
         }]
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_list_resources_returns_7() {
+        let resources = list_resources();
+        let list = resources["resources"].as_array().unwrap();
+        assert_eq!(list.len(), 7);
+    }
+
+    #[test]
+    fn test_all_resources_have_required_fields() {
+        let resources = list_resources();
+        for r in resources["resources"].as_array().unwrap() {
+            assert!(r["uri"].is_string(), "resource missing uri");
+            assert!(r["name"].is_string(), "resource missing name");
+            assert!(r["description"].is_string(), "resource missing description");
+            assert_eq!(r["mimeType"], "application/json");
+        }
+    }
+
+    #[test]
+    fn test_resource_uris_use_evaporchain_scheme() {
+        let resources = list_resources();
+        for r in resources["resources"].as_array().unwrap() {
+            let uri = r["uri"].as_str().unwrap();
+            assert!(
+                uri.starts_with("evaporchain://"),
+                "URI should use evaporchain:// scheme: {uri}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_resource_uris_unique() {
+        let resources = list_resources();
+        let uris: Vec<&str> = resources["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["uri"].as_str().unwrap())
+            .collect();
+        let mut deduped = uris.clone();
+        deduped.sort();
+        deduped.dedup();
+        assert_eq!(uris.len(), deduped.len(), "duplicate resource URIs");
+    }
+}
