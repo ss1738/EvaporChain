@@ -818,6 +818,8 @@ mod tests {
                 },
                 balance: (i as u64 + 1) * 10_000,
                 nonce: i as u64,
+                storage_deposit: 0,
+                storage_bytes: 0,
             });
         }
         for i in 0..50u8 {
