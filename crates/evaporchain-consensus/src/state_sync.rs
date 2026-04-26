@@ -13,6 +13,8 @@
 use crate::light_client::{LightBlockHeader, LightClientVerifier, VerificationResult};
 use crate::validator_set::ValidatorSet;
 use evaporchain_crypto::hash::blake3_hash;
+#[cfg(test)]
+use evaporchain_types::CommitCertificate;
 use std::collections::{HashMap, HashSet};
 use tracing::{debug, info, warn};
 
