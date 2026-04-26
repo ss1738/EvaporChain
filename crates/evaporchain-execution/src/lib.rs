@@ -3001,12 +3001,15 @@ contract Counter {
         let mut db = InMemoryStateDB::new();
 
         let oid = obj_id(1);
-        db.insert_object(StateObject {
+        db.put_object(StateObject {
             id: oid,
             owner: addr(1),
             energy: 100,
             half_life: 10,
             created_at: 1,
+            last_refreshed: 1,
+            state: ObjectState::Active,
+            grace_epoch: None,
             data: vec![],
             decay_curve: None,
         });
