@@ -36,8 +36,8 @@ use tracing::{debug, info};
 use crate::{
     fees, BlockExecutionResult, ExecutionEngine, ExecutionError,
     GAS_CALL_CONTRACT, GAS_CALL_SCRIPT, GAS_CREATE_OBJECT_BASE, GAS_CREATE_OBJECT_PER_BYTE,
-    GAS_DEPLOY_CONTRACT, GAS_DEPLOY_SCRIPT, GAS_REFRESH, GAS_TRANSFER, GAS_VALIDATOR_EXIT,
-    GAS_VALIDATOR_STAKE,
+    GAS_DEPLOY_CONTRACT, GAS_DEPLOY_SCRIPT, GAS_REFRESH, GAS_TRANSFER, GAS_VALIDATOR_CLAIM_STAKE,
+    GAS_VALIDATOR_EXIT, GAS_VALIDATOR_STAKE,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
