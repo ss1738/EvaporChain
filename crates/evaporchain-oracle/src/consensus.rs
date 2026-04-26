@@ -143,6 +143,7 @@ pub enum ConsensusError {
     ExcessiveSpread { spread_pct: f64, max_pct: f64 },
     DuplicateVoter(u64),
     RoundMismatch { expected: u64, got: u64 },
+    InvalidVote(String),
 }
 
 #[derive(Debug)]
@@ -188,6 +189,14 @@ impl OracleConsensusRound {
         }
         if self.votes.contains_key(&vote.validator_id) {
             return Err(ConsensusError::DuplicateVoter(vote.validator_id));
+        }
+        if !vote.signature.is_empty() {
+            let expected = vote.vote_hash();
+            if vote.signature.len() != 32 || vote.signature[..] != expected[..] {
+                return Err(ConsensusError::InvalidVote(
+                    "vote signature does not match vote hash".into(),
+                ));
+            }
         }
         self.votes.insert(vote.validator_id, vote);
         Ok(())

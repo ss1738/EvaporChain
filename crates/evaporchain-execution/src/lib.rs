@@ -139,6 +139,7 @@ const UNBONDING_PERIOD_EPOCHS: u64 = 256;
 const SNAPSHOT_RETAIN_BLOCKS: u64 = 256;
 
 pub(crate) const MAX_CALL_DEPTH: usize = 64;
+pub(crate) const MAX_BLOB_SIZE: usize = 128 * 1024;
 
 // TODO(M-19): cross-block execution cache keyed on (tx_hash, pre_state_root).
 // TODO(M-21): sort block transactions by gas_price before execution.
@@ -931,14 +932,15 @@ impl SimpleExecutor {
 
         if let Some(ref paymaster) = tx.paymaster {
             let pm = db.get_or_create_account(paymaster);
-            if pm.balance < tx.call_gas_limit {
-                return Err(ExecutionError::InsufficientBalance {
+            let total_gas_cost = tx.call_gas_limit.saturating_add(GAS_USER_OP);
+            if pm.balance < total_gas_cost {
+                return Err(ExecutionError::InsufficientGas {
                     account: hex::encode(paymaster),
-                    required: tx.call_gas_limit,
+                    required: total_gas_cost,
                     available: pm.balance,
                 });
             }
-            pm.balance -= tx.call_gas_limit;
+            pm.balance = pm.balance.saturating_sub(total_gas_cost);
         }
 
         Ok(())
@@ -1220,9 +1222,18 @@ impl ExecutionEngine for SimpleExecutor {
                         .map(|_| ())
                         .map_err(|e| ExecutionError::ContractError(e.to_string()))
                 }
-                Transaction::Blob(_) => {
-                    // Blob transactions are handled by the DA layer, not execution
-                    Ok(())
+                Transaction::Blob(blob) => {
+                    if blob.data.is_empty() {
+                        Err(ExecutionError::ContractError("blob data cannot be empty".into()))
+                    } else if blob.data.len() > MAX_BLOB_SIZE {
+                        Err(ExecutionError::ContractError(format!(
+                            "blob size {} exceeds limit {}", blob.data.len(), MAX_BLOB_SIZE
+                        )))
+                    } else if blob.namespace_id == 0 {
+                        Err(ExecutionError::ContractError("reserved namespace_id 0".into()))
+                    } else {
+                        Ok(())
+                    }
                 }
                 Transaction::Governance(gov) => self.execute_governance(db, gov, block.epoch),
                 Transaction::MultiSig(msig) => self.execute_multisig(db, msig),

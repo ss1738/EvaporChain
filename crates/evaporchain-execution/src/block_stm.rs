@@ -593,9 +593,18 @@ fn execute_tx(
                 "contract/script/privacy/deferred txs execute in serial phase".into(),
             )))
         }
-        Transaction::Blob(_) => {
-            // Blob transactions are handled by the DA layer
-            Ok(())
+        Transaction::Blob(blob) => {
+            if blob.data.is_empty() {
+                Err(TxViewError::ExecutionError(ExecutionError::ContractError("blob data cannot be empty".into())))
+            } else if blob.data.len() > crate::MAX_BLOB_SIZE {
+                Err(TxViewError::ExecutionError(ExecutionError::ContractError(format!(
+                    "blob size {} exceeds limit {}", blob.data.len(), crate::MAX_BLOB_SIZE
+                ))))
+            } else if blob.namespace_id == 0 {
+                Err(TxViewError::ExecutionError(ExecutionError::ContractError("reserved namespace_id 0".into())))
+            } else {
+                Ok(())
+            }
         }
         Transaction::Governance(_) => {
             Err(TxViewError::ExecutionError(ExecutionError::ContractError(

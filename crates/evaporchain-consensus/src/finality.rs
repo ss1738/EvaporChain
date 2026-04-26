@@ -156,6 +156,9 @@ impl FinalityTracker {
         if self.records.contains_key(&height) {
             return false; // Already recorded
         }
+        if height > 0 && height <= self.latest_finalized {
+            return false; // Cannot finalize below already-finalized height
+        }
 
         let signer_count = certificate.signer_ids.len();
         let record = FinalityRecord {

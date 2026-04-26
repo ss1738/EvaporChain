@@ -4,7 +4,7 @@
 //! deprioritize messages to dying objects — they'll evaporate soon anyway.
 
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 
 use super::shard_assignment::ShardId;
 
@@ -104,7 +104,12 @@ impl CrossShardRouter {
         if receipts.is_empty() {
             return [0u8; 32];
         }
-        let hashes: Vec<[u8; 32]> = receipts.iter().map(|r| r.receipt_hash()).collect();
+        let mut seen_ids = HashSet::new();
+        let deduped: Vec<&CrossShardReceipt> = receipts
+            .iter()
+            .filter(|r| seen_ids.insert(r.message_id))
+            .collect();
+        let hashes: Vec<[u8; 32]> = deduped.iter().map(|r| r.receipt_hash()).collect();
         let mut current = hashes;
         while current.len() > 1 {
             let mut next = Vec::new();

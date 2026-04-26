@@ -681,9 +681,18 @@ impl ParallelExecutor {
                         "contract/script/privacy/deferred txs execute in serial phase".into(),
                     ))
                 }
-                Transaction::Blob(_) => {
-                    // Blob transactions are handled by the DA layer
-                    Ok(())
+                Transaction::Blob(blob) => {
+                    if blob.data.is_empty() {
+                        Err(ExecutionError::ContractError("blob data cannot be empty".into()))
+                    } else if blob.data.len() > crate::MAX_BLOB_SIZE {
+                        Err(ExecutionError::ContractError(format!(
+                            "blob size {} exceeds limit {}", blob.data.len(), crate::MAX_BLOB_SIZE
+                        )))
+                    } else if blob.namespace_id == 0 {
+                        Err(ExecutionError::ContractError("reserved namespace_id 0".into()))
+                    } else {
+                        Ok(())
+                    }
                 }
                 Transaction::Governance(_) => {
                     Err(ExecutionError::ContractError(
