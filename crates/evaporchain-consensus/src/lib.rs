@@ -655,9 +655,9 @@ mod tests {
         id
     }
 
-    /// Sign a transaction with the given keypair.
+    /// Sign a transaction with the given keypair (empty chain_id for tests).
     fn sign_tx(tx: &mut Transaction, kp: &MlDsaKeypair) {
-        let msg = tx.signable_bytes();
+        let msg = tx.signing_message("");
         let sig = kp.sign(&msg);
         let pk = kp.public_key_bytes();
         match tx {
