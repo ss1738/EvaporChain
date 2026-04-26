@@ -372,7 +372,6 @@ mod tests {
             parent_hash: b1.parent_hash,
             state_root: [1u8; 32],
             timestamp: b1.timestamp,
-            chain_id: String::new(),
             validator_set: vs.clone(),
             commit_certificate: cert1.clone(),
         };
@@ -389,7 +388,6 @@ mod tests {
                 parent_hash: block.parent_hash,
                 state_root: [block.number as u8; 32],
                 timestamp: block.timestamp,
-                chain_id: String::new(),
                 validator_set: vs.clone(),
                 commit_certificate: cert.clone(),
             };
@@ -532,7 +530,6 @@ mod tests {
             parent_hash: [99u8; 32],
             state_root,
             timestamp: 10000,
-            chain_id: String::new(),
             validator_set: vs,
             commit_certificate: CommitCertificate {
                 height: 1000,
