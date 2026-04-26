@@ -188,11 +188,30 @@ pub struct CommitCertificate {
     pub signer_ids: Vec<u64>,
 }
 
+pub const STORAGE_RENT_PER_BYTE_PER_EPOCH: u64 = 1;
+pub const MIN_STORAGE_DEPOSIT: u64 = 1000;
+
 /// An account with a balance.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Account {
     pub address: AccountAddress,
     pub balance: u64,
+    pub nonce: u64,
+    #[serde(default)]
+    pub storage_deposit: u64,
+    #[serde(default)]
+    pub storage_bytes: u64,
+}
+
+/// Multi-signature transaction executed at the protocol level.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MultiSigTx {
+    pub multisig_address: AccountAddress,
+    pub threshold: u8,
+    pub signers: Vec<AccountAddress>,
+    pub inner_tx_bytes: Vec<u8>,
+    pub signatures: Vec<(AccountAddress, Vec<u8>)>,
+    pub public_keys: Vec<(AccountAddress, Vec<u8>)>,
     pub nonce: u64,
 }
 
@@ -233,6 +252,8 @@ pub enum Transaction {
     Blob(BlobTx),
     /// Governance: on-chain parameter proposals and voting.
     Governance(GovernanceTx),
+    /// Multi-signature transaction requiring threshold approvals.
+    MultiSig(MultiSigTx),
 }
 
 impl Transaction {
@@ -445,6 +466,18 @@ impl Transaction {
                 }
                 buf
             }
+            Transaction::MultiSig(tx) => {
+                let mut buf = Vec::new();
+                buf.push(0x11);
+                buf.extend_from_slice(&tx.multisig_address);
+                buf.extend_from_slice(&tx.nonce.to_le_bytes());
+                buf.push(tx.threshold);
+                for signer in &tx.signers {
+                    buf.extend_from_slice(signer);
+                }
+                buf.extend_from_slice(&tx.inner_tx_bytes);
+                buf
+            }
         }
     }
 
@@ -473,6 +506,7 @@ impl Transaction {
             Transaction::Deferred(tx) => tx.signature.as_deref(),
             Transaction::Blob(tx) => tx.signature.as_deref(),
             Transaction::Governance(tx) => tx.signature.as_deref(),
+            Transaction::MultiSig(_) => None,
         }
     }
 
@@ -495,6 +529,7 @@ impl Transaction {
             Transaction::Deferred(tx) => tx.public_key.as_deref(),
             Transaction::Blob(tx) => tx.public_key.as_deref(),
             Transaction::Governance(tx) => tx.public_key.as_deref(),
+            Transaction::MultiSig(_) => None,
         }
     }
 
@@ -519,6 +554,7 @@ impl Transaction {
             Transaction::Deferred(tx) => Some(&tx.submitter),
             Transaction::Blob(tx) => Some(&tx.submitter),
             Transaction::Governance(tx) => Some(&tx.sender),
+            Transaction::MultiSig(tx) => Some(&tx.multisig_address),
         }
     }
 }

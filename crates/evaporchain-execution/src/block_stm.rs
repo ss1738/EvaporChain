@@ -281,6 +281,8 @@ impl<'a> TxView<'a> {
                         address: *addr,
                         balance: 0,
                         nonce: 0,
+                    storage_deposit: 0,
+                    storage_bytes: 0,
                     });
                     acct.balance = *bal;
                 }
@@ -289,6 +291,8 @@ impl<'a> TxView<'a> {
                         address: *addr,
                         balance: 0,
                         nonce: 0,
+                    storage_deposit: 0,
+                    storage_bytes: 0,
                     });
                     acct.nonce = *nonce;
                 }
@@ -424,6 +428,8 @@ impl<'a> TxView<'a> {
             address: addr,
             balance,
             nonce,
+            storage_deposit: 0,
+            storage_bytes: 0,
         };
         self.local_accounts.insert(addr, acct);
         self.write_buffer.push(WriteEntry {
@@ -596,6 +602,11 @@ fn execute_tx(
                 "governance txs execute in serial phase".into(),
             )))
         }
+        Transaction::MultiSig(_) => {
+            Err(TxViewError::ExecutionError(ExecutionError::ContractError(
+                "multi-sig txs execute in serial phase".into(),
+            )))
+        }
     };
 
     match result {
@@ -652,6 +663,7 @@ fn estimate_gas(tx: &Transaction) -> u64 {
             crate::GAS_CREATE_OBJECT_BASE.saturating_add(crate::GAS_CREATE_OBJECT_PER_BYTE.saturating_mul(tx.data.len() as u64))
         }
         Transaction::Governance(_) => GAS_VALIDATOR_CLAIM_STAKE,
+        Transaction::MultiSig(_) => GAS_VALIDATOR_CLAIM_STAKE,
     }
 }
 
@@ -1594,6 +1606,8 @@ impl BlockStmExecutor {
                             address: *sender_addr,
                             balance: new_bal,
                             nonce,
+                            storage_deposit: 0,
+                            storage_bytes: 0,
                         },
                     );
                 }
@@ -1621,6 +1635,8 @@ impl BlockStmExecutor {
                                             address: t.from,
                                             balance: new_sb,
                                             nonce: new_sn,
+                            storage_deposit: 0,
+                            storage_bytes: 0,
                                         },
                                     );
                                     let rb = get_balance(&t.to, &accounts);
@@ -1633,6 +1649,8 @@ impl BlockStmExecutor {
                                                     address: t.to,
                                                     balance: new_rb,
                                                     nonce: rn,
+                            storage_deposit: 0,
+                            storage_bytes: 0,
                                                 },
                                             );
                                             true
@@ -1702,6 +1720,8 @@ impl BlockStmExecutor {
                                         address: t.validator_address,
                                         balance: new_bal,
                                         nonce: new_nonce,
+                            storage_deposit: 0,
+                            storage_bytes: 0,
                                     },
                                 );
                                 true
@@ -1724,6 +1744,8 @@ impl BlockStmExecutor {
                                         address: t.validator_address,
                                         balance: bal,
                                         nonce: new_nonce,
+                            storage_deposit: 0,
+                            storage_bytes: 0,
                                     },
                                 );
                                 true
@@ -1815,6 +1837,8 @@ mod tests {
             address: addr(byte),
             balance,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         });
     }
 
@@ -2396,6 +2420,8 @@ mod tests {
             address: addr(2),
             balance: u64::MAX,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         });
 
         let txs = vec![Transaction::Transfer(TransferTx {
@@ -2434,6 +2460,8 @@ mod tests {
             address: addr(2),
             balance: u64::MAX,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         });
 
         let txs = vec![Transaction::Transfer(TransferTx {
@@ -2470,6 +2498,8 @@ mod tests {
             address: addr(1),
             balance: u64::MAX - 100,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         });
         fund_account(&mut db, 2, 0);
 
@@ -2506,6 +2536,8 @@ mod tests {
             address: addr(2),
             balance: u64::MAX - 5_000,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         });
 
         // Two independent senders both transferring to addr(2)

@@ -605,6 +605,8 @@ mod tests {
             address: *addr,
             balance,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         });
         db
     }
@@ -1190,7 +1192,7 @@ mod tests {
         let alice = test_addr(1);
         let bob = test_addr(2);
         let mut db = setup_db_with_balance(&alice, 100_000);
-        db.put_account(Account { address: bob, balance: 0, nonce: 0 });
+        db.put_account(Account { address: bob, balance: 0, nonce: 0, storage_deposit: 0, storage_bytes: 0 });
         let mut executor = PrivacyExecutor::with_depth(8);
         executor.set_epoch(1);
 

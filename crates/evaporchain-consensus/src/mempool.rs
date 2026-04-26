@@ -271,6 +271,10 @@ impl Mempool {
                     + tx.signature.as_ref().map_or(0, |s| s.len())
                     + tx.public_key.as_ref().map_or(0, |p| p.len())
             }
+            Transaction::MultiSig(tx) => {
+                32 + 1 + 8 + tx.signers.len() * 32 + tx.inner_tx_bytes.len()
+                    + tx.signatures.len() * 64
+            }
         }
     }
 }

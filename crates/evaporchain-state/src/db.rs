@@ -396,6 +396,8 @@ impl StateDB for InMemoryStateDB {
                 address: *addr,
                 balance: 0,
                 nonce: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
             };
             let key = trie_key_for_account(&account.address);
             let value = trie_value_for_account(&account);
@@ -705,7 +707,7 @@ mod tests {
     #[test]
     fn test_trie_health_with_accounts() {
         let mut db = InMemoryStateDB::new();
-        db.put_account(Account { address: [1u8; 32], balance: 100, nonce: 0 });
+        db.put_account(Account { address: [1u8; 32], balance: 100, nonce: 0, storage_deposit: 0, storage_bytes: 0 });
         db.put_object(make_object(1, 500));
 
         let health = db.trie_health();

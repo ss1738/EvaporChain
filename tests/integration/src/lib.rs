@@ -188,6 +188,8 @@ mod tests {
             address: sender,
             balance: 1_000_000,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         });
 
         // Submit transfer to all mempools
@@ -244,6 +246,8 @@ mod tests {
             address: [1u8; 32],
             balance: 10_000_000,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         });
 
         let mut state_roots = Vec::new();
@@ -592,6 +596,8 @@ mod tests {
             address: [5u8; 32],
             balance: 1_000_000,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         });
 
         // Submit blob tx
@@ -687,6 +693,8 @@ mod tests {
             address: sender,
             balance: 1_000_000,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         });
 
         // Build and sign the transfer
@@ -757,6 +765,8 @@ mod tests {
             address: sender,
             balance: 1_000_000,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         });
 
         // Build tx with WRONG signature (sign different message)

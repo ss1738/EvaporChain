@@ -12,6 +12,8 @@ fn seed_db(db: &mut InMemoryStateDB, n_accounts: u8) {
             address: addr,
             balance: 1_000_000_000,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         });
     }
 }

@@ -168,6 +168,8 @@ fn set_signature(tx: &mut Transaction, sig: Vec<u8>, pk: Vec<u8>) {
             g.signature = Some(sig);
             g.public_key = Some(pk);
         }
+        // MultiSig uses threshold signatures, not single-signer.
+        Transaction::MultiSig(_) => {}
     }
 }
 

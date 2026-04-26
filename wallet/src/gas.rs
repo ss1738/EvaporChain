@@ -116,6 +116,9 @@ impl GasEstimator {
                 50_000 + 10 * tx.data.len() as u64
             }
             Transaction::Governance(_) => 25_000,
+            Transaction::MultiSig(tx) => {
+                50_000 + 10_000 * tx.signatures.len() as u64
+            }
         }
     }
 

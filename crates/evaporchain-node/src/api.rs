@@ -535,6 +535,7 @@ fn tx_to_json(tx: &Transaction) -> serde_json::Value {
         Transaction::Deferred(_) => serde_json::json!({ "type": "deferred" }),
         Transaction::Blob(_) => serde_json::json!({ "type": "blob" }),
         Transaction::Governance(_) => serde_json::json!({ "type": "governance" }),
+        Transaction::MultiSig(_) => serde_json::json!({ "type": "multisig" }),
     }
 }
 
@@ -873,6 +874,7 @@ fn set_tx_signature(tx: &mut Transaction, sig: Vec<u8>, pk: Vec<u8>) {
         Transaction::Deferred(d) => { d.signature = Some(sig); d.public_key = Some(pk); }
         Transaction::Blob(b) => { b.signature = Some(sig); b.public_key = Some(pk); }
         Transaction::Governance(g) => { g.signature = Some(sig); g.public_key = Some(pk); }
+        Transaction::MultiSig(_) => {}
     }
 }
 
@@ -4663,6 +4665,8 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/sw.js", get(service_worker_js))
         // WebSocket subscriptions
         .route("/ws", get(ws_upgrade_handler))
+        // JSON-RPC 2.0 endpoint
+        .route("/rpc", post(crate::jsonrpc::handle_jsonrpc))
         .with_state(state)
         // Merge auth routes (different state type)
         .merge(auth_router)
@@ -4757,6 +4761,10 @@ pub async fn start_api_server(state: Arc<ApiState>, auth_state: Arc<crate::auth:
 
 /// Build TxRecord entries from a block's transactions.
 /// Gas cost estimates (must match execution crate).
+pub(crate) fn estimate_tx_gas_pub(tx: &Transaction) -> u64 {
+    estimate_tx_gas(tx)
+}
+
 fn estimate_tx_gas(tx: &Transaction) -> u64 {
     match tx {
         Transaction::Transfer(_) => 21_000,
@@ -4782,6 +4790,7 @@ fn estimate_tx_gas(tx: &Transaction) -> u64 {
             50_000 + 10 * tx.data.len() as u64
         }
         Transaction::Governance(_) => 25_000,
+        Transaction::MultiSig(_) => 50_000,
     }
 }
 
@@ -5022,6 +5031,21 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     hash,
                     tx_type: "governance".to_string(),
                     from: account_full(&tx.sender),
+                    to: String::new(),
+                    amount: None,
+                    object_id: None,
+                    energy: None,
+                    half_life: None,
+                    method: None,
+                    gas,
+                    block_number: block.number,
+                    epoch: block.epoch,
+                    status: "success".to_string(),
+                },
+                Transaction::MultiSig(tx) => TxRecord {
+                    hash,
+                    tx_type: "multisig".to_string(),
+                    from: account_full(&tx.multisig_address),
                     to: String::new(),
                     amount: None,
                     object_id: None,

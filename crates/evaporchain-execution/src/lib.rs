@@ -18,8 +18,8 @@ use evaporchain_state::db::StateDB;
 use evaporchain_state::{EvaporationEngine, RefreshEngine};
 use evaporchain_types::{
     Block, CallContractTx, CallScriptTx, CreateObjectTx, DeployContractTx, DeployScriptTx,
-    Epoch, GovernanceAction, GovernanceProposal, GovernanceTx, ObjectState, ProposalStatus,
-    RefreshTx, StakeRecord, StateObject, Transaction, TransferTx,
+    Epoch, GovernanceAction, GovernanceProposal, GovernanceTx, MultiSigTx, ObjectState,
+    ProposalStatus, RefreshTx, StakeRecord, StateObject, Transaction, TransferTx,
     ValidatorClaimStakeTx, ValidatorExitTx, ValidatorStakeTx,
 };
 use thiserror::Error;
@@ -122,6 +122,7 @@ pub(crate) const GAS_VALIDATOR_STAKE: u64 = 50_000;
 pub(crate) const GAS_VALIDATOR_EXIT: u64 = 30_000;
 pub(crate) const GAS_VALIDATOR_CLAIM_STAKE: u64 = 30_000;
 pub(crate) const GAS_GOVERNANCE: u64 = 25_000;
+pub(crate) const GAS_MULTISIG: u64 = 50_000;
 
 // TODO(M-19): cross-block execution cache keyed on (tx_hash, pre_state_root).
 // TODO(M-21): sort block transactions by gas_price before execution.
@@ -322,6 +323,7 @@ impl SimpleExecutor {
                 GAS_CREATE_OBJECT_BASE.saturating_add(GAS_CREATE_OBJECT_PER_BYTE.saturating_mul(tx.data.len() as u64))
             }
             Transaction::Governance(_) => GAS_GOVERNANCE,
+            Transaction::MultiSig(_) => GAS_MULTISIG,
         }
     }
 
@@ -762,6 +764,65 @@ impl SimpleExecutor {
 
         Ok(())
     }
+
+    fn execute_multisig(
+        &self,
+        db: &mut dyn StateDB,
+        tx: &MultiSigTx,
+    ) -> Result<(), ExecutionError> {
+        if (tx.signatures.len() as u8) < tx.threshold {
+            return Err(ExecutionError::ContractError(format!(
+                "multi-sig requires {} signatures, got {}",
+                tx.threshold, tx.signatures.len()
+            )));
+        }
+
+        for (signer_addr, _) in &tx.signatures {
+            if !tx.signers.contains(signer_addr) {
+                return Err(ExecutionError::ContractError(
+                    "signer not in authorized signers list".to_string()
+                ));
+            }
+        }
+
+        let sender = db.get_or_create_account(&tx.multisig_address);
+        if sender.nonce != tx.nonce {
+            return Err(ExecutionError::InvalidNonce {
+                expected: sender.nonce,
+                got: tx.nonce,
+            });
+        }
+        sender.nonce += 1;
+
+        Ok(())
+    }
+
+    fn collect_storage_rent(&self, db: &mut dyn StateDB) {
+        let addresses = db.all_account_addresses();
+        for addr in addresses {
+            let rent_info = {
+                let acct = match db.get_account(&addr) {
+                    Some(a) => a,
+                    None => continue,
+                };
+                if acct.storage_bytes == 0 {
+                    continue;
+                }
+                let rent = acct.storage_bytes.saturating_mul(
+                    evaporchain_types::STORAGE_RENT_PER_BYTE_PER_EPOCH
+                );
+                (rent, acct.balance)
+            };
+            let acct = db.get_or_create_account(&addr);
+            if acct.balance >= rent_info.0 {
+                acct.balance -= rent_info.0;
+            } else {
+                acct.balance = 0;
+                acct.storage_deposit = 0;
+                acct.storage_bytes = 0;
+            }
+        }
+    }
 }
 
 impl ExecutionEngine for SimpleExecutor {
@@ -887,6 +948,7 @@ impl ExecutionEngine for SimpleExecutor {
                     Ok(())
                 }
                 Transaction::Governance(gov) => self.execute_governance(db, gov, block.epoch),
+                Transaction::MultiSig(msig) => self.execute_multisig(db, msig),
             };
 
             match result {
@@ -982,6 +1044,7 @@ impl ExecutionEngine for SimpleExecutor {
             }
         }
 
+        self.collect_storage_rent(db);
         let state_root = db.compute_state_root();
         db.commit_state_snapshot(block.number);
 
@@ -1082,6 +1145,8 @@ mod tests {
             address: addr(byte),
             balance,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         });
     }
 
@@ -1148,6 +1213,7 @@ mod tests {
                 g.signature = Some(sig);
                 g.public_key = Some(pk);
             }
+            Transaction::MultiSig(_) => {}
         }
     }
 
@@ -2662,7 +2728,7 @@ contract Counter {
         let mut executor = SimpleExecutor::new_for_test(7);
 
         let owner = addr(1);
-        db.put_account(Account { address: owner, balance: 1_000_000, nonce: 0 });
+        db.put_account(Account { address: owner, balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0 });
         let obj = evaporchain_types::StateObject {
             id: obj_id(1),
             owner,
@@ -2699,7 +2765,7 @@ contract Counter {
         let mut executor = SimpleExecutor::new_for_test(7);
 
         let owner = addr(1);
-        db.put_account(Account { address: owner, balance: 1_000_000, nonce: 0 });
+        db.put_account(Account { address: owner, balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0 });
 
         for i in 1..=3u8 {
             let obj = evaporchain_types::StateObject {

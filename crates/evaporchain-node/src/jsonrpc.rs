@@ -1,0 +1,396 @@
+//! JSON-RPC 2.0 endpoint for ethers.js / web3.py compatibility.
+//!
+//! All methods use the `evap_` namespace. Standard `net_*` methods are also
+//! supported for tooling that probes the network layer.
+
+use axum::{extract::State, Json};
+use evaporchain_state::db::StateDB;
+use evaporchain_types::Transaction;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::sync::Arc;
+
+use crate::api::ApiState;
+
+fn safe_lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+// ──────────────────────────── Wire Types ─────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct JsonRpcRequest {
+    pub jsonrpc: String,
+    pub method: String,
+    #[serde(default)]
+    pub params: Value,
+    pub id: Value,
+}
+
+#[derive(Debug, Serialize)]
+pub struct JsonRpcResponse {
+    pub jsonrpc: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<JsonRpcError>,
+    pub id: Value,
+}
+
+#[derive(Debug, Serialize)]
+pub struct JsonRpcError {
+    pub code: i64,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<Value>,
+}
+
+impl JsonRpcResponse {
+    fn ok(id: Value, result: Value) -> Self {
+        Self { jsonrpc: "2.0", result: Some(result), error: None, id }
+    }
+
+    fn err(id: Value, code: i64, message: impl Into<String>) -> Self {
+        Self {
+            jsonrpc: "2.0",
+            result: None,
+            error: Some(JsonRpcError { code, message: message.into(), data: None }),
+            id,
+        }
+    }
+
+    fn method_not_found(id: Value, method: &str) -> Self {
+        Self::err(id, -32601, format!("Method not found: {}", method))
+    }
+
+    fn invalid_params(id: Value, msg: impl Into<String>) -> Self {
+        Self::err(id, -32602, msg)
+    }
+}
+
+// ──────────────────────────── Handler ────────────────────────────────
+
+pub async fn handle_jsonrpc(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<Value>,
+) -> Json<Value> {
+    if let Some(arr) = req.as_array() {
+        let mut results = Vec::with_capacity(arr.len());
+        for item in arr {
+            if let Ok(r) = serde_json::from_value::<JsonRpcRequest>(item.clone()) {
+                results.push(dispatch(&state, r));
+            } else {
+                results.push(JsonRpcResponse::err(
+                    Value::Null,
+                    -32600,
+                    "Invalid Request",
+                ));
+            }
+        }
+        Json(serde_json::to_value(results).unwrap_or(Value::Null))
+    } else if let Ok(r) = serde_json::from_value::<JsonRpcRequest>(req) {
+        let resp = dispatch(&state, r);
+        Json(serde_json::to_value(resp).unwrap_or(Value::Null))
+    } else {
+        Json(serde_json::to_value(JsonRpcResponse::err(
+            Value::Null,
+            -32700,
+            "Parse error",
+        )).unwrap_or(Value::Null))
+    }
+}
+
+fn dispatch(state: &ApiState, req: JsonRpcRequest) -> JsonRpcResponse {
+    match req.method.as_str() {
+        "evap_chainId" => rpc_chain_id(state, req.id),
+        "evap_blockNumber" => rpc_block_number(state, req.id),
+        "evap_gasPrice" => rpc_gas_price(state, req.id),
+        "evap_getBalance" => rpc_get_balance(state, &req.params, req.id),
+        "evap_getTransactionCount" => rpc_get_tx_count(state, &req.params, req.id),
+        "evap_getAccountInfo" => rpc_get_account_info(state, &req.params, req.id),
+        "evap_getBlockByNumber" => rpc_get_block_by_number(state, &req.params, req.id),
+        "evap_getTransactionReceipt" => rpc_get_tx_receipt(state, &req.params, req.id),
+        "evap_sendRawTransaction" => rpc_send_raw_tx(state, &req.params, req.id),
+        "evap_estimateGas" => rpc_estimate_gas(state, &req.params, req.id),
+        "evap_getObject" => rpc_get_object(state, &req.params, req.id),
+        "evap_mempoolSize" => rpc_mempool_size(state, req.id),
+        "net_version" => rpc_net_version(state, req.id),
+        "net_peerCount" => rpc_peer_count(state, req.id),
+        "net_listening" => JsonRpcResponse::ok(req.id, Value::Bool(true)),
+        _ => JsonRpcResponse::method_not_found(req.id, &req.method),
+    }
+}
+
+// ──────────────────────────── Methods ────────────────────────────────
+
+fn rpc_chain_id(state: &ApiState, id: Value) -> JsonRpcResponse {
+    let chain_id = if let Some(ref tc) = state.tendermint {
+        let c = safe_lock(tc);
+        c.chain_id().to_string()
+    } else {
+        "evaporchain-devnet".to_string()
+    };
+    JsonRpcResponse::ok(id, Value::String(chain_id))
+}
+
+fn rpc_block_number(state: &ApiState, id: Value) -> JsonRpcResponse {
+    let height = {
+        let c = safe_lock(&state.consensus);
+        c.block_number()
+    };
+    JsonRpcResponse::ok(id, json_hex_u64(height))
+}
+
+fn rpc_gas_price(state: &ApiState, id: Value) -> JsonRpcResponse {
+    let base_fee = latest_base_fee(state);
+    JsonRpcResponse::ok(id, json_hex_u64(base_fee))
+}
+
+fn rpc_get_balance(state: &ApiState, params: &Value, id: Value) -> JsonRpcResponse {
+    let addr = match parse_address_param(params, 0) {
+        Ok(a) => a,
+        Err(e) => return e(id),
+    };
+    let db = safe_lock(&state.db);
+    let balance = db.get_account(&addr).map(|a| a.balance).unwrap_or(0);
+    JsonRpcResponse::ok(id, json_hex_u64(balance))
+}
+
+fn rpc_get_tx_count(state: &ApiState, params: &Value, id: Value) -> JsonRpcResponse {
+    let addr = match parse_address_param(params, 0) {
+        Ok(a) => a,
+        Err(e) => return e(id),
+    };
+    let db = safe_lock(&state.db);
+    let nonce = db.get_account(&addr).map(|a| a.nonce).unwrap_or(0);
+    JsonRpcResponse::ok(id, json_hex_u64(nonce))
+}
+
+fn rpc_get_account_info(state: &ApiState, params: &Value, id: Value) -> JsonRpcResponse {
+    let addr = match parse_address_param(params, 0) {
+        Ok(a) => a,
+        Err(e) => return e(id),
+    };
+    let db = safe_lock(&state.db);
+    match db.get_account(&addr) {
+        Some(acct) => {
+            let obj = serde_json::json!({
+                "address": format!("0x{}", hex::encode(acct.address)),
+                "balance": json_hex_u64(acct.balance),
+                "nonce": json_hex_u64(acct.nonce),
+                "storage_deposit": json_hex_u64(acct.storage_deposit),
+                "storage_bytes": json_hex_u64(acct.storage_bytes),
+            });
+            JsonRpcResponse::ok(id, obj)
+        }
+        None => JsonRpcResponse::ok(id, Value::Null),
+    }
+}
+
+fn rpc_get_block_by_number(state: &ApiState, params: &Value, id: Value) -> JsonRpcResponse {
+    let arr = match params.as_array() {
+        Some(a) => a,
+        None => return JsonRpcResponse::invalid_params(id, "expected array params"),
+    };
+    let block_num = match arr.first() {
+        Some(Value::String(s)) if s == "latest" => {
+            let c = safe_lock(&state.consensus);
+            c.block_number()
+        }
+        Some(v) => match parse_hex_u64(v) {
+            Some(n) => n,
+            None => return JsonRpcResponse::invalid_params(id, "invalid block number"),
+        },
+        None => return JsonRpcResponse::invalid_params(id, "missing block number"),
+    };
+    let full_txs = arr.get(1).and_then(|v| v.as_bool()).unwrap_or(false);
+
+    if let Some(ref cs) = state.chain_store {
+        if let Some(block) = cs.load_full_block(block_num) {
+            return JsonRpcResponse::ok(id, block_to_json(&block, full_txs));
+        }
+    }
+
+    let history = safe_lock(&state.block_history);
+    if let Some(record) = history.iter().find(|b| b.number == block_num) {
+        let obj = serde_json::json!({
+            "number": json_hex_u64(record.number),
+            "epoch": json_hex_u64(record.epoch),
+            "hash": record.hash,
+            "parentHash": record.parent_hash,
+            "stateRoot": record.state_root,
+            "txCount": record.tx_count,
+            "timestamp": json_hex_u64(record.timestamp),
+            "gasUsed": json_hex_u64(record.gas_used),
+            "baseFee": json_hex_u64(record.base_fee),
+        });
+        return JsonRpcResponse::ok(id, obj);
+    }
+
+    JsonRpcResponse::ok(id, Value::Null)
+}
+
+fn rpc_get_tx_receipt(state: &ApiState, params: &Value, id: Value) -> JsonRpcResponse {
+    let hash_hex = match params.as_array().and_then(|a| a.first()).and_then(|v| v.as_str()) {
+        Some(h) => h.strip_prefix("0x").unwrap_or(h),
+        None => return JsonRpcResponse::invalid_params(id, "missing tx hash"),
+    };
+    if let Some(ref cs) = state.chain_store {
+        if let Some(receipt) = cs.get_tx_receipt(hash_hex) {
+            let obj = serde_json::json!({
+                "transactionHash": format!("0x{}", receipt.tx_hash),
+                "blockNumber": json_hex_u64(receipt.block_number),
+                "transactionIndex": json_hex_u64(receipt.tx_index as u64),
+                "epoch": json_hex_u64(receipt.epoch),
+                "type": receipt.tx_type,
+                "from": receipt.from,
+                "to": receipt.to,
+                "status": if receipt.status == "confirmed" { "0x1" } else { "0x0" },
+            });
+            return JsonRpcResponse::ok(id, obj);
+        }
+    }
+    JsonRpcResponse::ok(id, Value::Null)
+}
+
+fn rpc_send_raw_tx(state: &ApiState, params: &Value, id: Value) -> JsonRpcResponse {
+    let tx_json = match params.as_array().and_then(|a| a.first()) {
+        Some(v) => v,
+        None => return JsonRpcResponse::invalid_params(id, "missing transaction"),
+    };
+    let tx: Transaction = match serde_json::from_value(tx_json.clone()) {
+        Ok(t) => t,
+        Err(e) => return JsonRpcResponse::invalid_params(id, format!("invalid tx: {}", e)),
+    };
+    let hash = hex::encode(blake3::hash(&serde_json::to_vec(&tx).unwrap_or_default()).as_bytes());
+    state.submit_tx(tx);
+    JsonRpcResponse::ok(id, Value::String(format!("0x{}", hash)))
+}
+
+fn rpc_estimate_gas(state: &ApiState, params: &Value, id: Value) -> JsonRpcResponse {
+    let tx_json = match params.as_array().and_then(|a| a.first()) {
+        Some(v) => v,
+        None => return JsonRpcResponse::invalid_params(id, "missing transaction"),
+    };
+    let tx: Transaction = match serde_json::from_value(tx_json.clone()) {
+        Ok(t) => t,
+        Err(e) => return JsonRpcResponse::invalid_params(id, format!("invalid tx: {}", e)),
+    };
+    let gas = crate::api::estimate_tx_gas_pub(&tx);
+    let base_fee = latest_base_fee(state);
+    let obj = serde_json::json!({
+        "gas": json_hex_u64(gas),
+        "baseFee": json_hex_u64(base_fee),
+        "totalFee": json_hex_u64(gas * base_fee),
+    });
+    JsonRpcResponse::ok(id, obj)
+}
+
+fn rpc_get_object(state: &ApiState, params: &Value, id: Value) -> JsonRpcResponse {
+    let obj_hex = match params.as_array().and_then(|a| a.first()).and_then(|v| v.as_str()) {
+        Some(h) => h.strip_prefix("0x").unwrap_or(h),
+        None => return JsonRpcResponse::invalid_params(id, "missing object ID"),
+    };
+    let bytes = match hex::decode(obj_hex) {
+        Ok(b) if b.len() == 32 => {
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&b);
+            arr
+        }
+        _ => return JsonRpcResponse::invalid_params(id, "invalid object ID (need 32 bytes hex)"),
+    };
+    let db = safe_lock(&state.db);
+    match db.get_object(&bytes) {
+        Some(obj) => {
+            let obj_json = serde_json::json!({
+                "id": format!("0x{}", hex::encode(obj.id)),
+                "owner": format!("0x{}", hex::encode(obj.owner)),
+                "energy": obj.energy,
+                "half_life": obj.half_life,
+                "created_at": obj.created_at,
+                "data_len": obj.data.len(),
+            });
+            JsonRpcResponse::ok(id, obj_json)
+        }
+        None => JsonRpcResponse::ok(id, Value::Null),
+    }
+}
+
+fn rpc_mempool_size(state: &ApiState, id: Value) -> JsonRpcResponse {
+    let size = if let Some(ref tc) = state.tendermint {
+        let c = safe_lock(tc);
+        c.mempool.len()
+    } else {
+        let c = safe_lock(&state.consensus);
+        c.mempool.len()
+    };
+    JsonRpcResponse::ok(id, json_hex_u64(size as u64))
+}
+
+fn rpc_net_version(_state: &ApiState, id: Value) -> JsonRpcResponse {
+    JsonRpcResponse::ok(id, Value::String("1".to_string()))
+}
+
+fn rpc_peer_count(state: &ApiState, id: Value) -> JsonRpcResponse {
+    let count = state.peer_count.load(std::sync::atomic::Ordering::Relaxed);
+    JsonRpcResponse::ok(id, json_hex_u64(count as u64))
+}
+
+// ──────────────────────────── Helpers ────────────────────────────────
+
+fn json_hex_u64(val: u64) -> Value {
+    Value::String(format!("0x{:x}", val))
+}
+
+fn parse_hex_u64(v: &Value) -> Option<u64> {
+    let s = v.as_str()?;
+    let s = s.strip_prefix("0x").unwrap_or(s);
+    u64::from_str_radix(s, 16).ok()
+}
+
+fn parse_address_param(params: &Value, idx: usize) -> Result<[u8; 32], fn(Value) -> JsonRpcResponse> {
+    let arr = params.as_array();
+    let hex_str = arr
+        .and_then(|a| a.get(idx))
+        .and_then(|v| v.as_str())
+        .ok_or(invalid_params_fn as fn(Value) -> JsonRpcResponse)?;
+    let hex_str = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+    let bytes = hex::decode(hex_str).map_err(|_| invalid_params_fn as fn(Value) -> JsonRpcResponse)?;
+    if bytes.len() != 32 {
+        return Err(invalid_params_fn);
+    }
+    let mut addr = [0u8; 32];
+    addr.copy_from_slice(&bytes);
+    Ok(addr)
+}
+
+fn invalid_params_fn(id: Value) -> JsonRpcResponse {
+    JsonRpcResponse::invalid_params(id, "invalid address (need 32 bytes hex)")
+}
+
+fn latest_base_fee(state: &ApiState) -> u64 {
+    let history = safe_lock(&state.block_history);
+    history.back().map(|b| b.base_fee).unwrap_or(1)
+}
+
+fn block_to_json(block: &evaporchain_types::Block, full_txs: bool) -> Value {
+    let tx_list = if full_txs {
+        serde_json::to_value(&block.transactions).unwrap_or(Value::Array(vec![]))
+    } else {
+        let hashes: Vec<String> = block.transactions.iter().map(|tx| {
+            let h = blake3::hash(&serde_json::to_vec(tx).unwrap_or_default());
+            format!("0x{}", hex::encode(h.as_bytes()))
+        }).collect();
+        serde_json::to_value(hashes).unwrap_or(Value::Array(vec![]))
+    };
+    serde_json::json!({
+        "number": json_hex_u64(block.number),
+        "epoch": json_hex_u64(block.epoch),
+        "hash": format!("0x{}", hex::encode(block.state_root)),
+        "parentHash": format!("0x{}", hex::encode(block.parent_hash)),
+        "stateRoot": format!("0x{}", hex::encode(block.state_root)),
+        "timestamp": json_hex_u64(block.timestamp),
+        "txCount": block.transactions.len(),
+        "transactions": tx_list,
+    })
+}

@@ -532,6 +532,8 @@ mod tests {
             address: addr(b),
             balance,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         }
     }
 

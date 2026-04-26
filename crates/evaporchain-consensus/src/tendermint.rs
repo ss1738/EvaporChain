@@ -2637,6 +2637,8 @@ mod tests {
             address: addr(1),
             balance: 1_000_000,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         });
 
         let mut tc = make_consensus(1, &[1]);
@@ -2676,6 +2678,8 @@ mod tests {
             address: addr(1),
             balance: 1_000_000,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         });
 
         // Tick all validators — the proposer should create a proposal
@@ -3089,6 +3093,8 @@ mod tests {
             address: addr(1),
             balance: 1_000_000,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         });
 
         // Run consensus
@@ -3162,6 +3168,8 @@ mod tests {
             address: addr(1),
             balance: 1_000_000,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         });
 
         let mut messages = Vec::new();
@@ -3489,6 +3497,8 @@ mod integration_tests {
             address: addr(1),
             balance: 10_000_000,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         });
 
         // Run 3 consecutive heights
@@ -3542,6 +3552,8 @@ mod integration_tests {
             address: addr(1),
             balance: 10_000_000,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         });
 
         // Submit a blob transaction to the proposer's mempool
@@ -3583,6 +3595,8 @@ mod integration_tests {
             address: addr(1),
             balance: 10_000_000,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         });
 
         // Remove validator 4 from the active set (simulate offline)
@@ -3616,6 +3630,8 @@ mod integration_tests {
             address: addr(1),
             balance: 10_000_000,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         });
 
         let committed = run_consensus_round(&mut nodes, &mut db, 30);
@@ -3726,6 +3742,8 @@ mod integration_tests {
             address: addr(1),
             balance: 10_000_000,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         });
 
         // === Height 1: Commit a block with BLS certificate ===
@@ -3792,6 +3810,8 @@ mod integration_tests {
             address: addr(1),
             balance: 10_000_000,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         });
 
         let mut all_messages = Vec::new();
@@ -3953,6 +3973,8 @@ mod vrf_tests {
             address: addr(1),
             balance: 10_000_000,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         });
 
         // Tick to get the proposer to create a block
@@ -4006,6 +4028,8 @@ mod vrf_tests {
             address: addr(1),
             balance: 10_000_000,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         });
 
         // Run full consensus round with VRF-enabled validators
@@ -4130,6 +4154,8 @@ mod vrf_tests {
             address: addr(1),
             balance: 10_000_000,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         });
 
         let beacon_before = nodes[0].randomness_beacon().current();
@@ -4196,6 +4222,8 @@ mod vrf_tests {
             address: addr(1),
             balance: 10_000_000,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         });
 
         let mut vrf_outputs = Vec::new();

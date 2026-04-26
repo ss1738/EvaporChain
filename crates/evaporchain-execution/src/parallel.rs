@@ -106,6 +106,9 @@ fn extract_access_keys(tx: &Transaction) -> Vec<AccessKey> {
         Transaction::Governance(tx) => {
             vec![AccessKey::Account(tx.sender)]
         }
+        Transaction::MultiSig(tx) => {
+            vec![AccessKey::Account(tx.multisig_address)]
+        }
     }
 }
 
@@ -330,6 +333,8 @@ impl StateDB for OverlayStateDB {
             address: *addr,
             balance: 0,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         })
     }
 
@@ -540,6 +545,7 @@ impl ParallelExecutor {
                 crate::GAS_CREATE_OBJECT_BASE + crate::GAS_CREATE_OBJECT_PER_BYTE * tx.data.len() as u64
             }
             Transaction::Governance(_) => GAS_GOVERNANCE,
+            Transaction::MultiSig(_) => crate::GAS_MULTISIG,
         }
     }
 
@@ -664,6 +670,11 @@ impl ParallelExecutor {
                 Transaction::Governance(_) => {
                     Err(ExecutionError::ContractError(
                         "governance txs execute in serial phase".into(),
+                    ))
+                }
+                Transaction::MultiSig(_) => {
+                    Err(ExecutionError::ContractError(
+                        "multi-sig txs execute in serial phase".into(),
                     ))
                 }
             };
@@ -1250,6 +1261,8 @@ mod tests {
             address: addr(byte),
             balance,
             nonce: 0,
+        storage_deposit: 0,
+        storage_bytes: 0,
         });
     }
 
