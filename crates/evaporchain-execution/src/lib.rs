@@ -823,6 +823,7 @@ impl SimpleExecutor {
                     votes_against: 0,
                     status: ProposalStatus::Active,
                     created_at: current_epoch,
+                    voters: std::collections::HashSet::new(),
                 };
                 db.put_proposal(proposal);
             }
