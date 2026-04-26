@@ -651,9 +651,21 @@ mod tests {
             parent_hash: [0xBB; 32],
             timestamp: 1000,
             transactions: vec![],
-            vrf_output: None,
+            chain_id: String::new(),
             producer_id: None,
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+            blob_commitments: vec![],
+            da_certificate: None,
             commit_certificate: None,
+            nova_proof: None,
+            anchor_hash: None,
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
         };
         let json = block_to_json(&block, false);
         assert_eq!(json["number"], "0x2a");

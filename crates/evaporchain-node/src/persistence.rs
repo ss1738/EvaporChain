@@ -975,7 +975,7 @@ mod tests {
     #[test]
     fn test_tx_type_name_refresh() {
         let tx = Transaction::Refresh(RefreshTx {
-            object_id: 1,
+            object_id: [1u8; 32],
             energy_deposit: 100,
             signature: None,
             public_key: None,
@@ -1004,7 +1004,7 @@ mod tests {
     #[test]
     fn test_tx_sender_hex_refresh_is_none() {
         let tx = Transaction::Refresh(RefreshTx {
-            object_id: 0,
+            object_id: [0u8; 32],
             energy_deposit: 0,
             signature: None,
             public_key: None,
@@ -1015,7 +1015,7 @@ mod tests {
     #[test]
     fn test_tx_receiver_hex_non_transfer_is_none() {
         let tx = Transaction::Refresh(RefreshTx {
-            object_id: 0,
+            object_id: [0u8; 32],
             energy_deposit: 0,
             signature: None,
             public_key: None,
