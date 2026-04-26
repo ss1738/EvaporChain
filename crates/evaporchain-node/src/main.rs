@@ -15,7 +15,7 @@ use evaporchain_consensus::MockConsensus;
 use evaporchain_consensus::encrypted_mempool::EncryptedMempool;
 use evaporchain_consensus::finality::FinalityTracker;
 use evaporchain_consensus::light_client::{LightBlockHeader, LightClientVerifier};
-use evaporchain_consensus::tendermint::{TendermintConsensus, ConsensusMessage, ConsensusAction, SlashReason, ProofVerifier, AnchorHashProvider};
+use evaporchain_consensus::tendermint::{TendermintConsensus, ConsensusMessage, ConsensusAction, ProofVerifier, AnchorHashProvider};
 use evaporchain_consensus::state_sync::{StateSyncManager, SyncAction, SyncMessage};
 use evaporchain_consensus::validator_set::{ValidatorInfo, ValidatorSet};
 use evaporchain_network::service::{cache_block, NetworkConfig, P2pNetworkService};
@@ -1410,7 +1410,7 @@ async fn main() -> Result<()> {
     let node_tag = make_tag(&args.node_id);
 
     if args.light_mode {
-        info!(chain_id = %args.chain_id, "Starting in LIGHT CLIENT mode — headers only, no execution");
+        println!("{} \x1b[33mStarting in LIGHT CLIENT mode — headers only, no execution (chain_id={})\x1b[0m", node_tag, args.chain_id);
     }
 
     print_banner(&node_tag);
@@ -2535,7 +2535,7 @@ async fn main() -> Result<()> {
                             stake.slashed_amount = stake.slashed_amount.saturating_add(amount);
                             db_guard.put_stake(stake);
                         }
-                        warn!(validator_id, amount, reason = ?reason, "Slash applied to stake ledger");
+                        eprintln!("{} \x1b[31mSlash applied: validator={} amount={} reason={:?}\x1b[0m", node_tag, validator_id, amount, reason);
                         continue;
                     }
                     if let ConsensusAction::RequestSync(from, to) = action {
@@ -2558,7 +2558,7 @@ async fn main() -> Result<()> {
                             tc.on_block_committed(&block, block.state_root, 0);
                             let tip = tc.height();
                             drop(tc);
-                            info!(height = block.number, tip, "Light client: header verified");
+                            println!("{} \x1b[36mLight client: header #{} verified (tip={})\x1b[0m", node_tag, block.number, tip);
                             continue;
                         }
                         // Execute the block to get state root
@@ -3154,7 +3154,7 @@ async fn main() -> Result<()> {
                                 stake.slashed_amount = stake.slashed_amount.saturating_add(amount);
                                 db_guard.put_stake(stake);
                             }
-                            warn!(validator_id, amount, reason = ?reason, "Slash applied to stake ledger (follower)");
+                            eprintln!("{} \x1b[31mSlash applied (follower): validator={} amount={} reason={:?}\x1b[0m", node_tag, validator_id, amount, reason);
                             continue;
                         }
                         if let ConsensusAction::RequestSync(from, to) = action {
@@ -3174,7 +3174,7 @@ async fn main() -> Result<()> {
                             if args.light_mode {
                                 let mut tc = safe_lock(&tc_ref);
                                 tc.on_block_committed(&block, block.state_root, 0);
-                                info!(height = block.number, "Light client: header verified (follower)");
+                                println!("{} \x1b[36mLight client: header #{} verified (follower)\x1b[0m", node_tag, block.number);
                                 continue;
                             }
                             let exec_start = Instant::now();
