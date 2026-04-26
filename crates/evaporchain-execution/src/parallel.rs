@@ -32,8 +32,8 @@ use tracing::{debug, info};
 use crate::{
     fees, BlockExecutionResult, ExecutionEngine, ExecutionError,
     GAS_CALL_CONTRACT, GAS_CALL_SCRIPT, GAS_CREATE_OBJECT_BASE, GAS_CREATE_OBJECT_PER_BYTE,
-    GAS_DEPLOY_CONTRACT, GAS_DEPLOY_SCRIPT, GAS_REFRESH, GAS_TRANSFER, GAS_VALIDATOR_EXIT,
-    GAS_VALIDATOR_STAKE,
+    GAS_DEPLOY_CONTRACT, GAS_DEPLOY_SCRIPT, GAS_REFRESH, GAS_TRANSFER, GAS_VALIDATOR_CLAIM_STAKE,
+    GAS_VALIDATOR_EXIT, GAS_VALIDATOR_STAKE,
 };
 
 // ─── Access Key & Conflict Detection ───────────────────────────────────────
@@ -368,6 +368,10 @@ impl StateDB for OverlayStateDB {
     fn get_shielded_pool_balance(&self) -> u64 { 0 }
     fn put_note_count(&mut self, _count: u64) {}
     fn get_note_count(&self) -> u64 { 0 }
+    fn get_stake(&self, _validator_id: u64) -> Option<&evaporchain_types::StakeRecord> { None }
+    fn put_stake(&mut self, _record: evaporchain_types::StakeRecord) {}
+    fn remove_stake(&mut self, _validator_id: u64) -> Option<evaporchain_types::StakeRecord> { None }
+    fn all_stakes(&self) -> Vec<&evaporchain_types::StakeRecord> { Vec::new() }
 }
 
 // ─── Partition Execution Result ────────────────────────────────────────────
