@@ -1482,6 +1482,7 @@ impl TendermintConsensus {
         self.parent_hash = blake3_hash(&hash_input);
 
         self.epoch = block.epoch;
+        self.mempool.set_epoch(block.epoch);
         self.current_state_root = state_root;
         self.committed_heights.insert(self.height);
         if let Some(pid) = block.producer_id {

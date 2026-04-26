@@ -151,6 +151,7 @@ impl MockConsensus {
         // Advance local tracking to stay in sync
         self.block_number = block.number;
         self.epoch = block.epoch;
+        self.mempool.set_epoch(block.epoch);
 
         // Derive parent hash the same way produce_block does
         let mut hash_input = Vec::new();
@@ -181,6 +182,7 @@ impl MockConsensus {
     ) -> Result<BlockProductionResult, ConsensusError> {
         self.epoch += 1;
         self.block_number += 1;
+        self.mempool.set_epoch(self.epoch);
 
         let txs: Vec<Transaction> = self.mempool.drain();
 
@@ -251,6 +253,7 @@ impl MockConsensus {
     ) -> Result<BlockProductionResult, ConsensusError> {
         self.epoch += 1;
         self.block_number += 1;
+        self.mempool.set_epoch(self.epoch);
 
         // Drain plaintext mempool
         let mut txs: Vec<Transaction> = self.mempool.drain();
@@ -426,6 +429,7 @@ impl RotatingConsensus {
 
         self.epoch = next_epoch;
         self.block_number += 1;
+        self.mempool.set_epoch(self.epoch);
 
         let txs: Vec<Transaction> = self.mempool.drain();
 
@@ -541,6 +545,7 @@ impl RotatingConsensus {
         // Advance local tracking
         self.block_number = block.number;
         self.epoch = block.epoch;
+        self.mempool.set_epoch(block.epoch);
 
         let mut hash_input = Vec::new();
         hash_input.extend_from_slice(&block.number.to_le_bytes());

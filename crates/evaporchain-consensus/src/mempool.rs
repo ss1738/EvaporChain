@@ -1,5 +1,5 @@
 use evaporchain_types::Transaction;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Maximum number of transactions in the mempool (DoS protection).
 const MAX_MEMPOOL_SIZE: usize = 10_000;
@@ -7,9 +7,15 @@ const MAX_MEMPOOL_SIZE: usize = 10_000;
 /// Maximum transaction data size in bytes (prevents oversized payloads).
 const MAX_TX_SIZE_BYTES: usize = 128 * 1024; // 128 KB
 
+/// Maximum transactions per account in the mempool (anti-spam).
+const MAX_TXS_PER_ACCOUNT: usize = 64;
+
+/// Maximum age of a transaction in epochs before it's evicted.
+const MAX_TX_AGE_EPOCHS: u64 = 256;
+
 /// Thread-safe pending transaction pool with DoS protection.
 ///
-/// Enforces size limits and basic validation before accepting transactions.
+/// Enforces size limits, per-account caps, TTL eviction, and basic validation.
 pub struct Mempool {
     pending: VecDeque<Transaction>,
     /// BLAKE3 hashes of transactions currently in the pool (dedup).
@@ -22,6 +28,12 @@ pub struct Mempool {
     rejected_count: u64,
     /// Transactions rejected as duplicates.
     duplicate_count: u64,
+    /// Per-account transaction count (anti-spam).
+    account_tx_count: HashMap<[u8; 32], usize>,
+    /// Epoch when each transaction was submitted (for TTL eviction).
+    tx_submit_epoch: HashMap<[u8; 32], u64>,
+    /// Current chain epoch (updated on each block commit).
+    current_epoch: u64,
 }
 
 impl Mempool {
@@ -33,6 +45,9 @@ impl Mempool {
             max_size: MAX_MEMPOOL_SIZE,
             rejected_count: 0,
             duplicate_count: 0,
+            account_tx_count: HashMap::new(),
+            tx_submit_epoch: HashMap::new(),
+            current_epoch: 0,
         }
     }
 
@@ -45,27 +60,23 @@ impl Mempool {
             max_size,
             rejected_count: 0,
             duplicate_count: 0,
+            account_tx_count: HashMap::new(),
+            tx_submit_epoch: HashMap::new(),
+            current_epoch: 0,
         }
     }
 
-    /// Add a transaction to the pool. Returns false if rejected (duplicate, pool full, or oversized).
+    /// Add a transaction to the pool. Returns false if rejected (duplicate, pool full, oversized,
+    /// or per-account limit exceeded).
     pub fn submit(&mut self, tx: Transaction) -> bool {
+        if !self.validate_submission(&tx) {
+            return false;
+        }
         let hash = tx.tx_hash();
-        if self.seen.contains(&hash) {
-            self.duplicate_count += 1;
-            return false;
-        }
-        if self.pending.len() >= self.max_size {
-            self.rejected_count += 1;
-            return false;
-        }
-        let tx_size = Self::estimate_tx_size(&tx);
-        if tx_size > MAX_TX_SIZE_BYTES {
-            self.rejected_count += 1;
-            return false;
-        }
+        self.track_account_add(&tx);
+        self.tx_submit_epoch.insert(hash, self.current_epoch);
         self.seen.insert(hash);
-        self.total_bytes += tx_size;
+        self.total_bytes += Self::estimate_tx_size(&tx);
         self.pending.push_back(tx);
         true
     }
@@ -73,6 +84,19 @@ impl Mempool {
     /// Add a high-priority transaction to the FRONT of the pool.
     /// Used for API-submitted transactions that should be included before demo txs.
     pub fn submit_priority(&mut self, tx: Transaction) -> bool {
+        if !self.validate_submission(&tx) {
+            return false;
+        }
+        let hash = tx.tx_hash();
+        self.track_account_add(&tx);
+        self.tx_submit_epoch.insert(hash, self.current_epoch);
+        self.seen.insert(hash);
+        self.total_bytes += Self::estimate_tx_size(&tx);
+        self.pending.push_front(tx);
+        true
+    }
+
+    fn validate_submission(&mut self, tx: &Transaction) -> bool {
         let hash = tx.tx_hash();
         if self.seen.contains(&hash) {
             self.duplicate_count += 1;
@@ -82,21 +106,75 @@ impl Mempool {
             self.rejected_count += 1;
             return false;
         }
-        let tx_size = Self::estimate_tx_size(&tx);
+        let tx_size = Self::estimate_tx_size(tx);
         if tx_size > MAX_TX_SIZE_BYTES {
             self.rejected_count += 1;
             return false;
         }
-        self.seen.insert(hash);
-        self.total_bytes += tx_size;
-        self.pending.push_front(tx);
+        if let Some(sender) = tx.sender() {
+            let count = self.account_tx_count.get(sender).copied().unwrap_or(0);
+            if count >= MAX_TXS_PER_ACCOUNT {
+                self.rejected_count += 1;
+                return false;
+            }
+        }
         true
+    }
+
+    fn track_account_add(&mut self, tx: &Transaction) {
+        if let Some(sender) = tx.sender() {
+            *self.account_tx_count.entry(*sender).or_insert(0) += 1;
+        }
+    }
+
+    fn track_account_remove(&mut self, tx: &Transaction) {
+        if let Some(sender) = tx.sender() {
+            if let Some(count) = self.account_tx_count.get_mut(sender) {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    self.account_tx_count.remove(sender);
+                }
+            }
+        }
+    }
+
+    /// Update the current epoch and evict expired transactions.
+    pub fn set_epoch(&mut self, epoch: u64) {
+        self.current_epoch = epoch;
+        self.evict_expired();
+    }
+
+    /// Remove transactions older than MAX_TX_AGE_EPOCHS.
+    fn evict_expired(&mut self) {
+        if self.current_epoch < MAX_TX_AGE_EPOCHS {
+            return;
+        }
+        let cutoff = self.current_epoch - MAX_TX_AGE_EPOCHS;
+        let mut evicted = Vec::new();
+        self.pending.retain(|tx| {
+            let hash = tx.tx_hash();
+            let submit_epoch = self.tx_submit_epoch.get(&hash).copied().unwrap_or(0);
+            if submit_epoch < cutoff {
+                evicted.push((hash, tx.clone()));
+                false
+            } else {
+                true
+            }
+        });
+        for (hash, tx) in &evicted {
+            self.seen.remove(hash);
+            self.tx_submit_epoch.remove(hash);
+            self.track_account_remove(tx);
+        }
+        self.total_bytes = self.pending.iter().map(Self::estimate_tx_size).sum();
     }
 
     /// Drain all pending transactions for inclusion in the next block.
     pub fn drain(&mut self) -> Vec<Transaction> {
         self.total_bytes = 0;
         self.seen.clear();
+        self.account_tx_count.clear();
+        self.tx_submit_epoch.clear();
         self.pending.drain(..).collect()
     }
 
@@ -114,9 +192,11 @@ impl Mempool {
         let mut taken = Vec::with_capacity(take_count);
         let mut remaining = VecDeque::new();
 
-        for (i, (_hash, tx)) in with_hash.into_iter().enumerate() {
+        for (i, (h, tx)) in with_hash.into_iter().enumerate() {
             if i < take_count {
-                self.seen.remove(&_hash);
+                self.seen.remove(&h);
+                self.tx_submit_epoch.remove(&h);
+                self.track_account_remove(&tx);
                 taken.push(tx);
             } else {
                 remaining.push_back(tx);
@@ -145,13 +225,73 @@ impl Mempool {
         let result: Vec<([u8; 32], Transaction)> = taken.to_vec();
 
         self.pending = rest.iter().map(|(_, tx)| tx.clone()).collect();
-        for (h, _) in &result {
+        for (h, tx) in &result {
             self.seen.remove(h);
+            self.tx_submit_epoch.remove(h);
+            self.track_account_remove(tx);
         }
         self.total_bytes = self.pending.iter()
             .map(Self::estimate_tx_size)
             .sum();
         result
+    }
+
+    /// Take transactions up to a gas limit. Respects per-block gas cap for proposals.
+    pub fn take_with_gas_limit(&mut self, max_txs: usize, gas_limit: u64) -> Vec<Transaction> {
+        let all: Vec<Transaction> = self.pending.drain(..).collect();
+        let mut with_hash: Vec<([u8; 32], Transaction)> = all
+            .into_iter()
+            .map(|tx| (tx.tx_hash(), tx))
+            .collect();
+        with_hash.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let mut taken = Vec::new();
+        let mut remaining = VecDeque::new();
+        let mut gas_used = 0u64;
+
+        for (hash, tx) in with_hash {
+            let tx_gas = Self::estimate_tx_gas(&tx);
+            if taken.len() < max_txs && gas_used.saturating_add(tx_gas) <= gas_limit {
+                self.seen.remove(&hash);
+                self.tx_submit_epoch.remove(&hash);
+                self.track_account_remove(&tx);
+                gas_used += tx_gas;
+                taken.push(tx);
+            } else {
+                remaining.push_back(tx);
+            }
+        }
+
+        self.pending = remaining;
+        self.total_bytes = self.pending.iter().map(Self::estimate_tx_size).sum();
+        taken
+    }
+
+    fn estimate_tx_gas(tx: &Transaction) -> u64 {
+        match tx {
+            Transaction::Transfer(_) => 21_000,
+            Transaction::CreateObject(t) => 50_000 + 200 * t.data.len() as u64,
+            Transaction::Refresh(_) => 30_000,
+            Transaction::DeployContract(_) => 100_000,
+            Transaction::CallContract(_) => 40_000,
+            Transaction::DeployScript(_) => 150_000,
+            Transaction::CallScript(_) => 50_000,
+            Transaction::ValidatorStake(_) => 50_000,
+            Transaction::ValidatorExit(_) => 30_000,
+            Transaction::ValidatorClaimStake(_) => 30_000,
+            Transaction::Shield(_) => 60_000,
+            Transaction::Unshield(_) => 80_000,
+            Transaction::PrivateTransfer(ptx) => {
+                100_000 + 20_000 * ptx.input_nullifiers.len() as u64
+                    + 15_000 * ptx.output_commitments.len() as u64
+            }
+            Transaction::Deferred(dtx) => 75_000 + 5_000 * dtx.guards.len() as u64,
+            Transaction::Blob(tx) => 50_000 + 10 * tx.data.len() as u64,
+            Transaction::Governance(_) => 25_000,
+            Transaction::MultiSig(_) => 50_000,
+            Transaction::UserOp(tx) => 30_000 + 16 * tx.call_data.len() as u64,
+            Transaction::UpgradeContract(tx) => 100_000 + 200 * tx.new_bytecode.len() as u64,
+        }
     }
 
     /// Number of pending transactions.

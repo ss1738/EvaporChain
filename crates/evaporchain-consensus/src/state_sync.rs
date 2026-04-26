@@ -162,6 +162,15 @@ pub enum SyncAction {
 // ─────────────────────── StateSyncManager ────────────────────────────
 
 /// Manages the state sync protocol for a syncing node.
+/// Hardcoded genesis checkpoint for safe bootstrap.
+/// Nodes refuse to sync unless the initial header chain connects to this root.
+#[derive(Debug, Clone)]
+pub struct GenesisCheckpoint {
+    pub height: u64,
+    pub state_root: [u8; 32],
+    pub block_hash: [u8; 32],
+}
+
 pub struct StateSyncManager {
     /// Current sync phase.
     phase: SyncPhase,
@@ -179,6 +188,8 @@ pub struct StateSyncManager {
     received_chunks: HashMap<usize, Vec<u8>>,
     /// Chunks we've requested but not yet received.
     pending_requests: HashSet<usize>,
+    /// Genesis checkpoint for safe initial sync.
+    genesis_checkpoint: Option<GenesisCheckpoint>,
 }
 
 impl StateSyncManager {
@@ -193,6 +204,17 @@ impl StateSyncManager {
             snapshot_meta: None,
             received_chunks: HashMap::new(),
             pending_requests: HashSet::new(),
+            genesis_checkpoint: None,
+        }
+    }
+
+    /// Create a state sync manager with a hardcoded genesis checkpoint.
+    /// The node will refuse to bootstrap from any header chain that doesn't
+    /// connect back to this checkpoint.
+    pub fn with_checkpoint(local_height: u64, checkpoint: GenesisCheckpoint) -> Self {
+        Self {
+            genesis_checkpoint: Some(checkpoint),
+            ..Self::new(local_height)
         }
     }
 
@@ -334,13 +356,38 @@ impl StateSyncManager {
                 }
             }
         } else {
-            // Bootstrap: trust this header if it has a valid commit certificate
-            // (In production, you'd verify against a hardcoded genesis or checkpoint)
+            // Bootstrap: verify the header against the genesis checkpoint if configured.
+            if let Some(ref checkpoint) = self.genesis_checkpoint {
+                if header.height < checkpoint.height {
+                    warn!(
+                        header_height = header.height,
+                        checkpoint_height = checkpoint.height,
+                        "Bootstrap header is below genesis checkpoint — rejecting"
+                    );
+                    self.phase = SyncPhase::Failed("Header below genesis checkpoint".into());
+                    return vec![];
+                }
+                if header.height == checkpoint.height
+                    && header.state_root != checkpoint.state_root
+                {
+                    warn!(
+                        "Bootstrap header state root does not match genesis checkpoint — rejecting"
+                    );
+                    self.phase = SyncPhase::Failed("State root mismatch with genesis checkpoint".into());
+                    return vec![];
+                }
+                if header.commit_certificate.is_none() {
+                    warn!("Bootstrap header has no commit certificate — rejecting");
+                    self.phase = SyncPhase::Failed("No commit certificate on bootstrap header".into());
+                    return vec![];
+                }
+            }
             self.light_client =
                 Some(LightClientVerifier::new(header.clone(), current_time));
             info!(
                 height = target,
-                "Light client bootstrapped with trusted header"
+                has_checkpoint = self.genesis_checkpoint.is_some(),
+                "Light client bootstrapped with verified header"
             );
         }
 
