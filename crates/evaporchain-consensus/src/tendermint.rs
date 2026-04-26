@@ -384,6 +384,7 @@ impl TendermintConsensus {
         let pk_bytes = keypair.public_key_bytes().0.clone();
         if let Some(vi) = self.validator_set.get_mut(self.my_id) {
             vi.bls_public_key = Some(pk_bytes);
+            vi.pop_verified = true;
         }
         self.bls_keypair = Some(keypair);
     }
@@ -2994,7 +2995,9 @@ mod tests {
         }).collect();
         for node in &mut nodes {
             for (id, pk) in &pks {
-                node.validator_set.get_mut(*id).unwrap().bls_public_key = Some(pk.clone());
+                let vi = node.validator_set.get_mut(*id).unwrap();
+                vi.bls_public_key = Some(pk.clone());
+                vi.pop_verified = true;
             }
         }
 
@@ -3329,10 +3332,9 @@ mod integration_tests {
             .collect();
         for node in &mut nodes {
             for (id, pk) in &pks {
-                node.validator_set
-                    .get_mut(*id)
-                    .unwrap()
-                    .bls_public_key = Some(pk.clone());
+                let vi = node.validator_set.get_mut(*id).unwrap();
+                vi.bls_public_key = Some(pk.clone());
+                vi.pop_verified = true;
             }
         }
         nodes
@@ -3850,6 +3852,7 @@ mod vrf_tests {
                 let v = node.validator_set.get_mut(*id).unwrap();
                 v.bls_public_key = Some(bls_pk.clone());
                 v.vrf_public_key = Some(vrf_pk.clone());
+                v.pop_verified = true;
             }
         }
         nodes
