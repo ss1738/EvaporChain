@@ -1122,7 +1122,7 @@ impl BlockStmExecutor {
                         let tx = parallel_txs[tx_idx as usize];
 
                         if verify_sigs {
-                            if crate::parallel::ParallelExecutor::verify_tx_signature(true, tx)
+                            if crate::parallel::ParallelExecutor::verify_tx_signature(true, tx, &chain_id)
                                 .is_err()
                             {
                                 return (tx_idx, Vec::new(), Vec::new(), TxExecResult::Failed { fee: 0 });

@@ -362,7 +362,7 @@ impl DASampler {
                         resp.proof.leaf_index,
                         &resp.shard.hash,
                     );
-                    if !evaporchain_crypto::signatures::HybridVerifier::verify(&msg, sig, pk) {
+                    if !<evaporchain_crypto::signatures::HybridVerifier as evaporchain_crypto::signatures::Verifier>::verify(&msg, sig, pk) {
                         invalid.push(i);
                     }
                 }
