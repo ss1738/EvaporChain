@@ -861,6 +861,63 @@ impl SimpleExecutor {
         }
     }
 
+    fn apply_governance_params(&mut self, db: &dyn StateDB) {
+        if let Some(val) = db.get_governance_param("block_gas_limit") {
+            if let Ok(limit) = val.parse::<u64>() {
+                self.block_gas_limit = limit;
+            }
+        }
+        if let Some(ref mut fc) = self.fee_controller {
+            if let Some(val) = db.get_governance_param("base_fee_floor") {
+                if let Ok(floor) = val.parse::<u64>() {
+                    fc.min_base_fee = floor;
+                }
+            }
+            if let Some(val) = db.get_governance_param("base_fee_ceiling") {
+                if let Ok(ceiling) = val.parse::<u64>() {
+                    fc.max_base_fee = ceiling;
+                }
+            }
+            if let Some(val) = db.get_governance_param("target_gas_utilization") {
+                if let Ok(target) = val.parse::<f64>() {
+                    if (0.0..=1.0).contains(&target) {
+                        fc.target_utilization = target;
+                    }
+                }
+            }
+        }
+    }
+
+    fn finalize_expired_proposals(&self, db: &mut dyn StateDB, current_epoch: u64) {
+        let expired: Vec<GovernanceProposal> = db
+            .all_proposals()
+            .iter()
+            .filter(|p| p.status == ProposalStatus::Active && current_epoch > p.end_epoch)
+            .cloned()
+            .cloned()
+            .collect();
+
+        for mut proposal in expired {
+            if proposal.votes_for > proposal.votes_against * 2 {
+                proposal.status = ProposalStatus::Passed;
+                db.put_governance_param(proposal.param_key.clone(), proposal.param_value.clone());
+                info!(
+                    proposal_id = proposal.proposal_id,
+                    param = proposal.param_key,
+                    value = proposal.param_value,
+                    "Governance proposal passed and applied"
+                );
+            } else {
+                proposal.status = ProposalStatus::Rejected;
+                debug!(
+                    proposal_id = proposal.proposal_id,
+                    "Governance proposal rejected (insufficient votes)"
+                );
+            }
+            db.put_proposal(proposal);
+        }
+    }
+
     pub fn execute_cross_shard_messages(
         &mut self,
         db: &mut dyn StateDB,
@@ -938,6 +995,9 @@ impl ExecutionEngine for SimpleExecutor {
         db: &mut dyn StateDB,
         block: &Block,
     ) -> Result<BlockExecutionResult, ExecutionError> {
+        self.apply_governance_params(db);
+        self.finalize_expired_proposals(db, block.epoch);
+
         let mut txs_executed = 0;
         let mut txs_failed = 0;
         let mut gas_used = 0u64;

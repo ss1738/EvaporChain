@@ -460,6 +460,9 @@ impl ChainStore {
                 from: tx_sender_hex(tx),
                 to: tx_receiver_hex(tx),
                 status: "confirmed".to_string(),
+                gas_used: crate::api::estimate_tx_gas_pub(tx),
+                revert_reason: None,
+                log_count: 0,
             };
             let value = serde_json::to_vec(&receipt).map_err(|e| e.to_string())?;
             self.db.put_cf(tx_cf, tx_hash, &value).map_err(|e| e.to_string())?;
@@ -737,6 +740,12 @@ pub struct TxReceipt {
     pub from: Option<String>,
     pub to: Option<String>,
     pub status: String,
+    #[serde(default)]
+    pub gas_used: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revert_reason: Option<String>,
+    #[serde(default)]
+    pub log_count: u32,
 }
 
 /// Persisted contract event log entry.

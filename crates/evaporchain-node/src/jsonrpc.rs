@@ -116,6 +116,8 @@ fn dispatch(state: &ApiState, req: JsonRpcRequest) -> JsonRpcResponse {
         "evap_mempoolSize" => rpc_mempool_size(state, req.id),
         "evap_getLogs" => rpc_get_logs(state, &req.params, req.id),
         "evap_getBlockLogs" => rpc_get_block_logs(state, &req.params, req.id),
+        "evap_getFinalityStatus" => rpc_get_finality_status(state, &req.params, req.id),
+        "evap_latestFinalizedBlock" => rpc_latest_finalized(state, req.id),
         "net_version" => rpc_net_version(state, req.id),
         "net_peerCount" => rpc_peer_count(state, req.id),
         "net_listening" => JsonRpcResponse::ok(req.id, Value::Bool(true)),
@@ -248,6 +250,9 @@ fn rpc_get_tx_receipt(state: &ApiState, params: &Value, id: Value) -> JsonRpcRes
                 "from": receipt.from,
                 "to": receipt.to,
                 "status": if receipt.status == "confirmed" { "0x1" } else { "0x0" },
+                "gasUsed": json_hex_u64(receipt.gas_used),
+                "revertReason": receipt.revert_reason,
+                "logCount": receipt.log_count,
             });
             return JsonRpcResponse::ok(id, obj);
         }
@@ -336,6 +341,43 @@ fn rpc_net_version(_state: &ApiState, id: Value) -> JsonRpcResponse {
 fn rpc_peer_count(state: &ApiState, id: Value) -> JsonRpcResponse {
     let count = state.peer_count.load(std::sync::atomic::Ordering::Relaxed);
     JsonRpcResponse::ok(id, json_hex_u64(count as u64))
+}
+
+fn rpc_get_finality_status(state: &ApiState, params: &Value, id: Value) -> JsonRpcResponse {
+    let height = match params.as_array().and_then(|a| a.first()).and_then(|v| parse_hex_u64(v)) {
+        Some(h) => h,
+        None => return JsonRpcResponse::invalid_params(id, "missing block height"),
+    };
+    let ft = safe_lock(&state.finality_tracker);
+    let status = ft.finality_status(height);
+    let obj = match status {
+        evaporchain_consensus::finality::FinalityStatus::Finalized { confirmations } => {
+            let record = ft.get_record(height);
+            serde_json::json!({
+                "status": "finalized",
+                "confirmations": confirmations,
+                "signerCount": record.map(|r| r.signer_count).unwrap_or(0),
+                "participationRate": record.map(|r| r.participation_rate()).unwrap_or(0.0),
+            })
+        }
+        evaporchain_consensus::finality::FinalityStatus::Pending => {
+            serde_json::json!({ "status": "pending" })
+        }
+        evaporchain_consensus::finality::FinalityStatus::Unknown => {
+            serde_json::json!({ "status": "unknown" })
+        }
+    };
+    JsonRpcResponse::ok(id, obj)
+}
+
+fn rpc_latest_finalized(state: &ApiState, id: Value) -> JsonRpcResponse {
+    let ft = safe_lock(&state.finality_tracker);
+    let height = ft.latest_finalized_height();
+    let obj = serde_json::json!({
+        "latestFinalizedBlock": json_hex_u64(height),
+        "totalFinalized": ft.total_finalized(),
+    });
+    JsonRpcResponse::ok(id, obj)
 }
 
 fn rpc_get_logs(state: &ApiState, params: &Value, id: Value) -> JsonRpcResponse {
