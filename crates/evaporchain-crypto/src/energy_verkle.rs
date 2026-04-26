@@ -1036,7 +1036,7 @@ impl EnergyVerkleTrie {
             return *expected_root == [0u8; 32];
         }
         let all: Vec<usize> = (0..proof.keys.len()).collect();
-        Self::reconstruct_mp(proof, &all, 0, &[]).map_or(false, |h| h == *expected_root)
+        Self::reconstruct_mp(proof, &all, 0, &[]) == Some(*expected_root)
     }
 
     fn reconstruct_mp(

@@ -206,9 +206,10 @@ impl FrontierState {
         let lazy_objects = self.lazy_cache.total_objects();
 
         format!(
-            "anchors={} poha={}({}h/{}w/{}c) etrie={}active/{}compressed lazy={}snap/{}obj",
+            "anchors={} poha={}/{}ghosts({}h/{}w/{}c) etrie={}active/{}compressed lazy={}snap/{}obj",
             anchor_count,
             poha_active,
+            poha_ghosts,
             dist.hot,
             dist.warm,
             dist.cold,

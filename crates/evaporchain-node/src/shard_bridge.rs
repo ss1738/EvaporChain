@@ -190,7 +190,7 @@ mod tests {
             timestamp: 1000,
         };
 
-        let id = bridge.send_message(msg);
+        let _id = bridge.send_message(msg);
         assert_eq!(bridge.pending_messages(), 1);
 
         let msgs = bridge.drain_shard(ShardId(1));

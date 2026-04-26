@@ -222,17 +222,13 @@ impl MerkleMountainRange {
     pub fn verify(proof: &MMRProof, nullifier_hash: &[u8; 32], expected_root: &[u8; 32]) -> bool {
         // Rebuild from leaf to peak using siblings
         let mut current = *nullifier_hash;
-        let mut height = 0u32;
 
-        for sibling in &proof.siblings {
+        for (height, sibling) in proof.siblings.iter().enumerate() {
             if (proof.leaf_index >> height) & 1 == 0 {
-                // We are left child
                 current = hash_pair(&current, sibling);
             } else {
-                // We are right child
                 current = hash_pair(sibling, &current);
             }
-            height += 1;
         }
 
         // Now `current` is our peak hash. Bag all peaks together.
