@@ -591,6 +591,11 @@ fn execute_tx(
             // Blob transactions are handled by the DA layer
             Ok(())
         }
+        Transaction::Governance(_) => {
+            Err(TxViewError::ExecutionError(ExecutionError::ContractError(
+                "governance txs execute in serial phase".into(),
+            )))
+        }
     };
 
     match result {
@@ -646,6 +651,7 @@ fn estimate_gas(tx: &Transaction) -> u64 {
         Transaction::Blob(tx) => {
             crate::GAS_CREATE_OBJECT_BASE.saturating_add(crate::GAS_CREATE_OBJECT_PER_BYTE.saturating_mul(tx.data.len() as u64))
         }
+        Transaction::Governance(_) => GAS_VALIDATOR_CLAIM_STAKE,
     }
 }
 

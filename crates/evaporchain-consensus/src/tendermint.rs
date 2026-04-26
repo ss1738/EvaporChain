@@ -320,6 +320,10 @@ pub struct TendermintConsensus {
     da_enforcement_height: u64,
     /// Chain identifier — embedded in every block to prevent cross-chain replay.
     chain_id: String,
+    /// Runtime governance parameters (updated via on-chain proposals).
+    governance_params: HashMap<String, String>,
+    /// Latest block height with confirmed DA attestation.
+    da_confirmed_height: u64,
 }
 
 impl TendermintConsensus {
@@ -374,7 +378,21 @@ impl TendermintConsensus {
             da_confidence_threshold: 0.999,
             da_enforcement_height: 100,
             chain_id: String::new(),
+            governance_params: HashMap::new(),
+            da_confirmed_height: 0,
         }
+    }
+
+    pub fn get_governance_param(&self, key: &str) -> Option<&str> {
+        self.governance_params.get(key).map(|s| s.as_str())
+    }
+
+    pub fn da_confirmed_height(&self) -> u64 {
+        self.da_confirmed_height
+    }
+
+    pub fn is_da_finalized(&self, height: u64) -> bool {
+        height <= self.da_confirmed_height
     }
 
     /// Set the chain identifier for this consensus instance.
@@ -521,6 +539,8 @@ impl TendermintConsensus {
             da_confidence_threshold: 0.999,
             da_enforcement_height: 100,
             chain_id: String::new(),
+            governance_params: HashMap::new(),
+            da_confirmed_height: 0,
         }
     }
 
@@ -1463,6 +1483,15 @@ impl TendermintConsensus {
             self.da_block_proposers.insert(block.number, pid);
         }
         self.height += 1;
+
+        // Update DA confirmed height by checking attestation rounds
+        for h in (self.da_confirmed_height + 1)..=block.number {
+            if self.da_attestation.is_confirmed(h) {
+                self.da_confirmed_height = h;
+            } else {
+                break;
+            }
+        }
 
         // Advance randomness beacon with this block's VRF output.
         if let Some(ref vrf_out) = block.vrf_output {

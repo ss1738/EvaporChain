@@ -115,6 +115,7 @@ impl GasEstimator {
             Transaction::Blob(tx) => {
                 50_000 + 10 * tx.data.len() as u64
             }
+            Transaction::Governance(_) => 25_000,
         }
     }
 

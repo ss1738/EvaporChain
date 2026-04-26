@@ -18,7 +18,8 @@ use evaporchain_state::db::StateDB;
 use evaporchain_state::{EvaporationEngine, RefreshEngine};
 use evaporchain_types::{
     Block, CallContractTx, CallScriptTx, CreateObjectTx, DeployContractTx, DeployScriptTx,
-    Epoch, ObjectState, RefreshTx, StakeRecord, StateObject, Transaction, TransferTx,
+    Epoch, GovernanceAction, GovernanceProposal, GovernanceTx, ObjectState, ProposalStatus,
+    RefreshTx, StakeRecord, StateObject, Transaction, TransferTx,
     ValidatorClaimStakeTx, ValidatorExitTx, ValidatorStakeTx,
 };
 use thiserror::Error;
@@ -120,6 +121,7 @@ pub(crate) const GAS_CALL_SCRIPT: u64 = 50_000;
 pub(crate) const GAS_VALIDATOR_STAKE: u64 = 50_000;
 pub(crate) const GAS_VALIDATOR_EXIT: u64 = 30_000;
 pub(crate) const GAS_VALIDATOR_CLAIM_STAKE: u64 = 30_000;
+pub(crate) const GAS_GOVERNANCE: u64 = 25_000;
 
 // TODO(M-19): cross-block execution cache keyed on (tx_hash, pre_state_root).
 // TODO(M-21): sort block transactions by gas_price before execution.
@@ -319,6 +321,7 @@ impl SimpleExecutor {
             Transaction::Blob(tx) => {
                 GAS_CREATE_OBJECT_BASE.saturating_add(GAS_CREATE_OBJECT_PER_BYTE.saturating_mul(tx.data.len() as u64))
             }
+            Transaction::Governance(_) => GAS_GOVERNANCE,
         }
     }
 
@@ -683,6 +686,82 @@ impl SimpleExecutor {
 
         Ok(())
     }
+
+    fn execute_governance(
+        &self,
+        db: &mut dyn StateDB,
+        tx: &GovernanceTx,
+        current_epoch: u64,
+    ) -> Result<(), ExecutionError> {
+        let sender = db.get_or_create_account(&tx.sender);
+        if sender.nonce != tx.nonce {
+            return Err(ExecutionError::InvalidNonce {
+                expected: sender.nonce,
+                got: tx.nonce,
+            });
+        }
+        sender.nonce += 1;
+
+        match &tx.action {
+            GovernanceAction::CreateProposal { title, param_key, param_value, voting_epochs } => {
+                let proposal_id = db.all_proposals().len() as u64;
+                let proposal = GovernanceProposal {
+                    proposal_id,
+                    proposer: tx.sender,
+                    title: title.clone(),
+                    param_key: param_key.clone(),
+                    param_value: param_value.clone(),
+                    start_epoch: current_epoch,
+                    end_epoch: current_epoch + voting_epochs,
+                    votes_for: 0,
+                    votes_against: 0,
+                    status: ProposalStatus::Active,
+                    created_at: current_epoch,
+                };
+                db.put_proposal(proposal);
+            }
+            GovernanceAction::CastVote { proposal_id, vote } => {
+                let proposal = db.get_proposal(*proposal_id).cloned();
+                let mut proposal = proposal.ok_or_else(|| ExecutionError::ContractError(
+                    format!("proposal {} not found", proposal_id)
+                ))?;
+
+                if proposal.status != ProposalStatus::Active {
+                    return Err(ExecutionError::ContractError(
+                        "proposal is not active".to_string()
+                    ));
+                }
+
+                if current_epoch > proposal.end_epoch {
+                    proposal.status = if proposal.votes_for > proposal.votes_against * 2 {
+                        ProposalStatus::Passed
+                    } else {
+                        ProposalStatus::Rejected
+                    };
+                    db.put_proposal(proposal);
+                    return Err(ExecutionError::ContractError(
+                        "voting period has ended".to_string()
+                    ));
+                }
+
+                let voter_balance = db.get_account(&tx.sender).map(|a| a.balance).unwrap_or(0);
+                if *vote {
+                    proposal.votes_for += voter_balance;
+                } else {
+                    proposal.votes_against += voter_balance;
+                }
+
+                if proposal.votes_for > proposal.votes_against * 2 && current_epoch >= proposal.end_epoch {
+                    proposal.status = ProposalStatus::Passed;
+                    db.put_governance_param(proposal.param_key.clone(), proposal.param_value.clone());
+                }
+
+                db.put_proposal(proposal);
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl ExecutionEngine for SimpleExecutor {
@@ -807,6 +886,7 @@ impl ExecutionEngine for SimpleExecutor {
                     // Blob transactions are handled by the DA layer, not execution
                     Ok(())
                 }
+                Transaction::Governance(gov) => self.execute_governance(db, gov, block.epoch),
             };
 
             match result {
@@ -903,6 +983,7 @@ impl ExecutionEngine for SimpleExecutor {
         }
 
         let state_root = db.compute_state_root();
+        db.commit_state_snapshot(block.number);
 
         info!(
             block = block.number,
@@ -1062,6 +1143,10 @@ mod tests {
             Transaction::Blob(b) => {
                 b.signature = Some(sig);
                 b.public_key = Some(pk);
+            }
+            Transaction::Governance(g) => {
+                g.signature = Some(sig);
+                g.public_key = Some(pk);
             }
         }
     }

@@ -766,6 +766,19 @@ impl StateDB for RocksDBStateDB {
 
         count
     }
+
+    fn get_proposal(&self, _proposal_id: u64) -> Option<&evaporchain_types::GovernanceProposal> { None }
+    fn put_proposal(&mut self, _proposal: evaporchain_types::GovernanceProposal) {}
+    fn all_proposals(&self) -> Vec<&evaporchain_types::GovernanceProposal> { Vec::new() }
+    fn get_governance_param(&self, _key: &str) -> Option<&str> { None }
+    fn put_governance_param(&mut self, _key: String, _value: String) {}
+
+    fn commit_state_snapshot(&mut self, _height: u64) {}
+    fn get_account_at_height(&self, _address: &evaporchain_types::AccountAddress, _height: u64) -> Option<evaporchain_types::Account> { None }
+    fn get_object_at_height(&self, _id: &evaporchain_types::ObjectId, _height: u64) -> Option<evaporchain_types::StateObject> { None }
+    fn earliest_snapshot_height(&self) -> Option<u64> { None }
+    fn latest_snapshot_height(&self) -> Option<u64> { None }
+    fn prune_snapshots_before(&mut self, _height: u64) {}
 }
 
 /// Flush account changes back to RocksDB after mutable borrows.

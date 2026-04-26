@@ -266,6 +266,11 @@ impl Mempool {
                     + tx.signature.as_ref().map_or(0, |s| s.len())
                     + tx.public_key.as_ref().map_or(0, |p| p.len())
             }
+            Transaction::Governance(tx) => {
+                32 + 8 + 64
+                    + tx.signature.as_ref().map_or(0, |s| s.len())
+                    + tx.public_key.as_ref().map_or(0, |p| p.len())
+            }
         }
     }
 }

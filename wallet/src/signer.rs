@@ -164,6 +164,10 @@ fn set_signature(tx: &mut Transaction, sig: Vec<u8>, pk: Vec<u8>) {
             b.signature = Some(sig);
             b.public_key = Some(pk);
         }
+        Transaction::Governance(g) => {
+            g.signature = Some(sig);
+            g.public_key = Some(pk);
+        }
     }
 }
 

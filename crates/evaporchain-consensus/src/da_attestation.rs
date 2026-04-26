@@ -13,7 +13,7 @@ use evaporchain_crypto::signatures::{BlsKeypair, BlsPublicKey, BlsVerifier};
 use evaporchain_da::certificate::{
     CertificateBuilder, DAAttestation, DACertificate, create_attestation,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tracing::{debug, info, warn};
 
 // ─────────────────────── Configuration ─────────────────────────────���────
@@ -45,6 +45,8 @@ pub struct DAAttestationManager {
     certificate: Option<DACertificate>,
     /// Number of samples to verify per attestation.
     sample_count: u32,
+    /// Heights that have been confirmed (certificate built successfully).
+    confirmed_heights: HashSet<u64>,
 }
 
 impl DAAttestationManager {
@@ -57,6 +59,7 @@ impl DAAttestationManager {
             attested_validators: HashMap::new(),
             certificate: None,
             sample_count: DEFAULT_SAMPLE_COUNT,
+            confirmed_heights: HashSet::new(),
         }
     }
 
@@ -191,6 +194,7 @@ impl DAAttestationManager {
                     total_stake = cert.total_stake,
                     "DA certificate built"
                 );
+                self.confirmed_heights.insert(cert.block_number);
                 self.certificate = Some(cert.clone());
                 return Some(cert);
             } else {
@@ -235,6 +239,14 @@ impl DAAttestationManager {
     /// Check if a validator has already attested.
     pub fn has_attested(&self, validator_id: u64) -> bool {
         self.attested_validators.contains_key(&validator_id)
+    }
+
+    pub fn is_confirmed(&self, height: u64) -> bool {
+        self.confirmed_heights.contains(&height)
+    }
+
+    pub fn confirmed_heights(&self) -> &HashSet<u64> {
+        &self.confirmed_heights
     }
 
     /// Verify a DA certificate from a received block.

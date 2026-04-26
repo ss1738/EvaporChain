@@ -534,6 +534,7 @@ fn tx_to_json(tx: &Transaction) -> serde_json::Value {
         Transaction::PrivateTransfer(_) => serde_json::json!({ "type": "private_transfer" }),
         Transaction::Deferred(_) => serde_json::json!({ "type": "deferred" }),
         Transaction::Blob(_) => serde_json::json!({ "type": "blob" }),
+        Transaction::Governance(_) => serde_json::json!({ "type": "governance" }),
     }
 }
 
@@ -871,6 +872,7 @@ fn set_tx_signature(tx: &mut Transaction, sig: Vec<u8>, pk: Vec<u8>) {
         Transaction::Unshield(_) | Transaction::PrivateTransfer(_) => {} // ZK-authenticated
         Transaction::Deferred(d) => { d.signature = Some(sig); d.public_key = Some(pk); }
         Transaction::Blob(b) => { b.signature = Some(sig); b.public_key = Some(pk); }
+        Transaction::Governance(g) => { g.signature = Some(sig); g.public_key = Some(pk); }
     }
 }
 
@@ -4779,6 +4781,7 @@ fn estimate_tx_gas(tx: &Transaction) -> u64 {
         Transaction::Blob(tx) => {
             50_000 + 10 * tx.data.len() as u64
         }
+        Transaction::Governance(_) => 25_000,
     }
 }
 
@@ -5004,6 +5007,21 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     hash,
                     tx_type: "blob".to_string(),
                     from: account_full(&tx.submitter),
+                    to: String::new(),
+                    amount: None,
+                    object_id: None,
+                    energy: None,
+                    half_life: None,
+                    method: None,
+                    gas,
+                    block_number: block.number,
+                    epoch: block.epoch,
+                    status: "success".to_string(),
+                },
+                Transaction::Governance(tx) => TxRecord {
+                    hash,
+                    tx_type: "governance".to_string(),
+                    from: account_full(&tx.sender),
                     to: String::new(),
                     amount: None,
                     object_id: None,

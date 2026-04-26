@@ -1,7 +1,8 @@
 use evaporchain_crypto::hash::blake3_hash;
 use evaporchain_crypto::{EnergyVerkleTrie, TrieHealth};
 
-use evaporchain_types::{Account, AccountAddress, GhostRecord, ObjectId, StakeRecord, StateObject};
+use std::collections::BTreeMap;
+use evaporchain_types::{Account, AccountAddress, GhostRecord, GovernanceProposal, ObjectId, StakeRecord, StateObject};
 use std::collections::HashMap;
 
 // ─── Trie key/value derivation (shared by all StateDB backends) ─────────
@@ -193,6 +194,23 @@ pub trait StateDB: Send + Sync {
     /// Return all stake records.
     fn all_stakes(&self) -> Vec<&StakeRecord>;
 
+    // ─── Governance ─────────────────────────────────────────────────────
+
+    fn get_proposal(&self, proposal_id: u64) -> Option<&GovernanceProposal>;
+    fn put_proposal(&mut self, proposal: GovernanceProposal);
+    fn all_proposals(&self) -> Vec<&GovernanceProposal>;
+    fn get_governance_param(&self, key: &str) -> Option<&str>;
+    fn put_governance_param(&mut self, key: String, value: String);
+
+    // ─── Historical Snapshots ───────────────────────────────────────────
+
+    fn commit_state_snapshot(&mut self, height: u64);
+    fn get_account_at_height(&self, address: &AccountAddress, height: u64) -> Option<Account>;
+    fn get_object_at_height(&self, id: &ObjectId, height: u64) -> Option<StateObject>;
+    fn earliest_snapshot_height(&self) -> Option<u64>;
+    fn latest_snapshot_height(&self) -> Option<u64>;
+    fn prune_snapshots_before(&mut self, height: u64);
+
     // ─── State Pruning ───────────────────────────────────────────────────
 
     /// Prune historical state data older than the given block height.
@@ -224,6 +242,18 @@ pub struct InMemoryStateDB {
     note_count: u64,
     // Stake ledger
     stakes: HashMap<u64, StakeRecord>,
+    // Governance
+    proposals: HashMap<u64, GovernanceProposal>,
+    governance_params: HashMap<String, String>,
+    // Historical snapshots
+    snapshots: BTreeMap<u64, HistoricalSnapshot>,
+}
+
+const MAX_SNAPSHOTS: usize = 256;
+
+struct HistoricalSnapshot {
+    accounts: HashMap<AccountAddress, Account>,
+    objects: HashMap<ObjectId, StateObject>,
 }
 
 impl InMemoryStateDB {
@@ -240,6 +270,9 @@ impl InMemoryStateDB {
             shielded_pool_balance: 0,
             note_count: 0,
             stakes: HashMap::new(),
+            proposals: HashMap::new(),
+            governance_params: HashMap::new(),
+            snapshots: BTreeMap::new(),
         }
     }
 
@@ -486,6 +519,63 @@ impl StateDB for InMemoryStateDB {
             self.ghosts.remove(&id);
         }
         count
+    }
+
+    // ─── Governance ─────────────────────────────────────────────────────
+
+    fn get_proposal(&self, proposal_id: u64) -> Option<&GovernanceProposal> {
+        self.proposals.get(&proposal_id)
+    }
+
+    fn put_proposal(&mut self, proposal: GovernanceProposal) {
+        self.proposals.insert(proposal.proposal_id, proposal);
+    }
+
+    fn all_proposals(&self) -> Vec<&GovernanceProposal> {
+        self.proposals.values().collect()
+    }
+
+    fn get_governance_param(&self, key: &str) -> Option<&str> {
+        self.governance_params.get(key).map(|s| s.as_str())
+    }
+
+    fn put_governance_param(&mut self, key: String, value: String) {
+        self.governance_params.insert(key, value);
+    }
+
+    // ─── Historical Snapshots ───────────────────────────────────────────
+
+    fn commit_state_snapshot(&mut self, height: u64) {
+        let snap = HistoricalSnapshot {
+            accounts: self.accounts.clone(),
+            objects: self.objects.clone(),
+        };
+        self.snapshots.insert(height, snap);
+        while self.snapshots.len() > MAX_SNAPSHOTS {
+            if let Some(&oldest) = self.snapshots.keys().next() {
+                self.snapshots.remove(&oldest);
+            }
+        }
+    }
+
+    fn get_account_at_height(&self, address: &AccountAddress, height: u64) -> Option<Account> {
+        self.snapshots.get(&height).and_then(|s| s.accounts.get(address).cloned())
+    }
+
+    fn get_object_at_height(&self, id: &ObjectId, height: u64) -> Option<StateObject> {
+        self.snapshots.get(&height).and_then(|s| s.objects.get(id).cloned())
+    }
+
+    fn earliest_snapshot_height(&self) -> Option<u64> {
+        self.snapshots.keys().next().copied()
+    }
+
+    fn latest_snapshot_height(&self) -> Option<u64> {
+        self.snapshots.keys().next_back().copied()
+    }
+
+    fn prune_snapshots_before(&mut self, height: u64) {
+        self.snapshots = self.snapshots.split_off(&height);
     }
 }
 

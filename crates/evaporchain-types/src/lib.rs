@@ -231,6 +231,8 @@ pub enum Transaction {
     Deferred(DeferredTx),
     /// Blob: data availability blob submission.
     Blob(BlobTx),
+    /// Governance: on-chain parameter proposals and voting.
+    Governance(GovernanceTx),
 }
 
 impl Transaction {
@@ -422,6 +424,27 @@ impl Transaction {
                 buf.extend_from_slice(&tx.data);
                 buf
             }
+            Transaction::Governance(tx) => {
+                let mut buf = Vec::new();
+                buf.push(0x10);
+                buf.extend_from_slice(&tx.sender);
+                buf.extend_from_slice(&tx.nonce.to_le_bytes());
+                match &tx.action {
+                    GovernanceAction::CreateProposal { title, param_key, param_value, voting_epochs } => {
+                        buf.push(0x01);
+                        buf.extend_from_slice(title.as_bytes());
+                        buf.extend_from_slice(param_key.as_bytes());
+                        buf.extend_from_slice(param_value.as_bytes());
+                        buf.extend_from_slice(&voting_epochs.to_le_bytes());
+                    }
+                    GovernanceAction::CastVote { proposal_id, vote } => {
+                        buf.push(0x02);
+                        buf.extend_from_slice(&proposal_id.to_le_bytes());
+                        buf.push(if *vote { 1 } else { 0 });
+                    }
+                }
+                buf
+            }
         }
     }
 
@@ -449,6 +472,7 @@ impl Transaction {
             Transaction::PrivateTransfer(_) => None,
             Transaction::Deferred(tx) => tx.signature.as_deref(),
             Transaction::Blob(tx) => tx.signature.as_deref(),
+            Transaction::Governance(tx) => tx.signature.as_deref(),
         }
     }
 
@@ -470,6 +494,7 @@ impl Transaction {
             Transaction::PrivateTransfer(_) => None,
             Transaction::Deferred(tx) => tx.public_key.as_deref(),
             Transaction::Blob(tx) => tx.public_key.as_deref(),
+            Transaction::Governance(tx) => tx.public_key.as_deref(),
         }
     }
 
@@ -493,6 +518,7 @@ impl Transaction {
             Transaction::PrivateTransfer(_) => None,
             Transaction::Deferred(tx) => Some(&tx.submitter),
             Transaction::Blob(tx) => Some(&tx.submitter),
+            Transaction::Governance(tx) => Some(&tx.sender),
         }
     }
 }
@@ -668,6 +694,59 @@ pub struct StakeRecord {
     pub staked_at_epoch: Epoch,
     pub unbonding_epoch: Option<Epoch>,
     pub slashed_amount: u64,
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// On-Chain Governance Types
+// ═══════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ProposalStatus {
+    Pending,
+    Active,
+    Passed,
+    Rejected,
+    Executed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GovernanceProposal {
+    pub proposal_id: u64,
+    pub proposer: AccountAddress,
+    pub title: String,
+    pub param_key: String,
+    pub param_value: String,
+    pub start_epoch: u64,
+    pub end_epoch: u64,
+    pub votes_for: u64,
+    pub votes_against: u64,
+    pub status: ProposalStatus,
+    pub created_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GovernanceVote {
+    pub proposal_id: u64,
+    pub voter: AccountAddress,
+    pub vote: bool,
+    pub stake_weight: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GovernanceAction {
+    CreateProposal { title: String, param_key: String, param_value: String, voting_epochs: u64 },
+    CastVote { proposal_id: u64, vote: bool },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GovernanceTx {
+    pub action: GovernanceAction,
+    pub sender: AccountAddress,
+    pub nonce: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<Vec<u8>>,
 }
 
 // ═══════════════════════════════════════════════════════════════════

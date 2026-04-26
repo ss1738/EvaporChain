@@ -39,6 +39,8 @@ pub struct FinalityRecord {
     pub signing_stake: u64,
     /// Total stake in the validator set.
     pub total_stake: u64,
+    /// Whether DA attestation has been confirmed for this block.
+    pub da_confirmed: bool,
 }
 
 impl FinalityRecord {
@@ -166,6 +168,7 @@ impl FinalityTracker {
             signer_count,
             signing_stake,
             total_stake,
+            da_confirmed: false,
         };
 
         debug!(

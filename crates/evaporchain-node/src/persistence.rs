@@ -886,6 +886,7 @@ fn tx_type_name(tx: &Transaction) -> &'static str {
         Transaction::PrivateTransfer(_) => "private_transfer",
         Transaction::Deferred(_) => "deferred",
         Transaction::Blob(_) => "blob",
+        Transaction::Governance(_) => "governance",
     }
 }
 
@@ -906,7 +907,7 @@ fn tx_sender_hex(tx: &Transaction) -> Option<String> {
         Transaction::ValidatorExit(t) => Some(addr_hex(&t.validator_address)),
         Transaction::ValidatorClaimStake(t) => Some(addr_hex(&t.validator_address)),
         Transaction::Shield(_) | Transaction::Unshield(_) | Transaction::PrivateTransfer(_)
-        | Transaction::Deferred(_) | Transaction::Blob(_) => None,
+        | Transaction::Deferred(_) | Transaction::Blob(_) | Transaction::Governance(_) => None,
     }
 }
 

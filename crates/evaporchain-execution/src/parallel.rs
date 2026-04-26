@@ -32,8 +32,8 @@ use tracing::{debug, info};
 use crate::{
     fees, BlockExecutionResult, ExecutionEngine, ExecutionError,
     GAS_CALL_CONTRACT, GAS_CALL_SCRIPT, GAS_CREATE_OBJECT_BASE, GAS_CREATE_OBJECT_PER_BYTE,
-    GAS_DEPLOY_CONTRACT, GAS_DEPLOY_SCRIPT, GAS_REFRESH, GAS_TRANSFER, GAS_VALIDATOR_CLAIM_STAKE,
-    GAS_VALIDATOR_EXIT, GAS_VALIDATOR_STAKE,
+    GAS_DEPLOY_CONTRACT, GAS_DEPLOY_SCRIPT, GAS_GOVERNANCE, GAS_REFRESH, GAS_TRANSFER,
+    GAS_VALIDATOR_CLAIM_STAKE, GAS_VALIDATOR_EXIT, GAS_VALIDATOR_STAKE,
 };
 
 // ─── Access Key & Conflict Detection ───────────────────────────────────────
@@ -102,6 +102,9 @@ fn extract_access_keys(tx: &Transaction) -> Vec<AccessKey> {
         }
         Transaction::Blob(tx) => {
             vec![AccessKey::Account(tx.submitter)]
+        }
+        Transaction::Governance(tx) => {
+            vec![AccessKey::Account(tx.sender)]
         }
     }
 }
@@ -372,6 +375,17 @@ impl StateDB for OverlayStateDB {
     fn put_stake(&mut self, _record: evaporchain_types::StakeRecord) {}
     fn remove_stake(&mut self, _validator_id: u64) -> Option<evaporchain_types::StakeRecord> { None }
     fn all_stakes(&self) -> Vec<&evaporchain_types::StakeRecord> { Vec::new() }
+    fn get_proposal(&self, _proposal_id: u64) -> Option<&evaporchain_types::GovernanceProposal> { None }
+    fn put_proposal(&mut self, _proposal: evaporchain_types::GovernanceProposal) {}
+    fn all_proposals(&self) -> Vec<&evaporchain_types::GovernanceProposal> { Vec::new() }
+    fn get_governance_param(&self, _key: &str) -> Option<&str> { None }
+    fn put_governance_param(&mut self, _key: String, _value: String) {}
+    fn commit_state_snapshot(&mut self, _height: u64) {}
+    fn get_account_at_height(&self, _address: &evaporchain_types::AccountAddress, _height: u64) -> Option<evaporchain_types::Account> { None }
+    fn get_object_at_height(&self, _id: &evaporchain_types::ObjectId, _height: u64) -> Option<evaporchain_types::StateObject> { None }
+    fn earliest_snapshot_height(&self) -> Option<u64> { None }
+    fn latest_snapshot_height(&self) -> Option<u64> { None }
+    fn prune_snapshots_before(&mut self, _height: u64) {}
 }
 
 // ─── Partition Execution Result ────────────────────────────────────────────
@@ -525,6 +539,7 @@ impl ParallelExecutor {
             Transaction::Blob(tx) => {
                 crate::GAS_CREATE_OBJECT_BASE + crate::GAS_CREATE_OBJECT_PER_BYTE * tx.data.len() as u64
             }
+            Transaction::Governance(_) => GAS_GOVERNANCE,
         }
     }
 
@@ -645,6 +660,11 @@ impl ParallelExecutor {
                 Transaction::Blob(_) => {
                     // Blob transactions are handled by the DA layer
                     Ok(())
+                }
+                Transaction::Governance(_) => {
+                    Err(ExecutionError::ContractError(
+                        "governance txs execute in serial phase".into(),
+                    ))
                 }
             };
 
