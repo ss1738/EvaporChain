@@ -827,6 +827,15 @@ impl P2pNetworkService {
                             SwarmEvent::NewListenAddr { address, .. } => {
                                 info!("Listening on {address}/p2p/{local_peer_id}");
                             }
+                            SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
+                                warn!("Outgoing connection error to {peer_id:?}: {error}");
+                            }
+                            SwarmEvent::IncomingConnectionError { error, .. } => {
+                                warn!("Incoming connection error: {error}");
+                            }
+                            SwarmEvent::Dialing { peer_id, .. } => {
+                                debug!("Dialing peer {peer_id:?}");
+                            }
                             _ => {}
                         }
                     }
