@@ -327,6 +327,8 @@ pub struct TendermintConsensus {
     governance_params: HashMap<String, String>,
     /// Latest block height with confirmed DA attestation.
     da_confirmed_height: u64,
+    /// Timestamp of the last committed block (for monotonicity validation).
+    last_block_timestamp: u64,
 }
 
 impl TendermintConsensus {
@@ -384,6 +386,7 @@ impl TendermintConsensus {
             chain_id: String::new(),
             governance_params: HashMap::new(),
             da_confirmed_height: 0,
+            last_block_timestamp: 0,
         }
     }
 
@@ -546,6 +549,7 @@ impl TendermintConsensus {
             chain_id: String::new(),
             governance_params: HashMap::new(),
             da_confirmed_height: 0,
+            last_block_timestamp: 0,
         }
     }
 
@@ -609,12 +613,18 @@ impl TendermintConsensus {
     /// Number of validators needed for a 2f+1 quorum (count-based, for certificate signer checks).
     fn quorum_size(&self) -> usize {
         let n = self.validator_set.len();
+        if n == 0 {
+            return usize::MAX;
+        }
         n * 2 / 3 + 1
     }
 
     /// Stake threshold for a 2f+1 quorum (stake-weighted).
     fn stake_quorum_threshold(&self) -> u64 {
         let total = self.validator_set.total_stake();
+        if total == 0 {
+            return u64::MAX;
+        }
         total * 2 / 3 + 1
     }
 
@@ -1018,6 +1028,23 @@ impl TendermintConsensus {
                     return actions;
                 }
 
+                // Reject proposals that exceed the block gas limit
+                if self.executor.block_gas_limit > 0 {
+                    let total_gas: u64 = block.transactions.iter()
+                        .map(|tx| ParallelExecutor::estimate_gas(tx))
+                        .fold(0u64, |a, g| a.saturating_add(g));
+                    if total_gas > self.executor.block_gas_limit {
+                        warn!(
+                            height = height,
+                            round = round,
+                            total_gas = total_gas,
+                            limit = self.executor.block_gas_limit,
+                            "Rejected proposal: cumulative gas exceeds block gas limit"
+                        );
+                        return actions;
+                    }
+                }
+
                 // Verify chain_id matches (prevents cross-chain replay)
                 if !self.chain_id.is_empty() && !block.chain_id.is_empty() && block.chain_id != self.chain_id {
                     warn!(
@@ -1044,6 +1071,20 @@ impl TendermintConsensus {
                     // Ask for the last few blocks leading up to this height.
                     let sync_from = self.height.saturating_sub(5);
                     actions.push(ConsensusAction::RequestSync(sync_from, height));
+                    return actions;
+                }
+
+                // Timestamp monotonicity: block timestamp must not decrease
+                if block.timestamp > 0 && self.last_block_timestamp > 0
+                    && block.timestamp < self.last_block_timestamp
+                {
+                    warn!(
+                        height = height,
+                        round = round,
+                        block_ts = block.timestamp,
+                        last_ts = self.last_block_timestamp,
+                        "Rejected proposal: timestamp not monotonically increasing"
+                    );
                     return actions;
                 }
 
@@ -1485,6 +1526,9 @@ impl TendermintConsensus {
         self.mempool.set_epoch(block.epoch);
         self.current_state_root = state_root;
         self.committed_heights.insert(self.height);
+        if block.timestamp > 0 {
+            self.last_block_timestamp = block.timestamp;
+        }
         if let Some(pid) = block.producer_id {
             self.da_block_proposers.insert(block.number, pid);
         }

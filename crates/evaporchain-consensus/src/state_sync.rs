@@ -382,6 +382,20 @@ impl StateSyncManager {
                     self.phase = SyncPhase::Failed("Empty commit certificate on bootstrap header".into());
                     return vec![];
                 }
+                let n = header.validator_set.active_count();
+                let quorum = if n == 0 { usize::MAX } else { n * 2 / 3 + 1 };
+                if header.commit_certificate.signer_ids.len() < quorum {
+                    warn!(
+                        signers = header.commit_certificate.signer_ids.len(),
+                        quorum = quorum,
+                        "Bootstrap header commit certificate lacks quorum — rejecting"
+                    );
+                    self.phase = SyncPhase::Failed(format!(
+                        "Commit certificate has {} signers, need {} for quorum",
+                        header.commit_certificate.signer_ids.len(), quorum
+                    ));
+                    return vec![];
+                }
             }
             self.light_client =
                 Some(LightClientVerifier::new(header.clone(), current_time));

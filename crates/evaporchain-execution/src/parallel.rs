@@ -534,7 +534,7 @@ impl ParallelExecutor {
         self.fee_controller.as_mut()
     }
 
-    fn estimate_gas(tx: &Transaction) -> u64 {
+    pub fn estimate_gas(tx: &Transaction) -> u64 {
         match tx {
             Transaction::Transfer(_) => GAS_TRANSFER,
             Transaction::CreateObject(create) => {

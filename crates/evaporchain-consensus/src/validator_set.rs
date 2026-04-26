@@ -278,10 +278,7 @@ impl ValidatorSet {
             return None;
         }
 
-        // Use base stake (NOT health-weighted effective_weight) for leader selection.
-        // Health scores can diverge by 1-2 blocks between nodes, causing different
-        // nodes to compute different proposers — breaking consensus.
-        let total: u64 = active.iter().map(|v| v.stake).sum();
+        let total: u64 = active.iter().map(|v| v.stake).fold(0u64, |a, s| a.saturating_add(s));
         if total == 0 {
             let idx = epoch as usize % active.len();
             return Some(active[idx]);
@@ -291,7 +288,7 @@ impl ValidatorSet {
         let mut accumulated = 0u64;
 
         for validator in &active {
-            accumulated += validator.stake;
+            accumulated = accumulated.saturating_add(validator.stake);
             if accumulated > weighted_index {
                 return Some(validator);
             }
@@ -467,11 +464,12 @@ impl ValidatorSet {
     }
 
     /// Total raw stake across all active (non-jailed) validators.
+    /// Uses saturating arithmetic to prevent overflow in Byzantine scenarios.
     pub fn total_stake(&self) -> u64 {
         self.validators.iter()
             .filter(|v| !v.jailed)
             .map(|v| v.stake)
-            .sum()
+            .fold(0u64, |acc, s| acc.saturating_add(s))
     }
 
     /// Get a validator by ID.
@@ -498,7 +496,7 @@ impl ValidatorSet {
         if active.is_empty() {
             return None;
         }
-        let total: u64 = active.iter().map(|v| v.stake).sum();
+        let total: u64 = active.iter().map(|v| v.stake).fold(0u64, |a, s| a.saturating_add(s));
         if total == 0 {
             let idx = epoch as usize % active.len();
             return Some(active[idx]);
@@ -506,7 +504,7 @@ impl ValidatorSet {
         let weighted_index = Self::epoch_hash_with_seed(epoch, beacon_seed) % total;
         let mut accumulated = 0u64;
         for validator in &active {
-            accumulated += validator.stake;
+            accumulated = accumulated.saturating_add(validator.stake);
             if accumulated > weighted_index {
                 return Some(validator);
             }
