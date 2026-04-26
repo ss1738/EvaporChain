@@ -29,7 +29,7 @@ use subtle::ConstantTimeEq;
 const VRF_DOMAIN_SEP: &[u8] = b"EvaporChain_VRF_v1";
 
 /// VRF output: 32 bytes of verifiable pseudorandomness.
-#[derive(Debug, Clone, Copy, Hash)]
+#[derive(Debug, Clone, Copy)]
 pub struct VrfOutput(pub [u8; 32]);
 
 impl PartialEq for VrfOutput {
@@ -39,6 +39,12 @@ impl PartialEq for VrfOutput {
 }
 
 impl Eq for VrfOutput {}
+
+impl std::hash::Hash for VrfOutput {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
 
 /// VRF proof: the ML-DSA signature (3293 bytes for Dilithium3).
 #[derive(Debug, Clone)]

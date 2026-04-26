@@ -142,18 +142,13 @@ struct CompressedNode {
     last_activity_epoch: u64,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 enum EnergyNode {
     Internal(Box<EnergyInternal>),
     Leaf(EnergyLeaf),
     Compressed(CompressedNode),
+    #[default]
     Empty,
-}
-
-impl Default for EnergyNode {
-    fn default() -> Self {
-        EnergyNode::Empty
-    }
 }
 
 impl EnergyInternal {
@@ -207,7 +202,7 @@ impl EnergyNode {
                 for (&idx, child) in &internal.children {
                     let child_hash = child.hash();
                     let scalar = bytes_to_scalar(&child_hash);
-                    commitment = commitment + gens[idx as usize] * scalar;
+                    commitment += gens[idx as usize] * scalar;
                 }
                 point_to_bytes(&commitment)
             }
@@ -693,7 +688,7 @@ impl EnergyVerkleTrie {
                     for (&cidx, child) in &internal.children {
                         let child_hash = child.hash();
                         let scalar = bytes_to_scalar(&child_hash);
-                        commitment = commitment + gens[cidx as usize] * scalar;
+                        commitment += gens[cidx as usize] * scalar;
                     }
                     commitments.push(point_to_bytes(&commitment));
 
@@ -771,11 +766,11 @@ impl EnergyVerkleTrie {
             let idx = proof.path_indices[level];
             let mut commitment = Ep::identity();
             let child_scalar = bytes_to_scalar(&current_hash);
-            commitment = commitment + gens[idx as usize] * child_scalar;
+            commitment += gens[idx as usize] * child_scalar;
 
             for &(sib_idx, ref sib_hash) in &proof.siblings[level] {
                 let sib_scalar = bytes_to_scalar(sib_hash);
-                commitment = commitment + gens[sib_idx as usize] * sib_scalar;
+                commitment += gens[sib_idx as usize] * sib_scalar;
             }
 
             current_hash = point_to_bytes(&commitment);
@@ -1097,14 +1092,14 @@ impl EnergyVerkleTrie {
             cp.push(byte);
             let ch = Self::reconstruct_mp(proof, gi, depth + 1, &cp)?;
             let scalar = bytes_to_scalar(&ch);
-            commitment = commitment + gens[byte as usize] * scalar;
+            commitment += gens[byte as usize] * scalar;
         }
 
         let path_vec = path.to_vec();
         if let Some(sibs) = proof.siblings.get(&path_vec) {
             for &(idx, ref hash) in sibs {
                 let scalar = bytes_to_scalar(hash);
-                commitment = commitment + gens[idx as usize] * scalar;
+                commitment += gens[idx as usize] * scalar;
             }
         }
 

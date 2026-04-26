@@ -75,17 +75,12 @@ struct LeafNode {
     value: [u8; 32],
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 enum Node {
     Internal(Box<InternalNode>),
     Leaf(LeafNode),
+    #[default]
     Empty,
-}
-
-impl Default for Node {
-    fn default() -> Self {
-        Node::Empty
-    }
 }
 
 impl InternalNode {
@@ -107,7 +102,7 @@ fn commit_internal(children: &BTreeMap<u8, Node>) -> Ep {
     for (&idx, child) in children.iter() {
         let child_hash = node_hash(child);
         let scalar = bytes_to_scalar(&child_hash);
-        commitment = commitment + gens[idx as usize] * scalar;
+        commitment += gens[idx as usize] * scalar;
     }
 
     commitment
@@ -448,12 +443,12 @@ impl VerkleTrie {
 
             // Add the path child's contribution
             let child_scalar = bytes_to_scalar(&current_hash);
-            commitment = commitment + gens[idx as usize] * child_scalar;
+            commitment += gens[idx as usize] * child_scalar;
 
             // Add sibling contributions
             for &(sib_idx, ref sib_hash) in &proof.siblings[level] {
                 let sib_scalar = bytes_to_scalar(sib_hash);
-                commitment = commitment + gens[sib_idx as usize] * sib_scalar;
+                commitment += gens[sib_idx as usize] * sib_scalar;
             }
 
             current_hash = point_to_bytes(&commitment);
