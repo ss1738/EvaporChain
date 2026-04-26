@@ -372,7 +372,12 @@ impl EvaporVM {
 
                 Op::Jump(target) => {
                     self.charge_gas(GAS_JUMP)?;
-                    // Backwards jumps are loops — enforce iteration limit
+                    if *target >= bytecode.opcodes.len() {
+                        return Err(ScriptError::Runtime(format!(
+                            "jump target {} out of bounds (bytecode len {})",
+                            target, bytecode.opcodes.len()
+                        )));
+                    }
                     if *target <= ip {
                         loop_counter += 1;
                         if loop_counter > MAX_LOOP_ITERATIONS {
@@ -387,6 +392,12 @@ impl EvaporVM {
 
                 Op::JumpIf(target) => {
                     self.charge_gas(GAS_JUMP)?;
+                    if *target >= bytecode.opcodes.len() {
+                        return Err(ScriptError::Runtime(format!(
+                            "jump target {} out of bounds (bytecode len {})",
+                            target, bytecode.opcodes.len()
+                        )));
+                    }
                     let cond = self.pop()?.as_bool()?;
                     if cond {
                         if *target <= ip {
@@ -404,6 +415,12 @@ impl EvaporVM {
 
                 Op::JumpIfFalse(target) => {
                     self.charge_gas(GAS_JUMP)?;
+                    if *target >= bytecode.opcodes.len() {
+                        return Err(ScriptError::Runtime(format!(
+                            "jump target {} out of bounds (bytecode len {})",
+                            target, bytecode.opcodes.len()
+                        )));
+                    }
                     let cond = self.pop()?.as_bool()?;
                     if !cond {
                         if *target <= ip {

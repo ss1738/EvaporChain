@@ -889,7 +889,13 @@ impl SimpleExecutor {
             )));
         }
 
+        let mut seen_signers = std::collections::HashSet::new();
         for (signer_addr, _) in &tx.signatures {
+            if !seen_signers.insert(signer_addr) {
+                return Err(ExecutionError::ContractError(
+                    "duplicate signer in multisig transaction".into(),
+                ));
+            }
             if !tx.signers.contains(signer_addr) {
                 return Err(ExecutionError::ContractError(
                     "signer not in authorized signers list".to_string()

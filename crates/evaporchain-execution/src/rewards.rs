@@ -126,7 +126,7 @@ impl RewardAccumulator {
             return 0;
         }
 
-        let total_stake: u64 = stakers.iter().map(|(_, s)| *s).sum();
+        let total_stake: u64 = stakers.iter().map(|(_, s)| *s).fold(0u64, |a, s| a.saturating_add(s));
         if total_stake == 0 {
             return 0;
         }
@@ -135,16 +135,30 @@ impl RewardAccumulator {
         let pool = self.pending_staker_rewards;
 
         for (addr, stake) in stakers {
-            // Proportional share using u128 to avoid overflow
             let share = (pool as u128 * *stake as u128 / total_stake as u128) as u64;
             if share > 0 {
                 let acct = db.get_or_create_account(addr);
                 acct.balance = acct.balance.saturating_add(share);
-                distributed += share;
+                distributed = distributed.saturating_add(share);
             }
         }
 
-        // Any remainder stays in pending (rounding dust)
+        // Distribute rounding dust to highest-stake stakers (1 unit each)
+        let mut remainder = pool.saturating_sub(distributed);
+        if remainder > 0 {
+            let mut sorted: Vec<&(AccountAddress, u64)> = stakers.iter().collect();
+            sorted.sort_by(|a, b| b.1.cmp(&a.1));
+            for (addr, _) in sorted {
+                if remainder == 0 {
+                    break;
+                }
+                let acct = db.get_or_create_account(addr);
+                acct.balance = acct.balance.saturating_add(1);
+                distributed = distributed.saturating_add(1);
+                remainder -= 1;
+            }
+        }
+
         self.pending_staker_rewards = self.pending_staker_rewards.saturating_sub(distributed);
         distributed
     }

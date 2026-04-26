@@ -237,6 +237,9 @@ impl MerkleMountainRange {
 
         // Now `current` is our peak hash. Bag all peaks together.
         // Insert our peak at the correct index among the other peaks.
+        if proof.peak_index > proof.peak_hashes.len() {
+            return false;
+        }
         let mut all_peaks = Vec::with_capacity(proof.peak_hashes.len() + 1);
         let mut other_idx = 0;
         for i in 0..=proof.peak_hashes.len() {

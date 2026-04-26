@@ -453,18 +453,24 @@ impl ContractEngine {
             }
         }
 
-        // Execute the method.
+        // Execute the method (snapshot state for rollback on quota violation).
         let contract = self
             .contracts
             .get_mut(&contract_id)
             .ok_or(ContractError::NotFound(contract_id))?;
         let creator = contract.creator;
+        let state_snapshot = contract.state.clone();
         let return_value =
-            execute_method(&contract.template, &mut contract.state, method, args, caller, &creator, current_epoch)?;
+            execute_method(&contract.template, &mut contract.state, method, args, caller, &creator, current_epoch)
+                .map_err(|e| {
+                    contract.state = state_snapshot.clone();
+                    e
+                })?;
 
         // Enforce per-contract storage quota
         let state_size = serde_json::to_vec(&contract.state).map(|v| v.len()).unwrap_or(0);
         if state_size > MAX_CONTRACT_STATE_BYTES {
+            contract.state = state_snapshot;
             return Err(ContractError::StorageQuotaExceeded {
                 size: state_size,
                 max: MAX_CONTRACT_STATE_BYTES,
