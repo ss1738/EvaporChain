@@ -860,6 +860,76 @@ impl SimpleExecutor {
             }
         }
     }
+
+    pub fn execute_cross_shard_messages(
+        &mut self,
+        db: &mut dyn StateDB,
+        messages: Vec<evaporchain_sharding::cross_shard::CrossShardMessage>,
+        epoch: u64,
+    ) -> Vec<evaporchain_sharding::cross_shard::CrossShardReceipt> {
+        use evaporchain_sharding::cross_shard::{CrossShardReceipt, MessagePayload};
+
+        let mut receipts = Vec::with_capacity(messages.len());
+
+        for msg in messages {
+            let (success, result_hash) = match &msg.payload {
+                MessagePayload::Transfer { from, amount } => {
+                    let mut from_addr = [0u8; 32];
+                    from_addr[..20].copy_from_slice(from);
+                    let mut to_addr = [0u8; 32];
+                    to_addr[..20].copy_from_slice(&msg.target_object);
+
+                    let from_acct = db.get_or_create_account(&from_addr);
+                    if from_acct.balance >= *amount {
+                        from_acct.balance -= *amount;
+                        let to_acct = db.get_or_create_account(&to_addr);
+                        to_acct.balance += *amount;
+                        let mut h = blake3::Hasher::new();
+                        h.update(&from_addr);
+                        h.update(&to_addr);
+                        h.update(&amount.to_le_bytes());
+                        (true, *h.finalize().as_bytes())
+                    } else {
+                        (false, [0u8; 32])
+                    }
+                }
+                MessagePayload::Reference { source_object } => {
+                    let mut obj_id = [0u8; 32];
+                    obj_id[..20].copy_from_slice(source_object);
+                    let exists = db.get_object(&obj_id).is_some();
+                    let mut h = blake3::Hasher::new();
+                    h.update(source_object);
+                    h.update(&[exists as u8]);
+                    (exists, *h.finalize().as_bytes())
+                }
+                MessagePayload::Query { key } => {
+                    let mut h = blake3::Hasher::new();
+                    h.update(key.as_bytes());
+                    (true, *h.finalize().as_bytes())
+                }
+                MessagePayload::Eviction { .. } => {
+                    let mut obj_id = [0u8; 32];
+                    obj_id[..20].copy_from_slice(&msg.target_object);
+                    let evicted = db.get_object(&obj_id).is_some();
+                    if evicted {
+                        db.delete_object(&obj_id);
+                    }
+                    (evicted, [0u8; 32])
+                }
+            };
+
+            receipts.push(CrossShardReceipt {
+                message_id: msg.id,
+                from_shard: msg.from_shard,
+                to_shard: msg.to_shard,
+                success,
+                result_hash,
+                processed_at: epoch,
+            });
+        }
+
+        receipts
+    }
 }
 
 impl ExecutionEngine for SimpleExecutor {
@@ -1129,78 +1199,6 @@ impl ExecutionEngine for SimpleExecutor {
             cross_shard_processed: 0,
             cross_shard_receipts: Vec::new(),
         })
-    }
-
-    /// Execute cross-shard messages against the local state.
-    /// Returns receipts for each processed message.
-    pub fn execute_cross_shard_messages(
-        &mut self,
-        db: &mut dyn StateDB,
-        messages: Vec<evaporchain_sharding::cross_shard::CrossShardMessage>,
-        epoch: u64,
-    ) -> Vec<evaporchain_sharding::cross_shard::CrossShardReceipt> {
-        use evaporchain_sharding::cross_shard::{CrossShardReceipt, MessagePayload};
-
-        let mut receipts = Vec::with_capacity(messages.len());
-
-        for msg in messages {
-            let (success, result_hash) = match &msg.payload {
-                MessagePayload::Transfer { from, amount } => {
-                    let mut from_addr = [0u8; 32];
-                    from_addr[..20].copy_from_slice(from);
-                    let mut to_addr = [0u8; 32];
-                    to_addr[..20].copy_from_slice(&msg.target_object);
-
-                    let from_acct = db.get_or_create_account(&from_addr);
-                    if from_acct.balance >= *amount {
-                        from_acct.balance -= *amount;
-                        let to_acct = db.get_or_create_account(&to_addr);
-                        to_acct.balance += *amount;
-                        let mut h = blake3::Hasher::new();
-                        h.update(&from_addr);
-                        h.update(&to_addr);
-                        h.update(&amount.to_le_bytes());
-                        (true, *h.finalize().as_bytes())
-                    } else {
-                        (false, [0u8; 32])
-                    }
-                }
-                MessagePayload::Reference { source_object } => {
-                    let mut obj_id = [0u8; 32];
-                    obj_id[..20].copy_from_slice(source_object);
-                    let exists = db.get_object(&obj_id).is_some();
-                    let mut h = blake3::Hasher::new();
-                    h.update(source_object);
-                    h.update(&[exists as u8]);
-                    (exists, *h.finalize().as_bytes())
-                }
-                MessagePayload::Query { key } => {
-                    let mut h = blake3::Hasher::new();
-                    h.update(key.as_bytes());
-                    (true, *h.finalize().as_bytes())
-                }
-                MessagePayload::Eviction { .. } => {
-                    let mut obj_id = [0u8; 32];
-                    obj_id[..20].copy_from_slice(&msg.target_object);
-                    let evicted = db.get_object(&obj_id).is_some();
-                    if evicted {
-                        db.delete_object(&obj_id);
-                    }
-                    (evicted, [0u8; 32])
-                }
-            };
-
-            receipts.push(CrossShardReceipt {
-                message_id: msg.id,
-                from_shard: msg.from_shard,
-                to_shard: msg.to_shard,
-                success,
-                result_hash,
-                processed_at: epoch,
-            });
-        }
-
-        receipts
     }
 
     fn mmr_root(&self) -> [u8; 32] {
