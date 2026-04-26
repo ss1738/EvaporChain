@@ -4743,14 +4743,15 @@ mod da_tests {
     }
 
     #[test]
-    fn test_empty_proposal_has_no_data_root() {
+    fn test_empty_proposal_has_data_root_sentinel() {
         let mut tc = make_test_tc();
         let mut db = InMemoryStateDB::new();
 
-        // No transactions in mempool
+        // No transactions in mempool — should still get a sentinel data_root
         let block = tc.create_proposal(&mut db).unwrap();
         assert_eq!(block.transactions.len(), 0);
-        assert!(block.data_root.is_none(), "empty block should have no data_root");
+        let expected = blake3::hash(b"evaporchain:empty_block").into();
+        assert_eq!(block.data_root, Some(expected), "empty block should have sentinel data_root");
     }
 
     #[test]
@@ -5066,7 +5067,7 @@ mod da_tests {
     }
 
     #[test]
-    fn test_da_sampling_empty_block_returns_none() {
+    fn test_da_sampling_empty_block_has_sentinel() {
         let mut tc = make_proposer_tc();
         let mut db = InMemoryStateDB::new();
 
@@ -5074,10 +5075,8 @@ mod da_tests {
         tc.set_bls_keypair(kp);
 
         let block = tc.create_proposal(&mut db).unwrap();
-        assert!(block.data_root.is_none(), "Empty block should have no data_root");
-
-        let att = tc.perform_da_sampling(&block);
-        assert!(att.is_none(), "No attestation for empty blocks");
+        let expected: [u8; 32] = blake3::hash(b"evaporchain:empty_block").into();
+        assert_eq!(block.data_root, Some(expected), "Empty block should have sentinel data_root");
     }
 
     #[test]
