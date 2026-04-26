@@ -525,6 +525,11 @@ impl TendermintConsensus {
         self.height
     }
 
+    pub fn set_height(&mut self, h: u64) {
+        self.height = h;
+        self.round_state = RoundState::new(0);
+    }
+
     pub fn epoch(&self) -> Epoch {
         self.epoch
     }
@@ -1844,7 +1849,8 @@ impl TendermintConsensus {
                 }
             }
         } else {
-            None // Empty blocks have no data_root
+            let empty_root = blake3::hash(b"evaporchain:empty_block").into();
+            Some(empty_root)
         };
 
         // Build namespace Merkle tree for blob commitments

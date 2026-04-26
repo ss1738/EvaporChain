@@ -16,6 +16,7 @@ use evaporchain_consensus::encrypted_mempool::EncryptedMempool;
 use evaporchain_consensus::finality::FinalityTracker;
 use evaporchain_consensus::light_client::{LightBlockHeader, LightClientVerifier};
 use evaporchain_consensus::tendermint::{TendermintConsensus, ConsensusMessage, ConsensusAction, ProofVerifier, AnchorHashProvider};
+use evaporchain_consensus::state_sync::{StateSyncManager, SyncAction, SyncMessage};
 use evaporchain_consensus::validator_set::{ValidatorInfo, ValidatorSet};
 use evaporchain_network::service::{cache_block, NetworkConfig, P2pNetworkService};
 use evaporchain_proving::ProvingEngine;
@@ -2132,6 +2133,8 @@ async fn main() -> Result<()> {
     let mut pending_blocks: BTreeMap<u64, evaporchain_types::Block> = BTreeMap::new();
     // Track whether we have an outstanding sync request to avoid duplicate requests
     let mut sync_in_flight = false;
+    // State sync manager for fast-syncing when >1000 blocks behind
+    let mut state_sync: Option<StateSyncManager> = None;
 
     // ── Populate block cache from persistence (enables sync after restart) ──
     if let Some(ref cache) = block_cache {
@@ -3007,7 +3010,65 @@ async fn main() -> Result<()> {
                     None => std::future::pending::<Option<Vec<u8>>>().await,
                 }
             }, if tendermint.is_some() => {
-                if let Ok(msg) = serde_json::from_slice::<ConsensusMessage>(&data) {
+                if let Ok(sync_msg) = serde_json::from_slice::<SyncMessage>(&data) {
+                    if let Some(ref mut ssm) = state_sync {
+                        let actions = ssm.on_message(0, sync_msg);
+                        for action in actions {
+                            match action {
+                                SyncAction::Broadcast { message } | SyncAction::SendToPeer { message, .. } => {
+                                    if let Some(ref sender) = consensus_net_sender {
+                                        if let Ok(data) = serde_json::to_vec(&message) {
+                                            let _ = sender.send(data).await;
+                                        }
+                                    }
+                                }
+                                SyncAction::ApplySnapshot { height, state_root, data } => {
+                                    println!(
+                                        "{} \x1b[1;32mState sync: applying snapshot at height {} ({}B)\x1b[0m",
+                                        node_tag, height, data.len()
+                                    );
+                                    if let Ok(snapshot) = serde_json::from_slice::<evaporchain_state::snapshot::StateSnapshot>(&data) {
+                                        let mut db_guard = safe_lock(&db);
+                                        let _ = evaporchain_state::snapshot::SnapshotApplier::apply(&mut *db_guard, &snapshot);
+                                        drop(db_guard);
+                                        if let Some(ref tc) = tendermint {
+                                            let mut c = safe_lock(&tc);
+                                            c.set_height(height + 1);
+                                        }
+                                        println!(
+                                            "{} \x1b[1;32mState sync complete — resuming at height {}\x1b[0m",
+                                            node_tag, height + 1
+                                        );
+                                    }
+                                    state_sync = None;
+                                    sync_in_flight = false;
+                                }
+                                SyncAction::ResumeConsensus { height, .. } => {
+                                    if let Some(ref tc) = tendermint {
+                                        let mut c = safe_lock(&tc);
+                                        c.set_height(height);
+                                    }
+                                    state_sync = None;
+                                    sync_in_flight = false;
+                                }
+                            }
+                        }
+                    } else {
+                        // We're not syncing — serve the request if it's a tip request
+                        if let Some(ref tc) = tendermint {
+                            let c = safe_lock(&tc);
+                            if let Ok(srv) = sync_server.lock() {
+                                if let Some(resp) = srv.handle_request(&sync_msg, c.height()) {
+                                    if let Some(ref sender) = consensus_net_sender {
+                                        if let Ok(data) = serde_json::to_vec(&resp) {
+                                            let _ = sender.send(data).await;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if let Ok(msg) = serde_json::from_slice::<ConsensusMessage>(&data) {
                     eprintln!(
                         "{} [net-msg] h={} r={} type={}",
                         node_tag, msg.height(), msg.round(),
@@ -3562,6 +3623,26 @@ async fn main() -> Result<()> {
                 if tendermint.is_some() {
                     let expected_next = local_height + 1;
                     if block.number > expected_next && !sync_in_flight {
+                        let gap = block.number - local_height;
+                        if gap > 1000 && state_sync.is_none() {
+                            println!(
+                                "{} \x1b[1;33mGap too large ({} blocks) — initiating state sync\x1b[0m",
+                                node_tag, gap
+                            );
+                            let mut ssm = StateSyncManager::new(local_height);
+                            let actions = ssm.start();
+                            for action in actions {
+                                if let SyncAction::Broadcast { message } = action {
+                                    if let Some(ref sender) = consensus_net_sender {
+                                        if let Ok(data) = serde_json::to_vec(&message) {
+                                            let _ = sender.send(data).await;
+                                        }
+                                    }
+                                }
+                            }
+                            state_sync = Some(ssm);
+                            sync_in_flight = true;
+                        }
                         println!(
                             "{} [33m⚠ Tendermint sync gap: at #{}, received #{} — requesting backfill[0m",
                             node_tag, local_height, block.number
