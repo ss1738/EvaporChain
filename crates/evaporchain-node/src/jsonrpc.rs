@@ -216,7 +216,7 @@ fn rpc_get_block_by_number(state: &ApiState, params: &Value, id: Value) -> JsonR
         let obj = serde_json::json!({
             "number": json_hex_u64(record.number),
             "epoch": json_hex_u64(record.epoch),
-            "hash": record.hash,
+            "hash": &record.state_root,
             "parentHash": record.parent_hash,
             "stateRoot": record.state_root,
             "txCount": record.tx_count,
