@@ -123,7 +123,7 @@ impl SnapshotBuilder {
             .into_iter()
             .filter_map(|addr| db.get_account(&addr).cloned())
             .collect();
-        accounts.sort_by(|a, b| a.address.cmp(&b.address));
+        accounts.sort_by_key(|a| a.address);
 
         // Collect objects (sorted by ID)
         let mut objects: Vec<StateObject> = db
@@ -131,7 +131,7 @@ impl SnapshotBuilder {
             .into_iter()
             .filter_map(|id| db.get_object(&id).cloned())
             .collect();
-        objects.sort_by(|a, b| a.id.cmp(&b.id));
+        objects.sort_by_key(|o| o.id);
 
         // Collect ghosts (sorted by object ID)
         let mut ghosts: Vec<GhostRecord> = db
@@ -139,7 +139,7 @@ impl SnapshotBuilder {
             .into_iter()
             .filter_map(|id| db.get_ghost(&id).cloned())
             .collect();
-        ghosts.sort_by(|a, b| a.object_id.cmp(&b.object_id));
+        ghosts.sort_by_key(|g| g.object_id);
 
         // Collect privacy state
         let mut nullifiers = db.all_nullifiers();

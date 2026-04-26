@@ -17,7 +17,7 @@ EvaporChain introduces thermodynamic state decay — every piece of on-chain sta
 - [x] ZK proving (Nova recursive proof folding)
 - [x] P2P networking (block propagation, tx gossip)
 - [x] Full node with API, dashboard, faucet, and CLI
-- [x] **4,159 tests passing**
+- [x] **4,486+ tests passing**
 - [ ] Public testnet deployment
 
 ## Run Locally
@@ -58,38 +58,42 @@ Coming soon. The testnet will be deployed on 4 Hetzner nodes. See [`scripts/depl
 |-------|----------------|
 | Language | Rust |
 | Smart Contracts | 6 template contracts + EvaporScript (custom scripting language) |
-| Consensus | Rotating leader with stake-weighted selection |
+| Consensus | Tendermint BFT with BLS aggregation + VRF leader election |
 | Execution | SimpleExecutor with gas metering + PID fee controller |
 | ZK Proofs | Nova IVC recursive proof folding |
-| State | Verkle trie (active) + MMR nullifier accumulator (expired) |
-| Signatures | ML-DSA (post-quantum) |
+| State | Energy-Verkle trie (active) + MMR nullifier accumulator (expired) + WAL crash recovery |
+| Signatures | ML-DSA Dilithium3 (post-quantum) + BLS12-381 aggregation |
 | Hashing | BLAKE3 |
-| Networking | Custom P2P with block propagation and tx gossip |
+| Networking | libp2p with gossipsub, mDNS, TLS 1.3, block sync, DA shard sampling |
 | API | Axum HTTP with live dashboard |
 
 ## Crate Map
 
 ```
-evaporchain-types       Core types (transactions, objects, accounts, energy decay)
-evaporchain-crypto      BLAKE3, ML-DSA signatures, Verkle trie, MMR
-evaporchain-state       Evaporation engine, refresh engine, state DB
-evaporchain-contracts   6 contract templates + rule engine
-evaporchain-script      EvaporScript parser → compiler → VM
-evaporchain-execution   Transaction executor, gas, fees
-evaporchain-consensus   Rotating leader, encrypted mempool, validator sets
-evaporchain-proving     Nova recursive ZK proof folding
-evaporchain-network     P2P block/tx propagation
-evaporchain-node        Full node binary + API + dashboard + faucet
-evaporchain-cli         Command-line interface
+evaporchain-types       Core types (19 tx variants, objects, accounts, energy decay)
+evaporchain-crypto      BLAKE3, BLS, ML-DSA, VRF, Verkle trie, Energy-Verkle, MMR
+evaporchain-state       Evaporation engine, refresh engine, state DB, WAL, RocksDB
+evaporchain-contracts   6 contract templates + rule engine + upgrades
+evaporchain-script      EvaporScript parser → compiler (constant fold + DCE) → VM (91 ops)
+evaporchain-execution   Block-STM parallel executor, gas, PID fees, privacy execution
+evaporchain-consensus   Tendermint BFT, finality tracker, light client, state sync
+evaporchain-proving     Nova IVC recursive proofs, privacy proofs, evaporation proofs
+evaporchain-network     libp2p gossipsub, block sync, DA shard sampling
+evaporchain-da          2D erasure coding, PoHA, namespace proofs, DA certificates
+evaporchain-oracle      Decentralized oracle with BFT consensus + inclusion proofs
+evaporchain-sharding    Dynamic shard assignment, cross-shard messaging, compaction
+evaporchain-node        Full node binary + JSON-RPC API + dashboard + persistence
+evaporchain-cli         CLI with genesis ceremony + keygen + monitoring
+evaporchain-mcp         MCP server for AI agent interaction (15 tools, 7 resources)
 ```
 
 ## Test Coverage
 
-**4,159 tests** across 13 crates — all passing.
+**4,486+ tests** across 16 crates — all passing.
 
 ```bash
 cargo test --workspace
-# 4,159 passed; 0 failed
+# 4,486 passed; 0 failed
 ```
 
 ## License

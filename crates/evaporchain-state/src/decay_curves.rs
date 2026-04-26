@@ -115,6 +115,7 @@ const OP_MAX: u8 = 0x0A;
 const MAX_STEPS: usize = 256;
 const MAX_STACK: usize = 32;
 
+#[allow(clippy::manual_checked_division)]
 fn evaluate_custom(bytecode: &[u8], initial_energy: u64, elapsed_epochs: u64) -> Option<u64> {
     let mut stack: Vec<u64> = vec![initial_energy, elapsed_epochs];
     let mut pc = 0;

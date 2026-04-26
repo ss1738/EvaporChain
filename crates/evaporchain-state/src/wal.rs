@@ -12,8 +12,8 @@
 
 use blake3;
 use serde::{Deserialize, Serialize};
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufReader, Read, Seek, SeekFrom, Write};
+use std::fs::{File, OpenOptions};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 const WAL_MAGIC: &[u8; 8] = b"EVAPWAL\x01";
@@ -48,7 +48,7 @@ pub struct WalEntry {
 }
 
 pub struct WriteAheadLog {
-    path: PathBuf,
+    _path: PathBuf,
     file: File,
     last_committed_height: Option<u64>,
 }
@@ -59,6 +59,7 @@ impl WriteAheadLog {
         let exists = path.exists();
         let mut file = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(&path)?;
@@ -81,7 +82,7 @@ impl WriteAheadLog {
         file.seek(SeekFrom::End(0))?;
 
         Ok(Self {
-            path,
+            _path: path,
             file,
             last_committed_height,
         })

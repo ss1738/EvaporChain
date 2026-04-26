@@ -81,6 +81,7 @@ impl GhostBridgeBuilder {
         Self { next_nonce: 0 }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn build_proof(
         &mut self,
         ghost: GhostRecord,
@@ -140,6 +141,7 @@ pub fn verify_ghost_bridge_proof(proof: &GhostBridgeProof) -> GhostBridgeVerific
     verify_ghost_bridge_proof_with_keys(proof, None)
 }
 
+#[allow(clippy::field_reassign_with_default)]
 pub fn verify_ghost_bridge_proof_with_keys(
     proof: &GhostBridgeProof,
     validator_pubkeys: Option<&BTreeMap<u64, Vec<u8>>>,
@@ -169,7 +171,7 @@ pub fn verify_ghost_bridge_proof_with_keys(
         match validator_pubkeys {
             Some(keys) => {
                 proof.state_root_proof.validator_signatures.iter().all(|sig| {
-                    keys.get(&sig.validator_id).map_or(false, |pk_bytes| {
+                    keys.get(&sig.validator_id).is_some_and(|pk_bytes| {
                         let pk = BlsPublicKey(pk_bytes.clone());
                         let bls_sig = BlsSignature(sig.signature.clone());
                         BlsVerifier::verify(&proof.state_root, &bls_sig, &pk)
@@ -226,6 +228,7 @@ fn verify_mmr_path(
     let mut idx = leaf_index;
     for sibling in proof_hashes {
         let mut hasher = blake3::Hasher::new();
+        #[allow(clippy::manual_is_multiple_of)]
         if idx % 2 == 0 {
             hasher.update(&current);
             hasher.update(sibling);

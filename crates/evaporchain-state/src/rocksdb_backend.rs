@@ -420,7 +420,7 @@ impl RocksDBStateDB {
         let mut guard = self.pending_batch.lock().unwrap();
         if let Some(ref mut batch) = *guard {
             let cf = self.db.cf_handle(CF_NULLIFIERS).unwrap();
-            batch.put_cf(cf, nullifier, &[1u8]);
+            batch.put_cf(cf, nullifier, [1u8]);
         } else {
             drop(guard);
             let cf = self.cf(CF_NULLIFIERS);
@@ -789,7 +789,7 @@ impl StateDB for RocksDBStateDB {
 impl RocksDBStateDB {
     pub fn flush_accounts(&mut self) {
         let cf = self.cf(CF_ACCOUNTS);
-        for (_, account) in &self.accounts {
+        for account in self.accounts.values() {
             let value = bincode::serialize(account).expect("serialize account");
             self.db.put_cf(cf, account.address, value).expect("flush account to RocksDB");
         }
@@ -799,7 +799,7 @@ impl RocksDBStateDB {
 
     pub fn flush_objects(&mut self) {
         let cf = self.cf(CF_OBJECTS);
-        for (_, obj) in &self.objects {
+        for obj in self.objects.values() {
             let value = bincode::serialize(obj).expect("serialize object");
             self.db.put_cf(cf, obj.id, value).expect("flush object to RocksDB");
         }

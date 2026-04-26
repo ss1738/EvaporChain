@@ -73,7 +73,7 @@ impl OracleReport {
 
     pub fn report_hash(&self) -> [u8; 32] {
         let mut hasher = Sha256::new();
-        hasher.update(&self.signable_bytes());
+        hasher.update(self.signable_bytes());
         hasher.finalize().into()
     }
 }
@@ -233,6 +233,7 @@ impl Aggregator {
 
         let min = values[0];
         let max = values[values.len() - 1];
+        #[allow(clippy::manual_is_multiple_of)]
         let median = if values.len() % 2 == 0 {
             (values[values.len() / 2 - 1] + values[values.len() / 2]) / 2.0
         } else {
@@ -251,7 +252,7 @@ impl Aggregator {
 
         let confidence = if values.len() >= 3 {
             let spread = if median > 0.0 { (max - min) / median } else { 0.0 };
-            (1.0 - spread).max(0.0).min(1.0)
+            (1.0 - spread).clamp(0.0, 1.0)
         } else if values.len() == 2 {
             0.8
         } else {

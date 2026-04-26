@@ -51,7 +51,7 @@ pub fn build_energy_trie(
         );
     }
 
-    for (_id, obj) in objects {
+    for obj in objects.values() {
         trie.insert(
             trie_key_for_object(&obj.id),
             trie_value_for_object(obj),
