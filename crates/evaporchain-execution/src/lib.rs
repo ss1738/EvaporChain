@@ -138,7 +138,7 @@ const UNBONDING_PERIOD_EPOCHS: u64 = 256;
 /// Number of state snapshots to retain before pruning older ones.
 const SNAPSHOT_RETAIN_BLOCKS: u64 = 256;
 
-const MAX_CALL_DEPTH: usize = 64;
+pub(crate) const MAX_CALL_DEPTH: usize = 64;
 
 // TODO(M-19): cross-block execution cache keyed on (tx_hash, pre_state_root).
 // TODO(M-21): sort block transactions by gas_price before execution.
@@ -850,11 +850,18 @@ impl SimpleExecutor {
                     ));
                 }
 
+                if proposal.voters.contains(&tx.sender) {
+                    return Err(ExecutionError::ContractError(
+                        "duplicate vote: account has already voted on this proposal".into(),
+                    ));
+                }
+                proposal.voters.insert(tx.sender);
+
                 let voter_balance = db.get_account(&tx.sender).map(|a| a.balance).unwrap_or(0);
                 if *vote {
-                    proposal.votes_for += voter_balance;
+                    proposal.votes_for = proposal.votes_for.saturating_add(voter_balance);
                 } else {
-                    proposal.votes_against += voter_balance;
+                    proposal.votes_against = proposal.votes_against.saturating_add(voter_balance);
                 }
 
                 if proposal.votes_for > proposal.votes_against * 2 && current_epoch >= proposal.end_epoch {
@@ -1306,6 +1313,37 @@ impl ExecutionEngine for SimpleExecutor {
         let deferred_result =
             self.deferred_queue
                 .process_epoch(block.epoch, db, &self.contract_engine);
+        // Execute matured deferred transactions.
+        for (submitter, inner_bytes, _gas_limit) in &deferred_result.matured_txs {
+            match serde_json::from_slice::<Transaction>(inner_bytes) {
+                Ok(inner_tx) => {
+                    let result = match &inner_tx {
+                        Transaction::Transfer(t) => self.execute_transfer(db, t),
+                        Transaction::CreateObject(c) => self.execute_create_object(db, c, block.epoch),
+                        Transaction::CallContract(c) => self.execute_call_contract(c),
+                        Transaction::CallScript(c) => self.execute_call_script(c),
+                        _ => Err(ExecutionError::ContractError(
+                            "unsupported deferred inner tx type".into(),
+                        )),
+                    };
+                    match result {
+                        Ok(()) => {
+                            debug!(submitter = %hex::encode(&submitter[..8]), "Matured deferred tx executed");
+                            txs_executed += 1;
+                        }
+                        Err(e) => {
+                            debug!(error = %e, "Matured deferred tx execution failed");
+                            txs_failed += 1;
+                        }
+                    }
+                }
+                Err(e) => {
+                    debug!(error = %e, "Failed to deserialize matured deferred tx inner bytes");
+                    txs_failed += 1;
+                }
+            }
+        }
+
         // Refund expired deferred tx deposits.
         for (addr, refund) in &deferred_result.refunds {
             if let Some(acct) = db.get_account_mut(addr) {

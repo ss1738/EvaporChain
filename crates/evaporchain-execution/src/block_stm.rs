@@ -1355,6 +1355,7 @@ impl ExecutionEngine for BlockStmExecutor {
         let mut total_fees = par_result.total_fees;
 
         // ── Phase 3: Execute serial txs (contract/script) ──
+        let mut serial_call_depth: usize = 0;
         for &(idx, tx) in &serial_txs {
             if self.verify_signatures {
                 if let Err(e) =
@@ -1435,14 +1436,21 @@ impl ExecutionEngine for BlockStmExecutor {
                     }
                 }
                 Transaction::CallContract(call) => {
-                    let args: Result<serde_json::Value, _> = serde_json::from_str(&call.args);
-                    match args {
-                        Ok(a) => self
-                            .contract_engine
-                            .call(call.contract_id, &call.method, &a, &call.caller, call.epoch)
-                            .map(|_| ())
-                            .map_err(|e| ExecutionError::ContractError(e.to_string())),
-                        Err(e) => Err(ExecutionError::ContractError(format!("invalid args: {e}"))),
+                    if serial_call_depth >= crate::MAX_CALL_DEPTH {
+                        Err(ExecutionError::CallDepthExceeded(crate::MAX_CALL_DEPTH))
+                    } else {
+                        serial_call_depth += 1;
+                        let args: Result<serde_json::Value, _> = serde_json::from_str(&call.args);
+                        let r = match args {
+                            Ok(a) => self
+                                .contract_engine
+                                .call(call.contract_id, &call.method, &a, &call.caller, call.epoch)
+                                .map(|_| ())
+                                .map_err(|e| ExecutionError::ContractError(e.to_string())),
+                            Err(e) => Err(ExecutionError::ContractError(format!("invalid args: {e}"))),
+                        };
+                        serial_call_depth = serial_call_depth.saturating_sub(1);
+                        r
                     }
                 }
                 Transaction::DeployScript(deploy) => self
@@ -1454,16 +1462,23 @@ impl ExecutionEngine for BlockStmExecutor {
                     .map(|_| ())
                     .map_err(|e| ExecutionError::ScriptError(e.to_string())),
                 Transaction::CallScript(call) => {
-                    let args: Vec<evaporchain_script::Value> =
-                        if call.args.is_empty() || call.args == "[]" {
-                            vec![]
-                        } else {
-                            serde_json::from_str(&call.args).unwrap_or_default()
-                        };
-                    self.script_engine
-                        .call(call.contract_id, &call.method, args, call.caller, call.epoch)
-                        .map(|_| ())
-                        .map_err(|e| ExecutionError::ScriptError(e.to_string()))
+                    if serial_call_depth >= crate::MAX_CALL_DEPTH {
+                        Err(ExecutionError::CallDepthExceeded(crate::MAX_CALL_DEPTH))
+                    } else {
+                        serial_call_depth += 1;
+                        let args: Vec<evaporchain_script::Value> =
+                            if call.args.is_empty() || call.args == "[]" {
+                                vec![]
+                            } else {
+                                serde_json::from_str(&call.args).unwrap_or_default()
+                            };
+                        let r = self.script_engine
+                            .call(call.contract_id, &call.method, args, call.caller, call.epoch)
+                            .map(|_| ())
+                            .map_err(|e| ExecutionError::ScriptError(e.to_string()));
+                        serial_call_depth = serial_call_depth.saturating_sub(1);
+                        r
+                    }
                 }
                 Transaction::Shield(shield) => {
                     self.privacy_executor.set_epoch(block.epoch);

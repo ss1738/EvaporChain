@@ -39,6 +39,7 @@ pub struct BlockResponse {
 /// Manages state synchronization for a node that has fallen behind.
 pub struct StateSyncManager {
     local_height: u64,
+    local_tip_hash: [u8; 32],
     state: SyncState,
     peer_heights: HashMap<u64, u64>,
     pending_request: Option<BlockRequest>,
@@ -50,12 +51,17 @@ impl StateSyncManager {
     pub fn new(local_height: u64) -> Self {
         Self {
             local_height,
+            local_tip_hash: [0u8; 32],
             state: SyncState::Synced,
             peer_heights: HashMap::new(),
             pending_request: None,
             stall_counter: 0,
             max_stall_retries: 5,
         }
+    }
+
+    pub fn set_local_tip_hash(&mut self, hash: [u8; 32]) {
+        self.local_tip_hash = hash;
     }
 
     pub fn state(&self) -> &SyncState {
@@ -145,7 +151,7 @@ impl StateSyncManager {
         // Validate chain continuity
         let mut validated = Vec::with_capacity(response.blocks.len());
         let mut expected_height = self.local_height + 1;
-        let mut prev_hash = [0u8; 32]; // caller should set this from local chain tip
+        let mut prev_hash = self.local_tip_hash;
 
         for block in &response.blocks {
             if block.number != expected_height {
@@ -155,7 +161,7 @@ impl StateSyncManager {
                 });
             }
 
-            if expected_height > self.local_height + 1 && block.parent_hash != prev_hash {
+            if prev_hash != [0u8; 32] && block.parent_hash != prev_hash {
                 return Err(SyncError::ParentHashMismatch {
                     height: block.number,
                 });
@@ -166,7 +172,10 @@ impl StateSyncManager {
             validated.push(block.clone());
         }
 
-        // Update local height
+        // Update local height and tip hash
+        if !validated.is_empty() {
+            self.local_tip_hash = prev_hash;
+        }
         if let Some(last) = validated.last() {
             self.local_height = last.number;
         }

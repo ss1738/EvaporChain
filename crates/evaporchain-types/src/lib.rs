@@ -831,6 +831,8 @@ pub struct GovernanceProposal {
     pub votes_against: u64,
     pub status: ProposalStatus,
     pub created_at: u64,
+    #[serde(default)]
+    pub voters: std::collections::HashSet<AccountAddress>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

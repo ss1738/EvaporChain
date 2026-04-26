@@ -424,6 +424,17 @@ impl VerkleTrie {
             None => [0u8; 32], // non-existence
         };
 
+        // Validate sibling indices: no duplicates, no overlap with path
+        for level in 0..proof.depth {
+            let path_idx = proof.path_indices[level];
+            let mut seen = std::collections::HashSet::new();
+            for &(sib_idx, _) in &proof.siblings[level] {
+                if sib_idx == path_idx || !seen.insert(sib_idx) {
+                    return false;
+                }
+            }
+        }
+
         // Rebuild commitments bottom-up
         let gens = generators();
         let mut current_hash = leaf_hash;
