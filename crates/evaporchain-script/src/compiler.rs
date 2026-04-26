@@ -487,30 +487,33 @@ fn eval_const_expr(expr: &Expr) -> Option<Value> {
 fn constant_fold(opcodes: &mut Vec<Op>) -> bool {
     let mut changed = false;
     let mut i = 0;
-    while i + 2 < opcodes.len() {
-        if let (Op::Push(ref a), Op::Push(ref b)) = (&opcodes[i], &opcodes[i + 1]) {
-            let folded = match &opcodes[i + 2] {
-                Op::Add => fold_binop(a, b, BinOp::Add),
-                Op::Sub => fold_binop(a, b, BinOp::Sub),
-                Op::Mul => fold_binop(a, b, BinOp::Mul),
-                Op::Div => fold_binop(a, b, BinOp::Div),
-                Op::Mod => fold_binop(a, b, BinOp::Mod),
-                Op::Eq => fold_binop(a, b, BinOp::Eq),
-                Op::Neq => fold_binop(a, b, BinOp::Neq),
-                Op::Gt => fold_binop(a, b, BinOp::Gt),
-                Op::Lt => fold_binop(a, b, BinOp::Lt),
-                Op::Gte => fold_binop(a, b, BinOp::Gte),
-                Op::Lte => fold_binop(a, b, BinOp::Lte),
-                Op::And => fold_binop(a, b, BinOp::And),
-                Op::Or => fold_binop(a, b, BinOp::Or),
-                _ => None,
-            };
-            if let Some(result) = folded {
-                opcodes[i] = Op::Push(result);
-                opcodes.remove(i + 2);
-                opcodes.remove(i + 1);
-                changed = true;
-                continue;
+    while i < opcodes.len() {
+        // Binary constant fold: Push(a), Push(b), BinOp → Push(result)
+        if i + 2 < opcodes.len() {
+            if let (Op::Push(ref a), Op::Push(ref b)) = (&opcodes[i], &opcodes[i + 1]) {
+                let folded = match &opcodes[i + 2] {
+                    Op::Add => fold_binop(a, b, BinOp::Add),
+                    Op::Sub => fold_binop(a, b, BinOp::Sub),
+                    Op::Mul => fold_binop(a, b, BinOp::Mul),
+                    Op::Div => fold_binop(a, b, BinOp::Div),
+                    Op::Mod => fold_binop(a, b, BinOp::Mod),
+                    Op::Eq => fold_binop(a, b, BinOp::Eq),
+                    Op::Neq => fold_binop(a, b, BinOp::Neq),
+                    Op::Gt => fold_binop(a, b, BinOp::Gt),
+                    Op::Lt => fold_binop(a, b, BinOp::Lt),
+                    Op::Gte => fold_binop(a, b, BinOp::Gte),
+                    Op::Lte => fold_binop(a, b, BinOp::Lte),
+                    Op::And => fold_binop(a, b, BinOp::And),
+                    Op::Or => fold_binop(a, b, BinOp::Or),
+                    _ => None,
+                };
+                if let Some(result) = folded {
+                    opcodes[i] = Op::Push(result);
+                    opcodes.remove(i + 2);
+                    opcodes.remove(i + 1);
+                    changed = true;
+                    continue;
+                }
             }
         }
         // Unary constant fold: Push(a), Not → Push(!a)
