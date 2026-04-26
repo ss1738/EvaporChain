@@ -135,6 +135,37 @@ impl MockConsensus {
         self.parent_hash = parent_hash;
     }
 
+    fn validate_block_header(&self, block: &Block) -> Result<(), ConsensusError> {
+        if block.number == 0 {
+            return Err(ConsensusError::ProposalFailed("block number cannot be 0".into()));
+        }
+        if block.number <= self.block_number {
+            return Err(ConsensusError::ProposalFailed(
+                format!("block height {} not greater than local {}", block.number, self.block_number),
+            ));
+        }
+        if block.epoch < self.epoch {
+            return Err(ConsensusError::ProposalFailed(
+                format!("block epoch {} less than local {}", block.epoch, self.epoch),
+            ));
+        }
+        if block.parent_hash != self.parent_hash && self.block_number > 0 {
+            return Err(ConsensusError::ProposalFailed(
+                "parent hash mismatch".into(),
+            ));
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if block.timestamp > now + 30 {
+            return Err(ConsensusError::ProposalFailed(
+                "block timestamp too far in the future".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Apply a block received from a peer: re-execute transactions and
     /// advance local state to match.  Returns the execution result so the
     /// caller can verify the state root matches.
@@ -143,6 +174,8 @@ impl MockConsensus {
         db: &mut dyn StateDB,
         block: &Block,
     ) -> Result<BlockProductionResult, ConsensusError> {
+        self.validate_block_header(block)?;
+
         let execution = self
             .executor
             .execute_block(db, block)
@@ -498,6 +531,34 @@ impl RotatingConsensus {
 
     /// Validate that a received block was produced by the legitimate leader.
     pub fn validate_received_block(&self, block: &Block) -> Result<(), ConsensusError> {
+        // Structural header validation
+        if block.number == 0 {
+            return Err(ConsensusError::ProposalFailed("block number cannot be 0".into()));
+        }
+        if block.number <= self.block_number {
+            return Err(ConsensusError::ProposalFailed(
+                format!("block height {} not greater than local {}", block.number, self.block_number),
+            ));
+        }
+        if block.epoch < self.epoch {
+            return Err(ConsensusError::ProposalFailed(
+                format!("block epoch {} less than local {}", block.epoch, self.epoch),
+            ));
+        }
+        if block.parent_hash != self.parent_hash && self.block_number > 0 {
+            return Err(ConsensusError::ProposalFailed("parent hash mismatch".into()));
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if block.timestamp > now + 30 {
+            return Err(ConsensusError::ProposalFailed(
+                "block timestamp too far in the future".into(),
+            ));
+        }
+
+        // Producer legitimacy
         let producer_id = block.producer_id.ok_or(ConsensusError::ProposalFailed(
             "block missing producer_id".to_string(),
         ))?;

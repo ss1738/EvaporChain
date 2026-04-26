@@ -595,6 +595,30 @@ impl Transaction {
             Transaction::UpgradeContract(tx) => Some(&tx.owner),
         }
     }
+
+    pub fn nonce(&self) -> Option<u64> {
+        match self {
+            Transaction::Transfer(tx) => Some(tx.nonce),
+            Transaction::CreateObject(_) => None,
+            Transaction::DeployContract(tx) => Some(tx.nonce),
+            Transaction::CallContract(tx) => Some(tx.nonce),
+            Transaction::DeployScript(tx) => Some(tx.nonce),
+            Transaction::CallScript(tx) => Some(tx.nonce),
+            Transaction::Refresh(_) => None,
+            Transaction::ValidatorStake(tx) => Some(tx.nonce),
+            Transaction::ValidatorExit(tx) => Some(tx.nonce),
+            Transaction::ValidatorClaimStake(tx) => Some(tx.nonce),
+            Transaction::Shield(tx) => Some(tx.nonce),
+            Transaction::Unshield(_) => None,
+            Transaction::PrivateTransfer(_) => None,
+            Transaction::Deferred(tx) => Some(tx.nonce),
+            Transaction::Blob(tx) => Some(tx.nonce),
+            Transaction::Governance(tx) => Some(tx.nonce),
+            Transaction::MultiSig(tx) => Some(tx.nonce),
+            Transaction::UserOp(tx) => Some(tx.nonce),
+            Transaction::UpgradeContract(tx) => Some(tx.nonce),
+        }
+    }
 }
 
 /// Value transfer transaction.

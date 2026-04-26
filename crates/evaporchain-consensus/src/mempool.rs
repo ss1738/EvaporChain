@@ -1,3 +1,4 @@
+use evaporchain_crypto::signatures::{HybridVerifier, Verifier};
 use evaporchain_types::Transaction;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -34,6 +35,8 @@ pub struct Mempool {
     tx_submit_epoch: HashMap<[u8; 32], u64>,
     /// Current chain epoch (updated on each block commit).
     current_epoch: u64,
+    /// Verify signatures before accepting transactions.
+    verify_signatures: bool,
 }
 
 impl Mempool {
@@ -48,6 +51,7 @@ impl Mempool {
             account_tx_count: HashMap::new(),
             tx_submit_epoch: HashMap::new(),
             current_epoch: 0,
+            verify_signatures: false,
         }
     }
 
@@ -63,7 +67,13 @@ impl Mempool {
             account_tx_count: HashMap::new(),
             tx_submit_epoch: HashMap::new(),
             current_epoch: 0,
+            verify_signatures: false,
         }
+    }
+
+    /// Enable signature verification on transaction submission.
+    pub fn enable_sig_verification(&mut self) {
+        self.verify_signatures = true;
     }
 
     /// Add a transaction to the pool. Returns false if rejected (duplicate, pool full, oversized,
@@ -116,6 +126,20 @@ impl Mempool {
             if count >= MAX_TXS_PER_ACCOUNT {
                 self.rejected_count += 1;
                 return false;
+            }
+        }
+        if self.verify_signatures {
+            if !matches!(tx, Transaction::Unshield(_) | Transaction::PrivateTransfer(_)) {
+                if let (Some(sig), Some(pk)) = (tx.signature(), tx.public_key()) {
+                    let msg = tx.signable_bytes();
+                    if !HybridVerifier::verify(&msg, sig, pk) {
+                        self.rejected_count += 1;
+                        return false;
+                    }
+                } else if tx.signature().is_none() && tx.sender().is_some() {
+                    self.rejected_count += 1;
+                    return false;
+                }
             }
         }
         true
@@ -178,15 +202,16 @@ impl Mempool {
         self.pending.drain(..).collect()
     }
 
-    /// Take up to `n` transactions, sorted by tx_hash for deterministic ordering.
-    /// All validators selecting from the same TX set will produce identical proposals.
+    /// Take up to `n` transactions with nonce-aware ordering.
+    /// Groups by sender, sorts by nonce within each group, then interleaves
+    /// by sender hash for determinism across validators.
     pub fn take(&mut self, n: usize) -> Vec<Transaction> {
         let all: Vec<Transaction> = self.pending.drain(..).collect();
         let mut with_hash: Vec<([u8; 32], Transaction)> = all
             .into_iter()
             .map(|tx| (tx.tx_hash(), tx))
             .collect();
-        with_hash.sort_by(|a, b| a.0.cmp(&b.0));
+        Self::sort_nonce_aware(&mut with_hash);
 
         let take_count = n.min(with_hash.len());
         let mut taken = Vec::with_capacity(take_count);
@@ -210,7 +235,7 @@ impl Mempool {
         taken
     }
 
-    /// Take up to `n` transactions sorted by tx_hash (deterministic proposal ordering).
+    /// Take up to `n` transactions with nonce-aware ordering.
     /// Returns transactions paired with their hashes for callers that need them.
     pub fn take_with_hashes(&mut self, n: usize) -> Vec<([u8; 32], Transaction)> {
         let all: Vec<Transaction> = self.pending.drain(..).collect();
@@ -218,7 +243,7 @@ impl Mempool {
             .into_iter()
             .map(|tx| (tx.tx_hash(), tx))
             .collect();
-        with_hash.sort_by(|a, b| a.0.cmp(&b.0));
+        Self::sort_nonce_aware(&mut with_hash);
 
         let take_count = n.min(with_hash.len());
         let (taken, rest) = with_hash.split_at(take_count);
@@ -236,14 +261,14 @@ impl Mempool {
         result
     }
 
-    /// Take transactions up to a gas limit. Respects per-block gas cap for proposals.
+    /// Take transactions up to a gas limit with nonce-aware ordering.
     pub fn take_with_gas_limit(&mut self, max_txs: usize, gas_limit: u64) -> Vec<Transaction> {
         let all: Vec<Transaction> = self.pending.drain(..).collect();
         let mut with_hash: Vec<([u8; 32], Transaction)> = all
             .into_iter()
             .map(|tx| (tx.tx_hash(), tx))
             .collect();
-        with_hash.sort_by(|a, b| a.0.cmp(&b.0));
+        Self::sort_nonce_aware(&mut with_hash);
 
         let mut taken = Vec::new();
         let mut remaining = VecDeque::new();
@@ -265,6 +290,22 @@ impl Mempool {
         self.pending = remaining;
         self.total_bytes = self.pending.iter().map(Self::estimate_tx_size).sum();
         taken
+    }
+
+    /// Sort transactions by (sender_hash, nonce, tx_hash) for deterministic
+    /// nonce-respecting ordering. Ensures lower nonces execute first per account.
+    fn sort_nonce_aware(txs: &mut Vec<([u8; 32], Transaction)>) {
+        txs.sort_by(|a, b| {
+            let sender_a = a.1.sender().copied().unwrap_or([0xff; 32]);
+            let sender_b = b.1.sender().copied().unwrap_or([0xff; 32]);
+            sender_a.cmp(&sender_b)
+                .then_with(|| {
+                    let nonce_a = a.1.nonce().unwrap_or(0);
+                    let nonce_b = b.1.nonce().unwrap_or(0);
+                    nonce_a.cmp(&nonce_b)
+                })
+                .then_with(|| a.0.cmp(&b.0))
+        });
     }
 
     fn estimate_tx_gas(tx: &Transaction) -> u64 {
