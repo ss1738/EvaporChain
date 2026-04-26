@@ -62,6 +62,7 @@ mod tests {
             let bls_kp = BlsKeypair::generate();
             let mut info = ValidatorInfo::new(i, stake, [i as u8; 32]);
             info.bls_public_key = Some(bls_kp.public_key_bytes().0);
+            info.pop_verified = true;
             vs.add_validator(info);
             bls_kps.push(bls_kp);
         }
@@ -112,6 +113,7 @@ mod tests {
                     if target.vrf_public_key.is_none() {
                         target.vrf_public_key = v.vrf_public_key.clone();
                     }
+                    target.pop_verified = true;
                 }
             }
         }
