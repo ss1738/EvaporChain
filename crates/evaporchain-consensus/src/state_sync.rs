@@ -13,7 +13,6 @@
 use crate::light_client::{LightBlockHeader, LightClientVerifier, VerificationResult};
 use crate::validator_set::ValidatorSet;
 use evaporchain_crypto::hash::blake3_hash;
-use evaporchain_types::CommitCertificate;
 use std::collections::{HashMap, HashSet};
 use tracing::{debug, info, warn};
 
@@ -376,9 +375,9 @@ impl StateSyncManager {
                     self.phase = SyncPhase::Failed("State root mismatch with genesis checkpoint".into());
                     return vec![];
                 }
-                if header.commit_certificate.is_none() {
-                    warn!("Bootstrap header has no commit certificate — rejecting");
-                    self.phase = SyncPhase::Failed("No commit certificate on bootstrap header".into());
+                if header.commit_certificate.signer_ids.is_empty() {
+                    warn!("Bootstrap header has empty commit certificate — rejecting");
+                    self.phase = SyncPhase::Failed("Empty commit certificate on bootstrap header".into());
                     return vec![];
                 }
             }
