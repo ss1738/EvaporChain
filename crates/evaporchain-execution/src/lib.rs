@@ -154,6 +154,8 @@ pub struct SimpleExecutor {
     pub decay_watchers: temporal::DecayWatcherEngine,
     /// Pending structured events from script calls (drained per block).
     pending_events: Vec<(u64, evaporchain_script::ContractEvent)>,
+    /// Reward accumulator for block rewards and fee distribution.
+    pub reward_accumulator: Option<rewards::RewardAccumulator>,
 }
 
 impl SimpleExecutor {
@@ -172,6 +174,7 @@ impl SimpleExecutor {
             deferred_queue: temporal::DeferredQueue::new(),
             decay_watchers: temporal::DecayWatcherEngine::new(),
             pending_events: Vec::new(),
+            reward_accumulator: None,
         }
     }
 
@@ -190,6 +193,7 @@ impl SimpleExecutor {
             deferred_queue: temporal::DeferredQueue::new(),
             decay_watchers: temporal::DecayWatcherEngine::new(),
             pending_events: Vec::new(),
+            reward_accumulator: None,
         }
     }
 
@@ -207,6 +211,7 @@ impl SimpleExecutor {
             deferred_queue: temporal::DeferredQueue::new(),
             decay_watchers: temporal::DecayWatcherEngine::new(),
             pending_events: Vec::new(),
+            reward_accumulator: None,
         }
     }
 
@@ -224,6 +229,7 @@ impl SimpleExecutor {
             deferred_queue: temporal::DeferredQueue::new(),
             decay_watchers: temporal::DecayWatcherEngine::new(),
             pending_events: Vec::new(),
+            reward_accumulator: None,
         }
     }
 
@@ -245,6 +251,7 @@ impl SimpleExecutor {
             deferred_queue: temporal::DeferredQueue::new(),
             decay_watchers: temporal::DecayWatcherEngine::new(),
             pending_events: Vec::new(),
+            reward_accumulator: None,
         }
     }
 
@@ -266,6 +273,7 @@ impl SimpleExecutor {
             deferred_queue: temporal::DeferredQueue::new(),
             decay_watchers: temporal::DecayWatcherEngine::new(),
             pending_events: Vec::new(),
+            reward_accumulator: None,
         }
     }
 
@@ -288,6 +296,7 @@ impl SimpleExecutor {
             deferred_queue: temporal::DeferredQueue::new(),
             decay_watchers: temporal::DecayWatcherEngine::new(),
             pending_events: Vec::new(),
+            reward_accumulator: None,
         }
     }
 
@@ -299,6 +308,11 @@ impl SimpleExecutor {
     /// Get a mutable reference to the fee controller.
     pub fn fee_controller_mut(&mut self) -> Option<&mut fees::PidFeeController> {
         self.fee_controller.as_mut()
+    }
+
+    /// Enable reward distribution with the given tokenomics.
+    pub fn enable_rewards(&mut self, tokenomics: evaporchain_types::genesis::Tokenomics) {
+        self.reward_accumulator = Some(rewards::RewardAccumulator::new(tokenomics));
     }
 
     /// Estimate gas for a transaction.
@@ -1214,6 +1228,41 @@ impl ExecutionEngine for SimpleExecutor {
         for (addr, refund) in &deferred_result.refunds {
             if let Some(acct) = db.get_account_mut(addr) {
                 acct.balance = acct.balance.saturating_add(*refund);
+            }
+        }
+
+        // Reward distribution: route fees through tokenomics instead of pure burn
+        if let Some(ref mut ra) = self.reward_accumulator {
+            let producer_addr = if let Some(pid) = block.producer_id {
+                db.get_stake(pid)
+                    .map(|s| s.validator_address)
+                    .unwrap_or_else(|| {
+                        let mut addr = [0u8; 32];
+                        addr[..8].copy_from_slice(&pid.to_le_bytes());
+                        addr
+                    })
+            } else {
+                [0u8; 32]
+            };
+            ra.process_block_rewards(db, &producer_addr, block.epoch, total_fees);
+
+            // Distribute staker rewards every 100 blocks
+            if block.number % 100 == 0 && ra.pending_staker_rewards > 0 {
+                let stakers: Vec<([u8; 32], u64)> = db
+                    .all_stakes()
+                    .iter()
+                    .filter(|s| s.unbonding_epoch.is_none())
+                    .map(|s| (s.validator_address, s.staked_amount))
+                    .collect();
+                let distributed = ra.distribute_staker_rewards(db, &stakers);
+                if distributed > 0 {
+                    info!(
+                        distributed,
+                        stakers = stakers.len(),
+                        block = block.number,
+                        "Staker rewards distributed"
+                    );
+                }
             }
         }
 
