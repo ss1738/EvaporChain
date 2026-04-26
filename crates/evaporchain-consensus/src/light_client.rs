@@ -240,6 +240,12 @@ impl LightClientVerifier {
             return Err("Certificate block hash mismatch".into());
         }
 
+        // Reject duplicate signer IDs (prevents double-counted stake)
+        let unique_signers: std::collections::HashSet<u64> = cert.signer_ids.iter().copied().collect();
+        if unique_signers.len() != cert.signer_ids.len() {
+            return Err("Duplicate signer IDs in commit certificate".into());
+        }
+
         // Collect BLS public keys from signers
         let quorum = (header.validator_set.active_count() * 2 / 3) + 1;
         if cert.signer_ids.len() < quorum {
@@ -257,7 +263,7 @@ impl LightClientVerifier {
                 Some(v) => {
                     if let Some(ref bls_pk) = v.bls_public_key {
                         pks.push(BlsPublicKey(bls_pk.clone()));
-                        signing_stake += v.stake;
+                        signing_stake = signing_stake.saturating_add(v.stake);
                     } else {
                         return Err(format!("Signer {} has no BLS key", vid));
                     }
@@ -266,9 +272,9 @@ impl LightClientVerifier {
             }
         }
 
-        // Verify 2/3 stake threshold
+        // Verify 2/3 stake threshold (use u128 to prevent overflow)
         let total_stake = header.validator_set.total_stake();
-        if signing_stake * 3 < total_stake * 2 {
+        if (signing_stake as u128) * 3 < (total_stake as u128) * 2 {
             return Err(format!(
                 "Insufficient signing stake: {} < 2/3 of {}",
                 signing_stake, total_stake

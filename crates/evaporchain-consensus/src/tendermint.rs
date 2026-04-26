@@ -1319,12 +1319,15 @@ impl TendermintConsensus {
             }
 
             ConsensusMessage::Prevote {
-                height: _,
+                height,
                 round,
                 block_hash,
                 validator_id,
                 bls_signature,
             } => {
+                if height != self.height {
+                    return actions;
+                }
                 if round == self.round_state.round {
                     // ── Validator Membership Check ──
                     let validator = match self.validator_set.get(validator_id) {
@@ -1412,12 +1415,15 @@ impl TendermintConsensus {
             }
 
             ConsensusMessage::Precommit {
-                height: _,
+                height,
                 round,
                 block_hash,
                 validator_id,
                 bls_signature,
             } => {
+                if height != self.height {
+                    return actions;
+                }
                 if round == self.round_state.round {
                     // ── Validator Membership Check ──
                     let validator = match self.validator_set.get(validator_id) {

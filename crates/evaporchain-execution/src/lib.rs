@@ -62,6 +62,8 @@ pub enum ExecutionError {
     ScriptError(String),
     #[error("block gas limit exceeded: used {used}, limit {limit}")]
     BlockGasLimitExceeded { used: u64, limit: u64 },
+    #[error("call depth exceeded: max {0}")]
+    CallDepthExceeded(usize),
 }
 
 /// Contract event emitted during block execution, tagged with origin.
@@ -136,6 +138,8 @@ const UNBONDING_PERIOD_EPOCHS: u64 = 256;
 /// Number of state snapshots to retain before pruning older ones.
 const SNAPSHOT_RETAIN_BLOCKS: u64 = 256;
 
+const MAX_CALL_DEPTH: usize = 64;
+
 // TODO(M-19): cross-block execution cache keyed on (tx_hash, pre_state_root).
 // TODO(M-21): sort block transactions by gas_price before execution.
 
@@ -164,6 +168,8 @@ pub struct SimpleExecutor {
     pub reward_accumulator: Option<rewards::RewardAccumulator>,
     /// Chain ID for signing message domain separation (cross-chain replay protection).
     pub chain_id: String,
+    /// Current contract call depth (guards against unbounded re-entrancy).
+    call_depth: usize,
 }
 
 impl SimpleExecutor {
@@ -184,6 +190,7 @@ impl SimpleExecutor {
             pending_events: Vec::new(),
             reward_accumulator: None,
             chain_id: String::new(),
+            call_depth: 0,
         }
     }
 
@@ -209,6 +216,7 @@ impl SimpleExecutor {
             pending_events: Vec::new(),
             reward_accumulator: None,
             chain_id: String::new(),
+            call_depth: 0,
         }
     }
 
@@ -228,6 +236,7 @@ impl SimpleExecutor {
             pending_events: Vec::new(),
             reward_accumulator: None,
             chain_id: String::new(),
+            call_depth: 0,
         }
     }
 
@@ -247,6 +256,7 @@ impl SimpleExecutor {
             pending_events: Vec::new(),
             reward_accumulator: None,
             chain_id: String::new(),
+            call_depth: 0,
         }
     }
 
@@ -270,6 +280,7 @@ impl SimpleExecutor {
             pending_events: Vec::new(),
             reward_accumulator: None,
             chain_id: String::new(),
+            call_depth: 0,
         }
     }
 
@@ -293,6 +304,7 @@ impl SimpleExecutor {
             pending_events: Vec::new(),
             reward_accumulator: None,
             chain_id: String::new(),
+            call_depth: 0,
         }
     }
 
@@ -317,6 +329,7 @@ impl SimpleExecutor {
             pending_events: Vec::new(),
             reward_accumulator: None,
             chain_id: String::new(),
+            call_depth: 0,
         }
     }
 
@@ -546,13 +559,23 @@ impl SimpleExecutor {
         &mut self,
         tx: &CallContractTx,
     ) -> Result<(), ExecutionError> {
+        if self.call_depth >= MAX_CALL_DEPTH {
+            return Err(ExecutionError::CallDepthExceeded(MAX_CALL_DEPTH));
+        }
+        self.call_depth += 1;
+
         let args: serde_json::Value = serde_json::from_str(&tx.args)
             .map_err(|e| ExecutionError::ContractError(format!("invalid args JSON: {e}")))?;
 
         let result = self
             .contract_engine
             .call(tx.contract_id, &tx.method, &args, &tx.caller, tx.epoch)
-            .map_err(|e| ExecutionError::ContractError(e.to_string()))?;
+            .map_err(|e| {
+                self.call_depth = self.call_depth.saturating_sub(1);
+                ExecutionError::ContractError(e.to_string())
+            })?;
+
+        self.call_depth = self.call_depth.saturating_sub(1);
 
         debug!(
             contract_id = tx.contract_id,
@@ -583,6 +606,11 @@ impl SimpleExecutor {
         &mut self,
         tx: &CallScriptTx,
     ) -> Result<(), ExecutionError> {
+        if self.call_depth >= MAX_CALL_DEPTH {
+            return Err(ExecutionError::CallDepthExceeded(MAX_CALL_DEPTH));
+        }
+        self.call_depth += 1;
+
         // Parse args from JSON
         let args: Vec<evaporchain_script::Value> = if tx.args.is_empty() || tx.args == "[]" {
             vec![]
@@ -594,7 +622,10 @@ impl SimpleExecutor {
         let result = self
             .script_engine
             .call(tx.contract_id, &tx.method, args, tx.caller, tx.epoch)
-            .map_err(|e| ExecutionError::ScriptError(e.to_string()))?;
+            .map_err(|e| {
+                self.call_depth = self.call_depth.saturating_sub(1);
+                ExecutionError::ScriptError(e.to_string())
+            })?;
 
         if !result.structured_events.is_empty() {
             self.pending_events.extend(
@@ -603,6 +634,8 @@ impl SimpleExecutor {
                 })
             );
         }
+
+        self.call_depth = self.call_depth.saturating_sub(1);
 
         debug!(
             script_id = tx.contract_id,

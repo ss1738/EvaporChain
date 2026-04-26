@@ -82,6 +82,7 @@ const MAX_CACHE_SIZE: usize = 2000;
 /// Maximum allowed gossip message size (10 MB). Messages exceeding this
 /// are dropped before deserialization to prevent OOM attacks.
 const MAX_GOSSIP_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
+const MAX_CONSENSUS_MESSAGE_SIZE: usize = 512 * 1024;
 
 /// Maximum gossip messages per peer per window before throttling.
 const PEER_MSG_LIMIT: u64 = 500;
@@ -655,8 +656,18 @@ impl P2pNetworkService {
                                         }
                                     }
                                 } else if message.topic == consensus_topic_hash {
-                                    // Forward raw bytes — app deserializes
-                                    let _ = net_consensus_sender.send(message.data.to_vec()).await;
+                                    if message.data.len() > MAX_CONSENSUS_MESSAGE_SIZE {
+                                        debug!(
+                                            "Dropping oversized consensus message: {} bytes (limit {})",
+                                            message.data.len(),
+                                            MAX_CONSENSUS_MESSAGE_SIZE
+                                        );
+                                        if let Some(ref source) = message.source {
+                                            ban_list.record_violation(*source);
+                                        }
+                                    } else {
+                                        let _ = net_consensus_sender.send(message.data.to_vec()).await;
+                                    }
                                 }
                             }
                             // ── Block sync: inbound request (serve blocks) ──
