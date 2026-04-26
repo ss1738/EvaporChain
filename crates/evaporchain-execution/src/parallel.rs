@@ -109,6 +109,16 @@ fn extract_access_keys(tx: &Transaction) -> Vec<AccessKey> {
         Transaction::MultiSig(tx) => {
             vec![AccessKey::Account(tx.multisig_address)]
         }
+        Transaction::UserOp(tx) => {
+            let mut keys = vec![AccessKey::Account(tx.sender)];
+            if let Some(ref pm) = tx.paymaster {
+                keys.push(AccessKey::Account(*pm));
+            }
+            keys
+        }
+        Transaction::UpgradeContract(tx) => {
+            vec![AccessKey::Account(tx.owner)]
+        }
     }
 }
 
@@ -546,6 +556,8 @@ impl ParallelExecutor {
             }
             Transaction::Governance(_) => GAS_GOVERNANCE,
             Transaction::MultiSig(_) => crate::GAS_MULTISIG,
+            Transaction::UserOp(tx) => crate::GAS_USER_OP.saturating_add(tx.call_data.len() as u64 * 16),
+            Transaction::UpgradeContract(tx) => crate::GAS_UPGRADE_CONTRACT.saturating_add(tx.new_bytecode.len() as u64 * 200),
         }
     }
 
@@ -675,6 +687,16 @@ impl ParallelExecutor {
                 Transaction::MultiSig(_) => {
                     Err(ExecutionError::ContractError(
                         "multi-sig txs execute in serial phase".into(),
+                    ))
+                }
+                Transaction::UserOp(_) => {
+                    Err(ExecutionError::ContractError(
+                        "user-op txs execute in serial phase".into(),
+                    ))
+                }
+                Transaction::UpgradeContract(_) => {
+                    Err(ExecutionError::ContractError(
+                        "upgrade txs execute in serial phase".into(),
                     ))
                 }
             };

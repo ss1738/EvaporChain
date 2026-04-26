@@ -607,6 +607,16 @@ fn execute_tx(
                 "multi-sig txs execute in serial phase".into(),
             )))
         }
+        Transaction::UserOp(_) => {
+            Err(TxViewError::ExecutionError(ExecutionError::ContractError(
+                "user-op txs execute in serial phase".into(),
+            )))
+        }
+        Transaction::UpgradeContract(_) => {
+            Err(TxViewError::ExecutionError(ExecutionError::ContractError(
+                "upgrade txs execute in serial phase".into(),
+            )))
+        }
     };
 
     match result {
@@ -664,6 +674,8 @@ fn estimate_gas(tx: &Transaction) -> u64 {
         }
         Transaction::Governance(_) => GAS_VALIDATOR_CLAIM_STAKE,
         Transaction::MultiSig(_) => GAS_VALIDATOR_CLAIM_STAKE,
+        Transaction::UserOp(tx) => crate::GAS_USER_OP.saturating_add(tx.call_data.len() as u64 * 16),
+        Transaction::UpgradeContract(tx) => crate::GAS_UPGRADE_CONTRACT.saturating_add(tx.new_bytecode.len() as u64 * 200),
     }
 }
 

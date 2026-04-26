@@ -653,6 +653,14 @@ mod tests {
                 inner.public_key = Some(pk);
             }
             Transaction::MultiSig(_) => {}
+            Transaction::UserOp(ref mut inner) => {
+                inner.signature = Some(sig);
+                inner.public_key = Some(pk);
+            }
+            Transaction::UpgradeContract(ref mut inner) => {
+                inner.signature = Some(sig);
+                inner.public_key = Some(pk);
+            }
         }
     }
 

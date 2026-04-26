@@ -254,6 +254,10 @@ pub enum Transaction {
     Governance(GovernanceTx),
     /// Multi-signature transaction requiring threshold approvals.
     MultiSig(MultiSigTx),
+    /// Account abstraction: user operation with optional paymaster gas sponsorship.
+    UserOp(UserOpTx),
+    /// Upgrade a deployed contract's bytecode (owner + governance gate).
+    UpgradeContract(UpgradeContractTx),
 }
 
 impl Transaction {
@@ -478,6 +482,28 @@ impl Transaction {
                 buf.extend_from_slice(&tx.inner_tx_bytes);
                 buf
             }
+            Transaction::UserOp(tx) => {
+                let mut buf = Vec::new();
+                buf.push(0x12);
+                buf.extend_from_slice(&tx.sender);
+                buf.extend_from_slice(&tx.nonce.to_le_bytes());
+                buf.extend_from_slice(&tx.call_gas_limit.to_le_bytes());
+                buf.extend_from_slice(&tx.call_data);
+                if let Some(ref pm) = tx.paymaster {
+                    buf.extend_from_slice(pm);
+                }
+                buf
+            }
+            Transaction::UpgradeContract(tx) => {
+                let mut buf = Vec::new();
+                buf.push(0x13);
+                buf.extend_from_slice(&tx.owner);
+                buf.extend_from_slice(&tx.contract_id.to_le_bytes());
+                buf.extend_from_slice(&tx.nonce.to_le_bytes());
+                buf.push(if tx.governance_approved { 1 } else { 0 });
+                buf.extend_from_slice(&tx.new_bytecode);
+                buf
+            }
         }
     }
 
@@ -507,6 +533,8 @@ impl Transaction {
             Transaction::Blob(tx) => tx.signature.as_deref(),
             Transaction::Governance(tx) => tx.signature.as_deref(),
             Transaction::MultiSig(_) => None,
+            Transaction::UserOp(tx) => tx.signature.as_deref(),
+            Transaction::UpgradeContract(tx) => tx.signature.as_deref(),
         }
     }
 
@@ -530,6 +558,8 @@ impl Transaction {
             Transaction::Blob(tx) => tx.public_key.as_deref(),
             Transaction::Governance(tx) => tx.public_key.as_deref(),
             Transaction::MultiSig(_) => None,
+            Transaction::UserOp(tx) => tx.public_key.as_deref(),
+            Transaction::UpgradeContract(tx) => tx.public_key.as_deref(),
         }
     }
 
@@ -555,6 +585,14 @@ impl Transaction {
             Transaction::Blob(tx) => Some(&tx.submitter),
             Transaction::Governance(tx) => Some(&tx.sender),
             Transaction::MultiSig(tx) => Some(&tx.multisig_address),
+            Transaction::UserOp(tx) => {
+                if let Some(ref pm) = tx.paymaster {
+                    Some(pm)
+                } else {
+                    Some(&tx.sender)
+                }
+            }
+            Transaction::UpgradeContract(tx) => Some(&tx.owner),
         }
     }
 }
@@ -779,6 +817,38 @@ pub struct GovernanceTx {
     pub action: GovernanceAction,
     pub sender: AccountAddress,
     pub nonce: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<Vec<u8>>,
+}
+
+/// ERC-4337-style account abstraction: user operation with optional paymaster.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserOpTx {
+    pub sender: AccountAddress,
+    pub nonce: u64,
+    pub call_data: Vec<u8>,
+    pub call_gas_limit: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paymaster: Option<AccountAddress>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paymaster_data: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<Vec<u8>>,
+}
+
+/// Upgrade a deployed contract to a new implementation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpgradeContractTx {
+    pub owner: AccountAddress,
+    pub contract_id: u64,
+    pub new_bytecode: Vec<u8>,
+    pub nonce: u64,
+    #[serde(default)]
+    pub governance_approved: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<Vec<u8>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

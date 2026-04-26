@@ -275,6 +275,16 @@ impl Mempool {
                 32 + 1 + 8 + tx.signers.len() * 32 + tx.inner_tx_bytes.len()
                     + tx.signatures.len() * 64
             }
+            Transaction::UserOp(tx) => {
+                32 + 8 + 8 + tx.call_data.len()
+                    + tx.signature.as_ref().map_or(0, |s| s.len())
+                    + tx.public_key.as_ref().map_or(0, |p| p.len())
+            }
+            Transaction::UpgradeContract(tx) => {
+                32 + 8 + 8 + tx.new_bytecode.len()
+                    + tx.signature.as_ref().map_or(0, |s| s.len())
+                    + tx.public_key.as_ref().map_or(0, |p| p.len())
+            }
         }
     }
 }

@@ -119,6 +119,12 @@ impl GasEstimator {
             Transaction::MultiSig(tx) => {
                 50_000 + 10_000 * tx.signatures.len() as u64
             }
+            Transaction::UserOp(tx) => {
+                30_000 + 16 * tx.call_data.len() as u64
+            }
+            Transaction::UpgradeContract(tx) => {
+                100_000 + 200 * tx.new_bytecode.len() as u64
+            }
         }
     }
 

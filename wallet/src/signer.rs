@@ -170,6 +170,14 @@ fn set_signature(tx: &mut Transaction, sig: Vec<u8>, pk: Vec<u8>) {
         }
         // MultiSig uses threshold signatures, not single-signer.
         Transaction::MultiSig(_) => {}
+        Transaction::UserOp(u) => {
+            u.signature = Some(sig);
+            u.public_key = Some(pk);
+        }
+        Transaction::UpgradeContract(u) => {
+            u.signature = Some(sig);
+            u.public_key = Some(pk);
+        }
     }
 }
 

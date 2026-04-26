@@ -536,6 +536,8 @@ fn tx_to_json(tx: &Transaction) -> serde_json::Value {
         Transaction::Blob(_) => serde_json::json!({ "type": "blob" }),
         Transaction::Governance(_) => serde_json::json!({ "type": "governance" }),
         Transaction::MultiSig(_) => serde_json::json!({ "type": "multisig" }),
+        Transaction::UserOp(_) => serde_json::json!({ "type": "user_op" }),
+        Transaction::UpgradeContract(_) => serde_json::json!({ "type": "upgrade_contract" }),
     }
 }
 
@@ -875,6 +877,8 @@ fn set_tx_signature(tx: &mut Transaction, sig: Vec<u8>, pk: Vec<u8>) {
         Transaction::Blob(b) => { b.signature = Some(sig); b.public_key = Some(pk); }
         Transaction::Governance(g) => { g.signature = Some(sig); g.public_key = Some(pk); }
         Transaction::MultiSig(_) => {}
+        Transaction::UserOp(u) => { u.signature = Some(sig); u.public_key = Some(pk); }
+        Transaction::UpgradeContract(u) => { u.signature = Some(sig); u.public_key = Some(pk); }
     }
 }
 
@@ -4791,6 +4795,8 @@ fn estimate_tx_gas(tx: &Transaction) -> u64 {
         }
         Transaction::Governance(_) => 25_000,
         Transaction::MultiSig(_) => 50_000,
+        Transaction::UserOp(tx) => 30_000 + tx.call_data.len() as u64 * 16,
+        Transaction::UpgradeContract(tx) => 100_000 + tx.new_bytecode.len() as u64 * 200,
     }
 }
 
@@ -5046,6 +5052,36 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     hash,
                     tx_type: "multisig".to_string(),
                     from: account_full(&tx.multisig_address),
+                    to: String::new(),
+                    amount: None,
+                    object_id: None,
+                    energy: None,
+                    half_life: None,
+                    method: None,
+                    gas,
+                    block_number: block.number,
+                    epoch: block.epoch,
+                    status: "success".to_string(),
+                },
+                Transaction::UserOp(tx) => TxRecord {
+                    hash,
+                    tx_type: "user_op".to_string(),
+                    from: account_full(&tx.sender),
+                    to: String::new(),
+                    amount: None,
+                    object_id: None,
+                    energy: None,
+                    half_life: None,
+                    method: None,
+                    gas,
+                    block_number: block.number,
+                    epoch: block.epoch,
+                    status: "success".to_string(),
+                },
+                Transaction::UpgradeContract(tx) => TxRecord {
+                    hash,
+                    tx_type: "upgrade_contract".to_string(),
+                    from: account_full(&tx.owner),
                     to: String::new(),
                     amount: None,
                     object_id: None,

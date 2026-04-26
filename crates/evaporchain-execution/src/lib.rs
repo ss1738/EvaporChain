@@ -123,6 +123,8 @@ pub(crate) const GAS_VALIDATOR_EXIT: u64 = 30_000;
 pub(crate) const GAS_VALIDATOR_CLAIM_STAKE: u64 = 30_000;
 pub(crate) const GAS_GOVERNANCE: u64 = 25_000;
 pub(crate) const GAS_MULTISIG: u64 = 50_000;
+pub(crate) const GAS_USER_OP: u64 = 30_000;
+pub(crate) const GAS_UPGRADE_CONTRACT: u64 = 100_000;
 
 // TODO(M-19): cross-block execution cache keyed on (tx_hash, pre_state_root).
 // TODO(M-21): sort block transactions by gas_price before execution.
@@ -324,6 +326,8 @@ impl SimpleExecutor {
             }
             Transaction::Governance(_) => GAS_GOVERNANCE,
             Transaction::MultiSig(_) => GAS_MULTISIG,
+            Transaction::UserOp(tx) => GAS_USER_OP.saturating_add(tx.call_data.len() as u64 * 16),
+            Transaction::UpgradeContract(tx) => GAS_UPGRADE_CONTRACT.saturating_add(tx.new_bytecode.len() as u64 * 200),
         }
     }
 
@@ -797,6 +801,34 @@ impl SimpleExecutor {
         Ok(())
     }
 
+    fn execute_user_op(
+        &self,
+        db: &mut dyn StateDB,
+        tx: &evaporchain_types::UserOpTx,
+    ) -> Result<(), ExecutionError> {
+        let sender = db.get_or_create_account(&tx.sender);
+        if sender.nonce != tx.nonce {
+            return Err(ExecutionError::InvalidNonce {
+                expected: sender.nonce,
+                got: tx.nonce,
+            });
+        }
+        sender.nonce += 1;
+
+        if let Some(ref paymaster) = tx.paymaster {
+            let pm = db.get_or_create_account(paymaster);
+            if pm.balance < tx.call_gas_limit {
+                return Err(ExecutionError::InsufficientBalance {
+                    required: tx.call_gas_limit,
+                    available: pm.balance,
+                });
+            }
+            pm.balance -= tx.call_gas_limit;
+        }
+
+        Ok(())
+    }
+
     fn collect_storage_rent(&self, db: &mut dyn StateDB) {
         let addresses = db.all_account_addresses();
         for addr in addresses {
@@ -949,6 +981,12 @@ impl ExecutionEngine for SimpleExecutor {
                 }
                 Transaction::Governance(gov) => self.execute_governance(db, gov, block.epoch),
                 Transaction::MultiSig(msig) => self.execute_multisig(db, msig),
+                Transaction::UserOp(uop) => self.execute_user_op(db, uop),
+                Transaction::UpgradeContract(_) => {
+                    // Contract upgrade is validated at submission; execution is a no-op
+                    // (bytecode swap is handled by the contract engine).
+                    Ok(())
+                }
             };
 
             match result {
@@ -1214,6 +1252,14 @@ mod tests {
                 g.public_key = Some(pk);
             }
             Transaction::MultiSig(_) => {}
+            Transaction::UserOp(u) => {
+                u.signature = Some(sig);
+                u.public_key = Some(pk);
+            }
+            Transaction::UpgradeContract(u) => {
+                u.signature = Some(sig);
+                u.public_key = Some(pk);
+            }
         }
     }
 

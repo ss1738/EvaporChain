@@ -888,6 +888,8 @@ fn tx_type_name(tx: &Transaction) -> &'static str {
         Transaction::Blob(_) => "blob",
         Transaction::Governance(_) => "governance",
         Transaction::MultiSig(_) => "multisig",
+        Transaction::UserOp(_) => "user_op",
+        Transaction::UpgradeContract(_) => "upgrade_contract",
     }
 }
 
@@ -909,7 +911,7 @@ fn tx_sender_hex(tx: &Transaction) -> Option<String> {
         Transaction::ValidatorClaimStake(t) => Some(addr_hex(&t.validator_address)),
         Transaction::Shield(_) | Transaction::Unshield(_) | Transaction::PrivateTransfer(_)
         | Transaction::Deferred(_) | Transaction::Blob(_) | Transaction::Governance(_)
-        | Transaction::MultiSig(_) => None,
+        | Transaction::MultiSig(_) | Transaction::UserOp(_) | Transaction::UpgradeContract(_) => None,
     }
 }
 
