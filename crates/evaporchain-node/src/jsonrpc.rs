@@ -496,3 +496,169 @@ fn block_to_json(block: &evaporchain_types::Block, full_txs: bool) -> Value {
         "transactions": tx_list,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── json_hex_u64 ──
+
+    #[test]
+    fn test_json_hex_u64_zero() {
+        assert_eq!(json_hex_u64(0), Value::String("0x0".into()));
+    }
+
+    #[test]
+    fn test_json_hex_u64_small() {
+        assert_eq!(json_hex_u64(255), Value::String("0xff".into()));
+    }
+
+    #[test]
+    fn test_json_hex_u64_large() {
+        assert_eq!(json_hex_u64(1_000_000), Value::String("0xf4240".into()));
+    }
+
+    #[test]
+    fn test_json_hex_u64_max() {
+        let result = json_hex_u64(u64::MAX);
+        assert_eq!(result, Value::String("0xffffffffffffffff".into()));
+    }
+
+    // ── parse_hex_u64 ──
+
+    #[test]
+    fn test_parse_hex_u64_with_prefix() {
+        let v = Value::String("0xff".into());
+        assert_eq!(parse_hex_u64(&v), Some(255));
+    }
+
+    #[test]
+    fn test_parse_hex_u64_without_prefix() {
+        let v = Value::String("ff".into());
+        assert_eq!(parse_hex_u64(&v), Some(255));
+    }
+
+    #[test]
+    fn test_parse_hex_u64_zero() {
+        let v = Value::String("0x0".into());
+        assert_eq!(parse_hex_u64(&v), Some(0));
+    }
+
+    #[test]
+    fn test_parse_hex_u64_invalid() {
+        let v = Value::String("0xGG".into());
+        assert_eq!(parse_hex_u64(&v), None);
+    }
+
+    #[test]
+    fn test_parse_hex_u64_non_string() {
+        let v = Value::Number(serde_json::Number::from(42));
+        assert_eq!(parse_hex_u64(&v), None);
+    }
+
+    // ── parse_address_param ──
+
+    #[test]
+    fn test_parse_address_valid() {
+        let addr_hex = hex::encode([0xABu8; 32]);
+        let params = serde_json::json!([format!("0x{}", addr_hex)]);
+        let result = parse_address_param(&params, 0);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), [0xAB; 32]);
+    }
+
+    #[test]
+    fn test_parse_address_without_prefix() {
+        let addr_hex = hex::encode([0x01u8; 32]);
+        let params = serde_json::json!([addr_hex]);
+        assert!(parse_address_param(&params, 0).is_ok());
+    }
+
+    #[test]
+    fn test_parse_address_wrong_length() {
+        let params = serde_json::json!(["0xdeadbeef"]);
+        assert!(parse_address_param(&params, 0).is_err());
+    }
+
+    #[test]
+    fn test_parse_address_missing_param() {
+        let params = serde_json::json!([]);
+        assert!(parse_address_param(&params, 0).is_err());
+    }
+
+    #[test]
+    fn test_parse_address_not_array() {
+        let params = serde_json::json!({"addr": "0x00"});
+        assert!(parse_address_param(&params, 0).is_err());
+    }
+
+    // ── JsonRpcResponse constructors ──
+
+    #[test]
+    fn test_response_ok_format() {
+        let resp = JsonRpcResponse::ok(Value::Number(1.into()), Value::Bool(true));
+        assert_eq!(resp.jsonrpc, "2.0");
+        assert!(resp.result.is_some());
+        assert!(resp.error.is_none());
+        assert_eq!(resp.id, Value::Number(1.into()));
+    }
+
+    #[test]
+    fn test_response_err_format() {
+        let resp = JsonRpcResponse::err(Value::Number(2.into()), -32600, "bad request");
+        assert_eq!(resp.jsonrpc, "2.0");
+        assert!(resp.result.is_none());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32600);
+        assert_eq!(err.message, "bad request");
+    }
+
+    #[test]
+    fn test_method_not_found() {
+        let resp = JsonRpcResponse::method_not_found(Value::Null, "eth_foo");
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32601);
+        assert!(err.message.contains("eth_foo"));
+    }
+
+    #[test]
+    fn test_invalid_params() {
+        let resp = JsonRpcResponse::invalid_params(Value::Null, "missing field");
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        assert!(err.message.contains("missing field"));
+    }
+
+    // ── roundtrip ──
+
+    #[test]
+    fn test_hex_roundtrip() {
+        for val in [0, 1, 255, 65535, u64::MAX] {
+            let hex_val = json_hex_u64(val);
+            let parsed = parse_hex_u64(&hex_val);
+            assert_eq!(parsed, Some(val), "roundtrip failed for {val}");
+        }
+    }
+
+    // ── block_to_json ──
+
+    #[test]
+    fn test_block_to_json_no_txs() {
+        let block = evaporchain_types::Block {
+            number: 42,
+            epoch: 5,
+            state_root: [0xAA; 32],
+            parent_hash: [0xBB; 32],
+            timestamp: 1000,
+            transactions: vec![],
+            vrf_output: None,
+            producer_id: None,
+            commit_certificate: None,
+        };
+        let json = block_to_json(&block, false);
+        assert_eq!(json["number"], "0x2a");
+        assert_eq!(json["epoch"], "0x5");
+        assert_eq!(json["txCount"], 0);
+        assert!(json["stateRoot"].as_str().unwrap().starts_with("0x"));
+    }
+}

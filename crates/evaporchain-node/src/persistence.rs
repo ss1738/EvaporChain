@@ -930,3 +930,299 @@ fn tx_receiver_hex(tx: &Transaction) -> Option<String> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use evaporchain_types::{TransferTx, RefreshTx};
+
+    fn make_transfer(from: [u8; 32], to: [u8; 32], amount: u64) -> Transaction {
+        Transaction::Transfer(TransferTx {
+            from,
+            to,
+            amount,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        })
+    }
+
+    // ── addr_hex ──
+
+    #[test]
+    fn test_addr_hex_truncates_to_4_bytes() {
+        let mut addr = [0u8; 32];
+        addr[0] = 0xDE;
+        addr[1] = 0xAD;
+        addr[2] = 0xBE;
+        addr[3] = 0xEF;
+        assert_eq!(addr_hex(&addr), "0xdeadbeef");
+    }
+
+    #[test]
+    fn test_addr_hex_all_zeros() {
+        assert_eq!(addr_hex(&[0u8; 32]), "0x00000000");
+    }
+
+    // ── tx_type_name ──
+
+    #[test]
+    fn test_tx_type_name_transfer() {
+        let tx = make_transfer([0; 32], [1; 32], 100);
+        assert_eq!(tx_type_name(&tx), "transfer");
+    }
+
+    #[test]
+    fn test_tx_type_name_refresh() {
+        let tx = Transaction::Refresh(RefreshTx {
+            object_id: 1,
+            energy_deposit: 100,
+            signature: None,
+            public_key: None,
+        });
+        assert_eq!(tx_type_name(&tx), "refresh");
+    }
+
+    // ── tx_sender_hex / tx_receiver_hex ──
+
+    #[test]
+    fn test_tx_sender_hex_transfer() {
+        let mut from = [0u8; 32];
+        from[0..4].copy_from_slice(&[0x11, 0x22, 0x33, 0x44]);
+        let tx = make_transfer(from, [0; 32], 50);
+        assert_eq!(tx_sender_hex(&tx), Some("0x11223344".into()));
+    }
+
+    #[test]
+    fn test_tx_receiver_hex_transfer() {
+        let mut to = [0u8; 32];
+        to[0..4].copy_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD]);
+        let tx = make_transfer([0; 32], to, 50);
+        assert_eq!(tx_receiver_hex(&tx), Some("0xaabbccdd".into()));
+    }
+
+    #[test]
+    fn test_tx_sender_hex_refresh_is_none() {
+        let tx = Transaction::Refresh(RefreshTx {
+            object_id: 0,
+            energy_deposit: 0,
+            signature: None,
+            public_key: None,
+        });
+        assert_eq!(tx_sender_hex(&tx), None);
+    }
+
+    #[test]
+    fn test_tx_receiver_hex_non_transfer_is_none() {
+        let tx = Transaction::Refresh(RefreshTx {
+            object_id: 0,
+            energy_deposit: 0,
+            signature: None,
+            public_key: None,
+        });
+        assert_eq!(tx_receiver_hex(&tx), None);
+    }
+
+    // ── compute_tx_hash ──
+
+    #[test]
+    fn test_compute_tx_hash_deterministic() {
+        let tx = make_transfer([1; 32], [2; 32], 1000);
+        let h1 = ChainStore::compute_tx_hash(&tx);
+        let h2 = ChainStore::compute_tx_hash(&tx);
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn test_compute_tx_hash_different_for_different_txs() {
+        let tx1 = make_transfer([1; 32], [2; 32], 100);
+        let tx2 = make_transfer([1; 32], [2; 32], 200);
+        assert_ne!(ChainStore::compute_tx_hash(&tx1), ChainStore::compute_tx_hash(&tx2));
+    }
+
+    // ── compute_tx_merkle_root ──
+
+    #[test]
+    fn test_merkle_root_empty() {
+        assert_eq!(compute_tx_merkle_root(&[]), [0u8; 32]);
+    }
+
+    #[test]
+    fn test_merkle_root_single_tx() {
+        let tx = make_transfer([1; 32], [2; 32], 100);
+        let root = compute_tx_merkle_root(&[tx.clone()]);
+        assert_eq!(root, ChainStore::compute_tx_hash(&tx));
+    }
+
+    #[test]
+    fn test_merkle_root_two_txs() {
+        let tx1 = make_transfer([1; 32], [2; 32], 100);
+        let tx2 = make_transfer([3; 32], [4; 32], 200);
+        let root = compute_tx_merkle_root(&[tx1.clone(), tx2.clone()]);
+        let h1 = ChainStore::compute_tx_hash(&tx1);
+        let h2 = ChainStore::compute_tx_hash(&tx2);
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&h1);
+        hasher.update(&h2);
+        assert_eq!(root, *hasher.finalize().as_bytes());
+    }
+
+    #[test]
+    fn test_merkle_root_deterministic() {
+        let txs: Vec<_> = (0..5)
+            .map(|i| make_transfer([i; 32], [(i + 1); 32], (i as u64) * 100))
+            .collect();
+        let r1 = compute_tx_merkle_root(&txs);
+        let r2 = compute_tx_merkle_root(&txs);
+        assert_eq!(r1, r2);
+    }
+
+    // ── prove_tx_inclusion / verify_tx_inclusion ──
+
+    #[test]
+    fn test_prove_and_verify_inclusion() {
+        let txs: Vec<_> = (0..4)
+            .map(|i| make_transfer([i; 32], [(i + 10); 32], (i as u64) * 50))
+            .collect();
+        for idx in 0..txs.len() {
+            let proof = prove_tx_inclusion(&txs, idx, 42).unwrap();
+            assert!(verify_tx_inclusion(&proof), "failed for index {idx}");
+            assert_eq!(proof.tx_index, idx);
+            assert_eq!(proof.block_number, 42);
+        }
+    }
+
+    #[test]
+    fn test_prove_inclusion_single_tx() {
+        let txs = vec![make_transfer([1; 32], [2; 32], 100)];
+        let proof = prove_tx_inclusion(&txs, 0, 1).unwrap();
+        assert!(verify_tx_inclusion(&proof));
+        assert!(proof.siblings.is_empty());
+    }
+
+    #[test]
+    fn test_prove_inclusion_out_of_bounds() {
+        let txs = vec![make_transfer([1; 32], [2; 32], 100)];
+        assert!(prove_tx_inclusion(&txs, 1, 1).is_none());
+    }
+
+    #[test]
+    fn test_tampered_proof_fails() {
+        let txs: Vec<_> = (0..4)
+            .map(|i| make_transfer([i; 32], [(i + 10); 32], (i as u64) * 50))
+            .collect();
+        let mut proof = prove_tx_inclusion(&txs, 0, 42).unwrap();
+        proof.tx_hash = hex::encode([0xFF; 32]);
+        assert!(!verify_tx_inclusion(&proof));
+    }
+
+    #[test]
+    fn test_merkle_root_matches_proof_root() {
+        let txs: Vec<_> = (0..7)
+            .map(|i| make_transfer([i; 32], [(i + 10); 32], (i as u64) * 10))
+            .collect();
+        let root = compute_tx_merkle_root(&txs);
+        let proof = prove_tx_inclusion(&txs, 3, 1).unwrap();
+        assert_eq!(hex::encode(root), proof.merkle_root);
+    }
+
+    // ── TxReceipt serialization ──
+
+    #[test]
+    fn test_tx_receipt_roundtrip() {
+        let receipt = TxReceipt {
+            tx_hash: "abc123".into(),
+            block_number: 10,
+            tx_index: 0,
+            epoch: 1,
+            timestamp: 1000,
+            tx_type: "transfer".into(),
+            from: Some("0xdead".into()),
+            to: Some("0xbeef".into()),
+            status: "success".into(),
+            gas_used: 21000,
+            revert_reason: None,
+            log_count: 2,
+        };
+        let json = serde_json::to_vec(&receipt).unwrap();
+        let back: TxReceipt = serde_json::from_slice(&json).unwrap();
+        assert_eq!(back.tx_hash, "abc123");
+        assert_eq!(back.gas_used, 21000);
+        assert_eq!(back.log_count, 2);
+    }
+
+    // ── ContractEventLog serialization ──
+
+    #[test]
+    fn test_event_log_roundtrip() {
+        let log = ContractEventLog {
+            contract_id: 42,
+            block_number: 100,
+            log_index: 0,
+            epoch: 5,
+            timestamp: 2000,
+            tx_hash: "0xfeed".into(),
+            event_name: "Transfer".into(),
+            topics: vec!["topic1".into()],
+            data: vec!["data1".into()],
+        };
+        let json = serde_json::to_vec(&log).unwrap();
+        let back: ContractEventLog = serde_json::from_slice(&json).unwrap();
+        assert_eq!(back.contract_id, 42);
+        assert_eq!(back.event_name, "Transfer");
+    }
+
+    // ── ChainStore integration (tempdir) ──
+
+    #[test]
+    fn test_chain_store_consensus_meta_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("evap_test_cs_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let cs = ChainStore::open(&dir).unwrap();
+        cs.save_consensus_meta(42, 5, [0xAA; 32]).unwrap();
+        let (bn, ep, ph) = cs.load_consensus_meta().unwrap();
+        assert_eq!(bn, 42);
+        assert_eq!(ep, 5);
+        assert_eq!(ph, [0xAA; 32]);
+        drop(cs);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_chain_store_consensus_meta_none_when_empty() {
+        let dir = std::env::temp_dir().join(format!("evap_test_cs_empty_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let cs = ChainStore::open(&dir).unwrap();
+        assert!(cs.load_consensus_meta().is_none());
+        drop(cs);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_chain_store_mempool_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("evap_test_mp_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let cs = ChainStore::open(&dir).unwrap();
+        let txs = vec![make_transfer([1; 32], [2; 32], 100)];
+        cs.save_mempool(&txs).unwrap();
+        let loaded = cs.load_mempool();
+        assert_eq!(loaded.len(), 1);
+        drop(cs);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_chain_store_snapshot_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("evap_test_snap_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let cs = ChainStore::open(&dir).unwrap();
+        let data = b"snapshot data here";
+        cs.save_snapshot(100, data, [0xBB; 32]).unwrap();
+        let (h, root, d) = cs.load_latest_snapshot().unwrap();
+        assert_eq!(h, 100);
+        assert_eq!(root, [0xBB; 32]);
+        assert_eq!(d, data);
+        drop(cs);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
