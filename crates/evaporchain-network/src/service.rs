@@ -1355,4 +1355,102 @@ mod tests {
             }
         }
     }
+
+    // ── PeerRateLimiter ──
+
+    #[test]
+    fn test_rate_limiter_allows_within_limit() {
+        let mut rl = PeerRateLimiter::new();
+        let peer = PeerId::random();
+        for _ in 0..PEER_MSG_LIMIT {
+            assert!(rl.check_and_increment(&peer));
+        }
+    }
+
+    #[test]
+    fn test_rate_limiter_blocks_over_limit() {
+        let mut rl = PeerRateLimiter::new();
+        let peer = PeerId::random();
+        for _ in 0..PEER_MSG_LIMIT {
+            rl.check_and_increment(&peer);
+        }
+        assert!(!rl.check_and_increment(&peer));
+    }
+
+    #[test]
+    fn test_rate_limiter_independent_peers() {
+        let mut rl = PeerRateLimiter::new();
+        let peer_a = PeerId::random();
+        let peer_b = PeerId::random();
+        for _ in 0..PEER_MSG_LIMIT {
+            rl.check_and_increment(&peer_a);
+        }
+        assert!(!rl.check_and_increment(&peer_a));
+        assert!(rl.check_and_increment(&peer_b));
+    }
+
+    #[test]
+    fn test_rate_limiter_gc_removes_stale() {
+        let mut rl = PeerRateLimiter::new();
+        for _ in 0..(MAX_TRACKED_PEERS + 100) {
+            let peer = PeerId::random();
+            rl.check_and_increment(&peer);
+        }
+        assert!(rl.counters.len() > MAX_TRACKED_PEERS);
+        rl.maybe_gc();
+        assert!(rl.counters.len() <= MAX_TRACKED_PEERS + 100);
+    }
+
+    // ── PeerBanList ──
+
+    #[test]
+    fn test_ban_list_not_banned_initially() {
+        let mut bl = PeerBanList::new();
+        let peer = PeerId::random();
+        assert!(!bl.is_banned(&peer));
+    }
+
+    #[test]
+    fn test_ban_list_violations_below_threshold() {
+        let mut bl = PeerBanList::new();
+        let peer = PeerId::random();
+        for _ in 0..(BAN_THRESHOLD - 1) {
+            assert!(!bl.record_violation(peer));
+        }
+        assert!(!bl.is_banned(&peer));
+    }
+
+    #[test]
+    fn test_ban_list_bans_at_threshold() {
+        let mut bl = PeerBanList::new();
+        let peer = PeerId::random();
+        for _ in 0..(BAN_THRESHOLD - 1) {
+            bl.record_violation(peer);
+        }
+        assert!(bl.record_violation(peer));
+        assert!(bl.is_banned(&peer));
+    }
+
+    #[test]
+    fn test_ban_list_independent_peers() {
+        let mut bl = PeerBanList::new();
+        let peer_a = PeerId::random();
+        let peer_b = PeerId::random();
+        for _ in 0..BAN_THRESHOLD {
+            bl.record_violation(peer_a);
+        }
+        assert!(bl.is_banned(&peer_a));
+        assert!(!bl.is_banned(&peer_b));
+    }
+
+    #[test]
+    fn test_ban_list_violations_count() {
+        let mut bl = PeerBanList::new();
+        let peer = PeerId::random();
+        assert_eq!(*bl.violations.entry(peer).or_insert(0), 0);
+        bl.record_violation(peer);
+        assert_eq!(*bl.violations.get(&peer).unwrap(), 1);
+        bl.record_violation(peer);
+        assert_eq!(*bl.violations.get(&peer).unwrap(), 2);
+    }
 }

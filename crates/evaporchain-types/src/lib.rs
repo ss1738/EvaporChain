@@ -1248,6 +1248,153 @@ mod tests {
         // At epoch 5 (same as refresh), no decay
         assert_eq!(obj.energy_at(5), 1000);
     }
+
+    // ── Transaction sender() ──
+
+    #[test]
+    fn test_transfer_sender() {
+        let tx = Transaction::Transfer(TransferTx {
+            from: [0xAA; 32],
+            to: [0xBB; 32],
+            amount: 100,
+            nonce: 1,
+            signature: None,
+            public_key: None,
+        });
+        assert_eq!(tx.sender(), Some(&[0xAA; 32]));
+    }
+
+    #[test]
+    fn test_refresh_has_no_sender() {
+        let tx = Transaction::Refresh(RefreshTx {
+            object_id: [1u8; 32],
+            energy_deposit: 100,
+            signature: None,
+            public_key: None,
+        });
+        assert_eq!(tx.sender(), None);
+    }
+
+    // ── Transaction nonce() ──
+
+    #[test]
+    fn test_transfer_nonce() {
+        let tx = Transaction::Transfer(TransferTx {
+            from: [0; 32],
+            to: [1; 32],
+            amount: 50,
+            nonce: 42,
+            signature: None,
+            public_key: None,
+        });
+        assert_eq!(tx.nonce(), Some(42));
+    }
+
+    #[test]
+    fn test_refresh_has_no_nonce() {
+        let tx = Transaction::Refresh(RefreshTx {
+            object_id: [0u8; 32],
+            energy_deposit: 0,
+            signature: None,
+            public_key: None,
+        });
+        assert_eq!(tx.nonce(), None);
+    }
+
+    // ── Transaction serialization roundtrip ──
+
+    #[test]
+    fn test_transfer_tx_roundtrip() {
+        let tx = Transaction::Transfer(TransferTx {
+            from: [1; 32],
+            to: [2; 32],
+            amount: 999,
+            nonce: 7,
+            signature: None,
+            public_key: None,
+        });
+        let json = serde_json::to_vec(&tx).unwrap();
+        let back: Transaction = serde_json::from_slice(&json).unwrap();
+        assert_eq!(back.sender(), Some(&[1u8; 32]));
+        assert_eq!(back.nonce(), Some(7));
+    }
+
+    // ── Block serialization ──
+
+    #[test]
+    fn test_block_serialization_roundtrip() {
+        let block = Block {
+            number: 100,
+            epoch: 10,
+            parent_hash: [0xAA; 32],
+            state_root: [0xBB; 32],
+            transactions: vec![],
+            timestamp: 1234567890,
+            chain_id: "test-chain".into(),
+            producer_id: Some(1),
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
+            nova_proof: None,
+            anchor_hash: None,
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
+        };
+        let json = serde_json::to_vec(&block).unwrap();
+        let back: Block = serde_json::from_slice(&json).unwrap();
+        assert_eq!(back.number, 100);
+        assert_eq!(back.epoch, 10);
+        assert_eq!(back.chain_id, "test-chain");
+        assert_eq!(back.producer_id, Some(1));
+    }
+
+    // ── ObjectState ──
+
+    #[test]
+    fn test_object_state_default_is_active() {
+        let obj = StateObject {
+            id: [0; 32],
+            owner: [0; 32],
+            energy: 100,
+            half_life: 10,
+            created_at: 0,
+            last_refreshed: 0,
+            state: ObjectState::Active,
+            grace_epoch: None,
+            data: vec![],
+            decay_curve: None,
+        };
+        assert!(matches!(obj.state, ObjectState::Active));
+    }
+
+    #[test]
+    fn test_state_object_serialization_roundtrip() {
+        let obj = StateObject {
+            id: [0xFF; 32],
+            owner: [0x11; 32],
+            energy: 5000,
+            half_life: 20,
+            created_at: 1,
+            last_refreshed: 5,
+            state: ObjectState::Ghost,
+            grace_epoch: Some(100),
+            data: vec![1, 2, 3],
+            decay_curve: None,
+        };
+        let json = serde_json::to_vec(&obj).unwrap();
+        let back: StateObject = serde_json::from_slice(&json).unwrap();
+        assert_eq!(back.id, [0xFF; 32]);
+        assert_eq!(back.energy, 5000);
+        assert!(matches!(back.state, ObjectState::Ghost));
+        assert_eq!(back.grace_epoch, Some(100));
+        assert_eq!(back.data, vec![1, 2, 3]);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
