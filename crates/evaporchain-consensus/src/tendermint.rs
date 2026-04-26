@@ -271,6 +271,9 @@ pub struct TendermintConsensus {
     /// Tracks consecutive missed proposals per validator.
     /// Reset to 0 when the validator successfully produces a block.
     missed_proposals: HashMap<u64, u64>,
+    /// Tracks consecutive missed votes (prevotes + precommits) per validator.
+    /// Incremented each round a validator fails to vote; reset on successful vote.
+    missed_votes: HashMap<u64, u64>,
     /// Weak subjectivity checkpoint: (height, state_root) pairs.
     /// Validators refuse to reorg past the most recent checkpoint.
     weak_subjectivity_checkpoints: Vec<(u64, [u8; 32])>,
@@ -358,6 +361,7 @@ impl TendermintConsensus {
             committed_heights: HashSet::new(),
             proposals_seen: HashMap::new(),
             missed_proposals: HashMap::new(),
+            missed_votes: HashMap::new(),
             weak_subjectivity_checkpoints: Vec::new(),
             checkpoint_interval: 1000,
             trusted_checkpoint: None,
@@ -519,6 +523,7 @@ impl TendermintConsensus {
             committed_heights: HashSet::new(),
             proposals_seen: HashMap::new(),
             missed_proposals: HashMap::new(),
+            missed_votes: HashMap::new(),
             weak_subjectivity_checkpoints: Vec::new(),
             checkpoint_interval: 1000,
             trusted_checkpoint: None,
@@ -2115,6 +2120,35 @@ impl TendermintConsensus {
                         "Proposer missed round (slash at 3)"
                     );
                 }
+            }
+        }
+
+        // ── Vote Liveness Detection ──
+        // Track validators who failed to cast prevotes or precommits.
+        let active_ids: Vec<u64> = self.validator_set.validators()
+            .iter()
+            .filter(|v| !v.jailed)
+            .map(|v| v.id)
+            .collect();
+        for vid in &active_ids {
+            let voted_prevote = self.round_state.prevotes.contains_key(vid);
+            let voted_precommit = self.round_state.precommits.contains_key(vid);
+            if !voted_prevote && !voted_precommit {
+                let misses = self.missed_votes.entry(*vid).or_insert(0);
+                *misses += 1;
+                let total = *misses;
+                if total >= 5 {
+                    let slashed = self.validator_set.slash_downtime(*vid, total);
+                    warn!(
+                        validator = vid,
+                        missed_votes = total,
+                        slashed_amount = slashed,
+                        "SLASHED for vote liveness failure"
+                    );
+                    self.missed_votes.insert(*vid, 0);
+                }
+            } else {
+                self.missed_votes.insert(*vid, 0);
             }
         }
 
