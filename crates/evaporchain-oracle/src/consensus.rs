@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
-use super::{OracleReport, OracleValue};
+use super::OracleValue;
 
 // ─── Validator Vote ──────────────────────────────────────────────────────
 
@@ -41,7 +41,7 @@ impl OracleVote {
 
     pub fn vote_hash(&self) -> [u8; 32] {
         let mut hasher = Sha256::new();
-        hasher.update(&self.signable_bytes());
+        hasher.update(self.signable_bytes());
         hasher.finalize().into()
     }
 }
@@ -270,12 +270,12 @@ impl OracleConsensusRound {
     fn compute_aggregate_hash(&self) -> [u8; 32] {
         let mut hasher = Sha256::new();
         hasher.update(self.key.as_bytes());
-        hasher.update(&self.round.to_le_bytes());
+        hasher.update(self.round.to_le_bytes());
         let mut ids: Vec<u64> = self.votes.keys().copied().collect();
         ids.sort();
         for id in ids {
             if let Some(vote) = self.votes.get(&id) {
-                hasher.update(&vote.vote_hash());
+                hasher.update(vote.vote_hash());
             }
         }
         hasher.finalize().into()

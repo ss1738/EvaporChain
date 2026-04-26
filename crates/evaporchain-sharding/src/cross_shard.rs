@@ -83,7 +83,7 @@ impl CrossShardRouter {
             .unwrap_or_default()
             .into_iter()
             .collect();
-        msgs.sort_by(|a, b| b.target_energy.cmp(&a.target_energy));
+        msgs.sort_by_key(|m| std::cmp::Reverse(m.target_energy));
         msgs
     }
 

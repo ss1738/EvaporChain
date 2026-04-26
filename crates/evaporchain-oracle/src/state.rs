@@ -124,9 +124,9 @@ impl OracleState {
         for key in keys {
             if let Some(entry) = self.entries.get(key) {
                 hasher.update(key.as_bytes());
-                hasher.update(&entry.current_value.to_le_bytes());
-                hasher.update(&entry.last_round.to_le_bytes());
-                hasher.update(&entry.last_updated.to_le_bytes());
+                hasher.update(entry.current_value.to_le_bytes());
+                hasher.update(entry.last_round.to_le_bytes());
+                hasher.update(entry.last_updated.to_le_bytes());
             }
         }
         hasher.finalize().into()
@@ -165,9 +165,9 @@ impl OracleInclusionProof {
         let mut hasher = Sha256::new();
         hasher.update(b"oracle-inclusion-v1:");
         hasher.update(key.as_bytes());
-        hasher.update(&entry.current_value.to_le_bytes());
-        hasher.update(&entry.last_round.to_le_bytes());
-        hasher.update(&state_root);
+        hasher.update(entry.current_value.to_le_bytes());
+        hasher.update(entry.last_round.to_le_bytes());
+        hasher.update(state_root);
         let proof_hash = hasher.finalize().into();
 
         Some(Self {
@@ -186,9 +186,9 @@ impl OracleInclusionProof {
         let mut hasher = Sha256::new();
         hasher.update(b"oracle-inclusion-v1:");
         hasher.update(self.key.as_bytes());
-        hasher.update(&self.value.to_le_bytes());
-        hasher.update(&self.round.to_le_bytes());
-        hasher.update(&self.state_root);
+        hasher.update(self.value.to_le_bytes());
+        hasher.update(self.round.to_le_bytes());
+        hasher.update(self.state_root);
         let expected_hash: [u8; 32] = hasher.finalize().into();
         self.proof_hash == expected_hash
     }

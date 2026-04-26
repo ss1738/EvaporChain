@@ -930,6 +930,7 @@ impl EnergyVerkleTrie {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn collect_mp(
         node: &EnergyNode,
         keys: &[[u8; 32]],
@@ -1107,6 +1108,7 @@ impl EnergyVerkleTrie {
     }
 
     /// Insert multiple entries at once.
+    #[allow(clippy::type_complexity)]
     pub fn insert_batch(&mut self, entries: &[([u8; 32], [u8; 32], u64, u64, u64)]) {
         for &(key, value, energy, half_life, epoch) in entries {
             self.insert(key, value, energy, half_life, epoch);
