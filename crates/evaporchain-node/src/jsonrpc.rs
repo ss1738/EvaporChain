@@ -114,6 +114,8 @@ fn dispatch(state: &ApiState, req: JsonRpcRequest) -> JsonRpcResponse {
         "evap_estimateGas" => rpc_estimate_gas(state, &req.params, req.id),
         "evap_getObject" => rpc_get_object(state, &req.params, req.id),
         "evap_mempoolSize" => rpc_mempool_size(state, req.id),
+        "evap_getLogs" => rpc_get_logs(state, &req.params, req.id),
+        "evap_getBlockLogs" => rpc_get_block_logs(state, &req.params, req.id),
         "net_version" => rpc_net_version(state, req.id),
         "net_peerCount" => rpc_peer_count(state, req.id),
         "net_listening" => JsonRpcResponse::ok(req.id, Value::Bool(true)),
@@ -334,6 +336,64 @@ fn rpc_net_version(_state: &ApiState, id: Value) -> JsonRpcResponse {
 fn rpc_peer_count(state: &ApiState, id: Value) -> JsonRpcResponse {
     let count = state.peer_count.load(std::sync::atomic::Ordering::Relaxed);
     JsonRpcResponse::ok(id, json_hex_u64(count as u64))
+}
+
+fn rpc_get_logs(state: &ApiState, params: &Value, id: Value) -> JsonRpcResponse {
+    let filter = match params.as_array().and_then(|a| a.first()) {
+        Some(v) => v,
+        None => return JsonRpcResponse::invalid_params(id, "missing filter object"),
+    };
+    let contract_id = match filter.get("contractId").and_then(|v| v.as_u64()) {
+        Some(c) => c,
+        None => return JsonRpcResponse::invalid_params(id, "contractId (u64) required"),
+    };
+    let event_name = filter.get("eventName").and_then(|v| v.as_str());
+    let from_block = filter.get("fromBlock").and_then(|v| parse_hex_u64(v));
+    let to_block = filter.get("toBlock").and_then(|v| parse_hex_u64(v));
+    let limit = filter.get("limit").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
+    let limit = limit.min(1000);
+
+    let cs = match &state.chain_store {
+        Some(cs) => cs,
+        None => return JsonRpcResponse::ok(id, Value::Array(vec![])),
+    };
+    let logs = cs.get_contract_events(contract_id, event_name, from_block, to_block, limit);
+    let arr: Vec<Value> = logs.iter().map(event_log_to_json).collect();
+    JsonRpcResponse::ok(id, Value::Array(arr))
+}
+
+fn rpc_get_block_logs(state: &ApiState, params: &Value, id: Value) -> JsonRpcResponse {
+    let block_num = match params.as_array().and_then(|a| a.first()).and_then(|v| parse_hex_u64(v)) {
+        Some(n) => n,
+        None => return JsonRpcResponse::invalid_params(id, "missing block number"),
+    };
+    let limit = params.as_array()
+        .and_then(|a| a.get(1))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(500) as usize;
+    let limit = limit.min(5000);
+
+    let cs = match &state.chain_store {
+        Some(cs) => cs,
+        None => return JsonRpcResponse::ok(id, Value::Array(vec![])),
+    };
+    let logs = cs.get_block_events(block_num, limit);
+    let arr: Vec<Value> = logs.iter().map(event_log_to_json).collect();
+    JsonRpcResponse::ok(id, Value::Array(arr))
+}
+
+fn event_log_to_json(log: &crate::persistence::ContractEventLog) -> Value {
+    serde_json::json!({
+        "contractId": log.contract_id,
+        "blockNumber": json_hex_u64(log.block_number),
+        "logIndex": log.log_index,
+        "epoch": json_hex_u64(log.epoch),
+        "timestamp": json_hex_u64(log.timestamp),
+        "transactionHash": format!("0x{}", log.tx_hash),
+        "eventName": log.event_name,
+        "topics": log.topics,
+        "data": log.data,
+    })
 }
 
 // ──────────────────────────── Helpers ────────────────────────────────

@@ -1531,6 +1531,8 @@ impl ExecutionEngine for BlockStmExecutor {
             total_fees,
             evaporation_proof: None,
             contract_events: Vec::new(),
+            cross_shard_processed: 0,
+            cross_shard_receipts: Vec::new(),
         })
     }
 

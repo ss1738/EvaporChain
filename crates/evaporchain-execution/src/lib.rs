@@ -91,6 +91,10 @@ pub struct BlockExecutionResult {
     pub total_fees: u64,
     /// Batch evaporation proof for this block (None if no evaporations).
     pub evaporation_proof: Option<EvaporationProof>,
+    /// Number of cross-shard messages executed in this block.
+    pub cross_shard_processed: usize,
+    /// Receipts from cross-shard message execution.
+    pub cross_shard_receipts: Vec<evaporchain_sharding::cross_shard::CrossShardReceipt>,
 }
 
 /// Trait for block/transaction execution engines.
@@ -1122,7 +1126,81 @@ impl ExecutionEngine for SimpleExecutor {
             total_fees,
             evaporation_proof,
             contract_events,
+            cross_shard_processed: 0,
+            cross_shard_receipts: Vec::new(),
         })
+    }
+
+    /// Execute cross-shard messages against the local state.
+    /// Returns receipts for each processed message.
+    pub fn execute_cross_shard_messages(
+        &mut self,
+        db: &mut dyn StateDB,
+        messages: Vec<evaporchain_sharding::cross_shard::CrossShardMessage>,
+        epoch: u64,
+    ) -> Vec<evaporchain_sharding::cross_shard::CrossShardReceipt> {
+        use evaporchain_sharding::cross_shard::{CrossShardReceipt, MessagePayload};
+
+        let mut receipts = Vec::with_capacity(messages.len());
+
+        for msg in messages {
+            let (success, result_hash) = match &msg.payload {
+                MessagePayload::Transfer { from, amount } => {
+                    let mut from_addr = [0u8; 32];
+                    from_addr[..20].copy_from_slice(from);
+                    let mut to_addr = [0u8; 32];
+                    to_addr[..20].copy_from_slice(&msg.target_object);
+
+                    let from_acct = db.get_or_create_account(&from_addr);
+                    if from_acct.balance >= *amount {
+                        from_acct.balance -= *amount;
+                        let to_acct = db.get_or_create_account(&to_addr);
+                        to_acct.balance += *amount;
+                        let mut h = blake3::Hasher::new();
+                        h.update(&from_addr);
+                        h.update(&to_addr);
+                        h.update(&amount.to_le_bytes());
+                        (true, *h.finalize().as_bytes())
+                    } else {
+                        (false, [0u8; 32])
+                    }
+                }
+                MessagePayload::Reference { source_object } => {
+                    let mut obj_id = [0u8; 32];
+                    obj_id[..20].copy_from_slice(source_object);
+                    let exists = db.get_object(&obj_id).is_some();
+                    let mut h = blake3::Hasher::new();
+                    h.update(source_object);
+                    h.update(&[exists as u8]);
+                    (exists, *h.finalize().as_bytes())
+                }
+                MessagePayload::Query { key } => {
+                    let mut h = blake3::Hasher::new();
+                    h.update(key.as_bytes());
+                    (true, *h.finalize().as_bytes())
+                }
+                MessagePayload::Eviction { .. } => {
+                    let mut obj_id = [0u8; 32];
+                    obj_id[..20].copy_from_slice(&msg.target_object);
+                    let evicted = db.get_object(&obj_id).is_some();
+                    if evicted {
+                        db.delete_object(&obj_id);
+                    }
+                    (evicted, [0u8; 32])
+                }
+            };
+
+            receipts.push(CrossShardReceipt {
+                message_id: msg.id,
+                from_shard: msg.from_shard,
+                to_shard: msg.to_shard,
+                success,
+                result_hash,
+                processed_at: epoch,
+            });
+        }
+
+        receipts
     }
 
     fn mmr_root(&self) -> [u8; 32] {
@@ -2848,5 +2926,108 @@ contract Counter {
 
         assert_eq!(total_evaporated, 3, "All 3 objects should have evaporated");
         assert_eq!(executor.mmr_size(), 3, "MMR should have 3 nullifiers");
+    }
+
+    #[test]
+    fn test_cross_shard_transfer() {
+        use evaporchain_sharding::cross_shard::{CrossShardMessage, MessagePayload};
+        use evaporchain_sharding::shard_assignment::ShardId;
+
+        let mut executor = SimpleExecutor::new_for_test(100);
+        let mut db = InMemoryStateDB::new();
+
+        let from_addr = addr(1);
+        let from_acct = db.get_or_create_account(&from_addr);
+        from_acct.balance = 1_000_000;
+
+        let mut from_20 = [0u8; 20];
+        from_20.copy_from_slice(&from_addr[..20]);
+        let mut to_20 = [0u8; 20];
+        to_20.copy_from_slice(&addr(2)[..20]);
+
+        let msg = CrossShardMessage {
+            id: 0,
+            from_shard: ShardId(0),
+            to_shard: ShardId(1),
+            target_object: to_20,
+            payload: MessagePayload::Transfer { from: from_20, amount: 500 },
+            target_energy: 100,
+            timestamp: 1,
+        };
+
+        let receipts = executor.execute_cross_shard_messages(&mut db, vec![msg], 10);
+        assert_eq!(receipts.len(), 1);
+        assert!(receipts[0].success);
+        assert_eq!(db.get_account(&from_addr).unwrap().balance, 999_500);
+    }
+
+    #[test]
+    fn test_cross_shard_transfer_insufficient_balance() {
+        use evaporchain_sharding::cross_shard::{CrossShardMessage, MessagePayload};
+        use evaporchain_sharding::shard_assignment::ShardId;
+
+        let mut executor = SimpleExecutor::new_for_test(100);
+        let mut db = InMemoryStateDB::new();
+
+        let from_addr = addr(1);
+        let from_acct = db.get_or_create_account(&from_addr);
+        from_acct.balance = 100;
+
+        let mut from_20 = [0u8; 20];
+        from_20.copy_from_slice(&from_addr[..20]);
+        let mut to_20 = [0u8; 20];
+        to_20.copy_from_slice(&addr(2)[..20]);
+
+        let msg = CrossShardMessage {
+            id: 0,
+            from_shard: ShardId(0),
+            to_shard: ShardId(1),
+            target_object: to_20,
+            payload: MessagePayload::Transfer { from: from_20, amount: 500 },
+            target_energy: 100,
+            timestamp: 1,
+        };
+
+        let receipts = executor.execute_cross_shard_messages(&mut db, vec![msg], 10);
+        assert_eq!(receipts.len(), 1);
+        assert!(!receipts[0].success);
+        assert_eq!(db.get_account(&from_addr).unwrap().balance, 100);
+    }
+
+    #[test]
+    fn test_cross_shard_eviction() {
+        use evaporchain_sharding::cross_shard::{CrossShardMessage, MessagePayload};
+        use evaporchain_sharding::shard_assignment::ShardId;
+
+        let mut executor = SimpleExecutor::new_for_test(100);
+        let mut db = InMemoryStateDB::new();
+
+        let oid = obj_id(1);
+        db.insert_object(StateObject {
+            id: oid,
+            owner: addr(1),
+            energy: 100,
+            half_life: 10,
+            created_at: 1,
+            data: vec![],
+            decay_curve: None,
+        });
+
+        let mut target = [0u8; 20];
+        target.copy_from_slice(&oid[..20]);
+
+        let msg = CrossShardMessage {
+            id: 0,
+            from_shard: ShardId(0),
+            to_shard: ShardId(1),
+            target_object: target,
+            payload: MessagePayload::Eviction { reason: "low energy".into() },
+            target_energy: 0,
+            timestamp: 1,
+        };
+
+        let receipts = executor.execute_cross_shard_messages(&mut db, vec![msg], 10);
+        assert!(receipts[0].success);
+        assert!(db.get_object(&oid).is_none());
     }
 }
