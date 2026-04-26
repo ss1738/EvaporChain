@@ -39,6 +39,13 @@ pub struct SampleResponse {
     pub shard: Shard,
     /// Merkle proof for this shard against the commitment root.
     pub proof: MerkleProof,
+    /// Optional BLS/hybrid attestation signature from the responding peer.
+    /// Signs BLAKE3(commitment_root || shard_index_le_bytes || shard_hash).
+    #[serde(default)]
+    pub attestation_signature: Option<Vec<u8>>,
+    /// Public key of the attesting peer (for signature verification).
+    #[serde(default)]
+    pub attester_public_key: Option<Vec<u8>>,
 }
 
 /// Merkle proof for a shard in the commitment tree.
@@ -325,6 +332,48 @@ impl DASampler {
         })
     }
 
+    /// Build the canonical attestation message for a sample response.
+    /// The attester signs this to prove they hold the shard data.
+    pub fn attestation_message(
+        commitment_root: &[u8; 32],
+        shard_index: usize,
+        shard_hash: &[u8; 32],
+    ) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"evaporchain-da-attestation-v1");
+        hasher.update(commitment_root);
+        hasher.update(&(shard_index as u64).to_le_bytes());
+        hasher.update(shard_hash);
+        hasher.finalize().into()
+    }
+
+    /// Verify attestation signatures on sample responses.
+    /// Returns indices of responses with invalid or missing attestations.
+    pub fn verify_attestations(
+        proof: &DAProof,
+        responses: &[SampleResponse],
+    ) -> Vec<usize> {
+        let mut invalid = Vec::new();
+        for (i, resp) in responses.iter().enumerate() {
+            match (&resp.attestation_signature, &resp.attester_public_key) {
+                (Some(sig), Some(pk)) => {
+                    let msg = Self::attestation_message(
+                        &proof.commitment_root,
+                        resp.proof.leaf_index,
+                        &resp.shard.hash,
+                    );
+                    if !evaporchain_crypto::signatures::HybridVerifier::verify(&msg, sig, pk) {
+                        invalid.push(i);
+                    }
+                }
+                (None, _) | (_, None) => {
+                    invalid.push(i);
+                }
+            }
+        }
+        invalid
+    }
+
     // ── Internal Merkle helpers ──
 
     fn hash_pair(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
@@ -476,7 +525,7 @@ mod tests {
             .map(|q| {
                 let shard = shards[q.shard_index].clone();
                 let proof = DASampler::generate_proof(&shards, q.shard_index).unwrap();
-                SampleResponse { shard, proof }
+                SampleResponse { shard, proof, attestation_signature: None, attester_public_key: None }
             })
             .collect();
 
@@ -507,6 +556,8 @@ mod tests {
         let responses = vec![SampleResponse {
             shard: bad_shard,
             proof,
+            attestation_signature: None,
+            attester_public_key: None,
         }];
         let result = DASampler::verify_samples(&da_proof, &responses, 1).unwrap();
         assert!(!result);
@@ -545,6 +596,8 @@ mod tests {
             .map(|(i, s)| SampleResponse {
                 shard: s.clone(),
                 proof: proofs[i].clone(),
+                attestation_signature: None,
+                attester_public_key: None,
             })
             .collect();
 
@@ -580,6 +633,8 @@ mod tests {
             .map(|(i, s)| SampleResponse {
                 shard: s.clone(),
                 proof: proofs[i].clone(),
+                attestation_signature: None,
+                attester_public_key: None,
             })
             .collect();
         // Tamper the data of response[3] so hash check fails.
@@ -630,10 +685,14 @@ mod tests {
             SampleResponse {
                 shard: shards_a[0].clone(),
                 proof: proof_a0.clone(),
+                attestation_signature: None,
+                attester_public_key: None,
             },
             SampleResponse {
                 shard: shards_b[0].clone(),
-                proof: proof_b0.clone(), // root != da_proof_a.commitment_root
+                proof: proof_b0.clone(),
+                attestation_signature: None,
+                attester_public_key: None,
             },
         ];
         let batch_result =

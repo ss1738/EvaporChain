@@ -507,6 +507,17 @@ impl Transaction {
         }
     }
 
+    /// Compute the signing message: chain_id domain separator + signable_bytes.
+    /// This prevents cross-chain replay attacks (cf. EIP-155).
+    pub fn signing_message(&self, chain_id: &str) -> Vec<u8> {
+        let body = self.signable_bytes();
+        let mut msg = Vec::with_capacity(4 + chain_id.len() + body.len());
+        msg.extend_from_slice(&(chain_id.len() as u32).to_le_bytes());
+        msg.extend_from_slice(chain_id.as_bytes());
+        msg.extend_from_slice(&body);
+        msg
+    }
+
     /// Canonical BLAKE3 hash of this transaction (over signable_bytes).
     pub fn tx_hash(&self) -> [u8; 32] {
         *blake3::hash(&self.signable_bytes()).as_bytes()

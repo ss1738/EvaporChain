@@ -435,6 +435,7 @@ pub struct ParallelExecutor {
     pub privacy_executor: crate::privacy_exec::PrivacyExecutor,
     pub deferred_queue: crate::temporal::DeferredQueue,
     pub decay_watchers: crate::temporal::DecayWatcherEngine,
+    pub chain_id: String,
 }
 
 impl ParallelExecutor {
@@ -450,6 +451,7 @@ impl ParallelExecutor {
             privacy_executor: crate::privacy_exec::PrivacyExecutor::new(),
             deferred_queue: crate::temporal::DeferredQueue::new(),
             decay_watchers: crate::temporal::DecayWatcherEngine::new(),
+            chain_id: String::new(),
         }
     }
 
@@ -467,6 +469,7 @@ impl ParallelExecutor {
             privacy_executor: crate::privacy_exec::PrivacyExecutor::with_depth(4),
             deferred_queue: crate::temporal::DeferredQueue::new(),
             decay_watchers: crate::temporal::DecayWatcherEngine::new(),
+            chain_id: String::new(),
         }
     }
 
@@ -483,6 +486,7 @@ impl ParallelExecutor {
             privacy_executor: crate::privacy_exec::PrivacyExecutor::with_depth(4),
             deferred_queue: crate::temporal::DeferredQueue::new(),
             decay_watchers: crate::temporal::DecayWatcherEngine::new(),
+            chain_id: String::new(),
         }
     }
 
@@ -498,6 +502,7 @@ impl ParallelExecutor {
             privacy_executor: crate::privacy_exec::PrivacyExecutor::new(),
             deferred_queue: crate::temporal::DeferredQueue::new(),
             decay_watchers: crate::temporal::DecayWatcherEngine::new(),
+            chain_id: String::new(),
         }
     }
 
@@ -517,6 +522,7 @@ impl ParallelExecutor {
             privacy_executor: crate::privacy_exec::PrivacyExecutor::new(),
             deferred_queue: crate::temporal::DeferredQueue::new(),
             decay_watchers: crate::temporal::DecayWatcherEngine::new(),
+            chain_id: String::new(),
         }
     }
 
@@ -561,17 +567,16 @@ impl ParallelExecutor {
         }
     }
 
-    pub fn verify_tx_signature(verify: bool, tx: &Transaction) -> Result<(), ExecutionError> {
+    pub fn verify_tx_signature(verify: bool, tx: &Transaction, chain_id: &str) -> Result<(), ExecutionError> {
         if !verify {
             return Ok(());
         }
-        // ZK-authenticated transactions don't use signatures
         if matches!(tx, Transaction::Unshield(_) | Transaction::PrivateTransfer(_)) {
             return Ok(());
         }
         let sig = tx.signature().ok_or(ExecutionError::MissingSignature)?;
         let pk = tx.public_key().ok_or(ExecutionError::MissingSignature)?;
-        let msg = tx.signable_bytes();
+        let msg = tx.signing_message(chain_id);
         if !HybridVerifier::verify(&msg, sig, pk) {
             return Err(ExecutionError::InvalidSignature);
         }
@@ -590,6 +595,7 @@ impl ParallelExecutor {
         fee_controller: &Option<fees::PidFeeController>,
         _block_gas_limit: u64,
         gas_budget: &mut u64,
+        chain_id: &str,
     ) -> PartitionResult {
         let mut txs_executed = 0;
         let mut txs_failed = 0;
@@ -598,7 +604,7 @@ impl ParallelExecutor {
 
         for &(idx, tx) in txs {
             // Signature verification
-            if let Err(e) = Self::verify_tx_signature(verify_signatures, tx) {
+            if let Err(e) = Self::verify_tx_signature(verify_signatures, tx, chain_id) {
                 debug!(tx_idx = idx, error = %e, "Parallel: signature verification failed");
                 txs_failed += 1;
                 continue;
@@ -653,7 +659,7 @@ impl ParallelExecutor {
                 Transaction::CreateObject(t) => Self::exec_create_object(overlay, t, epoch),
                 Transaction::Refresh(t) => Self::exec_refresh(overlay, t, epoch),
                 Transaction::ValidatorStake(t) => Self::exec_validator_stake(overlay, t),
-                Transaction::ValidatorExit(t) => Self::exec_validator_exit(overlay, t),
+                Transaction::ValidatorExit(t) => Self::exec_validator_exit(overlay, t, epoch),
                 Transaction::ValidatorClaimStake(_) => {
                     Err(ExecutionError::ContractError(
                         "validator claim stake executes in serial phase".into(),
@@ -873,6 +879,7 @@ impl ParallelExecutor {
     fn exec_validator_exit(
         db: &mut OverlayStateDB,
         tx: &ValidatorExitTx,
+        current_epoch: u64,
     ) -> Result<(), ExecutionError> {
         let sender = db.get_or_create_account(&tx.validator_address);
         if sender.nonce != tx.nonce {
@@ -882,6 +889,25 @@ impl ParallelExecutor {
             });
         }
         sender.nonce += 1;
+
+        let mut stake = db.get_stake(tx.validator_id).cloned().ok_or_else(|| {
+            ExecutionError::ObjectNotFound(
+                format!("no stake record for validator {}", tx.validator_id),
+            )
+        })?;
+
+        if stake.validator_address != tx.validator_address {
+            return Err(ExecutionError::InvalidSignature);
+        }
+
+        if stake.unbonding_epoch.is_some() {
+            return Err(ExecutionError::ContractError(
+                "validator already exiting".to_string(),
+            ));
+        }
+
+        stake.unbonding_epoch = Some(current_epoch + crate::UNBONDING_PERIOD_EPOCHS);
+        db.put_stake(stake);
         Ok(())
     }
 }
@@ -912,7 +938,9 @@ impl ExecutionEngine for ParallelExecutor {
                 | Transaction::Shield(_)
                 | Transaction::Unshield(_)
                 | Transaction::PrivateTransfer(_)
-                | Transaction::Deferred(_) => serial_txs.push((i, tx)),
+                | Transaction::Deferred(_)
+                | Transaction::ValidatorExit(_)
+                | Transaction::ValidatorClaimStake(_) => serial_txs.push((i, tx)),
                 _ => parallel_txs.push((i, tx)),
             }
         }
@@ -979,6 +1007,7 @@ impl ExecutionEngine for ParallelExecutor {
 
         let verify_sigs = self.verify_signatures;
         let fee_ctrl = self.fee_controller.clone();
+        let chain_id = self.chain_id.clone();
 
         let partition_results: Vec<PartitionResult> = partition_data
             .par_iter_mut()
@@ -993,6 +1022,7 @@ impl ExecutionEngine for ParallelExecutor {
                     &fee_ctrl,
                     0,
                     &mut gas_budget,
+                    &chain_id,
                 )
             })
             .collect();
@@ -1010,7 +1040,7 @@ impl ExecutionEngine for ParallelExecutor {
         // ── Phase 6: Execute serial (contract/script) txs sequentially ──
 
         for &(idx, tx) in &serial_txs {
-            if let Err(e) = Self::verify_tx_signature(self.verify_signatures, tx) {
+            if let Err(e) = Self::verify_tx_signature(self.verify_signatures, tx, &self.chain_id) {
                 debug!(tx_idx = idx, error = %e, "Serial: signature verification failed");
                 total_txs_failed += 1;
                 continue;
@@ -1149,7 +1179,67 @@ impl ExecutionEngine for ParallelExecutor {
                         .map(|_| ())
                         .map_err(|e| ExecutionError::ContractError(e.to_string()))
                 }
-                _ => unreachable!("only contract/script/privacy/deferred txs in serial phase"),
+                Transaction::ValidatorExit(exit) => {
+                    let sender = db.get_or_create_account(&exit.validator_address);
+                    if sender.nonce != exit.nonce {
+                        Err(ExecutionError::InvalidNonce {
+                            expected: sender.nonce,
+                            got: exit.nonce,
+                        })
+                    } else {
+                        sender.nonce += 1;
+                        let mut stake = db.get_stake(exit.validator_id).cloned().ok_or_else(|| {
+                            ExecutionError::ObjectNotFound(
+                                format!("no stake record for validator {}", exit.validator_id),
+                            )
+                        })?;
+                        if stake.validator_address != exit.validator_address {
+                            return Err(ExecutionError::InvalidSignature);
+                        }
+                        if stake.unbonding_epoch.is_some() {
+                            Err(ExecutionError::ContractError("validator already exiting".to_string()))
+                        } else {
+                            stake.unbonding_epoch = Some(block.epoch + crate::UNBONDING_PERIOD_EPOCHS);
+                            db.put_stake(stake);
+                            Ok(())
+                        }
+                    }
+                }
+                Transaction::ValidatorClaimStake(claim) => {
+                    let stake = db.get_stake(claim.validator_id).cloned().ok_or_else(|| {
+                        ExecutionError::ObjectNotFound(
+                            format!("no stake record for validator {}", claim.validator_id),
+                        )
+                    })?;
+                    if stake.validator_address != claim.validator_address {
+                        return Err(ExecutionError::InvalidSignature);
+                    }
+                    let unbonding = stake.unbonding_epoch.ok_or_else(|| {
+                        ExecutionError::ContractError(
+                            "validator has not exited — cannot claim stake".to_string(),
+                        )
+                    })?;
+                    if block.epoch < unbonding {
+                        Err(ExecutionError::ContractError(format!(
+                            "unbonding period not complete: current epoch {} < unbonding epoch {}",
+                            block.epoch, unbonding
+                        )))
+                    } else {
+                        let sender = db.get_or_create_account(&claim.validator_address);
+                        if sender.nonce != claim.nonce {
+                            return Err(ExecutionError::InvalidNonce {
+                                expected: sender.nonce,
+                                got: claim.nonce,
+                            });
+                        }
+                        let claimable = stake.staked_amount.saturating_sub(stake.slashed_amount);
+                        sender.balance += claimable;
+                        sender.nonce += 1;
+                        db.remove_stake(claim.validator_id);
+                        Ok(())
+                    }
+                }
+                _ => unreachable!("only serial-phase txs expected here"),
             };
 
             match result {

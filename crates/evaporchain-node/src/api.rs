@@ -93,6 +93,8 @@ pub struct ApiState {
     pub finality_tracker: Arc<Mutex<evaporchain_consensus::finality::FinalityTracker>>,
     /// MEV-protected encrypted mempool (commit-reveal scheme).
     pub encrypted_mempool: Arc<Mutex<evaporchain_consensus::encrypted_mempool::EncryptedMempool>>,
+    /// Chain ID for signing message domain separation (cross-chain replay protection).
+    pub chain_id: String,
     /// Light client verifier — BLS header verification + skip/sequential modes.
     pub light_client: Arc<Mutex<evaporchain_consensus::light_client::LightClientVerifier>>,
 }
@@ -840,7 +842,7 @@ fn sign_transaction(tx: &mut Transaction, state: &ApiState, sender_address: Opti
             if pk_hex.len() > 1000 {
                 if let (Ok(pk_bytes), Ok(sk_bytes)) = (hex::decode(&pk_hex), hex::decode(&sk_hex)) {
                     if let Ok(kp) = MlDsaKeypair::from_bytes(&pk_bytes, &sk_bytes) {
-                        let msg = tx.signable_bytes();
+                        let msg = tx.signing_message(&state.chain_id);
                         let sig = kp.sign(&msg);
                         let pk = kp.public_key_bytes();
                         set_tx_signature(tx, sig, pk);
@@ -852,7 +854,7 @@ fn sign_transaction(tx: &mut Transaction, state: &ApiState, sender_address: Opti
     }
 
     // Fallback: sign with node keypair
-    let msg = tx.signable_bytes();
+    let msg = tx.signing_message(&state.chain_id);
     let sig = state.node_keypair.sign(&msg);
     let pk = state.node_keypair.public_key_bytes();
     set_tx_signature(tx, sig, pk);

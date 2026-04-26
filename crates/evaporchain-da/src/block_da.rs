@@ -114,6 +114,8 @@ impl BlockDA {
         Ok(SampleResponse {
             shard: package.shards[shard_index].clone(),
             proof,
+            attestation_signature: None,
+            attester_public_key: None,
         })
     }
 

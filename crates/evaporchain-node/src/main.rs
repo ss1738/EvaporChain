@@ -432,7 +432,7 @@ enum StdinCommand {
     },
 }
 
-fn parse_stdin_command(line: &str, signer: &MlDsaKeypair) -> Option<Transaction> {
+fn parse_stdin_command(line: &str, signer: &MlDsaKeypair, chain_id: &str) -> Option<Transaction> {
     let line = line.trim();
     if line.is_empty() || line.starts_with('#') {
         return None;
@@ -478,8 +478,7 @@ fn parse_stdin_command(line: &str, signer: &MlDsaKeypair) -> Option<Transaction>
                 public_key: None,
             }),
         };
-        // Sign the transaction with the stdin keypair
-        let msg = tx.signable_bytes();
+        let msg = tx.signing_message(chain_id);
         let sig = signer.sign(&msg);
         let pk = signer.public_key_bytes();
         match &mut tx {
@@ -505,6 +504,7 @@ fn generate_demo_tx(
     validator_id: u64,
     validator_count: u64,
     db: &Arc<Mutex<evaporchain_state::RocksDBStateDB>>,
+    chain_id: &str,
 ) -> Option<Transaction> {
     use api::{GENESIS_FOUNDATION, GENESIS_CORE_DEV, GENESIS_VALIDATOR1, GENESIS_VALIDATOR2, GENESIS_ECOSYSTEM, GENESIS_COMMUNITY, parse_hex_address};
     use evaporchain_state::db::StateDB;
@@ -572,7 +572,7 @@ fn generate_demo_tx(
                 signature: None,
                 public_key: None,
             });
-            let msg = tx.signable_bytes();
+            let msg = tx.signing_message(chain_id);
             let sig = my_keypairs[fi].sign(&msg);
             let pk = my_keypairs[fi].public_key_bytes();
             if let Transaction::Transfer(ref mut inner) = tx {
@@ -605,7 +605,7 @@ fn generate_demo_tx(
                 signature: None,
                 public_key: None,
             });
-            let msg = tx.signable_bytes();
+            let msg = tx.signing_message(chain_id);
             let sig = my_keypairs[ci].sign(&msg);
             let pk = my_keypairs[ci].public_key_bytes();
             if let Transaction::CreateObject(ref mut inner) = tx {
@@ -624,7 +624,7 @@ fn generate_demo_tx(
                 signature: None,
                 public_key: None,
             });
-            let msg = tx.signable_bytes();
+            let msg = tx.signing_message(chain_id);
             let sig = my_keypairs[si].sign(&msg);
             let pk = my_keypairs[si].public_key_bytes();
             if let Transaction::Refresh(ref mut inner) = tx {
@@ -642,7 +642,7 @@ fn generate_demo_tx(
                 signature: None,
                 public_key: None,
             });
-            let msg = tx.signable_bytes();
+            let msg = tx.signing_message(chain_id);
             let sig = my_keypairs[si].sign(&msg);
             let pk = my_keypairs[si].public_key_bytes();
             if let Transaction::Refresh(ref mut inner) = tx {
@@ -2063,6 +2063,7 @@ async fn main() -> Result<()> {
             finality_tracker: Arc::clone(&finality_tracker),
             encrypted_mempool: Arc::clone(&encrypted_mempool),
             light_client: Arc::clone(&light_client),
+            chain_id: args.chain_id.clone(),
         });
         let api_port = args.api_port;
         tokio::spawn(async move {
@@ -2080,13 +2081,14 @@ async fn main() -> Result<()> {
     if !args.demo_mode && is_producer {
         let consensus_tx = Arc::clone(&consensus);
         let tag = node_tag.clone();
+        let stdin_chain_id = args.chain_id.clone();
         tokio::task::spawn_blocking(move || {
             let stdin_keypair = MlDsaKeypair::generate();
             let stdin = std::io::stdin();
             for line in stdin.lock().lines() {
                 match line {
                     Ok(line) => {
-                        if let Some(tx) = parse_stdin_command(&line, &stdin_keypair) {
+                        if let Some(tx) = parse_stdin_command(&line, &stdin_keypair, &stdin_chain_id) {
                             let mut c = safe_lock(&consensus_tx);
                             c.mempool.submit(tx);
                             println!(
@@ -2487,7 +2489,7 @@ async fn main() -> Result<()> {
                     };
 
                     if is_proposer {
-                        if let Some(tx) = generate_demo_tx(&mut rng, epoch, &mut demo_nonces, &demo_keypairs, args.validator_id, args.validator_count, &db) {
+                        if let Some(tx) = generate_demo_tx(&mut rng, epoch, &mut demo_nonces, &demo_keypairs, args.validator_id, args.validator_count, &db, &args.chain_id) {
                             let mut tc = safe_lock(&tc_ref);
                             tc.mempool.submit(tx);
                         }
@@ -3488,7 +3490,7 @@ async fn main() -> Result<()> {
                         let c = safe_lock(&consensus);
                         c.epoch() + 1
                     };
-                    if let Some(tx) = generate_demo_tx(&mut rng, epoch, &mut demo_nonces, &demo_keypairs, args.validator_id, args.validator_count, &db) {
+                    if let Some(tx) = generate_demo_tx(&mut rng, epoch, &mut demo_nonces, &demo_keypairs, args.validator_id, args.validator_count, &db, &args.chain_id) {
                         let mut c = safe_lock(&consensus);
                         c.mempool.submit(tx);
                     }

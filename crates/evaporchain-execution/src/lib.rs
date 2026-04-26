@@ -130,6 +130,12 @@ pub(crate) const GAS_MULTISIG: u64 = 50_000;
 pub(crate) const GAS_USER_OP: u64 = 30_000;
 pub(crate) const GAS_UPGRADE_CONTRACT: u64 = 100_000;
 
+/// Unbonding period: validators must wait this many epochs after exit before claiming stake.
+const UNBONDING_PERIOD_EPOCHS: u64 = 256;
+
+/// Number of state snapshots to retain before pruning older ones.
+const SNAPSHOT_RETAIN_BLOCKS: u64 = 256;
+
 // TODO(M-19): cross-block execution cache keyed on (tx_hash, pre_state_root).
 // TODO(M-21): sort block transactions by gas_price before execution.
 
@@ -156,6 +162,8 @@ pub struct SimpleExecutor {
     pending_events: Vec<(u64, evaporchain_script::ContractEvent)>,
     /// Reward accumulator for block rewards and fee distribution.
     pub reward_accumulator: Option<rewards::RewardAccumulator>,
+    /// Chain ID for signing message domain separation (cross-chain replay protection).
+    pub chain_id: String,
 }
 
 impl SimpleExecutor {
@@ -175,7 +183,13 @@ impl SimpleExecutor {
             decay_watchers: temporal::DecayWatcherEngine::new(),
             pending_events: Vec::new(),
             reward_accumulator: None,
+            chain_id: String::new(),
         }
+    }
+
+    /// Set the chain ID for signing message domain separation.
+    pub fn set_chain_id(&mut self, chain_id: String) {
+        self.chain_id = chain_id;
     }
 
     /// Create a test-friendly executor with a small privacy tree (depth 4).
@@ -194,6 +208,7 @@ impl SimpleExecutor {
             decay_watchers: temporal::DecayWatcherEngine::new(),
             pending_events: Vec::new(),
             reward_accumulator: None,
+            chain_id: String::new(),
         }
     }
 
@@ -212,6 +227,7 @@ impl SimpleExecutor {
             decay_watchers: temporal::DecayWatcherEngine::new(),
             pending_events: Vec::new(),
             reward_accumulator: None,
+            chain_id: String::new(),
         }
     }
 
@@ -230,6 +246,7 @@ impl SimpleExecutor {
             decay_watchers: temporal::DecayWatcherEngine::new(),
             pending_events: Vec::new(),
             reward_accumulator: None,
+            chain_id: String::new(),
         }
     }
 
@@ -252,6 +269,7 @@ impl SimpleExecutor {
             decay_watchers: temporal::DecayWatcherEngine::new(),
             pending_events: Vec::new(),
             reward_accumulator: None,
+            chain_id: String::new(),
         }
     }
 
@@ -274,6 +292,7 @@ impl SimpleExecutor {
             decay_watchers: temporal::DecayWatcherEngine::new(),
             pending_events: Vec::new(),
             reward_accumulator: None,
+            chain_id: String::new(),
         }
     }
 
@@ -297,6 +316,7 @@ impl SimpleExecutor {
             decay_watchers: temporal::DecayWatcherEngine::new(),
             pending_events: Vec::new(),
             reward_accumulator: None,
+            chain_id: String::new(),
         }
     }
 
@@ -363,7 +383,7 @@ impl SimpleExecutor {
 
         let sig = tx.signature().ok_or(ExecutionError::MissingSignature)?;
         let pk = tx.public_key().ok_or(ExecutionError::MissingSignature)?;
-        let msg = tx.signable_bytes();
+        let msg = tx.signing_message(&self.chain_id);
 
         if !HybridVerifier::verify(&msg, sig, pk) {
             return Err(ExecutionError::InvalidSignature);
@@ -643,11 +663,12 @@ impl SimpleExecutor {
     }
 
     /// Execute a validator exit transaction.
-    /// Marks the validator as exiting (the consensus layer handles the unbonding period).
+    /// Sets unbonding_epoch so the validator must wait before claiming stake.
     fn execute_validator_exit(
         &self,
         db: &mut dyn StateDB,
         tx: &ValidatorExitTx,
+        current_epoch: u64,
     ) -> Result<(), ExecutionError> {
         let sender = db.get_or_create_account(&tx.validator_address);
         if sender.nonce != tx.nonce {
@@ -658,10 +679,30 @@ impl SimpleExecutor {
         }
         sender.nonce += 1;
 
+        let mut stake = db.get_stake(tx.validator_id).cloned().ok_or_else(|| {
+            ExecutionError::ObjectNotFound(
+                format!("no stake record for validator {}", tx.validator_id),
+            )
+        })?;
+
+        if stake.validator_address != tx.validator_address {
+            return Err(ExecutionError::InvalidSignature);
+        }
+
+        if stake.unbonding_epoch.is_some() {
+            return Err(ExecutionError::ContractError(
+                "validator already exiting".to_string(),
+            ));
+        }
+
+        stake.unbonding_epoch = Some(current_epoch + UNBONDING_PERIOD_EPOCHS);
+        db.put_stake(stake);
+
         debug!(
             validator = hex::encode(tx.validator_address),
             validator_id = tx.validator_id,
-            "Validator exit requested"
+            unbonding_epoch = current_epoch + UNBONDING_PERIOD_EPOCHS,
+            "Validator exit: unbonding period started"
         );
 
         Ok(())
@@ -671,6 +712,7 @@ impl SimpleExecutor {
         &self,
         db: &mut dyn StateDB,
         tx: &ValidatorClaimStakeTx,
+        current_epoch: u64,
     ) -> Result<(), ExecutionError> {
         let stake = db.get_stake(tx.validator_id).cloned();
         let stake = stake.ok_or_else(|| ExecutionError::ObjectNotFound(
@@ -681,10 +723,17 @@ impl SimpleExecutor {
             return Err(ExecutionError::InvalidSignature);
         }
 
-        if stake.unbonding_epoch.is_none() {
-            return Err(ExecutionError::ContractError(
-                "validator has not exited — cannot claim stake".to_string()
-            ));
+        let unbonding = stake.unbonding_epoch.ok_or_else(|| {
+            ExecutionError::ContractError(
+                "validator has not exited — cannot claim stake".to_string(),
+            )
+        })?;
+
+        if current_epoch < unbonding {
+            return Err(ExecutionError::ContractError(format!(
+                "unbonding period not complete: current epoch {} < unbonding epoch {}",
+                current_epoch, unbonding
+            )));
         }
 
         let sender = db.get_or_create_account(&tx.validator_address);
@@ -705,7 +754,7 @@ impl SimpleExecutor {
             validator = hex::encode(tx.validator_address),
             validator_id = tx.validator_id,
             claimable,
-            "Validator stake claimed"
+            "Validator stake claimed after unbonding"
         );
 
         Ok(())
@@ -1095,8 +1144,8 @@ impl ExecutionEngine for SimpleExecutor {
                 Transaction::DeployScript(deploy) => self.execute_deploy_script(deploy, block.epoch),
                 Transaction::CallScript(call) => self.execute_call_script(call),
                 Transaction::ValidatorStake(stake) => self.execute_validator_stake(db, stake),
-                Transaction::ValidatorExit(exit) => self.execute_validator_exit(db, exit),
-                Transaction::ValidatorClaimStake(claim) => self.execute_validator_claim_stake(db, claim),
+                Transaction::ValidatorExit(exit) => self.execute_validator_exit(db, exit, block.epoch),
+                Transaction::ValidatorClaimStake(claim) => self.execute_validator_claim_stake(db, claim, block.epoch),
                 Transaction::Shield(shield) => {
                     self.privacy_executor.set_epoch(block.epoch);
                     self.privacy_executor
@@ -1270,6 +1319,10 @@ impl ExecutionEngine for SimpleExecutor {
         let state_root = db.compute_state_root();
         db.commit_state_snapshot(block.number);
 
+        if block.number > SNAPSHOT_RETAIN_BLOCKS {
+            db.prune_snapshots_before(block.number - SNAPSHOT_RETAIN_BLOCKS);
+        }
+
         info!(
             block = block.number,
             epoch = block.epoch,
@@ -1375,8 +1428,9 @@ mod tests {
     }
 
     /// Helper: sign a transaction with the given keypair.
+    /// Uses signing_message with empty chain_id to match executor verification.
     fn sign_tx(tx: &mut Transaction, kp: &MlDsaKeypair) {
-        let msg = tx.signable_bytes();
+        let msg = tx.signing_message("");
         let sig = kp.sign(&msg);
         let pk = kp.public_key_bytes();
         match tx {
@@ -2478,7 +2532,7 @@ contract Counter {
             signature: None, public_key: None,
         });
         // Sign with kp1 but attach kp2's public key
-        let msg = tx.signable_bytes();
+        let msg = tx.signing_message("");
         let sig = kp1.sign(&msg);
         let pk = kp2.public_key_bytes(); // wrong key
         if let Transaction::Transfer(ref mut t) = tx {

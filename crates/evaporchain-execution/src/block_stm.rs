@@ -908,6 +908,7 @@ pub struct BlockStmExecutor {
     /// Minimum number of transactions to trigger parallel execution.
     /// Below this threshold, sequential execution is used (less overhead).
     pub parallel_threshold: usize,
+    pub chain_id: String,
 }
 
 impl BlockStmExecutor {
@@ -924,6 +925,7 @@ impl BlockStmExecutor {
             deferred_queue: crate::temporal::DeferredQueue::new(),
             decay_watchers: crate::temporal::DecayWatcherEngine::new(),
             parallel_threshold: 4,
+            chain_id: String::new(),
         }
     }
 
@@ -942,6 +944,7 @@ impl BlockStmExecutor {
             deferred_queue: crate::temporal::DeferredQueue::new(),
             decay_watchers: crate::temporal::DecayWatcherEngine::new(),
             parallel_threshold: 4,
+            chain_id: String::new(),
         }
     }
 
@@ -958,6 +961,7 @@ impl BlockStmExecutor {
             deferred_queue: crate::temporal::DeferredQueue::new(),
             decay_watchers: crate::temporal::DecayWatcherEngine::new(),
             parallel_threshold: 4,
+            chain_id: String::new(),
         }
     }
 
@@ -978,6 +982,7 @@ impl BlockStmExecutor {
             deferred_queue: crate::temporal::DeferredQueue::new(),
             decay_watchers: crate::temporal::DecayWatcherEngine::new(),
             parallel_threshold: 4,
+            chain_id: String::new(),
         }
     }
 
@@ -1011,6 +1016,7 @@ impl BlockStmExecutor {
         let mv_memory = MVMemory::new();
         let verify_sigs = self.verify_signatures;
         let fee_ctrl = &self.fee_controller;
+        let chain_id = &self.chain_id;
 
         // Per-transaction state
         let mut incarnations: Vec<u32> = vec![0; num_txs as usize];
@@ -1026,7 +1032,7 @@ impl BlockStmExecutor {
 
                 // Signature check
                 if verify_sigs {
-                    if crate::parallel::ParallelExecutor::verify_tx_signature(true, tx).is_err() {
+                    if crate::parallel::ParallelExecutor::verify_tx_signature(true, tx, &chain_id).is_err() {
                         return (tx_idx, Vec::new(), Vec::new(), TxExecResult::Failed { fee: 0 });
                     }
                 }
@@ -1318,7 +1324,9 @@ impl ExecutionEngine for BlockStmExecutor {
                 | Transaction::Shield(_)
                 | Transaction::Unshield(_)
                 | Transaction::PrivateTransfer(_)
-                | Transaction::Deferred(_) => serial_txs.push((i, tx)),
+                | Transaction::Deferred(_)
+                | Transaction::ValidatorExit(_)
+                | Transaction::ValidatorClaimStake(_) => serial_txs.push((i, tx)),
                 _ => parallel_txs.push(tx),
             }
         }
@@ -1350,7 +1358,7 @@ impl ExecutionEngine for BlockStmExecutor {
         for &(idx, tx) in &serial_txs {
             if self.verify_signatures {
                 if let Err(e) =
-                    crate::parallel::ParallelExecutor::verify_tx_signature(true, tx)
+                    crate::parallel::ParallelExecutor::verify_tx_signature(true, tx, &self.chain_id)
                 {
                     debug!(tx_idx = idx, error = %e, "Serial: sig verification failed");
                     total_txs_failed += 1;
@@ -1484,7 +1492,67 @@ impl ExecutionEngine for BlockStmExecutor {
                         .map(|_| ())
                         .map_err(|e| ExecutionError::ContractError(e.to_string()))
                 }
-                _ => unreachable!("only contract/script/privacy/deferred txs in serial phase"),
+                Transaction::ValidatorExit(exit) => {
+                    let sender = db.get_or_create_account(&exit.validator_address);
+                    if sender.nonce != exit.nonce {
+                        Err(ExecutionError::InvalidNonce {
+                            expected: sender.nonce,
+                            got: exit.nonce,
+                        })
+                    } else {
+                        sender.nonce += 1;
+                        let mut stake = db.get_stake(exit.validator_id).cloned().ok_or_else(|| {
+                            ExecutionError::ObjectNotFound(
+                                format!("no stake record for validator {}", exit.validator_id),
+                            )
+                        })?;
+                        if stake.validator_address != exit.validator_address {
+                            return Err(ExecutionError::InvalidSignature);
+                        }
+                        if stake.unbonding_epoch.is_some() {
+                            Err(ExecutionError::ContractError("validator already exiting".to_string()))
+                        } else {
+                            stake.unbonding_epoch = Some(block.epoch + crate::UNBONDING_PERIOD_EPOCHS);
+                            db.put_stake(stake);
+                            Ok(())
+                        }
+                    }
+                }
+                Transaction::ValidatorClaimStake(claim) => {
+                    let stake = db.get_stake(claim.validator_id).cloned().ok_or_else(|| {
+                        ExecutionError::ObjectNotFound(
+                            format!("no stake record for validator {}", claim.validator_id),
+                        )
+                    })?;
+                    if stake.validator_address != claim.validator_address {
+                        return Err(ExecutionError::InvalidSignature);
+                    }
+                    let unbonding = stake.unbonding_epoch.ok_or_else(|| {
+                        ExecutionError::ContractError(
+                            "validator has not exited — cannot claim stake".to_string(),
+                        )
+                    })?;
+                    if block.epoch < unbonding {
+                        Err(ExecutionError::ContractError(format!(
+                            "unbonding period not complete: current epoch {} < unbonding epoch {}",
+                            block.epoch, unbonding
+                        )))
+                    } else {
+                        let sender = db.get_or_create_account(&claim.validator_address);
+                        if sender.nonce != claim.nonce {
+                            return Err(ExecutionError::InvalidNonce {
+                                expected: sender.nonce,
+                                got: claim.nonce,
+                            });
+                        }
+                        let claimable = stake.staked_amount.saturating_sub(stake.slashed_amount);
+                        sender.balance += claimable;
+                        sender.nonce += 1;
+                        db.remove_stake(claim.validator_id);
+                        Ok(())
+                    }
+                }
+                _ => unreachable!("only serial-phase txs expected here"),
             };
 
             match result {

@@ -742,6 +742,8 @@ impl P2pNetworkService {
                                                 .map(|proof| SampleResponse {
                                                     shard: pkg.shards[query.shard_index].clone(),
                                                     proof,
+                                                    attestation_signature: None,
+                                                    attester_public_key: None,
                                                 })
                                         } else {
                                             None

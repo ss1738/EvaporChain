@@ -37,6 +37,8 @@ pub struct Mempool {
     current_epoch: u64,
     /// Verify signatures before accepting transactions.
     verify_signatures: bool,
+    /// Chain ID for signing message domain separation (cross-chain replay protection).
+    chain_id: String,
 }
 
 impl Mempool {
@@ -52,6 +54,7 @@ impl Mempool {
             tx_submit_epoch: HashMap::new(),
             current_epoch: 0,
             verify_signatures: false,
+            chain_id: String::new(),
         }
     }
 
@@ -68,7 +71,13 @@ impl Mempool {
             tx_submit_epoch: HashMap::new(),
             current_epoch: 0,
             verify_signatures: false,
+            chain_id: String::new(),
         }
+    }
+
+    /// Set the chain ID for signing message domain separation.
+    pub fn set_chain_id(&mut self, chain_id: String) {
+        self.chain_id = chain_id;
     }
 
     /// Enable signature verification on transaction submission.
@@ -131,7 +140,7 @@ impl Mempool {
         if self.verify_signatures {
             if !matches!(tx, Transaction::Unshield(_) | Transaction::PrivateTransfer(_)) {
                 if let (Some(sig), Some(pk)) = (tx.signature(), tx.public_key()) {
-                    let msg = tx.signable_bytes();
+                    let msg = tx.signing_message(&self.chain_id);
                     if !HybridVerifier::verify(&msg, sig, pk) {
                         self.rejected_count += 1;
                         return false;
