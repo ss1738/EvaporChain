@@ -102,6 +102,7 @@ impl GasEstimator {
             Transaction::CallScript(_) => GAS_CALL_CONTRACT, // same cost as CallContract
             Transaction::ValidatorStake(_) => GAS_VALIDATOR_STAKE,
             Transaction::ValidatorExit(_) => GAS_VALIDATOR_EXIT,
+            Transaction::ValidatorClaimStake(_) => GAS_VALIDATOR_EXIT,
             Transaction::Shield(_) => 60_000,
             Transaction::Unshield(_) => 80_000,
             Transaction::PrivateTransfer(ptx) => {

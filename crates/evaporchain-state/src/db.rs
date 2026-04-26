@@ -1,7 +1,7 @@
 use evaporchain_crypto::hash::blake3_hash;
 use evaporchain_crypto::{EnergyVerkleTrie, TrieHealth};
 
-use evaporchain_types::{Account, AccountAddress, GhostRecord, ObjectId, StateObject};
+use evaporchain_types::{Account, AccountAddress, GhostRecord, ObjectId, StakeRecord, StateObject};
 use std::collections::HashMap;
 
 // ─── Trie key/value derivation (shared by all StateDB backends) ─────────
@@ -179,6 +179,20 @@ pub trait StateDB: Send + Sync {
     /// Get the note count.
     fn get_note_count(&self) -> u64;
 
+    // ─── Stake Ledger ───────────────────────────────────────────────────
+
+    /// Get a stake record by validator ID.
+    fn get_stake(&self, validator_id: u64) -> Option<&StakeRecord>;
+
+    /// Insert or update a stake record.
+    fn put_stake(&mut self, record: StakeRecord);
+
+    /// Remove a stake record by validator ID.
+    fn remove_stake(&mut self, validator_id: u64) -> Option<StakeRecord>;
+
+    /// Return all stake records.
+    fn all_stakes(&self) -> Vec<&StakeRecord>;
+
     // ─── State Pruning ───────────────────────────────────────────────────
 
     /// Prune historical state data older than the given block height.
@@ -208,6 +222,8 @@ pub struct InMemoryStateDB {
     spent_nullifiers: std::collections::HashSet<[u8; 32]>,
     shielded_pool_balance: u64,
     note_count: u64,
+    // Stake ledger
+    stakes: HashMap<u64, StakeRecord>,
 }
 
 impl InMemoryStateDB {
@@ -223,6 +239,7 @@ impl InMemoryStateDB {
             spent_nullifiers: std::collections::HashSet::new(),
             shielded_pool_balance: 0,
             note_count: 0,
+            stakes: HashMap::new(),
         }
     }
 
@@ -400,6 +417,22 @@ impl StateDB for InMemoryStateDB {
 
     fn get_note_count(&self) -> u64 {
         self.note_count
+    }
+
+    fn get_stake(&self, validator_id: u64) -> Option<&StakeRecord> {
+        self.stakes.get(&validator_id)
+    }
+
+    fn put_stake(&mut self, record: StakeRecord) {
+        self.stakes.insert(record.validator_id, record);
+    }
+
+    fn remove_stake(&mut self, validator_id: u64) -> Option<StakeRecord> {
+        self.stakes.remove(&validator_id)
+    }
+
+    fn all_stakes(&self) -> Vec<&StakeRecord> {
+        self.stakes.values().collect()
     }
 
     fn compute_state_root(&mut self) -> [u8; 32] {

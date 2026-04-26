@@ -84,6 +84,7 @@ pub fn initialize_genesis(
         state_root,
         transactions: vec![],
         timestamp: 0,
+        chain_id: String::new(),
         producer_id: None,
         vrf_output: None,
         vrf_proof: None,

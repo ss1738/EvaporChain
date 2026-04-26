@@ -18,8 +18,8 @@ use evaporchain_state::db::StateDB;
 use evaporchain_state::{EvaporationEngine, RefreshEngine};
 use evaporchain_types::{
     Block, CallContractTx, CallScriptTx, CreateObjectTx, DeployContractTx, DeployScriptTx,
-    Epoch, ObjectState, RefreshTx, StateObject, Transaction, TransferTx,
-    ValidatorExitTx, ValidatorStakeTx,
+    Epoch, ObjectState, RefreshTx, StakeRecord, StateObject, Transaction, TransferTx,
+    ValidatorClaimStakeTx, ValidatorExitTx, ValidatorStakeTx,
 };
 use thiserror::Error;
 use tracing::{debug, info};
@@ -119,6 +119,7 @@ pub(crate) const GAS_DEPLOY_SCRIPT: u64 = 150_000;
 pub(crate) const GAS_CALL_SCRIPT: u64 = 50_000;
 pub(crate) const GAS_VALIDATOR_STAKE: u64 = 50_000;
 pub(crate) const GAS_VALIDATOR_EXIT: u64 = 30_000;
+pub(crate) const GAS_VALIDATOR_CLAIM_STAKE: u64 = 30_000;
 
 // TODO(M-19): cross-block execution cache keyed on (tx_hash, pre_state_root).
 // TODO(M-21): sort block transactions by gas_price before execution.
@@ -305,6 +306,7 @@ impl SimpleExecutor {
             Transaction::CallScript(_) => GAS_CALL_SCRIPT,
             Transaction::ValidatorStake(_) => GAS_VALIDATOR_STAKE,
             Transaction::ValidatorExit(_) => GAS_VALIDATOR_EXIT,
+            Transaction::ValidatorClaimStake(_) => GAS_VALIDATOR_CLAIM_STAKE,
             Transaction::Shield(_) => privacy_exec::GAS_SHIELD,
             Transaction::Unshield(_) => privacy_exec::GAS_UNSHIELD,
             Transaction::PrivateTransfer(ptx) => {
@@ -593,6 +595,16 @@ impl SimpleExecutor {
         sender.balance -= tx.stake_amount;
         sender.nonce += 1;
 
+        let existing_stake = db.get_stake(tx.validator_id).map(|s| s.staked_amount).unwrap_or(0);
+        db.put_stake(StakeRecord {
+            validator_id: tx.validator_id,
+            validator_address: tx.validator_address,
+            staked_amount: existing_stake + tx.stake_amount,
+            staked_at_epoch: 0,
+            unbonding_epoch: None,
+            slashed_amount: 0,
+        });
+
         debug!(
             validator = hex::encode(tx.validator_address),
             stake = tx.stake_amount,
@@ -623,6 +635,50 @@ impl SimpleExecutor {
             validator = hex::encode(tx.validator_address),
             validator_id = tx.validator_id,
             "Validator exit requested"
+        );
+
+        Ok(())
+    }
+
+    fn execute_validator_claim_stake(
+        &self,
+        db: &mut dyn StateDB,
+        tx: &ValidatorClaimStakeTx,
+    ) -> Result<(), ExecutionError> {
+        let stake = db.get_stake(tx.validator_id).cloned();
+        let stake = stake.ok_or_else(|| ExecutionError::ObjectNotFound(
+            format!("no stake record for validator {}", tx.validator_id)
+        ))?;
+
+        if stake.validator_address != tx.validator_address {
+            return Err(ExecutionError::InvalidSignature);
+        }
+
+        if stake.unbonding_epoch.is_none() {
+            return Err(ExecutionError::ContractError(
+                "validator has not exited — cannot claim stake".to_string()
+            ));
+        }
+
+        let sender = db.get_or_create_account(&tx.validator_address);
+        if sender.nonce != tx.nonce {
+            return Err(ExecutionError::InvalidNonce {
+                expected: sender.nonce,
+                got: tx.nonce,
+            });
+        }
+
+        let claimable = stake.staked_amount.saturating_sub(stake.slashed_amount);
+        sender.balance += claimable;
+        sender.nonce += 1;
+
+        db.remove_stake(tx.validator_id);
+
+        debug!(
+            validator = hex::encode(tx.validator_address),
+            validator_id = tx.validator_id,
+            claimable,
+            "Validator stake claimed"
         );
 
         Ok(())
@@ -719,6 +775,7 @@ impl ExecutionEngine for SimpleExecutor {
                 Transaction::CallScript(call) => self.execute_call_script(call),
                 Transaction::ValidatorStake(stake) => self.execute_validator_stake(db, stake),
                 Transaction::ValidatorExit(exit) => self.execute_validator_exit(db, exit),
+                Transaction::ValidatorClaimStake(claim) => self.execute_validator_claim_stake(db, claim),
                 Transaction::Shield(shield) => {
                     self.privacy_executor.set_epoch(block.epoch);
                     self.privacy_executor
@@ -921,6 +978,7 @@ mod tests {
             state_root: [0u8; 32],
             transactions: txs,
             timestamp: 0,
+            chain_id: String::new(),
             producer_id: None,
             vrf_output: None,
             vrf_proof: None,
@@ -985,6 +1043,10 @@ mod tests {
                 v.public_key = Some(pk);
             }
             Transaction::ValidatorExit(v) => {
+                v.signature = Some(sig);
+                v.public_key = Some(pk);
+            }
+            Transaction::ValidatorClaimStake(v) => {
                 v.signature = Some(sig);
                 v.public_key = Some(pk);
             }

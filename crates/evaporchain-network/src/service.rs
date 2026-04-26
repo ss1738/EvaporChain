@@ -886,6 +886,7 @@ mod tests {
             state_root: [0u8; 32],
             transactions: vec![],
             timestamp: 0,
+            chain_id: String::new(),
             producer_id: None,
             vrf_output: None,
             vrf_proof: None,

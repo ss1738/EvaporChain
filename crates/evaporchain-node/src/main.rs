@@ -15,7 +15,7 @@ use evaporchain_consensus::MockConsensus;
 use evaporchain_consensus::encrypted_mempool::EncryptedMempool;
 use evaporchain_consensus::finality::FinalityTracker;
 use evaporchain_consensus::light_client::{LightBlockHeader, LightClientVerifier};
-use evaporchain_consensus::tendermint::{TendermintConsensus, ConsensusMessage, ConsensusAction, ProofVerifier, AnchorHashProvider};
+use evaporchain_consensus::tendermint::{TendermintConsensus, ConsensusMessage, ConsensusAction, SlashReason, ProofVerifier, AnchorHashProvider};
 use evaporchain_consensus::state_sync::{StateSyncManager, SyncAction, SyncMessage};
 use evaporchain_consensus::validator_set::{ValidatorInfo, ValidatorSet};
 use evaporchain_network::service::{cache_block, NetworkConfig, P2pNetworkService};
@@ -690,6 +690,10 @@ struct NodeArgs {
     checkpoint_block_hash: Option<String>,
     /// Disable DA certificate enforcement (for devnets without DA layer).
     no_da_enforcement: bool,
+    /// Chain identifier for cross-chain replay protection.
+    chain_id: String,
+    /// Light client mode — verify headers only, skip block execution.
+    light_mode: bool,
 }
 
 fn parse_args() -> NodeArgs {
@@ -797,6 +801,11 @@ fn parse_args() -> NodeArgs {
         .cloned();
 
     let no_da_enforcement = args.iter().any(|a| a == "--no-da-enforcement");
+    let light_mode = args.iter().any(|a| a == "--light");
+    let chain_id = args.iter().position(|a| a == "--chain-id")
+        .and_then(|i| args.get(i + 1))
+        .cloned()
+        .unwrap_or_else(|| "evaporchain-testnet-1".to_string());
 
     let allowed_peers: Vec<String> = args
         .iter()
@@ -844,6 +853,8 @@ fn parse_args() -> NodeArgs {
         checkpoint_state_root,
         checkpoint_block_hash,
         no_da_enforcement,
+        chain_id,
+        light_mode,
     }
 }
 
@@ -1398,6 +1409,10 @@ async fn main() -> Result<()> {
     let args = parse_args();
     let node_tag = make_tag(&args.node_id);
 
+    if args.light_mode {
+        info!(chain_id = %args.chain_id, "Starting in LIGHT CLIENT mode — headers only, no execution");
+    }
+
     print_banner(&node_tag);
 
     // ── Persistent storage ──
@@ -1714,6 +1729,7 @@ async fn main() -> Result<()> {
             kp
         };
         tc.set_bls_keypair(bls_kp);
+        tc.set_chain_id(args.chain_id.clone());
 
         // Trusted checkpoint for weak subjectivity (long-range attack defense)
         if let Some(cp_height) = args.checkpoint_height {
@@ -2354,6 +2370,9 @@ async fn main() -> Result<()> {
                 ConsensusAction::RequestSync(_, _) => {
                     commit_actions.push(action);
                 }
+                ConsensusAction::SlashValidator { .. } => {
+                    commit_actions.push(action);
+                }
             }
         }
         commit_actions
@@ -2510,6 +2529,15 @@ async fn main() -> Result<()> {
 
                 // Handle commits
                 for action in commits.drain(..) {
+                    if let ConsensusAction::SlashValidator { validator_id, amount, ref reason } = action {
+                        let mut db_guard = safe_lock(&db);
+                        if let Some(mut stake) = db_guard.get_stake(validator_id).cloned() {
+                            stake.slashed_amount = stake.slashed_amount.saturating_add(amount);
+                            db_guard.put_stake(stake);
+                        }
+                        warn!(validator_id, amount, reason = ?reason, "Slash applied to stake ledger");
+                        continue;
+                    }
                     if let ConsensusAction::RequestSync(from, to) = action {
                         if !sync_in_flight {
                             println!(
@@ -2524,6 +2552,15 @@ async fn main() -> Result<()> {
                         continue;
                     }
                     if let ConsensusAction::CommitBlock(mut block) = action {
+                        if args.light_mode {
+                            // Light mode: skip execution, only feed to light client verifier
+                            let mut tc = safe_lock(&tc_ref);
+                            tc.on_block_committed(&block, block.state_root, 0);
+                            let tip = tc.height();
+                            drop(tc);
+                            info!(height = block.number, tip, "Light client: header verified");
+                            continue;
+                        }
                         // Execute the block to get state root
                         let exec_start = Instant::now();
                         let result = {
@@ -3111,6 +3148,15 @@ async fn main() -> Result<()> {
 
                     // Handle any commits from message processing
                     for action in commits.drain(..) {
+                        if let ConsensusAction::SlashValidator { validator_id, amount, ref reason } = action {
+                            let mut db_guard = safe_lock(&db);
+                            if let Some(mut stake) = db_guard.get_stake(validator_id).cloned() {
+                                stake.slashed_amount = stake.slashed_amount.saturating_add(amount);
+                                db_guard.put_stake(stake);
+                            }
+                            warn!(validator_id, amount, reason = ?reason, "Slash applied to stake ledger (follower)");
+                            continue;
+                        }
                         if let ConsensusAction::RequestSync(from, to) = action {
                             if !sync_in_flight {
                                 println!(
@@ -3125,6 +3171,12 @@ async fn main() -> Result<()> {
                             continue;
                         }
                         if let ConsensusAction::CommitBlock(mut block) = action {
+                            if args.light_mode {
+                                let mut tc = safe_lock(&tc_ref);
+                                tc.on_block_committed(&block, block.state_root, 0);
+                                info!(height = block.number, "Light client: header verified (follower)");
+                                continue;
+                            }
                             let exec_start = Instant::now();
                             let result = {
                                 let mut tc = safe_lock(&tc_ref);

@@ -880,6 +880,7 @@ fn tx_type_name(tx: &Transaction) -> &'static str {
         Transaction::CallScript(_) => "call_script",
         Transaction::ValidatorStake(_) => "validator_stake",
         Transaction::ValidatorExit(_) => "validator_exit",
+        Transaction::ValidatorClaimStake(_) => "validator_claim_stake",
         Transaction::Shield(_) => "shield",
         Transaction::Unshield(_) => "unshield",
         Transaction::PrivateTransfer(_) => "private_transfer",
@@ -903,6 +904,7 @@ fn tx_sender_hex(tx: &Transaction) -> Option<String> {
         Transaction::CallScript(t) => Some(addr_hex(&t.caller)),
         Transaction::ValidatorStake(t) => Some(addr_hex(&t.validator_address)),
         Transaction::ValidatorExit(t) => Some(addr_hex(&t.validator_address)),
+        Transaction::ValidatorClaimStake(t) => Some(addr_hex(&t.validator_address)),
         Transaction::Shield(_) | Transaction::Unshield(_) | Transaction::PrivateTransfer(_)
         | Transaction::Deferred(_) | Transaction::Blob(_) => None,
     }

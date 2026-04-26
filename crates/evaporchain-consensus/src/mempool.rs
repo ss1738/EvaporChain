@@ -238,6 +238,11 @@ impl Mempool {
                     + t.signature.as_ref().map_or(0, |s| s.len())
                     + t.public_key.as_ref().map_or(0, |p| p.len())
             }
+            Transaction::ValidatorClaimStake(t) => {
+                32 + 8 + 8
+                    + t.signature.as_ref().map_or(0, |s| s.len())
+                    + t.public_key.as_ref().map_or(0, |p| p.len())
+            }
             Transaction::Shield(t) => {
                 32 + 8 + 8 + 32 + 32 + 8 // from + amount + nonce + owner_hash + blinding + half_life
                     + t.signature.as_ref().map_or(0, |s| s.len())

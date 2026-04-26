@@ -92,6 +92,9 @@ pub struct Block {
     pub state_root: [u8; 32],
     pub transactions: Vec<Transaction>,
     pub timestamp: u64,
+    /// Chain identifier (e.g., "evaporchain-mainnet-1"). Prevents cross-chain replay.
+    #[serde(default)]
+    pub chain_id: String,
     /// Validator ID that produced this block (None for single-node mode).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub producer_id: Option<u64>,
@@ -216,6 +219,8 @@ pub enum Transaction {
     CallScript(CallScriptTx),
     ValidatorStake(ValidatorStakeTx),
     ValidatorExit(ValidatorExitTx),
+    /// Claim unbonded stake after the unbonding period has elapsed.
+    ValidatorClaimStake(ValidatorClaimStakeTx),
     /// Shield: transparent → private (burns balance, creates note).
     Shield(ShieldTx),
     /// Unshield: private → transparent (spends note, credits balance).
@@ -316,6 +321,14 @@ impl Transaction {
             Transaction::ValidatorExit(tx) => {
                 let mut buf = Vec::with_capacity(1 + 32 + 8 + 8);
                 buf.push(0x09);
+                buf.extend_from_slice(&tx.validator_address);
+                buf.extend_from_slice(&tx.validator_id.to_le_bytes());
+                buf.extend_from_slice(&tx.nonce.to_le_bytes());
+                buf
+            }
+            Transaction::ValidatorClaimStake(tx) => {
+                let mut buf = Vec::with_capacity(1 + 32 + 8 + 8);
+                buf.push(0x0F);
                 buf.extend_from_slice(&tx.validator_address);
                 buf.extend_from_slice(&tx.validator_id.to_le_bytes());
                 buf.extend_from_slice(&tx.nonce.to_le_bytes());
@@ -429,6 +442,7 @@ impl Transaction {
             Transaction::CallScript(tx) => tx.signature.as_deref(),
             Transaction::ValidatorStake(tx) => tx.signature.as_deref(),
             Transaction::ValidatorExit(tx) => tx.signature.as_deref(),
+            Transaction::ValidatorClaimStake(tx) => tx.signature.as_deref(),
             Transaction::Shield(tx) => tx.signature.as_deref(),
             // Unshield and PrivateTransfer are authenticated by ZK proofs, not signatures.
             Transaction::Unshield(_) => None,
@@ -450,6 +464,7 @@ impl Transaction {
             Transaction::CallScript(tx) => tx.public_key.as_deref(),
             Transaction::ValidatorStake(tx) => tx.public_key.as_deref(),
             Transaction::ValidatorExit(tx) => tx.public_key.as_deref(),
+            Transaction::ValidatorClaimStake(tx) => tx.public_key.as_deref(),
             Transaction::Shield(tx) => tx.public_key.as_deref(),
             Transaction::Unshield(_) => None,
             Transaction::PrivateTransfer(_) => None,
@@ -471,6 +486,7 @@ impl Transaction {
             Transaction::Refresh(_) => None, // Refresh has no sender address field
             Transaction::ValidatorStake(tx) => Some(&tx.validator_address),
             Transaction::ValidatorExit(tx) => Some(&tx.validator_address),
+            Transaction::ValidatorClaimStake(tx) => Some(&tx.validator_address),
             Transaction::Shield(tx) => Some(&tx.from),
             // Unshield/PrivateTransfer have no transparent sender — fees come from the shielded pool.
             Transaction::Unshield(_) => None,
@@ -628,6 +644,30 @@ pub struct ValidatorExitTx {
     pub signature: Option<Vec<u8>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_key: Option<Vec<u8>>,
+}
+
+/// Claim unbonded stake back to the validator's balance.
+/// Only succeeds if the unbonding period has elapsed since the ValidatorExit.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidatorClaimStakeTx {
+    pub validator_address: AccountAddress,
+    pub validator_id: u64,
+    pub nonce: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<Vec<u8>>,
+}
+
+/// On-chain stake record tracking a validator's locked stake and unbonding status.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct StakeRecord {
+    pub validator_id: u64,
+    pub validator_address: AccountAddress,
+    pub staked_amount: u64,
+    pub staked_at_epoch: Epoch,
+    pub unbonding_epoch: Option<Epoch>,
+    pub slashed_amount: u64,
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -146,6 +146,10 @@ fn set_signature(tx: &mut Transaction, sig: Vec<u8>, pk: Vec<u8>) {
             t.signature = Some(sig);
             t.public_key = Some(pk);
         }
+        Transaction::ValidatorClaimStake(t) => {
+            t.signature = Some(sig);
+            t.public_key = Some(pk);
+        }
         Transaction::Shield(t) => {
             t.signature = Some(sig);
             t.public_key = Some(pk);

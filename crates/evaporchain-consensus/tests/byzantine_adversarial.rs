@@ -33,6 +33,7 @@ fn make_test_block(height: u64, producer_id: u64) -> Block {
         state_root: [1u8; 32],
         transactions: vec![],
         timestamp: 1000 + height,
+        chain_id: String::new(),
         producer_id: Some(producer_id),
         vrf_output: None,
         vrf_proof: None,

@@ -569,6 +569,11 @@ fn execute_tx(
         Transaction::Refresh(t) => exec_refresh(view, t, epoch),
         Transaction::ValidatorStake(t) => exec_validator_stake(view, t),
         Transaction::ValidatorExit(t) => exec_validator_exit(view, t),
+        Transaction::ValidatorClaimStake(_) => {
+            Err(TxViewError::ExecutionError(ExecutionError::ContractError(
+                "validator claim stake executes in serial phase".into(),
+            )))
+        }
         // Contract/script/privacy txs cannot run in parallel (global mutable state)
         Transaction::DeployContract(_)
         | Transaction::CallContract(_)
@@ -628,6 +633,7 @@ fn estimate_gas(tx: &Transaction) -> u64 {
         Transaction::CallScript(_) => GAS_CALL_SCRIPT,
         Transaction::ValidatorStake(_) => GAS_VALIDATOR_STAKE,
         Transaction::ValidatorExit(_) => GAS_VALIDATOR_EXIT,
+        Transaction::ValidatorClaimStake(_) => GAS_VALIDATOR_CLAIM_STAKE,
         Transaction::Shield(_) => crate::privacy_exec::GAS_SHIELD,
         Transaction::Unshield(_) => crate::privacy_exec::GAS_UNSHIELD,
         Transaction::PrivateTransfer(ptx) => {
@@ -1780,6 +1786,7 @@ mod tests {
             state_root: [0u8; 32],
             transactions: txs,
             timestamp: 0,
+            chain_id: String::new(),
             producer_id: None,
             vrf_output: None,
             vrf_proof: None,

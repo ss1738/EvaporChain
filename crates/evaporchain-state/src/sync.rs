@@ -272,6 +272,7 @@ mod tests {
                 state_root: [1u8; 32],
                 transactions: vec![],
                 timestamp: 1000 + height,
+                chain_id: String::new(),
                 producer_id: Some(1),
                 vrf_output: None,
                 vrf_proof: None,

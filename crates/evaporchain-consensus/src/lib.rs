@@ -196,6 +196,7 @@ impl MockConsensus {
             state_root: [0u8; 32],
             transactions: txs,
             timestamp,
+            chain_id: String::new(),
             producer_id: None,
             vrf_output: None,
             vrf_proof: None,
@@ -272,6 +273,7 @@ impl MockConsensus {
             state_root: [0u8; 32],
             transactions: txs,
             timestamp,
+            chain_id: String::new(),
             producer_id: None,
             vrf_output: None,
             vrf_proof: None,
@@ -439,6 +441,7 @@ impl RotatingConsensus {
             state_root: [0u8; 32],
             transactions: txs,
             timestamp,
+            chain_id: String::new(),
             producer_id: Some(self.my_id),
             vrf_output: None,
             vrf_proof: None,
@@ -625,6 +628,10 @@ mod tests {
                 inner.public_key = Some(pk);
             }
             Transaction::ValidatorExit(ref mut inner) => {
+                inner.signature = Some(sig);
+                inner.public_key = Some(pk);
+            }
+            Transaction::ValidatorClaimStake(ref mut inner) => {
                 inner.signature = Some(sig);
                 inner.public_key = Some(pk);
             }
@@ -1015,6 +1022,7 @@ mod tests {
             state_root: [0u8; 32],
             transactions: vec![],
             timestamp: 0,
+            chain_id: String::new(),
             producer_id: Some(wrong_id),
             vrf_output: None,
             vrf_proof: None,
@@ -1052,6 +1060,7 @@ mod tests {
             state_root: [0u8; 32],
             transactions: vec![],
             timestamp: 0,
+            chain_id: String::new(),
             producer_id: None,
             vrf_output: None,
             vrf_proof: None,
@@ -1120,6 +1129,7 @@ mod tests {
             state_root: [0u8; 32],
             transactions: vec![],
             timestamp: 0,
+            chain_id: String::new(),
             producer_id: Some(wrong_id),
             vrf_output: None,
             vrf_proof: None,

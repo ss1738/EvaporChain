@@ -85,6 +85,9 @@ fn extract_access_keys(tx: &Transaction) -> Vec<AccessKey> {
         Transaction::ValidatorExit(t) => {
             vec![AccessKey::Account(t.validator_address)]
         }
+        Transaction::ValidatorClaimStake(t) => {
+            vec![AccessKey::Account(t.validator_address)]
+        }
         Transaction::Shield(t) => {
             vec![AccessKey::Account(t.from), AccessKey::PrivacyEngine]
         }
@@ -505,6 +508,7 @@ impl ParallelExecutor {
             Transaction::CallScript(_) => GAS_CALL_SCRIPT,
             Transaction::ValidatorStake(_) => GAS_VALIDATOR_STAKE,
             Transaction::ValidatorExit(_) => GAS_VALIDATOR_EXIT,
+            Transaction::ValidatorClaimStake(_) => GAS_VALIDATOR_CLAIM_STAKE,
             Transaction::Shield(_) => crate::privacy_exec::GAS_SHIELD,
             Transaction::Unshield(_) => crate::privacy_exec::GAS_UNSHIELD,
             Transaction::PrivateTransfer(ptx) => {
@@ -613,6 +617,11 @@ impl ParallelExecutor {
                 Transaction::Refresh(t) => Self::exec_refresh(overlay, t, epoch),
                 Transaction::ValidatorStake(t) => Self::exec_validator_stake(overlay, t),
                 Transaction::ValidatorExit(t) => Self::exec_validator_exit(overlay, t),
+                Transaction::ValidatorClaimStake(_) => {
+                    Err(ExecutionError::ContractError(
+                        "validator claim stake executes in serial phase".into(),
+                    ))
+                }
                 // Contract/script txs should not appear in parallelizable partitions
                 // (they all share the ContractEngine/ScriptEngine key and form one partition).
                 // But if they do end up here, we mark them failed — they'll be handled
@@ -1194,6 +1203,7 @@ mod tests {
             state_root: [0u8; 32],
             transactions: txs,
             timestamp: 0,
+            chain_id: String::new(),
             producer_id: None,
             vrf_output: None,
             vrf_proof: None,

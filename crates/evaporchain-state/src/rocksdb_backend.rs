@@ -6,7 +6,7 @@
 
 use crate::db::{build_energy_trie, trie_key_for_account, trie_key_for_object, trie_value_for_account, trie_value_for_object, StateDB};
 use evaporchain_crypto::{EnergyVerkleTrie, TrieHealth};
-use evaporchain_types::{Account, AccountAddress, GhostRecord, ObjectId, StateObject};
+use evaporchain_types::{Account, AccountAddress, GhostRecord, ObjectId, StakeRecord, StateObject};
 use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, Options, WriteBatch, DB};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -694,6 +694,21 @@ impl StateDB for RocksDBStateDB {
 
     fn get_note_count(&self) -> u64 {
         self.note_count
+    }
+
+    fn get_stake(&self, _validator_id: u64) -> Option<&StakeRecord> {
+        None
+    }
+
+    fn put_stake(&mut self, _record: StakeRecord) {
+    }
+
+    fn remove_stake(&mut self, _validator_id: u64) -> Option<StakeRecord> {
+        None
+    }
+
+    fn all_stakes(&self) -> Vec<&StakeRecord> {
+        Vec::new()
     }
 
     fn prove_account(&mut self, addr: &AccountAddress) -> evaporchain_crypto::EnergyVerkleProof {

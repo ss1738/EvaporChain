@@ -524,6 +524,11 @@ fn tx_to_json(tx: &Transaction) -> serde_json::Value {
             "type": "validator_exit",
             "validator": format!("0x{}", hex::encode(&t.validator_address[..4])),
         }),
+        Transaction::ValidatorClaimStake(t) => serde_json::json!({
+            "type": "validator_claim_stake",
+            "validator": format!("0x{}", hex::encode(&t.validator_address[..4])),
+            "validator_id": t.validator_id,
+        }),
         Transaction::Shield(_) => serde_json::json!({ "type": "shield" }),
         Transaction::Unshield(_) => serde_json::json!({ "type": "unshield" }),
         Transaction::PrivateTransfer(_) => serde_json::json!({ "type": "private_transfer" }),
@@ -861,6 +866,7 @@ fn set_tx_signature(tx: &mut Transaction, sig: Vec<u8>, pk: Vec<u8>) {
         Transaction::CallScript(t) => { t.signature = Some(sig); t.public_key = Some(pk); }
         Transaction::ValidatorStake(t) => { t.signature = Some(sig); t.public_key = Some(pk); }
         Transaction::ValidatorExit(t) => { t.signature = Some(sig); t.public_key = Some(pk); }
+        Transaction::ValidatorClaimStake(t) => { t.signature = Some(sig); t.public_key = Some(pk); }
         Transaction::Shield(t) => { t.signature = Some(sig); t.public_key = Some(pk); }
         Transaction::Unshield(_) | Transaction::PrivateTransfer(_) => {} // ZK-authenticated
         Transaction::Deferred(d) => { d.signature = Some(sig); d.public_key = Some(pk); }
@@ -4760,6 +4766,7 @@ fn estimate_tx_gas(tx: &Transaction) -> u64 {
         Transaction::CallScript(_) => 50_000,
         Transaction::ValidatorStake(_) => 50_000,
         Transaction::ValidatorExit(_) => 30_000,
+        Transaction::ValidatorClaimStake(_) => 30_000,
         Transaction::Shield(_) => 60_000,
         Transaction::Unshield(_) => 80_000,
         Transaction::PrivateTransfer(ptx) => {
@@ -4906,6 +4913,21 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                 Transaction::ValidatorExit(t) => TxRecord {
                     hash,
                     tx_type: "validator_exit".to_string(),
+                    from: account_full(&t.validator_address),
+                    to: String::new(),
+                    amount: None,
+                    object_id: None,
+                    energy: None,
+                    half_life: None,
+                    method: None,
+                    gas,
+                    block_number: block.number,
+                    epoch: block.epoch,
+                    status: "success".to_string(),
+                },
+                Transaction::ValidatorClaimStake(t) => TxRecord {
+                    hash,
+                    tx_type: "validator_claim_stake".to_string(),
                     from: account_full(&t.validator_address),
                     to: String::new(),
                     amount: None,

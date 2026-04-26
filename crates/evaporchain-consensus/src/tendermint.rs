@@ -217,6 +217,19 @@ pub enum ConsensusAction {
     CommitBlock(Block),
     /// Request state sync from peers (from_height, to_height).
     RequestSync(u64, u64),
+    /// Slash a validator — update on-chain stake ledger.
+    SlashValidator {
+        validator_id: u64,
+        amount: u64,
+        reason: SlashReason,
+    },
+}
+
+/// Reason for a validator slash event.
+#[derive(Debug, Clone)]
+pub enum SlashReason {
+    Equivocation,
+    Downtime { missed_blocks: u64 },
 }
 
 // ─────────────────────── TendermintConsensus ─────────────────────────────
@@ -305,6 +318,8 @@ pub struct TendermintConsensus {
     /// At or after this height: blocks without valid DA certificates are rejected (hard mode).
     /// In both modes, if a DA certificate IS present it must pass full verification.
     da_enforcement_height: u64,
+    /// Chain identifier — embedded in every block to prevent cross-chain replay.
+    chain_id: String,
 }
 
 impl TendermintConsensus {
@@ -358,7 +373,18 @@ impl TendermintConsensus {
             current_state_root: [0u8; 32],
             da_confidence_threshold: 0.999,
             da_enforcement_height: 100,
+            chain_id: String::new(),
         }
+    }
+
+    /// Set the chain identifier for this consensus instance.
+    pub fn set_chain_id(&mut self, chain_id: String) {
+        self.chain_id = chain_id;
+    }
+
+    /// Get the current chain identifier.
+    pub fn chain_id(&self) -> &str {
+        &self.chain_id
     }
 
     /// Set the proof verifier for validating Nova IVC proofs on proposed blocks.
@@ -494,6 +520,7 @@ impl TendermintConsensus {
             current_state_root: [0u8; 32],
             da_confidence_threshold: 0.999,
             da_enforcement_height: 100,
+            chain_id: String::new(),
         }
     }
 
@@ -966,6 +993,18 @@ impl TendermintConsensus {
                     return actions;
                 }
 
+                // Verify chain_id matches (prevents cross-chain replay)
+                if !self.chain_id.is_empty() && !block.chain_id.is_empty() && block.chain_id != self.chain_id {
+                    warn!(
+                        height = height,
+                        round = round,
+                        expected = %self.chain_id,
+                        got = %block.chain_id,
+                        "Rejected proposal: chain_id mismatch"
+                    );
+                    return actions;
+                }
+
                 // Verify block connects to our chain
                 if block.parent_hash != self.parent_hash {
                     warn!(
@@ -1002,6 +1041,11 @@ impl TendermintConsensus {
                             round = round,
                             "SLASHED for equivocation (double-signing)"
                         );
+                        actions.push(ConsensusAction::SlashValidator {
+                            validator_id: proposer_id,
+                            amount: slashed,
+                            reason: SlashReason::Equivocation,
+                        });
                         return actions; // Reject the equivocating proposal
                     }
                 } else {
@@ -1527,6 +1571,7 @@ impl TendermintConsensus {
                 signing_stake,
                 total_stake,
                 timestamp,
+                chain_id: String::new(),
             );
         }
 
@@ -1917,6 +1962,7 @@ impl TendermintConsensus {
             state_root: self.current_state_root,
             transactions: txs,
             timestamp,
+            chain_id: self.chain_id.clone(),
             producer_id: Some(self.my_id),
             vrf_output: vrf_out,
             vrf_proof: vrf_prf,
@@ -2668,6 +2714,7 @@ mod tests {
             state_root: [1u8; 32],
             transactions: vec![],
             timestamp: 0,
+            chain_id: String::new(),
             producer_id: Some(1),
             vrf_output: None,
             vrf_proof: None,
@@ -2698,6 +2745,7 @@ mod tests {
             state_root: [0u8; 32],
             transactions: vec![],
             timestamp: 12345,
+            chain_id: String::new(),
             producer_id: Some(1),
             vrf_output: None,
             vrf_proof: None,
@@ -2841,6 +2889,7 @@ mod tests {
             state_root: [0u8; 32],
             transactions: vec![],
             timestamp: 0,
+            chain_id: String::new(),
             producer_id: Some(*wrong_id),
             vrf_output: None,
             vrf_proof: None,
@@ -3162,6 +3211,7 @@ mod tests {
             state_root: [0u8; 32],
             transactions: vec![],
             timestamp: 0,
+            chain_id: String::new(),
             producer_id: Some(proposer_id),
             vrf_output: None,
             vrf_proof: None,
@@ -3206,6 +3256,7 @@ mod tests {
             state_root: [0u8; 32],
             transactions: vec![],
             timestamp: 0,
+            chain_id: String::new(),
             producer_id: Some(proposer_id),
             vrf_output: None,
             vrf_proof: None,
@@ -3251,6 +3302,7 @@ mod tests {
             state_root: [0u8; 32],
             transactions: vec![],
             timestamp: 0,
+            chain_id: String::new(),
             producer_id: Some(proposer_id),
             vrf_output: None,
             vrf_proof: None,
@@ -3992,6 +4044,7 @@ mod vrf_tests {
             state_root: [0u8; 32],
             transactions: vec![],
             timestamp: 0,
+            chain_id: String::new(),
             producer_id: Some(proposer_id),
             vrf_output: Some([0xAA; 32]),    // Fake VRF output
             vrf_proof: Some(vec![0xBB; 100]), // Fake VRF proof
@@ -4203,6 +4256,7 @@ mod epoch_tests {
             transactions: txs,
             producer_id: Some(0),
             timestamp: 0,
+            chain_id: String::new(),
             commit_certificate: None,
             nova_proof: None,
             anchor_hash: None,
@@ -5281,6 +5335,7 @@ mod da_tests {
             transactions: vec![],
             producer_id: Some(1),
             timestamp: 0,
+            chain_id: String::new(),
             commit_certificate: None,
             nova_proof: None,
             anchor_hash: None,
