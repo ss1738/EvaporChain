@@ -3055,14 +3055,11 @@ async fn main() -> Result<()> {
                         }
                     } else {
                         // We're not syncing — serve the request if it's a tip request
-                        if let Some(ref tc) = tendermint {
-                            let c = safe_lock(&tc);
-                            if let Ok(srv) = sync_server.lock() {
-                                if let Some(resp) = srv.handle_request(&sync_msg, c.height()) {
-                                    if let Some(ref sender) = consensus_net_sender {
-                                        if let Ok(data) = serde_json::to_vec(&resp) {
-                                            let _ = sender.send(data).await;
-                                        }
+                        if let Ok(srv) = sync_server.lock() {
+                            if let Some(resp) = srv.handle_request(&sync_msg) {
+                                if let Some(ref sender) = consensus_net_sender {
+                                    if let Ok(data) = serde_json::to_vec(&resp) {
+                                        let _ = sender.send(data).await;
                                     }
                                 }
                             }
