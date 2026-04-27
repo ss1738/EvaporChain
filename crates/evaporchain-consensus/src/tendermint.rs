@@ -74,6 +74,7 @@ const MAX_TXS_PER_BLOCK: usize = 50;
 
 /// Messages exchanged between validators during consensus.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(clippy::large_enum_variant)]
 pub enum ConsensusMessage {
     /// Leader proposes a block for this height/round.
     Proposal {
@@ -267,6 +268,7 @@ pub struct TendermintConsensus {
     // ── Slashing Evidence ──────────────────────────────────────────────
     /// Tracks proposals seen per (height, round) → (proposer_id, block_hash).
     /// Used to detect equivocation (same validator proposing two different blocks).
+    #[allow(clippy::type_complexity)]
     proposals_seen: HashMap<(u64, u32), Vec<(u64, [u8; 32])>>,
     /// Tracks consecutive missed proposals per validator.
     /// Reset to 0 when the validator successfully produces a block.
@@ -339,7 +341,6 @@ impl TendermintConsensus {
 
     /// Create with a custom block gas limit (for high-throughput mode).
     pub fn new_with_gas_limit(my_id: u64, grace_period: u64, validator_set: ValidatorSet, block_gas_limit: u64) -> Self {
-        let block_gas_limit = block_gas_limit;
         Self {
             my_id,
             height: 1, // Start at height 1 (genesis is 0)
@@ -644,7 +645,7 @@ impl TendermintConsensus {
     /// Am I the proposer for the current height/round?
     pub fn am_i_proposer(&self) -> bool {
         self.proposer_for_round(self.height, self.round_state.round)
-            .map_or(false, |v| v.id == self.my_id)
+            .is_some_and(|v| v.id == self.my_id)
     }
 
     /// Compute the hash of a block for voting purposes.
@@ -679,7 +680,7 @@ impl TendermintConsensus {
         let mut actions = Vec::new();
 
         // Re-broadcast BLS KeyAnnounce every 50 blocks so late-joining peers get our key
-        if self.height > 0 && self.height % 50 == 0 && self.round_state.phase == Phase::Propose && self.round_state.round == 0 {
+        if self.height > 0 && self.height.is_multiple_of(50) && self.round_state.phase == Phase::Propose && self.round_state.round == 0 {
             if let Some(msg) = self.make_key_announce() {
                 actions.push(ConsensusAction::BroadcastMessage(msg));
             }
@@ -1031,7 +1032,7 @@ impl TendermintConsensus {
                 // Reject proposals that exceed the block gas limit
                 if self.executor.block_gas_limit > 0 {
                     let total_gas: u64 = block.transactions.iter()
-                        .map(|tx| ParallelExecutor::estimate_gas(tx))
+                        .map(ParallelExecutor::estimate_gas)
                         .fold(0u64, |a, g| a.saturating_add(g));
                     if total_gas > self.executor.block_gas_limit {
                         warn!(
@@ -1557,7 +1558,7 @@ impl TendermintConsensus {
         // ── Weak Subjectivity Checkpoint ──
         // Periodically snapshot (height, state_root) so nodes refuse to reorg
         // past this point. Prevents long-range attacks.
-        if block.number > 0 && block.number % self.checkpoint_interval == 0 {
+        if block.number > 0 && block.number.is_multiple_of(self.checkpoint_interval) {
             self.weak_subjectivity_checkpoints
                 .push((block.number, state_root));
             self.prune_old_checkpoints();
@@ -1724,8 +1725,8 @@ impl TendermintConsensus {
             }
         }
 
-        // Check against rolling checkpoints
-        for &(cp_height, cp_root) in self.weak_subjectivity_checkpoints.iter().rev() {
+        // Check against most recent rolling checkpoint
+        if let Some(&(cp_height, cp_root)) = self.weak_subjectivity_checkpoints.iter().next_back() {
             if block.number < cp_height {
                 warn!(
                     block = block.number,
@@ -1742,7 +1743,6 @@ impl TendermintConsensus {
                 );
                 return false;
             }
-            break;
         }
         true
     }
@@ -1756,7 +1756,7 @@ impl TendermintConsensus {
         let unbonding_blocks: u64 = 3 * 100; // UNBONDING_PERIOD_EPOCHS * EPOCH_LENGTH
         let validator_count = self.validator_set.active_count() as u64;
         let max_churn_per_epoch = std::cmp::max(1, validator_count / 3);
-        let epochs_to_majority = (validator_count + max_churn_per_epoch - 1) / max_churn_per_epoch;
+        let epochs_to_majority = validator_count.div_ceil(max_churn_per_epoch);
         let churn_blocks = epochs_to_majority * 100; // EPOCH_LENGTH
         let safety_margin = 200; // ~200 blocks buffer
 

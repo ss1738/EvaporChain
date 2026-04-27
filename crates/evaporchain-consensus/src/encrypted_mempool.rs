@@ -194,7 +194,7 @@ impl EncryptedMempool {
 
         // Encrypted txs sorted by commitment hash — deterministic, unmanipulable
         let mut encrypted_sorted = self.pending_encrypted.clone();
-        encrypted_sorted.sort_by(|a, b| a.commitment.cmp(&b.commitment));
+        encrypted_sorted.sort_by_key(|a| a.commitment);
 
         for enc in encrypted_sorted {
             envelopes.push(TransactionEnvelope::Encrypted(enc));
@@ -268,7 +268,7 @@ impl EncryptedMempool {
         self.pending_encrypted = remaining;
 
         // Drain plaintext pool too
-        revealed_txs.extend(self.pending_plaintext.drain(..));
+        revealed_txs.append(&mut self.pending_plaintext);
 
         revealed_txs
     }

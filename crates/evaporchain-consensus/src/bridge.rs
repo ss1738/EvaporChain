@@ -208,6 +208,7 @@ impl BridgeProofBuilder {
     }
 
     /// Build a bridge message for a token transfer.
+    #[allow(clippy::too_many_arguments)]
     pub fn build_transfer(
         &mut self,
         dest_chain: &str,
@@ -241,6 +242,7 @@ impl BridgeProofBuilder {
     }
 
     /// Build a bridge message for a validator set update.
+    #[allow(clippy::too_many_arguments)]
     pub fn build_validator_set_update(
         &mut self,
         dest_chain: &str,
@@ -266,6 +268,7 @@ impl BridgeProofBuilder {
     }
 
     /// Internal: build a message with auto-incrementing sequence.
+    #[allow(clippy::too_many_arguments)]
     fn build_message(
         &mut self,
         dest_chain: &str,

@@ -137,18 +137,18 @@ impl Mempool {
                 return false;
             }
         }
-        if self.verify_signatures {
-            if !matches!(tx, Transaction::Unshield(_) | Transaction::PrivateTransfer(_)) {
-                if let (Some(sig), Some(pk)) = (tx.signature(), tx.public_key()) {
-                    let msg = tx.signing_message(&self.chain_id);
-                    if !HybridVerifier::verify(&msg, sig, pk) {
-                        self.rejected_count += 1;
-                        return false;
-                    }
-                } else if tx.signature().is_none() && tx.sender().is_some() {
+        if self.verify_signatures
+            && !matches!(tx, Transaction::Unshield(_) | Transaction::PrivateTransfer(_))
+        {
+            if let (Some(sig), Some(pk)) = (tx.signature(), tx.public_key()) {
+                let msg = tx.signing_message(&self.chain_id);
+                if !HybridVerifier::verify(&msg, sig, pk) {
                     self.rejected_count += 1;
                     return false;
                 }
+            } else if tx.signature().is_none() && tx.sender().is_some() {
+                self.rejected_count += 1;
+                return false;
             }
         }
         true
@@ -303,7 +303,7 @@ impl Mempool {
 
     /// Sort transactions by (sender_hash, nonce, tx_hash) for deterministic
     /// nonce-respecting ordering. Ensures lower nonces execute first per account.
-    fn sort_nonce_aware(txs: &mut Vec<([u8; 32], Transaction)>) {
+    fn sort_nonce_aware(txs: &mut [([u8; 32], Transaction)]) {
         txs.sort_by(|a, b| {
             let sender_a = a.1.sender().copied().unwrap_or([0xff; 32]);
             let sender_b = b.1.sender().copied().unwrap_or([0xff; 32]);

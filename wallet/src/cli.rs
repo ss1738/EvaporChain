@@ -4852,7 +4852,7 @@ fn cmd_seed(
             let sk = keypair.secret_key();
 
             let mut keystore = load_or_create_keystore(keystore_path);
-            let addr = keystore.import_key(&name, &password, pk, &sk)?;
+            let addr = keystore.import_key(&name, &password, &pk, &sk)?;
             keystore.save(keystore_path)?;
 
             println!(

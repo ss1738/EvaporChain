@@ -301,7 +301,7 @@ impl ValidatorSet {
     /// Check if a given validator is the leader for the given epoch.
     pub fn is_leader(&self, validator_id: u64, epoch: u64) -> bool {
         self.leader_for_epoch(epoch)
-            .map_or(false, |v| v.id == validator_id)
+            .is_some_and(|v| v.id == validator_id)
     }
 
     /// Update a validator's health score after it produced a block.
@@ -639,7 +639,7 @@ impl EpochTransitionManager {
 
     /// Returns true if the given block height is an epoch boundary.
     pub fn is_epoch_boundary(height: u64) -> bool {
-        height > 0 && height % EPOCH_LENGTH == 0
+        height > 0 && height.is_multiple_of(EPOCH_LENGTH)
     }
 
     /// Apply pending transitions to the validator set at an epoch boundary.

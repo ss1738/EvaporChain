@@ -142,6 +142,7 @@ impl FinalityTracker {
     ///
     /// Called after a block commits with a valid CommitCertificate.
     /// Returns true if this is a new finalization, false if already recorded.
+    #[allow(clippy::too_many_arguments)]
     pub fn on_block_finalized(
         &mut self,
         height: u64,

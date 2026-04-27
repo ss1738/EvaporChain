@@ -345,7 +345,7 @@ impl AnchorManager {
 
     /// Check if this height should produce an anchor.
     pub fn is_anchor_height(&self, height: u64) -> bool {
-        height > 0 && height % self.interval == 0
+        height > 0 && height.is_multiple_of(self.interval)
     }
 
     /// Create and register a new state anchor.

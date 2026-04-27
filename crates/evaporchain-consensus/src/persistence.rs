@@ -244,7 +244,7 @@ impl FileStateStore {
 impl ConsensusStateStore for FileStateStore {
     fn save_checkpoint(&self, checkpoint: &ConsensusCheckpoint) -> io::Result<()> {
         let data = serde_json::to_vec_pretty(checkpoint)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
         Self::atomic_write(&self.checkpoint_path(), &data)
     }
 
@@ -264,7 +264,7 @@ impl ConsensusStateStore for FileStateStore {
         let filename = format!("{}_{}.json", entry.height, seq);
         let path = self.wal_dir.join(filename);
         let data = serde_json::to_vec(entry)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
         // fsync WAL entries so they survive power loss.
         let f = fs::File::create(&path)?;
         io::Write::write_all(&mut &f, &data)?;
