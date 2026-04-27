@@ -898,6 +898,17 @@ fn validate_mainnet_strict(args: &NodeArgs) -> Result<(), String> {
     if args.devnet_no_rate_limit {
         issues.push("--devnet-no-rate-limit disables faucet cooldowns and is incompatible with --mainnet".into());
     }
+    // K-07/K-08: a multi-validator launch without a shared genesis-config
+    // produces split-brain (each node generates its own ML-DSA + BLS keys
+    // at startup, validator-set bytes diverge, Tendermint quorum cannot
+    // form). Refuse it in --mainnet mode.
+    if args.validator_count > 1 && args.genesis_config.is_none() {
+        issues.push(format!(
+            "--validators={} requires --genesis-config <path> in --mainnet mode \
+             (per-node implicit genesis splits the cluster — see audit pack K-07/K-08)",
+            args.validator_count
+        ));
+    }
     match std::env::var("EVAPORCHAIN_KEY_MASTER") {
         Err(_) => issues.push("EVAPORCHAIN_KEY_MASTER must be set in --mainnet mode".into()),
         Ok(v) if v == DEV_MASTER_KEY => issues.push(
