@@ -119,6 +119,12 @@ fn extract_access_keys(tx: &Transaction) -> Vec<AccessKey> {
         Transaction::UpgradeContract(tx) => {
             vec![AccessKey::Account(tx.owner)]
         }
+        Transaction::Delegate(tx) => {
+            vec![AccessKey::Account(tx.delegator)]
+        }
+        Transaction::Undelegate(tx) => {
+            vec![AccessKey::Account(tx.delegator)]
+        }
     }
 }
 
@@ -564,6 +570,8 @@ impl ParallelExecutor {
             Transaction::MultiSig(_) => crate::GAS_MULTISIG,
             Transaction::UserOp(tx) => crate::GAS_USER_OP.saturating_add(tx.call_data.len() as u64 * 16),
             Transaction::UpgradeContract(tx) => crate::GAS_UPGRADE_CONTRACT.saturating_add(tx.new_bytecode.len() as u64 * 200),
+            Transaction::Delegate(_) => crate::GAS_DELEGATE,
+            Transaction::Undelegate(_) => crate::GAS_UNDELEGATE,
         }
     }
 
@@ -713,6 +721,16 @@ impl ParallelExecutor {
                 Transaction::UpgradeContract(_) => {
                     Err(ExecutionError::ContractError(
                         "upgrade txs execute in serial phase".into(),
+                    ))
+                }
+                Transaction::Delegate(_) => {
+                    Err(ExecutionError::ContractError(
+                        "delegation txs execute in serial phase".into(),
+                    ))
+                }
+                Transaction::Undelegate(_) => {
+                    Err(ExecutionError::ContractError(
+                        "delegation txs execute in serial phase".into(),
                     ))
                 }
             };

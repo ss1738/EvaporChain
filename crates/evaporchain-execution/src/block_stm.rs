@@ -626,6 +626,16 @@ fn execute_tx(
                 "upgrade txs execute in serial phase".into(),
             )))
         }
+        Transaction::Delegate(_) => {
+            Err(TxViewError::ExecutionError(ExecutionError::ContractError(
+                "delegation txs execute in serial phase".into(),
+            )))
+        }
+        Transaction::Undelegate(_) => {
+            Err(TxViewError::ExecutionError(ExecutionError::ContractError(
+                "delegation txs execute in serial phase".into(),
+            )))
+        }
     };
 
     match result {
@@ -685,6 +695,8 @@ fn estimate_gas(tx: &Transaction) -> u64 {
         Transaction::MultiSig(_) => GAS_VALIDATOR_CLAIM_STAKE,
         Transaction::UserOp(tx) => crate::GAS_USER_OP.saturating_add(tx.call_data.len() as u64 * 16),
         Transaction::UpgradeContract(tx) => crate::GAS_UPGRADE_CONTRACT.saturating_add(tx.new_bytecode.len() as u64 * 200),
+        Transaction::Delegate(_) => crate::GAS_DELEGATE,
+        Transaction::Undelegate(_) => crate::GAS_UNDELEGATE,
     }
 }
 
