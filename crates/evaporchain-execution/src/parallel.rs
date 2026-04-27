@@ -395,7 +395,7 @@ impl StateDB for OverlayStateDB {
     // Sister-session-added trait methods, stubbed here to satisfy the trait.
     // Real implementation lives in InMemoryStateDB / RocksDB; OverlayStateDB
     // never serves the privacy-pool note commitment trie.
-    fn append_note_commitment(&mut self, _commitment: [u8; 32]) {}
+    fn append_note_commitment(&mut self, _index: u64, _commitment: [u8; 32]) {}
     fn get_all_note_commitments(&self) -> Vec<[u8; 32]> { Vec::new() }
     fn get_stake(&self, _validator_id: u64) -> Option<&evaporchain_types::StakeRecord> { None }
     fn put_stake(&mut self, _record: evaporchain_types::StakeRecord) {}
