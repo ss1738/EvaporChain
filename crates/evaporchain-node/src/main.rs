@@ -702,6 +702,9 @@ struct NodeArgs {
     light_mode: bool,
     /// Mainnet strict mode — refuses any insecure default at startup.
     mainnet_strict: bool,
+    /// Disable the faucet per-address cooldown (for stress/load testing).
+    /// Refused by --mainnet strict mode.
+    devnet_no_rate_limit: bool,
 }
 
 fn parse_args() -> NodeArgs {
@@ -751,6 +754,7 @@ fn parse_args() -> NodeArgs {
     let mock_consensus = args.iter().any(|a| a == "--mock-consensus");
     let tendermint_mode = !mock_consensus;
     let mainnet_strict = args.iter().any(|a| a == "--mainnet");
+    let devnet_no_rate_limit = args.iter().any(|a| a == "--devnet-no-rate-limit");
     let validator_id = args
         .iter()
         .position(|a| a == "--validator-id")
@@ -865,6 +869,7 @@ fn parse_args() -> NodeArgs {
         chain_id,
         light_mode,
         mainnet_strict,
+        devnet_no_rate_limit,
     }
 }
 
@@ -889,6 +894,9 @@ fn validate_mainnet_strict(args: &NodeArgs) -> Result<(), String> {
     }
     if args.no_da_enforcement {
         issues.push("--no-da-enforcement bypasses DA attestation and is incompatible with --mainnet".into());
+    }
+    if args.devnet_no_rate_limit {
+        issues.push("--devnet-no-rate-limit disables faucet cooldowns and is incompatible with --mainnet".into());
     }
     match std::env::var("EVAPORCHAIN_KEY_MASTER") {
         Err(_) => issues.push("EVAPORCHAIN_KEY_MASTER must be set in --mainnet mode".into()),
@@ -1481,6 +1489,12 @@ async fn main() -> Result<()> {
     if args.mainnet_strict {
         println!(
             "{} \x1b[1;32mMAINNET STRICT MODE\x1b[0m — Tendermint required, demo+DA bypass blocked, validator key encryption required",
+            node_tag
+        );
+    }
+    if args.devnet_no_rate_limit {
+        println!(
+            "{} \x1b[1;33m--devnet-no-rate-limit ACTIVE\x1b[0m — faucet cooldowns disabled (load-test only)",
             node_tag
         );
     }
@@ -2188,6 +2202,7 @@ async fn main() -> Result<()> {
             prove_mode: args.prove_mode,
             start_time,
             faucet_rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
+            faucet_rate_limit_disabled: args.devnet_no_rate_limit,
             nft_store,
             token_store,
             staking_store,

@@ -49,6 +49,10 @@ pub struct ApiState {
     pub start_time: Instant,
     /// Faucet rate limiter: address hex string -> last request timestamp.
     pub faucet_rate_limit: Mutex<HashMap<String, Instant>>,
+    /// When true, the faucet skips its per-address cooldown entirely.
+    /// Set by `--devnet-no-rate-limit` for stress / load testing only;
+    /// `--mainnet` strict mode rejects this combination at startup.
+    pub faucet_rate_limit_disabled: bool,
     /// NFT marketplace store.
     pub nft_store: Arc<Mutex<NftStore>>,
     /// Token store.
@@ -1933,8 +1937,8 @@ async fn post_faucet(
     };
     let addr_key = hex::encode(&addr[..20]);
 
-    // Rate limit check
-    {
+    // Rate limit check (skipped entirely in --devnet-no-rate-limit mode)
+    if !state.faucet_rate_limit_disabled {
         let mut limits = safe_lock(&state.faucet_rate_limit);
         if let Some(last) = limits.get(&addr_key) {
             if last.elapsed().as_secs() < FAUCET_RATE_LIMIT_SECS {
