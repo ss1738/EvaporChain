@@ -396,6 +396,12 @@ impl StateDB for OverlayStateDB {
     fn put_stake(&mut self, _record: evaporchain_types::StakeRecord) {}
     fn remove_stake(&mut self, _validator_id: u64) -> Option<evaporchain_types::StakeRecord> { None }
     fn all_stakes(&self) -> Vec<&evaporchain_types::StakeRecord> { Vec::new() }
+    fn get_delegation(&self, _delegator: &evaporchain_types::AccountAddress, _validator_id: u64) -> Option<&evaporchain_types::DelegationRecord> { None }
+    fn put_delegation(&mut self, _record: evaporchain_types::DelegationRecord) {}
+    fn remove_delegation(&mut self, _delegator: &evaporchain_types::AccountAddress, _validator_id: u64) -> Option<evaporchain_types::DelegationRecord> { None }
+    fn delegations_for_validator(&self, _validator_id: u64) -> Vec<&evaporchain_types::DelegationRecord> { Vec::new() }
+    fn delegations_for_delegator(&self, _delegator: &evaporchain_types::AccountAddress) -> Vec<&evaporchain_types::DelegationRecord> { Vec::new() }
+    fn all_delegations(&self) -> Vec<&evaporchain_types::DelegationRecord> { Vec::new() }
     fn get_proposal(&self, _proposal_id: u64) -> Option<&evaporchain_types::GovernanceProposal> { None }
     fn put_proposal(&mut self, _proposal: evaporchain_types::GovernanceProposal) {}
     fn all_proposals(&self) -> Vec<&evaporchain_types::GovernanceProposal> { Vec::new() }
