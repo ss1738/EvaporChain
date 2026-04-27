@@ -131,6 +131,8 @@ pub(crate) const GAS_GOVERNANCE: u64 = 25_000;
 pub(crate) const GAS_MULTISIG: u64 = 50_000;
 pub(crate) const GAS_USER_OP: u64 = 30_000;
 pub(crate) const GAS_UPGRADE_CONTRACT: u64 = 100_000;
+pub(crate) const GAS_DELEGATE: u64 = 40_000;
+pub(crate) const GAS_UNDELEGATE: u64 = 40_000;
 
 /// Unbonding period: validators must wait this many epochs after exit before claiming stake.
 const UNBONDING_PERIOD_EPOCHS: u64 = 256;
@@ -460,6 +462,8 @@ impl SimpleExecutor {
             Transaction::MultiSig(_) => GAS_MULTISIG,
             Transaction::UserOp(tx) => GAS_USER_OP.saturating_add(tx.call_data.len() as u64 * 16),
             Transaction::UpgradeContract(tx) => GAS_UPGRADE_CONTRACT.saturating_add(tx.new_bytecode.len() as u64 * 200),
+            Transaction::Delegate(_) => GAS_DELEGATE,
+            Transaction::Undelegate(_) => GAS_UNDELEGATE,
         }
     }
 
@@ -1330,6 +1334,18 @@ impl ExecutionEngine for SimpleExecutor {
                             .into(),
                     ))
                 }
+                Transaction::Delegate(_) => {
+                    Err(ExecutionError::ContractError(
+                        "Delegate execution not yet implemented (P0 #4 in flight)"
+                            .into(),
+                    ))
+                }
+                Transaction::Undelegate(_) => {
+                    Err(ExecutionError::ContractError(
+                        "Undelegate execution not yet implemented (P0 #4 in flight)"
+                            .into(),
+                    ))
+                }
             };
 
             match result {
@@ -1672,6 +1688,14 @@ mod tests {
                 u.public_key = Some(pk);
             }
             Transaction::UpgradeContract(u) => {
+                u.signature = Some(sig);
+                u.public_key = Some(pk);
+            }
+            Transaction::Delegate(d) => {
+                d.signature = Some(sig);
+                d.public_key = Some(pk);
+            }
+            Transaction::Undelegate(u) => {
                 u.signature = Some(sig);
                 u.public_key = Some(pk);
             }
