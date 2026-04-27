@@ -1530,6 +1530,13 @@ async fn main() -> Result<()> {
     let db = Arc::new(Mutex::new(state_db));
 
     let mut restored_height: Option<u64> = None;
+    // Holds the parsed --genesis-config so the validator set can later be
+    // built from its `validators` array instead of synthesizing per-node.
+    // Closes the K-07/K-08 split-brain by having every node start from the
+    // same genesis-supplied BLS pubkeys rather than its own freshly-generated
+    // ones.
+    let mut genesis_config_loaded:
+        Option<evaporchain_types::genesis::GenesisConfig> = None;
     if is_fresh {
         let mut db = safe_lock(&db);
         // Try restoring from a local snapshot first (e.g., from a previous sync)
@@ -1546,6 +1553,7 @@ async fn main() -> Result<()> {
             println!("{} \x1b[1;32mGenesis block #{} created\x1b[0m — {} accounts, {} validators, state_root={}",
                 node_tag, result.block.number, result.accounts_created, result.validators_registered,
                 hex::encode(&result.state_root[..8]));
+            genesis_config_loaded = Some(config);
             if args.demo_mode {
                 seed_demo_accounts(&mut db, &node_tag);
                 seed_demo_objects(&mut db, &node_tag);
@@ -1564,6 +1572,21 @@ async fn main() -> Result<()> {
             db.object_count(),
             db.ghost_count(),
         );
+    }
+    // Always re-read --genesis-config (if provided) so the initial validator
+    // set is rebuilt from the same source on every restart, not just on the
+    // first fresh boot. Slashing-derived changes during operation are
+    // handled via state-transition reads, not this bootstrap path.
+    if genesis_config_loaded.is_none() {
+        if let Some(ref genesis_path) = args.genesis_config {
+            if let Ok(json) = std::fs::read_to_string(genesis_path) {
+                if let Ok(config) =
+                    evaporchain_execution::genesis::load_genesis_config(&json)
+                {
+                    genesis_config_loaded = Some(config);
+                }
+            }
+        }
     }
     println!();
 
@@ -1780,11 +1803,63 @@ async fn main() -> Result<()> {
 
     // Build Tendermint consensus if enabled
     let tendermint = if args.tendermint_mode {
-        let mut validators = Vec::new();
-        for vid in 0..args.validator_count {
-            let mut address = [0u8; 32];
-            address[0] = vid as u8;
-            validators.push(ValidatorInfo::new(vid, args.validator_stake, address));
+        // Build the validator set:
+        // (a) When --genesis-config is supplied AND it contains validator
+        //     entries, seed the set directly from genesis. Each entry's
+        //     `bls_public_key` (hex, 48-byte compressed) is registered up
+        //     front so every node computes the SAME validator-set bytes,
+        //     which is the K-07/K-08 fix.
+        // (b) Otherwise fall back to the historical synthetic set built
+        //     from --validators=N. Print a yellow warning so an operator
+        //     running multi-node without genesis sees why the cluster
+        //     will split.
+        let mut validators: Vec<ValidatorInfo> = Vec::new();
+        if let Some(ref gc) = genesis_config_loaded {
+            if !gc.validators.is_empty() {
+                let mut with_bls = 0usize;
+                for gv in &gc.validators {
+                    let info = match &gv.bls_public_key {
+                        Some(hex_pk) => match hex::decode(hex_pk) {
+                            Ok(pk_bytes) => {
+                                with_bls += 1;
+                                let mut vi = ValidatorInfo::with_bls_key(
+                                    gv.id, gv.stake, gv.address, pk_bytes,
+                                );
+                                vi.pop_verified = true;
+                                vi
+                            }
+                            Err(e) => {
+                                eprintln!(
+                                    "{} \x1b[31mGenesis validator {}: invalid bls_public_key hex ({}) — registered without pubkey\x1b[0m",
+                                    node_tag, gv.id, e
+                                );
+                                ValidatorInfo::new(gv.id, gv.stake, gv.address)
+                            }
+                        },
+                        None => ValidatorInfo::new(gv.id, gv.stake, gv.address),
+                    };
+                    validators.push(info);
+                }
+                println!(
+                    "{} \x1b[1;32mValidator set seeded from genesis\x1b[0m — {} validators ({} with BLS pubkey)",
+                    node_tag, validators.len(), with_bls
+                );
+            }
+        }
+        if validators.is_empty() {
+            for vid in 0..args.validator_count {
+                let mut address = [0u8; 32];
+                address[0] = vid as u8;
+                validators.push(ValidatorInfo::new(vid, args.validator_stake, address));
+            }
+            if args.validator_count > 1 {
+                eprintln!(
+                    "{} \x1b[1;33mWARNING: validator set synthesized from --validators={}\x1b[0m \
+                     — no genesis pubkeys; expect K-07 split-brain on multi-node clusters. \
+                     Pass --genesis-config <path> with bls_public_key fields to fix.",
+                    node_tag, args.validator_count
+                );
+            }
         }
         let vs = ValidatorSet::with_validators(validators);
         let mut tc = TendermintConsensus::new_with_gas_limit(args.validator_id, GRACE_PERIOD, vs, args.block_gas_limit);
@@ -1906,6 +1981,53 @@ async fn main() -> Result<()> {
             );
             kp
         };
+        // K-07/K-08 fix: if genesis pre-registered a BLS pubkey for this
+        // validator-id, verify our on-disk secret derives the same pubkey.
+        // Mismatch is fatal — running with a key the rest of the cluster
+        // doesn't expect would silently break consensus.
+        if let Some(ref gc) = genesis_config_loaded {
+            if let Some(gv) = gc.validators.iter().find(|v| v.id == args.validator_id) {
+                if let Some(ref expected_hex) = gv.bls_public_key {
+                    let actual = hex::encode(bls_kp.public_key_bytes().0);
+                    let expected = expected_hex.trim_start_matches("0x").to_lowercase();
+                    if actual.to_lowercase() != expected {
+                        eprintln!(
+                            "{} \x1b[1;31mFATAL: BLS key mismatch for validator-id={}\x1b[0m",
+                            node_tag, args.validator_id
+                        );
+                        eprintln!(
+                            "  expected (genesis): {}",
+                            expected
+                        );
+                        eprintln!(
+                            "  actual (on-disk):   {}",
+                            actual
+                        );
+                        eprintln!(
+                            "  Either restore the correct bls_key.bin for this validator-id, \
+                             or update genesis with the new pubkey and redistribute."
+                        );
+                        std::process::exit(1);
+                    }
+                    println!(
+                        "{} \x1b[1;32mBLS key matches genesis entry\x1b[0m for validator-id={}",
+                        node_tag, args.validator_id
+                    );
+                } else if args.mainnet_strict {
+                    eprintln!(
+                        "{} \x1b[1;31mFATAL: --mainnet requires genesis to pre-register bls_public_key for validator-id={}\x1b[0m",
+                        node_tag, args.validator_id
+                    );
+                    std::process::exit(1);
+                }
+            } else if args.mainnet_strict {
+                eprintln!(
+                    "{} \x1b[1;31mFATAL: --mainnet validator-id={} not found in genesis validator set\x1b[0m",
+                    node_tag, args.validator_id
+                );
+                std::process::exit(1);
+            }
+        }
         tc.set_bls_keypair(bls_kp);
         tc.set_chain_id(args.chain_id.clone());
 
