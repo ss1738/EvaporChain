@@ -182,8 +182,10 @@ trap - EXIT
 
 # ── Summary ──
 TOTAL_TX=$(wc -l < "$TX_LOG" | tr -d ' ')
-OK_TX=$(grep -c ',200' "$TX_LOG" 2>/dev/null || echo 0)
-RATE_LIMITED_TX=$(grep -c ',429' "$TX_LOG" 2>/dev/null || echo 0)
+# `grep -c` always prints a count; piping through awk strips the
+# stderr/exit-code interplay that produced "0\n0" in earlier runs.
+OK_TX=$(awk -F, 'BEGIN{n=0} $3==200 {n++} END{print n}' "$TX_LOG")
+RATE_LIMITED_TX=$(awk -F, 'BEGIN{n=0} $3==429 {n++} END{print n}' "$TX_LOG")
 SAMPLES=$(($(wc -l < "$SAMPLE_LOG" | tr -d ' ') - 1))
 
 echo ""
