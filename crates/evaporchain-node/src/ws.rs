@@ -9,6 +9,7 @@ use tracing::{debug, info, warn};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type")]
+#[allow(dead_code)]
 pub enum WsEvent {
     #[serde(rename = "new_block")]
     NewBlock {
@@ -208,7 +209,7 @@ async fn handle_ws(socket: WebSocket, broadcaster: Arc<WsBroadcaster>, filter: S
         while let Some(Ok(msg)) = receiver.next().await {
             match msg {
                 Message::Close(_) => break,
-                Message::Ping(data) => {
+                Message::Ping(_data) => {
                     debug!("WebSocket ping received");
                 }
                 Message::Text(text) => {

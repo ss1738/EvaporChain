@@ -119,6 +119,7 @@ impl UserDb {
         Ok(conn.last_insert_rowid())
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn get_user_by_email(&self, email: &str) -> Result<Option<(i64, String, String, bool, Option<String>)>, String> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(

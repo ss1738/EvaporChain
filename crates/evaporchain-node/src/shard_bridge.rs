@@ -39,6 +39,7 @@ impl ShardHealthTracker {
     }
 
     fn to_health(&self, shard_id: ShardId) -> ShardHealth {
+        #[allow(clippy::manual_checked_ops)]
         let avg_half_life = if self.objects_for_avg > 0 {
             self.energy_sum_for_avg / self.objects_for_avg
         } else {
@@ -54,6 +55,7 @@ impl ShardHealthTracker {
     }
 }
 
+#[allow(dead_code)]
 impl ShardBridge {
     pub fn new(num_shards: u16) -> Self {
         Self {

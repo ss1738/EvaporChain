@@ -82,6 +82,7 @@ pub struct ApiState {
     /// 2D DA packages per block number (ring buffer, last 64 blocks).
     pub da_2d_store: Arc<Mutex<BTreeMap<u64, BlockDA2DPackage>>>,
     /// Latest state snapshot metadata (height, state_root, data_len).
+    #[allow(clippy::type_complexity)]
     pub snapshot_info: Arc<Mutex<Option<(u64, [u8; 32], usize)>>>,
     /// Frontier primitives state (anchors, PoHA, energy trie).
     pub frontier_state: Option<Arc<Mutex<crate::frontier::FrontierState>>>,
@@ -148,7 +149,7 @@ impl ApiState {
             let c = safe_lock(&self.consensus);
             c.mempool.pending().iter().cloned().collect()
         };
-        txs.iter().map(|tx| tx_to_json(tx)).collect()
+        txs.iter().map(tx_to_json).collect()
     }
 }
 
@@ -205,8 +206,7 @@ impl NftToken {
             return 0;
         }
         // energy * 2^(-t/hl) < 1 => t > hl * log2(energy)
-        let t = (self.half_life as f64 * (current as f64).log2()).ceil() as u64;
-        t
+        (self.half_life as f64 * (current as f64).log2()).ceil() as u64
     }
 }
 
@@ -587,6 +587,7 @@ struct AccountResponse {
     nonce: u64,
 }
 
+#[allow(dead_code)]
 #[derive(Serialize)]
 struct GhostResponse {
     id: String,
@@ -1065,7 +1066,7 @@ async fn get_accounts(State(state): State<Arc<ApiState>>) -> Json<Vec<AccountRes
             })
         })
         .collect();
-    accounts.sort_by(|a, b| b.balance.cmp(&a.balance));
+    accounts.sort_by_key(|a| std::cmp::Reverse(a.balance));
     Json(accounts)
 }
 
@@ -2591,7 +2592,7 @@ async fn get_tokens(State(state): State<Arc<ApiState>>) -> Json<Vec<TokenRespons
             .filter(|(_, b)| **b > 0)
             .map(|(a, b)| TokenHolder { address: a.clone(), balance: *b })
             .collect();
-        holders.sort_by(|a, b| b.balance.cmp(&a.balance));
+        holders.sort_by_key(|a| std::cmp::Reverse(a.balance));
         TokenResponse {
             id: t.id, name: t.name.clone(), symbol: t.symbol.clone(),
             total_supply: t.total_supply, current_supply: t.current_supply(epoch),
@@ -2614,7 +2615,7 @@ async fn get_single_token(State(state): State<Arc<ApiState>>, Path(id): Path<u64
         .filter(|(_, b)| **b > 0)
         .map(|(a, b)| TokenHolder { address: a.clone(), balance: *b })
         .collect();
-    holders.sort_by(|a, b| b.balance.cmp(&a.balance));
+    holders.sort_by_key(|a| std::cmp::Reverse(a.balance));
     Ok(Json(TokenResponse {
         id: t.id, name: t.name.clone(), symbol: t.symbol.clone(),
         total_supply: t.total_supply, current_supply: t.current_supply(epoch),
@@ -3948,7 +3949,7 @@ async fn get_da_cell_sample(
             "block": block,
             "row": row,
             "col": col,
-            "cell_hash": hex::encode(&proof.cell_hash),
+            "cell_hash": hex::encode(proof.cell_hash),
             "row_root": hex::encode(package.header.row_roots[row]),
             "col_root": hex::encode(package.header.col_roots[col]),
             "data_root": hex::encode(package.header.data_root),
@@ -4000,7 +4001,7 @@ async fn get_da_2d_light_sample(
             samples.push(serde_json::json!({
                 "row": query.row,
                 "col": query.col,
-                "cell_hash": hex::encode(&proof.cell_hash),
+                "cell_hash": hex::encode(proof.cell_hash),
                 "valid": valid,
             }));
         }
@@ -4324,6 +4325,7 @@ async fn get_light_client_status(
 #[derive(Deserialize)]
 struct VerifyHeaderRequest {
     height: u64,
+    #[allow(dead_code)]
     epoch: u64,
     block_hash: String,
     parent_hash: String,
@@ -5107,7 +5109,7 @@ pub fn push_event(
     event_type: &str,
     message: String,
 ) {
-    let mut evts = safe_lock(&events);
+    let mut evts = safe_lock(events);
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()

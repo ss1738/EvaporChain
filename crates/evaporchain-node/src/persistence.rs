@@ -154,8 +154,7 @@ impl ChainStore {
         // Scan for snapshot:N keys where N < cutoff
         let prefix = b"snapshot:";
         let iter = self.db.prefix_iterator_cf(cf, prefix);
-        for item in iter {
-            if let Ok((key, _)) = item {
+        for (key, _) in iter.flatten() {
                 if let Ok(key_str) = std::str::from_utf8(&key) {
                     if let Some(height_str) = key_str.strip_prefix("snapshot:") {
                         if let Ok(h) = height_str.parse::<u64>() {
@@ -362,6 +361,7 @@ impl ChainStore {
         self.db.put_cf(cf, key, value).map_err(|e| e.to_string())
     }
 
+    #[allow(dead_code)]
     pub fn load_da_package(&self, block_number: u64) -> Option<BlockDAPackage> {
         let cf = self.db.cf_handle(CF_DA_SHARDS).unwrap();
         let key = block_number.to_be_bytes();
@@ -414,9 +414,8 @@ impl ChainStore {
         let cf = self.db.cf_handle(CF_POHA).unwrap();
         let mut loaded = 0usize;
         let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
-        for item in iter {
-            if let Ok((key, value)) = item {
-                if key.starts_with(&[b'G']) && key.len() >= 9 {
+        for (key, value) in iter.flatten() {
+                if key.starts_with(b"G") && key.len() >= 9 {
                     // Ghost record
                     if let Ok(ghost) = serde_json::from_slice::<evaporchain_da::poha::CertGhost>(&value) {
                         store.insert_ghost(ghost);
@@ -429,7 +428,6 @@ impl ChainStore {
                         loaded += 1;
                     }
                 }
-            }
         }
         loaded
     }
@@ -578,7 +576,7 @@ impl ChainStore {
     ) -> Vec<ContractEventLog> {
         let cf = self.db.cf_handle(CF_CONTRACT_EVENTS).unwrap();
         let prefix = contract_id.to_be_bytes();
-        let iter = self.db.prefix_iterator_cf(cf, &prefix);
+        let iter = self.db.prefix_iterator_cf(cf, prefix);
         let mut results = Vec::new();
 
         for item in iter {
@@ -688,12 +686,10 @@ impl ChainStore {
         };
         let mut contracts = vec![];
         let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
-        for item in iter {
-            if let Ok((_key, value)) = item {
+        for (_key, value) in iter.flatten() {
                 if let Ok(c) = serde_json::from_slice(&value) {
                     contracts.push(c);
                 }
-            }
         }
         contracts
     }
@@ -716,12 +712,10 @@ impl ChainStore {
         };
         let mut contracts = vec![];
         let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
-        for item in iter {
-            if let Ok((_key, value)) = item {
+        for (_key, value) in iter.flatten() {
                 if let Ok(c) = serde_json::from_slice(&value) {
                     contracts.push(c);
                 }
-            }
         }
         contracts
     }
@@ -767,9 +761,9 @@ pub fn compute_tx_merkle_root(txs: &[Transaction]) -> [u8; 32] {
     if txs.is_empty() {
         return [0u8; 32];
     }
-    let mut layer: Vec<[u8; 32]> = txs.iter().map(|tx| ChainStore::compute_tx_hash(tx)).collect();
+    let mut layer: Vec<[u8; 32]> = txs.iter().map(ChainStore::compute_tx_hash).collect();
     while layer.len() > 1 {
-        let mut next = Vec::with_capacity((layer.len() + 1) / 2);
+        let mut next = Vec::with_capacity(layer.len().div_ceil(2));
         for chunk in layer.chunks(2) {
             if chunk.len() == 2 {
                 let mut hasher = blake3::Hasher::new();
@@ -806,21 +800,21 @@ pub fn prove_tx_inclusion(txs: &[Transaction], tx_index: usize, block_number: u6
     if tx_index >= txs.len() {
         return None;
     }
-    let hashes: Vec<[u8; 32]> = txs.iter().map(|tx| ChainStore::compute_tx_hash(tx)).collect();
+    let hashes: Vec<[u8; 32]> = txs.iter().map(ChainStore::compute_tx_hash).collect();
     let tx_hash = hashes[tx_index];
     let mut layer = hashes;
     let mut siblings = Vec::new();
     let mut idx = tx_index;
 
     while layer.len() > 1 {
-        let sibling_idx = if idx % 2 == 0 { idx + 1 } else { idx - 1 };
+        let sibling_idx = if idx.is_multiple_of(2) { idx + 1 } else { idx - 1 };
         if sibling_idx < layer.len() {
             siblings.push(TxMerkleSibling {
                 hash: hex::encode(layer[sibling_idx]),
-                position: if idx % 2 == 0 { "right".into() } else { "left".into() },
+                position: if idx.is_multiple_of(2) { "right".into() } else { "left".into() },
             });
         }
-        let mut next = Vec::with_capacity((layer.len() + 1) / 2);
+        let mut next = Vec::with_capacity(layer.len().div_ceil(2));
         for chunk in layer.chunks(2) {
             if chunk.len() == 2 {
                 let mut hasher = blake3::Hasher::new();

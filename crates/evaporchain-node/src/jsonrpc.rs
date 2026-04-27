@@ -20,6 +20,7 @@ fn safe_lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 #[derive(Debug, Deserialize)]
 pub struct JsonRpcRequest {
+    #[allow(dead_code)]
     pub jsonrpc: String,
     pub method: String,
     #[serde(default)]
@@ -344,7 +345,7 @@ fn rpc_peer_count(state: &ApiState, id: Value) -> JsonRpcResponse {
 }
 
 fn rpc_get_finality_status(state: &ApiState, params: &Value, id: Value) -> JsonRpcResponse {
-    let height = match params.as_array().and_then(|a| a.first()).and_then(|v| parse_hex_u64(v)) {
+    let height = match params.as_array().and_then(|a| a.first()).and_then(parse_hex_u64) {
         Some(h) => h,
         None => return JsonRpcResponse::invalid_params(id, "missing block height"),
     };
@@ -390,8 +391,8 @@ fn rpc_get_logs(state: &ApiState, params: &Value, id: Value) -> JsonRpcResponse 
         None => return JsonRpcResponse::invalid_params(id, "contractId (u64) required"),
     };
     let event_name = filter.get("eventName").and_then(|v| v.as_str());
-    let from_block = filter.get("fromBlock").and_then(|v| parse_hex_u64(v));
-    let to_block = filter.get("toBlock").and_then(|v| parse_hex_u64(v));
+    let from_block = filter.get("fromBlock").and_then(parse_hex_u64);
+    let to_block = filter.get("toBlock").and_then(parse_hex_u64);
     let limit = filter.get("limit").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
     let limit = limit.min(1000);
 
@@ -405,7 +406,7 @@ fn rpc_get_logs(state: &ApiState, params: &Value, id: Value) -> JsonRpcResponse 
 }
 
 fn rpc_get_block_logs(state: &ApiState, params: &Value, id: Value) -> JsonRpcResponse {
-    let block_num = match params.as_array().and_then(|a| a.first()).and_then(|v| parse_hex_u64(v)) {
+    let block_num = match params.as_array().and_then(|a| a.first()).and_then(parse_hex_u64) {
         Some(n) => n,
         None => return JsonRpcResponse::invalid_params(id, "missing block number"),
     };

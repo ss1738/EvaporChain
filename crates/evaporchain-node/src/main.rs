@@ -5,6 +5,7 @@ mod frontier;
 mod oracle_bridge;
 mod persistence;
 mod shard_bridge;
+#[allow(dead_code)]
 mod sync;
 mod user_db;
 mod jsonrpc;
@@ -28,7 +29,6 @@ use evaporchain_state::db::StateDB;
 use evaporchain_state::RocksDBStateDB;
 use evaporchain_crypto::signatures::{MlDsaKeypair, Signer};
 use evaporchain_da::block_da::{BlockDA, BlockDAPackage};
-use evaporchain_da::block_da_2d::BlockDA2D;
 use evaporchain_types::{
     Account, CreateObjectTx, ObjectState, RefreshTx, StateObject, Transaction, TransferTx,
 };
@@ -496,10 +496,11 @@ fn parse_stdin_command(line: &str, signer: &MlDsaKeypair, chain_id: &str) -> Opt
 
 // ──────────────────────────── Demo Mode ──────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn generate_demo_tx(
     rng: &mut impl Rng,
     epoch: u64,
-    nonces: &mut [u64; 4],
+    _nonces: &mut [u64; 4],
     keypairs: &[MlDsaKeypair; 6],
     validator_id: u64,
     validator_count: u64,
@@ -592,7 +593,7 @@ fn generate_demo_tx(
             let name = format!("{}v{}:0x{:02x}{:02x}", prefix, validator_id, oid, (epoch % 256) as u8);
             let curve = match rng.gen_range(0u8..5) {
                 0 => Some(evaporchain_types::DecayCurve::Linear { rate_per_epoch: rng.gen_range(1..10) }),
-                1 => Some(evaporchain_types::DecayCurve::Asymptotic { floor: rng.gen_range(5..20), half_life: half_life }),
+                1 => Some(evaporchain_types::DecayCurve::Asymptotic { floor: rng.gen_range(5..20), half_life }),
                 _ => None, // default exponential
             };
             let mut tx = Transaction::CreateObject(CreateObjectTx {
@@ -886,6 +887,7 @@ fn make_tag(node_id: &str) -> String {
 use evaporchain_execution::BlockExecutionResult;
 
 /// Record a block into the API shared state (block history, stats, events).
+#[allow(clippy::too_many_arguments)]
 fn record_block(
     block_history: &Arc<Mutex<VecDeque<BlockRecord>>>,
     chain_stats: &Arc<Mutex<ChainStats>>,
@@ -935,13 +937,13 @@ fn record_block(
         da_square_size: block.da_row_roots.len(),
         blob_count: block.blob_commitments.len(),
         has_state_commitment: block.state_function_commitment.is_some(),
-        is_anchor: block.state_function_commitment.as_ref().map_or(false, |c| c.is_anchor),
+        is_anchor: block.state_function_commitment.as_ref().is_some_and(|c| c.is_anchor),
         anchor_epoch: block.state_function_commitment.as_ref().map_or(0, |c| c.anchor_epoch),
     };
 
     // Push to block history
     {
-        let mut history = safe_lock(&block_history);
+        let mut history = safe_lock(block_history);
         history.push_back(record);
         while history.len() > 500 {
             history.pop_front();
@@ -950,7 +952,7 @@ fn record_block(
 
     // Update stats
     {
-        let mut stats = safe_lock(&chain_stats);
+        let mut stats = safe_lock(chain_stats);
         stats.total_objects_created += tx_creates;
         stats.total_refreshed += tx_refreshes;
         stats.total_evaporated += execution.objects_evaporated as u64;
@@ -1118,6 +1120,7 @@ fn index_contract_events_from_exec(
     }
 }
 
+#[allow(dead_code)]
 fn broadcast_contract_events(
     ws_broadcaster: &ws::WsBroadcaster,
     block: &evaporchain_types::Block,
@@ -1386,6 +1389,7 @@ fn initialize_dao_store() -> DAOStore {
 // ──────────────────────────── Main ───────────────────────────────────────
 
 #[tokio::main]
+#[allow(clippy::await_holding_lock)]
 async fn main() -> Result<()> {
     // Quick exit for --bench mode
     if std::env::args().any(|a| a == "--bench") {
@@ -1451,8 +1455,8 @@ async fn main() -> Result<()> {
                 node_tag, result.block.number, result.accounts_created, result.validators_registered,
                 hex::encode(&result.state_root[..8]));
             if args.demo_mode {
-                seed_demo_accounts(&mut *db, &node_tag);
-                seed_demo_objects(&mut *db, &node_tag);
+                seed_demo_accounts(&mut db, &node_tag);
+                seed_demo_objects(&mut db, &node_tag);
             }
         } else {
             println!("{} \x1b[1mFresh start — loading genesis state:\x1b[0m", node_tag);
@@ -1791,7 +1795,7 @@ async fn main() -> Result<()> {
     if !is_fresh {
         if let Some((block_number, epoch, parent_hash)) = chain_store.load_consensus_meta() {
             if let Some(ref tc) = tendermint {
-                let mut c = safe_lock(&tc);
+                let mut c = safe_lock(tc);
                 c.restore_state(block_number, epoch, parent_hash);
                 println!(
                     "{} \x1b[1;32mTendermint restored:\x1b[0m block={}, epoch={}, parent_hash={}…",
@@ -1812,7 +1816,7 @@ async fn main() -> Result<()> {
     // giving time for BLS key exchange and DA attestation rounds to stabilize.
     if !args.no_da_enforcement {
         if let Some(ref tc) = tendermint {
-            let mut c = safe_lock(&tc);
+            let mut c = safe_lock(tc);
             let da_start = c.height().saturating_add(200);
             c.set_da_enforcement_height(da_start);
         }
@@ -1823,7 +1827,7 @@ async fn main() -> Result<()> {
         let saved_txs = chain_store.load_mempool();
         if !saved_txs.is_empty() {
             if let Some(ref tc) = tendermint {
-                let mut c = safe_lock(&tc);
+                let mut c = safe_lock(tc);
                 for tx in &saved_txs {
                     c.mempool.submit(tx.clone());
                 }
@@ -1937,8 +1941,7 @@ async fn main() -> Result<()> {
     let (api_tx_sender, mut api_tx_receiver) = tokio::sync::mpsc::channel::<Transaction>(256);
 
     // Snapshot info — shared between API server and commit loop
-    let snapshot_info: Arc<Mutex<Option<(u64, [u8; 32], usize)>>> =
-        Arc::new(Mutex::new(None));
+    let snapshot_info = Arc::new(Mutex::new(None::<(u64, [u8; 32], usize)>));
 
     // State sync server — serves snapshots to syncing peers
     let sync_server: Arc<Mutex<sync::SyncServer>> = {
@@ -2017,10 +2020,10 @@ async fn main() -> Result<()> {
             log_persist_err("dao_store", chain_store.save_dao_store(&ds));
             (Arc::new(Mutex::new(ns)), Arc::new(Mutex::new(ts)), Arc::new(Mutex::new(ss)), Arc::new(Mutex::new(ds)))
         } else {
-            let ns = chain_store.load_nft_store().unwrap_or_else(|| initialize_nft_store());
-            let ts = chain_store.load_token_store().unwrap_or_else(|| initialize_token_store());
-            let ss = chain_store.load_staking_store().unwrap_or_else(|| initialize_staking_store());
-            let ds = chain_store.load_dao_store().unwrap_or_else(|| initialize_dao_store());
+            let ns = chain_store.load_nft_store().unwrap_or_else(initialize_nft_store);
+            let ts = chain_store.load_token_store().unwrap_or_else(initialize_token_store);
+            let ss = chain_store.load_staking_store().unwrap_or_else(initialize_staking_store);
+            let ds = chain_store.load_dao_store().unwrap_or_else(initialize_dao_store);
             println!("{} \x1b[32mDeFi stores restored: {} NFTs, {} tokens, {} staking pools, {} proposals\x1b[0m",
                 node_tag, ns.tokens.len(), ts.tokens.len(), ss.pools.len(), ds.proposals.len());
             (Arc::new(Mutex::new(ns)), Arc::new(Mutex::new(ts)), Arc::new(Mutex::new(ss)), Arc::new(Mutex::new(ds)))
@@ -2116,7 +2119,7 @@ async fn main() -> Result<()> {
         mut tip_receiver,
         consensus_net_sender,
         mut consensus_net_receiver,
-        mut sample_request_sender,
+        sample_request_sender,
         mut sample_response_receiver,
         shard_cache,
     ) = if let Some(ch) = net_channels {
@@ -2203,6 +2206,7 @@ async fn main() -> Result<()> {
 
     // ── Helper: apply a single block (follower path) ──
     // Returns (obj_count, ghost_count) on success
+    #[allow(clippy::too_many_arguments)]
     fn apply_follower_block(
         node_tag: &str,
         block: &evaporchain_types::Block,
@@ -2226,7 +2230,7 @@ async fn main() -> Result<()> {
                 let tc = safe_lock(tc_ref);
                 let has_all_keys = cert.signer_ids.iter().all(|&vid| {
                     tc.validator_set().get(vid)
-                        .map_or(false, |v| v.bls_public_key.is_some())
+                        .is_some_and(|v| v.bls_public_key.is_some())
                 });
                 if has_all_keys && !tc.verify_commit_certificate(cert) {
                     eprintln!(
@@ -2239,8 +2243,8 @@ async fn main() -> Result<()> {
         }
 
         let exec_start = Instant::now();
-        let mut c = safe_lock(&consensus);
-        let mut db_guard = safe_lock(&db);
+        let mut c = safe_lock(consensus);
+        let mut db_guard = safe_lock(db);
 
         // Only apply if this block advances our chain
         if block.number <= c.block_number() {
@@ -2252,7 +2256,7 @@ async fn main() -> Result<()> {
                 db_guard.flush_accounts();
                 db_guard.flush_objects();
 
-                let mut p = safe_lock(&prover);
+                let mut p = safe_lock(prover);
                 match p.fold_block(&result.block, result.execution.state_root) {
                     Ok(fold_res) if prove_mode => {
                         println!(
@@ -2275,7 +2279,7 @@ async fn main() -> Result<()> {
                 let exec_elapsed_us = exec_start.elapsed().as_micros() as u64;
                 record_block(
                     block_history, chain_stats, events, throughput,
-                    Some(&ws_broadcaster),
+                    Some(ws_broadcaster),
                     &result.block, &result.execution,
                     obj_count, ghost_count_val, exec_elapsed_us,
                 );
@@ -2285,19 +2289,19 @@ async fn main() -> Result<()> {
                 ));
                 log_persist_err("full_block", chain_store.save_full_block(&result.block));
                 log_persist_err("tx_index", chain_store.index_block_transactions(&result.block).map(|_| ()));
-                index_contract_events_from_exec(&chain_store, &result.block, &result.execution);
+                index_contract_events_from_exec(chain_store, &result.block, &result.execution);
                 {
-                    let history = safe_lock(&block_history);
+                    let history = safe_lock(block_history);
                     if let Some(record) = history.back() {
                         log_persist_err("block", chain_store.save_block(record));
                     }
                 }
                 {
-                    let stats = safe_lock(&chain_stats);
+                    let stats = safe_lock(chain_stats);
                     log_persist_err("chain_stats", chain_store.save_chain_stats(&stats));
                 }
                 {
-                    let ev = safe_lock(&events);
+                    let ev = safe_lock(events);
                     log_persist_err("events", chain_store.save_events(&ev));
                 }
                 // Persist mempool
@@ -2311,7 +2315,7 @@ async fn main() -> Result<()> {
                     };
                     log_persist_err("mempool", chain_store.save_mempool(&pending));
                 }
-                persist_contracts(&chain_store, &tendermint);
+                persist_contracts(chain_store, tendermint);
 
                 // Cache block for serving to peers
                 if let Some(ref cache) = block_cache {
@@ -2442,7 +2446,7 @@ async fn main() -> Result<()> {
     let mut pending_da_samples: Vec<PendingSample> = Vec::new();
     let mut da_retry_ticker = interval(Duration::from_secs(1));
     let mut da_valid_sample_count: u64 = 0;
-    let mut da_total_sample_count: u64 = 0;
+    let mut _da_total_sample_count: u64 = 0;
 
     loop {
         tokio::select! {
@@ -2468,7 +2472,7 @@ async fn main() -> Result<()> {
                 // Drain network txs into mempool
                 if let Some(ref mut rx) = net_tx_receiver {
                     while let Ok(tx) = rx.try_recv() {
-                        let mut tc = safe_lock(&tc_ref);
+                        let mut tc = safe_lock(tc_ref);
                         tc.mempool.submit(tx);
                     }
                 }
@@ -2484,13 +2488,13 @@ async fn main() -> Result<()> {
                 // Generate demo txs only when we're the proposer (avoids stale nonce accumulation)
                 if args.demo_mode {
                     let (epoch, is_proposer) = {
-                        let tc = safe_lock(&tc_ref);
+                        let tc = safe_lock(tc_ref);
                         (tc.epoch() + 1, tc.am_i_proposer())
                     };
 
                     if is_proposer {
                         if let Some(tx) = generate_demo_tx(&mut rng, epoch, &mut demo_nonces, &demo_keypairs, args.validator_id, args.validator_count, &db, &args.chain_id) {
-                            let mut tc = safe_lock(&tc_ref);
+                            let mut tc = safe_lock(tc_ref);
                             tc.mempool.submit(tx);
                         }
                         // Submit oracle votes for demo price feeds
@@ -2514,7 +2518,7 @@ async fn main() -> Result<()> {
 
                 // Tick the consensus state machine
                 let actions = {
-                    let mut tc = safe_lock(&tc_ref);
+                    let mut tc = safe_lock(tc_ref);
                     let mut db_guard = safe_lock(&db);
                     let phase = tc.phase();
                     let height = tc.height();
@@ -2561,7 +2565,7 @@ async fn main() -> Result<()> {
                     if let ConsensusAction::CommitBlock(mut block) = action {
                         if args.light_mode {
                             // Light mode: skip execution, only feed to light client verifier
-                            let mut tc = safe_lock(&tc_ref);
+                            let mut tc = safe_lock(tc_ref);
                             tc.on_block_committed(&block, block.state_root, 0);
                             let tip = tc.height();
                             drop(tc);
@@ -2571,7 +2575,7 @@ async fn main() -> Result<()> {
                         // Execute the block to get state root
                         let exec_start = Instant::now();
                         let result = {
-                            let mut tc = safe_lock(&tc_ref);
+                            let mut tc = safe_lock(tc_ref);
                             let mut db_guard = safe_lock(&db);
                             db_guard.begin_batch();
                             tc.execute_block(&mut *db_guard, &block)
@@ -2682,10 +2686,10 @@ async fn main() -> Result<()> {
                                                     }
                                                     // Reset per-block sample counters
                                                     da_valid_sample_count = 0;
-                                                    da_total_sample_count = 0;
+                                                    _da_total_sample_count = 0;
 
                                                     // Attest with local verification (peer sample results handled async below)
-                                                    let mut tc = safe_lock(&tc_ref);
+                                                    let mut tc = safe_lock(tc_ref);
                                                     if let Some(att_msg) = tc.make_da_attestation(block.number, data_root, shard_count) {
                                                         // Self-register the attestation
                                                         tc.on_message(att_msg.clone());
@@ -2720,7 +2724,7 @@ async fn main() -> Result<()> {
 
                                 // Advance consensus state
                                 let consensus_parent_hash = {
-                                    let mut tc = safe_lock(&tc_ref);
+                                    let mut tc = safe_lock(tc_ref);
                                     tc.on_block_committed(&block, result.execution.state_root, result.execution.objects_evaporated);
                                     tc.parent_hash()
                                 };
@@ -2881,7 +2885,7 @@ async fn main() -> Result<()> {
                                 }
                                 // Persist mempool
                                 {
-                                    let tc = safe_lock(&tc_ref);
+                                    let tc = safe_lock(tc_ref);
                                     let pending: Vec<evaporchain_types::Transaction> = tc.mempool.pending().iter().cloned().collect();
                                     log_persist_err("mempool", chain_store.save_mempool(&pending));
                                 }
@@ -2982,7 +2986,7 @@ async fn main() -> Result<()> {
                                 // Log BLS aggregate signature status and record finality
                                 if let Some(ref cert) = block.commit_certificate {
                                     let (signing_stake, total_stake) = {
-                                        let tc = safe_lock(&tc_ref);
+                                        let tc = safe_lock(tc_ref);
                                         let vs = tc.validator_set();
                                         let signing: u64 = cert.signer_ids.iter()
                                             .filter_map(|&id| vs.get(id))
@@ -3010,7 +3014,7 @@ async fn main() -> Result<()> {
                                     // Feed header to light client verifier
                                     {
                                         let vs = {
-                                            let tc = safe_lock(&tc_ref);
+                                            let tc = safe_lock(tc_ref);
                                             tc.validator_set().clone()
                                         };
                                         let now = std::time::SystemTime::now()
@@ -3066,7 +3070,7 @@ async fn main() -> Result<()> {
                                         }
                                     }
                                 }
-                                SyncAction::ApplySnapshot { height, state_root, data } => {
+                                SyncAction::ApplySnapshot { height, state_root: _, data } => {
                                     println!(
                                         "{} \x1b[1;32mState sync: applying snapshot at height {} ({}B)\x1b[0m",
                                         node_tag, height, data.len()
@@ -3076,7 +3080,7 @@ async fn main() -> Result<()> {
                                         let _ = evaporchain_state::snapshot::SnapshotApplier::apply(&mut *db_guard, &snapshot);
                                         drop(db_guard);
                                         if let Some(ref tc) = tendermint {
-                                            let mut c = safe_lock(&tc);
+                                            let mut c = safe_lock(tc);
                                             c.set_height(height + 1);
                                         }
                                         println!(
@@ -3089,7 +3093,7 @@ async fn main() -> Result<()> {
                                 }
                                 SyncAction::ResumeConsensus { height, .. } => {
                                     if let Some(ref tc) = tendermint {
-                                        let mut c = safe_lock(&tc);
+                                        let mut c = safe_lock(tc);
                                         c.set_height(height);
                                     }
                                     state_sync = None;
@@ -3130,7 +3134,7 @@ async fn main() -> Result<()> {
 
                     let tc_ref = tendermint.as_ref().unwrap();
                     let actions = {
-                        let mut tc = safe_lock(&tc_ref);
+                        let mut tc = safe_lock(tc_ref);
                         let actions = tc.on_message(msg);
                         // If DA attestation, check if supermajority now reached
                         if let Some((bn, dr)) = da_att_info {
@@ -3179,14 +3183,14 @@ async fn main() -> Result<()> {
                         }
                         if let ConsensusAction::CommitBlock(mut block) = action {
                             if args.light_mode {
-                                let mut tc = safe_lock(&tc_ref);
+                                let mut tc = safe_lock(tc_ref);
                                 tc.on_block_committed(&block, block.state_root, 0);
                                 println!("{} \x1b[36mLight client: header #{} verified (follower)\x1b[0m", node_tag, block.number);
                                 continue;
                             }
                             let exec_start = Instant::now();
                             let result = {
-                                let mut tc = safe_lock(&tc_ref);
+                                let mut tc = safe_lock(tc_ref);
                                 let mut db_guard = safe_lock(&db);
                                 db_guard.begin_batch();
                                 tc.execute_block(&mut *db_guard, &block)
@@ -3205,7 +3209,7 @@ async fn main() -> Result<()> {
                                     }
                                     {
                                         let mut p = safe_lock(&chain_prover);
-                                        if let Ok(_) = p.fold_block(&block, result.execution.state_root) {
+                                        if p.fold_block(&block, result.execution.state_root).is_ok() {
                                             if let Ok(chain_proof) = p.generate_chain_proof() {
                                                 block.nova_proof = Some(chain_proof.proof.proof_bytes);
                                             }
@@ -3271,9 +3275,9 @@ async fn main() -> Result<()> {
                                                         }
                                                         // Reset per-block sample counters
                                                         da_valid_sample_count = 0;
-                                                        da_total_sample_count = 0;
+                                                        _da_total_sample_count = 0;
 
-                                                        let mut tc = safe_lock(&tc_ref);
+                                                        let mut tc = safe_lock(tc_ref);
                                                         if let Some(att_msg) = tc.make_da_attestation(block.number, data_root, shard_count) {
                                                             tc.on_message(att_msg.clone());
                                                             if let Some(cert_bytes) = tc.try_build_da_certificate(block.number, data_root) {
@@ -3304,7 +3308,7 @@ async fn main() -> Result<()> {
                                     let peers = peer_count.load(std::sync::atomic::Ordering::Relaxed);
 
                                     let consensus_parent_hash = {
-                                        let mut tc = safe_lock(&tc_ref);
+                                        let mut tc = safe_lock(tc_ref);
                                         tc.on_block_committed(&block, result.execution.state_root, result.execution.objects_evaporated);
                                         tc.parent_hash()
                                     };
@@ -3422,7 +3426,7 @@ async fn main() -> Result<()> {
                                     }
                                     // Persist mempool
                                     {
-                                        let tc = safe_lock(&tc_ref);
+                                        let tc = safe_lock(tc_ref);
                                         let pending: Vec<evaporchain_types::Transaction> = tc.mempool.pending().iter().cloned().collect();
                                         log_persist_err("mempool", chain_store.save_mempool(&pending));
                                     }
@@ -3843,7 +3847,7 @@ async fn main() -> Result<()> {
                                 Some(cert) => {
                                     let has_all_keys = cert.signer_ids.iter().all(|&vid| {
                                         tc.validator_set().get(vid)
-                                            .map_or(false, |v| v.bls_public_key.is_some())
+                                            .is_some_and(|v| v.bls_public_key.is_some())
                                     });
                                     if !has_all_keys {
                                         // Missing keys — defer until KeyAnnounce arrives
@@ -3921,7 +3925,7 @@ async fn main() -> Result<()> {
                                             da_square_size: block.da_row_roots.len(),
                                             blob_count: block.blob_commitments.len(),
                                             has_state_commitment: block.state_function_commitment.is_some(),
-                                            is_anchor: block.state_function_commitment.as_ref().map_or(false, |c| c.is_anchor),
+                                            is_anchor: block.state_function_commitment.as_ref().is_some_and(|c| c.is_anchor),
                                             anchor_epoch: block.state_function_commitment.as_ref().map_or(0, |c| c.anchor_epoch),
                                         };
                                         let mut history = safe_lock(&block_history);
@@ -3998,7 +4002,7 @@ async fn main() -> Result<()> {
                                     let tc = safe_lock(tc_ref);
                                     let has_all_keys = cert.signer_ids.iter().all(|&vid| {
                                         tc.validator_set().get(vid)
-                                            .map_or(false, |v| v.bls_public_key.is_some())
+                                            .is_some_and(|v| v.bls_public_key.is_some())
                                     });
                                     if has_all_keys && !tc.verify_commit_certificate(cert) {
                                         eprintln!(
@@ -4152,7 +4156,7 @@ async fn main() -> Result<()> {
                 if !samples.is_empty() {
                     // Update cumulative sample counters
                     da_valid_sample_count += valid_count as u64;
-                    da_total_sample_count += samples.len() as u64;
+                    _da_total_sample_count += samples.len() as u64;
 
                     // Clear matching pending samples (responses arrived)
                     let sampled_block = if let Some(ref tc_ref) = tendermint {
@@ -4202,7 +4206,7 @@ async fn main() -> Result<()> {
                                         "{}   \x1b[1;32mDA attestation: block #{}, confidence={:.6} >= {}\x1b[0m",
                                         node_tag, sampled_block, confidence, DA_MIN_CONFIDENCE,
                                     );
-                                    if let Some(cert_bytes) = tc.try_build_da_certificate(sampled_block, data_root) {
+                                    if let Some(_cert_bytes) = tc.try_build_da_certificate(sampled_block, data_root) {
                                         println!(
                                             "{}   \x1b[1;35mDA Certificate: block #{}, supermajority via peer samples\x1b[0m",
                                             node_tag, sampled_block,

@@ -70,6 +70,7 @@ impl FrontierState {
     /// - Energy trie updates from state DB
     ///
     /// Returns a `FrontierUpdate` describing what happened.
+    #[allow(clippy::too_many_arguments)]
     pub fn on_block_committed(
         &mut self,
         block_number: u64,
