@@ -544,6 +544,8 @@ fn tx_to_json(tx: &Transaction) -> serde_json::Value {
         Transaction::MultiSig(_) => serde_json::json!({ "type": "multisig" }),
         Transaction::UserOp(_) => serde_json::json!({ "type": "user_op" }),
         Transaction::UpgradeContract(_) => serde_json::json!({ "type": "upgrade_contract" }),
+        Transaction::Delegate(t) => serde_json::json!({ "type": "delegate", "validator_id": t.validator_id, "amount": t.amount }),
+        Transaction::Undelegate(t) => serde_json::json!({ "type": "undelegate", "validator_id": t.validator_id, "amount": t.amount }),
     }
 }
 
@@ -886,6 +888,8 @@ fn set_tx_signature(tx: &mut Transaction, sig: Vec<u8>, pk: Vec<u8>) {
         Transaction::MultiSig(_) => {}
         Transaction::UserOp(u) => { u.signature = Some(sig); u.public_key = Some(pk); }
         Transaction::UpgradeContract(u) => { u.signature = Some(sig); u.public_key = Some(pk); }
+        Transaction::Delegate(d) => { d.signature = Some(sig); d.public_key = Some(pk); }
+        Transaction::Undelegate(u) => { u.signature = Some(sig); u.public_key = Some(pk); }
     }
 }
 
@@ -3949,10 +3953,16 @@ async fn get_da_cell_sample(
 
     let da2d = evaporchain_da::block_da_2d::BlockDA2D::new();
     match da2d.prove_cell(package, row, col) {
+        // `cell_data` is mandatory: light-client `verify_cell_proof` hashes
+        // it to derive `cell_hash`, then walks the row+column Merkle paths.
+        // Omitting it (the prior format) made the endpoint unverifiable —
+        // an attacker could send any cell_hash with matching siblings and
+        // the client would have no way to refute. Closes punch-list #2b.
         Ok(proof) => Json(serde_json::json!({
             "block": block,
             "row": row,
             "col": col,
+            "cell_data": hex::encode(&proof.cell_data),
             "cell_hash": hex::encode(proof.cell_hash),
             "row_root": hex::encode(package.header.row_roots[row]),
             "col_root": hex::encode(package.header.col_roots[col]),
@@ -4805,6 +4815,8 @@ fn estimate_tx_gas(tx: &Transaction) -> u64 {
         Transaction::MultiSig(_) => 50_000,
         Transaction::UserOp(tx) => 30_000 + tx.call_data.len() as u64 * 16,
         Transaction::UpgradeContract(tx) => 100_000 + tx.new_bytecode.len() as u64 * 200,
+        Transaction::Delegate(_) => 40_000,
+        Transaction::Undelegate(_) => 40_000,
     }
 }
 
@@ -5092,6 +5104,36 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     from: account_full(&tx.owner),
                     to: String::new(),
                     amount: None,
+                    object_id: None,
+                    energy: None,
+                    half_life: None,
+                    method: None,
+                    gas,
+                    block_number: block.number,
+                    epoch: block.epoch,
+                    status: "success".to_string(),
+                },
+                Transaction::Delegate(tx) => TxRecord {
+                    hash,
+                    tx_type: "delegate".to_string(),
+                    from: account_full(&tx.delegator),
+                    to: format!("validator-{}", tx.validator_id),
+                    amount: Some(tx.amount),
+                    object_id: None,
+                    energy: None,
+                    half_life: None,
+                    method: None,
+                    gas,
+                    block_number: block.number,
+                    epoch: block.epoch,
+                    status: "success".to_string(),
+                },
+                Transaction::Undelegate(tx) => TxRecord {
+                    hash,
+                    tx_type: "undelegate".to_string(),
+                    from: account_full(&tx.delegator),
+                    to: format!("validator-{}", tx.validator_id),
+                    amount: Some(tx.amount),
                     object_id: None,
                     energy: None,
                     half_life: None,

@@ -892,6 +892,8 @@ fn tx_type_name(tx: &Transaction) -> &'static str {
         Transaction::MultiSig(_) => "multisig",
         Transaction::UserOp(_) => "user_op",
         Transaction::UpgradeContract(_) => "upgrade_contract",
+        Transaction::Delegate(_) => "delegate",
+        Transaction::Undelegate(_) => "undelegate",
     }
 }
 
@@ -914,6 +916,8 @@ fn tx_sender_hex(tx: &Transaction) -> Option<String> {
         Transaction::Shield(_) | Transaction::Unshield(_) | Transaction::PrivateTransfer(_)
         | Transaction::Deferred(_) | Transaction::Blob(_) | Transaction::Governance(_)
         | Transaction::MultiSig(_) | Transaction::UserOp(_) | Transaction::UpgradeContract(_) => None,
+        Transaction::Delegate(t) => Some(addr_hex(&t.delegator)),
+        Transaction::Undelegate(t) => Some(addr_hex(&t.delegator)),
     }
 }
 
