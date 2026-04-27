@@ -6,9 +6,9 @@
 
 use crate::db::{build_energy_trie, trie_key_for_account, trie_key_for_object, trie_value_for_account, trie_value_for_object, StateDB};
 use evaporchain_crypto::{EnergyVerkleTrie, TrieHealth};
-use evaporchain_types::{Account, AccountAddress, GhostRecord, ObjectId, StakeRecord, StateObject};
+use evaporchain_types::{Account, AccountAddress, DelegationRecord, GhostRecord, ObjectId, StakeRecord, StateObject};
 use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, Options, WriteBatch, DB};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 const CF_OBJECTS: &str = "objects";
@@ -16,10 +16,43 @@ const CF_GHOSTS: &str = "ghosts";
 const CF_ACCOUNTS: &str = "accounts";
 const CF_TRIE: &str = "trie";
 const CF_NULLIFIERS: &str = "nullifiers";
+/// Append-only note-commitment archive. Key = u64 leaf index (big-endian
+/// for sort order), value = 32-byte commitment. Required so the in-memory
+/// note tree can be rebuilt at startup without replaying the chain from
+/// genesis. Closes punch-list 1a.
+const CF_NOTE_COMMITMENTS: &str = "note_commitments";
 const TRIE_SNAPSHOT_KEY: &[u8] = b"__energy_verkle_trie__";
 const PRIVACY_NOTE_ROOT_KEY: &[u8] = b"__note_tree_root__";
 const PRIVACY_POOL_BALANCE_KEY: &[u8] = b"__shielded_pool_balance__";
 const PRIVACY_NOTE_COUNT_KEY: &[u8] = b"__note_count__";
+
+/// Halt the node when a persistence operation fails. Logs the operation +
+/// underlying error, then exits with status 2 so the operator can diagnose.
+///
+/// Why this exists: previously the persistence path used `.expect("write X
+/// to RocksDB")`, which panics with a generic message, no structured log,
+/// and a 101 exit status. For an L1 the difference between "node panicked
+/// at line 338" and "FATAL persistence failure: write_object returned IO
+/// error: disk full" is substantial — both for diagnosis and for
+/// distinguishing programmer-error panics from genuine I/O failures.
+///
+/// Why exit instead of `Result` propagation: the public `StateDB` trait
+/// methods (`put_object`, `put_account`, etc.) return unit. Adapting them
+/// to `Result<(), PersistError>` would cascade through every caller in
+/// the workspace. Logged-exit halts the chain cleanly without that
+/// cascade and produces an actionable log line; on restart, the node
+/// reloads from disk and the in-flight block is replayed by consensus.
+/// Closes the gap from `audit/end_to_end_audit_2026_04_27.md` §3.
+fn fatal_persistence_error(op: &'static str, e: impl std::fmt::Display) -> ! {
+    tracing::error!(
+        operation = op,
+        error = %e,
+        "FATAL: persistence failure — node halting to prevent state corruption",
+    );
+    // Give the tracing subscriber a moment to flush before exit.
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    std::process::exit(2);
+}
 
 /// Tracks in-memory changes during a batch for correct rollback.
 struct BatchUndoLog {
@@ -34,6 +67,7 @@ struct BatchUndoLog {
     nullifiers_snapshot: HashSet<[u8; 32]>,
     shielded_pool_balance: u64,
     note_count: u64,
+    note_commitments_snapshot: BTreeMap<u64, [u8; 32]>,
 }
 
 /// RocksDB-backed state database with in-memory write-through cache.
@@ -50,6 +84,10 @@ pub struct RocksDBStateDB {
     spent_nullifiers: std::collections::HashSet<[u8; 32]>,
     shielded_pool_balance: u64,
     note_count: u64,
+    /// In-memory cache of persisted note commitments by leaf index. BTreeMap
+    /// preserves leaf-order iteration so PrivacyExecutor can rebuild the
+    /// note tree deterministically at startup.
+    note_commitments: BTreeMap<u64, [u8; 32]>,
     // Batch mode: buffer writes for atomic commit (Mutex for Sync)
     pending_batch: std::sync::Mutex<Option<WriteBatch>>,
     // Undo log for reverting in-memory state on rollback
@@ -70,6 +108,7 @@ impl RocksDBStateDB {
             ColumnFamilyDescriptor::new(CF_ACCOUNTS, Options::default()),
             ColumnFamilyDescriptor::new(CF_TRIE, Options::default()),
             ColumnFamilyDescriptor::new(CF_NULLIFIERS, Options::default()),
+            ColumnFamilyDescriptor::new(CF_NOTE_COMMITMENTS, Options::default()),
         ];
 
         let db = DB::open_cf_descriptors(&opts, path, cf_descriptors)
@@ -128,8 +167,13 @@ impl RocksDBStateDB {
             let cf_g = db.cf_handle(CF_GHOSTS)
                 .ok_or_else(|| format!("missing column family: {CF_GHOSTS}"))?;
             for ghost in ghosts.values() {
-                let val = bincode::serialize(ghost).expect("serialize ghost");
-                db.put_cf(cf_g, ghost.object_id, val).expect("migrate ghost to RocksDB");
+                let val = match bincode::serialize(ghost) {
+                    Ok(v) => v,
+                    Err(e) => fatal_persistence_error("migrate_serialize_ghost", e),
+                };
+                if let Err(e) = db.put_cf(cf_g, ghost.object_id, val) {
+                    fatal_persistence_error("migrate_ghost_to_rocksdb", e);
+                }
             }
             // Force compaction so old SST entries are replaced
             db.compact_range_cf(cf_g, None::<&[u8]>, None::<&[u8]>);
@@ -203,6 +247,24 @@ impl RocksDBStateDB {
             println!("  RocksDB: loaded {} nullifiers, pool_balance={}, note_count={}", spent_nullifiers.len(), shielded_pool_balance, note_count);
         }
 
+        // Load persisted note commitments (leaf-index ordered).
+        let mut note_commitments: BTreeMap<u64, [u8; 32]> = BTreeMap::new();
+        let cf_commits = db.cf_handle(CF_NOTE_COMMITMENTS)
+            .ok_or_else(|| format!("missing column family: {CF_NOTE_COMMITMENTS}"))?;
+        let iter = db.iterator_cf(cf_commits, rocksdb::IteratorMode::Start);
+        for item in iter {
+            let (key, value) = item.map_err(|e| format!("RocksDB iterator error: {}", e))?;
+            if key.len() == 8 && value.len() == 32 {
+                let idx = u64::from_be_bytes(key[..8].try_into().unwrap());
+                let mut commit = [0u8; 32];
+                commit.copy_from_slice(&value);
+                note_commitments.insert(idx, commit);
+            }
+        }
+        if !note_commitments.is_empty() {
+            println!("  RocksDB: loaded {} note commitments", note_commitments.len());
+        }
+
         // Load persisted trie or rebuild from scratch
         let trie = {
             let cf_trie = db.cf_handle(CF_TRIE)
@@ -243,6 +305,7 @@ impl RocksDBStateDB {
             spent_nullifiers,
             shielded_pool_balance,
             note_count,
+            note_commitments,
             pending_batch: std::sync::Mutex::new(None),
             batch_undo: None,
         })
@@ -263,6 +326,7 @@ impl RocksDBStateDB {
             nullifiers_snapshot: self.spent_nullifiers.clone(),
             shielded_pool_balance: self.shielded_pool_balance,
             note_count: self.note_count,
+            note_commitments_snapshot: self.note_commitments.clone(),
         });
     }
 
@@ -305,6 +369,7 @@ impl RocksDBStateDB {
             self.spent_nullifiers = undo.nullifiers_snapshot;
             self.shielded_pool_balance = undo.shielded_pool_balance;
             self.note_count = undo.note_count;
+            self.note_commitments = undo.note_commitments_snapshot;
         }
     }
 
@@ -327,7 +392,10 @@ impl RocksDBStateDB {
     }
 
     fn persist_object(&self, obj: &StateObject) {
-        let value = bincode::serialize(obj).expect("serialize object");
+        let value = match bincode::serialize(obj) {
+            Ok(v) => v,
+            Err(e) => fatal_persistence_error("serialize_object", e),
+        };
         let mut guard = self.pending_batch.lock().unwrap();
         if let Some(ref mut batch) = *guard {
             let cf = self.db.cf_handle(CF_OBJECTS).unwrap();
@@ -335,7 +403,9 @@ impl RocksDBStateDB {
         } else {
             drop(guard);
             let cf = self.cf(CF_OBJECTS);
-            self.db.put_cf(cf, obj.id, value).expect("write object to RocksDB");
+            if let Err(e) = self.db.put_cf(cf, obj.id, value) {
+                fatal_persistence_error("write_object_to_rocksdb", e);
+            }
         }
     }
 
@@ -347,12 +417,17 @@ impl RocksDBStateDB {
         } else {
             drop(guard);
             let cf = self.cf(CF_OBJECTS);
-            self.db.delete_cf(cf, id).expect("delete object from RocksDB");
+            if let Err(e) = self.db.delete_cf(cf, id) {
+                fatal_persistence_error("delete_object_from_rocksdb", e);
+            }
         }
     }
 
     fn persist_ghost(&self, ghost: &GhostRecord) {
-        let value = bincode::serialize(ghost).expect("serialize ghost");
+        let value = match bincode::serialize(ghost) {
+            Ok(v) => v,
+            Err(e) => fatal_persistence_error("serialize_ghost", e),
+        };
         let mut guard = self.pending_batch.lock().unwrap();
         if let Some(ref mut batch) = *guard {
             let cf = self.db.cf_handle(CF_GHOSTS).unwrap();
@@ -360,7 +435,9 @@ impl RocksDBStateDB {
         } else {
             drop(guard);
             let cf = self.cf(CF_GHOSTS);
-            self.db.put_cf(cf, ghost.object_id, value).expect("write ghost to RocksDB");
+            if let Err(e) = self.db.put_cf(cf, ghost.object_id, value) {
+                fatal_persistence_error("write_ghost_to_rocksdb", e);
+            }
         }
     }
 
@@ -372,12 +449,17 @@ impl RocksDBStateDB {
         } else {
             drop(guard);
             let cf = self.cf(CF_GHOSTS);
-            self.db.delete_cf(cf, id).expect("delete ghost from RocksDB");
+            if let Err(e) = self.db.delete_cf(cf, id) {
+                fatal_persistence_error("delete_ghost_from_rocksdb", e);
+            }
         }
     }
 
     fn persist_account(&self, account: &Account) {
-        let value = bincode::serialize(account).expect("serialize account");
+        let value = match bincode::serialize(account) {
+            Ok(v) => v,
+            Err(e) => fatal_persistence_error("serialize_account", e),
+        };
         let mut guard = self.pending_batch.lock().unwrap();
         if let Some(ref mut batch) = *guard {
             let cf = self.db.cf_handle(CF_ACCOUNTS).unwrap();
@@ -385,7 +467,9 @@ impl RocksDBStateDB {
         } else {
             drop(guard);
             let cf = self.cf(CF_ACCOUNTS);
-            self.db.put_cf(cf, account.address, value).expect("write account to RocksDB");
+            if let Err(e) = self.db.put_cf(cf, account.address, value) {
+                fatal_persistence_error("write_account_to_rocksdb", e);
+            }
         }
     }
 
@@ -413,7 +497,9 @@ impl RocksDBStateDB {
     fn persist_trie(&self) {
         let cf = self.cf(CF_TRIE);
         let bytes = self.trie.to_bytes();
-        self.db.put_cf(cf, TRIE_SNAPSHOT_KEY, bytes).expect("write trie snapshot to RocksDB");
+        if let Err(e) = self.db.put_cf(cf, TRIE_SNAPSHOT_KEY, bytes) {
+            fatal_persistence_error("write_trie_snapshot_to_rocksdb", e);
+        }
     }
 
     fn persist_nullifier(&self, nullifier: &[u8; 32]) {
@@ -424,15 +510,44 @@ impl RocksDBStateDB {
         } else {
             drop(guard);
             let cf = self.cf(CF_NULLIFIERS);
-            self.db.put_cf(cf, nullifier, [1u8]).expect("write nullifier to RocksDB");
+            if let Err(e) = self.db.put_cf(cf, nullifier, [1u8]) {
+                fatal_persistence_error("write_nullifier_to_rocksdb", e);
+            }
+        }
+    }
+
+    fn persist_note_commitment(&self, index: u64, commitment: &[u8; 32]) {
+        let key = index.to_be_bytes();
+        let mut guard = self.pending_batch.lock().unwrap();
+        if let Some(ref mut batch) = *guard {
+            let cf = self.db.cf_handle(CF_NOTE_COMMITMENTS).unwrap();
+            batch.put_cf(cf, key, commitment);
+        } else {
+            drop(guard);
+            let cf = self.cf(CF_NOTE_COMMITMENTS);
+            if let Err(e) = self.db.put_cf(cf, key, commitment) {
+                fatal_persistence_error("write_note_commitment_to_rocksdb", e);
+            }
         }
     }
 
     fn persist_privacy_metadata(&self) {
         let cf = self.cf(CF_TRIE);
-        self.db.put_cf(cf, PRIVACY_NOTE_ROOT_KEY, self.note_tree_root).expect("write note_tree_root");
-        self.db.put_cf(cf, PRIVACY_POOL_BALANCE_KEY, self.shielded_pool_balance.to_le_bytes()).expect("write pool_balance");
-        self.db.put_cf(cf, PRIVACY_NOTE_COUNT_KEY, self.note_count.to_le_bytes()).expect("write note_count");
+        if let Err(e) = self.db.put_cf(cf, PRIVACY_NOTE_ROOT_KEY, self.note_tree_root) {
+            fatal_persistence_error("write_privacy_note_tree_root", e);
+        }
+        if let Err(e) = self
+            .db
+            .put_cf(cf, PRIVACY_POOL_BALANCE_KEY, self.shielded_pool_balance.to_le_bytes())
+        {
+            fatal_persistence_error("write_privacy_pool_balance", e);
+        }
+        if let Err(e) = self
+            .db
+            .put_cf(cf, PRIVACY_NOTE_COUNT_KEY, self.note_count.to_le_bytes())
+        {
+            fatal_persistence_error("write_privacy_note_count", e);
+        }
     }
 }
 
@@ -698,6 +813,17 @@ impl StateDB for RocksDBStateDB {
         self.note_count
     }
 
+    fn append_note_commitment(&mut self, index: u64, commitment: [u8; 32]) {
+        // Idempotent: writing the same (index, commitment) twice is harmless.
+        // The cache and disk both end up with the same value.
+        self.note_commitments.insert(index, commitment);
+        self.persist_note_commitment(index, &commitment);
+    }
+
+    fn get_all_note_commitments(&self) -> Vec<[u8; 32]> {
+        self.note_commitments.values().copied().collect()
+    }
+
     fn get_stake(&self, _validator_id: u64) -> Option<&StakeRecord> {
         None
     }
@@ -710,6 +836,43 @@ impl StateDB for RocksDBStateDB {
     }
 
     fn all_stakes(&self) -> Vec<&StakeRecord> {
+        Vec::new()
+    }
+
+    // Delegation persistence is stubbed in the RocksDB backend, matching
+    // the existing stake-records pattern (RocksDB stake calls also return
+    // empty/None today). Production RocksDB persistence for both is a
+    // separate hardening pass — InMemoryStateDB is the source of truth.
+    fn get_delegation(
+        &self,
+        _delegator: &AccountAddress,
+        _validator_id: u64,
+    ) -> Option<&DelegationRecord> {
+        None
+    }
+
+    fn put_delegation(&mut self, _record: DelegationRecord) {}
+
+    fn remove_delegation(
+        &mut self,
+        _delegator: &AccountAddress,
+        _validator_id: u64,
+    ) -> Option<DelegationRecord> {
+        None
+    }
+
+    fn delegations_for_validator(&self, _validator_id: u64) -> Vec<&DelegationRecord> {
+        Vec::new()
+    }
+
+    fn delegations_for_delegator(
+        &self,
+        _delegator: &AccountAddress,
+    ) -> Vec<&DelegationRecord> {
+        Vec::new()
+    }
+
+    fn all_delegations(&self) -> Vec<&DelegationRecord> {
         Vec::new()
     }
 
@@ -757,9 +920,9 @@ impl StateDB for RocksDBStateDB {
         for id in &ids_to_prune {
             batch.delete_cf(cf, id);
         }
-        self.db
-            .write(batch)
-            .expect("prune_before_height: WriteBatch commit failed");
+        if let Err(e) = self.db.write(batch) {
+            fatal_persistence_error("prune_before_height_writebatch_commit", e);
+        }
 
         // Remove from in-memory cache.
         for id in &ids_to_prune {
@@ -790,8 +953,13 @@ impl RocksDBStateDB {
     pub fn flush_accounts(&mut self) {
         let cf = self.cf(CF_ACCOUNTS);
         for account in self.accounts.values() {
-            let value = bincode::serialize(account).expect("serialize account");
-            self.db.put_cf(cf, account.address, value).expect("flush account to RocksDB");
+            let value = match bincode::serialize(account) {
+                Ok(v) => v,
+                Err(e) => fatal_persistence_error("flush_serialize_account", e),
+            };
+            if let Err(e) = self.db.put_cf(cf, account.address, value) {
+                fatal_persistence_error("flush_account_to_rocksdb", e);
+            }
         }
         self.sync_dirty_to_trie();
         self.persist_trie();
@@ -800,8 +968,13 @@ impl RocksDBStateDB {
     pub fn flush_objects(&mut self) {
         let cf = self.cf(CF_OBJECTS);
         for obj in self.objects.values() {
-            let value = bincode::serialize(obj).expect("serialize object");
-            self.db.put_cf(cf, obj.id, value).expect("flush object to RocksDB");
+            let value = match bincode::serialize(obj) {
+                Ok(v) => v,
+                Err(e) => fatal_persistence_error("flush_serialize_object", e),
+            };
+            if let Err(e) = self.db.put_cf(cf, obj.id, value) {
+                fatal_persistence_error("flush_object_to_rocksdb", e);
+            }
         }
         self.sync_dirty_to_trie();
         self.persist_trie();

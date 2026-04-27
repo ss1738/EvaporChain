@@ -2,7 +2,7 @@ use evaporchain_crypto::hash::blake3_hash;
 use evaporchain_crypto::{EnergyVerkleTrie, TrieHealth};
 
 use std::collections::BTreeMap;
-use evaporchain_types::{Account, AccountAddress, GhostRecord, GovernanceProposal, ObjectId, StakeRecord, StateObject};
+use evaporchain_types::{Account, AccountAddress, DelegationRecord, GhostRecord, GovernanceProposal, ObjectId, StakeRecord, StateObject};
 use std::collections::HashMap;
 
 // ─── Trie key/value derivation (shared by all StateDB backends) ─────────
@@ -180,6 +180,16 @@ pub trait StateDB: Send + Sync {
     /// Get the note count.
     fn get_note_count(&self) -> u64;
 
+    /// Persist a note commitment at the given leaf index. Idempotent: writing
+    /// the same (index, commitment) pair twice is a no-op. Required so that
+    /// `PrivacyEngine.note_tree` can be rebuilt deterministically on node
+    /// restart without replaying the chain from genesis.
+    fn append_note_commitment(&mut self, index: u64, commitment: [u8; 32]);
+
+    /// Return all persisted note commitments in leaf-index order. Used by
+    /// PrivacyExecutor at startup to rebuild the in-memory note tree.
+    fn get_all_note_commitments(&self) -> Vec<[u8; 32]>;
+
     // ─── Stake Ledger ───────────────────────────────────────────────────
 
     /// Get a stake record by validator ID.
@@ -193,6 +203,43 @@ pub trait StateDB: Send + Sync {
 
     /// Return all stake records.
     fn all_stakes(&self) -> Vec<&StakeRecord>;
+
+    // ─── Delegations ────────────────────────────────────────────────────
+
+    /// Get a single delegation record by (delegator, validator_id).
+    fn get_delegation(
+        &self,
+        delegator: &AccountAddress,
+        validator_id: u64,
+    ) -> Option<&DelegationRecord>;
+
+    /// Insert or replace a delegation record. Same key shape as
+    /// `get_delegation`. Used both for new delegations and to update
+    /// existing ones (e.g., add to amount, set unbonding fields).
+    fn put_delegation(&mut self, record: DelegationRecord);
+
+    /// Remove a delegation record entirely. Returns the removed record
+    /// if it existed.
+    fn remove_delegation(
+        &mut self,
+        delegator: &AccountAddress,
+        validator_id: u64,
+    ) -> Option<DelegationRecord>;
+
+    /// All delegations to a given validator (used for reward
+    /// distribution and slashing pass-through).
+    fn delegations_for_validator(&self, validator_id: u64) -> Vec<&DelegationRecord>;
+
+    /// All delegations from a given delegator (used by wallets and
+    /// account dashboards).
+    fn delegations_for_delegator(
+        &self,
+        delegator: &AccountAddress,
+    ) -> Vec<&DelegationRecord>;
+
+    /// Return every delegation record. Used for state snapshots and
+    /// effective-stake roll-up across the full validator set.
+    fn all_delegations(&self) -> Vec<&DelegationRecord>;
 
     // ─── Governance ─────────────────────────────────────────────────────
 
@@ -240,8 +287,14 @@ pub struct InMemoryStateDB {
     spent_nullifiers: std::collections::HashSet<[u8; 32]>,
     shielded_pool_balance: u64,
     note_count: u64,
+    /// Persisted note commitments by leaf index. BTreeMap so iteration
+    /// order matches leaf order — required for deterministic tree rebuild.
+    note_commitments: BTreeMap<u64, [u8; 32]>,
     // Stake ledger
     stakes: HashMap<u64, StakeRecord>,
+    // Delegation ledger — keyed on (delegator, validator_id) so the same
+    // delegator can have multiple delegations to different validators.
+    delegations: HashMap<(AccountAddress, u64), DelegationRecord>,
     // Governance
     proposals: HashMap<u64, GovernanceProposal>,
     governance_params: HashMap<String, String>,
@@ -269,7 +322,9 @@ impl InMemoryStateDB {
             spent_nullifiers: std::collections::HashSet::new(),
             shielded_pool_balance: 0,
             note_count: 0,
+            note_commitments: BTreeMap::new(),
             stakes: HashMap::new(),
+            delegations: HashMap::new(),
             proposals: HashMap::new(),
             governance_params: HashMap::new(),
             snapshots: BTreeMap::new(),
@@ -454,6 +509,14 @@ impl StateDB for InMemoryStateDB {
         self.note_count
     }
 
+    fn append_note_commitment(&mut self, index: u64, commitment: [u8; 32]) {
+        self.note_commitments.insert(index, commitment);
+    }
+
+    fn get_all_note_commitments(&self) -> Vec<[u8; 32]> {
+        self.note_commitments.values().copied().collect()
+    }
+
     fn get_stake(&self, validator_id: u64) -> Option<&StakeRecord> {
         self.stakes.get(&validator_id)
     }
@@ -468,6 +531,48 @@ impl StateDB for InMemoryStateDB {
 
     fn all_stakes(&self) -> Vec<&StakeRecord> {
         self.stakes.values().collect()
+    }
+
+    fn get_delegation(
+        &self,
+        delegator: &AccountAddress,
+        validator_id: u64,
+    ) -> Option<&DelegationRecord> {
+        self.delegations.get(&(*delegator, validator_id))
+    }
+
+    fn put_delegation(&mut self, record: DelegationRecord) {
+        let key = (record.delegator, record.validator_id);
+        self.delegations.insert(key, record);
+    }
+
+    fn remove_delegation(
+        &mut self,
+        delegator: &AccountAddress,
+        validator_id: u64,
+    ) -> Option<DelegationRecord> {
+        self.delegations.remove(&(*delegator, validator_id))
+    }
+
+    fn delegations_for_validator(&self, validator_id: u64) -> Vec<&DelegationRecord> {
+        self.delegations
+            .values()
+            .filter(|d| d.validator_id == validator_id)
+            .collect()
+    }
+
+    fn delegations_for_delegator(
+        &self,
+        delegator: &AccountAddress,
+    ) -> Vec<&DelegationRecord> {
+        self.delegations
+            .values()
+            .filter(|d| &d.delegator == delegator)
+            .collect()
+    }
+
+    fn all_delegations(&self) -> Vec<&DelegationRecord> {
+        self.delegations.values().collect()
     }
 
     fn compute_state_root(&mut self) -> [u8; 32] {
