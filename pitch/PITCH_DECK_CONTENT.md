@@ -92,7 +92,7 @@ Open-source prototype: [github.com/ss1738/EvaporChain](https://github.com/ss1738
 | Layer | Technology | Rationale |
 |---|---|---|
 | Consensus | Mysticeti DAG-BFT | Sub-second finality, proven at scale on Sui |
-| Execution | MoveVM | Linear types prevent asset bugs at the compiler level |
+| Execution | EvaporScript VM | 44 gas-metered opcodes including temporal primitives (`EnergyOf`, `ComputeDecay`, `RequireEpochRange`); non-Turing-complete by design |
 | ZK proving | Nova IVC folding | 6.2ms/block today; HyperNova/CCS + Binius binary-field backend on roadmap |
 | Active state | Verkle trie | Smaller proofs than Merkle Patricia, bandwidth-efficient sync |
 | Evaporated state | RSA accumulator | Constant-size membership proofs for evaporated objects |
@@ -102,12 +102,12 @@ All components chosen for production readiness and cutting-edge performance. No 
 
 ---
 
-## Slide 9: Why Move?
+## Slide 9: Why EvaporScript?
 
-- **Linear resource types** eliminate re-entrancy and double-spending at the compiler level. The class of bugs that caused the DAO hack, the Wormhole exploit, and dozens of DeFi exploits cannot compile on Move.
-- **`decaying<T, half_life>`**: a type wrapper that encodes temporal validity as a first-class type constraint. The first smart contract language where state expiry is type-safe.
-- Developers get **compile-time guarantees** that their objects handle decay correctly. Incorrect decay handling is a type error, not a runtime bug.
-- Existing Move ecosystem (Sui, Aptos) provides developer familiarity. Migration path from existing Move contracts is straightforward.
+- **44 gas-metered opcodes**, non-Turing-complete by design — eliminates unbounded execution as an attack surface. Reentrancy guard enforced at the VM level.
+- **Temporal primitives built into the VM**: `EpochNow`, `BlockNum`, `EnergyOf`, `RequireEpochRange`, `ComputeDecay`. State expiry isn't a contract pattern bolted on top — it's a first-class VM operation.
+- **7 template contracts shipped**: DecayingToken, MortalNFT, ThermodynamicEscrow, DecayingAuction, StakingPool, DAOVote, TemporalContract. Common decay patterns are off-the-shelf and audited.
+- **Declarative rule engine** for triggers, conditions, and actions on contracts. Each contract instance carries its own energy and half-life — contracts themselves evaporate when unused.
 
 ---
 
@@ -130,7 +130,7 @@ First-mover advantage in thermodynamic blockchain design.
 
 **vs Sui/Aptos**: Same Move language, same linear type safety. No state decay, no folded chain proofs. EvaporChain extends Move with temporal types and adds constant-size chain verification.
 
-**vs Mina**: Constant-size proofs, but limited programmability. No general smart contracts, no DeFi composability. EvaporChain has full MoveVM execution and constant-size proofs.
+**vs Mina**: Constant-size proofs, but limited programmability. No general smart contracts, no DeFi composability. EvaporChain has full EvaporScript execution and constant-size proofs.
 
 **vs Celestia/EigenDA**: They solve data availability. EvaporChain solves state growth. Orthogonal problems -- potentially complementary. EvaporChain could use Celestia for DA while managing its own state lifecycle.
 
@@ -153,7 +153,7 @@ First-mover advantage in thermodynamic blockchain design.
 | Research phases 1-3 (1.2MB research corpus, 188KB whitepaper, 70 citations) | Q2 2025 | Complete |
 | Fold-a-Block prototype -- 6.2ms/block, PASS | Q2 2025 | Complete |
 | Project scaffold -- 9-crate Cargo workspace | Q3 2025 | Complete |
-| MoveVM fork with `decaying<T>` type + devnet launch | Q4 2025 | In progress |
+| EvaporScript VM (44 temporal opcodes) + 7 template contracts | Q4 2025 | Complete |
 | Public testnet with Mysticeti consensus | Q2 2026 | Planned |
 | Security audits + mainnet genesis | Q4 2026 | Planned |
 
@@ -165,7 +165,7 @@ Founded by engineers with ML/systems background building at the intersection of 
 
 **First 5 hires:**
 1. ZK Cryptographer -- Nova/HyperNova implementation, circuit optimization
-2. Move Compiler Engineer -- `decaying<T>` type system, MoveVM fork
+2. Smart Contract Engineer -- EvaporScript VM extensions, formal verification, developer tooling
 3. Consensus Engineer -- Mysticeti DAG-BFT integration, networking
 4. Systems/Infra Lead -- node architecture, DevOps, benchmarking infrastructure
 5. DevRel -- documentation, developer ecosystem, grants program

@@ -155,12 +155,11 @@ impl ChainStore {
         let prefix = b"snapshot:";
         let iter = self.db.prefix_iterator_cf(cf, prefix);
         for (key, _) in iter.flatten() {
-                if let Ok(key_str) = std::str::from_utf8(&key) {
-                    if let Some(height_str) = key_str.strip_prefix("snapshot:") {
-                        if let Ok(h) = height_str.parse::<u64>() {
-                            if h < cutoff {
-                                let _ = self.db.delete_cf(cf, &key);
-                            }
+            if let Ok(key_str) = std::str::from_utf8(&key) {
+                if let Some(height_str) = key_str.strip_prefix("snapshot:") {
+                    if let Ok(h) = height_str.parse::<u64>() {
+                        if h < cutoff {
+                            let _ = self.db.delete_cf(cf, &key);
                         }
                     }
                 }

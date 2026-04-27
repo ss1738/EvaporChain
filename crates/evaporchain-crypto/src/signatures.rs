@@ -190,7 +190,7 @@ impl Drop for EcdsaKeypair {
 
 impl EcdsaKeypair {
     pub fn generate() -> Self {
-        let signing_key = SigningKey::random(&mut rand::thread_rng());
+        let signing_key = SigningKey::random(&mut rand::rngs::OsRng);
         Self { signing_key }
     }
 
@@ -401,7 +401,7 @@ impl BlsKeypair {
     /// Generate a new random BLS keypair.
     pub fn generate() -> Self {
         let mut ikm = [0u8; 32];
-        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut ikm);
+        rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut ikm);
         let sk = BlstSecretKey::key_gen(&ikm, &[]).expect("BLS key generation failed");
         ikm.zeroize();
         let pk = sk.sk_to_pk();

@@ -11,13 +11,13 @@ EvaporChain introduces thermodynamic state decay — every piece of on-chain sta
 - [x] Core types and cryptographic layer (BLAKE3, ML-DSA, Verkle, MMR)
 - [x] State layer (evaporation engine, refresh engine, dual commitment)
 - [x] Execution engine (gas, fees, PID controller, signature verification)
-- [x] Smart contracts (6 templates + rule engine)
+- [x] Smart contracts (7 templates + rule engine)
 - [x] EvaporScript (parser, compiler, VM with gas metering)
-- [x] Consensus (rotating leader, encrypted mempool, validator sets)
+- [x] Consensus (Tendermint BFT — Propose/Prevote/Precommit/Commit, BLS aggregation, encrypted mempool, validator sets)
 - [x] ZK proving (Nova recursive proof folding)
 - [x] P2P networking (block propagation, tx gossip)
 - [x] Full node with API, dashboard, faucet, and CLI
-- [x] **4,486+ tests passing**
+- [x] **4,668+ tests passing**
 - [ ] Public testnet deployment
 
 ## Run Locally
@@ -57,7 +57,7 @@ Coming soon. The testnet will be deployed on 4 Hetzner nodes. See [`scripts/depl
 | Layer | Implementation |
 |-------|----------------|
 | Language | Rust |
-| Smart Contracts | 6 template contracts + EvaporScript (custom scripting language) |
+| Smart Contracts | 7 template contracts + EvaporScript (custom 44-opcode VM) |
 | Consensus | Tendermint BFT with BLS aggregation + VRF leader election |
 | Execution | SimpleExecutor with gas metering + PID fee controller |
 | ZK Proofs | Nova IVC recursive proof folding |
@@ -73,8 +73,8 @@ Coming soon. The testnet will be deployed on 4 Hetzner nodes. See [`scripts/depl
 evaporchain-types       Core types (19 tx variants, objects, accounts, energy decay)
 evaporchain-crypto      BLAKE3, BLS, ML-DSA, VRF, Verkle trie, Energy-Verkle, MMR
 evaporchain-state       Evaporation engine, refresh engine, state DB, WAL, RocksDB
-evaporchain-contracts   6 contract templates + rule engine + upgrades
-evaporchain-script      EvaporScript parser → compiler (constant fold + DCE) → VM (91 ops)
+evaporchain-contracts   7 contract templates + rule engine + upgrades
+evaporchain-script      EvaporScript parser → compiler (constant fold + DCE) → VM (44 ops)
 evaporchain-execution   Block-STM parallel executor, gas, PID fees, privacy execution
 evaporchain-consensus   Tendermint BFT, finality tracker, light client, state sync
 evaporchain-proving     Nova IVC recursive proofs, privacy proofs, evaporation proofs
@@ -89,11 +89,11 @@ evaporchain-mcp         MCP server for AI agent interaction (15 tools, 7 resourc
 
 ## Test Coverage
 
-**4,486+ tests** across 16 crates — all passing.
+**4,668+ tests** across 16 crates — all passing.
 
 ```bash
 cargo test --workspace
-# 4,486 passed; 0 failed
+# 4,668 passed; 0 failed
 ```
 
 ## License
