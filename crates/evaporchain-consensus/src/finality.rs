@@ -13,7 +13,7 @@
 
 use evaporchain_crypto::hash::blake3_hash;
 use evaporchain_types::CommitCertificate;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use tracing::debug;
 
 // ─────────────────────── Types ───────────────────────────────────────
@@ -115,6 +115,16 @@ pub struct FinalityTracker {
     max_records: usize,
     /// Total blocks finalized since genesis.
     total_finalized: u64,
+    /// Heights at which we have observed at least one proposal in flight
+    /// (any phase). Used to bound back-fill: a finalization for
+    /// `height < latest_finalized` is only accepted if the height was
+    /// observed in this set, eliminating the residual replay surface
+    /// from cross_verification §1.
+    seen_proposals: BTreeSet<u64>,
+    /// Maximum entries to keep in `seen_proposals` (LRU-pruned alongside
+    /// `records`). Sized at `max_records * 2` to keep gap memory longer
+    /// than finalization memory.
+    max_seen: usize,
 }
 
 impl FinalityTracker {
@@ -125,6 +135,8 @@ impl FinalityTracker {
             latest_finalized: 0,
             max_records: 10_000,
             total_finalized: 0,
+            seen_proposals: BTreeSet::new(),
+            max_seen: 20_000,
         }
     }
 
@@ -135,7 +147,30 @@ impl FinalityTracker {
             latest_finalized: 0,
             max_records,
             total_finalized: 0,
+            seen_proposals: BTreeSet::new(),
+            max_seen: max_records * 2,
         }
+    }
+
+    /// Record that a proposal was observed at the given height. The
+    /// consensus engine should call this on every Proposal it sees (any
+    /// phase) so that legitimate gap-fill finalizations for that height
+    /// are accepted later. Heights NOT observed here cannot be back-filled
+    /// once they fall below `latest_finalized`.
+    pub fn observe_proposal(&mut self, height: u64) {
+        if self.seen_proposals.insert(height)
+            && self.seen_proposals.len() > self.max_seen
+        {
+            // Prune the oldest observed height to bound memory.
+            if let Some(&oldest) = self.seen_proposals.iter().next() {
+                self.seen_proposals.remove(&oldest);
+            }
+        }
+    }
+
+    /// Total observed proposal heights currently retained.
+    pub fn seen_proposals_len(&self) -> usize {
+        self.seen_proposals.len()
     }
 
     /// Record a newly finalized block.
@@ -157,18 +192,23 @@ impl FinalityTracker {
         if self.records.contains_key(&height) {
             return false; // Already recorded — duplicate-finalization guard
         }
-        // NOTE on monotonicity (cross_verification §1): we deliberately do
-        // NOT reject `height < latest_finalized`. The records map is allowed
-        // to be backfilled with previously-unseen heights below the current
-        // tip — late delivery, gap-fill after restart, and out-of-order
-        // certificate arrival all need this. `latest_finalized` itself is
-        // still strictly monotone (only advances at the `if height >
-        // latest_finalized` check below). The 2/3 stake quorum on
-        // `signing_stake / total_stake` bounds replay risk: an attacker
-        // cannot craft a fake old certificate without controlling 2/3 of
-        // historical stake. A future hardening pass could add per-height
-        // gap-tracking to reject backfill of heights never observed in any
-        // proposal, but that needs new state outside this struct.
+        // Cross_verification §1 hardening: if this finalization is a
+        // back-fill (height < latest_finalized), only accept it when the
+        // height was actually seen in a prior proposal observation. This
+        // closes the residual replay window where a colluding majority
+        // could backfill records the cluster never proposed. The 2/3
+        // stake quorum check below is still required.
+        if self.latest_finalized > 0
+            && height < self.latest_finalized
+            && !self.seen_proposals.contains(&height)
+        {
+            debug!(
+                height,
+                latest_finalized = self.latest_finalized,
+                "Rejecting backfill: height never observed in any proposal"
+            );
+            return false;
+        }
         if certificate.signer_ids.is_empty() {
             return false; // Reject finality without any signers
         }
@@ -584,19 +624,46 @@ mod tests {
     }
 
     #[test]
-    fn test_non_sequential_finalization() {
+    fn test_non_sequential_finalization_with_observed_gap() {
         let mut ft = FinalityTracker::new();
 
-        // Finalize blocks out of order
+        // Pre-observe both heights — simulates the consensus engine
+        // calling observe_proposal() as proposals arrive in flight.
+        ft.observe_proposal(3);
+        ft.observe_proposal(5);
+
+        // Finalize out of order: 5 first, then back-fill 3.
         let cert5 = make_cert(5, [5u8; 32], vec![0, 1, 2]);
         ft.on_block_finalized(5, [5u8; 32], [5u8; 32], 0, cert5, 3000, 4000, 50);
         assert_eq!(ft.latest_finalized_height(), 5);
 
         let cert3 = make_cert(3, [3u8; 32], vec![0, 1, 2]);
         ft.on_block_finalized(3, [3u8; 32], [3u8; 32], 0, cert3, 3000, 4000, 30);
-        // Latest should still be 5
+        // Latest stays at 5; record_count is now 2 because gap-fill is
+        // allowed for previously-observed heights.
         assert_eq!(ft.latest_finalized_height(), 5);
         assert_eq!(ft.record_count(), 2);
+    }
+
+    #[test]
+    fn test_unobserved_backfill_is_rejected() {
+        // Closes cross_verification §1: a colluding-majority cert for a
+        // height the cluster never proposed must be rejected, even
+        // though the cert itself has 2/3 stake.
+        let mut ft = FinalityTracker::new();
+        ft.observe_proposal(5);
+        let cert5 = make_cert(5, [5u8; 32], vec![0, 1, 2]);
+        ft.on_block_finalized(5, [5u8; 32], [5u8; 32], 0, cert5, 3000, 4000, 50);
+        assert_eq!(ft.record_count(), 1);
+
+        // Height 3 was never observed. Even with a perfectly valid 2/3
+        // certificate, this back-fill must be rejected.
+        let cert3 = make_cert(3, [3u8; 32], vec![0, 1, 2]);
+        let accepted =
+            ft.on_block_finalized(3, [3u8; 32], [3u8; 32], 0, cert3, 3000, 4000, 30);
+        assert!(!accepted, "unobserved backfill must be rejected");
+        assert_eq!(ft.record_count(), 1);
+        assert_eq!(ft.latest_finalized_height(), 5);
     }
 
     #[test]
