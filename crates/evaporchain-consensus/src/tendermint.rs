@@ -1013,6 +1013,13 @@ impl TendermintConsensus {
                     );
                     return actions;
                 }
+                // Record this height as observed in flight so a future
+                // legitimate gap-fill finalization (block delivered late
+                // or cluster restarted with old certs in transit) can
+                // still be accepted by FinalityTracker. Heights we never
+                // see proposed cannot be back-filled — closes
+                // cross_verification §1 residual replay window.
+                self.finality_tracker.observe_proposal(height);
 
                 // Reject oversized proposals (DoS protection)
                 if let Ok(encoded) = serde_json::to_vec(&block) {
