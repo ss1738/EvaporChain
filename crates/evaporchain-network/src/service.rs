@@ -94,6 +94,12 @@ const MAX_TRACKED_PEERS: usize = 1024;
 const BAN_THRESHOLD: u32 = 10;
 /// How long a ban lasts.
 const BAN_DURATION: Duration = Duration::from_secs(600);
+/// Sybil resistance: maximum concurrent connections per source IP.
+/// One attacker host can run many libp2p identities but only from a
+/// bounded set of source IPs; capping per-IP makes Sybil expensive
+/// (attacker must rent many IPs). Tuned to allow several legitimate
+/// nodes behind one home NAT or one Tailscale exit.
+const MAX_CONNECTIONS_PER_IP: usize = 8;
 
 struct PeerRateLimiter {
     counters: HashMap<PeerId, (u64, Instant)>,
@@ -160,6 +166,113 @@ impl PeerBanList {
         } else {
             false
         }
+    }
+}
+
+/// Per-IP connection accounting. Bounds how many concurrent peer
+/// identities a single source IP can hold open. The libp2p PeerId is
+/// cheap to spin up (Sybil-friendly); the source IP is not.
+struct PerIpConnectionTracker {
+    counts: std::collections::HashMap<std::net::IpAddr, usize>,
+    per_ip_max: usize,
+}
+
+impl PerIpConnectionTracker {
+    fn new(per_ip_max: usize) -> Self {
+        Self { counts: std::collections::HashMap::new(), per_ip_max }
+    }
+
+    /// Returns true if a new connection from this IP is permitted.
+    /// Records the increment as a side effect when allowed.
+    fn try_admit(&mut self, ip: std::net::IpAddr) -> bool {
+        let n = self.counts.entry(ip).or_insert(0);
+        if *n >= self.per_ip_max {
+            return false;
+        }
+        *n += 1;
+        true
+    }
+
+    /// Decrement on connection close. Idempotent at zero.
+    fn release(&mut self, ip: std::net::IpAddr) {
+        if let Some(n) = self.counts.get_mut(&ip) {
+            if *n > 0 {
+                *n -= 1;
+            }
+            if *n == 0 {
+                self.counts.remove(&ip);
+            }
+        }
+    }
+
+    fn count_for(&self, ip: &std::net::IpAddr) -> usize {
+        self.counts.get(ip).copied().unwrap_or(0)
+    }
+}
+
+/// Extract the remote IPv4/IPv6 address from a libp2p ConnectedPoint.
+/// Returns None for transports without an IP component (rare).
+fn endpoint_remote_ip(endpoint: &libp2p::core::ConnectedPoint) -> Option<std::net::IpAddr> {
+    use libp2p::core::ConnectedPoint;
+    use libp2p::core::multiaddr::Protocol;
+    let addr = match endpoint {
+        ConnectedPoint::Dialer { address, .. } => address,
+        ConnectedPoint::Listener { send_back_addr, .. } => send_back_addr,
+    };
+    for proto in addr.iter() {
+        match proto {
+            Protocol::Ip4(ip) => return Some(std::net::IpAddr::V4(ip)),
+            Protocol::Ip6(ip) => return Some(std::net::IpAddr::V6(ip)),
+            _ => {}
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod per_ip_tracker_tests {
+    use super::*;
+    use std::net::{IpAddr, Ipv4Addr};
+
+    #[test]
+    fn admit_up_to_cap_then_reject() {
+        let mut t = PerIpConnectionTracker::new(3);
+        let ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+        assert!(t.try_admit(ip));
+        assert!(t.try_admit(ip));
+        assert!(t.try_admit(ip));
+        assert!(!t.try_admit(ip), "fourth connection from same IP should be rejected");
+        assert_eq!(t.count_for(&ip), 3);
+    }
+
+    #[test]
+    fn release_frees_a_slot() {
+        let mut t = PerIpConnectionTracker::new(2);
+        let ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
+        assert!(t.try_admit(ip));
+        assert!(t.try_admit(ip));
+        assert!(!t.try_admit(ip));
+        t.release(ip);
+        assert!(t.try_admit(ip), "after release a slot should reopen");
+    }
+
+    #[test]
+    fn release_below_zero_is_idempotent() {
+        let mut t = PerIpConnectionTracker::new(2);
+        let ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3));
+        // Never admitted; release shouldn't panic.
+        t.release(ip);
+        assert_eq!(t.count_for(&ip), 0);
+    }
+
+    #[test]
+    fn distinct_ips_are_independent() {
+        let mut t = PerIpConnectionTracker::new(1);
+        let a = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 4));
+        let b = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5));
+        assert!(t.try_admit(a));
+        assert!(!t.try_admit(a));
+        assert!(t.try_admit(b), "different IP should not be blocked by another IP's cap");
     }
 }
 
@@ -520,6 +633,8 @@ impl P2pNetworkService {
 
             let mut rate_limiter = PeerRateLimiter::new();
             let mut ban_list = PeerBanList::new();
+            let mut per_ip_tracker =
+                PerIpConnectionTracker::new(MAX_CONNECTIONS_PER_IP);
             let mut gc_counter: u64 = 0;
 
             loop {
@@ -817,11 +932,25 @@ impl P2pNetworkService {
                                 peer_count_inner.store(count, Ordering::Relaxed);
                             }
                             // ── Connection events ──
-                            SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+                            SwarmEvent::ConnectionEstablished { peer_id, ref endpoint, .. } => {
                                 if !peer_authority.is_authorized(&peer_id) {
                                     warn!("Unauthorized peer {peer_id} — disconnecting");
                                     let _ = swarm.disconnect_peer_id(peer_id);
                                     continue;
+                                }
+                                // Sybil cap: bound concurrent connections per source IP.
+                                // PeerId is cheap to mint, source IP is not — capping
+                                // per-IP makes Sybil attacks expensive.
+                                if let Some(ip) = endpoint_remote_ip(endpoint) {
+                                    if !per_ip_tracker.try_admit(ip) {
+                                        warn!(
+                                            "Per-IP cap reached ({} active from {}); rejecting {peer_id}",
+                                            per_ip_tracker.count_for(&ip),
+                                            ip
+                                        );
+                                        let _ = swarm.disconnect_peer_id(peer_id);
+                                        continue;
+                                    }
                                 }
                                 let count = swarm.connected_peers().count();
                                 peer_count_inner.store(count, Ordering::Relaxed);
@@ -833,7 +962,10 @@ impl P2pNetworkService {
                                     BlockSyncRequest { from_height: 0, to_height: 0 },
                                 );
                             }
-                            SwarmEvent::ConnectionClosed { .. } => {
+                            SwarmEvent::ConnectionClosed { ref endpoint, .. } => {
+                                if let Some(ip) = endpoint_remote_ip(endpoint) {
+                                    per_ip_tracker.release(ip);
+                                }
                                 let count = swarm.connected_peers().count();
                                 peer_count_inner.store(count, Ordering::Relaxed);
                             }
