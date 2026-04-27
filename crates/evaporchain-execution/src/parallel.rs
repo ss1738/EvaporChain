@@ -119,6 +119,12 @@ fn extract_access_keys(tx: &Transaction) -> Vec<AccessKey> {
         Transaction::UpgradeContract(tx) => {
             vec![AccessKey::Account(tx.owner)]
         }
+        Transaction::Delegate(tx) => {
+            vec![AccessKey::Account(tx.delegator)]
+        }
+        Transaction::Undelegate(tx) => {
+            vec![AccessKey::Account(tx.delegator)]
+        }
     }
 }
 
@@ -386,6 +392,8 @@ impl StateDB for OverlayStateDB {
     fn get_shielded_pool_balance(&self) -> u64 { 0 }
     fn put_note_count(&mut self, _count: u64) {}
     fn get_note_count(&self) -> u64 { 0 }
+    fn append_note_commitment(&mut self, _index: u64, _commitment: [u8; 32]) {}
+    fn get_all_note_commitments(&self) -> Vec<[u8; 32]> { Vec::new() }
     fn get_stake(&self, _validator_id: u64) -> Option<&evaporchain_types::StakeRecord> { None }
     fn put_stake(&mut self, _record: evaporchain_types::StakeRecord) {}
     fn remove_stake(&mut self, _validator_id: u64) -> Option<evaporchain_types::StakeRecord> { None }
@@ -564,6 +572,8 @@ impl ParallelExecutor {
             Transaction::MultiSig(_) => crate::GAS_MULTISIG,
             Transaction::UserOp(tx) => crate::GAS_USER_OP.saturating_add(tx.call_data.len() as u64 * 16),
             Transaction::UpgradeContract(tx) => crate::GAS_UPGRADE_CONTRACT.saturating_add(tx.new_bytecode.len() as u64 * 200),
+            Transaction::Delegate(_) => crate::GAS_DELEGATE,
+            Transaction::Undelegate(_) => crate::GAS_UNDELEGATE,
         }
     }
 
@@ -713,6 +723,16 @@ impl ParallelExecutor {
                 Transaction::UpgradeContract(_) => {
                     Err(ExecutionError::ContractError(
                         "upgrade txs execute in serial phase".into(),
+                    ))
+                }
+                Transaction::Delegate(_) => {
+                    Err(ExecutionError::ContractError(
+                        "delegation txs execute in serial phase".into(),
+                    ))
+                }
+                Transaction::Undelegate(_) => {
+                    Err(ExecutionError::ContractError(
+                        "delegation txs execute in serial phase".into(),
                     ))
                 }
             };
@@ -1104,20 +1124,32 @@ impl ExecutionEngine for ParallelExecutor {
                                     } else {
                                         vec![]
                                     };
-                                    self.contract_engine
-                                        .deploy(
-                                            tmpl,
-                                            args,
-                                            rules,
-                                            deploy.deployer,
-                                            deploy.energy,
-                                            deploy.half_life,
-                                            block.epoch,
-                                        )
-                                        .map(|_| ())
-                                        .map_err(|e| {
-                                            ExecutionError::ContractError(e.to_string())
-                                        })
+                                    match self.contract_engine.deploy(
+                                        tmpl,
+                                        args,
+                                        rules,
+                                        deploy.deployer,
+                                        deploy.energy,
+                                        deploy.half_life,
+                                        block.epoch,
+                                    ) {
+                                        Ok(_) => {
+                                            // Charge storage_bytes (mirrors
+                                            // execute_deploy_contract in
+                                            // lib.rs; audit gap 2C — parallel
+                                            // executor was missing the credit).
+                                            let acct = db.get_or_create_account(
+                                                &deploy.deployer,
+                                            );
+                                            acct.storage_bytes = acct
+                                                .storage_bytes
+                                                .saturating_add(deploy.init_args.len() as u64);
+                                            Ok(())
+                                        }
+                                        Err(e) => Err(ExecutionError::ContractError(
+                                            e.to_string(),
+                                        )),
+                                    }
                                 }
                                 Err(e) => Err(ExecutionError::ContractError(format!(
                                     "invalid init_args: {e}"
@@ -1147,17 +1179,25 @@ impl ExecutionEngine for ParallelExecutor {
                         r
                     }
                 }
-                Transaction::DeployScript(deploy) => self
-                    .script_engine
-                    .deploy(
-                        &deploy.source_code,
-                        deploy.deployer,
-                        deploy.energy,
-                        deploy.half_life,
-                        block.epoch,
-                    )
-                    .map(|_| ())
-                    .map_err(|e| ExecutionError::ScriptError(e.to_string())),
+                Transaction::DeployScript(deploy) => match self.script_engine.deploy(
+                    &deploy.source_code,
+                    deploy.deployer,
+                    deploy.energy,
+                    deploy.half_life,
+                    block.epoch,
+                ) {
+                    Ok(_) => {
+                        // Charge storage_bytes (mirrors execute_deploy_script
+                        // in lib.rs; audit gap 2C — parallel executor was
+                        // missing the credit).
+                        let acct = db.get_or_create_account(&deploy.deployer);
+                        acct.storage_bytes = acct
+                            .storage_bytes
+                            .saturating_add(deploy.source_code.len() as u64);
+                        Ok(())
+                    }
+                    Err(e) => Err(ExecutionError::ScriptError(e.to_string())),
+                },
                 Transaction::CallScript(call) => {
                     if serial_call_depth >= crate::MAX_CALL_DEPTH {
                         Err(ExecutionError::CallDepthExceeded(crate::MAX_CALL_DEPTH))
@@ -1286,8 +1326,10 @@ impl ExecutionEngine for ParallelExecutor {
         // ── Phase 7: Evaporation + contract/script ticks ──
 
         let evap_result = self.evaporation_engine.process_epoch_with_mmr(db, block.epoch, &mut self.mmr);
-        self.contract_engine.tick(block.epoch);
-        self.script_engine.tick(block.epoch);
+        let contract_tick_result = self.contract_engine.tick(block.epoch);
+        crate::credit_back_evaporated_contracts(db, &self.contract_engine, &contract_tick_result);
+        let script_tick_result = self.script_engine.tick(block.epoch);
+        crate::credit_back_evaporated_scripts(db, &self.script_engine, &script_tick_result);
 
         let state_root = db.compute_state_root();
 

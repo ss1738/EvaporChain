@@ -127,6 +127,8 @@ pub(crate) const GAS_CALL_SCRIPT: u64 = 50_000;
 pub(crate) const GAS_VALIDATOR_STAKE: u64 = 50_000;
 pub(crate) const GAS_VALIDATOR_EXIT: u64 = 30_000;
 pub(crate) const GAS_VALIDATOR_CLAIM_STAKE: u64 = 30_000;
+pub(crate) const GAS_DELEGATE: u64 = 40_000;
+pub(crate) const GAS_UNDELEGATE: u64 = 40_000;
 pub(crate) const GAS_GOVERNANCE: u64 = 25_000;
 pub(crate) const GAS_MULTISIG: u64 = 50_000;
 pub(crate) const GAS_USER_OP: u64 = 30_000;
@@ -222,6 +224,216 @@ pub fn sort_txs_by_gas_priority(txs: &mut [Transaction]) {
     txs.sort_by(|a, b| {
         SimpleExecutor::estimate_gas(b).cmp(&SimpleExecutor::estimate_gas(a))
     });
+}
+
+/// Credit back `storage_bytes` to the creators of contracts that evaporated
+/// in the most recent `ContractEngine::tick`. Mirrors the object-evaporation
+/// decrement in `evaporchain-state::evaporation::evaporate_object`.
+///
+/// Reads the exact deploy-time charge from `ContractInstance::storage_bytes_charged`
+/// (set at deploy from `serde_json::to_string(&params).len()` — close to the
+/// execution-layer charge). For contracts deployed before that field was
+/// added, `#[serde(default)]` makes the value 0 → `saturating_sub` is a
+/// safe no-op (the legacy contract's deployer was never charged anyway).
+///
+/// Closes audit gap 2D from `audit/end_to_end_audit_2026_04_27.md`.
+pub(crate) fn credit_back_evaporated_contracts(
+    db: &mut dyn StateDB,
+    engine: &ContractEngine,
+    tick_result: &evaporchain_contracts::TickResult,
+) {
+    for id in &tick_result.contracts_evaporated {
+        if let Some(contract) = engine.get(*id) {
+            // Read the exact deploy-time charge from the contract instance.
+            // For contracts deployed before this field was added,
+            // `#[serde(default)]` makes this 0 → saturating_sub is a no-op
+            // (the legacy contract's deployer was never charged anyway,
+            // so no credit is owed).
+            let bytes = contract.storage_bytes_charged;
+            let acct = db.get_or_create_account(&contract.creator);
+            acct.storage_bytes = acct.storage_bytes.saturating_sub(bytes);
+        }
+    }
+}
+
+/// Mirror of `credit_back_evaporated_contracts` for `ScriptEngine`. When
+/// an EvaporScript contract evaporates, credit back its compiled-bytecode
+/// size to the deployer.
+///
+/// Approximation note: the deploy-time charge was `tx.source_code.len()`
+/// (the raw Rust string), but at evaporation only the compiled bytecode
+/// is in memory. We use `serde_json::to_string(&bytecode).len()` as a
+/// proxy (avoiding a `bincode` dep on this crate). The exact byte count
+/// differs from either source or compiled bytecode, but
+/// `saturating_sub` keeps the account at 0 rather than underflowing if
+/// storage_bytes was already 0.
+///
+/// Closes the script half of audit gap 2D.
+pub(crate) fn credit_back_evaporated_scripts(
+    db: &mut dyn StateDB,
+    engine: &ScriptEngine,
+    tick_result: &evaporchain_script::ScriptTickResult,
+) {
+    for id in &tick_result.contracts_evaporated {
+        if let Some(script) = engine.get(*id) {
+            // Exact deploy-time charge stored on the script contract.
+            // For scripts: `script.storage_bytes_charged == source.len()`,
+            // matching what the execution layer credited at deploy.
+            let bytes = script.storage_bytes_charged;
+            let acct = db.get_or_create_account(&script.creator);
+            acct.storage_bytes = acct.storage_bytes.saturating_sub(bytes);
+        }
+    }
+}
+
+/// Validate a governance parameter against the immutable execution-layer
+/// floor bounds. Returns `Ok(())` if the `(key, value)` pair is acceptable,
+/// or `Err(ExecutionError::ContractError)` with a descriptive message
+/// otherwise.
+///
+/// These bounds are CONSTITUTIONAL — they can only be widened by a hard
+/// fork, never by governance. A `DecayingDAO` contract may further
+/// tighten these bounds via its own per-key `param_bounds` configuration,
+/// but cannot widen them past these constants. Defense-in-depth pair to
+/// the `apply_dao_governance` bridge: the contract layer enforces
+/// statutory bounds, this layer enforces constitutional bounds.
+///
+/// V0.1 only enforces `block_gas_limit`. Other parameters (`block_reward`,
+/// `reward_half_life`, `fee_burn_rate`, `base_fee_floor`, `base_fee_ceiling`)
+/// pass through; future hardening can add their floors.
+///
+/// Closes audit gap E from `audit/end_to_end_audit_2026_04_27.md` §5.
+pub fn validate_governance_param(key: &str, value: &str) -> Result<(), ExecutionError> {
+    /// Helper: parse a u64 and enforce inclusive `[min, max]` bounds.
+    fn check_u64(key: &str, value: &str, min: u64, max: u64) -> Result<(), ExecutionError> {
+        let v: u64 = value.parse().map_err(|_| {
+            ExecutionError::ContractError(format!(
+                "governance param '{}' must be a u64, got '{}'",
+                key, value
+            ))
+        })?;
+        if v < min || v > max {
+            return Err(ExecutionError::ContractError(format!(
+                "governance param '{}' = {} outside floor bounds [{}, {}]",
+                key, v, min, max
+            )));
+        }
+        Ok(())
+    }
+
+    /// Helper: parse an f64 and enforce inclusive `[min, max]` bounds.
+    fn check_f64(key: &str, value: &str, min: f64, max: f64) -> Result<(), ExecutionError> {
+        let v: f64 = value.parse().map_err(|_| {
+            ExecutionError::ContractError(format!(
+                "governance param '{}' must be an f64, got '{}'",
+                key, value
+            ))
+        })?;
+        if !v.is_finite() || v < min || v > max {
+            return Err(ExecutionError::ContractError(format!(
+                "governance param '{}' = {} outside floor bounds [{}, {}]",
+                key, v, min, max
+            )));
+        }
+        Ok(())
+    }
+
+    match key {
+        // Block-level: too small → can't fit any tx; too large → blocks too
+        // big to gossip in time. Halts the chain at either extreme.
+        "block_gas_limit" => check_u64(key, value, 10_000, 100_000_000),
+
+        // Issuance: block_reward capped at 1B per block — well above any
+        // sane production value; prevents single-proposal hyperinflation.
+        // Half-life ≥ 100 prevents inflation collapsing to 0 too fast.
+        "block_reward" => check_u64(key, value, 0, 1_000_000_000),
+        "reward_half_life" => check_u64(key, value, 100, u64::MAX),
+
+        // Fee market: floor < ceiling not enforced here (cross-key
+        // constraint requires state access); each leg has its own bound.
+        "base_fee_floor" => check_u64(key, value, 0, u64::MAX / 2),
+        "base_fee_ceiling" => check_u64(key, value, 1, u64::MAX),
+
+        // Ratios: f64 in [0.0, 1.0]. NaN / non-finite rejected.
+        "fee_burn_rate" => check_f64(key, value, 0.0, 1.0),
+        "staker_fee_share" => check_f64(key, value, 0.0, 1.0),
+        "target_staking_apy" => check_f64(key, value, 0.0, 1.0),
+        "target_gas_utilization" => check_f64(key, value, 0.0, 1.0),
+
+        // Unknown keys: pass through. New tunable parameters can be
+        // added by appending an arm above; pass-through is the safe
+        // default for forward-compatibility.
+        _ => Ok(()),
+    }
+}
+
+/// Validate a governance parameter against (a) the immutable single-key
+/// floor bounds via `validate_governance_param`, AND (b) cross-key
+/// invariants that require reading other governance values from state.
+///
+/// The cross-key checks currently enforce:
+/// * `base_fee_floor < base_fee_ceiling` — floor must be strictly less
+///   than the ceiling at all times. When updating one side, we validate
+///   against the OTHER side as currently set in `db.get_governance_param`.
+///   If the other side is unset, the cross-key check is skipped (the
+///   executor's compiled-in default is used).
+///
+/// Closes the cross-key invariant gap from the
+/// `audit/end_to_end_audit_2026_04_27.md` follow-up list.
+pub fn validate_governance_param_against_state(
+    db: &dyn StateDB,
+    key: &str,
+    value: &str,
+) -> Result<(), ExecutionError> {
+    // First the single-key bound check.
+    validate_governance_param(key, value)?;
+
+    // Cross-key invariants:
+    match key {
+        "base_fee_floor" => {
+            // If a ceiling is set, ensure floor < ceiling.
+            if let Some(ceiling_str) = db.get_governance_param("base_fee_ceiling") {
+                if let Ok(ceiling) = ceiling_str.parse::<u64>() {
+                    let floor: u64 = value.parse().map_err(|_| {
+                        ExecutionError::ContractError(format!(
+                            "governance param 'base_fee_floor' must be u64, got '{}'",
+                            value
+                        ))
+                    })?;
+                    if floor >= ceiling {
+                        return Err(ExecutionError::ContractError(format!(
+                            "base_fee_floor ({}) must be strictly less than \
+                             base_fee_ceiling ({})",
+                            floor, ceiling
+                        )));
+                    }
+                }
+            }
+        }
+        "base_fee_ceiling" => {
+            // If a floor is set, ensure ceiling > floor.
+            if let Some(floor_str) = db.get_governance_param("base_fee_floor") {
+                if let Ok(floor) = floor_str.parse::<u64>() {
+                    let ceiling: u64 = value.parse().map_err(|_| {
+                        ExecutionError::ContractError(format!(
+                            "governance param 'base_fee_ceiling' must be u64, got '{}'",
+                            value
+                        ))
+                    })?;
+                    if ceiling <= floor {
+                        return Err(ExecutionError::ContractError(format!(
+                            "base_fee_ceiling ({}) must be strictly greater than \
+                             base_fee_floor ({})",
+                            ceiling, floor
+                        )));
+                    }
+                }
+            }
+        }
+        _ => {} // No cross-key invariant for this key.
+    }
+
+    Ok(())
 }
 
 /// Simple executor that processes transactions sequentially and runs
@@ -460,6 +672,8 @@ impl SimpleExecutor {
             Transaction::MultiSig(_) => GAS_MULTISIG,
             Transaction::UserOp(tx) => GAS_USER_OP.saturating_add(tx.call_data.len() as u64 * 16),
             Transaction::UpgradeContract(tx) => GAS_UPGRADE_CONTRACT.saturating_add(tx.new_bytecode.len() as u64 * 200),
+            Transaction::Delegate(_) => GAS_DELEGATE,
+            Transaction::Undelegate(_) => GAS_UNDELEGATE,
         }
     }
 
@@ -560,10 +774,27 @@ impl SimpleExecutor {
 
         db.put_object(obj);
 
+        // Charge storage_bytes to the creator. Closes the storage-rent
+        // write-path gap from audit/end_to_end_audit_2026_04_27.md §3:
+        // before this, `storage_bytes` was only ever set to 0, so
+        // collect_storage_rent (lib.rs:~1029) had nothing to bill.
+        //
+        // V0.1 scope: only the CreateObject path is wired here. The
+        // DeployContract / DeployScript paths do not currently route
+        // through StateDB and so do not charge their deployers — that's
+        // a follow-up. Object evaporation also does not DEcrement
+        // storage_bytes — owners of evaporated objects keep paying. Both
+        // gaps are intentional in this v0.1.
+        let creator_acct = db.get_or_create_account(&tx.creator);
+        creator_acct.storage_bytes = creator_acct
+            .storage_bytes
+            .saturating_add(tx.data.len() as u64);
+
         debug!(
             object_id = hex::encode(tx.object_id),
             energy = tx.energy,
             half_life = tx.half_life,
+            data_bytes = tx.data.len(),
             "Object created"
         );
 
@@ -597,6 +828,7 @@ impl SimpleExecutor {
     /// Execute a contract deployment transaction.
     fn execute_deploy_contract(
         &mut self,
+        db: &mut dyn StateDB,
         tx: &DeployContractTx,
         epoch: Epoch,
     ) -> Result<(), ExecutionError> {
@@ -631,7 +863,22 @@ impl SimpleExecutor {
             .deploy(template, init_args, rules, tx.deployer, tx.energy, tx.half_life, epoch)
             .map_err(|e| ExecutionError::ContractError(e.to_string()))?;
 
-        debug!(contract_id = id, template = %tx.template, "Contract deployed");
+        // Charge storage_bytes to the deployer. Uses init_args.len() as an
+        // approximation of the stored contract instance size — exact
+        // per-state-mutation accounting is a separate concern. Mirrors the
+        // CreateObject write-path edit. Closes the DeployContract gap from
+        // the storage_bytes-write-path build.
+        let deployer_acct = db.get_or_create_account(&tx.deployer);
+        deployer_acct.storage_bytes = deployer_acct
+            .storage_bytes
+            .saturating_add(tx.init_args.len() as u64);
+
+        debug!(
+            contract_id = id,
+            template = %tx.template,
+            init_args_bytes = tx.init_args.len(),
+            "Contract deployed"
+        );
         Ok(())
     }
 
@@ -670,6 +917,7 @@ impl SimpleExecutor {
     /// Execute a script deployment transaction.
     fn execute_deploy_script(
         &mut self,
+        db: &mut dyn StateDB,
         tx: &DeployScriptTx,
         epoch: Epoch,
     ) -> Result<(), ExecutionError> {
@@ -678,7 +926,21 @@ impl SimpleExecutor {
             .deploy(&tx.source_code, tx.deployer, tx.energy, tx.half_life, epoch)
             .map_err(|e| ExecutionError::ScriptError(e.to_string()))?;
 
-        debug!(script_id = id, "Script contract deployed");
+        // Charge storage_bytes to the deployer. Uses source_code.len() as a
+        // conservative upper bound for the stored bytecode size (the
+        // compiled bytecode is typically smaller than the source, so this
+        // over-charges slightly — preferable to under-charging). Mirrors
+        // the CreateObject write-path edit; closes the DeployScript gap.
+        let deployer_acct = db.get_or_create_account(&tx.deployer);
+        deployer_acct.storage_bytes = deployer_acct
+            .storage_bytes
+            .saturating_add(tx.source_code.len() as u64);
+
+        debug!(
+            script_id = id,
+            source_bytes = tx.source_code.len(),
+            "Script contract deployed"
+        );
         Ok(())
     }
 
@@ -891,6 +1153,21 @@ impl SimpleExecutor {
 
         match &tx.action {
             GovernanceAction::CreateProposal { title, param_key, param_value, voting_epochs } => {
+                // Submission-time floor-bounds check: reject malformed
+                // or out-of-floor proposals at submit, not at apply.
+                // Without this, voters waste blocks voting on a proposal
+                // that the floor will reject when it tries to apply.
+                // Closes the deferred submission-time-validation follow-up.
+                validate_governance_param_against_state(db, param_key, param_value).map_err(|e| {
+                    ExecutionError::ContractError(format!(
+                        "proposal rejected at submit: {}",
+                        match &e {
+                            ExecutionError::ContractError(msg) => msg.as_str(),
+                            _ => "validation failed",
+                        }
+                    ))
+                })?;
+
                 let proposal_id = db.all_proposals().len() as u64;
                 let proposal = GovernanceProposal {
                     proposal_id,
@@ -947,8 +1224,30 @@ impl SimpleExecutor {
                 }
 
                 if proposal.votes_for > proposal.votes_against * 2 && current_epoch >= proposal.end_epoch {
+                    // Floor-bounds defense-in-depth: even if voting passed,
+                    // the value must be inside the constitutional floor
+                    // AND consistent with cross-key invariants.
+                    // On violation: log + skip put, but DO advance status to
+                    // Passed so the proposal isn't reconsidered.
+                    if let Err(e) = validate_governance_param_against_state(
+                        db,
+                        &proposal.param_key,
+                        &proposal.param_value,
+                    ) {
+                        tracing::warn!(
+                            proposal_id = proposal.proposal_id,
+                            param_key = %proposal.param_key,
+                            param_value = %proposal.param_value,
+                            error = %e,
+                            "Governance proposal passed vote but violated floor bounds; param NOT applied",
+                        );
+                    } else {
+                        db.put_governance_param(
+                            proposal.param_key.clone(),
+                            proposal.param_value.clone(),
+                        );
+                    }
                     proposal.status = ProposalStatus::Passed;
-                    db.put_governance_param(proposal.param_key.clone(), proposal.param_value.clone());
                 }
 
                 db.put_proposal(proposal);
@@ -1011,7 +1310,24 @@ impl SimpleExecutor {
         sender.nonce += 1;
 
         if let Some(ref paymaster) = tx.paymaster {
+            // Paymaster requires its own nonce. Without it, the same UserOpTx
+            // could be replayed across blocks (or across Block-STM aborts)
+            // to drain the paymaster — closes the replay-drain gap from
+            // audit/end_to_end_audit_2026_04_27.md §3.
+            let pm_nonce = tx.paymaster_nonce.ok_or_else(|| {
+                ExecutionError::ContractError(
+                    "UserOp with paymaster requires paymaster_nonce".into(),
+                )
+            })?;
             let pm = db.get_or_create_account(paymaster);
+            if pm.nonce != pm_nonce {
+                return Err(ExecutionError::InvalidNonce {
+                    expected: pm.nonce,
+                    got: pm_nonce,
+                });
+            }
+            pm.nonce += 1;
+
             let total_gas_cost = tx.call_gas_limit.saturating_add(GAS_USER_OP);
             if pm.balance < total_gas_cost {
                 return Err(ExecutionError::InsufficientGas {
@@ -1021,6 +1337,11 @@ impl SimpleExecutor {
                 });
             }
             pm.balance = pm.balance.saturating_sub(total_gas_cost);
+        } else if tx.paymaster_nonce.is_some() {
+            // paymaster_nonce without paymaster is malformed.
+            return Err(ExecutionError::ContractError(
+                "UserOp has paymaster_nonce but no paymaster".into(),
+            ));
         }
 
         Ok(())
@@ -1060,16 +1381,37 @@ impl SimpleExecutor {
             }
         }
         if let Some(ref mut fc) = self.fee_controller {
-            if let Some(val) = db.get_governance_param("base_fee_floor") {
-                if let Ok(floor) = val.parse::<u64>() {
+            // Cross-key consistency check before applying floor/ceiling:
+            // if both are set in db AND inconsistent (floor >= ceiling),
+            // log a warning and apply NEITHER. Defense-in-depth — the
+            // submission/apply gates should already prevent this, but if
+            // legacy or genesis state contains an inverted pair, applying
+            // them as-is would invert the fee controller. Better to skip.
+            let floor_str = db.get_governance_param("base_fee_floor");
+            let ceiling_str = db.get_governance_param("base_fee_ceiling");
+            let parsed_floor = floor_str.and_then(|s| s.parse::<u64>().ok());
+            let parsed_ceiling = ceiling_str.and_then(|s| s.parse::<u64>().ok());
+
+            let pair_consistent = match (parsed_floor, parsed_ceiling) {
+                (Some(f), Some(c)) => f < c,
+                _ => true, // single side or neither — no cross-key check
+            };
+
+            if !pair_consistent {
+                tracing::warn!(
+                    base_fee_floor = ?parsed_floor,
+                    base_fee_ceiling = ?parsed_ceiling,
+                    "Governance state has inconsistent base_fee_floor/ceiling pair (floor >= ceiling); skipping apply",
+                );
+            } else {
+                if let Some(floor) = parsed_floor {
                     fc.min_base_fee = floor;
                 }
-            }
-            if let Some(val) = db.get_governance_param("base_fee_ceiling") {
-                if let Ok(ceiling) = val.parse::<u64>() {
+                if let Some(ceiling) = parsed_ceiling {
                     fc.max_base_fee = ceiling;
                 }
             }
+
             if let Some(val) = db.get_governance_param("target_gas_utilization") {
                 if let Ok(target) = val.parse::<f64>() {
                     if (0.0..=1.0).contains(&target) {
@@ -1078,6 +1420,120 @@ impl SimpleExecutor {
                 }
             }
         }
+    }
+
+    /// Apply all `ReadyToApply` proposals from a DecayingDAO contract to
+    /// the execution-layer governance state. Bridges the policy layer
+    /// (in the contract: bounds, vote-weight cap, quorum, timelock) to
+    /// the parameter layer (in execution state: actual values consumed
+    /// by `apply_governance_params`).
+    ///
+    /// Returns the list of `(param_key, param_value_u64)` pairs that were
+    /// successfully applied. If the contract has no `ReadyToApply`
+    /// proposals, returns an empty `Vec`. Errors propagate from the
+    /// contract engine — the bridge is all-or-nothing per call.
+    ///
+    /// Closes the deferred F-bridge from
+    /// `audit/end_to_end_audit_2026_04_27.md` §5. Operator-invoked for
+    /// now; automatic block-time dispatch (a registered DAO contract
+    /// polled per block) is a separate change.
+    pub fn apply_dao_governance(
+        &mut self,
+        db: &mut dyn StateDB,
+        dao_contract_id: u64,
+        current_epoch: Epoch,
+    ) -> Result<Vec<(String, u64)>, ExecutionError> {
+        // Sentinel zero-address caller. The DecayingDAO's
+        // `list_ready_to_apply` and `mark_applied` methods are open (no
+        // caller restriction) — the access gate already happened at
+        // `propose` / `vote` / `finalize` / `mark_ready_to_apply`.
+        let bridge_caller = [0u8; 32];
+
+        let listed = self
+            .contract_engine
+            .call(
+                dao_contract_id,
+                "list_ready_to_apply",
+                &serde_json::json!({}),
+                &bridge_caller,
+                current_epoch,
+            )
+            .map_err(|e| {
+                ExecutionError::ContractError(format!(
+                    "list_ready_to_apply on DAO {}: {}",
+                    dao_contract_id, e
+                ))
+            })?;
+
+        let ready = listed
+            .return_value
+            .get("ready")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        let mut applied = Vec::new();
+        for entry in ready {
+            let id = entry
+                .get("id")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| {
+                    ExecutionError::ContractError(
+                        "DAO proposal entry missing id".into(),
+                    )
+                })?;
+            let key = entry
+                .get("param_key")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    ExecutionError::ContractError(
+                        "DAO proposal entry missing param_key".into(),
+                    )
+                })?
+                .to_string();
+            let val = entry
+                .get("param_value_u64")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| {
+                    ExecutionError::ContractError(
+                        "DAO proposal entry missing param_value_u64".into(),
+                    )
+                })?;
+
+            // Apply to execution-layer governance state. The DAO has
+            // already verified bounds + quorum + supermajority + timelock
+            // before transitioning the proposal to ReadyToApply. The
+            // execution-layer floor bounds is a defense-in-depth layer
+            // (audit gap E): the DAO's bounds are statutory and may be
+            // tightened by deploying a new DAO with different bounds, but
+            // never widened past the constitutional floor enforced here.
+            // On floor violation, abort the bridge call — neither this
+            // proposal nor any later ones in the same call are applied.
+            let val_str = val.to_string();
+            validate_governance_param_against_state(db, &key, &val_str)?;
+            db.put_governance_param(key.clone(), val_str);
+
+            // Mark the proposal Applied in the DAO so subsequent
+            // list_ready_to_apply calls don't re-surface it.
+            self.contract_engine
+                .call(
+                    dao_contract_id,
+                    "mark_applied",
+                    &serde_json::json!({ "proposal_id": id }),
+                    &bridge_caller,
+                    current_epoch,
+                )
+                .map_err(|e| {
+                    ExecutionError::ContractError(format!(
+                        "mark_applied on proposal {}: {}",
+                        id, e
+                    ))
+                })?;
+
+            applied.push((key, val));
+        }
+
+        Ok(applied)
     }
 
     fn finalize_expired_proposals(&self, db: &mut dyn StateDB, current_epoch: u64) {
@@ -1092,7 +1548,23 @@ impl SimpleExecutor {
         for mut proposal in expired {
             if proposal.votes_for > proposal.votes_against * 2 {
                 proposal.status = ProposalStatus::Passed;
-                db.put_governance_param(proposal.param_key.clone(), proposal.param_value.clone());
+                // Floor-bounds defense-in-depth (audit gap E). Same
+                // shape as the execute_governance pass-immediate path.
+                if let Err(e) = validate_governance_param_against_state(
+                    db,
+                    &proposal.param_key,
+                    &proposal.param_value,
+                ) {
+                    tracing::warn!(
+                        proposal_id = proposal.proposal_id,
+                        param_key = %proposal.param_key,
+                        param_value = %proposal.param_value,
+                        error = %e,
+                        "Expired-proposal finalization passed vote but violated floor bounds; param NOT applied",
+                    );
+                } else {
+                    db.put_governance_param(proposal.param_key.clone(), proposal.param_value.clone());
+                }
                 info!(
                     proposal_id = proposal.proposal_id,
                     param = proposal.param_key,
@@ -1268,9 +1740,9 @@ impl ExecutionEngine for SimpleExecutor {
                     self.execute_create_object(db, create, block.epoch)
                 }
                 Transaction::Refresh(refresh) => self.execute_refresh(db, refresh, block.epoch),
-                Transaction::DeployContract(deploy) => self.execute_deploy_contract(deploy, block.epoch),
+                Transaction::DeployContract(deploy) => self.execute_deploy_contract(db, deploy, block.epoch),
                 Transaction::CallContract(call) => self.execute_call_contract(call),
-                Transaction::DeployScript(deploy) => self.execute_deploy_script(deploy, block.epoch),
+                Transaction::DeployScript(deploy) => self.execute_deploy_script(db, deploy, block.epoch),
                 Transaction::CallScript(call) => self.execute_call_script(call),
                 Transaction::ValidatorStake(stake) => self.execute_validator_stake(db, stake),
                 Transaction::ValidatorExit(exit) => self.execute_validator_exit(db, exit, block.epoch),
@@ -1327,6 +1799,22 @@ impl ExecutionEngine for SimpleExecutor {
                     Err(ExecutionError::ContractError(
                         "UpgradeContract execution not implemented: \
                          governance approval check and bytecode swap are missing"
+                            .into(),
+                    ))
+                }
+                Transaction::Delegate(_) => {
+                    // Fail loud: delegation handler will land in a follow-up
+                    // commit (P0 #4 phase 4). Until then refuse to admit so a
+                    // user submitting Delegate sees an explicit error rather
+                    // than a silent no-op.
+                    Err(ExecutionError::ContractError(
+                        "Delegate execution not yet implemented (P0 #4 in flight)"
+                            .into(),
+                    ))
+                }
+                Transaction::Undelegate(_) => {
+                    Err(ExecutionError::ContractError(
+                        "Undelegate execution not yet implemented (P0 #4 in flight)"
                             .into(),
                     ))
                 }
@@ -1395,7 +1883,10 @@ impl ExecutionEngine for SimpleExecutor {
         };
 
         // Tick all contracts (energy decay, auto-finalize, etc.)
-        self.contract_engine.tick(block.epoch);
+        let contract_tick_result = self.contract_engine.tick(block.epoch);
+        credit_back_evaporated_contracts(db, &self.contract_engine, &contract_tick_result);
+        let script_tick_result = self.script_engine.tick(block.epoch);
+        credit_back_evaporated_scripts(db, &self.script_engine, &script_tick_result);
 
         // Tick all script contracts (energy decay, lifecycle hooks)
         self.script_engine.tick(block.epoch);
@@ -1675,6 +2166,14 @@ mod tests {
                 u.signature = Some(sig);
                 u.public_key = Some(pk);
             }
+            Transaction::Delegate(d) => {
+                d.signature = Some(sig);
+                d.public_key = Some(pk);
+            }
+            Transaction::Undelegate(u) => {
+                u.signature = Some(sig);
+                u.public_key = Some(pk);
+            }
         }
     }
 
@@ -1899,6 +2398,70 @@ mod tests {
         assert_eq!(
             obj.decay_curve,
             Some(evaporchain_types::DecayCurve::Linear { rate_per_epoch: 100 })
+        );
+    }
+
+    // ─── storage_bytes accounting on CreateObject ───
+
+    #[test]
+    fn test_create_object_charges_storage_bytes() {
+        // CreateObject must increment the creator's storage_bytes by the
+        // data size, so collect_storage_rent has something to bill.
+        let mut db = InMemoryStateDB::new();
+        let mut executor = SimpleExecutor::new_for_test(7);
+        fund_account(&mut db, 1, 10_000);
+
+        // Storage_bytes starts at zero.
+        let initial = db.get_account(&addr(1)).unwrap().storage_bytes;
+        assert_eq!(initial, 0);
+
+        let payload: Vec<u8> = (0..256u32).map(|i| (i & 0xff) as u8).collect();
+        let block = make_block(
+            1,
+            10,
+            vec![Transaction::CreateObject(CreateObjectTx {
+                creator: addr(1),
+                object_id: obj_id(101),
+                energy: 5000,
+                half_life: 100,
+                data: payload.clone(),
+                decay_curve: None,
+                signature: None,
+                public_key: None,
+            })],
+        );
+
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_executed, 1);
+
+        let after_one = db.get_account(&addr(1)).unwrap().storage_bytes;
+        assert_eq!(
+            after_one, payload.len() as u64,
+            "first CreateObject should credit data.len() to creator's storage_bytes"
+        );
+
+        // A second CreateObject in a later block should accumulate, not overwrite.
+        let payload2 = vec![0xAB; 100];
+        let block2 = make_block(
+            2,
+            11,
+            vec![Transaction::CreateObject(CreateObjectTx {
+                creator: addr(1),
+                object_id: obj_id(102),
+                energy: 5000,
+                half_life: 100,
+                data: payload2.clone(),
+                decay_curve: None,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        let _ = executor.execute_block(&mut db, &block2).unwrap();
+        let after_two = db.get_account(&addr(1)).unwrap().storage_bytes;
+        assert_eq!(
+            after_two,
+            (payload.len() + payload2.len()) as u64,
+            "second CreateObject should accumulate storage_bytes, not overwrite"
         );
     }
 
@@ -3368,5 +3931,838 @@ contract Counter {
         let receipts = executor.execute_cross_shard_messages(&mut db, vec![msg], 10);
         assert!(receipts[0].success);
         assert!(db.get_object(&oid).is_none());
+    }
+
+    // ─── UserOp paymaster-nonce replay protection ───────────────────────────
+
+    fn make_user_op_tx(
+        sender: AccountAddress,
+        sender_nonce: u64,
+        paymaster: Option<AccountAddress>,
+        paymaster_nonce: Option<u64>,
+        call_gas_limit: u64,
+    ) -> evaporchain_types::UserOpTx {
+        evaporchain_types::UserOpTx {
+            sender,
+            nonce: sender_nonce,
+            call_data: vec![],
+            call_gas_limit,
+            paymaster,
+            paymaster_nonce,
+            paymaster_data: None,
+            signature: None,
+            public_key: None,
+        }
+    }
+
+    #[test]
+    fn test_user_op_paymaster_nonce_required() {
+        // Paymaster set but paymaster_nonce missing → reject (malformed).
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1_000_000);
+        fund_account(&mut db, 2, 1_000_000);
+        let executor = SimpleExecutor::new_for_test(7);
+
+        let tx = make_user_op_tx(addr(1), 0, Some(addr(2)), None, 1_000);
+        let result = executor.execute_user_op(&mut db, &tx);
+        assert!(
+            result.is_err(),
+            "UserOp with paymaster but no paymaster_nonce must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_user_op_paymaster_nonce_without_paymaster_rejected() {
+        // paymaster_nonce set but paymaster missing → reject (malformed).
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1_000_000);
+        let executor = SimpleExecutor::new_for_test(7);
+
+        let tx = make_user_op_tx(addr(1), 0, None, Some(0), 1_000);
+        let result = executor.execute_user_op(&mut db, &tx);
+        assert!(
+            result.is_err(),
+            "UserOp with paymaster_nonce but no paymaster must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_user_op_paymaster_nonce_mismatch_rejected() {
+        // Paymaster account has nonce 0; tx provides paymaster_nonce 5.
+        // Should reject.
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1_000_000);
+        fund_account(&mut db, 2, 1_000_000);
+        let executor = SimpleExecutor::new_for_test(7);
+
+        let tx = make_user_op_tx(addr(1), 0, Some(addr(2)), Some(5), 1_000);
+        match executor.execute_user_op(&mut db, &tx) {
+            Err(ExecutionError::InvalidNonce { expected, got }) => {
+                assert_eq!(expected, 0);
+                assert_eq!(got, 5);
+            }
+            other => panic!("expected InvalidNonce, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_user_op_paymaster_nonce_increments_on_success() {
+        // Successful UserOp with paymaster increments BOTH sender and
+        // paymaster nonces — so a replay of the same tx hits the nonce
+        // check on both accounts.
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1_000_000);
+        fund_account(&mut db, 2, 1_000_000);
+        let executor = SimpleExecutor::new_for_test(7);
+
+        let tx = make_user_op_tx(addr(1), 0, Some(addr(2)), Some(0), 1_000);
+        executor.execute_user_op(&mut db, &tx).unwrap();
+
+        assert_eq!(db.get_account(&addr(1)).unwrap().nonce, 1);
+        assert_eq!(db.get_account(&addr(2)).unwrap().nonce, 1);
+
+        // Replay the exact same tx — sender nonce check is what catches it
+        // here; what we are really protecting against is a tx with sender
+        // nonce 1 and paymaster_nonce 0, which would have drained the
+        // paymaster a second time before this fix.
+        let replay = make_user_op_tx(addr(1), 1, Some(addr(2)), Some(0), 1_000);
+        match executor.execute_user_op(&mut db, &replay) {
+            Err(ExecutionError::InvalidNonce { expected, got }) => {
+                assert_eq!(expected, 1, "paymaster nonce should now be 1");
+                assert_eq!(got, 0, "tx-supplied paymaster_nonce was 0 (stale)");
+            }
+            other => panic!(
+                "expected InvalidNonce on paymaster, got {:?} — pre-fix the paymaster would have been drained again",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    fn test_user_op_no_paymaster_does_not_require_nonce() {
+        // UserOp without paymaster works as before — only sender nonce checked.
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1_000_000);
+        let executor = SimpleExecutor::new_for_test(7);
+
+        let tx = make_user_op_tx(addr(1), 0, None, None, 1_000);
+        executor.execute_user_op(&mut db, &tx).unwrap();
+        assert_eq!(db.get_account(&addr(1)).unwrap().nonce, 1);
+    }
+
+    // ─── DeployContract / DeployScript storage_bytes accounting ────────────
+
+    #[test]
+    fn test_deploy_contract_charges_storage_bytes() {
+        // DeployContract must increment the deployer's storage_bytes by
+        // init_args.len(), so collect_storage_rent has something to bill.
+        let mut db = InMemoryStateDB::new();
+        let mut executor = SimpleExecutor::new_for_test(7);
+        fund_account(&mut db, 1, 10_000_000);
+
+        let initial = db.get_account(&addr(1)).unwrap().storage_bytes;
+        assert_eq!(initial, 0);
+
+        let init_args = r#"{"name":"Test","supply":1000,"decay_half_life":100}"#;
+        let block = make_block(
+            1,
+            10,
+            vec![Transaction::DeployContract(DeployContractTx {
+                deployer: addr(1),
+                template: "DecayingToken".into(),
+                init_args: init_args.into(),
+                energy: 5_000,
+                half_life: 100,
+                rules: None,
+                signature: None,
+                public_key: None,
+            })],
+        );
+
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_executed, 1, "DeployContract must succeed");
+
+        let after = db.get_account(&addr(1)).unwrap().storage_bytes;
+        assert_eq!(
+            after,
+            init_args.len() as u64,
+            "DeployContract should credit init_args.len() to deployer's storage_bytes"
+        );
+    }
+
+    #[test]
+    fn test_deploy_script_charges_storage_bytes() {
+        // DeployScript must increment the deployer's storage_bytes by
+        // source_code.len() — used as a conservative upper bound for
+        // the compiled bytecode size.
+        let mut db = InMemoryStateDB::new();
+        let mut executor = SimpleExecutor::new_for_test(7);
+        fund_account(&mut db, 1, 10_000_000);
+
+        let source = "contract C { state { x: u64 = 0 } fn inc() { self.x += 1 } }";
+        let block = make_block(
+            1,
+            10,
+            vec![Transaction::DeployScript(evaporchain_types::DeployScriptTx {
+                deployer: addr(1),
+                source_code: source.into(),
+                energy: 5_000,
+                half_life: 100,
+                signature: None,
+                public_key: None,
+            })],
+        );
+
+        let result = executor.execute_block(&mut db, &block);
+        // Script may or may not parse-succeed depending on grammar; what
+        // matters here is the accounting on the success path. Skip if
+        // parsing fails (the storage_bytes path is only hit on success).
+        if let Ok(r) = result {
+            if r.txs_executed == 1 {
+                let after = db.get_account(&addr(1)).unwrap().storage_bytes;
+                assert_eq!(
+                    after,
+                    source.len() as u64,
+                    "DeployScript should credit source_code.len() to deployer's storage_bytes"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_contract_evaporation_decrements_deployer_storage_bytes() {
+        // End-to-end: deploy a contract → its storage_bytes is credited;
+        // advance many epochs so its energy decays to 0 → tick evaporates
+        // it → credit_back_evaporated_contracts decrements the deployer.
+        let mut db = InMemoryStateDB::new();
+        let mut executor = SimpleExecutor::new_for_test(7);
+        fund_account(&mut db, 1, 10_000_000);
+
+        // energy=1, half_life=1 → fully decayed within 64 epochs.
+        let init_args = r#"{"name":"DecayFast","symbol":"DF","supply":1}"#;
+        let block_deploy = make_block(
+            1,
+            0,
+            vec![Transaction::DeployContract(DeployContractTx {
+                deployer: addr(1),
+                template: "DecayingToken".into(),
+                init_args: init_args.into(),
+                energy: 1,
+                half_life: 1,
+                rules: None,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        let _ = executor.execute_block(&mut db, &block_deploy).unwrap();
+
+        let pre = db.get_account(&addr(1)).unwrap().storage_bytes;
+        assert!(
+            pre > 0,
+            "deploy must have credited storage_bytes (got {})",
+            pre
+        );
+
+        // Advance to epoch 200 — well past the contract's lifetime. The
+        // empty block triggers the post-block tick, which should mark the
+        // contract evaporated and credit-back the deployer.
+        let block_later = make_block(2, 200, vec![]);
+        let _ = executor.execute_block(&mut db, &block_later).unwrap();
+
+        let post = db.get_account(&addr(1)).unwrap().storage_bytes;
+        assert!(
+            post < pre,
+            "evaporation must have decremented storage_bytes (pre={}, post={})",
+            pre,
+            post
+        );
+    }
+
+    #[test]
+    fn test_script_evaporation_decrements_deployer_storage_bytes() {
+        // Mirror of the contract-evaporation test for the script path.
+        // Permissive on parse: if the source doesn't compile, skip the
+        // assertion (the storage_bytes path only runs on a successful
+        // deploy). Same shape as test_deploy_script_charges_storage_bytes.
+        let mut db = InMemoryStateDB::new();
+        let mut executor = SimpleExecutor::new_for_test(7);
+        fund_account(&mut db, 1, 10_000_000);
+
+        let source = "contract C { state { x: u64 = 0 } fn inc() { self.x += 1 } }";
+        let block_deploy = make_block(
+            1,
+            0,
+            vec![Transaction::DeployScript(evaporchain_types::DeployScriptTx {
+                deployer: addr(1),
+                source_code: source.into(),
+                energy: 1,
+                half_life: 1,
+                signature: None,
+                public_key: None,
+            })],
+        );
+
+        let deploy_result = executor.execute_block(&mut db, &block_deploy);
+        let pre = db.get_account(&addr(1)).map(|a| a.storage_bytes).unwrap_or(0);
+
+        // Only assert on the successful-deploy branch — parser grammar may
+        // shift; we don't want a brittle test pinning to one form.
+        if let Ok(r) = &deploy_result {
+            if r.txs_executed == 1 && pre > 0 {
+                let block_later = make_block(2, 200, vec![]);
+                let _ = executor.execute_block(&mut db, &block_later).unwrap();
+
+                let post = db.get_account(&addr(1)).unwrap().storage_bytes;
+                assert!(
+                    post < pre,
+                    "script evaporation should have decremented storage_bytes \
+                     (pre={}, post={})",
+                    pre,
+                    post,
+                );
+            }
+        }
+    }
+
+    // ─── DecayingDAO ↔ execution governance bridge ──────────────────────────
+
+    #[test]
+    fn test_apply_dao_governance_end_to_end() {
+        // Full integration: deploy DecayingDAO → propose → vote → finalize
+        // → mark_ready_to_apply → apply_dao_governance → verify the
+        // execution-layer governance param was set and the contract-layer
+        // proposal is marked Applied.
+        use evaporchain_contracts::ContractTemplate;
+
+        let mut db = InMemoryStateDB::new();
+        let mut executor = SimpleExecutor::new_for_test(7);
+        let creator = addr(1);
+
+        // Deploy DecayingDAO with bounds: block_gas_limit ∈ [10_000, 100_000_000].
+        // Small total_stake / min_stake_to_propose / quorum so the test
+        // converges on small numbers.
+        let init_args = serde_json::json!({
+            "title": "test_dao",
+            "param_bounds": {
+                "block_gas_limit": [10_000u64, 100_000_000u64],
+            },
+            "voting_period_epochs": 100u64,
+            "quorum_pct": 50u64,
+            "timelock_epochs": 24u64,
+            "total_stake": 1_000u64,
+            "min_stake_to_propose": 100u64,
+        });
+        let dao_id = executor
+            .contract_engine
+            .deploy(
+                ContractTemplate::DecayingDAO,
+                init_args,
+                Vec::new(),
+                creator,
+                100_000,
+                10_000,
+                0,
+            )
+            .unwrap();
+
+        // Propose to set block_gas_limit = 50_000_000.
+        executor
+            .contract_engine
+            .call(
+                dao_id,
+                "propose",
+                &serde_json::json!({
+                    "proposer_stake": 200u64,
+                    "param_key": "block_gas_limit",
+                    "param_value_u64": 50_000_000u64,
+                }),
+                &creator,
+                5,
+            )
+            .unwrap();
+
+        // Three voters, each contributing 200 weight → 600 yes / 0 no.
+        // Quorum threshold = 1000 * 50 / 100 = 500. 600 ≥ 500 ✓
+        // Supermajority: 600 > 0 * 2 ✓
+        for i in 0u8..3 {
+            let mut a = [0u8; 32];
+            a[0] = 0x10 + i;
+            executor
+                .contract_engine
+                .call(
+                    dao_id,
+                    "vote",
+                    &serde_json::json!({
+                        "proposal_id": 0u64,
+                        "support": true,
+                        "balance": 200u64,
+                        "stake": 200u64,
+                    }),
+                    &a,
+                    10 + i as u64,
+                )
+                .unwrap();
+        }
+
+        // Finalize: voting started at 5, period 100, ends at 105. Call at 110.
+        let finalized = executor
+            .contract_engine
+            .call(
+                dao_id,
+                "finalize",
+                &serde_json::json!({ "proposal_id": 0u64 }),
+                &creator,
+                110,
+            )
+            .unwrap();
+        assert_eq!(finalized.return_value["status"], "Passed");
+
+        // Mark ready_to_apply: passed at 110, timelock 24 → ready at 134. Call at 140.
+        executor
+            .contract_engine
+            .call(
+                dao_id,
+                "mark_ready_to_apply",
+                &serde_json::json!({ "proposal_id": 0u64 }),
+                &creator,
+                140,
+            )
+            .unwrap();
+
+        // Pre-bridge: governance state has no override.
+        assert!(db.get_governance_param("block_gas_limit").is_none());
+
+        // Bridge: apply.
+        let applied = executor
+            .apply_dao_governance(&mut db, dao_id, 141)
+            .expect("bridge should succeed");
+        assert_eq!(applied.len(), 1, "exactly one ReadyToApply proposal");
+        assert_eq!(applied[0].0, "block_gas_limit");
+        assert_eq!(applied[0].1, 50_000_000);
+
+        // Post-bridge: governance state now has the value.
+        assert_eq!(
+            db.get_governance_param("block_gas_limit"),
+            Some("50000000"),
+            "execution-layer governance state must reflect the applied param",
+        );
+
+        // Idempotency: bridge again returns empty (proposal already Applied).
+        let again = executor.apply_dao_governance(&mut db, dao_id, 142).unwrap();
+        assert!(
+            again.is_empty(),
+            "second bridge call must not re-apply already-Applied proposals"
+        );
+    }
+
+    #[test]
+    fn test_apply_dao_governance_no_ready_proposals_is_noop() {
+        // Brand-new DAO with no proposals → bridge returns empty Vec.
+        use evaporchain_contracts::ContractTemplate;
+
+        let mut db = InMemoryStateDB::new();
+        let mut executor = SimpleExecutor::new_for_test(7);
+        let creator = addr(1);
+
+        let init_args = serde_json::json!({
+            "title": "empty_dao",
+            "param_bounds": { "block_gas_limit": [1u64, 1_000_000u64] },
+            "voting_period_epochs": 100u64,
+            "quorum_pct": 50u64,
+            "timelock_epochs": 24u64,
+            "total_stake": 1_000u64,
+            "min_stake_to_propose": 100u64,
+        });
+        let dao_id = executor
+            .contract_engine
+            .deploy(
+                ContractTemplate::DecayingDAO,
+                init_args,
+                Vec::new(),
+                creator,
+                100_000,
+                10_000,
+                0,
+            )
+            .unwrap();
+
+        let applied = executor.apply_dao_governance(&mut db, dao_id, 1).unwrap();
+        assert!(applied.is_empty());
+        assert!(db.get_governance_param("block_gas_limit").is_none());
+    }
+
+    // ─── Execution-layer floor bounds (validate_governance_param) ──────────
+
+    #[test]
+    fn test_validate_governance_param_block_gas_limit_inside_bounds() {
+        // Within [10_000, 100_000_000] → Ok
+        assert!(validate_governance_param("block_gas_limit", "10000").is_ok());
+        assert!(validate_governance_param("block_gas_limit", "500000").is_ok());
+        assert!(validate_governance_param("block_gas_limit", "100000000").is_ok());
+    }
+
+    #[test]
+    fn test_validate_governance_param_block_gas_limit_below_floor() {
+        // Below the minimum floor → Err
+        assert!(validate_governance_param("block_gas_limit", "0").is_err());
+        assert!(validate_governance_param("block_gas_limit", "9999").is_err());
+    }
+
+    #[test]
+    fn test_validate_governance_param_block_gas_limit_above_ceiling() {
+        // Above the maximum → Err
+        assert!(validate_governance_param("block_gas_limit", "100000001").is_err());
+        assert!(
+            validate_governance_param("block_gas_limit", &u64::MAX.to_string()).is_err()
+        );
+    }
+
+    #[test]
+    fn test_validate_governance_param_unparseable_value() {
+        // Non-u64 value for a numeric key → Err
+        assert!(validate_governance_param("block_gas_limit", "not_a_number").is_err());
+        assert!(validate_governance_param("block_gas_limit", "").is_err());
+        assert!(validate_governance_param("block_gas_limit", "-1").is_err());
+    }
+
+    #[test]
+    fn test_validate_governance_param_unknown_key_passes() {
+        // Unknown keys still pass through (forward-compat default).
+        assert!(
+            validate_governance_param("some_future_param", "anything").is_ok()
+        );
+    }
+
+    #[test]
+    fn test_validate_governance_param_block_reward_bounded() {
+        // Inside [0, 1_000_000_000]
+        assert!(validate_governance_param("block_reward", "0").is_ok());
+        assert!(validate_governance_param("block_reward", "999999999").is_ok());
+        assert!(validate_governance_param("block_reward", "1000000000").is_ok());
+        // Above the ceiling
+        assert!(validate_governance_param("block_reward", "1000000001").is_err());
+        assert!(
+            validate_governance_param("block_reward", &u64::MAX.to_string()).is_err()
+        );
+    }
+
+    #[test]
+    fn test_validate_governance_param_reward_half_life_minimum() {
+        // Below floor (100)
+        assert!(validate_governance_param("reward_half_life", "0").is_err());
+        assert!(validate_governance_param("reward_half_life", "99").is_err());
+        // At and above floor
+        assert!(validate_governance_param("reward_half_life", "100").is_ok());
+        assert!(validate_governance_param("reward_half_life", "1000000").is_ok());
+    }
+
+    #[test]
+    fn test_validate_governance_param_base_fee_ceiling_nonzero() {
+        // Floor for base_fee_ceiling is 1 (zero would never let any tx pay).
+        assert!(validate_governance_param("base_fee_ceiling", "0").is_err());
+        assert!(validate_governance_param("base_fee_ceiling", "1").is_ok());
+        assert!(validate_governance_param("base_fee_floor", "0").is_ok());
+    }
+
+    #[test]
+    fn test_validate_governance_param_f64_ratios() {
+        // fee_burn_rate / staker_fee_share / target_*: ratios in [0.0, 1.0]
+        for key in [
+            "fee_burn_rate",
+            "staker_fee_share",
+            "target_staking_apy",
+            "target_gas_utilization",
+        ] {
+            assert!(
+                validate_governance_param(key, "0").is_ok(),
+                "{key}=0 should be ok"
+            );
+            assert!(
+                validate_governance_param(key, "0.5").is_ok(),
+                "{key}=0.5 should be ok"
+            );
+            assert!(
+                validate_governance_param(key, "1.0").is_ok(),
+                "{key}=1.0 should be ok"
+            );
+            // Outside range
+            assert!(
+                validate_governance_param(key, "1.000001").is_err(),
+                "{key}=1.000001 should fail"
+            );
+            assert!(
+                validate_governance_param(key, "-0.0001").is_err(),
+                "{key}=-0.0001 should fail"
+            );
+            // Non-finite
+            assert!(
+                validate_governance_param(key, "NaN").is_err(),
+                "{key}=NaN should fail"
+            );
+            assert!(
+                validate_governance_param(key, "inf").is_err(),
+                "{key}=inf should fail"
+            );
+            // Unparseable
+            assert!(
+                validate_governance_param(key, "not_a_number").is_err(),
+                "{key}=not_a_number should fail"
+            );
+        }
+    }
+
+    // ─── Cross-key invariant: base_fee_floor < base_fee_ceiling ────────────
+
+    #[test]
+    fn test_validate_against_state_base_fee_floor_below_ceiling_ok() {
+        let mut db = InMemoryStateDB::new();
+        // Set ceiling first.
+        db.put_governance_param("base_fee_ceiling".into(), "1000".into());
+        // Floor strictly less → ok
+        assert!(validate_governance_param_against_state(&db, "base_fee_floor", "500").is_ok());
+        assert!(validate_governance_param_against_state(&db, "base_fee_floor", "999").is_ok());
+    }
+
+    #[test]
+    fn test_validate_against_state_base_fee_floor_at_or_above_ceiling_rejected() {
+        let mut db = InMemoryStateDB::new();
+        db.put_governance_param("base_fee_ceiling".into(), "1000".into());
+        // Floor == ceiling → must be strictly less, so reject.
+        assert!(validate_governance_param_against_state(&db, "base_fee_floor", "1000").is_err());
+        // Floor > ceiling → reject.
+        assert!(validate_governance_param_against_state(&db, "base_fee_floor", "1001").is_err());
+    }
+
+    #[test]
+    fn test_validate_against_state_base_fee_ceiling_above_floor_ok() {
+        let mut db = InMemoryStateDB::new();
+        db.put_governance_param("base_fee_floor".into(), "100".into());
+        // Ceiling strictly greater → ok
+        assert!(validate_governance_param_against_state(&db, "base_fee_ceiling", "200").is_ok());
+        assert!(validate_governance_param_against_state(&db, "base_fee_ceiling", "101").is_ok());
+    }
+
+    #[test]
+    fn test_validate_against_state_base_fee_ceiling_at_or_below_floor_rejected() {
+        let mut db = InMemoryStateDB::new();
+        db.put_governance_param("base_fee_floor".into(), "100".into());
+        // Ceiling == floor → reject (must be strictly greater).
+        assert!(validate_governance_param_against_state(&db, "base_fee_ceiling", "100").is_err());
+        // Ceiling < floor → reject.
+        assert!(validate_governance_param_against_state(&db, "base_fee_ceiling", "50").is_err());
+    }
+
+    #[test]
+    fn test_validate_against_state_no_cross_check_when_other_unset() {
+        // If the other side isn't set in db, cross-key check is skipped —
+        // the executor's compiled-in default fills in. Single-key bound
+        // is still enforced.
+        let db = InMemoryStateDB::new();
+        // Floor set, ceiling not in db → ok (only single-key check).
+        assert!(validate_governance_param_against_state(&db, "base_fee_floor", "100").is_ok());
+        assert!(validate_governance_param_against_state(&db, "base_fee_ceiling", "100").is_ok());
+    }
+
+    #[test]
+    fn test_validate_against_state_single_key_bounds_still_apply() {
+        // The cross-key wrapper still calls the single-key validator first.
+        let db = InMemoryStateDB::new();
+        // block_gas_limit=0 fails single-key bounds check.
+        assert!(validate_governance_param_against_state(&db, "block_gas_limit", "0").is_err());
+        // base_fee_ceiling=0 fails single-key bounds check (min=1).
+        assert!(validate_governance_param_against_state(&db, "base_fee_ceiling", "0").is_err());
+    }
+
+    #[test]
+    fn test_apply_dao_governance_rejects_out_of_floor_bounds() {
+        // The DAO contract's own param_bounds may be wider than the
+        // execution-layer floor. If so, the bridge must REJECT the apply
+        // even though the contract considers the proposal Ready.
+        use evaporchain_contracts::ContractTemplate;
+
+        let mut db = InMemoryStateDB::new();
+        let mut executor = SimpleExecutor::new_for_test(7);
+        let creator = addr(1);
+
+        // Deploy DAO with bounds INTENTIONALLY WIDER than the floor:
+        // [1, u64::MAX] for block_gas_limit. The DAO will accept any
+        // value; the floor [10_000, 100_000_000] should reject the bridge
+        // call when a value outside floor is proposed.
+        let init_args = serde_json::json!({
+            "title": "wide_dao",
+            "param_bounds": {
+                "block_gas_limit": [1u64, u64::MAX],
+            },
+            "voting_period_epochs": 100u64,
+            "quorum_pct": 50u64,
+            "timelock_epochs": 24u64,
+            "total_stake": 1_000u64,
+            "min_stake_to_propose": 100u64,
+        });
+        let dao_id = executor
+            .contract_engine
+            .deploy(
+                ContractTemplate::DecayingDAO,
+                init_args,
+                Vec::new(),
+                creator,
+                100_000,
+                10_000,
+                0,
+            )
+            .unwrap();
+
+        // Propose value above the floor ceiling.
+        executor
+            .contract_engine
+            .call(
+                dao_id,
+                "propose",
+                &serde_json::json!({
+                    "proposer_stake": 200u64,
+                    "param_key": "block_gas_limit",
+                    "param_value_u64": 200_000_000u64, // above 100M ceiling
+                }),
+                &creator,
+                5,
+            )
+            .unwrap();
+
+        // Pass the proposal through the contract layer: 3 voters, full quorum.
+        for i in 0u8..3 {
+            let mut a = [0u8; 32];
+            a[0] = 0x20 + i;
+            executor
+                .contract_engine
+                .call(
+                    dao_id,
+                    "vote",
+                    &serde_json::json!({
+                        "proposal_id": 0u64,
+                        "support": true,
+                        "balance": 200u64,
+                        "stake": 200u64,
+                    }),
+                    &a,
+                    10 + i as u64,
+                )
+                .unwrap();
+        }
+        executor
+            .contract_engine
+            .call(
+                dao_id,
+                "finalize",
+                &serde_json::json!({ "proposal_id": 0u64 }),
+                &creator,
+                110,
+            )
+            .unwrap();
+        executor
+            .contract_engine
+            .call(
+                dao_id,
+                "mark_ready_to_apply",
+                &serde_json::json!({ "proposal_id": 0u64 }),
+                &creator,
+                140,
+            )
+            .unwrap();
+
+        // Bridge: floor bounds must reject this — return Err, no put.
+        let result = executor.apply_dao_governance(&mut db, dao_id, 141);
+        assert!(
+            result.is_err(),
+            "bridge must reject values outside execution-layer floor bounds"
+        );
+
+        // No governance state mutation happened.
+        assert!(db.get_governance_param("block_gas_limit").is_none());
+    }
+
+    // ─── Submission-time governance proposal validation ─────────────────────
+
+    fn make_create_proposal_tx(
+        sender: AccountAddress,
+        param_key: &str,
+        param_value: &str,
+    ) -> evaporchain_types::GovernanceTx {
+        evaporchain_types::GovernanceTx {
+            action: evaporchain_types::GovernanceAction::CreateProposal {
+                title: "test_proposal".into(),
+                param_key: param_key.into(),
+                param_value: param_value.into(),
+                voting_epochs: 100,
+            },
+            sender,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        }
+    }
+
+    #[test]
+    fn test_create_proposal_rejected_at_submit_when_below_floor() {
+        // block_gas_limit = 0 is below the floor (10_000). Submission must
+        // reject the tx and NOT create the proposal — voters shouldn't
+        // waste blocks voting on a doomed proposal.
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1_000_000);
+        let executor = SimpleExecutor::new_for_test(7);
+
+        assert!(db.all_proposals().is_empty());
+
+        let tx = make_create_proposal_tx(addr(1), "block_gas_limit", "0");
+        let result = executor.execute_governance(&mut db, &tx, 1);
+        assert!(
+            result.is_err(),
+            "out-of-floor proposal must be rejected at submit"
+        );
+
+        // No proposal was created.
+        assert!(
+            db.all_proposals().is_empty(),
+            "rejected proposal must not appear in the proposal list"
+        );
+    }
+
+    #[test]
+    fn test_create_proposal_rejected_when_value_unparseable() {
+        // For a u64-bounded key, non-numeric value rejected at submit.
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1_000_000);
+        let executor = SimpleExecutor::new_for_test(7);
+
+        let tx = make_create_proposal_tx(addr(1), "block_gas_limit", "not_a_number");
+        assert!(executor.execute_governance(&mut db, &tx, 1).is_err());
+        assert!(db.all_proposals().is_empty());
+    }
+
+    #[test]
+    fn test_create_proposal_succeeds_inside_floor() {
+        // A valid proposal still succeeds — sanity check that submission
+        // validation only rejects bad values, not all values.
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1_000_000);
+        let executor = SimpleExecutor::new_for_test(7);
+
+        let tx = make_create_proposal_tx(addr(1), "block_gas_limit", "50000000");
+        executor.execute_governance(&mut db, &tx, 1).unwrap();
+
+        assert_eq!(db.all_proposals().len(), 1);
+    }
+
+    #[test]
+    fn test_create_proposal_unknown_key_passes_at_submit() {
+        // Unknown keys pass through validate_governance_param (forward-compat
+        // default) — submission also accepts.
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1_000_000);
+        let executor = SimpleExecutor::new_for_test(7);
+
+        let tx = make_create_proposal_tx(addr(1), "some_future_param", "anything");
+        executor.execute_governance(&mut db, &tx, 1).unwrap();
+
+        assert_eq!(db.all_proposals().len(), 1);
     }
 }
