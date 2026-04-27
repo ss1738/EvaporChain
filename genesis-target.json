@@ -1,0 +1,85 @@
+{
+  "_comment_top": "TEMPLATE — produced by the genesis ceremony procedure in docs/GENESIS_CEREMONY.md. Every TODO marker MUST be replaced before this file becomes the real mainnet genesis.json. Distinct from genesis-mainnet.json which is a development scaffold.",
+
+  "chain_params": {
+    "chain_id": "evaporchain-mainnet-1",
+    "block_interval_ms": 2000,
+    "grace_period": 5,
+    "block_gas_limit": 500000,
+    "max_tx_size": 1048576,
+    "max_txs_per_block": 10000,
+    "min_validator_stake": 100000,
+    "unbonding_period": 100
+  },
+
+  "tokenomics": {
+    "total_supply": 1000000000,
+    "block_reward": 100,
+    "reward_half_life": 1000000,
+    "fee_burn_rate": 0.50,
+    "staker_fee_share": 0.50,
+    "target_staking_apy": 0.05
+  },
+
+  "_TODO_genesis_time": "Replace with real UTC ISO8601 at T-7 days per ceremony Step 4. NEVER ship the placeholder.",
+  "genesis_time": "TODO_REPLACE_WITH_UTC_ISO8601",
+
+  "_TODO_genesis_state_root": "blake3 over the canonical encoding of all accounts + objects. Computed at T-1 day per ceremony Step 5.",
+  "genesis_state_root": "TODO_REPLACE_WITH_BLAKE3_HEX",
+
+  "validators": [
+    {
+      "_TODO": "One entry per genesis validator. Replace ALL fields with real data collected in ceremony Step 2.",
+      "id": 1,
+      "name": "TODO_REPLACE_VALIDATOR_NAME",
+      "stake": 250000,
+      "address": "TODO_REPLACE_32_BYTE_OPERATOR_ADDRESS",
+      "bls_public_key": "TODO_REPLACE_48_BYTE_BLS_G1_HEX",
+      "bls_proof_of_possession": "TODO_REPLACE_BLS_POP_HEX",
+      "mldsa_public_key": "TODO_REPLACE_MLDSA_PUBKEY_HEX",
+      "p2p_address": "TODO_REPLACE_REAL_MULTIADDR_NOT_0_0_0_0"
+    }
+  ],
+
+  "accounts": [
+    {
+      "_TODO": "One entry per token-allocated account. Address provided by token custodian in ceremony Step 3.",
+      "address": "TODO_REPLACE_FOUNDATION_TREASURY_ADDRESS",
+      "balance": 350000000,
+      "label": "Foundation Treasury",
+      "_centralization_warning": "35% of supply concentrated in one address. Combined with vote-weight=balance and no quorum requirement (execution/lib.rs:949), this address can pass any governance proposal solo. Consider multisig custody and per-vote stake limits before mainnet."
+    },
+    {
+      "address": "TODO_REPLACE_ECOSYSTEM_DEV_ADDRESS",
+      "balance": 200000000,
+      "label": "Ecosystem Development"
+    },
+    {
+      "address": "TODO_REPLACE_CORE_CONTRIBUTORS_ADDRESS",
+      "balance": 150000000,
+      "label": "Core Contributors"
+    },
+    {
+      "address": "TODO_REPLACE_COMMUNITY_AIRDROP_ADDRESS",
+      "balance": 100000000,
+      "label": "Community Airdrop"
+    },
+    {
+      "_TODO": "One per genesis validator operator. Address must match validators[].address.",
+      "address": "TODO_REPLACE_VALIDATOR_OPERATOR_ADDRESS",
+      "balance": 50000000,
+      "label": "Validator Operator (TODO_NAME)"
+    }
+  ],
+
+  "objects": [],
+
+  "bootstrap_peers": [
+    "_TODO_REPLACE_with_real_multiaddrs_from_validators_section_no_0_0_0_0"
+  ],
+
+  "_post_ceremony_signature_block": {
+    "_TODO": "Coordinator computes blake3(genesis.json without this block) and gathers BLS signatures from each validator over that hash. The bundle is published separately as genesis-attestation.json, NOT inlined here.",
+    "see": "docs/GENESIS_CEREMONY.md Step 6"
+  }
+}

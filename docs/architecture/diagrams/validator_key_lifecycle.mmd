@@ -1,0 +1,34 @@
+%% EvaporChain — Validator Key Lifecycle (BLS12-381 + ML-DSA + TLS)
+
+flowchart TD
+    A[Operator runs node binary<br/>--tendermint-mode --validator-id N] --> B{bls_key.bin exists<br/>at data_dir?}
+    B -->|no| C[BlsKeypair::generate#40;#41;<br/>OsRng entropy]
+    B -->|yes, 32B| D[from_secret_bytes#40;#41;<br/>load existing keypair]
+    B -->|yes, wrong size| E[Log warning, regenerate]
+    C --> F[write_secret_file<br/>plaintext + mode 0600]
+    F --> G[BLS keypair active]
+    D --> G
+    E --> F
+
+    H[ML-DSA wallet key] --> I[generate_keypair#40;#41;<br/>encrypt_secret_key]
+    I --> J[XChaCha20-Poly1305<br/>master = blake3_derive#40;EVAPORCHAIN_KEY_MASTER#41;]
+    J --> K[Store as encrypted hex<br/>in user_db sqlite]
+
+    L[TLS validator cert] --> M[rcgen self-signed<br/>cert + private key in PEM]
+    M --> N[Write to data_dir<br/>plaintext + mode 0600]
+
+    G --> O[Sign consensus votes<br/>BLS_DST domain sep]
+    G --> P[Sign DA attestations<br/>distinct DST]
+
+    Q[Key rotation:<br/>NOT IMPLEMENTED] -.-> G
+    Q -.-> K
+    Q -.-> M
+
+    style F fill:#fff3cd
+    style N fill:#fff3cd
+    style J fill:#d1e7dd
+    style Q fill:#f8d7da
+
+    %% YELLOW gates = plaintext on disk #40;mode 0600 only#41; — mainnet hardening required
+    %% RED   gates = unimplemented — mainnet blocker for operational rotation
+    %% audit/cross_verification_2026_04_27.md §4 — C-10 fix landed on wallet keys not validator keys

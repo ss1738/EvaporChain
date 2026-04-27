@@ -1,0 +1,35 @@
+%% EvaporChain — Tendermint Consensus State Machine (per height)
+
+stateDiagram-v2
+    [*] --> NewHeight
+
+    NewHeight --> Propose: round = 0<br/>start round timer
+    Propose --> Prevote: proposer broadcasts Proposal<br/>OR timeout_propose
+
+    Prevote --> Precommit: 2/3 stake prevotes for hash<br/>(check_prevote_quorum)
+    Prevote --> Prevote: equivocating prevote<br/>→ slash 10% + reject (NOT counted)
+    Prevote --> ViewChange: timeout_prevote<br/>without 2/3 quorum
+
+    Precommit --> Commit: 2/3 stake precommits for hash<br/>aggregate BLS signatures
+    Precommit --> ViewChange: timeout_precommit<br/>without 2/3 quorum
+    Precommit --> Precommit: equivocating precommit<br/>→ slash 10% + reject
+
+    Commit --> NewHeight: block finalized<br/>height++<br/>FinalityTracker records
+
+    ViewChange --> Propose: round++<br/>timeout *= 2 (capped 6)<br/>new proposer
+    ViewChange --> NewHeight: round ≥ MAX_ROUNDS_PER_HEIGHT (10)<br/>reset to 0
+
+    NewHeight --> [*]: shutdown / state-sync trigger
+
+    note right of Prevote
+        locked_block / locked_round
+        prevent fork choice
+        ambiguity across rounds
+    end note
+
+    note right of Commit
+        on_block_finalized:
+        - records.insert(h, ...)
+        - latest_finalized = max(latest, h)
+        - DA attestation round fires
+    end note

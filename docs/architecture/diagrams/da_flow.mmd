@@ -1,0 +1,34 @@
+%% EvaporChain — Data Availability Flow
+
+flowchart LR
+    A[Block body<br/>txs + blobs] --> B[2D erasure encode<br/>RS over BLS12-381 field]
+    B --> C[k×k data matrix<br/>extended to 2k×2k]
+    C --> D[Row commitments<br/>cell proofs per row]
+    C --> E[Column commitments<br/>cell proofs per column]
+    D --> F[data_root<br/>Merkle root of row+col commits]
+    E --> F
+
+    F --> G[Block header<br/>data_root field]
+    G --> H[Validators sign DA attestation<br/>BLS over hash#40;data_root, height#41;]
+    H --> I{Supermajority?<br/>signing stake × 3 ≥ total × 2}
+    I -->|no| Z[Block remains unfinalized<br/>for DA enforcement]
+    I -->|yes| J[DA Certificate<br/>aggregate BLS sig + signer_ids]
+
+    J --> K[PoHA: certificate hash<br/>committed in next block]
+
+    L[Light client] --> M[Random sample<br/>seed = blake3#40;height ‖ vid ‖ idx#41;]
+    M --> N[Request cell #40;r,c#41; from peer]
+    N --> O{Cell + proof verify<br/>against row_root + col_root?}
+    O -->|no| P[Mark peer faulty]
+    O -->|yes| Q[Sample passed]
+    Q --> R[After s samples,<br/>DA assured to high prob]
+
+    style Z fill:#f8d7da
+    style J fill:#d1e7dd
+    style R fill:#d1e7dd
+
+    %% NOTE 2026-04-27:
+    %% encode #40;A→F#41; library is implemented but NOT called from
+    %% MockConsensus::produce_block#40;#41;. data_root: None for empty
+    %% blocks today; non-empty blocks also bypass the encoder.
+    %% audit/end_to_end_audit_2026_04_27.md item 4.

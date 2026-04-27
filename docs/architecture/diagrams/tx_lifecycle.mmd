@@ -1,0 +1,31 @@
+%% EvaporChain — Transaction Lifecycle
+%% Renders on GitHub natively. mermaid.live for local preview.
+
+flowchart TD
+    A[Client signs Transaction<br/>ML-DSA / ECDSA / Hybrid] --> B[Submit via JSON-RPC<br/>evaporchain-node API]
+    B --> C{Mempool admit?}
+    C -->|sig fail / wrong nonce / over quota| Z1[Reject<br/>return error to client]
+    C -->|admit| D[Mempool<br/>per-account ≤ 64 / TTL eviction / total ≤ 10K]
+    D --> E[Gossip to peers<br/>libp2p GossipSub]
+    E --> F[Proposer selected for height H<br/>VRF + stake-weighted]
+    F --> G[Build block<br/>up to 10K txs / 500K gas]
+    G --> H[Block-STM parallel execution<br/>MVCC + abort/retry]
+    H -->|cycle / overload| H2[Serial fallback]
+    H2 --> I
+    H --> I[Apply state changes<br/>RocksDB write batch]
+    I --> J[Compute state_root + data_root<br/>Verkle + 2D erasure*]
+    J --> K[Broadcast Proposal<br/>Tendermint consensus]
+    K --> L[Prevote → Precommit → Commit<br/>2/3 stake-weighted quorum]
+    L --> M[BLS aggregate signature<br/>CommitCertificate]
+    M --> N[Block finalized<br/>FinalityTracker.on_block_finalized]
+    N --> O[DA attestation round<br/>BLS supermajority over data_root]
+    O --> P[Client polls receipt<br/>tx visible at finality]
+
+    style C fill:#fff3cd
+    style H fill:#cfe2ff
+    style L fill:#d1e7dd
+    style N fill:#d1e7dd
+
+    %% * As of 2026-04-27 the 2D erasure encoder is implemented but not
+    %% yet wired into produce_block — empty blocks ship with sentinel data_root.
+    %% See audit/end_to_end_audit_2026_04_27.md item 4.

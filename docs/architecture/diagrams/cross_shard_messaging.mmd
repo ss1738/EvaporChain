@@ -1,0 +1,27 @@
+%% EvaporChain — Cross-Shard Messaging Flow
+
+sequenceDiagram
+    participant A as Origin Shard #40;A#41;
+    participant M as Cross-Shard<br/>Receipt Layer
+    participant B as Destination Shard #40;B#41;
+    participant L as Light Client / RPC
+
+    Note over A: User submits CrossShardSend<br/>tx targeting shard B
+    A->>A: execute origin tx<br/>debit sender, mark in-flight
+    A->>A: build CrossShardReceipt<br/>{message_id, payload, dest_shard}
+    A->>M: emit receipt #40;included in A's block#41;
+
+    Note over M: Receipt root computed:<br/>dedup by message_id #40;87c8e1c#41;<br/>then Merkle over receipts
+    M->>M: receipt_root committed<br/>in origin block header
+
+    M->>B: relay receipt<br/>+ inclusion proof against A's state_root
+
+    Note over B: Destination shard verifies:<br/>1. inclusion proof valid<br/>2. message_id not seen before<br/>3. payload well-formed
+    B->>B: execute destination side<br/>credit recipient, apply payload
+    B->>B: emit completion receipt<br/>#40;optional, for atomic flows#41;
+
+    L->>A: query origin receipt
+    L->>B: query destination effect
+    Note over L: User sees both halves<br/>once both shards finalize
+
+    Note right of M: ⚠ Open: cross-shard atomicity<br/>under partial failure not specified.<br/>If A reverts post-emit, B's effect<br/>does NOT auto-rollback.
