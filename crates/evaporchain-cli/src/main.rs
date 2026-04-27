@@ -248,6 +248,27 @@ pub enum GenesisAction {
         balance: u64,
     },
 
+    /// Set the BLS public key on an existing validator entry. Use this to
+    /// retrofit older genesis files that were created before the validator
+    /// onboarding flow required pre-registered pubkeys (closes K-07/K-08).
+    SetValidatorBls {
+        /// Path to genesis JSON file
+        #[arg()]
+        path: String,
+
+        /// Validator ID to update
+        #[arg(long)]
+        validator_id: u64,
+
+        /// Path to a keygen JSON bundle (from `evaporchain keygen`)
+        #[arg(long, conflicts_with = "bls_pk_hex")]
+        keys: Option<String>,
+
+        /// BLS public key as hex (48-byte compressed). Use this OR --keys.
+        #[arg(long)]
+        bls_pk_hex: Option<String>,
+    },
+
     /// Add an account to a genesis config
     AddAccount {
         /// Path to genesis JSON file
@@ -1173,6 +1194,85 @@ fn cmd_genesis_add_validator(
     Ok(())
 }
 
+fn cmd_genesis_set_validator_bls(
+    path: &str,
+    validator_id: u64,
+    keys_path: Option<&str>,
+    bls_pk_hex: Option<&str>,
+    json_mode: bool,
+) -> Result<()> {
+    use evaporchain_types::genesis::*;
+
+    // Resolve the BLS pubkey from either source.
+    let pk_hex: String = match (keys_path, bls_pk_hex) {
+        (Some(kp), None) => {
+            let kf = std::fs::read_to_string(kp)
+                .with_context(|| format!("Failed to read keys file {}", kp))?;
+            let bundle: serde_json::Value = serde_json::from_str(&kf)?;
+            bundle
+                .get("bls")
+                .and_then(|b| b.get("public_key"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .ok_or_else(|| anyhow::anyhow!("keys file missing bls.public_key"))?
+        }
+        (None, Some(hex_str)) => hex_str.to_string(),
+        (Some(_), Some(_)) => anyhow::bail!("pass --keys OR --bls-pk-hex, not both"),
+        (None, None) => anyhow::bail!("must pass --keys or --bls-pk-hex"),
+    };
+
+    // Sanity-check the hex decodes and is the expected length.
+    let pk_bytes = hex::decode(pk_hex.trim_start_matches("0x"))
+        .with_context(|| "BLS pubkey is not valid hex")?;
+    if pk_bytes.len() != 48 {
+        anyhow::bail!(
+            "BLS pubkey must be 48 bytes (compressed BLS12-381 G1), got {} bytes",
+            pk_bytes.len()
+        );
+    }
+
+    let json = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read {}", path))?;
+    let mut config: GenesisConfig = serde_json::from_str(&json)
+        .with_context(|| "Failed to parse genesis config")?;
+
+    let entry = config
+        .validators
+        .iter_mut()
+        .find(|v| v.id == validator_id)
+        .ok_or_else(|| anyhow::anyhow!("validator-id {} not in genesis", validator_id))?;
+    let prev = entry.bls_public_key.clone();
+    entry.bls_public_key = Some(pk_hex.to_lowercase());
+
+    let output = serde_json::to_string_pretty(&config)?;
+    std::fs::write(path, &output)?;
+
+    if json_mode {
+        let result = serde_json::json!({
+            "validator_id": validator_id,
+            "previous_bls_public_key": prev,
+            "new_bls_public_key": entry.bls_public_key,
+        });
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    } else {
+        println!(
+            "  {} validator-id={} bls_public_key updated in {}",
+            "\u{2714}".green().bold(),
+            validator_id,
+            path
+        );
+        if let Some(p) = prev {
+            println!("  was:  {}...", &p[..32.min(p.len())].truecolor(100, 110, 130));
+        }
+        println!(
+            "  now:  {}...",
+            &entry.bls_public_key.as_ref().unwrap()[..32].truecolor(100, 110, 130)
+        );
+    }
+    println!();
+    Ok(())
+}
+
 fn cmd_genesis_add_account(
     path: &str,
     label: &str,
@@ -1468,6 +1568,9 @@ async fn main() -> Result<()> {
                 }
                 GenesisAction::AddValidator { path, name, stake, p2p, keys, balance } => {
                     cmd_genesis_add_validator(&path, &name, stake, p2p.as_deref(), keys.as_deref(), balance, cli.json)
+                }
+                GenesisAction::SetValidatorBls { path, validator_id, keys, bls_pk_hex } => {
+                    cmd_genesis_set_validator_bls(&path, validator_id, keys.as_deref(), bls_pk_hex.as_deref(), cli.json)
                 }
                 GenesisAction::AddAccount { path, label, balance, address_byte } => {
                     cmd_genesis_add_account(&path, &label, balance, address_byte, cli.json)
