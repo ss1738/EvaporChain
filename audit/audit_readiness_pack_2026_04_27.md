@@ -108,12 +108,12 @@ Auditors should not flag these as novel — they are tracked.
 |----|------|--------|-----------|
 | H-13 | `pqc_dilithium` upstream crate is itself unaudited | Pinned version; no in-house alternative | NIST PQC Level 3 implementation risk |
 | H-15 | Poseidon constants are non-standard | Pending RFC alignment | Theoretical: collision-resistance with non-standard params |
-| K-01 | MockConsensus is the binary default; Tendermint requires `--tendermint-mode` | Operator responsibility for prod deploy | Misconfigured operator runs single-node consensus |
-| K-02 | `bls_key.bin` validator key plaintext on disk, mode 0600 only | Pre-mainnet hardening planned | OS file-permission failure → key exfil |
-| K-03 | `EVAPORCHAIN_KEY_MASTER` env var defaults to dev string | Production deploy must set explicitly | Operator forgets → wallet keys recoverable from source |
-| K-04 | DA layer 2D erasure exists but not wired into `produce_block` | Empty blocks use sentinel `data_root` | DA attestation is over-sentinel today; no real DA enforcement |
-| K-05 | Equivocation slashing not yet automatic | Manual slashing path; vote-liveness slashing exists | Detected double-votes need operator action |
-| K-06 | Cross-verification §1-§4 findings | See `cross_verification_2026_04_27.md` | Will be resolved before audit kickoff |
+| K-01 | ~~MockConsensus is the binary default~~ | **RESOLVED 2026-04-27 (commit 4afe27f).** Tendermint is the binary default; `--mock-consensus` is opt-in (`main.rs:751`). `--mainnet` strict mode hard-fails on `--mock-consensus`. | — |
+| K-02 | ~~`bls_key.bin` validator key plaintext on disk, mode 0600 only~~ | **RESOLVED 2026-04-27 (commit 0af4bb2).** Opt-in EVK1 encryption (Argon2id + XChaCha20-Poly1305) via `EVAPORCHAIN_VALIDATOR_KEY_PASS`; `--mainnet` strict mode requires it. | — |
+| K-03 | ~~`EVAPORCHAIN_KEY_MASTER` env var defaults to dev string~~ | **RESOLVED 2026-04-27 (commit 4afe27f).** `--mainnet` strict mode hard-fails on unset, dev-default, or sub-16-char value. | — |
+| K-04 | ~~DA layer 2D erasure exists but not wired into `produce_block`~~ | **RESOLVED 2026-04-27 (commit 1fc67c0).** `compute_block_da` calls `BlockDA2D::encode_block_with_blobs` from `MockConsensus::produce_block`, `produce_block_with_reveals`, and `RotatingConsensus::produce_block_if_leader`. Empty blocks still use sentinel data_root. Tendermint already had its own wiring (`tendermint.rs:1958-2030`). | — |
+| K-05 | ~~Equivocation slashing not yet automatic~~ | **RESOLVED — already wired before audit pack capture.** `slash_equivocation` is invoked in-line at all three detection sites: proposal (`tendermint.rs:1113`), prevote (`tendermint.rs:1377`), precommit (`tendermint.rs:1473`). Penalty applies stake reduction + jail + auto-remove below MIN_STAKE in one call (`validator_set.rs:341-356`). Three regression tests cover the path. | — |
+| K-06 | Cross-verification §1-§4 findings | All four resolved 2026-04-27 (commits 674be1d, c49a2fe, 0af4bb2). See `cross_verification_2026_04_27.md` for original details. | — |
 
 ## 6. Invariant catalogue
 

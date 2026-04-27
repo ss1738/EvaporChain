@@ -21,7 +21,7 @@ repo     = github.com/ss1738/EvaporChain
 
 | Package | Version | Purpose | Audit status / notes |
 |---|---|---|---|
-| `pqc_dilithium` | 0.2.0 | ML-DSA Dilithium3 post-quantum signatures | **Upstream UNAUDITED.** Tracked as known issue H-13. Pin the exact commit before mainnet; document the upstream-audit risk explicitly to the engaged auditor. |
+| `pqc_dilithium` | =0.2.0 | ML-DSA Dilithium3 post-quantum signatures | **Upstream UNAUDITED — H-13.** Pinned exact (`version = "=0.2.0"`) in `crates/evaporchain-crypto/Cargo.toml` and `crates/evaporchain-crypto-wasm/Cargo.toml` (commit pending). Patch upgrades require manual security review. Engaged auditor must be told the upstream is unaudited at NIST PQC Level 3. |
 | `blst` | 0.3.16 | BLS12-381 pairing-based signatures (consensus) | Supranational reference impl; widely deployed (Ethereum, Filecoin). Subgroup checks rely on `from_bytes` — verify it enforces prime-order subgroup, not just curve. |
 | `nova-snark` | 0.68.0 | Nova IVC recursive proofs | Active research code, upstream changes frequent. Pin and re-verify on bumps. HyperKZG transcript binding is the soundness anchor. |
 | `rocksdb` | 0.22.0 | Persistent state backend | Vendored bindings to upstream RocksDB C++. Crash-safety relies on WAL — verify atomicity of multi-CF batch writes. |
