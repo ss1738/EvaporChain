@@ -451,6 +451,7 @@ impl SocialRecoveryManager {
 
 // ── Helper ───────────────────────────────────────────────────────────
 
+#[cfg(test)]
 fn make_guardian(id: &str) -> Guardian {
     Guardian {
         id: id.to_string(),

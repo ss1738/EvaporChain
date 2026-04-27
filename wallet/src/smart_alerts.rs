@@ -382,6 +382,7 @@ impl SmartAlertEngine {
 // Helpers for tests
 // ---------------------------------------------------------------------------
 
+#[cfg(test)]
 fn make_alert(id: &str, name: &str) -> SmartAlert {
     SmartAlert {
         id: id.to_string(),
@@ -399,6 +400,7 @@ fn make_alert(id: &str, name: &str) -> SmartAlert {
     }
 }
 
+#[cfg(test)]
 fn make_context() -> AlertContext {
     AlertContext {
         prices: HashMap::new(),

@@ -20,7 +20,7 @@ use tracing::{error, info, warn};
 // ─────────────────────── Configuration ─────────────────────────────────
 
 /// Generate a deterministic object ID from source + key.
-fn object_id(source: &str, key: &str) -> String {
+fn _object_id(source: &str, key: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(source.as_bytes());
     hasher.update(b":");
@@ -91,8 +91,10 @@ struct UsgsFeature {
 struct UsgsProperties {
     mag: Option<f64>,
     place: Option<String>,
+    #[allow(dead_code)]
     time: Option<u64>,
     #[serde(rename = "type")]
+    #[allow(dead_code)]
     event_type: Option<String>,
 }
 
@@ -129,8 +131,10 @@ struct MempoolFees {
     #[serde(rename = "hourFee")]
     hour_fee: u64,
     #[serde(rename = "economyFee")]
+    #[allow(dead_code)]
     economy_fee: u64,
     #[serde(rename = "minimumFee")]
+    #[allow(dead_code)]
     minimum_fee: u64,
 }
 
@@ -151,6 +155,7 @@ struct NoaaObsProperties {
     #[serde(rename = "barometricPressure")]
     barometric_pressure: Option<NoaaMeasurement>,
     #[serde(rename = "relativeHumidity")]
+    #[allow(dead_code)]
     relative_humidity: Option<NoaaMeasurement>,
     #[serde(rename = "textDescription")]
     text_description: Option<String>,
@@ -160,6 +165,7 @@ struct NoaaObsProperties {
 struct NoaaMeasurement {
     value: Option<f64>,
     #[serde(rename = "unitCode")]
+    #[allow(dead_code)]
     unit_code: Option<String>,
 }
 
@@ -585,7 +591,7 @@ async fn main() {
     let mut oracle = Oracle::new(node_url);
 
     // Verify node is reachable
-    match oracle.client.get(&format!("{}/api/status", node_url)).send().await {
+    match oracle.client.get(format!("{}/api/status", node_url)).send().await {
         Ok(resp) => {
             if let Ok(status) = resp.json::<serde_json::Value>().await {
                 let height = status.get("block_height").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -614,7 +620,7 @@ async fn main() {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // ── Every 30s: CoinGecko, NOAA solar ──
-        if tick % 3 == 0 {
+        if tick.is_multiple_of(3) {
             oracle.poll_coingecko().await;
             tokio::time::sleep(Duration::from_millis(500)).await;
             oracle.poll_noaa_solar_wind().await;
@@ -624,7 +630,7 @@ async fn main() {
         }
 
         // ── Every 60s: Earthquakes, OpenSky, Weather ──
-        if tick % 6 == 0 {
+        if tick.is_multiple_of(6) {
             oracle.poll_usgs_earthquakes().await;
             tokio::time::sleep(Duration::from_millis(500)).await;
             oracle.poll_opensky().await;
@@ -639,7 +645,7 @@ async fn main() {
         }
 
         // Stats every 5 cycles
-        if tick % 5 == 0 && tick > 0 {
+        if tick.is_multiple_of(5) && tick > 0 {
             println!(
                 "\n\x1b[90m[Oracle Stats] submitted={} accepted={} failed={} uptime={}s\x1b[0m\n",
                 oracle.stats.total_submitted,

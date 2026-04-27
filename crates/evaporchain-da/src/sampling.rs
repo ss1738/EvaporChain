@@ -106,7 +106,7 @@ pub fn batch_verify_proofs(proofs: &[&MerkleProof], shard_hashes: &[[u8; 32]]) -
     let mut invalid_indices: Vec<usize> = Vec::new();
     let mut verified_count: usize = 0;
 
-    for (_root, indices) in &groups {
+    for indices in groups.values() {
         for &idx in indices {
             verified_count += 1;
 
@@ -114,7 +114,7 @@ pub fn batch_verify_proofs(proofs: &[&MerkleProof], shard_hashes: &[[u8; 32]]) -
             let mut current = shard_hashes[idx];
             let mut leaf_idx = proofs[idx].leaf_index;
             for sibling in &proofs[idx].siblings {
-                current = if leaf_idx % 2 == 0 {
+                current = if leaf_idx.is_multiple_of(2) {
                     DASampler::hash_pair(&current, sibling)
                 } else {
                     DASampler::hash_pair(sibling, &current)
@@ -205,7 +205,7 @@ impl DASampler {
         let mut index = proof.leaf_index;
 
         for sibling in &proof.siblings {
-            current = if index % 2 == 0 {
+            current = if index.is_multiple_of(2) {
                 Self::hash_pair(&current, sibling)
             } else {
                 Self::hash_pair(sibling, &current)
@@ -424,7 +424,7 @@ impl DASampler {
 
         while layer.len() > 1 {
             // Record sibling
-            let sibling_index = if current_index % 2 == 0 {
+            let sibling_index = if current_index.is_multiple_of(2) {
                 current_index + 1
             } else {
                 current_index - 1

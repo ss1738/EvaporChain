@@ -586,6 +586,7 @@ impl ParallelExecutor {
     /// Execute a partition's transactions sequentially against an overlay DB.
     /// Contract/script transactions are skipped here — they require mutable
     /// access to the global engines and are handled in a serial phase.
+    #[allow(clippy::too_many_arguments)]
     fn execute_partition(
         txs: &[(usize, &Transaction)],
         overlay: &mut OverlayStateDB,

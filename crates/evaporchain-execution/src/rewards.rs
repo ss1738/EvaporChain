@@ -147,7 +147,7 @@ impl RewardAccumulator {
         let mut remainder = pool.saturating_sub(distributed);
         if remainder > 0 {
             let mut sorted: Vec<&(AccountAddress, u64)> = stakers.iter().collect();
-            sorted.sort_by(|a, b| b.1.cmp(&a.1));
+            sorted.sort_by_key(|a| std::cmp::Reverse(a.1));
             for (addr, _) in sorted {
                 if remainder == 0 {
                     break;

@@ -335,6 +335,7 @@ fn rollout_hash(user_id: &str) -> u32 {
 // Helper to build a test flag
 // ---------------------------------------------------------------------------
 
+#[cfg(test)]
 fn make_flag(id: &str, status: FlagStatus2, category: FlagCategory) -> FeatureFlag {
     let now = Utc::now().to_rfc3339();
     FeatureFlag {

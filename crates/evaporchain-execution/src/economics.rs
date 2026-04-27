@@ -300,6 +300,7 @@ pub fn analyze_attack_costs(
     let dust_cost = txs_per_block * base_fee * min_tx_gas;
 
     // How many blocks of rewards to recoup the BFT attack cost
+    #[allow(clippy::manual_checked_ops)]
     let recoup_blocks = if block_reward > 0 {
         bft_cost / block_reward
     } else {

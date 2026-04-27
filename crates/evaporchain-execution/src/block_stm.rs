@@ -89,6 +89,7 @@ const MV_SHARDS: usize = 64;
 /// execution. Each Location is hashed to a shard; concurrent reads/writes to
 /// different shards never contend.
 pub(crate) struct MVMemory {
+    #[allow(clippy::type_complexity)]
     shards: Vec<RwLock<HashMap<Location, BTreeMap<u32, (u32, MVValue)>>>>,
 }
 
@@ -162,8 +163,7 @@ impl MVMemory {
         let shard = Self::shard_index(loc);
         let map = self.shards[shard].read().unwrap();
         if let Some(versions) = map.get(loc) {
-            // Find the highest key < tx_index
-            for (&writer_tx, (incarnation, mv_val)) in versions.range(..tx_index).rev() {
+            if let Some((&writer_tx, (incarnation, mv_val))) = versions.range(..tx_index).next_back() {
                 match mv_val {
                     MVValue::Value(payload) => {
                         return Ok(Some(((writer_tx, *incarnation), payload.clone())));
@@ -1040,10 +1040,10 @@ impl BlockStmExecutor {
                 let tx = parallel_txs[tx_idx];
 
                 // Signature check
-                if verify_sigs {
-                    if crate::parallel::ParallelExecutor::verify_tx_signature(true, tx, &chain_id).is_err() {
-                        return (tx_idx, Vec::new(), Vec::new(), TxExecResult::Failed { fee: 0 });
-                    }
+                if verify_sigs
+                    && crate::parallel::ParallelExecutor::verify_tx_signature(true, tx, chain_id).is_err()
+                {
+                    return (tx_idx, Vec::new(), Vec::new(), TxExecResult::Failed { fee: 0 });
                 }
 
                 let mut view = TxView::new(tx_idx as u32, 0, &mv_memory, db);
@@ -1142,13 +1142,12 @@ impl BlockStmExecutor {
                 let inc = incarnations[tx_idx as usize];
                 let tx = parallel_txs[tx_idx as usize];
 
-                if verify_sigs {
-                    if crate::parallel::ParallelExecutor::verify_tx_signature(true, tx, &chain_id)
+                if verify_sigs
+                    && crate::parallel::ParallelExecutor::verify_tx_signature(true, tx, chain_id)
                         .is_err()
-                    {
-                        results[tx_idx as usize] = Some(TxExecResult::Failed { fee: 0 });
-                        continue;
-                    }
+                {
+                    results[tx_idx as usize] = Some(TxExecResult::Failed { fee: 0 });
+                    continue;
                 }
 
                 let mut view = TxView::new(tx_idx, inc, &mv_memory, db);
@@ -1174,12 +1173,11 @@ impl BlockStmExecutor {
                         let inc = incarnations[tx_idx as usize];
                         let tx = parallel_txs[tx_idx as usize];
 
-                        if verify_sigs {
-                            if crate::parallel::ParallelExecutor::verify_tx_signature(true, tx, &chain_id)
+                        if verify_sigs
+                            && crate::parallel::ParallelExecutor::verify_tx_signature(true, tx, chain_id)
                                 .is_err()
-                            {
-                                return (tx_idx, Vec::new(), Vec::new(), TxExecResult::Failed { fee: 0 });
-                            }
+                        {
+                            return (tx_idx, Vec::new(), Vec::new(), TxExecResult::Failed { fee: 0 });
                         }
 
                         let mut view = TxView::new(tx_idx, inc, &mv_memory, db);
@@ -1213,7 +1211,7 @@ impl BlockStmExecutor {
 
         for i in 0..num_txs {
             // Check if this tx would exceed the block gas limit
-            if let Some(_) = gas_exceeded_from {
+            if gas_exceeded_from.is_some() {
                 // All remaining txs are over the limit — remove their writes
                 mv_memory.delete_writes(i, &write_locs[i as usize]);
                 txs_failed += 1;
@@ -1266,7 +1264,7 @@ impl BlockStmExecutor {
 
         mv_memory.for_each_location(|loc, versions| {
             // Find the highest tx_index with a committed value
-            if let Some((&_tx_idx, (_inc, MVValue::Value(payload)))) = versions.iter().rev().next()
+            if let Some((&_tx_idx, (_inc, MVValue::Value(payload)))) = versions.iter().next_back()
             {
                 match (loc, payload) {
                     (Location::AccountBalance(addr), ValuePayload::Balance(bal)) => {

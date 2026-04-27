@@ -308,6 +308,7 @@ impl TxReceiptStore {
 // Helper to build a receipt for tests
 // ---------------------------------------------------------------------------
 
+#[cfg(test)]
 fn make_receipt(
     tx_hash: &str,
     from: &str,

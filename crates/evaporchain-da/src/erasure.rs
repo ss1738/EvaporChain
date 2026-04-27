@@ -92,7 +92,7 @@ impl ErasureEncoder {
             return Err(ErasureError::EmptyData);
         }
 
-        let shard_size = (data.len() + self.config.data_shards - 1) / self.config.data_shards;
+        let shard_size = data.len().div_ceil(self.config.data_shards);
         let padded_len = shard_size * self.config.data_shards;
 
         // Create padded data
@@ -154,10 +154,8 @@ impl ErasureEncoder {
 
         // Concatenate data shards
         let mut result = Vec::new();
-        for shard in shard_refs.iter().take(self.config.data_shards) {
-            if let Some(data) = shard {
-                result.extend_from_slice(data);
-            }
+        for shard in shard_refs.iter().take(self.config.data_shards).flatten() {
+            result.extend_from_slice(shard);
         }
 
         Ok(result)

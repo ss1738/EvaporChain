@@ -144,9 +144,9 @@ pub fn epochs_until_zero(current_energy: u64, half_life: u64) -> Option<u64> {
 // ──────────────────────────── Internal ─────────────────────────────────
 
 fn build_portfolio(detail: AddressDetailResponse) -> Portfolio {
-    let objects: Vec<OwnedObject> = detail.objects.iter().map(|o| map_object(o)).collect();
-    let nfts: Vec<OwnedNft> = detail.nfts.iter().map(|n| map_nft(n)).collect();
-    let tokens: Vec<TokenBalance> = detail.tokens.iter().map(|t| map_token(t)).collect();
+    let objects: Vec<OwnedObject> = detail.objects.iter().map(map_object).collect();
+    let nfts: Vec<OwnedNft> = detail.nfts.iter().map(map_nft).collect();
+    let tokens: Vec<TokenBalance> = detail.tokens.iter().map(map_token).collect();
 
     let total_energy_at_risk: u64 = objects.iter().map(|o| o.current_energy).sum::<u64>()
         + nfts.iter().map(|n| n.current_energy).sum::<u64>();

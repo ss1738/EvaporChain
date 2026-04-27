@@ -1465,7 +1465,7 @@ impl ExecutionEngine for SimpleExecutor {
             ra.process_block_rewards(db, &producer_addr, block.epoch, total_fees);
 
             // Distribute staker rewards every 100 blocks
-            if block.number % 100 == 0 && ra.pending_staker_rewards > 0 {
+            if block.number.is_multiple_of(100) && ra.pending_staker_rewards > 0 {
                 let stakers: Vec<([u8; 32], u64)> = db
                     .all_stakes()
                     .iter()
@@ -1507,8 +1507,7 @@ impl ExecutionEngine for SimpleExecutor {
         );
 
         let contract_events: Vec<BlockContractEvent> = self.pending_events.drain(..)
-            .enumerate()
-            .map(|(_, (contract_id, event))| BlockContractEvent {
+            .map(|(contract_id, event)| BlockContractEvent {
                 contract_id,
                 tx_index: 0,
                 event,

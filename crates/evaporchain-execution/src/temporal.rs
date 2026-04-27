@@ -158,15 +158,11 @@ impl DeferredQueue {
         let mut expiry = u64::MAX;
         for guard in &tx.guards {
             match guard {
-                TemporalGuard::AfterEpoch(e) => {
-                    if *e > earliest {
-                        earliest = *e;
-                    }
+                TemporalGuard::AfterEpoch(e) if *e > earliest => {
+                    earliest = *e;
                 }
-                TemporalGuard::BeforeEpoch(e) => {
-                    if *e < expiry {
-                        expiry = *e;
-                    }
+                TemporalGuard::BeforeEpoch(e) if *e < expiry => {
+                    expiry = *e;
                 }
                 _ => {}
             }
@@ -365,6 +361,7 @@ impl DecayWatcherEngine {
     }
 
     /// Register a new energy watcher. Returns the watcher ID.
+    #[allow(clippy::too_many_arguments)]
     pub fn register(
         &mut self,
         object_id: ObjectId,

@@ -286,12 +286,11 @@ impl NamespaceMerkleTree {
                 let right = &proof.siblings[1];
                 // The left neighbor's max namespace must be less than queried,
                 // and right neighbor's min must be greater.
-                if !left.is_empty() && !right.is_empty() {
-                    if left.max_namespace >= proof.namespace
-                        || right.min_namespace <= proof.namespace
-                    {
-                        return false;
-                    }
+                if !left.is_empty() && !right.is_empty()
+                    && (left.max_namespace >= proof.namespace
+                        || right.min_namespace <= proof.namespace)
+                {
+                    return false;
                 }
             }
 
@@ -360,7 +359,7 @@ impl NamespaceMerkleTree {
             }
 
             cur_s /= 2;
-            cur_e = (cur_e + 1) / 2;
+            cur_e = cur_e.div_ceil(2);
         }
 
         siblings

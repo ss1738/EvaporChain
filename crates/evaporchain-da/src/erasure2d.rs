@@ -58,7 +58,7 @@ impl ErasureEncoder2D {
         }
 
         // Determine k: smallest k such that k*k*cell_size >= data.len()
-        let total_cells_needed = (data.len() + self.cell_size - 1) / self.cell_size;
+        let total_cells_needed = data.len().div_ceil(self.cell_size);
         let k = {
             let mut dim = 1usize;
             while dim * dim < total_cells_needed {
@@ -91,17 +91,15 @@ impl ErasureEncoder2D {
             parity_shards: k,
         })?;
 
-        for r in 0..k {
-            let row_data: Vec<u8> = grid[r].iter().flat_map(|c| c.iter().copied()).collect();
+        for row in grid.iter_mut().take(k) {
+            let row_data: Vec<u8> = row.iter().flat_map(|c| c.iter().copied()).collect();
             let encoded = row_rs.encode(&row_data)?;
-            // The parity shards are indices k..2k
             for p in 0..k {
                 let shard = &encoded.shards[k + p];
-                // Shard data may be larger than cell_size due to padding; take cell_size bytes
                 let mut cell = vec![0u8; self.cell_size];
                 let copy_len = cell.len().min(shard.data.len());
                 cell[..copy_len].copy_from_slice(&shard.data[..copy_len]);
-                grid[r].push(cell);
+                row.push(cell);
             }
         }
 
@@ -120,8 +118,8 @@ impl ErasureEncoder2D {
             parity_shards: k,
         })?;
 
+        #[allow(clippy::needless_range_loop)]
         for c in 0..ext {
-            // Gather column data (rows 0..k)
             let col_data: Vec<u8> = (0..k)
                 .flat_map(|r| grid[r][c].iter().copied())
                 .collect();
@@ -136,12 +134,7 @@ impl ErasureEncoder2D {
         }
 
         // Flatten into cells vector
-        let mut cells = Vec::with_capacity(ext * ext);
-        for r in 0..ext {
-            for c in 0..ext {
-                cells.push(grid[r][c].clone());
-            }
-        }
+        let cells: Vec<Vec<u8>> = grid.iter().flatten().cloned().collect();
 
         Ok(Matrix2D {
             original_dim: k,
@@ -309,6 +302,7 @@ pub fn reconstruct_column(
 ///
 /// # Returns
 /// A fully reconstructed Matrix2D, or an error if insufficient cells.
+#[allow(clippy::needless_range_loop)]
 pub fn reconstruct_from_samples(
     dim: usize,
     cell_size: usize,

@@ -233,6 +233,7 @@ impl PoHAStore {
     }
 
     /// Register a new DA certificate as a PoHA certificate.
+    #[allow(clippy::too_many_arguments)]
     pub fn register(
         &mut self,
         block_number: u64,

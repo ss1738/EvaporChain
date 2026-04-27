@@ -141,6 +141,12 @@ pub struct BlockDA2D {
     cell_size: usize,
 }
 
+impl Default for BlockDA2D {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BlockDA2D {
     pub fn new() -> Self {
         Self { cell_size: 64 }

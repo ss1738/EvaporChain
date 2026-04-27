@@ -4541,7 +4541,7 @@ async fn cmd_energy(
             if once {
                 let rpc2 = RpcClient::new(mgr.rpc().base_url())?;
                 let actions = refresher.execute_cycle(&rpc2, &signer, &addr_hex).await
-                    .map_err(|e| -> Box<dyn std::error::Error> { Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())) })?;
+                    .map_err(|e| -> Box<dyn std::error::Error> { Box::new(std::io::Error::other(e.to_string())) })?;
                 if actions.is_empty() {
                     println!("{} All assets above {}% energy", "OK".green().bold(), threshold);
                 } else {
@@ -4582,7 +4582,7 @@ async fn cmd_energy(
                         }
                     })
                     .await
-                    .map_err(|e| -> Box<dyn std::error::Error> { Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())) })?;
+                    .map_err(|e| -> Box<dyn std::error::Error> { Box::new(std::io::Error::other(e.to_string())) })?;
 
                 println!("\n{}", "Auto-Refresh Stopped".bold().yellow());
                 println!("  Reason:    {}", summary.shutdown_reason);
@@ -4852,7 +4852,7 @@ fn cmd_seed(
             let sk = keypair.secret_key();
 
             let mut keystore = load_or_create_keystore(keystore_path);
-            let addr = keystore.import_key(&name, &password, &pk, &sk)?;
+            let addr = keystore.import_key(&name, &password, pk, &sk)?;
             keystore.save(keystore_path)?;
 
             println!(
@@ -5963,10 +5963,7 @@ fn dirs_home() -> Option<String> {
 }
 
 fn load_or_create_keystore(path: &str) -> KeyStore {
-    match KeyStore::load(path) {
-        Ok(ks) => ks,
-        Err(_) => KeyStore::new(),
-    }
+    KeyStore::load(path).unwrap_or_default()
 }
 
 fn prompt_password(prompt: &str) -> Result<String, Box<dyn std::error::Error>> {
@@ -5985,17 +5982,14 @@ async fn await_confirmation(pipeline: &TxPipeline, tx_hash: &str) {
     print!("  Waiting for confirmation");
     for i in 0..30 {
         print!(".");
-        match pipeline.confirm_tx(tx_hash, 1, 0).await {
-            Ok(Some(tx)) => {
-                println!();
-                println!(
-                    "  {} Confirmed in block #{}",
-                    "CONFIRMED".green().bold(),
-                    tx.block_number
-                );
-                return;
-            }
-            _ => {}
+        if let Ok(Some(tx)) = pipeline.confirm_tx(tx_hash, 1, 0).await {
+            println!();
+            println!(
+                "  {} Confirmed in block #{}",
+                "CONFIRMED".green().bold(),
+                tx.block_number
+            );
+            return;
         }
         if i < 29 {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -6013,12 +6007,9 @@ async fn await_confirmation(pipeline: &TxPipeline, tx_hash: &str) {
 /// Show a gas estimate for a transfer (non-fatal if node unreachable).
 async fn show_gas_estimate(rpc_url: &str, label: &str) {
     let Ok(rpc) = RpcClient::new(rpc_url) else { return };
-    match GasEstimator::from_rpc(&rpc).await {
-        Ok(est) => {
-            let fee = est.estimate_transfer();
-            println!("  {} {}: ~{} units (base_fee={})", "Gas".yellow(), label, fee.total_fee, fee.base_fee);
-        }
-        Err(_) => {}
+    if let Ok(est) = GasEstimator::from_rpc(&rpc).await {
+        let fee = est.estimate_transfer();
+        println!("  {} {}: ~{} units (base_fee={})", "Gas".yellow(), label, fee.total_fee, fee.base_fee);
     }
 }
 

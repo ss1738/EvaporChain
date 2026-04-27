@@ -230,7 +230,7 @@ fn merkle_proof(leaves: &[[u8; 32]], index: usize) -> ([u8; 32], Vec<[u8; 32]>) 
     let mut siblings = Vec::new();
     let mut current_index = index;
     while layer.len() > 1 {
-        let sibling_index = if current_index % 2 == 0 {
+        let sibling_index = if current_index.is_multiple_of(2) {
             current_index + 1
         } else {
             current_index - 1
@@ -253,7 +253,7 @@ fn merkle_proof(leaves: &[[u8; 32]], index: usize) -> ([u8; 32], Vec<[u8; 32]>) 
 fn verify_merkle_path(leaf: &[u8; 32], mut index: usize, siblings: &[[u8; 32]]) -> [u8; 32] {
     let mut current = *leaf;
     for sibling in siblings {
-        current = if index % 2 == 0 {
+        current = if index.is_multiple_of(2) {
             hash_pair(&current, sibling)
         } else {
             hash_pair(sibling, &current)
