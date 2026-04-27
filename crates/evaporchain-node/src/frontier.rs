@@ -13,7 +13,7 @@ use evaporchain_consensus::anchor::{
     ObjectSnapshot,
 };
 use evaporchain_crypto::energy_verkle::{EnergyVerkleTrie, TrieHealth};
-use evaporchain_da::poha::{CertTemperature, PoHACertificate, PoHAStore, TemperatureDistribution};
+use evaporchain_da::poha::PoHAStore;
 use evaporchain_state::db::StateDB;
 
 /// Configuration for frontier primitives.

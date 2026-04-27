@@ -4,7 +4,7 @@
 //! When quorum is reached, finalized values are applied to on-chain oracle state
 //! and included in the block's oracle state root.
 
-use evaporchain_oracle::consensus::{FinalizedOracleValue, OracleConsensusRound, OracleVote, make_vote};
+use evaporchain_oracle::consensus::{FinalizedOracleValue, OracleConsensusRound, OracleVote};
 use evaporchain_oracle::state::{OracleInclusionProof, OracleState};
 use evaporchain_oracle::presets;
 use std::collections::HashMap;
