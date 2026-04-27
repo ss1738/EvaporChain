@@ -125,8 +125,6 @@ impl GasEstimator {
             Transaction::UpgradeContract(tx) => {
                 100_000 + 200 * tx.new_bytecode.len() as u64
             }
-            Transaction::Delegate(_) => 40_000,
-            Transaction::Undelegate(_) => 40_000,
         }
     }
 

@@ -178,14 +178,6 @@ fn set_signature(tx: &mut Transaction, sig: Vec<u8>, pk: Vec<u8>) {
             u.signature = Some(sig);
             u.public_key = Some(pk);
         }
-        Transaction::Delegate(d) => {
-            d.signature = Some(sig);
-            d.public_key = Some(pk);
-        }
-        Transaction::Undelegate(u) => {
-            u.signature = Some(sig);
-            u.public_key = Some(pk);
-        }
     }
 }
 

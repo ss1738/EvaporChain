@@ -626,16 +626,6 @@ fn execute_tx(
                 "upgrade txs execute in serial phase".into(),
             )))
         }
-        Transaction::Delegate(_) => {
-            Err(TxViewError::ExecutionError(ExecutionError::ContractError(
-                "delegation txs execute in serial phase".into(),
-            )))
-        }
-        Transaction::Undelegate(_) => {
-            Err(TxViewError::ExecutionError(ExecutionError::ContractError(
-                "delegation txs execute in serial phase".into(),
-            )))
-        }
     };
 
     match result {
@@ -695,8 +685,6 @@ fn estimate_gas(tx: &Transaction) -> u64 {
         Transaction::MultiSig(_) => GAS_VALIDATOR_CLAIM_STAKE,
         Transaction::UserOp(tx) => crate::GAS_USER_OP.saturating_add(tx.call_data.len() as u64 * 16),
         Transaction::UpgradeContract(tx) => crate::GAS_UPGRADE_CONTRACT.saturating_add(tx.new_bytecode.len() as u64 * 200),
-        Transaction::Delegate(_) => crate::GAS_DELEGATE,
-        Transaction::Undelegate(_) => crate::GAS_UNDELEGATE,
     }
 }
 
@@ -1482,29 +1470,13 @@ impl ExecutionEngine for BlockStmExecutor {
                                     } else {
                                         vec![]
                                     };
-                                    match self.contract_engine.deploy(
-                                        tmpl, args, rules, deploy.deployer,
-                                        deploy.energy, deploy.half_life, block.epoch,
-                                    ) {
-                                        Ok(_) => {
-                                            // Charge storage_bytes to the
-                                            // deployer. Mirrors
-                                            // execute_deploy_contract in lib.rs
-                                            // (closes audit gap 2C — Block-STM
-                                            // serial fallback path was missing
-                                            // the storage rent credit).
-                                            let acct = db.get_or_create_account(
-                                                &deploy.deployer,
-                                            );
-                                            acct.storage_bytes = acct
-                                                .storage_bytes
-                                                .saturating_add(deploy.init_args.len() as u64);
-                                            Ok(())
-                                        }
-                                        Err(e) => Err(ExecutionError::ContractError(
-                                            e.to_string(),
-                                        )),
-                                    }
+                                    self.contract_engine
+                                        .deploy(
+                                            tmpl, args, rules, deploy.deployer,
+                                            deploy.energy, deploy.half_life, block.epoch,
+                                        )
+                                        .map(|_| ())
+                                        .map_err(|e| ExecutionError::ContractError(e.to_string()))
                                 }
                                 Err(e) => Err(ExecutionError::ContractError(format!(
                                     "invalid init_args: {e}"
@@ -1532,21 +1504,14 @@ impl ExecutionEngine for BlockStmExecutor {
                         r
                     }
                 }
-                Transaction::DeployScript(deploy) => match self.script_engine.deploy(
-                    &deploy.source_code, deploy.deployer, deploy.energy,
-                    deploy.half_life, block.epoch,
-                ) {
-                    Ok(_) => {
-                        // Charge storage_bytes (mirrors execute_deploy_script,
-                        // closes audit gap 2C — Block-STM serial fallback).
-                        let acct = db.get_or_create_account(&deploy.deployer);
-                        acct.storage_bytes = acct
-                            .storage_bytes
-                            .saturating_add(deploy.source_code.len() as u64);
-                        Ok(())
-                    }
-                    Err(e) => Err(ExecutionError::ScriptError(e.to_string())),
-                },
+                Transaction::DeployScript(deploy) => self
+                    .script_engine
+                    .deploy(
+                        &deploy.source_code, deploy.deployer, deploy.energy,
+                        deploy.half_life, block.epoch,
+                    )
+                    .map(|_| ())
+                    .map_err(|e| ExecutionError::ScriptError(e.to_string())),
                 Transaction::CallScript(call) => {
                     if serial_call_depth >= crate::MAX_CALL_DEPTH {
                         Err(ExecutionError::CallDepthExceeded(crate::MAX_CALL_DEPTH))
@@ -1672,10 +1637,8 @@ impl ExecutionEngine for BlockStmExecutor {
 
         // ── Phase 4: Evaporation + contract/script ticks ──
         let evap_result = self.evaporation_engine.process_epoch_with_mmr(db, block.epoch, &mut self.mmr);
-        let contract_tick_result = self.contract_engine.tick(block.epoch);
-        crate::credit_back_evaporated_contracts(db, &self.contract_engine, &contract_tick_result);
-        let script_tick_result = self.script_engine.tick(block.epoch);
-        crate::credit_back_evaporated_scripts(db, &self.script_engine, &script_tick_result);
+        self.contract_engine.tick(block.epoch);
+        self.script_engine.tick(block.epoch);
 
         let state_root = db.compute_state_root();
 
