@@ -225,7 +225,7 @@ impl CommandPalette {
 
     pub fn most_used(&self, n: usize) -> Vec<&PaletteCommand> {
         let mut cmds: Vec<&PaletteCommand> = self.commands.values().collect();
-        cmds.sort_by(|a, b| b.use_count.cmp(&a.use_count));
+        cmds.sort_by_key(|a| std::cmp::Reverse(a.use_count));
         cmds.into_iter().take(n).collect()
     }
 

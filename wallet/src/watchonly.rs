@@ -165,11 +165,7 @@ impl WatchedAccount {
 
         // Check if an alert should fire
         if self.alerts_enabled && self.alert_threshold > 0 {
-            let diff = if new_balance >= old {
-                new_balance - old
-            } else {
-                old - new_balance
-            };
+            let diff = new_balance.abs_diff(old);
             if diff >= self.alert_threshold {
                 let msg = format!(
                     "Balance changed from {} to {} (delta: {})",

@@ -46,7 +46,7 @@ pub enum SpendingError {
 // ──────────────────────────── Policy ─────────────────────────────────────
 
 /// Enforcement mode for spending policies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EnforcementMode {
     /// Block transactions that violate policy.
@@ -54,13 +54,8 @@ pub enum EnforcementMode {
     /// Warn but allow transactions.
     Warn,
     /// Disabled — no checks.
+    #[default]
     Disabled,
-}
-
-impl Default for EnforcementMode {
-    fn default() -> Self {
-        Self::Disabled
-    }
 }
 
 /// Spending policy configuration.

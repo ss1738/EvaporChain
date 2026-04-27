@@ -573,7 +573,7 @@ impl RpcClient {
         if let Some(ref limiter) = self.rate_limiter {
             limiter.acquire().await;
         }
-        let resp = self.client.get(&self.url(path)).send().await?;
+        let resp = self.client.get(self.url(path)).send().await?;
         let status = resp.status().as_u16();
         if !resp.status().is_success() {
             let body = resp.text().await.unwrap_or_default();
@@ -595,7 +595,7 @@ impl RpcClient {
         if let Some(ref limiter) = self.rate_limiter {
             limiter.acquire().await;
         }
-        let mut req = self.client.post(&self.url(path)).json(body);
+        let mut req = self.client.post(self.url(path)).json(body);
         if let Some(ref token) = self.auth_token {
             req = req.header("Authorization", format!("Bearer {}", token));
         }

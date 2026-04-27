@@ -48,17 +48,12 @@ pub enum KeyStatus2 {
     Wiped,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum EnclaveStatus {
+    #[default]
     Open,
     Sealed,
     Compromised,
-}
-
-impl Default for EnclaveStatus {
-    fn default() -> Self {
-        EnclaveStatus::Open
-    }
 }
 
 // ---------------------------------------------------------------------------

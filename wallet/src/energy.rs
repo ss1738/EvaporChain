@@ -146,7 +146,7 @@ impl EnergyMonitor {
         }
 
         // Sort by severity (Critical first)
-        alerts.sort_by(|a, b| b.severity.cmp(&a.severity));
+        alerts.sort_by_key(|a| std::cmp::Reverse(a.severity));
         alerts
     }
 

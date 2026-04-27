@@ -228,25 +228,25 @@ impl WsSubscriber {
                     val.parse::<f64>()
                         .ok()
                         .zip(f.value.parse::<f64>().ok())
-                        .map_or(false, |(v, t)| v > t)
+                        .is_some_and(|(v, t)| v > t)
                 }
                 FilterOp::Lt => {
                     val.parse::<f64>()
                         .ok()
                         .zip(f.value.parse::<f64>().ok())
-                        .map_or(false, |(v, t)| v < t)
+                        .is_some_and(|(v, t)| v < t)
                 }
                 FilterOp::Gte => {
                     val.parse::<f64>()
                         .ok()
                         .zip(f.value.parse::<f64>().ok())
-                        .map_or(false, |(v, t)| v >= t)
+                        .is_some_and(|(v, t)| v >= t)
                 }
                 FilterOp::Lte => {
                     val.parse::<f64>()
                         .ok()
                         .zip(f.value.parse::<f64>().ok())
-                        .map_or(false, |(v, t)| v <= t)
+                        .is_some_and(|(v, t)| v <= t)
                 }
             }
         })

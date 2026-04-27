@@ -295,11 +295,7 @@ impl CrossChainManager {
         if expected == 0 {
             return 0;
         }
-        let diff = if actual >= expected {
-            actual - expected
-        } else {
-            expected - actual
-        };
+        let diff = actual.abs_diff(expected);
         ((diff as f64 / expected as f64) * 10_000.0).round() as u32
     }
 

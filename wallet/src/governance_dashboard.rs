@@ -324,7 +324,7 @@ impl GovernanceDashboard {
             .map(|addr| self.voting_power(addr))
             .collect();
 
-        breakdowns.sort_by(|a, b| b.total_power.cmp(&a.total_power));
+        breakdowns.sort_by_key(|a| std::cmp::Reverse(a.total_power));
         breakdowns.truncate(n);
         breakdowns
     }

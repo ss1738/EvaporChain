@@ -408,14 +408,10 @@ impl KeyRotationManager {
         // First, walk backwards to find the root
         let mut ids_back = Vec::new();
         let mut visit = key_id.to_string();
-        loop {
-            if let Some(key) = self.keys.get(&visit) {
-                ids_back.push(visit.clone());
-                if let Some(ref pred) = key.predecessor_id {
-                    visit = pred.clone();
-                } else {
-                    break;
-                }
+        while let Some(key) = self.keys.get(&visit) {
+            ids_back.push(visit.clone());
+            if let Some(ref pred) = key.predecessor_id {
+                visit = pred.clone();
             } else {
                 break;
             }

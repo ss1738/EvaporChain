@@ -24,31 +24,21 @@ pub enum FeatureFlagError {
 // Enums
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub enum FlagStatus2 {
     Enabled,
+    #[default]
     Disabled,
     Rollout(u8),
 }
 
-impl Default for FlagStatus2 {
-    fn default() -> Self {
-        Self::Disabled
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub enum FlagCategory {
+    #[default]
     Core,
     Experimental,
     Beta,
     Deprecated,
-}
-
-impl Default for FlagCategory {
-    fn default() -> Self {
-        Self::Core
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -276,7 +266,7 @@ impl FeatureFlagManager {
 
     pub fn recent_evaluations(&self, n: usize) -> Vec<&FlagEvaluation> {
         let len = self.evaluations.len();
-        let start = if len > n { len - n } else { 0 };
+        let start = len.saturating_sub(n);
         self.evaluations[start..].iter().collect()
     }
 

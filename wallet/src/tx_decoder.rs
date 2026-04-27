@@ -254,6 +254,7 @@ impl TxDecoder {
     }
 
     /// Decode a transaction from its selector and raw parameters.
+    #[allow(clippy::too_many_arguments)]
     pub fn decode(
         &mut self,
         tx_hash: &str,

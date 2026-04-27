@@ -27,8 +27,9 @@ pub enum StateSyncError {
 // ──────────────────────────── Enums ──────────────────────────────────
 
 /// Current synchronization status of an account.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub enum SyncStatus {
+    #[default]
     Synced,
     Syncing,
     Behind,
@@ -36,24 +37,13 @@ pub enum SyncStatus {
     Offline,
 }
 
-impl Default for SyncStatus {
-    fn default() -> Self {
-        Self::Synced
-    }
-}
-
 /// Strategy used when synchronizing blocks.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub enum SyncMode {
+    #[default]
     Full,
     Light,
     Checkpoint,
-}
-
-impl Default for SyncMode {
-    fn default() -> Self {
-        Self::Full
-    }
 }
 
 /// How a state conflict should be resolved.

@@ -396,8 +396,7 @@ fn format_log_line(ctx: &HookContext, format: Option<&str>) -> String {
                 .replace("{timestamp}", &ctx.timestamp)
         }
         None => {
-            let json = serde_json::to_string(ctx).unwrap_or_else(|_| "{}".to_string());
-            json
+            serde_json::to_string(ctx).unwrap_or_else(|_| "{}".to_string())
         }
     }
 }

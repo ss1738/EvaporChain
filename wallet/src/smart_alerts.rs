@@ -185,13 +185,13 @@ impl SmartAlertEngine {
     fn evaluate_single(condition: &AlertCondition, ctx: &AlertContext) -> bool {
         match condition {
             AlertCondition::PriceAbove { token, threshold } => {
-                ctx.prices.get(token).map_or(false, |p| p > threshold)
+                ctx.prices.get(token).is_some_and(|p| p > threshold)
             }
             AlertCondition::PriceBelow { token, threshold } => {
-                ctx.prices.get(token).map_or(false, |p| p < threshold)
+                ctx.prices.get(token).is_some_and(|p| p < threshold)
             }
             AlertCondition::VolumeSpike { token, multiplier } => {
-                ctx.volumes.get(token).map_or(false, |v| v >= multiplier)
+                ctx.volumes.get(token).is_some_and(|v| v >= multiplier)
             }
             AlertCondition::WhaleMovement { min_amount } => ctx
                 .recent_transfers
@@ -200,10 +200,10 @@ impl SmartAlertEngine {
             AlertCondition::GasAbove { threshold } => ctx.gas_price > *threshold,
             AlertCondition::GasBelow { threshold } => ctx.gas_price < *threshold,
             AlertCondition::BalanceBelow { token, threshold } => {
-                ctx.balances.get(token).map_or(false, |b| b < threshold)
+                ctx.balances.get(token).is_some_and(|b| b < threshold)
             }
             AlertCondition::BalanceAbove { token, threshold } => {
-                ctx.balances.get(token).map_or(false, |b| b > threshold)
+                ctx.balances.get(token).is_some_and(|b| b > threshold)
             }
             AlertCondition::ContractEvent {
                 contract,
@@ -287,10 +287,8 @@ impl SmartAlertEngine {
         let mut triggered = Vec::new();
         for id in active_ids {
             let matched = self.evaluate_conditions(&id, context).unwrap_or(false);
-            if matched {
-                if self.trigger_alert(&id).is_ok() {
-                    triggered.push(id);
-                }
+            if matched && self.trigger_alert(&id).is_ok() {
+                triggered.push(id);
             }
         }
         triggered

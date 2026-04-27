@@ -28,22 +28,18 @@ pub enum TaskQueueError {
 // Enums
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TaskPriority2 {
     Critical,
     High,
+    #[default]
     Normal,
     Low,
 }
 
-impl Default for TaskPriority2 {
-    fn default() -> Self {
-        Self::Normal
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TaskStatus3 {
+    #[default]
     Queued,
     Running,
     Completed,
@@ -52,27 +48,16 @@ pub enum TaskStatus3 {
     Cancelled,
 }
 
-impl Default for TaskStatus3 {
-    fn default() -> Self {
-        Self::Queued
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TaskType2 {
     TxSubmit,
     BalanceRefresh,
     EnergyCheck,
     Backup,
+    #[default]
     Sync,
     Notification,
     Custom(String),
-}
-
-impl Default for TaskType2 {
-    fn default() -> Self {
-        Self::Sync
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -289,6 +274,7 @@ impl TaskQueue {
             .count()
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     pub fn stats(&self) -> QueueStats2 {
         let mut s = QueueStats2::default();
         s.total_tasks = self.tasks.len() + self.dead_letter.len();

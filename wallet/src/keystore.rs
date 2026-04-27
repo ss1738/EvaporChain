@@ -303,7 +303,7 @@ impl KeyStore {
             .entries
             .iter()
             .find(|e| e.address == addr_hex)
-            .ok_or_else(|| KeyStoreError::NotFound(addr_hex))?;
+            .ok_or(KeyStoreError::NotFound(addr_hex))?;
 
         decrypt_entry(entry, password)
     }

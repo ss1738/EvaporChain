@@ -388,7 +388,7 @@ impl ComplianceManager {
             .ok_or_else(|| ComplianceError::ReportNotFound(report_id.to_string()))?;
         let jkey = report.jurisdiction.key();
         let rule = self.rules.get(&jkey)
-            .ok_or_else(|| ComplianceError::NoJurisdictionRule(jkey))?;
+            .ok_or(ComplianceError::NoJurisdictionRule(jkey))?;
 
         let net_gains = report.total_gains - report.total_losses;
         if net_gains <= 0.0 {

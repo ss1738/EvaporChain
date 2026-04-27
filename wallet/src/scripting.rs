@@ -101,17 +101,17 @@ impl Condition {
         match self {
             Condition::Always => true,
             Condition::Equals { var, value } => {
-                vars.get(var).map_or(false, |v| v == value)
+                vars.get(var).is_some_and(|v| v == value)
             }
             Condition::LessThan { var, value } => {
                 vars.get(var)
                     .and_then(|v| v.parse::<u64>().ok())
-                    .map_or(false, |v| v < *value)
+                    .is_some_and(|v| v < *value)
             }
             Condition::GreaterThan { var, value } => {
                 vars.get(var)
                     .and_then(|v| v.parse::<u64>().ok())
-                    .map_or(false, |v| v > *value)
+                    .is_some_and(|v| v > *value)
             }
             Condition::Exists { var } => vars.contains_key(var),
             Condition::Not(inner) => !inner.evaluate(vars),

@@ -279,7 +279,7 @@ impl HelpSystem {
 
     pub fn popular_topics(&self, n: usize) -> Vec<&HelpTopic> {
         let mut topics: Vec<&HelpTopic> = self.topics.values().collect();
-        topics.sort_by(|a, b| b.views.cmp(&a.views));
+        topics.sort_by_key(|a| std::cmp::Reverse(a.views));
         topics.truncate(n);
         topics
     }

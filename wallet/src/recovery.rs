@@ -277,7 +277,7 @@ impl SocialRecovery {
             .requests
             .iter_mut()
             .find(|r| r.id == request_id)
-            .ok_or_else(|| RecoveryError::NotActive)?;
+            .ok_or(RecoveryError::NotActive)?;
 
         if req.status != RecoveryStatus::Pending {
             return Err(RecoveryError::NotActive);
@@ -315,7 +315,7 @@ impl SocialRecovery {
             .requests
             .iter_mut()
             .find(|r| r.id == request_id)
-            .ok_or_else(|| RecoveryError::NotActive)?;
+            .ok_or(RecoveryError::NotActive)?;
 
         if !req.rejections.contains(&guardian_address.to_string()) {
             req.rejections.push(guardian_address.to_string());
@@ -336,7 +336,7 @@ impl SocialRecovery {
             .requests
             .iter_mut()
             .find(|r| r.id == request_id)
-            .ok_or_else(|| RecoveryError::NotActive)?;
+            .ok_or(RecoveryError::NotActive)?;
 
         if req.status != RecoveryStatus::Approved {
             return Err(RecoveryError::NotEnoughApprovals(

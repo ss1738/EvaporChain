@@ -380,7 +380,7 @@ impl ReputationStore {
         self.records.iter()
             .filter(|r| {
                 r.address.to_lowercase().contains(&q)
-                    || r.label.as_ref().map_or(false, |l| l.to_lowercase().contains(&q))
+                    || r.label.as_ref().is_some_and(|l| l.to_lowercase().contains(&q))
             })
             .collect()
     }

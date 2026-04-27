@@ -293,6 +293,7 @@ impl PermissionManager {
             .collect()
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     pub fn stats(&self) -> PermissionStats3 {
         let mut s = PermissionStats3::default();
         s.total_permissions = self.permissions.len();

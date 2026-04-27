@@ -159,7 +159,7 @@ fn encrypt_memo(plaintext: &str, key: &[u8; 32]) -> Result<String, MemoError> {
         .map_err(|e| MemoError::EncryptionFailed(e.to_string()))?;
 
     // Encode as nonce_hex:ciphertext_hex
-    Ok(format!("{}:{}", hex::encode(&nonce), hex::encode(&ciphertext)))
+    Ok(format!("{}:{}", hex::encode(nonce), hex::encode(&ciphertext)))
 }
 
 fn decrypt_memo(encrypted: &str, key: &[u8; 32]) -> Result<String, MemoError> {

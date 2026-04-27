@@ -29,8 +29,9 @@ pub enum ContractVerifierError {
 // Enums
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum VerificationStatus {
+    #[default]
     Unverified,
     Verified,
     Failed,
@@ -38,24 +39,13 @@ pub enum VerificationStatus {
     Outdated,
 }
 
-impl Default for VerificationStatus {
-    fn default() -> Self {
-        Self::Unverified
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum CompilerVersion {
+    #[default]
     V1,
     V2,
     V3,
     Custom(String),
-}
-
-impl Default for CompilerVersion {
-    fn default() -> Self {
-        Self::V1
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -311,7 +301,7 @@ impl ContractVerifier {
             latest.insert(&report.contract_address, report);
         }
 
-        for (_, report) in &latest {
+        for report in latest.values() {
             match report.status {
                 VerificationStatus::Verified => {
                     verified_addrs.insert(&report.contract_address);

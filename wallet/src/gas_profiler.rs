@@ -96,7 +96,7 @@ impl GasProfile {
         let mut vals: Vec<u64> = self.samples.iter().map(|s| s.gas_used).collect();
         vals.sort_unstable();
         let mid = vals.len() / 2;
-        if vals.len() % 2 == 0 {
+        if vals.len().is_multiple_of(2) {
             (vals[mid - 1] + vals[mid]) / 2
         } else {
             vals[mid]

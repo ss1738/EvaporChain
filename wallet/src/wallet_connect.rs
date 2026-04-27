@@ -299,21 +299,11 @@ pub struct ConnectStats {
 // ──────────────────────────── WalletConnectManager ──────────────────────
 
 /// Manages WalletConnect sessions and signing requests.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WalletConnectManager {
     pub sessions: HashMap<String, Session>,
     pub requests: Vec<SigningRequest>,
     pub auto_approve_permissions: Vec<Permission>,
-}
-
-impl Default for WalletConnectManager {
-    fn default() -> Self {
-        Self {
-            sessions: HashMap::new(),
-            requests: Vec::new(),
-            auto_approve_permissions: Vec::new(),
-        }
-    }
 }
 
 impl WalletConnectManager {

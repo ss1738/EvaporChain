@@ -24,18 +24,13 @@ pub enum PnlError {
 // Enums
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub enum CostBasisMethod {
+    #[default]
     Fifo,
     Lifo,
     Hifo,
     AvgCost,
-}
-
-impl Default for CostBasisMethod {
-    fn default() -> Self {
-        CostBasisMethod::Fifo
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

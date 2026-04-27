@@ -282,7 +282,7 @@ impl WhaleTracker {
 
     pub fn top_whales(&self, n: usize) -> Vec<&WhaleAccount> {
         let mut whales: Vec<&WhaleAccount> = self.whales.values().collect();
-        whales.sort_by(|a, b| b.balance.cmp(&a.balance));
+        whales.sort_by_key(|a| std::cmp::Reverse(a.balance));
         whales.truncate(n);
         whales
     }

@@ -60,19 +60,14 @@ pub enum RefreshStrategy {
     CostOptimal,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ObjectState {
+    #[default]
     Healthy,
     Decaying,
     Grace,
     Ghost,
     Evaporated,
-}
-
-impl Default for ObjectState {
-    fn default() -> Self {
-        ObjectState::Healthy
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -192,7 +187,7 @@ impl EnergyOptimizer {
     }
 
     pub fn forecast_all(&self) -> Vec<DecayForecast> {
-        self.objects.values().map(|obj| build_forecast(obj)).collect()
+        self.objects.values().map(build_forecast).collect()
     }
 
     pub fn objects_by_urgency(&self, urgency: &DecayUrgency) -> Vec<&TrackedObject> {

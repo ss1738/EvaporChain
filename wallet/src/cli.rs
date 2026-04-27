@@ -9585,7 +9585,7 @@ fn cmd_snapshot(action: SnapshotAction) -> Result<(), Box<dyn std::error::Error>
             // Capture key wallet state
             let config_path = crate::config::WalletConfig::default_path();
             let config = crate::config::WalletConfig::load_or_default(&config_path)?;
-            let mut entries: Vec<(String, String, String)> = vec![
+            let entries: Vec<(String, String, String)> = vec![
                 ("config.node_url".into(), config.node_url.clone(), "config".into()),
                 ("config.default_account".into(), config.active_account.clone().unwrap_or_default(), "config".into()),
             ];

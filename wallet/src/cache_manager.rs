@@ -26,31 +26,21 @@ pub enum CacheManagerError {
 // Enums
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum EvictionPolicy {
+    #[default]
     Lru,
     Lfu,
     Fifo,
     Ttl,
 }
 
-impl Default for EvictionPolicy {
-    fn default() -> Self {
-        Self::Lru
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum CacheLayer {
+    #[default]
     Memory,
     Disk,
     Remote,
-}
-
-impl Default for CacheLayer {
-    fn default() -> Self {
-        Self::Memory
-    }
 }
 
 // ---------------------------------------------------------------------------

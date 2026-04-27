@@ -334,7 +334,7 @@ impl AnalyticsTracker {
                 percentage: (amt as f64 / total as f64) * 100.0,
             })
             .collect();
-        result.sort_by(|a, b| b.total_amount.cmp(&a.total_amount));
+        result.sort_by_key(|a| std::cmp::Reverse(a.total_amount));
         result
     }
 

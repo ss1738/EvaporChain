@@ -165,7 +165,7 @@ pub fn validate_half_life(half_life: u64) -> Result<u64, ValidationError> {
 
 /// Validate a percentage threshold (0-100).
 pub fn validate_threshold(pct: f64) -> Result<f64, ValidationError> {
-    if pct < 0.0 || pct > 100.0 {
+    if !(0.0..=100.0).contains(&pct) {
         return Err(ValidationError::InvalidThreshold {
             reason: format!("{} is out of range (must be 0-100)", pct),
         });

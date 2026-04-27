@@ -265,26 +265,26 @@ impl RuleContext {
     pub fn matches_condition(&self, condition: &RuleCondition) -> bool {
         match condition {
             RuleCondition::BalanceAbove(threshold) => {
-                self.balance.map_or(false, |b| b > *threshold)
+                self.balance.is_some_and(|b| b > *threshold)
             }
             RuleCondition::BalanceBelow(threshold) => {
-                self.balance.map_or(false, |b| b < *threshold)
+                self.balance.is_some_and(|b| b < *threshold)
             }
             RuleCondition::TxAmountAbove(threshold) => {
-                self.tx_amount.map_or(false, |a| a > *threshold)
+                self.tx_amount.is_some_and(|a| a > *threshold)
             }
             RuleCondition::EnergyBelow(threshold) => {
-                self.energy.map_or(false, |e| e < *threshold)
+                self.energy.is_some_and(|e| e < *threshold)
             }
             RuleCondition::PriceAbove(threshold) => {
-                self.price.map_or(false, |p| p > *threshold)
+                self.price.is_some_and(|p| p > *threshold)
             }
             RuleCondition::PriceBelow(threshold) => {
-                self.price.map_or(false, |p| p < *threshold)
+                self.price.is_some_and(|p| p < *threshold)
             }
             RuleCondition::NewIncoming => self.has_incoming,
             RuleCondition::GasAbove(threshold) => {
-                self.gas.map_or(false, |g| g > *threshold)
+                self.gas.is_some_and(|g| g > *threshold)
             }
             RuleCondition::Custom(key) => self.custom.contains_key(key),
         }

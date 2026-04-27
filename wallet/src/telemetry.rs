@@ -226,7 +226,7 @@ impl TelemetryManager {
 
     pub fn top_commands(&self, n: usize) -> Vec<&UsagePattern> {
         let mut sorted: Vec<&UsagePattern> = self.patterns.values().collect();
-        sorted.sort_by(|a, b| b.count.cmp(&a.count));
+        sorted.sort_by_key(|a| std::cmp::Reverse(a.count));
         sorted.truncate(n);
         sorted
     }

@@ -109,7 +109,7 @@ impl Condition {
             }
             Condition::StatusEquals(_) => false, // Status checks use check_status
             Condition::AnyChange => {
-                previous.map_or(true, |prev| (current - prev).abs() > f64::EPSILON)
+                previous.is_none_or(|prev| (current - prev).abs() > f64::EPSILON)
             }
         }
     }

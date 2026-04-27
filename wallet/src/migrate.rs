@@ -210,7 +210,7 @@ impl Migrator {
 
         match format {
             SourceFormat::Mnemonic => {
-                let words: Vec<&str> = input.trim().split_whitespace().collect();
+                let words: Vec<&str> = input.split_whitespace().collect();
                 plan.add_account(ImportedAccount {
                     label: "imported-mnemonic".to_string(),
                     source_format: format.name().to_string(),
@@ -360,7 +360,7 @@ impl Migrator {
 
     /// Validate a mnemonic phrase (basic word count + alpha check)
     pub fn validate_mnemonic(phrase: &str) -> Result<usize, MigrateError> {
-        let words: Vec<&str> = phrase.trim().split_whitespace().collect();
+        let words: Vec<&str> = phrase.split_whitespace().collect();
         if words.len() != 12 && words.len() != 24 {
             return Err(MigrateError::InvalidMnemonic(format!(
                 "expected 12 or 24 words, got {}",

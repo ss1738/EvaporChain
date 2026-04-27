@@ -287,7 +287,7 @@ impl PrivacyShield {
                     chrono::Utc::now().to_rfc3339(),
                     std::process::id()
                 ).as_bytes()
-            ).to_hex().to_string()[..16].to_string()
+            ).to_hex().to_string()[..16]
         );
         let req = MixRequest::new(id.clone(), amount, strategy);
         self.mix_requests.insert(id.clone(), req);

@@ -28,18 +28,13 @@ pub enum OnboardingError {
 // Enums
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum StepStatus2 {
+    #[default]
     NotStarted,
     InProgress,
     Completed,
     Skipped,
-}
-
-impl Default for StepStatus2 {
-    fn default() -> Self {
-        Self::NotStarted
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -199,14 +199,15 @@ impl HealthChecker {
 
     /// Run all health checks
     pub fn run_all(&self) -> HealthReport {
-        let mut checks = Vec::new();
-        checks.push(self.check_data_dir());
-        checks.push(self.check_keystore());
-        checks.push(self.check_config());
-        checks.push(self.check_permissions());
-        checks.push(self.check_disk_space());
-        checks.push(self.check_backup_age());
-        checks.push(self.check_stale_locks());
+        let checks = vec![
+            self.check_data_dir(),
+            self.check_keystore(),
+            self.check_config(),
+            self.check_permissions(),
+            self.check_disk_space(),
+            self.check_backup_age(),
+            self.check_stale_locks(),
+        ];
         HealthReport::new(checks)
     }
 

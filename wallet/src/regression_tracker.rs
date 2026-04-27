@@ -258,7 +258,7 @@ impl RegressionTracker {
 
     pub fn recent_diffs(&self, n: usize) -> Vec<&RegressionDiff> {
         let len = self.diffs.len();
-        let start = if len > n { len - n } else { 0 };
+        let start = len.saturating_sub(n);
         self.diffs[start..].iter().collect()
     }
 

@@ -201,7 +201,7 @@ fn check_data_dir() -> CheckResult {
 fn check_accounts(keystore_path: &str) -> CheckResult {
     match KeyStore::load(keystore_path) {
         Ok(ks) => {
-            if ks.len() == 0 {
+            if ks.is_empty() {
                 CheckResult::warn(
                     "Accounts",
                     "No accounts in keystore",

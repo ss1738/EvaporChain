@@ -314,7 +314,7 @@ impl WalletMigrator {
     pub fn validate_key_format(&self, key: &str, format: &KeyFormat) -> bool {
         match format {
             KeyFormat::Hex => {
-                !key.is_empty() && key.len() % 2 == 0 && key.chars().all(|c| c.is_ascii_hexdigit())
+                !key.is_empty() && key.len().is_multiple_of(2) && key.chars().all(|c| c.is_ascii_hexdigit())
             }
             KeyFormat::Base58 => {
                 const BASE58_CHARS: &str =

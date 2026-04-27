@@ -51,6 +51,7 @@ impl QrCode {
         draw_finder(&mut modules, size - 7, 0);
 
         // Timing patterns
+        #[allow(clippy::needless_range_loop)]
         for i in 8..size - 8 {
             modules[6][i] = i % 2 == 0;
             modules[i][6] = i % 2 == 0;
@@ -59,6 +60,7 @@ impl QrCode {
         // Encode data bits into available modules
         let mut bit_idx = 0;
         let data_bits = bytes_to_bits(bytes);
+        #[allow(clippy::needless_range_loop)]
         for col in (8..size - 8).rev() {
             for row in 8..size - 8 {
                 if bit_idx < data_bits.len() {
@@ -302,12 +304,12 @@ fn compute_size(data_len: usize) -> usize {
     size
 }
 
-fn draw_finder(modules: &mut Vec<Vec<bool>>, row: usize, col: usize) {
+fn draw_finder(modules: &mut [Vec<bool>], row: usize, col: usize) {
     // 7x7 finder pattern
     for r in 0..7 {
         for c in 0..7 {
             let is_border = r == 0 || r == 6 || c == 0 || c == 6;
-            let is_center = r >= 2 && r <= 4 && c >= 2 && c <= 4;
+            let is_center = (2..=4).contains(&r) && (2..=4).contains(&c);
             if r + row < modules.len() && c + col < modules[0].len() {
                 modules[r + row][c + col] = is_border || is_center;
             }

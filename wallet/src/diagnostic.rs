@@ -40,24 +40,20 @@ impl From<serde_json::Error> for DiagnosticError {
 
 // ──────────────────────────── Enums ─────────────────────────────────────────
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CheckStatus {
     Pass,
     Warn,
     Fail,
+    #[default]
     Skip,
 }
 
-impl Default for CheckStatus {
-    fn default() -> Self {
-        CheckStatus::Skip
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CheckCategory {
+    #[default]
     Config,
     Keys,
     Network,
@@ -66,25 +62,14 @@ pub enum CheckCategory {
     Performance,
 }
 
-impl Default for CheckCategory {
-    fn default() -> Self {
-        CheckCategory::Config
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RepairAction {
+    #[default]
     None,
     AutoFixed,
     ManualRequired,
     Skipped,
-}
-
-impl Default for RepairAction {
-    fn default() -> Self {
-        RepairAction::None
-    }
 }
 
 // ──────────────────────────── Structs ───────────────────────────────────────
@@ -360,7 +345,7 @@ impl DiagnosticEngine {
 
     pub fn reports_history(&self, n: usize) -> Vec<&DiagnosticReport> {
         let len = self.reports.len();
-        let start = if len > n { len - n } else { 0 };
+        let start = len.saturating_sub(n);
         self.reports[start..].iter().collect()
     }
 

@@ -46,18 +46,13 @@ pub enum RiskWarning {
 }
 
 /// Overall preview safety status, ordered by severity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum PreviewStatus {
+    #[default]
     Safe,
     Caution,
     Warning,
     Danger,
-}
-
-impl Default for PreviewStatus {
-    fn default() -> Self {
-        Self::Safe
-    }
 }
 
 // ──────────────────────────── StateChange ──────────────────────────────

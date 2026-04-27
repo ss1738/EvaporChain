@@ -134,14 +134,14 @@ where
     Ok(compute_stats(name, &mut timings))
 }
 
-fn compute_stats(name: &str, timings: &mut Vec<u128>) -> BenchResult {
+fn compute_stats(name: &str, timings: &mut [u128]) -> BenchResult {
     timings.sort();
     let n = timings.len();
     let total: u128 = timings.iter().sum();
     let min = timings[0];
     let max = timings[n - 1];
     let mean = total / n as u128;
-    let median = if n % 2 == 0 {
+    let median = if n.is_multiple_of(2) {
         (timings[n / 2 - 1] + timings[n / 2]) / 2
     } else {
         timings[n / 2]
@@ -312,7 +312,7 @@ pub fn run_wallet_benchmarks(config: &BenchConfig) -> Result<BenchSuite, Benchma
     // Hex encoding/decoding
     suite.run("hex_encode_64b", || {
         let data = [0xABu8; 64];
-        let _ = hex::encode(&data);
+        let _ = hex::encode(data);
     })?;
 
     suite.run("hex_decode_128char", || {

@@ -297,7 +297,7 @@ impl TokenRegistry {
     pub fn is_scam(&self, address: &str) -> bool {
         self.tokens
             .get(address)
-            .map_or(false, |t| t.flagged_scam)
+            .is_some_and(|t| t.flagged_scam)
     }
 
     /// Mark a token as verified. Fails if the address is not registered.
