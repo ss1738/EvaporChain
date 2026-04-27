@@ -52,6 +52,7 @@ impl Schedule {
     }
 
     /// Parse from string: "30s", "5m", "2h", "1d", "1w"
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Result<Self, SchedulerError> {
         let s = s.trim();
         if s.len() < 2 {

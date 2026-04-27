@@ -256,7 +256,7 @@ impl LazyStateEvaluator {
     }
 
     /// Find the epoch when an object's energy first reaches zero.
-    fn epoch_of_zero_energy(snapshot: &ObjectSnapshot, rules: &DecayRules) -> u64 {
+    fn epoch_of_zero_energy(snapshot: &ObjectSnapshot, _rules: &DecayRules) -> u64 {
         if snapshot.energy_at_anchor == 0 || snapshot.half_life == 0 {
             return snapshot.anchor_epoch;
         }

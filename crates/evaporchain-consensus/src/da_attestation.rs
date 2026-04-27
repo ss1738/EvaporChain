@@ -14,7 +14,7 @@ use evaporchain_da::certificate::{
     CertificateBuilder, DAAttestation, DACertificate, create_attestation,
 };
 use std::collections::{HashMap, HashSet};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 // ─────────────────────── Configuration ─────────────────────────────���────
 

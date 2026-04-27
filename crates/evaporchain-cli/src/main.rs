@@ -873,7 +873,7 @@ fn cmd_genesis_validate(path: &str, json_mode: bool) -> Result<()> {
             "accounts": config.accounts.len(),
             "objects": config.objects.len(),
             "genesis_block_number": result.block.number,
-            "state_root": hex::encode(&result.state_root),
+            "state_root": hex::encode(result.state_root),
         });
         println!("{}", serde_json::to_string_pretty(&out)?);
         return Ok(());
@@ -885,7 +885,7 @@ fn cmd_genesis_validate(path: &str, json_mode: bool) -> Result<()> {
     println!("  {}  {} validators", "Vals: ".truecolor(140, 150, 170), config.validators.len().to_string().cyan());
     println!("  {}  {} accounts", "Accts:".truecolor(140, 150, 170), config.accounts.len().to_string().cyan());
     println!("  {}  {} objects", "Objs: ".truecolor(140, 150, 170), config.objects.len().to_string().cyan());
-    println!("  {}  {}", "Root: ".truecolor(140, 150, 170), hex::encode(&result.state_root).truecolor(100, 110, 130));
+    println!("  {}  {}", "Root: ".truecolor(140, 150, 170), hex::encode(result.state_root).truecolor(100, 110, 130));
     println!();
 
     Ok(())
@@ -918,7 +918,7 @@ fn cmd_genesis_show(path: &str, json_mode: bool) -> Result<()> {
     println!("  {} ({})", "Validators".bold(), config.validators.len());
     println!("  {}", separator());
     for v in &config.validators {
-        let addr_hex = hex::encode(&v.address);
+        let addr_hex = hex::encode(v.address);
         let addr_short = format!("{}...", &addr_hex[..16]);
         let bls = v.bls_public_key.as_deref().unwrap_or("none");
         let bls_short = if bls.len() > 16 { format!("{}...", &bls[..16]) } else { bls.to_string() };
@@ -937,7 +937,7 @@ fn cmd_genesis_show(path: &str, json_mode: bool) -> Result<()> {
     println!("  {} ({})", "Accounts".bold(), config.accounts.len());
     println!("  {}", separator());
     for a in &config.accounts {
-        let addr_hex = hex::encode(&a.address);
+        let addr_hex = hex::encode(a.address);
         let addr_short = format!("{}...", &addr_hex[..16]);
         println!(
             "  {:<14} {:>12} EVAP  {}",
@@ -976,7 +976,7 @@ fn cmd_genesis_init(path: &str, json_mode: bool) -> Result<()> {
             "genesis_block": {
                 "number": result.block.number,
                 "epoch": result.block.epoch,
-                "state_root": hex::encode(&result.state_root),
+                "state_root": hex::encode(result.state_root),
                 "block_hash": block_hash,
             },
             "accounts_created": result.accounts_created,
@@ -990,7 +990,7 @@ fn cmd_genesis_init(path: &str, json_mode: bool) -> Result<()> {
     print_header("Genesis Block Generated");
     println!("  {}  #{}", "Block: ".truecolor(140, 150, 170), "0".cyan().bold());
     println!("  {}  {}", "Hash:  ".truecolor(140, 150, 170), block_hash.truecolor(100, 110, 130));
-    println!("  {}  {}", "Root:  ".truecolor(140, 150, 170), hex::encode(&result.state_root).truecolor(100, 110, 130));
+    println!("  {}  {}", "Root:  ".truecolor(140, 150, 170), hex::encode(result.state_root).truecolor(100, 110, 130));
     println!("  {}  {} accounts, {} validators, {} objects",
         "State: ".truecolor(140, 150, 170),
         result.accounts_created.to_string().green(),
@@ -1219,7 +1219,7 @@ fn cmd_genesis_finalize(path: &str, json_mode: bool) -> Result<()> {
             "chain_id": config.chain_params.chain_id,
             "genesis_hash": hex::encode(block_hash),
             "config_hash": hex::encode(config_hash),
-            "state_root": hex::encode(&result.state_root),
+            "state_root": hex::encode(result.state_root),
             "validators": config.validators.len(),
             "accounts": config.accounts.len(),
             "total_allocated": config.accounts.iter().map(|a| a.balance).sum::<u64>(),
@@ -1233,7 +1233,7 @@ fn cmd_genesis_finalize(path: &str, json_mode: bool) -> Result<()> {
         println!("  {}  {}", "Chain:  ".truecolor(140, 150, 170), config.chain_params.chain_id.white().bold());
         println!("  {}  {}", "Hash:   ".truecolor(140, 150, 170), hex::encode(block_hash).truecolor(100, 110, 130));
         println!("  {}  {}", "Config: ".truecolor(140, 150, 170), hex::encode(config_hash).truecolor(100, 110, 130));
-        println!("  {}  {}", "Root:   ".truecolor(140, 150, 170), hex::encode(&result.state_root).truecolor(100, 110, 130));
+        println!("  {}  {}", "Root:   ".truecolor(140, 150, 170), hex::encode(result.state_root).truecolor(100, 110, 130));
         println!();
         println!("  {}  {} validators, {} accounts",
             "State: ".truecolor(140, 150, 170),

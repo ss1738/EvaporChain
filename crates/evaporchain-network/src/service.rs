@@ -614,14 +614,14 @@ impl P2pNetworkService {
                                     if !rate_limiter.check_and_increment(source) {
                                         debug!("Rate-limited peer {source} — dropping gossip message");
                                         gc_counter += 1;
-                                        if gc_counter % 100 == 0 {
+                                        if gc_counter.is_multiple_of(100) {
                                             rate_limiter.maybe_gc();
                                         }
                                         continue;
                                     }
                                 }
                                 gc_counter += 1;
-                                if gc_counter % 1000 == 0 {
+                                if gc_counter.is_multiple_of(1000) {
                                     rate_limiter.maybe_gc();
                                 }
                                 // Drop oversized messages before deserialization (DoS protection)

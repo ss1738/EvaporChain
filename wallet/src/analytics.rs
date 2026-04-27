@@ -127,6 +127,7 @@ impl Period {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Result<Self, AnalyticsError> {
         match s.to_lowercase().as_str() {
             "day" | "24h" | "1d" => Ok(Period::Day),

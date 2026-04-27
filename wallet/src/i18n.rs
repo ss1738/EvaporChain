@@ -28,6 +28,7 @@ pub enum Locale {
 
 impl Locale {
     /// Parse a locale string (e.g. "en", "es", "fr-FR", "zh-CN").
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Locale> {
         let lower = s.to_lowercase();
         let tag = lower.split(['-', '_']).next().unwrap_or("");

@@ -67,6 +67,7 @@ impl TemplateType {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "transfer" | "send" => Some(TemplateType::Transfer),
@@ -117,6 +118,7 @@ impl Frequency {
 
     /// Parse frequency from string: "once", "daily", "weekly", "monthly",
     /// "hourly:6", "daily:3", "weekly:2", "monthly:3"
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Result<Self, TemplateError> {
         let parts: Vec<&str> = s.split(':').collect();
         match parts[0].to_lowercase().as_str() {

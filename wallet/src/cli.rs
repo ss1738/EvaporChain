@@ -4852,7 +4852,7 @@ fn cmd_seed(
             let sk = keypair.secret_key();
 
             let mut keystore = load_or_create_keystore(keystore_path);
-            let addr = keystore.import_key(&name, &password, &pk, &sk)?;
+            let addr = keystore.import_key(&name, &password, &pk, sk)?;
             keystore.save(keystore_path)?;
 
             println!(
@@ -5524,7 +5524,7 @@ async fn cmd_dashboard(
             }
             Err(e) => {
                 if !crate::output::is_json_mode() {
-                    println!(" {} {:<12} {} {}", " ", acct.name, "Error:".red(), e);
+                    println!("   {:<12} {} {}", acct.name, "Error:".red(), e);
                 }
             }
         }
@@ -6258,7 +6258,7 @@ fn cmd_multisig(action: MultisigAction, keystore_path: &str) -> Result<(), Box<d
             }
         }
         MultisigAction::Propose { group, to, amount, memo } => {
-            let config = WalletConfig::load_or_default(&WalletConfig::default_path())?;
+            let config = WalletConfig::load_or_default(WalletConfig::default_path())?;
             let active_name = config.active_account
                 .ok_or("No active account — run: wallet account switch <name>")?;
             let ks = KeyStore::load(keystore_path)?;
@@ -6279,7 +6279,7 @@ fn cmd_multisig(action: MultisigAction, keystore_path: &str) -> Result<(), Box<d
             println!("  Status: {:?}", status);
         }
         MultisigAction::Approve { id } => {
-            let config = WalletConfig::load_or_default(&WalletConfig::default_path())?;
+            let config = WalletConfig::load_or_default(WalletConfig::default_path())?;
             let active_name = config.active_account
                 .ok_or("No active account — run: wallet account switch <name>")?;
             let ks = KeyStore::load(keystore_path)?;
@@ -6357,12 +6357,11 @@ fn cmd_hooks(action: HooksAction) -> Result<(), Box<dyn std::error::Error>> {
                 for h in hooks {
                     let status = if h.enabled { "enabled".green() } else { "disabled".red() };
                     let block = if h.blocking { " [blocking]" } else { "" };
-                    println!("  {} — {} on {} — {} {}{}",
+                    println!("  {} — {} on {} — {} {}",
                         h.name.bold(),
                         h.action.describe(),
                         h.event.label(),
                         status,
-                        "",
                         block,
                     );
                 }
@@ -6720,7 +6719,7 @@ fn cmd_dapp(action: DappAction, keystore_path: &str) -> Result<(), Box<dyn std::
                 return Err("No valid permissions specified. Use: view_account,request_sign,view_history,view_assets,view_energy".into());
             }
 
-            let config = WalletConfig::load_or_default(&WalletConfig::default_path())?;
+            let config = WalletConfig::load_or_default(WalletConfig::default_path())?;
             let account = config.active_account
                 .ok_or("No active account")?;
             let ks = KeyStore::load(keystore_path)?;
@@ -6894,11 +6893,11 @@ fn cmd_session_keys(action: SessionKeysAction, keystore_path: &str) -> Result<()
             }
         }
         SessionKeysAction::Create { label, max_per_tx, total_limit, ops, hours } => {
-            let config = WalletConfig::load_or_default(&WalletConfig::default_path())?;
+            let config = WalletConfig::load_or_default(WalletConfig::default_path())?;
             let active_name = config.active_account.as_ref().ok_or("No active account")?;
             let ks = KeyStore::load(keystore_path)?;
             let addr = ks.get_address(active_name).ok_or("Account not found in keystore")?;
-            let addr_hex = format!("0x{}", hex::encode(&addr));
+            let addr_hex = format!("0x{}", hex::encode(addr));
 
             let allowed: Vec<String> = ops.split(',').map(|s| s.trim().to_string()).collect();
             let key = store.create_session_key(&label, &addr_hex, max_per_tx, total_limit, allowed, hours);
@@ -6934,11 +6933,11 @@ fn cmd_session_keys(action: SessionKeysAction, keystore_path: &str) -> Result<()
             }
         }
         SessionKeysAction::SetupRecovery { threshold, delay_hours } => {
-            let config = WalletConfig::load_or_default(&WalletConfig::default_path())?;
+            let config = WalletConfig::load_or_default(WalletConfig::default_path())?;
             let active_name = config.active_account.as_ref().ok_or("No active account")?;
             let ks = KeyStore::load(keystore_path)?;
             let addr = ks.get_address(active_name).ok_or("Account not found in keystore")?;
-            let addr_hex = format!("0x{}", hex::encode(&addr));
+            let addr_hex = format!("0x{}", hex::encode(addr));
 
             store.setup_recovery(&addr_hex, threshold, delay_hours)?;
             store.save(&path)?;
@@ -8708,7 +8707,7 @@ fn cmd_timelock(action: TimelockAction) -> Result<(), Box<dyn std::error::Error>
         TimelockAction::Show { id } => {
             match store.get_timelock(&id) {
                 Some(l) => {
-                    println!("{} ({})", l.id.bold().cyan(), format!("{:?}", l.status));
+                    println!("{} ({:?})", l.id.bold().cyan(), l.status);
                     println!("  Recipient:  {}", l.recipient);
                     println!("  Amount:     {} EVAP", l.total_amount);
                     println!("  Claimed:    {} EVAP", l.claimed_amount);
@@ -9586,9 +9585,10 @@ fn cmd_snapshot(action: SnapshotAction) -> Result<(), Box<dyn std::error::Error>
             // Capture key wallet state
             let config_path = crate::config::WalletConfig::default_path();
             let config = crate::config::WalletConfig::load_or_default(&config_path)?;
-            let mut entries: Vec<(String, String, String)> = Vec::new();
-            entries.push(("config.node_url".into(), config.node_url.clone(), "config".into()));
-            entries.push(("config.default_account".into(), config.active_account.clone().unwrap_or_default(), "config".into()));
+            let mut entries: Vec<(String, String, String)> = vec![
+                ("config.node_url".into(), config.node_url.clone(), "config".into()),
+                ("config.default_account".into(), config.active_account.clone().unwrap_or_default(), "config".into()),
+            ];
             let id = store.capture(&label, entries);
             store.save(&path)?;
             crate::output::json_or(&serde_json::json!({"captured": id}), || {
@@ -11878,6 +11878,7 @@ fn cmd_stream(action: StreamAction) -> Result<(), Box<dyn std::error::Error>> {
                 _ => StreamType::Salary,
             };
             let now = chrono::Utc::now();
+            #[allow(clippy::manual_checked_ops)]
             let duration_secs = if rate > 0 { total / rate } else { 3600 };
             let end = now + chrono::Duration::seconds(duration_secs as i64);
             let stream = PaymentStream {
@@ -12308,7 +12309,9 @@ fn cmd_energy_opt(action: EnergyOptAction) -> Result<(), Box<dyn std::error::Err
                 object_id: id.clone(), owner, current_energy: energy, max_energy,
                 decay_rate, last_refresh: chrono::Utc::now().to_rfc3339(),
                 epochs_since_refresh: 0,
+                #[allow(clippy::manual_checked_ops)]
                 estimated_grace_epoch: if decay_rate > 0 { (energy * 80 / 100 / decay_rate) as u32 } else { 0 },
+                #[allow(clippy::manual_checked_ops)]
                 estimated_evaporation_epoch: if decay_rate > 0 { (energy / decay_rate) as u32 } else { 0 },
                 state: ObjectState::Healthy, refresh_cost: decay_rate * 10, priority,
             };
@@ -13839,11 +13842,11 @@ fn cmd_simulate2(action: SimAction) -> Result<(), Box<dyn std::error::Error>> {
 
     match action {
         SimAction::Fork { id, block, source } => {
-            let src = if source.starts_with("block:") {
-                let n: u64 = source[6..].parse().unwrap_or(block);
+            let src = if let Some(rest) = source.strip_prefix("block:") {
+                let n: u64 = rest.parse().unwrap_or(block);
                 ForkSource::SpecificBlock(n)
-            } else if source.starts_with("snapshot:") {
-                ForkSource::Snapshot(source[9..].to_string())
+            } else if let Some(rest) = source.strip_prefix("snapshot:") {
+                ForkSource::Snapshot(rest.to_string())
             } else {
                 ForkSource::LatestBlock
             };
