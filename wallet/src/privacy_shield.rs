@@ -279,16 +279,18 @@ impl PrivacyShield {
     // ── Mix requests ───────────────────────────────────────────────
 
     pub fn create_mix(&mut self, amount: u64, strategy: MixStrategy) -> String {
-        let id = format!(
-            "mix_{}",
-            blake3::hash(
-                format!("{}{}{}",
-                    amount,
-                    chrono::Utc::now().to_rfc3339(),
-                    std::process::id()
-                ).as_bytes()
-            ).to_hex().to_string()[..16]
-        );
+        let hash_hex = blake3::hash(
+            format!(
+                "{}{}{}",
+                amount,
+                chrono::Utc::now().to_rfc3339(),
+                std::process::id()
+            )
+            .as_bytes(),
+        )
+        .to_hex()
+        .to_string();
+        let id = format!("mix_{}", &hash_hex[..16]);
         let req = MixRequest::new(id.clone(), amount, strategy);
         self.mix_requests.insert(id.clone(), req);
         id

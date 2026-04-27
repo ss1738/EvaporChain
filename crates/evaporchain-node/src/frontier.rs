@@ -14,6 +14,8 @@ use evaporchain_consensus::anchor::{
 };
 use evaporchain_crypto::energy_verkle::{EnergyVerkleTrie, TrieHealth};
 use evaporchain_da::poha::PoHAStore;
+#[cfg(test)]
+use evaporchain_da::poha::CertTemperature;
 use evaporchain_state::db::StateDB;
 
 /// Configuration for frontier primitives.

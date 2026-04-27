@@ -622,7 +622,8 @@ impl TendermintConsensus {
     }
 
     /// Number of validators needed for a 2f+1 quorum (count-based, for certificate signer checks).
-    fn _quorum_size(&self) -> usize {
+    #[allow(dead_code)]
+    pub(crate) fn quorum_size(&self) -> usize {
         let n = self.validator_set.len();
         if n == 0 {
             return usize::MAX;
