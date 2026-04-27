@@ -1,7 +1,6 @@
 mod api;
 mod auth;
 mod bench;
-mod bls_key_store;
 mod frontier;
 mod oracle_bridge;
 mod persistence;
@@ -902,13 +901,13 @@ fn validate_mainnet_strict(args: &NodeArgs) -> Result<(), String> {
         )),
         Ok(_) => {}
     }
-    let validator_pass_ok = std::env::var(bls_key_store::ENV_PASSPHRASE)
+    let validator_pass_ok = std::env::var(evaporchain_crypto::bls_key_store::ENV_PASSPHRASE)
         .map(|v| !v.is_empty())
         .unwrap_or(false);
     if !validator_pass_ok {
         issues.push(format!(
             "{} must be set (non-empty) so the validator BLS key can be encrypted at rest",
-            bls_key_store::ENV_PASSPHRASE
+            evaporchain_crypto::bls_key_store::ENV_PASSPHRASE
         ));
     }
     if issues.is_empty() {
@@ -1781,10 +1780,10 @@ async fn main() -> Result<()> {
         // newly generated keys are written encrypted; without it, the
         // historical plaintext path is used and a warning is logged.
         let bls_key_path = format!("{}/bls_key.bin", args.data_dir);
-        let validator_passphrase = bls_key_store::passphrase_from_env();
+        let validator_passphrase = evaporchain_crypto::bls_key_store::passphrase_from_env();
         let write_bls_secret = |path: &str, sk: &[u8]| {
             match validator_passphrase.as_deref() {
-                Some(pass) => match bls_key_store::encrypt_bls_secret(sk, pass) {
+                Some(pass) => match evaporchain_crypto::bls_key_store::encrypt_bls_secret(sk, pass) {
                     Ok(blob) => {
                         write_secret_file(path, &blob);
                         println!(
@@ -1806,7 +1805,7 @@ async fn main() -> Result<()> {
                         "{} \x1b[33mWARNING: BLS validator key written in plaintext.\x1b[0m \
                          Set {} to enable encrypted-at-rest storage.",
                         node_tag,
-                        bls_key_store::ENV_PASSPHRASE
+                        evaporchain_crypto::bls_key_store::ENV_PASSPHRASE
                     );
                 }
             }
@@ -1819,20 +1818,20 @@ async fn main() -> Result<()> {
                             "{} \x1b[33mWARNING: BLS key file is plaintext but {} is set.\x1b[0m \
                              Re-save the key to migrate to encrypted format.",
                             node_tag,
-                            bls_key_store::ENV_PASSPHRASE
+                            evaporchain_crypto::bls_key_store::ENV_PASSPHRASE
                         );
                     }
                     Some(file_bytes)
                 }
-                bls_key_store::ENCRYPTED_LEN => match validator_passphrase.as_deref() {
-                    Some(pass) => match bls_key_store::decrypt_bls_secret(&file_bytes, pass) {
+                evaporchain_crypto::bls_key_store::ENCRYPTED_LEN => match validator_passphrase.as_deref() {
+                    Some(pass) => match evaporchain_crypto::bls_key_store::decrypt_bls_secret(&file_bytes, pass) {
                         Ok(plain) => Some(plain.to_vec()),
                         Err(e) => {
                             eprintln!(
                                 "{} \x1b[31mBLS key decryption failed ({}); refusing to overwrite — set the correct {} or remove {}\x1b[0m",
                                 node_tag,
                                 e,
-                                bls_key_store::ENV_PASSPHRASE,
+                                evaporchain_crypto::bls_key_store::ENV_PASSPHRASE,
                                 bls_key_path
                             );
                             std::process::exit(1);
@@ -1842,7 +1841,7 @@ async fn main() -> Result<()> {
                         eprintln!(
                             "{} \x1b[31mBLS key file is encrypted but {} is not set; refusing to overwrite\x1b[0m",
                             node_tag,
-                            bls_key_store::ENV_PASSPHRASE
+                            evaporchain_crypto::bls_key_store::ENV_PASSPHRASE
                         );
                         std::process::exit(1);
                     }

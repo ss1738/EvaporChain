@@ -1,4 +1,5 @@
 pub mod accumulator;
+pub mod bls_key_store;
 pub mod energy_verkle;
 pub mod hash;
 pub mod signatures;

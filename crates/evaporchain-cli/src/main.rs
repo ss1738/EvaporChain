@@ -140,6 +140,39 @@ pub enum Commands {
         #[arg(long)]
         output: Option<String>,
     },
+
+    /// Encrypt a plaintext bls_key.bin into the EVK1 encrypted format.
+    /// Use this to migrate an existing validator key without regenerating.
+    /// Passphrase is read from EVAPORCHAIN_VALIDATOR_KEY_PASS or --passphrase.
+    EncryptBlsKey {
+        /// Path to the plaintext bls_key.bin (32 raw secret bytes)
+        #[arg(long)]
+        in_file: String,
+
+        /// Where to write the EVK1 encrypted blob (92 bytes)
+        #[arg(long)]
+        out_file: String,
+
+        /// Passphrase (overrides EVAPORCHAIN_VALIDATOR_KEY_PASS)
+        #[arg(long)]
+        passphrase: Option<String>,
+    },
+
+    /// Decrypt an EVK1-encrypted bls_key.bin back to plaintext (32 bytes).
+    /// Used for key recovery / inspection. Handle the output carefully.
+    DecryptBlsKey {
+        /// Path to the EVK1 encrypted blob (92 bytes)
+        #[arg(long)]
+        in_file: String,
+
+        /// Where to write the plaintext 32-byte secret
+        #[arg(long)]
+        out_file: String,
+
+        /// Passphrase (overrides EVAPORCHAIN_VALIDATOR_KEY_PASS)
+        #[arg(long)]
+        passphrase: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1313,6 +1346,81 @@ fn cmd_keygen(output: Option<&str>, json_mode: bool) -> Result<()> {
     Ok(())
 }
 
+fn resolve_passphrase(arg: Option<&str>) -> Result<Vec<u8>> {
+    if let Some(p) = arg {
+        if p.is_empty() {
+            anyhow::bail!("--passphrase value is empty");
+        }
+        return Ok(p.as_bytes().to_vec());
+    }
+    match evaporchain_crypto::bls_key_store::passphrase_from_env() {
+        Some(p) => Ok(p),
+        None => anyhow::bail!(
+            "no passphrase: pass --passphrase or set {}",
+            evaporchain_crypto::bls_key_store::ENV_PASSPHRASE
+        ),
+    }
+}
+
+fn write_secret_file_0600(path: &str, data: &[u8]) -> Result<()> {
+    std::fs::write(path, data)
+        .with_context(|| format!("Failed to write {}", path))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("Failed to set 0600 on {}", path))?;
+    }
+    Ok(())
+}
+
+fn cmd_encrypt_bls_key(in_file: &str, out_file: &str, passphrase: Option<&str>) -> Result<()> {
+    let pass = resolve_passphrase(passphrase)?;
+    let secret = std::fs::read(in_file)
+        .with_context(|| format!("Failed to read {}", in_file))?;
+    if secret.len() != 32 {
+        anyhow::bail!(
+            "expected 32 plaintext BLS secret bytes in {}, got {}",
+            in_file,
+            secret.len()
+        );
+    }
+    let blob = evaporchain_crypto::bls_key_store::encrypt_bls_secret(&secret, &pass)
+        .map_err(|e| anyhow::anyhow!("encrypt failed: {}", e))?;
+    write_secret_file_0600(out_file, &blob)?;
+    println!(
+        "  {} Wrote {} encrypted bytes (EVK1) to {}",
+        "\u{2714}".green().bold(),
+        blob.len(),
+        out_file
+    );
+    println!(
+        "  {} Original plaintext at {} is unchanged — delete it once you've verified the encrypted file works.",
+        "\u{26A0}".yellow().bold(),
+        in_file
+    );
+    Ok(())
+}
+
+fn cmd_decrypt_bls_key(in_file: &str, out_file: &str, passphrase: Option<&str>) -> Result<()> {
+    let pass = resolve_passphrase(passphrase)?;
+    let blob = std::fs::read(in_file)
+        .with_context(|| format!("Failed to read {}", in_file))?;
+    let plaintext = evaporchain_crypto::bls_key_store::decrypt_bls_secret(&blob, &pass)
+        .map_err(|e| anyhow::anyhow!("decrypt failed: {}", e))?;
+    write_secret_file_0600(out_file, &plaintext)?;
+    println!(
+        "  {} Wrote 32-byte plaintext BLS secret to {}",
+        "\u{2714}".green().bold(),
+        out_file
+    );
+    println!(
+        "  {} Plaintext keys are recoverable from disk — handle this file carefully.",
+        "\u{26A0}".yellow().bold()
+    );
+    Ok(())
+}
+
 // ──────────────────────────── Main ───────────────────────────────────────
 
 #[tokio::main]
@@ -1372,6 +1480,16 @@ async fn main() -> Result<()> {
         Commands::Keygen { output } => {
             cmd_keygen(output.as_deref(), cli.json)
         }
+        Commands::EncryptBlsKey {
+            in_file,
+            out_file,
+            passphrase,
+        } => cmd_encrypt_bls_key(&in_file, &out_file, passphrase.as_deref()),
+        Commands::DecryptBlsKey {
+            in_file,
+            out_file,
+            passphrase,
+        } => cmd_decrypt_bls_key(&in_file, &out_file, passphrase.as_deref()),
     };
 
     if let Err(e) = result {

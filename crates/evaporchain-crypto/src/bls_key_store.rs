@@ -7,12 +7,15 @@
 //!   AEAD over the 32-byte secret. Layout:
 //!   `magic(4="EVK1") || salt(16) || nonce(24) || ciphertext(32+16=48)`.
 //!
-//! Encryption is opt-in: a node operator enables it by setting the
-//! `EVAPORCHAIN_VALIDATOR_KEY_PASS` environment variable (or supplying a
-//! passphrase through future CLI plumbing). When set, new keys are
-//! written encrypted and existing encrypted keys can be decrypted with
-//! the same passphrase. When unset, the historical plaintext path is
-//! used and a warning is logged so the operator notices.
+//! Encryption is opt-in for the running node binary: an operator enables
+//! it by setting the `EVAPORCHAIN_VALIDATOR_KEY_PASS` environment
+//! variable. When set, new keys are written encrypted and existing
+//! encrypted keys can be decrypted with the same passphrase. When unset,
+//! the historical plaintext path is used and a warning is logged.
+//!
+//! Operators with an existing plaintext `bls_key.bin` can migrate to
+//! the encrypted format with the `evaporchain encrypt-bls-key` CLI
+//! subcommand instead of regenerating the validator identity.
 
 use argon2::{Algorithm, Argon2, Params, Version};
 use chacha20poly1305::aead::{Aead, KeyInit};
