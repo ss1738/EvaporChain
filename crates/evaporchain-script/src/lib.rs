@@ -217,6 +217,7 @@ pub const MAX_CALL_DEPTH: u8 = 8;
 /// Callback for cross-contract calls. The ScriptEngine implements this
 /// so the VM can invoke other contracts during execution.
 pub trait ExternalCaller: Send {
+    #[allow(clippy::too_many_arguments)]
     fn call_external(
         &mut self,
         contract_id: u64,
@@ -280,6 +281,7 @@ pub struct ScriptTickResult {
 /// Snapshot of contract data for cross-contract call routing.
 /// Avoids `&mut` aliasing issues by cloning the registry for the call stack.
 struct ContractCallRouter {
+    #[allow(clippy::type_complexity)]
     contracts: HashMap<u64, (compiler::EvaporBytecode, HashMap<String, Value>, AccountAddress, Epoch, Energy, HalfLife, Epoch, bool)>,
     vrf_randomness: [u8; 32],
     state_patches: Vec<(u64, HashMap<String, Value>)>,

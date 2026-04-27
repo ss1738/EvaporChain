@@ -366,6 +366,7 @@ impl ContractEngine {
     }
 
     /// Deploy a new contract. Returns the contract ID.
+    #[allow(clippy::too_many_arguments)]
     pub fn deploy(
         &mut self,
         template: ContractTemplate,
@@ -462,9 +463,8 @@ impl ContractEngine {
         let state_snapshot = contract.state.clone();
         let return_value =
             execute_method(&contract.template, &mut contract.state, method, args, caller, &creator, current_epoch)
-                .map_err(|e| {
+                .inspect_err(|_| {
                     contract.state = state_snapshot.clone();
-                    e
                 })?;
 
         // Enforce per-contract storage quota
@@ -1306,7 +1306,7 @@ fn exec_dao(
         }
         "results" => {
             let mut tallies = vec![0u64; ds.options.len()];
-            for (_, (idx, weight)) in &ds.votes {
+            for (idx, weight) in ds.votes.values() {
                 if *idx < tallies.len() {
                     tallies[*idx] += weight;
                 }
@@ -1450,14 +1450,14 @@ fn tick_escrow(state: &mut serde_json::Value, current_epoch: Epoch) -> Vec<Strin
     };
     let mut events = Vec::new();
 
-    if !es.claimed && !es.refunded && !es.decayed {
-        if current_epoch >= es.release_epoch + es.decay_after_epochs {
-            es.decayed = true;
-            events.push(format!(
-                "ThermodynamicEscrow: {} evaporated (unclaimed)",
-                es.escrowed_amount
-            ));
-        }
+    if !es.claimed && !es.refunded && !es.decayed
+        && current_epoch >= es.release_epoch + es.decay_after_epochs
+    {
+        es.decayed = true;
+        events.push(format!(
+            "ThermodynamicEscrow: {} evaporated (unclaimed)",
+            es.escrowed_amount
+        ));
     }
 
     *state = serde_json::to_value(es).unwrap();
@@ -1511,6 +1511,7 @@ fn tick_staking(state: &mut serde_json::Value, current_epoch: Epoch) -> Vec<Stri
             continue;
         }
         // New rewards = rate * epochs * (stake / total_staked)
+        #[allow(clippy::manual_checked_ops)]
         let new_rewards = if ss.total_staked > 0 {
             ss.reward_rate_per_epoch * epochs_elapsed * info.amount / ss.total_staked
         } else {
@@ -1554,7 +1555,7 @@ fn tick_dao(state: &mut serde_json::Value, current_epoch: Epoch) -> Vec<String> 
         ds.finalized = true;
         // Determine winner.
         let mut tallies = vec![0u64; ds.options.len()];
-        for (_, (idx, weight)) in &ds.votes {
+        for (idx, weight) in ds.votes.values() {
             if *idx < tallies.len() {
                 tallies[*idx] += weight;
             }

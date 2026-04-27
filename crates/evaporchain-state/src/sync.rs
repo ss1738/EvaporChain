@@ -150,10 +150,9 @@ impl StateSyncManager {
 
         // Validate chain continuity
         let mut validated = Vec::with_capacity(response.blocks.len());
-        let mut expected_height = self.local_height + 1;
         let mut prev_hash = self.local_tip_hash;
 
-        for block in &response.blocks {
+        for (expected_height, block) in (self.local_height + 1..).zip(response.blocks.iter()) {
             if block.number != expected_height {
                 return Err(SyncError::HeightGap {
                     expected: expected_height,
@@ -168,7 +167,6 @@ impl StateSyncManager {
             }
 
             prev_hash = compute_block_hash(block);
-            expected_height += 1;
             validated.push(block.clone());
         }
 

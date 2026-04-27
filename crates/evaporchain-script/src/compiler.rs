@@ -456,7 +456,7 @@ fn extract_state_schema(contract: &Contract) -> StateSchema {
         .state_fields
         .iter()
         .map(|f| {
-            let default = f.default.as_ref().and_then(|expr| eval_const_expr(expr));
+            let default = f.default.as_ref().and_then(eval_const_expr);
             StateFieldSchema {
                 name: f.name.clone(),
                 ty: f.ty.clone(),
@@ -570,6 +570,7 @@ fn fold_binop(a: &Value, b: &Value, op: BinOp) -> Option<Value> {
 /// M-11: Dead code elimination — remove unreachable opcodes after Return/Halt.
 /// Uses reachability analysis: starting from each method entry point, follow
 /// control flow; any opcode not reached is replaced with a no-op (Pop).
+#[allow(clippy::ptr_arg)]
 fn eliminate_dead_code(opcodes: &mut Vec<Op>, methods: &HashMap<String, usize>) -> bool {
     if opcodes.is_empty() {
         return false;
@@ -691,9 +692,7 @@ fn fn_mutates_state(stmts: &[Stmt]) -> bool {
                     if fn_mutates_state(eb) { return true; }
                 }
             }
-            Stmt::While { body, .. } => {
-                if fn_mutates_state(body) { return true; }
-            }
+            Stmt::While { body, .. } if fn_mutates_state(body) => return true,
             _ => {}
         }
     }

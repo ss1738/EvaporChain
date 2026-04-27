@@ -192,6 +192,7 @@ impl NoteTree {
     }
 
     /// Generate a membership proof for the leaf at the given index.
+    #[allow(clippy::manual_is_multiple_of)]
     pub fn prove(&self, leaf_index: usize) -> Option<MerkleProof> {
         if leaf_index >= self.next_leaf {
             return None;
@@ -219,6 +220,7 @@ impl NoteTree {
 }
 
 /// Verify a Merkle membership proof.
+#[allow(clippy::manual_is_multiple_of)]
 pub fn verify_merkle_proof(leaf: &[u8; 32], proof: &MerkleProof) -> bool {
     let mut current = *leaf;
     let mut idx = proof.leaf_index;

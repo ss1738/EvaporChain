@@ -231,7 +231,7 @@ impl Lexer {
     fn skip_whitespace_and_comments(&mut self) {
         loop {
             // Skip whitespace
-            while self.peek().map_or(false, |c| c.is_whitespace()) {
+            while self.peek().is_some_and(|c| c.is_whitespace()) {
                 self.advance();
             }
             // Skip line comments
@@ -239,7 +239,7 @@ impl Lexer {
                 && self.chars[self.pos] == '/'
                 && self.chars[self.pos + 1] == '/'
             {
-                while self.peek().map_or(false, |c| c != '\n') {
+                while self.peek().is_some_and(|c| c != '\n') {
                     self.advance();
                 }
                 continue;
@@ -250,7 +250,7 @@ impl Lexer {
 
     fn read_ident(&mut self) -> String {
         let start = self.pos;
-        while self.peek().map_or(false, |c| c.is_alphanumeric() || c == '_') {
+        while self.peek().is_some_and(|c| c.is_alphanumeric() || c == '_') {
             self.advance();
         }
         self.chars[start..self.pos].iter().collect()
@@ -258,7 +258,7 @@ impl Lexer {
 
     fn read_number(&mut self) -> Result<u64, ScriptError> {
         let start = self.pos;
-        while self.peek().map_or(false, |c| c.is_ascii_digit()) {
+        while self.peek().is_some_and(|c| c.is_ascii_digit()) {
             self.advance();
         }
         let s: String = self.chars[start..self.pos].iter().collect();

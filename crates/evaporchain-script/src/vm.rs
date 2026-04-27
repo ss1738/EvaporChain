@@ -200,7 +200,7 @@ impl EvaporVM {
                 Op::StateStore(field) => {
                     self.charge_gas(GAS_STATE_STORE)?;
                     let val = self.pop()?;
-                    if !self.state.contains_key(&*field)
+                    if !self.state.contains_key(field.as_str())
                         && self.state.len() >= MAX_STATE_KEYS
                     {
                         return Err(ScriptError::Runtime(format!(
@@ -536,7 +536,7 @@ impl EvaporVM {
                     let key = self.pop()?;
 
                     // Check if this is a new map entry — track memory before borrowing state
-                    let is_new_entry = match self.state.get(&*field) {
+                    let is_new_entry = match self.state.get(field.as_str()) {
                         Some(Value::Map(m)) => !m.contains_key(&key.to_map_key()),
                         None => true,
                         _ => false,
@@ -723,7 +723,7 @@ impl EvaporVM {
                     let ac = *arg_count;
                     // Stack: [contract_id, method, arg0, arg1, ...] (bottom to top)
                     // arg_count includes contract_id and method, so actual args = ac - 2
-                    let extra_args = if ac >= 2 { ac - 2 } else { 0 };
+                    let extra_args = ac.saturating_sub(2);
                     let mut args = Vec::with_capacity(extra_args);
                     for _ in 0..extra_args {
                         args.push(self.pop()?);
