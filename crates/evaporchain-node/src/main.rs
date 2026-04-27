@@ -2507,10 +2507,19 @@ async fn main() -> Result<()> {
                             for (key, base_price) in &[("btc_usd", 60000.0f64), ("eth_usd", 3000.0), ("evap_usd", 0.50)] {
                                 let round_id = ob.start_round(key);
                                 let jitter = (rng.gen::<f64>() - 0.5) * base_price * 0.02;
-                                let vote = evaporchain_oracle::consensus::make_vote(
+                                let mut vote = evaporchain_oracle::consensus::make_vote(
                                     args.validator_id, key, base_price + jitter, round_id, ts,
                                 );
-                                let _ = ob.submit_vote(key, vote);
+                                // Sign the vote with our validator BLS key and
+                                // pull the matching pubkey from TendermintConsensus.
+                                let signed = {
+                                    let tc = safe_lock(tc_ref);
+                                    tc.sign_with_bls(&vote.signable_bytes())
+                                };
+                                if let Some((sig, pk)) = signed {
+                                    vote.signature = sig.0;
+                                    let _ = ob.submit_vote(key, vote, &pk);
+                                }
                             }
                         }
                     }

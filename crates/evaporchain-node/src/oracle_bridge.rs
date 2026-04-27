@@ -4,6 +4,7 @@
 //! When quorum is reached, finalized values are applied to on-chain oracle state
 //! and included in the block's oracle state root.
 
+use evaporchain_crypto::signatures::BlsPublicKey;
 use evaporchain_oracle::consensus::{FinalizedOracleValue, OracleConsensusRound, OracleVote};
 use evaporchain_oracle::state::{OracleInclusionProof, OracleState};
 use evaporchain_oracle::presets;
@@ -35,10 +36,18 @@ impl OracleBridge {
         self.round_counter
     }
 
-    pub fn submit_vote(&mut self, key: &str, vote: OracleVote) -> Result<(), String> {
+    /// Submit a signed oracle vote. `validator_pubkey` must be the BLS
+    /// public key registered for `vote.validator_id` in the validator set —
+    /// the caller is responsible for that lookup.
+    pub fn submit_vote(
+        &mut self,
+        key: &str,
+        vote: OracleVote,
+        validator_pubkey: &BlsPublicKey,
+    ) -> Result<(), String> {
         let round = self.active_rounds.get_mut(key)
             .ok_or_else(|| format!("no active round for key '{}'", key))?;
-        round.submit_vote(vote).map_err(|e| format!("{:?}", e))
+        round.submit_vote(vote, validator_pubkey).map_err(|e| format!("{:?}", e))
     }
 
     pub fn try_finalize(&mut self, key: &str) -> Option<FinalizedOracleValue> {
@@ -101,17 +110,35 @@ impl OracleBridge {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use evaporchain_crypto::signatures::BlsKeypair;
     use evaporchain_oracle::consensus::make_vote;
+
+    fn signed(
+        kp: &BlsKeypair,
+        validator_id: u64,
+        key: &str,
+        value: f64,
+        round: u64,
+        ts: u64,
+    ) -> (OracleVote, BlsPublicKey) {
+        let mut v = make_vote(validator_id, key, value, round, ts);
+        v.sign(kp);
+        (v, kp.public_key_bytes())
+    }
 
     #[test]
     fn test_oracle_bridge_full_cycle() {
         let mut bridge = OracleBridge::new(2);
         let round = bridge.start_round("btc_usd");
 
-        bridge.submit_vote("btc_usd", make_vote(0, "btc_usd", 60000.0, round, 1000)).unwrap();
+        let kp0 = BlsKeypair::generate();
+        let kp1 = BlsKeypair::generate();
+        let (v0, pk0) = signed(&kp0, 0, "btc_usd", 60000.0, round, 1000);
+        bridge.submit_vote("btc_usd", v0, &pk0).unwrap();
         assert!(bridge.try_finalize("btc_usd").is_none());
 
-        bridge.submit_vote("btc_usd", make_vote(1, "btc_usd", 60100.0, round, 1001)).unwrap();
+        let (v1, pk1) = signed(&kp1, 1, "btc_usd", 60100.0, round, 1001);
+        bridge.submit_vote("btc_usd", v1, &pk1).unwrap();
         let finalized = bridge.try_finalize("btc_usd").unwrap();
 
         assert_eq!(finalized.key, "btc_usd");
@@ -126,8 +153,11 @@ mod tests {
         let r1 = bridge.start_round("btc_usd");
         let r2 = bridge.start_round("eth_usd");
 
-        bridge.submit_vote("btc_usd", make_vote(0, "btc_usd", 60000.0, r1, 1000)).unwrap();
-        bridge.submit_vote("eth_usd", make_vote(0, "eth_usd", 3000.0, r2, 1000)).unwrap();
+        let kp = BlsKeypair::generate();
+        let (v_btc, pk_btc) = signed(&kp, 0, "btc_usd", 60000.0, r1, 1000);
+        bridge.submit_vote("btc_usd", v_btc, &pk_btc).unwrap();
+        let (v_eth, pk_eth) = signed(&kp, 0, "eth_usd", 3000.0, r2, 1000);
+        bridge.submit_vote("eth_usd", v_eth, &pk_eth).unwrap();
 
         let results = bridge.finalize_all();
         assert_eq!(results.len(), 2);
@@ -138,7 +168,9 @@ mod tests {
     fn test_oracle_inclusion_proof() {
         let mut bridge = OracleBridge::new(1);
         let r = bridge.start_round("btc_usd");
-        bridge.submit_vote("btc_usd", make_vote(0, "btc_usd", 60000.0, r, 1000)).unwrap();
+        let kp = BlsKeypair::generate();
+        let (v, pk) = signed(&kp, 0, "btc_usd", 60000.0, r, 1000);
+        bridge.submit_vote("btc_usd", v, &pk).unwrap();
         bridge.try_finalize("btc_usd");
 
         let proof = bridge.generate_proof("btc_usd").unwrap();

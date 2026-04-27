@@ -441,6 +441,16 @@ impl TendermintConsensus {
         self.bls_keypair = Some(keypair);
     }
 
+    /// Sign an arbitrary message with this validator's BLS key. Returns the
+    /// signature together with the matching public key so the caller can
+    /// submit both to a verifier without holding the keypair lock open.
+    /// Returns `None` when no BLS keypair has been configured.
+    pub fn sign_with_bls(&self, msg: &[u8]) -> Option<(BlsSignature, BlsPublicKey)> {
+        self.bls_keypair
+            .as_ref()
+            .map(|kp| (kp.sign(msg), kp.public_key_bytes()))
+    }
+
     /// Generate a KeyAnnounce message for broadcasting our BLS public key
     /// along with a proof-of-possession (prevents rogue-key attacks).
     pub fn make_key_announce(&self) -> Option<ConsensusMessage> {

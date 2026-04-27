@@ -5,6 +5,7 @@
 //! agree on a value (within tolerance), the aggregated report is finalized
 //! and can be included in a block.
 
+use evaporchain_crypto::signatures::{BlsKeypair, BlsPublicKey, BlsSignature, BlsVerifier};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -43,6 +44,18 @@ impl OracleVote {
         let mut hasher = Sha256::new();
         hasher.update(self.signable_bytes());
         hasher.finalize().into()
+    }
+
+    /// Sign this vote in place with the validator's BLS keypair.
+    ///
+    /// Replaces any existing `signature`. The matching public key must be
+    /// supplied to `OracleConsensusRound::submit_vote` so the verifier can
+    /// authenticate the sender. Callers are responsible for ensuring the
+    /// `validator_id` field matches the keypair's identity in the live
+    /// validator set — this method does not perform that check.
+    pub fn sign(&mut self, kp: &BlsKeypair) {
+        let sig = kp.sign(&self.signable_bytes());
+        self.signature = sig.0;
     }
 }
 
@@ -180,7 +193,20 @@ impl OracleConsensusRound {
         self
     }
 
-    pub fn submit_vote(&mut self, vote: OracleVote) -> Result<(), ConsensusError> {
+    /// Submit a vote signed by the validator identified by `vote.validator_id`.
+    ///
+    /// `validator_pubkey` MUST be the canonical BLS public key for that
+    /// validator as recorded in the validator set — it must NOT be supplied
+    /// from the vote payload. The caller is responsible for the validator-set
+    /// lookup; this function only verifies the BLS signature against the key
+    /// it is given.
+    ///
+    /// Empty signatures are rejected. There is no test/dev bypass.
+    pub fn submit_vote(
+        &mut self,
+        vote: OracleVote,
+        validator_pubkey: &BlsPublicKey,
+    ) -> Result<(), ConsensusError> {
         if vote.round != self.round {
             return Err(ConsensusError::RoundMismatch {
                 expected: self.round,
@@ -190,13 +216,14 @@ impl OracleConsensusRound {
         if self.votes.contains_key(&vote.validator_id) {
             return Err(ConsensusError::DuplicateVoter(vote.validator_id));
         }
-        if !vote.signature.is_empty() {
-            let expected = vote.vote_hash();
-            if vote.signature.len() != 32 || vote.signature[..] != expected[..] {
-                return Err(ConsensusError::InvalidVote(
-                    "vote signature does not match vote hash".into(),
-                ));
-            }
+        if vote.signature.is_empty() {
+            return Err(ConsensusError::InvalidVote("missing signature".into()));
+        }
+        let sig = BlsSignature(vote.signature.clone());
+        if !BlsVerifier::verify(&vote.signable_bytes(), &sig, validator_pubkey) {
+            return Err(ConsensusError::InvalidVote(
+                "BLS signature verification failed".into(),
+            ));
         }
         self.votes.insert(vote.validator_id, vote);
         Ok(())
@@ -301,6 +328,21 @@ pub fn make_vote(validator_id: u64, key: &str, value: f64, round: u64, timestamp
 mod tests {
     use super::*;
 
+    /// Build a signed test vote and return it together with its public key
+    /// for `submit_vote`.
+    fn signed(
+        kp: &BlsKeypair,
+        validator_id: u64,
+        key: &str,
+        value: f64,
+        round: u64,
+        ts: u64,
+    ) -> (OracleVote, BlsPublicKey) {
+        let mut v = make_vote(validator_id, key, value, round, ts);
+        v.sign(kp);
+        (v, kp.public_key_bytes())
+    }
+
     #[test]
     fn test_vote_hash_deterministic() {
         let v = make_vote(1, "btc_usd", 60000.0, 1, 1000);
@@ -317,18 +359,24 @@ mod tests {
     #[test]
     fn test_quorum_2_of_3() {
         let mut round = OracleConsensusRound::new("btc_usd", 1, 2, 3600);
-        round.submit_vote(make_vote(0, "btc_usd", 60000.0, 1, 1000)).unwrap();
+        let kp0 = BlsKeypair::generate();
+        let kp1 = BlsKeypair::generate();
+        let (v0, pk0) = signed(&kp0, 0, "btc_usd", 60000.0, 1, 1000);
+        round.submit_vote(v0, &pk0).unwrap();
         assert!(!round.has_quorum());
-        round.submit_vote(make_vote(1, "btc_usd", 60100.0, 1, 1001)).unwrap();
+        let (v1, pk1) = signed(&kp1, 1, "btc_usd", 60100.0, 1, 1001);
+        round.submit_vote(v1, &pk1).unwrap();
         assert!(round.has_quorum());
     }
 
     #[test]
     fn test_finalize_success() {
         let mut round = OracleConsensusRound::new("btc_usd", 1, 2, 3600);
-        round.submit_vote(make_vote(0, "btc_usd", 60000.0, 1, 1000)).unwrap();
-        round.submit_vote(make_vote(1, "btc_usd", 60100.0, 1, 1001)).unwrap();
-        round.submit_vote(make_vote(2, "btc_usd", 60050.0, 1, 1002)).unwrap();
+        for (id, value, ts) in [(0u64, 60000.0, 1000u64), (1, 60100.0, 1001), (2, 60050.0, 1002)] {
+            let kp = BlsKeypair::generate();
+            let (v, pk) = signed(&kp, id, "btc_usd", value, 1, ts);
+            round.submit_vote(v, &pk).unwrap();
+        }
         let result = round.finalize().unwrap();
         assert_eq!(result.key, "btc_usd");
         assert_eq!(result.voter_count, 3);
@@ -339,8 +387,11 @@ mod tests {
     #[test]
     fn test_insufficient_votes() {
         let mut round = OracleConsensusRound::new("btc_usd", 1, 3, 3600);
-        round.submit_vote(make_vote(0, "btc_usd", 60000.0, 1, 1000)).unwrap();
-        round.submit_vote(make_vote(1, "btc_usd", 60100.0, 1, 1001)).unwrap();
+        for (id, value, ts) in [(0u64, 60000.0, 1000u64), (1, 60100.0, 1001)] {
+            let kp = BlsKeypair::generate();
+            let (v, pk) = signed(&kp, id, "btc_usd", value, 1, ts);
+            round.submit_vote(v, &pk).unwrap();
+        }
         match round.finalize() {
             Err(ConsensusError::InsufficientVotes { have: 2, need: 3 }) => {}
             other => panic!("expected InsufficientVotes, got {:?}", other),
@@ -350,8 +401,11 @@ mod tests {
     #[test]
     fn test_duplicate_voter_rejected() {
         let mut round = OracleConsensusRound::new("btc_usd", 1, 2, 3600);
-        round.submit_vote(make_vote(0, "btc_usd", 60000.0, 1, 1000)).unwrap();
-        match round.submit_vote(make_vote(0, "btc_usd", 60100.0, 1, 1001)) {
+        let kp = BlsKeypair::generate();
+        let (v0, pk0) = signed(&kp, 0, "btc_usd", 60000.0, 1, 1000);
+        round.submit_vote(v0, &pk0).unwrap();
+        let (v0_dup, _) = signed(&kp, 0, "btc_usd", 60100.0, 1, 1001);
+        match round.submit_vote(v0_dup, &pk0) {
             Err(ConsensusError::DuplicateVoter(0)) => {}
             other => panic!("expected DuplicateVoter, got {:?}", other),
         }
@@ -360,9 +414,36 @@ mod tests {
     #[test]
     fn test_round_mismatch_rejected() {
         let mut round = OracleConsensusRound::new("btc_usd", 1, 2, 3600);
-        match round.submit_vote(make_vote(0, "btc_usd", 60000.0, 2, 1000)) {
+        let kp = BlsKeypair::generate();
+        let (v, pk) = signed(&kp, 0, "btc_usd", 60000.0, 2, 1000);
+        match round.submit_vote(v, &pk) {
             Err(ConsensusError::RoundMismatch { expected: 1, got: 2 }) => {}
             other => panic!("expected RoundMismatch, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_missing_signature_rejected() {
+        let mut round = OracleConsensusRound::new("btc_usd", 1, 2, 3600);
+        let kp = BlsKeypair::generate();
+        let v = make_vote(0, "btc_usd", 60000.0, 1, 1000);
+        match round.submit_vote(v, &kp.public_key_bytes()) {
+            Err(ConsensusError::InvalidVote(msg)) if msg.contains("missing signature") => {}
+            other => panic!("expected InvalidVote(missing signature), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_forged_signature_rejected() {
+        let mut round = OracleConsensusRound::new("btc_usd", 1, 2, 3600);
+        let real_kp = BlsKeypair::generate();
+        let attacker_kp = BlsKeypair::generate();
+        // Attacker signs the vote with their own key but presents the real
+        // validator's public key — the signature verification must fail.
+        let (v, _attacker_pk) = signed(&attacker_kp, 0, "btc_usd", 60000.0, 1, 1000);
+        match round.submit_vote(v, &real_kp.public_key_bytes()) {
+            Err(ConsensusError::InvalidVote(msg)) if msg.contains("verification failed") => {}
+            other => panic!("expected InvalidVote(verification failed), got {:?}", other),
         }
     }
 
@@ -370,9 +451,11 @@ mod tests {
     fn test_excessive_spread_rejected() {
         let mut round = OracleConsensusRound::new("btc_usd", 1, 2, 3600)
             .with_spread_tolerance(1.0);
-        round.submit_vote(make_vote(0, "btc_usd", 60000.0, 1, 1000)).unwrap();
-        round.submit_vote(make_vote(1, "btc_usd", 65000.0, 1, 1001)).unwrap();
-        round.submit_vote(make_vote(2, "btc_usd", 62000.0, 1, 1002)).unwrap();
+        for (id, value, ts) in [(0u64, 60000.0, 1000u64), (1, 65000.0, 1001), (2, 62000.0, 1002)] {
+            let kp = BlsKeypair::generate();
+            let (v, pk) = signed(&kp, id, "btc_usd", value, 1, ts);
+            round.submit_vote(v, &pk).unwrap();
+        }
         match round.finalize() {
             Err(ConsensusError::ExcessiveSpread { .. }) => {}
             other => panic!("expected ExcessiveSpread, got {:?}", other),
@@ -415,13 +498,22 @@ mod tests {
 
     #[test]
     fn test_aggregate_hash_deterministic() {
+        // Use the same keypairs across both rounds so signatures match
+        // byte-for-byte and the aggregate hash is reproducible.
+        let kp0 = BlsKeypair::generate();
+        let kp1 = BlsKeypair::generate();
+        let (v0a, pk0) = signed(&kp0, 0, "btc_usd", 60000.0, 1, 1000);
+        let (v1a, pk1) = signed(&kp1, 1, "btc_usd", 60100.0, 1, 1001);
+        let (v0b, _) = signed(&kp0, 0, "btc_usd", 60000.0, 1, 1000);
+        let (v1b, _) = signed(&kp1, 1, "btc_usd", 60100.0, 1, 1001);
+
         let mut r1 = OracleConsensusRound::new("btc_usd", 1, 2, 3600);
-        r1.submit_vote(make_vote(0, "btc_usd", 60000.0, 1, 1000)).unwrap();
-        r1.submit_vote(make_vote(1, "btc_usd", 60100.0, 1, 1001)).unwrap();
+        r1.submit_vote(v0a, &pk0).unwrap();
+        r1.submit_vote(v1a, &pk1).unwrap();
 
         let mut r2 = OracleConsensusRound::new("btc_usd", 1, 2, 3600);
-        r2.submit_vote(make_vote(0, "btc_usd", 60000.0, 1, 1000)).unwrap();
-        r2.submit_vote(make_vote(1, "btc_usd", 60100.0, 1, 1001)).unwrap();
+        r2.submit_vote(v0b, &pk0).unwrap();
+        r2.submit_vote(v1b, &pk1).unwrap();
 
         assert_eq!(r1.compute_aggregate_hash(), r2.compute_aggregate_hash());
     }
@@ -429,7 +521,9 @@ mod tests {
     #[test]
     fn test_finalize_includes_twap() {
         let mut round = OracleConsensusRound::new("btc_usd", 1, 1, 3600);
-        round.submit_vote(make_vote(0, "btc_usd", 60000.0, 1, 1000)).unwrap();
+        let kp = BlsKeypair::generate();
+        let (v, pk) = signed(&kp, 0, "btc_usd", 60000.0, 1, 1000);
+        round.submit_vote(v, &pk).unwrap();
         let result = round.finalize().unwrap();
         assert!(result.twap.is_some());
     }
