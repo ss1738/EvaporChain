@@ -802,6 +802,14 @@ mod tests {
                 inner.signature = Some(sig);
                 inner.public_key = Some(pk);
             }
+            Transaction::Delegate(ref mut inner) => {
+                inner.signature = Some(sig);
+                inner.public_key = Some(pk);
+            }
+            Transaction::Undelegate(ref mut inner) => {
+                inner.signature = Some(sig);
+                inner.public_key = Some(pk);
+            }
         }
     }
 
