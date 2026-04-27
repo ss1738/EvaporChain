@@ -341,6 +341,8 @@ impl Mempool {
             Transaction::MultiSig(_) => 50_000,
             Transaction::UserOp(tx) => 30_000 + 16 * tx.call_data.len() as u64,
             Transaction::UpgradeContract(tx) => 100_000 + 200 * tx.new_bytecode.len() as u64,
+            Transaction::Delegate(_) => 40_000,
+            Transaction::Undelegate(_) => 40_000,
         }
     }
 
@@ -472,6 +474,16 @@ impl Mempool {
             }
             Transaction::UpgradeContract(tx) => {
                 32 + 8 + 8 + tx.new_bytecode.len()
+                    + tx.signature.as_ref().map_or(0, |s| s.len())
+                    + tx.public_key.as_ref().map_or(0, |p| p.len())
+            }
+            Transaction::Delegate(tx) => {
+                32 + 8 + 8 + 8
+                    + tx.signature.as_ref().map_or(0, |s| s.len())
+                    + tx.public_key.as_ref().map_or(0, |p| p.len())
+            }
+            Transaction::Undelegate(tx) => {
+                32 + 8 + 8 + 8
                     + tx.signature.as_ref().map_or(0, |s| s.len())
                     + tx.public_key.as_ref().map_or(0, |p| p.len())
             }
