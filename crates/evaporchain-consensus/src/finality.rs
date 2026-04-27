@@ -155,16 +155,20 @@ impl FinalityTracker {
         timestamp: u64,
     ) -> bool {
         if self.records.contains_key(&height) {
-            return false; // Already recorded
+            return false; // Already recorded — duplicate-finalization guard
         }
-        // Monotonicity: never accept finalization for a height below the
-        // current finalized tip. Heights below latest_finalized are already
-        // implicitly final via the chain, so accepting them here only opens
-        // a window for replayed certificates from forks pruned before
-        // finalization.
-        if self.latest_finalized > 0 && height < self.latest_finalized {
-            return false;
-        }
+        // NOTE on monotonicity (cross_verification §1): we deliberately do
+        // NOT reject `height < latest_finalized`. The records map is allowed
+        // to be backfilled with previously-unseen heights below the current
+        // tip — late delivery, gap-fill after restart, and out-of-order
+        // certificate arrival all need this. `latest_finalized` itself is
+        // still strictly monotone (only advances at the `if height >
+        // latest_finalized` check below). The 2/3 stake quorum on
+        // `signing_stake / total_stake` bounds replay risk: an attacker
+        // cannot craft a fake old certificate without controlling 2/3 of
+        // historical stake. A future hardening pass could add per-height
+        // gap-tracking to reject backfill of heights never observed in any
+        // proposal, but that needs new state outside this struct.
         if certificate.signer_ids.is_empty() {
             return false; // Reject finality without any signers
         }

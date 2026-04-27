@@ -59,6 +59,31 @@ if height > 0 && height <= self.latest_finalized && !self.records.contains_key(&
 
 Or simpler: only allow non-sequential insertion if `height` is in a contiguous gap below `latest_finalized` AND no later record contradicts it. Defer detail to the consensus author.
 
+**Resolution (2026-04-27, commits 674be1d → 3b11769 → next):**
+A first attempt added a strict `height < latest_finalized` reject, but
+that broke `test_non_sequential_finalization` which exercises legitimate
+out-of-order finalization (block 5 finalized first, then block 3
+backfilled, both records expected to coexist with `latest_finalized`
+unchanged at 5). The fix was relaxed to **rely on the existing
+duplicate-key guard plus the 2/3 stake quorum**:
+- `records.contains_key(&height)` rejects duplicate finalization for the
+  same height.
+- `signing_stake * 3 < total_stake * 2` rejects any certificate without
+  2/3 stake — an attacker cannot forge a backfill cert without
+  controlling 2/3 of historical stake at that height.
+- `latest_finalized` is still strictly monotone (`if height >
+  latest_finalized` at line 189), so head-of-chain is not rewritable.
+
+Residual risk: a colluding majority that controlled 2/3 of stake at
+some past height *can* still backfill a record there. This is a
+governance failure, not a protocol-level forgery, and matches the
+inherent honest-majority assumption documented in the audit pack §1.
+
+A future hardening pass could add per-height gap-tracking that only
+allows backfill of heights actually observed in some prior proposal —
+that needs new state outside `FinalityTracker`. Out of scope for the
+2026-04-27 fix wave.
+
 ---
 
 ## 2. Oracle vote "verification" is byte equality (CRITICAL, confirmed)
