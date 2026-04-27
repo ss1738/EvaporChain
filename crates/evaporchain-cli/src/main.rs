@@ -1236,13 +1236,16 @@ fn cmd_genesis_set_validator_bls(
     let mut config: GenesisConfig = serde_json::from_str(&json)
         .with_context(|| "Failed to parse genesis config")?;
 
-    let entry = config
-        .validators
-        .iter_mut()
-        .find(|v| v.id == validator_id)
-        .ok_or_else(|| anyhow::anyhow!("validator-id {} not in genesis", validator_id))?;
-    let prev = entry.bls_public_key.clone();
-    entry.bls_public_key = Some(pk_hex.to_lowercase());
+    let (prev, new_pk) = {
+        let entry = config
+            .validators
+            .iter_mut()
+            .find(|v| v.id == validator_id)
+            .ok_or_else(|| anyhow::anyhow!("validator-id {} not in genesis", validator_id))?;
+        let prev = entry.bls_public_key.clone();
+        entry.bls_public_key = Some(pk_hex.to_lowercase());
+        (prev, entry.bls_public_key.clone().unwrap())
+    };
 
     let output = serde_json::to_string_pretty(&config)?;
     std::fs::write(path, &output)?;
@@ -1251,7 +1254,7 @@ fn cmd_genesis_set_validator_bls(
         let result = serde_json::json!({
             "validator_id": validator_id,
             "previous_bls_public_key": prev,
-            "new_bls_public_key": entry.bls_public_key,
+            "new_bls_public_key": new_pk,
         });
         println!("{}", serde_json::to_string_pretty(&result)?);
     } else {
@@ -1266,7 +1269,7 @@ fn cmd_genesis_set_validator_bls(
         }
         println!(
             "  now:  {}...",
-            &entry.bls_public_key.as_ref().unwrap()[..32].truecolor(100, 110, 130)
+            &new_pk[..32].truecolor(100, 110, 130)
         );
     }
     println!();
