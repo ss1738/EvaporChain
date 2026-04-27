@@ -14,6 +14,7 @@ mod audit_tests;
 
 use encrypted_mempool::EncryptedMempool;
 use evaporchain_crypto::hash::blake3_hash;
+use evaporchain_da::{BlockDA2D, NamespacedBlob};
 use evaporchain_execution::{fees::PidFeeController, BlockExecutionResult, ExecutionEngine};
 use evaporchain_execution::parallel::ParallelExecutor;
 use evaporchain_state::db::StateDB;
@@ -21,8 +22,79 @@ use evaporchain_types::{Block, Epoch, Transaction};
 use mempool::Mempool;
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
-use tracing::info;
+use tracing::{info, warn};
 use validator_set::{ValidatorInfo, ValidatorSet};
+
+/// 2D DA outputs to embed in a produced block. Returned by
+/// [`compute_block_da`] and copied directly into the block fields.
+struct BlockDaOutputs {
+    data_root: Option<[u8; 32]>,
+    da_row_roots: Vec<[u8; 32]>,
+    da_col_roots: Vec<[u8; 32]>,
+    blob_commitments: Vec<[u8; 32]>,
+}
+
+/// Compute the data availability commitments for a block's transactions.
+///
+/// Uses [`BlockDA2D`] (Celestia-style 2D extended data square) to produce a
+/// `data_root`, per-row and per-column Merkle roots, and namespace blob
+/// commitments in a single call. Empty blocks fall back to a sentinel
+/// `data_root` so the DA attestation flow still fires every block.
+///
+/// On any encoding failure all DA fields are returned empty / `None` and a
+/// warning is logged — block production is never aborted by a DA error.
+fn compute_block_da(txs: &[Transaction]) -> BlockDaOutputs {
+    if txs.is_empty() {
+        return BlockDaOutputs {
+            data_root: Some(blake3::hash(b"evaporchain:empty_block").into()),
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+            blob_commitments: vec![],
+        };
+    }
+    let tx_bytes = match serde_json::to_vec(txs) {
+        Ok(b) => b,
+        Err(e) => {
+            warn!("DA: tx serialization failed: {e} — block produced without data_root");
+            return BlockDaOutputs {
+                data_root: None,
+                da_row_roots: vec![],
+                da_col_roots: vec![],
+                blob_commitments: vec![],
+            };
+        }
+    };
+    let blobs: Vec<NamespacedBlob> = txs
+        .iter()
+        .map(|tx| {
+            let (ns_id, data) = match tx {
+                Transaction::Blob(blob_tx) => (blob_tx.namespace_id, blob_tx.data.clone()),
+                _ => (0u64, serde_json::to_vec(tx).unwrap_or_default()),
+            };
+            let mut namespace = [0u8; 8];
+            namespace.copy_from_slice(&ns_id.to_be_bytes());
+            NamespacedBlob { namespace, data }
+        })
+        .collect();
+    let da2d = BlockDA2D::new();
+    match da2d.encode_block_with_blobs(&tx_bytes, &blobs) {
+        Ok(package) => BlockDaOutputs {
+            data_root: Some(package.header.data_root),
+            da_row_roots: package.header.row_roots,
+            da_col_roots: package.header.col_roots,
+            blob_commitments: package.header.blob_commitments,
+        },
+        Err(e) => {
+            warn!("DA: BlockDA2D encoding failed: {e} — block produced without data_root");
+            BlockDaOutputs {
+                data_root: None,
+                da_row_roots: vec![],
+                da_col_roots: vec![],
+                blob_commitments: vec![],
+            }
+        }
+    }
+}
 
 /// Errors that can occur during consensus.
 #[derive(Debug, Error)]
@@ -224,6 +296,7 @@ impl MockConsensus {
             .unwrap_or_default()
             .as_secs();
 
+        let da = compute_block_da(&txs);
         let mut block = Block {
             number: self.block_number,
             epoch: self.epoch,
@@ -235,10 +308,10 @@ impl MockConsensus {
             producer_id: None,
             vrf_output: None,
             vrf_proof: None,
-            data_root: None,
-            da_row_roots: vec![],
-            da_col_roots: vec![],
-            blob_commitments: vec![],
+            data_root: da.data_root,
+            da_row_roots: da.da_row_roots,
+            da_col_roots: da.da_col_roots,
+            blob_commitments: da.blob_commitments,
             da_certificate: None,
             commit_certificate: None,
             nova_proof: None,
@@ -302,6 +375,7 @@ impl MockConsensus {
             .unwrap_or_default()
             .as_secs();
 
+        let da = compute_block_da(&txs);
         let mut block = Block {
             number: self.block_number,
             epoch: self.epoch,
@@ -313,10 +387,10 @@ impl MockConsensus {
             producer_id: None,
             vrf_output: None,
             vrf_proof: None,
-            data_root: None,
-            da_row_roots: vec![],
-            da_col_roots: vec![],
-            blob_commitments: vec![],
+            data_root: da.data_root,
+            da_row_roots: da.da_row_roots,
+            da_col_roots: da.da_col_roots,
+            blob_commitments: da.blob_commitments,
             da_certificate: None,
             commit_certificate: None,
             nova_proof: None,
@@ -471,6 +545,7 @@ impl RotatingConsensus {
             .unwrap_or_default()
             .as_secs();
 
+        let da = compute_block_da(&txs);
         let mut block = Block {
             number: self.block_number,
             epoch: self.epoch,
@@ -482,10 +557,10 @@ impl RotatingConsensus {
             producer_id: Some(self.my_id),
             vrf_output: None,
             vrf_proof: None,
-            data_root: None,
-            da_row_roots: vec![],
-            da_col_roots: vec![],
-            blob_commitments: vec![],
+            data_root: da.data_root,
+            da_row_roots: da.da_row_roots,
+            da_col_roots: da.da_col_roots,
+            blob_commitments: da.blob_commitments,
             da_certificate: None,
             commit_certificate: None,
             nova_proof: None,
