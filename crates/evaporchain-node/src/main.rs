@@ -701,6 +701,8 @@ struct NodeArgs {
     chain_id: String,
     /// Light client mode — verify headers only, skip block execution.
     light_mode: bool,
+    /// Mainnet strict mode — refuses any insecure default at startup.
+    mainnet_strict: bool,
 }
 
 fn parse_args() -> NodeArgs {
@@ -749,6 +751,7 @@ fn parse_args() -> NodeArgs {
 
     let mock_consensus = args.iter().any(|a| a == "--mock-consensus");
     let tendermint_mode = !mock_consensus;
+    let mainnet_strict = args.iter().any(|a| a == "--mainnet");
     let validator_id = args
         .iter()
         .position(|a| a == "--validator-id")
@@ -862,6 +865,60 @@ fn parse_args() -> NodeArgs {
         no_da_enforcement,
         chain_id,
         light_mode,
+        mainnet_strict,
+    }
+}
+
+/// In `--mainnet` strict mode the binary refuses to start unless every
+/// known footgun is closed. Returns an aggregated error listing every
+/// violated requirement so an operator sees the full punch list at once.
+fn validate_mainnet_strict(args: &NodeArgs) -> Result<(), String> {
+    if !args.mainnet_strict {
+        return Ok(());
+    }
+    // Keep this constant in sync with auth.rs::master_encryption_key().
+    const DEV_MASTER_KEY: &str = "EVAPORCHAIN_DEV_KEY_DO_NOT_USE_IN_PRODUCTION";
+
+    let mut issues: Vec<String> = Vec::new();
+    if !args.tendermint_mode {
+        issues.push(
+            "--mock-consensus is incompatible with --mainnet (Tendermint BFT required)".into(),
+        );
+    }
+    if args.demo_mode {
+        issues.push("--demo generates synthetic txs and is incompatible with --mainnet".into());
+    }
+    if args.no_da_enforcement {
+        issues.push("--no-da-enforcement bypasses DA attestation and is incompatible with --mainnet".into());
+    }
+    match std::env::var("EVAPORCHAIN_KEY_MASTER") {
+        Err(_) => issues.push("EVAPORCHAIN_KEY_MASTER must be set in --mainnet mode".into()),
+        Ok(v) if v == DEV_MASTER_KEY => issues.push(
+            "EVAPORCHAIN_KEY_MASTER is set to the dev default; pick a real high-entropy value".into(),
+        ),
+        Ok(v) if v.len() < 16 => issues.push(format!(
+            "EVAPORCHAIN_KEY_MASTER must be at least 16 chars in --mainnet mode (got {})",
+            v.len()
+        )),
+        Ok(_) => {}
+    }
+    let validator_pass_ok = std::env::var(bls_key_store::ENV_PASSPHRASE)
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
+    if !validator_pass_ok {
+        issues.push(format!(
+            "{} must be set (non-empty) so the validator BLS key can be encrypted at rest",
+            bls_key_store::ENV_PASSPHRASE
+        ));
+    }
+    if issues.is_empty() {
+        Ok(())
+    } else {
+        let bullets: Vec<String> = issues.into_iter().map(|s| format!("  - {s}")).collect();
+        Err(format!(
+            "--mainnet strict mode rejected this configuration:\n{}",
+            bullets.join("\n")
+        ))
     }
 }
 
@@ -1417,7 +1474,17 @@ async fn main() -> Result<()> {
     }
 
     let args = parse_args();
+    if let Err(e) = validate_mainnet_strict(&args) {
+        eprintln!("\x1b[1;31m{}\x1b[0m", e);
+        std::process::exit(1);
+    }
     let node_tag = make_tag(&args.node_id);
+    if args.mainnet_strict {
+        println!(
+            "{} \x1b[1;32mMAINNET STRICT MODE\x1b[0m — Tendermint required, demo+DA bypass blocked, validator key encryption required",
+            node_tag
+        );
+    }
 
     if args.light_mode {
         println!("{} \x1b[33mStarting in LIGHT CLIENT mode — headers only, no execution (chain_id={})\x1b[0m", node_tag, args.chain_id);
