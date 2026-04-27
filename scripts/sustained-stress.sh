@@ -15,6 +15,15 @@
 #                          active_objects,ghost_count,uptime_s
 #   <run_id>-txs.log      ts,target,http_code  (one line per submitted tx)
 #
+# !!! KNOWN LIMITATION (2026-04-27 first-run):
+# The submitter currently posts to /api/faucet which is rate-limited
+# server-side ("Try again in 59 minutes"). Run 20260427-205045 against
+# a single node returned 1014/1015 HTTP 429 — useful for proving the
+# harness loop, useless for measuring real cluster throughput.
+# A future revision should switch to a signed transfer or a
+# devnet-only bulk-submit endpoint. The harness now warns at end of
+# run when >50% of submissions hit 429 so this isn't silent.
+#
 # Usage:
 #   ./scripts/sustained-stress.sh
 #
@@ -174,15 +183,32 @@ trap - EXIT
 # ── Summary ──
 TOTAL_TX=$(wc -l < "$TX_LOG" | tr -d ' ')
 OK_TX=$(grep -c ',200' "$TX_LOG" 2>/dev/null || echo 0)
+RATE_LIMITED_TX=$(grep -c ',429' "$TX_LOG" 2>/dev/null || echo 0)
 SAMPLES=$(($(wc -l < "$SAMPLE_LOG" | tr -d ' ') - 1))
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  Sustained stress complete"
 echo "  Run ID:       ${RUN_ID}"
-echo "  Submitted:    ${TOTAL_TX} txs (${OK_TX} HTTP 200)"
+echo "  Submitted:    ${TOTAL_TX} txs (${OK_TX} HTTP 200, ${RATE_LIMITED_TX} HTTP 429)"
 echo "  Samples:      ${SAMPLES} rows in ${SAMPLE_LOG}"
 echo "  TX log:       ${TX_LOG}"
+
+# Surface rate-limit dominance — the most common reason a run "succeeds"
+# but produces no useful stress signal.
+if [ "$TOTAL_TX" -gt 0 ]; then
+    HALF=$((TOTAL_TX / 2))
+    if [ "$RATE_LIMITED_TX" -gt "$HALF" ]; then
+        echo ""
+        echo "  WARNING: >50% of submissions returned HTTP 429 (rate limited)."
+        echo "  The /api/faucet endpoint enforces a per-address cooldown — this"
+        echo "  harness is useful for proving the submit/poll loop works but is"
+        echo "  not measuring real chain throughput. Switch to a signed transfer"
+        echo "  endpoint (or a devnet --no-rate-limit mode) before drawing"
+        echo "  conclusions about TPS or block production."
+    fi
+fi
+
 echo ""
 echo "  Quick analysis:"
 echo "    head -3 ${SAMPLE_LOG}"
