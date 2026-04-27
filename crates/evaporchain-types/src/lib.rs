@@ -258,6 +258,13 @@ pub enum Transaction {
     UserOp(UserOpTx),
     /// Upgrade a deployed contract's bytecode (owner + governance gate).
     UpgradeContract(UpgradeContractTx),
+    /// Delegate stake to a validator on behalf of a token-holder.
+    /// Locks `amount` from the delegator's balance and credits it to the
+    /// validator's effective stake (used in voting power + reward share).
+    Delegate(DelegateTx),
+    /// Withdraw a delegation. Stake is locked for the unbonding period
+    /// before being returned to the delegator's balance.
+    Undelegate(UndelegateTx),
 }
 
 impl Transaction {
@@ -504,6 +511,24 @@ impl Transaction {
                 buf.extend_from_slice(&tx.new_bytecode);
                 buf
             }
+            Transaction::Delegate(tx) => {
+                let mut buf = Vec::new();
+                buf.push(0x14);
+                buf.extend_from_slice(&tx.delegator);
+                buf.extend_from_slice(&tx.validator_id.to_le_bytes());
+                buf.extend_from_slice(&tx.amount.to_le_bytes());
+                buf.extend_from_slice(&tx.nonce.to_le_bytes());
+                buf
+            }
+            Transaction::Undelegate(tx) => {
+                let mut buf = Vec::new();
+                buf.push(0x15);
+                buf.extend_from_slice(&tx.delegator);
+                buf.extend_from_slice(&tx.validator_id.to_le_bytes());
+                buf.extend_from_slice(&tx.amount.to_le_bytes());
+                buf.extend_from_slice(&tx.nonce.to_le_bytes());
+                buf
+            }
         }
     }
 
@@ -546,6 +571,8 @@ impl Transaction {
             Transaction::MultiSig(_) => None,
             Transaction::UserOp(tx) => tx.signature.as_deref(),
             Transaction::UpgradeContract(tx) => tx.signature.as_deref(),
+            Transaction::Delegate(tx) => tx.signature.as_deref(),
+            Transaction::Undelegate(tx) => tx.signature.as_deref(),
         }
     }
 
@@ -571,6 +598,8 @@ impl Transaction {
             Transaction::MultiSig(_) => None,
             Transaction::UserOp(tx) => tx.public_key.as_deref(),
             Transaction::UpgradeContract(tx) => tx.public_key.as_deref(),
+            Transaction::Delegate(tx) => tx.public_key.as_deref(),
+            Transaction::Undelegate(tx) => tx.public_key.as_deref(),
         }
     }
 
@@ -604,6 +633,8 @@ impl Transaction {
                 }
             }
             Transaction::UpgradeContract(tx) => Some(&tx.owner),
+            Transaction::Delegate(tx) => Some(&tx.delegator),
+            Transaction::Undelegate(tx) => Some(&tx.delegator),
         }
     }
 
@@ -628,6 +659,8 @@ impl Transaction {
             Transaction::MultiSig(tx) => Some(tx.nonce),
             Transaction::UserOp(tx) => Some(tx.nonce),
             Transaction::UpgradeContract(tx) => Some(tx.nonce),
+            Transaction::Delegate(tx) => Some(tx.nonce),
+            Transaction::Undelegate(tx) => Some(tx.nonce),
         }
     }
 }
@@ -869,12 +902,74 @@ pub struct UserOpTx {
     pub call_gas_limit: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paymaster: Option<AccountAddress>,
+    /// Per-paymaster nonce; required iff `paymaster` is `Some`. Without
+    /// this, the same UserOpTx could be replayed across blocks (or across
+    /// Block-STM aborts) to drain the paymaster.
+    /// Closes the gap from audit/end_to_end_audit_2026_04_27.md §3.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paymaster_nonce: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paymaster_data: Option<Vec<u8>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<Vec<u8>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_key: Option<Vec<u8>>,
+}
+
+/// Delegate stake to a validator. The delegator's balance is debited
+/// and the amount counts toward the validator's effective stake (voting
+/// power + reward share). Multiple delegations to the same validator
+/// are additive.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DelegateTx {
+    /// Token holder providing the stake.
+    pub delegator: AccountAddress,
+    /// Validator the stake is delegated to.
+    pub validator_id: u64,
+    /// Amount to delegate (debited from delegator balance).
+    pub amount: u64,
+    /// Sender nonce.
+    pub nonce: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<Vec<u8>>,
+}
+
+/// Undelegate stake from a validator. Begins the unbonding window;
+/// the delegator can claim the released stake back to balance after
+/// `chain_params.unbonding_period` epochs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UndelegateTx {
+    /// Token holder withdrawing the delegation.
+    pub delegator: AccountAddress,
+    /// Validator being undelegated from.
+    pub validator_id: u64,
+    /// Amount to undelegate (≤ existing delegation).
+    pub amount: u64,
+    /// Sender nonce.
+    pub nonce: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<Vec<u8>>,
+}
+
+/// On-chain record of a stake delegation between a delegator and a
+/// validator. One record per (delegator, validator_id) pair; subsequent
+/// `DelegateTx` to the same pair add to `amount`. Persisted as part of
+/// state so reward distribution and slashing can iterate efficiently.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DelegationRecord {
+    pub delegator: AccountAddress,
+    pub validator_id: u64,
+    pub amount: u64,
+    /// Epoch at which the delegation was first created or last increased.
+    pub delegated_at_epoch: Epoch,
+    /// Set when an undelegate is in progress; the unbonded amount can
+    /// be claimed back after `unbonding_epoch + chain_params.unbonding_period`.
+    pub unbonding_amount: u64,
+    pub unbonding_epoch: Option<Epoch>,
 }
 
 /// Upgrade a deployed contract to a new implementation.
