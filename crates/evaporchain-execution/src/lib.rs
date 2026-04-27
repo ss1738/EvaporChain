@@ -1319,9 +1319,16 @@ impl ExecutionEngine for SimpleExecutor {
                 Transaction::MultiSig(msig) => self.execute_multisig(db, msig),
                 Transaction::UserOp(uop) => self.execute_user_op(db, uop),
                 Transaction::UpgradeContract(_) => {
-                    // Contract upgrade is validated at submission; execution is a no-op
-                    // (bytecode swap is handled by the contract engine).
-                    Ok(())
+                    // Fail loud: governance approval check + bytecode swap into
+                    // ContractEngine are not yet implemented. Returning Ok here
+                    // would let any signer submit a contract upgrade tx that
+                    // silently passes — refuse it instead until the upgrade
+                    // path is wired through governance.
+                    Err(ExecutionError::ContractError(
+                        "UpgradeContract execution not implemented: \
+                         governance approval check and bytecode swap are missing"
+                            .into(),
+                    ))
                 }
             };
 

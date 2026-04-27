@@ -157,6 +157,14 @@ impl FinalityTracker {
         if self.records.contains_key(&height) {
             return false; // Already recorded
         }
+        // Monotonicity: never accept finalization for a height below the
+        // current finalized tip. Heights below latest_finalized are already
+        // implicitly final via the chain, so accepting them here only opens
+        // a window for replayed certificates from forks pruned before
+        // finalization.
+        if self.latest_finalized > 0 && height < self.latest_finalized {
+            return false;
+        }
         if certificate.signer_ids.is_empty() {
             return false; // Reject finality without any signers
         }
