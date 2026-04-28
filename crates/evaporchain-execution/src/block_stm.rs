@@ -636,6 +636,11 @@ fn execute_tx(
                 "delegation txs execute in serial phase".into(),
             )))
         }
+        Transaction::RotateValidatorKey(_) => {
+            Err(TxViewError::ExecutionError(ExecutionError::ContractError(
+                "validator key rotation executes in serial phase".into(),
+            )))
+        }
     };
 
     match result {
@@ -697,6 +702,7 @@ fn estimate_gas(tx: &Transaction) -> u64 {
         Transaction::UpgradeContract(tx) => crate::GAS_UPGRADE_CONTRACT.saturating_add(tx.new_bytecode.len() as u64 * 200),
         Transaction::Delegate(_) => crate::GAS_DELEGATE,
         Transaction::Undelegate(_) => crate::GAS_UNDELEGATE,
+        Transaction::RotateValidatorKey(_) => crate::GAS_ROTATE_VALIDATOR_KEY,
     }
 }
 
@@ -1679,6 +1685,9 @@ impl ExecutionEngine for BlockStmExecutor {
             contract_events: Vec::new(),
             cross_shard_processed: 0,
             cross_shard_receipts: Vec::new(),
+            // RotateValidatorKey is dispatched to serial fallback (see the
+            // arm in `execute_tx_view`) so Block-STM never accumulates them.
+            validator_key_rotations: Vec::new(),
         })
     }
 

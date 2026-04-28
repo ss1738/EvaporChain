@@ -125,6 +125,9 @@ fn extract_access_keys(tx: &Transaction) -> Vec<AccessKey> {
         Transaction::Undelegate(tx) => {
             vec![AccessKey::Account(tx.delegator)]
         }
+        Transaction::RotateValidatorKey(tx) => {
+            vec![AccessKey::Account(tx.validator_address)]
+        }
     }
 }
 
@@ -583,6 +586,7 @@ impl ParallelExecutor {
             Transaction::UpgradeContract(tx) => crate::GAS_UPGRADE_CONTRACT.saturating_add(tx.new_bytecode.len() as u64 * 200),
             Transaction::Delegate(_) => crate::GAS_DELEGATE,
             Transaction::Undelegate(_) => crate::GAS_UNDELEGATE,
+            Transaction::RotateValidatorKey(_) => crate::GAS_ROTATE_VALIDATOR_KEY,
         }
     }
 
@@ -742,6 +746,11 @@ impl ParallelExecutor {
                 Transaction::Undelegate(_) => {
                     Err(ExecutionError::ContractError(
                         "delegation txs execute in serial phase".into(),
+                    ))
+                }
+                Transaction::RotateValidatorKey(_) => {
+                    Err(ExecutionError::ContractError(
+                        "validator key rotation executes in serial phase".into(),
                     ))
                 }
             };
@@ -979,7 +988,12 @@ impl ExecutionEngine for ParallelExecutor {
                 | Transaction::PrivateTransfer(_)
                 | Transaction::Deferred(_)
                 | Transaction::ValidatorExit(_)
-                | Transaction::ValidatorClaimStake(_) => serial_txs.push((i, tx)),
+                | Transaction::ValidatorClaimStake(_)
+                // Validator key rotation mutates ValidatorSet via the
+                // BlockExecutionResult.validator_key_rotations side
+                // channel, which only the serial path populates. Putting
+                // it in the parallel pool would silently drop rotations.
+                | Transaction::RotateValidatorKey(_) => serial_txs.push((i, tx)),
                 _ => parallel_txs.push((i, tx)),
             }
         }
@@ -1079,6 +1093,11 @@ impl ExecutionEngine for ParallelExecutor {
         // ── Phase 6: Execute serial (contract/script) txs sequentially ──
 
         let mut serial_call_depth: usize = 0;
+        // Side-effect channel for validator BLS key rotations — populated
+        // by `RotateValidatorKey` arm below and surfaced through
+        // `BlockExecutionResult.validator_key_rotations` so the consensus
+        // layer can apply them post-commit. Closes punch-list 4b.
+        let mut validator_key_rotations: Vec<crate::ValidatorKeyRotation> = Vec::new();
         for &(idx, tx) in &serial_txs {
             if let Err(e) = Self::verify_tx_signature(self.verify_signatures, tx, &self.chain_id) {
                 debug!(tx_idx = idx, error = %e, "Serial: signature verification failed");
@@ -1293,6 +1312,68 @@ impl ExecutionEngine for ParallelExecutor {
                         Ok(())
                     }
                 }
+                Transaction::RotateValidatorKey(rot) => {
+                    if rot.effective_epoch < block.epoch {
+                        Err(ExecutionError::ContractError(format!(
+                            "RotateValidatorKey: effective_epoch {} is in the past (current {})",
+                            rot.effective_epoch, block.epoch
+                        )))
+                    } else if rot.new_bls_public_key.len() != 48 {
+                        Err(ExecutionError::ContractError(format!(
+                            "RotateValidatorKey: new_bls_public_key must be 48 bytes (got {})",
+                            rot.new_bls_public_key.len()
+                        )))
+                    } else {
+                        let stake_addr = db
+                            .get_stake(rot.validator_id)
+                            .map(|s| s.validator_address);
+                        match stake_addr {
+                            None => Err(ExecutionError::ContractError(format!(
+                                "RotateValidatorKey: validator_id {} has no stake record",
+                                rot.validator_id
+                            ))),
+                            Some(addr) if addr != rot.validator_address => {
+                                Err(ExecutionError::ContractError(format!(
+                                    "RotateValidatorKey: validator_id {} address mismatch",
+                                    rot.validator_id
+                                )))
+                            }
+                            Some(_) => {
+                                let expected_nonce = db
+                                    .get_account(&rot.validator_address)
+                                    .map_or(0, |a| a.nonce);
+                                if rot.nonce != expected_nonce {
+                                    Err(ExecutionError::ContractError(format!(
+                                        "RotateValidatorKey: nonce mismatch (expected {}, got {})",
+                                        expected_nonce, rot.nonce
+                                    )))
+                                } else if !{
+                                    use evaporchain_crypto::signatures::{BlsPublicKey, BlsSignature, BlsVerifier};
+                                    let pk = BlsPublicKey(rot.new_bls_public_key.clone());
+                                    let pop = BlsSignature(rot.bls_pop_new.clone());
+                                    BlsVerifier::verify_proof_of_possession(&pk, &pop)
+                                } {
+                                    Err(ExecutionError::ContractError(
+                                        "RotateValidatorKey: bls_pop_new failed verification".into(),
+                                    ))
+                                } else {
+                                    if let Some(acct) = db.get_account_mut(&rot.validator_address) {
+                                        acct.nonce = acct.nonce.saturating_add(1);
+                                    }
+                                    validator_key_rotations.push(crate::ValidatorKeyRotation {
+                                        validator_id: rot.validator_id,
+                                        new_bls_public_key: rot.new_bls_public_key.clone(),
+                                        bls_pop_old: rot.bls_pop_old.clone(),
+                                        new_bls_pop: rot.bls_pop_new.clone(),
+                                        prev_key_expiry_epoch: rot.effective_epoch
+                                            .saturating_add(crate::KEY_ROTATION_GRACE_EPOCHS),
+                                    });
+                                    Ok(())
+                                }
+                            }
+                        }
+                    }
+                }
                 _ => unreachable!("only serial-phase txs expected here"),
             };
 
@@ -1346,6 +1427,7 @@ impl ExecutionEngine for ParallelExecutor {
             contract_events: Vec::new(),
             cross_shard_processed: 0,
             cross_shard_receipts: Vec::new(),
+            validator_key_rotations,
         })
     }
 

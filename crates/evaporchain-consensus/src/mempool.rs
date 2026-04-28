@@ -343,6 +343,7 @@ impl Mempool {
             Transaction::UpgradeContract(tx) => 100_000 + 200 * tx.new_bytecode.len() as u64,
             Transaction::Delegate(_) => 40_000,
             Transaction::Undelegate(_) => 40_000,
+            Transaction::RotateValidatorKey(_) => 80_000,
         }
     }
 
@@ -484,6 +485,14 @@ impl Mempool {
             }
             Transaction::Undelegate(tx) => {
                 32 + 8 + 8 + 8
+                    + tx.signature.as_ref().map_or(0, |s| s.len())
+                    + tx.public_key.as_ref().map_or(0, |p| p.len())
+            }
+            Transaction::RotateValidatorKey(tx) => {
+                32 + 8 + 8 + 8
+                    + tx.new_bls_public_key.len()
+                    + tx.bls_pop_old.len()
+                    + tx.bls_pop_new.len()
                     + tx.signature.as_ref().map_or(0, |s| s.len())
                     + tx.public_key.as_ref().map_or(0, |p| p.len())
             }

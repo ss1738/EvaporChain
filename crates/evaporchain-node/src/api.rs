@@ -546,6 +546,11 @@ fn tx_to_json(tx: &Transaction) -> serde_json::Value {
         Transaction::UpgradeContract(_) => serde_json::json!({ "type": "upgrade_contract" }),
         Transaction::Delegate(t) => serde_json::json!({ "type": "delegate", "validator_id": t.validator_id, "amount": t.amount }),
         Transaction::Undelegate(t) => serde_json::json!({ "type": "undelegate", "validator_id": t.validator_id, "amount": t.amount }),
+        Transaction::RotateValidatorKey(t) => serde_json::json!({
+            "type": "rotate_validator_key",
+            "validator_id": t.validator_id,
+            "effective_epoch": t.effective_epoch,
+        }),
     }
 }
 
@@ -890,6 +895,7 @@ fn set_tx_signature(tx: &mut Transaction, sig: Vec<u8>, pk: Vec<u8>) {
         Transaction::UpgradeContract(u) => { u.signature = Some(sig); u.public_key = Some(pk); }
         Transaction::Delegate(d) => { d.signature = Some(sig); d.public_key = Some(pk); }
         Transaction::Undelegate(u) => { u.signature = Some(sig); u.public_key = Some(pk); }
+        Transaction::RotateValidatorKey(r) => { r.signature = Some(sig); r.public_key = Some(pk); }
     }
 }
 
@@ -4817,6 +4823,7 @@ fn estimate_tx_gas(tx: &Transaction) -> u64 {
         Transaction::UpgradeContract(tx) => 100_000 + tx.new_bytecode.len() as u64 * 200,
         Transaction::Delegate(_) => 40_000,
         Transaction::Undelegate(_) => 40_000,
+        Transaction::RotateValidatorKey(_) => 80_000,
     }
 }
 
@@ -5138,6 +5145,21 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     energy: None,
                     half_life: None,
                     method: None,
+                    gas,
+                    block_number: block.number,
+                    epoch: block.epoch,
+                    status: "success".to_string(),
+                },
+                Transaction::RotateValidatorKey(tx) => TxRecord {
+                    hash,
+                    tx_type: "rotate_validator_key".to_string(),
+                    from: account_full(&tx.validator_address),
+                    to: format!("validator-{}", tx.validator_id),
+                    amount: None,
+                    object_id: None,
+                    energy: None,
+                    half_life: None,
+                    method: Some(format!("effective_epoch={}", tx.effective_epoch)),
                     gas,
                     block_number: block.number,
                     epoch: block.epoch,

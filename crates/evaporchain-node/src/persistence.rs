@@ -894,6 +894,7 @@ fn tx_type_name(tx: &Transaction) -> &'static str {
         Transaction::UpgradeContract(_) => "upgrade_contract",
         Transaction::Delegate(_) => "delegate",
         Transaction::Undelegate(_) => "undelegate",
+        Transaction::RotateValidatorKey(_) => "rotate_validator_key",
     }
 }
 
@@ -918,6 +919,7 @@ fn tx_sender_hex(tx: &Transaction) -> Option<String> {
         | Transaction::MultiSig(_) | Transaction::UserOp(_) | Transaction::UpgradeContract(_) => None,
         Transaction::Delegate(t) => Some(addr_hex(&t.delegator)),
         Transaction::Undelegate(t) => Some(addr_hex(&t.delegator)),
+        Transaction::RotateValidatorKey(t) => Some(addr_hex(&t.validator_address)),
     }
 }
 
