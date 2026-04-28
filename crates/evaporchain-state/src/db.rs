@@ -269,6 +269,16 @@ pub trait StateDB: Send + Sync {
     /// This is a storage-management operation — it does NOT affect the current
     /// active state (objects, accounts, trie) and is safe to call at any time.
     fn prune_before_height(&mut self, height: u64) -> u64;
+
+    /// Last epoch at which storage rent was charged. Used by executors to
+    /// gate `collect_storage_rent` so it fires exactly once per epoch
+    /// (closes punch-list #6).
+    fn get_last_rent_epoch(&self) -> u64 { 0 }
+
+    /// Persist the most recent epoch at which storage rent was charged.
+    /// Default no-op so back-end implementations that don't carry the
+    /// cursor (e.g. transient overlays) compile without changes.
+    fn put_last_rent_epoch(&mut self, _epoch: u64) {}
 }
 
 /// In-memory state database for development and testing.
