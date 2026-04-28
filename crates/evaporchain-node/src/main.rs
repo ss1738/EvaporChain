@@ -1,7 +1,6 @@
 mod api;
 mod auth;
 mod bench;
-mod da_http_client;
 mod frontier;
 mod oracle_bridge;
 mod persistence;
