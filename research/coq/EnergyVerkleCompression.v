@@ -138,26 +138,72 @@ Proof.
   apply Nat.le_0_l.
 Qed.
 
+(* Custom strong-induction principle for `node`: the auto-generated
+   `node_ind` does not give us the IH on children of an `NInternal`
+   constructor (since `node` recurs through `list node`). We thread
+   the IH via a `Forall P` predicate over the children list. *)
+Section node_strong_ind.
+  Variable P : node -> Prop.
+  Hypothesis H_NEmpty      : P NEmpty.
+  Hypothesis H_NLeaf       : forall e c, P (NLeaf e c).
+  Hypothesis H_NInternal   : forall cs, List.Forall P cs -> P (NInternal cs).
+  Hypothesis H_NCompressed : forall k c, P (NCompressed k c).
+
+  Fixpoint node_strong_ind (n : node) : P n :=
+    match n as n0 return P n0 with
+    | NEmpty            => H_NEmpty
+    | NLeaf e c         => H_NLeaf e c
+    | NInternal cs      =>
+        H_NInternal cs
+          ((fix list_rec (l : list node) : List.Forall P l :=
+              match l with
+              | nil       => List.Forall_nil _
+              | x :: xs   => List.Forall_cons x (node_strong_ind x) (list_rec xs)
+              end) cs)
+    | NCompressed k c   => H_NCompressed k c
+    end.
+End node_strong_ind.
+
+(* `fold_left` of energy_sum over a list whose every element has zero
+   energy_sum is equal to its initial accumulator. Pure list lemma. *)
+Lemma fold_left_zero_of_Forall_zero :
+  forall (cs : list node) (init : nat),
+    List.Forall (fun c => energy_sum c = 0) cs ->
+    List.fold_left (fun acc c => acc + energy_sum c) cs init = init.
+Proof.
+  induction cs as [| c cs IH]; intros init Hall.
+  - reflexivity.
+  - simpl. inversion Hall as [| ? ? Hc Hcs]; subst.
+    rewrite Hc, Nat.add_0_r.
+    apply IH. exact Hcs.
+Qed.
+
 (* When the precondition `all_cold` holds (every active leaf has energy
    0), the energy sum is exactly 0 both before and after compression —
    so compression is energy-conservative on cold subtrees. *)
 Lemma cold_subtree_zero_energy : forall n,
     all_cold n -> energy_sum n = 0.
 Proof.
-  intros n H.
-  induction n as [| e c | cs IHcs | k c ] using
-    (well_founded_induction (Wf_nat.well_founded_ltof _ (fun _ => 0))).
-  - (* NEmpty *) reflexivity.
-  - (* NLeaf *) simpl in H. simpl. exact H.
-  - (* NInternal *)
-    (* Forall all_cold cs => fold_left ... = 0 *)
-    simpl. simpl in H.
-    (* Discharged by induction on the Forall. We omit the Forall
-       induction here for brevity; the fact follows from each child
-       having energy_sum = 0 by the inductive hypothesis. *)
-    admit.
-  - (* NCompressed *) reflexivity.
-Admitted.
+  intros n.
+  induction n using node_strong_ind.
+  - (* NEmpty *)      intros _. reflexivity.
+  - (* NLeaf *)       intros He. simpl in He. simpl. exact He.
+  - (* NInternal cs, with H : Forall P cs where
+                       P = fun n => all_cold n -> energy_sum n = 0 *)
+    intros Hall. simpl in Hall. simpl.
+    apply fold_left_zero_of_Forall_zero.
+    (* Zip the two Foralls (Hall : Forall all_cold cs,
+                            H    : Forall (all_cold -> energy_sum = 0) cs)
+       into Forall (energy_sum = 0) cs. *)
+    induction cs as [| c cs' IHcs].
+    + apply List.Forall_nil.
+    + inversion Hall as [| ? ? Ha Has]; subst.
+      inversion H    as [| ? ? Hh Hhs]; subst.
+      apply List.Forall_cons.
+      * apply Hh. exact Ha.
+      * apply IHcs; assumption.
+  - (* NCompressed *) intros _. reflexivity.
+Qed.
 
 Theorem compress_energy_conservative : forall n,
     all_cold n -> energy_sum (compress n) = energy_sum n.
@@ -205,10 +251,10 @@ Proof. exact compress_preserves_commitment. Qed.
 (* --------------------------------------------------------------------- *)
 (*  What's left to discharge                                             *)
 (*                                                                       *)
-(*  - `cold_subtree_zero_energy`: the inductive case `NInternal` is     *)
-(*    `Admitted`. The proof requires a list-induction on `Forall`        *)
-(*    paired with `fold_left` arithmetic, which is mechanical but       *)
-(*    not yet written. Closing it is straightforward.                    *)
+(*  - `cold_subtree_zero_energy`: closed via a custom strong-induction *)
+(*    principle (`node_strong_ind`) plus `fold_left_zero_of_Forall_zero`.*)
+(*    The IH-on-children gap from Coq's auto-generated `node_ind` is    *)
+(*    threaded by a `Forall P` predicate over the children list.        *)
 (*  - `compress_preserves_commitment` is an `Axiom` — it cannot be      *)
 (*    proven in Coq without modeling BLS12-381 G1. The dependency is    *)
 (*    explicit and the binding to the Rust code is documented.          *)

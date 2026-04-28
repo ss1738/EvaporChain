@@ -37,8 +37,10 @@
 (*    - `energy_at_epoch_monotone`: the main theorem, by case split on   *)
 (*      whether `e+1` crosses a half-life boundary.                      *)
 (*                                                                       *)
-(*  Status: spec + base cases + within-halving lemma proven.             *)
-(*  Cross-boundary lemma is `Admitted` pending an arithmetic helper.     *)
+(*  Status: spec + base cases + within-halving lemma + cross-halving    *)
+(*  lemma all proven. The arithmetic helper is `decay_term_bound` and   *)
+(*  is discharged below using `nia` over explicit `mul_div_le` and      *)
+(*  `div_mod` bounds.                                                    *)
 (* ===================================================================== *)
 
 From Coq Require Import Arith Lia.
@@ -241,17 +243,45 @@ Proof.
     lia.
 Qed.
 
+(* Arithmetic helper: the linear-decay term plus floor(v/2) never
+   exceeds v, for any in-window remainder rm < h. Proven by combining
+   `mul_div_le` lower bounds on the two floor-divisions with the
+   constraint rm + 1 <= h. The certificate is:
+       2h*Q <= v*rm                  (mul_div_le on Q)
+       2*P  <= v                     (mul_div_le on P)
+       rm + 1 <= h                   (from rm < h)
+   ⇒  2h*(Q+P) + v <= 2*v*h          (linear combination)
+   ⇒  Q + P <= v                     (since h >= 1, v - Q - P >= 0). *)
+Lemma decay_term_bound : forall v h rm,
+    h <> 0 -> rm < h ->
+    Nat.div (v * rm) (2 * h) + Nat.div v 2 <= v.
+Proof.
+  intros v h rm Hh Hrm.
+  pose proof (Nat.mul_div_le (v * rm) (2 * h) ltac:(lia)) as Hq.
+  pose proof (Nat.mul_div_le v 2 ltac:(lia)) as Hp.
+  (* Hq : 2 * h * (v * rm / (2 * h)) <= v * rm
+     Hp : 2 * (v / 2) <= v *)
+  (* Stage 1: bound 2*h*Q by v*h - v (since rm <= h - 1). *)
+  assert (Hbound_Q : 2 * h * (Nat.div (v * rm) (2 * h)) <= v * h - v).
+  { transitivity (v * (h - 1)).
+    - transitivity (v * rm); [exact Hq | apply Nat.mul_le_mono_l; lia].
+    - rewrite Nat.mul_sub_distr_l, Nat.mul_1_r. lia. }
+  (* Stage 2: bound 2*h*P by h*v from 2*P <= v. *)
+  assert (Hbound_P : 2 * h * (Nat.div v 2) <= h * v).
+  { nia. }
+  (* Stage 3: combine. 2*h*(Q+P) + v <= (v*h - v) + h*v + v = 2*v*h. *)
+  assert (Hcombined : 2 * h * (Nat.div (v * rm) (2 * h) + Nat.div v 2) + v
+                       <= 2 * v * h).
+  { rewrite Nat.mul_add_distr_l. nia. }
+  nia.
+Qed.
+
 (* Cross-halving step: when (S e) crosses a half-life boundary, the
    number of halvings increments by exactly one and the remainder
    resets to 0. We need to show:
-       nat_shr init (full + 1) - 0
-       <= nat_shr init full - linear_decay (nat_shr init full) (h-1) h
-   i.e., halving the value once is no greater than subtracting the
-   end-of-window linear-decay value.
-   The key fact: nat_shr v 1 = v / 2, and linear_decay v (h-1) h
-   approximates v * (h-1) / (2*h) ≤ v/2 - 1 for typical v, but the
-   bound depends on integer-rounding details that need a careful
-   arithmetic argument. Left as Admitted for now. *)
+       Nat.div2 (nat_shr init full)
+       <= nat_shr init full - linear_decay (nat_shr init full) rm h
+   for rm = mod e h < h, which is exactly `decay_term_bound`. *)
 Lemma energy_step_cross_halving : forall init h e,
     h <> 0 ->
     Nat.div (S e) h = S (Nat.div e h) ->
@@ -259,12 +289,41 @@ Lemma energy_step_cross_halving : forall init h e,
     energy_at_epoch init h (S e) <= energy_at_epoch init h e.
 Proof.
   intros init h e Hh Hdiv Hcut.
-  (* Proof obligation reduces to: for any value v and half-life h,
-       nat_shr v 1 <= v - (v * (h-1)) / (2*h).
-     This is true intuitively (halving = -50%, the linear term is
-     just under -50% at remainder = h-1), but the precise bound
-     requires case analysis on h's divisibility. *)
-Admitted.
+  unfold energy_at_epoch.
+  rewrite (proj2 (Nat.eqb_neq h 0) Hh).
+  rewrite Hdiv.
+  assert (Hc1 : leb halving_cutoff (Nat.div e h) = false)
+    by (apply Nat.leb_gt; lia).
+  assert (Hc2 : leb halving_cutoff (S (Nat.div e h)) = false)
+    by (apply Nat.leb_gt; lia).
+  rewrite Hc1, Hc2.
+  (* Boundary crossing forces (S e) to be a clean multiple of h, so
+     mod (S e) h = 0. *)
+  assert (Hrem : Nat.modulo (S e) h = 0).
+  { pose proof (Nat.div_mod (S e) h Hh) as HSeq.
+    pose proof (Nat.div_mod e h Hh)     as Heq.
+    pose proof (Nat.mod_upper_bound (S e) h Hh) as Hu1.
+    pose proof (Nat.mod_upper_bound e h Hh)     as Hu2.
+    rewrite Hdiv in HSeq. nia. }
+  rewrite Hrem.
+  rewrite nat_shr_succ.
+  (* LHS linear-decay collapses: rem = 0 ⇒ linear_decay _ 0 _ = 0. *)
+  unfold linear_decay at 1.
+  rewrite Nat.mul_0_r, Nat.div_0_l by lia.
+  rewrite Nat.sub_0_r.
+  unfold linear_decay.
+  (* Goal: Nat.div2 (nat_shr init (Nat.div e h))
+            <= nat_shr init (Nat.div e h)
+               - Nat.div (nat_shr init (Nat.div e h) * Nat.modulo e h) (2 * h) *)
+  rewrite Nat.div2_div.
+  pose proof (Nat.mod_upper_bound e h Hh) as Hrm_lt.
+  pose proof (decay_term_bound
+                (nat_shr init (Nat.div e h))
+                h
+                (Nat.modulo e h)
+                Hh Hrm_lt) as Hbound.
+  lia.
+Qed.
 
 Theorem energy_at_epoch_monotone : forall init h e,
     h <> 0 ->
@@ -314,16 +373,10 @@ Qed.
 (* --------------------------------------------------------------------- *)
 (*  What's left to discharge                                             *)
 (*                                                                       *)
-(*  `energy_step_cross_halving` is the only `Admitted` in this file.    *)
-(*  Discharging it requires an arithmetic lemma of the form:             *)
+(*  All lemmas in this file are now `Qed` (no `Admitted`).              *)
 (*                                                                       *)
-(*    forall v h, h >= 1 ->                                              *)
-(*      Nat.div v 2 <= v - Nat.div (v * (h - 1)) (2 * h).                *)
-(*                                                                       *)
-(*  Equivalent inequality:                                               *)
-(*    Nat.div (v * (h - 1)) (2 * h) <= v - Nat.div v 2                   *)
-(*    Nat.div (v * (h - 1)) (2 * h) <= Nat.div (v + 1) 2.  (*loose*)     *)
-(*                                                                       *)
-(*  This is provable by Lia after multiplying through, but the proof    *)
-(*  needs care around the floor-divisions. Tracked as a follow-up.       *)
+(*  Closed via `decay_term_bound`, an arithmetic helper that bounds     *)
+(*  the floor-divisions of the linear-decay term + halving by `nia`     *)
+(*  using `Nat.mul_div_le` lower bounds. The certificate is documented  *)
+(*  inline above the lemma.                                              *)
 (* --------------------------------------------------------------------- *)
