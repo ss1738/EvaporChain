@@ -30,6 +30,7 @@ members = [
     "crates/evaporchain-evap-fork-cert",
     "crates/evaporchain-lad-vm",
     "crates/evaporchain-decay-forget",
+    "crates/evaporchain-allen-decay",
     "crates/evaporchain-crypto",
     "crates/evaporchain-state",
     "crates/evaporchain-consensus",

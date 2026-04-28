@@ -1,0 +1,15 @@
+[package]
+name = "evaporchain-allen-decay"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Allen-Decay Opcodes — 13 interval-relation opcodes (Allen 1983) for energy-bounded intervals. Per INVENTION_STACK.md §4.2 (Tier 2)."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
