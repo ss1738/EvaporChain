@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-modular-beacon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Modular-form beacon. Per-epoch (E_4, E_6, Δ) triple from a VRF-supplied τ, satisfying known Ramanujan-style modular relations. Per INVENTION_STACK.md §A1.4 — aperiodic, hard to fake without solving the modular equation, cheap to verify."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+blake3 = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
