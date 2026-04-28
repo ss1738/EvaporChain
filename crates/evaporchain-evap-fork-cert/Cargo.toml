@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-evap-fork-cert"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Evaporated-Fork Certificates. Negative-finality proof: a fork CANNOT finalize because its aggregate energy decayed below threshold. O(1) light-client verification. Per INVENTION_STACK.md §4.1 #10."
+
+[dependencies]
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+blake3 = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
