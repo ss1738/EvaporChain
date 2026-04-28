@@ -105,6 +105,24 @@ pub struct NftState {
     pub tokens: HashMap<u64, NftInfo>,
     pub next_token_id: u64,
     pub last_tick_epoch: u64,
+    /// Subscription-renewal economics: when > 0, calling `refresh` to
+    /// extend an NFT's lifetime requires paying this amount of contract-
+    /// internal balance to `renewal_recipient`. Backward-compatible —
+    /// pre-existing collections deserialize with renewal_fee=0 and
+    /// behave like the original gratis-refresh MortalNFT.
+    #[serde(default)]
+    pub renewal_fee: u64,
+    /// Recipient of the renewal_fee. When empty, the contract creator
+    /// is used (resolved at refresh time, not stored here).
+    #[serde(default)]
+    pub renewal_recipient: String,
+    /// Per-account renewal-fee balance. Holders deposit funds here
+    /// (e.g. via a top-level "deposit_renewal_fund" method, or by an
+    /// external contract crediting them) and refresh debits from this.
+    /// Keeps the renewal economy native to the NFT contract instead
+    /// of requiring a side-channel to a token contract.
+    #[serde(default)]
+    pub renewal_balances: HashMap<String, u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -658,6 +676,17 @@ impl ContractEngine {
             ContractTemplate::MortalNFT => {
                 let collection_name = get_str(params, "collection_name")?;
                 let max_supply = get_u64(params, "max_supply")?;
+                // Optional subscription-renewal economics. Defaults
+                // (renewal_fee=0) preserve the original gratis-refresh
+                // behaviour. When > 0, refresh debits the caller's
+                // pre-deposited balance and credits renewal_recipient
+                // (or the contract creator if recipient is empty).
+                let renewal_fee = get_u64(params, "renewal_fee").unwrap_or(0);
+                let renewal_recipient = params
+                    .get("renewal_recipient")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
 
                 let state = NftState {
                     collection_name,
@@ -665,6 +694,9 @@ impl ContractEngine {
                     tokens: HashMap::new(),
                     next_token_id: 1,
                     last_tick_epoch: epoch,
+                    renewal_fee,
+                    renewal_recipient,
+                    renewal_balances: HashMap::new(),
                 };
                 Ok(serde_json::to_value(state).unwrap())
             }
@@ -1038,21 +1070,65 @@ fn exec_nft(
         "refresh" => {
             let token_id = get_u64(args, "token_id")?;
             let energy = get_u64(args, "energy")?;
+            let renewal_fee = ns.renewal_fee;
+            let recipient_key = if ns.renewal_recipient.is_empty() {
+                hex::encode(creator)
+            } else {
+                ns.renewal_recipient.clone()
+            };
             let nft = ns
                 .tokens
                 .get_mut(&token_id)
                 .ok_or_else(|| ContractError::StateError(format!("NFT {token_id} not found")))?;
-            // Only the NFT owner or contract creator can refresh its energy.
             if !nft.owner.eq_ignore_ascii_case(&caller_hex) && caller != creator {
                 return Err(ContractError::PermissionDenied(
                     format!("caller does not own NFT {token_id}"),
                 ));
             }
-            let current =
-                energy_at_epoch(nft.energy, nft.half_life, current_epoch - nft.minted_epoch);
-            nft.energy = current + energy;
-            nft.minted_epoch = current_epoch;
-            serde_json::json!({ "new_energy": nft.energy })
+            // Subscription gate: when renewal_fee > 0, debit the caller's
+            // pre-deposited renewal balance and credit the renewal_recipient.
+            // Free for the original creator (they own the contract).
+            if renewal_fee > 0 && caller != creator {
+                let bal = ns.renewal_balances.get(&caller_hex).copied().unwrap_or(0);
+                if bal < renewal_fee {
+                    return Err(ContractError::StateError(format!(
+                        "refresh requires {renewal_fee} units in renewal balance \
+                         (caller has {bal}); call deposit_renewal first"
+                    )));
+                }
+                ns.renewal_balances.insert(caller_hex.clone(), bal - renewal_fee);
+                let r = ns.renewal_balances.get(&recipient_key).copied().unwrap_or(0);
+                ns.renewal_balances.insert(recipient_key, r.saturating_add(renewal_fee));
+                // Re-borrow nft after the second mutable borrow above.
+                let nft = ns.tokens.get_mut(&token_id).expect("checked above");
+                let current = energy_at_epoch(
+                    nft.energy, nft.half_life, current_epoch - nft.minted_epoch,
+                );
+                nft.energy = current + energy;
+                nft.minted_epoch = current_epoch;
+            } else {
+                let current = energy_at_epoch(
+                    nft.energy, nft.half_life, current_epoch - nft.minted_epoch,
+                );
+                nft.energy = current + energy;
+                nft.minted_epoch = current_epoch;
+            }
+            serde_json::json!({ "new_energy": ns.tokens.get(&token_id).map(|n| n.energy).unwrap_or(0) })
+        }
+        "deposit_renewal" => {
+            // Holders pre-fund their renewal balance. amount is taken on
+            // trust (the off-chain payment rail credits it). For an
+            // on-chain integration, a paired Token contract would invoke
+            // this method on the NFT contract during a transfer.
+            let amount = get_u64(args, "amount")?;
+            let bal = ns.renewal_balances.get(&caller_hex).copied().unwrap_or(0);
+            ns.renewal_balances.insert(caller_hex.clone(), bal.saturating_add(amount));
+            serde_json::json!({ "balance": bal.saturating_add(amount) })
+        }
+        "renewal_balance" => {
+            let addr = get_str(args, "addr")?.to_string();
+            let bal = ns.renewal_balances.get(&addr).copied().unwrap_or(0);
+            serde_json::json!({ "balance": bal })
         }
         "burn" => {
             let token_id = get_u64(args, "token_id")?;
@@ -2365,6 +2441,158 @@ mod tests {
             0,
         )
         .unwrap()
+    }
+
+    fn deploy_subscription_nft(eng: &mut ContractEngine, fee: u64) -> u64 {
+        eng.deploy(
+            ContractTemplate::MortalNFT,
+            serde_json::json!({
+                "collection_name": "SubscribeApes",
+                "max_supply": 10,
+                "renewal_fee": fee,
+            }),
+            vec![],
+            addr(1), // creator
+            5000,
+            100,
+            0,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_subscription_nft_refresh_requires_payment() {
+        let mut eng = engine();
+        let id = deploy_subscription_nft(&mut eng, 100);
+        // Mint to alice (caller=creator addr(1))
+        eng.call(
+            id,
+            "mint",
+            &serde_json::json!({"to": "alice", "metadata_hash": "abc", "energy": 50, "half_life": 5}),
+            &addr(1),
+            0,
+        )
+        .unwrap();
+        // Alice tries to refresh without depositing — must fail with
+        // "renewal balance" error.
+        let alice_addr = {
+            let mut a = [0u8; 32];
+            a[0] = 0xAA;
+            a
+        };
+        // First, set the NFT owner to alice's hex so the owner check passes.
+        eng.call(
+            id,
+            "transfer",
+            &serde_json::json!({"token_id": 1, "to": hex::encode(alice_addr)}),
+            &addr(1),
+            0,
+        )
+        .unwrap();
+        let err = eng
+            .call(
+                id,
+                "refresh",
+                &serde_json::json!({"token_id": 1, "energy": 50}),
+                &alice_addr,
+                10,
+            )
+            .unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("renewal balance"), "expected fee gate, got: {msg}");
+    }
+
+    #[test]
+    fn test_subscription_nft_refresh_with_deposit_succeeds() {
+        let mut eng = engine();
+        let id = deploy_subscription_nft(&mut eng, 100);
+        eng.call(
+            id,
+            "mint",
+            &serde_json::json!({"to": "alice", "metadata_hash": "abc", "energy": 50, "half_life": 5}),
+            &addr(1),
+            0,
+        )
+        .unwrap();
+        let alice_addr = {
+            let mut a = [0u8; 32];
+            a[0] = 0xAA;
+            a
+        };
+        eng.call(
+            id,
+            "transfer",
+            &serde_json::json!({"token_id": 1, "to": hex::encode(alice_addr)}),
+            &addr(1),
+            0,
+        )
+        .unwrap();
+        // Alice deposits 200, then refreshes (debits 100) — succeeds.
+        eng.call(
+            id,
+            "deposit_renewal",
+            &serde_json::json!({"amount": 200}),
+            &alice_addr,
+            10,
+        )
+        .unwrap();
+        let r = eng
+            .call(
+                id,
+                "refresh",
+                &serde_json::json!({"token_id": 1, "energy": 50}),
+                &alice_addr,
+                10,
+            )
+            .unwrap();
+        // Energy should be > 0 after a successful refresh.
+        assert!(r.return_value["new_energy"].as_u64().unwrap() > 0);
+        // Alice's balance dropped to 100, creator received 100.
+        let r = eng
+            .call(
+                id,
+                "renewal_balance",
+                &serde_json::json!({"addr": hex::encode(alice_addr)}),
+                &addr(1),
+                10,
+            )
+            .unwrap();
+        assert_eq!(r.return_value["balance"], 100);
+        let r = eng
+            .call(
+                id,
+                "renewal_balance",
+                &serde_json::json!({"addr": hex::encode(addr(1))}),
+                &addr(1),
+                10,
+            )
+            .unwrap();
+        assert_eq!(r.return_value["balance"], 100);
+    }
+
+    #[test]
+    fn test_subscription_nft_creator_refresh_is_free() {
+        let mut eng = engine();
+        let id = deploy_subscription_nft(&mut eng, 100);
+        eng.call(
+            id,
+            "mint",
+            &serde_json::json!({"to": "alice", "metadata_hash": "abc", "energy": 50, "half_life": 5}),
+            &addr(1),
+            0,
+        )
+        .unwrap();
+        // Creator (addr(1)) refreshes without paying — should succeed.
+        let r = eng
+            .call(
+                id,
+                "refresh",
+                &serde_json::json!({"token_id": 1, "energy": 100}),
+                &addr(1),
+                0,
+            )
+            .unwrap();
+        assert!(r.return_value["new_energy"].as_u64().unwrap() > 0);
     }
 
     #[test]
