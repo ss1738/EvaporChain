@@ -1470,4 +1470,107 @@ mod tests {
         // Join and leave depend on churn limits, but both should be processable
         assert!(result.applied.len() >= 2, "Stake update + at least one more: {:?}", result);
     }
+
+    // ─── P0 #4 Phase 5 + 6: Delegation slashing & voting-power roll-up ──
+
+    use evaporchain_state::db::{InMemoryStateDB, StateDB};
+    use evaporchain_types::DelegationRecord;
+
+    fn delegation(delegator_byte: u8, validator_id: u64, amount: u64) -> DelegationRecord {
+        let mut addr = [0u8; 32];
+        addr[0] = delegator_byte;
+        DelegationRecord {
+            delegator: addr,
+            validator_id,
+            amount,
+            delegated_at_epoch: 0,
+            unbonding_amount: 0,
+            unbonding_epoch: None,
+        }
+    }
+
+    #[test]
+    fn test_refresh_delegated_stakes_sums_per_validator() {
+        let mut vs = make_validator_set(3, 1000);
+        let mut db = InMemoryStateDB::new();
+        // Two delegations to validator 1, one to validator 2.
+        db.put_delegation(delegation(10, 1, 500));
+        db.put_delegation(delegation(11, 1, 700));
+        db.put_delegation(delegation(12, 2, 200));
+
+        vs.refresh_delegated_stakes(&db);
+
+        assert_eq!(vs.get(1).unwrap().delegated_stake, 1200);
+        assert_eq!(vs.get(2).unwrap().delegated_stake, 200);
+        assert_eq!(vs.get(3).unwrap().delegated_stake, 0);
+        // total_stake() rolls up self + delegated for non-jailed.
+        assert_eq!(vs.total_stake(), 1000 * 3 + 1200 + 200);
+        assert_eq!(vs.total_self_stake(), 3000);
+    }
+
+    #[test]
+    fn test_effective_stake_includes_delegations() {
+        let mut info = ValidatorInfo::new(7, 1000, [7u8; 32]);
+        assert_eq!(info.effective_stake(), 1000);
+        info.delegated_stake = 500;
+        assert_eq!(info.effective_stake(), 1500);
+    }
+
+    fn delegator_addr(b: u8) -> [u8; 32] {
+        let mut a = [0u8; 32];
+        a[0] = b;
+        a
+    }
+
+    #[test]
+    fn test_slash_delegations_proportional_with_remove() {
+        let mut db = InMemoryStateDB::new();
+        // Three delegations to validator 7.
+        db.put_delegation(delegation(10, 7, 1000));
+        db.put_delegation(delegation(11, 7, 100));
+        let mut d_unbonding = delegation(12, 7, 500);
+        d_unbonding.unbonding_amount = 200;
+        db.put_delegation(d_unbonding);
+
+        // Slash 50%.
+        let total = slash_delegations_for_validator(&mut db, 7, 0.5);
+        // Expected: 500 (delegator 10) + 50 (delegator 11) + 250 (active 12)
+        // + 100 (unbonding 12) = 900
+        assert_eq!(total, 900);
+
+        assert_eq!(db.get_delegation(&delegator_addr(10), 7).map(|r| r.amount), Some(500));
+        assert_eq!(db.get_delegation(&delegator_addr(11), 7).map(|r| r.amount), Some(50));
+        let r12 = db.get_delegation(&delegator_addr(12), 7).unwrap();
+        assert_eq!(r12.amount, 250);
+        assert_eq!(r12.unbonding_amount, 100);
+    }
+
+    #[test]
+    fn test_slash_delegations_removes_zero_records() {
+        let mut db = InMemoryStateDB::new();
+        db.put_delegation(delegation(10, 9, 1000));
+        // 100% slash zeroes amount AND unbonding -> record removed.
+        let total = slash_delegations_for_validator(&mut db, 9, 1.0);
+        assert_eq!(total, 1000);
+        assert!(db.get_delegation(&delegator_addr(10), 9).is_none(), "fully-slashed record removed");
+    }
+
+    #[test]
+    fn test_slash_delegations_pct_zero_or_oor_no_op() {
+        let mut db = InMemoryStateDB::new();
+        db.put_delegation(delegation(10, 9, 1000));
+        assert_eq!(slash_delegations_for_validator(&mut db, 9, 0.0), 0);
+        assert_eq!(slash_delegations_for_validator(&mut db, 9, -0.1), 0);
+        assert_eq!(slash_delegations_for_validator(&mut db, 9, 1.5), 0);
+        assert_eq!(db.get_delegation(&delegator_addr(10), 9).unwrap().amount, 1000);
+    }
+
+    #[test]
+    fn test_slash_delegations_unknown_validator_no_op() {
+        let mut db = InMemoryStateDB::new();
+        db.put_delegation(delegation(10, 7, 1000));
+        let total = slash_delegations_for_validator(&mut db, 99, 0.5);
+        assert_eq!(total, 0);
+        assert_eq!(db.get_delegation(&delegator_addr(10), 7).unwrap().amount, 1000);
+    }
 }
