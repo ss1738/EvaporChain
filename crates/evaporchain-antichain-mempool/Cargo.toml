@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-antichain-mempool"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Evap-Antichain Mempool. Mempool IS the partial order; producer extends maximal antichains whose total energy clears a threshold. Per INVENTION_STACK.md §4.1 #2 — pairs structurally with evaporchain-light-cone."
+
+[dependencies]
+evaporchain-light-cone = { path = "../evaporchain-light-cone" }
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

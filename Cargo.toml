@@ -14,6 +14,7 @@ members = [
     "crates/evaporchain-refresh-market",
     "crates/evaporchain-tur-liveness",
     "crates/evaporchain-light-cone",
+    "crates/evaporchain-antichain-mempool",
     "crates/evaporchain-crypto",
     "crates/evaporchain-state",
     "crates/evaporchain-consensus",
