@@ -359,6 +359,13 @@ const BLS_DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
 /// Domain separation tag for proof-of-possession (prevents rogue-key attacks).
 /// Different from BLS_DST so PoP signatures cannot be replayed as message signatures.
 const BLS_POP_DST: &[u8] = b"BLS_POP_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
+/// Domain separation tag for validator key-rotation continuity proofs.
+/// Distinct from POP_DST so a generic PoP signed at validator registration
+/// time cannot be replayed as a rotation continuity proof. Distinct from
+/// BLS_DST so a regular vote signature cannot be replayed either.
+/// Closes the loose-binding gap on RotateValidatorKey: each rotation
+/// attempt requires a fresh signature bound to the specific new pubkey.
+const BLS_ROTATION_DST: &[u8] = b"BLS_ROTATION_BLS12381G2_XMD:SHA-256_SSWU_RO_ROT_";
 
 /// BLS12-381 public key for consensus attestation aggregation.
 /// Public key: 48 bytes (compressed G1 point).
@@ -441,6 +448,20 @@ impl BlsKeypair {
         let sig = self.sk.sign(&pk_bytes, BLS_POP_DST, &[]);
         BlsSignature(sig.to_bytes().to_vec())
     }
+
+    /// Generate a rotation continuity proof: sign the NEW public key (the
+    /// one being rotated TO) with the OLD secret key (the one being rotated
+    /// FROM), under a dedicated rotation DST.
+    ///
+    /// Why this exists: a generic `proof_of_possession()` of the old key
+    /// is replayable across any rotation attempt. By binding the proof
+    /// specifically to `new_pk_bytes`, each rotation attempt requires a
+    /// fresh signature — an old PoP captured from a different rotation
+    /// (or from validator registration) cannot be reused.
+    pub fn sign_rotation_continuity(&self, new_pk_bytes: &[u8]) -> BlsSignature {
+        let sig = self.sk.sign(new_pk_bytes, BLS_ROTATION_DST, &[]);
+        BlsSignature(sig.to_bytes().to_vec())
+    }
 }
 
 /// Stateless BLS verification and aggregation.
@@ -491,6 +512,30 @@ impl BlsVerifier {
             Err(_) => return false,
         };
         sig.verify(true, &pk.0, BLS_POP_DST, &[], &pk_parsed, true) == blst::BLST_ERROR::BLST_SUCCESS
+    }
+
+    /// Verify a rotation continuity proof: that `sig` was produced by the
+    /// holder of `old_pk`'s secret key over the bytes of `new_pk_bytes`,
+    /// under `BLS_ROTATION_DST`.
+    ///
+    /// Returns true only if the rotator currently controls the old key
+    /// AND has committed (via signature) to this specific new public key.
+    /// Replays of a generic PoP fail because the DST differs.
+    pub fn verify_rotation_continuity(
+        old_pk: &BlsPublicKey,
+        new_pk_bytes: &[u8],
+        sig: &BlsSignature,
+    ) -> bool {
+        let pk_parsed = match BlstPublicKey::from_bytes(&old_pk.0) {
+            Ok(pk) => pk,
+            Err(_) => return false,
+        };
+        let parsed_sig = match BlstSignature::from_bytes(&sig.0) {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+        parsed_sig.verify(true, new_pk_bytes, BLS_ROTATION_DST, &[], &pk_parsed, true)
+            == blst::BLST_ERROR::BLST_SUCCESS
     }
 
     /// Verify an aggregated signature against multiple public keys.
@@ -873,6 +918,55 @@ mod tests {
         // Random 96 bytes should never pass as a valid PoP
         let fake_pop = BlsSignature(vec![0xDE; 96]);
         assert!(!BlsVerifier::verify_proof_of_possession(&pk, &fake_pop));
+    }
+
+    // ─── BLS Rotation Continuity Tests ─────────────────────────────────
+
+    #[test]
+    fn test_rotation_continuity_roundtrip() {
+        let old_kp = BlsKeypair::generate();
+        let new_kp = BlsKeypair::generate();
+        let old_pk = old_kp.public_key_bytes();
+        let new_pk_bytes = new_kp.public_key_bytes().0.clone();
+        let sig = old_kp.sign_rotation_continuity(&new_pk_bytes);
+        assert!(BlsVerifier::verify_rotation_continuity(&old_pk, &new_pk_bytes, &sig));
+    }
+
+    #[test]
+    fn test_rotation_continuity_replay_of_pop_rejected() {
+        // A generic PoP signed at validator registration time should NOT
+        // verify as a rotation continuity proof — different DST.
+        let old_kp = BlsKeypair::generate();
+        let new_kp = BlsKeypair::generate();
+        let old_pk = old_kp.public_key_bytes();
+        let new_pk_bytes = new_kp.public_key_bytes().0.clone();
+        let pop = old_kp.proof_of_possession();
+        assert!(!BlsVerifier::verify_rotation_continuity(&old_pk, &new_pk_bytes, &pop));
+    }
+
+    #[test]
+    fn test_rotation_continuity_wrong_new_pk_rejected() {
+        let old_kp = BlsKeypair::generate();
+        let new_kp = BlsKeypair::generate();
+        let other_kp = BlsKeypair::generate();
+        let old_pk = old_kp.public_key_bytes();
+        let new_pk_bytes = new_kp.public_key_bytes().0.clone();
+        let other_pk_bytes = other_kp.public_key_bytes().0.clone();
+        let sig = old_kp.sign_rotation_continuity(&new_pk_bytes);
+        // Signature was over new_pk_bytes; verifying against other_pk_bytes fails.
+        assert!(!BlsVerifier::verify_rotation_continuity(&old_pk, &other_pk_bytes, &sig));
+    }
+
+    #[test]
+    fn test_rotation_continuity_wrong_old_key_rejected() {
+        let old_kp = BlsKeypair::generate();
+        let attacker_kp = BlsKeypair::generate();
+        let new_kp = BlsKeypair::generate();
+        let attacker_pk = attacker_kp.public_key_bytes();
+        let new_pk_bytes = new_kp.public_key_bytes().0.clone();
+        // Old key signs the rotation; verifying against attacker's pk fails.
+        let sig = old_kp.sign_rotation_continuity(&new_pk_bytes);
+        assert!(!BlsVerifier::verify_rotation_continuity(&attacker_pk, &new_pk_bytes, &sig));
     }
 
     // ─── ECDSA secp256k1 Tests ─────────────────────────────────────────
