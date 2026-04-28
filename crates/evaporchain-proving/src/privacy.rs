@@ -138,19 +138,29 @@ pub struct MerkleProof {
 
 impl NoteTree {
     /// Create a new tree with the given depth (capacity = 2^depth).
+    ///
+    /// Empty-subtree optimization (closes H-15 startup hang): every leaf is
+    /// initially `[0; 32]`, so every internal level has exactly ONE distinct
+    /// hash value. Cache it per level — for depth=20 this drops the
+    /// initialization cost from 2^20-1 ≈ 1M Poseidon hashes to 20.
+    /// Output is bit-for-bit identical to the previous per-node loop.
     pub fn new(depth: usize) -> Self {
         let capacity = 1 << depth;
         let total_nodes = 2 * capacity; // 1-indexed: indices 0 unused, 1=root
         let mut nodes = vec![[0u8; 32]; total_nodes];
 
-        // Initialize empty leaves with zero hashes and propagate up
-        for i in (1..capacity).rev() {
-            let left = nodes[2 * i];
-            let right = nodes[2 * i + 1];
-            let mut combined = Vec::with_capacity(64);
-            combined.extend_from_slice(&left);
-            combined.extend_from_slice(&right);
-            nodes[i] = poseidon_hash(&combined);
+        let mut empty = [0u8; 32]; // empty-subtree hash at level 0 (leaves).
+        for level in 1..=depth {
+            let mut combined = [0u8; 64];
+            combined[..32].copy_from_slice(&empty);
+            combined[32..].copy_from_slice(&empty);
+            empty = poseidon_hash(&combined);
+            // All nodes at this level are the same empty-subtree hash.
+            let level_start = capacity >> level;
+            let level_end = capacity >> (level - 1);
+            for slot in nodes[level_start..level_end].iter_mut() {
+                *slot = empty;
+            }
         }
 
         Self {
@@ -909,6 +919,38 @@ mod tests {
     }
 
     // ── Merkle Tree Tests ──
+
+    /// H-15 regression: the per-level empty-subtree caching must produce
+    /// the SAME root as the original per-node hash loop. Compare against
+    /// a direct rebuild that walks every internal node.
+    #[test]
+    fn test_empty_tree_root_matches_per_node_hash() {
+        for depth in 1..=6 {
+            let tree = NoteTree::new(depth);
+
+            let capacity = 1usize << depth;
+            let mut nodes = vec![[0u8; 32]; 2 * capacity];
+            for i in (1..capacity).rev() {
+                let left = nodes[2 * i];
+                let right = nodes[2 * i + 1];
+                let mut combined = Vec::with_capacity(64);
+                combined.extend_from_slice(&left);
+                combined.extend_from_slice(&right);
+                nodes[i] = poseidon_hash(&combined);
+            }
+
+            assert_eq!(
+                tree.root(), nodes[1],
+                "fast empty-tree init at depth={} must match per-node loop", depth
+            );
+            for i in 1..capacity {
+                assert_eq!(
+                    tree.nodes[i], nodes[i],
+                    "internal node {} at depth={} must match", i, depth
+                );
+            }
+        }
+    }
 
     #[test]
     fn test_merkle_tree_insert_and_prove() {
