@@ -1,0 +1,15 @@
+[package]
+name = "evaporchain-padic"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "p-adic ultrametric Merkle commitment. Per INVENTION_STACK.md §A1.4: keys live in Z_p, the p-adic valuation indexes ball depth, and ultrametric balls form a strict tree (Hughes 2004). No other L1 commits state in p-adic space."
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+blake3 = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

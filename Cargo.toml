@@ -4,6 +4,7 @@ exclude = ["crates/evaporchain-crypto-wasm"]
 members = [
     "crates/evaporchain-types",
     "crates/evaporchain-energy-kernel",
+    "crates/evaporchain-padic",
     "crates/evaporchain-crypto",
     "crates/evaporchain-state",
     "crates/evaporchain-consensus",
