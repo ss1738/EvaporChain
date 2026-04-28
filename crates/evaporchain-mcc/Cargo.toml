@@ -1,0 +1,18 @@
+[package]
+name = "evaporchain-mcc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Maximum-Caliber Consensus (MCC) — fork-choice that picks the trajectory maximising path-entropy under ⟨ΔE⟩ = λ. Per INVENTION_STACK.md §A1.2 T1 (Jaynes 1980; Pressé-Ghosh-Lee-Dill 2013). Tier-0 theorem-grade."
+
+[dependencies]
+evaporchain-light-cone = { path = "../evaporchain-light-cone" }
+evaporchain-cfm = { path = "../evaporchain-cfm" }
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
