@@ -81,6 +81,9 @@ impl ValidatorInfoSnapshot {
             total_slashed: self.total_slashed,
             bls_pop: None,
             pop_verified: false,
+            bls_public_key_prev: None,
+            bls_prev_key_expiry_epoch: None,
+            delegated_stake: 0,
         }
     }
 }
