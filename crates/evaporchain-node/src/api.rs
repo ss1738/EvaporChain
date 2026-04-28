@@ -451,9 +451,16 @@ fn account_name(addr: &[u8; 32]) -> String {
     format!("0x{}...{}", &full[..8], &full[34..])
 }
 
-/// Full 20-byte address as 0x-prefixed hex.
+/// Full 32-byte account address as 0x-prefixed hex.
+///
+/// Previously truncated to the first 20 bytes which caused distinct
+/// AccountAddress values (faucet [0;32] vs faucet recipients whose
+/// last byte differs) to render as the same display string, masking
+/// failed transfers in /api/accounts and /api/block/N responses and
+/// making cluster load-test verification impossible. Restored to full
+/// 32-byte hex.
 fn account_full(addr: &[u8; 32]) -> String {
-    format!("0x{}", hex::encode(&addr[..20]))
+    format!("0x{}", hex::encode(addr))
 }
 
 /// Try to extract a name from the object's data field, otherwise use hex id.
