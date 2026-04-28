@@ -913,6 +913,75 @@ pub struct StakeRecord {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// Vesting Timelock (addresses 35% Foundation centralization concern)
+// ═══════════════════════════════════════════════════════════════════
+
+/// On-chain linear vesting schedule with cliff. Released over time by
+/// `tick_vesting` once per block. Wraps large genesis allocations so
+/// they release thermodynamically rather than as a calendar smart
+/// contract.
+///
+/// Semantics:
+///   - At any epoch `t < start_epoch + cliff_epochs`: 0 released.
+///   - At `t == start_epoch + cliff_epochs`: linear release begins from 0.
+///   - At `t >= start_epoch + vesting_epochs`: full `total_amount`
+///     released. Caller invariant: `vesting_epochs >= cliff_epochs`.
+///   - `released_amount` records how much has been credited to the
+///     beneficiary so far (so repeated ticks are idempotent).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VestingSchedule {
+    /// Caller-supplied unique id (e.g. genesis line index, or
+    /// `blake3(beneficiary || start_epoch)` for runtime-created schedules).
+    pub id: u64,
+    pub beneficiary: AccountAddress,
+    /// Total tokens locked by this schedule. Constant for the lifetime
+    /// of the schedule.
+    pub total_amount: u64,
+    /// Epoch at which the cliff/vesting window begins counting.
+    pub start_epoch: Epoch,
+    /// Number of epochs after `start_epoch` before any tokens release.
+    pub cliff_epochs: u64,
+    /// Total number of epochs from `start_epoch` until the schedule is
+    /// fully released. Must be >= `cliff_epochs`.
+    pub vesting_epochs: u64,
+    /// Sum of all releases credited so far. Monotonically non-decreasing.
+    pub released_amount: u64,
+}
+
+impl VestingSchedule {
+    /// How much SHOULD be released by `current_epoch` against `total_amount`.
+    /// Saturating arithmetic — returns `total_amount` past the schedule end.
+    pub fn vested_at(&self, current_epoch: Epoch) -> u64 {
+        let cliff_end = self.start_epoch.saturating_add(self.cliff_epochs);
+        if current_epoch < cliff_end {
+            return 0;
+        }
+        let vesting_end = self.start_epoch.saturating_add(self.vesting_epochs);
+        if current_epoch >= vesting_end {
+            return self.total_amount;
+        }
+        let elapsed = current_epoch.saturating_sub(cliff_end) as u128;
+        let linear_window = vesting_end.saturating_sub(cliff_end) as u128;
+        if linear_window == 0 {
+            return self.total_amount;
+        }
+        let released = (self.total_amount as u128).saturating_mul(elapsed) / linear_window;
+        released.min(self.total_amount as u128) as u64
+    }
+
+    /// Releasable delta against the current `released_amount`.
+    pub fn pending_release_at(&self, current_epoch: Epoch) -> u64 {
+        self.vested_at(current_epoch)
+            .saturating_sub(self.released_amount)
+    }
+
+    /// True iff the schedule has fully released its total.
+    pub fn is_fully_vested(&self) -> bool {
+        self.released_amount >= self.total_amount
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // On-Chain Governance Types
 // ═══════════════════════════════════════════════════════════════════
 

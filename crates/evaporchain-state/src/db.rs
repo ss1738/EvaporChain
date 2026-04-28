@@ -279,6 +279,21 @@ pub trait StateDB: Send + Sync {
     /// Default no-op so back-end implementations that don't carry the
     /// cursor (e.g. transient overlays) compile without changes.
     fn put_last_rent_epoch(&mut self, _epoch: u64) {}
+
+    // ─── Vesting registry (centralization defence) ──────────────────────
+    // Default no-ops so back-ends that haven't migrated still compile.
+    // Overridden by InMemoryStateDB / RocksDBStateDB.
+
+    fn get_vesting_schedule(&self, _id: u64) -> Option<&evaporchain_types::VestingSchedule> {
+        None
+    }
+    fn put_vesting_schedule(&mut self, _schedule: evaporchain_types::VestingSchedule) {}
+    fn remove_vesting_schedule(&mut self, _id: u64) -> Option<evaporchain_types::VestingSchedule> {
+        None
+    }
+    fn all_vesting_schedules(&self) -> Vec<evaporchain_types::VestingSchedule> {
+        Vec::new()
+    }
 }
 
 /// In-memory state database for development and testing.
@@ -313,6 +328,9 @@ pub struct InMemoryStateDB {
     // Governance
     proposals: HashMap<u64, GovernanceProposal>,
     governance_params: HashMap<String, String>,
+    // Vesting registry — addresses 35% Foundation centralization
+    // by wrapping large genesis allocations in time-released schedules.
+    vesting_schedules: HashMap<u64, evaporchain_types::VestingSchedule>,
     // Historical snapshots
     snapshots: BTreeMap<u64, HistoricalSnapshot>,
 }
@@ -343,6 +361,7 @@ impl InMemoryStateDB {
             delegations: HashMap::new(),
             proposals: HashMap::new(),
             governance_params: HashMap::new(),
+            vesting_schedules: HashMap::new(),
             snapshots: BTreeMap::new(),
         }
     }
@@ -676,6 +695,23 @@ impl StateDB for InMemoryStateDB {
         self.last_rent_epoch = epoch;
     }
 
+    // ─── Vesting registry ─────────────────────────────────────────────
+
+    fn get_vesting_schedule(&self, id: u64) -> Option<&evaporchain_types::VestingSchedule> {
+        self.vesting_schedules.get(&id)
+    }
+
+    fn put_vesting_schedule(&mut self, schedule: evaporchain_types::VestingSchedule) {
+        self.vesting_schedules.insert(schedule.id, schedule);
+    }
+
+    fn remove_vesting_schedule(&mut self, id: u64) -> Option<evaporchain_types::VestingSchedule> {
+        self.vesting_schedules.remove(&id)
+    }
+
+    fn all_vesting_schedules(&self) -> Vec<evaporchain_types::VestingSchedule> {
+        self.vesting_schedules.values().cloned().collect()
+    }
 
     // ─── Historical Snapshots ───────────────────────────────────────────
 

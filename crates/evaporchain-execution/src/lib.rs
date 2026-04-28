@@ -1398,6 +1398,37 @@ impl SimpleExecutor {
         Ok(())
     }
 
+    /// Tick the vesting registry: walk every active VestingSchedule,
+    /// compute pending release at `current_epoch`, credit the
+    /// beneficiary's transparent balance, and bump the schedule's
+    /// `released_amount`. Fully-vested schedules are removed from the
+    /// registry to keep the active set bounded.
+    ///
+    /// Addresses the 35% Foundation Treasury centralization concern:
+    /// large genesis allocations can be wrapped in a VestingSchedule so
+    /// they release thermodynamically over time, instead of being a
+    /// single account with a huge unconstrained balance from epoch 0.
+    fn tick_vesting(&self, db: &mut dyn StateDB, current_epoch: u64) {
+        let schedules = db.all_vesting_schedules();
+        for sched in schedules {
+            let pending = sched.pending_release_at(current_epoch);
+            if pending == 0 && !sched.is_fully_vested() {
+                continue;
+            }
+            if pending > 0 {
+                let acct = db.get_or_create_account(&sched.beneficiary);
+                acct.balance = acct.balance.saturating_add(pending);
+            }
+            let mut updated = sched.clone();
+            updated.released_amount = updated.released_amount.saturating_add(pending);
+            if updated.is_fully_vested() {
+                db.remove_vesting_schedule(updated.id);
+            } else {
+                db.put_vesting_schedule(updated);
+            }
+        }
+    }
+
     fn collect_storage_rent(&self, db: &mut dyn StateDB) {
         let addresses = db.all_account_addresses();
         for addr in addresses {
@@ -1984,6 +2015,13 @@ impl ExecutionEngine for SimpleExecutor {
             self.collect_storage_rent(db);
             db.put_last_rent_epoch(block.epoch);
         }
+
+        // Vesting timelock release tick — runs every block (per-block
+        // schedules need responsive release). Idempotent within an
+        // epoch because pending_release_at == 0 once released_amount
+        // catches up to vested_at.
+        self.tick_vesting(db, block.epoch);
+
         let state_root = db.compute_state_root();
         db.commit_state_snapshot(block.number);
 
