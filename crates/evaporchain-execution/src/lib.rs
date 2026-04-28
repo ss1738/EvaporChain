@@ -1967,7 +1967,23 @@ impl ExecutionEngine for SimpleExecutor {
             }
         }
 
-        self.collect_storage_rent(db);
+        // Punch-list 6: gate storage-rent collection on the per-epoch
+        // cursor (`last_rent_epoch`) so rent fires exactly once per
+        // epoch instead of once per block. Mirrors the inline gate
+        // already used by ParallelExecutor (parallel.rs:1430) and
+        // Block-STM (block_stm.rs:1670). Keeping the inline pattern
+        // (rather than baking it into `collect_storage_rent`) preserves
+        // the existing test signatures.
+        //
+        // Why this matters: `STORAGE_RENT_PER_BYTE_PER_EPOCH` is a
+        // per-EPOCH rate; running it per-block over-charges by
+        // `blocks_per_epoch` (≈50× at 2s blocks). A Foundation account
+        // would be drained roughly 50× faster than the tokenomics
+        // declare. Closes the SimpleExecutor half of #6.
+        if block.epoch > db.get_last_rent_epoch() {
+            self.collect_storage_rent(db);
+            db.put_last_rent_epoch(block.epoch);
+        }
         let state_root = db.compute_state_root();
         db.commit_state_snapshot(block.number);
 

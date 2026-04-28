@@ -290,6 +290,11 @@ pub struct InMemoryStateDB {
     /// Persisted note commitments by leaf index. BTreeMap so iteration
     /// order matches leaf order — required for deterministic tree rebuild.
     note_commitments: BTreeMap<u64, [u8; 32]>,
+    /// Cursor for per-epoch storage-rent collection (punch-list 6).
+    /// Persists across calls within a single InMemoryStateDB instance
+    /// so the gate in `apply_block` actually fires once-per-epoch in
+    /// tests, not the trait-default no-op behaviour.
+    last_rent_epoch: u64,
     // Stake ledger
     stakes: HashMap<u64, StakeRecord>,
     // Delegation ledger — keyed on (delegator, validator_id) so the same
@@ -323,6 +328,7 @@ impl InMemoryStateDB {
             shielded_pool_balance: 0,
             note_count: 0,
             note_commitments: BTreeMap::new(),
+            last_rent_epoch: 0,
             stakes: HashMap::new(),
             delegations: HashMap::new(),
             proposals: HashMap::new(),
@@ -650,6 +656,17 @@ impl StateDB for InMemoryStateDB {
         self.governance_params.insert(key, value);
     }
 
+    // ─── Storage-rent cursor (punch-list 6) ───────────────────────────
+
+    fn get_last_rent_epoch(&self) -> u64 {
+        self.last_rent_epoch
+    }
+
+    fn put_last_rent_epoch(&mut self, epoch: u64) {
+        self.last_rent_epoch = epoch;
+    }
+
+
     // ─── Historical Snapshots ───────────────────────────────────────────
 
     fn commit_state_snapshot(&mut self, height: u64) {
@@ -888,5 +905,23 @@ mod tests {
         let pruned = db.prune_before_height(0);
         assert_eq!(pruned, 0);
         assert_eq!(db.ghost_count(), 1);
+    }
+
+    /// Punch-list 6: rent cursor defaults to 0 and persists writes
+    /// monotonically. The InMemoryStateDB override (not the trait
+    /// default no-op) is what makes the gate effective in tests.
+    #[test]
+    fn test_last_rent_epoch_in_memory_persists_writes() {
+        let mut db = InMemoryStateDB::new();
+        assert_eq!(db.get_last_rent_epoch(), 0, "fresh DB defaults to 0");
+        db.put_last_rent_epoch(7);
+        assert_eq!(db.get_last_rent_epoch(), 7);
+        // Monotonic advance: rent collection always moves forward in epochs.
+        db.put_last_rent_epoch(13);
+        assert_eq!(db.get_last_rent_epoch(), 13);
+        // The store also accepts equal-or-lower writes (callers must enforce
+        // monotonicity at their layer; this layer is just a kv).
+        db.put_last_rent_epoch(13);
+        assert_eq!(db.get_last_rent_epoch(), 13);
     }
 }
