@@ -1,6 +1,7 @@
 mod api;
 mod auth;
 mod bench;
+mod da_http_client;
 mod frontier;
 mod oracle_bridge;
 mod persistence;
@@ -77,6 +78,38 @@ fn log_persist_err(op: &str, r: Result<(), String>) {
     }
 }
 
+/// Halt the node cleanly on a consensus-critical persistence failure.
+///
+/// `log_persist_err` (above) is the right call for ops where loss of the
+/// write is recoverable from on-chain replay (DeFi snapshot stores, UI
+/// metrics, DA caches). For ops where divergence between in-memory and
+/// on-disk state would corrupt the chain on restart — `full_block`,
+/// `consensus_meta`, `mempool`, contract sources — the right behaviour is
+/// to STOP block production immediately rather than continue with stale
+/// disk state.
+///
+/// Closes Gap-A #7 from `audit/end_to_end_audit_2026_04_27.md` (matches
+/// the `fatal_persistence_error` discipline already used in
+/// `evaporchain-state/rocksdb_backend.rs:46`). Returns `()` on success
+/// so callers don't need to handle the never type at every site.
+fn fatal_persist_err(op: &str, r: Result<(), String>) {
+    if let Err(e) = r {
+        tracing::error!(
+            operation = op,
+            error = %e,
+            "FATAL: consensus-critical persistence failed — node halting to prevent state divergence",
+        );
+        eprintln!(
+            "\x1b[1;31mFATAL persistence failure ({}): {}\x1b[0m",
+            op, e
+        );
+        eprintln!("\x1b[1;31m  Halting to prevent on-restart divergence between in-memory and on-disk state.\x1b[0m");
+        // Give tracing + stderr a moment to flush before exit.
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        std::process::exit(2);
+    }
+}
+
 fn write_secret_file(path: impl AsRef<std::path::Path>, data: &[u8]) {
     let path = path.as_ref();
     if let Err(e) = std::fs::write(path, data) {
@@ -98,8 +131,8 @@ fn persist_contracts(
         let tc = safe_lock(tc_ref);
         let scripts: Vec<_> = tc.script_engine().all_contracts().into_iter().collect();
         let templates: Vec<_> = tc.contract_engine().all_contracts().into_iter().collect();
-        log_persist_err("script_contracts", chain_store.save_script_contracts(&scripts));
-        log_persist_err("template_contracts", chain_store.save_template_contracts(&templates));
+        fatal_persist_err("script_contracts", chain_store.save_script_contracts(&scripts));
+        fatal_persist_err("template_contracts", chain_store.save_template_contracts(&templates));
     }
 }
 
@@ -2576,10 +2609,10 @@ async fn main() -> Result<()> {
                     obj_count, ghost_count_val, exec_elapsed_us,
                 );
 
-                log_persist_err("consensus_meta", chain_store.save_consensus_meta(
+                fatal_persist_err("consensus_meta", chain_store.save_consensus_meta(
                     result.block.number, result.block.epoch, result.block.parent_hash,
                 ));
-                log_persist_err("full_block", chain_store.save_full_block(&result.block));
+                fatal_persist_err("full_block", chain_store.save_full_block(&result.block));
                 log_persist_err("tx_index", chain_store.index_block_transactions(&result.block).map(|_| ()));
                 index_contract_events_from_exec(chain_store, &result.block, &result.execution);
                 {
@@ -3176,8 +3209,8 @@ async fn main() -> Result<()> {
                                 );
 
                                 // Persist
-                                log_persist_err("consensus_meta", chain_store.save_consensus_meta(block.number, block.epoch, consensus_parent_hash));
-                                log_persist_err("full_block", chain_store.save_full_block(&block));
+                                fatal_persist_err("consensus_meta", chain_store.save_consensus_meta(block.number, block.epoch, consensus_parent_hash));
+                                fatal_persist_err("full_block", chain_store.save_full_block(&block));
                                 log_persist_err("tx_index", chain_store.index_block_transactions(&block).map(|_| ()));
                                 {
                                     let history = safe_lock(&block_history);
@@ -3725,8 +3758,8 @@ async fn main() -> Result<()> {
                                         &block, &result.execution,
                                         obj_count, ghost_count, exec_elapsed_us,
                                     );
-                                    log_persist_err("consensus_meta", chain_store.save_consensus_meta(block.number, block.epoch, consensus_parent_hash));
-                                    log_persist_err("full_block", chain_store.save_full_block(&block));
+                                    fatal_persist_err("consensus_meta", chain_store.save_consensus_meta(block.number, block.epoch, consensus_parent_hash));
+                                    fatal_persist_err("full_block", chain_store.save_full_block(&block));
                                     log_persist_err("tx_index", chain_store.index_block_transactions(&block).map(|_| ()));
                                     index_contract_events_from_exec(&chain_store, &block, &result.execution);
                                     {
@@ -3911,12 +3944,12 @@ async fn main() -> Result<()> {
                     );
 
                     // Persist chain data to disk
-                    log_persist_err("consensus_meta", chain_store.save_consensus_meta(
+                    fatal_persist_err("consensus_meta", chain_store.save_consensus_meta(
                         result.block.number,
                         result.block.epoch,
                         result.block.parent_hash,
                     ));
-                    log_persist_err("full_block", chain_store.save_full_block(&result.block));
+                    fatal_persist_err("full_block", chain_store.save_full_block(&result.block));
                 log_persist_err("tx_index", chain_store.index_block_transactions(&result.block).map(|_| ()));
                     index_contract_events_from_exec(&chain_store, &result.block, &result.execution);
                     {
@@ -4220,7 +4253,7 @@ async fn main() -> Result<()> {
                                     if let Some(ref cache) = block_cache {
                                         cache_block(cache, block);
                                     }
-                                    log_persist_err("consensus_meta", chain_store.save_consensus_meta(block.number, block.epoch, consensus_parent_hash));
+                                    fatal_persist_err("consensus_meta", chain_store.save_consensus_meta(block.number, block.epoch, consensus_parent_hash));
                                     // Record in block history & chain store
                                     {
                                         let record = BlockRecord {
@@ -4251,7 +4284,7 @@ async fn main() -> Result<()> {
                                         history.push_back(record.clone());
                                         if history.len() > 500 { history.pop_front(); }
                                         log_persist_err("block", chain_store.save_block(&record));
-                                        log_persist_err("full_block", chain_store.save_full_block(block));
+                                        fatal_persist_err("full_block", chain_store.save_full_block(block));
                                         log_persist_err("tx_index", chain_store.index_block_transactions(block).map(|_| ()));
                                     }
                                     // Update chain stats (same as record_block_production)
@@ -4348,7 +4381,7 @@ async fn main() -> Result<()> {
                                     let gh_count = db_guard.ghost_count();
                                     drop(db_guard);
                                     let _ = safe_lock(&chain_prover).fold_block(&queued, result.execution.state_root);
-                                    log_persist_err("consensus_meta", chain_store.save_consensus_meta(queued.number, queued.epoch, consensus_parent_hash));
+                                    fatal_persist_err("consensus_meta", chain_store.save_consensus_meta(queued.number, queued.epoch, consensus_parent_hash));
                                     // Update stats for queued/pending blocks
                                     {
                                         let mut tx_creates = 0u64;
