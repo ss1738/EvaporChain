@@ -3896,4 +3896,121 @@ contract Counter {
         assert_eq!(rec.amount, 1_000);
         assert_eq!(rec.unbonding_amount, 0);
     }
+
+    // ─── Phase 7: ClaimDelegationTx ──────────────────────────────────
+
+    #[test]
+    fn test_claim_delegation_after_unbonding_period() {
+        let mut db = InMemoryStateDB::new();
+        seed_validator(&mut db, 7, 9, 100_000);
+        fund_account(&mut db, 1, 5_000);
+
+        let mut executor = SimpleExecutor::new_for_test(7);
+        // Delegate then undelegate at epoch 5.
+        executor.execute_block(&mut db, &make_block(
+            1, 1,
+            vec![Transaction::Delegate(DelegateTx {
+                delegator: addr(1), validator_id: 7, amount: 2_000, nonce: 0,
+                signature: None, public_key: None,
+            })],
+        )).unwrap();
+        executor.execute_block(&mut db, &make_block(
+            2, 5,
+            vec![Transaction::Undelegate(UndelegateTx {
+                delegator: addr(1), validator_id: 7, amount: 1_500, nonce: 1,
+                signature: None, public_key: None,
+            })],
+        )).unwrap();
+        let pre_claim_balance = db.get_account(&addr(1)).unwrap().balance;
+
+        // Claim before unbonding period elapses → must fail.
+        let early = executor.execute_block(&mut db, &make_block(
+            3, 50,
+            vec![Transaction::ClaimDelegation(ClaimDelegationTx {
+                delegator: addr(1), validator_id: 7, nonce: 2,
+                signature: None, public_key: None,
+            })],
+        )).unwrap();
+        assert_eq!(early.txs_failed, 1, "claim before unbonding period must fail");
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, pre_claim_balance);
+
+        // Claim after unbonding period (5 + 256 = 261) → succeeds.
+        let ready = executor.execute_block(&mut db, &make_block(
+            4, 261,
+            vec![Transaction::ClaimDelegation(ClaimDelegationTx {
+                delegator: addr(1), validator_id: 7, nonce: 2,
+                signature: None, public_key: None,
+            })],
+        )).unwrap();
+        assert_eq!(ready.txs_executed, 1);
+        assert_eq!(
+            db.get_account(&addr(1)).unwrap().balance,
+            pre_claim_balance + 1_500,
+            "claimed amount credited to balance"
+        );
+        let rec = db.get_delegation(&addr(1), 7).unwrap();
+        assert_eq!(rec.unbonding_amount, 0);
+        assert!(rec.unbonding_epoch.is_none());
+        assert_eq!(rec.amount, 500, "active amount untouched");
+    }
+
+    #[test]
+    fn test_claim_delegation_removes_record_when_fully_unbonded() {
+        let mut db = InMemoryStateDB::new();
+        seed_validator(&mut db, 7, 9, 100_000);
+        fund_account(&mut db, 1, 5_000);
+
+        let mut executor = SimpleExecutor::new_for_test(7);
+        executor.execute_block(&mut db, &make_block(
+            1, 1,
+            vec![Transaction::Delegate(DelegateTx {
+                delegator: addr(1), validator_id: 7, amount: 2_000, nonce: 0,
+                signature: None, public_key: None,
+            })],
+        )).unwrap();
+        executor.execute_block(&mut db, &make_block(
+            2, 1,
+            vec![Transaction::Undelegate(UndelegateTx {
+                delegator: addr(1), validator_id: 7, amount: 2_000, nonce: 1,
+                signature: None, public_key: None,
+            })],
+        )).unwrap();
+        executor.execute_block(&mut db, &make_block(
+            3, 257,
+            vec![Transaction::ClaimDelegation(ClaimDelegationTx {
+                delegator: addr(1), validator_id: 7, nonce: 2,
+                signature: None, public_key: None,
+            })],
+        )).unwrap();
+
+        assert!(
+            db.get_delegation(&addr(1), 7).is_none(),
+            "fully unbonded delegation should be removed"
+        );
+    }
+
+    #[test]
+    fn test_claim_delegation_with_no_unbonding_amount_fails() {
+        let mut db = InMemoryStateDB::new();
+        seed_validator(&mut db, 7, 9, 100_000);
+        fund_account(&mut db, 1, 5_000);
+
+        let mut executor = SimpleExecutor::new_for_test(7);
+        executor.execute_block(&mut db, &make_block(
+            1, 1,
+            vec![Transaction::Delegate(DelegateTx {
+                delegator: addr(1), validator_id: 7, amount: 1_000, nonce: 0,
+                signature: None, public_key: None,
+            })],
+        )).unwrap();
+
+        let r = executor.execute_block(&mut db, &make_block(
+            2, 500,
+            vec![Transaction::ClaimDelegation(ClaimDelegationTx {
+                delegator: addr(1), validator_id: 7, nonce: 1,
+                signature: None, public_key: None,
+            })],
+        )).unwrap();
+        assert_eq!(r.txs_failed, 1, "claim without unbonding must fail");
+    }
 }
