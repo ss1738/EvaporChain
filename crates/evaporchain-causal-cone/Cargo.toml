@@ -1,0 +1,18 @@
+[package]
+name = "evaporchain-causal-cone"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Causal-Cone Validator State — Shalizi 2003 light-cone sufficient statistics for EvaporChain. Constant-size summary of a validator's causal past. Upgrades Light-Cone Consensus from heuristic to theorem-backed via the Optimal Prediction Theorem. Per INVENTION_STACK.md §A1.3."
+
+[dependencies]
+evaporchain-light-cone = { path = "../evaporchain-light-cone" }
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+blake3 = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
