@@ -3535,4 +3535,200 @@ contract Counter {
         assert!(receipts[0].success);
         assert!(db.get_object(&oid).is_none());
     }
+
+    // ─── Delegation (P0 #4) ───────────────────────────────────────────
+
+    fn seed_validator(db: &mut InMemoryStateDB, vid: u64, validator_byte: u8, stake: u64) {
+        // Stake records are required before any delegation can target the
+        // validator (anti-griefing in execute_delegate).
+        fund_account(db, validator_byte, 1_000_000);
+        db.put_stake(StakeRecord {
+            validator_id: vid,
+            validator_address: addr(validator_byte),
+            staked_amount: stake,
+            staked_at_epoch: 0,
+            unbonding_epoch: None,
+            slashed_amount: 0,
+        });
+    }
+
+    #[test]
+    fn test_delegate_happy_path() {
+        let mut db = InMemoryStateDB::new();
+        seed_validator(&mut db, 7, 9, 100_000);
+        fund_account(&mut db, 1, 5_000);
+
+        let mut executor = SimpleExecutor::new_for_test(7);
+        let block = make_block(
+            1, 1,
+            vec![Transaction::Delegate(DelegateTx {
+                delegator: addr(1),
+                validator_id: 7,
+                amount: 1_000,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        let r = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_executed, 1);
+        assert_eq!(r.txs_failed, 0);
+
+        let acct = db.get_account(&addr(1)).unwrap();
+        assert_eq!(acct.balance, 4_000, "1000 should be debited from delegator");
+        assert_eq!(acct.nonce, 1);
+
+        let rec = db.get_delegation(&addr(1), 7).expect("delegation must exist");
+        assert_eq!(rec.amount, 1_000);
+        assert_eq!(rec.unbonding_amount, 0);
+        assert!(rec.unbonding_epoch.is_none());
+    }
+
+    #[test]
+    fn test_delegate_to_unknown_validator_rejected() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 5_000);
+        // No stake record for validator 99 — anti-griefing guard should fire.
+
+        let mut executor = SimpleExecutor::new_for_test(7);
+        let block = make_block(
+            1, 1,
+            vec![Transaction::Delegate(DelegateTx {
+                delegator: addr(1),
+                validator_id: 99,
+                amount: 1_000,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        let r = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1, "delegate to unknown validator must fail");
+        // Balance should be unchanged (state reverted on failure).
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 5_000);
+        assert!(db.get_delegation(&addr(1), 99).is_none());
+    }
+
+    #[test]
+    fn test_delegate_insufficient_balance_rejected() {
+        let mut db = InMemoryStateDB::new();
+        seed_validator(&mut db, 7, 9, 100_000);
+        fund_account(&mut db, 1, 500);
+
+        let mut executor = SimpleExecutor::new_for_test(7);
+        let block = make_block(
+            1, 1,
+            vec![Transaction::Delegate(DelegateTx {
+                delegator: addr(1),
+                validator_id: 7,
+                amount: 1_000,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        let r = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(r.txs_failed, 1);
+        assert!(db.get_delegation(&addr(1), 7).is_none());
+    }
+
+    #[test]
+    fn test_delegate_additive() {
+        let mut db = InMemoryStateDB::new();
+        seed_validator(&mut db, 7, 9, 100_000);
+        fund_account(&mut db, 1, 10_000);
+
+        let mut executor = SimpleExecutor::new_for_test(7);
+        let block1 = make_block(
+            1, 1,
+            vec![Transaction::Delegate(DelegateTx {
+                delegator: addr(1), validator_id: 7, amount: 1_000, nonce: 0,
+                signature: None, public_key: None,
+            })],
+        );
+        executor.execute_block(&mut db, &block1).unwrap();
+        let block2 = make_block(
+            2, 2,
+            vec![Transaction::Delegate(DelegateTx {
+                delegator: addr(1), validator_id: 7, amount: 2_500, nonce: 1,
+                signature: None, public_key: None,
+            })],
+        );
+        executor.execute_block(&mut db, &block2).unwrap();
+
+        let rec = db.get_delegation(&addr(1), 7).unwrap();
+        assert_eq!(rec.amount, 3_500, "delegations to same validator should be additive");
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 6_500);
+    }
+
+    #[test]
+    fn test_undelegate_marks_unbonding() {
+        let mut db = InMemoryStateDB::new();
+        seed_validator(&mut db, 7, 9, 100_000);
+        fund_account(&mut db, 1, 5_000);
+
+        let mut executor = SimpleExecutor::new_for_test(7);
+        // First delegate so there's something to undelegate.
+        let b1 = make_block(
+            1, 1,
+            vec![Transaction::Delegate(DelegateTx {
+                delegator: addr(1), validator_id: 7, amount: 1_000, nonce: 0,
+                signature: None, public_key: None,
+            })],
+        );
+        executor.execute_block(&mut db, &b1).unwrap();
+        let pre_balance = db.get_account(&addr(1)).unwrap().balance;
+
+        let b2 = make_block(
+            2, 5,
+            vec![Transaction::Undelegate(UndelegateTx {
+                delegator: addr(1), validator_id: 7, amount: 600, nonce: 1,
+                signature: None, public_key: None,
+            })],
+        );
+        executor.execute_block(&mut db, &b2).unwrap();
+
+        let rec = db.get_delegation(&addr(1), 7).unwrap();
+        assert_eq!(rec.amount, 400, "active amount reduced by 600");
+        assert_eq!(rec.unbonding_amount, 600, "600 marked unbonding");
+        assert_eq!(rec.unbonding_epoch, Some(5), "epoch recorded");
+        // Funds NOT yet returned to balance — that's a future ClaimDelegation tx.
+        assert_eq!(
+            db.get_account(&addr(1)).unwrap().balance,
+            pre_balance,
+            "undelegate must not credit balance immediately"
+        );
+    }
+
+    #[test]
+    fn test_undelegate_more_than_delegated_rejected() {
+        let mut db = InMemoryStateDB::new();
+        seed_validator(&mut db, 7, 9, 100_000);
+        fund_account(&mut db, 1, 5_000);
+
+        let mut executor = SimpleExecutor::new_for_test(7);
+        let b1 = make_block(
+            1, 1,
+            vec![Transaction::Delegate(DelegateTx {
+                delegator: addr(1), validator_id: 7, amount: 1_000, nonce: 0,
+                signature: None, public_key: None,
+            })],
+        );
+        executor.execute_block(&mut db, &b1).unwrap();
+
+        let b2 = make_block(
+            2, 2,
+            vec![Transaction::Undelegate(UndelegateTx {
+                delegator: addr(1), validator_id: 7, amount: 5_000, nonce: 1,
+                signature: None, public_key: None,
+            })],
+        );
+        let r = executor.execute_block(&mut db, &b2).unwrap();
+        assert_eq!(r.txs_failed, 1);
+
+        // Original delegation untouched.
+        let rec = db.get_delegation(&addr(1), 7).unwrap();
+        assert_eq!(rec.amount, 1_000);
+        assert_eq!(rec.unbonding_amount, 0);
+    }
 }
