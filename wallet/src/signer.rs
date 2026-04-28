@@ -186,6 +186,10 @@ fn set_signature(tx: &mut Transaction, sig: Vec<u8>, pk: Vec<u8>) {
             u.signature = Some(sig);
             u.public_key = Some(pk);
         }
+        Transaction::RotateValidatorKey(r) => {
+            r.signature = Some(sig);
+            r.public_key = Some(pk);
+        }
     }
 }
 
