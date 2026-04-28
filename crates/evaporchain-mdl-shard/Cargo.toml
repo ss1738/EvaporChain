@@ -1,0 +1,15 @@
+[package]
+name = "evaporchain-mdl-shard"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "MDL-Shard: Rissanen 1978 Minimum Description Length sharding. Optimal shard partition Π* = argmin L(Π) + L(D|Π) — provably optimal, not heuristic. Per INVENTION_STACK.md §A1.3."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

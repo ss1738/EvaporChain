@@ -22,6 +22,7 @@ members = [
     "crates/evaporchain-cmu-gate",
     "crates/evaporchain-cslc",
     "crates/evaporchain-lambda-fold",
+    "crates/evaporchain-mdl-shard",
     "crates/evaporchain-crypto",
     "crates/evaporchain-state",
     "crates/evaporchain-consensus",
