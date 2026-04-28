@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-lambda-fold"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Lambda-Fold (Energy-Folded Light Client). First sublinear-in-active-energy verifier. Nova/HyperNova extension where each fold step folds the energy state alongside the witness. Per INVENTION_STACK.md §4.1 #8 — decade-defining moonshot."
+
+[dependencies]
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+blake3 = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
