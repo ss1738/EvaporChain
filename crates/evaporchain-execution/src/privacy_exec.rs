@@ -130,6 +130,28 @@ impl PrivacyExecutor {
         self.engine.set_epoch(epoch);
     }
 
+    /// Restore in-memory privacy state (note tree, nullifier set) from
+    /// the persisted commitment list in `db`. Called once at node startup
+    /// after consensus state restoration so a freshly-launched node can
+    /// re-verify spends against the canonical Merkle root.
+    ///
+    /// **Today this is a stub.** Punch-list 1b describes the full
+    /// implementation: walk `db.note_commitment_iter()`, push each
+    /// commitment into `engine.note_tree`, then assert the rebuilt root
+    /// equals `db.privacy_note_tree_root()`. Returning `Ok(0)` here
+    /// preserves the call-site contract introduced by the consensus
+    /// `restore_privacy_from_db` wrapper while the persistence trait
+    /// methods land.
+    ///
+    /// Returns the number of commitments restored.
+    pub fn restore_from_db(&mut self, _db: &dyn StateDB) -> Result<usize, PrivacyExecError> {
+        tracing::warn!(
+            "PrivacyExecutor::restore_from_db: stub returning 0 — implement before mainnet \
+             (punch-list 1b: walk persisted commitments, assert root)"
+        );
+        Ok(0)
+    }
+
     /// Get the current Merkle root of the note tree.
     pub fn merkle_root(&self) -> [u8; 32] {
         self.engine.merkle_root()
