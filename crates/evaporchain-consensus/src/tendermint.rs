@@ -424,6 +424,15 @@ impl TendermintConsensus {
 
     /// Set the chain identifier for this consensus instance.
     pub fn set_chain_id(&mut self, chain_id: String) {
+        // Mirror the chain_id onto the ParallelExecutor so signature
+        // verification at execute time uses the SAME chain_id the API
+        // signed the tx with. Without this propagation, executor.chain_id
+        // stays empty (the default in new_production), every signed tx
+        // fails sig verification at execute time, and txs silently
+        // disappear despite landing in committed blocks. Caught during
+        // the 3-Mini cluster faucet flow: faucet endpoint returned 200,
+        // tx made it into block #6556, but balance never decremented.
+        self.executor.chain_id = chain_id.clone();
         self.chain_id = chain_id;
     }
 
