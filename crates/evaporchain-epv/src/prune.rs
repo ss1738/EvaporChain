@@ -62,13 +62,11 @@ mod tests {
         let mut r = EpvRegistry::new();
         r.register(ProtocolVersion::new(1, 1000, 0)).unwrap();
         r.register(ProtocolVersion::new(2, 1000, 500)).unwrap();
-        // At t=1000:
-        //   v1 remaining = 1000 with 1000-epoch elapsed at half_life=100
-        //                = 10 halvings ≈ 0
-        //   v2 remaining = 1000 with 500-epoch elapsed at half_life=100
-        //                = 5 halvings ≈ 31
-        // With e_min = 50: v1 pruned, v2 stays.
-        let out = prune_evaporated(&mut r, lambda(), 1000, 50);
+        // At t=1000, half_life=100:
+        //   v1 elapsed=1000 → 10 halvings → 1000>>10 ≈ 0
+        //   v2 elapsed=500  →  5 halvings → 1000>>5  ≈ 31
+        // With e_min=20: v1 pruned (0 ≤ 20), v2 stays (31 > 20).
+        let out = prune_evaporated(&mut r, lambda(), 1000, 20);
         assert_eq!(out.pruned, vec![1]);
         assert!(!r.contains(1));
         assert!(r.contains(2));
