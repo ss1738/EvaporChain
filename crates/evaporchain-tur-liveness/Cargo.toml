@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-tur-liveness"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TUR Liveness Detector. Barato-Seifert 2015 thermodynamic uncertainty relation: Var(J)/⟨J⟩² ≥ 2/Σ. Falsifiable passive liveness oracle for EvaporChain. Per INVENTION_STACK.md §A1.3."
+
+[dependencies]
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

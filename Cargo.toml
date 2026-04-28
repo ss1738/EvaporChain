@@ -12,6 +12,7 @@ members = [
     "crates/evaporchain-cfm",
     "crates/evaporchain-boltzmann-stake",
     "crates/evaporchain-refresh-market",
+    "crates/evaporchain-tur-liveness",
     "crates/evaporchain-crypto",
     "crates/evaporchain-state",
     "crates/evaporchain-consensus",
