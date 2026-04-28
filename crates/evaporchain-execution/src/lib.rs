@@ -1398,6 +1398,77 @@ impl SimpleExecutor {
         Ok(())
     }
 
+    /// Execute UpgradeContract — closes K-10.
+    ///
+    /// Authorization layers (all must hold for the upgrade to apply):
+    ///   1. Sender nonce matches and bumps.
+    ///   2. A governance proposal with key `upgrade_contract:{contract_id}`
+    ///      and status Passed exists, AND its value equals the
+    ///      hex-encoded blake3 of `tx.new_bytecode`. The hash binding
+    ///      prevents bait-and-switch: the proposal commits to specific
+    ///      bytecode at proposal time and the tx must supply that
+    ///      exact bytecode at apply time.
+    ///   3. ScriptEngine::upgrade_contract enforces caller-is-creator
+    ///      and schema-compatibility internally (no field removal,
+    ///      no type narrowing).
+    ///
+    /// On success the proposal is marked Executed so a single approval
+    /// can't be replayed.
+    fn execute_upgrade_contract(
+        &mut self,
+        db: &mut dyn StateDB,
+        tx: &evaporchain_types::UpgradeContractTx,
+        current_epoch: u64,
+    ) -> Result<(), ExecutionError> {
+        // Nonce check + bump.
+        let sender = db.get_or_create_account(&tx.owner);
+        if sender.nonce != tx.nonce {
+            return Err(ExecutionError::InvalidNonce {
+                expected: sender.nonce,
+                got: tx.nonce,
+            });
+        }
+        sender.nonce = sender.nonce.saturating_add(1);
+
+        // Governance gate: find a Passed proposal whose key/value
+        // commit to this contract's upgrade with the supplied bytecode.
+        let bytecode_hash = hex::encode(blake3::hash(&tx.new_bytecode).as_bytes());
+        let key = format!("upgrade_contract:{}", tx.contract_id);
+        let approval = db
+            .all_proposals()
+            .into_iter()
+            .find(|p| {
+                p.status == evaporchain_types::ProposalStatus::Passed
+                    && p.param_key == key
+                    && p.param_value == bytecode_hash
+            })
+            .cloned();
+        let mut approval = approval.ok_or_else(|| {
+            ExecutionError::ContractError(format!(
+                "UpgradeContract: no Passed governance proposal authorizing key='{}' \
+                 with bytecode hash {}",
+                key, bytecode_hash
+            ))
+        })?;
+
+        // Apply the upgrade through ScriptEngine. UTF-8 source is the
+        // shape DeployScript uses; UpgradeContractTx mirrors it.
+        let new_source = std::str::from_utf8(&tx.new_bytecode).map_err(|_| {
+            ExecutionError::ContractError(
+                "UpgradeContract: new_bytecode is not valid UTF-8 EvaporScript source".into(),
+            )
+        })?;
+        self.script_engine
+            .upgrade_contract(tx.contract_id, new_source, tx.owner, current_epoch)
+            .map_err(|e| ExecutionError::ContractError(e.to_string()))?;
+
+        // Mark the proposal Executed so it can't be replayed.
+        approval.status = evaporchain_types::ProposalStatus::Executed;
+        db.put_proposal(approval);
+
+        Ok(())
+    }
+
     /// Tick the vesting registry: walk every active VestingSchedule,
     /// compute pending release at `current_epoch`, credit the
     /// beneficiary's transparent balance, and bump the schedule's
@@ -1753,18 +1824,7 @@ impl ExecutionEngine for SimpleExecutor {
                 Transaction::Governance(gov) => self.execute_governance(db, gov, block.epoch),
                 Transaction::MultiSig(msig) => self.execute_multisig(db, msig),
                 Transaction::UserOp(uop) => self.execute_user_op(db, uop),
-                Transaction::UpgradeContract(_) => {
-                    // Fail loud: governance approval check + bytecode swap into
-                    // ContractEngine are not yet implemented. Returning Ok here
-                    // would let any signer submit a contract upgrade tx that
-                    // silently passes — refuse it instead until the upgrade
-                    // path is wired through governance.
-                    Err(ExecutionError::ContractError(
-                        "UpgradeContract execution not implemented: \
-                         governance approval check and bytecode swap are missing"
-                            .into(),
-                    ))
-                }
+                Transaction::UpgradeContract(up) => self.execute_upgrade_contract(db, up, block.epoch),
                 Transaction::Delegate(d) => self.execute_delegate(db, d, block.epoch),
                 Transaction::Undelegate(u) => self.execute_undelegate(db, u, block.epoch),
                 Transaction::RotateValidatorKey(rot) => {

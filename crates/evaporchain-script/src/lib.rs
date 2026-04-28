@@ -455,6 +455,97 @@ impl ScriptEngine {
         Ok(id)
     }
 
+    /// Upgrade a deployed contract to new bytecode.
+    ///
+    /// Authorization: only the original creator may upgrade. Schema
+    /// compatibility: every existing field in the current state must
+    /// be present in the new schema with the same type. New fields
+    /// are allowed and initialized to their declared defaults. Removed
+    /// fields are rejected — silently dropping state on upgrade would
+    /// erase user balances or governance votes that the original
+    /// contract was responsible for. State, energy, half_life,
+    /// last_refreshed, creator, and created_epoch are preserved across
+    /// the upgrade. Closes K-10 (UpgradeContract) deferred item.
+    pub fn upgrade_contract(
+        &mut self,
+        contract_id: u64,
+        new_source: &str,
+        caller: AccountAddress,
+        _current_epoch: Epoch,
+    ) -> Result<(), ScriptError> {
+        let contract = self
+            .contracts
+            .get(&contract_id)
+            .ok_or_else(|| {
+                ScriptError::Runtime(format!("upgrade: contract {contract_id} not found"))
+            })?;
+        if contract.evaporated {
+            return Err(ScriptError::Runtime(format!(
+                "upgrade: contract {contract_id} has evaporated"
+            )));
+        }
+        if contract.creator != caller {
+            return Err(ScriptError::Runtime(format!(
+                "upgrade: caller is not the original creator of contract {contract_id}"
+            )));
+        }
+
+        let new_ast = parser::parse(new_source)?;
+        let new_bytecode = compiler::compile(&new_ast)?;
+        let new_abi = compiler::generate_abi(&new_ast);
+
+        // Schema-compatibility check.
+        let current = self.contracts.get_mut(&contract_id).expect("checked above");
+        for (field_name, current_value) in current.state.iter() {
+            let new_field = new_bytecode
+                .state_schema
+                .fields
+                .iter()
+                .find(|f| &f.name == field_name)
+                .ok_or_else(|| {
+                    ScriptError::Runtime(format!(
+                        "upgrade: new schema removes existing field '{field_name}' \
+                         (would orphan live state)"
+                    ))
+                })?;
+            let compatible = match (current_value, &new_field.ty) {
+                (Value::U64(_), ScriptType::U64) => true,
+                (Value::Bool(_), ScriptType::Bool) => true,
+                (Value::Str(_), ScriptType::String) => true,
+                (Value::Address(_), ScriptType::Address) => true,
+                (Value::Map(_), ScriptType::Map(_, _)) => true,
+                (Value::Array(_), ScriptType::Array(_)) => true,
+                _ => false,
+            };
+            if !compatible {
+                return Err(ScriptError::Runtime(format!(
+                    "upgrade: field '{field_name}' type mismatch \
+                     (current value cannot inhabit new declared type)"
+                )));
+            }
+        }
+
+        // Inject defaults for new fields.
+        for field in &new_bytecode.state_schema.fields {
+            if !current.state.contains_key(&field.name) {
+                let default_val = field.default.clone().unwrap_or_else(|| match &field.ty {
+                    ScriptType::U64 => Value::U64(0),
+                    ScriptType::Bool => Value::Bool(false),
+                    ScriptType::String => Value::Str(String::new()),
+                    ScriptType::Address => Value::Address([0u8; 32]),
+                    ScriptType::Map(_, _) => Value::Map(HashMap::new()),
+                    ScriptType::Array(_) => Value::Array(Vec::new()),
+                });
+                current.state.insert(field.name.clone(), default_val);
+            }
+        }
+
+        current.bytecode = new_bytecode;
+        current.abi = new_abi;
+        current.name = new_ast.name;
+        Ok(())
+    }
+
     /// Call a method on a deployed script contract.
     pub fn call(
         &mut self,
