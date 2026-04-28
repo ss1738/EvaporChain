@@ -656,6 +656,53 @@ impl Default for ValidatorSet {
     }
 }
 
+/// Apply a proportional slash to every delegation against `validator_id`
+/// (P0 #4 Phase 5). Use after [`ValidatorSet::slash_equivocation`] or
+/// [`ValidatorSet::slash_downtime`] so delegators share the loss
+/// proportionally with the misbehaving validator.
+///
+/// `slash_pct` is the fraction of *each delegation's amount* that gets
+/// removed (0.0..=1.0). The slashed amount is permanently destroyed —
+/// it is not credited back to the delegator's balance.
+///
+/// Both `amount` (active) and `unbonding_amount` are slashed so
+/// misbehaviour during an in-flight undelegate still costs the delegator.
+/// Records that drop to zero in both fields are removed entirely so the
+/// delegation map doesn't accumulate dead entries.
+///
+/// Returns the total amount slashed across all delegators. Returns 0 if
+/// `slash_pct` is outside `(0.0, 1.0]` or no delegations exist.
+pub fn slash_delegations_for_validator(
+    db: &mut dyn evaporchain_state::db::StateDB,
+    validator_id: u64,
+    slash_pct: f64,
+) -> u64 {
+    if !(0.0..=1.0).contains(&slash_pct) || slash_pct == 0.0 {
+        return 0;
+    }
+    let records: Vec<evaporchain_types::DelegationRecord> = db
+        .delegations_for_validator(validator_id)
+        .into_iter()
+        .cloned()
+        .collect();
+    let mut total_slashed: u64 = 0;
+    for mut r in records {
+        let active_slash = (r.amount as f64 * slash_pct).round() as u64;
+        let unbonding_slash = (r.unbonding_amount as f64 * slash_pct).round() as u64;
+        r.amount = r.amount.saturating_sub(active_slash);
+        r.unbonding_amount = r.unbonding_amount.saturating_sub(unbonding_slash);
+        total_slashed = total_slashed
+            .saturating_add(active_slash)
+            .saturating_add(unbonding_slash);
+        if r.amount == 0 && r.unbonding_amount == 0 {
+            db.remove_delegation(&r.delegator, validator_id);
+        } else {
+            db.put_delegation(r);
+        }
+    }
+    total_slashed
+}
+
 // ─────────────────────── Epoch Transition Manager ───────────────────────
 
 /// Minimum number of active validators (safety floor).
