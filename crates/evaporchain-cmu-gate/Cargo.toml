@@ -1,0 +1,15 @@
+[package]
+name = "evaporchain-cmu-gate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Cμ-Gate. Shalizi-Crutchfield identity Cμ ≤ E + hμ as a chain-level Sybil/spam detector. Per INVENTION_STACK.md §A1.3 — principled τ from theorem, not an ad-hoc heuristic."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

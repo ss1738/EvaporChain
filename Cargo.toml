@@ -19,6 +19,7 @@ members = [
     "crates/evaporchain-causal-cone",
     "crates/evaporchain-epv",
     "crates/evaporchain-llsa",
+    "crates/evaporchain-cmu-gate",
     "crates/evaporchain-crypto",
     "crates/evaporchain-state",
     "crates/evaporchain-consensus",
