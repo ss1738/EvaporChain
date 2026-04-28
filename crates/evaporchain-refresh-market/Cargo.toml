@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-refresh-market"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Refresh Market — AMM-priced per-namespace rent. The chain's primary economic activity per INVENTION_STACK.md §4.1 #7. Pays out from the RefreshPool (sourced by demurrage, slashing, MEV burn)."
+
+[dependencies]
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
