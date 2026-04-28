@@ -17,6 +17,7 @@ members = [
     "crates/evaporchain-antichain-mempool",
     "crates/evaporchain-mcc",
     "crates/evaporchain-causal-cone",
+    "crates/evaporchain-epv",
     "crates/evaporchain-crypto",
     "crates/evaporchain-state",
     "crates/evaporchain-consensus",

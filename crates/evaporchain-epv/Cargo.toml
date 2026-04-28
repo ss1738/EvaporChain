@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-epv"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Evaporative Protocol Versioning. Old protocol versions decay below E_min and become cryptographically un-runnable. Per INVENTION_STACK.md §A1.2 T5: rollback is not socially discouraged — it is *physically impossible*."
+
+[dependencies]
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
