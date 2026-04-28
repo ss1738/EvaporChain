@@ -20,6 +20,9 @@ pub struct FeeControllerParams {
     /// Controller gain — base-fee response per unit of imbalance,
     /// in parts-per-million. Higher = more aggressive response.
     pub fee_response_ppm: u64,
+    /// Base fee at equilibrium (E = E*). Floor; the response only
+    /// adds when energy is above target.
+    pub base_fee_floor: Energy,
 }
 
 impl FeeControllerParams {
@@ -28,21 +31,29 @@ impl FeeControllerParams {
         target_gas: u64,
         chain_lambda: ChainLambda,
         fee_response_ppm: u64,
+        base_fee_floor: Energy,
     ) -> Self {
         Self {
             target_energy,
             target_gas,
             chain_lambda,
             fee_response_ppm,
+            base_fee_floor,
         }
     }
 
     /// Provisional genesis defaults — pending tokenomics ceremony.
     /// E* = 1_000_000, target_gas = 30_000_000 (≈ Ethereum target),
     /// fee_response_ppm = 125_000 (1/8 in ppm — matches EIP-1559's
-    /// natural responsiveness).
+    /// natural responsiveness), base_fee_floor = 1_000.
     pub fn default_genesis() -> Self {
-        Self::new(1_000_000, 30_000_000, ChainLambda::default_genesis(), 125_000)
+        Self::new(
+            1_000_000,
+            30_000_000,
+            ChainLambda::default_genesis(),
+            125_000,
+            1_000,
+        )
     }
 }
 
@@ -62,6 +73,7 @@ mod tests {
         assert_eq!(p.target_energy, 1_000_000);
         assert_eq!(p.target_gas, 30_000_000);
         assert_eq!(p.fee_response_ppm, 125_000);
+        assert_eq!(p.base_fee_floor, 1_000);
         assert!(!p.chain_lambda.lambda().is_degenerate());
     }
 }

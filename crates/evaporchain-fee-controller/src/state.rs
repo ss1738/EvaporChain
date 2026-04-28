@@ -1,7 +1,12 @@
-//! `FeeState` — current energy + current base fee.
+//! `FeeState` — the integrator-with-leak energy. Base fee is *not*
+//! part of state — it's a stateless function of `(energy, params)`
+//! exposed via [`crate::controller::base_fee`].
 //!
-//! The energy state is the integrator-with-leak; base fee is its
-//! visible projection (what users actually pay).
+//! Keeping base fee derived (rather than integrated) is what makes the
+//! Lyapunov property go through cleanly: V depends on energy alone, so
+//! the empty-block monotone-drift proof reduces to "decay shrinks
+//! `|E − E*|`", which `evaporchain-types::energy_at_epoch` already gives
+//! us (mechanized in `research/coq/EnergyDecayMonotonicity.v`).
 
 use serde::{Deserialize, Serialize};
 
@@ -11,23 +16,16 @@ use evaporchain_types::Energy;
 pub struct FeeState {
     /// Current cumulative energy E.
     pub energy: Energy,
-    /// Current base fee charged on transactions (chain-native unit;
-    /// the controller treats it as opaque).
-    pub base_fee: Energy,
 }
 
 impl FeeState {
-    pub const fn new(energy: Energy, base_fee: Energy) -> Self {
-        Self { energy, base_fee }
+    pub const fn new(energy: Energy) -> Self {
+        Self { energy }
     }
 
-    /// "At equilibrium" initial state — energy at target, base fee at
-    /// the supplied seed.
-    pub const fn at_equilibrium(target_energy: Energy, base_fee_seed: Energy) -> Self {
-        Self {
-            energy: target_energy,
-            base_fee: base_fee_seed,
-        }
+    /// "At equilibrium" initial state — energy at target.
+    pub const fn at_equilibrium(target_energy: Energy) -> Self {
+        Self { energy: target_energy }
     }
 }
 
@@ -37,8 +35,7 @@ mod tests {
 
     #[test]
     fn at_equilibrium_sets_energy_to_target() {
-        let s = FeeState::at_equilibrium(1_000_000, 1_000);
+        let s = FeeState::at_equilibrium(1_000_000);
         assert_eq!(s.energy, 1_000_000);
-        assert_eq!(s.base_fee, 1_000);
     }
 }

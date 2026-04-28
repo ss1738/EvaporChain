@@ -41,7 +41,7 @@ pub mod lyapunov;
 pub mod params;
 pub mod state;
 
-pub use controller::{Drift, FeeController};
+pub use controller::{base_fee, Drift, FeeController};
 pub use lyapunov::{lyapunov_value, signed_diff};
 pub use params::FeeControllerParams;
 pub use state::FeeState;
