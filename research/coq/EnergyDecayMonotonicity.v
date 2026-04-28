@@ -223,15 +223,13 @@ Proof.
   - reflexivity. (* both 0 *)
   - (* The remainder advances by 1 (no boundary crossing). *)
     assert (Hrem : Nat.modulo (S e) h = S (Nat.modulo e h)).
-    { (* When div doesn't change, mod advances by exactly 1. *)
-      (* Standard fact, discharged via Lia after rewriting. *)
-      assert (Heq : S e = h * Nat.div e h + S (Nat.modulo e h)).
-      { (* Use S e = e + 1 = (h * div e h + mod e h) + 1 *)
-        rewrite Nat.add_1_r in *.
-        rewrite (Nat.div_mod e h Hh) at 1.
-        lia. }
-      rewrite (Nat.div_mod (S e) h Hh) at 1.
-      rewrite Hdiv in Heq.
+    { (* When div doesn't change, mod advances by exactly 1.
+         Pose div_mod for both e and (S e), then lia. *)
+      pose proof (Nat.div_mod e h Hh) as He_eq.
+      pose proof (Nat.div_mod (S e) h Hh) as HSe_eq.
+      rewrite Hdiv in HSe_eq.
+      pose proof (Nat.mod_upper_bound e h Hh) as Hu.
+      pose proof (Nat.mod_upper_bound (S e) h Hh) as HSu.
       lia. }
     rewrite Hrem.
     set (after := nat_shr init (Nat.div e h)).
