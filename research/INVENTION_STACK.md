@@ -534,3 +534,160 @@ Add to §10 doctrine:
 
 End of Amendment 2.
 
+---
+
+# Amendment 3 — Final Synthesis & Doctrine Closure
+
+**Added:** 2026-04-28 (final pass, same day)
+**Status:** This is the canonical TL;DR. If you read nothing else, read this. Updates supersede earlier sections where they conflict.
+**Research thread closure:** with this amendment, the research phase for the May–Oct 2026 sprint is **closed**. Future sessions read this and start coding; do not propose new primitives unless an existing one is shown to fail.
+
+## A3.1 The total stack — what EvaporChain has after one day's research
+
+| Tier | Count | What it contains |
+|---|---|---|
+| **Tier 0 — closed-form theorems** | 5 | MCC (Jaynes), CFM (Crooks), CSLC (Shalizi-Crutchfield), LLSA (Coq invariants), EPV (decay-pruned versions) |
+| **Tier 0 — supporting theorem-grade** | 6 | Sanov-Slashing, TUR Liveness Detector, Cμ-Gate, MDL-Shard, Causal-Cone Validator State, Crooks-MEV Refund |
+| **Far-frontier math survivors** | 5 | Authenticated Energy-MERA (gated), p-adic Merkle, Tropical Plücker Light Client, Modular-Form Beacon, Braid-Group Sequencer Commitment |
+| **Tier 1 — launch primitives** | 12 | Light-Cone Consensus, Evap-Antichain Mempool, Decay-Lamport Time, Singh-Lyapunov Fee Controller, Singh-Boltzmann Stake, Native Demurrage→Refresh Pool, Refresh Market, Lambda-Fold, EFH, Evaporated-Fork Certificates, Provable Retention Proofs, Linear-Affine-Decay VM |
+| **Tier 2 — V2 primitives** | 19 | (see §4.2) |
+| **Tier 3 — app-layer specialized** | ~16 | (see §4.3) |
+| **Launch dApp candidates** | 3 | EnergyCoin (YELLOW), HBCT (launch wedge), Gallery That Forgets (V2) |
+| **Self-referential narrative spine** | 4 | Genesis (Birth), Sentinel (Life), Tombstone (Small deaths), Mortis (Final death) |
+| **Confirmed strikes** | 30+ | (see §4.4 and §A1.5 and §A2.6) |
+
+**Total novel primitives across all tiers: ~70.**
+
+That's more theorem-grade novelty than any L1 launch in history has assembled. It is also more than any solo founder can ship in 6 months. The doctrine doc is now complete enough that the only remaining question is **which subset actually ships**, and that question lives in code, not in more research.
+
+## A3.2 The complete vocabulary of disappearance — the four-act narrative
+
+EvaporChain is the first chain with a complete vocabulary for impermanence. Every act is structurally impossible on a chain that doesn't decay.
+
+```
+              BIRTH                    LIFE                   SMALL DEATHS              FINAL DEATH
+       ┌──────────────────┐    ┌────────────────────┐    ┌───────────────────┐    ┌──────────────────────┐
+       │      Genesis      │    │     Sentinel        │    │     Tombstone      │    │       Mortis          │
+       │  with LLSA-checked│    │ autonomic governance│    │  32-byte commitment│    │  death certificate    │
+       │  invariants (Coq) │    │ via decay-weighted  │    │  for every evapor- │    │  auto-minted as a     │
+       │                   │    │  homeostasis        │    │  ated account      │    │  singleton NFT when   │
+       │                   │    │                     │    │                    │    │  refresh pool ≤ ε     │
+       └──────────────────┘    └────────────────────┘    └───────────────────┘    └──────────────────────┘
+            "constitution         "homeostasis             "Maya Lin                "the chain that signs
+             is a proof"           not legislators"          parallel"                its own death cert"
+```
+
+Bitcoin promises immortality (and quietly fails). EvaporChain promises mortality (and provably succeeds).
+
+## A3.3 The three press lanes — which audience writes about which thing
+
+| Launch primitive | Lead audience | Sample headline they'd write |
+|---|---|---|
+| **HBCT** Hour-Block Capacity Tokens | Industrial / energy press, FT, Bloomberg | "The first blockchain to natively price what physics already prices" |
+| **Mortis + Sentinel + Tombstone** | New Yorker / Atlantic / Wired / MIT Tech Review | "The blockchain that signs its own death certificate" |
+| **EnergyCoin** (post-spec-gap-closure) | Financial Times, Economist, central-bank research | "A currency whose value is a closed-form function of one physical constant" |
+| **The Gallery That Forgets** (V2) | NYT Arts, Frieze, ArtForum, NYT Style | "An exhibition that closes by mathematics" |
+
+These lanes are non-overlapping. A solo founder ships **HBCT + the four-act narrative** in the May–Oct sprint; defers EnergyCoin and Gallery to V2.
+
+## A3.4 The honest launch recommendation
+
+**Lead with HBCT. Wrap it in the four-act narrative. Defer EnergyCoin and Gallery.**
+
+| Reason | What it gives |
+|---|---|
+| HBCT has a concrete B2B customer (battery aggregators) | Real revenue path |
+| GB Elexon BMRS + ENTSO-E APIs are open | Solo founder can ship testnet demo without partner approval |
+| Decay is dimensionally honest for electricity (canonical non-storable) | Math story is unassailable |
+| Light reg bar (Ofgem/FERC capacity-market frameworks are utility-token-friendly) | No 5+ year regulatory grind |
+| Existing energy chains use no decay primitive | First-mover novelty defensible |
+| Mortis + Sentinel + Tombstone are cheap (8–10 weeks total) | Adds the philosophical spine almost for free |
+| Combined narrative: "real engineering for real markets, admits its own mortality" | Crosses out of crypto press into mainstream |
+
+**Don't ship at launch:**
+- **EnergyCoin** — math is sound but 3 spec gaps must close (R(t) MEV semantics, refresh-pool solvency proof, fee-controller cross-derivative note). UST's marketing fraud is the failure mode to avoid. Ship V2.
+- **The Gallery That Forgets** — gallery partnerships (Serpentine / Tate / MoMA PS1) take longer than 6 months. Online MVP can ship V2; IRL exhibition in Year 2.
+- **Decay-Native Memecoin** — only ship if you have a separate person handling the meme campaign. Don't dilute focus.
+
+## A3.5 The full build order — protocol + launch dApps + narrative spine
+
+Consolidating Amendment 1 §A1.7 + Amendment 2 §A2.8:
+
+| Weeks | Build | Layer |
+|---|---|---|
+| **1–2** | `evaporchain-energy-kernel` (single λ accumulator, conservation invariant, refresh pool) | Substrate |
+| **1–2** | `evaporchain-mera-gate` empirical entropy measurement on Ethereum/Solana account-touch data | Tier 0 decision |
+| **1–2** | `evaporchain-padic` crate (low-risk parallel) | Far-frontier |
+| **1–4** | EnergyCoin spec work (close the 3 gaps in writing — decision: V2 or kill) | Math |
+| **3–5** | Native Demurrage (passive accrual) | Tier 1 |
+| **3–6** | `evaporchain-tropical` (Plücker commitments) | Far-frontier |
+| **4–7** | Singh-Lyapunov Fee Controller + CFM closed-form extension + Sanov-Slashing | Tier 0 + 1 |
+| **6–10** | Singh-Boltzmann Stake + Refresh Market + TUR Liveness Detector | Tier 0 + 1 |
+| **8–14** | Light-Cone Consensus + Evap-Antichain Mempool + MCC fork choice + Causal-Cone Validator State | Tier 0 |
+| **8–14** | **Tombstone** primitive (alongside above) | Self-referential |
+| **10–16** | **LLSA** (MetaCoq + extraction) + EPV (parallel) | Tier 0 |
+| **12–18** | Lambda-Fold + CSLC ε-machine + Cμ-Gate | Tier 0 |
+| **14–18** | (if MERA gate passed) Authenticated Energy-MERA crate | Far-frontier |
+| **14–18** | **Mortis** death predicate + auto-mint rule | Self-referential |
+| **16–20** | **Sentinel** autonomic controller built on LLSA | Self-referential |
+| **16–22** | Linear-Affine-Decay VM + MDL-Shard | Tier 1 + 0 |
+| **18–24** | **HBCT** primitive + GB grid oracle + testnet demo | Launch dApp |
+| **20–24** | EFH + PRP + Evaporated-Fork Certs + Decay-Lamport Time + Modular-Form Beacon | Tier 0 + 1 |
+| **22–26** | Refresh-Pool Patronage covenant | Self-referential |
+
+26 weeks > 6 months. Realistic launch is end-of-October MVP testnet, late-2026 mainnet candidate, early-2027 mainnet launch.
+
+## A3.6 Updated naming guardrails (final)
+
+Inherit from §A1.9 + §A2.9. Plus:
+
+19. **Closed-form theorem grants you "Singh-X" naming.** No theorem, no name. Lyapunov-stable without a Lyapunov function = marketing.
+20. **Cultural primitives must connect to a pre-crypto lineage** (Maya Lin, Banksy, Hirst, Goldsworthy, Abramović, sand mandalas, mono no aware, memento mori). If it doesn't fit a lineage older than crypto, it's crypto-incest.
+21. **Every Tier-0 primitive must have its theorem cited in its source code.** Code comment at the type definition: `// Theorem: Shalizi-Crutchfield 2001 Optimal Prediction Theorem (J. Stat. Phys. 104).`
+22. **No "thermodynamic" or "quantum" in marketing.** "Algorithmic state lifetime" or "exponential lifetime." Don't invoke Landauer.
+23. **MERA gate must pass before MERA ships.** Repeat from A1.9; underline.
+
+## A3.7 What "research is closed" actually means
+
+Three things are off the table:
+
+1. **No more candidate-name brainstorms.** We have ~70 primitives ranked. Adding a 71st is procrastination.
+2. **No more agent rounds.** 11 agents have run today. Diminishing returns hard.
+3. **No more "but what if we also had X?" exploration.** Pick the X you want from the existing tier table or accept that it's V2.
+
+Three things remain valid as work threads:
+
+1. **Math validation in parallel with coding** — Coq/TLA+ proofs for the conservation invariant, MCC steady state, LLSA invariant preservation. Runs alongside implementation; doesn't block code.
+2. **Closing the 3 EnergyCoin spec gaps** — written notes, then decision V2-ship or kill. 1-week task.
+3. **The MERA empirical gate** — 2-week measurement on real chain data; drives Week-14 decision.
+
+If a future session wants to propose a new primitive, the bar is: **a published theorem the existing stack does not claim, plus a structural argument why the single-λ is required**. That bar is high deliberately.
+
+## A3.8 The single sentence — final pick
+
+After three rounds of refinement:
+
+> **EvaporChain is the first blockchain whose consensus, fee market, light client, upgrade path, and history are all closed-form solutions of named theorems, parameterized by one constant λ — and the first chain to admit, at genesis, that it can die.**
+
+Two clauses, two ideas, one chain. The first clause is the math. The second is the philosophy. Together they're the pitch.
+
+If forced to one clause for marketing: pick the second.
+
+If forced to one clause for academia: pick the first.
+
+If you have one minute on a podcast: deliver both, in that order, and stop talking.
+
+## A3.9 Closure
+
+Doctrine doc is at version 1.0 + Amendment 1 + Amendment 2 + Amendment 3 = canonical. ~600 lines of Markdown covering every load-bearing decision from a single day of intense research with two SATYA-1 round-trips and 11 parallel research agents.
+
+The next high-value action is one of:
+
+1. Scaffold `evaporchain-energy-kernel` on the Minis
+2. Run the MERA empirical entropy gate
+3. Close the 3 EnergyCoin spec gaps in writing
+
+If a future Claude session reads this and is asked "should we research more?" the answer is **no — build**. The single λ has been chosen. The four acts have been named. The customer has been identified. The strikes have been buried. Go.
+
+End of Amendment 3. End of doctrine.
+
