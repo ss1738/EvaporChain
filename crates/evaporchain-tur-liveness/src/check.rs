@@ -34,6 +34,10 @@ pub enum Verdict {
 pub fn tur_check(samples: &[u64], sigma: u64) -> Verdict {
     let observed = relative_variance_fixed(samples);
     let bound = tur_bound_fixed(sigma);
+    // σ = 0 ⇒ bound = +∞ ⇒ vacuously Ok (no liveness assertion possible).
+    if bound == u128::MAX {
+        return Verdict::Ok { observed, bound };
+    }
     if observed >= bound {
         Verdict::Ok { observed, bound }
     } else {
