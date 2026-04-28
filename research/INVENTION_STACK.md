@@ -244,4 +244,125 @@ A future Claude session reading this doc should:
 7. **Build, don't paper.** When deciding what to do next, prefer crate scaffolding over paper drafts. Papers come from running code.
 8. **Run cargo on the Minis, never the MacBook.** (Per `feedback_no_local_builds.md`.)
 
-End of doctrine.
+End of original doctrine.
+
+---
+
+# Amendment 1 — TIER 0: Theorem-Grade Primitives
+
+**Added:** 2026-04-28 (same day, round 2)
+**Method:** 4 frontier-mode research agents (stochastic thermodynamics, computational mechanics, self-modifying protocols, far-frontier mathematics), each instructed to surface only primitives a CRYPTO/Nature reviewer would call genuinely unprecedented for an L1.
+**Status:** These primitives **outrank Tier 1** in importance because each comes with a *published closed-form theorem* giving EvaporChain a provable claim no other chain can structurally make.
+
+## A1.1 The new headline claim
+
+EvaporChain is the first L1 whose **consensus, fee market, light client, upgrade path, and protocol history are all closed-form solutions of named published theorems, parameterized by a single constant λ.**
+
+## A1.2 The five theorem-grade primitives
+
+Each one binds a *specific* published theorem to EvaporChain via the single-λ. None of them are portable to a chain without a structural decay primitive — that's the moat.
+
+| # | Primitive | Theorem | What EvaporChain alone can state |
+|---|---|---|---|
+| **T1** | **Maximum-Caliber Consensus (MCC)** — fork-choice rule selecting the chain trajectory that maximizes path-entropy under ⟨ΔE⟩ = λ | Jaynes 1980 (Maximum Caliber); Pressé-Ghosh-Lee-Dill *Rev. Mod. Phys.* 2013 | "Our fork choice is the unique distribution maximizing path-entropy subject to one thermodynamic constraint, with closed-form Perron solution." |
+| **T2** | **Crooks-Singh Fee Equilibrium (CFM)** — closed-form fee distribution `p_eq(f) ∝ exp(−β f) · ρ_mempool(f)` with `β = 1/λ` | Crooks 1999 (Fluctuation Theorem); Jarzynski 1997 | "Our fee market satisfies an *exact equality* between work and free-energy difference (not a bound), with the inverse temperature supplied by our decay constant." |
+| **T3** | **Causal-State Light Client (CSLC)** — ε-machine reconstruction of the energy-filtered tx process | Shalizi-Crutchfield 2001 (Optimal Prediction Theorem); Shalizi-Klinkner 2004 (CSSR) | "Our light clients carry the *unique minimal sufficient predictive model* of the energy-surviving tx process. Provably optimal — any model with fewer states cannot be predictively sufficient." |
+| **T4** | **Lambda-Locked Self-Amendment (LLSA)** — protocol upgrades require a Coq/Lean term of type `forall s, Inv(s) → Inv(step_new(s))` | Pinned MetaCoq kernel + extraction-to-Rust | "Our upgrades are gated by mechanically-checked invariant-preservation proofs — Tezos has self-amendment without proofs; we are the first chain whose governance is a theorem." |
+| **T5** | **Evaporative Protocol Versioning (EPV)** — old protocol versions decay below `E_min` and become *cryptographically un-runnable*; verifier modules pruned by the same λ | Direct consequence of single-λ + state pruning | "Rollback is not socially discouraged — it is *physically impossible*. The verifier modules for old versions have evaporated." |
+
+## A1.3 Theorem-grade supporting primitives
+
+These are the second layer — each a closed-form result, not a heuristic:
+
+| Primitive | Theorem | Use |
+|---|---|---|
+| **Sanov-Slashing** | Cramér 1938; Sanov 1957 | slash magnitude = stake × KL-rate function I(observed‖honest); replaces ad-hoc percentages with the *exact* large-deviation cost |
+| **TUR Liveness Detector** | Barato-Seifert 2015 (Thermodynamic Uncertainty Relation) | falsifiable thermodynamic liveness oracle: `Var(J)/⟨J⟩² ≥ 2/Σ`. Cheap passive monitor. |
+| **Cμ-Gate** | Shalizi-Crutchfield identity Cμ ≤ E + hμ | block header carries Cμ; consensus rejects ΔCμ violations (Sybil/spam detector, principled τ from theorem) |
+| **MDL-Shard** | Rissanen 1978 (Minimum Description Length) | sharding partition Π* = argmin L(Π) + L(D \| Π); provably optimal not heuristic |
+| **Causal-Cone Validator State** | Shalizi 2003 (light-cone sufficient statistics) | upgrades Light-Cone Consensus from heuristic to theorem-backed via the same Optimal Prediction Theorem |
+| **Crooks-MEV Refund** | Crooks 1999 fluctuation-theorem ratio | refund formula falls out of CFM; fair restitution = ΔF computed from forward/reverse work distributions |
+
+## A1.4 Far-frontier math — what survived the L1 shipping filter
+
+Out of 14 candidate exotic-math primitives, **5 survived** as ship-now or research-ready, with hard novelty defensible at L1:
+
+| Primitive | Math | Why it ships |
+|---|---|---|
+| **Authenticated Energy-MERA** | Vidal 2007 / Evenbly-Vidal 2011 — Multi-scale Entanglement Renormalization Ansatz | MERA layer ℓ = states with half-life τ₀·2^ℓ. Disentanglers = decay operator. Energy filtration *is* the MERA RG flow. First state commitment exposing **correlation structure**, not just account scalars. **GATED on empirical entropy measurement** of real chain workloads — this is a 2-week go/no-go study. If chain state has log-correlation, MERA crushes Verkle. If only area-law, downshift to authenticated MPS (still a first). |
+| **p-adic ultrametric Merkle** | Hughes 2004 (every ultrametric space embeds in a tree); Khrennikov 1996 | p-adic valuation v_p(x) = energy level. Ultrametric balls form a *strict* tree — perfect Merkle-native geometry. Distinctive, low-risk, ship-now. No other chain has p-adic state metrics. |
+| **Tropical Plücker Light Client** | Speyer-Sturmfels 2004 (tropical Grassmannian = phylogenetic trees) | Tropical Plücker coords commit to *entire tree shape* canonically, not just root. Edge weights `−log(remaining energy)` — tropical (min,+) gives multiplicative aggregation = energy-product paths. Clean fit. |
+| **Modular-Form Beacon** | Zagier; Eisenstein E_k(τ), modular discriminant Δ(τ) | Per-epoch beacon = (E_4, E_6, Δ) at τ_epoch from VRF. Outputs satisfy known modular equations — aperiodic, hard to fake without solving the modular equation, cheap to verify. q-expansion in q = e^(2πiτ) reframes naturally as e^(−λt). |
+| **Braid-Group Sequencer Commitment** | Garside normal form; Dehornoy ordering | tx ordering = braid word in B_n with canonical Garside form. Cheap, unprecedented at L1. *Don't oversell as "anyonic"* — it's just braid-group commitment, no quantum required. |
+
+## A1.5 Strikes confirmed by frontier-mode round
+
+In addition to the original Strikes list (§4.4), these are now also **confirmed dead**:
+
+| Primitive | Reason |
+|---|---|
+| **Solomonoff oracle / AIXI** | Incomputable; no verifiable approximation; "AI buzzword" risk |
+| **Levin universal search as block production** | No useful cutoff; reduces to running the validator anyway |
+| **Chaitin Ω as beacon** | Uncomputable → any "Ω-beacon" is hand-wave |
+| **NCD (Normalized Compression Distance) fork choice** | Adversarially exploitable with off-the-shelf compressors |
+| **Reflection towers (3-Lisp on-chain)** | Wand 1998 broke compositional reasoning under reflective shifts; halting at every level. Skip. |
+| **Meta-circular validators** | Bootstrap regress; can't formally ground first interpreter without an external metalanguage |
+| **HoTT / Cubical-type-theory contracts** | Decades premature; no production extraction story |
+| **Reflexive (self-verifying) headers** | Löb's theorem — ship Mina-style succinctness, skip self-reference |
+| **Tropical crypto (KEMs/signatures)** | Cryptanalytic body count too high (Kotov-Ushakov 2018, Brown-Monico 2023) |
+| **Geometric (Clifford) algebra state** | Continuous, no security reduction, hashing real multivectors loses the algebra's point |
+| **TQFT contracts / motivic integration / F1 / adèles / ∞-cats / λ-rings** | Ship-impossible — no compute backend in 2026, generically #P-hard or computationally undefined |
+| **Anyonic braiding for tx ordering primitive** | BQP-complete to simulate. Salvage = braid-group commitment (above) without quantum claim |
+| **Carnot validator-reward bound** | Needs two temperatures; EvaporChain has one λ. Forced. |
+| **Entropy-production auctions** | Clausius inequality on bids has no clean operational meaning |
+| **Process-calculus sharding (π / ambient / join calculus)** | Sharding is already the hardest engineering surface; defer to post-mainnet |
+
+## A1.6 Updated headline launch sentences
+
+The Tier 0 round produced sharper candidates than what was in §5. Replace earlier list with these:
+
+| Sentence | Best for |
+|---|---|
+| **"EvaporChain — the first blockchain whose consensus, fee market, light client, upgrade path, and history are all closed-form solutions of named theorems, parameterized by one constant λ."** | Technical pitch, paper venue |
+| **"EvaporChain — a tensor-network-authenticated, ultrametric, tropically-committed L1 with energy as the renormalization-group flow."** | Math-frontier crowd; one-sentence summary of what's genuinely novel about the math |
+| *"The first blockchain with conservation laws."* | Academic |
+| *"The blockchain that knows when to die — and pays its own keep-alive."* | Mainstream / VC |
+
+## A1.7 Updated build order — Tier 0 inserted
+
+| Weeks | Build | Why |
+|---|---|---|
+| 1–2 | `evaporchain-energy-kernel` (substrate) **+** `evaporchain-mera-gate` (empirical entropy measurement on Ethereum/Solana account-touch data, 2-week go/no-go for MERA) **+** `evaporchain-padic` crate (low-risk parallel) | Substrate + MERA decision + cheap math win |
+| 3–5 | Native Demurrage **+** `evaporchain-tropical` (Plücker commitments) | Closes philosophy loop + far-frontier math |
+| 4–7 | Singh-Lyapunov Fee Controller **+ CFM closed-form extension +** Sanov-Slashing | Fee-market triple-stack: stability + closed-form equilibrium + theorem-grade slash |
+| 6–10 | Singh-Boltzmann Stake **+** Refresh Market **+** TUR Liveness Detector | Validator economics + chain economic engine + falsifiable liveness oracle |
+| 8–14 | Light-Cone Consensus **+** Evap-Antichain Mempool **+ MCC fork choice +** Causal-Cone Validator State | Headline consensus stack — all four pieces are theorem-grade together |
+| 10–16 | **LLSA** (Coq tooling, MetaCoq + extraction) **+ EPV** (parallel, much simpler) | Self-amendment with invariant proofs + un-rollbackable history |
+| 12–18 | Lambda-Fold light client **+ CSLC** (ε-machine reconstruction via CSSR) **+ Cμ-Gate** | Theorem-grade light client + sufficient-statistic state + spam detector |
+| 14–18 | (if MERA gate passed) **Authenticated Energy-MERA** crate, χ=4 prototype | Tensor-network state commitment with correlation structure |
+| 16–22 | Linear-Affine-Decay VM **+** MDL-Shard | Developer interface + provably-optimal sharding |
+| 20–24 | EFH (filtration homology), PRP, Evaporated-Fork Certs, Decay-Lamport Time **+** Modular-form beacon | Light-client + finality + time + randomness |
+
+## A1.8 Open empirical question — the MERA gate
+
+This is the only *go/no-go* gate in the entire Tier-0 stack. Real chain state may NOT have log-correlation structure; if it doesn't, MERA reduces to flat Merkle with χ²× overhead.
+
+**Test:** pull Ethereum mainnet block-by-block account-touch graph for 1M blocks; compute mutual-information matrix; check spectrum.
+- **If log-correlation:** MERA goes ahead as the headline state commitment.
+- **If only area-law:** downshift to authenticated MPS (1D Matrix Product State) — still a first at L1, just less ambitious.
+- **If random:** drop tensor networks entirely; ship Verkle + Energy-Verkle as planned.
+
+This gate runs in parallel with Week 1–2 of the energy-kernel work. Decision drives the Week 14–18 sprint.
+
+## A1.9 Doctrine update for future sessions
+
+Add to §10 doctrine:
+
+9. **Tier 0 outranks Tier 1 in priority.** When choosing what to ship first, prefer Tier 0 theorem-grade primitives where ship-now is feasible.
+10. **Don't propose "X with decay"** unless X is a primitive nobody has at L1 *and* decay is structurally required. Cosmetic decay disqualifies.
+11. **Cite the specific theorem** for any primitive claiming theorem-grade status. "Lyapunov-stable" without a Lyapunov function is marketing, not engineering.
+12. **The MERA gate must pass before MERA ships.** Don't write the whitepaper section assuming success.
+13. **Löb's theorem is real.** Don't claim the chain has escaped Gödel. The Coq kernel is an external TCB; document it honestly.
+
+End of Amendment 1.
+
