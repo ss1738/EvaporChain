@@ -203,16 +203,17 @@ impl EvaporationEngine {
 
         // Credit back the owner's storage_bytes for the data we're about
         // to evaporate. Mirrors the increment on CreateObject in
-        // evaporchain-execution::execute_create_object. saturating_sub
-        // guards against underflow for objects created before the
-        // storage_bytes write-path landed (their account was never
-        // credited, so the account's storage_bytes is already 0 and
-        // saturating_sub is a no-op). Closes the deferred follow-up to
-        // the storage_bytes-write-path build (audit/end_to_end_audit_2026_04_27.md §3).
-        let owner_acct = db.get_or_create_account(&obj.owner);
-        owner_acct.storage_bytes = owner_acct
-            .storage_bytes
-            .saturating_sub(obj.data.len() as u64);
+        // evaporchain-execution::execute_create_object. We only touch
+        // EXISTING accounts — if the owner never had an account, there
+        // is nothing to credit back, and creating an empty one here
+        // would inject a phantom account leaf into the trie that
+        // distorts active_leaves counts (caught by the four
+        // trie-health regression tests below).
+        if let Some(owner_acct) = db.get_account_mut(&obj.owner) {
+            owner_acct.storage_bytes = owner_acct
+                .storage_bytes
+                .saturating_sub(obj.data.len() as u64);
+        }
 
         db.delete_object(&obj.id);
         db.put_ghost(ghost);
@@ -701,8 +702,11 @@ mod tests {
         assert_eq!(db.get_account(&owner).unwrap().storage_bytes, 5);
 
         let engine = EvaporationEngine::new(3);
-        // Many epochs → energy 0, then grace expires → ghost.
-        let r = engine.process_epoch(&mut db, 100);
+        // The evaporation engine is a TWO-PASS state machine:
+        //   pass 1 (energy reaches 0): Active → Grace, sets grace_epoch
+        //   pass 2 (current_epoch >= grace_epoch + grace_period): Grace → Ghost
+        engine.process_epoch(&mut db, 100); // Active → Grace at grace_epoch=100
+        let r = engine.process_epoch(&mut db, 104); // 104 >= 100 + 3 → evaporate
         assert_eq!(r.evaporated.len(), 1, "object should have evaporated");
 
         // After evaporation, the owner's storage_bytes should be back to 0.
@@ -715,23 +719,28 @@ mod tests {
 
     #[test]
     fn test_evaporation_storage_bytes_saturates_on_under_credit() {
-        // Defensive: if an object was created before the storage_bytes
-        // write-path landed (so the owner was never credited), the
-        // decrement on evaporation must NOT underflow. saturating_sub
-        // guarantees this — the stored value stays at 0.
+        // Defensive: if an object's data_len exceeds the owner's
+        // recorded storage_bytes (under-credited account), the decrement
+        // on evaporation must NOT underflow. saturating_sub guarantees
+        // the stored value stays at 0.
         let mut db = InMemoryStateDB::new();
         let mut obj = make_object(2, 4, 1);
-        obj.data = vec![0xBB; 100]; // large data
+        obj.data = vec![0xBB; 100]; // large data, but owner has 0 stored bytes
         let owner = obj.owner;
         db.put_object(obj);
-
-        // Owner's storage_bytes was never credited (legacy / pre-fix object).
-        // The account may not even exist yet — get_or_create inside
-        // evaporate_object will create it with storage_bytes=0, then
-        // saturating_sub keeps it at 0.
+        // Force the owner account to exist with storage_bytes=0 so the
+        // decrement runs through saturating_sub. (When the owner has no
+        // account at all, evaporate_object intentionally skips the
+        // credit-back so it cannot inject a phantom trie leaf — see
+        // the evaporate_object guard.)
+        {
+            let acct = db.get_or_create_account(&owner);
+            acct.storage_bytes = 0;
+        }
 
         let engine = EvaporationEngine::new(3);
-        let r = engine.process_epoch(&mut db, 100);
+        engine.process_epoch(&mut db, 100); // Active → Grace
+        let r = engine.process_epoch(&mut db, 104); // Grace → Ghost
         assert_eq!(r.evaporated.len(), 1);
 
         // Storage_bytes must saturate to 0, not underflow.
