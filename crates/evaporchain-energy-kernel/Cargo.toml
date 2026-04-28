@@ -1,0 +1,15 @@
+[package]
+name = "evaporchain-energy-kernel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Single-λ substrate: chain-global decay constant, conservation invariant, refresh pool. Per INVENTION_STACK.md §1 + §6 weeks 1–2."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

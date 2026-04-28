@@ -1433,9 +1433,10 @@ impl Default for DecayCurve {
 ///
 /// Mechanized monotonicity proof: `research/coq/EnergyDecayMonotonicity.v`
 /// (theorem `energy_at_epoch_monotone`). Any change to this function's
-/// arithmetic must be reflected in the Coq spec — the within-halving
-/// case is fully proven; the cross-halving case is `Admitted` pending
-/// one arithmetic-bound lemma.
+/// arithmetic must be reflected in the Coq spec. Both the within-halving
+/// and cross-halving cases are now `Qed` (the latter via the
+/// `decay_term_bound` arithmetic helper); the file is machine-verified
+/// under Rocq 9.1.1.
 pub fn energy_at_epoch(initial: Energy, half_life: HalfLife, epochs_elapsed: u64) -> Energy {
     if half_life == 0 {
         return 0;
