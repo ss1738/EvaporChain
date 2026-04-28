@@ -459,6 +459,13 @@ pub struct ParallelExecutor {
     pub deferred_queue: crate::temporal::DeferredQueue,
     pub decay_watchers: crate::temporal::DecayWatcherEngine,
     pub chain_id: String,
+    /// Cross-shard router. Inbound messages addressed to this shard are
+    /// drained and processed at the end of every block; outbound messages
+    /// produced by tx execution are routed via the router for inclusion
+    /// in the destination shard's next block. Default ShardId(0) =
+    /// single-shard topology.
+    pub shard_id: evaporchain_sharding::shard_assignment::ShardId,
+    pub cross_shard_router: evaporchain_sharding::cross_shard::CrossShardRouter,
 }
 
 impl ParallelExecutor {
@@ -475,6 +482,8 @@ impl ParallelExecutor {
             deferred_queue: crate::temporal::DeferredQueue::new(),
             decay_watchers: crate::temporal::DecayWatcherEngine::new(),
             chain_id: String::new(),
+            shard_id: evaporchain_sharding::shard_assignment::ShardId(0),
+            cross_shard_router: evaporchain_sharding::cross_shard::CrossShardRouter::new(),
         }
     }
 
@@ -493,6 +502,8 @@ impl ParallelExecutor {
             deferred_queue: crate::temporal::DeferredQueue::new(),
             decay_watchers: crate::temporal::DecayWatcherEngine::new(),
             chain_id: String::new(),
+            shard_id: evaporchain_sharding::shard_assignment::ShardId(0),
+            cross_shard_router: evaporchain_sharding::cross_shard::CrossShardRouter::new(),
         }
     }
 
@@ -510,6 +521,8 @@ impl ParallelExecutor {
             deferred_queue: crate::temporal::DeferredQueue::new(),
             decay_watchers: crate::temporal::DecayWatcherEngine::new(),
             chain_id: String::new(),
+            shard_id: evaporchain_sharding::shard_assignment::ShardId(0),
+            cross_shard_router: evaporchain_sharding::cross_shard::CrossShardRouter::new(),
         }
     }
 
@@ -526,6 +539,8 @@ impl ParallelExecutor {
             deferred_queue: crate::temporal::DeferredQueue::new(),
             decay_watchers: crate::temporal::DecayWatcherEngine::new(),
             chain_id: String::new(),
+            shard_id: evaporchain_sharding::shard_assignment::ShardId(0),
+            cross_shard_router: evaporchain_sharding::cross_shard::CrossShardRouter::new(),
         }
     }
 
@@ -546,7 +561,17 @@ impl ParallelExecutor {
             deferred_queue: crate::temporal::DeferredQueue::new(),
             decay_watchers: crate::temporal::DecayWatcherEngine::new(),
             chain_id: String::new(),
+            shard_id: evaporchain_sharding::shard_assignment::ShardId(0),
+            cross_shard_router: evaporchain_sharding::cross_shard::CrossShardRouter::new(),
         }
+    }
+
+    /// Set this executor's shard id. Inbound cross-shard messages
+    /// addressed to this shard will be drained from
+    /// `cross_shard_router` at the end of every block. Default
+    /// `ShardId(0)` for single-shard topology.
+    pub fn set_shard_id(&mut self, shard: evaporchain_sharding::shard_assignment::ShardId) {
+        self.shard_id = shard;
     }
 
     pub fn fee_controller(&self) -> Option<&fees::PidFeeController> {
@@ -1454,6 +1479,34 @@ impl ExecutionEngine for ParallelExecutor {
             "Parallel block executed"
         );
 
+        // Cross-shard activation (Task #24): drain inbound messages
+        // addressed to this shard from the router, generate receipts,
+        // and acknowledge them. Each receipt records that the message
+        // was processed at this block's epoch. The router's per-shard
+        // inbox is now actively consumed instead of accumulating
+        // forever (which is what the previous hardcoded
+        // cross_shard_processed: 0 implied).
+        let inbound = self.cross_shard_router.drain_for_shard(self.shard_id);
+        let cross_shard_receipts: Vec<evaporchain_sharding::cross_shard::CrossShardReceipt> =
+            inbound
+                .into_iter()
+                .map(|msg| {
+                    let payload_bytes = serde_json::to_vec(&msg.payload).unwrap_or_default();
+                    let result_hash = *blake3::hash(&payload_bytes).as_bytes();
+                    let receipt = evaporchain_sharding::cross_shard::CrossShardReceipt {
+                        message_id: msg.id,
+                        from_shard: msg.from_shard,
+                        to_shard: msg.to_shard,
+                        success: true,
+                        result_hash,
+                        processed_at: block.epoch,
+                    };
+                    self.cross_shard_router.acknowledge(receipt.clone());
+                    receipt
+                })
+                .collect();
+        let cross_shard_processed = cross_shard_receipts.len();
+
         Ok(BlockExecutionResult {
             state_root,
             mmr_root: self.mmr.root(),
@@ -1466,8 +1519,8 @@ impl ExecutionEngine for ParallelExecutor {
             total_fees,
             evaporation_proof: None,
             contract_events: Vec::new(),
-            cross_shard_processed: 0,
-            cross_shard_receipts: Vec::new(),
+            cross_shard_processed,
+            cross_shard_receipts,
             validator_key_rotations,
         })
     }
