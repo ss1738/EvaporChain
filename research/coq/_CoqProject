@@ -1,0 +1,7 @@
+-Q . EvaporChain
+-arg -w
+-arg -notation-overridden
+EnergyDecayMonotonicity.v
+EnergyVerkleCompression.v
+PoHAFreeloading.v
+LazyEagerEquivalence.v
