@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-lad-vm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Linear-Affine-Decay VM substrate. Resources carry a Mode (Linear, Affine, Decaying) plus an optional decay window. 'Use it or evaporate' — forces liveness as a type-system property. Per INVENTION_STACK.md §4.1 #12."
+
+[dependencies]
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
