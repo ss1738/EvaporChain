@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-prp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Provable Retention Proofs (PRP). Positive-finality dual of Evaporated-Fork Certs — proves a piece of chain state IS retained at a given epoch under the chain-global λ. Per INVENTION_STACK.md §4.1 #11. Regulator-survival primitive."
+
+[dependencies]
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+blake3 = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
