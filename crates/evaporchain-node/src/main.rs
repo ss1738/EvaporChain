@@ -2541,6 +2541,7 @@ async fn main() -> Result<()> {
             start_time,
             faucet_rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
             faucet_rate_limit_disabled: args.devnet_no_rate_limit,
+            pending_nonces: std::sync::Mutex::new(std::collections::HashMap::new()),
             nft_store,
             token_store,
             staking_store,

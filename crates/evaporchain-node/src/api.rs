@@ -49,6 +49,13 @@ pub struct ApiState {
     pub start_time: Instant,
     /// Faucet rate limiter: address hex string -> last request timestamp.
     pub faucet_rate_limit: Mutex<HashMap<String, Instant>>,
+    /// Pending-nonce cache. Concurrent /api/faucet (and other tx) hits
+    /// would otherwise all read the same db.nonce and submit txs with
+    /// identical nonce, of which only one can execute (the others hit
+    /// InvalidNonce silently). The cache returns max(db.nonce, cached)
+    /// and increments locally. When pending txs commit and db.nonce
+    /// catches up, max takes over and the cache resyncs implicitly.
+    pub pending_nonces: Mutex<HashMap<[u8; 32], u64>>,
     /// When true, the faucet skips its per-address cooldown entirely.
     /// Set by `--devnet-no-rate-limit` for stress / load testing only;
     /// `--mainnet` strict mode rejects this combination at startup.
@@ -105,6 +112,24 @@ pub struct ApiState {
 }
 
 impl ApiState {
+    /// Reserve and return the next nonce for `addr`. Concurrent submits
+    /// to the same account get distinct, monotonically-increasing nonces
+    /// instead of all reading the same db.nonce. The cache is bounded:
+    /// when pending txs commit and db.nonce catches up, max(db, cache)
+    /// keeps the cache from drifting forever; if a tx is rejected the
+    /// cache may temporarily run ahead of reality and subsequent
+    /// submits will fail with InvalidNonce until the cache resyncs.
+    pub fn reserve_nonce(&self, addr: &[u8; 32]) -> u64 {
+        let db_nonce = {
+            let db = safe_lock(&self.db);
+            db.get_account(addr).map(|a| a.nonce).unwrap_or(0)
+        };
+        let mut cache = safe_lock(&self.pending_nonces);
+        let next = std::cmp::max(db_nonce, cache.get(addr).copied().unwrap_or(0));
+        cache.insert(*addr, next.saturating_add(1));
+        next
+    }
+
     /// Submit a transaction to the correct mempool and broadcast over P2P.
     /// API transactions use priority insertion (front of queue) to avoid being
     /// buried behind demo transactions.
@@ -1983,12 +2008,11 @@ async fn post_faucet(
     }
 
     // Submit faucet as a transfer from the "faucet account" (all-zeros address)
-    // through consensus so all validators see it.
+    // through consensus so all validators see it. Reserve a unique nonce
+    // via the pending-nonce cache so concurrent faucet hits don't all
+    // collide on the same db.nonce (only one would land otherwise).
     let faucet_addr = [0u8; 32]; // special faucet/mint address (pre-seeded at genesis)
-    let nonce = {
-        let db = safe_lock(&state.db);
-        db.get_account(&faucet_addr).map(|a| a.nonce).unwrap_or(0)
-    };
+    let nonce = state.reserve_nonce(&faucet_addr);
     let mut tx = Transaction::Transfer(TransferTx {
         from: faucet_addr,
         to: addr,
