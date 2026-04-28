@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-llsa"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Lambda-Locked Self-Amendment: protocol upgrades require a Coq/Lean term of type ∀s, Inv(s) → Inv(step_new(s)). Per INVENTION_STACK.md §A1.2 T4. The Coq kernel is an external TCB (per doctrine §10.13); this crate exposes the chain-side gate and defers verification to a pluggable trait."
+
+[dependencies]
+evaporchain-epv = { path = "../evaporchain-epv" }
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+blake3 = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
