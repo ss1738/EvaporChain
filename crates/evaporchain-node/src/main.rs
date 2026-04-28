@@ -3015,7 +3015,22 @@ async fn main() -> Result<()> {
                                 };
                                 if let Some((sig, pk)) = signed {
                                     vote.signature = sig.0;
-                                    let _ = ob.submit_vote(key, vote, &pk);
+                                    let _ = ob.submit_vote(key, vote.clone(), &pk);
+                                    // Gap-A #1: also gossip the signed vote so
+                                    // OTHER validators can verify against
+                                    // their own validator-set view and admit
+                                    // it into THEIR oracle bridge. Without
+                                    // this broadcast each node only ever sees
+                                    // its own self-vote and oracle consensus
+                                    // never actually runs across validators.
+                                    if let Ok(payload) = serde_json::to_vec(&vote) {
+                                        let cm = ConsensusMessage::OracleVote { payload };
+                                        if let Ok(data) = serde_json::to_vec(&cm) {
+                                            if let Some(ref s) = consensus_net_sender {
+                                                let _ = s.try_send(data);
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -3638,8 +3653,26 @@ async fn main() -> Result<()> {
                             ConsensusMessage::Precommit { .. } => "Precommit",
                             ConsensusMessage::KeyAnnounce { .. } => "KeyAnnounce",
                             ConsensusMessage::DAAttestation { .. } => "DAAttestation",
+                            ConsensusMessage::OracleVote { .. } => "OracleVote",
                         }
                     );
+                    // Gap-A #1: route OracleVote to the OracleBridge with
+                    // validator-set-membership BLS check. Skip the
+                    // tendermint state machine since OracleVote is gossip,
+                    // not consensus state.
+                    if let ConsensusMessage::OracleVote { ref payload } = msg {
+                        if let Ok(vote) = serde_json::from_slice::<evaporchain_oracle::consensus::OracleVote>(payload) {
+                            let key = vote.key.clone();
+                            let mut ob = safe_lock(&oracle_bridge);
+                            let tc_ref = tendermint.as_ref().unwrap();
+                            let tc = safe_lock(tc_ref);
+                            let vs = tc.validator_set();
+                            if let Err(e) = ob.submit_vote_via_validator_set(&key, vote, vs) {
+                                tracing::debug!(error = %e, key = %key, "inbound OracleVote rejected");
+                            }
+                        }
+                        continue;
+                    }
                     // Check if this is a DA attestation that might complete a certificate
                     let da_att_info = if let ConsensusMessage::DAAttestation { block_number, data_root, .. } = &msg {
                         Some((*block_number, *data_root))

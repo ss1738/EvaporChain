@@ -125,6 +125,23 @@ pub enum ConsensusMessage {
         /// BLS public key of the signer.
         public_key: Vec<u8>,
     },
+    /// Validator broadcasts an oracle vote for an off-chain feed
+    /// (e.g. price, weather, randomness). The payload is an
+    /// `evaporchain_oracle::consensus::OracleVote` serialized via
+    /// serde_json — kept opaque here so the consensus crate stays
+    /// decoupled from the oracle crate. The node-level dispatcher
+    /// deserializes and routes to `OracleBridge::submit_vote_via_validator_set`,
+    /// which performs the BLS sig + validator-set membership check
+    /// against the validator's REGISTERED pubkey (not the one in the
+    /// payload). Closes Gap-A #1 from the end-to-end audit:
+    /// previously the oracle had a self-vote path only and no inbound
+    /// P2P route, so multi-validator oracle consensus did not actually
+    /// run on the cluster.
+    OracleVote {
+        /// `OracleVote` serialized as JSON bytes. Length-bounded by the
+        /// consensus message-size cap in `evaporchain-network`.
+        payload: Vec<u8>,
+    },
 }
 
 impl ConsensusMessage {
@@ -135,6 +152,7 @@ impl ConsensusMessage {
             Self::Precommit { height, .. } => *height,
             Self::KeyAnnounce { .. } => 0,
             Self::DAAttestation { block_number, .. } => *block_number,
+            Self::OracleVote { .. } => 0,
         }
     }
 
@@ -145,6 +163,7 @@ impl ConsensusMessage {
             Self::Precommit { round, .. } => *round,
             Self::KeyAnnounce { .. } => 0,
             Self::DAAttestation { .. } => 0,
+            Self::OracleVote { .. } => 0,
         }
     }
 }
@@ -1055,6 +1074,14 @@ impl TendermintConsensus {
             return actions;
         }
 
+        // OracleVote is height-independent gossip routed by the node-level
+        // dispatcher to OracleBridge. The tendermint engine itself ignores
+        // it; we return early so it doesn't get caught by the height/round
+        // filters below (it carries height=0 / round=0 by design).
+        if matches!(msg, ConsensusMessage::OracleVote { .. }) {
+            return actions;
+        }
+
         // Ignore messages for old heights
         if msg.height() < self.height {
             return actions;
@@ -1614,9 +1641,11 @@ impl TendermintConsensus {
                     }
                 }
             }
-            // KeyAnnounce and DAAttestation are handled before height filters — unreachable here
+            // KeyAnnounce, DAAttestation, OracleVote are handled before
+            // height filters — unreachable here.
             ConsensusMessage::KeyAnnounce { .. } => {}
             ConsensusMessage::DAAttestation { .. } => {}
+            ConsensusMessage::OracleVote { .. } => {}
         }
 
         actions
