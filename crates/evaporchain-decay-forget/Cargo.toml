@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-decay-forget"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Decay-Forget Proofs — GDPR-native: chain *provably cannot* recover a timestamp once decayed past threshold. Negative dual of evaporchain-prp. Per INVENTION_STACK.md §4.2 (Tier 2)."
+
+[dependencies]
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+blake3 = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
