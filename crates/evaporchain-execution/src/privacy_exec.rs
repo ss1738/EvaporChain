@@ -68,6 +68,8 @@ pub enum PrivacyExecError {
     BalanceOverflow,
     #[error("privacy engine error: {0}")]
     EngineError(String),
+    #[error("privacy state error: {0}")]
+    StateError(String),
 }
 
 /// Result of executing a privacy transaction.
@@ -135,21 +137,52 @@ impl PrivacyExecutor {
     /// after consensus state restoration so a freshly-launched node can
     /// re-verify spends against the canonical Merkle root.
     ///
-    /// **Today this is a stub.** Punch-list 1b describes the full
-    /// implementation: walk `db.note_commitment_iter()`, push each
-    /// commitment into `engine.note_tree`, then assert the rebuilt root
-    /// equals `db.privacy_note_tree_root()`. Returning `Ok(0)` here
-    /// preserves the call-site contract introduced by the consensus
-    /// `restore_privacy_from_db` wrapper while the persistence trait
-    /// methods land.
+    /// Walks `db.get_all_note_commitments()` (BTreeMap-ordered by leaf
+    /// index), pushes each commitment into `engine.note_tree`, then
+    /// asserts the rebuilt root equals `db.get_note_tree_root()`.
+    ///
+    /// Mismatch is a fatal restart condition — the node would otherwise
+    /// silently accept ZK proofs against the wrong tree state. Returns
+    /// `PrivacyExecError::StateError` so the caller can crash cleanly
+    /// instead of running on divergent state. Closes punch-list 1b.
     ///
     /// Returns the number of commitments restored.
-    pub fn restore_from_db(&mut self, _db: &dyn StateDB) -> Result<usize, PrivacyExecError> {
-        tracing::warn!(
-            "PrivacyExecutor::restore_from_db: stub returning 0 — implement before mainnet \
-             (punch-list 1b: walk persisted commitments, assert root)"
+    pub fn restore_from_db(&mut self, db: &dyn StateDB) -> Result<usize, PrivacyExecError> {
+        let persisted_commitments = db.get_all_note_commitments();
+        let persisted_root = db.get_note_tree_root();
+        let mut restored = 0usize;
+        for c_bytes in &persisted_commitments {
+            let c = evaporchain_proving::privacy::Commitment(*c_bytes);
+            if self.engine.note_tree.insert(&c).is_some() {
+                restored += 1;
+            }
+        }
+        // Catch up the count + epoch trackers so subsequent privacy
+        // ops know how many notes already exist.
+        self.engine.set_epoch(self.current_epoch);
+        // Verify the rebuilt root matches the persisted root. An empty
+        // commitment set with a zero root is the legitimate fresh-node
+        // case and must not error.
+        let rebuilt_root = self.engine.note_tree.root();
+        let zero = [0u8; 32];
+        if persisted_commitments.is_empty() && persisted_root == zero {
+            return Ok(0);
+        }
+        if rebuilt_root != persisted_root {
+            return Err(PrivacyExecError::StateError(format!(
+                "privacy restore: rebuilt root {} differs from persisted root {} \
+                 ({} commitments restored) — chain state may be corrupted",
+                hex::encode(rebuilt_root),
+                hex::encode(persisted_root),
+                restored,
+            )));
+        }
+        tracing::info!(
+            commitments = restored,
+            "PrivacyExecutor: restored {} note commitments from disk; root verified",
+            restored,
         );
-        Ok(0)
+        Ok(restored)
     }
 
     /// Get the current Merkle root of the note tree.
@@ -1299,4 +1332,28 @@ mod tests {
             GAS_PRIVATE_TRANSFER_BASE + 2 * GAS_PRIVATE_TRANSFER_PER_INPUT + 3 * GAS_PRIVATE_TRANSFER_PER_OUTPUT
         );
     }
+
+    // ─── restore_from_db (Task #31) ──────────────────────────────────
+
+    #[test]
+    fn test_restore_from_db_empty_state_returns_zero() {
+        let mut exec = PrivacyExecutor::with_depth(4);
+        let db = InMemoryStateDB::new();
+        let n = exec.restore_from_db(&db).expect("empty restore should succeed");
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn test_restore_from_db_root_mismatch_errors() {
+        let mut exec = PrivacyExecutor::with_depth(4);
+        let mut db = InMemoryStateDB::new();
+        // Persist a fake commitment + a wrong root.
+        let bad_commitment = [0xABu8; 32];
+        db.append_note_commitment(0, bad_commitment);
+        db.put_note_tree_root([0xCDu8; 32]); // not the real rebuilt root
+        let err = exec.restore_from_db(&db).expect_err("root mismatch must error");
+        let msg = format!("{err}");
+        assert!(msg.contains("rebuilt root"), "expected mismatch error, got: {msg}");
+    }
+}
 }
