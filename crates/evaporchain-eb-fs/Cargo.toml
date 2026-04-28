@@ -1,0 +1,15 @@
+[package]
+name = "evaporchain-eb-fs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Energy-Bound Fiat-Shamir (EB-FS). One-line transcript change that binds Fiat-Shamir challenges to per-epoch energy — stops cross-fork proof replay. Per INVENTION_STACK.md §4.2 (Tier 2)."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+blake3 = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
