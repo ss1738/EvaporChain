@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-light-cone"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Light-Cone Consensus substrate. Causal-set partial-order DAG (Sorkin/Pratt) with energy-decay time arrow. The 'soul of the chain' per INVENTION_STACK.md §4.1 #1."
+
+[dependencies]
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
