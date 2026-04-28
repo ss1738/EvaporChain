@@ -6,6 +6,7 @@ members = [
     "crates/evaporchain-energy-kernel",
     "crates/evaporchain-demurrage",
     "crates/evaporchain-padic",
+    "crates/evaporchain-tropical",
     "crates/evaporchain-crypto",
     "crates/evaporchain-state",
     "crates/evaporchain-consensus",

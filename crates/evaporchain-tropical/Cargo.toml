@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-tropical"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Tropical Plücker commitment for the energy-history light client. Per INVENTION_STACK.md §A1.4: tropical (min, +) semiring over edge weights -log(remaining energy); commits to entire tree shape canonically. Speyer-Sturmfels 2004 (tropical Grassmannian = phylogenetic trees)."
+
+[dependencies]
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+blake3 = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
