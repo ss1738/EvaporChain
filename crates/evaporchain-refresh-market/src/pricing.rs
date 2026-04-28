@@ -31,7 +31,12 @@ pub fn rent_rate(used: u64, capacity: u64, base: Energy) -> Result<Energy, Prici
     let numerator = (used as u128 + 1).saturating_mul(used as u128 + 1);
     let denominator = (capacity as u128).saturating_mul(capacity as u128);
     let scaled = (base as u128).saturating_mul(numerator) / denominator;
-    Ok(scaled.min(Energy::MAX as u128) as Energy)
+    let raw = scaled.min(Energy::MAX as u128) as Energy;
+    // Never charge zero rent — even sub-unit AMM rates round up to 1
+    // so squatting on capacity always has a price (the property the
+    // "+1" in the numerator was meant to enforce, but integer-floor
+    // can still cancel it for `base ≪ capacity²`).
+    Ok(raw.max(1))
 }
 
 #[cfg(test)]
