@@ -19,7 +19,7 @@ use evaporchain_consensus::finality::FinalityTracker;
 use evaporchain_consensus::light_client::{LightBlockHeader, LightClientVerifier};
 use evaporchain_consensus::tendermint::{TendermintConsensus, ConsensusMessage, ConsensusAction, ProofVerifier, AnchorHashProvider};
 use evaporchain_consensus::state_sync::{StateSyncManager, SyncAction, SyncMessage};
-use evaporchain_consensus::validator_set::{ValidatorInfo, ValidatorSet};
+use evaporchain_consensus::validator_set::{ValidatorInfo, ValidatorSet, slash_delegations_for_validator};
 use evaporchain_network::service::{cache_block, NetworkConfig, P2pNetworkService};
 use evaporchain_proving::ProvingEngine;
 #[cfg(any(test, feature = "test-utils", debug_assertions))]
@@ -2847,7 +2847,16 @@ async fn main() -> Result<()> {
                             stake.slashed_amount = stake.slashed_amount.saturating_add(amount);
                             db_guard.put_stake(stake);
                         }
-                        eprintln!("{} \x1b[31mSlash applied: validator={} amount={} reason={:?}\x1b[0m", node_tag, validator_id, amount, reason);
+                        let delegation_pct = match reason {
+                            evaporchain_consensus::tendermint::SlashReason::Equivocation => 0.10,
+                            evaporchain_consensus::tendermint::SlashReason::Downtime { missed_blocks } => {
+                                ((*missed_blocks as f64) * 0.01).min(1.0)
+                            }
+                        };
+                        let delegated_slashed = slash_delegations_for_validator(
+                            &mut *db_guard, validator_id, delegation_pct,
+                        );
+                        eprintln!("{} \x1b[31mSlash applied: validator={} amount={} delegated={} reason={:?}\x1b[0m", node_tag, validator_id, amount, delegated_slashed, reason);
                         continue;
                     }
                     if let ConsensusAction::RequestSync(from, to) = action {
@@ -3466,7 +3475,16 @@ async fn main() -> Result<()> {
                                 stake.slashed_amount = stake.slashed_amount.saturating_add(amount);
                                 db_guard.put_stake(stake);
                             }
-                            eprintln!("{} \x1b[31mSlash applied (follower): validator={} amount={} reason={:?}\x1b[0m", node_tag, validator_id, amount, reason);
+                            let delegation_pct = match reason {
+                                evaporchain_consensus::tendermint::SlashReason::Equivocation => 0.10,
+                                evaporchain_consensus::tendermint::SlashReason::Downtime { missed_blocks } => {
+                                    ((*missed_blocks as f64) * 0.01).min(1.0)
+                                }
+                            };
+                            let delegated_slashed = slash_delegations_for_validator(
+                                &mut *db_guard, validator_id, delegation_pct,
+                            );
+                            eprintln!("{} \x1b[31mSlash applied (follower): validator={} amount={} delegated={} reason={:?}\x1b[0m", node_tag, validator_id, amount, delegated_slashed, reason);
                             continue;
                         }
                         if let ConsensusAction::RequestSync(from, to) = action {
