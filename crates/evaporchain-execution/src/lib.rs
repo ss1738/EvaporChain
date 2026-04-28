@@ -1465,18 +1465,8 @@ impl ExecutionEngine for SimpleExecutor {
                             .into(),
                     ))
                 }
-                Transaction::Delegate(_) => {
-                    Err(ExecutionError::ContractError(
-                        "Delegate execution not yet implemented (P0 #4 in flight)"
-                            .into(),
-                    ))
-                }
-                Transaction::Undelegate(_) => {
-                    Err(ExecutionError::ContractError(
-                        "Undelegate execution not yet implemented (P0 #4 in flight)"
-                            .into(),
-                    ))
-                }
+                Transaction::Delegate(d) => self.execute_delegate(db, d, block.epoch),
+                Transaction::Undelegate(u) => self.execute_undelegate(db, u, block.epoch),
                 Transaction::RotateValidatorKey(_) => {
                     // Punch-list 4a closed (tx variant + canonical encoding +
                     // gas + dispatch). 4b/4c/4d open: BLS PoP verification
