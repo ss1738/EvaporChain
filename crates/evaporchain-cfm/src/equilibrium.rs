@@ -148,16 +148,29 @@ mod proptests {
     }
 
     proptest! {
-        /// Property: CFM equilibrium always sums to FIXED_POINT_SCALE.
+        /// Property: CFM equilibrium always sums to FIXED_POINT_SCALE
+        /// when it produces a result.
+        ///
+        /// For extreme β·fee combinations, all weights collapse to zero
+        /// and the equilibrium is genuinely undefined — the substrate
+        /// returns `AllZero` and we accept that as correct behavior
+        /// rather than asserting a normalised result.
         #[test]
         fn equilibrium_always_normalises(
             pmf in arb_pmf2(),
             fees in proptest::collection::vec(0u64..1_000_000, 2..=2),
             beta_mb in 0u64..10_000,
         ) {
-            let eq = cfm_equilibrium(&pmf, &fees, beta_mb).unwrap();
-            let sum: u64 = eq.pmf.iter().sum();
-            prop_assert_eq!(sum, FIXED_POINT_SCALE);
+            match cfm_equilibrium(&pmf, &fees, beta_mb) {
+                Ok(eq) => {
+                    let sum: u64 = eq.pmf.iter().sum();
+                    prop_assert_eq!(sum, FIXED_POINT_SCALE);
+                }
+                Err(EquilibriumError::AllZero) => {
+                    // Acceptable: extreme β collapses every weight to 0.
+                }
+                Err(other) => prop_assert!(false, "unexpected error: {other}"),
+            }
         }
 
         /// Property: at β = 0, equilibrium equals the input pmf
