@@ -86,9 +86,8 @@ impl<const P: usize> PAdicMerkleTree<P> {
 
     /// Compute the Merkle root of the tree.
     pub fn root(&self) -> Hash {
-        // Collect leaves into a vec; recurse.
         let leaves: Vec<(u64, Hash)> = self.leaves.iter().map(|(k, v)| (*k, *v)).collect();
-        subtree_root::<P>(&leaves, self.depth, 0)
+        subtree_root::<P>(&leaves, self.depth)
     }
 }
 
@@ -116,27 +115,26 @@ pub(crate) fn node_hash<const P: usize>(level: u32, children: &[Hash; 64]) -> Ha
     *h.finalize().as_bytes()
 }
 
-/// Recurse: compute the root of the subtree containing `leaves`, where
-/// each leaf still has `depth_remaining` base-`P` digits left to walk
-/// (low-order first), and we are currently `current_level` levels above
-/// the leaves.
+/// Recurse: compute the root of the subtree containing `leaves`. The
+/// subtree has `depth_remaining` levels of internal structure left
+/// before bottoming out at the leaves. The `level` of *this* node in
+/// verifier numbering (0 = just above leaves, depth − 1 = root) is
+/// `depth_remaining − 1`, so a level-k node partitions by base-`P`
+/// digit at *position* k of the key (low-order first).
 pub(crate) fn subtree_root<const P: usize>(
     leaves: &[(u64, Hash)],
     depth_remaining: u32,
-    current_level: u32,
 ) -> Hash {
     if leaves.is_empty() {
         return EMPTY_HASH;
     }
     if depth_remaining == 0 {
-        // At the bottom: there should be exactly one leaf in this leaf
-        // bucket (any collisions on raw `u64` were resolved by the
-        // BTreeMap that fed us). If there are multiple, the tree depth
-        // is set too shallow for the keyspace; fold them deterministically.
+        // At the bottom: a single leaf returns its leaf hash. More than
+        // one only reachable when tree depth is set too shallow for the
+        // keyspace; fold deterministically as a fallback.
         if leaves.len() == 1 {
             return leaves[0].1;
         }
-        // Fold pairwise blake3 (canonical) — only reachable with too-shallow depth.
         let mut h = blake3::Hasher::new();
         h.update(b"padic-overflow-leaf");
         for (k, v) in leaves {
@@ -145,13 +143,12 @@ pub(crate) fn subtree_root<const P: usize>(
         }
         return *h.finalize().as_bytes();
     }
-    // Partition by next (low-order) base-P digit at depth = (self.depth - depth_remaining).
-    // Equivalent: the digit at position `current_level` is `(key / P^current_level) % P`.
+    let level = depth_remaining - 1;
     let mut buckets: Vec<Vec<(u64, Hash)>> = (0..P).map(|_| Vec::new()).collect();
     let p = P as u64;
     for (k, h) in leaves {
         let mut x = *k;
-        for _ in 0..current_level {
+        for _ in 0..level {
             x /= p;
         }
         let digit = (x % p) as usize;
@@ -159,9 +156,9 @@ pub(crate) fn subtree_root<const P: usize>(
     }
     let mut children = [EMPTY_HASH; 64];
     for (digit, bucket) in buckets.iter().enumerate() {
-        children[digit] = subtree_root::<P>(bucket, depth_remaining - 1, current_level + 1);
+        children[digit] = subtree_root::<P>(bucket, depth_remaining - 1);
     }
-    node_hash::<P>(current_level, &children)
+    node_hash::<P>(level, &children)
 }
 
 #[cfg(test)]
@@ -169,15 +166,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empty_tree_root_is_a_node_hash_of_empty_children() {
+    fn empty_tree_root_is_canonical_zero() {
+        // An empty tree returns the canonical zero hash from
+        // `subtree_root`. Different depths/fanouts of an empty tree
+        // therefore share a root — fine for our purposes since depth
+        // and fanout are protocol parameters fixed at the root scope.
         let t = PAdicMerkleTree::<2>::new(4).unwrap();
-        let r = t.root();
-        // Sanity: empty tree's root is the hash of (level=0, fanout=2,
-        // children=[empty; 2]) — non-zero deterministic constant.
-        let mut all_empty = [EMPTY_HASH; 64];
-        for c in &mut all_empty[..2] { *c = EMPTY_HASH; }
-        let expected = node_hash::<2>(0, &all_empty);
-        assert_eq!(r, expected);
+        assert_eq!(t.root(), EMPTY_HASH);
     }
 
     #[test]

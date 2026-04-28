@@ -50,19 +50,20 @@ impl<const P: usize> PAdicMerkleTree<P> {
         let mut levels = Vec::with_capacity(depth as usize);
         // Walk from the leaf upward: at each level, partition by next
         // (low-order) digit, record the sibling subtree hashes.
-        for current_level in 0..depth {
-            let depth_remaining = depth - current_level;
-            let path_digit = key_digit::<P>(key.raw(), current_level);
-            // Partition the *current bucket* (= leaves whose lower
-            // `current_level` digits agree with `key`'s) by next digit.
+        for level in 0..depth {
+            let path_digit = key_digit::<P>(key.raw(), level);
+            // Bucket = leaves under the same level-`level` node as `key`.
+            // That node's path is determined by digits at positions
+            // `level + 1 .. depth − 1` (the HIGH digits relative to
+            // this level), so we filter by agreement on those digits.
             let bucket: Vec<(u64, Hash)> = leaves
                 .iter()
-                .filter(|(k, _)| key_share_low_digits::<P>(*k, key.raw(), current_level))
+                .filter(|(k, _)| share_high_digits::<P>(*k, key.raw(), level, depth))
                 .copied()
                 .collect();
             let mut by_digit: Vec<Vec<(u64, Hash)>> = (0..P).map(|_| Vec::new()).collect();
             for (k, h) in &bucket {
-                let d = key_digit::<P>(*k, current_level) as usize;
+                let d = key_digit::<P>(*k, level) as usize;
                 by_digit[d].push((*k, *h));
             }
             let mut siblings: Vec<Hash> = Vec::with_capacity(P - 1);
@@ -70,7 +71,9 @@ impl<const P: usize> PAdicMerkleTree<P> {
                 if digit == path_digit as usize {
                     continue;
                 }
-                siblings.push(subtree_root::<P>(sub, depth_remaining - 1, current_level + 1));
+                // The sibling subtree is rooted at `level` and contains
+                // `level` levels of internal structure below its root.
+                siblings.push(subtree_root::<P>(sub, level));
             }
             levels.push(ProofLevel {
                 digit: path_digit,
@@ -154,13 +157,21 @@ fn key_digit<const P: usize>(key: u64, level: u32) -> u8 {
     (x % p) as u8
 }
 
-/// Helper: do `a` and `b` agree on their first `level` low-order
-/// base-`P` digits?
-fn key_share_low_digits<const P: usize>(a: u64, b: u64, level: u32) -> bool {
+/// Helper: do `a` and `b` agree on the digits at positions
+/// `level + 1, level + 2, …, depth − 1` (the *high* digits relative to
+/// `level`)? Equivalently: do they fall into the same level-`level` node
+/// in the tree of total depth `depth`?
+fn share_high_digits<const P: usize>(a: u64, b: u64, level: u32, depth: u32) -> bool {
     let p = P as u64;
     let mut a = a;
     let mut b = b;
-    for _ in 0..level {
+    // Strip the low `level + 1` digits.
+    for _ in 0..=level {
+        a /= p;
+        b /= p;
+    }
+    // Compare the remaining `depth − level − 1` digits.
+    for _ in 0..depth.saturating_sub(level + 1) {
         if a % p != b % p {
             return false;
         }
