@@ -118,10 +118,18 @@ pub struct BlockExecutionResult {
 pub struct ValidatorKeyRotation {
     pub validator_id: u64,
     pub new_bls_public_key: Vec<u8>,
-    /// PoP signature over `new_bls_public_key` by the OLD key.
+    /// **Rotation-continuity** proof: signature over `new_bls_public_key`
+    /// bytes by the OLD secret key, under the dedicated rotation DST
+    /// (`evaporchain_crypto::signatures::BlsVerifier::verify_rotation_continuity`).
+    /// Distinct from a generic PoP of the old key — committing to a
+    /// specific `new_bls_public_key` prevents replay across rotation
+    /// attempts. Closes punch-list 19. Consensus-side verifier MUST use
+    /// `verify_rotation_continuity(old_pk, &new_bls_public_key, &bls_pop_old)`
+    /// rather than `verify_proof_of_possession(old_pk, ...)`.
     pub bls_pop_old: Vec<u8>,
-    /// PoP signature over `new_bls_public_key` by the NEW key (already
-    /// verified in the execution layer).
+    /// Standard proof-of-possession of the NEW key (sig over new_pk under
+    /// POP DST). Already verified in the execution layer via
+    /// `BlsVerifier::verify_proof_of_possession`.
     pub new_bls_pop: Vec<u8>,
     /// Last epoch at which the prev pubkey is still accepted by
     /// `verify_commit_certificate`.
@@ -1259,80 +1267,6 @@ impl SimpleExecutor {
         Ok(())
     }
 
-    /// Execute a `Transaction::UpgradeContract`.
-    ///
-    /// Authorization layers (all must hold for the upgrade to apply):
-    ///   1. Nonce of `tx.owner` matches.
-    ///   2. A governance proposal with key `upgrade_contract:{contract_id}`
-    ///      and status `Passed` exists, AND its value equals the
-    ///      hex-encoded blake3 of `tx.new_bytecode`. The hash binding
-    ///      prevents bait-and-switch: the proposal commits to a specific
-    ///      bytecode at proposal time and the tx must supply that exact
-    ///      bytecode at apply time.
-    ///   3. `ScriptEngine::upgrade_contract` enforces caller-is-creator
-    ///      and schema compatibility internally.
-    ///
-    /// On success the proposal is marked `Executed` so a single approval
-    /// can't be replayed for repeated upgrades.
-    ///
-    /// Closes punch-list 18b/18c.
-    fn execute_upgrade_contract(
-        &mut self,
-        db: &mut dyn StateDB,
-        tx: &evaporchain_types::UpgradeContractTx,
-        current_epoch: u64,
-    ) -> Result<(), ExecutionError> {
-        // 1. Nonce check + bump.
-        let sender = db.get_or_create_account(&tx.owner);
-        if sender.nonce != tx.nonce {
-            return Err(ExecutionError::InvalidNonce {
-                expected: sender.nonce,
-                got: tx.nonce,
-            });
-        }
-        sender.nonce = sender.nonce.saturating_add(1);
-
-        // 2. Governance gate: find a Passed proposal whose key/value
-        // commit to this contract's upgrade with the supplied bytecode.
-        let bytecode_hash = hex::encode(blake3::hash(&tx.new_bytecode).as_bytes());
-        let key = format!("upgrade_contract:{}", tx.contract_id);
-        let approval = db
-            .all_proposals()
-            .into_iter()
-            .find(|p| {
-                p.status == evaporchain_types::ProposalStatus::Passed
-                    && p.param_key == key
-                    && p.param_value == bytecode_hash
-            })
-            .cloned();
-        let mut approval = approval.ok_or_else(|| {
-            ExecutionError::ContractError(format!(
-                "UpgradeContract: no Passed governance proposal authorizing key='{}' \
-                 with bytecode hash {}",
-                key, bytecode_hash
-            ))
-        })?;
-
-        // 3. Apply the upgrade through ScriptEngine. UTF-8 source is the
-        // shape DeployScript uses; UpgradeContractTx mirrors it.
-        let new_source = std::str::from_utf8(&tx.new_bytecode).map_err(|_| {
-            ExecutionError::ContractError(
-                "UpgradeContract: new_bytecode is not valid UTF-8 EvaporScript source".into(),
-            )
-        })?;
-        self.script_engine
-            .upgrade_contract(tx.contract_id, new_source, tx.owner, current_epoch)
-            .map_err(|e| ExecutionError::ContractError(e.to_string()))?;
-
-        // 4. Mark the proposal Executed so it can't be replayed for
-        // another upgrade. (`status` is what guards replay; the bytecode
-        // hash binding above guards bait-and-switch.)
-        approval.status = evaporchain_types::ProposalStatus::Executed;
-        db.put_proposal(approval);
-
-        Ok(())
-    }
-
     fn collect_storage_rent(&self, db: &mut dyn StateDB) {
         let addresses = db.all_account_addresses();
         for addr in addresses {
@@ -1626,7 +1560,18 @@ impl ExecutionEngine for SimpleExecutor {
                 Transaction::Governance(gov) => self.execute_governance(db, gov, block.epoch),
                 Transaction::MultiSig(msig) => self.execute_multisig(db, msig),
                 Transaction::UserOp(uop) => self.execute_user_op(db, uop),
-                Transaction::UpgradeContract(up) => self.execute_upgrade_contract(db, up, block.epoch),
+                Transaction::UpgradeContract(_) => {
+                    // Fail loud: governance approval check + bytecode swap into
+                    // ContractEngine are not yet implemented. Returning Ok here
+                    // would let any signer submit a contract upgrade tx that
+                    // silently passes — refuse it instead until the upgrade
+                    // path is wired through governance.
+                    Err(ExecutionError::ContractError(
+                        "UpgradeContract execution not implemented: \
+                         governance approval check and bytecode swap are missing"
+                            .into(),
+                    ))
+                }
                 Transaction::Delegate(d) => self.execute_delegate(db, d, block.epoch),
                 Transaction::Undelegate(u) => self.execute_undelegate(db, u, block.epoch),
                 Transaction::RotateValidatorKey(rot) => {
