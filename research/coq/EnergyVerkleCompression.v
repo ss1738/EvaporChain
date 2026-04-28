@@ -226,7 +226,10 @@ Theorem compress_energy_conservative : forall n,
     all_cold n -> energy_sum (compress n) = energy_sum n.
 Proof.
   intros n Hcold.
-  rewrite cold_subtree_zero_energy by exact Hcold.
+  (* Rewrite the RHS explicitly: cold_subtree_zero_energy applied to
+     `n` gives `energy_sum n = 0`. Then the LHS reduces to 0 via the
+     NCompressed branch of energy_sum. *)
+  rewrite (cold_subtree_zero_energy n Hcold).
   unfold compress. simpl. reflexivity.
 Qed.
 

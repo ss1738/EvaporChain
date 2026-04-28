@@ -138,8 +138,7 @@ Proof.
   (* full = 0, so leb halving_cutoff 0 is false (cutoff > 0) *)
   destruct halving_cutoff eqn:Hcut.
   - exfalso. apply Hc. reflexivity.
-  - simpl.  (* leb (S n) 0 = false *)
-    rewrite nat_shr_zero.
+  - simpl.  (* leb (S n) 0 = false; nat_shr init 0 reduces to init *)
     unfold linear_decay.
     rewrite Nat.mul_0_r.  (* init * 0 = 0 *)
     rewrite Nat.div_0_l by lia.
