@@ -36,7 +36,7 @@ pub enum ProofError {
     WrongSiblingCount { level: u32, got: usize, expected: usize },
     #[error("digit at level {level} ({got}) does not match key's digit ({expected})")]
     DigitMismatch { level: u32, got: u8, expected: u8 },
-    #[error("recomputed root {got} != expected root {expected}")]
+    #[error("recomputed root {got:?} != expected root {expected:?}")]
     RootMismatch { got: Hash, expected: Hash },
 }
 
