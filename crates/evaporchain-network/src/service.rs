@@ -502,12 +502,21 @@ impl P2pNetworkService {
         }
 
         // Build the swarm — TLS 1.3 or Noise, selected at startup
+        // Enable port_reuse so the listener socket can also be used for
+        // outbound dials. Without this, libp2p tries to dial peers from
+        // ephemeral ports while the SAME local port is already bound for
+        // listening, and on macOS the kernel rejects with EADDRINUSE
+        // when the dial target is another node listening on the same
+        // port (every cluster member uses 9000). Reproduced on the
+        // 3-Mini Tailscale cluster: bootstrap dial from apsarth/ironman
+        // to satyawan:9000 always failed until this flag was set.
+        let tcp_cfg = || tcp::Config::default().port_reuse(true);
         let mut swarm = if use_tls {
             info!("Using TLS 1.3 transport (libp2p-tls)");
             SwarmBuilder::with_new_identity()
                 .with_tokio()
                 .with_tcp(
-                    tcp::Config::default(),
+                    tcp_cfg(),
                     tls::Config::new,
                     yamux::Config::default,
                 )
@@ -520,7 +529,7 @@ impl P2pNetworkService {
             SwarmBuilder::with_new_identity()
                 .with_tokio()
                 .with_tcp(
-                    tcp::Config::default(),
+                    tcp_cfg(),
                     noise::Config::new,
                     yamux::Config::default,
                 )
