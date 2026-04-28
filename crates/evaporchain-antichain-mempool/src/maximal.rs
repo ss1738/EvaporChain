@@ -17,23 +17,17 @@ use evaporchain_light_cone::{is_concurrent, BlockId, LightCone};
 use crate::antichain::{Antichain, AntichainError};
 
 /// True iff no block on `lc` outside `a` is concurrent with every
-/// member of `a`. (i.e. no proper extension exists.)
+/// member of `a` (i.e. no proper extension exists).
+///
+/// Brute-force candidate sweep over `LightCone::ids()` — O(|DAG| × |a|)
+/// in the number of `is_concurrent` checks. Acceptable at substrate
+/// scope; a production proposer will keep its own candidate index.
 pub fn is_maximal_antichain(a: &Antichain, lc: &LightCone) -> bool {
-    // Iterate every known block id in the DAG. We don't have a public
-    // `ids()` accessor on LightCone — gather via the `causal_*` reach
-    // sets from a representative. Simpler: walk every member's union
-    // of causal_past, causal_future, plus the member itself, plus
-    // candidates from the broader DAG.
-    //
-    // For substrate scope we expose a brute-force check that visits
-    // every block reachable from any antichain member's neighbourhood.
-    // Production callers should pass an explicit candidate iterator.
-    let candidates = collect_candidates(a, lc);
-    !candidates.iter().any(|c| {
-        if a.contains(c) {
+    !lc.ids().any(|c| {
+        if a.contains(&c) {
             return false;
         }
-        a.members().iter().all(|m| is_concurrent(lc, *m, *c))
+        a.members().iter().all(|m| is_concurrent(lc, *m, c))
     })
 }
 
@@ -59,25 +53,6 @@ pub fn extend_to_maximal<I: IntoIterator<Item = BlockId>>(
     Antichain::from_set(members, lc)
 }
 
-/// Helper: gather all blocks reachable through the antichain's
-/// neighbourhood. Used by `is_maximal_antichain` to bound the
-/// brute-force candidate scan. For an empty antichain, returns the
-/// empty set (any antichain over a non-empty DAG is non-maximal, so
-/// callers will typically check membership against ALL DAG blocks
-/// in production rather than relying on this helper).
-fn collect_candidates(a: &Antichain, lc: &LightCone) -> BTreeSet<BlockId> {
-    let mut out = BTreeSet::new();
-    for m in a.members() {
-        out.insert(*m);
-        for x in evaporchain_light_cone::causal_past(lc, *m) {
-            out.insert(x);
-        }
-        for x in evaporchain_light_cone::causal_future(lc, *m) {
-            out.insert(x);
-        }
-    }
-    out
-}
 
 #[cfg(test)]
 mod tests {

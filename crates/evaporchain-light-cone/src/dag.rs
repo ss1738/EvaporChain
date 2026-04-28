@@ -47,6 +47,13 @@ impl LightCone {
         self.blocks.contains_key(id)
     }
 
+    /// Iterate every block id known to the DAG, in `BTreeMap` (sorted)
+    /// order. Used by consumers that need to scan all blocks (e.g. the
+    /// `is_maximal_antichain` brute-force candidate sweep).
+    pub fn ids(&self) -> impl Iterator<Item = BlockId> + '_ {
+        self.blocks.keys().copied()
+    }
+
     /// Insert a block. All parents must already be present (this is a
     /// causal-consistency requirement; the consensus layer enforces it
     /// at network ingest).
