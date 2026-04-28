@@ -98,6 +98,34 @@ pub struct BlockExecutionResult {
     pub cross_shard_processed: usize,
     /// Receipts from cross-shard message execution.
     pub cross_shard_receipts: Vec<evaporchain_sharding::cross_shard::CrossShardReceipt>,
+    /// Validator BLS key rotations committed in this block. The consensus
+    /// layer applies these to its live `ValidatorSet` at block-commit time
+    /// (after the state root is finalized) so signature verification of
+    /// subsequent blocks uses the new keys with old keys honoured during
+    /// the grace window. Closes punch-list 4b cross-layer wiring.
+    pub validator_key_rotations: Vec<ValidatorKeyRotation>,
+}
+
+/// Side-effect emitted by `Transaction::RotateValidatorKey` execution and
+/// applied by the consensus layer post-commit.
+///
+/// The consensus layer is responsible for one final verification step
+/// before applying: PoP-verify `bls_pop_old` against the validator's
+/// *currently-recorded* `bls_public_key` (continuity-of-control proof).
+/// This step lives in consensus rather than execution because the live
+/// `ValidatorSet` is consensus-owned.
+#[derive(Debug, Clone)]
+pub struct ValidatorKeyRotation {
+    pub validator_id: u64,
+    pub new_bls_public_key: Vec<u8>,
+    /// PoP signature over `new_bls_public_key` by the OLD key.
+    pub bls_pop_old: Vec<u8>,
+    /// PoP signature over `new_bls_public_key` by the NEW key (already
+    /// verified in the execution layer).
+    pub new_bls_pop: Vec<u8>,
+    /// Last epoch at which the prev pubkey is still accepted by
+    /// `verify_commit_certificate`.
+    pub prev_key_expiry_epoch: u64,
 }
 
 /// Trait for block/transaction execution engines.
@@ -145,7 +173,10 @@ const UNBONDING_PERIOD_EPOCHS: u64 = 256;
 /// signature verification this many epochs after a rotation commits.
 /// Sized to cover one Tendermint round-trip across a globally distributed
 /// validator set plus a comfortable safety margin.
-pub(crate) const KEY_ROTATION_GRACE_EPOCHS: u64 = 8;
+///
+/// Public so the node binary can use it for `bls_key.{N}.bin` ring
+/// purging and operator tooling can reference the same value.
+pub const KEY_ROTATION_GRACE_EPOCHS: u64 = 8;
 
 /// Number of state snapshots to retain before pruning older ones.
 const SNAPSHOT_RETAIN_BLOCKS: u64 = 256;
@@ -1333,6 +1364,7 @@ impl ExecutionEngine for SimpleExecutor {
             .fee_controller
             .as_ref()
             .map_or(0, |fc| fc.base_fee);
+        let mut validator_key_rotations: Vec<ValidatorKeyRotation> = Vec::new();
 
         // Execute transactions
         for tx in &block.transactions {
@@ -1467,22 +1499,74 @@ impl ExecutionEngine for SimpleExecutor {
                 }
                 Transaction::Delegate(d) => self.execute_delegate(db, d, block.epoch),
                 Transaction::Undelegate(u) => self.execute_undelegate(db, u, block.epoch),
-                Transaction::RotateValidatorKey(_) => {
-                    // Punch-list 4a closed (tx variant + canonical encoding +
-                    // gas + dispatch). 4b/4c/4d open: BLS PoP verification
-                    // for both old and new key, ValidatorInfo schema for
-                    // grace-period prev pubkey, two-pass cert verification
-                    // path, and bls_key.{epoch}.bin file ring with old-key
-                    // purge after grace expiry. Refuse the tx until 4b lands
-                    // so admission of a malformed RotateValidatorKey can't
-                    // silently corrupt the validator set.
-                    Err(ExecutionError::ContractError(
-                        "RotateValidatorKey execution not yet implemented \
-                         (punch-list #4b in flight) — refusing to admit so \
-                         the validator set cannot be corrupted by a partial \
-                         rotation"
-                            .into(),
-                    ))
+                Transaction::RotateValidatorKey(rot) => {
+                    // Closes punch-list 4b. Validation order: cheap checks
+                    // first (effective_epoch + nonce + stake-record
+                    // existence + key length), then BLS PoP verification
+                    // on the new key. Old-key continuity (`bls_pop_old`)
+                    // is verified by the consensus layer when it applies
+                    // the rotation post-commit, since SimpleExecutor does
+                    // not own the live ValidatorSet.
+                    if rot.effective_epoch < block.epoch {
+                        Err(ExecutionError::ContractError(format!(
+                            "RotateValidatorKey: effective_epoch {} is in the past (current {})",
+                            rot.effective_epoch, block.epoch
+                        )))
+                    } else if rot.new_bls_public_key.len() != 48 {
+                        Err(ExecutionError::ContractError(format!(
+                            "RotateValidatorKey: new_bls_public_key must be 48 bytes (got {})",
+                            rot.new_bls_public_key.len()
+                        )))
+                    } else {
+                        let stake_addr = db
+                            .get_stake(rot.validator_id)
+                            .map(|s| s.validator_address);
+                        match stake_addr {
+                            None => Err(ExecutionError::ContractError(format!(
+                                "RotateValidatorKey: validator_id {} has no stake record",
+                                rot.validator_id
+                            ))),
+                            Some(addr) if addr != rot.validator_address => {
+                                Err(ExecutionError::ContractError(format!(
+                                    "RotateValidatorKey: validator_id {} address mismatch",
+                                    rot.validator_id
+                                )))
+                            }
+                            Some(_) => {
+                                let expected_nonce = db
+                                    .get_account(&rot.validator_address)
+                                    .map_or(0, |a| a.nonce);
+                                if rot.nonce != expected_nonce {
+                                    Err(ExecutionError::ContractError(format!(
+                                        "RotateValidatorKey: nonce mismatch (expected {}, got {})",
+                                        expected_nonce, rot.nonce
+                                    )))
+                                } else if !{
+                                    use evaporchain_crypto::signatures::{BlsPublicKey, BlsSignature, BlsVerifier};
+                                    let pk = BlsPublicKey(rot.new_bls_public_key.clone());
+                                    let pop = BlsSignature(rot.bls_pop_new.clone());
+                                    BlsVerifier::verify_proof_of_possession(&pk, &pop)
+                                } {
+                                    Err(ExecutionError::ContractError(
+                                        "RotateValidatorKey: bls_pop_new failed verification".into(),
+                                    ))
+                                } else {
+                                    if let Some(acct) = db.get_account_mut(&rot.validator_address) {
+                                        acct.nonce = acct.nonce.saturating_add(1);
+                                    }
+                                    validator_key_rotations.push(ValidatorKeyRotation {
+                                        validator_id: rot.validator_id,
+                                        new_bls_public_key: rot.new_bls_public_key.clone(),
+                                        bls_pop_old: rot.bls_pop_old.clone(),
+                                        new_bls_pop: rot.bls_pop_new.clone(),
+                                        prev_key_expiry_epoch: rot.effective_epoch
+                                            .saturating_add(KEY_ROTATION_GRACE_EPOCHS),
+                                    });
+                                    Ok(())
+                                }
+                            }
+                        }
+                    }
                 }
             };
 
@@ -1689,6 +1773,7 @@ impl ExecutionEngine for SimpleExecutor {
             contract_events,
             cross_shard_processed: 0,
             cross_shard_receipts: Vec::new(),
+            validator_key_rotations,
         })
     }
 
