@@ -1,6 +1,17 @@
 use evaporchain_crypto::signatures::{HybridVerifier, Verifier};
-use evaporchain_types::Transaction;
+use evaporchain_types::{energy_at_epoch, Transaction};
 use std::collections::{HashMap, HashSet, VecDeque};
+
+/// Initial inclusion-priority energy assigned to every tx at submission.
+/// Decays each block with `MEV_INCLUSION_HALF_LIFE_BLOCKS`. Sized so a tx
+/// held back for one half-life is worth ~50% of its initial priority,
+/// making reordering attacks bleed value (see
+/// `research/proposals/energy-stamped-mev-resistance.md`).
+pub const BASE_INCLUSION_ENERGY: u64 = 1_000_000;
+/// Block-count half-life for tx inclusion priority. Tuned for 2-second
+/// block intervals — 4 blocks ≈ 8 seconds halving, comparable to the
+/// Ethereum 12-second slot window.
+pub const MEV_INCLUSION_HALF_LIFE_BLOCKS: u64 = 4;
 
 /// Maximum number of transactions in the mempool (DoS protection).
 const MAX_MEMPOOL_SIZE: usize = 10_000;
@@ -264,6 +275,79 @@ impl Mempool {
 
     /// Take up to `n` transactions with nonce-aware ordering.
     /// Returns transactions paired with their hashes for callers that need them.
+    /// Take up to `n` transactions ordered by **energy-stamped inclusion
+    /// priority** (Phase 2 of the MEV-resistance proposal in
+    /// `research/proposals/energy-stamped-mev-resistance.md`).
+    ///
+    /// Each tx's priority is `energy_at_epoch(BASE_INCLUSION_ENERGY,
+    /// MEV_INCLUSION_HALF_LIFE_BLOCKS, current_block - submit_epoch)`.
+    /// This means:
+    /// - Old txs naturally fall down the queue (their priority decays).
+    /// - The proposer's reward incentive is to include high-priority
+    ///   txs FAST. Holding a tx to insert your own first costs
+    ///   `(1 - 0.5^(1/half_life))` of that tx's reward weight (~16% per
+    ///   block at half_life=4) — making sandwich/frontrun attacks
+    ///   economically unprofitable when gross < decay cost.
+    ///
+    /// Tie-breaking falls back to the existing nonce-aware ordering so
+    /// per-sender nonce sequences stay valid.
+    ///
+    /// Honest validators get the same proposal regardless of whether
+    /// they call `take` or `take_with_priority` because all txs are
+    /// included before the next block; the ordering only matters when
+    /// `pending.len() > n` (back-pressure scenario) or when reward
+    /// weighting kicks in.
+    pub fn take_with_priority(&mut self, n: usize, current_block: u64) -> Vec<Transaction> {
+        let all: Vec<Transaction> = self.pending.drain(..).collect();
+        let mut with_meta: Vec<(u64, [u8; 32], Transaction)> = all
+            .into_iter()
+            .map(|tx| {
+                let hash = tx.tx_hash();
+                let submit = self.tx_submit_epoch.get(&hash).copied().unwrap_or(current_block);
+                let elapsed = current_block.saturating_sub(submit);
+                let priority = energy_at_epoch(
+                    BASE_INCLUSION_ENERGY,
+                    MEV_INCLUSION_HALF_LIFE_BLOCKS,
+                    elapsed,
+                );
+                (priority, hash, tx)
+            })
+            .collect();
+        // Sort by (priority desc, sender, nonce, hash) — priority dominates,
+        // nonce-aware tie-break preserves per-sender sequencing.
+        with_meta.sort_by(|a, b| {
+            b.0.cmp(&a.0)
+                .then_with(|| {
+                    let sa = a.2.sender().copied().unwrap_or([0xff; 32]);
+                    let sb = b.2.sender().copied().unwrap_or([0xff; 32]);
+                    sa.cmp(&sb)
+                })
+                .then_with(|| {
+                    let na = a.2.nonce().unwrap_or(0);
+                    let nb = b.2.nonce().unwrap_or(0);
+                    na.cmp(&nb)
+                })
+                .then_with(|| a.1.cmp(&b.1))
+        });
+
+        let take_count = n.min(with_meta.len());
+        let mut taken = Vec::with_capacity(take_count);
+        let mut remaining = VecDeque::new();
+        for (i, (_p, h, tx)) in with_meta.into_iter().enumerate() {
+            if i < take_count {
+                self.seen.remove(&h);
+                self.tx_submit_epoch.remove(&h);
+                self.track_account_remove(&tx);
+                taken.push(tx);
+            } else {
+                remaining.push_back(tx);
+            }
+        }
+        self.pending = remaining;
+        self.total_bytes = self.pending.iter().map(Self::estimate_tx_size).sum();
+        taken
+    }
+
     pub fn take_with_hashes(&mut self, n: usize) -> Vec<([u8; 32], Transaction)> {
         let all: Vec<Transaction> = self.pending.drain(..).collect();
         let mut with_hash: Vec<([u8; 32], Transaction)> = all
@@ -775,5 +859,46 @@ mod tests {
             pool.rejected_count() >= 1,
             "rejected_count must reflect the byte-cap rejection"
         );
+    }
+
+    // ─── MEV-resistance: take_with_priority (Task #34) ────────────────
+
+    #[test]
+    fn test_take_with_priority_old_txs_lose_to_new() {
+        let mut pool = Mempool::new();
+        // Submit tx_a at "block 0" (current_epoch=0).
+        pool.set_epoch(0);
+        let tx_a = dummy_tx_with_nonce(0);
+        let tx_a_hash = tx_a.tx_hash();
+        assert!(pool.submit(tx_a));
+        // Several blocks pass; submit tx_b at "block 12" — well past
+        // multiple half-life windows for tx_a.
+        pool.set_epoch(12);
+        let tx_b = dummy_tx_with_nonce(1);
+        let tx_b_hash = tx_b.tx_hash();
+        assert!(pool.submit(tx_b));
+        // Drain at block 12. tx_b has full priority (fresh), tx_a has
+        // decayed by 12 / 4 = 3 half-lives → ~12.5% remaining.
+        let drained = pool.take_with_priority(2, 12);
+        assert_eq!(drained.len(), 2);
+        // tx_b sorts first because its priority is higher.
+        assert_eq!(drained[0].tx_hash(), tx_b_hash);
+        assert_eq!(drained[1].tx_hash(), tx_a_hash);
+    }
+
+    #[test]
+    fn test_take_with_priority_fresh_txs_keep_input_order_for_same_sender() {
+        let mut pool = Mempool::new();
+        pool.set_epoch(0);
+        let tx0 = dummy_tx_with_nonce(0);
+        let tx1 = dummy_tx_with_nonce(1);
+        assert!(pool.submit(tx0.clone()));
+        assert!(pool.submit(tx1.clone()));
+        // Both submitted at the same epoch → identical priority. Tie-break
+        // by sender then nonce → nonce 0 ahead of nonce 1.
+        let drained = pool.take_with_priority(2, 0);
+        assert_eq!(drained.len(), 2);
+        assert_eq!(drained[0].nonce(), Some(0));
+        assert_eq!(drained[1].nonce(), Some(1));
     }
 }
