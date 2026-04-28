@@ -1,0 +1,15 @@
+[package]
+name = "evaporchain-efh"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Evaporative Filtration Homology (EFH). Persistent homology with energy as the filtration parameter; Cohen-Steiner-Edelsbrunner-Harer 2007 stability theorem gives free tamper-evidence. Per INVENTION_STACK.md §4.1 #9."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

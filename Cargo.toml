@@ -25,6 +25,7 @@ members = [
     "crates/evaporchain-mdl-shard",
     "crates/evaporchain-decay-lamport",
     "crates/evaporchain-modular-beacon",
+    "crates/evaporchain-efh",
     "crates/evaporchain-crypto",
     "crates/evaporchain-state",
     "crates/evaporchain-consensus",
