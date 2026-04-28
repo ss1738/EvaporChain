@@ -42,7 +42,13 @@ impl std::error::Error for NmtBuildError {}
 
 #[inline]
 fn is_reserved_namespace(ns: &NamespaceId) -> bool {
-    *ns == NAMESPACE_MIN || *ns == NAMESPACE_MAX
+    // Only NAMESPACE_MAX (all 0xFF) is structurally reserved by the NMT
+    // for parity / erasure padding. NAMESPACE_MIN (all zeros) is in
+    // active production use by the tendermint proposal builder for
+    // "core transactions" (non-Blob txs are framed under ns=0). If
+    // user-submitted BlobTx with namespace_id=0 needs to be rejected,
+    // gate it at mempool admission, not at NMT construction.
+    *ns == NAMESPACE_MAX
 }
 
 /// A blob tagged with a namespace.
@@ -615,12 +621,15 @@ mod tests {
     }
 
     #[test]
-    fn test_from_blobs_filters_reserved_min_namespace() {
-        let good = blob(7, b"valid");
-        let reserved = blob_with_ns(NAMESPACE_MIN, b"sneaky");
-        let tree = NamespaceMerkleTree::from_blobs(&[reserved, good.clone()]);
-        assert_eq!(tree.leaves.len(), 1);
-        assert_eq!(tree.leaves[0].namespace, good.namespace);
+    fn test_from_blobs_admits_namespace_min_for_core_tx_framing() {
+        // Namespace 0 is in production use as the "core transactions"
+        // namespace by tendermint's proposal builder. Filtering it would
+        // drop every non-Blob tx from the NMT (regression caught after
+        // initial Gap-A #9 commit).
+        let core = blob_with_ns(NAMESPACE_MIN, b"transfer");
+        let user = blob(7, b"user-blob");
+        let tree = NamespaceMerkleTree::from_blobs(&[core.clone(), user.clone()]);
+        assert_eq!(tree.leaves.len(), 2);
     }
 
     #[test]
@@ -630,13 +639,6 @@ mod tests {
         let tree = NamespaceMerkleTree::from_blobs(&[good.clone(), parity]);
         assert_eq!(tree.leaves.len(), 1);
         assert_eq!(tree.leaves[0].namespace, good.namespace);
-    }
-
-    #[test]
-    fn test_try_from_blobs_rejects_reserved_min_namespace() {
-        let blobs = vec![blob(7, b"valid"), blob_with_ns(NAMESPACE_MIN, b"x")];
-        let err = NamespaceMerkleTree::try_from_blobs(&blobs).unwrap_err();
-        assert_eq!(err, NmtBuildError::ReservedNamespace { namespace: NAMESPACE_MIN });
     }
 
     #[test]
@@ -654,12 +656,12 @@ mod tests {
     }
 
     #[test]
-    fn test_try_from_leaves_rejects_reserved_namespace() {
+    fn test_try_from_leaves_rejects_reserved_max_namespace() {
         let leaves = vec![
             NmtLeaf { namespace: ns(7), data_hash: [0u8; 32] },
-            NmtLeaf { namespace: NAMESPACE_MIN, data_hash: [0u8; 32] },
+            NmtLeaf { namespace: NAMESPACE_MAX, data_hash: [0u8; 32] },
         ];
         let err = NamespaceMerkleTree::try_from_leaves(leaves).unwrap_err();
-        assert_eq!(err, NmtBuildError::ReservedNamespace { namespace: NAMESPACE_MIN });
+        assert_eq!(err, NmtBuildError::ReservedNamespace { namespace: NAMESPACE_MAX });
     }
 }
