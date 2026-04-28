@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-sanov-slashing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Sanov-Slashing: slash magnitude = stake × KL(observed ‖ honest), the exact large-deviation cost. Per INVENTION_STACK.md §A1.3 (Cramér 1938, Sanov 1957). Replaces ad-hoc 10%/1% Equivocation/Downtime constants."
+
+[dependencies]
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

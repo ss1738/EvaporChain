@@ -8,6 +8,7 @@ members = [
     "crates/evaporchain-padic",
     "crates/evaporchain-tropical",
     "crates/evaporchain-fee-controller",
+    "crates/evaporchain-sanov-slashing",
     "crates/evaporchain-crypto",
     "crates/evaporchain-state",
     "crates/evaporchain-consensus",
