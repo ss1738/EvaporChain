@@ -187,6 +187,103 @@ const UNBONDING_PERIOD_EPOCHS: u64 = 256;
 /// purging and operator tooling can reference the same value.
 pub const KEY_ROTATION_GRACE_EPOCHS: u64 = 8;
 
+// ─────────────── Governance bounds (Gap-A #4) ────────────────────────────
+// Closes Gap-A #4 from end_to_end_audit_2026_04_27.md: param-range bounds,
+// quorum requirement, vote-weight cap, optional timelock.
+
+/// Per-voter vote-weight cap. Caps any single voter's contribution so a
+/// whale (e.g. the 35 % Foundation Treasury entry in genesis-mainnet.json)
+/// cannot pass proposals solo. Tuned for the 1B total-supply mainnet.
+const MAX_VOTE_WEIGHT: u64 = 10_000_000;
+/// Minimum total weighted votes (for + against) for a proposal to be
+/// eligible to pass. Forces a proposal to be seen by the network.
+const QUORUM_MIN_TOTAL_WEIGHT: u64 = 30_000_000; // 3% of 1B mainnet supply
+/// Minimum number of distinct voters for a proposal to be eligible to pass.
+const QUORUM_MIN_VOTERS: usize = 3;
+/// Pass threshold: votes_for must exceed this multiple of votes_against.
+const PASS_THRESHOLD_MULTIPLIER: u64 = 2;
+/// Minimum and maximum proposal voting window (in epochs).
+const MIN_VOTING_EPOCHS: u64 = 10;
+const MAX_VOTING_EPOCHS: u64 = 100_000;
+/// Maximum proposal title length (bytes). DoS guard.
+const MAX_PROPOSAL_TITLE_BYTES: usize = 200;
+/// Maximum param_key length (bytes).
+const MAX_PARAM_KEY_BYTES: usize = 64;
+/// Maximum param_value length (bytes).
+const MAX_PARAM_VALUE_BYTES: usize = 256;
+/// Timelock between a proposal reaching `Passed` and the parameter
+/// becoming effective. Gives stakeholders a window to react / exit.
+pub const GOVERNANCE_TIMELOCK_EPOCHS: u64 = 5;
+
+/// Allowlist of governable parameter keys. Anything not on this list
+/// (or the `upgrade_contract:{id}` pattern) is rejected at CreateProposal
+/// admission so a malicious proposer cannot stamp arbitrary keys into
+/// state and trick callers downstream.
+const GOVERNABLE_PARAM_KEYS: &[&str] = &[
+    "block_gas_limit",
+    "base_fee_floor",
+    "base_fee_ceiling",
+    "target_gas_utilization",
+];
+
+fn is_governable_param_key(key: &str) -> bool {
+    GOVERNABLE_PARAM_KEYS.contains(&key) || key.starts_with("upgrade_contract:")
+}
+
+/// Decide a proposal's outcome under the Gap-A #4 rules:
+/// - Quorum: total weighted votes >= QUORUM_MIN_TOTAL_WEIGHT and at least
+///   QUORUM_MIN_VOTERS distinct voters.
+/// - Super-majority: votes_for > votes_against * PASS_THRESHOLD_MULTIPLIER.
+fn decide_proposal_outcome(proposal: &GovernanceProposal) -> ProposalStatus {
+    let total_weight = proposal.votes_for.saturating_add(proposal.votes_against);
+    if total_weight < QUORUM_MIN_TOTAL_WEIGHT || proposal.voters.len() < QUORUM_MIN_VOTERS {
+        return ProposalStatus::Rejected;
+    }
+    if proposal.votes_for > proposal.votes_against.saturating_mul(PASS_THRESHOLD_MULTIPLIER) {
+        ProposalStatus::Passed
+    } else {
+        ProposalStatus::Rejected
+    }
+}
+
+/// Validate that `param_value` is parseable / in-range for `param_key`.
+fn validate_param_value(key: &str, value: &str) -> Result<(), String> {
+    match key {
+        "block_gas_limit" => value
+            .parse::<u64>()
+            .map_err(|_| "block_gas_limit must be a non-negative integer".to_string())
+            .and_then(|v| {
+                if (1_000..=10_000_000_000).contains(&v) {
+                    Ok(())
+                } else {
+                    Err(format!("block_gas_limit out of range [1_000, 10_000_000_000]: {}", v))
+                }
+            }),
+        "base_fee_floor" | "base_fee_ceiling" => value
+            .parse::<u64>()
+            .map_err(|_| format!("{} must be a non-negative integer", key))
+            .map(|_| ()),
+        "target_gas_utilization" => value
+            .parse::<f64>()
+            .map_err(|_| "target_gas_utilization must be a float".to_string())
+            .and_then(|v| {
+                if (0.0..=1.0).contains(&v) {
+                    Ok(())
+                } else {
+                    Err(format!("target_gas_utilization out of range [0.0, 1.0]: {}", v))
+                }
+            }),
+        k if k.starts_with("upgrade_contract:") => {
+            if value.len() == 64 && value.chars().all(|c| c.is_ascii_hexdigit()) {
+                Ok(())
+            } else {
+                Err("upgrade_contract value must be 64-char hex (blake3 of new bytecode)".into())
+            }
+        }
+        _ => Err(format!("param_key '{}' is not on the governable allowlist", key)),
+    }
+}
+
 /// Number of state snapshots to retain before pruning older ones.
 const SNAPSHOT_RETAIN_BLOCKS: u64 = 256;
 
@@ -1132,6 +1229,43 @@ impl SimpleExecutor {
 
         match &tx.action {
             GovernanceAction::CreateProposal { title, param_key, param_value, voting_epochs } => {
+                // Gap-A #4: bound checks on proposal admission.
+                if title.len() > MAX_PROPOSAL_TITLE_BYTES {
+                    return Err(ExecutionError::ContractError(format!(
+                        "proposal title exceeds {} bytes ({})",
+                        MAX_PROPOSAL_TITLE_BYTES, title.len()
+                    )));
+                }
+                if param_key.len() > MAX_PARAM_KEY_BYTES {
+                    return Err(ExecutionError::ContractError(format!(
+                        "param_key exceeds {} bytes ({})",
+                        MAX_PARAM_KEY_BYTES, param_key.len()
+                    )));
+                }
+                if param_value.len() > MAX_PARAM_VALUE_BYTES {
+                    return Err(ExecutionError::ContractError(format!(
+                        "param_value exceeds {} bytes ({})",
+                        MAX_PARAM_VALUE_BYTES, param_value.len()
+                    )));
+                }
+                if !(MIN_VOTING_EPOCHS..=MAX_VOTING_EPOCHS).contains(voting_epochs) {
+                    return Err(ExecutionError::ContractError(format!(
+                        "voting_epochs out of range [{}, {}]: {}",
+                        MIN_VOTING_EPOCHS, MAX_VOTING_EPOCHS, voting_epochs
+                    )));
+                }
+                if !is_governable_param_key(param_key) {
+                    return Err(ExecutionError::ContractError(format!(
+                        "param_key '{}' is not on the governable allowlist",
+                        param_key
+                    )));
+                }
+                if let Err(e) = validate_param_value(param_key, param_value) {
+                    return Err(ExecutionError::ContractError(format!(
+                        "invalid param_value: {}", e
+                    )));
+                }
+
                 let proposal_id = db.all_proposals().len() as u64;
                 let proposal = GovernanceProposal {
                     proposal_id,
@@ -1162,11 +1296,8 @@ impl SimpleExecutor {
                 }
 
                 if current_epoch > proposal.end_epoch {
-                    proposal.status = if proposal.votes_for > proposal.votes_against * 2 {
-                        ProposalStatus::Passed
-                    } else {
-                        ProposalStatus::Rejected
-                    };
+                    // Voting closed — finalize using Gap-A #4 quorum + super-majority.
+                    proposal.status = decide_proposal_outcome(&proposal);
                     db.put_proposal(proposal);
                     return Err(ExecutionError::ContractError(
                         "voting period has ended".to_string()
@@ -1180,17 +1311,17 @@ impl SimpleExecutor {
                 }
                 proposal.voters.insert(tx.sender);
 
+                // Gap-A #4: cap per-voter weight so a whale cannot pass solo.
                 let voter_balance = db.get_account(&tx.sender).map(|a| a.balance).unwrap_or(0);
+                let voter_weight = voter_balance.min(MAX_VOTE_WEIGHT);
                 if *vote {
-                    proposal.votes_for = proposal.votes_for.saturating_add(voter_balance);
+                    proposal.votes_for = proposal.votes_for.saturating_add(voter_weight);
                 } else {
-                    proposal.votes_against = proposal.votes_against.saturating_add(voter_balance);
+                    proposal.votes_against = proposal.votes_against.saturating_add(voter_weight);
                 }
 
-                if proposal.votes_for > proposal.votes_against * 2 && current_epoch >= proposal.end_epoch {
-                    proposal.status = ProposalStatus::Passed;
-                    db.put_governance_param(proposal.param_key.clone(), proposal.param_value.clone());
-                }
+                // The activation step is deferred to finalize_expired_proposals
+                // so the GOVERNANCE_TIMELOCK_EPOCHS window is enforced.
 
                 db.put_proposal(proposal);
             }
@@ -1322,7 +1453,9 @@ impl SimpleExecutor {
     }
 
     fn finalize_expired_proposals(&self, db: &mut dyn StateDB, current_epoch: u64) {
-        let expired: Vec<GovernanceProposal> = db
+        // (a) Decide outcome of any Active proposals whose voting window
+        //     closed. Quorum + super-majority via decide_proposal_outcome.
+        let expired_active: Vec<GovernanceProposal> = db
             .all_proposals()
             .iter()
             .filter(|p| p.status == ProposalStatus::Active && current_epoch > p.end_epoch)
@@ -1330,23 +1463,52 @@ impl SimpleExecutor {
             .cloned()
             .collect();
 
-        for mut proposal in expired {
-            if proposal.votes_for > proposal.votes_against * 2 {
-                proposal.status = ProposalStatus::Passed;
-                db.put_governance_param(proposal.param_key.clone(), proposal.param_value.clone());
-                info!(
-                    proposal_id = proposal.proposal_id,
-                    param = proposal.param_key,
-                    value = proposal.param_value,
-                    "Governance proposal passed and applied"
-                );
-            } else {
-                proposal.status = ProposalStatus::Rejected;
-                debug!(
-                    proposal_id = proposal.proposal_id,
-                    "Governance proposal rejected (insufficient votes)"
-                );
+        for mut proposal in expired_active {
+            proposal.status = decide_proposal_outcome(&proposal);
+            match proposal.status {
+                ProposalStatus::Passed => {
+                    info!(
+                        proposal_id = proposal.proposal_id,
+                        param = proposal.param_key,
+                        value = proposal.param_value,
+                        activates_at_epoch = proposal.end_epoch + GOVERNANCE_TIMELOCK_EPOCHS,
+                        "Governance proposal passed — entering timelock window"
+                    );
+                }
+                _ => {
+                    debug!(
+                        proposal_id = proposal.proposal_id,
+                        for_weight = proposal.votes_for,
+                        against_weight = proposal.votes_against,
+                        voters = proposal.voters.len(),
+                        "Governance proposal rejected (no quorum or super-majority)"
+                    );
+                }
             }
+            db.put_proposal(proposal);
+        }
+
+        // (b) Activate any Passed proposals whose timelock has elapsed.
+        let timelock_due: Vec<GovernanceProposal> = db
+            .all_proposals()
+            .iter()
+            .filter(|p| {
+                p.status == ProposalStatus::Passed
+                    && current_epoch >= p.end_epoch.saturating_add(GOVERNANCE_TIMELOCK_EPOCHS)
+            })
+            .cloned()
+            .cloned()
+            .collect();
+
+        for mut proposal in timelock_due {
+            db.put_governance_param(proposal.param_key.clone(), proposal.param_value.clone());
+            proposal.status = ProposalStatus::Executed;
+            info!(
+                proposal_id = proposal.proposal_id,
+                param = proposal.param_key,
+                value = proposal.param_value,
+                "Governance: timelock elapsed — parameter activated"
+            );
             db.put_proposal(proposal);
         }
     }
@@ -4012,5 +4174,94 @@ contract Counter {
             })],
         )).unwrap();
         assert_eq!(r.txs_failed, 1, "claim without unbonding must fail");
+    }
+
+    // ─── Gap-A #4 governance bounds ───────────────────────────────────
+
+    fn proposal_with(votes_for: u64, votes_against: u64, voter_count: usize) -> GovernanceProposal {
+        let mut voters = std::collections::HashSet::new();
+        for i in 0..voter_count {
+            let mut a = [0u8; 32];
+            a[0] = i as u8;
+            voters.insert(a);
+        }
+        GovernanceProposal {
+            proposal_id: 0,
+            proposer: [0u8; 32],
+            title: "t".into(),
+            param_key: "block_gas_limit".into(),
+            param_value: "1000000".into(),
+            start_epoch: 0,
+            end_epoch: 100,
+            votes_for,
+            votes_against,
+            status: ProposalStatus::Active,
+            created_at: 0,
+            voters,
+        }
+    }
+
+    #[test]
+    fn test_decide_proposal_outcome_passes_super_majority_with_quorum() {
+        let p = proposal_with(QUORUM_MIN_TOTAL_WEIGHT, 0, QUORUM_MIN_VOTERS);
+        assert_eq!(decide_proposal_outcome(&p), ProposalStatus::Passed);
+    }
+
+    #[test]
+    fn test_decide_proposal_outcome_rejects_below_quorum_weight() {
+        let p = proposal_with(QUORUM_MIN_TOTAL_WEIGHT - 1, 0, QUORUM_MIN_VOTERS);
+        assert_eq!(decide_proposal_outcome(&p), ProposalStatus::Rejected);
+    }
+
+    #[test]
+    fn test_decide_proposal_outcome_rejects_below_min_voters() {
+        let p = proposal_with(QUORUM_MIN_TOTAL_WEIGHT, 0, QUORUM_MIN_VOTERS - 1);
+        assert_eq!(decide_proposal_outcome(&p), ProposalStatus::Rejected);
+    }
+
+    #[test]
+    fn test_decide_proposal_outcome_rejects_without_super_majority() {
+        // for == 2*against → not strictly greater → rejected.
+        let p = proposal_with(20_000_000, 10_000_000, QUORUM_MIN_VOTERS);
+        assert_eq!(decide_proposal_outcome(&p), ProposalStatus::Rejected);
+    }
+
+    #[test]
+    fn test_validate_param_value_governable_keys() {
+        assert!(validate_param_value("block_gas_limit", "500000").is_ok());
+        assert!(validate_param_value("block_gas_limit", "999").is_err());
+        assert!(validate_param_value("block_gas_limit", "abc").is_err());
+        assert!(validate_param_value("base_fee_floor", "100").is_ok());
+        assert!(validate_param_value("base_fee_ceiling", "1000").is_ok());
+        assert!(validate_param_value("target_gas_utilization", "0.5").is_ok());
+        assert!(validate_param_value("target_gas_utilization", "1.5").is_err());
+        assert!(validate_param_value("target_gas_utilization", "-0.1").is_err());
+    }
+
+    #[test]
+    fn test_validate_param_value_upgrade_contract_pattern() {
+        let good = "a".repeat(64);
+        let bad_len = "a".repeat(63);
+        let bad_hex = "g".repeat(64);
+        assert!(validate_param_value("upgrade_contract:42", &good).is_ok());
+        assert!(validate_param_value("upgrade_contract:42", &bad_len).is_err());
+        assert!(validate_param_value("upgrade_contract:42", &bad_hex).is_err());
+    }
+
+    #[test]
+    fn test_validate_param_value_unknown_key_rejected() {
+        assert!(validate_param_value("chain_id", "evaporchain-evil").is_err());
+        assert!(validate_param_value("total_supply", "999999").is_err());
+    }
+
+    #[test]
+    fn test_is_governable_param_key() {
+        assert!(is_governable_param_key("block_gas_limit"));
+        assert!(is_governable_param_key("base_fee_floor"));
+        assert!(is_governable_param_key("upgrade_contract:0"));
+        assert!(is_governable_param_key("upgrade_contract:99999"));
+        assert!(!is_governable_param_key("chain_id"));
+        assert!(!is_governable_param_key(""));
+        assert!(!is_governable_param_key("upgrade_contract")); // missing colon
     }
 }
