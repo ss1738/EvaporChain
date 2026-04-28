@@ -1,0 +1,15 @@
+[package]
+name = "evaporchain-pnt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Phasing Nullifier Tree (PNT). Bounded nullifier sets — kills monotone privacy-chain growth (Tornado / Aztec / Zcash). Per INVENTION_STACK.md §4.2 (Tier 2)."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
