@@ -35,6 +35,7 @@ members = [
     "crates/evaporchain-hot-cold-stake",
     "crates/evaporchain-hlwa",
     "crates/evaporchain-pnt",
+    "crates/evaporchain-hlts",
     "crates/evaporchain-crypto",
     "crates/evaporchain-state",
     "crates/evaporchain-consensus",
