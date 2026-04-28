@@ -2637,6 +2637,26 @@ impl TendermintConsensus {
     pub fn perform_da_sampling(&self, block: &Block) -> Option<ConsensusMessage> {
         let data_root = block.data_root?;
 
+        // Empty-block sentinel: must mirror the proposer logic at the
+        // top of create_proposal (line ~2120). The proposer skips the
+        // BlockDA encoding entirely for txs.is_empty() and stamps a
+        // fixed blake3("evaporchain:empty_block") root. If the verifier
+        // tries to encode an empty tx list through BlockDA, it produces
+        // a DIFFERENT root and rejects every empty block — which is
+        // every block in a quiet cluster, so quorum never forms.
+        // Cluster-fix while bringing up the 3-Mini Tailscale BFT proof.
+        if block.transactions.is_empty() {
+            let expected: [u8; 32] = blake3::hash(b"evaporchain:empty_block").into();
+            if data_root != expected {
+                warn!(
+                    height = block.number,
+                    "DA sampling: empty-block data_root differs from sentinel"
+                );
+                return None;
+            }
+            return self.make_da_attestation(block.number, data_root, 0);
+        }
+
         let tx_bytes = serde_json::to_vec(&block.transactions).ok()?;
 
         // ── 2D sampling path (preferred) ────────────────────────────────
