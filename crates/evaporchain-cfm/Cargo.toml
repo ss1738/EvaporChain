@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-cfm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Crooks-Singh Fee Equilibrium: closed-form Boltzmann-reweighted fee distribution p_eq(f) ∝ exp(−β f) · ρ_mempool(f) with β = 1/λ. Per INVENTION_STACK.md §A1.2 T2 (Crooks 1999 fluctuation theorem; Jarzynski 1997). Third piece of the weeks 4-7 fee-market triple-stack."
+
+[dependencies]
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
+evaporchain-sanov-slashing = { path = "../evaporchain-sanov-slashing" }
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
