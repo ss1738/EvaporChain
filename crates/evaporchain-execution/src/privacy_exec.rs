@@ -1356,4 +1356,3 @@ mod tests {
         assert!(msg.contains("rebuilt root"), "expected mismatch error, got: {msg}");
     }
 }
-}
