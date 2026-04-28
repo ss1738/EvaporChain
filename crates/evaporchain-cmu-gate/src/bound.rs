@@ -91,8 +91,10 @@ mod proptests {
             let v_low = cmu_check(cmu, e, h);
             let v_high = cmu_check(cmu.saturating_add(extra), e, h);
             // If the higher Cμ is Ok, the lower one MUST also be Ok.
-            if matches!(v_high, Verdict::Ok { .. }) {
-                prop_assert!(matches!(v_low, Verdict::Ok { .. }));
+            let high_ok = matches!(v_high, Verdict::Ok { .. });
+            let low_ok = matches!(v_low, Verdict::Ok { .. });
+            if high_ok {
+                prop_assert!(low_ok);
             }
         }
     }
