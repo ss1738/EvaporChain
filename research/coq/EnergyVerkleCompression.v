@@ -188,6 +188,24 @@ Qed.
 (* When the precondition `all_cold` holds (every active leaf has energy
    0), the energy sum is exactly 0 both before and after compression —
    so compression is energy-conservative on cold subtrees. *)
+(* Pure list helper: zips a `Forall all_cold cs` with a `Forall P cs`
+   (where P = fun n => all_cold n -> energy_sum n = 0) into the
+   conclusion `Forall (energy_sum = 0) cs`. Stand-alone so the
+   induction over `cs` is unencumbered by the outer node induction. *)
+Lemma cold_zip_forall : forall cs,
+    List.Forall all_cold cs ->
+    List.Forall (fun n => all_cold n -> energy_sum n = 0) cs ->
+    List.Forall (fun c => energy_sum c = 0) cs.
+Proof.
+  induction cs as [| c cs IH]; intros Hall HforP.
+  - apply List.Forall_nil.
+  - inversion Hall  as [| ? ? Ha Has]; subst.
+    inversion HforP as [| ? ? Hp Hps]; subst.
+    apply List.Forall_cons.
+    + apply Hp. exact Ha.
+    + apply IH; assumption.
+Qed.
+
 Lemma cold_subtree_zero_energy : forall n,
     all_cold n -> energy_sum n = 0.
 Proof.
@@ -200,16 +218,7 @@ Proof.
     intros Hall. inversion Hall as [| | cs0 Hcs0 |]; subst.
     simpl.
     apply fold_left_zero_of_Forall_zero.
-    (* Zip the two Foralls (Hcs0 : Forall all_cold cs,
-                            H    : Forall (all_cold -> energy_sum = 0) cs)
-       into Forall (energy_sum = 0) cs. *)
-    induction cs as [| c cs' IHcs].
-    + apply List.Forall_nil.
-    + inversion Hcs0 as [| ? ? Ha Has]; subst.
-      inversion H    as [| ? ? Hh Hhs]; subst.
-      apply List.Forall_cons.
-      * apply Hh. exact Ha.
-      * apply IHcs; assumption.
+    apply cold_zip_forall; assumption.
   - (* NCompressed *) intros _. reflexivity.
 Qed.
 
