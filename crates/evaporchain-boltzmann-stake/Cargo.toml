@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-boltzmann-stake"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Singh-Boltzmann Stake. Validator stake decays by default (single λ), refresh by producing blocks. Boltzmann distribution over validator activity. Per INVENTION_STACK.md §4.1 #5: kills the stake-and-lease-key-to-MEV pattern."
+
+[dependencies]
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
+evaporchain-cfm = { path = "../evaporchain-cfm" }
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
