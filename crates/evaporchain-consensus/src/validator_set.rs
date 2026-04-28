@@ -74,6 +74,26 @@ pub struct ValidatorInfo {
     /// Whether the BLS proof-of-possession has been verified.
     #[serde(default)]
     pub pop_verified: bool,
+    /// Previous BLS public key, retained during the rotation grace window
+    /// so in-flight votes signed with the old key still verify. Cleared
+    /// (set to `None`) once `bls_prev_key_expiry_epoch` has elapsed.
+    /// Closes punch-list 4b.
+    #[serde(default)]
+    pub bls_public_key_prev: Option<Vec<u8>>,
+    /// Last epoch (inclusive) at which `bls_public_key_prev` is still
+    /// accepted by `verify_commit_certificate`. After this epoch, only
+    /// `bls_public_key` is consulted.
+    #[serde(default)]
+    pub bls_prev_key_expiry_epoch: Option<u64>,
+    /// Total stake delegated to this validator by other token holders,
+    /// summed across the live `DelegationRecord` set in StateDB. Cached
+    /// here so the consensus quorum check (and other hot paths) don't
+    /// have to walk the delegation map every block. Refreshed by
+    /// `ValidatorSet::refresh_delegated_stakes` at block-production
+    /// boundaries. Defaults to 0 — pre-delegation chains keep the same
+    /// effective stake as their `stake` field.
+    #[serde(default)]
+    pub delegated_stake: u64,
 }
 
 impl ValidatorInfo {
@@ -92,7 +112,17 @@ impl ValidatorInfo {
             total_slashed: 0,
             bls_pop: None,
             pop_verified: false,
+            bls_public_key_prev: None,
+            bls_prev_key_expiry_epoch: None,
+            delegated_stake: 0,
         }
+    }
+
+    /// Total voting power = own stake + cached delegated stake. Used by
+    /// quorum checks. Saturating add prevents overflow under Byzantine
+    /// stake-injection scenarios.
+    pub fn effective_stake(&self) -> u64 {
+        self.stake.saturating_add(self.delegated_stake)
     }
 
     /// Create a validator with a BLS public key and proof-of-possession.
@@ -224,6 +254,67 @@ impl ValidatorSet {
         let pk = BlsPublicKey(public_key_bytes.to_vec());
         let pop = BlsSignature(pop_signature.to_vec());
         BlsVerifier::verify_proof_of_possession(&pk, &pop)
+    }
+
+    /// Public PoP verification helper. Used by the execution layer to
+    /// validate `RotateValidatorKey` proof-of-possession on both the old
+    /// and new keys before applying a rotation.
+    pub fn verify_pop(public_key_bytes: &[u8], pop_signature: &[u8]) -> bool {
+        Self::verify_bls_pop(public_key_bytes, pop_signature)
+    }
+
+    /// Apply a validator BLS key rotation. The previous public key is
+    /// stashed in `bls_public_key_prev` until `expiry_epoch` so in-flight
+    /// votes signed with the old key still verify during the grace window.
+    ///
+    /// Caller responsibilities (NOT checked here, since this is the
+    /// final-step state mutator):
+    ///   - PoP-verify the new key with the supplied `bls_pop_new`
+    ///   - PoP-verify that the old key (currently on-chain) signed the new
+    ///     key claim (`bls_pop_old`) — proves continuity of control
+    ///   - Confirm `expiry_epoch >= current_epoch`
+    ///
+    /// Returns false if the validator is unknown or has no current BLS key.
+    /// Closes punch-list 4b state mutation half.
+    pub fn rotate_validator_key(
+        &mut self,
+        validator_id: u64,
+        new_pk: Vec<u8>,
+        new_pop: Vec<u8>,
+        expiry_epoch: u64,
+    ) -> bool {
+        let v = match self.validators.iter_mut().find(|v| v.id == validator_id) {
+            Some(v) => v,
+            None => return false,
+        };
+        let prev = match v.bls_public_key.take() {
+            Some(p) if !p.is_empty() => p,
+            _ => return false,
+        };
+        v.bls_public_key_prev = Some(prev);
+        v.bls_prev_key_expiry_epoch = Some(expiry_epoch);
+        v.bls_public_key = Some(new_pk);
+        v.bls_pop = Some(new_pop);
+        // The new key has been PoP-verified by the caller; record it.
+        v.pop_verified = true;
+        true
+    }
+
+    /// Drop the previous key for any validator whose grace window has
+    /// elapsed. Cheap O(n) sweep; called once per epoch from the
+    /// execution layer.
+    pub fn purge_expired_prev_keys(&mut self, current_epoch: u64) -> usize {
+        let mut purged = 0usize;
+        for v in self.validators.iter_mut() {
+            if let Some(expiry) = v.bls_prev_key_expiry_epoch {
+                if current_epoch > expiry {
+                    v.bls_public_key_prev = None;
+                    v.bls_prev_key_expiry_epoch = None;
+                    purged += 1;
+                }
+            }
+        }
+        purged
     }
 
     /// Remove a validator by id.
@@ -465,11 +556,41 @@ impl ValidatorSet {
 
     /// Total raw stake across all active (non-jailed) validators.
     /// Uses saturating arithmetic to prevent overflow in Byzantine scenarios.
+    /// Includes both self-stake and cached delegated stake (P0 #4 Phase 6).
+    /// Quorum checks compare signing voting power against this total.
     pub fn total_stake(&self) -> u64 {
+        self.validators.iter()
+            .filter(|v| !v.jailed)
+            .map(|v| v.effective_stake())
+            .fold(0u64, |acc, s| acc.saturating_add(s))
+    }
+
+    /// Total *self-stake only* across active validators. Useful when
+    /// reporting protocol-fundamentals separately from delegations.
+    pub fn total_self_stake(&self) -> u64 {
         self.validators.iter()
             .filter(|v| !v.jailed)
             .map(|v| v.stake)
             .fold(0u64, |acc, s| acc.saturating_add(s))
+    }
+
+    /// Refresh each validator's `delegated_stake` from the live
+    /// DelegationRecord set in StateDB. Should be called at the start
+    /// of every block production cycle so quorum checks within that
+    /// block use up-to-date voting power. Within-block delegations
+    /// take effect on the next block.
+    pub fn refresh_delegated_stakes(&mut self, db: &dyn evaporchain_state::db::StateDB) {
+        // Build a per-validator total from the delegation set in one pass.
+        let mut totals: std::collections::HashMap<u64, u64> =
+            std::collections::HashMap::new();
+        for d in db.all_delegations() {
+            *totals.entry(d.validator_id).or_insert(0) =
+                totals.get(&d.validator_id).copied().unwrap_or(0)
+                    .saturating_add(d.amount);
+        }
+        for v in self.validators.iter_mut() {
+            v.delegated_stake = totals.get(&v.id).copied().unwrap_or(0);
+        }
     }
 
     /// Get a validator by ID.
