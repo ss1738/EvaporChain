@@ -26,6 +26,7 @@ flowchart TD
     style L fill:#d1e7dd
     style N fill:#d1e7dd
 
-    %% * As of 2026-04-27 the 2D erasure encoder is implemented but not
-    %% yet wired into produce_block — empty blocks ship with sentinel data_root.
-    %% See audit/end_to_end_audit_2026_04_27.md item 4.
+    %% * As of 2026-04-27 the 2D erasure encoder is wired into all 3
+    %% producers via compute_block_da #40;commit 1fc67c0#41;. Empty
+    %% blocks ship a sentinel data_root #40;blake3#40;"evaporchain:empty_block"#41;#41;
+    %% so DA attestation rounds fire on every block. Closed K-04.

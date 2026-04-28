@@ -1408,6 +1408,38 @@ impl ExecutionEngine for ParallelExecutor {
         self.contract_engine.tick(block.epoch);
         self.script_engine.tick(block.epoch);
 
+        // Punch-list 6: storage-rent collection. Inline here (rather than
+        // a method on ParallelExecutor) because the rent logic is small,
+        // gated by `last_rent_epoch`, and identical to the SimpleExecutor
+        // path. Idempotent: if already charged this epoch, no-op.
+        if block.epoch > db.get_last_rent_epoch() {
+            let addresses = db.all_account_addresses();
+            for addr in addresses {
+                let rent_info = {
+                    let acct = match db.get_account(&addr) {
+                        Some(a) => a,
+                        None => continue,
+                    };
+                    if acct.storage_bytes == 0 {
+                        continue;
+                    }
+                    let rent = acct.storage_bytes.saturating_mul(
+                        evaporchain_types::STORAGE_RENT_PER_BYTE_PER_EPOCH,
+                    );
+                    (rent, acct.balance)
+                };
+                let acct = db.get_or_create_account(&addr);
+                if acct.balance >= rent_info.0 {
+                    acct.balance -= rent_info.0;
+                } else {
+                    acct.balance = 0;
+                    acct.storage_deposit = 0;
+                    acct.storage_bytes = 0;
+                }
+            }
+            db.put_last_rent_epoch(block.epoch);
+        }
+
         let state_root = db.compute_state_root();
 
         info!(

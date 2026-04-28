@@ -80,6 +80,14 @@ impl ValidatorSetCommitment {
     }
 
     /// Verify BLS aggregate signature on a commit certificate against this validator set.
+    ///
+    /// Note on key rotation (punch-list 4b): a `ValidatorSetCommitment`
+    /// snapshots `(stake, pk)` per validator at the point the commitment
+    /// was issued. Grace-window verification of in-flight rotations
+    /// happens upstream in `TendermintConsensus::verify_commit_certificate`,
+    /// against the live `ValidatorSet` which carries prev-key history.
+    /// Bridge-level verification operates on the snapshot as it stood at
+    /// commitment time, so the live grace window is not in scope here.
     pub fn verify_certificate_signature(
         &self,
         cert: &CommitCertificate,

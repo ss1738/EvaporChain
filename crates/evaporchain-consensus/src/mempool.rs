@@ -8,6 +8,15 @@ const MAX_MEMPOOL_SIZE: usize = 10_000;
 /// Maximum transaction data size in bytes (prevents oversized payloads).
 const MAX_TX_SIZE_BYTES: usize = 128 * 1024; // 128 KB
 
+/// Maximum aggregate bytes across all pending mempool transactions
+/// (DoS protection — caps total memory regardless of per-tx size).
+/// Closes punch-list 5: prior to this, per-tx and per-account caps were
+/// enforced but the global byte total was tracked-not-rejected, so an
+/// adversary submitting many medium-sized txs could exceed the implicit
+/// 10K × 128KB = 1.28GB ceiling. 256 MiB is well above realistic
+/// throughput needs for an L1 mempool.
+const MAX_MEMPOOL_BYTES: usize = 256 * 1024 * 1024; // 256 MiB
+
 /// Maximum transactions per account in the mempool (anti-spam).
 const MAX_TXS_PER_ACCOUNT: usize = 64;
 
@@ -127,6 +136,15 @@ impl Mempool {
         }
         let tx_size = Self::estimate_tx_size(tx);
         if tx_size > MAX_TX_SIZE_BYTES {
+            self.rejected_count += 1;
+            return false;
+        }
+        // Punch-list 5: global byte-cap admission check. Reject when the
+        // pool's total serialized bytes plus this tx would exceed the
+        // configured cap. Prevents an adversary from filling the mempool
+        // with sub-128KB txs that individually pass the per-tx check but
+        // collectively blow past the implicit memory ceiling.
+        if self.total_bytes.saturating_add(tx_size) > MAX_MEMPOOL_BYTES {
             self.rejected_count += 1;
             return false;
         }
@@ -515,7 +533,7 @@ impl Default for Mempool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use evaporchain_types::TransferTx;
+    use evaporchain_types::{BlobTx, TransferTx};
 
     fn dummy_tx_with_nonce(nonce: u64) -> Transaction {
         Transaction::Transfer(TransferTx {
@@ -682,5 +700,80 @@ mod tests {
         assert!(pool.submit(tx2));
         assert_eq!(pool.len(), 2);
         assert_eq!(pool.duplicate_count(), 0);
+    }
+
+    /// Punch-list 5: a tx whose size would push the pool past the global
+    /// byte cap is rejected, even when the per-tx and per-account caps
+    /// would otherwise admit it.
+    #[test]
+    fn test_global_byte_cap_rejects_when_pool_would_overflow() {
+        // Construct a Blob tx whose body alone is just under the per-tx
+        // limit. Submitting enough of these should fill the global cap
+        // long before the 10K-tx count cap.
+        let mut pool = Mempool::new();
+        // Each blob: 100 KB of payload — well under MAX_TX_SIZE_BYTES (128 KB)
+        // but means we can fit roughly MAX_MEMPOOL_BYTES / 100KB ≈ 2621 txs.
+        // We don't actually need to reach that count — just verify the cap
+        // is enforced. To keep the test fast we use a much smaller artificial
+        // mempool by writing many txs and asserting rejected_count > 0
+        // long before MAX_MEMPOOL_SIZE.
+        //
+        // To make the test deterministic and fast, we craft a single
+        // borderline-large blob and confirm the second one is rejected.
+        // We size the blob so two of them exceed the global cap.
+
+        // We can't easily mutate the const, so instead we exercise the
+        // contract directly: total_bytes counter advances and the
+        // saturating_add check fires. Use a blob just over half the cap.
+        let half_cap = (super::MAX_MEMPOOL_BYTES / 2) + 1024;
+        let payload_size = half_cap.saturating_sub(64); // 64-byte fudge for tx framing
+        let blob1 = Transaction::Blob(BlobTx {
+            namespace_id: 1,
+            data: vec![0xABu8; payload_size],
+            submitter: [1u8; 32],
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        });
+        // Each blob exceeds MAX_TX_SIZE_BYTES (128 KiB) so the per-tx cap
+        // would reject it. This test instead targets the global cap path,
+        // so we'd need to reduce the blob size below MAX_TX_SIZE_BYTES and
+        // submit many. Switch strategy: use small blobs and many submits.
+        let _ = blob1; // unused — keep the example for documentation
+
+        // Submit ~3000 blobs of just-under-128KB until the global cap fires.
+        let mut submitted = 0usize;
+        let mut rejected_after = false;
+        let blob_payload = 100 * 1024; // 100 KB payload
+        for i in 0..u32::MAX {
+            let tx = Transaction::Blob(BlobTx {
+                namespace_id: 1,
+                data: vec![0u8; blob_payload],
+                submitter: [(i & 0xff) as u8; 32], // spread across senders to dodge per-account cap
+                nonce: i as u64,
+                signature: None,
+                public_key: None,
+            });
+            if pool.submit(tx) {
+                submitted += 1;
+                if submitted >= super::MAX_MEMPOOL_SIZE {
+                    panic!("byte cap should fire before tx-count cap");
+                }
+            } else {
+                rejected_after = true;
+                break;
+            }
+        }
+        assert!(rejected_after, "byte cap should reject a tx eventually");
+        assert!(
+            pool.total_bytes() <= super::MAX_MEMPOOL_BYTES,
+            "total_bytes ({}) must stay within MAX_MEMPOOL_BYTES ({})",
+            pool.total_bytes(),
+            super::MAX_MEMPOOL_BYTES
+        );
+        assert!(
+            pool.rejected_count() >= 1,
+            "rejected_count must reflect the byte-cap rejection"
+        );
     }
 }

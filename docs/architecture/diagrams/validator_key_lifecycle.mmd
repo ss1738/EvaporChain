@@ -5,7 +5,7 @@ flowchart TD
     B -->|no| C[BlsKeypair::generate#40;#41;<br/>OsRng entropy]
     B -->|yes, 32B| D[from_secret_bytes#40;#41;<br/>load existing keypair]
     B -->|yes, wrong size| E[Log warning, regenerate]
-    C --> F[write_secret_file<br/>plaintext + mode 0600]
+    C --> F[write_secret_file<br/>EVK1 encrypted #40;Argon2id +<br/>XChaCha20-Poly1305#41; if<br/>EVAPORCHAIN_VALIDATOR_KEY_PASS<br/>set; else plaintext + mode 0600]
     F --> G[BLS keypair active]
     D --> G
     E --> F
@@ -24,11 +24,17 @@ flowchart TD
     Q -.-> K
     Q -.-> M
 
-    style F fill:#fff3cd
+    style F fill:#d1e7dd
     style N fill:#fff3cd
     style J fill:#d1e7dd
     style Q fill:#f8d7da
 
-    %% YELLOW gates = plaintext on disk #40;mode 0600 only#41; — mainnet hardening required
-    %% RED   gates = unimplemented — mainnet blocker for operational rotation
-    %% audit/cross_verification_2026_04_27.md §4 — C-10 fix landed on wallet keys not validator keys
+    %% NOTE 2026-04-27 update:
+    %% - BLS validator key encryption #40;F#41; landed via commit 0af4bb2
+    %%   #40;EVK1: Argon2id + XChaCha20-Poly1305#41;. Opt-in via
+    %%   EVAPORCHAIN_VALIDATOR_KEY_PASS env var; --mainnet strict mode
+    %%   refuses to start without it.
+    %% - TLS validator cert #40;N#41; still plaintext on disk #40;mode 0600#41;
+    %%   — mainnet hardening still required for that path.
+    %% - Key rotation #40;Q#41; remains unimplemented — operational rotation
+    %%   needs a fresh deployment for now.

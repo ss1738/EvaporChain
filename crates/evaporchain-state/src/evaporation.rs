@@ -201,6 +201,19 @@ impl EvaporationEngine {
             original_half_life: Some(obj.half_life),
         };
 
+        // Credit back the owner's storage_bytes for the data we're about
+        // to evaporate. Mirrors the increment on CreateObject in
+        // evaporchain-execution::execute_create_object. saturating_sub
+        // guards against underflow for objects created before the
+        // storage_bytes write-path landed (their account was never
+        // credited, so the account's storage_bytes is already 0 and
+        // saturating_sub is a no-op). Closes the deferred follow-up to
+        // the storage_bytes-write-path build (audit/end_to_end_audit_2026_04_27.md §3).
+        let owner_acct = db.get_or_create_account(&obj.owner);
+        owner_acct.storage_bytes = owner_acct
+            .storage_bytes
+            .saturating_sub(obj.data.len() as u64);
+
         db.delete_object(&obj.id);
         db.put_ghost(ghost);
     }
@@ -660,5 +673,69 @@ mod tests {
         let r = engine.process_epoch(&mut db, 1000);
         assert_eq!(r.decayed, 1);
         assert!(r.entered_grace.is_empty());
+    }
+
+    // ─── Storage_bytes decrement on evaporation ─────────────────────────────
+
+    #[test]
+    fn test_evaporation_decrements_owner_storage_bytes() {
+        // When an object evaporates, the owner's storage_bytes must
+        // decrement by the object's data length — mirroring the credit
+        // applied on CreateObject in evaporchain-execution.
+        let mut db = InMemoryStateDB::new();
+
+        // Object with 5-byte data, dies fast (energy 4, half_life 1).
+        let mut obj = make_object(1, 4, 1);
+        obj.data = vec![0xAA; 5];
+        let owner = obj.owner;
+        db.put_object(obj);
+
+        // Manually pre-credit the owner's storage_bytes to mimic the
+        // execute_create_object path that runs in evaporchain-execution.
+        // (The evaporation engine alone cannot trigger CreateObject; this
+        // test is for the decrement path only.)
+        {
+            let acct = db.get_or_create_account(&owner);
+            acct.storage_bytes = 5;
+        }
+        assert_eq!(db.get_account(&owner).unwrap().storage_bytes, 5);
+
+        let engine = EvaporationEngine::new(3);
+        // Many epochs → energy 0, then grace expires → ghost.
+        let r = engine.process_epoch(&mut db, 100);
+        assert_eq!(r.evaporated.len(), 1, "object should have evaporated");
+
+        // After evaporation, the owner's storage_bytes should be back to 0.
+        assert_eq!(
+            db.get_account(&owner).unwrap().storage_bytes,
+            0,
+            "evaporation must credit back the data.len() to owner's storage_bytes"
+        );
+    }
+
+    #[test]
+    fn test_evaporation_storage_bytes_saturates_on_under_credit() {
+        // Defensive: if an object was created before the storage_bytes
+        // write-path landed (so the owner was never credited), the
+        // decrement on evaporation must NOT underflow. saturating_sub
+        // guarantees this — the stored value stays at 0.
+        let mut db = InMemoryStateDB::new();
+        let mut obj = make_object(2, 4, 1);
+        obj.data = vec![0xBB; 100]; // large data
+        let owner = obj.owner;
+        db.put_object(obj);
+
+        // Owner's storage_bytes was never credited (legacy / pre-fix object).
+        // The account may not even exist yet — get_or_create inside
+        // evaporate_object will create it with storage_bytes=0, then
+        // saturating_sub keeps it at 0.
+
+        let engine = EvaporationEngine::new(3);
+        let r = engine.process_epoch(&mut db, 100);
+        assert_eq!(r.evaporated.len(), 1);
+
+        // Storage_bytes must saturate to 0, not underflow.
+        let acct = db.get_account(&owner).unwrap();
+        assert_eq!(acct.storage_bytes, 0, "saturating_sub must prevent underflow");
     }
 }

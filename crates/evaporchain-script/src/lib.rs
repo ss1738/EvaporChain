@@ -246,6 +246,13 @@ pub struct ScriptContract {
     pub half_life: HalfLife,
     pub last_refreshed: Epoch,
     pub evaporated: bool,
+    /// Bytes credited to the creator's `storage_bytes` at deploy time.
+    /// Set to `source.len()` at deploy — exact match to what the
+    /// execution layer charges. The execution-layer evaporation
+    /// credit-back reads this for precise debit. `#[serde(default)]`
+    /// keeps legacy script contracts deserializable.
+    #[serde(default)]
+    pub storage_bytes_charged: u64,
 }
 
 impl ScriptContract {
@@ -439,6 +446,9 @@ impl ScriptEngine {
                 half_life,
                 last_refreshed: current_epoch,
                 evaporated: false,
+                // Exact deploy-time charge. Matches what the execution
+                // layer credits to the deployer's storage_bytes.
+                storage_bytes_charged: source.len() as u64,
             },
         );
 

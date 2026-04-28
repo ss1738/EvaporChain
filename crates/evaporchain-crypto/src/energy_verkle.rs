@@ -526,6 +526,13 @@ impl EnergyVerkleTrie {
 
     /// Compress all cold subtrees (max_energy == 0, leaf_count > 0).
     /// Returns the number of subtrees compressed.
+    ///
+    /// Mechanized invariants: `research/coq/EnergyVerkleCompression.v`
+    /// — `compress_preserves_total_leaf_count` (Qed),
+    ///   `compress_energy_sum_monotone` (Qed),
+    ///   `compress_preserves_commitment` (Axiom — pinned to the
+    ///   `commitment: child.hash()` line in `compress_recursive` below;
+    ///   any change there must update the Coq axiom binding).
     pub fn compress_cold(&mut self) -> u32 {
         let count = Self::compress_recursive(&mut self.root);
         self.compressions += count as u64;

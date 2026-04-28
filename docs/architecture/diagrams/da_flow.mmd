@@ -28,7 +28,11 @@ flowchart LR
     style R fill:#d1e7dd
 
     %% NOTE 2026-04-27:
-    %% encode #40;A→F#41; library is implemented but NOT called from
-    %% MockConsensus::produce_block#40;#41;. data_root: None for empty
-    %% blocks today; non-empty blocks also bypass the encoder.
-    %% audit/end_to_end_audit_2026_04_27.md item 4.
+    %% encode #40;A→F#41; is now wired into all 3 block producers via
+    %% compute_block_da#40;#41;: MockConsensus::produce_block,
+    %% MockConsensus::produce_block_with_reveals, and
+    %% RotatingConsensus::produce_block_if_leader. Tendermint already
+    %% had its own DA wiring at tendermint.rs:1958. Empty blocks use a
+    %% sentinel data_root #40;blake3#40;"evaporchain:empty_block"#41;#41;
+    %% so DA attestation rounds fire on every block. Closed by
+    %% commit 1fc67c0 #40;K-04#41;.

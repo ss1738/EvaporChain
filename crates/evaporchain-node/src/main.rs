@@ -122,6 +122,109 @@ fn write_secret_file(path: impl AsRef<std::path::Path>, data: &[u8]) {
     }
 }
 
+/// Punch-list 4c — BLS key file ring scan.
+///
+/// Returns the path of the BLS key file the node should load on startup.
+/// Resolution order:
+///   1. The `bls_key.{N}.bin` file with the highest numeric suffix.
+///   2. Failing that, the canonical `bls_key.bin`.
+///   3. None if neither exists (caller generates fresh).
+fn pick_active_bls_key_path(data_dir: &str, node_tag: &str) -> Option<String> {
+    let canonical = format!("{}/bls_key.bin", data_dir);
+    let mut best: Option<(u64, String)> = None;
+    if let Ok(entries) = std::fs::read_dir(data_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = match path.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n,
+                None => continue,
+            };
+            // Match `bls_key.{N}.bin` exactly — skip `bls_key.bin` here
+            // (handled as fallback) and skip anything else.
+            if let Some(rest) = name.strip_prefix("bls_key.") {
+                if let Some(epoch_str) = rest.strip_suffix(".bin") {
+                    if let Ok(epoch) = epoch_str.parse::<u64>() {
+                        match &best {
+                            Some((cur_epoch, _)) if *cur_epoch >= epoch => {}
+                            _ => {
+                                best = Some((epoch, path.to_string_lossy().into_owned()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if let Some((epoch, path)) = best {
+        println!(
+            "{} \x1b[1;36mBLS key ring: selected bls_key.{}.bin\x1b[0m",
+            node_tag, epoch
+        );
+        return Some(path);
+    }
+    if std::path::Path::new(&canonical).exists() {
+        Some(canonical)
+    } else {
+        None
+    }
+}
+
+/// Punch-list 4c — purge `bls_key.{N}.bin` files whose epoch is more
+/// than `KEY_ROTATION_GRACE_EPOCHS` behind `current_epoch`. Called once
+/// at startup after consensus state is restored. The active key file
+/// (highest epoch) is never purged regardless of age, since deleting
+/// the running key would brick the validator.
+fn purge_stale_bls_key_files(data_dir: &str, current_epoch: u64, node_tag: &str) {
+    use evaporchain_execution::KEY_ROTATION_GRACE_EPOCHS;
+    let cutoff = current_epoch.saturating_sub(KEY_ROTATION_GRACE_EPOCHS);
+    let mut numbered: Vec<(u64, std::path::PathBuf)> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(data_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = match path.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n,
+                None => continue,
+            };
+            if let Some(rest) = name.strip_prefix("bls_key.") {
+                if let Some(epoch_str) = rest.strip_suffix(".bin") {
+                    if let Ok(epoch) = epoch_str.parse::<u64>() {
+                        numbered.push((epoch, path));
+                    }
+                }
+            }
+        }
+    }
+    if numbered.is_empty() {
+        return;
+    }
+    numbered.sort_by_key(|(e, _)| *e);
+    // The highest-epoch file is the active key — never purge.
+    let active_idx = numbered.len() - 1;
+    let mut purged = 0usize;
+    for (i, (epoch, path)) in numbered.iter().enumerate() {
+        if i == active_idx {
+            continue;
+        }
+        if *epoch < cutoff {
+            match std::fs::remove_file(path) {
+                Ok(()) => purged += 1,
+                Err(e) => eprintln!(
+                    "{} \x1b[33mWarning: failed to purge {}: {}\x1b[0m",
+                    node_tag,
+                    path.display(),
+                    e
+                ),
+            }
+        }
+    }
+    if purged > 0 {
+        println!(
+            "{} \x1b[36mBLS key ring: purged {} stale file(s) older than epoch {}\x1b[0m",
+            node_tag, purged, cutoff
+        );
+    }
+}
+
 fn persist_contracts(
     chain_store: &persistence::ChainStore,
     tendermint: &Option<Arc<Mutex<evaporchain_consensus::tendermint::TendermintConsensus>>>,
@@ -960,6 +1063,36 @@ fn validate_mainnet_strict(args: &NodeArgs) -> Result<(), String> {
             "{} must be set (non-empty) so the validator BLS key can be encrypted at rest",
             evaporchain_crypto::bls_key_store::ENV_PASSPHRASE
         ));
+    }
+    // Punch-list 3c: every `*-key.pem` under the data dir must be EVKV-
+    // encrypted in --mainnet mode. The TLS path is opt-in (libp2p Noise
+    // covers the active transport today) but if any operator wired it up,
+    // mainnet strict mode must refuse to start with plaintext private keys
+    // on disk. Mirrors the BLS posture above.
+    if let Ok(entries) = std::fs::read_dir(&args.data_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = match path.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n,
+                None => continue,
+            };
+            if !name.ends_with("-key.pem") {
+                continue;
+            }
+            match evaporchain_network::tls::is_pem_encrypted(&path) {
+                Ok(true) => {} // good
+                Ok(false) => issues.push(format!(
+                    "TLS private key at {} is plaintext on disk; \
+                     re-issue with {} set so it can be wrapped in an EVKV envelope",
+                    path.display(),
+                    evaporchain_crypto::bls_key_store::ENV_PASSPHRASE
+                )),
+                Err(e) => issues.push(format!(
+                    "could not inspect TLS private key {}: {e}",
+                    path.display()
+                )),
+            }
+        }
     }
     if issues.is_empty() {
         Ok(())
@@ -1911,7 +2044,16 @@ async fn main() -> Result<()> {
         // Encryption is opt-in via EVAPORCHAIN_VALIDATOR_KEY_PASS. When set,
         // newly generated keys are written encrypted; without it, the
         // historical plaintext path is used and a warning is logged.
-        let bls_key_path = format!("{}/bls_key.bin", args.data_dir);
+        // Punch-list 4c: scan for `bls_key.{epoch}.bin` rotation files and
+        // pick the one with the highest epoch suffix. Falls back to the
+        // canonical `bls_key.bin` if no numbered file is present. The
+        // numbered files are written by the operator workflow when
+        // submitting a `RotateValidatorKey` tx — they hold the next key
+        // pre-staged so the validator can switch on the rotation epoch.
+        // After-startup purge of stale files happens once `current_epoch`
+        // is known via `purge_stale_bls_key_files` (called below).
+        let bls_key_path = pick_active_bls_key_path(&args.data_dir, &node_tag)
+            .unwrap_or_else(|| format!("{}/bls_key.bin", args.data_dir));
         let validator_passphrase = evaporchain_crypto::bls_key_store::passphrase_from_env();
         let write_bls_secret = |path: &str, sk: &[u8]| {
             match validator_passphrase.as_deref() {
@@ -2132,6 +2274,37 @@ async fn main() -> Result<()> {
                     node_tag, block_number, epoch, &hex::encode(parent_hash)[..16]
                 );
             }
+            // Punch-list 4c: now that current_epoch is known, purge any
+            // bls_key.{N}.bin files older than the rotation grace window.
+            // The active (highest-epoch) file is preserved unconditionally.
+            purge_stale_bls_key_files(&args.data_dir, epoch, &node_tag);
+        }
+
+        // Rebuild the in-memory privacy note tree from persisted commitments
+        // (punch-list 1b). On a fresh DB this is a no-op; on resume it
+        // replays the persisted commitment list rather than the chain.
+        let db_lock = safe_lock(&db);
+        let restore_result = if let Some(ref tc) = tendermint {
+            let mut c = safe_lock(tc);
+            c.restore_privacy_from_db(&*db_lock)
+        } else {
+            let mut c = safe_lock(&consensus);
+            c.executor
+                .privacy_executor
+                .restore_from_db(&*db_lock)
+                .map_err(|e| e.to_string())
+        };
+        match restore_result {
+            Ok(n) if n > 0 => println!(
+                "{} \x1b[1;32mPrivacy note tree restored:\x1b[0m {} commitment(s)",
+                node_tag, n
+            ),
+            Ok(_) => {} // fresh-equivalent: nothing to log
+            Err(e) => panic!(
+                "FATAL: privacy note tree restore failed — {}. \
+                 Refusing to resume with inconsistent state.",
+                e
+            ),
         }
     }
 

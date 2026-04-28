@@ -1573,4 +1573,74 @@ mod tests {
         assert_eq!(total, 0);
         assert_eq!(db.get_delegation(&delegator_addr(10), 7).unwrap().amount, 1000);
     }
+
+    // ── Validator key rotation (punch-list 4b/4d) ──────────────────────
+
+    #[test]
+    fn test_rotate_validator_key_stashes_prev_and_sets_expiry() {
+        use evaporchain_crypto::signatures::BlsKeypair;
+        let kp_old = BlsKeypair::generate();
+        let kp_new = BlsKeypair::generate();
+        let old_pk = kp_old.public_key_bytes().0.clone();
+        let new_pk = kp_new.public_key_bytes().0.clone();
+
+        let mut vs = ValidatorSet::new();
+        let mut info = ValidatorInfo::new(7, 1000, [7u8; 32]);
+        info.bls_public_key = Some(old_pk.clone());
+        info.pop_verified = true;
+        vs.add_validator(info);
+
+        // PoP signature for the new key (any valid PoP — not actually
+        // verified here since rotate_validator_key trusts its caller).
+        let new_pop = kp_new.proof_of_possession().0.clone();
+        assert!(vs.rotate_validator_key(7, new_pk.clone(), new_pop, 100));
+
+        let v = vs.get(7).unwrap();
+        assert_eq!(v.bls_public_key.as_ref().unwrap(), &new_pk);
+        assert_eq!(v.bls_public_key_prev.as_ref().unwrap(), &old_pk);
+        assert_eq!(v.bls_prev_key_expiry_epoch, Some(100));
+    }
+
+    #[test]
+    fn test_purge_expired_prev_keys_clears_stale_entries() {
+        use evaporchain_crypto::signatures::BlsKeypair;
+        let mut vs = ValidatorSet::new();
+        for vid in 1u64..=3 {
+            let kp = BlsKeypair::generate();
+            let mut info = ValidatorInfo::new(vid, 1000, [vid as u8; 32]);
+            info.bls_public_key = Some(kp.public_key_bytes().0.clone());
+            info.bls_public_key_prev = Some(vec![0u8; 48]);
+            // Give each validator a different expiry to exercise the boundary.
+            info.bls_prev_key_expiry_epoch = Some((vid * 10) as u64);
+            info.pop_verified = true;
+            vs.add_validator(info);
+        }
+
+        // current_epoch = 15 → expiry 10 is past, expiry 20 + 30 are still valid.
+        let purged = vs.purge_expired_prev_keys(15);
+        assert_eq!(purged, 1);
+        assert!(vs.get(1).unwrap().bls_public_key_prev.is_none());
+        assert!(vs.get(2).unwrap().bls_public_key_prev.is_some());
+        assert!(vs.get(3).unwrap().bls_public_key_prev.is_some());
+
+        // current_epoch = 25 → 20 also expires, 30 still grace.
+        let purged = vs.purge_expired_prev_keys(25);
+        assert_eq!(purged, 1);
+        assert!(vs.get(2).unwrap().bls_public_key_prev.is_none());
+        assert!(vs.get(3).unwrap().bls_public_key_prev.is_some());
+    }
+
+    #[test]
+    fn test_rotate_validator_key_unknown_validator_returns_false() {
+        let mut vs = ValidatorSet::new();
+        assert!(!vs.rotate_validator_key(999, vec![0u8; 48], vec![0u8; 96], 100));
+    }
+
+    #[test]
+    fn test_rotate_validator_key_no_current_key_returns_false() {
+        let mut vs = ValidatorSet::new();
+        // Validator with no BLS key registered yet.
+        vs.add_validator(ValidatorInfo::new(7, 1000, [7u8; 32]));
+        assert!(!vs.rotate_validator_key(7, vec![0u8; 48], vec![0u8; 96], 100));
+    }
 }

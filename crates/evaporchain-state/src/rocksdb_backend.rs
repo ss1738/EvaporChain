@@ -25,6 +25,7 @@ const TRIE_SNAPSHOT_KEY: &[u8] = b"__energy_verkle_trie__";
 const PRIVACY_NOTE_ROOT_KEY: &[u8] = b"__note_tree_root__";
 const PRIVACY_POOL_BALANCE_KEY: &[u8] = b"__shielded_pool_balance__";
 const PRIVACY_NOTE_COUNT_KEY: &[u8] = b"__note_count__";
+const LAST_RENT_EPOCH_KEY: &[u8] = b"__last_rent_epoch__";
 
 /// Halt the node when a persistence operation fails. Logs the operation +
 /// underlying error, then exits with status 2 so the operator can diagnose.
@@ -88,6 +89,10 @@ pub struct RocksDBStateDB {
     /// preserves leaf-order iteration so PrivacyExecutor can rebuild the
     /// note tree deterministically at startup.
     note_commitments: BTreeMap<u64, [u8; 32]>,
+    /// Last epoch at which `collect_storage_rent` ran. Persisted across
+    /// restarts so rent cadence is exactly per-epoch (not per-block).
+    /// Closes punch-list 6.
+    last_rent_epoch: u64,
     // Batch mode: buffer writes for atomic commit (Mutex for Sync)
     pending_batch: std::sync::Mutex<Option<WriteBatch>>,
     // Undo log for reverting in-memory state on rollback
@@ -243,6 +248,10 @@ impl RocksDBStateDB {
             Ok(Some(bytes)) if bytes.len() == 8 => u64::from_le_bytes(bytes[..8].try_into().unwrap()),
             _ => 0,
         };
+        let last_rent_epoch = match db.get_cf(cf_trie_meta, LAST_RENT_EPOCH_KEY) {
+            Ok(Some(bytes)) if bytes.len() == 8 => u64::from_le_bytes(bytes[..8].try_into().unwrap()),
+            _ => 0,
+        };
         if !spent_nullifiers.is_empty() {
             println!("  RocksDB: loaded {} nullifiers, pool_balance={}, note_count={}", spent_nullifiers.len(), shielded_pool_balance, note_count);
         }
@@ -306,6 +315,7 @@ impl RocksDBStateDB {
             shielded_pool_balance,
             note_count,
             note_commitments,
+            last_rent_epoch,
             pending_batch: std::sync::Mutex::new(None),
             batch_undo: None,
         })
@@ -822,6 +832,18 @@ impl StateDB for RocksDBStateDB {
 
     fn get_all_note_commitments(&self) -> Vec<[u8; 32]> {
         self.note_commitments.values().copied().collect()
+    }
+
+    fn get_last_rent_epoch(&self) -> u64 {
+        self.last_rent_epoch
+    }
+
+    fn put_last_rent_epoch(&mut self, epoch: u64) {
+        self.last_rent_epoch = epoch;
+        let cf = self.cf(CF_TRIE);
+        if let Err(e) = self.db.put_cf(cf, LAST_RENT_EPOCH_KEY, epoch.to_le_bytes()) {
+            fatal_persistence_error("write_last_rent_epoch", e);
+        }
     }
 
     fn get_stake(&self, _validator_id: u64) -> Option<&StakeRecord> {

@@ -1361,6 +1361,12 @@ impl Default for DecayCurve {
 /// Uses the approximation: energy * 2^(-epochs_elapsed / half_life)
 /// Implemented via bit-shifting for complete halvings and linear
 /// interpolation for the fractional part.
+///
+/// Mechanized monotonicity proof: `research/coq/EnergyDecayMonotonicity.v`
+/// (theorem `energy_at_epoch_monotone`). Any change to this function's
+/// arithmetic must be reflected in the Coq spec — the within-halving
+/// case is fully proven; the cross-halving case is `Admitted` pending
+/// one arithmetic-bound lemma.
 pub fn energy_at_epoch(initial: Energy, half_life: HalfLife, epochs_elapsed: u64) -> Energy {
     if half_life == 0 {
         return 0;

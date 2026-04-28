@@ -17,6 +17,7 @@ pub mod certificate;
 pub mod namespace;
 pub mod poha;
 pub mod pruning;
+pub mod light_client;
 
 pub use erasure::ErasureEncoder;
 pub use sampling::{DASampler, DAProof, SampleQuery, SampleResponse, BatchVerifyResult, batch_verify_proofs};

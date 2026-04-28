@@ -39,7 +39,7 @@
 | Fee burn rate | 50% | `genesis-mainnet.json` `tokenomics.fee_burn_rate` | Remaining 50% to stakers |
 | Staker fee share | 50% | `genesis-mainnet.json` `tokenomics.staker_fee_share` | Of non-burned fees |
 | Target staking APY | 5% | `genesis-mainnet.json` `tokenomics.target_staking_apy` | Calibration target |
-| Storage rent | 1 / byte / epoch | `crates/evaporchain-types/src/lib.rs:191` `STORAGE_RENT_PER_BYTE_PER_EPOCH` | **Note: enforcement stubbed; see audit** |
+| Storage rent | 1 / byte / epoch | `crates/evaporchain-types/src/lib.rs:191` `STORAGE_RENT_PER_BYTE_PER_EPOCH` | Enforced once per epoch via `last_rent_epoch` cursor in StateDB. Closes punch-list 6. |
 | Min storage deposit | 1,000 | `crates/evaporchain-types/src/lib.rs:192` `MIN_STORAGE_DEPOSIT` | Per object create |
 
 ### Initial supply distribution (genesis)
@@ -83,7 +83,7 @@
 | `MAX_MEMPOOL_SIZE` (txs) | 10,000 | `crates/evaporchain-consensus/src/mempool.rs:6` |
 | `MAX_TX_SIZE_BYTES` | 131,072 (128 KiB) | `crates/evaporchain-consensus/src/mempool.rs:9` |
 | `MAX_TXS_PER_ACCOUNT` | 64 | `crates/evaporchain-consensus/src/mempool.rs:12` |
-| Global byte cap | **none** | — | Tracked but not enforced — see audit |
+| `MAX_MEMPOOL_BYTES` | 268,435,456 (256 MiB) | `crates/evaporchain-consensus/src/mempool.rs` `MAX_MEMPOOL_BYTES` | Enforced at admission — closes punch-list 5 |
 | TTL eviction | implemented | `mempool.rs:181-203` | Specifics TODO |
 
 ## 6. Identifiers
@@ -107,17 +107,42 @@
 | RocksDB | `rocksdb` | 0.22.0 | 5 column families |
 | libp2p | `libp2p` | 0.54.1 | GossipSub, Kademlia, Noise |
 
-## 8. Open-issue parameter audit
+## 8. Governance-tunable parameter floor bounds
 
-The following parameters are **currently unbounded** when set via governance — see `audit/end_to_end_audit_2026_04_27.md` §5:
+Every parameter set via the governance pipeline is validated against the
+constitutional floor bounds defined in
+`crates/evaporchain-execution/src/lib.rs:validate_governance_param`. These
+bounds are **immutable except by hard fork** — governance can tighten
+them via a `DecayingDAO` contract's `param_bounds`, but never widen them
+past these constants.
 
-- `block_gas_limit`
-- `block_reward`
-- `reward_half_life`
-- `fee_burn_rate`
-- Any `param_value` accepted at `execution/lib.rs:951`
+| Key | Type | Floor bounds | Rationale |
+|---|---|---|---|
+| `block_gas_limit` | u64 | `[10_000, 100_000_000]` | Halts chain at either extreme |
+| `block_reward` | u64 | `[0, 1_000_000_000]` | Prevents single-proposal hyperinflation |
+| `reward_half_life` | u64 | `[100, u64::MAX]` | Below 100, inflation collapses to 0 too fast |
+| `base_fee_floor` | u64 | `[0, u64::MAX/2]` | Leaves headroom for ceiling |
+| `base_fee_ceiling` | u64 | `[1, u64::MAX]` | Zero would never let any tx pay |
+| `fee_burn_rate` | f64 | `[0.0, 1.0]` | Ratio; NaN/inf rejected |
+| `staker_fee_share` | f64 | `[0.0, 1.0]` | Ratio |
+| `target_staking_apy` | f64 | `[0.0, 1.0]` | Ratio |
+| `target_gas_utilization` | f64 | `[0.0, 1.0]` | Ratio (used by PID controller) |
+| (other keys) | — | pass-through | Forward-compatibility default |
 
-**Mainnet must add per-parameter range validation before deployment.**
+Cross-key invariants enforced by `validate_governance_param_against_state`:
+
+- `base_fee_floor < base_fee_ceiling` strictly. When updating either
+  side, the OTHER side as currently set in `db.get_governance_param` is
+  read and the strict-less-than relation is checked. If only one side is
+  set (the other relies on the executor's compiled-in default), the
+  cross-key check is skipped.
+
+Validation fires at four entry points: `execute_governance::CreateProposal`
+(submission), `execute_governance::CastVote` (apply at vote pass),
+`apply_dao_governance` (the DAO bridge), and `finalize_expired_proposals`.
+A defense-in-depth consistency check at `apply_governance_params` (the
+state-readback that the executor runs each block) skips the apply if the
+floor/ceiling pair is somehow inconsistent.
 
 ## 9. How to update this table
 
