@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-cslc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Causal-State Light Client (CSLC). ε-machine reconstruction of the energy-filtered tx process. Per INVENTION_STACK.md §A1.2 T3 (Shalizi-Crutchfield 2001 Optimal Prediction Theorem; Shalizi-Klinkner 2004 CSSR). Tier-0 theorem-grade."
+
+[dependencies]
+evaporchain-sanov-slashing = { path = "../evaporchain-sanov-slashing" }
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
