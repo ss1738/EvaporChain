@@ -81,7 +81,8 @@ Proof.
   intros n k.
   rewrite nat_shr_succ.
   (* Goal: Nat.div2 (nat_shr n k) <= nat_shr n k *)
-  apply Nat.le_div2.
+  rewrite Nat.div2_div.
+  apply Nat.div_le_upper_bound; lia.
 Qed.
 
 Lemma nat_shr_monotone : forall n k1 k2,

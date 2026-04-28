@@ -89,14 +89,21 @@ Fixpoint energy_sum (n : node) : nat :=
 (*  subtree is non-empty (leaf_count > 0).                               *)
 (* --------------------------------------------------------------------- *)
 
-(* All active leaves in the subtree have energy = 0. *)
-Fixpoint all_cold (n : node) : Prop :=
-  match n with
-  | NEmpty => True
-  | NLeaf e _ => e = 0
-  | NInternal cs => List.Forall all_cold cs
-  | NCompressed _ _ => True
-  end.
+(* All active leaves in the subtree have energy = 0.
+
+   We use an Inductive (not Fixpoint) because the recursive use is
+   nested inside `List.Forall`, which Coq's syntactic positivity
+   checker rejects for Fixpoint. The Inductive form expresses the
+   same predicate with constructors that bottom out at:
+     - empty / compressed nodes (trivially cold)
+     - leaves with energy 0
+     - internal nodes whose every child is itself all_cold. *)
+Inductive all_cold : node -> Prop :=
+  | all_cold_empty      : all_cold NEmpty
+  | all_cold_leaf       : forall c, all_cold (NLeaf 0 c)
+  | all_cold_internal   : forall cs, List.Forall all_cold cs ->
+                                     all_cold (NInternal cs)
+  | all_cold_compressed : forall k c, all_cold (NCompressed k c).
 
 (* Compress an entire subtree into a single Compressed node. The
    commitment of the Compressed node is whatever the subtree's hash
@@ -187,17 +194,18 @@ Proof.
   intros n.
   induction n using node_strong_ind.
   - (* NEmpty *)      intros _. reflexivity.
-  - (* NLeaf *)       intros He. simpl in He. simpl. exact He.
+  - (* NLeaf *)       intros He. inversion He; subst. reflexivity.
   - (* NInternal cs, with H : Forall P cs where
                        P = fun n => all_cold n -> energy_sum n = 0 *)
-    intros Hall. simpl in Hall. simpl.
+    intros Hall. inversion Hall as [| | cs0 Hcs0 |]; subst.
+    simpl.
     apply fold_left_zero_of_Forall_zero.
-    (* Zip the two Foralls (Hall : Forall all_cold cs,
+    (* Zip the two Foralls (Hcs0 : Forall all_cold cs,
                             H    : Forall (all_cold -> energy_sum = 0) cs)
        into Forall (energy_sum = 0) cs. *)
     induction cs as [| c cs' IHcs].
     + apply List.Forall_nil.
-    + inversion Hall as [| ? ? Ha Has]; subst.
+    + inversion Hcs0 as [| ? ? Ha Has]; subst.
       inversion H    as [| ? ? Hh Hhs]; subst.
       apply List.Forall_cons.
       * apply Hh. exact Ha.
