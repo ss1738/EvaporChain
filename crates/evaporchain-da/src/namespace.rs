@@ -8,14 +8,42 @@
 //! Inspired by Celestia's NMT design, adapted for EvaporChain.
 
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 /// 8-byte namespace identifier. Namespaces are ordered lexicographically.
 pub type NamespaceId = [u8; 8];
 
-/// Minimum possible namespace (all zeros).
+/// Reserved namespace (all zeros) — system / sentinel; user blobs cannot use it.
+/// Closes Gap-A #9 (audit `end_to_end_audit_2026_04_27.md` §7).
 pub const NAMESPACE_MIN: NamespaceId = [0u8; 8];
-/// Maximum possible namespace (all 0xFF) — reserved for parity data.
+/// Reserved namespace (all 0xFF) — parity / erasure padding.
 pub const NAMESPACE_MAX: NamespaceId = [0xFF; 8];
+
+/// Construction errors for the namespace Merkle tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NmtBuildError {
+    /// A user blob carried a reserved namespace that the NMT refuses to admit.
+    ReservedNamespace { namespace: NamespaceId },
+}
+
+impl std::fmt::Display for NmtBuildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NmtBuildError::ReservedNamespace { namespace } => write!(
+                f,
+                "reserved namespace 0x{} cannot appear in user blobs",
+                hex::encode(namespace)
+            ),
+        }
+    }
+}
+
+impl std::error::Error for NmtBuildError {}
+
+#[inline]
+fn is_reserved_namespace(ns: &NamespaceId) -> bool {
+    *ns == NAMESPACE_MIN || *ns == NAMESPACE_MAX
+}
 
 /// A blob tagged with a namespace.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,9 +156,26 @@ pub struct BlobCommitment {
 }
 
 impl NamespaceMerkleTree {
-    /// Build a NMT from a set of namespaced blobs. Blobs are sorted by namespace.
+    /// Build a NMT from user blobs. Reserved namespaces ([0..0] and [FF..FF])
+    /// are filtered out with a warning so a malformed admission path can
+    /// never bake reserved IDs into the tree. Use [`try_from_blobs`] when
+    /// you want a hard error instead of silent filtering.
     pub fn from_blobs(blobs: &[NamespacedBlob]) -> Self {
-        let mut sorted: Vec<&NamespacedBlob> = blobs.iter().collect();
+        let mut sorted: Vec<&NamespacedBlob> = blobs
+            .iter()
+            .filter(|b| {
+                if is_reserved_namespace(&b.namespace) {
+                    warn!(
+                        namespace = %hex::encode(b.namespace),
+                        size = b.data.len(),
+                        "NMT: dropping blob with reserved namespace at construction"
+                    );
+                    false
+                } else {
+                    true
+                }
+            })
+            .collect();
         sorted.sort_by_key(|b| b.namespace);
 
         let leaves: Vec<NmtLeaf> = sorted
@@ -144,8 +189,36 @@ impl NamespaceMerkleTree {
         Self::from_leaves(leaves)
     }
 
-    /// Build from pre-sorted leaves.
+    /// Strict version of [`from_blobs`] that refuses to construct a tree
+    /// when any blob carries a reserved namespace ([0..0] / [FF..FF]).
+    /// Closes Gap-A #9 from the end-to-end audit.
+    pub fn try_from_blobs(blobs: &[NamespacedBlob]) -> Result<Self, NmtBuildError> {
+        for b in blobs {
+            if is_reserved_namespace(&b.namespace) {
+                return Err(NmtBuildError::ReservedNamespace { namespace: b.namespace });
+            }
+        }
+        Ok(Self::from_blobs(blobs))
+    }
+
+    /// Build from pre-sorted leaves. Reserved namespaces are filtered with
+    /// a warning; use [`try_from_leaves`] for the hard-error variant.
     pub fn from_leaves(leaves: Vec<NmtLeaf>) -> Self {
+        let leaves: Vec<NmtLeaf> = leaves
+            .into_iter()
+            .filter(|l| {
+                if is_reserved_namespace(&l.namespace) {
+                    warn!(
+                        namespace = %hex::encode(l.namespace),
+                        "NMT: dropping leaf with reserved namespace at construction"
+                    );
+                    false
+                } else {
+                    true
+                }
+            })
+            .collect();
+
         if leaves.is_empty() {
             return Self {
                 layers: vec![vec![NmtNode::empty()]],
@@ -178,6 +251,17 @@ impl NamespaceMerkleTree {
         }
 
         Self { layers, leaves }
+    }
+
+    /// Strict version of [`from_leaves`] that refuses to construct a tree
+    /// when any leaf carries a reserved namespace.
+    pub fn try_from_leaves(leaves: Vec<NmtLeaf>) -> Result<Self, NmtBuildError> {
+        for l in &leaves {
+            if is_reserved_namespace(&l.namespace) {
+                return Err(NmtBuildError::ReservedNamespace { namespace: l.namespace });
+            }
+        }
+        Ok(Self::from_leaves(leaves))
     }
 
     /// Get the root node (namespace range + hash).
@@ -522,5 +606,60 @@ mod tests {
         // Namespace above range
         let proof = tree.prove_namespace(&ns(10));
         assert!(proof.is_absence);
+    }
+
+    // ─── Reserved-namespace enforcement (Gap-A #9) ────────────────────────
+
+    fn blob_with_ns(namespace: NamespaceId, data: &[u8]) -> NamespacedBlob {
+        NamespacedBlob { namespace, data: data.to_vec() }
+    }
+
+    #[test]
+    fn test_from_blobs_filters_reserved_min_namespace() {
+        let good = blob(7, b"valid");
+        let reserved = blob_with_ns(NAMESPACE_MIN, b"sneaky");
+        let tree = NamespaceMerkleTree::from_blobs(&[reserved, good.clone()]);
+        assert_eq!(tree.leaves.len(), 1);
+        assert_eq!(tree.leaves[0].namespace, good.namespace);
+    }
+
+    #[test]
+    fn test_from_blobs_filters_reserved_max_namespace() {
+        let good = blob(7, b"valid");
+        let parity = blob_with_ns(NAMESPACE_MAX, b"parity-impostor");
+        let tree = NamespaceMerkleTree::from_blobs(&[good.clone(), parity]);
+        assert_eq!(tree.leaves.len(), 1);
+        assert_eq!(tree.leaves[0].namespace, good.namespace);
+    }
+
+    #[test]
+    fn test_try_from_blobs_rejects_reserved_min_namespace() {
+        let blobs = vec![blob(7, b"valid"), blob_with_ns(NAMESPACE_MIN, b"x")];
+        let err = NamespaceMerkleTree::try_from_blobs(&blobs).unwrap_err();
+        assert_eq!(err, NmtBuildError::ReservedNamespace { namespace: NAMESPACE_MIN });
+    }
+
+    #[test]
+    fn test_try_from_blobs_rejects_reserved_max_namespace() {
+        let blobs = vec![blob_with_ns(NAMESPACE_MAX, b"x"), blob(7, b"valid")];
+        let err = NamespaceMerkleTree::try_from_blobs(&blobs).unwrap_err();
+        assert_eq!(err, NmtBuildError::ReservedNamespace { namespace: NAMESPACE_MAX });
+    }
+
+    #[test]
+    fn test_try_from_blobs_accepts_valid_blobs() {
+        let blobs = vec![blob(1, b"a"), blob(7, b"b"), blob(99, b"c")];
+        let tree = NamespaceMerkleTree::try_from_blobs(&blobs).unwrap();
+        assert_eq!(tree.leaves.len(), 3);
+    }
+
+    #[test]
+    fn test_try_from_leaves_rejects_reserved_namespace() {
+        let leaves = vec![
+            NmtLeaf { namespace: ns(7), data_hash: [0u8; 32] },
+            NmtLeaf { namespace: NAMESPACE_MIN, data_hash: [0u8; 32] },
+        ];
+        let err = NamespaceMerkleTree::try_from_leaves(leaves).unwrap_err();
+        assert_eq!(err, NmtBuildError::ReservedNamespace { namespace: NAMESPACE_MIN });
     }
 }
