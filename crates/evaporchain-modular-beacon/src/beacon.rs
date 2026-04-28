@@ -97,8 +97,8 @@ mod tests {
         // E_4(1) = sum of E4_COEFFS = 199_920.
         let e4_sum: i128 = 1 + 240 + 2160 + 6720 + 17520 + 30240 + 60480 + 82560;
         assert_eq!(b.e4, e4_sum);
-        // Δ(1) = 65274.
-        assert_eq!(b.delta, 65274);
+        // Δ(1) = 65275.
+        assert_eq!(b.delta, 65275);
     }
 
     #[test]

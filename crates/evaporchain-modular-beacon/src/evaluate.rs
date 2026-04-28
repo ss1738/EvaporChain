@@ -67,10 +67,10 @@ mod tests {
         // not exactly 0 — Σ τ(n) for the FULL series gives 0 (Jacobi
         // triple-product), but the TRUNCATED partial sum is just the
         // partial sum of (1, -24, 252, -1472, 4830, -6048, -16744,
-        // 84480) = 65274. We test the partial-sum value, not the
+        // 84480) = 65275. We test the partial-sum value, not the
         // analytic-zero claim.
         let body: i128 = DELTA_COEFFS.iter().sum();
-        assert_eq!(body, 65274);
-        assert_eq!(evaluate_delta(1), 65274);
+        assert_eq!(body, 65275);
+        assert_eq!(evaluate_delta(1), 65275);
     }
 }
