@@ -17,10 +17,11 @@ use evaporchain_script::ScriptEngine;
 use evaporchain_state::db::StateDB;
 use evaporchain_state::{EvaporationEngine, RefreshEngine};
 use evaporchain_types::{
-    Block, CallContractTx, CallScriptTx, CreateObjectTx, DeployContractTx, DeployScriptTx,
-    Epoch, GovernanceAction, GovernanceProposal, GovernanceTx, MultiSigTx, ObjectState,
-    ProposalStatus, RefreshTx, StakeRecord, StateObject, Transaction, TransferTx,
-    ValidatorClaimStakeTx, ValidatorExitTx, ValidatorStakeTx,
+    Block, CallContractTx, CallScriptTx, CreateObjectTx, DelegateTx, DelegationRecord,
+    DeployContractTx, DeployScriptTx, Epoch, GovernanceAction, GovernanceProposal,
+    GovernanceTx, MultiSigTx, ObjectState, ProposalStatus, RefreshTx, StakeRecord,
+    StateObject, Transaction, TransferTx, UndelegateTx, ValidatorClaimStakeTx,
+    ValidatorExitTx, ValidatorStakeTx,
 };
 use thiserror::Error;
 use tracing::{debug, info};
@@ -133,9 +134,18 @@ pub(crate) const GAS_USER_OP: u64 = 30_000;
 pub(crate) const GAS_UPGRADE_CONTRACT: u64 = 100_000;
 pub(crate) const GAS_DELEGATE: u64 = 40_000;
 pub(crate) const GAS_UNDELEGATE: u64 = 40_000;
+/// BLS key rotation: covers two PoP-style verifications (old + new) plus
+/// the validator-set update. Higher than stake/exit because of the
+/// double signature check.
+pub(crate) const GAS_ROTATE_VALIDATOR_KEY: u64 = 80_000;
 
 /// Unbonding period: validators must wait this many epochs after exit before claiming stake.
 const UNBONDING_PERIOD_EPOCHS: u64 = 256;
+/// BLS key rotation grace window: the previous pubkey remains valid for
+/// signature verification this many epochs after a rotation commits.
+/// Sized to cover one Tendermint round-trip across a globally distributed
+/// validator set plus a comfortable safety margin.
+pub(crate) const KEY_ROTATION_GRACE_EPOCHS: u64 = 8;
 
 /// Number of state snapshots to retain before pruning older ones.
 const SNAPSHOT_RETAIN_BLOCKS: u64 = 256;
@@ -464,6 +474,7 @@ impl SimpleExecutor {
             Transaction::UpgradeContract(tx) => GAS_UPGRADE_CONTRACT.saturating_add(tx.new_bytecode.len() as u64 * 200),
             Transaction::Delegate(_) => GAS_DELEGATE,
             Transaction::Undelegate(_) => GAS_UNDELEGATE,
+            Transaction::RotateValidatorKey(_) => GAS_ROTATE_VALIDATOR_KEY,
         }
     }
 
@@ -777,6 +788,126 @@ impl SimpleExecutor {
             "Validator stake locked"
         );
 
+        Ok(())
+    }
+
+    /// Execute a delegation transaction. Locks `tx.amount` from the
+    /// delegator's balance and credits it to the
+    /// (delegator, validator_id) `DelegationRecord`. Multiple delegations
+    /// to the same validator are additive.
+    fn execute_delegate(
+        &self,
+        db: &mut dyn StateDB,
+        tx: &DelegateTx,
+        current_epoch: Epoch,
+    ) -> Result<(), ExecutionError> {
+        if tx.amount == 0 {
+            return Err(ExecutionError::ZeroAmount);
+        }
+        // Validator must already exist as a stake record before accepting
+        // delegations — prevents griefing where someone delegates to a
+        // non-existent validator id and locks funds forever.
+        if db.get_stake(tx.validator_id).is_none() {
+            return Err(ExecutionError::ContractError(format!(
+                "validator-id {} has no stake record; cannot accept delegations",
+                tx.validator_id
+            )));
+        }
+
+        let delegator = db.get_or_create_account(&tx.delegator);
+        if delegator.nonce != tx.nonce {
+            return Err(ExecutionError::InvalidNonce {
+                expected: delegator.nonce,
+                got: tx.nonce,
+            });
+        }
+        if delegator.balance < tx.amount {
+            return Err(ExecutionError::InsufficientBalance {
+                account: hex::encode(tx.delegator),
+                available: delegator.balance,
+                required: tx.amount,
+            });
+        }
+        delegator.balance -= tx.amount;
+        delegator.nonce += 1;
+
+        // Get-or-create the (delegator, validator_id) record. Adding to
+        // an existing delegation refreshes `delegated_at_epoch` so reward
+        // distribution can use a cleaner time-weighted share.
+        let existing = db.get_delegation(&tx.delegator, tx.validator_id).cloned();
+        let record = match existing {
+            Some(mut r) => {
+                r.amount = r.amount.saturating_add(tx.amount);
+                r.delegated_at_epoch = current_epoch;
+                r
+            }
+            None => DelegationRecord {
+                delegator: tx.delegator,
+                validator_id: tx.validator_id,
+                amount: tx.amount,
+                delegated_at_epoch: current_epoch,
+                unbonding_amount: 0,
+                unbonding_epoch: None,
+            },
+        };
+        db.put_delegation(record);
+
+        debug!(
+            delegator = hex::encode(tx.delegator),
+            validator_id = tx.validator_id,
+            amount = tx.amount,
+            "Delegation locked"
+        );
+        Ok(())
+    }
+
+    /// Execute an undelegation transaction. Marks `tx.amount` as
+    /// unbonding on the existing `DelegationRecord`; funds are not
+    /// returned to balance until a future ClaimDelegation tx runs after
+    /// the unbonding period elapses (separate, future tx type).
+    fn execute_undelegate(
+        &self,
+        db: &mut dyn StateDB,
+        tx: &UndelegateTx,
+        current_epoch: Epoch,
+    ) -> Result<(), ExecutionError> {
+        if tx.amount == 0 {
+            return Err(ExecutionError::ZeroAmount);
+        }
+        let delegator_acct = db.get_or_create_account(&tx.delegator);
+        if delegator_acct.nonce != tx.nonce {
+            return Err(ExecutionError::InvalidNonce {
+                expected: delegator_acct.nonce,
+                got: tx.nonce,
+            });
+        }
+        delegator_acct.nonce += 1;
+
+        let mut record = db
+            .get_delegation(&tx.delegator, tx.validator_id)
+            .cloned()
+            .ok_or_else(|| ExecutionError::ContractError(format!(
+                "no delegation from {} to validator-id {}",
+                hex::encode(tx.delegator), tx.validator_id
+            )))?;
+        if record.amount < tx.amount {
+            return Err(ExecutionError::ContractError(format!(
+                "delegation has only {} but tried to undelegate {}",
+                record.amount, tx.amount
+            )));
+        }
+        record.amount = record.amount.saturating_sub(tx.amount);
+        record.unbonding_amount = record.unbonding_amount.saturating_add(tx.amount);
+        record.unbonding_epoch = Some(current_epoch);
+        db.put_delegation(record);
+
+        debug!(
+            delegator = hex::encode(tx.delegator),
+            validator_id = tx.validator_id,
+            amount = tx.amount,
+            unbonding_epoch = current_epoch,
+            "Delegation unbonding"
+        );
         Ok(())
     }
 
@@ -1346,6 +1477,23 @@ impl ExecutionEngine for SimpleExecutor {
                             .into(),
                     ))
                 }
+                Transaction::RotateValidatorKey(_) => {
+                    // Punch-list 4a closed (tx variant + canonical encoding +
+                    // gas + dispatch). 4b/4c/4d open: BLS PoP verification
+                    // for both old and new key, ValidatorInfo schema for
+                    // grace-period prev pubkey, two-pass cert verification
+                    // path, and bls_key.{epoch}.bin file ring with old-key
+                    // purge after grace expiry. Refuse the tx until 4b lands
+                    // so admission of a malformed RotateValidatorKey can't
+                    // silently corrupt the validator set.
+                    Err(ExecutionError::ContractError(
+                        "RotateValidatorKey execution not yet implemented \
+                         (punch-list #4b in flight) — refusing to admit so \
+                         the validator set cannot be corrupted by a partial \
+                         rotation"
+                            .into(),
+                    ))
+                }
             };
 
             match result {
@@ -1698,6 +1846,10 @@ mod tests {
             Transaction::Undelegate(u) => {
                 u.signature = Some(sig);
                 u.public_key = Some(pk);
+            }
+            Transaction::RotateValidatorKey(r) => {
+                r.signature = Some(sig);
+                r.public_key = Some(pk);
             }
         }
     }
