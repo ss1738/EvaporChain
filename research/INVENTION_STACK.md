@@ -366,3 +366,171 @@ Add to §10 doctrine:
 
 End of Amendment 1.
 
+---
+
+# Amendment 2 — Application Layer & Launch dApp Candidates
+
+**Added:** 2026-04-28 (same day, round 3)
+**Method:** 4 application-layer frontier agents (energy-backed stablecoin, cultural/memetic, RWA expiring assets, self-referential primitives), each filtered for "would the New York Times / Wired / Atlantic actually cover this, or is it crypto-incest?"
+**Status:** Application-layer addendum to Tier 1/2/3. These are the dApps that demonstrate the chain to non-crypto audiences.
+
+## A2.1 Three categories, three different press lanes
+
+| Category | Lead candidate | Secondary | Audience |
+|---|---|---|---|
+| **Math / finance** | EnergyCoin (YELLOW pending spec gaps) | — | Financial press, economists, central bankers |
+| **Cultural / art** | The Gallery That Forgets | Time Capsules + Memorial Contracts | NYT Arts/Style, art press, mainstream culture |
+| **Real-world commercial** | Hour-Block Capacity Tokens (HBCT) | EU ETS Phase tokens | Industrial / energy press, real B2B customers |
+| **Philosophical / self-referential** | Mortis + Sentinel + Tombstone (four-act structure) | Refresh-Pool Patronage | New Yorker, Atlantic, MIT Tech Review |
+
+These are not mutually exclusive; they serve different launch goals. A solo founder ships at most one as the headline; the others slot in as supporting moments.
+
+## A2.2 EnergyCoin — verdict YELLOW (ship-after-spec)
+
+The chain's potential unit-of-account currency. Pegged not to USD, not to crypto, but to the chain's **aggregate active energy**. Closed-form value, no oracle, the chain is its own central bank with one constant.
+
+**Critical math reframe:** EnergyCoin is a **Bancor-family bonding curve with state-dependent ratio R(t)=E(t)/N_active, NOT a Terra-family dual-token.** The UST death-spiral physics literally does not apply — there is no second token whose supply expands to defend peg. Mint/redeem is conservative by construction.
+
+**Genuine novelty:** the first production currency whose peg target is computed in closed form from chain state alone. Closer in spirit to Technocracy 1932 energy certificates than to any post-2014 algo-stable.
+
+**Critical branding correction:** EnergyCoin is NOT a USD stablecoin — it is the chain's **unit of account**. Floats against fiat. Same family as gold-pegged coins or REIT shares. Anyone selling it as "stable in dollars" is recreating UST's marketing fraud. The honest pitch: *"The first currency whose value is a closed-form function of one constant — no oracle, no external collateral, no central bank."*
+
+**Three spec gaps that block launch:**
+1. **R(t) update semantics under MEV** — must be computed atomically at execution, not submission, with single canonical ordering
+2. **Refresh-pool solvency invariant** — must be a *proof*, not assumption. TLA+ / Coq target.
+3. **Fee-controller × EnergyCoin coupling** — specify whether mint/redeem ops subtract from E(t) before or after R(t) computation; cross-derivatives with Singh-Lyapunov controller need a 2-page note.
+
+**Build:** spec work in Weeks 1–4, implementation Week 16+ after kernel + Singh-Lyapunov + Refresh Market are in place.
+
+## A2.3 The Gallery That Forgets — fusion of three primitives
+
+One launch artifact, three primitives:
+
+1. **Provably-Mortal NFTs ("Mayflies")** — minted with declared half-life + ZK death certificate. Wallet shows literal countdown.
+2. **Decay-as-Performance-Art** — gallery contract; artists deposit works with chosen half-lives; gallery's visual state changes daily. Closing date is *thermodynamic*.
+3. **AI-Decay-Art** — generative pieces taking chain-energy as runtime parameter; output literally changes as state evaporates. Basinski's Disintegration Loops on-chain.
+
+**The lineage argument:** places EvaporChain in the lineage of **Banksy / Hirst / Goldsworthy / Abramović / Tibetan sand mandalas / Felix Gonzalez-Torres** — *not* in the lineage of Solana memecoins. Real cultural pedigree.
+
+**The single sentence:**
+> *"It is the first thing humans have made that is provably going to die."*
+
+That sentence is what gets EvaporChain out of crypto press and into the rest of the world.
+
+**Build:** 8–10 weeks for primitives, 4–6 months for an actual partner exhibition (Serpentine, Tate, MoMA PS1). Online MVP first, IRL partnership in parallel. Risk: art-world partnerships are slow; mitigation = ship online primitive first, court partner separately.
+
+## A2.4 HBCT (Hour-Block Capacity Tokens) — RWA wedge
+
+Out of 17 RWA candidates, **electricity capacity won all three rankings** (largest 18-month wedge, easiest 6-month demo, most defensible).
+
+**Why electricity:** capacity in hour H decays to 0 at H+1. Single-λ is dimensionally honest, not metaphor. Battery state-of-charge IS a decaying inventory.
+
+| Why HBCT wins |
+|---|
+| $5T global electricity market; battery-storage segment growing >30% YoY |
+| UK Elexon BMRS + ENTSO-E APIs are open → solo founder can ship testnet demo with real GB grid data, no regulator approval needed |
+| Existing energy chains (Power Ledger, Energy Web, WePower) handle RECs/PPAs — **none use decay as primitive** |
+| Customer (battery aggregators — Octopus Kraken, Habitat Energy) has concrete day-ahead/intraday balancing pain |
+| Regulatory bar is light (Ofgem/FERC capacity-market frameworks are utility-token-friendly) |
+
+**The pitch:** *"The first L1 to natively price what physics already prices."*
+
+**Primitive:** `HBCT { delivery_location, hour_slot, mwh_amount }`. Tokens burn at slot close; oracle confirms via smart-meter / settlement-system feed. Battery operators issue forward HBCTs against state-of-charge; aggregators clear day-ahead and intraday.
+
+**Build:** 6–8 weeks for testnet demo with real GB grid data. Production needs balancing-responsible-party partner. Reg score 3 (utility-token-friendly).
+
+**Fallback wedge:** EU ETS Phase-bounded allowances (~€800B/yr turnover). Bigger but reg score 5 (MiFID II treats EUAs as financial instruments since 2018).
+
+## A2.5 The Four-Act Self-Referential Structure
+
+The self-referential agent surfaced something stronger than individual primitives — a *vocabulary* spanning the chain's entire arc:
+
+| Act | Primitive | One sentence |
+|---|---|---|
+| **Birth** | Genesis with LLSA-checked invariants | "The first blockchain whose constitution is a Coq-checked proof." |
+| **Life** | **Sentinel** — autonomic parameter governance via decay-weighted LLSA voting within hard-coded bounds | "EvaporChain is the first chain that governs itself the way a body does — through homeostasis, not legislators." |
+| **Small deaths** | **Tombstone** — 32-byte commitment for every fully-evaporated account, written to non-decaying eulogy trie | (The Maya Lin parallel writes itself.) |
+| **Final death** | **Mortis** — when refresh pool falls below ε for N epochs, the final state root is auto-minted as a single unowned NFT visible to all light clients forever | *"The first blockchain that signs its own death certificate."* |
+
+**Why this is the strongest narrative play:** every act is structurally impossible on a chain that doesn't decay. Bitcoin promises immortality (and quietly fails); EvaporChain promises mortality (and provably succeeds). The four-act structure is itself the pitch.
+
+**Builds (cheap):**
+- Mortis: 2–3 weeks (death predicate + deterministic mint-on-halt rule + light-client visibility)
+- Sentinel: 4–5 weeks (LLSA exists; the homeostatic controller is the missing piece)
+- Tombstone: 2 weeks (32-byte commitment + eulogy-trie data structure)
+
+Three primitives, all small, all ship-now, all genuinely first-of-their-kind.
+
+## A2.6 Strikes from the application-layer round
+
+Confirmed dead at app layer:
+
+- **Half-Life Memes (decaying total supply)** — crypto-incest, not mainstream
+- **Decay-DNS** — crypto-incest only
+- **Decay-Voting** — governance press only
+- **Living Whitepaper** — blockchain-flavored conceptual art, pretentious
+- **Möbius Genesis** — recursive proof at block 0 — decoration, not structural
+- **Self-Referential Naming** — pretentious
+- **Reflexive Block Headers** — no structural decay synergy, MEV footguns
+- **Decay-Photo / Cherry-clone** — consumer-app surface area too risky for solo founder
+- **Decay-Native VC equity** — legal mess
+- **Decay-Native Will / Testator** — regulatory minefield, defer
+- **Decay-Funded UBI** — Sybil failure mode dominates press coverage
+- **Decay-Native Public-Goods QF** — Gitcoin shadow, derivative
+- **Validator-as-Audience NFTs** — flavor, not structural
+
+RWA strikes:
+- **Carbon offsets** — reputation-burned post-2023 Verra collapse
+- **DeFi options** — crowded space + CFTC hostile
+- **Tokenized treasuries** — already crowded by Ondo / BlackRock BUIDL / Hashnote
+- **B2C plays** (loyalty, gift cards, subscriptions) — drag, hard sell
+- **Spectrum licenses, water rights, patents** — regulatory bar too high for 6-month sprint
+
+## A2.7 Honest launch recommendation for solo + £100K + 6 months
+
+If you ship one launch dApp:
+
+**Ship HBCT.** Reasons:
+- Concrete B2B customer (battery aggregators)
+- Open data (GB grid)
+- Lowest regulatory bar of the serious candidates
+- Decay is dimensionally honest (electricity is the canonical non-storable)
+- Demonstrates "the chain is for real-world things that genuinely expire"
+
+If you ship two:
+
+**Ship HBCT + the four-act self-referential structure (Mortis + Sentinel + Tombstone).** The HBCT is the commercial wedge; the four-act structure is the philosophical story. Together they say: "EvaporChain is real engineering for real markets, and it admits its own mortality." That's a complete narrative.
+
+**Defer to V2:**
+- EnergyCoin (YELLOW until 3 spec gaps close)
+- The Gallery That Forgets (gallery partnerships > 6mo timeline)
+- Time Capsules / Memorial Contracts (ship as features once Mortis lands)
+- Decay-Native Memecoin (only if you have a separate person handling the meme campaign)
+
+## A2.8 Updated build order — with launch dApp inserted
+
+Insert into the Amendment 1 build order:
+
+| Weeks | Add | Why |
+|---|---|---|
+| 1–4 | EnergyCoin spec work (3 spec gaps closed in writing) | Decision: ship later or kill |
+| 8–14 | **Tombstone** primitive (alongside consensus + mempool) | 2-week add; cheapest profound primitive |
+| 14–18 | **Mortis** death predicate + auto-mint rule | Pairs with EFH and PRP timeline |
+| 16–20 | **Sentinel** autonomic controller (built on top of LLSA from A1.2) | Whitepaper centerpiece for "chain governs itself" claim |
+| 18–24 | **HBCT** primitive + GB grid oracle + testnet demo | Launch wedge implementation |
+| 22–26 | (post-mainnet-prep) Refresh-Pool Patronage covenant | Funds the chain's own audits + indexers + docs |
+
+The Gallery That Forgets, Time Capsules, EU ETS, Decay-Native Memecoin, Decay-Native Reputation — all V2 (post-launch).
+
+## A2.9 Doctrine update for application layer
+
+Add to §10 doctrine:
+
+14. **App-layer primitives must clear the "non-crypto press" bar.** If only crypto-Twitter would write about it, it's not a launch primitive — it's a feature.
+15. **Lineage matters.** Cultural primitives must connect to a pre-crypto cultural lineage (sand mandalas, memento mori, Maya Lin, conceptual art) to land outside crypto.
+16. **HBCT is the operating launch wedge** unless explicitly overridden. Every other dApp sits in the four-act philosophical narrative around HBCT.
+17. **EnergyCoin doesn't ship until the 3 spec gaps are closed.** No exceptions; UST's marketing fraud is the failure mode to avoid.
+18. **The four-act structure (Mortis / Sentinel / Tombstone / Genesis) is the chain's narrative spine.** Don't lose it in the engineering rush.
+
+End of Amendment 2.
+
