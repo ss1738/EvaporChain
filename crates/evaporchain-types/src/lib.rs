@@ -265,6 +265,10 @@ pub enum Transaction {
     /// Withdraw a delegation. Stake is locked for the unbonding period
     /// before being returned to the delegator's balance.
     Undelegate(UndelegateTx),
+    /// Rotate a validator's BLS public key. The old key remains valid
+    /// for a grace window (defined in execution) so in-flight certs do
+    /// not lose quorum across the boundary.
+    RotateValidatorKey(RotateValidatorKeyTx),
 }
 
 impl Transaction {
@@ -529,6 +533,23 @@ impl Transaction {
                 buf.extend_from_slice(&tx.nonce.to_le_bytes());
                 buf
             }
+            Transaction::RotateValidatorKey(tx) => {
+                let mut buf = Vec::new();
+                buf.push(0x16);
+                buf.extend_from_slice(&tx.validator_address);
+                buf.extend_from_slice(&tx.validator_id.to_le_bytes());
+                // BLS keys + PoP signatures are length-prefixed so the
+                // canonical form is unambiguous regardless of size.
+                buf.extend_from_slice(&(tx.new_bls_public_key.len() as u32).to_le_bytes());
+                buf.extend_from_slice(&tx.new_bls_public_key);
+                buf.extend_from_slice(&(tx.bls_pop_old.len() as u32).to_le_bytes());
+                buf.extend_from_slice(&tx.bls_pop_old);
+                buf.extend_from_slice(&(tx.bls_pop_new.len() as u32).to_le_bytes());
+                buf.extend_from_slice(&tx.bls_pop_new);
+                buf.extend_from_slice(&tx.effective_epoch.to_le_bytes());
+                buf.extend_from_slice(&tx.nonce.to_le_bytes());
+                buf
+            }
         }
     }
 
@@ -573,6 +594,7 @@ impl Transaction {
             Transaction::UpgradeContract(tx) => tx.signature.as_deref(),
             Transaction::Delegate(tx) => tx.signature.as_deref(),
             Transaction::Undelegate(tx) => tx.signature.as_deref(),
+            Transaction::RotateValidatorKey(tx) => tx.signature.as_deref(),
         }
     }
 
@@ -600,6 +622,7 @@ impl Transaction {
             Transaction::UpgradeContract(tx) => tx.public_key.as_deref(),
             Transaction::Delegate(tx) => tx.public_key.as_deref(),
             Transaction::Undelegate(tx) => tx.public_key.as_deref(),
+            Transaction::RotateValidatorKey(tx) => tx.public_key.as_deref(),
         }
     }
 
@@ -635,6 +658,7 @@ impl Transaction {
             Transaction::UpgradeContract(tx) => Some(&tx.owner),
             Transaction::Delegate(tx) => Some(&tx.delegator),
             Transaction::Undelegate(tx) => Some(&tx.delegator),
+            Transaction::RotateValidatorKey(tx) => Some(&tx.validator_address),
         }
     }
 
@@ -661,6 +685,7 @@ impl Transaction {
             Transaction::UpgradeContract(tx) => Some(tx.nonce),
             Transaction::Delegate(tx) => Some(tx.nonce),
             Transaction::Undelegate(tx) => Some(tx.nonce),
+            Transaction::RotateValidatorKey(tx) => Some(tx.nonce),
         }
     }
 }
@@ -820,6 +845,40 @@ pub struct ValidatorExitTx {
 pub struct ValidatorClaimStakeTx {
     pub validator_address: AccountAddress,
     pub validator_id: u64,
+    pub nonce: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<Vec<u8>>,
+}
+
+/// Rotate a validator's BLS public key while keeping the validator slot
+/// active. After commit, the previous key remains valid for `GRACE_PERIOD`
+/// epochs so in-flight votes/certs signed with the old key still verify.
+///
+/// Closes punch-list item #4. Why proof-of-possession on BOTH keys:
+///   - `bls_pop_old`  — proves the rotator currently controls the old key
+///                       (prevents external attacker from swapping a
+///                       compromised key out of an unwitting validator's
+///                       slot).
+///   - `bls_pop_new`  — proves the rotator controls the new key (rogue-key
+///                       defence; same logic as the original PoP at
+///                       validator registration).
+///
+/// `effective_epoch` must be in the future relative to the block in which
+/// this tx is admitted, giving operators a deterministic switchover point.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RotateValidatorKeyTx {
+    pub validator_address: AccountAddress,
+    pub validator_id: u64,
+    /// New 48-byte compressed BLS12-381 G1 public key.
+    pub new_bls_public_key: Vec<u8>,
+    /// Proof-of-possession signature over `new_bls_public_key` by the OLD key.
+    pub bls_pop_old: Vec<u8>,
+    /// Proof-of-possession signature over `new_bls_public_key` by the NEW key.
+    pub bls_pop_new: Vec<u8>,
+    /// Epoch at which the rotation takes effect. Must be ≥ current epoch.
+    pub effective_epoch: Epoch,
     pub nonce: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<Vec<u8>>,
