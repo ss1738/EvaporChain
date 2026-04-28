@@ -2532,18 +2532,34 @@ impl TendermintConsensus {
         // not worth the cost for a corner case.
         let mut pks_with_prev = Vec::with_capacity(pks.len());
         for &vid in &cert.signer_ids {
-            let v = self.validator_set.get(vid).expect("checked above");
+            // Defensive: if a signer disappears from the validator set
+            // between cert build and verify (rotation race, removed
+            // validator, etc.), or has no registered BLS key, treat
+            // the certificate as invalid rather than panicking the
+            // node. Closes the Gap-A #8 critical-path expect() that
+            // could SIGABRT the process under adversarial input.
+            let v = match self.validator_set.get(vid) {
+                Some(v) => v,
+                None => {
+                    warn!(validator_id = vid, "cert grace verify: signer not in validator set — rejecting");
+                    return false;
+                }
+            };
             let in_grace = v
                 .bls_prev_key_expiry_epoch
                 .map(|exp| self.epoch <= exp)
                 .unwrap_or(false);
-            let pk_bytes = if in_grace {
-                v.bls_public_key_prev
-                    .clone()
-                    .or_else(|| v.bls_public_key.clone())
-                    .expect("validator must have a key")
+            let pk_bytes_opt = if in_grace {
+                v.bls_public_key_prev.clone().or_else(|| v.bls_public_key.clone())
             } else {
-                v.bls_public_key.clone().expect("validator must have a key")
+                v.bls_public_key.clone()
+            };
+            let pk_bytes = match pk_bytes_opt {
+                Some(b) => b,
+                None => {
+                    warn!(validator_id = vid, "cert grace verify: signer has no registered BLS key — rejecting");
+                    return false;
+                }
             };
             pks_with_prev.push(BlsPublicKey(pk_bytes));
         }
