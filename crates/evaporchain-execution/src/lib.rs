@@ -17,10 +17,10 @@ use evaporchain_script::ScriptEngine;
 use evaporchain_state::db::StateDB;
 use evaporchain_state::{EvaporationEngine, RefreshEngine};
 use evaporchain_types::{
-    Block, CallContractTx, CallScriptTx, CreateObjectTx, DelegateTx, DelegationRecord,
-    DeployContractTx, DeployScriptTx, Epoch, GovernanceAction, GovernanceProposal,
-    GovernanceTx, MultiSigTx, ObjectState, ProposalStatus, RefreshTx, StakeRecord,
-    StateObject, Transaction, TransferTx, UndelegateTx, ValidatorClaimStakeTx,
+    Block, CallContractTx, CallScriptTx, ClaimDelegationTx, CreateObjectTx, DelegateTx,
+    DelegationRecord, DeployContractTx, DeployScriptTx, Epoch, GovernanceAction,
+    GovernanceProposal, GovernanceTx, MultiSigTx, ObjectState, ProposalStatus, RefreshTx,
+    StakeRecord, StateObject, Transaction, TransferTx, UndelegateTx, ValidatorClaimStakeTx,
     ValidatorExitTx, ValidatorStakeTx,
 };
 use thiserror::Error;
@@ -162,6 +162,7 @@ pub(crate) const GAS_USER_OP: u64 = 30_000;
 pub(crate) const GAS_UPGRADE_CONTRACT: u64 = 100_000;
 pub(crate) const GAS_DELEGATE: u64 = 40_000;
 pub(crate) const GAS_UNDELEGATE: u64 = 40_000;
+pub(crate) const GAS_CLAIM_DELEGATION: u64 = 30_000;
 /// BLS key rotation: covers two PoP-style verifications (old + new) plus
 /// the validator-set update. Higher than stake/exit because of the
 /// double signature check.
@@ -506,6 +507,7 @@ impl SimpleExecutor {
             Transaction::Delegate(_) => GAS_DELEGATE,
             Transaction::Undelegate(_) => GAS_UNDELEGATE,
             Transaction::RotateValidatorKey(_) => GAS_ROTATE_VALIDATOR_KEY,
+            Transaction::ClaimDelegation(_) => GAS_CLAIM_DELEGATION,
         }
     }
 
@@ -942,6 +944,71 @@ impl SimpleExecutor {
         Ok(())
     }
 
+    /// Execute a claim-delegation transaction (P0 #4 Phase 7).
+    /// Releases a previously-undelegated amount back to the delegator's
+    /// balance once `unbonding_epoch + UNBONDING_PERIOD_EPOCHS` has elapsed.
+    fn execute_claim_delegation(
+        &self,
+        db: &mut dyn StateDB,
+        tx: &ClaimDelegationTx,
+        current_epoch: Epoch,
+    ) -> Result<(), ExecutionError> {
+        let delegator_acct = db.get_or_create_account(&tx.delegator);
+        if delegator_acct.nonce != tx.nonce {
+            return Err(ExecutionError::InvalidNonce {
+                expected: delegator_acct.nonce,
+                got: tx.nonce,
+            });
+        }
+        delegator_acct.nonce += 1;
+
+        let mut record = db
+            .get_delegation(&tx.delegator, tx.validator_id)
+            .cloned()
+            .ok_or_else(|| ExecutionError::ContractError(format!(
+                "no delegation from {} to validator-id {}",
+                hex::encode(tx.delegator), tx.validator_id
+            )))?;
+        if record.unbonding_amount == 0 {
+            return Err(ExecutionError::ContractError(
+                "no unbonding amount to claim".into(),
+            ));
+        }
+        let unbonding_started = record.unbonding_epoch.ok_or_else(|| {
+            ExecutionError::ContractError("unbonding_epoch unset".into())
+        })?;
+        let claim_ready_at = unbonding_started.saturating_add(UNBONDING_PERIOD_EPOCHS);
+        if current_epoch < claim_ready_at {
+            return Err(ExecutionError::ContractError(format!(
+                "unbonding period not elapsed: claimable at epoch {} (current {})",
+                claim_ready_at, current_epoch
+            )));
+        }
+
+        let claimed = record.unbonding_amount;
+        record.unbonding_amount = 0;
+        record.unbonding_epoch = None;
+
+        if let Some(acct) = db.get_account_mut(&tx.delegator) {
+            acct.balance = acct.balance.saturating_add(claimed);
+        }
+
+        if record.amount == 0 && record.unbonding_amount == 0 {
+            db.remove_delegation(&tx.delegator, tx.validator_id);
+        } else {
+            db.put_delegation(record);
+        }
+
+        debug!(
+            delegator = hex::encode(tx.delegator),
+            validator_id = tx.validator_id,
+            claimed = claimed,
+            current_epoch = current_epoch,
+            "Delegation claim succeeded"
+        );
+        Ok(())
+    }
+
     /// Execute a validator exit transaction.
     /// Sets unbonding_epoch so the validator must wait before claiming stake.
     fn execute_validator_exit(
@@ -1188,6 +1255,80 @@ impl SimpleExecutor {
             }
             pm.balance = pm.balance.saturating_sub(total_gas_cost);
         }
+
+        Ok(())
+    }
+
+    /// Execute a `Transaction::UpgradeContract`.
+    ///
+    /// Authorization layers (all must hold for the upgrade to apply):
+    ///   1. Nonce of `tx.owner` matches.
+    ///   2. A governance proposal with key `upgrade_contract:{contract_id}`
+    ///      and status `Passed` exists, AND its value equals the
+    ///      hex-encoded blake3 of `tx.new_bytecode`. The hash binding
+    ///      prevents bait-and-switch: the proposal commits to a specific
+    ///      bytecode at proposal time and the tx must supply that exact
+    ///      bytecode at apply time.
+    ///   3. `ScriptEngine::upgrade_contract` enforces caller-is-creator
+    ///      and schema compatibility internally.
+    ///
+    /// On success the proposal is marked `Executed` so a single approval
+    /// can't be replayed for repeated upgrades.
+    ///
+    /// Closes punch-list 18b/18c.
+    fn execute_upgrade_contract(
+        &mut self,
+        db: &mut dyn StateDB,
+        tx: &evaporchain_types::UpgradeContractTx,
+        current_epoch: u64,
+    ) -> Result<(), ExecutionError> {
+        // 1. Nonce check + bump.
+        let sender = db.get_or_create_account(&tx.owner);
+        if sender.nonce != tx.nonce {
+            return Err(ExecutionError::InvalidNonce {
+                expected: sender.nonce,
+                got: tx.nonce,
+            });
+        }
+        sender.nonce = sender.nonce.saturating_add(1);
+
+        // 2. Governance gate: find a Passed proposal whose key/value
+        // commit to this contract's upgrade with the supplied bytecode.
+        let bytecode_hash = hex::encode(blake3::hash(&tx.new_bytecode).as_bytes());
+        let key = format!("upgrade_contract:{}", tx.contract_id);
+        let approval = db
+            .all_proposals()
+            .into_iter()
+            .find(|p| {
+                p.status == evaporchain_types::ProposalStatus::Passed
+                    && p.param_key == key
+                    && p.param_value == bytecode_hash
+            })
+            .cloned();
+        let mut approval = approval.ok_or_else(|| {
+            ExecutionError::ContractError(format!(
+                "UpgradeContract: no Passed governance proposal authorizing key='{}' \
+                 with bytecode hash {}",
+                key, bytecode_hash
+            ))
+        })?;
+
+        // 3. Apply the upgrade through ScriptEngine. UTF-8 source is the
+        // shape DeployScript uses; UpgradeContractTx mirrors it.
+        let new_source = std::str::from_utf8(&tx.new_bytecode).map_err(|_| {
+            ExecutionError::ContractError(
+                "UpgradeContract: new_bytecode is not valid UTF-8 EvaporScript source".into(),
+            )
+        })?;
+        self.script_engine
+            .upgrade_contract(tx.contract_id, new_source, tx.owner, current_epoch)
+            .map_err(|e| ExecutionError::ContractError(e.to_string()))?;
+
+        // 4. Mark the proposal Executed so it can't be replayed for
+        // another upgrade. (`status` is what guards replay; the bytecode
+        // hash binding above guards bait-and-switch.)
+        approval.status = evaporchain_types::ProposalStatus::Executed;
+        db.put_proposal(approval);
 
         Ok(())
     }
@@ -1485,18 +1626,7 @@ impl ExecutionEngine for SimpleExecutor {
                 Transaction::Governance(gov) => self.execute_governance(db, gov, block.epoch),
                 Transaction::MultiSig(msig) => self.execute_multisig(db, msig),
                 Transaction::UserOp(uop) => self.execute_user_op(db, uop),
-                Transaction::UpgradeContract(_) => {
-                    // Fail loud: governance approval check + bytecode swap into
-                    // ContractEngine are not yet implemented. Returning Ok here
-                    // would let any signer submit a contract upgrade tx that
-                    // silently passes — refuse it instead until the upgrade
-                    // path is wired through governance.
-                    Err(ExecutionError::ContractError(
-                        "UpgradeContract execution not implemented: \
-                         governance approval check and bytecode swap are missing"
-                            .into(),
-                    ))
-                }
+                Transaction::UpgradeContract(up) => self.execute_upgrade_contract(db, up, block.epoch),
                 Transaction::Delegate(d) => self.execute_delegate(db, d, block.epoch),
                 Transaction::Undelegate(u) => self.execute_undelegate(db, u, block.epoch),
                 Transaction::RotateValidatorKey(rot) => {
@@ -1568,6 +1698,7 @@ impl ExecutionEngine for SimpleExecutor {
                         }
                     }
                 }
+                Transaction::ClaimDelegation(c) => self.execute_claim_delegation(db, c, block.epoch),
             };
 
             match result {
@@ -1925,6 +2056,10 @@ mod tests {
             Transaction::RotateValidatorKey(r) => {
                 r.signature = Some(sig);
                 r.public_key = Some(pk);
+            }
+            Transaction::ClaimDelegation(c) => {
+                c.signature = Some(sig);
+                c.public_key = Some(pk);
             }
         }
     }

@@ -269,6 +269,9 @@ pub enum Transaction {
     /// for a grace window (defined in execution) so in-flight certs do
     /// not lose quorum across the boundary.
     RotateValidatorKey(RotateValidatorKeyTx),
+    /// Claim a previously-undelegated amount back to the delegator's
+    /// balance once the unbonding period has elapsed (P0 #4 Phase 7).
+    ClaimDelegation(ClaimDelegationTx),
 }
 
 impl Transaction {
@@ -550,6 +553,14 @@ impl Transaction {
                 buf.extend_from_slice(&tx.nonce.to_le_bytes());
                 buf
             }
+            Transaction::ClaimDelegation(tx) => {
+                let mut buf = Vec::new();
+                buf.push(0x17);
+                buf.extend_from_slice(&tx.delegator);
+                buf.extend_from_slice(&tx.validator_id.to_le_bytes());
+                buf.extend_from_slice(&tx.nonce.to_le_bytes());
+                buf
+            }
         }
     }
 
@@ -595,6 +606,7 @@ impl Transaction {
             Transaction::Delegate(tx) => tx.signature.as_deref(),
             Transaction::Undelegate(tx) => tx.signature.as_deref(),
             Transaction::RotateValidatorKey(tx) => tx.signature.as_deref(),
+            Transaction::ClaimDelegation(tx) => tx.signature.as_deref(),
         }
     }
 
@@ -623,6 +635,7 @@ impl Transaction {
             Transaction::Delegate(tx) => tx.public_key.as_deref(),
             Transaction::Undelegate(tx) => tx.public_key.as_deref(),
             Transaction::RotateValidatorKey(tx) => tx.public_key.as_deref(),
+            Transaction::ClaimDelegation(tx) => tx.public_key.as_deref(),
         }
     }
 
@@ -659,6 +672,7 @@ impl Transaction {
             Transaction::Delegate(tx) => Some(&tx.delegator),
             Transaction::Undelegate(tx) => Some(&tx.delegator),
             Transaction::RotateValidatorKey(tx) => Some(&tx.validator_address),
+            Transaction::ClaimDelegation(tx) => Some(&tx.delegator),
         }
     }
 
@@ -686,6 +700,7 @@ impl Transaction {
             Transaction::Delegate(tx) => Some(tx.nonce),
             Transaction::Undelegate(tx) => Some(tx.nonce),
             Transaction::RotateValidatorKey(tx) => Some(tx.nonce),
+            Transaction::ClaimDelegation(tx) => Some(tx.nonce),
         }
     }
 }
@@ -1006,6 +1021,24 @@ pub struct UndelegateTx {
     pub validator_id: u64,
     /// Amount to undelegate (≤ existing delegation).
     pub amount: u64,
+    /// Sender nonce.
+    pub nonce: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<Vec<u8>>,
+}
+
+/// Claim a previously-undelegated amount back to the delegator's balance.
+/// Only valid once the unbonding window has elapsed
+/// (`unbonding_epoch + UNBONDING_PERIOD_EPOCHS <= current_epoch`).
+/// (P0 #4 Phase 7.)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaimDelegationTx {
+    /// Token holder claiming the unbonded amount.
+    pub delegator: AccountAddress,
+    /// Validator the original delegation was bonded to.
+    pub validator_id: u64,
     /// Sender nonce.
     pub nonce: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]

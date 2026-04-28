@@ -128,6 +128,7 @@ impl GasEstimator {
             Transaction::Delegate(_) => 40_000,
             Transaction::Undelegate(_) => 40_000,
             Transaction::RotateValidatorKey(_) => 60_000,
+            Transaction::ClaimDelegation(_) => 30_000,
         }
     }
 

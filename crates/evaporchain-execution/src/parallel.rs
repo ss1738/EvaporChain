@@ -128,6 +128,9 @@ fn extract_access_keys(tx: &Transaction) -> Vec<AccessKey> {
         Transaction::RotateValidatorKey(tx) => {
             vec![AccessKey::Account(tx.validator_address)]
         }
+        Transaction::ClaimDelegation(tx) => {
+            vec![AccessKey::Account(tx.delegator)]
+        }
     }
 }
 
@@ -587,6 +590,7 @@ impl ParallelExecutor {
             Transaction::Delegate(_) => crate::GAS_DELEGATE,
             Transaction::Undelegate(_) => crate::GAS_UNDELEGATE,
             Transaction::RotateValidatorKey(_) => crate::GAS_ROTATE_VALIDATOR_KEY,
+            Transaction::ClaimDelegation(_) => crate::GAS_CLAIM_DELEGATION,
         }
     }
 
@@ -751,6 +755,11 @@ impl ParallelExecutor {
                 Transaction::RotateValidatorKey(_) => {
                     Err(ExecutionError::ContractError(
                         "validator key rotation executes in serial phase".into(),
+                    ))
+                }
+                Transaction::ClaimDelegation(_) => {
+                    Err(ExecutionError::ContractError(
+                        "delegation txs execute in serial phase".into(),
                     ))
                 }
             };

@@ -344,6 +344,7 @@ impl Mempool {
             Transaction::Delegate(_) => 40_000,
             Transaction::Undelegate(_) => 40_000,
             Transaction::RotateValidatorKey(_) => 80_000,
+            Transaction::ClaimDelegation(_) => 30_000,
         }
     }
 
@@ -493,6 +494,11 @@ impl Mempool {
                     + tx.new_bls_public_key.len()
                     + tx.bls_pop_old.len()
                     + tx.bls_pop_new.len()
+                    + tx.signature.as_ref().map_or(0, |s| s.len())
+                    + tx.public_key.as_ref().map_or(0, |p| p.len())
+            }
+            Transaction::ClaimDelegation(tx) => {
+                32 + 8 + 8
                     + tx.signature.as_ref().map_or(0, |s| s.len())
                     + tx.public_key.as_ref().map_or(0, |p| p.len())
             }

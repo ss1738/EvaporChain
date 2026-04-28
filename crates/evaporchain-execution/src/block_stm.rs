@@ -641,6 +641,11 @@ fn execute_tx(
                 "validator key rotation executes in serial phase".into(),
             )))
         }
+        Transaction::ClaimDelegation(_) => {
+            Err(TxViewError::ExecutionError(ExecutionError::ContractError(
+                "delegation txs execute in serial phase".into(),
+            )))
+        }
     };
 
     match result {
@@ -703,6 +708,7 @@ fn estimate_gas(tx: &Transaction) -> u64 {
         Transaction::Delegate(_) => crate::GAS_DELEGATE,
         Transaction::Undelegate(_) => crate::GAS_UNDELEGATE,
         Transaction::RotateValidatorKey(_) => crate::GAS_ROTATE_VALIDATOR_KEY,
+        Transaction::ClaimDelegation(_) => crate::GAS_CLAIM_DELEGATION,
     }
 }
 

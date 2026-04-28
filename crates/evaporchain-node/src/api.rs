@@ -551,6 +551,10 @@ fn tx_to_json(tx: &Transaction) -> serde_json::Value {
             "validator_id": t.validator_id,
             "effective_epoch": t.effective_epoch,
         }),
+        Transaction::ClaimDelegation(t) => serde_json::json!({
+            "type": "claim_delegation",
+            "validator_id": t.validator_id,
+        }),
     }
 }
 
@@ -896,6 +900,7 @@ fn set_tx_signature(tx: &mut Transaction, sig: Vec<u8>, pk: Vec<u8>) {
         Transaction::Delegate(d) => { d.signature = Some(sig); d.public_key = Some(pk); }
         Transaction::Undelegate(u) => { u.signature = Some(sig); u.public_key = Some(pk); }
         Transaction::RotateValidatorKey(r) => { r.signature = Some(sig); r.public_key = Some(pk); }
+        Transaction::ClaimDelegation(c) => { c.signature = Some(sig); c.public_key = Some(pk); }
     }
 }
 
@@ -4824,6 +4829,7 @@ fn estimate_tx_gas(tx: &Transaction) -> u64 {
         Transaction::Delegate(_) => 40_000,
         Transaction::Undelegate(_) => 40_000,
         Transaction::RotateValidatorKey(_) => 80_000,
+        Transaction::ClaimDelegation(_) => 30_000,
     }
 }
 
@@ -5160,6 +5166,21 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     energy: None,
                     half_life: None,
                     method: Some(format!("effective_epoch={}", tx.effective_epoch)),
+                    gas,
+                    block_number: block.number,
+                    epoch: block.epoch,
+                    status: "success".to_string(),
+                },
+                Transaction::ClaimDelegation(tx) => TxRecord {
+                    hash,
+                    tx_type: "claim_delegation".to_string(),
+                    from: account_full(&tx.delegator),
+                    to: format!("validator-{}", tx.validator_id),
+                    amount: None,
+                    object_id: None,
+                    energy: None,
+                    half_life: None,
+                    method: None,
                     gas,
                     block_number: block.number,
                     epoch: block.epoch,
