@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-demurrage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Native demurrage on idle balances. Piecewise-log rate r(balance) = max(0, λ_base · log(balance/threshold)), redirected into the refresh pool. Per INVENTION_STACK.md §4.1 #6 and §6 weeks 3-5. First consumer of evaporchain-energy-kernel."
+
+[dependencies]
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
