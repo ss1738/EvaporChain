@@ -3454,6 +3454,17 @@ async fn main() -> Result<()> {
                                     tc.parent_hash()
                                 };
 
+                                // DSN (Decay-Stamped Nullifiers §Tier2): fold block state_root
+                                // as the per-block nullifier and advance the window on epoch change.
+                                if let Some(api) = api_state_for_loop.as_ref() {
+                                    if let Ok(mut dsn) = api.dsn_window.lock() {
+                                        dsn.fold_nullifier(&result.execution.state_root);
+                                        if block.number > 0 && block.epoch != block.number / 100 {
+                                            dsn.advance_window();
+                                        }
+                                    }
+                                }
+
                                 // ── Frontier primitives update ──
                                 {
                                     let da_info = block.da_certificate.as_ref().and_then(|_| {
