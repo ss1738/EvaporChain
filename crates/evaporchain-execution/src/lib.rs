@@ -12,6 +12,8 @@ pub mod sanov_slash_helpers;
 pub mod temporal;
 #[cfg(test)]
 mod audit_tests;
+#[cfg(test)]
+mod four_act_integration_tests;
 
 use evaporchain_contracts::{ContractEngine, ContractTemplate};
 use evaporchain_crypto::signatures::{HybridVerifier, Verifier};
@@ -473,6 +475,14 @@ impl SimpleExecutor {
     /// Set the chain ID for signing message domain separation.
     pub fn set_chain_id(&mut self, chain_id: String) {
         self.chain_id = chain_id;
+    }
+
+    /// Test-only public wrapper around the private `collect_storage_rent`.
+    /// Keeps integration tests in `four_act_integration_tests` from
+    /// having to mock the full apply_block path.
+    #[doc(hidden)]
+    pub fn run_storage_rent_for_test(&mut self, db: &mut dyn StateDB, current_epoch: u64) {
+        self.collect_storage_rent(db, current_epoch);
     }
 
     /// Per-block hook: advance the Singh-Lyapunov fee state against
