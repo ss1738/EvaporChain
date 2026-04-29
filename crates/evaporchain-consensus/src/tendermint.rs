@@ -541,6 +541,31 @@ impl TendermintConsensus {
         self.executor.mortis_certificate.as_ref()
     }
 
+    /// Build the death-certificate that *would* be minted at the
+    /// current chain state, without mutating anything. For dashboards
+    /// and demos: shows the cert format ahead of actual death so
+    /// observers can preview the artefact while the chain is healthy.
+    /// Returns None if Mortis already triggered (real cert is
+    /// authoritative).
+    pub fn mortis_cert_preview(&self) -> Option<evaporchain_mortis::MortisCertificate> {
+        if self.executor.mortis_monitor.is_triggered() {
+            return None;
+        }
+        let trie = &self.executor.eulogy_trie;
+        let eulogy_root = if trie.is_empty() {
+            [0u8; 32]
+        } else {
+            trie.root()
+        };
+        let refresh_pool = self.executor.refresh_pool.total_accrued();
+        Some(evaporchain_mortis::mint_certificate(
+            self.current_state_root,
+            eulogy_root,
+            self.epoch,
+            refresh_pool,
+        ))
+    }
+
     /// Read-only iteration over the executor's RefreshPool credits.
     /// Returns (namespace_hex, accrued, last_touched_epoch) tuples.
     pub fn refresh_pool_credits(&self) -> Vec<(String, u64, u64)> {

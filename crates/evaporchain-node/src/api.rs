@@ -1072,6 +1072,64 @@ async fn get_four_act_status(State(state): State<Arc<ApiState>>) -> Json<FourAct
     Json(snap.clone())
 }
 
+// ─────────── Mortis death-certificate preview ──────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct MortisCertPreviewResp {
+    pub status: &'static str,
+    pub final_state_root_hex: String,
+    pub eulogy_trie_root_hex: String,
+    pub epoch_of_death: u64,
+    pub final_refresh_pool: u64,
+    pub witness_hex: String,
+    pub note: String,
+}
+
+/// Preview the MortisCertificate that *would* be minted at the chain's
+/// current state — without mutating anything. Returns the same NFT
+/// shape (state_root, eulogy_root, epoch, refresh_pool, witness) the
+/// chain would commit to under the doctrine §A2.5 death predicate.
+/// Returns status="already-triggered" once the real death has fired.
+async fn get_mortis_cert_preview(
+    State(state): State<Arc<ApiState>>,
+) -> Json<MortisCertPreviewResp> {
+    let tc = match state.tendermint.as_ref() {
+        Some(tc) => tc,
+        None => {
+            return Json(MortisCertPreviewResp {
+                status: "no-consensus-engine",
+                final_state_root_hex: String::new(),
+                eulogy_trie_root_hex: String::new(),
+                epoch_of_death: 0,
+                final_refresh_pool: 0,
+                witness_hex: String::new(),
+                note: "consensus engine not bound to API state".into(),
+            });
+        }
+    };
+    let tc = safe_lock(tc);
+    match tc.mortis_cert_preview() {
+        None => Json(MortisCertPreviewResp {
+            status: "already-triggered",
+            final_state_root_hex: String::new(),
+            eulogy_trie_root_hex: String::new(),
+            epoch_of_death: 0,
+            final_refresh_pool: 0,
+            witness_hex: String::new(),
+            note: "real death certificate already minted; query /api/mortis_cert".into(),
+        }),
+        Some(c) => Json(MortisCertPreviewResp {
+            status: "preview",
+            final_state_root_hex: hex::encode(c.final_state_root),
+            eulogy_trie_root_hex: hex::encode(c.eulogy_trie_root),
+            epoch_of_death: c.epoch_of_death,
+            final_refresh_pool: c.final_refresh_pool,
+            witness_hex: hex::encode(c.witness),
+            note: "preview only — chain is alive; this is what the cert would look like at current state".into(),
+        }),
+    }
+}
+
 // ───────── EvaporChain identity — single-call dashboard summary ─────
 
 /// Aggregate snapshot of every distinguishing chain primitive,
@@ -6434,6 +6492,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/tropical_weight", post(post_tropical_weight))
         .route("/api/eb_fs_challenge", post(post_eb_fs_challenge))
         .route("/api/identity", get(get_identity))
+        .route("/api/mortis_cert_preview", get(get_mortis_cert_preview))
         .route("/api/objects", get(get_objects))
         .route("/api/object/:id", get(get_single_object))
         .route("/api/accounts", get(get_accounts))

@@ -159,7 +159,7 @@ export default function IdentityDashboard() {
         endpoint={endpoint}
         currentEpoch={identity.lambda_fold.latest_epoch}
       />
-      <FourActPanel act={identity.four_act} />
+      <FourActPanel act={identity.four_act} endpoint={endpoint} />
       <LivenessPanel liveness={identity.tur_liveness} />
       <FoldPanel fold={identity.lambda_fold} endpoint={endpoint} />
       <PrimitivesPanel primitives={identity.wired_primitives} />
@@ -375,12 +375,63 @@ function HbctPanel({
   );
 }
 
-function FourActPanel({ act }: { act: FourAct }) {
+type MortisCertPreview = {
+  status: string;
+  final_state_root_hex: string;
+  eulogy_trie_root_hex: string;
+  epoch_of_death: number;
+  final_refresh_pool: number;
+  witness_hex: string;
+  note: string;
+};
+
+function FourActPanel({
+  act,
+  endpoint,
+}: {
+  act: FourAct;
+  endpoint: string;
+}) {
+  const [preview, setPreview] = useState<MortisCertPreview | null>(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+
+  async function fetchPreview() {
+    setLoadingPreview(true);
+    try {
+      const res = await fetch(`${endpoint}/api/mortis_cert_preview`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data: MortisCertPreview = await res.json();
+      setPreview(data);
+    } catch (e) {
+      setPreview({
+        status: "error",
+        final_state_root_hex: "",
+        eulogy_trie_root_hex: "",
+        epoch_of_death: 0,
+        final_refresh_pool: 0,
+        witness_hex: "",
+        note: e instanceof Error ? e.message : "preview fetch failed",
+      });
+    } finally {
+      setLoadingPreview(false);
+    }
+  }
+
   return (
     <div className="rounded-xl border border-neutral-200 bg-white p-6">
-      <h2 className="mb-1 text-xl font-light text-neutral-900">
-        Four-Act Narrative Spine
-      </h2>
+      <div className="mb-1 flex items-baseline justify-between">
+        <h2 className="text-xl font-light text-neutral-900">
+          Four-Act Narrative Spine
+        </h2>
+        <button
+          onClick={fetchPreview}
+          disabled={loadingPreview}
+          className="rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium text-neutral-900 hover:bg-neutral-50 disabled:opacity-50"
+          title="Build the death certificate that would mint at current chain state — without triggering death"
+        >
+          {loadingPreview ? "Loading…" : "Preview Mortis cert"}
+        </button>
+      </div>
       <p className="mb-6 text-xs uppercase tracking-wider text-neutral-500">
         Birth · Life · Small Deaths · Final Death
       </p>
@@ -440,6 +491,42 @@ function FourActPanel({ act }: { act: FourAct }) {
           ]}
         />
       </div>
+      {preview && (
+        <div
+          className={`mt-6 rounded-lg border p-4 text-xs ${
+            preview.status === "preview"
+              ? "border-neutral-200 bg-neutral-50"
+              : preview.status === "already-triggered"
+                ? "border-amber-200 bg-amber-50 text-amber-900"
+                : "border-red-200 bg-red-50 text-red-900"
+          }`}
+        >
+          <p className="mb-2 font-medium uppercase tracking-wider text-neutral-600">
+            Mortis cert · {preview.status}
+          </p>
+          {preview.status === "preview" && (
+            <dl className="space-y-1.5 text-xs">
+              <Row k="Epoch of death" v={preview.epoch_of_death.toLocaleString()} />
+              <Row
+                k="Final refresh pool"
+                v={preview.final_refresh_pool.toLocaleString()}
+              />
+              <Row
+                k="Final state root"
+                v={trunc(preview.final_state_root_hex)}
+                mono
+              />
+              <Row
+                k="Eulogy trie root"
+                v={trunc(preview.eulogy_trie_root_hex)}
+                mono
+              />
+              <Row k="Witness" v={trunc(preview.witness_hex)} mono />
+            </dl>
+          )}
+          <p className="mt-2 italic opacity-80">{preview.note}</p>
+        </div>
+      )}
     </div>
   );
 }
