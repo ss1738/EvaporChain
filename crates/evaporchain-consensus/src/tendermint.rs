@@ -254,6 +254,19 @@ pub enum SlashReason {
 
 // ─────────────────────── TendermintConsensus ─────────────────────────────
 
+/// Snapshot of the four-act narrative spine state for the API layer.
+/// Consensus produces this; the node binary translates into the
+/// public-facing `evaporchain_node::api::FourActSnapshot`. Per
+/// INVENTION_STACK.md Amendment 2 §A2.5.
+#[derive(Debug, Clone, Default)]
+pub struct ConsensusFourActState {
+    pub eulogy_count: usize,
+    pub refresh_pool_total: u64,
+    pub mortis_triggered: bool,
+    pub mortis_epoch_of_death: Option<u64>,
+    pub mortis_final_state_root: Option<[u8; 32]>,
+}
+
 /// Tendermint-style BFT consensus engine.
 pub struct TendermintConsensus {
     /// This node's validator id.
@@ -439,6 +452,30 @@ impl TendermintConsensus {
     /// Get the current chain identifier.
     pub fn chain_id(&self) -> &str {
         &self.chain_id
+    }
+
+    /// Snapshot of the four-act narrative spine state from the
+    /// internal `ParallelExecutor`. Caller (typically the node binary)
+    /// translates this into the public-facing `api::FourActSnapshot`
+    /// after each block. Per INVENTION_STACK.md Amendment 2 §A2.5.
+    pub fn four_act_state(&self) -> ConsensusFourActState {
+        ConsensusFourActState {
+            eulogy_count: self.executor.eulogy_trie.len(),
+            refresh_pool_total: self.executor.refresh_pool.total_accrued(),
+            mortis_triggered: self.executor.mortis_monitor.is_triggered(),
+            mortis_epoch_of_death: self.executor.mortis_certificate.as_ref().map(|c| c.epoch_of_death),
+            mortis_final_state_root: self.executor.mortis_certificate.as_ref().map(|c| c.final_state_root),
+        }
+    }
+
+    /// Per-block hook: advance Mortis on the internal executor. Caller
+    /// invokes after `execute_block` with the just-committed state root.
+    pub fn tick_mortis_on_executor(
+        &mut self,
+        current_epoch: u64,
+        state_root: [u8; 32],
+    ) -> Option<&evaporchain_mortis::MortisCertificate> {
+        self.executor.tick_mortis(current_epoch, state_root)
     }
 
     /// Set the proof verifier for validating Nova IVC proofs on proposed blocks.

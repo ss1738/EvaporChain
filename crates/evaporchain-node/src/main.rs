@@ -2457,6 +2457,11 @@ async fn main() -> Result<()> {
     let encrypted_mempool: Arc<Mutex<EncryptedMempool>> =
         Arc::new(Mutex::new(EncryptedMempool::new(2)));
 
+    // Optional handle to ApiState for the block-applying loop. Set
+    // when the API server is launched (--api flag). The loop uses it
+    // to publish four-act narrative snapshots after each block.
+    let mut api_state_for_loop: Option<Arc<ApiState>> = None;
+
     // Light client verifier — initialized from genesis validator set
     let light_client: Arc<Mutex<LightClientVerifier>> = {
         let genesis_vs = if let Some(ref tc) = tendermint {
@@ -2567,6 +2572,9 @@ async fn main() -> Result<()> {
             chain_id: args.chain_id.clone(),
             four_act_snapshot: Arc::new(Mutex::new(api::FourActSnapshot::default())),
         });
+        // Keep one Arc<ApiState> for the block-applying loop so it can
+        // call update_four_act_snapshot after each commit.
+        api_state_for_loop = Some(Arc::clone(&api_state));
         let api_port = args.api_port;
         tokio::spawn(async move {
             if let Err(e) = api::start_api_server(api_state, auth_state, api_port).await {
@@ -3124,6 +3132,25 @@ async fn main() -> Result<()> {
                                     db_guard.flush_objects();
                                     if let Err(e) = db_guard.commit_batch() {
                                         eprintln!("\x1b[31mFATAL: state batch commit failed: {}\x1b[0m", e);
+                                    }
+                                }
+
+                                // Four-act narrative spine: tick Mortis,
+                                // then publish snapshot to /api/four_act.
+                                {
+                                    let mut tc = safe_lock(tc_ref);
+                                    let _ = tc.tick_mortis_on_executor(block.epoch, block.state_root);
+                                    let s = tc.four_act_state();
+                                    if let Some(api) = api_state_for_loop.as_ref() {
+                                        api.update_four_act_snapshot(api::FourActSnapshot {
+                                            eulogy_count: s.eulogy_count,
+                                            refresh_pool_total: s.refresh_pool_total,
+                                            mortis_triggered: s.mortis_triggered,
+                                            mortis_epoch_of_death: s.mortis_epoch_of_death,
+                                            mortis_final_state_root: s.mortis_final_state_root.map(hex::encode),
+                                            last_conservation_audit_ok: None,
+                                            genesis_amendment_hash: None,
+                                        });
                                     }
                                 }
 
