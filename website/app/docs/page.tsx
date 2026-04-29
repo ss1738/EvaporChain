@@ -1,13 +1,13 @@
 import Link from "next/link";
-import IdentityDashboard from "@/components/IdentityDashboard";
+import ApiDocs from "@/components/ApiDocs";
 
 export const metadata = {
-  title: "Chain Identity — EvaporChain",
+  title: "API Reference — EvaporChain",
   description:
-    "Live snapshot of every distinguishing EvaporChain primitive in one view: four-act narrative spine, light-cone DAG, TUR liveness, Lambda-Fold accumulator, autonomic Sentinel governance.",
+    "Live catalog of every EvaporChain HTTP endpoint: identity, substrate primitives, HBCT lifecycle, autonomic Sentinel governance, demo, observability.",
 };
 
-export default function IdentityPage() {
+export default function DocsPage() {
   return (
     <div className="min-h-screen bg-white text-neutral-900">
       <header className="sticky top-0 z-10 border-b border-neutral-200 bg-white/85 backdrop-blur">
@@ -41,14 +41,11 @@ export default function IdentityPage() {
             <Link href="/" className="hover:text-neutral-900">
               Home
             </Link>
-            <Link href="/docs" className="hover:text-neutral-900">
-              API
+            <Link href="/identity" className="hover:text-neutral-900">
+              Chain Identity
             </Link>
             <Link href="/whitepaper" className="hover:text-neutral-900">
               Whitepaper
-            </Link>
-            <Link href="/explorer" className="hover:text-neutral-900">
-              Explorer
             </Link>
             <a
               href="https://github.com/ss1738/EvaporChain"
@@ -65,24 +62,30 @@ export default function IdentityPage() {
         <section className="mx-auto max-w-6xl px-6 pb-20 pt-12">
           <div className="mb-10">
             <p className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500">
-              Chain Identity
+              API Reference
             </p>
             <h1 className="text-4xl font-light tracking-tight text-neutral-900 sm:text-5xl">
-              What makes EvaporChain different,{" "}
-              <span className="text-neutral-500">in real time.</span>
+              Every launch endpoint,{" "}
+              <span className="text-neutral-500">live from the node.</span>
             </h1>
+            <p className="mt-4 max-w-2xl text-sm text-neutral-600">
+              Auto-generated from <code className="font-mono">/api/docs</code>.
+              Each entry shows method, path, what the endpoint does, and
+              (where applicable) an example payload you can copy into{" "}
+              <code className="font-mono">curl</code>.
+            </p>
           </div>
-          <IdentityDashboard />
+          <ApiDocs />
         </section>
         <footer className="border-t border-neutral-200">
           <div className="mx-auto max-w-6xl px-6 py-8 text-xs text-neutral-500">
             <p>
-              Single-λ thermodynamic-decay L1 · 30+ wired primitives ·{" "}
+              Single-λ thermodynamic-decay L1 ·{" "}
               <Link
-                href="/whitepaper"
+                href="/identity"
                 className="underline hover:text-neutral-700"
               >
-                whitepaper
+                live dashboard
               </Link>
             </p>
           </div>
