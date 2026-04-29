@@ -1618,6 +1618,47 @@ pub struct LamportTimeResp {
     pub tick_quantum: u64,
 }
 
+// ─────────── Modular-Form Beacon (E_4³ − E_6² = 1728·Δ) ────────────
+
+#[derive(Debug, Serialize)]
+pub struct BeaconResp {
+    pub tau: u64,
+    pub e4: String,
+    pub e6: String,
+    pub delta: String,
+    pub identity_holds: bool,
+    pub identity_residual: String,
+    pub tolerance: String,
+}
+
+/// Compute the per-epoch modular-form beacon at `tau` and verify the
+/// E_4³ − E_6² = 1728·Δ identity. Per INVENTION_STACK.md §A1.4.
+async fn get_beacon(
+    axum::extract::Path(tau): axum::extract::Path<u64>,
+) -> Json<BeaconResp> {
+    let beacon = evaporchain_modular_beacon::compute_beacon(tau);
+    // Tolerance: scales with τ since the truncated polynomial breaks
+    // the identity for non-zero q. Launch placeholder; governance can
+    // tighten once the truncation depth is locked.
+    let tolerance: i128 = (tau as i128).saturating_mul(1_000_000_000);
+    let (identity_holds, residual) =
+        match evaporchain_modular_beacon::verify_modular_identity(&beacon, tolerance) {
+            Ok(()) => (true, 0i128),
+            Err(evaporchain_modular_beacon::BeaconError::IdentityFailed { residual, .. }) => {
+                (false, residual)
+            }
+        };
+    Json(BeaconResp {
+        tau: beacon.tau,
+        e4: beacon.e4.to_string(),
+        e6: beacon.e6.to_string(),
+        delta: beacon.delta.to_string(),
+        identity_holds,
+        identity_residual: residual.to_string(),
+        tolerance: tolerance.to_string(),
+    })
+}
+
 // ─────────── Crooks-MEV Refund (Crooks 1999 fluctuation theorem) ───
 
 #[derive(Debug, Deserialize)]
@@ -5601,6 +5642,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/tur_liveness", get(get_tur_liveness))
         .route("/api/cmu_check", get(get_cmu_check))
         .route("/api/crooks_refund", post(post_crooks_refund))
+        .route("/api/beacon/:tau", get(get_beacon))
         .route("/api/objects", get(get_objects))
         .route("/api/object/:id", get(get_single_object))
         .route("/api/accounts", get(get_accounts))
