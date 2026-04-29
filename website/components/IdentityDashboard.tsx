@@ -154,7 +154,11 @@ export default function IdentityDashboard() {
         />
       </div>
 
-      <HbctPanel hbct={identity.hbct} endpoint={endpoint} />
+      <HbctPanel
+        hbct={identity.hbct}
+        endpoint={endpoint}
+        currentEpoch={identity.lambda_fold.latest_epoch}
+      />
       <FourActPanel act={identity.four_act} />
       <LivenessPanel liveness={identity.tur_liveness} />
       <FoldPanel fold={identity.lambda_fold} />
@@ -201,29 +205,56 @@ function Stat({
 function HbctPanel({
   hbct,
   endpoint,
+  currentEpoch,
 }: {
   hbct: HbctState;
   endpoint: string;
+  currentEpoch: number;
 }) {
-  const [seeding, setSeeding] = useState(false);
-  const [seedMsg, setSeedMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState<"seed" | "tick" | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
 
   async function seed() {
-    setSeeding(true);
-    setSeedMsg(null);
+    setBusy("seed");
+    setMsg(null);
     try {
       const res = await fetch(`${endpoint}/api/hbct/seed_demo`, {
         method: "POST",
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      setSeedMsg(
+      setMsg(
         `Minted ${data.minted_positions} demo positions — refresh in 5s.`,
       );
     } catch (e) {
-      setSeedMsg(e instanceof Error ? e.message : "seed failed");
+      setMsg(e instanceof Error ? e.message : "seed failed");
     } finally {
-      setSeeding(false);
+      setBusy(null);
+    }
+  }
+
+  async function tick() {
+    setBusy("tick");
+    setMsg(null);
+    try {
+      // Tick the chain ~1 epoch past the latest seeded slot so any H+1
+      // expiries fire deterministically. Seeded slots top out at
+      // 481252; chain epoch may be lower in dev. Pick the larger.
+      const at = Math.max(currentEpoch, 481253);
+      const res = await fetch(`${endpoint}/api/hbct/tick`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ current_epoch: at }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setMsg(
+        `H+1 tick at epoch ${at}: ${data.entries_removed} entries closed, ${data.mwh_burnt} MWh burnt.`,
+      );
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "tick failed");
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -264,6 +295,26 @@ function HbctPanel({
           unit="counterparties"
         />
       </div>
+      <div className="mt-5 flex flex-wrap gap-2">
+        <button
+          onClick={seed}
+          disabled={busy !== null}
+          className="rounded-md bg-neutral-900 px-4 py-2 text-xs font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+        >
+          {busy === "seed" ? "Seeding…" : "Seed demo positions"}
+        </button>
+        <button
+          onClick={tick}
+          disabled={busy !== null || hbct.entry_count === 0}
+          className="rounded-md border border-neutral-300 bg-white px-4 py-2 text-xs font-medium text-neutral-900 hover:bg-neutral-50 disabled:opacity-50"
+          title="Auto-burn any positions whose hour slot has closed (H+1 decay)"
+        >
+          {busy === "tick" ? "Ticking…" : "Tick H+1 (auto-burn closed slots)"}
+        </button>
+      </div>
+      {msg && (
+        <p className="mt-3 text-xs text-neutral-600">{msg}</p>
+      )}
       {hbct.top_entries.length > 0 ? (
         <div className="mt-6">
           <p className="mb-3 text-xs uppercase tracking-wider text-neutral-500">
@@ -309,26 +360,16 @@ function HbctPanel({
           </div>
         </div>
       ) : (
-        <div className="mt-6 rounded-lg border border-dashed border-neutral-300 bg-neutral-50 p-5">
-          <p className="mb-3 text-sm text-neutral-600">
-            No HBCT positions yet. Seed a realistic demo batch (8
-            positions across GB BMUs + DE-LU) or mint manually via{" "}
-            <code className="font-mono text-neutral-800">
-              POST /api/hbct/mint
-            </code>
-            .
-          </p>
-          <button
-            onClick={seed}
-            disabled={seeding}
-            className="rounded-md bg-neutral-900 px-4 py-2 text-xs font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
-          >
-            {seeding ? "Seeding…" : "Seed demo positions"}
-          </button>
-          {seedMsg && (
-            <p className="mt-3 text-xs text-neutral-500">{seedMsg}</p>
-          )}
-        </div>
+        <p className="mt-6 text-sm text-neutral-500">
+          No HBCT positions yet — click <strong>Seed demo positions</strong>{" "}
+          above to mint 8 realistic positions across GB BMUs + DE-LU,
+          then click <strong>Tick H+1</strong> to watch closed slots
+          auto-burn. Manual mint also via{" "}
+          <code className="font-mono text-neutral-700">
+            POST /api/hbct/mint
+          </code>
+          .
+        </p>
       )}
     </div>
   );
