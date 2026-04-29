@@ -54,9 +54,13 @@ pub struct AggregatedReport {
 
 // ─────────────────────── Signing ───────────────────────────────────────
 
+/// Domain separation tag for oracle report signatures.
+pub const ORACLE_REPORT_DST: &[u8] = b"evaporchain:oracle-report:v1:";
+
 impl OracleReport {
     pub fn signable_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::new();
+        buf.extend_from_slice(ORACLE_REPORT_DST);
         buf.extend_from_slice(self.source.as_bytes());
         buf.push(b':');
         buf.extend_from_slice(self.key.as_bytes());

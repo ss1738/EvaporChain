@@ -14,6 +14,9 @@ use super::OracleValue;
 
 // ─── Validator Vote ──────────────────────────────────────────────────────
 
+/// Domain separation tag for oracle vote BLS signatures.
+pub const ORACLE_VOTE_DST: &[u8] = b"evaporchain:oracle-vote:v1:";
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct OracleVote {
     pub validator_id: u64,
@@ -27,6 +30,7 @@ pub struct OracleVote {
 impl OracleVote {
     pub fn signable_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::new();
+        buf.extend_from_slice(ORACLE_VOTE_DST);
         buf.extend_from_slice(&self.validator_id.to_le_bytes());
         buf.extend_from_slice(self.key.as_bytes());
         buf.push(b':');
