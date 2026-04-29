@@ -275,6 +275,11 @@ pub struct ConsensusFourActState {
 
 /// Tendermint-style BFT consensus engine.
 pub struct TendermintConsensus {
+    /// Parallel partial-order DAG of every committed block. Per
+    /// INVENTION_STACK.md §4.1 #1 this is the substrate for Light-Cone
+    /// Consensus replacing Tendermint as the authoritative consensus
+    /// (governance amendment). Read-only observability for now.
+    pub light_cone_dag: evaporchain_light_cone::LightCone,
     /// This node's validator id.
     pub my_id: u64,
     /// Current block height being decided.
@@ -380,6 +385,7 @@ impl TendermintConsensus {
     /// Create with a custom block gas limit (for high-throughput mode).
     pub fn new_with_gas_limit(my_id: u64, grace_period: u64, validator_set: ValidatorSet, block_gas_limit: u64) -> Self {
         Self {
+            light_cone_dag: evaporchain_light_cone::LightCone::new(),
             my_id,
             height: 1, // Start at height 1 (genesis is 0)
             epoch: 0,
@@ -516,6 +522,13 @@ impl TendermintConsensus {
         self.executor.eulogy_trie.get(addr).map(|t| t.commitment)
     }
 
+    /// Number of blocks in the parallel Light-Cone DAG. Should equal
+    /// `committed_heights.len() - 1` minus genesis edge cases under
+    /// normal operation. Read-only observability for now.
+    pub fn light_cone_block_count(&self) -> usize {
+        self.light_cone_dag.len()
+    }
+
     /// Set the proof verifier for validating Nova IVC proofs on proposed blocks.
     pub fn set_proof_verifier(&mut self, verifier: Box<dyn ProofVerifier>, genesis_state_root: [u8; 32]) {
         self.proof_verifier = Some(verifier);
@@ -622,6 +635,7 @@ impl TendermintConsensus {
     /// to avoid the ~60s initialization of the full 2^20 Merkle tree.
     pub fn new_for_test(my_id: u64, grace_period: u64, validator_set: ValidatorSet) -> Self {
         Self {
+            light_cone_dag: evaporchain_light_cone::LightCone::new(),
             my_id,
             height: 1,
             epoch: 0,
@@ -1759,6 +1773,37 @@ impl TendermintConsensus {
         hash_input.extend_from_slice(&state_root);
         hash_input.extend_from_slice(&block.parent_hash);
         self.parent_hash = blake3_hash(&hash_input);
+
+        // Record this block in the parallel Light-Cone DAG. Per
+        // INVENTION_STACK.md §4.1 #1 this is the substrate for the
+        // partial-order consensus that replaces Tendermint via
+        // governance amendment. For now: read-only observability —
+        // chain authority is still Tendermint's linear chain.
+        // Genesis (block.number == 0) inserted with no parents;
+        // subsequent blocks inherit `block.parent_hash` if it's
+        // already in the DAG (which it should be, as we insert in
+        // commit order).
+        let lc_block = evaporchain_light_cone::Block::new(
+            self.parent_hash,
+            // Parent linkage in the DAG: only include the parent if
+            // we already have it in the DAG (to satisfy the
+            // MissingParent invariant). Genesis edge case: empty.
+            if self.light_cone_dag.contains(&block.parent_hash) {
+                vec![block.parent_hash]
+            } else {
+                vec![]
+            },
+            // Per-block "energy": substitute total gas spent — the
+            // chain's natural per-block work measure. Real production
+            // wires whatever the chain accounts as per-block energy.
+            block.transactions.len() as u64,
+            block.epoch,
+        );
+        // Silently ignore re-insertions (forks the chain rejected
+        // would never reach on_block_committed; if they did, the DAG
+        // would have a duplicate-id rejection that we don't want to
+        // propagate as a panic).
+        let _ = self.light_cone_dag.insert(lc_block);
 
         self.epoch = block.epoch;
         self.mempool.set_epoch(block.epoch);
