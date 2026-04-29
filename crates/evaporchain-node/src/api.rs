@@ -1618,6 +1618,76 @@ pub struct LamportTimeResp {
     pub tick_quantum: u64,
 }
 
+// ─────────── Provable Retention Proofs (PRP) ───────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct PrpProveQuery {
+    /// Hex-encoded 32-byte state id.
+    pub state_id_hex: String,
+    /// Energy committed at activation.
+    pub committed_energy: u64,
+    /// Activation epoch.
+    pub activated_epoch: u64,
+    /// Retention floor (energy below which the state is no longer
+    /// considered "retained").
+    pub floor: u64,
+    /// Half-life in epochs. Defaults to chain ChainLambda::default_genesis().
+    pub half_life_epochs: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PrpProveResp {
+    pub status: &'static str,
+    pub state_id_hex: String,
+    pub activated_epoch: u64,
+    pub committed_energy: u64,
+    pub retained_until_epoch: u64,
+    pub witness_hex: String,
+    pub detail: String,
+}
+
+/// Prove the latest epoch at which `committed_energy` is provably
+/// retained above `floor` under chain-global λ. Per
+/// INVENTION_STACK.md §4.1 #11.
+async fn post_prp_prove(Json(q): Json<PrpProveQuery>) -> Json<PrpProveResp> {
+    let state_id = match parse_hex32(&q.state_id_hex) {
+        Ok(b) => b,
+        Err(e) => {
+            return Json(PrpProveResp {
+                status: "error",
+                state_id_hex: q.state_id_hex,
+                activated_epoch: 0,
+                committed_energy: 0,
+                retained_until_epoch: 0,
+                witness_hex: String::new(),
+                detail: format!("bad state_id_hex: {e}"),
+            });
+        }
+    };
+    let half_life = q
+        .half_life_epochs
+        .unwrap_or(evaporchain_energy_kernel::ChainLambda::default_genesis().half_life());
+    let chain_lambda = evaporchain_energy_kernel::ChainLambda::new(
+        evaporchain_energy_kernel::Lambda::from_epochs(half_life.max(1)),
+    );
+    let proof = evaporchain_prp::prove_retention(
+        state_id,
+        q.committed_energy,
+        chain_lambda,
+        q.activated_epoch,
+        q.floor,
+    );
+    Json(PrpProveResp {
+        status: "ok",
+        state_id_hex: hex::encode(proof.state_id),
+        activated_epoch: proof.activated_epoch,
+        committed_energy: proof.committed_energy,
+        retained_until_epoch: proof.retained_until_epoch,
+        witness_hex: hex::encode(proof.witness),
+        detail: String::new(),
+    })
+}
+
 // ─────────── Modular-Form Beacon (E_4³ − E_6² = 1728·Δ) ────────────
 
 #[derive(Debug, Serialize)]
@@ -5643,6 +5713,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/cmu_check", get(get_cmu_check))
         .route("/api/crooks_refund", post(post_crooks_refund))
         .route("/api/beacon/:tau", get(get_beacon))
+        .route("/api/prp/prove", post(post_prp_prove))
         .route("/api/objects", get(get_objects))
         .route("/api/object/:id", get(get_single_object))
         .route("/api/accounts", get(get_accounts))
