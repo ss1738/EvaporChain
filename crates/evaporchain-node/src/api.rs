@@ -1072,6 +1072,152 @@ async fn get_four_act_status(State(state): State<Arc<ApiState>>) -> Json<FourAct
     Json(snap.clone())
 }
 
+// ───────── EvaporChain identity — single-call dashboard summary ─────
+
+/// Aggregate snapshot of every distinguishing chain primitive,
+/// reachable in one HTTP call. Designed for the launch dashboard,
+/// press demos, and external observers building light-client UIs.
+/// Pulls from FourActSnapshot, TendermintConsensus accessors, the
+/// Lambda-Fold instance, the Decay-Lamport clock, and the Sentinel
+/// parameter registry.
+#[derive(Debug, Serialize)]
+pub struct EvaporChainIdentity {
+    pub chain_id: String,
+    pub four_act: FourActSnapshot,
+    pub light_cone_block_count: usize,
+    pub tur_liveness: TurLivenessResp,
+    pub lambda_fold: LambdaFoldResp,
+    pub lamport_time: LamportTimeResp,
+    pub sentinel_param_count: usize,
+    pub wired_primitives: Vec<&'static str>,
+    pub headline_sentence: &'static str,
+}
+
+const HEADLINE_SENTENCE: &str =
+    "EvaporChain — the first blockchain whose consensus, fee market, light client, \
+     upgrade path, and history are all closed-form solutions of named theorems, \
+     parameterized by one constant λ — and the first chain to admit, at genesis, \
+     that it can die.";
+
+const WIRED_PRIMITIVES: &[&str] = &[
+    "Light-Cone Consensus DAG (Sorkin/Pratt)",
+    "Causal-Cone Validator State (Shalizi-Crutchfield 2001)",
+    "MCC fork-choice (Jaynes 1980 + Stock 2009)",
+    "TUR Liveness Detector (Barato-Seifert 2015)",
+    "Cμ-Gate (Shalizi-Crutchfield Cμ ≤ E + hμ)",
+    "Crooks-MEV Refund (Crooks 1999 fluctuation theorem)",
+    "Modular-Form Beacon (E_4³ − E_6² = 1728·Δ)",
+    "Provable Retention Proofs (PRP)",
+    "Evaporative Filtration Homology (Cohen-Steiner-Edelsbrunner-Harer 2007)",
+    "Lambda-Fold light client (Nova-style)",
+    "Singh-Attractor Consensus (Tier 2)",
+    "Bell-Certified Beacon (CHSH)",
+    "Allen-Decay Opcodes (Allen 1983)",
+    "MDL-Shard (Rissanen 1978)",
+    "CSLC ε-machine (Shalizi-Crutchfield 2001)",
+    "p-adic ultrametric Merkle",
+    "Tropical Plücker commitment",
+    "Energy-Bound Fiat-Shamir (EB-FS)",
+    "Sentinel autonomic governance (homeostasis)",
+    "Mortis death certificate (singleton NFT)",
+    "Tombstone eulogy trie (32-byte commitments)",
+    "LLSA constitution proof (Coq-checked invariants)",
+    "EPV decay-pruned versions",
+    "Sanov-Slashing (KL-rate cost function)",
+    "Singh-Lyapunov Fee Controller",
+    "Singh-Boltzmann Stake (decay-weighted voting power)",
+    "Decay-Lamport energy-driven logical clock",
+    "HBCT Hour-Block Capacity Tokens (launch wedge)",
+    "Energy-Verkle Trie state commitment",
+    "Phased Nullifier Tree (sliding window)",
+];
+
+async fn get_identity(State(state): State<Arc<ApiState>>) -> Json<EvaporChainIdentity> {
+    let four_act = safe_lock(&state.four_act_snapshot).clone();
+    let chain_id = state.chain_id.clone();
+
+    // Mirror the per-endpoint logic so callers pay one round-trip.
+    let (light_cone_block_count, tur_resp, lambda_fold_resp) = match state.tendermint.as_ref() {
+        Some(tc) => {
+            let tc = safe_lock(tc);
+            let lc = tc.light_cone_block_count();
+            let window_samples = tc.tur_window_len();
+            let (verdict, observed, bound) = match tc.tur_liveness_verdict() {
+                None => ("warming-up", None, None),
+                Some(evaporchain_tur_liveness::Verdict::Ok { observed, bound }) => (
+                    "ok",
+                    Some(observed.to_string()),
+                    Some(bound.to_string()),
+                ),
+                Some(evaporchain_tur_liveness::Verdict::Violation { observed, bound }) => (
+                    "violation",
+                    Some(observed.to_string()),
+                    Some(bound.to_string()),
+                ),
+            };
+            let tur = TurLivenessResp {
+                verdict,
+                observed,
+                bound,
+                window_samples,
+                window_capacity: evaporchain_consensus::tendermint::TUR_WINDOW_BLOCKS,
+            };
+            let i = tc.lambda_fold_instance();
+            let lf = LambdaFoldResp {
+                acc_hash_hex: hex::encode(i.acc_hash),
+                total_energy_remaining: i.total_energy_remaining.to_string(),
+                step_count: i.step_count,
+                latest_epoch: i.latest_epoch,
+                is_identity: i.is_identity(),
+            };
+            (lc, tur, lf)
+        }
+        None => (
+            0,
+            TurLivenessResp {
+                verdict: "no-consensus-engine",
+                observed: None,
+                bound: None,
+                window_samples: 0,
+                window_capacity: evaporchain_consensus::tendermint::TUR_WINDOW_BLOCKS,
+            },
+            LambdaFoldResp {
+                acc_hash_hex: String::new(),
+                total_energy_remaining: "0".into(),
+                step_count: 0,
+                latest_epoch: 0,
+                is_identity: true,
+            },
+        ),
+    };
+
+    let lamport_time = {
+        let c = safe_lock(&state.lamport_clock);
+        LamportTimeResp {
+            current_tick: c.current_tick,
+            accumulated_energy: c.accumulated_energy,
+            tick_quantum: c.tick_quantum,
+        }
+    };
+
+    let sentinel_param_count = {
+        let db = safe_lock(&state.db);
+        db.all_sentinel_params().len()
+    };
+
+    Json(EvaporChainIdentity {
+        chain_id,
+        four_act,
+        light_cone_block_count,
+        tur_liveness: tur_resp,
+        lambda_fold: lambda_fold_resp,
+        lamport_time,
+        sentinel_param_count,
+        wired_primitives: WIRED_PRIMITIVES.to_vec(),
+        headline_sentence: HEADLINE_SENTENCE,
+    })
+}
+
 // ───────────────────────── HBCT endpoints ─────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -6176,6 +6322,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/padic", post(post_padic))
         .route("/api/tropical_weight", post(post_tropical_weight))
         .route("/api/eb_fs_challenge", post(post_eb_fs_challenge))
+        .route("/api/identity", get(get_identity))
         .route("/api/objects", get(get_objects))
         .route("/api/object/:id", get(get_single_object))
         .route("/api/accounts", get(get_accounts))
