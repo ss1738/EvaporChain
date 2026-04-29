@@ -45,6 +45,9 @@ evaporchain-bell-beacon = { path = "../evaporchain-bell-beacon" }
 evaporchain-allen-decay = { path = "../evaporchain-allen-decay" }
 evaporchain-mdl-shard = { path = "../evaporchain-mdl-shard" }
 evaporchain-cslc = { path = "../evaporchain-cslc" }
+evaporchain-padic = { path = "../evaporchain-padic" }
+evaporchain-tropical = { path = "../evaporchain-tropical" }
+evaporchain-eb-fs = { path = "../evaporchain-eb-fs" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

@@ -1618,6 +1618,92 @@ pub struct LamportTimeResp {
     pub tick_quantum: u64,
 }
 
+// ─────────── p-adic ultrametric (P=2) ──────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct PadicQuery {
+    pub x: u64,
+    pub y: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PadicResp {
+    pub valuation_x: u32,
+    pub valuation_y: u32,
+    pub ultrametric_distance: u32,
+    pub p: u32,
+}
+
+/// Compute the 2-adic ultrametric distance and valuations of two
+/// integers. Per INVENTION_STACK.md §A1.4 (far-frontier math).
+async fn post_padic(Json(q): Json<PadicQuery>) -> Json<PadicResp> {
+    Json(PadicResp {
+        valuation_x: evaporchain_padic::valuation::<2>(q.x),
+        valuation_y: evaporchain_padic::valuation::<2>(q.y),
+        ultrametric_distance: evaporchain_padic::ultrametric_distance::<2>(q.x, q.y),
+        p: 2,
+    })
+}
+
+// ─────────── Tropical scalar weight ────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct TropicalWeightQuery {
+    pub energy: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TropicalWeightResp {
+    pub energy: u64,
+    pub tropical_weight: String,
+}
+
+async fn post_tropical_weight(
+    Json(q): Json<TropicalWeightQuery>,
+) -> Json<TropicalWeightResp> {
+    let w = evaporchain_tropical::tropical_weight(q.energy);
+    Json(TropicalWeightResp {
+        energy: q.energy,
+        tropical_weight: format!("{w:?}"),
+    })
+}
+
+// ─────────── Energy-Bound Fiat-Shamir (EB-FS) ──────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct EbFsChallengeQuery {
+    /// Hex-encoded transcript bytes.
+    pub transcript_hex: String,
+    pub epoch: u64,
+    pub epoch_energy: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EbFsChallengeResp {
+    pub status: &'static str,
+    pub challenge_hex: String,
+    pub detail: String,
+}
+
+async fn post_eb_fs_challenge(Json(q): Json<EbFsChallengeQuery>) -> Json<EbFsChallengeResp> {
+    let transcript = match hex::decode(&q.transcript_hex) {
+        Ok(b) => b,
+        Err(e) => {
+            return Json(EbFsChallengeResp {
+                status: "error",
+                challenge_hex: String::new(),
+                detail: format!("bad transcript_hex: {e}"),
+            });
+        }
+    };
+    let challenge = evaporchain_eb_fs::eb_fs_challenge(&transcript, q.epoch, q.epoch_energy);
+    Json(EbFsChallengeResp {
+        status: "ok",
+        challenge_hex: hex::encode(challenge),
+        detail: String::new(),
+    })
+}
+
 // ─────────── Singh-Attractor Consensus (Tier 2) ────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -6087,6 +6173,9 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/allen_relation", post(post_allen_relation))
         .route("/api/mdl_optimal", post(post_mdl_optimal))
         .route("/api/cslc_reconstruct", post(post_cslc_reconstruct))
+        .route("/api/padic", post(post_padic))
+        .route("/api/tropical_weight", post(post_tropical_weight))
+        .route("/api/eb_fs_challenge", post(post_eb_fs_challenge))
         .route("/api/objects", get(get_objects))
         .route("/api/object/:id", get(get_single_object))
         .route("/api/accounts", get(get_accounts))
