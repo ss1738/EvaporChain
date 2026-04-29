@@ -117,9 +117,9 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 - [ ] Transaction simulation
 - [ ] Deploy to `evaporchain.com` or `testnet.evaporchain.com`
 
-### dApps — All 4 (67% average)
-- [ ] Wire contract interactions to extension wallet
-- [ ] Complete transaction signing flows
+### dApps — All 4 (80% average)
+- [x] Wire contract interactions to extension wallet — DONE: governance migrated from raw window.evaporchain to `@evaporchain/wallet-sdk/react`; all 4 dApps have vite alias pointing to workspace wallet-sdk
+- [x] Complete transaction signing flows — DONE: all modals (VoteModal, CreateProposalModal, MintModal, StakeModal, etc.) call real API endpoints; wallet address passed from useWalletConnect
 - [ ] Deploy to public URLs
 
 ---

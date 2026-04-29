@@ -5,7 +5,11 @@ import { resolve } from "path";
 export default defineConfig({
   plugins: [react()],
   resolve: {
-    alias: { "@": resolve(__dirname, "src") },
+    alias: {
+      "@": resolve(__dirname, "src"),
+      "@evaporchain/wallet-sdk": resolve(__dirname, "../../wallet-sdk/src/index.ts"),
+      "@evaporchain/wallet-sdk/react": resolve(__dirname, "../../wallet-sdk/src/react.ts"),
+    },
   },
   server: {
     port: 5177,
