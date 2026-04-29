@@ -17,7 +17,7 @@ EvaporChain introduces thermodynamic state decay — every piece of on-chain sta
 - [x] ZK proving (Nova recursive proof folding)
 - [x] P2P networking (block propagation, tx gossip)
 - [x] Full node with API, dashboard, faucet, and CLI
-- [x] **4,668+ tests passing**
+- [x] **4,770+ tests passing** (102 cross-crate integration tests added 2026-04-29)
 - [ ] Public testnet deployment
 
 ## Run Locally
@@ -41,7 +41,7 @@ open http://localhost:3000/faucet
 
 ## Connect to Public Testnet
 
-Coming soon. The testnet will be deployed on 4 Hetzner nodes. See [`scripts/deploy-testnet.sh`](scripts/deploy-testnet.sh) for deployment instructions.
+Coming soon. Infrastructure is Terraform-ready (`deploy/terraform/modules/hetzner/`) — scalable to 50 validators on Hetzner EU. See [`scripts/deploy-testnet.sh`](scripts/deploy-testnet.sh) for manual deployment.
 
 ## Documentation
 
@@ -84,16 +84,16 @@ evaporchain-oracle      Decentralized oracle with BFT consensus + inclusion proo
 evaporchain-sharding    Dynamic shard assignment, cross-shard messaging, compaction
 evaporchain-node        Full node binary + JSON-RPC API + dashboard + persistence
 evaporchain-cli         CLI with genesis ceremony + keygen + monitoring
-evaporchain-mcp         MCP server for AI agent interaction (15 tools, 7 resources)
+evaporchain-mcp         MCP server for AI agent interaction (26 tools, 13 resources, 6 prompts)
 ```
 
 ## Test Coverage
 
-**4,668+ tests** across 16 crates — all passing.
+**4,770+ tests** across 71 crates — all passing. Includes 102 cross-crate integration tests covering the full pipeline (consensus → execution → DA → proving → contracts → frontier primitives).
 
 ```bash
 cargo test --workspace
-# 4,668 passed; 0 failed
+# 4,770+ passed; 0 failed
 ```
 
 ## License
