@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-sentinel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Sentinel — autonomic parameter governance via decay-weighted voting within hard-coded bounds. The 'Life' act of EvaporChain's four-act narrative spine. Per INVENTION_STACK.md Amendment 2 §A2.5: 'EvaporChain is the first chain that governs itself the way a body does — through homeostasis, not legislators.'"
+
+[dependencies]
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
+evaporchain-llsa = { path = "../evaporchain-llsa" }
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
