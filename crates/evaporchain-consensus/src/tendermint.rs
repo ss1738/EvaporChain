@@ -965,7 +965,7 @@ impl TendermintConsensus {
         if slash_amount == 0 {
             return 0;
         }
-        let jail = missed_blocks >= 500;
+        let jail = missed_blocks >= 3;
         self.validator_set.slash_with_amount(validator_id, slash_amount, jail)
     }
 
