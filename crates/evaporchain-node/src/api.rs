@@ -1618,6 +1618,98 @@ pub struct LamportTimeResp {
     pub tick_quantum: u64,
 }
 
+// ─────────── Lambda-Fold light client (Nova-style folding) ────────
+
+#[derive(Debug, Serialize)]
+pub struct LambdaFoldResp {
+    pub acc_hash_hex: String,
+    pub total_energy_remaining: String,
+    pub step_count: u64,
+    pub latest_epoch: u64,
+    pub is_identity: bool,
+}
+
+/// Read the chain's current Lambda-Fold accumulator. Light clients
+/// pull this once and verify against the chain's expected
+/// (acc_hash, total_energy_remaining) in O(1) work — the substrate
+/// promise of the energy-folded light client. Per INVENTION_STACK.md
+/// §4.1 row 8.
+async fn get_lambda_fold(State(state): State<Arc<ApiState>>) -> Json<LambdaFoldResp> {
+    let tc = match state.tendermint.as_ref() {
+        Some(tc) => tc,
+        None => {
+            return Json(LambdaFoldResp {
+                acc_hash_hex: String::new(),
+                total_energy_remaining: "0".into(),
+                step_count: 0,
+                latest_epoch: 0,
+                is_identity: true,
+            });
+        }
+    };
+    let tc = safe_lock(tc);
+    let i = tc.lambda_fold_instance();
+    Json(LambdaFoldResp {
+        acc_hash_hex: hex::encode(i.acc_hash),
+        total_energy_remaining: i.total_energy_remaining.to_string(),
+        step_count: i.step_count,
+        latest_epoch: i.latest_epoch,
+        is_identity: i.is_identity(),
+    })
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LambdaFoldVerifyQuery {
+    pub expected_acc_hash_hex: String,
+    pub expected_remaining_energy: u128,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LambdaFoldVerifyResp {
+    pub status: &'static str,
+    pub detail: String,
+}
+
+/// Substrate-quality verifier for the Lambda-Fold instance. Checks
+/// (acc_hash, total_energy_remaining) match the caller's expected
+/// witness — the same check Nova's R1CS verifier subsumes once the
+/// arkworks integration replaces the blake3 stand-in.
+async fn post_lambda_fold_verify(
+    State(state): State<Arc<ApiState>>,
+    Json(q): Json<LambdaFoldVerifyQuery>,
+) -> Json<LambdaFoldVerifyResp> {
+    let expected_hash = match parse_hex32(&q.expected_acc_hash_hex) {
+        Ok(h) => h,
+        Err(e) => {
+            return Json(LambdaFoldVerifyResp {
+                status: "error",
+                detail: format!("bad expected_acc_hash_hex: {e}"),
+            });
+        }
+    };
+    let tc = match state.tendermint.as_ref() {
+        Some(tc) => tc,
+        None => {
+            return Json(LambdaFoldVerifyResp {
+                status: "error",
+                detail: "no consensus engine".into(),
+            });
+        }
+    };
+    let tc = safe_lock(tc);
+    let i = tc.lambda_fold_instance();
+    match evaporchain_lambda_fold::verify_folded(&i, expected_hash, q.expected_remaining_energy) {
+        Ok(()) => Json(LambdaFoldVerifyResp {
+            status: "ok",
+            detail: String::new(),
+        }),
+        Err(e) => Json(LambdaFoldVerifyResp {
+            status: "violation",
+            detail: format!("{e}"),
+        }),
+    }
+}
+
 // ─────────── Evaporative Filtration Homology (EFH) ─────────────────
 
 #[derive(Debug, Deserialize)]
@@ -5771,6 +5863,8 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/prp/prove", post(post_prp_prove))
         .route("/api/efh/h0", post(post_efh_h0))
         .route("/api/efh/bottleneck", post(post_efh_bottleneck))
+        .route("/api/lambda_fold", get(get_lambda_fold))
+        .route("/api/lambda_fold/verify", post(post_lambda_fold_verify))
         .route("/api/objects", get(get_objects))
         .route("/api/object/:id", get(get_single_object))
         .route("/api/accounts", get(get_accounts))

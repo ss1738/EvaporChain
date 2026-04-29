@@ -306,6 +306,11 @@ pub struct TendermintConsensus {
     /// Last TUR verdict computed at block-commit time. None until the
     /// window has at least 2 samples (variance is meaningless on 1).
     pub last_tur_verdict: Option<evaporchain_tur_liveness::Verdict>,
+    /// Lambda-Fold accumulated instance, ticked per committed block.
+    /// O(1) memory regardless of chain length — the substrate guarantee
+    /// of the energy-folded light client. Per INVENTION_STACK.md §4.1
+    /// row 8.
+    pub lambda_fold: evaporchain_lambda_fold::FoldedInstance,
     /// This node's validator id.
     pub my_id: u64,
     /// Current block height being decided.
@@ -414,6 +419,7 @@ impl TendermintConsensus {
             light_cone_dag: evaporchain_light_cone::LightCone::new(),
             tur_window: std::collections::VecDeque::with_capacity(TUR_WINDOW_BLOCKS),
             last_tur_verdict: None,
+            lambda_fold: evaporchain_lambda_fold::FoldedInstance::identity(),
             my_id,
             height: 1, // Start at height 1 (genesis is 0)
             epoch: 0,
@@ -642,6 +648,13 @@ impl TendermintConsensus {
         self.last_tur_verdict
     }
 
+    /// Current Lambda-Fold accumulator (O(1) light-client commitment
+    /// to chain state + energy decay). Per INVENTION_STACK.md §4.1
+    /// row 8.
+    pub fn lambda_fold_instance(&self) -> evaporchain_lambda_fold::FoldedInstance {
+        self.lambda_fold
+    }
+
     /// Number of samples currently in the TUR observation window.
     pub fn tur_window_len(&self) -> usize {
         self.tur_window.len()
@@ -763,6 +776,7 @@ impl TendermintConsensus {
             light_cone_dag: evaporchain_light_cone::LightCone::new(),
             tur_window: std::collections::VecDeque::with_capacity(TUR_WINDOW_BLOCKS),
             last_tur_verdict: None,
+            lambda_fold: evaporchain_lambda_fold::FoldedInstance::identity(),
             my_id,
             height: 1,
             epoch: 0,
@@ -1951,6 +1965,23 @@ impl TendermintConsensus {
             let samples: Vec<u64> = self.tur_window.iter().copied().collect();
             self.last_tur_verdict =
                 Some(evaporchain_tur_liveness::tur_check(&samples, sigma));
+        }
+
+        // Lambda-Fold per-block step. Each committed block contributes
+        // one StepWitness {state_hash = state_root, step_energy = J,
+        // observed_epoch = block.epoch}. The fold accumulator is O(1)
+        // memory regardless of chain length. Out-of-order steps are
+        // ignored (Tendermint commits monotone in epoch in practice).
+        let chain_lambda = evaporchain_energy_kernel::ChainLambda::default_genesis();
+        let step = evaporchain_lambda_fold::StepWitness::new(
+            state_root,
+            block_j,
+            block.epoch,
+        );
+        if let Ok(folded) =
+            evaporchain_lambda_fold::fold(self.lambda_fold, step, chain_lambda)
+        {
+            self.lambda_fold = folded;
         }
 
         self.epoch = block.epoch;
