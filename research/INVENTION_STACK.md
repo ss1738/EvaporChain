@@ -801,7 +801,13 @@ Energy synergy: structural — cooling rate = λ.
 Math feasibility: research-ready in 6 months.
 Citations: Kirkpatrick-Gelatt-Vecchi 1983; Geman-Geman 1984.
 
-### A4.3.3 Holonomy-Based State Verification **(WILD)**
+### A4.3.3 Holonomy-Based State Verification **(WILD — STRUCK 2026-04-29)**
+
+> **STRUCK.** No operational security reduction; Fisher-metric variant (ORMB) already in §A1.4 of Amendment 1.
+
+Original entry preserved below for audit trail:
+
+
 
 State manifold equipped with a Riemannian connection (Levi-Civita). State changes accumulate **holonomy** when transported around closed loops in state-space. Light clients verify state by walking small loops and checking that the holonomy matches a published reference.
 
@@ -821,7 +827,13 @@ Energy synergy: weak; structural-decay link is cosmetic.
 Math feasibility: research-ready in 12+ months.
 Citations: Pearl 1995 *Causal Diagrams for Empirical Research*; Pearl 2009 *Causality* 2nd ed.
 
-### A4.3.5 Stigmergic Consensus **(WILD)**
+### A4.3.5 Stigmergic Consensus **(WILD — STRUCK 2026-04-29)**
+
+> **STRUCK.** No Byzantine safety proof transfers from biological stigmergy math. "Bio-inspired" ≠ provable consensus.
+
+Original entry preserved below for audit trail:
+
+
 
 Camazine et al. *Self-Organization in Biological Systems* (2001). Validators leave decay-signed "traces" in the environment that other validators respond to. Consensus emerges without explicit message-passing — bio-inspired but rigorously based on stigmergy theory.
 
@@ -831,7 +843,13 @@ Energy synergy: structural — trace decay rate = λ.
 Math feasibility: research; would need a formal proof of safety/liveness under Byzantine adversary, which doesn't obviously transfer from biological systems.
 Citations: Grassé 1959 (original stigmergy); Theraulaz-Bonabeau 1999.
 
-### A4.3.6 Decay-Native Probabilistic Programming **(WILD)**
+### A4.3.6 Decay-Native Probabilistic Programming **(WILD — STRUCK 2026-04-29)**
+
+> **STRUCK.** zkML production ceiling (~tens-of-millions of params today) makes verifiable Bayesian inference at L1 unrealistic; decay-prior coupling would be cosmetic.
+
+Original entry preserved below for audit trail:
+
+
 
 VM where **probabilistic programs** are first-class — contracts express Bayesian inference natively (Stan/Pyro/Gen-style). State transitions are draws from posterior distributions, not deterministic updates. Validators reach consensus on the *distribution*, not the realization.
 
@@ -841,7 +859,13 @@ Energy synergy: weak unless decay parameterizes a prior.
 Math feasibility: speculative; verifiable inference at L1 is hard (zkML still has the production ceiling at ~tens-of-millions of params).
 Citations: Carpenter et al. 2017 *Stan*; Bingham et al. 2019 *Pyro*; Cusumano-Towner et al. 2019 *Gen*.
 
-### A4.3.7 Information-Geometry Consensus **(WILD)**
+### A4.3.7 Information-Geometry Consensus **(WILD — STRUCK 2026-04-29)**
+
+> **STRUCK.** Fisher metric computation at L1 throughput is prohibitive; not realistic as a runtime primitive.
+
+Original entry preserved below for audit trail:
+
+
 
 Amari's information geometry. State distributions live on a statistical manifold equipped with the Fisher-Rao metric. Consensus = following geodesics on this manifold; disagreement = geodesic distance.
 
@@ -861,7 +885,13 @@ Energy synergy: structural; autopoiesis requires a metabolism, decay supplies it
 Math feasibility: ship-now as a *framing*; the underlying primitives already exist.
 Citations: Maturana-Varela 1972, *De máquinas y seres vivos*; English: 1980 *Autopoiesis and Cognition*.
 
-### A4.3.9 Decay-Native Time Crystal **(SPEC)**
+### A4.3.9 Decay-Native Time Crystal **(SPEC — STRUCK 2026-04-29)**
+
+> **STRUCK.** Energy synergy is cosmetic at best; condensed-matter physics doesn't transfer cleanly to L1 dynamics.
+
+Original entry preserved below for audit trail:
+
+
 
 Wilczek 2012 (theory); Else et al. 2016 *Floquet Time Crystals* (experimental). Condensed-matter physics phenomenon: a system that breaks time-translation symmetry, exhibiting periodic structure in time without periodic driving.
 
@@ -871,7 +901,13 @@ Energy synergy: cosmetic at best.
 Math feasibility: SPEC. Likely doesn't transfer cleanly from condensed-matter to L1.
 Citations: Wilczek 2012 *Quantum Time Crystals*; Else-Bauer-Nayak 2016 *Floquet Time Crystals*.
 
-### A4.3.10 Quaternionic / Geometric-Algebra State for Specific Sub-Domains **(SPEC)**
+### A4.3.10 Quaternionic / Geometric-Algebra State for Specific Sub-Domains **(SPEC — STRUCK 2026-04-29)**
+
+> **STRUCK.** Already in the main strikes list (§4.4). Niche-domain salvage doesn't justify a parking spot here.
+
+Original entry preserved below for audit trail:
+
+
 
 Already in the strikes list as a general state primitive (continuous, no security reduction). But for *specific sub-domains* (e.g., physical-world simulation oracles, robotics on-chain, IoT spatial reasoning), Clifford algebra could be a useful native type. Wouldn't replace the main state model; would be a typed namespace for specific use cases.
 
@@ -887,7 +923,13 @@ Energy synergy: structural; RG flow is generated by λ.
 Math feasibility: research-ready in 12 months as analytic tooling; not a runtime primitive.
 Citations: Wilson 1971; Cardy 1996 *Scaling and Renormalization in Statistical Physics*.
 
-### A4.3.12 Decay-Native Topological Quantum Error Correction Inspired Validation **(WILD)**
+### A4.3.12 Decay-Native Topological Quantum Error Correction Inspired Validation **(WILD — STRUCK 2026-04-29)**
+
+> **STRUCK.** Weak decay synergy; "inspired by topological QEC" ≠ the actual math. Falls below the theorem-grade bar.
+
+Original entry preserved below for audit trail:
+
+
 
 Borrow from topological QEC (Kitaev surface codes, Bombin color codes). Not quantum hardware — the *combinatorial structure* of topological codes (anyons, lattice gauge theory) for arranging validator votes such that local errors don't propagate.
 
@@ -896,6 +938,32 @@ Different from existing strike (#5 Anyonic Braiding Tx Ordering — that was for
 Energy synergy: weak; would need contrived coupling.
 Math feasibility: research-grade; promising in principle, no L1 has tried.
 Citations: Kitaev 2003 *Fault-tolerant quantum computation by anyons*; Bombin-Martin-Delgado 2006.
+
+## A4.3.13 Curation pass — 2026-04-29
+
+Seven of the twelve speculative ideas were struck after the doctrine's first re-read. Surviving speculation list (the only items future sessions may consider promoting, with appropriate rigor):
+
+| # | Survivor | Severity | Why it survived |
+|---|---|---|---|
+| A4.3.1 | **Information-Bottleneck Validators** (Tishby) | PROMISING | β coupling = λ; structural decay synergy; mathematically grounded |
+| A4.3.2 | **Self-Annealing Validator Set** | PROMISING | Cooling rate = λ; clean structural fit; standard simulated-annealing math |
+| A4.3.4 | **Causal-Bayesian-Network Contracts** (Pearl) | PROMISING — *only if Contractless L1 is rejected* | Counterfactual reasoning as VM primitive; dies under Contractless paradigm |
+| A4.3.8 | **Autopoietic Chain** (Maturana-Varela) | PROMISING — *partly already shipped* | Coherent biological framing for Refresh-Pool Patronage + Sentinel + LLSA |
+| A4.3.11 | **RG Consensus Phase Map** (extends WSBF) | PROMISING | Diagnostic tooling; extends a Tier-2 primitive that's already locked |
+
+Struck items with reasoning:
+
+| # | Idea | Reason for strike |
+|---|---|---|
+| A4.3.3 | Holonomy-Based State Verification | No operational security reduction; Fisher-metric variant (ORMB) already in §A1.4 |
+| A4.3.5 | Stigmergic Consensus | No Byzantine safety proof from biological stigmergy math |
+| A4.3.6 | Decay-Native Probabilistic Programming | zkML production ceiling; decay-prior coupling is cosmetic |
+| A4.3.7 | Information-Geometry Consensus | Fisher metric at L1 throughput is prohibitive |
+| A4.3.9 | Decay-Native Time Crystal | SPEC; energy synergy cosmetic |
+| A4.3.10 | Quaternionic / Geometric-Algebra State | Already in strikes (§4.4) |
+| A4.3.12 | Topological QEC Validation | Weak decay synergy; "inspired by" ≠ the actual math |
+
+The struck entries remain visible in §A4.3 for audit trail (so a future session can see what was considered and why it was rejected) but **must not be promoted to any tier**. They are cumulative strikes on top of the main strikes list (§4.4 + §A1.5 + §A2.6).
 
 ## A4.4 Discipline for these speculations
 
@@ -906,6 +974,7 @@ A future Claude session reading this section must obey:
 26. **The Contractless L1 paradigm (§A4.1) is decision-ready.** Defer the choice to Week 4–6, but don't add it to a tier until then.
 27. **Hardware story (§A4.2) is V2+.** Don't propose it for the May–Oct sprint.
 28. **Don't propose a new speculative primitive in this section** unless it passes the same filter as Tier 0: published theorem + structural-decay requirement.
+29. **The 7 entries struck on 2026-04-29 (§A4.3.13) are dead.** Do not re-litigate. Reasoning is preserved with each entry; the bar to revive is the same as Tier 0 (published theorem + structural-decay test + Satyawan's explicit confirmation).
 
 End of Amendment 4. End of doctrine for now.
 
