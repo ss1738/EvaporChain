@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-tombstone"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Tombstone — 32-byte commitment per fully-evaporated account, written to a non-decaying eulogy trie. Per INVENTION_STACK.md Amendment 2 §A2.5 (the 'small deaths' act of the four-act narrative spine)."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+blake3 = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
