@@ -257,25 +257,35 @@ To be produced before audit kickoff:
 - D-04: Validator key lifecycle (generate → store → load → sign → rotate).
 - D-05: Cross-shard messaging (origin shard → receipt → destination shard execute).
 
-## 10. Operational parameters (TODO — to be tabulated)
+## 10. Operational parameters
 
-| Parameter | Current value |
-|-----------|---------------|
-| Block time target | TBD |
-| Max gas per block | per `--block-gas-limit` flag |
-| Validator unbonding period | TBD (recently added in `bb65654`) |
-| Slashing % for double-vote | TBD |
-| Slashing % for downtime | TBD (added in `f9ef6c8`) |
-| Epoch length | TBD |
-| Max blob size | 128 KiB (per `87c8e1c`) |
-| Max validator set size | TBD |
-| Reward per block | per `RewardAccumulator` (wired in `0cbb859`) |
-| Fee burn ratio | TBD |
-| `MAX_CALL_DEPTH` | per `execution/lib.rs:141` |
-| `MAX_STACK_DEPTH` | 1024 (`script/vm.rs:34`) |
-| Max records in `FinalityTracker` | 10,000 (`finality.rs:126`) |
-
-To be filled in by reading the constants out of source and confirming with operator-facing CLI defaults.
+| Parameter | Current value | Source |
+|-----------|---------------|--------|
+| Block time target | 2,000 ms | `genesis-mainnet.json` → `block_interval_ms` |
+| Max gas per block | 500,000 (default); overridable via `--block-gas-limit` | `genesis-mainnet.json` → `block_gas_limit` |
+| Validator bonding period | 2 epochs (200 blocks) | `validator_set.rs:715` `BONDING_PERIOD_EPOCHS` |
+| Validator unbonding period | 256 epochs (25,600 blocks) | `execution/lib.rs:196` `UNBONDING_PERIOD_EPOCHS` |
+| Slashing % for double-vote (equivocation) | 10% of stake | `validator_set.rs:34` `SLASH_EQUIVOCATION_PCT` |
+| Slashing % for downtime | 1% of stake per missed slot | `validator_set.rs:37` `SLASH_DOWNTIME_PCT` |
+| Epoch length | 100 blocks | `validator_set.rs:721` `EPOCH_LENGTH` |
+| Min validators (liveness threshold) | 3 | `validator_set.rs:709` `MIN_VALIDATORS` |
+| Max validator set size | Unbounded (no hard cap; churn ≤ 33%/epoch) | `validator_set.rs:712` `MAX_CHURN_FRACTION` |
+| Max blob size | 128 KiB | `execution/lib.rs:307` `MAX_BLOB_SIZE` |
+| Max cross-contract call depth (execution) | 64 | `execution/lib.rs:306` `MAX_CALL_DEPTH` |
+| Max cross-contract call depth (EvaporScript) | 8 | `script/lib.rs:215` `MAX_CALL_DEPTH` |
+| Max VM stack depth | 1,024 | `script/vm.rs:34` `MAX_STACK_DEPTH` |
+| Max records in `FinalityTracker` | 10,000 | `finality.rs:126` |
+| Min storage deposit (object creation) | 1,000 EVAP | `types/lib.rs` `MIN_STORAGE_DEPOSIT` |
+| Storage rent rate | 1 EVAP / byte / epoch | `types/lib.rs` `STORAGE_RENT_PER_BYTE_PER_EPOCH` |
+| Oracle quorum: min total weight | 30,000,000 EVAP | `oracle.rs` `QUORUM_MIN_TOTAL_WEIGHT` |
+| Oracle quorum: min voters | 3 | `oracle.rs` `QUORUM_MIN_VOTERS` |
+| Oracle max vote weight per validator | 10,000,000 EVAP | `oracle.rs` `MAX_VOTE_WEIGHT` |
+| Governance timelock | 5 epochs (500 blocks) | `execution/lib.rs` `GOVERNANCE_TIMELOCK_EPOCHS` |
+| Block reward (genesis) | 100 EVAP (halving every 1,000,000 blocks) | `genesis-mainnet.json` → `tokenomics` |
+| Total supply | 1,000,000,000 EVAP | `genesis-mainnet.json` → `tokenomics.total_supply` |
+| Fee burn ratio | 50% | `genesis-mainnet.json` → `tokenomics.fee_burn_rate` |
+| Staker fee share | 50% | `genesis-mainnet.json` → `tokenomics.staker_fee_share` |
+| Target staking APY | 5% | `genesis-mainnet.json` → `tokenomics.target_staking_apy` |
 
 ## 11. Pre-RFP checklist
 
@@ -284,7 +294,7 @@ In approximate priority order:
 - [ ] Resolve HIGH items or document as accepted risk if deferred.
 - [ ] Generate code-coverage report.
 - [ ] Produce architecture diagrams D-01 through D-05.
-- [ ] Tabulate all values in §10.
+- [x] Tabulate all values in §10.
 - [ ] Wire `BlockDA2D::encode_block()` into block production.
 - [ ] Pin `pqc_dilithium` commit; document upstream-audit status.
 - [ ] Encrypt `bls_key.bin` (mainnet gate; not strictly required for testnet).
