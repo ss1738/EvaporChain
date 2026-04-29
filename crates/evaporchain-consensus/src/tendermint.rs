@@ -552,6 +552,66 @@ impl TendermintConsensus {
         .ok()
     }
 
+    /// Run Maximum-Caliber-Coherence fork choice over `candidate_heads`.
+    /// For each head, builds the parent-chain trajectory back to genesis
+    /// (single-parent walk; first-parent of each block in the Light-Cone
+    /// DAG), then picks the trajectory whose path-caliber is maximal.
+    /// Returns `None` if no candidate is in the DAG. Per
+    /// INVENTION_STACK.md §A1.2 / §A1.3 (Jaynes 1980 + Stock 2009 closed-
+    /// form caliber).
+    ///
+    /// `beta_mb` is the chain-set inverse-temperature (Jaynes
+    /// multiplier-of-energy) for the caliber penalty term. The launch
+    /// default 10_000 is governance-set.
+    pub fn mcc_choose_fork(
+        &self,
+        candidate_heads: &[[u8; 32]],
+        beta_mb: u64,
+    ) -> Option<[u8; 32]> {
+        let trajectories: Vec<evaporchain_mcc::Trajectory> = candidate_heads
+            .iter()
+            .filter_map(|head| self.trajectory_to_genesis(*head))
+            .collect();
+        if trajectories.is_empty() {
+            return None;
+        }
+        let refs: Vec<&evaporchain_mcc::Trajectory> = trajectories.iter().collect();
+        evaporchain_mcc::mcc_choose(refs, &self.light_cone_dag, beta_mb)
+            .ok()
+            .and_then(|t| t.head().copied())
+    }
+
+    /// Walk from `head` back to genesis via first-parent at each step.
+    /// Returns the trajectory in genesis-first order, or None if `head`
+    /// isn't in the Light-Cone DAG.
+    fn trajectory_to_genesis(
+        &self,
+        head: [u8; 32],
+    ) -> Option<evaporchain_mcc::Trajectory> {
+        if !self.light_cone_dag.contains(&head) {
+            return None;
+        }
+        let mut path: Vec<[u8; 32]> = Vec::new();
+        let mut cursor = Some(head);
+        let mut depth = 0usize;
+        while let Some(id) = cursor {
+            path.push(id);
+            // Bound depth to prevent runaway on a malformed DAG (cycles
+            // are excluded by LightCone insertion rules but defence in
+            // depth never hurts).
+            depth += 1;
+            if depth > 1_000_000 {
+                break;
+            }
+            cursor = self
+                .light_cone_dag
+                .get(&id)
+                .and_then(|b| b.parents.first().copied());
+        }
+        path.reverse();
+        Some(evaporchain_mcc::Trajectory::new(path))
+    }
+
     /// Number of blocks in the parallel Light-Cone DAG. Should equal
     /// `committed_heights.len() - 1` minus genesis edge cases under
     /// normal operation. Read-only observability for now.

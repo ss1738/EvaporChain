@@ -1618,6 +1618,53 @@ pub struct LamportTimeResp {
     pub tick_quantum: u64,
 }
 
+// ─────────── MCC fork-choice (Jaynes 1980 + Stock 2009) ────────────
+
+#[derive(Debug, Deserialize)]
+pub struct MccForkChoiceQuery {
+    /// Comma-separated hex-encoded 32-byte candidate fork heads.
+    pub candidates: String,
+    /// Inverse-temperature for the caliber penalty term. Defaults to
+    /// 10_000 (launch governance default).
+    pub beta_mb: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MccForkChoiceResp {
+    pub chosen_head_hex: Option<String>,
+    pub considered: usize,
+    pub beta_mb: u64,
+}
+
+async fn get_mcc_fork_choice(
+    State(state): State<Arc<ApiState>>,
+    axum::extract::Query(q): axum::extract::Query<MccForkChoiceQuery>,
+) -> Json<MccForkChoiceResp> {
+    let beta_mb = q.beta_mb.unwrap_or(10_000);
+    let heads: Vec<[u8; 32]> = q
+        .candidates
+        .split(',')
+        .filter_map(|s| parse_hex32(s.trim()).ok())
+        .collect();
+    let tc = match state.tendermint.as_ref() {
+        Some(tc) => tc,
+        None => {
+            return Json(MccForkChoiceResp {
+                chosen_head_hex: None,
+                considered: heads.len(),
+                beta_mb,
+            });
+        }
+    };
+    let tc = safe_lock(tc);
+    let chosen = tc.mcc_choose_fork(&heads, beta_mb);
+    Json(MccForkChoiceResp {
+        chosen_head_hex: chosen.map(hex::encode),
+        considered: heads.len(),
+        beta_mb,
+    })
+}
+
 // ─────────── Shalizi-Crutchfield Causal-Cone observability ──────────
 
 #[derive(Debug, Serialize)]
@@ -5398,6 +5445,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/lamport_time", get(get_lamport_time))
         .route("/api/light_cone", get(get_light_cone))
         .route("/api/causal_cone", get(get_causal_cone))
+        .route("/api/mcc_fork_choice", get(get_mcc_fork_choice))
         .route("/api/objects", get(get_objects))
         .route("/api/object/:id", get(get_single_object))
         .route("/api/accounts", get(get_accounts))
