@@ -11,7 +11,7 @@ evaporchain-consensus = { path = "../../crates/evaporchain-consensus" }
 evaporchain-execution = { path = "../../crates/evaporchain-execution" }
 evaporchain-state = { path = "../../crates/evaporchain-state" }
 evaporchain-da = { path = "../../crates/evaporchain-da" }
-evaporchain-proving = { path = "../../crates/evaporchain-proving" }
+evaporchain-proving = { path = "../../crates/evaporchain-proving", features = ["test-utils"] }
 evaporchain-contracts = { path = "../../crates/evaporchain-contracts" }
 evaporchain-demurrage = { path = "../../crates/evaporchain-demurrage" }
 evaporchain-mera = { path = "../../crates/evaporchain-mera" }
