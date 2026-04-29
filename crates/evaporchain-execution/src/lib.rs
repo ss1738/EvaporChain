@@ -438,6 +438,14 @@ pub struct SimpleExecutor {
     /// `None` until the first block runs.
     pub last_conservation_audit:
         Option<Result<(), evaporchain_energy_kernel::ConservationViolation>>,
+    /// Last Cμ-Gate verdict (Shalizi-Crutchfield identity Cμ ≤ E + hμ).
+    /// Populated when the chain calls `record_cmu_observation`. Pure
+    /// observability — governance can promote to consensus-rejection later.
+    pub last_cmu_verdict: Option<evaporchain_cmu_gate::Verdict>,
+    /// Last TUR Liveness verdict (Var(J)/⟨J⟩² ≥ 2/Σ).
+    /// Populated when the chain calls `record_tur_observation`. Same
+    /// observability pattern as `last_cmu_verdict`.
+    pub last_tur_verdict: Option<evaporchain_tur_liveness::Verdict>,
 }
 
 /// Namespace key for the protocol-owned refresh pool. Storage rent
@@ -476,6 +484,8 @@ impl SimpleExecutor {
             ),
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
             last_conservation_audit: None,
+            last_cmu_verdict: None,
+            last_tur_verdict: None,
         }
     }
 
@@ -512,6 +522,40 @@ impl SimpleExecutor {
         self.lyapunov_fee_state = new_state;
         let new_fee = evaporchain_fee_controller::base_fee(&self.lyapunov_fee_state, &self.lyapunov_fee_params);
         Ok((new_fee, drift))
+    }
+
+    /// Record a Cμ-Gate observation (passive). Caller supplies the
+    /// observed Cμ + bound estimates; verdict is stored in
+    /// `last_cmu_verdict`. Per INVENTION_STACK.md §A1.3, an observed
+    /// Cμ above the bound is a Sybil/spam signature.
+    pub fn record_cmu_observation(
+        &mut self,
+        observed_cmu_mb: u64,
+        excess_entropy_mb: u64,
+        entropy_rate_mb: u64,
+    ) -> evaporchain_cmu_gate::Verdict {
+        let v = evaporchain_cmu_gate::cmu_check(
+            observed_cmu_mb,
+            excess_entropy_mb,
+            entropy_rate_mb,
+        );
+        self.last_cmu_verdict = Some(v);
+        v
+    }
+
+    /// Record a TUR Liveness observation (passive). Caller supplies a
+    /// per-block sample window of a chain current J + the entropy
+    /// production Σ; verdict is stored in `last_tur_verdict`. Per
+    /// INVENTION_STACK.md §A1.3, a violation flags coordinated
+    /// cartel activity (current too steady for the entropy budget).
+    pub fn record_tur_observation(
+        &mut self,
+        j_samples: &[u64],
+        sigma: u64,
+    ) -> evaporchain_tur_liveness::Verdict {
+        let v = evaporchain_tur_liveness::tur_check(j_samples, sigma);
+        self.last_tur_verdict = Some(v);
+        v
     }
 
     /// Per-block hook: advance the Mortis monitor against the current
@@ -573,6 +617,8 @@ impl SimpleExecutor {
             ),
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
             last_conservation_audit: None,
+            last_cmu_verdict: None,
+            last_tur_verdict: None,
         }
     }
 
@@ -604,6 +650,8 @@ impl SimpleExecutor {
             ),
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
             last_conservation_audit: None,
+            last_cmu_verdict: None,
+            last_tur_verdict: None,
         }
     }
 
@@ -635,6 +683,8 @@ impl SimpleExecutor {
             ),
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
             last_conservation_audit: None,
+            last_cmu_verdict: None,
+            last_tur_verdict: None,
         }
     }
 
@@ -670,6 +720,8 @@ impl SimpleExecutor {
             ),
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
             last_conservation_audit: None,
+            last_cmu_verdict: None,
+            last_tur_verdict: None,
         }
     }
 
@@ -705,6 +757,8 @@ impl SimpleExecutor {
             ),
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
             last_conservation_audit: None,
+            last_cmu_verdict: None,
+            last_tur_verdict: None,
         }
     }
 
@@ -741,6 +795,8 @@ impl SimpleExecutor {
             ),
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
             last_conservation_audit: None,
+            last_cmu_verdict: None,
+            last_tur_verdict: None,
         }
     }
 

@@ -20,6 +20,8 @@ evaporchain-llsa = { path = "../evaporchain-llsa" }
 evaporchain-epv = { path = "../evaporchain-epv" }
 evaporchain-tombstone = { path = "../evaporchain-tombstone" }
 evaporchain-mortis = { path = "../evaporchain-mortis" }
+evaporchain-cmu-gate = { path = "../evaporchain-cmu-gate" }
+evaporchain-tur-liveness = { path = "../evaporchain-tur-liveness" }
 blake3 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

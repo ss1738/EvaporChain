@@ -115,6 +115,36 @@ fn refresh_pool_namespace_is_well_known() {
 }
 
 #[test]
+fn cmu_observation_within_bound_records_ok() {
+    let mut exec = SimpleExecutor::new(0);
+    let v = exec.record_cmu_observation(100, 100, 200);
+    assert!(matches!(v, evaporchain_cmu_gate::Verdict::Ok { .. }));
+    assert!(exec.last_cmu_verdict.is_some());
+}
+
+#[test]
+fn cmu_observation_above_bound_records_violation() {
+    let mut exec = SimpleExecutor::new(0);
+    let v = exec.record_cmu_observation(500, 100, 200);
+    assert!(matches!(v, evaporchain_cmu_gate::Verdict::Violation { .. }));
+}
+
+#[test]
+fn tur_observation_constants_record_violation() {
+    let mut exec = SimpleExecutor::new(0);
+    let v = exec.record_tur_observation(&[10, 10, 10, 10, 10], 100);
+    assert!(matches!(v, evaporchain_tur_liveness::Verdict::Violation { .. }));
+    assert!(exec.last_tur_verdict.is_some());
+}
+
+#[test]
+fn tur_observation_high_variance_records_ok() {
+    let mut exec = SimpleExecutor::new(0);
+    let v = exec.record_tur_observation(&[1, 100, 1, 100, 1, 100], 100);
+    assert!(matches!(v, evaporchain_tur_liveness::Verdict::Ok { .. }));
+}
+
+#[test]
 fn full_death_flow_zero_account_then_mortis_fires() {
     let mut exec = SimpleExecutor::new(0);
     // Tight Mortis so 3 ticks past trigger it.
