@@ -15,6 +15,7 @@ evaporchain-proving = { path = "../evaporchain-proving" }
 evaporchain-sharding = { path = "../evaporchain-sharding" }
 evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
 evaporchain-fee-controller = { path = "../evaporchain-fee-controller" }
+evaporchain-sanov-slashing = { path = "../evaporchain-sanov-slashing" }
 blake3 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

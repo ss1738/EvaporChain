@@ -7,6 +7,7 @@ pub mod lyapunov_fees;
 pub mod parallel;
 pub mod privacy_exec;
 pub mod rewards;
+pub mod sanov_slash_helpers;
 pub mod temporal;
 #[cfg(test)]
 mod audit_tests;
