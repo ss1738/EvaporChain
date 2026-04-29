@@ -21,6 +21,12 @@ const CF_NULLIFIERS: &str = "nullifiers";
 /// note tree can be rebuilt at startup without replaying the chain from
 /// genesis. Closes punch-list 1a.
 const CF_NOTE_COMMITMENTS: &str = "note_commitments";
+/// Sentinel autonomic-governance: bounded parameters keyed by u32 id
+/// (big-endian for sorted iteration). Per INVENTION_STACK.md §A2.5.
+const CF_SENTINEL_PARAMS: &str = "sentinel_params";
+/// Sentinel votes: full vote slate per parameter id, replaced atomically
+/// (one-vote-per-validator semantics handled at write site).
+const CF_SENTINEL_VOTES: &str = "sentinel_votes";
 const TRIE_SNAPSHOT_KEY: &[u8] = b"__energy_verkle_trie__";
 const PRIVACY_NOTE_ROOT_KEY: &[u8] = b"__note_tree_root__";
 const PRIVACY_POOL_BALANCE_KEY: &[u8] = b"__shielded_pool_balance__";
@@ -93,6 +99,10 @@ pub struct RocksDBStateDB {
     /// restarts so rent cadence is exactly per-epoch (not per-block).
     /// Closes punch-list 6.
     last_rent_epoch: u64,
+    /// Sentinel governable parameters, write-through cached (§A2.5).
+    sentinel_params: BTreeMap<u32, evaporchain_sentinel::BoundedParameter>,
+    /// Sentinel votes per parameter id, write-through cached.
+    sentinel_votes: BTreeMap<u32, Vec<evaporchain_sentinel::Vote>>,
     // Batch mode: buffer writes for atomic commit (Mutex for Sync)
     pending_batch: std::sync::Mutex<Option<WriteBatch>>,
     // Undo log for reverting in-memory state on rollback
@@ -114,6 +124,8 @@ impl RocksDBStateDB {
             ColumnFamilyDescriptor::new(CF_TRIE, Options::default()),
             ColumnFamilyDescriptor::new(CF_NULLIFIERS, Options::default()),
             ColumnFamilyDescriptor::new(CF_NOTE_COMMITMENTS, Options::default()),
+            ColumnFamilyDescriptor::new(CF_SENTINEL_PARAMS, Options::default()),
+            ColumnFamilyDescriptor::new(CF_SENTINEL_VOTES, Options::default()),
         ];
 
         let db = DB::open_cf_descriptors(&opts, path, cf_descriptors)
@@ -302,6 +314,41 @@ impl RocksDBStateDB {
             }
         };
 
+        // Load Sentinel parameters and votes.
+        let mut sentinel_params: BTreeMap<u32, evaporchain_sentinel::BoundedParameter> =
+            BTreeMap::new();
+        let cf_sp = db.cf_handle(CF_SENTINEL_PARAMS)
+            .ok_or_else(|| format!("missing column family: {CF_SENTINEL_PARAMS}"))?;
+        let iter = db.iterator_cf(cf_sp, rocksdb::IteratorMode::Start);
+        for item in iter {
+            let (key, value) = item.map_err(|e| format!("RocksDB iterator error: {}", e))?;
+            if key.len() == 4 {
+                if let Ok(p) = bincode::deserialize::<evaporchain_sentinel::BoundedParameter>(&value) {
+                    sentinel_params.insert(p.id, p);
+                }
+            }
+        }
+        let mut sentinel_votes: BTreeMap<u32, Vec<evaporchain_sentinel::Vote>> = BTreeMap::new();
+        let cf_sv = db.cf_handle(CF_SENTINEL_VOTES)
+            .ok_or_else(|| format!("missing column family: {CF_SENTINEL_VOTES}"))?;
+        let iter = db.iterator_cf(cf_sv, rocksdb::IteratorMode::Start);
+        for item in iter {
+            let (key, value) = item.map_err(|e| format!("RocksDB iterator error: {}", e))?;
+            if key.len() == 4 {
+                let id = u32::from_be_bytes(key[..4].try_into().unwrap());
+                if let Ok(votes) = bincode::deserialize::<Vec<evaporchain_sentinel::Vote>>(&value) {
+                    sentinel_votes.insert(id, votes);
+                }
+            }
+        }
+        if !sentinel_params.is_empty() {
+            println!(
+                "  RocksDB: loaded {} Sentinel parameters, {} vote slates",
+                sentinel_params.len(),
+                sentinel_votes.len()
+            );
+        }
+
         Ok(Self {
             db,
             objects,
@@ -316,6 +363,8 @@ impl RocksDBStateDB {
             note_count,
             note_commitments,
             last_rent_epoch,
+            sentinel_params,
+            sentinel_votes,
             pending_batch: std::sync::Mutex::new(None),
             batch_undo: None,
         })
@@ -966,6 +1015,54 @@ impl StateDB for RocksDBStateDB {
     fn earliest_snapshot_height(&self) -> Option<u64> { None }
     fn latest_snapshot_height(&self) -> Option<u64> { None }
     fn prune_snapshots_before(&mut self, _height: u64) {}
+
+    // ─── Sentinel autonomic governance (write-through to RocksDB) ───────
+
+    fn get_sentinel_param(
+        &self,
+        id: u32,
+    ) -> Option<evaporchain_sentinel::BoundedParameter> {
+        self.sentinel_params.get(&id).copied()
+    }
+
+    fn put_sentinel_param(&mut self, param: evaporchain_sentinel::BoundedParameter) {
+        let key = param.id.to_be_bytes();
+        let val = match bincode::serialize(&param) {
+            Ok(v) => v,
+            Err(e) => fatal_persistence_error("serialize_sentinel_param", e),
+        };
+        let cf = self.cf(CF_SENTINEL_PARAMS);
+        if let Err(e) = self.db.put_cf(cf, key, val) {
+            fatal_persistence_error("put_sentinel_param", e);
+        }
+        self.sentinel_params.insert(param.id, param);
+        self.sentinel_votes.entry(param.id).or_default();
+    }
+
+    fn all_sentinel_params(&self) -> Vec<evaporchain_sentinel::BoundedParameter> {
+        self.sentinel_params.values().copied().collect()
+    }
+
+    fn get_sentinel_votes(&self, id: u32) -> Vec<evaporchain_sentinel::Vote> {
+        self.sentinel_votes.get(&id).cloned().unwrap_or_default()
+    }
+
+    fn put_sentinel_votes(
+        &mut self,
+        parameter_id: u32,
+        votes: Vec<evaporchain_sentinel::Vote>,
+    ) {
+        let key = parameter_id.to_be_bytes();
+        let val = match bincode::serialize(&votes) {
+            Ok(v) => v,
+            Err(e) => fatal_persistence_error("serialize_sentinel_votes", e),
+        };
+        let cf = self.cf(CF_SENTINEL_VOTES);
+        if let Err(e) = self.db.put_cf(cf, key, val) {
+            fatal_persistence_error("put_sentinel_votes", e);
+        }
+        self.sentinel_votes.insert(parameter_id, votes);
+    }
 }
 
 /// Flush account changes back to RocksDB after mutable borrows.

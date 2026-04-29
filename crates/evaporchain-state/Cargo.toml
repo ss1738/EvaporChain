@@ -8,6 +8,7 @@ repository.workspace = true
 [dependencies]
 evaporchain-types = { path = "../evaporchain-types" }
 evaporchain-crypto = { path = "../evaporchain-crypto" }
+evaporchain-sentinel = { path = "../evaporchain-sentinel" }
 serde = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }

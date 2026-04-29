@@ -294,6 +294,33 @@ pub trait StateDB: Send + Sync {
     fn all_vesting_schedules(&self) -> Vec<evaporchain_types::VestingSchedule> {
         Vec::new()
     }
+
+    // ─── Sentinel autonomic governance ──────────────────────────────────
+    // Persistent registry of bounded parameters + their decay-weighted
+    // votes. Per INVENTION_STACK.md Amendment 2 §A2.5. Default no-ops so
+    // back-ends that haven't migrated still compile.
+
+    fn get_sentinel_param(
+        &self,
+        _id: u32,
+    ) -> Option<evaporchain_sentinel::BoundedParameter> {
+        None
+    }
+    fn put_sentinel_param(&mut self, _param: evaporchain_sentinel::BoundedParameter) {}
+    fn all_sentinel_params(&self) -> Vec<evaporchain_sentinel::BoundedParameter> {
+        Vec::new()
+    }
+    fn get_sentinel_votes(&self, _id: u32) -> Vec<evaporchain_sentinel::Vote> {
+        Vec::new()
+    }
+    /// Replace the entire vote slate for `parameter_id`. Caller is
+    /// responsible for one-vote-per-validator semantics.
+    fn put_sentinel_votes(
+        &mut self,
+        _parameter_id: u32,
+        _votes: Vec<evaporchain_sentinel::Vote>,
+    ) {
+    }
 }
 
 /// In-memory state database for development and testing.
@@ -331,6 +358,9 @@ pub struct InMemoryStateDB {
     // Vesting registry — addresses 35% Foundation centralization
     // by wrapping large genesis allocations in time-released schedules.
     vesting_schedules: HashMap<u64, evaporchain_types::VestingSchedule>,
+    // Sentinel autonomic-governance state (§A2.5).
+    sentinel_params: BTreeMap<u32, evaporchain_sentinel::BoundedParameter>,
+    sentinel_votes: BTreeMap<u32, Vec<evaporchain_sentinel::Vote>>,
     // Historical snapshots
     snapshots: BTreeMap<u64, HistoricalSnapshot>,
 }
@@ -362,6 +392,8 @@ impl InMemoryStateDB {
             proposals: HashMap::new(),
             governance_params: HashMap::new(),
             vesting_schedules: HashMap::new(),
+            sentinel_params: BTreeMap::new(),
+            sentinel_votes: BTreeMap::new(),
             snapshots: BTreeMap::new(),
         }
     }
@@ -746,6 +778,36 @@ impl StateDB for InMemoryStateDB {
 
     fn prune_snapshots_before(&mut self, height: u64) {
         self.snapshots = self.snapshots.split_off(&height);
+    }
+
+    // ─── Sentinel autonomic governance ──────────────────────────────────
+
+    fn get_sentinel_param(
+        &self,
+        id: u32,
+    ) -> Option<evaporchain_sentinel::BoundedParameter> {
+        self.sentinel_params.get(&id).copied()
+    }
+
+    fn put_sentinel_param(&mut self, param: evaporchain_sentinel::BoundedParameter) {
+        self.sentinel_params.insert(param.id, param);
+        self.sentinel_votes.entry(param.id).or_default();
+    }
+
+    fn all_sentinel_params(&self) -> Vec<evaporchain_sentinel::BoundedParameter> {
+        self.sentinel_params.values().copied().collect()
+    }
+
+    fn get_sentinel_votes(&self, id: u32) -> Vec<evaporchain_sentinel::Vote> {
+        self.sentinel_votes.get(&id).cloned().unwrap_or_default()
+    }
+
+    fn put_sentinel_votes(
+        &mut self,
+        parameter_id: u32,
+        votes: Vec<evaporchain_sentinel::Vote>,
+    ) {
+        self.sentinel_votes.insert(parameter_id, votes);
     }
 }
 
