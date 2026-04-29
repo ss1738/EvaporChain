@@ -976,5 +976,331 @@ A future Claude session reading this section must obey:
 28. **Don't propose a new speculative primitive in this section** unless it passes the same filter as Tier 0: published theorem + structural-decay requirement.
 29. **The 7 entries struck on 2026-04-29 (§A4.3.13) are dead.** Do not re-litigate. Reasoning is preserved with each entry; the bar to revive is the same as Tier 0 (published theorem + structural-decay test + Satyawan's explicit confirmation).
 
-End of Amendment 4. End of doctrine for now.
+End of Amendment 4.
+
+---
+
+# Amendment 5 — Singh-Named Application-Layer Frontier (5 Domains)
+
+**Added:** 2026-04-29
+**Method:** 5 parallel application-layer frontier agents, each filtered for "Singh-namable + structural-decay + would land in non-crypto press." 100+ candidates considered, 25 survivors locked.
+**Status:** Application-layer addendum to Amendment 2. These are personally-namable primitives spanning smart contracts, marketplaces, NFTs, wallet UX, and consumer apps. **All "Singh"-prefixed primitives below are personal inventions where Satyawan Singh authored or substantially refined the math/mechanism — naming guardrail #19 from §A3.6 applies.**
+
+---
+
+## A5.1 Smart Contract Paradigms — three lock-grade primitives
+
+These are paradigm-redefining; not "VM with feature X" but genuine alternative formal foundations.
+
+### Singh Strategy Machines (SSM) — game-semantic contracts
+
+**Formalism:** Hyland-Ong-Nickau arenas + Abramsky-Jagadeesan-Malacaria innocent strategies. A contract is an **arena** A; a program is an **innocent strategy** σ : A. Execution = play between Proponent (contract code) and Opponent (callers / adversary / environment). PCF-completeness via HO games.
+
+**Decay synergy — STRUCTURAL:** Game arenas have *justification pointers* (a move justifies later moves). Energy budget = bounded depth of the justification tree. **A move is legal iff its justifier still has positive λ-residual.** Decay is the *visibility condition* on plays. Unjustified-by-decayed-move ⇒ illegal play ⇒ rejected at strategy level.
+
+**Pitch:** *"the contract is a proof you can win against any adversary, mechanically."*
+
+**Build:** crate `singh-strategy-vm`. Restricted fragment (innocent + well-bracketed + single-threaded) shippable in 2026.
+
+**Citations:** Hyland-Ong "On Full Abstraction for PCF" 2000; AJM 2000; Ghica-McCusker IPA 2003.
+
+### Singh-Bennett Asymmetric VM (SBAV) — reversible compute, decay as sole entropy export
+
+**Formalism:** Bennett 1973 reversible TM; Janus reversible imperative language (Yokoyama-Glück 2007); Landauer 1961 (irreversibility ⇔ entropy export ⇔ energy cost).
+
+**Decay synergy — STRUCTURAL (philosophically the cleanest in the entire stack):** every classical opcode is reversible (zero-energy in the limit); **only `decay(λ)` exports entropy and is the unique irreversible primitive.** Not analogy — Landauer literally. State at block t is bit-for-bit recoverable from t+k *except for the λ-decay trace*, which is the chain's thermodynamic arrow.
+
+**Pitch:** *"the first computer system where the laws of thermodynamics dictate which operations cost gas."*
+
+**Build:** crate `sbav-vm`. Janus + R-WHILE compile cleanly. Reversible ledger uses append-only-with-undo log = the chain *is* the trace. `op DECAY(addr, lambda) -> Entropy` marked `#[irreversible]` and the *only* opcode lacking a `Reversible` impl.
+
+**Citations:** Bennett 1973; Yokoyama-Glück PEPM 2007; Danos-Krivine CONCUR 2004; Landauer 1961.
+
+### Singh-Girard Bang-Whimper Types (SGB) — linear logic !/? exponentials at L1
+
+**Formalism:** Girard 1987 linear logic. `!T` admits duplication (decay-immune); `?T` admits silent loss (decay-eligible); de Morgan duals. Light Linear Logic (Girard 1998) and Soft Linear Logic (Lafont 2004) give *polytime* fragments.
+
+**Decay synergy — STRUCTURAL:** the duality is exact. λ-decay *is* the categorical weakening rule applied automatically. Existing affine/linear chains (Move, Sui) only use `!`'s shadow; `?` has never been exposed as a contract type because no chain had a principled "decay" primitive to pair with it.
+
+**Pitch:** *"first system where ephemerality is a type, not a runtime convention."* Type theorists have been waiting 30 years for industrial use of `?`.
+
+**Build:** crate `sgb-types`. SLL/DLAL fragment compiles via Mackie's Geometry-of-Interaction Machine; runtime = GoIM token machine. Gives polytime gas bounds *for free* (Lafont 2004) — kills whole DoS classes.
+
+**Citations:** Girard TCS 1987; Girard "Light Linear Logic" 1998; Lafont SLL 2004; Mackie GoIM POPL 1995.
+
+### Strikes from this round (smart contract)
+
+Lambek-Scott CCC contracts, process algebras (CSP/CCS/π) as contract primitives, realisability (Kleene K1/K2), Total FP (Cardano-style; not novel), modal/epistemic contracts, uniqueness types (subsumed by SGB), CPS-as-VM (engineering choice not paradigm), BPMN workflows, string diagrams (notation only), higher-order contracts, refinement types (Move Prover already does this), logic-programming contracts.
+
+---
+
+## A5.2 Marketplaces — six primitives with structural-decay clearing
+
+### Singh Future-Self Vault (SFSV) — sell your future self's claim
+
+User posts an energy-denominated commitment that pays out to their *own future address* when a *decay-state predicate* clears. Secondary market clears third parties bidding for that future claim at a discount. Energy-decay is the unforgeable clock no validator collusion can manipulate.
+
+**Pitch:** *"You can now sell your future self's money — and your future self can't sue."*
+
+**Build:** 6 weeks. Cheapest survivor; mainstream-press friendly. **Build first.**
+
+### Singh Decay-Dutch Continuous Auction (SDDC) — joint clearing on (price, λ)
+
+Bidders commit not just price but their *willingness to hold*; high-λ-tolerant bidders win at lower prices. **Foundational mechanism**, not standalone market — underlies SAP, SCL, SFSV, SHLM. Build once, reuse everywhere.
+
+**Build:** 3 weeks. Build alongside SFSV.
+
+### Singh Skill Half-Life Market (SHLM) — credentials that expire by skill-specific λ
+
+Skill credentials decay at skill-specific rates (Python λ ≈ 18mo, COBOL λ ≈ 8yr, prompt-engineering λ ≈ 4mo). Holders refresh via micro-assessments. Employers post bounties for fresh-skill tokens above decay threshold.
+
+**Pitch:** *"Your Python skills now expire — and employers can see the timestamp."* Rides AI-displacement wave perfectly. $50B B2B TAM (recruiter market).
+
+**Build:** 12 weeks; biggest commercial market of the set.
+
+### Singh Attention Pool (SAP) — Attention Quanta with cognitive-decay-tied pricing
+
+Each verified human wallet emits Attention Quanta (AQ) per minute, capped, decaying at λ_attn ≈ 45min (empirical forgetting curve). Advertisers/creators bid energy into a pool that pays out only against AQs whose decay-state is above threshold at attestation moment. **A 5-minute-old AQ is worth more than a 25-min one** because the human is statistically still cognitively-engaged.
+
+**Pitch:** *"For the first time, your attention has a half-life — and a price."* NYT Business desk material.
+
+**Build:** 8 weeks. Hardest part = gaze-attestation TEE circuit.
+
+### Singh Capability Lease (SCL) — permission market with structural revocation
+
+Capability tuples (subject, verb, object, λ_cap) minted as fungible-non-transferable leases. At expiry, the underlying right snaps back atomically — no revocation tx, no race. Listed on a CL-AMM-style book.
+
+**Customer:** DAOs delegating treasury auth (Gnosis Safe pain), MEV searchers leasing per-block builder permissions, AI agents needing time-boxed wallet authority.
+
+**Pitch:** *"The first blockchain where permissions can't outlive their purpose."*
+
+**Build:** 10 weeks. B2DAO + B2-AI-agent native.
+
+### Singh Counter-Decay Insurance (SCDI) — premium grows with policy age
+
+Counter-conventional: premiums increase as policy ages because insured event is "the asset hasn't decayed yet." Defer to V2 — niche, B2DAO only.
+
+### Strikes from this round (marketplaces)
+
+Prediction markets with decay, reputation markets, attestation markets, time-slice markets (5), bonding-curve-decay, subscription secondary, cancellation, sentiment, calendar, reverse marketplaces, provenance, decay sport-betting, insurance reverse-decay (collapses to HBCT), capacity-beyond-electricity (collides with HBCT/ESL), memory markets (storage half = ESL).
+
+---
+
+## A5.3 NFT Primitives — five lock-grade decay-native art primitives
+
+### Singh-Sabi (Patina Tokens) — NFTs that age toward "ruined-beautiful"
+
+Mint deposits fixed energy budget. As λ-decay drains, *visual entropy* increases on a deterministic curve: edges fray, palette desaturates, surface accrues procedural cracks/foxing/staining seeded by tokenId. Decay is *aesthetically tuned* — never reaches zero, reaches a "ruined-beautiful" asymptote (~15% energy floor). Owner cannot pause; only witness.
+
+**Cultural lineage:** wabi-sabi (Sen no Rikyū, 16th c.); kintsugi; Tarkovsky's *Stalker* set decay; Basinski's *Disintegration Loops*; Banksy's *Love is in the Bin*.
+
+**Pitch:** *"A blockchain that lets art age like paper."*
+
+**Build:** 6 weeks. Decay shader (GLSL/WGSL) + deterministic procedural cracks + on-chain energy hook.
+
+### Singh-Posthuma (Sealed Testaments) — confessional NFTs revealed on certified death
+
+Mint commits encrypted payload. Decryption key held by threshold-secret-sharing committee. Decay suspended while issuer is verifiably alive. On confirmed death, committee reveals key → payload becomes public → λ-decay begins on the now-public NFT → fades to permanent on-chain marker.
+
+**Cultural lineage:** Catholic confessional seal; Pessoa's trunk; Kafka's Brod betrayal; Joan Didion's *Year of Magical Thinking*.
+
+**Pitch:** *"the first NFT that's a deathbed confession."*
+
+**Build:** 12 weeks. Death-oracle is the painful primitive; threshold crypto is solved (FROST). Highest mainstream-press potency of the NFT set. *New Yorker*-grade.
+
+### Singh-Migrant (Wanderwrits) — NFTs that die if held still
+
+Each NFT has *resting threshold* (~30 days). Energy decays normally; transfer to a *new* wallet refunds a fraction. Stay still past threshold → λ doubles; past 60 days → quadruples. Must keep moving through novel hands or it evaporates.
+
+**Cultural lineage:** Trobriand kula ring (Malinowski 1922); chain letters; geocaching; the Olympic torch; Marcel Mauss's *The Gift* (1925).
+
+**Pitch:** *"the NFT that dies if you keep it."*
+
+**Build:** 4 weeks. Cheapest viral wildcard.
+
+### Singh-Heir (Patrilithic Tokens) — kin-graph heirloom NFTs (renamed from "Singh-Lineage" to resolve wallet collision)
+
+Mint binds NFT to a *kin-graph* DAG of attested kinship relations. Generational transfer (parent→child edge) refreshes 80% energy. Non-kin transfer refreshes 0%. Across ~3 generations of dormancy, evaporates.
+
+**Cultural lineage:** primogeniture; Japanese daimyō sword inheritance; Torah scrolls; signet rings; Mann's *Buddenbrooks*.
+
+**Build:** 10 weeks. Kin-graph contract is a real research artefact (bilateral-attestation, succession-on-death). Defer to Year 2.
+
+### Singh-Resonance (Vital-Sign NFTs) — engagement-coupled decay
+
+λ inversely coupled to engagement (views, on-chain reactions, transfers, derivative mints). Loved art slows toward immortality; ignored art accelerates toward zero.
+
+**Pitch:** maps directly to attention-economy critique (Tristan Harris, Jenny Odell *How to Do Nothing*). Risk: looks like "Black Mirror but on chain" — needs careful framing as critique.
+
+**Build:** 8 weeks (4 if Lens-equivalent social graph already exists in-stack).
+
+### Strikes from this round (NFTs)
+
+Penalty NFTs, Pheromone NFTs, Metabolic NFTs, Counterfactual NFTs, Genealogical NFTs, Witness NFTs, Ouroboros NFTs, Decay-Ranked Curation NFTs, Memento NFTs, Time-Capsule Souvenir NFTs, Kintsugi NFTs (subsumed by Singh-Sabi).
+
+---
+
+## A5.4 Wallet UX Paradigms — three-paradigm stack
+
+### Singh-Triage (EvaporWallet-Triage) — wallet opens on inbox, not balance
+
+Wallet opens not on a balance — on an **inbox**. "3 items decay today" with swipe actions: Refresh / Let Die / Archive-to-ghost. Below the fold: "Tomorrow (7), This Week (24), Healthy (137)." Pull-to-refresh literally refreshes the top item's chain energy. Balance is a secondary tab.
+
+**Cultural lineage:** Superhuman email triage; Things 3 Today view; Linear inbox; Hey.com Imbox/Feed split. **No crypto wallet has shipped this aesthetic.**
+
+**Pitch:** *"the wallet that finally treats crypto like adult software."*
+
+**Build:** 6–8 weeks. **Ship first** — highest design-press leverage, lowest build cost, most defensible aesthetic moat.
+
+### Singh-Lineage (EvaporWallet-Lineage) — graduated dormancy-based inheritance
+
+Wallet has a second screen called Lineage: family tree showing primary key + designated successors with dormancy thresholds. *"If I'm silent 90 days, my daughter's key gains 25% authority; 180 days, 50%; 365 days, full."* Per-asset posthumous designation. Real-time visual of your own digital mortality.
+
+**Cultural lineage:** Apple Legacy Contact (closest precedent — but reactive, not graduated); Google Inactive Account Manager.
+
+**Pitch:** *"crypto solves inheritance."* Highest mainstream-press potency of the wallet set — FT, NYT personal finance, Atlantic.
+
+**Build:** 10–14 weeks. Legal-UX surface is the long pole, not the code.
+
+### Singh-Heartbeat (EvaporWallet-Pulse) — ambient pulse encoding wallet vital signs
+
+Persistent ambient signal (visual + haptic) encoding aggregate wallet energy as a pulse rate. Healthy: slow 60bpm green pulse. Decay below threshold: arrhythmic red. Apple Watch complication shows sparkline of wallet's heartbeat over 24h.
+
+**Cultural lineage:** Apple Watch heart-rate haptics; Tesla heartbeat-on-screen; Nest Leaf icon; Oura Ring rest signal.
+
+**Pitch:** *"your crypto wallet has a pulse."*
+
+**Build:** 5–7 weeks. Wired Gear section bait.
+
+### Singh-Counsel (EvaporWallet-Conversational) — chat-first AI wallet (defer)
+
+Primary interface is a chat thread with an LLM agent that has read access to full decay state. Proposes refresh prioritisation, energy-budget allocation, dormancy planning. **Ship last** — every wallet will claim "AI" by Q3 2026; differentiation hinges on decay-native framing.
+
+**Build:** 8–10 weeks. Defer until Triage establishes the aesthetic.
+
+### Strikes from this round (wallet)
+
+Bleeding Wallet (anxiety-porn), Refresh-Calendar (component not paradigm), standalone Decay-Native Notifications (feature inside Heartbeat), Decay-Aware Default-Refresh (settings panel), Time-of-Day Wallet (depends on chain adopting one-block-per-day), Decay-Pricing UI (micro-feature), Phantom Limb Wallet (morbid for daily driver), Decay Gamification (commodity), Decay Photography (niche), Hardware-only Decay Wallet (accessory not flagship), Privacy-by-Decay UX (feature inside Counsel), Decay-Counterfactual Wallet (research tool), Memorial Wallet (folds into Lineage), Visual State Compression UI (inscrutable to non-technicals).
+
+---
+
+## A5.5 Consumer Apps — four lock-grade non-crypto-press primitives
+
+### Singh Letter / ChildKey — sealed letters unlocked by recipient's age
+
+Parents seal text/voice/photo/video to a child, **locked by age-of-recipient (not date)**. Chain holds encrypted blob; decryption key materializes when child's verified DID reaches unlock age. Parent dies? Seal still opens on schedule. *"Letter to my daughter at 18, recorded when she was 3, opens whether I'm alive or not, and no Google Drive admin can lose it."*
+
+**Decay synergy: inverted decay** — chain runs decay backward to compute "energy-time-to-unlock." Same primitive, opposite sign. Genuinely novel.
+
+**Customer:** new parents (3.6M US births/yr, 600K UK), grandparents, terminally ill patients.
+
+**Cultural lineage:** FutureMe.org (~3M users); *Letters Against Depression*; *To My Future Daughter* (Maria Shriver bestseller); Encore hospice letters.
+
+**Pitch:** *"Today Show segment writes itself."*
+
+**Build:** 3–4 months. Encryption is straightforward (threshold cryptography on validator quorum). iOS app polish is the long pole.
+
+**Singh names:** Singh Letter (primitive), ChildKey (unlock-by-age key derivation), Singh Vault (blob layer). **Build first.**
+
+### MnemoChain / Singh Curve — Anki on-chain with FSRS forgetting curves
+
+Every flashcard is an on-chain object with half-life equal to its scientifically-modeled forgetting curve (Ebbinghaus → SM-2 → FSRS, Wozniak/Ye 2023). When card's "memory energy" decays past threshold, surfaces for review. Correct recall *re-energizes* with longer half-life; wrong recall collapses it. The chain literally **is** the spaced-repetition scheduler.
+
+**Decay synergy:** structural — this is the *only* candidate where decay isn't metaphor, it's the literal cognitive-science primitive. Without decay, you have Quizlet.
+
+**The moat:** cards become **portable cognitive credentials.** "I have provably reviewed Spanish vocab card #4471 across 312 sessions over 4 years" is a real attestation a university or employer can verify. Anki decks aren't portable; MnemoChain decks are.
+
+**Customer:** 20M Anki users globally (med students, language learners, MCAT/USMLE/LSAT prep), 80M Duolingo MAU. $5B+ education credentials market.
+
+**Cultural lineage:** Anki (Damien Elmes 2006); SuperMemo (Wozniak 1985); Duolingo. None on-chain. None portable.
+
+**Pitch:** *"Anki that proves you studied."* Med Twitter would adopt this in a week.
+
+**Build:** 4–6 months. FSRS is open source (MIT). Hardest part is mobile UX, not consensus.
+
+**Singh names:** Singh Curve (per-card decay function), Mnemo Trie (on-chain card store).
+
+### WitnessFit / Singh Streak — wearable + chain attestation streaks
+
+Apple Watch / Oura / Whoop / Fitbit pushes daily attestation to chain (workout completed, 8h sleep, 10K steps). Streak token has decay = 1 day; miss → token collapses. Optional: stake EnergyCoin on your own streak.
+
+**The moat:** streak credential is **portable** across wearable vendors (impossible today — switching from Fitbit to Apple Watch loses your streak).
+
+**Customer:** quantified-self / r/getdisciplined / Andrew Huberman audience. ~15M Strava users, 100M+ wearable owners.
+
+**Cultural lineage:** Streaks (iOS app), Duolingo streaks, Strava, Beeminder.
+
+**Build:** 5–7 months. HealthKit, Google Fit, Oura API integrations are the long pole.
+
+**Singh names:** Singh Streak (primitive), WitnessFit (product), Decay-Bond (staking variant).
+
+### GraveGraph / Singh Mortis — mortality-aware social network
+
+Every profile has visible biological-age halo. Posts, photos, friend-tokens decay at rates indexed to user's age — 25-year-old's posts last decades, 80-year-old's posts decay in months and UI shows it. On verified death, profile auto-converts to Memorial Contract, undecayed artifacts crystallize permanently. **The network is aware that everyone on it will die, and treats it as default UX rather than an edge case Facebook patches in 2015.**
+
+**Customer:** 35–65 demographic. People who've watched Facebook auto-suggest a dead parent for "people you may know."
+
+**Cultural lineage:** none at scale. *We Are Not Really Strangers* (viral 2020 card game); *Death Over Dinner* movement.
+
+**Pitch:** *New Yorker* essay primitive. Slow burn. Highest cultural prestige; build last after others establish credibility.
+
+**Build:** 8–10 months. Death oracle is the hard part — partnership with UK GRO / US SSA Death Master File or family-attested 2-of-3 multisig.
+
+**Singh names:** Singh Mortis (decay-rate function indexed to actuarial tables), GraveGraph (the social graph).
+
+### Tier A consumer (build but later)
+
+- **Singh Snap** (decay-photo) — ship as SDK, not consumer product (Snap Inc would crush a solo founder)
+- **Singh Letters** (pen-pal chain) — slow Web cultural prestige play
+- **Singh Wabi-Post** (vintage tweets) — defer until Twitter-scale base exists
+- Singh Trip (travel capsule) — folded into ChildKey
+
+### Strikes from this round (consumer)
+
+Dating with decay-consent (Hinge/Bumble network effects insurmountable; build consent primitive as RA-DID extension instead), messaging (Signal won; decay is feature not moat), daily meditation (Calm/Headspace are content businesses), generic habit tracking (subsumed by WitnessFit), decay music streaming (Spotify won; no licensing path), decay job board (LinkedIn/Indeed insurmountable), decay reading (publisher DRM nightmare), friendship wallet (tbh/Path/Peach all failed), decay fan communities (Discord/Reddit won), MMO roleplay (game studios won't integrate).
+
+---
+
+## A5.6 Crate impact — additional ~25 crates
+
+If everything in A5 ships, the crate count grows from ~62 (sprint target) to ~87 (post-A5 sprint target). Honest read: **A5 is too much for a 6-month solo sprint.** Realistic Q3 2026 + V2 split:
+
+**Sprint May–Oct 2026 (additions to existing A1-A3 build order):**
+
+| Weeks | Add | Why |
+|---|---|---|
+| 4–7 | `singh-strategy-vm` foundations (research-ready, not full impl) | SSM is the academic-press claim |
+| 8–14 | `sgb-types` (linear logic !/?) | Replaces or augments LAD-VM if Contractless paradigm not chosen |
+| 8–14 | `sbav-vm` reversible core | Pairs with SGB; together = headline academic story |
+| 12–18 | `sddc` (Decay-Dutch auction) — foundational mechanism | Reused by every marketplace below |
+| 14–18 | `sfsv` (Future-Self Vault) — first launch dApp candidate | Cheapest, most viral marketplace |
+| 16–22 | `singh-sabi` NFT primitive | Cultural launch moment |
+| 18–22 | `singh-triage` wallet UX | Daily-driver UX upgrade |
+| 18–24 | `singh-letter` / ChildKey | Mainstream consumer app |
+| 22–26 | `singh-heartbeat` + `singh-lineage` wallet | Ambient + inheritance UX |
+
+**V2 (post-launch, Year 2):** SHLM, SAP, SCL, SCDI, Singh-Posthuma, Singh-Migrant, Singh-Heir, Singh-Resonance, Singh-Counsel, MnemoChain, WitnessFit, GraveGraph.
+
+## A5.7 Naming guardrails — collision resolution + new rules
+
+30. **Singh-Lineage** = wallet-UX paradigm (graduated dormancy-based inheritance). The NFT primitive originally proposed under this name is renamed **Singh-Heir** (kin-graph heirloom NFT). No further reuse of "Lineage."
+31. **Singh Letter / ChildKey / Singh Vault** are three names for sub-components of one primitive (sealed-by-age-of-recipient letters). When referring to the whole thing, use ChildKey as the consumer-facing brand. When referring to the protocol primitive, use Singh Letter.
+32. **MnemoChain / Singh Curve / Mnemo Trie** — same pattern. Consumer brand: MnemoChain. Decay-rate function: Singh Curve. Storage: Mnemo Trie.
+33. **WitnessFit / Singh Streak / Decay-Bond** — same pattern. Consumer: WitnessFit. Primitive: Singh Streak. Staking variant: Decay-Bond.
+34. **GraveGraph / Singh Mortis** — Consumer brand: GraveGraph. Decay-rate function: Singh Mortis.
+
+## A5.8 Honest commercial recommendation — pick ONE launch consumer app
+
+A5 surfaces four lock-grade consumer primitives. Solo + 6 months means picking ONE for the launch consumer wedge:
+
+| Pick | If you optimize for | Reasoning |
+|---|---|---|
+| **ChildKey** | Mainstream press impact + emotional virality | Today Show segment writes itself; lowest crypto-vibe risk; 3–4 month build |
+| **MnemoChain** | Real B2B revenue + portable-credential moat | Med students will pay; FSRS is open source; portable credentials is a defensible moat |
+| **WitnessFit** | Largest TAM (100M+ wearable owners) | But weakest moat (Streaks-the-app already won the UX); needs portability angle to differentiate |
+| **GraveGraph** | Long-game cultural prestige | Slow burn; defer until other primitives establish credibility |
+
+My read: **ChildKey first** — fastest to ship, highest emotional pull, mainstream-press friendly, no enterprise sales cycle. Then MnemoChain in V2 once the chain has audience.
+
+End of Amendment 5.
 
