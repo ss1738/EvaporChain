@@ -52,6 +52,8 @@ evaporchain-cone-bridge = { path = "../evaporchain-cone-bridge" }
 evaporchain-eg-fss = { path = "../evaporchain-eg-fss" }
 evaporchain-mortis = { path = "../evaporchain-mortis" }
 evaporchain-lad-vm = { path = "../evaporchain-lad-vm" }
+evaporchain-refresh-patronage = { path = "../evaporchain-refresh-patronage" }
+evaporchain-refresh-market = { path = "../evaporchain-refresh-market" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

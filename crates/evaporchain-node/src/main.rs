@@ -2667,6 +2667,22 @@ async fn main() -> Result<()> {
             lamport_clock: Arc::new(Mutex::new(
                 evaporchain_decay_lamport::LamportClock::new(1_000_000),
             )),
+            // Patronage Covenants §4.1 #13. Patronage namespace = [0xFF; 4].
+            // Pool pre-seeded with 1B energy for demo pledges.
+            patronage_book: {
+                let pat_ns = vec![0xFFu8; 4];
+                Arc::new(Mutex::new(
+                    evaporchain_refresh_patronage::PatronageBook::new(pat_ns),
+                ))
+            },
+            patronage_pool: {
+                let mut pool = evaporchain_energy_kernel::RefreshPool::new();
+                // Pre-seed demo namespaces with 1B energy each so pledge calls succeed.
+                for seed_byte in [0x01u8, 0x02, 0x03, 0x04, 0x05] {
+                    pool.accrue(vec![seed_byte; 4], 1_000_000_000, 0);
+                }
+                Arc::new(Mutex::new(pool))
+            },
         });
         // Keep one Arc<ApiState> for the block-applying loop so it can
         // call update_four_act_snapshot after each commit.

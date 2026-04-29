@@ -129,6 +129,12 @@ pub struct ApiState {
     /// promote to authoritative time after validators converge on
     /// `tick_quantum`.
     pub lamport_clock: Arc<Mutex<evaporchain_decay_lamport::LamportClock>>,
+    /// Patronage Covenant registry — active pledges, immunity status, and
+    /// per-object donation scores. §4.1 #13 Refresh-Pool Patronage.
+    pub patronage_book: Arc<Mutex<evaporchain_refresh_patronage::PatronageBook>>,
+    /// Refresh pool used by the patronage demo. Seeded at startup; in
+    /// production this would be the chain's canonical RefreshPool from StateDB.
+    pub patronage_pool: Arc<Mutex<evaporchain_energy_kernel::RefreshPool>>,
 }
 
 /// Public-facing snapshot of the four-act narrative spine state for
@@ -1343,6 +1349,227 @@ async fn post_lad_vm_simulate(Json(q): Json<LadSimQuery>) -> Json<LadSimResp> {
             })
         }
     }
+}
+
+// ─────────── Patronage Covenant API ────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct PatronagePledgeReq {
+    pub object_id_hex: String,
+    pub namespace_id_hex: String,
+    pub donation_per_epoch: u64,
+    pub epochs: u64,
+    pub current_epoch: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PatronageActionReq {
+    pub object_id_hex: String,
+    pub epoch: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PatronagePledgeResp {
+    pub status: &'static str,
+    pub object_id_hex: String,
+    pub pre_funded: u64,
+    pub expires_epoch: u64,
+    pub detail: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PatronageHonourResp {
+    pub status: &'static str,
+    pub donated: u64,
+    pub patronage_score: u64,
+    pub detail: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PatronageStatusResp {
+    pub active_covenants: usize,
+    pub total_pre_funded: u64,
+    pub total_active_score: u64,
+    pub patronage_ns_hex: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PatronageImmuneResp {
+    pub object_id_hex: String,
+    pub epoch: u64,
+    pub immune: bool,
+    pub patronage_score: u64,
+}
+
+/// POST /api/patronage/pledge — create a Patronage Covenant for an object.
+/// Draws `donation_per_epoch × epochs` from the namespace's refresh-pool
+/// credit and pre-funds the covenant. Object gains eviction immunity.
+async fn post_patronage_pledge(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<PatronagePledgeReq>,
+) -> Json<PatronagePledgeResp> {
+    let obj_bytes = match hex::decode(&req.object_id_hex) {
+        Ok(b) => b,
+        Err(_) => {
+            return Json(PatronagePledgeResp {
+                status: "error",
+                object_id_hex: req.object_id_hex,
+                pre_funded: 0,
+                expires_epoch: 0,
+                detail: "invalid object_id_hex".into(),
+            })
+        }
+    };
+    let ns_bytes = match hex::decode(&req.namespace_id_hex) {
+        Ok(b) => b,
+        Err(_) => {
+            return Json(PatronagePledgeResp {
+                status: "error",
+                object_id_hex: req.object_id_hex,
+                pre_funded: 0,
+                expires_epoch: 0,
+                detail: "invalid namespace_id_hex".into(),
+            })
+        }
+    };
+
+    let mut book = safe_lock(&state.patronage_book);
+    let mut pool = safe_lock(&state.patronage_pool);
+
+    match evaporchain_refresh_patronage::pledge(
+        &mut book,
+        &mut pool,
+        obj_bytes,
+        ns_bytes,
+        req.donation_per_epoch,
+        req.epochs,
+        req.current_epoch,
+    ) {
+        Ok(cv) => Json(PatronagePledgeResp {
+            status: "pledged",
+            object_id_hex: req.object_id_hex,
+            pre_funded: cv.pre_funded,
+            expires_epoch: cv.expires_epoch,
+            detail: format!(
+                "covenant active epochs {}–{}; {} total pre-funded",
+                cv.created_epoch, cv.expires_epoch, cv.pre_funded
+            ),
+        }),
+        Err(e) => Json(PatronagePledgeResp {
+            status: "error",
+            object_id_hex: req.object_id_hex,
+            pre_funded: 0,
+            expires_epoch: 0,
+            detail: e.to_string(),
+        }),
+    }
+}
+
+/// POST /api/patronage/honour — release one epoch's donation from a covenant
+/// into the global patronage pool credit. Increments patronage_score.
+async fn post_patronage_honour(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<PatronageActionReq>,
+) -> Json<PatronageHonourResp> {
+    let obj_bytes = match hex::decode(&req.object_id_hex) {
+        Ok(b) => b,
+        Err(_) => {
+            return Json(PatronageHonourResp {
+                status: "error",
+                donated: 0,
+                patronage_score: 0,
+                detail: "invalid object_id_hex".into(),
+            })
+        }
+    };
+
+    let mut book = safe_lock(&state.patronage_book);
+    let mut pool = safe_lock(&state.patronage_pool);
+
+    match evaporchain_refresh_patronage::honour(&mut book, &mut pool, &obj_bytes, req.epoch) {
+        Ok(donated) => {
+            let score = evaporchain_refresh_patronage::patronage_score(&book, &obj_bytes);
+            Json(PatronageHonourResp {
+                status: "honoured",
+                donated,
+                patronage_score: score,
+                detail: format!("donated {} at epoch {}; cumulative score {}", donated, req.epoch, score),
+            })
+        }
+        Err(e) => Json(PatronageHonourResp {
+            status: "error",
+            donated: 0,
+            patronage_score: 0,
+            detail: e.to_string(),
+        }),
+    }
+}
+
+/// POST /api/patronage/revoke — remove a covenant early; refunds unused
+/// pre-funded surplus back to the namespace pool credit.
+async fn post_patronage_revoke(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<PatronageActionReq>,
+) -> Json<serde_json::Value> {
+    let obj_bytes = match hex::decode(&req.object_id_hex) {
+        Ok(b) => b,
+        Err(_) => {
+            return Json(serde_json::json!({
+                "status": "error",
+                "detail": "invalid object_id_hex"
+            }))
+        }
+    };
+
+    let mut book = safe_lock(&state.patronage_book);
+    let mut pool = safe_lock(&state.patronage_pool);
+
+    match evaporchain_refresh_patronage::revoke(&mut book, &mut pool, &obj_bytes, req.epoch) {
+        Ok(archived) => Json(serde_json::json!({
+            "status": "revoked",
+            "object_id_hex": req.object_id_hex,
+            "patronage_score_archived": archived.patronage_score,
+            "refunded": archived.pre_funded,
+            "detail": format!("covenant closed; {} energy refunded to namespace; score {} archived", archived.pre_funded, archived.patronage_score)
+        })),
+        Err(e) => Json(serde_json::json!({
+            "status": "error",
+            "detail": e.to_string()
+        })),
+    }
+}
+
+/// GET /api/patronage/status — summary of all active covenants.
+async fn get_patronage_status(State(state): State<Arc<ApiState>>) -> Json<PatronageStatusResp> {
+    let book = safe_lock(&state.patronage_book);
+    Json(PatronageStatusResp {
+        active_covenants: book.len(),
+        total_pre_funded: book.total_pre_funded(),
+        total_active_score: book.total_active_score(),
+        patronage_ns_hex: hex::encode(&book.patronage_ns),
+    })
+}
+
+/// GET /api/patronage/immune?object_id_hex=&epoch= — immunity and score query.
+async fn get_patronage_immune(
+    State(state): State<Arc<ApiState>>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Json<PatronageImmuneResp> {
+    let hex_str = params.get("object_id_hex").cloned().unwrap_or_default();
+    let epoch: u64 = params
+        .get("epoch")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let obj_bytes = hex::decode(&hex_str).unwrap_or_default();
+    let book = safe_lock(&state.patronage_book);
+    let immune = evaporchain_refresh_patronage::is_immune(&book, &obj_bytes, epoch);
+    let score = evaporchain_refresh_patronage::patronage_score(&book, &obj_bytes);
+    Json(PatronageImmuneResp {
+        object_id_hex: hex_str,
+        epoch,
+        immune,
+        patronage_score: score,
+    })
 }
 
 // ─────────── Mortis cert verification (tamper-evidence) ────────────
@@ -3453,6 +3680,13 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     ApiDocEntry { method: "POST", path: "/api/cone_bridge",           category: "substrate", description: "Cone-Merged Bridge validity — both chains' decay cones must contain the query epoch", example: Some(r#"{"cone_a":{"half_life_epochs":100,"threshold":500,"committed_energy":1000,"observed_epoch":0},"cone_b":{...},"query_epoch":50}"#) },
     ApiDocEntry { method: "POST", path: "/api/eg_fss/sign_verify",    category: "substrate", description: "EG-FSS round-trip — evolve key by energy, sign, verify", example: Some(r#"{"seed_hex":"00…","energy_spent":1000,"threshold_per_period":100,"message_hex":"deadbeef"}"#) },
     ApiDocEntry { method: "POST", path: "/api/lad_vm/simulate",       category: "substrate", description: "LAD-VM substructural-resource lifecycle simulator — Linear/Affine/Decaying × use/drop/tick. Substrate for the future script-lad compiler frontend.", example: Some(r#"{"mode":"decaying","value":42,"created_at_epoch":0,"decay_window":10,"current_epoch":15,"action":"use"}"#) },
+
+    // Patronage Covenants (§4.1 #13)
+    ApiDocEntry { method: "POST", path: "/api/patronage/pledge",      category: "patronage", description: "Pledge a Patronage Covenant — pre-fund n epochs of voluntary over-rent to the refresh pool; grants eviction immunity for the duration.", example: Some(r#"{"object_id_hex":"0101010101010101","namespace_id_hex":"01010101","donation_per_epoch":100,"epochs":10,"current_epoch":0}"#) },
+    ApiDocEntry { method: "POST", path: "/api/patronage/honour",      category: "patronage", description: "Release one epoch's donation from a covenant into the global patronage pool credit; increments patronage_score.", example: Some(r#"{"object_id_hex":"0101010101010101","epoch":1}"#) },
+    ApiDocEntry { method: "POST", path: "/api/patronage/revoke",      category: "patronage", description: "Remove a covenant early; refunds unused pre-funded surplus back to the namespace pool credit.", example: Some(r#"{"object_id_hex":"0101010101010101","epoch":5}"#) },
+    ApiDocEntry { method: "GET",  path: "/api/patronage/status",      category: "patronage", description: "Summary of all active Patronage Covenants — count, total pre-funded, total score, patronage-ns hex.", example: None },
+    ApiDocEntry { method: "GET",  path: "/api/patronage/immune",      category: "patronage", description: "Query eviction immunity and patronage_score for an object at an epoch.", example: Some("?object_id_hex=0101010101010101&epoch=1") },
 
     // HBCT launch wedge
     ApiDocEntry { method: "GET",  path: "/api/hbct/state",            category: "hbct", description: "HBCT book summary (entry count, total MWh, top positions)", example: None },
@@ -7233,6 +7467,11 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/mortis_cert_preview", get(get_mortis_cert_preview))
         .route("/api/mortis_cert_verify", post(post_mortis_verify))
         .route("/api/lad_vm/simulate", post(post_lad_vm_simulate))
+        .route("/api/patronage/pledge", post(post_patronage_pledge))
+        .route("/api/patronage/honour", post(post_patronage_honour))
+        .route("/api/patronage/revoke", post(post_patronage_revoke))
+        .route("/api/patronage/status", get(get_patronage_status))
+        .route("/api/patronage/immune", get(get_patronage_immune))
         .route("/api/demo/reset", post(post_demo_reset))
         .route("/api/docs", get(get_api_docs))
         .route("/api/objects", get(get_objects))

@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-refresh-patronage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Patronage Covenants — voluntary over-payment of rent that donates surplus to the refresh pool and grants eviction immunity. Per INVENTION_STACK.md §4.1 #13."
+
+[dependencies]
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
