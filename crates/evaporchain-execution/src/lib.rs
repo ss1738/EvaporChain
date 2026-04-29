@@ -432,6 +432,12 @@ pub struct SimpleExecutor {
     /// Singh-Lyapunov fee params (snapshot of the chain-global λ +
     /// targets). Genesis defaults from `lyapunov_fees::default_params`.
     pub lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams,
+    /// Per-block conservation audit verdict — populated by
+    /// `execute_block` from `energy_audit::audit_block_step`. Pure
+    /// observability for now; governance can promote to gating later.
+    /// `None` until the first block runs.
+    pub last_conservation_audit:
+        Option<Result<(), evaporchain_energy_kernel::ConservationViolation>>,
 }
 
 /// Namespace key for the protocol-owned refresh pool. Storage rent
@@ -469,6 +475,7 @@ impl SimpleExecutor {
                 evaporchain_fee_controller::FeeControllerParams::default_genesis().target_energy,
             ),
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
+            last_conservation_audit: None,
         }
     }
 
@@ -565,6 +572,7 @@ impl SimpleExecutor {
                 evaporchain_fee_controller::FeeControllerParams::default_genesis().target_energy,
             ),
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
+            last_conservation_audit: None,
         }
     }
 
@@ -595,6 +603,7 @@ impl SimpleExecutor {
                 evaporchain_fee_controller::FeeControllerParams::default_genesis().target_energy,
             ),
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
+            last_conservation_audit: None,
         }
     }
 
@@ -625,6 +634,7 @@ impl SimpleExecutor {
                 evaporchain_fee_controller::FeeControllerParams::default_genesis().target_energy,
             ),
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
+            last_conservation_audit: None,
         }
     }
 
@@ -659,6 +669,7 @@ impl SimpleExecutor {
                 evaporchain_fee_controller::FeeControllerParams::default_genesis().target_energy,
             ),
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
+            last_conservation_audit: None,
         }
     }
 
@@ -693,6 +704,7 @@ impl SimpleExecutor {
                 evaporchain_fee_controller::FeeControllerParams::default_genesis().target_energy,
             ),
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
+            last_conservation_audit: None,
         }
     }
 
@@ -728,6 +740,7 @@ impl SimpleExecutor {
                 evaporchain_fee_controller::FeeControllerParams::default_genesis().target_energy,
             ),
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
+            last_conservation_audit: None,
         }
     }
 
@@ -1893,6 +1906,11 @@ impl ExecutionEngine for SimpleExecutor {
         db: &mut dyn StateDB,
         block: &Block,
     ) -> Result<BlockExecutionResult, ExecutionError> {
+        // Pre-block §1.2 conservation snapshot (read-only over StateDB).
+        let conservation_before = crate::energy_audit::compartment_snapshot_with_pool(
+            db,
+            self.refresh_pool.total_accrued(),
+        );
         self.apply_governance_params(db);
         self.finalize_expired_proposals(db, block.epoch);
 
@@ -2311,6 +2329,27 @@ impl ExecutionEngine for SimpleExecutor {
                 event,
             })
             .collect();
+
+        // Post-block §1.2 conservation snapshot + audit. Pure
+        // observability — populates self.last_conservation_audit so
+        // chain-status / metrics can read the verdict without
+        // gating block acceptance. Governance can promote to gating.
+        let conservation_after = crate::energy_audit::compartment_snapshot_with_pool(
+            db,
+            self.refresh_pool.total_accrued(),
+        );
+        let lambda = evaporchain_energy_kernel::ChainLambda::default_genesis();
+        // epochs_elapsed: best-available local proxy. apply_block path
+        // tracks block.epoch via db.get_last_rent_epoch — use the same
+        // delta convention here so the audit's λ-decay matches what
+        // collect_storage_rent assumed.
+        let epochs_elapsed = block.epoch.saturating_sub(db.get_last_rent_epoch().saturating_sub(0));
+        self.last_conservation_audit = Some(crate::energy_audit::audit_block_step(
+            &conservation_before,
+            &conservation_after,
+            epochs_elapsed,
+            lambda,
+        ));
 
         Ok(BlockExecutionResult {
             state_root,
