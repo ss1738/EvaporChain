@@ -2919,6 +2919,15 @@ impl TendermintConsensus {
             }
         }
 
+        // Log the proposal antichain from the parallel Light-Cone DAG.
+        // Purely observational at genesis (threshold=0 always passes).
+        crate::antichain_integration::log_proposal_antichain(
+            &self.light_cone_dag,
+            next_epoch,
+            evaporchain_energy_kernel::DEFAULT_LAMBDA.epochs(),
+            crate::antichain_integration::DEFAULT_ANTICHAIN_THRESHOLD,
+        );
+
         info!(
             height = self.height,
             round = self.round_state.round,
