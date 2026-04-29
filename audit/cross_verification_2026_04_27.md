@@ -4,14 +4,14 @@ Read-only verification of six findings raised by parallel review agents on 2026-
 
 Source baseline: `FULL_AUDIT_2026_04_24.md` + the ~40 commits since `2026-04-24`.
 
-| # | Finding | Verdict | Severity |
-|---|---------|---------|----------|
-| 1 | Finality monotonicity removed | CONFIRMED REGRESSION | HIGH |
-| 2 | Oracle vote "verification" is byte-equality, not crypto | CONFIRMED | CRITICAL |
-| 3 | `execute_upgrade_contract` is a no-op | CONFIRMED no-op; impact depends on downstream bytecode swap path | HIGH or CRITICAL |
-| 4 | Validator key encryption (C-10) not actually applied to BLS keys | CONFIRMED — fix landed on wallet keys, not validator keys | HIGH |
-| 5 | State-sync `local_tip_hash` uses parent hash | NOT VERIFIED head-to-head | needs read |
-| 6 | Paymaster gas underchanged | VERIFIED CORRECT — audit false-positive | none |
+| # | Finding | Verdict | Severity | Status |
+|---|---------|---------|----------|--------|
+| 1 | Finality monotonicity removed | CONFIRMED REGRESSION → FIXED | HIGH | ✅ RESOLVED — observe_proposal + gap-fill, tests in `finality.rs` |
+| 2 | Oracle vote "verification" is byte-equality, not crypto | CONFIRMED → FIXED | CRITICAL | ✅ RESOLVED — `submit_vote_via_validator_set` does validator-set lookup; `OracleConsensusRound::submit_vote` calls `BlsVerifier::verify` with caller-supplied pubkey |
+| 3 | `execute_upgrade_contract` is a no-op | CONFIRMED → FIXED | HIGH or CRITICAL | ✅ RESOLVED — `execute_upgrade_contract` in `lib.rs:1719` does governance gate (blake3 hash binding) + `ScriptEngine::upgrade_contract` + marks proposal Executed |
+| 4 | Validator key encryption (C-10) not actually applied to BLS keys | CONFIRMED → FIXED | HIGH | ✅ RESOLVED — EVK1 (Argon2id + XChaCha20-Poly1305) in `bls_key_store.rs`; `--mainnet` gate enforces env var |
+| 5 | State-sync `local_tip_hash` uses parent hash | AUDIT FALSE-POSITIVE | needs read → none | ✅ VERIFIED NO BUG — `prev_hash = compute_block_hash(block)` on each iteration; at loop end `prev_hash` is last validated block's hash (`sync.rs:169-175`) |
+| 6 | Paymaster gas underchanged | VERIFIED CORRECT — audit false-positive | none | ✅ no action |
 
 ---
 
@@ -210,14 +210,11 @@ The literal default seed string says it itself — without `EVAPORCHAIN_KEY_MAST
 
 ---
 
-## 5. State-sync chain-tip hash (HIGH, NOT VERIFIED)
+## 5. State-sync chain-tip hash — AUDIT FALSE-POSITIVE (verified 2026-04-29)
 
-**Where (claimed):** `crates/evaporchain-state/src/sync.rs:176`
-**Status:** flagged by review agent; not read head-to-head in this verification pass.
+**Where:** `crates/evaporchain-state/src/sync.rs:155-176`
 
-**Claim:** after validating a batch of blocks, the code sets `self.local_tip_hash = prev_hash` where `prev_hash` is the loop-local previous-block hash, not the last-validated block's hash. Next sync round would then validate against the wrong anchor.
-
-**Recommended action:** read `sync.rs:160-200` directly and confirm whether the assignment uses the loop variable or the actual last block's hash. If the agent is correct, fix is one line: `if let Some(last) = validated.last() { self.local_tip_hash = last.hash(); }`.
+**Verdict:** The claimed bug does not exist. `prev_hash` is set on every loop iteration at line 169 (`prev_hash = compute_block_hash(block)`), so at the end of the loop it holds the hash of the last validated block — not the parent of the first. The assignment at line 175 (`self.local_tip_hash = prev_hash`) is correct. No action needed.
 
 ---
 

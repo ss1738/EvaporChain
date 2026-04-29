@@ -290,13 +290,13 @@ To be produced before audit kickoff:
 ## 11. Pre-RFP checklist
 
 In approximate priority order:
-- [ ] Resolve all CRITICAL items in `cross_verification_2026_04_27.md`.
-- [ ] Resolve HIGH items or document as accepted risk if deferred.
+- [x] Resolve all CRITICAL items in `cross_verification_2026_04_27.md`. — ALL 6 items resolved or verified false-positive (2026-04-29)
+- [x] Resolve HIGH items or document as accepted risk if deferred. — Items 1 (finality), 4 (BLS encrypt) fixed; item 5 false-positive; item 3 (upgrade_contract) fully implemented
 - [ ] Generate code-coverage report.
-- [ ] Produce architecture diagrams D-01 through D-05.
+- [x] Produce architecture diagrams D-01 through D-05.
 - [x] Tabulate all values in §10.
-- [ ] Wire `BlockDA2D::encode_block()` into block production.
-- [ ] Pin `pqc_dilithium` commit; document upstream-audit status.
-- [ ] Encrypt `bls_key.bin` (mainnet gate; not strictly required for testnet).
+- [x] Wire `BlockDA2D::encode_block()` into block production. — DONE: all 3 producers + Tendermint (commit 1fc67c0)
+- [x] Pin `pqc_dilithium` commit; document upstream-audit status. — DONE: `=0.2.0` exact pin + audit note in `evaporchain-crypto/Cargo.toml:17`
+- [x] Encrypt `bls_key.bin` (mainnet gate; not strictly required for testnet). — DONE: EVK1 (Argon2id + XChaCha20-Poly1305), enforced by `--mainnet` flag (commit 0af4bb2)
 - [ ] Mutual NDA template ready.
 - [ ] Decide budget envelope.
