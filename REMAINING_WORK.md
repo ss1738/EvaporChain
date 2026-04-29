@@ -98,8 +98,8 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 ### Browser Extension (80% complete)
 - [x] Complete swap backend integration — DONE: /api/swap/quote + /api/swap/execute with oracle TWAP pricing
 - [ ] Advanced analytics/portfolio
-- [ ] User preferences persistence
-- [ ] Backup/restore UI
+- [x] User preferences persistence — DONE: `utils/preferences.ts` (chrome.storage.local + localStorage fallback); nodeUrl/currency/autoLock/slippage/hideSmallBalances persisted; loaded on `init()`
+- [x] Backup/restore UI — DONE: `BackupRestoreScreen.tsx` — export encrypted keystore as JSON, import overwrites current keystore; wired as `"backup"` view
 - [ ] Chrome Web Store submission
 
 ### Mobile Wallet (60% complete)

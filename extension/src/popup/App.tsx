@@ -24,6 +24,7 @@ import { LedgerConnect } from "@/components/LedgerConnect";
 import { BridgeScreen } from "@/components/BridgeScreen";
 import { PluginStore } from "@/components/PluginStore";
 import { AiAssistant } from "@/components/AiAssistant";
+import { BackupRestoreScreen } from "@/components/BackupRestoreScreen";
 
 export function App() {
   const { view, init, completeTutorial } = useWallet();
@@ -51,6 +52,8 @@ export function App() {
       return <ActivityScreen />;
     case "settings":
       return <SettingsScreen />;
+    case "backup":
+      return <BackupRestoreScreen />;
     case "swap":
       return <SwapScreen />;
     case "nfts":

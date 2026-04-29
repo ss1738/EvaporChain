@@ -9,8 +9,9 @@ import { api, type AccountDetail, type StateObject, type ChainStatus, type Token
 import type { WcSession, WcSessionProposal } from "@/utils/walletconnect";
 import { ledgerManager, type LedgerAccount } from "@/utils/ledger";
 import { type BridgeTransfer } from "@/utils/bridge";
+import { loadPreferences, savePreferences, type UserPreferences } from "@/utils/preferences";
 
-export type View = "locked" | "create" | "import" | "home" | "send" | "receive" | "objects" | "activity" | "settings" | "swap" | "nfts" | "nft-detail" | "buy" | "batch-refresh" | "ghost-recovery" | "energy-dashboard" | "social-login" | "tutorial" | "decay-forecast" | "walletconnect" | "ledger" | "bridge" | "plugins" | "ai-assistant";
+export type View = "locked" | "create" | "import" | "home" | "send" | "receive" | "objects" | "activity" | "settings" | "backup" | "swap" | "nfts" | "nft-detail" | "buy" | "batch-refresh" | "ghost-recovery" | "energy-dashboard" | "social-login" | "tutorial" | "decay-forecast" | "walletconnect" | "ledger" | "bridge" | "plugins" | "ai-assistant";
 
 interface WalletState {
   // Auth
@@ -58,6 +59,9 @@ interface WalletState {
   // Network
   nodeUrl: string;
 
+  // Preferences
+  preferences: UserPreferences;
+
   // Actions
   init: () => Promise<void>;
   unlock: (password: string) => Promise<void>;
@@ -90,6 +94,7 @@ interface WalletState {
   setError: (error: string | null) => void;
   setNotification: (msg: string | null) => void;
   setNodeUrl: (url: string) => void;
+  updatePreferences: (prefs: Partial<UserPreferences>) => Promise<void>;
 }
 
 interface TxSendResult {
@@ -123,16 +128,30 @@ export const useWallet = create<WalletState>((set, get) => ({
   error: null,
   notification: null,
   nodeUrl: "https://testnet.evaporchain.com",
+  preferences: {
+    nodeUrl: "https://testnet.evaporchain.com",
+    currency: "USD",
+    autoLockMinutes: 15,
+    defaultSlippage: 0.5,
+    hideSmallBalances: false,
+    notificationsEnabled: true,
+  },
 
   init: async () => {
-    const ks = await BrowserKeyStore.load();
+    const [ks, prefs] = await Promise.all([
+      BrowserKeyStore.load(),
+      loadPreferences(),
+    ]);
     const accounts = ks.listAccounts();
     const active = ks.getActiveAccount();
+    api.setNode(prefs.nodeUrl);
     set({
       keystore: ks,
       accounts,
       activeAccount: active,
       view: accounts.length === 0 ? "social-login" : "locked",
+      nodeUrl: prefs.nodeUrl,
+      preferences: prefs,
     });
   },
 
@@ -515,6 +534,21 @@ export const useWallet = create<WalletState>((set, get) => ({
   setNotification: (msg: string | null) => set({ notification: msg }),
   setNodeUrl: (url: string) => {
     api.setNode(url);
-    set({ nodeUrl: url });
+    set((state) => ({
+      nodeUrl: url,
+      preferences: { ...state.preferences, nodeUrl: url },
+    }));
+    savePreferences({ nodeUrl: url });
+  },
+
+  updatePreferences: async (prefs: Partial<UserPreferences>) => {
+    await savePreferences(prefs);
+    set((state) => ({
+      preferences: { ...state.preferences, ...prefs },
+      ...(prefs.nodeUrl != null ? { nodeUrl: prefs.nodeUrl } : {}),
+    }));
+    if (prefs.nodeUrl != null) {
+      api.setNode(prefs.nodeUrl);
+    }
   },
 }));

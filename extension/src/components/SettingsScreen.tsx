@@ -3,7 +3,13 @@ import { useWallet } from "@/hooks/useWallet";
 import { Header } from "./Header";
 
 export function SettingsScreen() {
-  const { accounts, activeAccount, switchAccount, nodeUrl, setNodeUrl, setView, lock } = useWallet();
+  const {
+    accounts, activeAccount, switchAccount,
+    nodeUrl, setNodeUrl,
+    preferences, updatePreferences,
+    setView, lock,
+  } = useWallet();
+
   const [customUrl, setCustomUrl] = useState(nodeUrl);
 
   return (
@@ -61,6 +67,85 @@ export function SettingsScreen() {
           </div>
         </div>
 
+        {/* Display preferences */}
+        <div>
+          <h3 className="text-xs font-semibold text-zinc-400 mb-2">Display</h3>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-evap-surface border border-evap-border">
+              <span className="text-xs text-zinc-300">Currency</span>
+              <select
+                value={preferences.currency}
+                onChange={e => updatePreferences({ currency: e.target.value as "USD" | "GBP" | "EUR" })}
+                className="bg-transparent text-xs text-zinc-300 focus:outline-none"
+              >
+                <option value="USD">USD</option>
+                <option value="GBP">GBP</option>
+                <option value="EUR">EUR</option>
+              </select>
+            </div>
+            <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-evap-surface border border-evap-border">
+              <span className="text-xs text-zinc-300">Hide small balances</span>
+              <button
+                onClick={() => updatePreferences({ hideSmallBalances: !preferences.hideSmallBalances })}
+                className={`w-9 h-5 rounded-full transition-colors ${
+                  preferences.hideSmallBalances ? "bg-evap-cyan" : "bg-zinc-700"
+                }`}
+              >
+                <span className={`block w-4 h-4 mx-auto rounded-full bg-white transition-transform ${
+                  preferences.hideSmallBalances ? "translate-x-2" : "-translate-x-2"
+                }`} />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Security preferences */}
+        <div>
+          <h3 className="text-xs font-semibold text-zinc-400 mb-2">Security</h3>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-evap-surface border border-evap-border">
+              <span className="text-xs text-zinc-300">Auto-lock (minutes)</span>
+              <select
+                value={preferences.autoLockMinutes}
+                onChange={e => updatePreferences({ autoLockMinutes: Number(e.target.value) })}
+                className="bg-transparent text-xs text-zinc-300 focus:outline-none"
+              >
+                <option value={5}>5</option>
+                <option value={15}>15</option>
+                <option value={30}>30</option>
+                <option value={60}>60</option>
+                <option value={0}>Never</option>
+              </select>
+            </div>
+            <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-evap-surface border border-evap-border">
+              <span className="text-xs text-zinc-300">Notifications</span>
+              <button
+                onClick={() => updatePreferences({ notificationsEnabled: !preferences.notificationsEnabled })}
+                className={`w-9 h-5 rounded-full transition-colors ${
+                  preferences.notificationsEnabled ? "bg-evap-cyan" : "bg-zinc-700"
+                }`}
+              >
+                <span className={`block w-4 h-4 mx-auto rounded-full bg-white transition-transform ${
+                  preferences.notificationsEnabled ? "translate-x-2" : "-translate-x-2"
+                }`} />
+              </button>
+            </div>
+            <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-evap-surface border border-evap-border">
+              <span className="text-xs text-zinc-300">Default slippage</span>
+              <select
+                value={preferences.defaultSlippage}
+                onChange={e => updatePreferences({ defaultSlippage: Number(e.target.value) })}
+                className="bg-transparent text-xs text-zinc-300 focus:outline-none"
+              >
+                <option value={0.1}>0.1%</option>
+                <option value={0.5}>0.5%</option>
+                <option value={1.0}>1.0%</option>
+                <option value={2.0}>2.0%</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
         {/* About */}
         <div>
           <h3 className="text-xs font-semibold text-zinc-400 mb-2">About</h3>
@@ -70,6 +155,14 @@ export function SettingsScreen() {
             <p className="text-[10px] text-zinc-500">Keys never leave your browser</p>
           </div>
         </div>
+
+        {/* Backup */}
+        <button
+          onClick={() => setView("backup")}
+          className="w-full py-2 rounded-lg bg-evap-surface border border-evap-border text-xs text-zinc-300 hover:border-evap-cyan/40 transition text-left px-3"
+        >
+          Backup &amp; Restore →
+        </button>
 
         {/* Lock */}
         <button
