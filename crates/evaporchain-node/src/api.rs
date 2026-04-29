@@ -1147,6 +1147,11 @@ pub struct EvaporChainIdentity {
     pub lambda_fold: LambdaFoldResp,
     pub lamport_time: LamportTimeResp,
     pub sentinel_param_count: usize,
+    /// Full Sentinel parameter list with current values + vote counts.
+    /// Inline so dashboards can show autonomic drift without a second
+    /// round trip. Per INVENTION_STACK.md §A2.5 ("homeostasis, not
+    /// legislators").
+    pub sentinel_parameters: Vec<SentinelParameterResp>,
     /// HBCT — Hour-Block Capacity Tokens, the launch wedge per
     /// INVENTION_STACK.md §A3.4. Inline so dashboards see the launch
     /// dApp state without a second round trip.
@@ -1262,10 +1267,20 @@ async fn get_identity(State(state): State<Arc<ApiState>>) -> Json<EvaporChainIde
         }
     };
 
-    let sentinel_param_count = {
+    let sentinel_parameters: Vec<SentinelParameterResp> = {
         let db = safe_lock(&state.db);
-        db.all_sentinel_params().len()
+        db.all_sentinel_params()
+            .into_iter()
+            .map(|p| SentinelParameterResp {
+                id: p.id,
+                current: p.current,
+                min: p.min,
+                max: p.max,
+                vote_count: db.get_sentinel_votes(p.id).len(),
+            })
+            .collect()
     };
+    let sentinel_param_count = sentinel_parameters.len();
 
     let hbct = hbct_summary(&state);
 
@@ -1277,6 +1292,7 @@ async fn get_identity(State(state): State<Arc<ApiState>>) -> Json<EvaporChainIde
         lambda_fold: lambda_fold_resp,
         lamport_time,
         sentinel_param_count,
+        sentinel_parameters,
         hbct,
         wired_primitives: WIRED_PRIMITIVES.to_vec(),
         headline_sentence: HEADLINE_SENTENCE,
@@ -1769,6 +1785,99 @@ pub struct SentinelParameterResp {
     pub min: u64,
     pub max: u64,
     pub vote_count: usize,
+}
+
+/// One-shot demo seeder. Registers a small set of bounded chain
+/// parameters so the dashboard can immediately show autonomic
+/// homeostasis without the caller needing to know the API shape.
+/// Idempotent on parameter id — re-calling overwrites the bounds.
+#[derive(Debug, Serialize)]
+pub struct SentinelSeedDemoResp {
+    pub status: &'static str,
+    pub registered: Vec<u32>,
+    pub detail: String,
+}
+
+async fn post_sentinel_seed_demo(
+    State(state): State<Arc<ApiState>>,
+) -> Json<SentinelSeedDemoResp> {
+    // (id, current, min, max). Realistic-shaped chain knobs.
+    let params: &[(u32, u64, u64, u64)] = &[
+        (1, 30_000_000, 5_000_000, 100_000_000),  // block gas limit
+        (2,         10,           1,          60),  // target block time (s)
+        (3,    1_000_000,      1_000,  10_000_000),  // mempool byte cap (kb)
+        (4,        4096,          64,      65_536),  // λ half-life (epochs)
+    ];
+    let mut registered: Vec<u32> = Vec::new();
+    let mut last_err: Option<String> = None;
+    {
+        let mut db = safe_lock(&state.db);
+        for (id, current, min, max) in params {
+            match evaporchain_sentinel::BoundedParameter::new(*id, *current, *min, *max) {
+                Ok(p) => {
+                    db.put_sentinel_param(p);
+                    registered.push(*id);
+                }
+                Err(e) => last_err = Some(format!("param {id}: {e}")),
+            }
+        }
+    }
+    Json(SentinelSeedDemoResp {
+        status: if !registered.is_empty() { "ok" } else { "error" },
+        registered,
+        detail: last_err.unwrap_or_else(|| "block gas limit · block time · mempool cap · λ half-life".into()),
+    })
+}
+
+/// One-shot demo voter. Casts a deterministic vote per validator on
+/// each parameter so the autonomic-tick has something to drift toward.
+/// Each call uses the supplied epoch to produce fresh-weight votes.
+#[derive(Debug, Deserialize)]
+pub struct SentinelSeedVotesQuery {
+    /// Epoch to record votes at (so weight = full at this observation
+    /// time). Caller passes the current chain epoch.
+    pub current_epoch: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SentinelSeedVotesResp {
+    pub status: &'static str,
+    pub votes_recorded: usize,
+    pub detail: String,
+}
+
+async fn post_sentinel_seed_votes(
+    State(state): State<Arc<ApiState>>,
+    Json(q): Json<SentinelSeedVotesQuery>,
+) -> Json<SentinelSeedVotesResp> {
+    // Deterministic vote slate: 3 demo validators, each voting for a
+    // target near the parameter's max (to make drift visible upward).
+    let validators: &[u64] = &[101, 102, 103];
+    let mut recorded = 0usize;
+    {
+        let mut db = safe_lock(&state.db);
+        let params = db.all_sentinel_params();
+        for p in params {
+            // Vote target = max, so the param drifts upward at the
+            // SENTINEL_DEFAULT_STEP_CAP per autonomic tick.
+            let target = p.max;
+            let mut votes = db.get_sentinel_votes(p.id);
+            for v in validators {
+                votes.retain(|x| x.validator_id != *v);
+                votes.push(evaporchain_sentinel::Vote::new(*v, target, q.current_epoch));
+                recorded += 1;
+            }
+            db.put_sentinel_votes(p.id, votes);
+        }
+    }
+    Json(SentinelSeedVotesResp {
+        status: if recorded > 0 { "ok" } else { "error" },
+        votes_recorded: recorded,
+        detail: format!(
+            "3 validators voting for max on every registered parameter @ epoch {}",
+            q.current_epoch
+        ),
+    })
 }
 
 async fn post_sentinel_register_param(
@@ -6469,6 +6578,8 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/sentinel/tick", post(post_sentinel_tick))
         .route("/api/sentinel/parameter/:id", get(get_sentinel_param))
         .route("/api/sentinel/all", get(get_sentinel_all))
+        .route("/api/sentinel/seed_demo", post(post_sentinel_seed_demo))
+        .route("/api/sentinel/seed_votes", post(post_sentinel_seed_votes))
         .route("/api/boltzmann_stake/:validator_id/at/:current_epoch", get(get_boltzmann_stake))
         .route("/api/lamport_time", get(get_lamport_time))
         .route("/api/light_cone", get(get_light_cone))

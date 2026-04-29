@@ -44,6 +44,14 @@ type HbctEntry = {
   mwh_amount: number;
 };
 
+type SentinelParameter = {
+  id: number;
+  current: number;
+  min: number;
+  max: number;
+  vote_count: number;
+};
+
 type HbctState = {
   entry_count: number;
   total_mwh: number;
@@ -61,6 +69,7 @@ type Identity = {
   lambda_fold: LambdaFold;
   lamport_time: LamportTime;
   sentinel_param_count: number;
+  sentinel_parameters: SentinelParameter[];
   hbct: HbctState;
   wired_primitives: string[];
   headline_sentence: string;
@@ -156,6 +165,11 @@ export default function IdentityDashboard() {
 
       <HbctPanel
         hbct={identity.hbct}
+        endpoint={endpoint}
+        currentEpoch={identity.lambda_fold.latest_epoch}
+      />
+      <SentinelPanel
+        parameters={identity.sentinel_parameters}
         endpoint={endpoint}
         currentEpoch={identity.lambda_fold.latest_epoch}
       />
@@ -373,6 +387,182 @@ function HbctPanel({
       )}
     </div>
   );
+}
+
+function SentinelPanel({
+  parameters,
+  endpoint,
+  currentEpoch,
+}: {
+  parameters: SentinelParameter[];
+  endpoint: string;
+  currentEpoch: number;
+}) {
+  const [busy, setBusy] = useState<"seed" | "vote" | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  async function seed() {
+    setBusy("seed");
+    setMsg(null);
+    try {
+      const res = await fetch(`${endpoint}/api/sentinel/seed_demo`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setMsg(
+        `Registered ${data.registered.length} demo parameters — ${data.detail}`,
+      );
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "seed failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function castVotes() {
+    setBusy("vote");
+    setMsg(null);
+    try {
+      const res = await fetch(`${endpoint}/api/sentinel/seed_votes`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ current_epoch: currentEpoch }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setMsg(
+        `Recorded ${data.votes_recorded} votes — autonomic tick will drift each parameter toward its max on every committed block.`,
+      );
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "vote failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-neutral-200 bg-white p-6">
+      <div className="mb-4 flex items-baseline justify-between">
+        <div>
+          <h2 className="text-xl font-light text-neutral-900">
+            Sentinel · Autonomic Governance
+          </h2>
+          <p className="text-xs uppercase tracking-wider text-neutral-500">
+            Homeostasis, not legislators
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={seed}
+            disabled={busy !== null}
+            className="rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+          >
+            {busy === "seed" ? "Seeding…" : "Seed demo params"}
+          </button>
+          <button
+            onClick={castVotes}
+            disabled={busy !== null || parameters.length === 0}
+            className="rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium text-neutral-900 hover:bg-neutral-50 disabled:opacity-50"
+            title="Record one vote per registered parameter from 3 demo validators, all targeting the parameter's max"
+          >
+            {busy === "vote" ? "Voting…" : "Cast demo votes"}
+          </button>
+        </div>
+      </div>
+      {msg && (
+        <p className="mb-4 text-xs text-neutral-600">{msg}</p>
+      )}
+      {parameters.length === 0 ? (
+        <p className="text-sm text-neutral-500">
+          No governable parameters yet. Click <strong>Seed demo params</strong>{" "}
+          to register block gas limit, target block time, mempool byte cap, and
+          λ half-life — then <strong>Cast demo votes</strong> to watch the
+          autonomic tick drift each value upward per block.
+        </p>
+      ) : (
+        <div className="overflow-hidden rounded-lg border border-neutral-200">
+          <table className="min-w-full divide-y divide-neutral-200 text-xs">
+            <thead className="bg-neutral-50">
+              <tr>
+                <th className="px-3 py-2 text-left font-medium text-neutral-500">
+                  Parameter
+                </th>
+                <th className="px-3 py-2 text-right font-medium text-neutral-500">
+                  Min
+                </th>
+                <th className="px-3 py-2 text-right font-medium text-neutral-500">
+                  Current
+                </th>
+                <th className="px-3 py-2 text-right font-medium text-neutral-500">
+                  Max
+                </th>
+                <th className="px-3 py-2 text-right font-medium text-neutral-500">
+                  Votes
+                </th>
+                <th className="px-3 py-2 text-left font-medium text-neutral-500">
+                  Position in band
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-neutral-100 bg-white">
+              {parameters.map((p) => {
+                const pct = bandPosition(p.current, p.min, p.max);
+                return (
+                  <tr key={p.id}>
+                    <td className="px-3 py-2 font-mono text-neutral-800">
+                      {parameterLabel(p.id)}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-neutral-600">
+                      {p.min.toLocaleString()}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono font-medium text-neutral-900">
+                      {p.current.toLocaleString()}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-neutral-600">
+                      {p.max.toLocaleString()}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-neutral-600">
+                      {p.vote_count}
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="relative h-2 w-32 overflow-hidden rounded-full bg-neutral-100">
+                        <div
+                          className="absolute inset-y-0 left-0 bg-neutral-900"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function parameterLabel(id: number): string {
+  switch (id) {
+    case 1:
+      return "block_gas_limit";
+    case 2:
+      return "target_block_time_s";
+    case 3:
+      return "mempool_byte_cap_kb";
+    case 4:
+      return "lambda_half_life_epochs";
+    default:
+      return `param_${id}`;
+  }
+}
+
+function bandPosition(current: number, min: number, max: number): number {
+  if (max <= min) return 0;
+  const pct = ((current - min) / (max - min)) * 100;
+  return Math.max(0, Math.min(100, pct));
 }
 
 type MortisCertPreview = {
