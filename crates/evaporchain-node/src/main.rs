@@ -3210,7 +3210,7 @@ async fn main() -> Result<()> {
                                             mortis_triggered: s.mortis_triggered,
                                             mortis_epoch_of_death: s.mortis_epoch_of_death,
                                             mortis_final_state_root: s.mortis_final_state_root.map(hex::encode),
-                                            last_conservation_audit_ok: None,
+                                            last_conservation_audit_ok: s.last_conservation_audit_ok,
                                             genesis_amendment_hash: None,
                                         });
                                     }

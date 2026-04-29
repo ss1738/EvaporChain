@@ -267,6 +267,10 @@ pub struct ConsensusFourActState {
     pub mortis_triggered: bool,
     pub mortis_epoch_of_death: Option<u64>,
     pub mortis_final_state_root: Option<[u8; 32]>,
+    /// Per-block §1.2 conservation audit verdict from
+    /// `ParallelExecutor::last_conservation_audit`. None until first
+    /// block; Some(true) = audit passed, Some(false) = violation.
+    pub last_conservation_audit_ok: Option<bool>,
 }
 
 /// Tendermint-style BFT consensus engine.
@@ -473,6 +477,11 @@ impl TendermintConsensus {
             mortis_triggered: self.executor.mortis_monitor.is_triggered(),
             mortis_epoch_of_death: self.executor.mortis_certificate.as_ref().map(|c| c.epoch_of_death),
             mortis_final_state_root: self.executor.mortis_certificate.as_ref().map(|c| c.final_state_root),
+            last_conservation_audit_ok: self
+                .executor
+                .last_conservation_audit
+                .as_ref()
+                .map(|r| r.is_ok()),
         }
     }
 

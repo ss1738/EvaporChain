@@ -473,6 +473,11 @@ pub struct ParallelExecutor {
     pub refresh_pool: evaporchain_energy_kernel::RefreshPool,
     pub mortis_monitor: evaporchain_mortis::MortisMonitor,
     pub mortis_certificate: Option<evaporchain_mortis::MortisCertificate>,
+    /// Per-block §1.2 conservation audit verdict. Pure observability —
+    /// chain accepts blocks regardless; governance can promote to
+    /// gating later.
+    pub last_conservation_audit:
+        Option<Result<(), evaporchain_energy_kernel::ConservationViolation>>,
 }
 
 impl ParallelExecutor {
@@ -497,6 +502,7 @@ impl ParallelExecutor {
                 evaporchain_mortis::MortisCondition::default_genesis(),
             ),
             mortis_certificate: None,
+            last_conservation_audit: None,
         }
     }
 
@@ -523,6 +529,7 @@ impl ParallelExecutor {
                 evaporchain_mortis::MortisCondition::default_genesis(),
             ),
             mortis_certificate: None,
+            last_conservation_audit: None,
         }
     }
 
@@ -548,6 +555,7 @@ impl ParallelExecutor {
                 evaporchain_mortis::MortisCondition::default_genesis(),
             ),
             mortis_certificate: None,
+            last_conservation_audit: None,
         }
     }
 
@@ -572,6 +580,7 @@ impl ParallelExecutor {
                 evaporchain_mortis::MortisCondition::default_genesis(),
             ),
             mortis_certificate: None,
+            last_conservation_audit: None,
         }
     }
 
@@ -600,6 +609,7 @@ impl ParallelExecutor {
                 evaporchain_mortis::MortisCondition::default_genesis(),
             ),
             mortis_certificate: None,
+            last_conservation_audit: None,
         }
     }
 
@@ -1061,6 +1071,11 @@ impl ExecutionEngine for ParallelExecutor {
         db: &mut dyn StateDB,
         block: &Block,
     ) -> Result<BlockExecutionResult, ExecutionError> {
+        // Pre-block §1.2 conservation snapshot (read-only over StateDB).
+        let conservation_before = crate::energy_audit::compartment_snapshot_with_pool(
+            db,
+            self.refresh_pool.total_accrued(),
+        );
         let base_fee = self.fee_controller.as_ref().map_or(0, |fc| fc.base_fee);
         let mut total_txs_executed = 0usize;
         let mut total_txs_failed = 0usize;
@@ -1586,6 +1601,24 @@ impl ExecutionEngine for ParallelExecutor {
                 })
                 .collect();
         let cross_shard_processed = cross_shard_receipts.len();
+
+        // Post-block §1.2 conservation snapshot + audit. Pure
+        // observability: stored in self.last_conservation_audit
+        // for the chain-status API.
+        let conservation_after = crate::energy_audit::compartment_snapshot_with_pool(
+            db,
+            self.refresh_pool.total_accrued(),
+        );
+        let lambda = evaporchain_energy_kernel::ChainLambda::default_genesis();
+        let epochs_elapsed = block
+            .epoch
+            .saturating_sub(db.get_last_rent_epoch().saturating_sub(0));
+        self.last_conservation_audit = Some(crate::energy_audit::audit_block_step(
+            &conservation_before,
+            &conservation_after,
+            epochs_elapsed,
+            lambda,
+        ));
 
         Ok(BlockExecutionResult {
             state_root,
