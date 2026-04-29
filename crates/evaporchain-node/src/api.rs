@@ -1629,6 +1629,29 @@ pub struct LamportTimeResp {
     pub tick_quantum: u64,
 }
 
+// ─────────────── Light-Cone DAG observability ───────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct LightConeResp {
+    pub block_count: usize,
+    pub running_alongside_tendermint: bool,
+}
+
+async fn get_light_cone(State(state): State<Arc<ApiState>>) -> Json<LightConeResp> {
+    let tc = match state.tendermint.as_ref() {
+        Some(tc) => tc,
+        None => return Json(LightConeResp {
+            block_count: 0,
+            running_alongside_tendermint: false,
+        }),
+    };
+    let tc = safe_lock(tc);
+    Json(LightConeResp {
+        block_count: tc.light_cone_block_count(),
+        running_alongside_tendermint: true,
+    })
+}
+
 async fn get_lamport_time(State(state): State<Arc<ApiState>>) -> Json<LamportTimeResp> {
     let c = safe_lock(&state.lamport_clock);
     Json(LamportTimeResp {
@@ -5323,6 +5346,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/sentinel/all", get(get_sentinel_all))
         .route("/api/boltzmann_stake/:validator_id/at/:current_epoch", get(get_boltzmann_stake))
         .route("/api/lamport_time", get(get_lamport_time))
+        .route("/api/light_cone", get(get_light_cone))
         .route("/api/objects", get(get_objects))
         .route("/api/object/:id", get(get_single_object))
         .route("/api/accounts", get(get_accounts))
