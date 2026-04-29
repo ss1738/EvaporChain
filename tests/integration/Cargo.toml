@@ -36,5 +36,10 @@ evaporchain-sentinel = { path = "../../crates/evaporchain-sentinel" }
 evaporchain-bell-beacon = { path = "../../crates/evaporchain-bell-beacon" }
 evaporchain-entropic-slashing = { path = "../../crates/evaporchain-entropic-slashing" }
 evaporchain-decay-lamport = { path = "../../crates/evaporchain-decay-lamport" }
+evaporchain-hot-cold-stake = { path = "../../crates/evaporchain-hot-cold-stake" }
+evaporchain-sanov-slashing = { path = "../../crates/evaporchain-sanov-slashing" }
+evaporchain-decay-forget = { path = "../../crates/evaporchain-decay-forget" }
+evaporchain-lambda-fold = { path = "../../crates/evaporchain-lambda-fold" }
+evaporchain-antichain-mempool = { path = "../../crates/evaporchain-antichain-mempool" }
 serde_json = "1"
 hex = "0.4"

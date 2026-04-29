@@ -2687,3 +2687,320 @@ mod autopoietic_integration {
             "parameter must converge toward vote target 80 (got {})", param.current);
     }
 }
+
+// ── Hot/Cold Stake integration ────────────────────────────────────────────────
+
+#[cfg(test)]
+mod hot_cold_stake_integration {
+    use evaporchain_hot_cold_stake::{HotColdStake, StakeError};
+    use evaporchain_energy_kernel::{ChainLambda, Lambda};
+
+    fn fresh() -> HotColdStake {
+        HotColdStake::new(
+            1_000,
+            10_000,
+            ChainLambda::new(Lambda::from_epochs(100)),
+            ChainLambda::new(Lambda::from_epochs(10_000)),
+            0,
+        )
+    }
+
+    #[test]
+    fn promote_cold_to_hot_and_total_preserved() {
+        let stake = fresh();
+        let pre_total = stake.total();
+        let after = stake.promote(2_000).unwrap();
+        assert_eq!(after.hot, 3_000);
+        assert_eq!(after.cold, 8_000);
+        assert_eq!(after.total(), pre_total);
+    }
+
+    #[test]
+    fn demote_hot_to_cold_and_total_preserved() {
+        let stake = fresh();
+        let pre_total = stake.total();
+        let after = stake.demote(500).unwrap();
+        assert_eq!(after.hot, 500);
+        assert_eq!(after.cold, 10_500);
+        assert_eq!(after.total(), pre_total);
+    }
+
+    #[test]
+    fn hot_decays_faster_than_cold_at_one_halflife() {
+        let stake = fresh();
+        let after = stake.decay(100);
+        // hot at half-life 100 → 1000 * 0.5 = 500
+        assert_eq!(after.hot, 500);
+        // cold at half-life 10_000 → effectively unchanged
+        assert!(after.cold > 9_990);
+    }
+
+    #[test]
+    fn promote_beyond_cold_balance_rejected() {
+        let stake = fresh();
+        let err = stake.promote(100_000).unwrap_err();
+        assert!(matches!(err, StakeError::InsufficientCold { .. }));
+    }
+
+    #[test]
+    fn promote_then_demote_roundtrip() {
+        let stake = fresh();
+        let after = stake.promote(2_000).unwrap().demote(2_000).unwrap();
+        assert_eq!(after.hot, stake.hot);
+        assert_eq!(after.cold, stake.cold);
+    }
+}
+
+// ── Sanov-Slashing integration ────────────────────────────────────────────────
+
+#[cfg(test)]
+mod sanov_slashing_integration {
+    use evaporchain_sanov_slashing::{sanov_slash, apply_slash, Distribution};
+    use evaporchain_energy_kernel::{Compartment, EnergyAccumulator, ConservationCheck};
+
+    fn honest() -> Distribution {
+        // 99.9% produced, 0.1% missed
+        Distribution::from_counts(&[999, 1]).unwrap()
+    }
+
+    fn observed_mild() -> Distribution {
+        // 95% produced, 5% missed — mild deviation
+        Distribution::from_counts(&[95, 5]).unwrap()
+    }
+
+    fn observed_severe() -> Distribution {
+        // 50/50 — strong deviation from honest
+        Distribution::from_counts(&[1, 1]).unwrap()
+    }
+
+    #[test]
+    fn identical_distributions_produce_zero_slash() {
+        let d = Distribution::from_counts(&[9, 1]).unwrap();
+        assert_eq!(sanov_slash(1_000_000, &d, &d).unwrap(), 0);
+    }
+
+    #[test]
+    fn severe_deviation_slashes_more_than_mild_deviation() {
+        let stake = 1_000_000u64;
+        let slash_mild = sanov_slash(stake, &observed_mild(), &honest()).unwrap();
+        let slash_severe = sanov_slash(stake, &observed_severe(), &honest()).unwrap();
+        assert!(slash_severe > slash_mild, "severe deviation must cost more");
+    }
+
+    #[test]
+    fn slash_never_exceeds_stake() {
+        let stake = 500_000u64;
+        let slash = sanov_slash(stake, &observed_severe(), &honest()).unwrap();
+        assert!(slash <= stake);
+    }
+
+    #[test]
+    fn apply_slash_conserves_total_energy() {
+        let mut acc = EnergyAccumulator::new(0, 1_000_000, 0, 0);
+        let pre = acc;
+        let slash = apply_slash(1_000_000, &observed_severe(), &honest(), &mut acc).unwrap();
+        assert!(slash > 0);
+        // Conservation: Stake compartment shrank, SlashedPool grew by same amount
+        assert_eq!(acc[Compartment::Stake], 1_000_000 - slash);
+        assert_eq!(acc[Compartment::SlashedPool], slash);
+        ConservationCheck::redirect(&pre, &acc).expect("slash must conserve total energy");
+    }
+}
+
+// ── Decay-Forget integration (GDPR path) ─────────────────────────────────────
+
+#[cfg(test)]
+mod decay_forget_integration {
+    use evaporchain_decay_forget::{prove_forgotten, verify_forget_proof};
+    use evaporchain_decay_forget::proof::ForgetProofError;
+    use evaporchain_energy_kernel::{ChainLambda, Lambda};
+
+    fn lambda() -> ChainLambda {
+        ChainLambda::new(Lambda::from_epochs(100))
+    }
+
+    #[test]
+    fn forgotten_record_verifies_after_ten_halvings() {
+        // After 1000 epochs (10× half-life), energy → ~0 → well below threshold
+        let proof = prove_forgotten([0xABu8; 32], 1_000_000, lambda(), 0, 1000, 1000);
+        verify_forget_proof(&proof).expect("record must be cryptographically forgotten");
+    }
+
+    #[test]
+    fn recently_activated_record_not_forgotten() {
+        // After 1 epoch, commitment is still ~1_000_000 >> threshold 100
+        let proof = prove_forgotten([0x01u8; 32], 1_000_000, lambda(), 0, 1, 100);
+        let err = verify_forget_proof(&proof).unwrap_err();
+        assert!(matches!(err, ForgetProofError::NotForgotten { .. }));
+    }
+
+    #[test]
+    fn tampered_witness_is_rejected() {
+        let mut proof = prove_forgotten([0x42u8; 32], 1_000_000, lambda(), 0, 1000, 1000);
+        proof.witness[0] ^= 0xFF;
+        let err = verify_forget_proof(&proof).unwrap_err();
+        assert!(matches!(err, ForgetProofError::WitnessMismatch { .. }));
+    }
+
+    #[test]
+    fn forget_threshold_exactly_at_decayed_value_accepts() {
+        // At epoch 100 (1 half-life): 1_000_000 → 500_000; threshold = 500_000
+        let proof = prove_forgotten([0x05u8; 32], 1_000_000, lambda(), 0, 100, 500_000);
+        // decayed_commitment == forget_threshold: verify checks <=, so passes
+        verify_forget_proof(&proof).expect("boundary case: commitment at threshold must verify");
+    }
+}
+
+// ── Lambda-Fold (energy-folded light client) integration ──────────────────────
+
+#[cfg(test)]
+mod lambda_fold_integration {
+    use evaporchain_lambda_fold::{
+        fold, verify_folded, FoldedInstance, StepWitness, FoldError,
+    };
+    use evaporchain_energy_kernel::{ChainLambda, Lambda};
+
+    fn lambda() -> ChainLambda {
+        ChainLambda::new(Lambda::from_epochs(1_000))
+    }
+
+    fn step(epoch: u64, energy: u64) -> StepWitness {
+        let mut hash = [0u8; 32];
+        hash[0] = epoch as u8;
+        StepWitness::new(hash, energy, epoch)
+    }
+
+    #[test]
+    fn fold_five_steps_increments_step_count() {
+        let mut instance = FoldedInstance::identity();
+        for i in 0..5u64 {
+            instance = fold(instance, step(i, 1_000), lambda()).unwrap();
+        }
+        assert_eq!(instance.step_count, 5);
+    }
+
+    #[test]
+    fn verify_folded_passes_on_correct_hash_and_energy() {
+        let mut instance = FoldedInstance::identity();
+        for i in 0..3u64 {
+            instance = fold(instance, step(i, 5_000), lambda()).unwrap();
+        }
+        let expected_hash = instance.acc_hash;
+        verify_folded(&instance, expected_hash, 0).expect("must verify with correct hash");
+    }
+
+    #[test]
+    fn verify_folded_rejects_wrong_acc_hash() {
+        let mut instance = FoldedInstance::identity();
+        instance = fold(instance, step(0, 1_000), lambda()).unwrap();
+        let wrong_hash = [0xFFu8; 32];
+        let err = verify_folded(&instance, wrong_hash, 0).unwrap_err();
+        use evaporchain_lambda_fold::VerifyError;
+        assert!(matches!(err, VerifyError::AccHashMismatch { .. }));
+    }
+
+    #[test]
+    fn out_of_order_fold_rejected() {
+        let mut instance = FoldedInstance::identity();
+        instance = fold(instance, step(10, 1_000), lambda()).unwrap();
+        // Fold at epoch 5 after epoch 10 → must error
+        let err = fold(instance, step(5, 1_000), lambda()).unwrap_err();
+        assert!(matches!(err, FoldError::OutOfOrder { .. }));
+    }
+
+    #[test]
+    fn energy_decays_across_folded_steps() {
+        let mut instance = FoldedInstance::identity();
+        // Fold at epoch 0 with 1_000_000 energy
+        instance = fold(instance, step(0, 1_000_000), lambda()).unwrap();
+        // Then fold at epoch 1000 (1 half-life) — prev energy halves, adds another 0
+        let next_step = StepWitness::new([1u8; 32], 0, 1_000);
+        instance = fold(instance, next_step, lambda()).unwrap();
+        // After 1 half-life: 1_000_000 → 500_000; plus 0 new energy
+        assert!(instance.total_energy_remaining <= 500_001);
+        assert!(instance.total_energy_remaining >= 499_000);
+    }
+}
+
+// ── Antichain Mempool integration ─────────────────────────────────────────────
+
+#[cfg(test)]
+mod antichain_mempool_integration {
+    use std::collections::BTreeSet;
+    use evaporchain_antichain_mempool::{
+        Antichain, AntichainError, extend_to_maximal, is_maximal_antichain,
+        total_energy_meets_threshold,
+    };
+    use evaporchain_light_cone::{Block, BlockId, LightCone};
+    use evaporchain_energy_kernel::{ChainLambda, Lambda};
+
+    fn id(b: u8) -> BlockId { [b; 32] }
+
+    fn lambda() -> ChainLambda {
+        ChainLambda::new(Lambda::from_epochs(1_000))
+    }
+
+    // Two concurrent genesis-level blocks (no parents shared, no parent edges)
+    fn two_concurrent_blocks() -> LightCone {
+        let mut lc = LightCone::new();
+        lc.insert(Block::new(id(0), vec![], 1_000, 0)).unwrap();
+        lc.insert(Block::new(id(1), vec![], 800, 0)).unwrap();
+        lc
+    }
+
+    // Linear chain: 0 → 1 → 2
+    fn linear_chain() -> LightCone {
+        let mut lc = LightCone::new();
+        lc.insert(Block::new(id(0), vec![], 1_000, 0)).unwrap();
+        lc.insert(Block::new(id(1), vec![id(0)], 900, 1)).unwrap();
+        lc.insert(Block::new(id(2), vec![id(1)], 800, 2)).unwrap();
+        lc
+    }
+
+    #[test]
+    fn concurrent_pair_forms_valid_antichain() {
+        let lc = two_concurrent_blocks();
+        let members: BTreeSet<BlockId> = [id(0), id(1)].into_iter().collect();
+        let a = Antichain::from_set(members, &lc).unwrap();
+        assert_eq!(a.len(), 2);
+    }
+
+    #[test]
+    fn comparable_blocks_rejected_from_antichain() {
+        let lc = linear_chain();
+        // id(0) precedes id(1) — not concurrent
+        let members: BTreeSet<BlockId> = [id(0), id(1)].into_iter().collect();
+        let err = Antichain::from_set(members, &lc).unwrap_err();
+        assert!(matches!(err, AntichainError::Comparable { .. }));
+    }
+
+    #[test]
+    fn antichain_energy_meets_threshold_at_epoch_zero() {
+        let lc = two_concurrent_blocks();
+        let members: BTreeSet<BlockId> = [id(0), id(1)].into_iter().collect();
+        let a = Antichain::from_set(members, &lc).unwrap();
+        // Total = 1_000 + 800 = 1_800
+        assert!(total_energy_meets_threshold(&a, &lc, lambda(), 0, 1_800));
+        assert!(!total_energy_meets_threshold(&a, &lc, lambda(), 0, 1_801));
+    }
+
+    #[test]
+    fn greedy_extend_to_maximal_adds_concurrent_candidate() {
+        let lc = two_concurrent_blocks();
+        // Seed with just id(0)
+        let seed_members: BTreeSet<BlockId> = [id(0)].into_iter().collect();
+        let seed = Antichain::from_set(seed_members, &lc).unwrap();
+        // id(1) is concurrent with id(0) — extend should add it
+        let extended = extend_to_maximal(&seed, &lc, vec![id(1)]).unwrap();
+        assert_eq!(extended.len(), 2);
+    }
+
+    #[test]
+    fn linear_chain_tip_is_maximal_antichain() {
+        let lc = linear_chain();
+        // Only the tip (id(2)) is maximal — no other block is concurrent with it
+        let members: BTreeSet<BlockId> = [id(2)].into_iter().collect();
+        let a = Antichain::from_set(members, &lc).unwrap();
+        assert!(is_maximal_antichain(&a, &lc));
+    }
+}
