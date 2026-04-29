@@ -5189,6 +5189,94 @@ async fn post_annealing_accepts_candidate(Json(req): Json<AnnealingAcceptReq>) -
     }))
 }
 
+// ─────────────── Tombstone — "small deaths" eulogy trie ──────────────
+
+#[derive(Debug, Deserialize)]
+pub struct TombstoneMintReq {
+    /// 64-hex address of the evaporated account.
+    pub address_hex: String,
+    pub final_balance: u64,
+    pub final_epoch: u64,
+    /// One of: "evaporated", "forgotten", "slashed", "rent", or "other:<n>"
+    pub cause: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TombstoneEulogyRootReq {
+    /// List of tombstone entries: each has address_hex + commitment_hex (from /mint).
+    pub entries: Vec<TombstoneEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TombstoneEntry {
+    pub address_hex: String,
+    pub commitment_hex: String,
+}
+
+fn parse_cause(s: &str) -> evaporchain_tombstone::CauseOfDeath {
+    use evaporchain_tombstone::CauseOfDeath;
+    match s.to_lowercase().as_str() {
+        "evaporated" => CauseOfDeath::Evaporated,
+        "forgotten"  => CauseOfDeath::ForgottenViaDecayProof,
+        "slashed"    => CauseOfDeath::SlashedToZero,
+        "rent"       => CauseOfDeath::RentExhausted,
+        other => {
+            let n: u32 = other.strip_prefix("other:").and_then(|x| x.parse().ok()).unwrap_or(0);
+            CauseOfDeath::Other(n)
+        }
+    }
+}
+
+/// POST /api/tombstone/mint — mint the 32-byte memorial for an evaporated account.
+///
+/// Domain-separated blake3: `"evaporchain-tombstone" || addr || final_balance ||
+/// final_epoch || cause_discriminant`. Pure compute — no state.
+async fn post_tombstone_mint(Json(req): Json<TombstoneMintReq>) -> Json<serde_json::Value> {
+    use evaporchain_tombstone::mint;
+    let addr = match parse_hex32(&req.address_hex) {
+        Ok(a) => a,
+        Err(_) => return Json(serde_json::json!({ "status": "error", "error": "address_hex must be 64 hex chars" })),
+    };
+    let cause = parse_cause(&req.cause);
+    let tombstone = mint(addr, req.final_balance, req.final_epoch, cause);
+    Json(serde_json::json!({
+        "status": "ok",
+        "address_hex": req.address_hex,
+        "final_balance": req.final_balance,
+        "final_epoch": req.final_epoch,
+        "cause": req.cause,
+        "commitment": hex::encode(tombstone.commitment),
+    }))
+}
+
+/// POST /api/tombstone/eulogy_root — build an EulogyTrie from a batch of
+/// (address, commitment) pairs and return the order-independent blake3 root.
+///
+/// Two nodes that have observed the same tombstone set (in any order)
+/// compute the same root — safe for light-client verification.
+async fn post_tombstone_eulogy_root(Json(req): Json<TombstoneEulogyRootReq>) -> Json<serde_json::Value> {
+    use evaporchain_tombstone::{EulogyTrie, Tombstone};
+    let mut trie = EulogyTrie::new();
+    for entry in &req.entries {
+        let addr = match parse_hex32(&entry.address_hex) {
+            Ok(a) => a,
+            Err(_) => return Json(serde_json::json!({ "status": "error", "error": format!("bad address_hex: {}", entry.address_hex) })),
+        };
+        let commitment = match parse_hex32(&entry.commitment_hex) {
+            Ok(c) => c,
+            Err(_) => return Json(serde_json::json!({ "status": "error", "error": format!("bad commitment_hex: {}", entry.commitment_hex) })),
+        };
+        if let Err(e) = trie.insert(addr, Tombstone { commitment }) {
+            return Json(serde_json::json!({ "status": "error", "error": e.to_string() }));
+        }
+    }
+    Json(serde_json::json!({
+        "status": "ok",
+        "n_entries": trie.len(),
+        "eulogy_root": hex::encode(trie.root()),
+    }))
+}
+
 // ─────────────── HBCT-Elexon: epoch → GB settlement period mapping ───
 
 #[derive(Debug, Deserialize)]
@@ -5458,6 +5546,10 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     // Self-Annealing — Kirkpatrick-Gelatt-Vecchi 1983 validator set crystallisation
     ApiDocEntry { method: "POST", path: "/api/annealing/temperature",       category: "substrate", description: "Compute SA effective temperature at epoch. T(epoch)=λ×2^(−epoch/λ). Approaches 0 as the validator set crystallises; zero = no degrading moves accepted.", example: Some(r#"{"lambda_half_life":4096,"beta_mb":1000,"epoch":2048}"#) },
     ApiDocEntry { method: "POST", path: "/api/annealing/accepts_candidate", category: "substrate", description: "Deterministic SA acceptance gate for validator rotation. Accepts if candidate is better OR T-weighted random acceptance (slot_nonce from block hash, never PRNG).", example: Some(r#"{"lambda_half_life":4096,"beta_mb":1000,"epoch":100,"slot_nonce":12345,"incumbent":{"stake":1000,"activity":10,"uptime_milli":900},"candidate":{"stake":1200,"activity":12,"uptime_milli":950}}"#) },
+
+    // Tombstone — "small deaths" eulogy trie (the chain's deliberate exception to immutability)
+    ApiDocEntry { method: "POST", path: "/api/tombstone/mint",              category: "substrate", description: "Mint the 32-byte memorial for an evaporated account. blake3('evaporchain-tombstone' || addr || final_balance || final_epoch || cause_discriminant). The chain admits its small deaths and engraves them.", example: Some(r#"{"address_hex":"0000000000000000000000000000000000000000000000000000000000000001","final_balance":0,"final_epoch":10000,"cause":"evaporated"}"#) },
+    ApiDocEntry { method: "POST", path: "/api/tombstone/eulogy_root",       category: "substrate", description: "Build an EulogyTrie from a batch of (address, commitment) pairs and return the order-independent blake3 root. Light-client safe: two nodes observing the same tombstone set in any order compute the same root.", example: Some(r#"{"entries":[{"address_hex":"0000...01","commitment_hex":"<from /tombstone/mint>"}]}"#) },
 
     // Elexon HBCT oracle: chain epoch → GB grid settlement slot
     ApiDocEntry { method: "POST", path: "/api/elexon/epoch_to_slot",        category: "substrate", description: "Map a chain epoch to a UK Elexon settlement date + period (1..=48, each 30 min). No network call — pure calendar arithmetic. Used by HBCT oracle to build BMRS B1790 queries for confirmed MWh delivery.", example: Some(r#"{"genesis_unix_ts":1704067200,"epoch_duration_s":12,"hour_slot":150}"#) },
@@ -9275,6 +9367,8 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/wsbf/rg_flow", post(post_wsbf_rg_flow))
         .route("/api/rg_phase/classify", post(post_rg_phase_classify))
         .route("/api/rg_phase/trajectory", post(post_rg_phase_trajectory))
+        .route("/api/tombstone/mint", post(post_tombstone_mint))
+        .route("/api/tombstone/eulogy_root", post(post_tombstone_eulogy_root))
         .route("/api/elexon/epoch_to_slot", post(post_elexon_epoch_to_slot))
         .route("/api/demurrage/owed", post(post_demurrage_owed))
         .route("/api/mera/commit", post(post_mera_commit))

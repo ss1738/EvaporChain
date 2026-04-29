@@ -55,6 +55,7 @@ evaporchain-mortis = { path = "../evaporchain-mortis" }
 evaporchain-lad-vm = { path = "../evaporchain-lad-vm" }
 evaporchain-refresh-patronage = { path = "../evaporchain-refresh-patronage" }
 evaporchain-mera             = { path = "../evaporchain-mera" }
+evaporchain-tombstone        = { path = "../evaporchain-tombstone" }
 evaporchain-ib-validators    = { path = "../evaporchain-ib-validators" }
 evaporchain-self-annealing   = { path = "../evaporchain-self-annealing" }
 evaporchain-demurrage        = { path = "../evaporchain-demurrage" }
