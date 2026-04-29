@@ -1,10 +1,10 @@
-//! 15 MCP Tools — actions AI agents can take on the EvaporChain blockchain.
+//! 23 MCP Tools — actions AI agents can take on the EvaporChain blockchain.
 
 use serde_json::{json, Value};
 
 use crate::protocol::Context;
 
-/// Return the list of all 15 tools.
+/// Return the list of all 23 tools.
 pub fn list_tools() -> Value {
     json!({
         "tools": [
@@ -182,6 +182,106 @@ pub fn list_tools() -> Value {
                     },
                     "required": ["address"]
                 }
+            },
+            // ── Substrate thermodynamic tools (new) ──
+            {
+                "name": "get_autopoietic_health",
+                "description": "Check the chain's autopoietic viability (Maturana-Varela 1980). Reports whether the three self-sustaining subsystems are healthy: Patronage (self-funding), Sentinel (self-maintenance), LLSA (self-boundary). Status: Viable | Stressed | Inviable.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            },
+            {
+                "name": "compute_demurrage",
+                "description": "Calculate how much demurrage an idle account balance owes. Native EvaporChain demurrage: piecewise log rate lambda_base_ppm × log2(balance/threshold) ppm/epoch. Sink goes to the refresh pool.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "balance": { "type": "integer", "description": "Account balance in energy units" },
+                        "last_touched_epoch": { "type": "integer", "description": "Epoch when account was last active" },
+                        "current_epoch": { "type": "integer", "description": "Current chain epoch" },
+                        "lambda_base_ppm": { "type": "integer", "description": "Rate coefficient (ppm per epoch per log-doubling). Default genesis: 1" },
+                        "threshold": { "type": "integer", "description": "Energy threshold below which demurrage is zero. Default genesis: 1024" }
+                    },
+                    "required": ["balance", "last_touched_epoch", "current_epoch"]
+                }
+            },
+            {
+                "name": "get_epv_status",
+                "description": "Get the Evaporative Protocol Versioning status — which protocol versions are currently live and their energy budgets. Versions whose energy decays to zero are automatically pruned.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            },
+            {
+                "name": "get_fee_status",
+                "description": "Get the current fee controller state — base fee, target gas, EIP-1559-style drift direction (Rising/Falling/Stable), and EMA of recent gas usage.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            },
+            {
+                "name": "get_consensus_phase",
+                "description": "Get the current RG Phase Map consensus regime: LivenessStable | SafetyStable | Frozen | Chaotic. Also returns the last WSBF EffectiveParams (renormalized λ_eff, energy density, entropy_mb).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            },
+            {
+                "name": "check_annealing_temperature",
+                "description": "Compute the self-annealing effective temperature at a given epoch. T(epoch) = λ × 2^(−epoch/λ). Approaches zero as the validator set crystallises — fully crystallised = no degrading moves accepted (Kirkpatrick-Gelatt-Vecchi 1983).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "lambda_half_life": { "type": "integer", "description": "Chain λ half-life in epochs" },
+                        "epoch": { "type": "integer", "description": "Epoch to evaluate temperature at" }
+                    },
+                    "required": ["lambda_half_life", "epoch"]
+                }
+            },
+            {
+                "name": "compute_mera_commitment",
+                "description": "Build a MERA tensor-network state commitment from a list of account energy values. Returns the blake3 root hash and per-layer hashes. The root goes in the block header as the chain's λ-parameterised state commitment (Vidal 2007).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "energies": {
+                            "type": "array",
+                            "items": { "type": "integer" },
+                            "description": "Account energy values (physical layer)"
+                        },
+                        "lambda_half_life": { "type": "integer", "description": "Chain λ half-life in epochs (default: 4096)" },
+                        "base_half_life": { "type": "integer", "description": "τ₀ base half-life for MERA layer 0 (default: 100)" }
+                    },
+                    "required": ["energies"]
+                }
+            },
+            {
+                "name": "prove_fork_evaporated",
+                "description": "Prove that a competing fork has λ-decayed below the evaporation threshold. Returns an EvaporatedForkCert with blake3 witness binding. If is_evaporated=true, the fork is safely ignorable by light clients.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "fork_root_hex": { "type": "string", "description": "64-hex blake3 hash of the competing fork root" },
+                        "blocks": {
+                            "type": "array",
+                            "description": "Block energy entries: [{seed_energy, observed_epoch}]",
+                            "items": { "type": "object" }
+                        },
+                        "evaluated_at_epoch": { "type": "integer", "description": "Epoch at which to evaluate decay" },
+                        "threshold": { "type": "integer", "description": "Energy threshold below which fork is evaporated" },
+                        "lambda_epochs": { "type": "integer", "description": "Chain λ half-life in epochs" }
+                    },
+                    "required": ["fork_root_hex", "blocks", "evaluated_at_epoch", "threshold", "lambda_epochs"]
+                }
             }
         ]
     })
@@ -301,6 +401,62 @@ pub async fn call_tool(ctx: &Context, params: &Value) -> Result<Value, String> {
             let data = ctx.post_json("/api/faucet", &body).await?;
             format_text_result(&data)
         }
+        "get_autopoietic_health" => {
+            let data = ctx.get_json("/api/autopoietic/health").await?;
+            format_text_result(&data)
+        }
+        "compute_demurrage" => {
+            let body = json!({
+                "balance": args.get("balance").ok_or("Missing 'balance'")?,
+                "last_touched_epoch": args.get("last_touched_epoch").ok_or("Missing 'last_touched_epoch'")?,
+                "current_epoch": args.get("current_epoch").ok_or("Missing 'current_epoch'")?,
+                "lambda_base_ppm": args.get("lambda_base_ppm").unwrap_or(&json!(1)),
+                "threshold": args.get("threshold").unwrap_or(&json!(1024)),
+            });
+            let data = ctx.post_json("/api/demurrage/owed", &body).await?;
+            format_text_result(&data)
+        }
+        "get_epv_status" => {
+            let data = ctx.get_json("/api/epv/status").await?;
+            format_text_result(&data)
+        }
+        "get_fee_status" => {
+            let data = ctx.get_json("/api/fee_controller/status").await?;
+            format_text_result(&data)
+        }
+        "get_consensus_phase" => {
+            let data = ctx.get_json("/api/consensus/phase").await?;
+            format_text_result(&data)
+        }
+        "check_annealing_temperature" => {
+            let body = json!({
+                "lambda_half_life": args.get("lambda_half_life").ok_or("Missing 'lambda_half_life'")?,
+                "beta_mb": 1000u64,
+                "epoch": args.get("epoch").ok_or("Missing 'epoch'")?,
+            });
+            let data = ctx.post_json("/api/annealing/temperature", &body).await?;
+            format_text_result(&data)
+        }
+        "compute_mera_commitment" => {
+            let body = json!({
+                "energies": args.get("energies").ok_or("Missing 'energies'")?,
+                "lambda_half_life": args.get("lambda_half_life").unwrap_or(&json!(4096)),
+                "base_half_life": args.get("base_half_life").unwrap_or(&json!(100)),
+            });
+            let data = ctx.post_json("/api/mera/commit", &body).await?;
+            format_text_result(&data)
+        }
+        "prove_fork_evaporated" => {
+            let body = json!({
+                "fork_root_hex": args.get("fork_root_hex").ok_or("Missing 'fork_root_hex'")?,
+                "blocks": args.get("blocks").ok_or("Missing 'blocks'")?,
+                "evaluated_at_epoch": args.get("evaluated_at_epoch").ok_or("Missing 'evaluated_at_epoch'")?,
+                "threshold": args.get("threshold").ok_or("Missing 'threshold'")?,
+                "lambda_epochs": args.get("lambda_epochs").ok_or("Missing 'lambda_epochs'")?,
+            });
+            let data = ctx.post_json("/api/fork_cert/prove", &body).await?;
+            format_text_result(&data)
+        }
         _ => Err(format!("Unknown tool: {name}"))?,
     };
 
@@ -321,10 +477,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_list_tools_returns_15_tools() {
+    fn test_list_tools_returns_23_tools() {
         let tools = list_tools();
         let tool_list = tools["tools"].as_array().unwrap();
-        assert_eq!(tool_list.len(), 15);
+        assert_eq!(tool_list.len(), 23);
     }
 
     #[test]
