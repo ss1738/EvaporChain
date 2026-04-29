@@ -1,10 +1,10 @@
-//! 23 MCP Tools — actions AI agents can take on the EvaporChain blockchain.
+//! 26 MCP Tools — actions AI agents can take on the EvaporChain blockchain.
 
 use serde_json::{json, Value};
 
 use crate::protocol::Context;
 
-/// Return the list of all 23 tools.
+/// Return the list of all 26 tools.
 pub fn list_tools() -> Value {
     json!({
         "tools": [
@@ -282,6 +282,36 @@ pub fn list_tools() -> Value {
                     },
                     "required": ["fork_root_hex", "blocks", "evaluated_at_epoch", "threshold", "lambda_epochs"]
                 }
+            },
+            {
+                "name": "get_oracle_status",
+                "description": "Get the status of the on-chain oracle bridge — whether it is active, how many feed keys are tracked, how many BLS quorum rounds are open, and the current oracle state root. The oracle is a decay-aware data feed: stale entries λ-evaporate automatically.",
+                "inputSchema": { "type": "object", "properties": {}, "required": [] }
+            },
+            {
+                "name": "get_shard_health",
+                "description": "Get per-shard health metrics: liveness_ratio (live_objects / total_objects), total_energy, is_dead, and which shards are candidates for compaction. Useful for identifying shards that are degrading and need operator attention.",
+                "inputSchema": { "type": "object", "properties": {}, "required": [] }
+            },
+            {
+                "name": "check_conservation",
+                "description": "Audit whether a hypothetical block transition (before → after EnergyAccumulator) satisfies the §1.2 conservation invariant: total energy must be non-increasing, and any drop must be ≤ what the global λ-decay allows over the elapsed epochs. Returns {valid, before_total, after_total} or {valid:false, error}.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "before_accounts":     { "type": "integer", "description": "Accounts compartment energy before block" },
+                        "before_stake":        { "type": "integer", "description": "Stake compartment energy before block" },
+                        "before_refresh_pool": { "type": "integer", "description": "RefreshPool compartment energy before block" },
+                        "before_slashed_pool": { "type": "integer", "description": "SlashedPool compartment energy before block" },
+                        "after_accounts":      { "type": "integer", "description": "Accounts compartment energy after block" },
+                        "after_stake":         { "type": "integer", "description": "Stake compartment energy after block" },
+                        "after_refresh_pool":  { "type": "integer", "description": "RefreshPool compartment energy after block" },
+                        "after_slashed_pool":  { "type": "integer", "description": "SlashedPool compartment energy after block" },
+                        "epochs_elapsed":      { "type": "integer", "description": "Number of epochs that elapsed during the block" },
+                        "half_life_epochs":    { "type": "integer", "description": "Chain λ half-life in epochs (default 4096)" }
+                    },
+                    "required": ["before_accounts","before_stake","before_refresh_pool","before_slashed_pool","after_accounts","after_stake","after_refresh_pool","after_slashed_pool","epochs_elapsed"]
+                }
             }
         ]
     })
@@ -457,6 +487,34 @@ pub async fn call_tool(ctx: &Context, params: &Value) -> Result<Value, String> {
             let data = ctx.post_json("/api/fork_cert/prove", &body).await?;
             format_text_result(&data)
         }
+        "get_oracle_status" => {
+            let data = ctx.get_json("/api/oracle/status").await?;
+            format_text_result(&data)
+        }
+        "get_shard_health" => {
+            let data = ctx.get_json("/api/shards/health").await?;
+            format_text_result(&data)
+        }
+        "check_conservation" => {
+            let body = json!({
+                "before": {
+                    "accounts":    args.get("before_accounts").and_then(|v| v.as_u64()).unwrap_or(0),
+                    "stake":       args.get("before_stake").and_then(|v| v.as_u64()).unwrap_or(0),
+                    "refresh_pool": args.get("before_refresh_pool").and_then(|v| v.as_u64()).unwrap_or(0),
+                    "slashed_pool": args.get("before_slashed_pool").and_then(|v| v.as_u64()).unwrap_or(0),
+                },
+                "after": {
+                    "accounts":    args.get("after_accounts").and_then(|v| v.as_u64()).unwrap_or(0),
+                    "stake":       args.get("after_stake").and_then(|v| v.as_u64()).unwrap_or(0),
+                    "refresh_pool": args.get("after_refresh_pool").and_then(|v| v.as_u64()).unwrap_or(0),
+                    "slashed_pool": args.get("after_slashed_pool").and_then(|v| v.as_u64()).unwrap_or(0),
+                },
+                "epochs_elapsed": args.get("epochs_elapsed").and_then(|v| v.as_u64()).unwrap_or(1),
+                "half_life_epochs": args.get("half_life_epochs").and_then(|v| v.as_u64()).unwrap_or(4096),
+            });
+            let data = ctx.post_json("/api/energy_kernel/conservation_check", &body).await?;
+            format_text_result(&data)
+        }
         _ => Err(format!("Unknown tool: {name}"))?,
     };
 
@@ -477,10 +535,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_list_tools_returns_23_tools() {
+    fn test_list_tools_returns_26_tools() {
         let tools = list_tools();
         let tool_list = tools["tools"].as_array().unwrap();
-        assert_eq!(tool_list.len(), 23);
+        assert_eq!(tool_list.len(), 26);
     }
 
     #[test]
