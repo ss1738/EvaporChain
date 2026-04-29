@@ -423,6 +423,13 @@ pub struct SimpleExecutor {
     /// The death certificate, once Mortis triggers. Latched: never
     /// reset. Light clients read this field to know the chain has died.
     pub mortis_certificate: Option<evaporchain_mortis::MortisCertificate>,
+    /// Singh-Lyapunov fee state. Lives alongside the existing PID
+    /// fee_controller — chain governance flips between them. Advanced
+    /// per-block via `tick_lyapunov_fee_state`.
+    pub lyapunov_fee_state: evaporchain_fee_controller::FeeState,
+    /// Singh-Lyapunov fee params (snapshot of the chain-global λ +
+    /// targets). Genesis defaults from `lyapunov_fees::default_params`.
+    pub lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams,
 }
 
 /// Namespace key for the protocol-owned refresh pool. Storage rent
@@ -456,12 +463,38 @@ impl SimpleExecutor {
                 evaporchain_mortis::MortisCondition::default_genesis(),
             ),
             mortis_certificate: None,
+            lyapunov_fee_state: evaporchain_fee_controller::FeeState::at_equilibrium(
+                evaporchain_fee_controller::FeeControllerParams::default_genesis().target_energy,
+            ),
+            lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
         }
     }
 
     /// Set the chain ID for signing message domain separation.
     pub fn set_chain_id(&mut self, chain_id: String) {
         self.chain_id = chain_id;
+    }
+
+    /// Per-block hook: advance the Singh-Lyapunov fee state against
+    /// `gas_used` from the just-applied block. Returns the new base
+    /// fee + the Lyapunov drift for chain-side audit. Per
+    /// INVENTION_STACK.md §4.1 #4 the empty-block drift is provably
+    /// monotone-non-positive (asserted by the property test in
+    /// `evaporchain-fee-controller`).
+    pub fn tick_lyapunov_fee_state(
+        &mut self,
+        gas_used: u64,
+        epochs_elapsed: u64,
+    ) -> Result<(evaporchain_types::Energy, evaporchain_fee_controller::Drift), evaporchain_fee_controller::controller::FeeControllerError> {
+        let (new_state, drift) = evaporchain_fee_controller::FeeController::step(
+            &self.lyapunov_fee_params,
+            &self.lyapunov_fee_state,
+            gas_used,
+            epochs_elapsed,
+        )?;
+        self.lyapunov_fee_state = new_state;
+        let new_fee = evaporchain_fee_controller::base_fee(&self.lyapunov_fee_state, &self.lyapunov_fee_params);
+        Ok((new_fee, drift))
     }
 
     /// Per-block hook: advance the Mortis monitor against the current
@@ -518,6 +551,10 @@ impl SimpleExecutor {
                 evaporchain_mortis::MortisCondition::default_genesis(),
             ),
             mortis_certificate: None,
+            lyapunov_fee_state: evaporchain_fee_controller::FeeState::at_equilibrium(
+                evaporchain_fee_controller::FeeControllerParams::default_genesis().target_energy,
+            ),
+            lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
         }
     }
 
@@ -544,6 +581,10 @@ impl SimpleExecutor {
                 evaporchain_mortis::MortisCondition::default_genesis(),
             ),
             mortis_certificate: None,
+            lyapunov_fee_state: evaporchain_fee_controller::FeeState::at_equilibrium(
+                evaporchain_fee_controller::FeeControllerParams::default_genesis().target_energy,
+            ),
+            lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
         }
     }
 
@@ -570,6 +611,10 @@ impl SimpleExecutor {
                 evaporchain_mortis::MortisCondition::default_genesis(),
             ),
             mortis_certificate: None,
+            lyapunov_fee_state: evaporchain_fee_controller::FeeState::at_equilibrium(
+                evaporchain_fee_controller::FeeControllerParams::default_genesis().target_energy,
+            ),
+            lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
         }
     }
 
@@ -600,6 +645,10 @@ impl SimpleExecutor {
                 evaporchain_mortis::MortisCondition::default_genesis(),
             ),
             mortis_certificate: None,
+            lyapunov_fee_state: evaporchain_fee_controller::FeeState::at_equilibrium(
+                evaporchain_fee_controller::FeeControllerParams::default_genesis().target_energy,
+            ),
+            lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
         }
     }
 
@@ -630,6 +679,10 @@ impl SimpleExecutor {
                 evaporchain_mortis::MortisCondition::default_genesis(),
             ),
             mortis_certificate: None,
+            lyapunov_fee_state: evaporchain_fee_controller::FeeState::at_equilibrium(
+                evaporchain_fee_controller::FeeControllerParams::default_genesis().target_energy,
+            ),
+            lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
         }
     }
 
@@ -661,6 +714,10 @@ impl SimpleExecutor {
                 evaporchain_mortis::MortisCondition::default_genesis(),
             ),
             mortis_certificate: None,
+            lyapunov_fee_state: evaporchain_fee_controller::FeeState::at_equilibrium(
+                evaporchain_fee_controller::FeeControllerParams::default_genesis().target_energy,
+            ),
+            lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
         }
     }
 
