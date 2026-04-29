@@ -8413,6 +8413,77 @@ async fn get_prometheus_metrics(
     out.push_str("# TYPE evaporchain_uptime_seconds counter\n");
     out.push_str(&format!("evaporchain_uptime_seconds {}\n", uptime));
 
+    // ── Substrate thermodynamic metrics ───────────────────────────────
+
+    // Fee controller — current base fee in ppm (derived from integrator energy)
+    {
+        use evaporchain_fee_controller::{base_fee, FeeControllerParams};
+        let fee_state = safe_lock(&state.fee_state);
+        let params = FeeControllerParams::default_genesis();
+        let base_fee_ppm = base_fee(&fee_state, &params);
+        out.push_str("# HELP evaporchain_fee_base_ppm Current base fee from EIP-1559-style fee controller (ppm)\n");
+        out.push_str("# TYPE evaporchain_fee_base_ppm gauge\n");
+        out.push_str(&format!("evaporchain_fee_base_ppm {}\n", base_fee_ppm));
+    }
+
+    // EPV — live protocol version count
+    {
+        let epv = safe_lock(&state.epv_registry);
+        let live = epv.live_versions().len();
+        out.push_str("# HELP evaporchain_epv_live_versions Number of live EPV protocol versions tracked\n");
+        out.push_str("# TYPE evaporchain_epv_live_versions gauge\n");
+        out.push_str(&format!("evaporchain_epv_live_versions {}\n", live));
+    }
+
+    // Autopoietic viability — 2=Viable, 1=Stressed, 0=Inviable
+    {
+        use evaporchain_autopoietic::{AutopoieticStatus, ChainAutopoiesis};
+        use evaporchain_llsa::proof::AlwaysAcceptVerifier;
+        let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
+        let last_sentinel_vote = {
+            let db_ref = safe_lock(&state.db);
+            let params = db_ref.all_sentinel_params();
+            let mut max_epoch: Option<u64> = None;
+            for p in &params {
+                for v in db_ref.get_sentinel_votes(p.id) {
+                    max_epoch = Some(max_epoch.map_or(v.observed_epoch, |e| e.max(v.observed_epoch)));
+                }
+            }
+            max_epoch
+        };
+        let covenant_ids: Vec<Vec<u8>> = (1u8..=5).map(|i| vec![i, 0, 0, 0]).collect();
+        let book = safe_lock(&state.patronage_book);
+        let sys = ChainAutopoiesis::new(AlwaysAcceptVerifier, 1_000, 50);
+        let report = sys.health_report(&book, &covenant_ids, last_sentinel_vote, epoch);
+        let viability_score: u64 = match report.status {
+            AutopoieticStatus::Viable   => 2,
+            AutopoieticStatus::Stressed => 1,
+            AutopoieticStatus::Inviable => 0,
+        };
+        out.push_str("# HELP evaporchain_autopoietic_viability Chain autopoietic viability: 2=Viable 1=Stressed 0=Inviable\n");
+        out.push_str("# TYPE evaporchain_autopoietic_viability gauge\n");
+        out.push_str(&format!("evaporchain_autopoietic_viability {}\n", viability_score));
+    }
+
+    // Consensus phase — encoded as: 3=LivenessStable, 2=SafetyStable, 1=Frozen, 0=Chaotic
+    {
+        let phase_score: u64 = if let Some(tc) = &state.tendermint {
+            let tc = safe_lock(tc);
+            let phase = tc.consensus_phase();
+            match format!("{phase:?}").as_str() {
+                s if s.contains("Liveness") => 3,
+                s if s.contains("Safety")   => 2,
+                s if s.contains("Frozen")   => 1,
+                _                           => 0,
+            }
+        } else {
+            3 // MockConsensus defaults to LivenessStable
+        };
+        out.push_str("# HELP evaporchain_consensus_phase RG Phase Map regime: 3=LivenessStable 2=SafetyStable 1=Frozen 0=Chaotic\n");
+        out.push_str("# TYPE evaporchain_consensus_phase gauge\n");
+        out.push_str(&format!("evaporchain_consensus_phase {}\n", phase_score));
+    }
+
     (
         [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
         out,
