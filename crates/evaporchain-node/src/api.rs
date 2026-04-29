@@ -7432,6 +7432,189 @@ async fn post_token_balance(State(state): State<Arc<ApiState>>, Json(req): Json<
     Json(serde_json::json!({"token_id": req.token_id, "address": req.address, "balance": bal, "symbol": t.symbol}))
 }
 
+// ──────────────────────────── Swap (CFM-priced) ─────────────────────────
+
+/// Swap fee in basis points (30 bps = 0.3 %).
+const SWAP_FEE_BPS: u64 = 30;
+
+#[derive(Deserialize)]
+struct SwapQuoteRequest {
+    from_token: String,
+    to_token: String,
+    amount: u64,
+}
+
+#[derive(Deserialize)]
+struct SwapExecuteRequest {
+    from_token: String,
+    to_token: String,
+    amount: u64,
+    slippage: f64,
+    from: String,
+    #[serde(default)]
+    signature: Option<String>,
+    #[serde(default)]
+    public_key: Option<String>,
+}
+
+/// Return a swap quote using oracle mid-prices (or 1:1 EVAP as fallback).
+async fn post_swap_quote(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<SwapQuoteRequest>,
+) -> impl IntoResponse {
+    if req.amount == 0 {
+        return Json(serde_json::json!({ "error": "amount must be > 0" }));
+    }
+    let rate = oracle_rate(&state, &req.from_token, &req.to_token);
+    let gross_out = (req.amount as f64 * rate) as u64;
+    let fee = (gross_out * SWAP_FEE_BPS / 10_000).max(1);
+    let amount_out = gross_out.saturating_sub(fee);
+    let price_impact = if gross_out > 0 { (fee as f64 / gross_out as f64) * 100.0 } else { 0.0 };
+    Json(serde_json::json!({
+        "from_token": req.from_token,
+        "to_token":   req.to_token,
+        "amount_in":  req.amount,
+        "amount_out": amount_out,
+        "fee":        fee,
+        "rate":       rate,
+        "price_impact": (price_impact * 100.0).round() / 100.0,
+    }))
+}
+
+/// Execute a swap: debit from_token balance, credit to_token balance.
+/// Both tokens must be deployed. EVAP ↔ token swaps adjust the EVAP
+/// account balance through the executor.
+async fn post_swap_execute(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Json(req): Json<SwapExecuteRequest>,
+) -> Json<TxResultResponse> {
+    if let Err(resp) = require_tx_auth(&headers, &state, req.signature.is_some()) {
+        return resp;
+    }
+    if req.amount == 0 {
+        return Json(TxResultResponse { success: false, message: "amount must be > 0".into(), tx_hash: None });
+    }
+
+    let rate = oracle_rate(&state, &req.from_token, &req.to_token);
+    let gross_out = (req.amount as f64 * rate) as u64;
+    let fee = (gross_out * SWAP_FEE_BPS / 10_000).max(1);
+    let amount_out = gross_out.saturating_sub(fee);
+
+    // Slippage guard: if computed amount_out < amount * (1 - slippage), reject.
+    let min_out = (req.amount as f64 * rate * (1.0 - req.slippage / 100.0)) as u64;
+    if amount_out < min_out {
+        return Json(TxResultResponse {
+            success: false,
+            message: format!("Slippage exceeded: expected min {} but got {}", min_out, amount_out),
+            tx_hash: None,
+        });
+    }
+
+    let from_upper = req.from_token.to_ascii_uppercase();
+    let to_upper = req.to_token.to_ascii_uppercase();
+
+    // Helper: check/deduct from a DeployedToken balance, credit to another.
+    {
+        let mut store = safe_lock(&state.token_store);
+        let epoch = {
+            let history = safe_lock(&state.block_history);
+            history.back().map(|b| b.epoch).unwrap_or(0)
+        };
+
+        // Determine if from/to are deployed tokens or "EVAP" (native).
+        let from_is_token = store.tokens.iter().any(|t| t.symbol.to_ascii_uppercase() == from_upper);
+        let to_is_token   = store.tokens.iter().any(|t| t.symbol.to_ascii_uppercase() == to_upper);
+
+        if from_is_token {
+            // Deduct from the token balance.
+            let token = store.tokens.iter_mut().find(|t| t.symbol.to_ascii_uppercase() == from_upper).unwrap();
+            token.tick_decay(epoch);
+            let bal = token.balances.entry(req.from.clone()).or_insert(0);
+            if *bal < req.amount {
+                return Json(TxResultResponse { success: false, message: format!("Insufficient {} balance: {} < {}", from_upper, bal, req.amount), tx_hash: None });
+            }
+            *bal -= req.amount;
+        } else if from_upper != "EVAP" {
+            return Json(TxResultResponse { success: false, message: format!("Unknown from_token: {}", req.from_token), tx_hash: None });
+        }
+        // EVAP debit handled below via executor.
+
+        if to_is_token {
+            // Credit the to_token balance.
+            let token = store.tokens.iter_mut().find(|t| t.symbol.to_ascii_uppercase() == to_upper).unwrap();
+            token.tick_decay(epoch);
+            let bal = token.balances.entry(req.from.clone()).or_insert(0);
+            *bal = bal.saturating_add(amount_out);
+        } else if to_upper != "EVAP" {
+            return Json(TxResultResponse { success: false, message: format!("Unknown to_token: {}", req.to_token), tx_hash: None });
+        }
+        // EVAP credit handled below via executor.
+    }
+
+    // EVAP ↔ token: adjust EVAP account balance through the DB.
+    if from_upper == "EVAP" || to_upper == "EVAP" {
+        let from_addr = match parse_address_value(&serde_json::Value::String(req.from.clone())) {
+            Ok(a) => a,
+            Err(e) => return Json(TxResultResponse { success: false, message: e, tx_hash: None }),
+        };
+        let mut db = safe_lock(&state.db);
+        if from_upper == "EVAP" {
+            // Deduct EVAP.
+            let acct = db.get_or_create_account(&from_addr);
+            if acct.balance < req.amount {
+                return Json(TxResultResponse { success: false, message: format!("Insufficient EVAP balance: {} < {}", acct.balance, req.amount), tx_hash: None });
+            }
+            let new_bal = acct.balance - req.amount;
+            let mut updated = acct;
+            updated.balance = new_bal;
+            db.update_account(&from_addr, updated);
+        }
+        if to_upper == "EVAP" {
+            // Credit EVAP.
+            let acct = db.get_or_create_account(&from_addr);
+            let updated_balance = acct.balance.saturating_add(amount_out);
+            let mut updated = acct;
+            updated.balance = updated_balance;
+            db.update_account(&from_addr, updated);
+        }
+    }
+
+    let tx_hash = tx_hash(&format!("swap:{}:{}:{}:{}", req.from_token, req.to_token, req.amount, req.from));
+    Json(TxResultResponse {
+        success: true,
+        message: format!("Swapped {} {} for {} {}", req.amount, from_upper, amount_out, to_upper),
+        tx_hash: Some(tx_hash),
+    })
+}
+
+/// Look up an oracle exchange rate from_symbol → to_symbol.
+/// Falls back to 1.0 if no oracle price is available.
+fn oracle_rate(state: &ApiState, from: &str, to: &str) -> f64 {
+    let from_u = from.to_ascii_uppercase();
+    let to_u = to.to_ascii_uppercase();
+    if from_u == to_u { return 1.0; }
+
+    let (from_usd, to_usd) = if let Some(ref ob) = state.oracle_bridge {
+        let bridge = ob.lock().unwrap();
+        let f = if from_u == "EVAP" {
+            bridge.get_twap("evap_usd").or_else(|| bridge.get_twap("evap_usdc")).unwrap_or(1.0)
+        } else {
+            bridge.get_twap(&format!("{}_usd", from_u.to_ascii_lowercase())).unwrap_or(1.0)
+        };
+        let t = if to_u == "EVAP" {
+            bridge.get_twap("evap_usd").or_else(|| bridge.get_twap("evap_usdc")).unwrap_or(1.0)
+        } else {
+            bridge.get_twap(&format!("{}_usd", to_u.to_ascii_lowercase())).unwrap_or(1.0)
+        };
+        (f, t)
+    } else {
+        (1.0, 1.0)
+    };
+
+    if to_usd == 0.0 { 1.0 } else { from_usd / to_usd }
+}
+
 // ──────────────────────────── Staking Store ─────────────────────────────
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -9537,6 +9720,9 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/token/deploy", post(post_deploy_token))
         .route("/api/token/transfer", post(post_token_transfer))
         .route("/api/token/balance", post(post_token_balance))
+        // Swap
+        .route("/api/swap/quote", post(post_swap_quote))
+        .route("/api/swap/execute", post(post_swap_execute))
         // Staking
         .route("/staking", get(staking_html))
         .route("/api/staking", get(get_staking_pools))

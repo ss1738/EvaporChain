@@ -13,5 +13,11 @@ evaporchain-state = { path = "../../crates/evaporchain-state" }
 evaporchain-da = { path = "../../crates/evaporchain-da" }
 evaporchain-proving = { path = "../../crates/evaporchain-proving" }
 evaporchain-contracts = { path = "../../crates/evaporchain-contracts" }
+evaporchain-demurrage = { path = "../../crates/evaporchain-demurrage" }
+evaporchain-mera = { path = "../../crates/evaporchain-mera" }
+evaporchain-epv = { path = "../../crates/evaporchain-epv" }
+evaporchain-tombstone = { path = "../../crates/evaporchain-tombstone" }
+evaporchain-dsn = { path = "../../crates/evaporchain-dsn" }
+evaporchain-fee-controller = { path = "../../crates/evaporchain-fee-controller" }
 serde_json = "1"
 hex = "0.4"

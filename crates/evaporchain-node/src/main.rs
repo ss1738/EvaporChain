@@ -1,6 +1,8 @@
 mod api;
 mod auth;
+mod autopoietic_integration;
 mod bench;
+mod elexon_integration;
 mod frontier;
 mod oracle_bridge;
 mod persistence;
@@ -2472,6 +2474,14 @@ async fn main() -> Result<()> {
             1
         }),
     ));
+
+    // Start the HBCT-Elexon oracle round so validators can submit MWh
+    // attestations from the Elexon BMRS B1790 feed.
+    {
+        let mut ob = safe_lock(&oracle_bridge);
+        ob.start_round(elexon_integration::HBCT_FEED_KEY);
+    }
+    let elexon_feed = elexon_integration::production_feed(0, 12);
     let shard_bridge: Arc<Mutex<shard_bridge::ShardBridge>> = Arc::new(Mutex::new(
         shard_bridge::ShardBridge::new(16),
     ));
@@ -3519,6 +3529,28 @@ async fn main() -> Result<()> {
                                         obj_count as u64,
                                     );
                                     block.state_function_commitment = Some(commitment);
+                                }
+
+                                // ── HBCT-Elexon oracle vote ──
+                                // Submit this validator's Elexon MWh attestation for the
+                                // HBCT feed once per block (best-effort; no-op if unreachable).
+                                {
+                                    if let Some(vote) = elexon_integration::attest_and_vote(
+                                        &elexon_feed,
+                                        args.validator_id,
+                                        "T_RATS-1", // governance-configurable BMU id placeholder
+                                        block.epoch,
+                                        [0u8; 32],
+                                    ) {
+                                        let mut ob = safe_lock(&oracle_bridge);
+                                        let _ = ob.submit_vote(
+                                            elexon_integration::HBCT_FEED_KEY,
+                                            vote,
+                                            &evaporchain_crypto::signatures::BlsPublicKey(vec![]),
+                                        );
+                                    } else {
+                                        elexon_integration::warn_feed_miss("T_RATS-1", block.epoch);
+                                    }
                                 }
 
                                 // ── Oracle finalization per block ──

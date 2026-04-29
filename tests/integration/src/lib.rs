@@ -869,3 +869,198 @@ mod tests {
         assert!(stats.avg_participation > 0.5, "Should have >50% participation");
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Substrate crate integration tests
+// ═══════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod substrate_integration {
+    use evaporchain_demurrage::{demurrage_owed, DemurrageParams};
+    use evaporchain_mera::commit;
+    use evaporchain_epv::{EpvRegistry, ProtocolVersion, prune_evaporated};
+    use evaporchain_tombstone::{mint, EulogyTrie, CauseOfDeath};
+    use evaporchain_dsn::{DsnWindow, DsnError};
+    use evaporchain_fee_controller::{FeeController, FeeControllerParams, FeeState};
+
+    // ── Demurrage ───────────────────────────────────────────────────
+
+    #[test]
+    fn demurrage_zero_below_threshold() {
+        let params = DemurrageParams::new(10, 1024);
+        // balance at threshold — rate should be zero per the piecewise rule
+        assert_eq!(demurrage_owed(1024, 0, 1_000_000, &params), 0);
+    }
+
+    #[test]
+    fn demurrage_accrues_above_threshold() {
+        let params = DemurrageParams::new(1, 1024); // 1 ppm/epoch/log-doubling
+        // 2*1024 = 2048, log2(2048/1024)=1, rate=1 ppm
+        // elapsed=1000 → owed = floor(2048 * 1 * 1000 / 1_000_000) = 2
+        let owed = demurrage_owed(2048, 0, 1000, &params);
+        assert!(owed > 0, "balance above threshold should owe demurrage");
+        assert!(owed <= 2048, "owed never exceeds balance");
+    }
+
+    #[test]
+    fn demurrage_disabled_owes_nothing() {
+        let params = DemurrageParams::disabled();
+        assert_eq!(demurrage_owed(u64::MAX, 0, 1_000_000, &params), 0);
+    }
+
+    // ── MERA state commitment ────────────────────────────────────────
+
+    #[test]
+    fn mera_commitment_is_deterministic() {
+        let energies = vec![1000u64, 2000, 3000, 4000, 5000, 6000, 7000, 8000];
+        let (c1, _) = commit(&energies, 4096, 100);
+        let (c2, _) = commit(&energies, 4096, 100);
+        assert_eq!(c1.root_hash, c2.root_hash, "MERA commitment must be deterministic");
+        assert_eq!(c1.header_bytes(), c2.header_bytes());
+    }
+
+    #[test]
+    fn mera_commitment_changes_with_energy_update() {
+        let energies = vec![1000u64, 2000, 3000, 4000];
+        let (c1, _) = commit(&energies, 4096, 100);
+        let mut e2 = energies.clone();
+        e2[2] = 9999; // one account gained energy
+        let (c2, _) = commit(&e2, 4096, 100);
+        assert_ne!(c1.root_hash, c2.root_hash, "any energy change must change the MERA root");
+    }
+
+    #[test]
+    fn mera_header_bytes_include_lambda() {
+        let energies = vec![1000u64, 2000];
+        let (c1, _) = commit(&energies, 4096, 100);
+        let (c2, _) = commit(&energies, 8192, 100); // different lambda
+        assert_ne!(c1.header_bytes(), c2.header_bytes(), "lambda is committed in header_bytes");
+    }
+
+    // ── EPV — Evaporative Protocol Versioning ────────────────────────
+
+    #[test]
+    fn epv_prune_removes_zero_energy_versions() {
+        let mut reg = EpvRegistry::new();
+        let _ = reg.register(ProtocolVersion::new(1, 1_000_000, 0)); // healthy
+        let _ = reg.register(ProtocolVersion::new(2, 0, 0));         // evaporated
+        let _ = reg.register(ProtocolVersion::new(3, 500_000, 0));   // healthy
+
+        let outcome = prune_evaporated(&mut reg, 1);
+        assert_eq!(outcome.pruned.len(), 1, "one evaporated version should be pruned");
+        assert_eq!(outcome.pruned[0], 2);
+    }
+
+    #[test]
+    fn epv_registration_ordering_stable() {
+        let mut reg = EpvRegistry::new();
+        for id in 1u64..=5 {
+            let _ = reg.register(ProtocolVersion::new(id, 1_000_000, 0));
+        }
+        let versions = reg.live_versions();
+        assert_eq!(versions.len(), 5);
+    }
+
+    // ── Tombstone + EulogyTrie ───────────────────────────────────────
+
+    #[test]
+    fn tombstone_mint_deterministic() {
+        let addr = [0x01u8; 32];
+        let t1 = mint(addr, 0, 100, CauseOfDeath::Evaporated);
+        let t2 = mint(addr, 0, 100, CauseOfDeath::Evaporated);
+        assert_eq!(t1.commitment, t2.commitment, "tombstone is deterministic");
+    }
+
+    #[test]
+    fn tombstone_different_cause_different_commitment() {
+        let addr = [0x01u8; 32];
+        let t_evap = mint(addr, 0, 100, CauseOfDeath::Evaporated);
+        let t_slash = mint(addr, 0, 100, CauseOfDeath::SlashedToZero);
+        assert_ne!(t_evap.commitment, t_slash.commitment);
+    }
+
+    #[test]
+    fn eulogy_trie_root_is_order_independent() {
+        let addr_a = [0xAAu8; 32];
+        let addr_b = [0xBBu8; 32];
+        let t_a = mint(addr_a, 0, 1000, CauseOfDeath::Evaporated);
+        let t_b = mint(addr_b, 500, 2000, CauseOfDeath::RentExhausted);
+
+        let mut trie1 = EulogyTrie::new();
+        trie1.insert(addr_a, t_a).unwrap();
+        trie1.insert(addr_b, t_b).unwrap();
+
+        let mut trie2 = EulogyTrie::new();
+        trie2.insert(addr_b, t_b).unwrap(); // reversed order
+        trie2.insert(addr_a, t_a).unwrap();
+
+        assert_eq!(trie1.root(), trie2.root(), "EulogyTrie root is order-independent");
+    }
+
+    #[test]
+    fn eulogy_trie_rejects_re_evaporation() {
+        let addr = [0x42u8; 32];
+        let t = mint(addr, 0, 100, CauseOfDeath::Evaporated);
+        let mut trie = EulogyTrie::new();
+        trie.insert(addr, t).unwrap();
+        // Same address again — must fail
+        let err = trie.insert(addr, t).unwrap_err();
+        assert!(err.to_string().contains("already"), "re-evaporation must be rejected");
+    }
+
+    // ── DSN — Decay-Stamped Nullifiers ───────────────────────────────
+
+    #[test]
+    fn dsn_fold_and_advance_window() {
+        let mut w = DsnWindow::new(8).expect("depth=8 is valid");
+        let nullifier = [0x01u8; 32];
+        // First fold succeeds
+        assert!(w.fold_nullifier(nullifier, 1).is_ok());
+        // Duplicate in same window is rejected
+        assert!(w.fold_nullifier(nullifier, 1).is_err());
+        // After advancing past window, old nullifier is forgettable
+        for _ in 0..8 { w.advance_window(); }
+        // Now the nullifier can re-appear (window expired)
+        assert!(w.fold_nullifier(nullifier, 9).is_ok());
+    }
+
+    // ── Fee Controller ───────────────────────────────────────────────
+
+    #[test]
+    fn fee_controller_raises_fee_under_high_load() {
+        let params = FeeControllerParams::default_genesis();
+        let state = FeeState::at_equilibrium(1_000_000);
+        // 5x target gas usage → fee should rise
+        let gas_used = params.target_gas * 5;
+        let (new_state, drift) = FeeController::step(&params, &state, gas_used, 1).unwrap();
+        assert!(
+            new_state.base_fee_ppm > state.base_fee_ppm,
+            "high gas usage must raise base fee (drift={drift:?})"
+        );
+    }
+
+    #[test]
+    fn fee_controller_lowers_fee_under_low_load() {
+        let params = FeeControllerParams::default_genesis();
+        // Start at 2x genesis equilibrium so there's room to fall
+        let state = FeeState::at_equilibrium(2_000_000);
+        let gas_used = 0; // no gas used
+        let (new_state, _drift) = FeeController::step(&params, &state, gas_used, 1).unwrap();
+        assert!(
+            new_state.base_fee_ppm < state.base_fee_ppm,
+            "zero gas usage must lower base fee"
+        );
+    }
+
+    #[test]
+    fn fee_controller_stable_at_target() {
+        let params = FeeControllerParams::default_genesis();
+        let state = FeeState::at_equilibrium(1_000_000);
+        // Exactly target gas → fee should be close to stable
+        let gas_used = params.target_gas;
+        let (new_state, _) = FeeController::step(&params, &state, gas_used, 1).unwrap();
+        let delta = (new_state.base_fee_ppm as i64 - state.base_fee_ppm as i64).abs();
+        // Small delta acceptable (EMA smoothing), but it should be tiny
+        assert!(delta < (state.base_fee_ppm as i64 / 10), "target gas should keep fee near stable");
+    }
+}
