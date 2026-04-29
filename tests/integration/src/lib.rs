@@ -2308,3 +2308,133 @@ mod contracts_integration {
         assert!(inst.energy > 0, "energy must be > 0 after refresh");
     }
 }
+
+// ── Frontier primitive integration (Light-Cone + Singh Attractor) ─────────────
+
+#[cfg(test)]
+mod frontier_primitive_integration {
+    use evaporchain_light_cone::block::Block as LcBlock;
+    use evaporchain_light_cone::dag::{LightCone, causal_past, causal_future};
+    use evaporchain_light_cone::concurrency::{is_concurrent, precedes, comparable};
+    use evaporchain_light_cone::arrow::time_arrow_holds_at;
+    use evaporchain_energy_kernel::{ChainLambda, Lambda};
+    use evaporchain_singh_attractor::{Attractor, select_attractor};
+
+    fn id(b: u8) -> [u8; 32] { [b; 32] }
+    fn lambda() -> ChainLambda { ChainLambda::new(Lambda::from_epochs(100)) }
+
+    // Build a diamond DAG:  A → B, A → C, B → D, C → D
+    fn diamond() -> LightCone {
+        let mut lc = LightCone::new();
+        lc.insert(LcBlock::new(id(0), vec![], 2_000, 0)).unwrap();
+        lc.insert(LcBlock::new(id(1), vec![id(0)], 1_800, 1)).unwrap();
+        lc.insert(LcBlock::new(id(2), vec![id(0)], 1_800, 1)).unwrap();
+        lc.insert(LcBlock::new(id(3), vec![id(1), id(2)], 1_600, 2)).unwrap();
+        lc
+    }
+
+    // ── LightCone DAG: causal past / future ───────────────────────────────
+
+    #[test]
+    fn light_cone_causal_past_includes_ancestors() {
+        let lc = diamond();
+        let past_d = causal_past(&lc, id(3));
+        // D's causal past must include A, B, C
+        assert!(past_d.contains(&id(0)), "genesis A must be in causal past of D");
+        assert!(past_d.contains(&id(1)), "B must be in causal past of D");
+        assert!(past_d.contains(&id(2)), "C must be in causal past of D");
+        assert!(!past_d.contains(&id(3)), "D must not be in its own causal past");
+    }
+
+    #[test]
+    fn light_cone_causal_future_includes_descendants() {
+        let lc = diamond();
+        let future_a = causal_future(&lc, id(0));
+        // A's future must include B, C, D
+        assert!(future_a.contains(&id(1)));
+        assert!(future_a.contains(&id(2)));
+        assert!(future_a.contains(&id(3)));
+        assert!(!future_a.contains(&id(0)), "A must not be in its own future");
+    }
+
+    // ── Concurrency relations ─────────────────────────────────────────────
+
+    #[test]
+    fn light_cone_concurrent_branches_in_diamond() {
+        let lc = diamond();
+        // B and C are concurrent — neither is in the other's causal past
+        assert!(is_concurrent(&lc, id(1), id(2)), "B and C must be concurrent");
+        assert!(is_concurrent(&lc, id(2), id(1)), "concurrency is symmetric");
+        // A precedes B (A → B)
+        assert!(precedes(&lc, id(0), id(1)), "A must precede B");
+        // D does not precede A
+        assert!(!precedes(&lc, id(3), id(0)), "D must not precede A");
+    }
+
+    #[test]
+    fn light_cone_comparable_is_reflexive_and_transitive() {
+        let lc = diamond();
+        // Reflexive
+        assert!(comparable(&lc, id(0), id(0)));
+        // Transitive: A ≼ B and B ≼ D → A ≼ D
+        assert!(comparable(&lc, id(0), id(3)));
+        // Concurrent pair is NOT comparable
+        assert!(!comparable(&lc, id(1), id(2)));
+    }
+
+    // ── Energy-decay time arrow ───────────────────────────────────────────
+
+    #[test]
+    fn time_arrow_holds_for_ancestor_with_higher_seed() {
+        let ancestor = LcBlock::new(id(0), vec![], 2_000, 0);
+        let descendant = LcBlock::new(id(1), vec![id(0)], 1_000, 5);
+        // At epoch 10: ancestor decays 10 epochs, descendant 5 — ancestor has more
+        assert!(
+            time_arrow_holds_at(&ancestor, &descendant, lambda(), 10),
+            "time arrow must hold when ancestor has higher seed energy"
+        );
+    }
+
+    #[test]
+    fn time_arrow_fails_before_observed_epoch() {
+        let a = LcBlock::new(id(0), vec![], 2_000, 10);
+        let d = LcBlock::new(id(1), vec![id(0)], 1_000, 20);
+        // t=5 is before both observed_epochs → undefined, returns false
+        assert!(!time_arrow_holds_at(&a, &d, lambda(), 5));
+    }
+
+    // ── Singh Attractor: multi-basin consensus ────────────────────────────
+
+    #[test]
+    fn singh_attractor_selects_correct_basin() {
+        let attractors = [
+            Attractor::new(100_000, 10_000),   // quiet-hours basin
+            Attractor::new(1_000_000, 100_000), // normal-load basin
+            Attractor::new(5_000_000, 500_000), // peak-load basin
+        ];
+
+        // Energy in normal-load basin
+        let selected = select_attractor(950_000, &attractors).unwrap();
+        assert_eq!(selected.center, 1_000_000, "normal-load basin must be selected");
+
+        // Energy in peak-load basin
+        let selected = select_attractor(5_200_000, &attractors).unwrap();
+        assert_eq!(selected.center, 5_000_000, "peak-load basin must be selected");
+    }
+
+    #[test]
+    fn singh_attractor_fallback_to_nearest_when_outside_all_basins() {
+        let attractors = [
+            Attractor::new(100, 10),
+            Attractor::new(10_000, 100),
+        ];
+        // 1_000 is outside both basins; nearest to 10_000 (9000 away) vs 100 (900 away)
+        let selected = select_attractor(1_000, &attractors).unwrap();
+        assert_eq!(selected.center, 100, "nearest attractor (100) must win by distance");
+    }
+
+    #[test]
+    fn singh_attractor_empty_list_returns_none() {
+        assert!(select_attractor(1_000_000, &[]).is_none());
+    }
+}

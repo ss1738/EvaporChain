@@ -28,5 +28,7 @@ evaporchain-wsbf = { path = "../../crates/evaporchain-wsbf" }
 evaporchain-rg-phase-map = { path = "../../crates/evaporchain-rg-phase-map" }
 evaporchain-self-annealing = { path = "../../crates/evaporchain-self-annealing" }
 evaporchain-boltzmann-stake = { path = "../../crates/evaporchain-boltzmann-stake" }
+evaporchain-light-cone = { path = "../../crates/evaporchain-light-cone" }
+evaporchain-singh-attractor = { path = "../../crates/evaporchain-singh-attractor" }
 serde_json = "1"
 hex = "0.4"
