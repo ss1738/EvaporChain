@@ -1301,6 +1301,65 @@ fn parse_hex32(s: &str) -> Result<[u8; 32], String> {
     Ok(a)
 }
 
+/// One-shot demo seeder. Mints a realistic batch of HBCT positions
+/// across multiple GB / EU delivery locations and hour slots, owned
+/// by deterministic stand-in holder addresses. Idempotent: re-calling
+/// stacks more MWh into existing entries (HbctBook::mint sums on the
+/// composite key), which is also a useful demo gesture for the
+/// dashboard.
+#[derive(Debug, Serialize)]
+pub struct HbctSeedDemoResp {
+    pub status: &'static str,
+    pub minted_positions: usize,
+    pub detail: String,
+}
+
+async fn post_hbct_seed_demo(
+    State(state): State<Arc<ApiState>>,
+) -> Json<HbctSeedDemoResp> {
+    // Realistic-shaped demo positions. Locations are GB BMU codes +
+    // German bidding zone; holders are deterministic stand-ins.
+    let positions: &[(&str, u64, u64, u8)] = &[
+        ("BMU-T_DRAXX-1",  481248, 250, 0xA1),
+        ("BMU-T_HEYM31",   481248, 180, 0xA2),
+        ("BMU-T_GRAIN-3",  481249,  95, 0xA1),
+        ("BMU-T_PEMB-1",   481249, 130, 0xA3),
+        ("DE-LU",          481250, 420, 0xB1),
+        ("DE-LU",          481250, 110, 0xB2),
+        ("BMU-T_HORNW-1",  481251,  75, 0xA4),
+        ("BMU-T_HORNW-1",  481252,  88, 0xA4),
+    ];
+    let issued_at = 0u64;
+    let mut book = safe_lock(&state.hbct_book);
+    let mut minted = 0usize;
+    let mut last_err: Option<String> = None;
+    for (loc, slot, mwh, holder_byte) in positions {
+        let holder = [*holder_byte; 32];
+        let token = match evaporchain_hbct::HbctToken::new(
+            loc.as_bytes().to_vec(),
+            *slot,
+            *mwh,
+            holder,
+            issued_at,
+        ) {
+            Ok(t) => t,
+            Err(e) => {
+                last_err = Some(format!("token {loc}/{slot}: {e}"));
+                continue;
+            }
+        };
+        match book.mint(token) {
+            Ok(()) => minted += 1,
+            Err(e) => last_err = Some(format!("mint {loc}/{slot}: {e}")),
+        }
+    }
+    Json(HbctSeedDemoResp {
+        status: if minted > 0 { "ok" } else { "error" },
+        minted_positions: minted,
+        detail: last_err.unwrap_or_else(|| format!("minted {minted} positions")),
+    })
+}
+
 async fn post_hbct_mint(
     State(state): State<Arc<ApiState>>,
     Json(req): Json<HbctMintReq>,
@@ -6339,6 +6398,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/refresh_pool", get(get_refresh_pool))
         .route("/api/tombstone/:addr_hex", get(get_tombstone))
         .route("/api/hbct/state", get(get_hbct_state))
+        .route("/api/hbct/seed_demo", post(post_hbct_seed_demo))
         .route("/api/hbct/mint", post(post_hbct_mint))
         .route("/api/hbct/transfer", post(post_hbct_transfer))
         .route("/api/hbct/burn", post(post_hbct_burn))

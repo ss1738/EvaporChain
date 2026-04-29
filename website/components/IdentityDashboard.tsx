@@ -154,7 +154,7 @@ export default function IdentityDashboard() {
         />
       </div>
 
-      <HbctPanel hbct={identity.hbct} />
+      <HbctPanel hbct={identity.hbct} endpoint={endpoint} />
       <FourActPanel act={identity.four_act} />
       <LivenessPanel liveness={identity.tur_liveness} />
       <FoldPanel fold={identity.lambda_fold} />
@@ -198,7 +198,35 @@ function Stat({
   );
 }
 
-function HbctPanel({ hbct }: { hbct: HbctState }) {
+function HbctPanel({
+  hbct,
+  endpoint,
+}: {
+  hbct: HbctState;
+  endpoint: string;
+}) {
+  const [seeding, setSeeding] = useState(false);
+  const [seedMsg, setSeedMsg] = useState<string | null>(null);
+
+  async function seed() {
+    setSeeding(true);
+    setSeedMsg(null);
+    try {
+      const res = await fetch(`${endpoint}/api/hbct/seed_demo`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setSeedMsg(
+        `Minted ${data.minted_positions} demo positions — refresh in 5s.`,
+      );
+    } catch (e) {
+      setSeedMsg(e instanceof Error ? e.message : "seed failed");
+    } finally {
+      setSeeding(false);
+    }
+  }
+
   return (
     <div className="rounded-xl border border-neutral-200 bg-white p-6">
       <div className="mb-4 flex items-baseline justify-between">
@@ -281,13 +309,26 @@ function HbctPanel({ hbct }: { hbct: HbctState }) {
           </div>
         </div>
       ) : (
-        <p className="mt-6 text-sm text-neutral-500">
-          No HBCT positions yet. Mint one via{" "}
-          <code className="font-mono text-neutral-700">
-            POST /api/hbct/mint
-          </code>
-          .
-        </p>
+        <div className="mt-6 rounded-lg border border-dashed border-neutral-300 bg-neutral-50 p-5">
+          <p className="mb-3 text-sm text-neutral-600">
+            No HBCT positions yet. Seed a realistic demo batch (8
+            positions across GB BMUs + DE-LU) or mint manually via{" "}
+            <code className="font-mono text-neutral-800">
+              POST /api/hbct/mint
+            </code>
+            .
+          </p>
+          <button
+            onClick={seed}
+            disabled={seeding}
+            className="rounded-md bg-neutral-900 px-4 py-2 text-xs font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+          >
+            {seeding ? "Seeding…" : "Seed demo positions"}
+          </button>
+          {seedMsg && (
+            <p className="mt-3 text-xs text-neutral-500">{seedMsg}</p>
+          )}
+        </div>
       )}
     </div>
   );
