@@ -1618,6 +1618,60 @@ pub struct LamportTimeResp {
     pub tick_quantum: u64,
 }
 
+// ─────────── Crooks-MEV Refund (Crooks 1999 fluctuation theorem) ───
+
+#[derive(Debug, Deserialize)]
+pub struct CrooksRefundQuery {
+    /// Forward pmf (fixed-point parts-per-million).
+    pub p_forward_ppm: u64,
+    /// Reverse pmf (fixed-point parts-per-million).
+    pub p_reverse_ppm: u64,
+    /// Total energy extracted by the MEV-suspect path, in chain energy units.
+    pub work_extracted: u64,
+    /// Inverse temperature β in millibits-per-fee-unit. Launch default 10.
+    pub beta_mb: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CrooksRefundResp {
+    pub status: &'static str,
+    pub delta_f_millibits: i64,
+    pub refund: u64,
+    pub detail: String,
+}
+
+/// Compute the Crooks-fluctuation-theorem MEV refund. Caller supplies
+/// observed forward/reverse pmfs of the path, total work extracted,
+/// and β; chain returns the refund (= work_extracted − ΔF clamped at 0).
+/// Per INVENTION_STACK.md §A1.3.
+async fn post_crooks_refund(
+    Json(q): Json<CrooksRefundQuery>,
+) -> Json<CrooksRefundResp> {
+    let delta_f = match evaporchain_crooks_mev_refund::compute_delta_f_from_pmfs(
+        q.p_forward_ppm,
+        q.p_reverse_ppm,
+        q.work_extracted as i64,
+        q.beta_mb,
+    ) {
+        Ok(d) => d,
+        Err(e) => {
+            return Json(CrooksRefundResp {
+                status: "error",
+                delta_f_millibits: 0,
+                refund: 0,
+                detail: format!("{e}"),
+            });
+        }
+    };
+    let refund = evaporchain_crooks_mev_refund::compute_refund(q.work_extracted, delta_f);
+    Json(CrooksRefundResp {
+        status: "ok",
+        delta_f_millibits: delta_f,
+        refund,
+        detail: String::new(),
+    })
+}
+
 // ─────────── Cμ-Gate (Shalizi-Crutchfield Cμ ≤ E + hμ) ─────────────
 
 #[derive(Debug, Deserialize)]
@@ -5536,6 +5590,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/mcc_fork_choice", get(get_mcc_fork_choice))
         .route("/api/tur_liveness", get(get_tur_liveness))
         .route("/api/cmu_check", get(get_cmu_check))
+        .route("/api/crooks_refund", post(post_crooks_refund))
         .route("/api/objects", get(get_objects))
         .route("/api/object/:id", get(get_single_object))
         .route("/api/accounts", get(get_accounts))
