@@ -2565,6 +2565,7 @@ async fn main() -> Result<()> {
             encrypted_mempool: Arc::clone(&encrypted_mempool),
             light_client: Arc::clone(&light_client),
             chain_id: args.chain_id.clone(),
+            four_act_snapshot: Arc::new(Mutex::new(api::FourActSnapshot::default())),
         });
         let api_port = args.api_port;
         tokio::spawn(async move {

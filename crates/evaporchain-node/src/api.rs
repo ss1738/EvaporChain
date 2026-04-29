@@ -109,9 +109,49 @@ pub struct ApiState {
     pub chain_id: String,
     /// Light client verifier — BLS header verification + skip/sequential modes.
     pub light_client: Arc<Mutex<evaporchain_consensus::light_client::LightClientVerifier>>,
+    /// Four-act narrative spine snapshot. The consensus layer's
+    /// `update_four_act_snapshot` is called after each block applied
+    /// by `SimpleExecutor`. Until then, fields are at their default
+    /// (zeroed / not-triggered).
+    pub four_act_snapshot: Arc<Mutex<FourActSnapshot>>,
+}
+
+/// Public-facing snapshot of the four-act narrative spine state for
+/// the chain's status endpoint. Per `INVENTION_STACK.md` Amendment 2
+/// §A2.5 the four acts are: Birth (Genesis with LLSA-checked
+/// invariants), Life (Sentinel autonomic governance), Small Deaths
+/// (Tombstone + eulogy trie), Final Death (Mortis death certificate).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct FourActSnapshot {
+    /// Number of accounts memorialised in the eulogy trie (Tombstone count).
+    pub eulogy_count: usize,
+    /// Total energy accrued in the protocol-owned refresh pool. Read
+    /// by `tick_mortis` to detect chain death.
+    pub refresh_pool_total: u64,
+    /// True iff Mortis has triggered. Latched once true.
+    pub mortis_triggered: bool,
+    /// Epoch the death-certificate fired (None until trigger).
+    pub mortis_epoch_of_death: Option<u64>,
+    /// State root committed in the death certificate (None until trigger).
+    pub mortis_final_state_root: Option<String>,
+    /// Per-block §1.2 conservation audit verdict from
+    /// `SimpleExecutor::last_conservation_audit`. `None` until first
+    /// block; `Some(true)` = audit passed; `Some(false)` = violation.
+    pub last_conservation_audit_ok: Option<bool>,
+    /// Genesis amendment hash that the chain's constitution proof
+    /// bound to. Empty until genesis ceremony runs.
+    pub genesis_amendment_hash: Option<String>,
 }
 
 impl ApiState {
+    /// Replace the four-act snapshot with `snap`. Called by the
+    /// consensus layer after each `SimpleExecutor::execute_block` so
+    /// `/api/four_act` reflects the latest narrative-spine state.
+    pub fn update_four_act_snapshot(&self, snap: FourActSnapshot) {
+        let mut s = safe_lock(&self.four_act_snapshot);
+        *s = snap;
+    }
+
     /// Reserve and return the next nonce for `addr`. Concurrent submits
     /// to the same account get distinct, monotonically-increasing nonces
     /// instead of all reading the same db.nonce. The cache is bounded:
@@ -996,6 +1036,16 @@ async fn get_status(State(state): State<Arc<ApiState>>) -> Json<StatusResponse> 
         proving_enabled: state.prove_mode,
         uptime_seconds: state.start_time.elapsed().as_secs(),
     })
+}
+
+/// Public-facing snapshot of the four-act narrative spine. Per
+/// INVENTION_STACK.md Amendment 2 §A2.5: Birth (LLSA-checked
+/// genesis), Life (Sentinel), Small Deaths (Tombstone), Final Death
+/// (Mortis). The consensus layer populates this via
+/// `ApiState::update_four_act_snapshot` after each block.
+async fn get_four_act_status(State(state): State<Arc<ApiState>>) -> Json<FourActSnapshot> {
+    let snap = safe_lock(&state.four_act_snapshot);
+    Json(snap.clone())
 }
 
 async fn get_objects(State(state): State<Arc<ApiState>>) -> Json<Vec<ObjectResponse>> {
@@ -4594,6 +4644,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/chain", get(get_chain))
         // Explorer
         .route("/api/status", get(get_status))
+        .route("/api/four_act", get(get_four_act_status))
         .route("/api/objects", get(get_objects))
         .route("/api/object/:id", get(get_single_object))
         .route("/api/accounts", get(get_accounts))
