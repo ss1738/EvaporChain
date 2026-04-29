@@ -1572,6 +1572,91 @@ async fn get_patronage_immune(
     })
 }
 
+// ─────────── Governance: fork-choice mode amendment ─────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct ForkChoiceAmendReq {
+    /// `"mcc"` or `"singh_attractor"`
+    pub mode: String,
+    /// Attractors (required when mode is `"singh_attractor"`).
+    pub attractors: Option<Vec<AttractorReq>>,
+    /// Endorsing validator stakes (summed to prove quorum).
+    pub endorser_stakes: Vec<u64>,
+    /// Minimum stake required for the amendment to pass.
+    pub required_stake: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AttractorReq {
+    pub center: u64,
+    pub basin_radius: u64,
+}
+
+/// POST /api/governance/fork_choice_mode — governance amendment to switch the
+/// authoritative fork-choice between MCC and Singh-Attractor.
+async fn post_governance_fork_choice_mode(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<ForkChoiceAmendReq>,
+) -> Json<serde_json::Value> {
+    let attractors: Vec<evaporchain_singh_attractor::Attractor> = req
+        .attractors
+        .unwrap_or_default()
+        .into_iter()
+        .map(|a| evaporchain_singh_attractor::Attractor::new(a.center, a.basin_radius))
+        .collect();
+
+    if let Some(tc_arc) = &state.tendermint {
+        let mut tc = safe_lock(tc_arc);
+        match tc.governance_set_fork_choice_mode(
+            &req.mode,
+            attractors,
+            &req.endorser_stakes,
+            req.required_stake,
+        ) {
+            Ok(()) => Json(serde_json::json!({
+                "status": "amended",
+                "fork_choice_mode": tc.fork_choice_mode(),
+                "attractor_count": tc.fork_choice_attractors.len(),
+                "detail": format!("fork-choice mode set to {:?} by {} endorsers", tc.fork_choice_mode(), req.endorser_stakes.len())
+            })),
+            Err(e) => Json(serde_json::json!({
+                "status": "error",
+                "detail": e.to_string()
+            })),
+        }
+    } else {
+        Json(serde_json::json!({
+            "status": "error",
+            "detail": "Tendermint consensus not running (single-validator devnet mode)"
+        }))
+    }
+}
+
+/// GET /api/governance/fork_choice_mode — current fork-choice mode + attractor set.
+async fn get_governance_fork_choice_mode(
+    State(state): State<Arc<ApiState>>,
+) -> Json<serde_json::Value> {
+    if let Some(tc_arc) = &state.tendermint {
+        let tc = safe_lock(tc_arc);
+        let attractors: Vec<serde_json::Value> = tc
+            .fork_choice_attractors
+            .iter()
+            .map(|a| serde_json::json!({"center": a.center, "basin_radius": a.basin_radius}))
+            .collect();
+        Json(serde_json::json!({
+            "fork_choice_mode": tc.fork_choice_mode(),
+            "attractors": attractors,
+            "detail": "MCC is the default; governance_set_fork_choice_mode promotes Singh-Attractor when validators signal readiness"
+        }))
+    } else {
+        Json(serde_json::json!({
+            "fork_choice_mode": "mcc",
+            "attractors": [],
+            "detail": "single-validator devnet — Tendermint not running"
+        }))
+    }
+}
+
 // ─────────── Mortis cert verification (tamper-evidence) ────────────
 
 #[derive(Debug, Deserialize)]
@@ -3707,6 +3792,10 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     ApiDocEntry { method: "POST", path: "/api/sentinel/tick",         category: "sentinel", description: "Manually run the homeostatic update on one parameter", example: Some(r#"{"parameter_id":1,"current_epoch":100,"max_step":5,"half_life_epochs":1000}"#) },
     ApiDocEntry { method: "GET",  path: "/api/sentinel/parameter/:id",category: "sentinel", description: "Read a single parameter by id", example: None },
     ApiDocEntry { method: "GET",  path: "/api/sentinel/all",          category: "sentinel", description: "List every registered parameter with its current value + vote count", example: None },
+
+    // Governance
+    ApiDocEntry { method: "GET",  path: "/api/governance/fork_choice_mode", category: "governance", description: "Current authoritative fork-choice mode (mcc|singh_attractor) + attractor set.", example: None },
+    ApiDocEntry { method: "POST", path: "/api/governance/fork_choice_mode", category: "governance", description: "Governance amendment to switch fork-choice between MCC and Singh-Attractor. Requires stake quorum from endorser_stakes.", example: Some(r#"{"mode":"singh_attractor","attractors":[{"center":1000,"basin_radius":200}],"endorser_stakes":[1000,800],"required_stake":1500}"#) },
 
     // Demo
     ApiDocEntry { method: "POST", path: "/api/demo/reset",            category: "demo", description: "Clear HBCT book + Sentinel votes so the dashboard demo can re-run", example: None },
@@ -7472,6 +7561,8 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/patronage/revoke", post(post_patronage_revoke))
         .route("/api/patronage/status", get(get_patronage_status))
         .route("/api/patronage/immune", get(get_patronage_immune))
+        .route("/api/governance/fork_choice_mode", get(get_governance_fork_choice_mode))
+        .route("/api/governance/fork_choice_mode", post(post_governance_fork_choice_mode))
         .route("/api/demo/reset", post(post_demo_reset))
         .route("/api/docs", get(get_api_docs))
         .route("/api/objects", get(get_objects))

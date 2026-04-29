@@ -252,6 +252,32 @@ pub enum SlashReason {
     Downtime { missed_blocks: u64 },
 }
 
+/// Error returned by `TendermintConsensus::governance_set_fork_choice_mode`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GovernanceAmendmentError {
+    /// Mode string was neither `"mcc"` nor `"singh_attractor"`.
+    UnrecognisedMode(String),
+    /// Singh-Attractor mode requires at least one attractor in the set.
+    EmptyAttractors,
+    /// Endorsing validators hold less stake than the quorum threshold.
+    InsufficientStake { endorsing: u64, required: u64 },
+}
+
+impl std::fmt::Display for GovernanceAmendmentError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnrecognisedMode(m) => write!(f, "unrecognised fork-choice mode: {m:?}"),
+            Self::EmptyAttractors => write!(f, "singh_attractor mode requires ≥1 attractor"),
+            Self::InsufficientStake { endorsing, required } => write!(
+                f,
+                "endorsing stake {endorsing} < required quorum {required}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for GovernanceAmendmentError {}
+
 // ─────────────────────── TendermintConsensus ─────────────────────────────
 
 /// Snapshot of the four-act narrative spine state for the API layer.
@@ -405,6 +431,11 @@ pub struct TendermintConsensus {
     da_confirmed_height: u64,
     /// Timestamp of the last committed block (for monotonicity validation).
     last_block_timestamp: u64,
+    /// Attractor set for Singh-Attractor fork-choice when
+    /// `governance_params["fork_choice_mode"] == "singh_attractor"`.
+    /// Empty means MCC (default). Governance-set via
+    /// `governance_set_fork_choice_mode`.
+    pub fork_choice_attractors: Vec<evaporchain_singh_attractor::Attractor>,
 }
 
 impl TendermintConsensus {
@@ -466,6 +497,7 @@ impl TendermintConsensus {
             governance_params: HashMap::new(),
             da_confirmed_height: 0,
             last_block_timestamp: 0,
+            fork_choice_attractors: Vec::new(),
         }
     }
 
@@ -685,6 +717,83 @@ impl TendermintConsensus {
             .and_then(|t| t.head().copied())
     }
 
+    // ─── Governance amendment: fork-choice mode ───────────────────────────
+
+    /// Authoritative fork-choice: dispatches to MCC or Singh-Attractor based
+    /// on the current governance-set mode. This is the single call-site for
+    /// all block-proposal/fork-selection code paths.
+    ///
+    /// Defaults to MCC (`beta_mb = 10_000`) if no governance amendment has been
+    /// applied yet (`fork_choice_mode` not set or `fork_choice_attractors` empty
+    /// in Singh-Attractor mode).
+    pub fn authoritative_head(
+        &self,
+        candidate_heads: &[[u8; 32]],
+        beta_mb: u64,
+    ) -> Option<[u8; 32]> {
+        let mode = self
+            .governance_params
+            .get("fork_choice_mode")
+            .map(|s| s.as_str())
+            .unwrap_or("mcc");
+        if mode == "singh_attractor" && !self.fork_choice_attractors.is_empty() {
+            self.singh_attractor_fork_choice(candidate_heads, &self.fork_choice_attractors)
+        } else {
+            self.mcc_choose_fork(candidate_heads, beta_mb)
+        }
+    }
+
+    /// Apply a governance amendment to switch the authoritative fork-choice mode.
+    ///
+    /// Requires that the calling validators collectively hold ≥ `required_stake`
+    /// (expressed as total stake units, not fraction). The caller must pass the
+    /// stake of each endorsing validator in `endorser_stakes`; this method sums
+    /// them and compares against `required_stake`. Returns `Err` if the quorum
+    /// is not met or the `mode` string is unrecognised.
+    ///
+    /// Recognised modes:
+    /// - `"mcc"` — Maximum-Caliber-Coherence (default; Jaynes 1980)
+    /// - `"singh_attractor"` — Singh-Attractor basin-based fork choice
+    pub fn governance_set_fork_choice_mode(
+        &mut self,
+        mode: &str,
+        attractors: Vec<evaporchain_singh_attractor::Attractor>,
+        endorser_stakes: &[u64],
+        required_stake: u64,
+    ) -> Result<(), GovernanceAmendmentError> {
+        if mode != "mcc" && mode != "singh_attractor" {
+            return Err(GovernanceAmendmentError::UnrecognisedMode(mode.to_string()));
+        }
+        if mode == "singh_attractor" && attractors.is_empty() {
+            return Err(GovernanceAmendmentError::EmptyAttractors);
+        }
+        let total_endorsing: u64 = endorser_stakes.iter().copied().fold(0u64, u64::saturating_add);
+        if total_endorsing < required_stake {
+            return Err(GovernanceAmendmentError::InsufficientStake {
+                endorsing: total_endorsing,
+                required: required_stake,
+            });
+        }
+        self.governance_params
+            .insert("fork_choice_mode".to_string(), mode.to_string());
+        self.fork_choice_attractors = attractors;
+        tracing::info!(
+            mode,
+            total_endorsing,
+            required_stake,
+            "fork-choice governance amendment applied"
+        );
+        Ok(())
+    }
+
+    /// Current fork-choice mode as stored in governance_params.
+    pub fn fork_choice_mode(&self) -> &str {
+        self.governance_params
+            .get("fork_choice_mode")
+            .map(|s| s.as_str())
+            .unwrap_or("mcc")
+    }
+
     /// Walk from `head` back to genesis via first-parent at each step.
     /// Returns the trajectory in genesis-first order, or None if `head`
     /// isn't in the Light-Cone DAG.
@@ -893,6 +1002,7 @@ impl TendermintConsensus {
             governance_params: HashMap::new(),
             da_confirmed_height: 0,
             last_block_timestamp: 0,
+            fork_choice_attractors: Vec::new(),
         }
     }
 
