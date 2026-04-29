@@ -2017,3 +2017,180 @@ mod proving_integration {
         assert!(result.is_err(), "generating proof with 0 blocks must fail");
     }
 }
+
+// ── Smart contract engine integration ────────────────────────────────────────
+
+#[cfg(test)]
+mod contracts_integration {
+    use evaporchain_contracts::{ContractEngine, ContractTemplate};
+    use serde_json::json;
+
+    const CREATOR: [u8; 32] = [0xCAu8; 32];
+    const ALICE: [u8; 32] = [0xA1u8; 32];
+    const BOB: [u8; 32] = [0xB0u8; 32];
+
+    // ── DecayingToken: deploy → transfer → tick evaporation ──────────────
+
+    #[test]
+    fn token_deploy_transfer_and_tick() {
+        let mut engine = ContractEngine::new();
+
+        let id = engine.deploy(
+            ContractTemplate::DecayingToken,
+            json!({ "name": "EvapCoin", "symbol": "EVAP", "total_supply": 1_000_000u64 }),
+            vec![],
+            CREATOR,
+            1_000_000,
+            100,
+            0,
+        ).expect("token deploy must succeed");
+
+        assert_eq!(engine.len(), 1);
+
+        // Transfer 1000 tokens from creator to Alice
+        let result = engine.call(id, "transfer", &json!({
+            "from": hex::encode(CREATOR),
+            "to":   hex::encode(ALICE),
+            "amount": 1000u64
+        }), &CREATOR, 1).expect("transfer must succeed");
+        assert!(result.success, "transfer must succeed: {:?}", result.error);
+
+        // Tick at epoch 0 — contract is young, should not evaporate
+        let tick = engine.tick(0);
+        assert_eq!(tick.contracts_evaporated.len(), 0, "contract must not evaporate at epoch 0");
+        assert_eq!(engine.len(), 1);
+    }
+
+    #[test]
+    fn token_evaporates_after_energy_drain() {
+        let mut engine = ContractEngine::new();
+
+        // half_life=1 so after a handful of epochs the contract is dead
+        let id = engine.deploy(
+            ContractTemplate::DecayingToken,
+            json!({ "name": "GhostCoin", "symbol": "GC", "total_supply": 100u64 }),
+            vec![],
+            CREATOR,
+            64,
+            1,
+            0,
+        ).expect("deploy must succeed");
+
+        // Tick at epoch 64: 64 halvings with half_life=1 → energy = 64 >> 64 = 0
+        let tick = engine.tick(64);
+        assert!(tick.contracts_evaporated.len() >= 1, "contract must evaporate after energy drain");
+        // Contract should be marked evaporated
+        let inst = engine.get(id).expect("instance must still be accessible");
+        assert!(inst.evaporated, "instance.evaporated must be true");
+    }
+
+    // ── MortalNFT: mint → transfer ────────────────────────────────────────
+
+    #[test]
+    fn nft_mint_and_transfer() {
+        let mut engine = ContractEngine::new();
+
+        let id = engine.deploy(
+            ContractTemplate::MortalNFT,
+            json!({ "collection_name": "ThermoPunks", "max_supply": 100u64 }),
+            vec![],
+            CREATOR,
+            1_000_000,
+            4096,
+            0,
+        ).expect("NFT deploy must succeed");
+
+        // Mint token 1 to Alice
+        let mint = engine.call(id, "mint", &json!({
+            "to": hex::encode(ALICE),
+            "token_id": 1u64,
+            "metadata_uri": "ipfs://Qm..."
+        }), &CREATOR, 0).expect("mint must not error");
+        assert!(mint.success, "mint must succeed: {:?}", mint.error);
+
+        // Transfer token 1 from Alice to Bob
+        let xfer = engine.call(id, "transfer", &json!({
+            "from": hex::encode(ALICE),
+            "to":   hex::encode(BOB),
+            "token_id": 1u64
+        }), &ALICE, 1).expect("transfer must not error");
+        assert!(xfer.success, "NFT transfer must succeed: {:?}", xfer.error);
+    }
+
+    // ── ContractEngine: multi-contract isolation ──────────────────────────
+
+    #[test]
+    fn multiple_contracts_are_isolated() {
+        let mut engine = ContractEngine::new();
+
+        let t1 = engine.deploy(
+            ContractTemplate::DecayingToken,
+            json!({ "name": "A", "symbol": "A", "total_supply": 500u64 }),
+            vec![], CREATOR, 1_000_000, 4096, 0,
+        ).unwrap();
+
+        let t2 = engine.deploy(
+            ContractTemplate::DecayingToken,
+            json!({ "name": "B", "symbol": "B", "total_supply": 200u64 }),
+            vec![], CREATOR, 1_000_000, 4096, 0,
+        ).unwrap();
+
+        assert_ne!(t1, t2, "contract IDs must be unique");
+        assert_eq!(engine.len(), 2);
+
+        // Transfer in t1 must not affect t2's state
+        engine.call(t1, "transfer", &json!({
+            "from": hex::encode(CREATOR), "to": hex::encode(ALICE), "amount": 100u64
+        }), &CREATOR, 0).unwrap();
+
+        let s1 = engine.get_state(t1).expect("t1 state must exist");
+        let s2 = engine.get_state(t2).expect("t2 state must exist");
+        // t2 total_supply unchanged
+        assert_eq!(s2["total_supply"], 200u64, "t2 supply must be unaffected");
+        // t1 still has state (we don't assert exact balance — internal repr varies)
+        assert!(s1.is_object());
+    }
+
+    // ── Call on evaporated contract → error ───────────────────────────────
+
+    #[test]
+    fn call_on_evaporated_contract_is_error() {
+        let mut engine = ContractEngine::new();
+        let id = engine.deploy(
+            ContractTemplate::DecayingToken,
+            json!({ "name": "Doomed", "symbol": "D", "total_supply": 1u64 }),
+            vec![], CREATOR, 1, 1, 0,
+        ).unwrap();
+
+        // Force tick past evaporation
+        engine.tick(64);
+
+        let result = engine.call(id, "transfer", &json!({
+            "from": hex::encode(CREATOR), "to": hex::encode(ALICE), "amount": 1u64
+        }), &CREATOR, 64);
+        assert!(result.is_err(), "call on evaporated contract must return Err");
+    }
+
+    // ── Refresh contract extends energy ───────────────────────────────────
+
+    #[test]
+    fn refresh_contract_prevents_evaporation() {
+        let mut engine = ContractEngine::new();
+        let id = engine.deploy(
+            ContractTemplate::DecayingToken,
+            json!({ "name": "Refreshed", "symbol": "R", "total_supply": 100u64 }),
+            vec![], CREATOR, 1_000, 10, 0,
+        ).unwrap();
+
+        // After 5 half-lives (epoch 50), energy ≈ 31 — still alive
+        let tick1 = engine.tick(50);
+        assert_eq!(tick1.evaporated, 0, "must not evaporate at epoch 50");
+
+        // Refresh with additional energy
+        engine.refresh_contract(id, 1_000_000, 50).expect("refresh must succeed on a live contract");
+
+        // Now even at epoch 200 it should have energy from the refresh
+        let inst = engine.get(id).unwrap();
+        assert!(inst.energy > 0, "energy must be > 0 after refresh");
+    }
+}
