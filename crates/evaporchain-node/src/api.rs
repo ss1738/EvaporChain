@@ -5567,6 +5567,10 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     // Consensus Phase + WSBF λ_eff observability
     ApiDocEntry { method: "GET",  path: "/api/consensus/phase",             category: "consensus", description: "Current RG Phase Map consensus regime (LivenessStable|SafetyStable|Frozen|Chaotic) + last WSBF EffectiveParams (renormalized λ_eff, energy density, entropy).", example: None },
 
+    // Offline signing support (cold-wallet + hardware-wallet flows)
+    ApiDocEntry { method: "GET",  path: "/api/tx/nonce/:address",      category: "identity", description: "Fetch the current nonce for an address (required for manual transaction construction). Returns nonce + chain_id.", example: None },
+    ApiDocEntry { method: "POST", path: "/api/tx/signable",            category: "identity", description: "Return the canonical bytes to sign for a transaction (transfer/create_object/refresh) without executing. Caller signs with ML-DSA key and resubmits via the normal tx endpoint.", example: Some(r#"{"tx_type":"transfer","params":{"from":1,"to":2,"amount":1000}}"#) },
+
     // Demo
     ApiDocEntry { method: "POST", path: "/api/demo/reset",            category: "demo", description: "Clear HBCT book + Sentinel votes so the dashboard demo can re-run", example: None },
 ];
