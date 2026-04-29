@@ -64,10 +64,16 @@ export default function Hero() {
             Read Whitepaper
           </a>
           <a
-            href="https://testnet.evaporchain.com"
+            href="/identity"
             className="gradient-bg px-8 py-3 rounded-full text-bg-primary text-sm font-medium hover:shadow-[0_0_24px_rgba(0,240,255,0.3)] transition-shadow duration-300"
           >
-            Try the Testnet
+            Try the Live Demo →
+          </a>
+          <a
+            href="https://testnet.evaporchain.com"
+            className="px-8 py-3 rounded-full border border-white/20 text-text-primary hover:border-accent-cyan hover:text-accent-cyan transition-all duration-300 text-sm font-medium"
+          >
+            Testnet
           </a>
         </motion.div>
       </div>
