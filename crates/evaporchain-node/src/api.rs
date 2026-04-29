@@ -1241,6 +1241,75 @@ async fn post_hbct_tick(
     })
 }
 
+// ── Mortis cert detail + refresh-pool detail ──
+
+#[derive(Debug, Serialize)]
+pub struct MortisCertDetail {
+    pub final_state_root: String,
+    pub eulogy_trie_root: String,
+    pub epoch_of_death: u64,
+    pub final_refresh_pool: u64,
+    pub witness: String,
+}
+
+async fn get_mortis_cert(
+    State(state): State<Arc<ApiState>>,
+) -> Json<Option<MortisCertDetail>> {
+    let tc = match state.tendermint.as_ref() {
+        Some(tc) => tc,
+        None => return Json(None),
+    };
+    let tc = safe_lock(tc);
+    let cert = match tc.mortis_certificate() {
+        Some(c) => c,
+        None => return Json(None),
+    };
+    Json(Some(MortisCertDetail {
+        final_state_root: hex::encode(cert.final_state_root),
+        eulogy_trie_root: hex::encode(cert.eulogy_trie_root),
+        epoch_of_death: cert.epoch_of_death,
+        final_refresh_pool: cert.final_refresh_pool,
+        witness: hex::encode(cert.witness),
+    }))
+}
+
+#[derive(Debug, Serialize)]
+pub struct RefreshPoolCredit {
+    pub namespace_hex: String,
+    pub accrued: u64,
+    pub last_touched_epoch: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RefreshPoolResp {
+    pub total_accrued: u64,
+    pub credits: Vec<RefreshPoolCredit>,
+}
+
+async fn get_refresh_pool(State(state): State<Arc<ApiState>>) -> Json<RefreshPoolResp> {
+    let tc = match state.tendermint.as_ref() {
+        Some(tc) => tc,
+        None => return Json(RefreshPoolResp {
+            total_accrued: 0,
+            credits: vec![],
+        }),
+    };
+    let tc = safe_lock(tc);
+    let raw = tc.refresh_pool_credits();
+    let total: u64 = raw.iter().map(|(_, a, _)| *a).fold(0u64, |a, b| a.saturating_add(b));
+    Json(RefreshPoolResp {
+        total_accrued: total,
+        credits: raw
+            .into_iter()
+            .map(|(namespace_hex, accrued, last_touched_epoch)| RefreshPoolCredit {
+                namespace_hex,
+                accrued,
+                last_touched_epoch,
+            })
+            .collect(),
+    })
+}
+
 async fn get_hbct_state(State(state): State<Arc<ApiState>>) -> Json<HbctStateResp> {
     let book = safe_lock(&state.hbct_book);
     Json(HbctStateResp {
@@ -4945,6 +5014,8 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         // Explorer
         .route("/api/status", get(get_status))
         .route("/api/four_act", get(get_four_act_status))
+        .route("/api/mortis_cert", get(get_mortis_cert))
+        .route("/api/refresh_pool", get(get_refresh_pool))
         .route("/api/hbct/state", get(get_hbct_state))
         .route("/api/hbct/mint", post(post_hbct_mint))
         .route("/api/hbct/transfer", post(post_hbct_transfer))

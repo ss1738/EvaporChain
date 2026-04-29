@@ -486,6 +486,21 @@ impl TendermintConsensus {
         self.executor.tick_mortis(current_epoch, state_root)
     }
 
+    /// Read-only access to the executor's MortisCertificate, if minted.
+    pub fn mortis_certificate(&self) -> Option<&evaporchain_mortis::MortisCertificate> {
+        self.executor.mortis_certificate.as_ref()
+    }
+
+    /// Read-only iteration over the executor's RefreshPool credits.
+    /// Returns (namespace_hex, accrued, last_touched_epoch) tuples.
+    pub fn refresh_pool_credits(&self) -> Vec<(String, u64, u64)> {
+        self.executor
+            .refresh_pool
+            .credits()
+            .map(|c| (hex::encode(&c.namespace), c.accrued, c.last_touched_epoch))
+            .collect()
+    }
+
     /// Set the proof verifier for validating Nova IVC proofs on proposed blocks.
     pub fn set_proof_verifier(&mut self, verifier: Box<dyn ProofVerifier>, genesis_state_root: [u8; 32]) {
         self.proof_verifier = Some(verifier);
