@@ -1,10 +1,10 @@
-//! 3 MCP Prompts — guided workflows for AI agents interacting with EvaporChain.
+//! 4 MCP Prompts — guided workflows for AI agents interacting with EvaporChain.
 
 use serde_json::{json, Value};
 
 use crate::protocol::Context;
 
-/// Return the list of all 3 prompts.
+/// Return the list of all 4 prompts.
 pub fn list_prompts() -> Value {
     json!({
         "prompts": [
@@ -33,6 +33,11 @@ pub fn list_prompts() -> Value {
                 "name": "chain_health_report",
                 "description": "Generate a comprehensive health report of the EvaporChain testnet — block production rate, object lifecycle metrics, evaporation trends, and network status.",
                 "arguments": []
+            },
+            {
+                "name": "viability_audit",
+                "description": "Audit the chain's autopoietic viability — checks all three self-sustaining subsystems (Patronage, Sentinel, LLSA), the RG consensus phase, and fee controller drift. Outputs a structured viability verdict with recommendations.",
+                "arguments": []
             }
         ]
     })
@@ -51,6 +56,7 @@ pub async fn get_prompt(ctx: &Context, params: &Value) -> Result<Value, String> 
         "explore_chain" => get_explore_chain(ctx).await,
         "create_and_watch" => get_create_and_watch(ctx, &args).await,
         "chain_health_report" => get_chain_health_report(ctx).await,
+        "viability_audit" => get_viability_audit(ctx).await,
         _ => Err(format!("Unknown prompt: {name}")),
     }
 }
@@ -60,10 +66,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_list_prompts_returns_3() {
+    fn test_list_prompts_returns_4() {
         let prompts = list_prompts();
         let list = prompts["prompts"].as_array().unwrap();
-        assert_eq!(list.len(), 3);
+        assert_eq!(list.len(), 4);
     }
 
     #[test]
@@ -88,6 +94,7 @@ mod tests {
         assert!(names.contains(&"explore_chain"));
         assert!(names.contains(&"create_and_watch"));
         assert!(names.contains(&"chain_health_report"));
+        assert!(names.contains(&"viability_audit"));
     }
 
     #[test]
@@ -176,6 +183,50 @@ async fn get_create_and_watch(ctx: &Context, args: &Value) -> Result<Value, Stri
                         half_life * 2,
                         half = energy / 2,
                         quarter = energy / 4
+                    )
+                }
+            }
+        ]
+    }))
+}
+
+async fn get_viability_audit(ctx: &Context) -> Result<Value, String> {
+    let autopoietic = ctx.get_json("/api/autopoietic/health").await.unwrap_or(json!({"error": "unavailable"}));
+    let consensus_phase = ctx.get_json("/api/consensus/phase").await.unwrap_or(json!({"error": "unavailable"}));
+    let fee_status = ctx.get_json("/api/fee_controller/status").await.unwrap_or(json!({"error": "unavailable"}));
+    let epv_status = ctx.get_json("/api/epv/status").await.unwrap_or(json!({"error": "unavailable"}));
+    let sentinel = ctx.get_json("/api/sentinel/status").await.unwrap_or(json!({"error": "unavailable"}));
+
+    let ap_str = serde_json::to_string_pretty(&autopoietic).unwrap_or_default();
+    let cp_str = serde_json::to_string_pretty(&consensus_phase).unwrap_or_default();
+    let fee_str = serde_json::to_string_pretty(&fee_status).unwrap_or_default();
+    let epv_str = serde_json::to_string_pretty(&epv_status).unwrap_or_default();
+    let sent_str = serde_json::to_string_pretty(&sentinel).unwrap_or_default();
+
+    Ok(json!({
+        "messages": [
+            {
+                "role": "user",
+                "content": {
+                    "type": "text",
+                    "text": format!(
+                        "Audit the autopoietic viability of the EvaporChain network.\n\n\
+                        EvaporChain is a thermodynamic blockchain that can legitimately die — \
+                        it has a viability condition: all three self-sustaining subsystems must remain functional.\n\n\
+                        ## Autopoietic Health (Maturana-Varela 1980)\n```json\n{ap_str}\n```\n\n\
+                        ## Consensus Phase (RG Phase Map)\n```json\n{cp_str}\n```\n\n\
+                        ## Fee Controller State\n```json\n{fee_str}\n```\n\n\
+                        ## Protocol Version Set (EPV)\n```json\n{epv_str}\n```\n\n\
+                        ## Sentinel Status\n```json\n{sent_str}\n```\n\n\
+                        Please produce a structured viability audit covering:\n\
+                        1. **Overall Verdict**: Viable | Stressed | Inviable — and what that means\n\
+                        2. **Patronage subsystem**: Is the chain self-funding? Any covenant shortfalls?\n\
+                        3. **Sentinel subsystem**: Is autonomic governance active? Last vote staleness?\n\
+                        4. **LLSA subsystem**: Is the upgrade gate functional?\n\
+                        5. **Consensus regime**: What phase is the chain in? Is it safe and live?\n\
+                        6. **Fee trajectory**: Is the fee controller drifting toward extremes?\n\
+                        7. **Protocol evolution**: Are old versions being pruned? Any version cliff?\n\
+                        8. **Immediate recommendations**: What must be fixed in the next N epochs to prevent Inviable status?"
                     )
                 }
             }

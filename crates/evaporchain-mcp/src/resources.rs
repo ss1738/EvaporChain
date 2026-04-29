@@ -1,10 +1,10 @@
-//! 7 MCP Resources — live blockchain data AI agents can read.
+//! 10 MCP Resources — live blockchain data AI agents can read.
 
 use serde_json::{json, Value};
 
 use crate::protocol::Context;
 
-/// Return the list of all 7 resources.
+/// Return the list of all 10 resources.
 pub fn list_resources() -> Value {
     json!({
         "resources": [
@@ -49,6 +49,24 @@ pub fn list_resources() -> Value {
                 "name": "Chain Statistics",
                 "description": "Aggregate statistics — total created, evaporated, resurrected, refreshed, average lifetime",
                 "mimeType": "application/json"
+            },
+            {
+                "uri": "evaporchain://autopoietic",
+                "name": "Autopoietic Health",
+                "description": "Live chain viability report (Maturana-Varela 1980) — Patronage / Sentinel / LLSA subsystem health. Status: Viable | Stressed | Inviable.",
+                "mimeType": "application/json"
+            },
+            {
+                "uri": "evaporchain://consensus_phase",
+                "name": "Consensus Phase",
+                "description": "Current RG Phase Map regime (LivenessStable | SafetyStable | Frozen | Chaotic) and last WSBF EffectiveParams — renormalized λ_eff, energy density, entropy.",
+                "mimeType": "application/json"
+            },
+            {
+                "uri": "evaporchain://fee_status",
+                "name": "Fee Controller Status",
+                "description": "Current EIP-1559-style fee controller state — base_fee, target_gas, recent gas EMA, and drift direction (Rising / Falling / Stable).",
+                "mimeType": "application/json"
             }
         ]
     })
@@ -69,6 +87,9 @@ pub async fn read_resource(ctx: &Context, params: &Value) -> Result<Value, Strin
         "evaporchain://blocks" => ("/api/blocks?limit=50", "Recent Blocks"),
         "evaporchain://events" => ("/api/events?limit=50", "Live Events"),
         "evaporchain://stats" => ("/api/stats/summary", "Chain Statistics"),
+        "evaporchain://autopoietic" => ("/api/autopoietic/health", "Autopoietic Health"),
+        "evaporchain://consensus_phase" => ("/api/consensus/phase", "Consensus Phase"),
+        "evaporchain://fee_status" => ("/api/fee_controller/status", "Fee Controller Status"),
         _ => return Err(format!("Unknown resource URI: {uri}")),
     };
 
@@ -91,10 +112,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_list_resources_returns_7() {
+    fn test_list_resources_returns_10() {
         let resources = list_resources();
         let list = resources["resources"].as_array().unwrap();
-        assert_eq!(list.len(), 7);
+        assert_eq!(list.len(), 10);
     }
 
     #[test]
