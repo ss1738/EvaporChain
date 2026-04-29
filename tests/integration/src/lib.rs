@@ -5352,3 +5352,363 @@ mod da_namespace_integration {
         assert!(!proof.is_absence);
     }
 }
+
+// ── Block DA integration ──────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod block_da_integration {
+    use evaporchain_da::block_da::{BlockDA, BlockDAHeader};
+
+    fn encode(data: &[u8]) -> evaporchain_da::block_da::BlockDAPackage {
+        BlockDA::new().unwrap().encode_block(data).unwrap()
+    }
+
+    #[test]
+    fn encode_produces_8_shards() {
+        let pkg = encode(b"evaporchain block payload for DA encoding test");
+        assert_eq!(pkg.shards.len(), 8);
+    }
+
+    #[test]
+    fn commitment_root_is_nonzero() {
+        let pkg = encode(b"commitment root test payload");
+        assert_ne!(pkg.header.commitment_root, [0u8; 32]);
+    }
+
+    #[test]
+    fn original_len_preserved() {
+        let data = b"block data length preservation check";
+        let pkg = encode(data);
+        assert_eq!(pkg.header.original_len, data.len());
+    }
+
+    #[test]
+    fn reconstruct_from_all_shards() {
+        let da = BlockDA::new().unwrap();
+        let data = b"full reconstruction from 8 shards";
+        let pkg = da.encode_block(data).unwrap();
+        let all: Vec<Option<Vec<u8>>> = pkg.shards.iter().map(|s| Some(s.data.clone())).collect();
+        let recovered = da.reconstruct_block(&pkg.header, all).unwrap();
+        assert_eq!(recovered.as_slice(), data.as_ref());
+    }
+
+    #[test]
+    fn reconstruct_with_missing_parity_shards() {
+        let da = BlockDA::new().unwrap();
+        let data = b"reconstruction with parity shards missing";
+        let pkg = da.encode_block(data).unwrap();
+        // Keep only data shards (first 4), drop parity
+        let partial: Vec<Option<Vec<u8>>> = pkg
+            .shards
+            .iter()
+            .enumerate()
+            .map(|(i, s)| if i < 4 { Some(s.data.clone()) } else { None })
+            .collect();
+        let recovered = da.reconstruct_block(&pkg.header, partial).unwrap();
+        assert_eq!(recovered.as_slice(), data.as_ref());
+    }
+
+    #[test]
+    fn prove_and_verify_shard() {
+        let da = BlockDA::new().unwrap();
+        let pkg = da.encode_block(b"shard proof generation test").unwrap();
+        let response = da.prove_shard(&pkg, 2).unwrap();
+        assert!(BlockDA::verify_shard_sample(&pkg.header, &response));
+    }
+}
+
+// ── Evaporation DA proof integration ─────────────────────────────────────────
+
+#[cfg(test)]
+mod evaporation_da_integration {
+    use evaporchain_da::evaporation_da::{
+        EvaporationDAProofBuilder, EnergySnapshot, EvaporationDAError,
+    };
+    use evaporchain_da::erasure::{ErasureConfig, ErasureEncoder};
+
+    fn shards(data: &[u8]) -> Vec<evaporchain_da::erasure::Shard> {
+        let enc = ErasureEncoder::new(ErasureConfig { data_shards: 4, parity_shards: 4 }).unwrap();
+        enc.encode(data).unwrap().shards
+    }
+
+    fn zero_snapshot(object_id: [u8; 32]) -> EnergySnapshot {
+        EnergySnapshot {
+            object_id,
+            energy_at_evaporation: 0,
+            evaporation_epoch: 50,
+            half_life: 10,
+            last_refreshed: 20,
+            energy_at_refresh: 10_000,
+        }
+    }
+
+    #[test]
+    fn create_proof_succeeds_with_zero_energy() {
+        let id = [0xABu8; 32];
+        let data = b"governance state at evaporation boundary";
+        let ss = zero_snapshot(id);
+        let ss_epoch = ss.evaporation_epoch;
+        let blk = shards(b"block containing the object");
+        let proof = EvaporationDAProofBuilder::create_proof(id, data, ss, &blk, 0).unwrap();
+        assert_eq!(proof.object_id, id);
+        assert_eq!(proof.proof_epoch, ss_epoch);
+        assert_ne!(proof.pre_evaporation_data_hash, [0u8; 32]);
+    }
+
+    #[test]
+    fn nonzero_energy_rejected() {
+        let id = [0x01u8; 32];
+        let mut ss = zero_snapshot(id);
+        ss.energy_at_evaporation = 500;
+        let blk = shards(b"block data");
+        let err = EvaporationDAProofBuilder::create_proof(id, b"obj data", ss, &blk, 0);
+        assert!(matches!(err, Err(EvaporationDAError::EnergyNotZero(500))));
+    }
+
+    #[test]
+    fn verify_proof_roundtrip() {
+        let id = [0x77u8; 32];
+        let obj_data = b"verifiable evaporation DA proof";
+        let blk_data = b"block containing verified object";
+        let blk = shards(blk_data);
+        let ss = zero_snapshot(id);
+        let proof = EvaporationDAProofBuilder::create_proof(id, obj_data, ss, &blk, 1).unwrap();
+        let ok = EvaporationDAProofBuilder::verify_proof(&proof, &blk[1].data).unwrap();
+        assert!(ok);
+    }
+
+    #[test]
+    fn verify_rejects_tampered_shard_data() {
+        let id = [0x55u8; 32];
+        let obj_data = b"object before evaporation";
+        let blk = shards(b"block data for tamper test");
+        let ss = zero_snapshot(id);
+        let proof = EvaporationDAProofBuilder::create_proof(id, obj_data, ss, &blk, 0).unwrap();
+        // Tamper with the shard data
+        let ok = EvaporationDAProofBuilder::verify_proof(&proof, b"wrong shard data").unwrap();
+        assert!(!ok);
+    }
+
+    #[test]
+    fn proof_hash_is_nonzero_and_deterministic() {
+        let id = [0xCCu8; 32];
+        let blk = shards(b"block for proof hash test");
+        let ss = zero_snapshot(id);
+        let proof = EvaporationDAProofBuilder::create_proof(id, b"object data", ss.clone(), &blk, 0).unwrap();
+        let h1 = EvaporationDAProofBuilder::proof_hash(&proof);
+        let h2 = EvaporationDAProofBuilder::proof_hash(&proof);
+        assert_ne!(h1, [0u8; 32]);
+        assert_eq!(h1, h2);
+    }
+}
+
+// ── DA pruning integration ────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod da_pruning_integration {
+    use std::collections::BTreeMap;
+    use evaporchain_da::block_da::{BlockDA, BlockDAPackage};
+    use evaporchain_da::poha::PoHAStore;
+    use evaporchain_da::pruning::prune_by_temperature;
+
+    fn make_pkg(data: &[u8]) -> BlockDAPackage {
+        BlockDA::new().unwrap().encode_block(data).unwrap()
+    }
+
+    fn register(poha: &mut PoHAStore, block: u64, epoch: u64) {
+        poha.register(block, [block as u8; 32], 8, 3000, 4000, epoch, vec![], vec![]);
+    }
+
+    #[test]
+    fn hot_block_retained() {
+        let mut da = BTreeMap::new();
+        let mut poha = PoHAStore::new(1000, 100);
+        da.insert(1, make_pkg(b"hot block data"));
+        register(&mut poha, 1, 0);
+        let r = prune_by_temperature(&mut da, &poha);
+        assert_eq!(r.blocks_retained, 1);
+        assert!(da.contains_key(&1));
+    }
+
+    #[test]
+    fn cold_block_fully_removed() {
+        let mut da = BTreeMap::new();
+        let mut poha = PoHAStore::new(1000, 100);
+        da.insert(1, make_pkg(b"cold block data"));
+        register(&mut poha, 1, 0);
+        poha.process_epoch(300); // drives energy to ~12.5% → Cold
+        let r = prune_by_temperature(&mut da, &poha);
+        assert_eq!(r.blocks_fully_pruned, 1);
+        assert!(!da.contains_key(&1));
+    }
+
+    #[test]
+    fn warm_block_loses_parity_only() {
+        let mut da = BTreeMap::new();
+        let mut poha = PoHAStore::new(1000, 100);
+        da.insert(1, make_pkg(b"warm block loses parity"));
+        register(&mut poha, 1, 0);
+        poha.process_epoch(200); // ~25% energy → Warm
+        let before = da.get(&1).unwrap().shards.len();
+        prune_by_temperature(&mut da, &poha);
+        let after = da.get(&1).unwrap().shards.len();
+        assert!(after < before, "parity shards should have been removed");
+        assert!(da.contains_key(&1));
+    }
+
+    #[test]
+    fn block_without_cert_but_with_ghost_removed() {
+        let mut da = BTreeMap::new();
+        let mut poha = PoHAStore::new(1000, 100);
+        da.insert(99, make_pkg(b"evaporated ghost block"));
+        register(&mut poha, 99, 0);
+        poha.process_epoch(1000); // full decay → ghost
+        assert!(poha.get_ghost(99).is_some());
+        let r = prune_by_temperature(&mut da, &poha);
+        assert_eq!(r.blocks_fully_pruned, 1);
+        assert!(!da.contains_key(&99));
+    }
+
+    #[test]
+    fn no_cert_no_ghost_block_retained() {
+        let mut da = BTreeMap::new();
+        let poha = PoHAStore::new(1000, 100);
+        da.insert(42, make_pkg(b"no cert block"));
+        // No registration, no ghost
+        let r = prune_by_temperature(&mut da, &poha);
+        assert_eq!(r.blocks_retained, 1);
+        assert!(da.contains_key(&42));
+    }
+}
+
+// ── Light-client DA sampler integration ──────────────────────────────────────
+
+#[cfg(test)]
+mod light_client_da_integration {
+    use evaporchain_da::block_da_2d::BlockDA2D;
+    use evaporchain_da::light_client::{CellSource, CellSourceError, LightClientSampler, PeerFaultReason};
+    use evaporchain_da::commitments::CellProof;
+
+    /// Mock cell source that serves cells directly from a 2D-encoded package.
+    struct MockSource {
+        da: BlockDA2D,
+        pkg: evaporchain_da::block_da_2d::BlockDA2DPackage,
+    }
+
+    impl MockSource {
+        fn new(data: &[u8]) -> Self {
+            let da = BlockDA2D::new();
+            let pkg = da.encode_block(data).unwrap();
+            Self { da, pkg }
+        }
+    }
+
+    impl CellSource for MockSource {
+        fn fetch_cell(
+            &self,
+            _height: u64,
+            row: usize,
+            col: usize,
+        ) -> Result<(String, CellProof), CellSourceError> {
+            let proof = self
+                .da
+                .prove_cell(&self.pkg, row, col)
+                .map_err(|e| CellSourceError::Malformed(e.to_string()))?;
+            Ok(("peer-0".to_string(), proof))
+        }
+    }
+
+    /// Mock source that returns bad data (hash mismatch).
+    struct BadSource {
+        da: BlockDA2D,
+        pkg: evaporchain_da::block_da_2d::BlockDA2DPackage,
+    }
+
+    impl BadSource {
+        fn new(data: &[u8]) -> Self {
+            let da = BlockDA2D::new();
+            let pkg = da.encode_block(data).unwrap();
+            Self { da, pkg }
+        }
+    }
+
+    impl CellSource for BadSource {
+        fn fetch_cell(
+            &self,
+            _height: u64,
+            row: usize,
+            col: usize,
+        ) -> Result<(String, CellProof), CellSourceError> {
+            let mut proof = self
+                .da
+                .prove_cell(&self.pkg, row, col)
+                .map_err(|e| CellSourceError::Malformed(e.to_string()))?;
+            // Corrupt cell_data so hash check fails
+            proof.cell_data = b"corrupted".to_vec();
+            Ok(("bad-peer".to_string(), proof))
+        }
+    }
+
+    #[test]
+    fn valid_source_all_samples_pass() {
+        let src = MockSource::new(b"evaporchain block data for light client sampling test run");
+        let header = src.pkg.header.clone();
+        let sampler = LightClientSampler::new(src);
+        let report = sampler.sample_block(&header, 1, 8, b"seed-valid");
+        assert!(report.all_valid);
+        assert!(report.faulty_peers.is_empty());
+        assert!(report.metrics.confidence > 0.99);
+    }
+
+    #[test]
+    fn bad_source_marks_faulty_peer() {
+        let src = BadSource::new(b"evaporchain block data for bad-peer detection test");
+        let header = src.pkg.header.clone();
+        let sampler = LightClientSampler::new(src);
+        let report = sampler.sample_block(&header, 2, 4, b"seed-bad");
+        assert!(!report.all_valid);
+        assert!(!report.faulty_peers.is_empty());
+        let (peer, reason) = &report.faulty_peers[0];
+        assert_eq!(peer, "bad-peer");
+        assert_eq!(*reason, PeerFaultReason::HashMismatch);
+    }
+
+    #[test]
+    fn report_passes_threshold_only_when_fully_valid() {
+        let src = MockSource::new(b"threshold test payload for light client sampler");
+        let header = src.pkg.header.clone();
+        let sampler = LightClientSampler::new(src);
+        let report = sampler.sample_block(&header, 3, 15, b"seed-thresh");
+        // 15 valid samples → confidence ≈ 1 - 2^(-15) >> 0.999
+        assert!(report.passes(0.999));
+    }
+
+    #[test]
+    fn sampling_report_metrics_structure() {
+        let src = MockSource::new(b"metrics check block payload for DA 2D sampling");
+        let header = src.pkg.header.clone();
+        let sampler = LightClientSampler::new(src);
+        let report = sampler.sample_block(&header, 4, 6, b"seed-metrics");
+        assert_eq!(report.results.len(), 6);
+        assert!(report.metrics.total_samples >= 6);
+    }
+
+    #[test]
+    fn unreachable_source_marks_not_all_valid() {
+        struct DeadSource;
+        impl CellSource for DeadSource {
+            fn fetch_cell(&self, _: u64, _: usize, _: usize) -> Result<(String, CellProof), CellSourceError> {
+                Err(CellSourceError::Transport("timeout".into()))
+            }
+        }
+        // Build a header from a real package for valid dim info
+        let da = BlockDA2D::new();
+        let pkg = da.encode_block(b"dead source test block payload data").unwrap();
+        let header = pkg.header.clone();
+        let sampler = LightClientSampler::new(DeadSource);
+        let report = sampler.sample_block(&header, 5, 4, b"seed-dead");
+        assert!(!report.all_valid);
+        // Unreachable is NOT a peer fault (no peer_id to report)
+        assert!(report.faulty_peers.is_empty());
+    }
+}
