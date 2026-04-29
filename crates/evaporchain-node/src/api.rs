@@ -2914,6 +2914,86 @@ async fn post_demo_reset(State(state): State<Arc<ApiState>>) -> Json<DemoResetRe
     })
 }
 
+// ─────────────── /api/docs — endpoint catalog ───────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ApiDocEntry {
+    pub method: &'static str,
+    pub path: &'static str,
+    pub category: &'static str,
+    pub description: &'static str,
+    pub example: Option<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ApiDocsResp {
+    pub chain: String,
+    pub launch_sprint_endpoints: usize,
+    pub endpoints: Vec<ApiDocEntry>,
+}
+
+const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
+    // Identity / spine
+    ApiDocEntry { method: "GET",  path: "/api/identity",              category: "identity", description: "Single-call dashboard summary: four-act spine, light-cone count, TUR verdict, lambda-fold accumulator, lamport time, sentinel parameters, HBCT state, wired primitives, headline sentence", example: None },
+    ApiDocEntry { method: "GET",  path: "/api/four_act",              category: "identity", description: "Four-act narrative spine snapshot (Birth/Life/Small Deaths/Final Death)", example: None },
+    ApiDocEntry { method: "GET",  path: "/api/light_cone",            category: "identity", description: "Light-Cone DAG block count + 'running alongside Tendermint' flag", example: None },
+    ApiDocEntry { method: "GET",  path: "/api/lambda_fold",           category: "identity", description: "Lambda-Fold accumulator (acc_hash, total_energy_remaining, step_count, latest_epoch)", example: None },
+    ApiDocEntry { method: "GET",  path: "/api/tur_liveness",          category: "identity", description: "TUR Liveness Detector verdict over the sliding window of per-block J", example: None },
+    ApiDocEntry { method: "GET",  path: "/api/lamport_time",          category: "identity", description: "Decay-Lamport energy-driven logical clock", example: None },
+    ApiDocEntry { method: "GET",  path: "/api/refresh_pool",          category: "identity", description: "Protocol-owned refresh pool total + per-namespace credits", example: None },
+    ApiDocEntry { method: "GET",  path: "/api/mortis_cert_preview",   category: "identity", description: "Preview the Mortis death-certificate NFT shape at current state — does not trigger death", example: None },
+
+    // Substrate primitives
+    ApiDocEntry { method: "GET",  path: "/api/causal_cone",           category: "substrate", description: "Shalizi-Crutchfield O(1) sufficient statistic over the Light-Cone DAG", example: Some("?head_hex=0000…0000") },
+    ApiDocEntry { method: "GET",  path: "/api/mcc_fork_choice",       category: "substrate", description: "MCC argmax-caliber fork choice (Jaynes 1980 + Stock 2009)", example: Some("?candidates=0xaa…,0xbb…&beta_mb=10000") },
+    ApiDocEntry { method: "GET",  path: "/api/cmu_check",             category: "substrate", description: "Shalizi-Crutchfield Cμ ≤ E + hμ gate", example: Some("?cmu_mb=300&excess_entropy_mb=100&entropy_rate_mb=200") },
+    ApiDocEntry { method: "GET",  path: "/api/beacon/:tau",           category: "substrate", description: "Modular-form beacon at τ — verifies E_4³ − E_6² = 1728·Δ", example: Some("/api/beacon/0") },
+    ApiDocEntry { method: "POST", path: "/api/crooks_refund",         category: "substrate", description: "Crooks fluctuation theorem MEV refund", example: Some(r#"{"p_forward_ppm":800000,"p_reverse_ppm":400000,"work_extracted":1000,"beta_mb":10}"#) },
+    ApiDocEntry { method: "POST", path: "/api/prp/prove",             category: "substrate", description: "Provable Retention Proof — latest epoch a committed_energy is retained above floor", example: Some(r#"{"state_id_hex":"00…","committed_energy":1000,"activated_epoch":0,"floor":10}"#) },
+    ApiDocEntry { method: "POST", path: "/api/efh/h0",                category: "substrate", description: "0-dim sublevel persistence diagram of an energy sequence", example: Some(r#"{"energies":[1,5,3,8,2]}"#) },
+    ApiDocEntry { method: "POST", path: "/api/efh/bottleneck",        category: "substrate", description: "Cohen-Steiner-Edelsbrunner-Harer bottleneck distance between two persistence diagrams", example: Some(r#"{"diagram_a":[[1,5]],"diagram_b":[[2,5]]}"#) },
+    ApiDocEntry { method: "POST", path: "/api/lambda_fold/verify",    category: "substrate", description: "Verify the chain's Lambda-Fold accumulator against expected (acc_hash, remaining_energy)", example: Some(r#"{"expected_acc_hash_hex":"…","expected_remaining_energy":0}"#) },
+    ApiDocEntry { method: "POST", path: "/api/singh_attractor",       category: "substrate", description: "Singh-Attractor basin selection", example: Some(r#"{"state_energy":50,"attractors":[{"center":50,"basin_radius":10}]}"#) },
+    ApiDocEntry { method: "POST", path: "/api/bell_beacon",           category: "substrate", description: "CHSH S-value + Bell certification (local-realism threshold S=2000mb)", example: Some(r#"{"e_ab":500,"e_ab_prime":-500,"e_a_prime_b":500,"e_a_prime_b_prime":500}"#) },
+    ApiDocEntry { method: "POST", path: "/api/allen_relation",        category: "substrate", description: "Allen interval algebra relation between two intervals", example: Some(r#"{"a":{"start":0,"end":10},"b":{"start":5,"end":15}}"#) },
+    ApiDocEntry { method: "POST", path: "/api/mdl_optimal",           category: "substrate", description: "Minimum-Description-Length optimal shard partition", example: Some(r#"{"items":[1,2,3,1,2,3],"max_shards":2}"#) },
+    ApiDocEntry { method: "POST", path: "/api/cslc_reconstruct",      category: "substrate", description: "ε-machine reconstruction (CSSR) from symbol-count distribution", example: Some(r#"{"counts":[10,20,30]}"#) },
+    ApiDocEntry { method: "POST", path: "/api/padic",                 category: "substrate", description: "2-adic ultrametric distance + valuations", example: Some(r#"{"x":12,"y":20}"#) },
+    ApiDocEntry { method: "POST", path: "/api/tropical_weight",       category: "substrate", description: "Tropical-semiring weight of an energy value", example: Some(r#"{"energy":1000}"#) },
+    ApiDocEntry { method: "POST", path: "/api/eb_fs_challenge",       category: "substrate", description: "Energy-Bound Fiat-Shamir challenge derivation", example: Some(r#"{"transcript_hex":"deadbeef","epoch":1,"epoch_energy":1000}"#) },
+
+    // HBCT launch wedge
+    ApiDocEntry { method: "GET",  path: "/api/hbct/state",            category: "hbct", description: "HBCT book summary (entry count, total MWh, top positions)", example: None },
+    ApiDocEntry { method: "POST", path: "/api/hbct/seed_demo",        category: "hbct", description: "Seed 8 realistic HBCT positions (GB BMUs + DE-LU)", example: None },
+    ApiDocEntry { method: "POST", path: "/api/hbct/mint",             category: "hbct", description: "Mint a single HBCT position", example: Some(r#"{"delivery_location":"BMU-T_DRAXX-1","hour_slot":481248,"mwh_amount":250,"holder_hex":"…","issued_at_epoch":0}"#) },
+    ApiDocEntry { method: "POST", path: "/api/hbct/transfer",         category: "hbct", description: "Transfer MWh between holders at a (location, slot)", example: None },
+    ApiDocEntry { method: "POST", path: "/api/hbct/burn",             category: "hbct", description: "Burn MWh from a position", example: None },
+    ApiDocEntry { method: "POST", path: "/api/hbct/balance",          category: "hbct", description: "Query a holder's MWh at (location, slot)", example: None },
+    ApiDocEntry { method: "POST", path: "/api/hbct/tick",             category: "hbct", description: "Auto-burn positions whose hour slot has closed (H+1 decay)", example: Some(r#"{"current_epoch":481253}"#) },
+    ApiDocEntry { method: "POST", path: "/api/hbct/seed_attestation", category: "hbct", description: "Seed an oracle attestation into the MockOracleFeed", example: None },
+    ApiDocEntry { method: "POST", path: "/api/hbct/settle",           category: "hbct", description: "Settle a position against the oracle attestation", example: None },
+
+    // Sentinel
+    ApiDocEntry { method: "POST", path: "/api/sentinel/seed_demo",    category: "sentinel", description: "Register 4 demo chain knobs (gas limit, block time, mempool cap, λ half-life)", example: None },
+    ApiDocEntry { method: "POST", path: "/api/sentinel/seed_votes",   category: "sentinel", description: "Cast votes from 3 demo validators targeting each parameter's max", example: Some(r#"{"current_epoch":1}"#) },
+    ApiDocEntry { method: "POST", path: "/api/sentinel/register",     category: "sentinel", description: "Register a single bounded chain parameter", example: Some(r#"{"parameter_id":1,"current":50,"min":0,"max":100}"#) },
+    ApiDocEntry { method: "POST", path: "/api/sentinel/vote",         category: "sentinel", description: "Record one validator's vote for a parameter target", example: Some(r#"{"parameter_id":1,"validator_id":1,"target":80,"observed_epoch":0}"#) },
+    ApiDocEntry { method: "POST", path: "/api/sentinel/tick",         category: "sentinel", description: "Manually run the homeostatic update on one parameter", example: Some(r#"{"parameter_id":1,"current_epoch":100,"max_step":5,"half_life_epochs":1000}"#) },
+    ApiDocEntry { method: "GET",  path: "/api/sentinel/parameter/:id",category: "sentinel", description: "Read a single parameter by id", example: None },
+    ApiDocEntry { method: "GET",  path: "/api/sentinel/all",          category: "sentinel", description: "List every registered parameter with its current value + vote count", example: None },
+
+    // Demo
+    ApiDocEntry { method: "POST", path: "/api/demo/reset",            category: "demo", description: "Clear HBCT book + Sentinel votes so the dashboard demo can re-run", example: None },
+];
+
+async fn get_api_docs(State(state): State<Arc<ApiState>>) -> Json<ApiDocsResp> {
+    Json(ApiDocsResp {
+        chain: state.chain_id.clone(),
+        launch_sprint_endpoints: ENDPOINT_CATALOG.len(),
+        endpoints: ENDPOINT_CATALOG.to_vec(),
+    })
+}
+
 // ─────────────── Light-Cone DAG observability ───────────────────────
 
 #[derive(Debug, Serialize)]
@@ -6657,6 +6737,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/identity", get(get_identity))
         .route("/api/mortis_cert_preview", get(get_mortis_cert_preview))
         .route("/api/demo/reset", post(post_demo_reset))
+        .route("/api/docs", get(get_api_docs))
         .route("/api/objects", get(get_objects))
         .route("/api/object/:id", get(get_single_object))
         .route("/api/accounts", get(get_accounts))
