@@ -689,5 +689,223 @@ The next high-value action is one of:
 
 If a future Claude session reads this and is asked "should we research more?" the answer is **no — build**. The single λ has been chosen. The four acts have been named. The customer has been identified. The strikes have been buried. Go.
 
-End of Amendment 3. End of doctrine.
+End of Amendment 3.
+
+---
+
+# Amendment 4 — Frontier Ideas & Hypothetical Speculation
+
+**Added:** 2026-04-29
+**Status:** Two parts. Part 1 (§A4.1) is a paradigm-level decision that's still on the table for the May–Oct sprint. Part 2 (§A4.2 onward) captures hypothetical frontier ideas not yet proven, not yet in any tier — these are speculative parking spots for *future* consideration, not commitments. Marked clearly so future sessions don't promote them prematurely.
+
+## A4.1 Paradigm-level option — Contractless L1
+
+A paradigm-level alternative to "smart contracts as Turing-complete user code." Decision-ready, not speculative. Choosing this rewrites the smart-contract-layer track of the build order.
+
+### The thesis
+
+EvaporChain ships a small set of **typed, theorem-grade composable primitives** (HBCT, demurrage, refresh, evaporate, retain, fold, decay, slash, ε-compress, ledger-fold, etc.). dApps are composed by *parameterizing and connecting* primitives — not by writing arbitrary Turing-complete code.
+
+| Standard L1 | Contractless EvaporChain |
+|---|---|
+| Solidity / Move / EvaporScript Turing-complete VM | Small typed library of named primitives |
+| User writes arbitrary code, audited per-contract | User selects + parameterizes audited primitives |
+| Reentrancy / DoS / overflow as ongoing risk class | Exploit classes literally cannot exist (no user code) |
+| dApp = bytecode + state | dApp = JSON/CBOR config of primitive composition + parameters |
+| Audit surface = total deployed bytecode | Audit surface = the chain itself, fixed and finite |
+
+**Lineage** (yes, this has precedent): Bitcoin Script (limited stack VM, no Turing-completeness), Cardano Marlowe (financial DSL only), Pact (Kadena, capability-based). None of these are theorem-grade. EvaporChain's primitives would each be backed by a published closed-form theorem — the first L1 of that kind.
+
+### Anti-feature manifesto extension (4th refusal)
+
+If adopted, the manifesto from §2 grows to four refusals:
+
+1. No permanent data storage
+2. No immutable data structures
+3. No bridges to chains without lifecycle alignment
+4. **No Turing-complete user code**
+
+Coherent extension of "the chain that says no."
+
+### Trade-offs
+
+| What it costs you | What it gives you |
+|---|---|
+| No third-party dApp ecosystem in the Solana / Ethereum sense | Audit surface collapses to a fixed set of crates |
+| Expressiveness ceiling fixed by primitive set | Security claim is unbeatable: "zero contract exploits since launch — by design, not by luck" |
+| You become responsible for primitive curation (every new primitive needs LLSA-checked invariant proofs) | Doctrine philosophy goes all the way down — single λ, conservation, no permanent storage, no arbitrary code |
+| VC narrative is harder ("where do we deploy our app?" "you don't deploy, you compose") | Mainstream press story sharpens: *"The blockchain that won't let you build."* |
+| | Build effort lower for solo founder — drops `lad-vm`, `capability-vm`, `dp-vm`, `total-script` from the smart-contract-layer track. Saves ~6–8 weeks. |
+
+### Crate impact if adopted
+
+- **Drop from sprint:** `lad-vm`, `capability-vm`, `dp-vm`, `total-script`. The Allen-Decay opcodes folded into primitive implementations rather than user opcodes.
+- **Add:** `evaporchain-composer` — a small composition language (declarative, typed at submission, no execution beyond parameter binding). 1 new crate, ~3 weeks effort.
+- **Net:** −4 crates, +1 crate, ~6–8 weeks saved.
+
+### Decision deferral
+
+This decision **does not need to be made today**. The energy kernel (Week 1–2) is the same code regardless. The fork happens at Week 4–6 once the kernel is running. By then, a few weeks of working code will tell you more about what you want than another doctrine pass would.
+
+If chosen at Week 6: drop the listed VM crates, add `evaporchain-composer`, rewrite the smart-contract-layer track of the build order. If not chosen: keep the existing LAD-VM-centered plan.
+
+## A4.2 Hardware story — silicon, FPGAs, validator power budget
+
+**Status:** V2+ (post-mainnet research). Captured here for the record so future sessions don't repeat the analysis.
+
+### Open questions
+
+1. Does **Lambda-Fold** require custom silicon to hit production-grade verifier latency? (Today: minutes per fold on CPU. Question becomes interesting only after CPU performance is measured against real chain load.)
+2. Are **FPGA-accelerated validator nodes** worth a reference design? (Solana ecosystem has explored ASIC; no L1 has a *thermodynamics-aware* hardware spec.)
+3. Could EvaporChain publish a **power-budget validator class** — "your node must dissipate no more than X watts per λ-tick" — as a hardware-side anti-Sybil mechanism?
+
+### Why deferred
+
+- ASIC tape-out: ~$1M and 9–12 months. Out of scope for solo + £100K.
+- FPGA iteration: 2–3 months per cycle. Could eat the entire 6-month sprint.
+- "Decay validators dissipate heat" sounds romantic but doesn't add to Tier 0 theorems. Marketing, not engineering, until measured.
+- Capital risk too high pre-launch.
+
+### When it becomes interesting
+
+Post-mainnet, once Lambda-Fold is in production on CPU and load metrics show a clear bottleneck. Then the hardware case writes itself; until then, premature optimization.
+
+## A4.3 Hypothetical frontier ideas — speculative parking spots
+
+**Status: NONE OF THE FOLLOWING ARE COMMITMENTS.** They are speculative ideas captured for future consideration, marked with severity flags. A future session must NOT promote any of these to Tier 1/2/3 without:
+
+- Identifying the specific theorem or formalism that backs the idea
+- Verifying the idea is genuinely novel (not already in strikes or other tiers)
+- Applying the same single-λ structural-decay filter as Tier 0 / Tier 1
+- Re-confirming with Satyawan
+
+Severity flags: **PROMISING** = mathematically grounded, decay synergy plausible, worth a future agent round; **WILD** = intellectually striking but unclear if math transfers; **SPEC** = pure speculation, may not survive scrutiny.
+
+### A4.3.1 Information-Bottleneck Validators **(PROMISING)**
+
+Tishby et al. *Information Bottleneck Method* (1999). Validators learn the **minimum sufficient statistic** for predicting the next block, via the IB principle: maximize I(T;Y) − β·I(X;T) where T is the validator's compressed view, X is full state, Y is next block.
+
+Cousin to **CSLC (Tier 0)** but learning-based rather than CSSR-reconstructed. Could give validators a principled way to *forget* irrelevant past history while maintaining predictive sufficiency.
+
+Energy synergy: structural — β coupling parameter could be set to chain λ.
+Math feasibility: research-ready in 12+ months.
+Citations: Tishby-Pereira-Bialek 1999; Tishby-Zaslavsky 2015 deep IB.
+
+### A4.3.2 Self-Annealing Validator Set **(PROMISING)**
+
+Simulated annealing applied to validator selection. "Temperature" parameter T(t) decays with chain energy: high T early (exploration), low T late (exploitation). Converges to optimal stake distribution under a global "honest validator likelihood" objective.
+
+Cousin to Singh-Boltzmann Stake but with a *cooling schedule* that is itself a function of λ.
+
+Energy synergy: structural — cooling rate = λ.
+Math feasibility: research-ready in 6 months.
+Citations: Kirkpatrick-Gelatt-Vecchi 1983; Geman-Geman 1984.
+
+### A4.3.3 Holonomy-Based State Verification **(WILD)**
+
+State manifold equipped with a Riemannian connection (Levi-Civita). State changes accumulate **holonomy** when transported around closed loops in state-space. Light clients verify state by walking small loops and checking that the holonomy matches a published reference.
+
+Tamper-evidence at a level beyond hashing — a state perturbation changes the geometry, not just the bytes.
+
+Energy synergy: connection coefficients could be parameterized by λ.
+Math feasibility: speculative; needs discrete differential geometry on state graph (Forman-Ricci or Ollivier-Ricci already in §1 of A1.4 as ORMB).
+Citations: do Carmo *Riemannian Geometry* 1992; Forman 2003 discrete Morse theory.
+
+### A4.3.4 Causal-Bayesian-Network Smart Contracts **(PROMISING — only if Contractless rejected)**
+
+Judea Pearl's *do-calculus* as native VM primitive operations. Contracts that natively reason counterfactually: "what would the state be if X had not happened?" Smart contracts as causal-Bayesian networks, not state machines.
+
+If Contractless L1 is adopted (§A4.1), this is moot. If not, this could differentiate LAD-VM from Move/EVM.
+
+Energy synergy: weak; structural-decay link is cosmetic.
+Math feasibility: research-ready in 12+ months.
+Citations: Pearl 1995 *Causal Diagrams for Empirical Research*; Pearl 2009 *Causality* 2nd ed.
+
+### A4.3.5 Stigmergic Consensus **(WILD)**
+
+Camazine et al. *Self-Organization in Biological Systems* (2001). Validators leave decay-signed "traces" in the environment that other validators respond to. Consensus emerges without explicit message-passing — bio-inspired but rigorously based on stigmergy theory.
+
+Cousin to gossip protocols but with decay built into trace lifetime.
+
+Energy synergy: structural — trace decay rate = λ.
+Math feasibility: research; would need a formal proof of safety/liveness under Byzantine adversary, which doesn't obviously transfer from biological systems.
+Citations: Grassé 1959 (original stigmergy); Theraulaz-Bonabeau 1999.
+
+### A4.3.6 Decay-Native Probabilistic Programming **(WILD)**
+
+VM where **probabilistic programs** are first-class — contracts express Bayesian inference natively (Stan/Pyro/Gen-style). State transitions are draws from posterior distributions, not deterministic updates. Validators reach consensus on the *distribution*, not the realization.
+
+Closest precedent: nothing at L1. Pyro (Uber) and Gen (MIT) are off-chain.
+
+Energy synergy: weak unless decay parameterizes a prior.
+Math feasibility: speculative; verifiable inference at L1 is hard (zkML still has the production ceiling at ~tens-of-millions of params).
+Citations: Carpenter et al. 2017 *Stan*; Bingham et al. 2019 *Pyro*; Cusumano-Towner et al. 2019 *Gen*.
+
+### A4.3.7 Information-Geometry Consensus **(WILD)**
+
+Amari's information geometry. State distributions live on a statistical manifold equipped with the Fisher-Rao metric. Consensus = following geodesics on this manifold; disagreement = geodesic distance.
+
+Cousin to **Singh-Lyapunov Fee Controller** but generalised to consensus state, not just fees.
+
+Energy synergy: structural if energy parameterizes the Fisher metric.
+Math feasibility: speculative; computing Fisher metrics at L1 throughput is expensive.
+Citations: Amari 1985 *Differential-Geometrical Methods in Statistics*; Amari-Nagaoka 2000.
+
+### A4.3.8 Autopoietic Chain **(PROMISING — partly already shipped)**
+
+Maturana-Varela 1972 *Autopoiesis*. A self-producing, self-maintaining system. The chain produces and maintains its own components: refresh pool funds audits (already in Refresh-Pool Patronage); Sentinel adjusts parameters within bounds (already in Sentinel); LLSA gates upgrades (already in LLSA).
+
+EvaporChain is *already* partly autopoietic. This idea is mostly **renaming what's already there into a coherent biological frame**. Could become a marketing / philosophical framing layer for the four-act narrative spine.
+
+Energy synergy: structural; autopoiesis requires a metabolism, decay supplies it.
+Math feasibility: ship-now as a *framing*; the underlying primitives already exist.
+Citations: Maturana-Varela 1972, *De máquinas y seres vivos*; English: 1980 *Autopoiesis and Cognition*.
+
+### A4.3.9 Decay-Native Time Crystal **(SPEC)**
+
+Wilczek 2012 (theory); Else et al. 2016 *Floquet Time Crystals* (experimental). Condensed-matter physics phenomenon: a system that breaks time-translation symmetry, exhibiting periodic structure in time without periodic driving.
+
+Could a chain have a built-in long-period recurrence in some metric (e.g., refresh-pool oscillation, validator-set rotation cycle) that is *exact* and emergent rather than imposed? Speculative — unclear what advantage it would confer.
+
+Energy synergy: cosmetic at best.
+Math feasibility: SPEC. Likely doesn't transfer cleanly from condensed-matter to L1.
+Citations: Wilczek 2012 *Quantum Time Crystals*; Else-Bauer-Nayak 2016 *Floquet Time Crystals*.
+
+### A4.3.10 Quaternionic / Geometric-Algebra State for Specific Sub-Domains **(SPEC)**
+
+Already in the strikes list as a general state primitive (continuous, no security reduction). But for *specific sub-domains* (e.g., physical-world simulation oracles, robotics on-chain, IoT spatial reasoning), Clifford algebra could be a useful native type. Wouldn't replace the main state model; would be a typed namespace for specific use cases.
+
+Energy synergy: weak.
+Math feasibility: research-ready as off-chain analytic, speculative as on-chain primitive.
+Citations: Hestenes 1966; Doran-Lasenby 2003 *Geometric Algebra for Physicists*.
+
+### A4.3.11 Renormalization-Group Consensus Phase Map **(PROMISING — extends WSBF)**
+
+Already in Tier 2 as Wilson-Singh Block Flow (WSBF). The hypothetical extension: produce a **phase diagram** of consensus regimes under varying λ, validator count, and adversary fraction. Map "fixed points" of the RG flow to operational regimes (liveness-stable, safety-stable, frozen, chaotic). First-of-its-kind diagnostic for L1 operators.
+
+Energy synergy: structural; RG flow is generated by λ.
+Math feasibility: research-ready in 12 months as analytic tooling; not a runtime primitive.
+Citations: Wilson 1971; Cardy 1996 *Scaling and Renormalization in Statistical Physics*.
+
+### A4.3.12 Decay-Native Topological Quantum Error Correction Inspired Validation **(WILD)**
+
+Borrow from topological QEC (Kitaev surface codes, Bombin color codes). Not quantum hardware — the *combinatorial structure* of topological codes (anyons, lattice gauge theory) for arranging validator votes such that local errors don't propagate.
+
+Different from existing strike (#5 Anyonic Braiding Tx Ordering — that was for ordering, this is for *error correction* in voting topology).
+
+Energy synergy: weak; would need contrived coupling.
+Math feasibility: research-grade; promising in principle, no L1 has tried.
+Citations: Kitaev 2003 *Fault-tolerant quantum computation by anyons*; Bombin-Martin-Delgado 2006.
+
+## A4.4 Discipline for these speculations
+
+A future Claude session reading this section must obey:
+
+24. **None of §A4.3 is locked.** Treat as a parking lot.
+25. **No primitive moves from §A4.3 to Tier 1/2/3 without** (a) the specific theorem cited, (b) the structural-decay test passed, (c) Satyawan's confirmation.
+26. **The Contractless L1 paradigm (§A4.1) is decision-ready.** Defer the choice to Week 4–6, but don't add it to a tier until then.
+27. **Hardware story (§A4.2) is V2+.** Don't propose it for the May–Oct sprint.
+28. **Don't propose a new speculative primitive in this section** unless it passes the same filter as Tier 0: published theorem + structural-decay requirement.
+
+End of Amendment 4. End of doctrine for now.
 
