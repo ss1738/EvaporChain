@@ -271,6 +271,10 @@ pub struct ConsensusFourActState {
     /// `ParallelExecutor::last_conservation_audit`. None until first
     /// block; Some(true) = audit passed, Some(false) = violation.
     pub last_conservation_audit_ok: Option<bool>,
+    /// Number of blocks recorded in the parallel Light-Cone DAG.
+    /// Equal to committed-height count modulo genesis edges. Per
+    /// INVENTION_STACK.md §4.1 #1.
+    pub light_cone_block_count: usize,
 }
 
 /// Tendermint-style BFT consensus engine.
@@ -488,6 +492,7 @@ impl TendermintConsensus {
                 .last_conservation_audit
                 .as_ref()
                 .map(|r| r.is_ok()),
+            light_cone_block_count: self.light_cone_dag.len(),
         }
     }
 

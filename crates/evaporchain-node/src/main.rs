@@ -3212,6 +3212,7 @@ async fn main() -> Result<()> {
                                             mortis_final_state_root: s.mortis_final_state_root.map(hex::encode),
                                             last_conservation_audit_ok: s.last_conservation_audit_ok,
                                             genesis_amendment_hash: None,
+                                            light_cone_block_count: s.light_cone_block_count,
                                         });
                                     }
                                 }

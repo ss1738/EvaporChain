@@ -175,6 +175,9 @@ pub struct FourActSnapshot {
     /// Genesis amendment hash that the chain's constitution proof
     /// bound to. Empty until genesis ceremony runs.
     pub genesis_amendment_hash: Option<String>,
+    /// Number of blocks recorded in the parallel Light-Cone DAG that
+    /// runs alongside Tendermint per INVENTION_STACK.md §4.1 #1.
+    pub light_cone_block_count: usize,
 }
 
 impl ApiState {
