@@ -122,11 +122,6 @@ pub struct ApiState {
     pub hbct_book: Arc<Mutex<evaporchain_hbct::HbctBook>>,
     /// Mock oracle feed for HBCT settlement attestations.
     pub hbct_oracle: Arc<Mutex<evaporchain_hbct::oracle::MockOracleFeed>>,
-    /// Sentinel autonomic-governance state per
-    /// `INVENTION_STACK.md` Amendment 2 §A2.5 (Life act). Off-chain
-    /// in-memory voting + parameter snapshot for launch demo;
-    /// production governance amendment promotes to chain-state.
-    pub sentinel: Arc<Mutex<SentinelState>>,
     /// Decay-Lamport energy-driven logical clock per §4.1 #3.
     /// Ticked from main.rs after each block by gas_used. Pure
     /// observability — chain still uses block.epoch as the
@@ -134,14 +129,6 @@ pub struct ApiState {
     /// promote to authoritative time after validators converge on
     /// `tick_quantum`.
     pub lamport_clock: Arc<Mutex<evaporchain_decay_lamport::LamportClock>>,
-}
-
-/// Per-parameter Sentinel state: governable bounded parameter +
-/// per-validator votes.
-#[derive(Debug, Default)]
-pub struct SentinelState {
-    pub parameters: std::collections::BTreeMap<u32, evaporchain_sentinel::BoundedParameter>,
-    pub votes: std::collections::BTreeMap<u32, Vec<evaporchain_sentinel::Vote>>,
 }
 
 /// Public-facing snapshot of the four-act narrative spine state for
@@ -1488,9 +1475,8 @@ async fn post_sentinel_register_param(
             });
         }
     };
-    let mut s = safe_lock(&state.sentinel);
-    s.parameters.insert(req.parameter_id, p);
-    s.votes.entry(req.parameter_id).or_default();
+    let mut db = safe_lock(&state.db);
+    db.put_sentinel_param(p);
     Json(HbctActionResp { status: "ok", detail: "registered".into() })
 }
 
@@ -1498,14 +1484,14 @@ async fn post_sentinel_vote(
     State(state): State<Arc<ApiState>>,
     Json(req): Json<SentinelVoteReq>,
 ) -> Json<HbctActionResp> {
-    let mut s = safe_lock(&state.sentinel);
-    if !s.parameters.contains_key(&req.parameter_id) {
+    let mut db = safe_lock(&state.db);
+    if db.get_sentinel_param(req.parameter_id).is_none() {
         return Json(HbctActionResp {
             status: "error",
             detail: format!("unknown parameter {}", req.parameter_id),
         });
     }
-    let votes = s.votes.entry(req.parameter_id).or_default();
+    let mut votes = db.get_sentinel_votes(req.parameter_id);
     // One-vote-per-validator: replace if present.
     votes.retain(|v| v.validator_id != req.validator_id);
     votes.push(evaporchain_sentinel::Vote::new(
@@ -1513,6 +1499,7 @@ async fn post_sentinel_vote(
         req.target,
         req.observed_epoch,
     ));
+    db.put_sentinel_votes(req.parameter_id, votes);
     Json(HbctActionResp { status: "ok", detail: "vote recorded".into() })
 }
 
@@ -1520,10 +1507,10 @@ async fn post_sentinel_tick(
     State(state): State<Arc<ApiState>>,
     Json(req): Json<SentinelTickReq>,
 ) -> Json<SentinelParameterResp> {
-    let mut s = safe_lock(&state.sentinel);
-    let votes = s.votes.get(&req.parameter_id).cloned().unwrap_or_default();
-    let param = match s.parameters.get(&req.parameter_id) {
-        Some(p) => *p,
+    let mut db = safe_lock(&state.db);
+    let votes = db.get_sentinel_votes(req.parameter_id);
+    let param = match db.get_sentinel_param(req.parameter_id) {
+        Some(p) => p,
         None => {
             return Json(SentinelParameterResp {
                 id: req.parameter_id,
@@ -1537,6 +1524,7 @@ async fn post_sentinel_tick(
     let lambda = evaporchain_energy_kernel::ChainLambda::new(
         evaporchain_energy_kernel::Lambda::from_epochs(req.half_life_epochs.max(1)),
     );
+    let mut effective = param;
     if let Ok(new_value) = evaporchain_sentinel::propose_adjustment(
         &param,
         &votes,
@@ -1544,16 +1532,14 @@ async fn post_sentinel_tick(
         req.current_epoch,
         req.max_step,
     ) {
-        if let Some(p) = s.parameters.get_mut(&req.parameter_id) {
-            p.current = new_value;
-        }
+        effective.current = new_value;
+        db.put_sentinel_param(effective);
     }
-    let p = s.parameters.get(&req.parameter_id).unwrap();
     Json(SentinelParameterResp {
-        id: p.id,
-        current: p.current,
-        min: p.min,
-        max: p.max,
+        id: effective.id,
+        current: effective.current,
+        min: effective.min,
+        max: effective.max,
         vote_count: votes.len(),
     })
 }
@@ -1562,12 +1548,12 @@ async fn get_sentinel_param(
     State(state): State<Arc<ApiState>>,
     axum::extract::Path(parameter_id): axum::extract::Path<u32>,
 ) -> Json<Option<SentinelParameterResp>> {
-    let s = safe_lock(&state.sentinel);
-    let p = match s.parameters.get(&parameter_id) {
-        Some(p) => *p,
+    let db = safe_lock(&state.db);
+    let p = match db.get_sentinel_param(parameter_id) {
+        Some(p) => p,
         None => return Json(None),
     };
-    let vote_count = s.votes.get(&parameter_id).map(|v| v.len()).unwrap_or(0);
+    let vote_count = db.get_sentinel_votes(parameter_id).len();
     Json(Some(SentinelParameterResp {
         id: p.id,
         current: p.current,
@@ -1665,16 +1651,16 @@ async fn get_lamport_time(State(state): State<Arc<ApiState>>) -> Json<LamportTim
 }
 
 async fn get_sentinel_all(State(state): State<Arc<ApiState>>) -> Json<Vec<SentinelParameterResp>> {
-    let s = safe_lock(&state.sentinel);
-    let out: Vec<SentinelParameterResp> = s
-        .parameters
-        .values()
+    let db = safe_lock(&state.db);
+    let out: Vec<SentinelParameterResp> = db
+        .all_sentinel_params()
+        .into_iter()
         .map(|p| SentinelParameterResp {
             id: p.id,
             current: p.current,
             min: p.min,
             max: p.max,
-            vote_count: s.votes.get(&p.id).map(|v| v.len()).unwrap_or(0),
+            vote_count: db.get_sentinel_votes(p.id).len(),
         })
         .collect();
     Json(out)
