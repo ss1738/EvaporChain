@@ -3,6 +3,7 @@ pub mod economics;
 pub mod energy_audit;
 pub mod fees;
 pub mod genesis;
+pub mod lyapunov_fees;
 pub mod parallel;
 pub mod privacy_exec;
 pub mod rewards;
