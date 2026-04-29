@@ -31,6 +31,7 @@ evaporchain-hbct = { path = "../evaporchain-hbct" }
 evaporchain-sentinel = { path = "../evaporchain-sentinel" }
 evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
 evaporchain-decay-lamport = { path = "../evaporchain-decay-lamport" }
+evaporchain-causal-cone = { path = "../evaporchain-causal-cone" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

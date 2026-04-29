@@ -527,6 +527,31 @@ impl TendermintConsensus {
         self.executor.eulogy_trie.get(addr).map(|t| t.commitment)
     }
 
+    /// Build the Shalizi-Crutchfield Causal-Cone summary for a given
+    /// block head if it exists in the parallel Light-Cone DAG. None if
+    /// `head` isn't in the DAG. Per INVENTION_STACK.md §A1.3 (Optimal
+    /// Prediction Theorem) this is the constant-size sufficient
+    /// statistic for predicting the chain's future from `head`'s past.
+    pub fn causal_cone_summary(
+        &self,
+        head: [u8; 32],
+        chain_lambda_half_life_epochs: u64,
+        observation_epoch: u64,
+    ) -> Option<evaporchain_causal_cone::CausalConeSummary> {
+        let lambda = evaporchain_energy_kernel::ChainLambda::new(
+            evaporchain_energy_kernel::Lambda::from_epochs(
+                chain_lambda_half_life_epochs.max(1),
+            ),
+        );
+        evaporchain_causal_cone::summarize_cone(
+            head,
+            &self.light_cone_dag,
+            lambda,
+            observation_epoch,
+        )
+        .ok()
+    }
+
     /// Number of blocks in the parallel Light-Cone DAG. Should equal
     /// `committed_heights.len() - 1` minus genesis edge cases under
     /// normal operation. Read-only observability for now.

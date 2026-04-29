@@ -1618,6 +1618,64 @@ pub struct LamportTimeResp {
     pub tick_quantum: u64,
 }
 
+// ─────────── Shalizi-Crutchfield Causal-Cone observability ──────────
+
+#[derive(Debug, Serialize)]
+pub struct CausalConeResp {
+    pub head_hex: String,
+    pub ancestor_count: u64,
+    pub total_remaining_energy: String,
+    pub oldest_observed_epoch: u64,
+    pub latest_observed_epoch: u64,
+    pub canonical_cone_hash_hex: String,
+    pub observation_epoch: u64,
+    pub chain_lambda_half_life_epochs: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CausalConeQuery {
+    /// Hex-encoded 32-byte block id (parent_hash). Required.
+    pub head_hex: String,
+    /// Chain epoch at which to compute λ-decayed remaining energies.
+    /// Defaults to current chain head epoch if absent.
+    pub observation_epoch: Option<u64>,
+    /// λ half-life in epochs. Defaults to ChainLambda::default_genesis().
+    pub chain_lambda_half_life_epochs: Option<u64>,
+}
+
+async fn get_causal_cone(
+    State(state): State<Arc<ApiState>>,
+    axum::extract::Query(q): axum::extract::Query<CausalConeQuery>,
+) -> Json<Option<CausalConeResp>> {
+    let head = match parse_hex32(&q.head_hex) {
+        Ok(h) => h,
+        Err(_) => return Json(None),
+    };
+    let tc = match state.tendermint.as_ref() {
+        Some(tc) => tc,
+        None => return Json(None),
+    };
+    let half_life = q.chain_lambda_half_life_epochs.unwrap_or(
+        evaporchain_energy_kernel::ChainLambda::default_genesis().half_life(),
+    );
+    let observation_epoch = q.observation_epoch.unwrap_or_else(|| {
+        let tc = safe_lock(tc);
+        tc.height()
+    });
+    let tc = safe_lock(tc);
+    let summary = tc.causal_cone_summary(head, half_life, observation_epoch)?;
+    Json(Some(CausalConeResp {
+        head_hex: hex::encode(summary.head_id),
+        ancestor_count: summary.ancestor_count,
+        total_remaining_energy: summary.total_remaining_energy.to_string(),
+        oldest_observed_epoch: summary.oldest_observed_epoch,
+        latest_observed_epoch: summary.latest_observed_epoch,
+        canonical_cone_hash_hex: hex::encode(summary.canonical_cone_hash),
+        observation_epoch,
+        chain_lambda_half_life_epochs: half_life,
+    }))
+}
+
 // ─────────────── Light-Cone DAG observability ───────────────────────
 
 #[derive(Debug, Serialize)]
@@ -5336,6 +5394,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/boltzmann_stake/:validator_id/at/:current_epoch", get(get_boltzmann_stake))
         .route("/api/lamport_time", get(get_lamport_time))
         .route("/api/light_cone", get(get_light_cone))
+        .route("/api/causal_cone", get(get_causal_cone))
         .route("/api/objects", get(get_objects))
         .route("/api/object/:id", get(get_single_object))
         .route("/api/accounts", get(get_accounts))

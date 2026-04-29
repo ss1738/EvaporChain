@@ -16,6 +16,8 @@ evaporchain-da = { path = "../evaporchain-da" }
 evaporchain-sharding = { path = "../evaporchain-sharding" }
 evaporchain-mortis = { path = "../evaporchain-mortis" }
 evaporchain-light-cone = { path = "../evaporchain-light-cone" }
+evaporchain-causal-cone = { path = "../evaporchain-causal-cone" }
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
 blake3 = "1"
 tokio = { workspace = true }
 serde = { workspace = true }
