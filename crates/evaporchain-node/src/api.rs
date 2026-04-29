@@ -5189,6 +5189,38 @@ async fn post_annealing_accepts_candidate(Json(req): Json<AnnealingAcceptReq>) -
     }))
 }
 
+// ─────────────── HBCT-Elexon: epoch → GB settlement period mapping ───
+
+#[derive(Debug, Deserialize)]
+pub struct ElexonEpochReq {
+    /// Unix timestamp (seconds) at chain epoch 0.
+    pub genesis_unix_ts: u64,
+    /// Seconds per chain epoch (default 12 for 12-second slots).
+    pub epoch_duration_s: u64,
+    /// The chain epoch at which the capacity slot *closes*.
+    pub hour_slot: u64,
+}
+
+/// POST /api/elexon/epoch_to_slot — map a chain epoch to a GB Elexon settlement slot.
+///
+/// Returns the calendar date "YYYY-MM-DD" and settlement period (1..=48)
+/// for the BMRS B1790 query, no network required. Used by the HBCT oracle
+/// to resolve capacity delivery confirmation from the UK grid.
+async fn post_elexon_epoch_to_slot(Json(req): Json<ElexonEpochReq>) -> Json<serde_json::Value> {
+    use evaporchain_hbct_elexon::mapping::epoch_to_elexon_slot;
+    let dur = req.epoch_duration_s.max(1);
+    let slot = epoch_to_elexon_slot(req.genesis_unix_ts, dur, req.hour_slot);
+    Json(serde_json::json!({
+        "status": "ok",
+        "hour_slot": req.hour_slot,
+        "genesis_unix_ts": req.genesis_unix_ts,
+        "epoch_duration_s": dur,
+        "settlement_date": slot.date,
+        "settlement_period": slot.period,
+        "detail": format!("Elexon BMRS B1790 query: date={} period={}", slot.date, slot.period),
+    }))
+}
+
 // ─────────────── Autopoietic Chain Health ────────────────────────────
 
 async fn get_autopoietic_health(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
@@ -5426,6 +5458,9 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     // Self-Annealing — Kirkpatrick-Gelatt-Vecchi 1983 validator set crystallisation
     ApiDocEntry { method: "POST", path: "/api/annealing/temperature",       category: "substrate", description: "Compute SA effective temperature at epoch. T(epoch)=λ×2^(−epoch/λ). Approaches 0 as the validator set crystallises; zero = no degrading moves accepted.", example: Some(r#"{"lambda_half_life":4096,"beta_mb":1000,"epoch":2048}"#) },
     ApiDocEntry { method: "POST", path: "/api/annealing/accepts_candidate", category: "substrate", description: "Deterministic SA acceptance gate for validator rotation. Accepts if candidate is better OR T-weighted random acceptance (slot_nonce from block hash, never PRNG).", example: Some(r#"{"lambda_half_life":4096,"beta_mb":1000,"epoch":100,"slot_nonce":12345,"incumbent":{"stake":1000,"activity":10,"uptime_milli":900},"candidate":{"stake":1200,"activity":12,"uptime_milli":950}}"#) },
+
+    // Elexon HBCT oracle: chain epoch → GB grid settlement slot
+    ApiDocEntry { method: "POST", path: "/api/elexon/epoch_to_slot",        category: "substrate", description: "Map a chain epoch to a UK Elexon settlement date + period (1..=48, each 30 min). No network call — pure calendar arithmetic. Used by HBCT oracle to build BMRS B1790 queries for confirmed MWh delivery.", example: Some(r#"{"genesis_unix_ts":1704067200,"epoch_duration_s":12,"hour_slot":150}"#) },
 
     // HLWA — Hashgraph-Locked Wrapped Asset λ-decay gate
     ApiDocEntry { method: "POST", path: "/api/hlwa/effective_supply",       category: "substrate", description: "Compute effective wrapped-asset supply after λ-decay of attestation freshness. Returns current_supply, effective_supply, excess_to_burn. Bridge anti-inflation gate.", example: Some(r#"{"current_supply":1000000,"origin_attested_supply":1000000,"last_attested_epoch":0,"attestation_lambda_epochs":500,"current_epoch":100}"#) },
@@ -9240,6 +9275,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/wsbf/rg_flow", post(post_wsbf_rg_flow))
         .route("/api/rg_phase/classify", post(post_rg_phase_classify))
         .route("/api/rg_phase/trajectory", post(post_rg_phase_trajectory))
+        .route("/api/elexon/epoch_to_slot", post(post_elexon_epoch_to_slot))
         .route("/api/demurrage/owed", post(post_demurrage_owed))
         .route("/api/mera/commit", post(post_mera_commit))
         .route("/api/annealing/temperature", post(post_annealing_temperature))
