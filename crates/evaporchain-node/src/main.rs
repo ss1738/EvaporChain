@@ -1173,6 +1173,49 @@ fn compute_delegation_slash_pct(
     }
 }
 
+/// Default Sentinel half-life and per-tick step cap. Conservative values
+/// chosen so a single block can move a parameter at most `STEP_CAP` raw
+/// units (≈ 1% of typical fee-controller scale) and ancient votes
+/// evaporate over `HALF_LIFE_EPOCHS` blocks. Both are launch defaults
+/// pending governance.
+const SENTINEL_DEFAULT_HALF_LIFE_EPOCHS: u64 = 1_000;
+const SENTINEL_DEFAULT_STEP_CAP: u64 = 1;
+
+/// Apply the Sentinel homeostatic update to every registered parameter.
+/// Reads votes from StateDB, computes the decay-weighted target, clamps
+/// to per-tick step + bounds, writes the new parameter back. Pure no-op
+/// for any parameter with no recorded votes — preserves the doctrine
+/// guarantee that without input the chain holds steady.
+fn autonomic_sentinel_tick(
+    db: &Arc<Mutex<evaporchain_state::RocksDBStateDB>>,
+    current_epoch: u64,
+) {
+    let lambda = evaporchain_energy_kernel::ChainLambda::new(
+        evaporchain_energy_kernel::Lambda::from_epochs(SENTINEL_DEFAULT_HALF_LIFE_EPOCHS),
+    );
+    let mut db = safe_lock(db);
+    let params = db.all_sentinel_params();
+    for param in params {
+        let votes = db.get_sentinel_votes(param.id);
+        if votes.is_empty() {
+            continue;
+        }
+        if let Ok(new_value) = evaporchain_sentinel::propose_adjustment(
+            &param,
+            &votes,
+            lambda,
+            current_epoch,
+            SENTINEL_DEFAULT_STEP_CAP,
+        ) {
+            if new_value != param.current {
+                let mut updated = param;
+                updated.current = new_value;
+                db.put_sentinel_param(updated);
+            }
+        }
+    }
+}
+
 /// Record a block into the API shared state (block history, stats, events).
 #[allow(clippy::too_many_arguments)]
 fn record_block(
@@ -3197,6 +3240,13 @@ async fn main() -> Result<()> {
                                                 *c = new_c;
                                             }
                                         }
+
+                                        // Sentinel autonomic tick: walk every registered
+                                        // parameter and apply the homeostatic update using
+                                        // current votes. "Homeostasis, not legislators."
+                                        // Per INVENTION_STACK.md §A2.5.
+                                        autonomic_sentinel_tick(&api.db, block.epoch);
+
                                         api.update_four_act_snapshot(api::FourActSnapshot {
                                             eulogy_count: s.eulogy_count,
                                             eulogy_trie_root: s.eulogy_trie_root.map(hex::encode),
