@@ -5025,3 +5025,107 @@ mod mempool_mev_integration {
         assert_eq!(taken.len(), 2);
     }
 }
+
+// ── Encrypted Mempool (commit-reveal MEV protection) integration ─────────────
+
+#[cfg(test)]
+mod encrypted_mempool_integration {
+    use evaporchain_consensus::encrypted_mempool::{
+        encrypt_transaction, verify_and_decrypt, EncryptedMempool, MevError,
+    };
+    use evaporchain_types::{Transaction, TransferTx};
+
+    fn transfer() -> Transaction {
+        Transaction::Transfer(TransferTx {
+            from: [1u8; 32],
+            to: [2u8; 32],
+            amount: 500,
+            nonce: 1,
+            signature: None,
+            public_key: None,
+        })
+    }
+
+    fn random_nonce() -> [u8; 32] {
+        let mut n = [0u8; 32];
+        for (i, b) in n.iter_mut().enumerate() { *b = i as u8; }
+        n
+    }
+
+    #[test]
+    fn encrypt_then_decrypt_roundtrip() {
+        let tx = transfer();
+        let nonce = random_nonce();
+        let enc = encrypt_transaction(&tx, &nonce, 1);
+        let decrypted = verify_and_decrypt(&enc, &nonce).unwrap();
+        // Verify the decrypted tx matches original
+        if let (Transaction::Transfer(orig), Transaction::Transfer(dec)) = (&tx, &decrypted) {
+            assert_eq!(orig.from, dec.from);
+            assert_eq!(orig.amount, dec.amount);
+        } else {
+            panic!("wrong transaction type after decryption");
+        }
+    }
+
+    #[test]
+    fn wrong_nonce_fails_decryption() {
+        let tx = transfer();
+        let nonce = random_nonce();
+        let enc = encrypt_transaction(&tx, &nonce, 1);
+        let bad_nonce = [0xFFu8; 32];
+        assert!(matches!(
+            verify_and_decrypt(&enc, &bad_nonce),
+            Err(MevError::NonceHashMismatch)
+        ));
+    }
+
+    #[test]
+    fn commitment_is_deterministic() {
+        let tx = transfer();
+        let nonce = random_nonce();
+        let enc1 = encrypt_transaction(&tx, &nonce, 1);
+        let enc2 = encrypt_transaction(&tx, &nonce, 1);
+        assert_eq!(enc1.commitment, enc2.commitment);
+    }
+
+    #[test]
+    fn different_nonces_produce_different_ciphertexts() {
+        let tx = transfer();
+        let nonce1 = random_nonce();
+        let mut nonce2 = random_nonce();
+        nonce2[0] ^= 0xFF;
+        let enc1 = encrypt_transaction(&tx, &nonce1, 1);
+        let enc2 = encrypt_transaction(&tx, &nonce2, 1);
+        assert_ne!(enc1.commitment, enc2.commitment);
+        assert_ne!(enc1.encrypted_payload, enc2.encrypted_payload);
+    }
+
+    #[test]
+    fn encrypted_mempool_reveal_flow() {
+        let mut pool = EncryptedMempool::new(2);
+        let tx = transfer();
+        let nonce = random_nonce();
+        let enc = encrypt_transaction(&tx, &nonce, 1);
+
+        pool.submit_encrypted(enc.clone());
+        assert_eq!(pool.pending_count(), (1, 0)); // 1 encrypted, 0 revealed
+
+        // Reveal at epoch > 1 + 2 (reveal_delay)
+        let result = pool.reveal(enc, &nonce, 4);
+        assert!(result.is_ok());
+        assert_eq!(pool.pending_count(), (0, 1)); // moved to revealed
+    }
+
+    #[test]
+    fn reveal_too_early_rejected() {
+        let mut pool = EncryptedMempool::new(5);
+        let tx = transfer();
+        let nonce = random_nonce();
+        let enc = encrypt_transaction(&tx, &nonce, 10);
+
+        pool.submit_encrypted(enc.clone());
+        // Try to reveal at epoch 12 — but delay=5 means must wait until epoch 15
+        let result = pool.reveal(enc, &nonce, 12);
+        assert!(matches!(result, Err(MevError::RevealTooEarly { .. })));
+    }
+}
