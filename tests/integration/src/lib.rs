@@ -3876,3 +3876,125 @@ mod allen_decay_integration {
             "active window should Overlap with grace period");
     }
 }
+
+// ── MCC — Maximum-Caliber Consensus fork-choice ───────────────────────────────
+
+#[cfg(test)]
+mod mcc_integration {
+    use evaporchain_mcc::{mcc_choose, path_caliber, path_energy, Trajectory};
+    use evaporchain_light_cone::{Block, BlockId, LightCone};
+
+    fn bid(b: u8) -> BlockId { let mut id = [0u8; 32]; id[0] = b; id }
+
+    fn block(b: u8, energy: u64, parents: Vec<BlockId>) -> Block {
+        Block { id: bid(b), parents, energy, observed_epoch: b as u64 }
+    }
+
+    fn linear_lc() -> (LightCone, Vec<BlockId>) {
+        // genesis → block 1 → block 2
+        let mut lc = LightCone::new();
+        lc.insert(block(0, 1_000, vec![])).unwrap();
+        lc.insert(block(1, 900, vec![bid(0)])).unwrap();
+        lc.insert(block(2, 810, vec![bid(1)])).unwrap();
+        (lc, vec![bid(0), bid(1), bid(2)])
+    }
+
+    #[test]
+    fn path_energy_sums_block_energies() {
+        let (lc, ids) = linear_lc();
+        let traj = Trajectory::new(ids.clone());
+        let energy = path_energy(&traj, &lc);
+        assert_eq!(energy, 1_000 + 900 + 810, "path_energy sums all block energies");
+    }
+
+    #[test]
+    fn path_caliber_higher_energy_lower_caliber_at_positive_beta() {
+        let (lc, ids) = linear_lc();
+        let traj = Trajectory::new(ids);
+        // Higher beta_mb penalises high-energy trajectories more
+        let c_low_beta  = path_caliber(&traj, &lc, 1);
+        let c_high_beta = path_caliber(&traj, &lc, 100);
+        // Both are non-zero caliber values; higher beta reduces caliber
+        assert!(c_low_beta >= c_high_beta,
+            "higher beta must not increase caliber: low={c_low_beta}, high={c_high_beta}");
+    }
+
+    #[test]
+    fn mcc_chooses_lower_energy_fork_at_high_beta() {
+        // Two forks: high-energy (sum=3_000) vs low-energy (sum=1_000)
+        let mut lc = LightCone::new();
+        lc.insert(block(0, 500, vec![])).unwrap();
+        // Fork A: high energy
+        lc.insert(block(1, 2_000, vec![bid(0)])).unwrap();
+        // Fork B: low energy
+        lc.insert(block(2, 500, vec![bid(0)])).unwrap();
+
+        let fork_a = Trajectory::new(vec![bid(0), bid(1)]);
+        let fork_b = Trajectory::new(vec![bid(0), bid(2)]);
+
+        // At very high beta (100_000 millibits), low-energy fork wins.
+        let chosen = mcc_choose([&fork_a, &fork_b].into_iter(), &lc, 100_000).unwrap();
+        let chosen_energy = path_energy(chosen, &lc);
+        let fork_b_energy = path_energy(&fork_b, &lc);
+        assert_eq!(chosen_energy, fork_b_energy,
+            "MCC at high beta must choose the lower-energy fork");
+    }
+
+    #[test]
+    fn mcc_empty_candidates_errors() {
+        let lc = LightCone::new();
+        let result = mcc_choose(std::iter::empty::<&Trajectory>(), &lc, 100);
+        assert!(result.is_err(), "empty candidate set must return McccError");
+    }
+}
+
+// ── MDL-Shard — minimum-description-length optimal sharding ──────────────────
+
+#[cfg(test)]
+mod mdl_shard_integration {
+    use evaporchain_mdl_shard::{mdl_optimal, mdl_score, Partition, PartitionError};
+
+    #[test]
+    fn identical_items_single_shard_is_optimal() {
+        // All same energy → single shard has minimum description length.
+        let items = vec![500u64; 6];
+        let opt = mdl_optimal(&items, 4).unwrap();
+        assert_eq!(opt.shard_count(), 1, "identical items should collapse to one shard");
+    }
+
+    #[test]
+    fn optimal_partition_has_minimum_score() {
+        let items = vec![100u64, 200, 300, 100, 200, 300];
+        let opt = mdl_optimal(&items, 3).unwrap();
+        let opt_score = mdl_score(&opt, &items);
+
+        // Build a naive "all in one shard" reference and check its score is ≥ optimal.
+        let naive = Partition::new(vec![0u32; items.len()]).unwrap();
+        let naive_score = mdl_score(&naive, &items);
+        assert!(opt_score <= naive_score,
+            "MDL optimal score ({opt_score}) must be ≤ naive single-shard ({naive_score})");
+    }
+
+    #[test]
+    fn empty_items_returns_none() {
+        assert!(mdl_optimal(&[], 4).is_none());
+    }
+
+    #[test]
+    fn zero_max_shards_returns_none() {
+        assert!(mdl_optimal(&[1, 2, 3], 0).is_none());
+    }
+
+    #[test]
+    fn partition_with_gap_in_shard_ids_rejected() {
+        // Assignments skip shard 1 (0,2 present but not 1)
+        let err = Partition::new(vec![0u32, 2, 0]).unwrap_err();
+        assert!(matches!(err, PartitionError::GapInShardIds { .. }));
+    }
+
+    #[test]
+    fn partition_shard_count_matches_distinct_ids() {
+        let p = Partition::new(vec![0u32, 1, 0, 1, 2]).unwrap();
+        assert_eq!(p.shard_count(), 3);
+    }
+}

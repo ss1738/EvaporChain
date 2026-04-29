@@ -59,5 +59,7 @@ evaporchain-lad-vm = { path = "../../crates/evaporchain-lad-vm" }
 evaporchain-hlwa = { path = "../../crates/evaporchain-hlwa" }
 evaporchain-eb-fs = { path = "../../crates/evaporchain-eb-fs" }
 evaporchain-allen-decay = { path = "../../crates/evaporchain-allen-decay" }
+evaporchain-mcc = { path = "../../crates/evaporchain-mcc" }
+evaporchain-mdl-shard = { path = "../../crates/evaporchain-mdl-shard" }
 serde_json = "1"
 hex = "0.4"
