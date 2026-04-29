@@ -38,6 +38,7 @@ evaporchain-crooks-mev-refund = { path = "../evaporchain-crooks-mev-refund" }
 evaporchain-cfm = { path = "../evaporchain-cfm" }
 evaporchain-modular-beacon = { path = "../evaporchain-modular-beacon" }
 evaporchain-prp = { path = "../evaporchain-prp" }
+evaporchain-efh = { path = "../evaporchain-efh" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

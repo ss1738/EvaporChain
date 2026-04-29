@@ -1618,6 +1618,61 @@ pub struct LamportTimeResp {
     pub tick_quantum: u64,
 }
 
+// ─────────── Evaporative Filtration Homology (EFH) ─────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct EfhH0Query {
+    /// Energy values to compute 0-dim persistence over.
+    pub energies: Vec<u64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EfhH0Resp {
+    pub pairs: Vec<(String, String)>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EfhBottleneckQuery {
+    pub diagram_a: Vec<(u64, u64)>,
+    pub diagram_b: Vec<(u64, u64)>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EfhBottleneckResp {
+    pub bottleneck_distance: String,
+}
+
+/// Compute the 0-dim persistence diagram (sublevel filtration) over a
+/// caller-supplied list of energies. Per INVENTION_STACK.md §4.1 row 9.
+async fn post_efh_h0(Json(q): Json<EfhH0Query>) -> Json<EfhH0Resp> {
+    let pd = evaporchain_efh::compute_h0(&q.energies);
+    Json(EfhH0Resp {
+        pairs: pd
+            .pairs
+            .iter()
+            .map(|(b, d)| (b.to_string(), d.to_string()))
+            .collect(),
+    })
+}
+
+/// Bottleneck distance between two persistence diagrams. Cohen-
+/// Steiner-Edelsbrunner-Harer 2007 stability bound:
+/// bottleneck_distance(PD(f), PD(g)) ≤ ||f − g||_∞.
+async fn post_efh_bottleneck(Json(q): Json<EfhBottleneckQuery>) -> Json<EfhBottleneckResp> {
+    let pd_a = evaporchain_efh::PersistenceDiagram::new(
+        q.diagram_a,
+        evaporchain_efh::Filtration::Sublevel,
+    );
+    let pd_b = evaporchain_efh::PersistenceDiagram::new(
+        q.diagram_b,
+        evaporchain_efh::Filtration::Sublevel,
+    );
+    let d = evaporchain_efh::bottleneck_distance(&pd_a, &pd_b);
+    Json(EfhBottleneckResp {
+        bottleneck_distance: d.to_string(),
+    })
+}
+
 // ─────────── Provable Retention Proofs (PRP) ───────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -5714,6 +5769,8 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/crooks_refund", post(post_crooks_refund))
         .route("/api/beacon/:tau", get(get_beacon))
         .route("/api/prp/prove", post(post_prp_prove))
+        .route("/api/efh/h0", post(post_efh_h0))
+        .route("/api/efh/bottleneck", post(post_efh_bottleneck))
         .route("/api/objects", get(get_objects))
         .route("/api/object/:id", get(get_single_object))
         .route("/api/accounts", get(get_accounts))
