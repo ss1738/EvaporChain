@@ -5309,6 +5309,108 @@ async fn post_elexon_epoch_to_slot(Json(req): Json<ElexonEpochReq>) -> Json<serd
     }))
 }
 
+// ─────────────── Energy Kernel — conservation audit + redirect sim ───────────
+
+#[derive(serde::Deserialize)]
+struct EnergyAccReq {
+    accounts: u64,
+    stake: u64,
+    refresh_pool: u64,
+    slashed_pool: u64,
+}
+
+#[derive(serde::Deserialize)]
+struct ConservationCheckReq {
+    before: EnergyAccReq,
+    after: EnergyAccReq,
+    epochs_elapsed: u64,
+    half_life_epochs: u64,
+}
+
+async fn post_energy_kernel_conservation_check(
+    Json(req): Json<ConservationCheckReq>,
+) -> Json<serde_json::Value> {
+    use evaporchain_energy_kernel::{
+        compartment::EnergyAccumulator, conservation::ConservationCheck, ChainLambda, Lambda,
+    };
+    let before = EnergyAccumulator::new(
+        req.before.accounts, req.before.stake,
+        req.before.refresh_pool, req.before.slashed_pool,
+    );
+    let after = EnergyAccumulator::new(
+        req.after.accounts, req.after.stake,
+        req.after.refresh_pool, req.after.slashed_pool,
+    );
+    let lambda = ChainLambda::new(Lambda::from_epochs(req.half_life_epochs.max(1)));
+    match ConservationCheck::block_step(&before, &after, req.epochs_elapsed, lambda) {
+        Ok(()) => Json(serde_json::json!({
+            "valid": true,
+            "before_total": before.total(),
+            "after_total": after.total(),
+            "epochs_elapsed": req.epochs_elapsed,
+            "half_life_epochs": req.half_life_epochs,
+        })),
+        Err(e) => Json(serde_json::json!({
+            "valid": false,
+            "error": e.to_string(),
+            "before_total": before.total(),
+            "after_total": after.total(),
+            "epochs_elapsed": req.epochs_elapsed,
+            "half_life_epochs": req.half_life_epochs,
+        })),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct EnergyRedirectReq {
+    accounts: u64,
+    stake: u64,
+    refresh_pool: u64,
+    slashed_pool: u64,
+    redirect_kind: String,
+    amount: u64,
+}
+
+async fn post_energy_kernel_redirect(
+    Json(req): Json<EnergyRedirectReq>,
+) -> Json<serde_json::Value> {
+    use evaporchain_energy_kernel::{
+        compartment::EnergyAccumulator, redirect::{EnergyRedirect, RedirectKind},
+    };
+    let mut acc = EnergyAccumulator::new(
+        req.accounts, req.stake, req.refresh_pool, req.slashed_pool,
+    );
+    let kind = match req.redirect_kind.to_lowercase().as_str() {
+        "slash"        => RedirectKind::Slash,
+        "slash_settle" => RedirectKind::SlashSettle,
+        "mev_burn"     => RedirectKind::MevBurn,
+        "demurrage"    => RedirectKind::Demurrage,
+        "refresh_payout" => RedirectKind::RefreshPayout,
+        other => return Json(serde_json::json!({ "error": format!("unknown redirect_kind: {other}") })),
+    };
+    let total_before = acc.total();
+    match EnergyRedirect::new(kind, req.amount).apply(&mut acc) {
+        Ok((from, to)) => {
+            use evaporchain_energy_kernel::compartment::Compartment;
+            Json(serde_json::json!({
+                "success": true,
+                "from_compartment": format!("{from:?}"),
+                "to_compartment": format!("{to:?}"),
+                "amount": req.amount,
+                "total_before": total_before,
+                "total_after": acc.total(),
+                "state_after": {
+                    "accounts":    acc[Compartment::Accounts],
+                    "stake":       acc[Compartment::Stake],
+                    "refresh_pool": acc[Compartment::RefreshPool],
+                    "slashed_pool": acc[Compartment::SlashedPool],
+                }
+            }))
+        },
+        Err(e) => Json(serde_json::json!({ "success": false, "error": e.to_string() })),
+    }
+}
+
 // ─────────────── Autopoietic Chain Health ────────────────────────────
 
 async fn get_autopoietic_health(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
@@ -5570,6 +5672,22 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     // Offline signing support (cold-wallet + hardware-wallet flows)
     ApiDocEntry { method: "GET",  path: "/api/tx/nonce/:address",      category: "identity", description: "Fetch the current nonce for an address (required for manual transaction construction). Returns nonce + chain_id.", example: None },
     ApiDocEntry { method: "POST", path: "/api/tx/signable",            category: "identity", description: "Return the canonical bytes to sign for a transaction (transfer/create_object/refresh) without executing. Caller signs with ML-DSA key and resubmits via the normal tx endpoint.", example: Some(r#"{"tx_type":"transfer","params":{"from":1,"to":2,"amount":1000}}"#) },
+
+    // Energy Kernel — conservation audit + energy redirect simulation
+    ApiDocEntry { method: "POST", path: "/api/energy_kernel/conservation_check", category: "substrate", description: "Audit whether a block transition (before→after EnergyAccumulator) satisfies the §1.2 conservation invariant: total energy non-increasing and any drop ≤ what the λ-decay allows. Returns {valid, before_total, after_total} or {valid:false, error}.", example: Some(r#"{"before":{"accounts":1000000,"stake":500000,"refresh_pool":0,"slashed_pool":0},"after":{"accounts":900000,"stake":500000,"refresh_pool":100000,"slashed_pool":0},"epochs_elapsed":1,"half_life_epochs":4096}"#) },
+    ApiDocEntry { method: "POST", path: "/api/energy_kernel/redirect",           category: "substrate", description: "Simulate an EnergyRedirect (slash|slash_settle|mev_burn|demurrage|refresh_payout) on an EnergyAccumulator. Verifies the total is preserved exactly; returns from_compartment, to_compartment, state_after. Used to dry-run energy flow transitions without touching chain state.", example: Some(r#"{"accounts":1000000,"stake":500000,"refresh_pool":0,"slashed_pool":0,"redirect_kind":"mev_burn","amount":5000}"#) },
+
+    // Oracle — decay-aware on-chain feed (OracleState + BLS quorum finalization)
+    ApiDocEntry { method: "POST", path: "/api/oracle/ingest",         category: "oracle", description: "Ingest a sensor/oracle data point as a CreateObject transaction. Auth: Bearer EVAPORCHAIN_ORACLE_KEY. The object decays with the configured half_life; stale data evaporates automatically.", example: Some(r#"{"source":"elexon-b1790","object_id":"oracle-feed-01","energy":100000,"half_life":100,"data":"{\"mwh\":42.5}"}"#) },
+    ApiDocEntry { method: "GET",  path: "/api/oracle/status",         category: "oracle", description: "Return OracleBridge status: active flag, feed count, active BLS quorum rounds, and current oracle_state_root.", example: None },
+    ApiDocEntry { method: "GET",  path: "/api/oracle/feed/:key",      category: "oracle", description: "Read the latest value, TWAP, and Merkle proof for a named oracle feed key. Returns {key, value, twap, has_proof, proof_hash}.", example: None },
+
+    // Sharding — object-level sharding + cross-shard message bus
+    ApiDocEntry { method: "GET",  path: "/api/shards",                category: "sharding", description: "Return ShardBridge status: num_shards and pending cross-shard message count. Returns {active:false} when sharding is disabled.", example: None },
+    ApiDocEntry { method: "GET",  path: "/api/shards/health",         category: "sharding", description: "Per-shard health report: liveness_ratio, total_objects, live_objects, total_energy, is_dead. Also lists shards that are candidates for compaction.", example: None },
+
+    // Tombstone lookup — per-account query
+    ApiDocEntry { method: "GET",  path: "/api/tombstone/:addr_hex",   category: "substrate", description: "Look up the tombstone commitment for a given 32-byte address (hex). Returns commitment_hex + metadata if the address has evaporated, 404 otherwise.", example: None },
 
     // Demo
     ApiDocEntry { method: "POST", path: "/api/demo/reset",            category: "demo", description: "Clear HBCT book + Sentinel votes so the dashboard demo can re-run", example: None },
@@ -9656,6 +9774,8 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/hlwa/effective_supply", post(post_hlwa_effective_supply))
         .route("/api/hlwa/re_attest", post(post_hlwa_re_attest))
         .route("/api/llsa/apply_amendment", post(post_llsa_apply_amendment))
+        .route("/api/energy_kernel/conservation_check", post(post_energy_kernel_conservation_check))
+        .route("/api/energy_kernel/redirect", post(post_energy_kernel_redirect))
         .route("/api/autopoietic/health", get(get_autopoietic_health))
         .route("/api/consensus/phase", get(get_consensus_phase))
         .route("/api/demo/reset", post(post_demo_reset))
