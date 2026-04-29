@@ -1620,6 +1620,9 @@ impl ExecutionEngine for ParallelExecutor {
             lambda,
         ));
 
+        let mera_root = crate::mera_integration::compute_mera_commitment(db);
+        let mera_commitment = if mera_root == [0u8; 32] { None } else { Some(mera_root) };
+
         Ok(BlockExecutionResult {
             state_root,
             mmr_root: self.mmr.root(),
@@ -1635,6 +1638,7 @@ impl ExecutionEngine for ParallelExecutor {
             cross_shard_processed,
             cross_shard_receipts,
             validator_key_rotations,
+            mera_commitment,
         })
     }
 

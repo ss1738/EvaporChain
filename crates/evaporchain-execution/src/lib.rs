@@ -8,6 +8,7 @@ pub mod genesis;
 pub mod genesis_invariant;
 pub mod lamport_integration;
 pub mod lyapunov_fees;
+pub mod mera_integration;
 pub mod parallel;
 pub mod privacy_exec;
 pub mod refresh_market_integration;
@@ -114,6 +115,11 @@ pub struct BlockExecutionResult {
     /// subsequent blocks uses the new keys with old keys honoured during
     /// the grace window. Closes punch-list 4b cross-layer wiring.
     pub validator_key_rotations: Vec<ValidatorKeyRotation>,
+    /// MERA (Multi-scale Entanglement Renormalization Ansatz) state commitment.
+    /// 32-byte root hash of the λ-parameterised tensor-network tree built over
+    /// all account energies after this block.  None if the MERA tree could not
+    /// be computed (empty state).
+    pub mera_commitment: Option<[u8; 32]>,
 }
 
 /// Side-effect emitted by `Transaction::RotateValidatorKey` execution and
@@ -2473,6 +2479,9 @@ impl ExecutionEngine for SimpleExecutor {
             lambda,
         ));
 
+        let mera_root = crate::mera_integration::compute_mera_commitment(db);
+        let mera_commitment = if mera_root == [0u8; 32] { None } else { Some(mera_root) };
+
         Ok(BlockExecutionResult {
             state_root,
             mmr_root: self.mmr.root(),
@@ -2488,6 +2497,7 @@ impl ExecutionEngine for SimpleExecutor {
             cross_shard_processed: 0,
             cross_shard_receipts: Vec::new(),
             validator_key_rotations,
+            mera_commitment,
         })
     }
 

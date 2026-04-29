@@ -1708,6 +1708,9 @@ impl ExecutionEngine for BlockStmExecutor {
             "Block-STM block executed"
         );
 
+        let mera_root = crate::mera_integration::compute_mera_commitment(db);
+        let mera_commitment = if mera_root == [0u8; 32] { None } else { Some(mera_root) };
+
         Ok(BlockExecutionResult {
             state_root,
             mmr_root: self.mmr.root(),
@@ -1725,6 +1728,7 @@ impl ExecutionEngine for BlockStmExecutor {
             // RotateValidatorKey is dispatched to serial fallback (see the
             // arm in `execute_tx_view`) so Block-STM never accumulates them.
             validator_key_rotations: Vec::new(),
+            mera_commitment,
         })
     }
 

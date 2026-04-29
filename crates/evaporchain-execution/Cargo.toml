@@ -26,6 +26,7 @@ evaporchain-boltzmann-stake  = { path = "../evaporchain-boltzmann-stake" }
 evaporchain-demurrage        = { path = "../evaporchain-demurrage" }
 evaporchain-refresh-market   = { path = "../evaporchain-refresh-market" }
 evaporchain-decay-lamport    = { path = "../evaporchain-decay-lamport" }
+evaporchain-mera             = { path = "../evaporchain-mera" }
 blake3 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
