@@ -28,6 +28,7 @@ evaporchain-contracts = { path = "../evaporchain-contracts" }
 evaporchain-sharding = { path = "../evaporchain-sharding" }
 evaporchain-oracle = { path = "../evaporchain-oracle" }
 evaporchain-hbct = { path = "../evaporchain-hbct" }
+evaporchain-hbct-elexon = { path = "../evaporchain-hbct-elexon" }
 evaporchain-sentinel = { path = "../evaporchain-sentinel" }
 evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
 evaporchain-decay-lamport = { path = "../evaporchain-decay-lamport" }
@@ -53,6 +54,10 @@ evaporchain-eg-fss = { path = "../evaporchain-eg-fss" }
 evaporchain-mortis = { path = "../evaporchain-mortis" }
 evaporchain-lad-vm = { path = "../evaporchain-lad-vm" }
 evaporchain-refresh-patronage = { path = "../evaporchain-refresh-patronage" }
+evaporchain-mera             = { path = "../evaporchain-mera" }
+evaporchain-ib-validators    = { path = "../evaporchain-ib-validators" }
+evaporchain-self-annealing   = { path = "../evaporchain-self-annealing" }
+evaporchain-demurrage        = { path = "../evaporchain-demurrage" }
 evaporchain-refresh-market = { path = "../evaporchain-refresh-market" }
 evaporchain-script-lad = { path = "../evaporchain-script-lad" }
 evaporchain-boltzmann-stake = { path = "../evaporchain-boltzmann-stake" }
@@ -74,6 +79,7 @@ evaporchain-fee-controller = { path = "../evaporchain-fee-controller" }
 evaporchain-evap-fork-cert = { path = "../evaporchain-evap-fork-cert" }
 evaporchain-hlts = { path = "../evaporchain-hlts" }
 evaporchain-pnt = { path = "../evaporchain-pnt" }
+evaporchain-hlwa = { path = "../evaporchain-hlwa" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

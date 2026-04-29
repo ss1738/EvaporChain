@@ -4195,6 +4195,107 @@ async fn post_demo_reset(State(state): State<Arc<ApiState>>) -> Json<DemoResetRe
     })
 }
 
+// ─────────────── HLWA — Half-Life Wrapped Asset ─────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct HlwaEffectiveSupplyReq {
+    pub current_supply: u64,
+    pub origin_attested_supply: u64,
+    pub last_attested_epoch: u64,
+    /// Half-life of attestation freshness in epochs.
+    pub attestation_lambda_epochs: u64,
+    pub current_epoch: u64,
+}
+
+async fn post_hlwa_effective_supply(Json(req): Json<HlwaEffectiveSupplyReq>) -> Json<serde_json::Value> {
+    use evaporchain_energy_kernel::{ChainLambda, Lambda};
+    use evaporchain_hlwa::WrappedAsset;
+    let lambda = ChainLambda::new(Lambda::from_epochs(req.attestation_lambda_epochs.max(1)));
+    let asset = WrappedAsset::new(req.current_supply, req.origin_attested_supply, req.last_attested_epoch, lambda);
+    match asset.effective_supply(req.current_epoch) {
+        Ok(eff) => {
+            let excess = asset.excess_to_burn(req.current_epoch).unwrap_or(0);
+            Json(serde_json::json!({
+                "status": "ok",
+                "effective_supply": eff,
+                "current_supply": req.current_supply,
+                "excess_to_burn": excess,
+                "current_epoch": req.current_epoch,
+            }))
+        }
+        Err(e) => Json(serde_json::json!({"status":"error","detail":e.to_string()})),
+    }
+}
+
+async fn post_hlwa_re_attest(Json(req): Json<HlwaEffectiveSupplyReq>) -> Json<serde_json::Value> {
+    use evaporchain_energy_kernel::{ChainLambda, Lambda};
+    use evaporchain_hlwa::WrappedAsset;
+    let lambda = ChainLambda::new(Lambda::from_epochs(req.attestation_lambda_epochs.max(1)));
+    let before = WrappedAsset::new(req.current_supply, req.origin_attested_supply, req.last_attested_epoch, lambda);
+    let after = before.re_attest(req.current_supply, req.current_epoch);
+    Json(serde_json::json!({
+        "status": "ok",
+        "new_attested_supply": after.origin_attested_supply,
+        "new_last_attested_epoch": after.last_attested_epoch,
+        "effective_supply_after": after.effective_supply(req.current_epoch).unwrap_or(0),
+    }))
+}
+
+// ─────────────── LLSA Amendment Apply ────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct LlsaApplyAmendmentReq {
+    pub from_version: u32,
+    pub to_version: u32,
+    pub step_new_descriptor_hex: String,
+    pub to_version_seed_energy: u64,
+    pub activation_epoch: u64,
+    /// Expected invariant id (32 bytes hex). Leave as 64 zeros for substrate mode.
+    pub expected_invariant_hex: String,
+}
+
+async fn post_llsa_apply_amendment(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<LlsaApplyAmendmentReq>,
+) -> Json<serde_json::Value> {
+    use evaporchain_llsa::{apply_amendment, Amendment};
+    use evaporchain_llsa::proof::{AlwaysAcceptVerifier, LlsaProof};
+
+    let descriptor = hex::decode(&req.step_new_descriptor_hex).unwrap_or_default();
+    let expected_invariant = match hex::decode(&req.expected_invariant_hex) {
+        Ok(b) if b.len() == 32 => { let mut a = [0u8; 32]; a.copy_from_slice(&b); a }
+        Ok(_) => return Json(serde_json::json!({"status":"error","detail":"expected_invariant_hex must be 64 hex chars"})),
+        Err(_) => [0u8; 32],
+    };
+
+    // Build amendment to compute its hash (needed for the proof binding).
+    let mut amendment = Amendment {
+        from_version: req.from_version,
+        to_version: req.to_version,
+        step_new_descriptor: descriptor,
+        proof: LlsaProof {
+            coq_term_hash: [0u8; 32],
+            target_invariant_id: expected_invariant,
+            bound_amendment_hash: [0u8; 32], // placeholder, filled below
+            proof_bytes: vec![],
+        },
+    };
+    // Bind proof to the canonical amendment hash so AlwaysAcceptVerifier accepts.
+    amendment.proof.bound_amendment_hash = amendment.hash();
+
+    let mut reg = safe_lock(&state.epv_registry);
+    match apply_amendment(&mut reg, &amendment, expected_invariant, req.to_version_seed_energy, req.activation_epoch, &AlwaysAcceptVerifier) {
+        Ok(()) => Json(serde_json::json!({
+            "status": "ok",
+            "from_version": req.from_version,
+            "to_version": req.to_version,
+            "seed_energy": req.to_version_seed_energy,
+            "total_versions": reg.len(),
+        })),
+        Err(e) => Json(serde_json::json!({"status":"error","detail":e.to_string()})),
+    }
+}
+
 // ─────────────── HLTS — Hashgraph-Like Threshold Shares ─────────────
 
 #[derive(Debug, Deserialize)]
@@ -5175,6 +5276,13 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     // RG Phase Map — consensus regime classification
     ApiDocEntry { method: "POST", path: "/api/rg_phase/classify",           category: "substrate", description: "Classify a (λ_eff, validator_count, adversary_fraction) tuple into a consensus regime: LivenessStable | SafetyStable | Frozen | Chaotic.", example: Some(r#"{"lambda_eff":4096,"n_validators":10,"adversary_fraction_per_mille":50}"#) },
     ApiDocEntry { method: "POST", path: "/api/rg_phase/trajectory",         category: "substrate", description: "Classify a WSBF phase trajectory. Feed in the effective_params from /api/wsbf/rg_flow. Returns one ConsensusPhase per step + fixed_point_step index.", example: Some(r#"{"steps":[{"step":0,"height_start":0,"height_end":99,"lambda_eff":4096,"effective_accounts":10,"energy_density":1000,"entropy_mb":0}],"n_validators":10,"adversary_fraction_per_mille":50}"#) },
+
+    // HLWA — Hashgraph-Locked Wrapped Asset λ-decay gate
+    ApiDocEntry { method: "POST", path: "/api/hlwa/effective_supply",       category: "substrate", description: "Compute effective wrapped-asset supply after λ-decay of attestation freshness. Returns current_supply, effective_supply, excess_to_burn. Bridge anti-inflation gate.", example: Some(r#"{"current_supply":1000000,"origin_attested_supply":1000000,"last_attested_epoch":0,"attestation_lambda_epochs":500,"current_epoch":100}"#) },
+    ApiDocEntry { method: "POST", path: "/api/hlwa/re_attest",              category: "substrate", description: "Simulate a HLWA re-attestation from origin chain. Resets last_attested_epoch and origin_attested_supply; returns updated effective_supply.", example: Some(r#"{"current_supply":1000000,"origin_attested_supply":1000000,"last_attested_epoch":0,"attestation_lambda_epochs":500,"current_epoch":200}"#) },
+
+    // LLSA — Lean-verified protocol amendment gate
+    ApiDocEntry { method: "POST", path: "/api/llsa/apply_amendment",        category: "substrate", description: "Apply a LLSA protocol amendment (from_version → to_version) via the Coq-verified proof gate. Substrate mode uses AlwaysAcceptVerifier. Registers the new version in the EPV registry.", example: Some(r#"{"from_version":3,"to_version":4,"step_new_descriptor_hex":"deadbeef","to_version_seed_energy":1000000000,"activation_epoch":0,"expected_invariant_hex":"0000000000000000000000000000000000000000000000000000000000000000"}"#) },
 
     // Autopoietic health — Maturana-Varela viability check
     ApiDocEntry { method: "GET",  path: "/api/autopoietic/health",          category: "substrate", description: "Autopoietic chain viability report (Maturana-Varela 1980): Patronage (self-funding), Sentinel (self-maintenance), LLSA (self-boundary). Reports Viable | Stressed | Inviable.", example: None },
@@ -8982,6 +9090,9 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/wsbf/rg_flow", post(post_wsbf_rg_flow))
         .route("/api/rg_phase/classify", post(post_rg_phase_classify))
         .route("/api/rg_phase/trajectory", post(post_rg_phase_trajectory))
+        .route("/api/hlwa/effective_supply", post(post_hlwa_effective_supply))
+        .route("/api/hlwa/re_attest", post(post_hlwa_re_attest))
+        .route("/api/llsa/apply_amendment", post(post_llsa_apply_amendment))
         .route("/api/autopoietic/health", get(get_autopoietic_health))
         .route("/api/consensus/phase", get(get_consensus_phase))
         .route("/api/demo/reset", post(post_demo_reset))
