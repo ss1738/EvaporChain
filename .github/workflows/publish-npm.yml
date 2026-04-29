@@ -1,0 +1,41 @@
+name: Publish — npm packages
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish-sdk:
+    name: Publish @evaporchain/sdk
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+      - run: npm ci
+      - run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-wallet-sdk:
+    name: Publish @evaporchain/wallet-sdk
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: wallet-sdk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+      - run: npm ci
+      - run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

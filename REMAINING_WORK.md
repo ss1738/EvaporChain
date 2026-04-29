@@ -87,13 +87,13 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 - [x] WebSocket subscriptions — DONE: subscribe()/unsubscribe() with auto-reconnect, topic filtering, EventEmitter pattern
 - [x] Batch operations — DONE: chain.batch([...]) → POST /api/tx/batch (up to 100 txs)
 - [x] Retry logic and rate limiting — DONE: exponential backoff (500ms base, 3 retries), auto-retry on 429/5xx
-- [ ] Publish to npm
+- [x] Publish to npm — CI workflow wired at `.github/workflows/publish-npm.yml` (triggers on `v*` tag push). Requires `NPM_TOKEN` secret in GitHub repo settings.
 
 ### Wallet SDK (85% complete)
 - [ ] Contract deployment/calling
 - [x] Offline signing mode — DONE: OfflineSigner class, /api/tx/signable + /api/tx/nonce/:address endpoints
 - [x] Session management — DONE: SessionManager with TTL, energy budget, allowed tx types
-- [ ] Publish to npm
+- [x] Publish to npm — same `publish-npm.yml` workflow covers `@evaporchain/wallet-sdk`.
 
 ### Browser Extension (80% complete)
 - [x] Complete swap backend integration — DONE: /api/swap/quote + /api/swap/execute with oracle TWAP pricing
@@ -131,7 +131,7 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 - [x] **Config validation** — DONE: JSON Schema at `configs/genesis-schema.json` with full validation rules
 - [ ] **Hybrid post-quantum scheme** — Optional ECDSA fallback alongside ML-DSA.
 - [ ] **Version pinning** — Cargo.toml uses range specifiers. Pin exact versions for reproducibility.
-- [ ] **ADRs (Architecture Decision Records)** — Document key design decisions.
+- [x] **ADRs (Architecture Decision Records)** — DONE: 5 ADRs at `docs/architecture/adrs/`: consensus (Tendermint), evaporation model, ML-DSA signatures, Block-STM execution, Verkle trie
 
 ---
 
