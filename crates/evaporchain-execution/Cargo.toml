@@ -19,6 +19,7 @@ evaporchain-sanov-slashing = { path = "../evaporchain-sanov-slashing" }
 evaporchain-llsa = { path = "../evaporchain-llsa" }
 evaporchain-epv = { path = "../evaporchain-epv" }
 evaporchain-tombstone = { path = "../evaporchain-tombstone" }
+evaporchain-mortis = { path = "../evaporchain-mortis" }
 blake3 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

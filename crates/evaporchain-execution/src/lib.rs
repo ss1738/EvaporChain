@@ -414,6 +414,15 @@ pub struct SimpleExecutor {
     /// Per INVENTION_STACK.md §1.2 conservation invariant: energy is
     /// never destroyed, only redirected.
     pub refresh_pool: evaporchain_energy_kernel::RefreshPool,
+    /// Mortis monitor — tracks consecutive epochs where refresh_pool
+    /// is at-or-below `condition.refresh_pool_floor`. When the run
+    /// hits `condition.sustained_epochs`, the chain auto-mints its
+    /// death certificate (the "final death" act). Chain ticks via
+    /// `tick_mortis(current_epoch)` per block.
+    pub mortis_monitor: evaporchain_mortis::MortisMonitor,
+    /// The death certificate, once Mortis triggers. Latched: never
+    /// reset. Light clients read this field to know the chain has died.
+    pub mortis_certificate: Option<evaporchain_mortis::MortisCertificate>,
 }
 
 /// Namespace key for the protocol-owned refresh pool. Storage rent
@@ -443,12 +452,46 @@ impl SimpleExecutor {
             call_depth: 0,
             eulogy_trie: evaporchain_tombstone::EulogyTrie::new(),
             refresh_pool: evaporchain_energy_kernel::RefreshPool::new(),
+            mortis_monitor: evaporchain_mortis::MortisMonitor::new(
+                evaporchain_mortis::MortisCondition::default_genesis(),
+            ),
+            mortis_certificate: None,
         }
     }
 
     /// Set the chain ID for signing message domain separation.
     pub fn set_chain_id(&mut self, chain_id: String) {
         self.chain_id = chain_id;
+    }
+
+    /// Per-block hook: advance the Mortis monitor against the current
+    /// refresh-pool total. If the death trigger fires this tick, mints
+    /// the chain's singleton death certificate from `state_root` and
+    /// the eulogy-trie root. Subsequent ticks after the trigger are
+    /// no-ops. Returns the certificate iff JUST minted on this tick.
+    ///
+    /// Per INVENTION_STACK.md Amendment 2 §A2.5: 'when refresh pool
+    /// falls below ε for N epochs, the final state root is auto-minted
+    /// as a single unowned NFT visible to all light clients forever.'
+    pub fn tick_mortis(
+        &mut self,
+        current_epoch: u64,
+        state_root: [u8; 32],
+    ) -> Option<&evaporchain_mortis::MortisCertificate> {
+        let pool_total = self.refresh_pool.total_accrued();
+        let outcome = self.mortis_monitor.tick(current_epoch, pool_total);
+        if matches!(outcome, evaporchain_mortis::TickOutcome::JustTriggered) {
+            let cert = evaporchain_mortis::mint_certificate(
+                state_root,
+                self.eulogy_trie.root(),
+                current_epoch,
+                pool_total,
+            );
+            self.mortis_certificate = Some(cert);
+            self.mortis_certificate.as_ref()
+        } else {
+            None
+        }
     }
 
     /// Create a test-friendly executor with a small privacy tree (depth 4).
@@ -471,6 +514,10 @@ impl SimpleExecutor {
             call_depth: 0,
             eulogy_trie: evaporchain_tombstone::EulogyTrie::new(),
             refresh_pool: evaporchain_energy_kernel::RefreshPool::new(),
+            mortis_monitor: evaporchain_mortis::MortisMonitor::new(
+                evaporchain_mortis::MortisCondition::default_genesis(),
+            ),
+            mortis_certificate: None,
         }
     }
 
@@ -493,6 +540,10 @@ impl SimpleExecutor {
             call_depth: 0,
             eulogy_trie: evaporchain_tombstone::EulogyTrie::new(),
             refresh_pool: evaporchain_energy_kernel::RefreshPool::new(),
+            mortis_monitor: evaporchain_mortis::MortisMonitor::new(
+                evaporchain_mortis::MortisCondition::default_genesis(),
+            ),
+            mortis_certificate: None,
         }
     }
 
@@ -515,6 +566,10 @@ impl SimpleExecutor {
             call_depth: 0,
             eulogy_trie: evaporchain_tombstone::EulogyTrie::new(),
             refresh_pool: evaporchain_energy_kernel::RefreshPool::new(),
+            mortis_monitor: evaporchain_mortis::MortisMonitor::new(
+                evaporchain_mortis::MortisCondition::default_genesis(),
+            ),
+            mortis_certificate: None,
         }
     }
 
@@ -541,6 +596,10 @@ impl SimpleExecutor {
             call_depth: 0,
             eulogy_trie: evaporchain_tombstone::EulogyTrie::new(),
             refresh_pool: evaporchain_energy_kernel::RefreshPool::new(),
+            mortis_monitor: evaporchain_mortis::MortisMonitor::new(
+                evaporchain_mortis::MortisCondition::default_genesis(),
+            ),
+            mortis_certificate: None,
         }
     }
 
@@ -567,6 +626,10 @@ impl SimpleExecutor {
             call_depth: 0,
             eulogy_trie: evaporchain_tombstone::EulogyTrie::new(),
             refresh_pool: evaporchain_energy_kernel::RefreshPool::new(),
+            mortis_monitor: evaporchain_mortis::MortisMonitor::new(
+                evaporchain_mortis::MortisCondition::default_genesis(),
+            ),
+            mortis_certificate: None,
         }
     }
 
@@ -594,6 +657,10 @@ impl SimpleExecutor {
             call_depth: 0,
             eulogy_trie: evaporchain_tombstone::EulogyTrie::new(),
             refresh_pool: evaporchain_energy_kernel::RefreshPool::new(),
+            mortis_monitor: evaporchain_mortis::MortisMonitor::new(
+                evaporchain_mortis::MortisCondition::default_genesis(),
+            ),
+            mortis_certificate: None,
         }
     }
 
