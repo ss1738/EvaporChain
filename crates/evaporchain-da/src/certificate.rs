@@ -66,8 +66,9 @@ impl DACertificate {
                 return false;
             }
 
-            // Reconstruct the signed message
-            let mut msg = Vec::with_capacity(8 + 32 + 8 + 4);
+            // Reconstruct the signed message — must match create_attestation exactly.
+            let mut msg = Vec::with_capacity(DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4);
+            msg.extend_from_slice(DA_ATTESTATION_DST);
             msg.extend_from_slice(&att.block_number.to_le_bytes());
             msg.extend_from_slice(&att.data_root);
             msg.extend_from_slice(&att.validator_id.to_le_bytes());
@@ -98,6 +99,12 @@ impl DACertificate {
     }
 }
 
+/// Domain-separation tag for DA attestation signatures.
+///
+/// Prepended to every signed message so a DA attestation BLS signature
+/// cannot be replayed as a consensus vote or oracle report.
+pub const DA_ATTESTATION_DST: &[u8] = b"evaporchain:da-attestation:v1:";
+
 /// Create a BLS-signed attestation for DA verification.
 pub fn create_attestation(
     block_number: u64,
@@ -107,8 +114,9 @@ pub fn create_attestation(
     stake: u64,
     keypair: &BlsKeypair,
 ) -> DAAttestation {
-    // Build the message to sign
-    let mut msg = Vec::with_capacity(8 + 32 + 8 + 4);
+    // Build the message to sign — DST prefix ensures cross-context separation.
+    let mut msg = Vec::with_capacity(DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4);
+    msg.extend_from_slice(DA_ATTESTATION_DST);
     msg.extend_from_slice(&block_number.to_le_bytes());
     msg.extend_from_slice(data_root);
     msg.extend_from_slice(&validator_id.to_le_bytes());
