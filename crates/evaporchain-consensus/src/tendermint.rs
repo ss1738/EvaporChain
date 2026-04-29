@@ -436,6 +436,11 @@ pub struct TendermintConsensus {
     /// Empty means MCC (default). Governance-set via
     /// `governance_set_fork_choice_mode`.
     pub fork_choice_attractors: Vec<evaporchain_singh_attractor::Attractor>,
+    /// Singh-Boltzmann Stake registry. Per-validator decay/refresh state
+    /// separate from the governance `ValidatorSet.stake` — the Boltzmann
+    /// stake is the *effective* staking weight after continuous decay.
+    /// Ticked per block: decay all → refresh proposer.
+    pub boltzmann_stakes: HashMap<u64, evaporchain_boltzmann_stake::ValidatorStake>,
 }
 
 impl TendermintConsensus {
@@ -498,6 +503,7 @@ impl TendermintConsensus {
             da_confirmed_height: 0,
             last_block_timestamp: 0,
             fork_choice_attractors: Vec::new(),
+            boltzmann_stakes: HashMap::new(),
         }
     }
 
@@ -794,6 +800,170 @@ impl TendermintConsensus {
             .unwrap_or("mcc")
     }
 
+    // ─── Singh-Boltzmann Stake ─────────────────────────────────────────────
+
+    /// Ensure `validator_id` has a Boltzmann stake entry. If not present,
+    /// seed it from the governance ValidatorSet's current stake value.
+    fn ensure_boltzmann_stake(&mut self, validator_id: u64) {
+        if !self.boltzmann_stakes.contains_key(&validator_id) {
+            let seed_stake = self
+                .validator_set
+                .get(validator_id)
+                .map(|v| v.stake)
+                .unwrap_or(0);
+            self.boltzmann_stakes.insert(
+                validator_id,
+                evaporchain_boltzmann_stake::ValidatorStake::fresh(seed_stake),
+            );
+        }
+    }
+
+    /// Decay all validators' Boltzmann stakes to `current_epoch`.
+    /// Called once per committed block.
+    pub fn decay_all_boltzmann_stakes(&mut self, current_epoch: u64) {
+        use evaporchain_boltzmann_stake::decay_validator_stake;
+        let chain_lambda = evaporchain_energy_kernel::ChainLambda::new(
+            evaporchain_energy_kernel::DEFAULT_LAMBDA,
+        );
+        // Seed any validator that doesn't have an entry yet.
+        let validator_ids: Vec<u64> = self
+            .validator_set
+            .validators()
+            .iter()
+            .map(|v| v.id)
+            .collect();
+        for id in &validator_ids {
+            self.ensure_boltzmann_stake(*id);
+        }
+        for (_, stake) in self.boltzmann_stakes.iter_mut() {
+            *stake = decay_validator_stake(*stake, chain_lambda, current_epoch);
+        }
+    }
+
+    /// Credit block-production refresh to the proposer's Boltzmann stake.
+    /// `refresh_amount` is governance-set; the launch default is the
+    /// expected decay-per-block at the target block rate.
+    pub fn refresh_proposer_boltzmann_stake(
+        &mut self,
+        proposer_id: u64,
+        current_epoch: u64,
+        refresh_amount: u64,
+    ) {
+        use evaporchain_boltzmann_stake::refresh_on_block;
+        self.ensure_boltzmann_stake(proposer_id);
+        if let Some(stake) = self.boltzmann_stakes.get_mut(&proposer_id) {
+            *stake = refresh_on_block(*stake, refresh_amount, current_epoch);
+        }
+    }
+
+    /// Boltzmann proposer weights for all active validators.
+    /// Returns `(validator_id, effective_weight)` pairs sorted descending.
+    /// `beta_mb` is the Boltzmann inverse-temperature parameter (launch default 1_000).
+    pub fn boltzmann_proposer_weights(&self, beta_mb: u64) -> Vec<(u64, u128)> {
+        use evaporchain_boltzmann_stake::proposer_weight;
+        let mut weights: Vec<(u64, u128)> = self
+            .validator_set
+            .validators()
+            .iter()
+            .map(|v| {
+                let b_stake = self
+                    .boltzmann_stakes
+                    .get(&v.id)
+                    .map(|s| s.active)
+                    .unwrap_or(v.stake);
+                // activity_score = blocks produced (health_score * 16 as proxy)
+                let activity = (v.health_score * 16.0).round() as u64;
+                let w = proposer_weight(b_stake, activity, beta_mb);
+                (v.id, w)
+            })
+            .collect();
+        weights.sort_by(|a, b| b.1.cmp(&a.1));
+        weights
+    }
+
+    // ─── Sanov Slashing ────────────────────────────────────────────────────
+
+    /// Slash a validator for equivocation using the Sanov large-deviation
+    /// formula. Replaces the hard-coded 10% penalty with the KL-rate
+    /// function cost of "all-equivocating" vs. "honest-within-tolerance".
+    ///
+    /// Honest distribution: `[window-1, 1]` (1 in `window` miss tolerance).
+    /// Observed distribution: `[0, window]` (fully equivocating).
+    /// Slash = stake × KL(observed ‖ honest) / 1000 (millibits), capped at stake.
+    pub fn sanov_slash_equivocation(&mut self, validator_id: u64, window: u64) -> u64 {
+        use evaporchain_sanov_slashing::{sanov_slash, Distribution};
+        let stake = match self.validator_set.get(validator_id) {
+            Some(v) => v.stake,
+            None => return 0,
+        };
+        let w = window.max(2);
+        let observed = match Distribution::from_counts(&[0, w]) {
+            Ok(d) => d,
+            Err(_) => return (stake as f64 * 0.10).round() as u64, // fallback
+        };
+        let honest = match Distribution::from_counts(&[w - 1, 1]) {
+            Ok(d) => d,
+            Err(_) => return (stake as f64 * 0.10).round() as u64,
+        };
+        let slash_amount = match sanov_slash(stake, &observed, &honest) {
+            Ok(s) => s,
+            Err(_) => (stake as f64 * 0.10).round() as u64,
+        };
+        // Apply to validator set.
+        if let Some(v) = self.validator_set.get_mut(validator_id) {
+            v.stake = v.stake.saturating_sub(slash_amount);
+            v.total_slashed += slash_amount;
+            v.jailed = true;
+            v.health_score = 0.0;
+        }
+        slash_amount
+    }
+
+    /// Slash a validator for downtime using the Sanov large-deviation formula.
+    /// `missed_blocks` = number missed in the observation `window`.
+    /// Honest distribution: `[window-1, 1]` (≈1% tolerance).
+    /// Observed distribution: `[window - missed_blocks, missed_blocks]`.
+    /// Slash = stake × KL(observed ‖ honest) / 1000, capped at stake.
+    pub fn sanov_slash_downtime(
+        &mut self,
+        validator_id: u64,
+        missed_blocks: u64,
+        window: u64,
+    ) -> u64 {
+        use evaporchain_sanov_slashing::{sanov_slash, Distribution};
+        if missed_blocks == 0 {
+            return 0;
+        }
+        let stake = match self.validator_set.get(validator_id) {
+            Some(v) => v.stake,
+            None => return 0,
+        };
+        let w = window.max(missed_blocks + 1);
+        let observed = match Distribution::from_counts(&[w - missed_blocks, missed_blocks]) {
+            Ok(d) => d,
+            Err(_) => return 0,
+        };
+        let honest = match Distribution::from_counts(&[w - 1, 1]) {
+            Ok(d) => d,
+            Err(_) => return 0,
+        };
+        let slash_amount = match sanov_slash(stake, &observed, &honest) {
+            Ok(s) => s,
+            Err(_) => return 0,
+        };
+        if slash_amount == 0 {
+            return 0;
+        }
+        if let Some(v) = self.validator_set.get_mut(validator_id) {
+            v.stake = v.stake.saturating_sub(slash_amount);
+            v.total_slashed += slash_amount;
+            if missed_blocks >= 3 {
+                v.jailed = true;
+            }
+        }
+        slash_amount
+    }
+
     /// Walk from `head` back to genesis via first-parent at each step.
     /// Returns the trajectory in genesis-first order, or None if `head`
     /// isn't in the Light-Cone DAG.
@@ -1003,6 +1173,7 @@ impl TendermintConsensus {
             da_confirmed_height: 0,
             last_block_timestamp: 0,
             fork_choice_attractors: Vec::new(),
+            boltzmann_stakes: HashMap::new(),
         }
     }
 

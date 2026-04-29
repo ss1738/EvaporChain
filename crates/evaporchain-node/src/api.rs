@@ -1572,6 +1572,182 @@ async fn get_patronage_immune(
     })
 }
 
+// ─────────── Boltzmann Stake + Sanov Slash observability ─────────────
+
+#[derive(Debug, Serialize)]
+pub struct BoltzmannStakeEntry {
+    pub validator_id: u64,
+    pub boltzmann_active: u64,
+    pub governance_stake: u64,
+    pub decay_ratio_pct: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BoltzmannWeightEntry {
+    pub validator_id: u64,
+    pub weight: u128,
+    pub boltzmann_active: u64,
+    pub governance_stake: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SanovSlashResp {
+    pub status: &'static str,
+    pub validator_id: u64,
+    pub slash_amount: u64,
+    pub detail: String,
+}
+
+/// GET /api/validators/boltzmann_stakes — current Boltzmann-decayed stake
+/// for all validators. Compares against governance stake to show decay ratio.
+async fn get_boltzmann_stakes(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
+    if let Some(tc_arc) = &state.tendermint {
+        let tc = safe_lock(tc_arc);
+        let entries: Vec<BoltzmannStakeEntry> = tc
+            .validator_set
+            .validators()
+            .iter()
+            .map(|v| {
+                let b_active = tc
+                    .boltzmann_stakes
+                    .get(&v.id)
+                    .map(|s| s.active)
+                    .unwrap_or(v.stake);
+                let decay_ratio = if v.stake > 0 {
+                    (b_active as f64 / v.stake as f64) * 100.0
+                } else {
+                    0.0
+                };
+                BoltzmannStakeEntry {
+                    validator_id: v.id,
+                    boltzmann_active: b_active,
+                    governance_stake: v.stake,
+                    decay_ratio_pct: (decay_ratio * 100.0).round() / 100.0,
+                }
+            })
+            .collect();
+        Json(serde_json::json!({
+            "status": "ok",
+            "validators": entries,
+            "detail": "boltzmann_active decays per-epoch; governance_stake is the governance-voting weight"
+        }))
+    } else {
+        Json(serde_json::json!({
+            "status": "error",
+            "detail": "Tendermint consensus not running"
+        }))
+    }
+}
+
+/// GET /api/validators/boltzmann_weights — Boltzmann proposer weights
+/// (stake × activity boost) sorted descending. Query: ?beta_mb=1000
+async fn get_boltzmann_weights(
+    State(state): State<Arc<ApiState>>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    let beta_mb: u64 = params
+        .get("beta_mb")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1_000);
+
+    if let Some(tc_arc) = &state.tendermint {
+        let tc = safe_lock(tc_arc);
+        let weights = tc.boltzmann_proposer_weights(beta_mb);
+        let entries: Vec<BoltzmannWeightEntry> = weights
+            .into_iter()
+            .map(|(id, w)| {
+                let b_active = tc
+                    .boltzmann_stakes
+                    .get(&id)
+                    .map(|s| s.active)
+                    .unwrap_or(0);
+                let gov_stake = tc.validator_set.get(id).map(|v| v.stake).unwrap_or(0);
+                BoltzmannWeightEntry {
+                    validator_id: id,
+                    weight: w,
+                    boltzmann_active: b_active,
+                    governance_stake: gov_stake,
+                }
+            })
+            .collect();
+        Json(serde_json::json!({
+            "status": "ok",
+            "beta_mb": beta_mb,
+            "weights": entries,
+            "detail": "higher weight → more likely to be selected as proposer"
+        }))
+    } else {
+        Json(serde_json::json!({
+            "status": "error",
+            "detail": "Tendermint consensus not running"
+        }))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SanovSlashReq {
+    pub validator_id: u64,
+    pub slash_type: String, // "equivocation" | "downtime"
+    pub missed_blocks: Option<u64>,
+    pub window: Option<u64>,
+}
+
+/// POST /api/validators/sanov_slash — apply a Sanov large-deviation slash to
+/// a validator. Slash type: "equivocation" (full Sanov slash for double-sign)
+/// or "downtime" (KL-divergence proportional to miss rate).
+async fn post_sanov_slash(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<SanovSlashReq>,
+) -> Json<SanovSlashResp> {
+    if let Some(tc_arc) = &state.tendermint {
+        let mut tc = safe_lock(tc_arc);
+        let (slash_amount, detail) = match req.slash_type.as_str() {
+            "equivocation" => {
+                let window = req.window.unwrap_or(1024);
+                let amount = tc.sanov_slash_equivocation(req.validator_id, window);
+                (
+                    amount,
+                    format!(
+                        "Sanov equivocation slash: KL(all-equivocating ‖ 1-in-{window}-tolerance) × stake = {amount}"
+                    ),
+                )
+            }
+            "downtime" => {
+                let missed = req.missed_blocks.unwrap_or(1);
+                let window = req.window.unwrap_or(100);
+                let amount = tc.sanov_slash_downtime(req.validator_id, missed, window);
+                (
+                    amount,
+                    format!(
+                        "Sanov downtime slash: {missed}/{window} missed, KL × stake = {amount}"
+                    ),
+                )
+            }
+            other => (
+                0,
+                format!("unknown slash_type {other:?}; use 'equivocation' or 'downtime'"),
+            ),
+        };
+        Json(SanovSlashResp {
+            status: if slash_amount > 0 || req.slash_type == "downtime" {
+                "slashed"
+            } else {
+                "no_slash"
+            },
+            validator_id: req.validator_id,
+            slash_amount,
+            detail,
+        })
+    } else {
+        Json(SanovSlashResp {
+            status: "error",
+            validator_id: req.validator_id,
+            slash_amount: 0,
+            detail: "Tendermint consensus not running".into(),
+        })
+    }
+}
+
 // ─────────── Governance: fork-choice mode amendment ─────────────────
 
 #[derive(Debug, Deserialize)]
@@ -3952,6 +4128,11 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     // Script-LAD compiler frontend (§4.1 #12 closure)
     ApiDocEntry { method: "POST", path: "/api/script_lad/check",     category: "script-lad", description: "Parse @lad annotations from script source and report resource verdicts at check_epoch. Flags unconsumed Linear resources and evaporations.", example: Some(r#"{"source":"@lad(mode=linear, value=1000)\nlet payment: u64 = 0;","check_epoch":5}"#) },
     ApiDocEntry { method: "POST", path: "/api/script_lad/simulate",  category: "script-lad", description: "Simulate a full LAD resource lifecycle: initialise from annotations, apply use/drop ops, tick to final_epoch, return verdicts.", example: Some(r#"{"source":"@lad(mode=decaying, window=10, value=500)\nlet voucher: u64 = 0;","created_epoch":0,"ops":[{"op":"use","field":"voucher","epoch":5}],"final_epoch":15}"#) },
+
+    // Singh-Boltzmann Stake + Sanov Slashing (§4.1 #5, §A1.3)
+    ApiDocEntry { method: "GET",  path: "/api/validators/boltzmann_stakes",  category: "validators", description: "Per-validator Singh-Boltzmann decayed stake vs governance stake. Decay ratio shows cumulative λ-decay since last block production.", example: None },
+    ApiDocEntry { method: "GET",  path: "/api/validators/boltzmann_weights", category: "validators", description: "Boltzmann proposer-selection weights (stake × activity boost). Query: ?beta_mb=1000", example: Some("?beta_mb=1000") },
+    ApiDocEntry { method: "POST", path: "/api/validators/sanov_slash",       category: "validators", description: "Apply Sanov KL-divergence slash. type=equivocation uses full slash; type=downtime uses missed_blocks/window miss rate.", example: Some(r#"{"validator_id":1,"slash_type":"downtime","missed_blocks":10,"window":100}"#) },
 
     // Governance
     ApiDocEntry { method: "GET",  path: "/api/governance/fork_choice_mode", category: "governance", description: "Current authoritative fork-choice mode (mcc|singh_attractor) + attractor set.", example: None },
@@ -7725,6 +7906,9 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/governance/fork_choice_mode", post(post_governance_fork_choice_mode))
         .route("/api/script_lad/check", post(post_script_lad_check))
         .route("/api/script_lad/simulate", post(post_script_lad_simulate))
+        .route("/api/validators/boltzmann_stakes", get(get_boltzmann_stakes))
+        .route("/api/validators/boltzmann_weights", get(get_boltzmann_weights))
+        .route("/api/validators/sanov_slash", post(post_sanov_slash))
         .route("/api/demo/reset", post(post_demo_reset))
         .route("/api/docs", get(get_api_docs))
         .route("/api/objects", get(get_objects))

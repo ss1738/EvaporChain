@@ -22,6 +22,8 @@ evaporchain-mcc = { path = "../evaporchain-mcc" }
 evaporchain-singh-attractor = { path = "../evaporchain-singh-attractor" }
 evaporchain-tur-liveness = { path = "../evaporchain-tur-liveness" }
 evaporchain-lambda-fold = { path = "../evaporchain-lambda-fold" }
+evaporchain-boltzmann-stake = { path = "../evaporchain-boltzmann-stake" }
+evaporchain-sanov-slashing = { path = "../evaporchain-sanov-slashing" }
 blake3 = "1"
 tokio = { workspace = true }
 serde = { workspace = true }
