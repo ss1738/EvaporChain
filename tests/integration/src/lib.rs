@@ -5197,3 +5197,85 @@ mod validator_slashing_integration {
         assert!(vs.total_stake() < before, "total stake must decrease after slashing");
     }
 }
+
+// ── State Snapshot serialization integration ─────────────────────────────────
+
+#[cfg(test)]
+mod state_snapshot_integration {
+    use evaporchain_state::{InMemoryStateDB, StateDB};
+    use evaporchain_state::snapshot::{SnapshotBuilder, serialize_snapshot, deserialize_snapshot};
+    use evaporchain_types::{Account, StateObject, ObjectState};
+
+    fn populated_db() -> InMemoryStateDB {
+        let mut db = InMemoryStateDB::new();
+        let addr = [0x01u8; 32];
+        db.put_account(Account {
+            address: addr,
+            balance: 10_000,
+            nonce: 5,
+            storage_deposit: 0,
+            storage_bytes: 0,
+        });
+        let obj = StateObject {
+            id: [0x02u8; 32],
+            owner: addr,
+            data: b"hello".to_vec(),
+            energy: 5000,
+            half_life: 50,
+            created_at: 0,
+            last_refreshed: 1,
+            state: evaporchain_types::ObjectState::Active,
+            grace_epoch: None,
+            decay_curve: None,
+        };
+        db.put_object(obj);
+        db
+    }
+
+    #[test]
+    fn snapshot_round_trips_through_serde() {
+        let mut db = populated_db();
+        let snap = SnapshotBuilder::create(&mut db, 42, 42).unwrap();
+        assert_eq!(snap.accounts.len(), 1);
+        assert_eq!(snap.objects.len(), 1);
+
+        let bytes = serialize_snapshot(&snap).unwrap();
+        let restored = deserialize_snapshot(&bytes).unwrap();
+
+        assert_eq!(snap.header.block_height, restored.header.block_height);
+        assert_eq!(snap.accounts.len(), restored.accounts.len());
+        assert_eq!(snap.objects.len(), restored.objects.len());
+    }
+
+    #[test]
+    fn snapshot_header_captures_block_height_and_epoch() {
+        let mut db = InMemoryStateDB::new();
+        let snap = SnapshotBuilder::create(&mut db, 100, 100).unwrap();
+        assert_eq!(snap.header.block_height, 100);
+        assert_eq!(snap.header.epoch, 100);
+    }
+
+    #[test]
+    fn empty_db_snapshot_has_zero_objects() {
+        let mut db = InMemoryStateDB::new();
+        let snap = SnapshotBuilder::create(&mut db, 0, 0).unwrap();
+        assert_eq!(snap.accounts.len(), 0);
+        assert_eq!(snap.objects.len(), 0);
+        assert_eq!(snap.ghosts.len(), 0);
+    }
+
+    #[test]
+    fn snapshot_hash_is_nonzero_for_populated_db() {
+        let mut db = populated_db();
+        let snap = SnapshotBuilder::create(&mut db, 1, 1).unwrap();
+        assert_ne!(snap.header.state_root, [0u8; 32]);
+    }
+
+    #[test]
+    fn serialized_bytes_are_nonempty() {
+        let mut db = populated_db();
+        let snap = SnapshotBuilder::create(&mut db, 1, 1).unwrap();
+        let bytes = serialize_snapshot(&snap).unwrap();
+        assert!(!bytes.is_empty());
+    }
+}
