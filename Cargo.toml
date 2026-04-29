@@ -39,6 +39,8 @@ members = [
     "crates/evaporchain-dsn",
     "crates/evaporchain-etlp",
     "crates/evaporchain-cone-bridge",
+    "crates/evaporchain-singh-attractor",
+    "crates/evaporchain-bell-beacon",
     "crates/evaporchain-crypto",
     "crates/evaporchain-state",
     "crates/evaporchain-consensus",

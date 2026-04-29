@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-singh-attractor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Singh Attractor Consensus. Folds into Singh-Lyapunov fee controller's stability framework — multiple equilibria + basin-of-attraction check. Per INVENTION_STACK.md §4.2 (Tier 2)."
+
+[dependencies]
+evaporchain-fee-controller = { path = "../evaporchain-fee-controller" }
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

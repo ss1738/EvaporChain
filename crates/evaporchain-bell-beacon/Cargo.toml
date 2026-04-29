@@ -1,0 +1,15 @@
+[package]
+name = "evaporchain-bell-beacon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Bell-Certified Beacon. Device-independent randomness from CHSH Bell-test correlations. Substrate exposes the CHSH-S-value gate; production wires real entangled-photon source. Per INVENTION_STACK.md §4.2 (Tier 2)."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
