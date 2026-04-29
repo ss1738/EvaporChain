@@ -26,6 +26,12 @@ use crate::db::StateDB;
 
 // ─────────────────────── Errors ─────────────────────────────────────────
 
+/// Minimum block height past the chain tip before a snapshot is safe from reorgs.
+/// Tendermint BFT finalizes instantly, but we require at least this many confirmations
+/// to protect sync nodes from loading a height that could theoretically be reverted
+/// in extreme slashing / equivocation scenarios (audit finding §8).
+pub const SNAPSHOT_MIN_FINALITY_DEPTH: u64 = 1;
+
 #[derive(Debug, Error)]
 pub enum SnapshotError {
     #[error("state root mismatch: expected {expected}, got {actual}")]
@@ -38,6 +44,8 @@ pub enum SnapshotError {
     DeserializationError(String),
     #[error("invalid snapshot: {0}")]
     Invalid(String),
+    #[error("snapshot at height {height} is below finality depth {required}")]
+    BelowFinalityDepth { height: u64, required: u64 },
     #[error("snapshot version mismatch: expected {expected}, got {actual}")]
     VersionMismatch { expected: u32, actual: u32 },
 }
@@ -109,7 +117,34 @@ pub struct StateSnapshot {
 pub struct SnapshotBuilder;
 
 impl SnapshotBuilder {
+    /// Create a snapshot that is safe to serve to sync nodes.
+    ///
+    /// Enforces that `block_height` is past `chain_tip - SNAPSHOT_MIN_FINALITY_DEPTH`
+    /// to protect against serving a snapshot for a height that could be reverted.
+    /// For testing or operator tooling where finality is externally guaranteed,
+    /// use [`create`] directly.
+    pub fn create_finalized(
+        db: &mut dyn StateDB,
+        block_height: u64,
+        epoch: u64,
+        chain_tip: u64,
+    ) -> Result<StateSnapshot, SnapshotError> {
+        if chain_tip > block_height
+            && chain_tip - block_height < SNAPSHOT_MIN_FINALITY_DEPTH
+        {
+            return Err(SnapshotError::BelowFinalityDepth {
+                height: block_height,
+                required: chain_tip.saturating_sub(SNAPSHOT_MIN_FINALITY_DEPTH - 1),
+            });
+        }
+        Self::create(db, block_height, epoch)
+    }
+
     /// Create a snapshot from the current state database.
+    ///
+    /// Callers MUST ensure `block_height` is past the finality window before
+    /// serving the snapshot to sync peers. Prefer [`create_finalized`] in
+    /// production code; this method is kept for testing and local tooling.
     pub fn create(
         db: &mut dyn StateDB,
         block_height: u64,
