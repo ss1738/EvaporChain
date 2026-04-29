@@ -2754,6 +2754,204 @@ async fn get_tur_liveness(State(state): State<Arc<ApiState>>) -> Json<TurLivenes
     })
 }
 
+// ─────────── Singh-Attractor fork choice (Tier 2) ──────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct SinghAttractorForkChoiceQuery {
+    pub candidates: String,
+    pub attractors: Vec<AttractorReq>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SinghAttractorForkChoiceResp {
+    pub chosen_head_hex: Option<String>,
+    pub considered: usize,
+    pub attractors: usize,
+}
+
+/// Singh-Attractor fork choice over caller-supplied candidate heads
+/// + attractor basins. For each candidate head, the chain reads its
+/// block "energy" from the Light-Cone DAG and returns whichever head
+/// lands in (or nearest to) an attractor basin. Per INVENTION_STACK.md
+/// §4.2 (Tier 2). Available alongside MCC for light clients to choose
+/// either rule.
+async fn post_singh_attractor_fork_choice(
+    State(state): State<Arc<ApiState>>,
+    Json(q): Json<SinghAttractorForkChoiceQuery>,
+) -> Json<SinghAttractorForkChoiceResp> {
+    let heads: Vec<[u8; 32]> = q
+        .candidates
+        .split(',')
+        .filter_map(|s| parse_hex32(s.trim()).ok())
+        .collect();
+    let attractors: Vec<evaporchain_singh_attractor::Attractor> = q
+        .attractors
+        .iter()
+        .map(|a| evaporchain_singh_attractor::Attractor::new(a.center, a.basin_radius))
+        .collect();
+    let tc = match state.tendermint.as_ref() {
+        Some(tc) => tc,
+        None => {
+            return Json(SinghAttractorForkChoiceResp {
+                chosen_head_hex: None,
+                considered: heads.len(),
+                attractors: attractors.len(),
+            });
+        }
+    };
+    let tc = safe_lock(tc);
+    let chosen = tc.singh_attractor_fork_choice(&heads, &attractors);
+    Json(SinghAttractorForkChoiceResp {
+        chosen_head_hex: chosen.map(hex::encode),
+        considered: heads.len(),
+        attractors: attractors.len(),
+    })
+}
+
+// ─────────── Cone-Merged Bridges (Tier 2) ──────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct ConeReq {
+    pub half_life_epochs: u64,
+    pub threshold: u64,
+    pub committed_energy: u64,
+    pub observed_epoch: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ConeBridgeQuery {
+    pub cone_a: ConeReq,
+    pub cone_b: ConeReq,
+    pub query_epoch: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ConeBridgeResp {
+    pub bridge_valid: bool,
+    pub cone_a_inside: bool,
+    pub cone_b_inside: bool,
+    pub query_epoch: u64,
+}
+
+fn cone_from_req(r: &ConeReq) -> evaporchain_cone_bridge::EnergyCone {
+    evaporchain_cone_bridge::EnergyCone::new(
+        evaporchain_energy_kernel::ChainLambda::new(
+            evaporchain_energy_kernel::Lambda::from_epochs(r.half_life_epochs.max(1)),
+        ),
+        r.threshold,
+        r.committed_energy,
+        r.observed_epoch,
+    )
+}
+
+async fn post_cone_bridge(Json(q): Json<ConeBridgeQuery>) -> Json<ConeBridgeResp> {
+    let a = cone_from_req(&q.cone_a);
+    let b = cone_from_req(&q.cone_b);
+    Json(ConeBridgeResp {
+        bridge_valid: evaporchain_cone_bridge::bridge_valid(&a, &b, q.query_epoch),
+        cone_a_inside: a.is_inside(q.query_epoch),
+        cone_b_inside: b.is_inside(q.query_epoch),
+        query_epoch: q.query_epoch,
+    })
+}
+
+// ─────────── EG-FSS forward-secure signatures (Tier 2) ─────────────
+
+#[derive(Debug, Deserialize)]
+pub struct EgFssSignVerifyQuery {
+    /// 32-byte hex seed for the EgFssKey. Caller controls — substrate
+    /// uses the seed verbatim as period 0 key material.
+    pub seed_hex: String,
+    /// Energy spent against the key before signing — drives evolution.
+    pub energy_spent: u64,
+    /// Threshold per period (energy units). Defaults to 100.
+    pub threshold_per_period: Option<u64>,
+    /// Hex-encoded message bytes to sign + verify.
+    pub message_hex: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EgFssSignVerifyResp {
+    pub status: &'static str,
+    pub period_index: u64,
+    pub key_material_hex: String,
+    pub signature_mac_hex: String,
+    pub verify_ok: bool,
+    pub detail: String,
+}
+
+/// Round-trip demo of the Energy-Indexed Forward-Secure Signature:
+/// build a key from seed, evolve it by `energy_spent`, sign the
+/// message, verify against the evolved period's key material. Per
+/// INVENTION_STACK.md §4.2 (Tier 2).
+async fn post_eg_fss_sign_verify(
+    Json(q): Json<EgFssSignVerifyQuery>,
+) -> Json<EgFssSignVerifyResp> {
+    let seed = match parse_hex32(&q.seed_hex) {
+        Ok(s) => s,
+        Err(e) => {
+            return Json(EgFssSignVerifyResp {
+                status: "error",
+                period_index: 0,
+                key_material_hex: String::new(),
+                signature_mac_hex: String::new(),
+                verify_ok: false,
+                detail: format!("bad seed_hex: {e}"),
+            });
+        }
+    };
+    let message = match hex::decode(&q.message_hex) {
+        Ok(m) => m,
+        Err(e) => {
+            return Json(EgFssSignVerifyResp {
+                status: "error",
+                period_index: 0,
+                key_material_hex: String::new(),
+                signature_mac_hex: String::new(),
+                verify_ok: false,
+                detail: format!("bad message_hex: {e}"),
+            });
+        }
+    };
+    let threshold = q.threshold_per_period.unwrap_or(100).max(1);
+    let key = evaporchain_eg_fss::EgFssKey::from_seed(seed);
+    let evolved = match key.evolve(q.energy_spent, threshold) {
+        Ok(k) => k,
+        Err(e) => {
+            return Json(EgFssSignVerifyResp {
+                status: "error",
+                period_index: 0,
+                key_material_hex: String::new(),
+                signature_mac_hex: String::new(),
+                verify_ok: false,
+                detail: format!("evolve: {e}"),
+            });
+        }
+    };
+    let sig = evaporchain_eg_fss::sign(&evolved, &message);
+    let verify_ok = evaporchain_eg_fss::verify(
+        evolved.key_material,
+        evolved.period_index,
+        &message,
+        &sig,
+    )
+    .is_ok();
+    Json(EgFssSignVerifyResp {
+        status: "ok",
+        period_index: evolved.period_index,
+        key_material_hex: hex::encode(evolved.key_material),
+        signature_mac_hex: hex::encode(sig.mac),
+        verify_ok,
+        detail: format!(
+            "key evolved {} periods (energy_spent={}, threshold={}); sig {}",
+            evolved.period_index,
+            q.energy_spent,
+            threshold,
+            if verify_ok { "verified" } else { "FAILED to verify" }
+        ),
+    })
+}
+
 // ─────────── MCC fork-choice (Jaynes 1980 + Stock 2009) ────────────
 
 #[derive(Debug, Deserialize)]
@@ -2961,6 +3159,9 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     ApiDocEntry { method: "POST", path: "/api/padic",                 category: "substrate", description: "2-adic ultrametric distance + valuations", example: Some(r#"{"x":12,"y":20}"#) },
     ApiDocEntry { method: "POST", path: "/api/tropical_weight",       category: "substrate", description: "Tropical-semiring weight of an energy value", example: Some(r#"{"energy":1000}"#) },
     ApiDocEntry { method: "POST", path: "/api/eb_fs_challenge",       category: "substrate", description: "Energy-Bound Fiat-Shamir challenge derivation", example: Some(r#"{"transcript_hex":"deadbeef","epoch":1,"epoch_energy":1000}"#) },
+    ApiDocEntry { method: "POST", path: "/api/singh_attractor_fork_choice", category: "substrate", description: "Singh-Attractor basin-based fork choice over candidate heads", example: Some(r#"{"candidates":"0xaa…,0xbb…","attractors":[{"center":50,"basin_radius":10}]}"#) },
+    ApiDocEntry { method: "POST", path: "/api/cone_bridge",           category: "substrate", description: "Cone-Merged Bridge validity — both chains' decay cones must contain the query epoch", example: Some(r#"{"cone_a":{"half_life_epochs":100,"threshold":500,"committed_energy":1000,"observed_epoch":0},"cone_b":{...},"query_epoch":50}"#) },
+    ApiDocEntry { method: "POST", path: "/api/eg_fss/sign_verify",    category: "substrate", description: "EG-FSS round-trip — evolve key by energy, sign, verify", example: Some(r#"{"seed_hex":"00…","energy_spent":1000,"threshold_per_period":100,"message_hex":"deadbeef"}"#) },
 
     // HBCT launch wedge
     ApiDocEntry { method: "GET",  path: "/api/hbct/state",            category: "hbct", description: "HBCT book summary (entry count, total MWh, top positions)", example: None },
@@ -6717,6 +6918,9 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/light_cone", get(get_light_cone))
         .route("/api/causal_cone", get(get_causal_cone))
         .route("/api/mcc_fork_choice", get(get_mcc_fork_choice))
+        .route("/api/singh_attractor_fork_choice", post(post_singh_attractor_fork_choice))
+        .route("/api/cone_bridge", post(post_cone_bridge))
+        .route("/api/eg_fss/sign_verify", post(post_eg_fss_sign_verify))
         .route("/api/tur_liveness", get(get_tur_liveness))
         .route("/api/cmu_check", get(get_cmu_check))
         .route("/api/crooks_refund", post(post_crooks_refund))

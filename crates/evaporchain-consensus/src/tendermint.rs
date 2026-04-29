@@ -607,6 +607,55 @@ impl TendermintConsensus {
         .ok()
     }
 
+    /// Singh-Attractor fork choice over `candidate_heads` against a
+    /// caller-supplied list of attractor basins. For each candidate
+    /// head, reads its block "energy" from the Light-Cone DAG and
+    /// returns the head that lands inside (or nearest to) one of the
+    /// attractors. Per INVENTION_STACK.md §4.2 (Tier 2 — Singh-
+    /// Attractor Consensus). Like `mcc_choose_fork`, exposed for light
+    /// clients ahead of governance promotion to authoritative fork
+    /// choice.
+    pub fn singh_attractor_fork_choice(
+        &self,
+        candidate_heads: &[[u8; 32]],
+        attractors: &[evaporchain_singh_attractor::Attractor],
+    ) -> Option<[u8; 32]> {
+        if attractors.is_empty() {
+            return None;
+        }
+        let mut best: Option<([u8; 32], u64)> = None;
+        for head in candidate_heads {
+            let block = self.light_cone_dag.get(head)?;
+            let energy = block.energy;
+            // Prefer in-basin candidates; fall back to closest-to-center.
+            let in_basin = attractors.iter().any(|a| a.contains(energy));
+            // Score: 0 if in basin, otherwise distance to nearest center.
+            let score: u64 = if in_basin {
+                0
+            } else {
+                attractors
+                    .iter()
+                    .map(|a| energy.abs_diff(a.center))
+                    .min()
+                    .unwrap_or(u64::MAX)
+            };
+            match best {
+                None => best = Some((*head, score)),
+                Some((_, prev_score)) if score < prev_score => {
+                    best = Some((*head, score));
+                }
+                Some((prev_head, prev_score)) if score == prev_score => {
+                    // Deterministic tie-break: lex-larger head wins.
+                    if *head > prev_head {
+                        best = Some((*head, score));
+                    }
+                }
+                _ => {}
+            }
+        }
+        best.map(|(h, _)| h)
+    }
+
     /// Run Maximum-Caliber-Coherence fork choice over `candidate_heads`.
     /// For each head, builds the parent-chain trajectory back to genesis
     /// (single-parent walk; first-parent of each block in the Light-Cone

@@ -19,6 +19,7 @@ evaporchain-light-cone = { path = "../evaporchain-light-cone" }
 evaporchain-causal-cone = { path = "../evaporchain-causal-cone" }
 evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
 evaporchain-mcc = { path = "../evaporchain-mcc" }
+evaporchain-singh-attractor = { path = "../evaporchain-singh-attractor" }
 evaporchain-tur-liveness = { path = "../evaporchain-tur-liveness" }
 evaporchain-lambda-fold = { path = "../evaporchain-lambda-fold" }
 blake3 = "1"

@@ -48,6 +48,8 @@ evaporchain-cslc = { path = "../evaporchain-cslc" }
 evaporchain-padic = { path = "../evaporchain-padic" }
 evaporchain-tropical = { path = "../evaporchain-tropical" }
 evaporchain-eb-fs = { path = "../evaporchain-eb-fs" }
+evaporchain-cone-bridge = { path = "../evaporchain-cone-bridge" }
+evaporchain-eg-fss = { path = "../evaporchain-eg-fss" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
