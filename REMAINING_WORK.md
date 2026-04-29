@@ -68,8 +68,8 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 
 ## MEDIUM — Ops & Deployment
 
-- [ ] **Terraform/IaC** — Modules for Hetzner/AWS/GCP. Reproducible infrastructure.
-- [ ] **Expanded devnet** — 10-20 validators on Hetzner (€5/mo CX21 each). Scripts exist at `scripts/deploy-testnet.sh`.
+- [x] **Terraform/IaC** — DONE: Hetzner module at `deploy/terraform/modules/hetzner/` (servers, network, firewall, volumes, monitoring). Testnet environment at `deploy/terraform/environments/testnet/`. Scales to 50 validators.
+- [ ] **Expanded devnet** — 10-20 validators on Hetzner (€5/mo CX21 each). Terraform ready; blocked on real binary URL + genesis_config_b64 from mainnet genesis CLI.
 - [x] **Log aggregation** — DONE: `--json-log` flag for structured JSON output via tracing-subscriber, RUST_LOG env filter support
 - [x] **Alerting rules** — DONE: 10 Prometheus alert rules at `deploy/alertmanager-rules.yaml` (consensus stalled, no peers, disk, memory, validator down)
 - [x] **Health check endpoints** — DONE: `/healthz` (liveness) and `/readyz` (readiness with block height, peers, uptime) in `api.rs`

@@ -1,0 +1,17 @@
+# Copy to terraform.tfvars and fill in real values.
+# Never commit terraform.tfvars to git.
+
+hcloud_token            = "your-hetzner-api-token"
+operator_ssh_public_key = "ssh-ed25519 AAAA... you@machine"
+binary_download_url     = "https://github.com/ss1738/EvaporChain/releases/download/v0.1.0/evaporchain-node-linux-amd64.tar.gz"
+genesis_config_b64      = ""   # base64 -i configs/prod.json
+grafana_admin_password  = "change-me"
+
+# Scale up for expanded devnet (10-20 validators across Hetzner EU):
+validator_count = 4
+server_type     = "cx21"   # 2vCPU / 4GB / €5/mo
+locations       = ["nbg1", "fsn1", "hel1"]
+data_volume_gb  = 40
+
+# Restrict SSH to your IP in production:
+admin_cidr_blocks = ["0.0.0.0/0"]

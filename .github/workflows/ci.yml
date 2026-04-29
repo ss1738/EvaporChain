@@ -70,11 +70,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Run benchmarks on PR branch
         run: |
-          cargo bench --workspace --no-fail-fast 2>&1 | tee bench-pr.txt
+          cargo bench --workspace --no-fail-fast -- --output-format bencher 2>&1 | tee bench-pr.txt
       - name: Run benchmarks on base branch
         run: |
           git checkout ${{ github.event.pull_request.base.sha }}
-          cargo bench --workspace --no-fail-fast 2>&1 | tee bench-base.txt
+          cargo bench --workspace --no-fail-fast -- --output-format bencher 2>&1 | tee bench-base.txt
           git checkout -
       - name: Check for regressions (>10%)
         run: |
