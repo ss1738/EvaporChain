@@ -1242,6 +1242,106 @@ async fn get_hbct_state(State(state): State<Arc<ApiState>>) -> Json<HbctStateRes
     })
 }
 
+// ── Oracle attestations + settlement ──
+
+#[derive(Debug, Deserialize)]
+pub struct HbctSeedAttestationReq {
+    pub delivery_location: String,
+    pub hour_slot: u64,
+    pub holder_hex: String,
+    pub mwh_delivered: u64,
+    pub attested_at_epoch: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HbctSettleResp {
+    pub status: &'static str,
+    pub settled_mwh: u64,
+    pub burnt_excess: u64,
+    pub detail: String,
+}
+
+/// Seed an oracle attestation into the in-memory MockOracleFeed.
+/// Production wires real GB Elexon BMRS / ENTSO-E adapters as a
+/// background task that calls this endpoint on every settlement
+/// notification, OR replaces the trait impl wholesale.
+async fn post_hbct_seed_attestation(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<HbctSeedAttestationReq>,
+) -> Json<HbctActionResp> {
+    let holder = match parse_hex32(&req.holder_hex) {
+        Ok(a) => a,
+        Err(e) => return Json(HbctActionResp { status: "error", detail: format!("bad holder: {e}") }),
+    };
+    let mut oracle = safe_lock(&state.hbct_oracle);
+    oracle.attestations.push(evaporchain_hbct::OracleAttestation {
+        delivery_location: req.delivery_location.into_bytes(),
+        hour_slot: req.hour_slot,
+        holder,
+        mwh_delivered: req.mwh_delivered,
+        attested_at_epoch: req.attested_at_epoch,
+    });
+    Json(HbctActionResp { status: "ok", detail: "attestation recorded".into() })
+}
+
+/// Settle one (location, slot, holder) HBCT position against the
+/// oracle. Burns any held capacity in excess of `mwh_delivered`
+/// (under-delivery is a delivery shortfall — the held tokens were
+/// never honored). Returns the settled amount and any excess burnt.
+async fn post_hbct_settle(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<HbctBalanceQuery>,
+) -> Json<HbctSettleResp> {
+    let holder = match parse_hex32(&req.holder_hex) {
+        Ok(a) => a,
+        Err(e) => {
+            return Json(HbctSettleResp {
+                status: "error",
+                settled_mwh: 0,
+                burnt_excess: 0,
+                detail: format!("bad holder: {e}"),
+            });
+        }
+    };
+    let location_bytes = req.delivery_location.into_bytes();
+    let attestation = {
+        let oracle = safe_lock(&state.hbct_oracle);
+        use evaporchain_hbct::oracle::OracleFeed;
+        oracle.attest(&location_bytes, req.hour_slot, holder)
+    };
+    let attestation = match attestation {
+        Some(a) => a,
+        None => {
+            return Json(HbctSettleResp {
+                status: "error",
+                settled_mwh: 0,
+                burnt_excess: 0,
+                detail: "no oracle attestation for this (location, slot, holder)".into(),
+            });
+        }
+    };
+    let mut book = safe_lock(&state.hbct_book);
+    let held = book.balance(&location_bytes, req.hour_slot, holder);
+    let settled = held.min(attestation.mwh_delivered);
+    let burnt_excess = held.saturating_sub(attestation.mwh_delivered);
+    if burnt_excess > 0 {
+        if let Err(e) = book.burn(&location_bytes, req.hour_slot, holder, burnt_excess) {
+            return Json(HbctSettleResp {
+                status: "error",
+                settled_mwh: 0,
+                burnt_excess: 0,
+                detail: format!("burn failed: {e}"),
+            });
+        }
+    }
+    Json(HbctSettleResp {
+        status: "ok",
+        settled_mwh: settled,
+        burnt_excess,
+        detail: format!("settled {} MWh; burnt {} MWh excess", settled, burnt_excess),
+    })
+}
+
 async fn get_objects(State(state): State<Arc<ApiState>>) -> Json<Vec<ObjectResponse>> {
     let db = safe_lock(&state.db);
     let history = safe_lock(&state.block_history);
@@ -4845,6 +4945,8 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/hbct/burn", post(post_hbct_burn))
         .route("/api/hbct/balance", post(post_hbct_balance))
         .route("/api/hbct/tick", post(post_hbct_tick))
+        .route("/api/hbct/seed_attestation", post(post_hbct_seed_attestation))
+        .route("/api/hbct/settle", post(post_hbct_settle))
         .route("/api/objects", get(get_objects))
         .route("/api/object/:id", get(get_single_object))
         .route("/api/accounts", get(get_accounts))
