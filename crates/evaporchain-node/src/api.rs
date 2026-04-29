@@ -1089,6 +1089,10 @@ pub struct EvaporChainIdentity {
     pub lambda_fold: LambdaFoldResp,
     pub lamport_time: LamportTimeResp,
     pub sentinel_param_count: usize,
+    /// HBCT — Hour-Block Capacity Tokens, the launch wedge per
+    /// INVENTION_STACK.md §A3.4. Inline so dashboards see the launch
+    /// dApp state without a second round trip.
+    pub hbct: HbctStateResp,
     pub wired_primitives: Vec<&'static str>,
     pub headline_sentence: &'static str,
 }
@@ -1205,6 +1209,8 @@ async fn get_identity(State(state): State<Arc<ApiState>>) -> Json<EvaporChainIde
         db.all_sentinel_params().len()
     };
 
+    let hbct = hbct_summary(&state);
+
     Json(EvaporChainIdentity {
         chain_id,
         four_act,
@@ -1213,6 +1219,7 @@ async fn get_identity(State(state): State<Arc<ApiState>>) -> Json<EvaporChainIde
         lambda_fold: lambda_fold_resp,
         lamport_time,
         sentinel_param_count,
+        hbct,
         wired_primitives: WIRED_PRIMITIVES.to_vec(),
         headline_sentence: HEADLINE_SENTENCE,
     })
@@ -1258,9 +1265,24 @@ pub struct HbctBalanceResp {
     pub mwh: u64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
+pub struct HbctEntryRow {
+    pub delivery_location: String,
+    pub hour_slot: u64,
+    pub holder_hex: String,
+    pub mwh_amount: u64,
+}
+
+#[derive(Debug, Serialize, Clone)]
 pub struct HbctStateResp {
     pub entry_count: usize,
+    pub total_mwh: u64,
+    pub distinct_locations: usize,
+    pub distinct_holders: usize,
+    pub distinct_hour_slots: usize,
+    /// Top 16 entries by MWh, descending. Caller paginates by hitting
+    /// future per-(location, slot) endpoints if needed.
+    pub top_entries: Vec<HbctEntryRow>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1513,10 +1535,39 @@ async fn get_refresh_pool(State(state): State<Arc<ApiState>>) -> Json<RefreshPoo
 }
 
 async fn get_hbct_state(State(state): State<Arc<ApiState>>) -> Json<HbctStateResp> {
+    Json(hbct_summary(&state))
+}
+
+fn hbct_summary(state: &ApiState) -> HbctStateResp {
     let book = safe_lock(&state.hbct_book);
-    Json(HbctStateResp {
-        entry_count: book.len(),
-    })
+    let mut total_mwh: u64 = 0;
+    let mut locs: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut holders: std::collections::BTreeSet<[u8; 32]> = std::collections::BTreeSet::new();
+    let mut slots: std::collections::BTreeSet<u64> = std::collections::BTreeSet::new();
+    let mut rows: Vec<HbctEntryRow> = Vec::with_capacity(book.entries.len());
+    for ((loc, slot, holder), mwh) in book.entries.iter() {
+        total_mwh = total_mwh.saturating_add(*mwh);
+        let loc_str = String::from_utf8_lossy(loc).into_owned();
+        locs.insert(loc_str.clone());
+        holders.insert(*holder);
+        slots.insert(*slot);
+        rows.push(HbctEntryRow {
+            delivery_location: loc_str,
+            hour_slot: *slot,
+            holder_hex: hex::encode(holder),
+            mwh_amount: *mwh,
+        });
+    }
+    rows.sort_by(|a, b| b.mwh_amount.cmp(&a.mwh_amount));
+    rows.truncate(16);
+    HbctStateResp {
+        entry_count: book.entries.len(),
+        total_mwh,
+        distinct_locations: locs.len(),
+        distinct_holders: holders.len(),
+        distinct_hour_slots: slots.len(),
+        top_entries: rows,
+    }
 }
 
 // ── Oracle attestations + settlement ──

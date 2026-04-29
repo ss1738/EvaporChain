@@ -37,6 +37,22 @@ type LamportTime = {
   tick_quantum: number;
 };
 
+type HbctEntry = {
+  delivery_location: string;
+  hour_slot: number;
+  holder_hex: string;
+  mwh_amount: number;
+};
+
+type HbctState = {
+  entry_count: number;
+  total_mwh: number;
+  distinct_locations: number;
+  distinct_holders: number;
+  distinct_hour_slots: number;
+  top_entries: HbctEntry[];
+};
+
 type Identity = {
   chain_id: string;
   four_act: FourAct;
@@ -45,6 +61,7 @@ type Identity = {
   lambda_fold: LambdaFold;
   lamport_time: LamportTime;
   sentinel_param_count: number;
+  hbct: HbctState;
   wired_primitives: string[];
   headline_sentence: string;
 };
@@ -137,6 +154,7 @@ export default function IdentityDashboard() {
         />
       </div>
 
+      <HbctPanel hbct={identity.hbct} />
       <FourActPanel act={identity.four_act} />
       <LivenessPanel liveness={identity.tur_liveness} />
       <FoldPanel fold={identity.lambda_fold} />
@@ -176,6 +194,101 @@ function Stat({
       </p>
       <p className="text-3xl font-light text-neutral-900">{value}</p>
       <p className="mt-1 text-xs text-neutral-500">{unit}</p>
+    </div>
+  );
+}
+
+function HbctPanel({ hbct }: { hbct: HbctState }) {
+  return (
+    <div className="rounded-xl border border-neutral-200 bg-white p-6">
+      <div className="mb-4 flex items-baseline justify-between">
+        <div>
+          <h2 className="text-xl font-light text-neutral-900">
+            HBCT — Hour-Block Capacity Tokens
+          </h2>
+          <p className="text-xs uppercase tracking-wider text-neutral-500">
+            Launch wedge · grid capacity that decays at H+1
+          </p>
+        </div>
+        <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">
+          launch dApp
+        </span>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-4">
+        <Stat
+          label="Open positions"
+          value={hbct.entry_count.toLocaleString()}
+          unit="entries"
+        />
+        <Stat
+          label="Total committed"
+          value={hbct.total_mwh.toLocaleString()}
+          unit="MWh"
+        />
+        <Stat
+          label="Hour slots"
+          value={hbct.distinct_hour_slots.toLocaleString()}
+          unit={`${hbct.distinct_locations} locations`}
+        />
+        <Stat
+          label="Distinct holders"
+          value={hbct.distinct_holders.toLocaleString()}
+          unit="counterparties"
+        />
+      </div>
+      {hbct.top_entries.length > 0 ? (
+        <div className="mt-6">
+          <p className="mb-3 text-xs uppercase tracking-wider text-neutral-500">
+            Top positions by MWh
+          </p>
+          <div className="overflow-hidden rounded-lg border border-neutral-200">
+            <table className="min-w-full divide-y divide-neutral-200 text-xs">
+              <thead className="bg-neutral-50">
+                <tr>
+                  <th className="px-3 py-2 text-left font-medium text-neutral-500">
+                    Location
+                  </th>
+                  <th className="px-3 py-2 text-left font-medium text-neutral-500">
+                    Hour slot
+                  </th>
+                  <th className="px-3 py-2 text-left font-medium text-neutral-500">
+                    Holder
+                  </th>
+                  <th className="px-3 py-2 text-right font-medium text-neutral-500">
+                    MWh
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-100 bg-white">
+                {hbct.top_entries.map((e, i) => (
+                  <tr key={`${e.delivery_location}-${e.hour_slot}-${e.holder_hex}-${i}`}>
+                    <td className="px-3 py-2 font-mono text-neutral-800">
+                      {e.delivery_location}
+                    </td>
+                    <td className="px-3 py-2 font-mono text-neutral-800">
+                      {e.hour_slot}
+                    </td>
+                    <td className="px-3 py-2 font-mono text-neutral-600">
+                      {trunc(e.holder_hex)}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-neutral-900">
+                      {e.mwh_amount.toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        <p className="mt-6 text-sm text-neutral-500">
+          No HBCT positions yet. Mint one via{" "}
+          <code className="font-mono text-neutral-700">
+            POST /api/hbct/mint
+          </code>
+          .
+        </p>
+      )}
     </div>
   );
 }
