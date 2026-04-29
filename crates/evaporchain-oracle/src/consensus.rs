@@ -98,8 +98,11 @@ impl TwapAccumulator {
     }
 
     pub fn twap(&self) -> Option<f64> {
+        // Require at least 2 entries with non-zero total duration.
+        // A single-entry TWAP is trivially manipulable in one block;
+        // returning None forces callers to wait for real history.
         if self.entries.len() < 2 {
-            return self.entries.first().map(|&(_, v)| v);
+            return None;
         }
         let mut weighted_sum = 0.0f64;
         let mut total_duration = 0u64;
@@ -111,7 +114,7 @@ impl TwapAccumulator {
             }
         }
         if total_duration == 0 {
-            return self.entries.first().map(|&(_, v)| v);
+            return None;
         }
         Some(weighted_sum / total_duration as f64)
     }
@@ -472,9 +475,11 @@ mod tests {
 
     #[test]
     fn test_twap_single_entry() {
+        // Single-entry TWAP returns None — requires at least 2 data points
+        // with non-zero time separation to prevent single-block manipulation.
         let mut twap = TwapAccumulator::new(3600);
         twap.push(1000, 60000.0);
-        assert_eq!(twap.twap(), Some(60000.0));
+        assert_eq!(twap.twap(), None);
     }
 
     #[test]

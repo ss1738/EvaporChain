@@ -4657,10 +4657,11 @@ mod oracle_consensus_integration {
     // ── TwapAccumulator ──
 
     #[test]
-    fn twap_single_entry_returns_that_value() {
+    fn twap_single_entry_returns_none() {
+        // Single-entry TWAP is None — prevents single-block price manipulation.
         let mut t = TwapAccumulator::new(300);
         t.push(1000, 60_000.0);
-        assert_eq!(t.twap(), Some(60_000.0));
+        assert_eq!(t.twap(), None);
     }
 
     #[test]
@@ -4676,9 +4677,9 @@ mod oracle_consensus_integration {
         t.push(800, 50_000.0);
         // push a fresh point at t=1000
         t.push(1000, 60_000.0);
-        // window = [940, 1000]; 800 < 940 so it should be evicted
+        // window = [940, 1000]; 800 < 940 so it should be evicted → 1 entry left → None
         assert_eq!(t.len(), 1);
-        assert_eq!(t.twap(), Some(60_000.0));
+        assert_eq!(t.twap(), None);
     }
 
     #[test]

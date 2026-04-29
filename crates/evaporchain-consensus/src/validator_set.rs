@@ -195,14 +195,25 @@ impl ValidatorSet {
     }
 
     /// Add a validator to the set.
-    /// If the validator has a BLS key, proof-of-possession must be verified
-    /// before calling this method. Use `add_validator_with_pop` for BLS-keyed
-    /// validators.
-    pub fn add_validator(&mut self, info: ValidatorInfo) {
-        // Don't add duplicates
-        if !self.validators.iter().any(|v| v.id == info.id) {
-            self.validators.push(info);
+    ///
+    /// Returns `false` (no-op) if:
+    /// - The validator ID already exists.
+    /// - The validator carries a BLS public key but `pop_verified` is false.
+    ///   Use [`add_validator_with_pop`] to register BLS-keyed validators; it
+    ///   verifies the proof-of-possession and sets `pop_verified = true`.
+    ///   Accepting an unverified BLS key opens rogue-key attacks on aggregate
+    ///   signature verification.
+    pub fn add_validator(&mut self, info: ValidatorInfo) -> bool {
+        // Reject duplicate
+        if self.validators.iter().any(|v| v.id == info.id) {
+            return false;
         }
+        // BLS key with unverified PoP is rejected — rogue-key attack surface.
+        if info.bls_public_key.as_ref().is_some_and(|k| !k.is_empty()) && !info.pop_verified {
+            return false;
+        }
+        self.validators.push(info);
+        true
     }
 
     /// Add a validator with BLS proof-of-possession verification.

@@ -765,6 +765,7 @@ mod tests {
             let kp = BlsKeypair::generate();
             let mut info = ValidatorInfo::new(i, stake, [i as u8; 32]);
             info.bls_public_key = Some(kp.public_key_bytes().0);
+            info.pop_verified = true; // test-only: bypass PoP to keep fixture simple
             vs.add_validator(info);
             kps.push(kp);
         }
