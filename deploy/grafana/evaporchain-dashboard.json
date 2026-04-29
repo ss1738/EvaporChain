@@ -99,6 +99,57 @@
         "type": "timeseries",
         "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
         "targets": [{ "expr": "evaporchain_avg_gas_per_block", "legendFormat": "{{instance}}" }]
+      },
+      {
+        "id": 13,
+        "title": "Fee Base (ppm)",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 0, "y": 28 },
+        "targets": [{ "expr": "evaporchain_fee_base_ppm", "legendFormat": "{{instance}}" }],
+        "fieldConfig": { "defaults": { "unit": "none", "thresholds": { "steps": [{ "value": 0, "color": "green" }, { "value": 5000000, "color": "yellow" }, { "value": 10000000, "color": "red" }] } } }
+      },
+      {
+        "id": 14,
+        "title": "EPV Live Versions",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 6, "y": 28 },
+        "targets": [{ "expr": "evaporchain_epv_live_versions", "legendFormat": "{{instance}}" }],
+        "fieldConfig": { "defaults": { "unit": "none" } }
+      },
+      {
+        "id": 15,
+        "title": "Autopoietic Viability",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 12, "y": 28 },
+        "targets": [{ "expr": "evaporchain_autopoietic_viability", "legendFormat": "{{instance}}" }],
+        "fieldConfig": { "defaults": { "unit": "none", "mappings": [{ "type": "value", "options": { "0": { "text": "Inviable", "color": "red" }, "1": { "text": "Stressed", "color": "yellow" }, "2": { "text": "Viable", "color": "green" } } }] } }
+      },
+      {
+        "id": 16,
+        "title": "Consensus Phase",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 18, "y": 28 },
+        "targets": [{ "expr": "evaporchain_consensus_phase", "legendFormat": "{{instance}}" }],
+        "fieldConfig": { "defaults": { "unit": "none", "mappings": [{ "type": "value", "options": { "0": { "text": "Chaotic", "color": "red" }, "1": { "text": "Frozen", "color": "orange" }, "2": { "text": "SafetyStable", "color": "yellow" }, "3": { "text": "LivenessStable", "color": "green" } } }] } }
+      },
+      {
+        "id": 17,
+        "title": "Fee Base Over Time (ppm)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+        "targets": [{ "expr": "evaporchain_fee_base_ppm", "legendFormat": "{{instance}}" }],
+        "fieldConfig": { "defaults": { "unit": "none" } }
+      },
+      {
+        "id": 18,
+        "title": "Autopoietic Viability Over Time",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+        "targets": [
+          { "expr": "evaporchain_autopoietic_viability", "legendFormat": "viability {{instance}}" },
+          { "expr": "evaporchain_consensus_phase", "legendFormat": "consensus {{instance}}" }
+        ],
+        "fieldConfig": { "defaults": { "unit": "none", "min": 0, "max": 3 } }
       }
     ],
     "templating": {
