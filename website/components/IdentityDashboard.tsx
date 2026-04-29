@@ -178,20 +178,72 @@ export default function IdentityDashboard() {
       <FoldPanel fold={identity.lambda_fold} endpoint={endpoint} />
       <PrimitivesPanel primitives={identity.wired_primitives} />
 
-      <div className="border-t border-neutral-200 pt-6 text-xs text-neutral-400">
-        Chain id: <code className="font-mono">{identity.chain_id}</code> ·
-        Polling every 5s ·{" "}
+      <DemoFooter endpoint={endpoint} chainId={identity.chain_id} setEndpoint={setEndpoint} />
+    </div>
+  );
+}
+
+function DemoFooter({
+  endpoint,
+  chainId,
+  setEndpoint,
+}: {
+  endpoint: string;
+  chainId: string;
+  setEndpoint: (s: string) => void;
+}) {
+  const [resetMsg, setResetMsg] = useState<string | null>(null);
+  const [resetting, setResetting] = useState(false);
+
+  async function reset() {
+    if (
+      !confirm(
+        "Clear all demo state (HBCT positions + Sentinel votes)? Chain history is untouched.",
+      )
+    )
+      return;
+    setResetting(true);
+    setResetMsg(null);
+    try {
+      const res = await fetch(`${endpoint}/api/demo/reset`, { method: "POST" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setResetMsg(data.detail);
+    } catch (e) {
+      setResetMsg(e instanceof Error ? e.message : "reset failed");
+    } finally {
+      setResetting(false);
+    }
+  }
+
+  return (
+    <div className="border-t border-neutral-200 pt-6 text-xs text-neutral-400">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <span>
+          Chain id: <code className="font-mono">{chainId}</code>
+        </span>
+        <span>·</span>
+        <span>Polling every 5s</span>
+        <span>·</span>
         <button
           onClick={() => {
-            const next =
-              prompt("Node base URL", endpoint) ?? endpoint;
+            const next = prompt("Node base URL", endpoint) ?? endpoint;
             setEndpoint(next);
           }}
           className="underline hover:text-neutral-600"
         >
           change node
         </button>
+        <span>·</span>
+        <button
+          onClick={reset}
+          disabled={resetting}
+          className="underline hover:text-neutral-600 disabled:opacity-50"
+        >
+          {resetting ? "Resetting…" : "reset demo state"}
+        </button>
       </div>
+      {resetMsg && <p className="mt-2 text-neutral-500">{resetMsg}</p>}
     </div>
   );
 }

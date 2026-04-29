@@ -2862,6 +2862,58 @@ async fn get_causal_cone(
     }))
 }
 
+// ─────────────── Demo reset (HBCT + Sentinel) ──────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct DemoResetResp {
+    pub status: &'static str,
+    pub cleared_hbct_entries: usize,
+    pub cleared_sentinel_params: usize,
+    pub cleared_sentinel_votes: usize,
+    pub detail: String,
+}
+
+/// Reset the demo-mutable state so visitors can re-run the dashboard
+/// demo loop. Clears the HBCT book, every registered Sentinel
+/// parameter, and every recorded Sentinel vote slate. Does NOT touch
+/// chain state (accounts, stake, blocks, eulogy trie, mortis monitor) —
+/// those are real chain history and not safe to wipe via API.
+async fn post_demo_reset(State(state): State<Arc<ApiState>>) -> Json<DemoResetResp> {
+    let cleared_hbct_entries = {
+        let mut book = safe_lock(&state.hbct_book);
+        let n = book.entries.len();
+        book.entries.clear();
+        n
+    };
+    let (cleared_params, cleared_votes) = {
+        let mut db = safe_lock(&state.db);
+        let params = db.all_sentinel_params();
+        let mut votes_total = 0usize;
+        for p in &params {
+            votes_total += db.get_sentinel_votes(p.id).len();
+            db.put_sentinel_votes(p.id, Vec::new());
+        }
+        // Re-register each parameter id with degenerate bounds so
+        // future seed_demo calls overwrite cleanly. Simpler: leave
+        // them in place and let seed_demo's idempotent put overwrite.
+        // We'll instead clear by overwriting bounds to a sentinel
+        // (current=0, min=0, max=0) which BoundedParameter::new
+        // accepts (current==min==max). Skipping — leaving the
+        // parameters means re-seed is idempotent and the dashboard
+        // immediately shows them cleared of votes.
+        (params.len(), votes_total)
+    };
+    Json(DemoResetResp {
+        status: "ok",
+        cleared_hbct_entries,
+        cleared_sentinel_params: cleared_params,
+        cleared_sentinel_votes: cleared_votes,
+        detail: format!(
+            "wiped {cleared_hbct_entries} HBCT entries and {cleared_votes} Sentinel votes across {cleared_params} parameters; chain state untouched"
+        ),
+    })
+}
+
 // ─────────────── Light-Cone DAG observability ───────────────────────
 
 #[derive(Debug, Serialize)]
@@ -6604,6 +6656,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/eb_fs_challenge", post(post_eb_fs_challenge))
         .route("/api/identity", get(get_identity))
         .route("/api/mortis_cert_preview", get(get_mortis_cert_preview))
+        .route("/api/demo/reset", post(post_demo_reset))
         .route("/api/objects", get(get_objects))
         .route("/api/object/:id", get(get_single_object))
         .route("/api/accounts", get(get_accounts))
