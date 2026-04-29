@@ -4771,3 +4771,81 @@ mod oracle_consensus_integration {
         ));
     }
 }
+
+// ── Script UpgradeContract integration ───────────────────────────────────────
+
+#[cfg(test)]
+mod script_upgrade_integration {
+    use evaporchain_script::{ScriptEngine, Value};
+
+    const COUNTER_V1: &str = r#"contract Counter {
+    state { count: u64 = 0 }
+    fn increment() { self.count += 1 }
+    fn get() -> u64 { return self.count }
+}"#;
+
+    const COUNTER_V2: &str = r#"contract Counter {
+    state { count: u64 = 0, version: u64 = 2 }
+    fn increment() { self.count += 1 }
+    fn get() -> u64 { return self.count }
+    fn get_version() -> u64 { return self.version }
+}"#;
+
+    const COUNTER_INCOMPATIBLE: &str = r#"contract CounterNew {
+    state { total: u64 = 0 }
+    fn add() { self.total += 1 }
+}"#;
+
+    fn zero_addr() -> [u8; 32] { [0u8; 32] }
+    fn other_addr() -> [u8; 32] { [1u8; 32] }
+
+    #[test]
+    fn upgrade_adds_new_field_preserves_existing_state() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(COUNTER_V1, zero_addr(), 5000, 100, 0).unwrap();
+        engine.call(id, "increment", vec![], zero_addr(), 1).unwrap();
+        engine.call(id, "increment", vec![], zero_addr(), 2).unwrap();
+
+        // Upgrade to V2 — adds `version` field
+        engine.upgrade_contract(id, COUNTER_V2, zero_addr(), 3).unwrap();
+
+        // Original count is preserved
+        let count = engine.call(id, "get", vec![], zero_addr(), 4).unwrap();
+        assert_eq!(count.return_value, Some(Value::U64(2)));
+
+        // New field exists with default
+        let ver = engine.call(id, "get_version", vec![], zero_addr(), 4).unwrap();
+        assert_eq!(ver.return_value, Some(Value::U64(2)));
+    }
+
+    #[test]
+    fn upgrade_by_non_creator_fails() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(COUNTER_V1, zero_addr(), 5000, 100, 0).unwrap();
+        assert!(engine.upgrade_contract(id, COUNTER_V2, other_addr(), 1).is_err());
+    }
+
+    #[test]
+    fn upgrade_removing_field_fails_schema_check() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(COUNTER_V1, zero_addr(), 5000, 100, 0).unwrap();
+        // COUNTER_INCOMPATIBLE removes `count` and replaces with `total`
+        assert!(engine.upgrade_contract(id, COUNTER_INCOMPATIBLE, zero_addr(), 1).is_err());
+    }
+
+    #[test]
+    fn upgrade_unknown_contract_fails() {
+        let mut engine = ScriptEngine::new();
+        assert!(engine.upgrade_contract(999, COUNTER_V2, zero_addr(), 0).is_err());
+    }
+
+    #[test]
+    fn increment_after_upgrade_still_works() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(COUNTER_V1, zero_addr(), 5000, 100, 0).unwrap();
+        engine.upgrade_contract(id, COUNTER_V2, zero_addr(), 1).unwrap();
+        engine.call(id, "increment", vec![], zero_addr(), 2).unwrap();
+        let r = engine.call(id, "get", vec![], zero_addr(), 3).unwrap();
+        assert_eq!(r.return_value, Some(Value::U64(1)));
+    }
+}
