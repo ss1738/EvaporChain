@@ -5049,6 +5049,146 @@ async fn post_rg_phase_trajectory(Json(req): Json<RgPhaseTrajectoryReq>) -> Json
     }))
 }
 
+// ─────────────── Demurrage ───────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct DemurrageOwedReq {
+    pub balance: u64,
+    pub last_touched_epoch: u64,
+    pub current_epoch: u64,
+    /// λ_base in parts-per-million per epoch (0 = disabled).
+    pub lambda_base_ppm: u64,
+    /// Energy threshold below which demurrage is zero.
+    pub threshold: u64,
+}
+
+/// POST /api/demurrage/owed — compute demurrage owed on an idle balance.
+///
+/// Pure function: no state mutation. Returns owed amount and the ppm rate.
+async fn post_demurrage_owed(Json(req): Json<DemurrageOwedReq>) -> Json<serde_json::Value> {
+    use evaporchain_demurrage::{demurrage_owed, rate_ppm, DemurrageParams};
+    let params = DemurrageParams::new(req.lambda_base_ppm, req.threshold);
+    let owed = demurrage_owed(req.balance, req.last_touched_epoch, req.current_epoch, &params);
+    let rate = rate_ppm(req.balance, &params);
+    let elapsed = req.current_epoch.saturating_sub(req.last_touched_epoch);
+    Json(serde_json::json!({
+        "status": "ok",
+        "balance": req.balance,
+        "last_touched_epoch": req.last_touched_epoch,
+        "current_epoch": req.current_epoch,
+        "elapsed_epochs": elapsed,
+        "rate_ppm": rate,
+        "owed": owed,
+        "remaining_balance": req.balance.saturating_sub(owed),
+        "is_disabled": params.is_disabled(),
+    }))
+}
+
+// ─────────────── MERA — authenticated energy state commitment ─────────
+
+#[derive(Debug, Deserialize)]
+pub struct MeraCommitReq {
+    /// Account energy values (physical layer, in chain energy units).
+    pub energies: Vec<u64>,
+    /// Chain's λ half-life in epochs.
+    pub lambda_half_life: u64,
+    /// τ₀ — base half-life assigned to MERA layer 0 (epochs).
+    pub base_half_life: u64,
+}
+
+/// POST /api/mera/commit — build a MERA state commitment from account energies.
+///
+/// Returns the 32-byte root_hash, per-layer hashes, and the compact
+/// header_bytes that go into the block header. Pure compute — no chain state.
+async fn post_mera_commit(Json(req): Json<MeraCommitReq>) -> Json<serde_json::Value> {
+    use evaporchain_mera::commit;
+    if req.energies.is_empty() {
+        return Json(serde_json::json!({ "status": "error", "error": "energies must be non-empty" }));
+    }
+    let lhl = req.lambda_half_life.max(1);
+    let bhl = req.base_half_life.max(1);
+    let (commitment, _tree) = commit(&req.energies, lhl, bhl);
+    let layer_hashes_hex: Vec<String> = commitment.layer_hashes.iter()
+        .map(|h| hex::encode(h))
+        .collect();
+    Json(serde_json::json!({
+        "status": "ok",
+        "n_accounts": commitment.n_accounts,
+        "depth": commitment.depth,
+        "lambda_half_life": commitment.lambda_half_life,
+        "root_hash": hex::encode(commitment.root_hash),
+        "layer_hashes": layer_hashes_hex,
+        "header_bytes": hex::encode(commitment.header_bytes()),
+    }))
+}
+
+// ─────────────── Self-Annealing Validator Gate ────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct AnnealingTempReq {
+    pub lambda_half_life: u64,
+    pub beta_mb: u64,
+    pub epoch: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AnnealedScoreDto {
+    pub stake: u64,
+    pub activity: u64,
+    pub uptime_milli: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AnnealingAcceptReq {
+    pub lambda_half_life: u64,
+    pub beta_mb: u64,
+    pub epoch: u64,
+    /// Deterministic slot nonce derived from block hash (never a PRNG).
+    pub slot_nonce: u64,
+    pub incumbent: AnnealedScoreDto,
+    pub candidate: AnnealedScoreDto,
+}
+
+/// POST /api/annealing/temperature — compute SA effective temperature at epoch.
+///
+/// T(epoch) = λ × 2^(−epoch/λ). Returns 0 once fully crystallised.
+async fn post_annealing_temperature(Json(req): Json<AnnealingTempReq>) -> Json<serde_json::Value> {
+    use evaporchain_self_annealing::{effective_temperature, AnnealingParams};
+    let params = AnnealingParams { lambda_half_life: req.lambda_half_life, beta_mb: req.beta_mb };
+    let temp = effective_temperature(&params, req.epoch);
+    let crystallised = temp == 0;
+    Json(serde_json::json!({
+        "status": "ok",
+        "epoch": req.epoch,
+        "lambda_half_life": req.lambda_half_life,
+        "effective_temperature": temp,
+        "crystallised": crystallised,
+        "half_lives_elapsed": if req.lambda_half_life > 0 { req.epoch / req.lambda_half_life } else { u64::MAX },
+    }))
+}
+
+/// POST /api/annealing/accepts_candidate — SA acceptance gate for validator set rotation.
+///
+/// Deterministic: given the same (epoch, slot_nonce, incumbent, candidate) every
+/// validator independently reaches the same accept/reject decision. Uses
+/// Kirkpatrick-Gelatt-Vecchi 1983 rational approximation — no PRNG.
+async fn post_annealing_accepts_candidate(Json(req): Json<AnnealingAcceptReq>) -> Json<serde_json::Value> {
+    use evaporchain_self_annealing::{accepts_candidate, effective_temperature, AnnealingParams, AnnealedScore};
+    let params = AnnealingParams { lambda_half_life: req.lambda_half_life, beta_mb: req.beta_mb };
+    let v_old = AnnealedScore { stake: req.incumbent.stake, activity: req.incumbent.activity, uptime_milli: req.incumbent.uptime_milli };
+    let v_new = AnnealedScore { stake: req.candidate.stake, activity: req.candidate.activity, uptime_milli: req.candidate.uptime_milli };
+    let accepted = accepts_candidate(&params, req.epoch, &v_old, &v_new, req.slot_nonce);
+    let temp = effective_temperature(&params, req.epoch);
+    Json(serde_json::json!({
+        "status": "ok",
+        "epoch": req.epoch,
+        "effective_temperature": temp,
+        "crystallised": temp == 0,
+        "accepted": accepted,
+        "detail": if accepted { "candidate accepted by SA gate" } else { "candidate rejected — incumbent retained" },
+    }))
+}
+
 // ─────────────── Autopoietic Chain Health ────────────────────────────
 
 async fn get_autopoietic_health(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
@@ -5276,6 +5416,16 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     // RG Phase Map — consensus regime classification
     ApiDocEntry { method: "POST", path: "/api/rg_phase/classify",           category: "substrate", description: "Classify a (λ_eff, validator_count, adversary_fraction) tuple into a consensus regime: LivenessStable | SafetyStable | Frozen | Chaotic.", example: Some(r#"{"lambda_eff":4096,"n_validators":10,"adversary_fraction_per_mille":50}"#) },
     ApiDocEntry { method: "POST", path: "/api/rg_phase/trajectory",         category: "substrate", description: "Classify a WSBF phase trajectory. Feed in the effective_params from /api/wsbf/rg_flow. Returns one ConsensusPhase per step + fixed_point_step index.", example: Some(r#"{"steps":[{"step":0,"height_start":0,"height_end":99,"lambda_eff":4096,"effective_accounts":10,"energy_density":1000,"entropy_mb":0}],"n_validators":10,"adversary_fraction_per_mille":50}"#) },
+
+    // Demurrage — native idle-balance demurrage (piecewise log rate)
+    ApiDocEntry { method: "POST", path: "/api/demurrage/owed",              category: "substrate", description: "Compute demurrage owed by an idle balance over elapsed epochs. Rate = lambda_base_ppm × log2(balance/threshold) ppm/epoch. Sink → refresh pool. Capped at balance.", example: Some(r#"{"balance":2000000,"last_touched_epoch":0,"current_epoch":1000,"lambda_base_ppm":1,"threshold":1024}"#) },
+
+    // MERA — Multi-scale Energy Renormalization Ansatz state commitment
+    ApiDocEntry { method: "POST", path: "/api/mera/commit",                 category: "substrate", description: "Build a MERA tensor-network state commitment from account energies. Returns blake3 root_hash, per-layer hashes, and the 32-byte header_bytes for the block header. λ-parameterised Vidal 2007 MERA.", example: Some(r#"{"energies":[1000,2000,3000,4000],"lambda_half_life":4096,"base_half_life":100}"#) },
+
+    // Self-Annealing — Kirkpatrick-Gelatt-Vecchi 1983 validator set crystallisation
+    ApiDocEntry { method: "POST", path: "/api/annealing/temperature",       category: "substrate", description: "Compute SA effective temperature at epoch. T(epoch)=λ×2^(−epoch/λ). Approaches 0 as the validator set crystallises; zero = no degrading moves accepted.", example: Some(r#"{"lambda_half_life":4096,"beta_mb":1000,"epoch":2048}"#) },
+    ApiDocEntry { method: "POST", path: "/api/annealing/accepts_candidate", category: "substrate", description: "Deterministic SA acceptance gate for validator rotation. Accepts if candidate is better OR T-weighted random acceptance (slot_nonce from block hash, never PRNG).", example: Some(r#"{"lambda_half_life":4096,"beta_mb":1000,"epoch":100,"slot_nonce":12345,"incumbent":{"stake":1000,"activity":10,"uptime_milli":900},"candidate":{"stake":1200,"activity":12,"uptime_milli":950}}"#) },
 
     // HLWA — Hashgraph-Locked Wrapped Asset λ-decay gate
     ApiDocEntry { method: "POST", path: "/api/hlwa/effective_supply",       category: "substrate", description: "Compute effective wrapped-asset supply after λ-decay of attestation freshness. Returns current_supply, effective_supply, excess_to_burn. Bridge anti-inflation gate.", example: Some(r#"{"current_supply":1000000,"origin_attested_supply":1000000,"last_attested_epoch":0,"attestation_lambda_epochs":500,"current_epoch":100}"#) },
@@ -9090,6 +9240,10 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/wsbf/rg_flow", post(post_wsbf_rg_flow))
         .route("/api/rg_phase/classify", post(post_rg_phase_classify))
         .route("/api/rg_phase/trajectory", post(post_rg_phase_trajectory))
+        .route("/api/demurrage/owed", post(post_demurrage_owed))
+        .route("/api/mera/commit", post(post_mera_commit))
+        .route("/api/annealing/temperature", post(post_annealing_temperature))
+        .route("/api/annealing/accepts_candidate", post(post_annealing_accepts_candidate))
         .route("/api/hlwa/effective_supply", post(post_hlwa_effective_supply))
         .route("/api/hlwa/re_attest", post(post_hlwa_re_attest))
         .route("/api/llsa/apply_amendment", post(post_llsa_apply_amendment))
