@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-entropic-slashing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Entropic Slashing. Shannon-weighted slash → energy-aware MEV burn → refresh pool. Sister to Sanov-Slashing (KL-weighted). Per INVENTION_STACK.md §4.2 (Tier 2 — the conservation triplet)."
+
+[dependencies]
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
+evaporchain-cmu-gate = { path = "../evaporchain-cmu-gate" }
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

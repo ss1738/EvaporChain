@@ -41,6 +41,8 @@ members = [
     "crates/evaporchain-cone-bridge",
     "crates/evaporchain-singh-attractor",
     "crates/evaporchain-bell-beacon",
+    "crates/evaporchain-eg-fss",
+    "crates/evaporchain-entropic-slashing",
     "crates/evaporchain-crypto",
     "crates/evaporchain-state",
     "crates/evaporchain-consensus",
