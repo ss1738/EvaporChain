@@ -1025,6 +1025,18 @@ impl TendermintConsensus {
         self.tur_window.len()
     }
 
+    /// Current consensus phase from the RG Phase Map.  `LivenessStable`
+    /// until enough blocks accumulate for the first WSBF coarse-grain step.
+    pub fn consensus_phase(&self) -> evaporchain_rg_phase_map::ConsensusPhase {
+        self.current_consensus_phase
+    }
+
+    /// Latest WSBF `EffectiveParams` (renormalized λ and energy density).
+    /// None until `WSBF_COARSE_GRAIN` blocks have been committed.
+    pub fn effective_params(&self) -> Option<&evaporchain_wsbf::params::EffectiveParams> {
+        self.last_effective_params.as_ref()
+    }
+
     /// Number of blocks in the parallel Light-Cone DAG. Should equal
     /// `committed_heights.len() - 1` minus genesis edge cases under
     /// normal operation. Read-only observability for now.
