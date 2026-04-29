@@ -404,6 +404,10 @@ pub struct SimpleExecutor {
     pub chain_id: String,
     /// Current contract call depth (guards against unbounded re-entrancy).
     call_depth: usize,
+    /// The chain's small-deaths memorial. Every account that fully
+    /// evaporates (storage rent zeros it out) is recorded here.
+    /// Append-only — the deliberate exception to §2.2 of the doctrine.
+    pub eulogy_trie: evaporchain_tombstone::EulogyTrie,
 }
 
 impl SimpleExecutor {
@@ -425,6 +429,7 @@ impl SimpleExecutor {
             reward_accumulator: None,
             chain_id: String::new(),
             call_depth: 0,
+            eulogy_trie: evaporchain_tombstone::EulogyTrie::new(),
         }
     }
 
@@ -451,6 +456,7 @@ impl SimpleExecutor {
             reward_accumulator: None,
             chain_id: String::new(),
             call_depth: 0,
+            eulogy_trie: evaporchain_tombstone::EulogyTrie::new(),
         }
     }
 
@@ -471,6 +477,7 @@ impl SimpleExecutor {
             reward_accumulator: None,
             chain_id: String::new(),
             call_depth: 0,
+            eulogy_trie: evaporchain_tombstone::EulogyTrie::new(),
         }
     }
 
@@ -491,6 +498,7 @@ impl SimpleExecutor {
             reward_accumulator: None,
             chain_id: String::new(),
             call_depth: 0,
+            eulogy_trie: evaporchain_tombstone::EulogyTrie::new(),
         }
     }
 
@@ -515,6 +523,7 @@ impl SimpleExecutor {
             reward_accumulator: None,
             chain_id: String::new(),
             call_depth: 0,
+            eulogy_trie: evaporchain_tombstone::EulogyTrie::new(),
         }
     }
 
@@ -539,6 +548,7 @@ impl SimpleExecutor {
             reward_accumulator: None,
             chain_id: String::new(),
             call_depth: 0,
+            eulogy_trie: evaporchain_tombstone::EulogyTrie::new(),
         }
     }
 
@@ -564,6 +574,7 @@ impl SimpleExecutor {
             reward_accumulator: None,
             chain_id: String::new(),
             call_depth: 0,
+            eulogy_trie: evaporchain_tombstone::EulogyTrie::new(),
         }
     }
 
@@ -1504,7 +1515,7 @@ impl SimpleExecutor {
         }
     }
 
-    fn collect_storage_rent(&self, db: &mut dyn StateDB) {
+    fn collect_storage_rent(&mut self, db: &mut dyn StateDB, current_epoch: u64) {
         let addresses = db.all_account_addresses();
         for addr in addresses {
             let rent_info = {
@@ -1524,9 +1535,26 @@ impl SimpleExecutor {
             if acct.balance >= rent_info.0 {
                 acct.balance -= rent_info.0;
             } else {
+                // Account is being zeroed out by storage rent — engrave
+                // the chain's small-deaths memorial via evaporchain-
+                // tombstone before we wipe state. Per doctrine §A2.5
+                // the eulogy trie is the deliberate exception to §2.2's
+                // anti-immutability rule.
+                let final_balance_before_wipe = acct.balance;
                 acct.balance = 0;
                 acct.storage_deposit = 0;
                 acct.storage_bytes = 0;
+                let tombstone = evaporchain_tombstone::mint(
+                    addr,
+                    final_balance_before_wipe,
+                    current_epoch,
+                    evaporchain_tombstone::CauseOfDeath::RentExhausted,
+                );
+                // Re-insertion would mean an account evaporated twice
+                // — impossible by construction. Silently ignore the
+                // already-memorialised case so a buggy iteration
+                // doesn't take down the chain.
+                let _ = self.eulogy_trie.insert(addr, tombstone);
             }
         }
     }
@@ -2076,7 +2104,7 @@ impl ExecutionEngine for SimpleExecutor {
         // would be drained roughly 50× faster than the tokenomics
         // declare. Closes the SimpleExecutor half of #6.
         if block.epoch > db.get_last_rent_epoch() {
-            self.collect_storage_rent(db);
+            self.collect_storage_rent(db, block.epoch);
             db.put_last_rent_epoch(block.epoch);
         }
 
