@@ -2018,6 +2018,120 @@ mod proving_integration {
     }
 }
 
+// ── Evaporation proof (Fiat-Shamir batch proving) integration ─────────────────
+
+#[cfg(test)]
+mod evaporation_proof_integration {
+    use evaporchain_proving::evaporation_proof::{
+        EvaporationClaim, EvaporationProver, EnergyDecayStatement,
+        verify_proof,
+    };
+
+    fn object_id(seed: u8) -> [u8; 20] { [seed; 20] }
+    fn nullifier(seed: u8) -> [u8; 32] { [seed; 32] }
+
+    // ── Decay statement: correct energy accepted ──────────────────────────
+
+    #[test]
+    fn decay_statement_correct_energy_accepted() {
+        let mut prover = EvaporationProver::new(100);
+        // half_life=10, elapsed=10 → energy = 1_000_000 >> 1 = 500_000
+        let stmt = EnergyDecayStatement {
+            object_id: object_id(1),
+            initial_energy: 1_000_000,
+            half_life: 10,
+            creation_epoch: 0,
+            current_epoch: 10,
+            claimed_energy: 500_000,
+        };
+        prover.add_decay(stmt).expect("correct decay statement must be accepted");
+    }
+
+    #[test]
+    fn decay_statement_wrong_energy_rejected() {
+        let mut prover = EvaporationProver::new(100);
+        let stmt = EnergyDecayStatement {
+            object_id: object_id(2),
+            initial_energy: 1_000_000,
+            half_life: 10,
+            creation_epoch: 0,
+            current_epoch: 10,
+            claimed_energy: 999_999, // wrong — should be 500_000
+        };
+        assert!(prover.add_decay(stmt).is_err(), "incorrect claimed energy must be rejected");
+    }
+
+    // ── Evaporation claim: at energy=0 epoch accepted ─────────────────────
+
+    #[test]
+    fn evaporation_claim_at_zero_epoch_accepted() {
+        let mut prover = EvaporationProver::new(200);
+        // half_life=1, elapsed=64 → energy = 64 >> 64 = 0
+        let claim = EvaporationClaim {
+            object_id: object_id(3),
+            initial_energy: 64,
+            half_life: 1,
+            creation_epoch: 0,
+            evaporation_epoch: 64,
+            nullifier: nullifier(0xAA),
+        };
+        prover.add_evaporation(claim).expect("evaporation at energy=0 must be accepted");
+    }
+
+    #[test]
+    fn evaporation_claim_before_zero_rejected() {
+        let mut prover = EvaporationProver::new(200);
+        // half_life=100, elapsed=10 → energy >> 0 = 1_000_000 (not zero)
+        let claim = EvaporationClaim {
+            object_id: object_id(4),
+            initial_energy: 1_000_000,
+            half_life: 100,
+            creation_epoch: 0,
+            evaporation_epoch: 10,
+            nullifier: nullifier(0xBB),
+        };
+        assert!(prover.add_evaporation(claim).is_err(), "evaporation with energy > 0 must be rejected");
+    }
+
+    // ── Full prove → verify round-trip ───────────────────────────────────
+
+    #[test]
+    fn evaporation_proof_prove_and_verify() {
+        let mut prover = EvaporationProver::new(500);
+
+        // Add two decay statements
+        for i in 0..2u8 {
+            prover.add_decay(EnergyDecayStatement {
+                object_id: object_id(i),
+                initial_energy: 1_000_000,
+                half_life: 10,
+                creation_epoch: 0,
+                current_epoch: 20,
+                claimed_energy: 250_000, // 2 halvings: 1_000_000 >> 2
+            }).unwrap();
+        }
+
+        // Add one evaporation claim
+        prover.add_evaporation(EvaporationClaim {
+            object_id: object_id(99),
+            initial_energy: 1,
+            half_life: 1,
+            creation_epoch: 0,
+            evaporation_epoch: 64,
+            nullifier: nullifier(0xFF),
+        }).unwrap();
+
+        let proof = prover.prove();
+        assert_eq!(proof.block_number, 500);
+        assert_eq!(proof.decay_statements.len(), 2);
+        assert_eq!(proof.evaporation_claims.len(), 1);
+        assert_ne!(proof.transcript_hash, [0u8; 32]);
+
+        let valid = verify_proof(&proof).expect("verify must not error");
+        assert!(valid, "batch evaporation proof must verify");
+    }
+}
+
 // ── Smart contract engine integration ────────────────────────────────────────
 
 #[cfg(test)]
