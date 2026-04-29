@@ -380,7 +380,7 @@ impl ValidatorSet {
             return None;
         }
 
-        let total: u64 = active.iter().map(|v| v.stake).fold(0u64, |a, s| a.saturating_add(s));
+        let total: u64 = active.iter().map(|v| v.effective_weight()).fold(0u64, |a, w| a.saturating_add(w));
         if total == 0 {
             let idx = epoch as usize % active.len();
             return Some(active[idx]);
@@ -390,7 +390,7 @@ impl ValidatorSet {
         let mut accumulated = 0u64;
 
         for validator in &active {
-            accumulated = accumulated.saturating_add(validator.stake);
+            accumulated = accumulated.saturating_add(validator.effective_weight());
             if accumulated > weighted_index {
                 return Some(validator);
             }
@@ -466,7 +466,7 @@ impl ValidatorSet {
             let penalty = per_miss.saturating_mul(missed_blocks);
             v.stake = v.stake.saturating_sub(penalty);
             v.total_slashed += penalty;
-            if missed_blocks >= 3 {
+            if missed_blocks >= 500 {
                 v.jailed = true;
             }
             v.health_score = (v.health_score - missed_blocks as f64 * 0.1).max(0.0);
@@ -654,7 +654,7 @@ impl ValidatorSet {
         if active.is_empty() {
             return None;
         }
-        let total: u64 = active.iter().map(|v| v.stake).fold(0u64, |a, s| a.saturating_add(s));
+        let total: u64 = active.iter().map(|v| v.effective_weight()).fold(0u64, |a, w| a.saturating_add(w));
         if total == 0 {
             let idx = epoch as usize % active.len();
             return Some(active[idx]);
@@ -662,7 +662,7 @@ impl ValidatorSet {
         let weighted_index = Self::epoch_hash_with_seed(epoch, beacon_seed) % total;
         let mut accumulated = 0u64;
         for validator in &active {
-            accumulated = accumulated.saturating_add(validator.stake);
+            accumulated = accumulated.saturating_add(validator.effective_weight());
             if accumulated > weighted_index {
                 return Some(validator);
             }

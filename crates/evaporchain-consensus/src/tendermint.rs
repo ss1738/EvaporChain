@@ -965,7 +965,7 @@ impl TendermintConsensus {
         if slash_amount == 0 {
             return 0;
         }
-        let jail = missed_blocks >= 3;
+        let jail = missed_blocks >= 500;
         self.validator_set.slash_with_amount(validator_id, slash_amount, jail)
     }
 
@@ -2279,8 +2279,19 @@ impl TendermintConsensus {
                 .update_health_score(producer_id, objects_evaporated);
             // Reset missed-proposal counter for successful producer
             self.missed_proposals.insert(producer_id, 0);
+            // Refresh Boltzmann stake for the block producer — credits
+            // active validators and "kills stake-and-lease-key-to-MEV"
+            // (INVENTION_STACK.md §4.1 #5).
+            let refresh_per_block = 100u64;
+            self.refresh_proposer_boltzmann_stake(producer_id, block.epoch, refresh_per_block);
         }
         self.validator_set.decay_health_scores();
+        // At each epoch boundary, apply Boltzmann decay to all validators.
+        // Idle validators' effective weight shrinks; active ones are refreshed
+        // above, keeping their weight stable.
+        if block.epoch != self.epoch {
+            self.decay_all_boltzmann_stakes(block.epoch);
+        }
 
         // Derive parent hash for next block
         let mut hash_input = Vec::new();
@@ -3041,7 +3052,7 @@ impl TendermintConsensus {
                 *misses += 1;
                 let total_misses = *misses;
 
-                if total_misses >= 3 {
+                if total_misses >= 500 {
                     let slashed = self.sanov_slash_downtime(expected_id, total_misses, SANOV_DOWNTIME_WINDOW);
                     warn!(
                         validator = expected_id,
@@ -3049,13 +3060,13 @@ impl TendermintConsensus {
                         slashed_amount = slashed,
                         "SLASHED for downtime (missed proposals)"
                     );
-                    // Reset counter after slashing (jailed at 3+)
+                    // Reset counter after slashing (jailed at 500+)
                     self.missed_proposals.insert(expected_id, 0);
                 } else {
                     debug!(
                         validator = expected_id,
                         missed_blocks = total_misses,
-                        "Proposer missed round (slash at 3)"
+                        "Proposer missed round (slash at 500)"
                     );
                 }
             }
@@ -3075,7 +3086,7 @@ impl TendermintConsensus {
                 let misses = self.missed_votes.entry(*vid).or_insert(0);
                 *misses += 1;
                 let total = *misses;
-                if total >= 5 {
+                if total >= 1000 {
                     let slashed = self.sanov_slash_downtime(*vid, total, SANOV_DOWNTIME_WINDOW);
                     warn!(
                         validator = vid,
