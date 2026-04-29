@@ -30,5 +30,8 @@ evaporchain-self-annealing = { path = "../../crates/evaporchain-self-annealing" 
 evaporchain-boltzmann-stake = { path = "../../crates/evaporchain-boltzmann-stake" }
 evaporchain-light-cone = { path = "../../crates/evaporchain-light-cone" }
 evaporchain-singh-attractor = { path = "../../crates/evaporchain-singh-attractor" }
+evaporchain-autopoietic = { path = "../../crates/evaporchain-autopoietic" }
+evaporchain-refresh-patronage = { path = "../../crates/evaporchain-refresh-patronage" }
+evaporchain-sentinel = { path = "../../crates/evaporchain-sentinel" }
 serde_json = "1"
 hex = "0.4"

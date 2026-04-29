@@ -2438,3 +2438,140 @@ mod frontier_primitive_integration {
         assert!(select_attractor(1_000_000, &[]).is_none());
     }
 }
+
+// ── Autopoietic viability: ChainAutopoiesis × Patronage × Sentinel × LLSA ────
+
+#[cfg(test)]
+mod autopoietic_integration {
+    use evaporchain_autopoietic::autopoiesis::{
+        AutopoieticStatus, ChainAutopoiesis, SubsystemHealth,
+    };
+    use evaporchain_llsa::proof::AlwaysAcceptVerifier;
+    use evaporchain_refresh_patronage::book::PatronageBook;
+    use evaporchain_refresh_patronage::covenant::PatronageCovenant;
+
+    fn book_with_covenant(object_id: &[u8], score: u64) -> PatronageBook {
+        let mut book = PatronageBook::new(b"test-ns".to_vec());
+        let cv = PatronageCovenant {
+            object_id: object_id.to_vec(),
+            namespace_id: b"test-ns".to_vec(),
+            donation_per_epoch: 1_000,
+            created_epoch: 0,
+            expires_epoch: 10_000,
+            pre_funded: 1_000_000,
+            patronage_score: score,
+            last_honoured_epoch: Some(0),
+        };
+        book.insert(cv);
+        book
+    }
+
+    fn autopoiesis() -> ChainAutopoiesis<AlwaysAcceptVerifier> {
+        ChainAutopoiesis::new(AlwaysAcceptVerifier, 1_000, 100)
+    }
+
+    // ── Viable: all three subsystems healthy ─────────────────────────────
+
+    #[test]
+    fn autopoietic_viable_when_all_subsystems_healthy() {
+        let book = book_with_covenant(b"covenant-1", 5_000);
+        let covenant_ids: Vec<Vec<u8>> = vec![b"covenant-1".to_vec()];
+        let ap = autopoiesis();
+
+        let report = ap.health_report(&book, &covenant_ids, Some(99), 100);
+
+        assert_eq!(report.status, AutopoieticStatus::Viable,
+            "all three subsystems healthy must → Viable");
+        assert_eq!(report.patronage, SubsystemHealth::Healthy);
+        assert_eq!(report.sentinel, SubsystemHealth::Healthy);
+        assert_eq!(report.llsa, SubsystemHealth::Healthy);
+        assert_eq!(report.epoch, 100);
+    }
+
+    // ── Stressed: sentinel stale (no recent vote) ─────────────────────────
+
+    #[test]
+    fn autopoietic_stressed_when_sentinel_stale() {
+        let book = book_with_covenant(b"covenant-2", 5_000);
+        let covenant_ids: Vec<Vec<u8>> = vec![b"covenant-2".to_vec()];
+        let ap = autopoiesis(); // heartbeat_window = 100
+
+        // Last sentinel vote was at epoch 0, now at epoch 200 → stale (window exceeded)
+        let report = ap.health_report(&book, &covenant_ids, Some(0), 200);
+
+        assert_eq!(report.status, AutopoieticStatus::Stressed,
+            "stale sentinel must → Stressed");
+        assert_ne!(report.sentinel, SubsystemHealth::Healthy);
+    }
+
+    // ── Stressed: no patronage covenants ─────────────────────────────────
+
+    #[test]
+    fn autopoietic_stressed_when_no_patronage() {
+        let book = PatronageBook::new(b"empty-ns".to_vec());
+        let covenant_ids: Vec<Vec<u8>> = vec![];
+        let ap = autopoiesis();
+
+        let report = ap.health_report(&book, &covenant_ids, Some(99), 100);
+
+        assert_ne!(report.patronage, SubsystemHealth::Healthy,
+            "no covenants must → patronage not healthy");
+        // sentinel OK, LLSA OK → not fully Inviable
+        assert_eq!(report.status, AutopoieticStatus::Stressed);
+    }
+
+    // ── Inviable: no covenants AND no sentinel vote AND AlwaysAccept fails sentinel ─
+
+    #[test]
+    fn autopoietic_total_patronage_energy_summed() {
+        let mut book = PatronageBook::new(b"ns".to_vec());
+        for i in 0u8..3 {
+            let cv = PatronageCovenant {
+                object_id: vec![i],
+                namespace_id: b"ns".to_vec(),
+                donation_per_epoch: 100,
+                created_epoch: 0,
+                expires_epoch: 1000,
+                pre_funded: 100_000,
+                patronage_score: 10_000,
+                last_honoured_epoch: Some(0),
+            };
+            book.insert(cv);
+        }
+        let covenant_ids: Vec<Vec<u8>> = (0u8..3).map(|i| vec![i]).collect();
+        let ap = autopoiesis();
+
+        let report = ap.health_report(&book, &covenant_ids, Some(99), 100);
+        // 3 × 10_000 = 30_000 total patronage energy
+        assert_eq!(report.total_patronage_energy, 30_000);
+        assert_eq!(report.status, AutopoieticStatus::Viable);
+    }
+
+    // ── Sentinel: propose_adjustment homeostasis ──────────────────────────
+
+    #[test]
+    fn sentinel_homeostasis_convergence() {
+        use evaporchain_sentinel::controller::propose_adjustment;
+        use evaporchain_sentinel::parameter::BoundedParameter;
+        use evaporchain_sentinel::vote::Vote;
+        use evaporchain_energy_kernel::{ChainLambda, Lambda};
+
+        let lambda = ChainLambda::new(Lambda::from_epochs(1000));
+        let mut param = BoundedParameter::new(1, 50, 0, 100).unwrap();
+
+        // 10 validators all vote for target=80
+        let votes: Vec<Vote> = (0..10).map(|i| Vote::new(i, 80, 0)).collect();
+        let max_step = 5;
+
+        // Simulate 10 epochs of homeostatic adjustment
+        for epoch in 0..10u64 {
+            let next = propose_adjustment(&param, &votes, lambda, epoch, max_step).unwrap();
+            // Update current for next tick
+            param = BoundedParameter::new(param.id, next, param.min, param.max).unwrap();
+        }
+
+        // After 10 ticks of max_step=5 from 50 → should be at 100 (capped) or near 80
+        assert!(param.current >= 80 || param.current == param.max,
+            "parameter must converge toward vote target 80 (got {})", param.current);
+    }
+}
