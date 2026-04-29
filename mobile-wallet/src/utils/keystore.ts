@@ -15,6 +15,7 @@ const KEYS = {
   PIN_HASH: 'evap_pin_hash',
   WALLET_CREATED: 'evap_wallet_created',
   AUTO_LOCK_TIMEOUT: 'evap_auto_lock_timeout',
+  HW_ACCOUNTS: 'evap_hw_accounts',
 } as const;
 
 const SECURE_OPTIONS: SecureStore.SecureStoreOptions = {
@@ -153,6 +154,33 @@ export const keystore = {
   async getAutoLockTimeout(): Promise<number> {
     const val = await SecureStore.getItemAsync(KEYS.AUTO_LOCK_TIMEOUT, SECURE_OPTIONS);
     return val ? parseInt(val, 10) : 5;
+  },
+
+  /**
+   * Store a hardware wallet derived address + derivation path.
+   * Multiple hardware accounts are stored as a JSON array.
+   */
+  async importHardwareAddress(address: string, path: string): Promise<void> {
+    const raw = await SecureStore.getItemAsync(KEYS.HW_ACCOUNTS, SECURE_OPTIONS);
+    const existing: Array<{ address: string; path: string }> = raw ? JSON.parse(raw) : [];
+    if (!existing.find((a) => a.address === address)) {
+      existing.push({ address, path });
+    }
+    await SecureStore.setItemAsync(KEYS.HW_ACCOUNTS, JSON.stringify(existing), SECURE_OPTIONS);
+    // Make first imported hw account the active address if no software wallet exists
+    const created = await SecureStore.getItemAsync(KEYS.WALLET_CREATED, SECURE_OPTIONS);
+    if (created !== 'true') {
+      await SecureStore.setItemAsync(KEYS.ADDRESS, address, SECURE_OPTIONS);
+      await SecureStore.setItemAsync(KEYS.WALLET_CREATED, 'hw', SECURE_OPTIONS);
+    }
+  },
+
+  /**
+   * Get all imported hardware wallet accounts.
+   */
+  async getHardwareAccounts(): Promise<Array<{ address: string; path: string }>> {
+    const raw = await SecureStore.getItemAsync(KEYS.HW_ACCOUNTS, SECURE_OPTIONS);
+    return raw ? JSON.parse(raw) : [];
   },
 
   /**

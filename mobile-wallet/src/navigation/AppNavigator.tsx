@@ -33,6 +33,9 @@ import HistoryScreen from '../screens/HistoryScreen';
 import FaucetScreen from '../screens/FaucetScreen';
 import EnergyDashboardScreen from '../screens/EnergyDashboardScreen';
 import StakingScreen from '../screens/StakingScreen';
+import HardwareWalletScreen from '../screens/HardwareWalletScreen';
+import WalletConnectScreen from '../screens/WalletConnectScreen';
+import OfflineModeScreen from '../screens/OfflineModeScreen';
 
 // ── Types ──
 
@@ -51,6 +54,9 @@ export type RootStackParamList = {
   History: undefined;
   Faucet: undefined;
   Staking: undefined;
+  HardwareWallet: undefined;
+  WalletConnect: undefined;
+  OfflineMode: undefined;
 };
 
 export type TabParamList = {
@@ -216,6 +222,9 @@ export const AppNavigator: React.FC<AppNavigatorProps> = ({ navigationRef }) => 
         <Stack.Screen name="History" component={HistoryScreen} options={{ title: 'Transaction History' }} />
         <Stack.Screen name="Faucet" component={FaucetScreen} options={{ title: 'Testnet Faucet' }} />
         <Stack.Screen name="Staking" component={StakingScreen} options={{ title: 'Staking' }} />
+        <Stack.Screen name="HardwareWallet" component={HardwareWalletScreen} options={{ title: 'Hardware Wallet' }} />
+        <Stack.Screen name="WalletConnect" component={WalletConnectScreen} options={{ title: 'WalletConnect' }} />
+        <Stack.Screen name="OfflineMode" component={OfflineModeScreen} options={{ title: 'Offline Queue' }} />
       </Stack.Navigator>
     </NavigationContainer>
   );

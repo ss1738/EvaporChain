@@ -105,9 +105,9 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 ### Mobile Wallet (60% complete)
 - [ ] Complete staking UI
 - [ ] Complete swap UI
-- [ ] Hardware wallet integration
-- [ ] WalletConnect support
-- [ ] Offline mode
+- [x] Hardware wallet integration — DONE: `HardwareWalletScreen.tsx` (BLE, 5-account derivation m/44'/9000'/0'/0/n, import to keystore)
+- [x] WalletConnect support — DONE: `WalletConnectScreen.tsx` (pair via URI, session list, approve/reject requests)
+- [x] Offline mode — DONE: `OfflineModeScreen.tsx` + `enqueueTransaction()` helper (AsyncStorage queue, NetInfo drain-on-reconnect)
 - [ ] App Store / Play Store submission
 
 ### Website + Explorer (65% complete)

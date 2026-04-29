@@ -354,6 +354,47 @@ const SettingsScreen: React.FC = () => {
           </View>
         </View>
 
+        {/* Advanced */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Advanced</Text>
+
+          <TouchableOpacity
+            style={styles.settingRow}
+            onPress={() => navigation.navigate('HardwareWallet')}
+            activeOpacity={0.7}
+          >
+            <View style={styles.settingLeft}>
+              <Text style={styles.settingLabel}>Hardware Wallet</Text>
+              <Text style={styles.settingSubtext}>Connect Ledger via Bluetooth</Text>
+            </View>
+            <Text style={styles.settingArrow}>{'>'}</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.settingRow}
+            onPress={() => navigation.navigate('WalletConnect')}
+            activeOpacity={0.7}
+          >
+            <View style={styles.settingLeft}>
+              <Text style={styles.settingLabel}>WalletConnect</Text>
+              <Text style={styles.settingSubtext}>Connect to dApps via QR code</Text>
+            </View>
+            <Text style={styles.settingArrow}>{'>'}</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.settingRow}
+            onPress={() => navigation.navigate('OfflineMode')}
+            activeOpacity={0.7}
+          >
+            <View style={styles.settingLeft}>
+              <Text style={styles.settingLabel}>Offline Queue</Text>
+              <Text style={styles.settingSubtext}>Manage queued transactions</Text>
+            </View>
+            <Text style={styles.settingArrow}>{'>'}</Text>
+          </TouchableOpacity>
+        </View>
+
         {/* Danger Zone */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: '#ef4444' }]}>Danger Zone</Text>
