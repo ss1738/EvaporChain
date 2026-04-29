@@ -27,6 +27,10 @@ const CF_SENTINEL_PARAMS: &str = "sentinel_params";
 /// Sentinel votes: full vote slate per parameter id, replaced atomically
 /// (one-vote-per-validator semantics handled at write site).
 const CF_SENTINEL_VOTES: &str = "sentinel_votes";
+/// Validator stake records keyed by validator_id (big-endian u64).
+const CF_STAKES: &str = "stakes";
+/// Delegation records keyed by (delegator_address[32] ++ validator_id_be[8]).
+const CF_DELEGATIONS: &str = "delegations";
 const TRIE_SNAPSHOT_KEY: &[u8] = b"__energy_verkle_trie__";
 const PRIVACY_NOTE_ROOT_KEY: &[u8] = b"__note_tree_root__";
 const PRIVACY_POOL_BALANCE_KEY: &[u8] = b"__shielded_pool_balance__";
@@ -103,6 +107,10 @@ pub struct RocksDBStateDB {
     sentinel_params: BTreeMap<u32, evaporchain_sentinel::BoundedParameter>,
     /// Sentinel votes per parameter id, write-through cached.
     sentinel_votes: BTreeMap<u32, Vec<evaporchain_sentinel::Vote>>,
+    /// Validator stake records, keyed by validator_id.
+    stakes: HashMap<u64, StakeRecord>,
+    /// Delegation records, keyed by delegation_key(delegator, validator_id).
+    delegations: HashMap<[u8; 40], DelegationRecord>,
     // Batch mode: buffer writes for atomic commit (Mutex for Sync)
     pending_batch: std::sync::Mutex<Option<WriteBatch>>,
     // Undo log for reverting in-memory state on rollback
@@ -126,6 +134,8 @@ impl RocksDBStateDB {
             ColumnFamilyDescriptor::new(CF_NOTE_COMMITMENTS, Options::default()),
             ColumnFamilyDescriptor::new(CF_SENTINEL_PARAMS, Options::default()),
             ColumnFamilyDescriptor::new(CF_SENTINEL_VOTES, Options::default()),
+            ColumnFamilyDescriptor::new(CF_STAKES, Options::default()),
+            ColumnFamilyDescriptor::new(CF_DELEGATIONS, Options::default()),
         ];
 
         let db = DB::open_cf_descriptors(&opts, path, cf_descriptors)
@@ -349,6 +359,44 @@ impl RocksDBStateDB {
             );
         }
 
+        // Load validator stake records.
+        let mut stakes: HashMap<u64, StakeRecord> = HashMap::new();
+        let cf_stk = db.cf_handle(CF_STAKES)
+            .ok_or_else(|| format!("missing column family: {CF_STAKES}"))?;
+        let iter = db.iterator_cf(cf_stk, rocksdb::IteratorMode::Start);
+        for item in iter {
+            let (key, value) = item.map_err(|e| format!("RocksDB iterator error: {}", e))?;
+            if key.len() == 8 {
+                if let Ok(record) = bincode::deserialize::<StakeRecord>(&value) {
+                    let id = u64::from_be_bytes(key[..8].try_into().unwrap());
+                    stakes.insert(id, record);
+                }
+            }
+        }
+
+        // Load delegation records (key = delegator[32] ++ validator_id_be[8]).
+        let mut delegations: HashMap<[u8; 40], DelegationRecord> = HashMap::new();
+        let cf_del = db.cf_handle(CF_DELEGATIONS)
+            .ok_or_else(|| format!("missing column family: {CF_DELEGATIONS}"))?;
+        let iter = db.iterator_cf(cf_del, rocksdb::IteratorMode::Start);
+        for item in iter {
+            let (key, value) = item.map_err(|e| format!("RocksDB iterator error: {}", e))?;
+            if key.len() == 40 {
+                if let Ok(record) = bincode::deserialize::<DelegationRecord>(&value) {
+                    let mut k = [0u8; 40];
+                    k.copy_from_slice(&key);
+                    delegations.insert(k, record);
+                }
+            }
+        }
+        if !stakes.is_empty() || !delegations.is_empty() {
+            println!(
+                "  RocksDB: loaded {} stakes, {} delegations",
+                stakes.len(),
+                delegations.len()
+            );
+        }
+
         Ok(Self {
             db,
             objects,
@@ -365,6 +413,8 @@ impl RocksDBStateDB {
             last_rent_epoch,
             sentinel_params,
             sentinel_votes,
+            stakes,
+            delegations,
             pending_batch: std::sync::Mutex::new(None),
             batch_undo: None,
         })
@@ -608,6 +658,82 @@ impl RocksDBStateDB {
             fatal_persistence_error("write_privacy_note_count", e);
         }
     }
+
+    fn persist_stake(&self, record: &StakeRecord) {
+        let key = record.validator_id.to_be_bytes();
+        let value = match bincode::serialize(record) {
+            Ok(v) => v,
+            Err(e) => fatal_persistence_error("serialize_stake", e),
+        };
+        let mut guard = self.pending_batch.lock().unwrap();
+        if let Some(ref mut batch) = *guard {
+            let cf = self.db.cf_handle(CF_STAKES).unwrap();
+            batch.put_cf(cf, key, &value);
+        } else {
+            drop(guard);
+            let cf = self.cf(CF_STAKES);
+            if let Err(e) = self.db.put_cf(cf, key, value) {
+                fatal_persistence_error("write_stake_to_rocksdb", e);
+            }
+        }
+    }
+
+    fn delete_stake_disk(&self, validator_id: u64) {
+        let key = validator_id.to_be_bytes();
+        let mut guard = self.pending_batch.lock().unwrap();
+        if let Some(ref mut batch) = *guard {
+            let cf = self.db.cf_handle(CF_STAKES).unwrap();
+            batch.delete_cf(cf, key);
+        } else {
+            drop(guard);
+            let cf = self.cf(CF_STAKES);
+            if let Err(e) = self.db.delete_cf(cf, key) {
+                fatal_persistence_error("delete_stake_from_rocksdb", e);
+            }
+        }
+    }
+
+    fn persist_delegation(&self, record: &DelegationRecord) {
+        let key = delegation_key(&record.delegator, record.validator_id);
+        let value = match bincode::serialize(record) {
+            Ok(v) => v,
+            Err(e) => fatal_persistence_error("serialize_delegation", e),
+        };
+        let mut guard = self.pending_batch.lock().unwrap();
+        if let Some(ref mut batch) = *guard {
+            let cf = self.db.cf_handle(CF_DELEGATIONS).unwrap();
+            batch.put_cf(cf, key, &value);
+        } else {
+            drop(guard);
+            let cf = self.cf(CF_DELEGATIONS);
+            if let Err(e) = self.db.put_cf(cf, key, value) {
+                fatal_persistence_error("write_delegation_to_rocksdb", e);
+            }
+        }
+    }
+
+    fn delete_delegation_disk(&self, delegator: &AccountAddress, validator_id: u64) {
+        let key = delegation_key(delegator, validator_id);
+        let mut guard = self.pending_batch.lock().unwrap();
+        if let Some(ref mut batch) = *guard {
+            let cf = self.db.cf_handle(CF_DELEGATIONS).unwrap();
+            batch.delete_cf(cf, key);
+        } else {
+            drop(guard);
+            let cf = self.cf(CF_DELEGATIONS);
+            if let Err(e) = self.db.delete_cf(cf, key) {
+                fatal_persistence_error("delete_delegation_from_rocksdb", e);
+            }
+        }
+    }
+}
+
+/// Composite key for delegation records: delegator_address[32] ++ validator_id_be[8].
+fn delegation_key(delegator: &AccountAddress, validator_id: u64) -> [u8; 40] {
+    let mut key = [0u8; 40];
+    key[..32].copy_from_slice(delegator);
+    key[32..].copy_from_slice(&validator_id.to_be_bytes());
+    key
 }
 
 /// Attempt to deserialize a ghost record from legacy format (no mmr_position field).
@@ -895,56 +1021,69 @@ impl StateDB for RocksDBStateDB {
         }
     }
 
-    fn get_stake(&self, _validator_id: u64) -> Option<&StakeRecord> {
-        None
+    fn get_stake(&self, validator_id: u64) -> Option<&StakeRecord> {
+        self.stakes.get(&validator_id)
     }
 
-    fn put_stake(&mut self, _record: StakeRecord) {
+    fn put_stake(&mut self, record: StakeRecord) {
+        self.persist_stake(&record);
+        self.stakes.insert(record.validator_id, record);
     }
 
-    fn remove_stake(&mut self, _validator_id: u64) -> Option<StakeRecord> {
-        None
+    fn remove_stake(&mut self, validator_id: u64) -> Option<StakeRecord> {
+        self.delete_stake_disk(validator_id);
+        self.stakes.remove(&validator_id)
     }
 
     fn all_stakes(&self) -> Vec<&StakeRecord> {
-        Vec::new()
+        self.stakes.values().collect()
     }
 
-    // Delegation persistence is stubbed in the RocksDB backend, matching
-    // the existing stake-records pattern (RocksDB stake calls also return
-    // empty/None today). Production RocksDB persistence for both is a
-    // separate hardening pass — InMemoryStateDB is the source of truth.
     fn get_delegation(
         &self,
-        _delegator: &AccountAddress,
-        _validator_id: u64,
+        delegator: &AccountAddress,
+        validator_id: u64,
     ) -> Option<&DelegationRecord> {
-        None
+        self.delegations.get(&delegation_key(delegator, validator_id))
     }
 
-    fn put_delegation(&mut self, _record: DelegationRecord) {}
+    fn put_delegation(&mut self, record: DelegationRecord) {
+        self.persist_delegation(&record);
+        let key = delegation_key(&record.delegator, record.validator_id);
+        self.delegations.insert(key, record);
+    }
 
     fn remove_delegation(
         &mut self,
-        _delegator: &AccountAddress,
-        _validator_id: u64,
+        delegator: &AccountAddress,
+        validator_id: u64,
     ) -> Option<DelegationRecord> {
-        None
+        self.delete_delegation_disk(delegator, validator_id);
+        self.delegations.remove(&delegation_key(delegator, validator_id))
     }
 
-    fn delegations_for_validator(&self, _validator_id: u64) -> Vec<&DelegationRecord> {
-        Vec::new()
+    fn delegations_for_validator(&self, validator_id: u64) -> Vec<&DelegationRecord> {
+        let id_be = validator_id.to_be_bytes();
+        self.delegations
+            .iter()
+            .filter(|(k, _)| k[32..] == id_be)
+            .map(|(_, v)| v)
+            .collect()
     }
 
     fn delegations_for_delegator(
         &self,
-        _delegator: &AccountAddress,
+        delegator: &AccountAddress,
     ) -> Vec<&DelegationRecord> {
-        Vec::new()
+        self.delegations
+            .iter()
+            .filter(|(k, _)| &k[..32] == delegator.as_slice())
+            .map(|(_, v)| v)
+            .collect()
     }
 
     fn all_delegations(&self) -> Vec<&DelegationRecord> {
-        Vec::new()
+        self.delegations.values().collect()
     }
 
     fn prove_account(&mut self, addr: &AccountAddress) -> evaporchain_crypto::EnergyVerkleProof {
@@ -1103,7 +1242,7 @@ impl RocksDBStateDB {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use evaporchain_types::{Account, ObjectState, StateObject};
+    use evaporchain_types::{Account, DelegationRecord, ObjectState, StakeRecord, StateObject};
 
     fn tmp_db() -> RocksDBStateDB {
         let dir = tempfile::tempdir().unwrap();
@@ -1323,6 +1462,129 @@ mod tests {
         let mut id200 = [0u8; 32];
         id200[0] = 200u8;
         assert!(db.get_ghost(&id200).is_some());
+    }
+
+    fn make_stake(validator_id: u64, amount: u64) -> StakeRecord {
+        StakeRecord {
+            validator_id,
+            validator_address: [validator_id as u8; 32],
+            staked_amount: amount,
+            staked_at_epoch: 1,
+            unbonding_epoch: None,
+            slashed_amount: 0,
+        }
+    }
+
+    fn make_delegation(delegator_byte: u8, validator_id: u64, amount: u64) -> DelegationRecord {
+        DelegationRecord {
+            delegator: [delegator_byte; 32],
+            validator_id,
+            amount,
+            delegated_at_epoch: 1,
+            unbonding_amount: 0,
+            unbonding_epoch: None,
+        }
+    }
+
+    #[test]
+    fn test_stake_roundtrip() {
+        let mut db = tmp_db();
+        let s = make_stake(1, 250_000);
+        db.put_stake(s.clone());
+        let loaded = db.get_stake(1).unwrap();
+        assert_eq!(loaded.staked_amount, 250_000);
+        assert_eq!(db.all_stakes().len(), 1);
+    }
+
+    #[test]
+    fn test_stake_remove() {
+        let mut db = tmp_db();
+        db.put_stake(make_stake(1, 100_000));
+        db.put_stake(make_stake(2, 200_000));
+        assert_eq!(db.all_stakes().len(), 2);
+        let removed = db.remove_stake(1).unwrap();
+        assert_eq!(removed.staked_amount, 100_000);
+        assert!(db.get_stake(1).is_none());
+        assert_eq!(db.all_stakes().len(), 1);
+    }
+
+    #[test]
+    fn test_stake_persistence_across_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        {
+            let mut db = RocksDBStateDB::open(&path).unwrap();
+            db.put_stake(make_stake(7, 777_000));
+            db.put_stake(make_stake(8, 888_000));
+        }
+        let db = RocksDBStateDB::open(&path).unwrap();
+        assert_eq!(db.all_stakes().len(), 2);
+        assert_eq!(db.get_stake(7).unwrap().staked_amount, 777_000);
+        assert_eq!(db.get_stake(8).unwrap().staked_amount, 888_000);
+    }
+
+    #[test]
+    fn test_delegation_roundtrip() {
+        let mut db = tmp_db();
+        let d = make_delegation(0xAA, 5, 50_000);
+        db.put_delegation(d.clone());
+        let addr = [0xAAu8; 32];
+        let loaded = db.get_delegation(&addr, 5).unwrap();
+        assert_eq!(loaded.amount, 50_000);
+    }
+
+    #[test]
+    fn test_delegation_remove() {
+        let mut db = tmp_db();
+        db.put_delegation(make_delegation(0x01, 1, 10_000));
+        db.put_delegation(make_delegation(0x02, 1, 20_000));
+        db.put_delegation(make_delegation(0x01, 2, 30_000));
+        assert_eq!(db.all_delegations().len(), 3);
+        let addr1 = [0x01u8; 32];
+        db.remove_delegation(&addr1, 1);
+        assert_eq!(db.all_delegations().len(), 2);
+        assert!(db.get_delegation(&addr1, 1).is_none());
+        assert!(db.get_delegation(&addr1, 2).is_some());
+    }
+
+    #[test]
+    fn test_delegations_for_validator() {
+        let mut db = tmp_db();
+        db.put_delegation(make_delegation(0x01, 10, 1_000));
+        db.put_delegation(make_delegation(0x02, 10, 2_000));
+        db.put_delegation(make_delegation(0x03, 20, 3_000));
+        let v10 = db.delegations_for_validator(10);
+        assert_eq!(v10.len(), 2);
+        let v20 = db.delegations_for_validator(20);
+        assert_eq!(v20.len(), 1);
+    }
+
+    #[test]
+    fn test_delegations_for_delegator() {
+        let mut db = tmp_db();
+        db.put_delegation(make_delegation(0x01, 1, 1_000));
+        db.put_delegation(make_delegation(0x01, 2, 2_000));
+        db.put_delegation(make_delegation(0x02, 1, 3_000));
+        let addr1 = [0x01u8; 32];
+        let d1 = db.delegations_for_delegator(&addr1);
+        assert_eq!(d1.len(), 2);
+        let addr2 = [0x02u8; 32];
+        let d2 = db.delegations_for_delegator(&addr2);
+        assert_eq!(d2.len(), 1);
+    }
+
+    #[test]
+    fn test_delegation_persistence_across_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        {
+            let mut db = RocksDBStateDB::open(&path).unwrap();
+            db.put_delegation(make_delegation(0xAA, 42, 99_000));
+        }
+        let db = RocksDBStateDB::open(&path).unwrap();
+        let addr = [0xAAu8; 32];
+        assert_eq!(db.all_delegations().len(), 1);
+        assert_eq!(db.get_delegation(&addr, 42).unwrap().amount, 99_000);
     }
 
     #[test]

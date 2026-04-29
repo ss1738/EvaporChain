@@ -10036,7 +10036,7 @@ async fn rate_limit_middleware(
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
-    if !limiter.check(addr.ip()) {
+    if !addr.ip().is_loopback() && !limiter.check(addr.ip()) {
         return (
             StatusCode::TOO_MANY_REQUESTS,
             [("Retry-After", "10")],
