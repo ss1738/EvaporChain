@@ -993,6 +993,28 @@ impl SimpleExecutor {
             return Err(ExecutionError::ObjectAlreadyExists(hex::encode(tx.object_id)));
         }
 
+        // Storage rent: creator must hold at least MIN_STORAGE_DEPOSIT EVAP
+        // to anchor the new object. The deposit is locked in the account's
+        // storage_deposit field and charged per-epoch by collect_storage_rent.
+        let object_bytes = {
+            const BASE_OBJECT_BYTES: u64 = 97; // id+owner+energy+half_life+timestamps+state
+            BASE_OBJECT_BYTES.saturating_add(tx.data.len() as u64)
+        };
+        {
+            let creator = db.get_or_create_account(&tx.creator);
+            if creator.balance < evaporchain_types::MIN_STORAGE_DEPOSIT {
+                return Err(ExecutionError::InsufficientBalance {
+                    account: hex::encode(tx.creator),
+                    available: creator.balance,
+                    required: evaporchain_types::MIN_STORAGE_DEPOSIT,
+                });
+            }
+            creator.balance -= evaporchain_types::MIN_STORAGE_DEPOSIT;
+            creator.storage_deposit = creator.storage_deposit
+                .saturating_add(evaporchain_types::MIN_STORAGE_DEPOSIT);
+            creator.storage_bytes = creator.storage_bytes.saturating_add(object_bytes);
+        }
+
         let obj = StateObject {
             id: tx.object_id,
             owner: tx.creator,
@@ -1012,6 +1034,7 @@ impl SimpleExecutor {
             object_id = hex::encode(tx.object_id),
             energy = tx.energy,
             half_life = tx.half_life,
+            storage_bytes = object_bytes,
             "Object created"
         );
 
@@ -2821,6 +2844,7 @@ mod tests {
     #[test]
     fn test_create_object_with_energy() {
         let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 10_000);
         let mut executor = SimpleExecutor::new_for_test(7);
 
         let block = make_block(
@@ -2854,6 +2878,7 @@ mod tests {
     #[test]
     fn test_create_object_with_decay_curve() {
         let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 10_000);
         let mut executor = SimpleExecutor::new_for_test(7);
 
         let block = make_block(
@@ -2886,6 +2911,7 @@ mod tests {
     #[test]
     fn test_duplicate_object_creation_fails() {
         let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 10_000);
         let mut executor = SimpleExecutor::new_for_test(7);
 
         let create_tx = Transaction::CreateObject(CreateObjectTx {

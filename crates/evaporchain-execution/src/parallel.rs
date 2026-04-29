@@ -970,6 +970,25 @@ impl ParallelExecutor {
         if db.get_object(&tx.object_id).is_some() {
             return Err(ExecutionError::ObjectAlreadyExists(hex::encode(tx.object_id)));
         }
+        // Storage rent enforcement: collect MIN_STORAGE_DEPOSIT from creator.
+        let object_bytes = {
+            const BASE_OBJECT_BYTES: u64 = 97;
+            BASE_OBJECT_BYTES.saturating_add(tx.data.len() as u64)
+        };
+        {
+            let creator = db.get_or_create_account(&tx.creator);
+            if creator.balance < evaporchain_types::MIN_STORAGE_DEPOSIT {
+                return Err(ExecutionError::InsufficientBalance {
+                    account: hex::encode(tx.creator),
+                    available: creator.balance,
+                    required: evaporchain_types::MIN_STORAGE_DEPOSIT,
+                });
+            }
+            creator.balance -= evaporchain_types::MIN_STORAGE_DEPOSIT;
+            creator.storage_deposit = creator.storage_deposit
+                .saturating_add(evaporchain_types::MIN_STORAGE_DEPOSIT);
+            creator.storage_bytes = creator.storage_bytes.saturating_add(object_bytes);
+        }
         db.put_object(StateObject {
             id: tx.object_id,
             owner: tx.creator,
@@ -1989,6 +2008,7 @@ mod tests {
         fund_account(&mut db_seq, 1, 10000);
         fund_account(&mut db_seq, 3, 10000);
         fund_account(&mut db_seq, 5, 10000);
+        fund_account(&mut db_seq, 7, 10000);
         // Pre-create object for refresh
         db_seq.put_object(StateObject {
             id: obj_id(2),
@@ -2010,6 +2030,7 @@ mod tests {
         fund_account(&mut db_par, 1, 10000);
         fund_account(&mut db_par, 3, 10000);
         fund_account(&mut db_par, 5, 10000);
+        fund_account(&mut db_par, 7, 10000);
         db_par.put_object(StateObject {
             id: obj_id(2),
             owner: addr(99),
@@ -2122,6 +2143,7 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 5000);
         fund_account(&mut db, 3, 5000);
+        fund_account(&mut db, 50, 10000);
         // Object for refresh
         db.put_object(StateObject {
             id: obj_id(10),

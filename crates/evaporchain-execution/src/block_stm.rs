@@ -49,6 +49,8 @@ use crate::{
 pub(crate) enum Location {
     AccountBalance(AccountAddress),
     AccountNonce(AccountAddress),
+    AccountStorageDeposit(AccountAddress),
+    AccountStorageBytes(AccountAddress),
     Object(ObjectId),
     Ghost(ObjectId),
 }
@@ -69,6 +71,8 @@ enum MVValue {
 pub(crate) enum ValuePayload {
     Balance(u64),
     Nonce(u64),
+    StorageDeposit(u64),
+    StorageBytes(u64),
     Object(StateObject),
     ObjectDeleted,
     Ghost(GhostRecord),
@@ -442,6 +446,58 @@ impl<'a> TxView<'a> {
         });
     }
 
+    /// Read storage deposit for an account.
+    fn read_storage_deposit(&mut self, addr: &AccountAddress) -> Result<u64, u32> {
+        if let Some(acct) = self.local_accounts.get(addr) {
+            return Ok(acct.storage_deposit);
+        }
+        let loc = Location::AccountStorageDeposit(*addr);
+        match self.mv_memory.read(&loc, self.tx_index)? {
+            Some((version, ValuePayload::StorageDeposit(d))) => {
+                self.read_set.push(ReadEntry { location: loc, version: Some(version) });
+                Ok(d)
+            }
+            _ => {
+                self.read_set.push(ReadEntry { location: loc, version: None });
+                Ok(self.base_db.get_account(addr).map_or(0, |a| a.storage_deposit))
+            }
+        }
+    }
+
+    /// Read storage bytes for an account.
+    fn read_storage_bytes(&mut self, addr: &AccountAddress) -> Result<u64, u32> {
+        if let Some(acct) = self.local_accounts.get(addr) {
+            return Ok(acct.storage_bytes);
+        }
+        let loc = Location::AccountStorageBytes(*addr);
+        match self.mv_memory.read(&loc, self.tx_index)? {
+            Some((version, ValuePayload::StorageBytes(b))) => {
+                self.read_set.push(ReadEntry { location: loc, version: Some(version) });
+                Ok(b)
+            }
+            _ => {
+                self.read_set.push(ReadEntry { location: loc, version: None });
+                Ok(self.base_db.get_account(addr).map_or(0, |a| a.storage_bytes))
+            }
+        }
+    }
+
+    /// Write updated storage deposit and bytes for an account.
+    fn write_storage_fields(&mut self, addr: AccountAddress, deposit: u64, bytes: u64) {
+        if let Some(acct) = self.local_accounts.get_mut(&addr) {
+            acct.storage_deposit = deposit;
+            acct.storage_bytes = bytes;
+        }
+        self.write_buffer.push(WriteEntry {
+            location: Location::AccountStorageDeposit(addr),
+            value: ValuePayload::StorageDeposit(deposit),
+        });
+        self.write_buffer.push(WriteEntry {
+            location: Location::AccountStorageBytes(addr),
+            value: ValuePayload::StorageBytes(bytes),
+        });
+    }
+
     /// Write a state object.
     fn write_object(&mut self, obj: StateObject) {
         let id = obj.id;
@@ -779,6 +835,30 @@ fn exec_create_object(
     if existing.is_some() {
         return Err(ExecutionError::ObjectAlreadyExists(hex::encode(tx.object_id)).into());
     }
+
+    // Storage rent enforcement: require MIN_STORAGE_DEPOSIT from creator.
+    let object_bytes = {
+        const BASE_OBJECT_BYTES: u64 = 97;
+        BASE_OBJECT_BYTES.saturating_add(tx.data.len() as u64)
+    };
+    let bal = view.read_balance(&tx.creator).map_err(TxViewError::Blocked)?;
+    if bal < evaporchain_types::MIN_STORAGE_DEPOSIT {
+        return Err(ExecutionError::InsufficientBalance {
+            account: hex::encode(tx.creator),
+            available: bal,
+            required: evaporchain_types::MIN_STORAGE_DEPOSIT,
+        }.into());
+    }
+    let nonce = view.read_nonce(&tx.creator).map_err(TxViewError::Blocked)?;
+    view.write_account(tx.creator, bal - evaporchain_types::MIN_STORAGE_DEPOSIT, nonce);
+
+    let cur_deposit = view.read_storage_deposit(&tx.creator).map_err(TxViewError::Blocked)?;
+    let cur_bytes = view.read_storage_bytes(&tx.creator).map_err(TxViewError::Blocked)?;
+    view.write_storage_fields(
+        tx.creator,
+        cur_deposit.saturating_add(evaporchain_types::MIN_STORAGE_DEPOSIT),
+        cur_bytes.saturating_add(object_bytes),
+    );
 
     view.write_object(StateObject {
         id: tx.object_id,
@@ -1306,6 +1386,20 @@ impl BlockStmExecutor {
                         });
                         entry.1 = *nonce;
                     }
+                    (Location::AccountStorageDeposit(addr), ValuePayload::StorageDeposit(d)) => {
+                        let base = base_db.get_account(addr);
+                        let entry = writes.storage.entry(*addr).or_insert_with(|| {
+                            base.map_or((0, 0), |a| (a.storage_deposit, a.storage_bytes))
+                        });
+                        entry.0 = *d;
+                    }
+                    (Location::AccountStorageBytes(addr), ValuePayload::StorageBytes(b)) => {
+                        let base = base_db.get_account(addr);
+                        let entry = writes.storage.entry(*addr).or_insert_with(|| {
+                            base.map_or((0, 0), |a| (a.storage_deposit, a.storage_bytes))
+                        });
+                        entry.1 = *b;
+                    }
                     (Location::Object(id), ValuePayload::Object(obj)) => {
                         writes.objects.insert(*id, Some(obj.clone()));
                     }
@@ -1328,11 +1422,17 @@ impl BlockStmExecutor {
 
     /// Apply finalized writes to the main state DB.
     fn apply_writes(db: &mut dyn StateDB, writes: FinalWrites) {
-        // Apply account changes
+        // Apply account balance/nonce changes
         for (addr, (balance, nonce)) in writes.accounts {
             let acct = db.get_or_create_account(&addr);
             acct.balance = balance;
             acct.nonce = nonce;
+        }
+        // Apply storage deposit/bytes changes
+        for (addr, (deposit, bytes)) in writes.storage {
+            let acct = db.get_or_create_account(&addr);
+            acct.storage_deposit = deposit;
+            acct.storage_bytes = bytes;
         }
 
         // Apply object changes
@@ -1372,6 +1472,8 @@ struct ParallelResult {
 struct FinalWrites {
     /// addr → (balance, nonce)
     accounts: HashMap<AccountAddress, (u64, u64)>,
+    /// addr → (storage_deposit, storage_bytes)
+    storage: HashMap<AccountAddress, (u64, u64)>,
     /// id → Some(obj) for write/create, None for delete
     objects: HashMap<ObjectId, Option<StateObject>>,
     /// id → Some(ghost) for write, None for remove
@@ -1984,8 +2086,13 @@ impl BlockStmExecutor {
             total_fees,
             final_writes: FinalWrites {
                 accounts: accounts
+                    .iter()
+                    .map(|(addr, acct)| (*addr, (acct.balance, acct.nonce)))
+                    .collect(),
+                storage: accounts
                     .into_iter()
-                    .map(|(addr, acct)| (addr, (acct.balance, acct.nonce)))
+                    .filter(|(_, acct)| acct.storage_deposit > 0 || acct.storage_bytes > 0)
+                    .map(|(addr, acct)| (addr, (acct.storage_deposit, acct.storage_bytes)))
                     .collect(),
                 objects,
                 ghosts,
@@ -2205,6 +2312,8 @@ mod tests {
     #[test]
     fn test_block_stm_create_object() {
         let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 10_000);
+        fund_account(&mut db, 2, 10_000);
 
         let txs = vec![
             Transaction::CreateObject(CreateObjectTx {
@@ -2387,7 +2496,8 @@ mod tests {
         let result = executor.execute_block(&mut db, &block).unwrap();
 
         assert_eq!(result.txs_executed, 3);
-        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 9500);
+        // addr(1): 10000 - 500 (transfer) - 1000 (storage deposit) = 8500
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 8500);
         assert_eq!(db.get_account(&addr(2)).unwrap().balance, 9500); // +500 -1000
         assert!(db.get_object(&obj_id(1)).is_some());
     }

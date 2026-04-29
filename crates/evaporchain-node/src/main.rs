@@ -3874,11 +3874,12 @@ async fn main() -> Result<()> {
                         if let Ok(vote) = serde_json::from_slice::<evaporchain_oracle::consensus::OracleVote>(payload) {
                             let key = vote.key.clone();
                             let mut ob = safe_lock(&oracle_bridge);
-                            let tc_ref = tendermint.as_ref().unwrap();
-                            let tc = safe_lock(tc_ref);
-                            let vs = tc.validator_set();
-                            if let Err(e) = ob.submit_vote_via_validator_set(&key, vote, vs) {
-                                tracing::debug!(error = %e, key = %key, "inbound OracleVote rejected");
+                            if let Some(ref tc_ref) = tendermint {
+                                let tc = safe_lock(tc_ref);
+                                let vs = tc.validator_set();
+                                if let Err(e) = ob.submit_vote_via_validator_set(&key, vote, vs) {
+                                    tracing::debug!(error = %e, key = %key, "inbound OracleVote rejected");
+                                }
                             }
                         }
                         continue;
@@ -3890,7 +3891,10 @@ async fn main() -> Result<()> {
                         None
                     };
 
-                    let tc_ref = tendermint.as_ref().unwrap();
+                    let tc_ref = match tendermint.as_ref() {
+                        Some(tc) => tc,
+                        None => continue,
+                    };
                     let actions = {
                         let mut tc = safe_lock(tc_ref);
                         let actions = tc.on_message(msg);
