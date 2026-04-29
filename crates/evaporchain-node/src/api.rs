@@ -4996,6 +4996,36 @@ async fn get_autopoietic_health(State(state): State<Arc<ApiState>>) -> Json<serd
     }))
 }
 
+// ─────────────── Consensus Phase + WSBF λ_eff ───────────────────────
+
+async fn get_consensus_phase(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
+    if let Some(tc) = &state.tendermint {
+        let tc = safe_lock(tc);
+        let phase = tc.consensus_phase();
+        let ep = tc.effective_params().map(|ep| serde_json::json!({
+            "step": ep.step,
+            "height_start": ep.height_start,
+            "height_end": ep.height_end,
+            "lambda_eff": ep.lambda_eff,
+            "effective_accounts": ep.effective_accounts,
+            "energy_density": ep.energy_density,
+            "entropy_mb": ep.entropy_mb,
+        }));
+        Json(serde_json::json!({
+            "status": "ok",
+            "consensus_phase": format!("{phase:?}"),
+            "last_effective_params": ep,
+        }))
+    } else {
+        Json(serde_json::json!({
+            "status": "ok",
+            "consensus_phase": "LivenessStable",
+            "last_effective_params": null,
+            "note": "Tendermint not active — running MockConsensus",
+        }))
+    }
+}
+
 // ─────────────── /api/docs — endpoint catalog ───────────────────────
 
 #[derive(Debug, Clone, Serialize)]
@@ -5148,6 +5178,9 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
 
     // Autopoietic health — Maturana-Varela viability check
     ApiDocEntry { method: "GET",  path: "/api/autopoietic/health",          category: "substrate", description: "Autopoietic chain viability report (Maturana-Varela 1980): Patronage (self-funding), Sentinel (self-maintenance), LLSA (self-boundary). Reports Viable | Stressed | Inviable.", example: None },
+
+    // Consensus Phase + WSBF λ_eff observability
+    ApiDocEntry { method: "GET",  path: "/api/consensus/phase",             category: "consensus", description: "Current RG Phase Map consensus regime (LivenessStable|SafetyStable|Frozen|Chaotic) + last WSBF EffectiveParams (renormalized λ_eff, energy density, entropy).", example: None },
 
     // Demo
     ApiDocEntry { method: "POST", path: "/api/demo/reset",            category: "demo", description: "Clear HBCT book + Sentinel votes so the dashboard demo can re-run", example: None },
@@ -8950,6 +8983,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/rg_phase/classify", post(post_rg_phase_classify))
         .route("/api/rg_phase/trajectory", post(post_rg_phase_trajectory))
         .route("/api/autopoietic/health", get(get_autopoietic_health))
+        .route("/api/consensus/phase", get(get_consensus_phase))
         .route("/api/demo/reset", post(post_demo_reset))
         .route("/api/docs", get(get_api_docs))
         .route("/api/objects", get(get_objects))
