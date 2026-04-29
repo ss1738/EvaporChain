@@ -13,7 +13,7 @@ const productLinks = [
   { label: "Staking", href: "/staking" },
   { label: "Governance", href: "/dao" },
   { label: "Explorer", href: "/explorer" },
-  { label: "Chain Identity", href: "/identity" },
+  { label: "Chain Identity ↗", href: "/identity" },
 ];
 
 const navLinks = [
