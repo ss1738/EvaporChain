@@ -3213,12 +3213,6 @@ async fn post_eb_fs_challenge(Json(q): Json<EbFsChallengeQuery>) -> Json<EbFsCha
 // ─────────── Singh-Attractor Consensus (Tier 2) ────────────────────
 
 #[derive(Debug, Deserialize)]
-pub struct AttractorReq {
-    pub center: u64,
-    pub basin_radius: u64,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct SinghAttractorQuery {
     pub state_energy: u64,
     pub attractors: Vec<AttractorReq>,
@@ -7684,17 +7678,17 @@ async fn post_swap_execute(
                 return Json(TxResultResponse { success: false, message: format!("Insufficient EVAP balance: {} < {}", acct.balance, req.amount), tx_hash: None });
             }
             let new_bal = acct.balance - req.amount;
-            let mut updated = acct;
+            let mut updated = acct.clone();
             updated.balance = new_bal;
-            db.update_account(&from_addr, updated);
+            db.put_account(updated);
         }
         if to_upper == "EVAP" {
             // Credit EVAP.
             let acct = db.get_or_create_account(&from_addr);
             let updated_balance = acct.balance.saturating_add(amount_out);
-            let mut updated = acct;
+            let mut updated = acct.clone();
             updated.balance = updated_balance;
-            db.update_account(&from_addr, updated);
+            db.put_account(updated);
         }
     }
 
@@ -8429,7 +8423,7 @@ async fn get_prometheus_metrics(
     // EPV — live protocol version count
     {
         let epv = safe_lock(&state.epv_registry);
-        let live = epv.live_versions().len();
+        let live = epv.iter().count();
         out.push_str("# HELP evaporchain_epv_live_versions Number of live EPV protocol versions tracked\n");
         out.push_str("# TYPE evaporchain_epv_live_versions gauge\n");
         out.push_str(&format!("evaporchain_epv_live_versions {}\n", live));

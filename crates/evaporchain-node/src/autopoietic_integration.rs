@@ -43,7 +43,7 @@ impl ProofVerifier for NullVerifier {
         _proof: &evaporchain_llsa::proof::LlsaProof,
         _expected_invariant: evaporchain_llsa::proof::InvariantId,
         _expected_amendment: evaporchain_llsa::proof::AmendmentHash,
-    ) -> Result<(), evaporchain_llsa::proof::VerifyError> {
+    ) -> Result<(), evaporchain_llsa::proof::ProofError> {
         Ok(())
     }
 }
@@ -125,7 +125,7 @@ fn subsystem_str(h: SubsystemHealth) -> &'static str {
 /// Called during node startup before the first block is produced.
 pub fn genesis_health_check(epoch: u64) -> AutopoieticHealth {
     let node = NodeAutopoiesis::new();
-    let book = PatronageBook::new();
+    let book = PatronageBook::new(b"evaporchain-patronage".to_vec());
     let report = node.check(&book, &[], None, epoch);
     info!(
         status = ?report.status,
@@ -162,7 +162,7 @@ mod tests {
     #[test]
     fn recent_sentinel_vote_gives_healthy_sentinel() {
         let node = NodeAutopoiesis::new();
-        let book = PatronageBook::new();
+        let book = PatronageBook::new(b"evaporchain-patronage".to_vec());
         let report = node.check(&book, &[], Some(5), 10); // 10 - 5 = 5 ≤ window(10)
         assert_eq!(report.sentinel, SubsystemHealth::Healthy);
     }
@@ -170,7 +170,7 @@ mod tests {
     #[test]
     fn stale_sentinel_vote_gives_degraded_sentinel() {
         let node = NodeAutopoiesis::new();
-        let book = PatronageBook::new();
+        let book = PatronageBook::new(b"evaporchain-patronage".to_vec());
         let report = node.check(&book, &[], Some(0), 100); // 100 - 0 = 100 > window(10)
         assert_eq!(report.sentinel, SubsystemHealth::Degraded);
     }

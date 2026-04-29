@@ -76,7 +76,11 @@ pub fn attest_and_vote(
 
     Some(OracleVote {
         validator_id,
+        key: bmu_id.to_string(),
         value: OracleValue::Numeric(mwh as f64),
+        timestamp: epoch,
+        round: 0,
+        signature: Vec::new(),
     })
 }
 
