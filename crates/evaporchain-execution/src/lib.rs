@@ -2432,11 +2432,12 @@ impl ExecutionEngine for SimpleExecutor {
             // Native demurrage sweep — charges idle balances above the
             // threshold and credits the refresh pool.  Fires at the same
             // per-epoch cadence as storage rent.
+            let last_rent_epoch = db.get_last_rent_epoch();
             crate::demurrage_integration::collect_demurrage(
                 db,
                 &mut self.refresh_pool,
                 &self.demurrage_params,
-                db.get_last_rent_epoch(),
+                last_rent_epoch,
                 block.epoch,
             );
             db.put_last_rent_epoch(block.epoch);
