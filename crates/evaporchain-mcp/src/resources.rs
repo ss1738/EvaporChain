@@ -1,10 +1,10 @@
-//! 10 MCP Resources — live blockchain data AI agents can read.
+//! 13 MCP Resources — live blockchain data AI agents can read.
 
 use serde_json::{json, Value};
 
 use crate::protocol::Context;
 
-/// Return the list of all 10 resources.
+/// Return the list of all 13 resources.
 pub fn list_resources() -> Value {
     json!({
         "resources": [
@@ -67,6 +67,24 @@ pub fn list_resources() -> Value {
                 "name": "Fee Controller Status",
                 "description": "Current EIP-1559-style fee controller state — base_fee, target_gas, recent gas EMA, and drift direction (Rising / Falling / Stable).",
                 "mimeType": "application/json"
+            },
+            {
+                "uri": "evaporchain://oracle",
+                "name": "Oracle Feed Status",
+                "description": "Live oracle aggregation status — all ingested feed keys, latest values, ingestion timestamps, and consensus confidence scores.",
+                "mimeType": "application/json"
+            },
+            {
+                "uri": "evaporchain://shards",
+                "name": "Shard Health",
+                "description": "Health report for all active shards — shard IDs, assignment maps, cross-shard pending queue depth, and per-shard liveness.",
+                "mimeType": "application/json"
+            },
+            {
+                "uri": "evaporchain://epv",
+                "name": "EPV Protocol Registry",
+                "description": "Evolution Protocol Versioning registry — all live protocol versions, activation epochs, deprecation schedules, and amendment queue.",
+                "mimeType": "application/json"
             }
         ]
     })
@@ -90,6 +108,9 @@ pub async fn read_resource(ctx: &Context, params: &Value) -> Result<Value, Strin
         "evaporchain://autopoietic" => ("/api/autopoietic/health", "Autopoietic Health"),
         "evaporchain://consensus_phase" => ("/api/consensus/phase", "Consensus Phase"),
         "evaporchain://fee_status" => ("/api/fee_controller/status", "Fee Controller Status"),
+        "evaporchain://oracle" => ("/api/oracle/status", "Oracle Feed Status"),
+        "evaporchain://shards" => ("/api/shards/health", "Shard Health"),
+        "evaporchain://epv" => ("/api/epv/registry", "EPV Protocol Registry"),
         _ => return Err(format!("Unknown resource URI: {uri}")),
     };
 
@@ -112,10 +133,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_list_resources_returns_10() {
+    fn test_list_resources_returns_13() {
         let resources = list_resources();
         let list = resources["resources"].as_array().unwrap();
-        assert_eq!(list.len(), 10);
+        assert_eq!(list.len(), 13);
     }
 
     #[test]

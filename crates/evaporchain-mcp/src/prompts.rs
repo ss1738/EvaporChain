@@ -1,10 +1,10 @@
-//! 4 MCP Prompts — guided workflows for AI agents interacting with EvaporChain.
+//! 6 MCP Prompts — guided workflows for AI agents interacting with EvaporChain.
 
 use serde_json::{json, Value};
 
 use crate::protocol::Context;
 
-/// Return the list of all 4 prompts.
+/// Return the list of all 6 prompts.
 pub fn list_prompts() -> Value {
     json!({
         "prompts": [
@@ -38,6 +38,22 @@ pub fn list_prompts() -> Value {
                 "name": "viability_audit",
                 "description": "Audit the chain's autopoietic viability — checks all three self-sustaining subsystems (Patronage, Sentinel, LLSA), the RG consensus phase, and fee controller drift. Outputs a structured viability verdict with recommendations.",
                 "arguments": []
+            },
+            {
+                "name": "oracle_data_analysis",
+                "description": "Analyze all live oracle feeds — check for stale prices, outlier values, consensus confidence, and cross-feed correlations. Flags any feed that may require operator attention.",
+                "arguments": [
+                    {
+                        "name": "staleness_threshold_secs",
+                        "description": "How many seconds before a feed is considered stale (default: 300)",
+                        "required": false
+                    }
+                ]
+            },
+            {
+                "name": "consensus_phase_investigation",
+                "description": "Deep-dive into the consensus substrate — RG Phase Map regime, WSBF renormalized λ_eff, Boltzmann proposer weight distribution, and self-annealing temperature. Diagnoses whether the chain is safe, live, or at risk of phase transition.",
+                "arguments": []
             }
         ]
     })
@@ -57,6 +73,8 @@ pub async fn get_prompt(ctx: &Context, params: &Value) -> Result<Value, String> 
         "create_and_watch" => get_create_and_watch(ctx, &args).await,
         "chain_health_report" => get_chain_health_report(ctx).await,
         "viability_audit" => get_viability_audit(ctx).await,
+        "oracle_data_analysis" => get_oracle_data_analysis(ctx, &args).await,
+        "consensus_phase_investigation" => get_consensus_phase_investigation(ctx).await,
         _ => Err(format!("Unknown prompt: {name}")),
     }
 }
@@ -66,10 +84,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_list_prompts_returns_4() {
+    fn test_list_prompts_returns_6() {
         let prompts = list_prompts();
         let list = prompts["prompts"].as_array().unwrap();
-        assert_eq!(list.len(), 4);
+        assert_eq!(list.len(), 6);
     }
 
     #[test]
@@ -95,6 +113,8 @@ mod tests {
         assert!(names.contains(&"create_and_watch"));
         assert!(names.contains(&"chain_health_report"));
         assert!(names.contains(&"viability_audit"));
+        assert!(names.contains(&"oracle_data_analysis"));
+        assert!(names.contains(&"consensus_phase_investigation"));
     }
 
     #[test]
@@ -227,6 +247,89 @@ async fn get_viability_audit(ctx: &Context) -> Result<Value, String> {
                         6. **Fee trajectory**: Is the fee controller drifting toward extremes?\n\
                         7. **Protocol evolution**: Are old versions being pruned? Any version cliff?\n\
                         8. **Immediate recommendations**: What must be fixed in the next N epochs to prevent Inviable status?"
+                    )
+                }
+            }
+        ]
+    }))
+}
+
+async fn get_oracle_data_analysis(ctx: &Context, args: &Value) -> Result<Value, String> {
+    let staleness = args
+        .get("staleness_threshold_secs")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(300);
+
+    let oracle_status = ctx.get_json("/api/oracle/status").await.unwrap_or(json!({"error": "unavailable"}));
+    let status = ctx.get_json("/api/status").await.unwrap_or(json!({}));
+
+    let oracle_str = serde_json::to_string_pretty(&oracle_status).unwrap_or_default();
+    let status_str = serde_json::to_string_pretty(&status).unwrap_or_default();
+
+    Ok(json!({
+        "messages": [
+            {
+                "role": "user",
+                "content": {
+                    "type": "text",
+                    "text": format!(
+                        "Analyze the oracle feed data for the EvaporChain network.\n\n\
+                        EvaporChain uses a multi-source oracle with signed reports and consensus confidence scoring.\n\
+                        Stale threshold: {staleness}s\n\n\
+                        ## Chain Status\n```json\n{status_str}\n```\n\n\
+                        ## Oracle Feed Status\n```json\n{oracle_str}\n```\n\n\
+                        Please analyze the oracle data and produce a report covering:\n\
+                        1. **Feed Inventory**: How many feeds are active? What assets/sources?\n\
+                        2. **Staleness Check**: Which feeds have not been updated within {staleness}s? Are any critically stale?\n\
+                        3. **Confidence Scores**: Which feeds have low consensus confidence (< 0.7)? What might cause this?\n\
+                        4. **Outlier Detection**: Are any feed values statistical outliers vs peer feeds for the same asset?\n\
+                        5. **Cross-feed Correlation**: Do correlated assets (e.g. ETH/USD vs ETH/BTC) move consistently?\n\
+                        6. **Operator Actions**: Which feeds need immediate attention? Recommend remediation steps.\n\
+                        7. **Health Verdict**: Overall oracle subsystem health — OK | Degraded | Critical."
+                    )
+                }
+            }
+        ]
+    }))
+}
+
+async fn get_consensus_phase_investigation(ctx: &Context) -> Result<Value, String> {
+    let consensus_phase = ctx.get_json("/api/consensus/phase").await.unwrap_or(json!({"error": "unavailable"}));
+    let autopoietic = ctx.get_json("/api/autopoietic/health").await.unwrap_or(json!({"error": "unavailable"}));
+    let validators = ctx.get_json("/api/validators").await.unwrap_or(json!({"error": "unavailable"}));
+    let status = ctx.get_json("/api/status").await.unwrap_or(json!({}));
+
+    let cp_str = serde_json::to_string_pretty(&consensus_phase).unwrap_or_default();
+    let ap_str = serde_json::to_string_pretty(&autopoietic).unwrap_or_default();
+    let val_str = serde_json::to_string_pretty(&validators).unwrap_or_default();
+    let status_str = serde_json::to_string_pretty(&status).unwrap_or_default();
+
+    Ok(json!({
+        "messages": [
+            {
+                "role": "user",
+                "content": {
+                    "type": "text",
+                    "text": format!(
+                        "Investigate the consensus substrate of the EvaporChain network.\n\n\
+                        EvaporChain consensus is built on three interacting layers:\n\
+                        - **WSBF** (Weighted Scale-free Block Flow): renormalizes λ_eff from recent block history\n\
+                        - **RG Phase Map**: classifies the regime as Chaotic | Frozen | SafetyStable | LivenessStable\n\
+                        - **Boltzmann Stake**: weights validators by stake × activity via a thermodynamic scoring function\n\
+                        - **Self-Annealing**: gradually tightens validator selection as the chain matures\n\n\
+                        ## Chain Status\n```json\n{status_str}\n```\n\n\
+                        ## Consensus Phase (WSBF + RG)\n```json\n{cp_str}\n```\n\n\
+                        ## Autopoietic Health\n```json\n{ap_str}\n```\n\n\
+                        ## Validator Set\n```json\n{val_str}\n```\n\n\
+                        Please produce a consensus investigation report covering:\n\
+                        1. **Current Phase**: What is the RG regime? Is it stable or at risk of transition?\n\
+                        2. **λ_eff Analysis**: What does the renormalized decay parameter tell us about chain health?\n\
+                        3. **Energy Density & Entropy**: Are block energy levels trending up or down?\n\
+                        4. **Adversary Estimate**: Based on fork history and voting patterns, what is the inferred adversary fraction?\n\
+                        5. **Validator Distribution**: Is stake well-distributed (Nakamoto coefficient)? Any dangerous concentration?\n\
+                        6. **Phase Transition Risk**: How close is the chain to crossing into Frozen or Chaotic?\n\
+                        7. **Annealing Temperature**: Is the chain in early (high-T, exploratory) or mature (low-T, conservative) regime?\n\
+                        8. **Recommendations**: Any validator set or governance actions needed to stabilize the phase?"
                     )
                 }
             }

@@ -3,7 +3,7 @@
 //! Implements the MCP specification over stdio (JSON-RPC 2.0).
 //! Connects to a running EvaporChain node via HTTP API.
 //!
-//! 26 Tools · 10 Resources · 4 Prompts
+//! 26 Tools · 13 Resources · 6 Prompts
 //!
 //! Start: evaporchain-mcp [--node-url http://37.27.1.1:8080]
 
