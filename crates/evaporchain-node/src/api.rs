@@ -127,6 +127,13 @@ pub struct ApiState {
     /// in-memory voting + parameter snapshot for launch demo;
     /// production governance amendment promotes to chain-state.
     pub sentinel: Arc<Mutex<SentinelState>>,
+    /// Decay-Lamport energy-driven logical clock per §4.1 #3.
+    /// Ticked from main.rs after each block by gas_used. Pure
+    /// observability — chain still uses block.epoch as the
+    /// authoritative time. Production governance amendment can
+    /// promote to authoritative time after validators converge on
+    /// `tick_quantum`.
+    pub lamport_clock: Arc<Mutex<evaporchain_decay_lamport::LamportClock>>,
 }
 
 /// Per-parameter Sentinel state: governable bounded parameter +
@@ -1611,6 +1618,24 @@ async fn get_boltzmann_stake(
         decayed_voting_power: decayed,
         decay_pct: pct,
     }))
+}
+
+// ─────────────────── Decay-Lamport time observability ───────────────
+
+#[derive(Debug, Serialize)]
+pub struct LamportTimeResp {
+    pub current_tick: u64,
+    pub accumulated_energy: u64,
+    pub tick_quantum: u64,
+}
+
+async fn get_lamport_time(State(state): State<Arc<ApiState>>) -> Json<LamportTimeResp> {
+    let c = safe_lock(&state.lamport_clock);
+    Json(LamportTimeResp {
+        current_tick: c.current_tick,
+        accumulated_energy: c.accumulated_energy,
+        tick_quantum: c.tick_quantum,
+    })
 }
 
 async fn get_sentinel_all(State(state): State<Arc<ApiState>>) -> Json<Vec<SentinelParameterResp>> {
@@ -5297,6 +5322,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/sentinel/parameter/:id", get(get_sentinel_param))
         .route("/api/sentinel/all", get(get_sentinel_all))
         .route("/api/boltzmann_stake/:validator_id/at/:current_epoch", get(get_boltzmann_stake))
+        .route("/api/lamport_time", get(get_lamport_time))
         .route("/api/objects", get(get_objects))
         .route("/api/object/:id", get(get_single_object))
         .route("/api/accounts", get(get_accounts))

@@ -2620,6 +2620,11 @@ async fn main() -> Result<()> {
             hbct_book: Arc::new(Mutex::new(evaporchain_hbct::HbctBook::new())),
             hbct_oracle: Arc::new(Mutex::new(evaporchain_hbct::oracle::MockOracleFeed::default())),
             sentinel: Arc::new(Mutex::new(api::SentinelState::default())),
+            // 1_000_000-energy quantum: per doctrine §4.1 #3 the tick
+            // rate is governance-set; this is a launch placeholder.
+            lamport_clock: Arc::new(Mutex::new(
+                evaporchain_decay_lamport::LamportClock::new(1_000_000),
+            )),
         });
         // Keep one Arc<ApiState> for the block-applying loop so it can
         // call update_four_act_snapshot after each commit.
@@ -3187,6 +3192,12 @@ async fn main() -> Result<()> {
                                     let _ = tc.tick_mortis_on_executor(block.epoch, block.state_root);
                                     let s = tc.four_act_state();
                                     if let Some(api) = api_state_for_loop.as_ref() {
+                                        // Tick Decay-Lamport clock by gas spent in this block.
+                                        if let Ok(mut c) = api.lamport_clock.lock() {
+                                            if let Ok(new_c) = c.tick(result.execution.gas_used) {
+                                                *c = new_c;
+                                            }
+                                        }
                                         api.update_four_act_snapshot(api::FourActSnapshot {
                                             eulogy_count: s.eulogy_count,
                                             eulogy_trie_root: s.eulogy_trie_root.map(hex::encode),

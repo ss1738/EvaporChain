@@ -30,6 +30,7 @@ evaporchain-oracle = { path = "../evaporchain-oracle" }
 evaporchain-hbct = { path = "../evaporchain-hbct" }
 evaporchain-sentinel = { path = "../evaporchain-sentinel" }
 evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
+evaporchain-decay-lamport = { path = "../evaporchain-decay-lamport" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
