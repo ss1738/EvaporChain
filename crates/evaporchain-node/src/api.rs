@@ -1663,7 +1663,10 @@ async fn get_causal_cone(
         tc.height()
     });
     let tc = safe_lock(tc);
-    let summary = tc.causal_cone_summary(head, half_life, observation_epoch)?;
+    let summary = match tc.causal_cone_summary(head, half_life, observation_epoch) {
+        Some(s) => s,
+        None => return Json(None),
+    };
     Json(Some(CausalConeResp {
         head_hex: hex::encode(summary.head_id),
         ancestor_count: summary.ancestor_count,
