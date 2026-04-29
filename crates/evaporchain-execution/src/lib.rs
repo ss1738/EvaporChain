@@ -408,7 +408,19 @@ pub struct SimpleExecutor {
     /// evaporates (storage rent zeros it out) is recorded here.
     /// Append-only — the deliberate exception to §2.2 of the doctrine.
     pub eulogy_trie: evaporchain_tombstone::EulogyTrie,
+    /// Protocol-owned refresh pool. Storage rent + slash settlement
+    /// + MEV burn flow into here under the system namespace, then pay
+    /// out via `RedirectKind::RefreshPayout` for namespace keep-alive.
+    /// Per INVENTION_STACK.md §1.2 conservation invariant: energy is
+    /// never destroyed, only redirected.
+    pub refresh_pool: evaporchain_energy_kernel::RefreshPool,
 }
+
+/// Namespace key for the protocol-owned refresh pool. Storage rent
+/// from `collect_storage_rent` accrues under this namespace; future
+/// payouts to chain-history / beacon / light-cone-proof keep-alive
+/// draw from it.
+pub const SYSTEM_REFRESH_NAMESPACE: &[u8] = b"evaporchain-system-refresh";
 
 impl SimpleExecutor {
     /// Create a new executor with the given grace period for evaporation.
@@ -430,6 +442,7 @@ impl SimpleExecutor {
             chain_id: String::new(),
             call_depth: 0,
             eulogy_trie: evaporchain_tombstone::EulogyTrie::new(),
+            refresh_pool: evaporchain_energy_kernel::RefreshPool::new(),
         }
     }
 
@@ -457,6 +470,7 @@ impl SimpleExecutor {
             chain_id: String::new(),
             call_depth: 0,
             eulogy_trie: evaporchain_tombstone::EulogyTrie::new(),
+            refresh_pool: evaporchain_energy_kernel::RefreshPool::new(),
         }
     }
 
@@ -478,6 +492,7 @@ impl SimpleExecutor {
             chain_id: String::new(),
             call_depth: 0,
             eulogy_trie: evaporchain_tombstone::EulogyTrie::new(),
+            refresh_pool: evaporchain_energy_kernel::RefreshPool::new(),
         }
     }
 
@@ -499,6 +514,7 @@ impl SimpleExecutor {
             chain_id: String::new(),
             call_depth: 0,
             eulogy_trie: evaporchain_tombstone::EulogyTrie::new(),
+            refresh_pool: evaporchain_energy_kernel::RefreshPool::new(),
         }
     }
 
@@ -524,6 +540,7 @@ impl SimpleExecutor {
             chain_id: String::new(),
             call_depth: 0,
             eulogy_trie: evaporchain_tombstone::EulogyTrie::new(),
+            refresh_pool: evaporchain_energy_kernel::RefreshPool::new(),
         }
     }
 
@@ -549,6 +566,7 @@ impl SimpleExecutor {
             chain_id: String::new(),
             call_depth: 0,
             eulogy_trie: evaporchain_tombstone::EulogyTrie::new(),
+            refresh_pool: evaporchain_energy_kernel::RefreshPool::new(),
         }
     }
 
@@ -575,6 +593,7 @@ impl SimpleExecutor {
             chain_id: String::new(),
             call_depth: 0,
             eulogy_trie: evaporchain_tombstone::EulogyTrie::new(),
+            refresh_pool: evaporchain_energy_kernel::RefreshPool::new(),
         }
     }
 
@@ -1532,14 +1551,20 @@ impl SimpleExecutor {
                 (rent, acct.balance)
             };
             let acct = db.get_or_create_account(&addr);
+            // Track how much actually flowed off the account so we can
+            // accrue the same amount into the refresh pool — closes
+            // the §1.2 conservation loop.
+            let actually_debited;
             if acct.balance >= rent_info.0 {
                 acct.balance -= rent_info.0;
+                actually_debited = rent_info.0;
             } else {
                 // Account is being zeroed out by storage rent — engrave
                 // the chain's small-deaths memorial via evaporchain-
                 // tombstone before we wipe state. Per doctrine §A2.5
                 // the eulogy trie is the deliberate exception to §2.2's
                 // anti-immutability rule.
+                actually_debited = acct.balance;
                 let final_balance_before_wipe = acct.balance;
                 acct.balance = 0;
                 acct.storage_deposit = 0;
@@ -1555,6 +1580,16 @@ impl SimpleExecutor {
                 // already-memorialised case so a buggy iteration
                 // doesn't take down the chain.
                 let _ = self.eulogy_trie.insert(addr, tombstone);
+            }
+            // Accrue the debited rent into the protocol-owned refresh
+            // pool under SYSTEM_REFRESH_NAMESPACE. Energy is never
+            // destroyed (§1.2) — only redirected.
+            if actually_debited > 0 {
+                self.refresh_pool.accrue(
+                    SYSTEM_REFRESH_NAMESPACE.to_vec(),
+                    actually_debited,
+                    current_epoch,
+                );
             }
         }
     }
