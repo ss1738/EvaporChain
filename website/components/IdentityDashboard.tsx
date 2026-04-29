@@ -82,6 +82,8 @@ export default function IdentityDashboard() {
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [endpoint, setEndpoint] = useState(DEFAULT_NODE);
+  const [wsConnected, setWsConnected] = useState(false);
+  const [lastBlockNumber, setLastBlockNumber] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -102,10 +104,48 @@ export default function IdentityDashboard() {
       }
     };
     fetchOnce();
+    // Polling fallback in case WS fails or is blocked.
     const id = setInterval(fetchOnce, 5_000);
+
+    // WebSocket push: refetch identity whenever the chain commits a new
+    // block. Substrate at /ws publishes NewBlock events; subscribing to
+    // just "blocks" keeps payload small.
+    let ws: WebSocket | null = null;
+    try {
+      const wsUrl = endpoint
+        .replace(/^http/, "ws")
+        .replace(/\/$/, "");
+      ws = new WebSocket(`${wsUrl}/ws?subscribe=blocks`);
+      ws.onopen = () => {
+        if (!cancelled) setWsConnected(true);
+      };
+      ws.onmessage = (ev) => {
+        try {
+          const m = JSON.parse(ev.data);
+          if (m.type === "new_block") {
+            if (!cancelled) {
+              setLastBlockNumber(m.number);
+              fetchOnce();
+            }
+          }
+        } catch {
+          // ignore non-JSON
+        }
+      };
+      ws.onclose = () => {
+        if (!cancelled) setWsConnected(false);
+      };
+      ws.onerror = () => {
+        if (!cancelled) setWsConnected(false);
+      };
+    } catch {
+      // browser may block ws on certain origins — polling still runs
+    }
+
     return () => {
       cancelled = true;
       clearInterval(id);
+      if (ws) ws.close();
     };
   }, [endpoint]);
 
@@ -178,7 +218,13 @@ export default function IdentityDashboard() {
       <FoldPanel fold={identity.lambda_fold} endpoint={endpoint} />
       <PrimitivesPanel primitives={identity.wired_primitives} />
 
-      <DemoFooter endpoint={endpoint} chainId={identity.chain_id} setEndpoint={setEndpoint} />
+      <DemoFooter
+        endpoint={endpoint}
+        chainId={identity.chain_id}
+        setEndpoint={setEndpoint}
+        wsConnected={wsConnected}
+        lastBlockNumber={lastBlockNumber}
+      />
     </div>
   );
 }
@@ -187,10 +233,14 @@ function DemoFooter({
   endpoint,
   chainId,
   setEndpoint,
+  wsConnected,
+  lastBlockNumber,
 }: {
   endpoint: string;
   chainId: string;
   setEndpoint: (s: string) => void;
+  wsConnected: boolean;
+  lastBlockNumber: number | null;
 }) {
   const [resetMsg, setResetMsg] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
@@ -223,7 +273,16 @@ function DemoFooter({
           Chain id: <code className="font-mono">{chainId}</code>
         </span>
         <span>·</span>
-        <span>Polling every 5s</span>
+        <span>
+          {wsConnected ? (
+            <span className="inline-flex items-center gap-1.5">
+              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+              live{lastBlockNumber !== null && ` · block ${lastBlockNumber}`}
+            </span>
+          ) : (
+            "polling every 5s (ws disconnected)"
+          )}
+        </span>
         <span>·</span>
         <button
           onClick={() => {
