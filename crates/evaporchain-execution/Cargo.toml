@@ -13,6 +13,7 @@ evaporchain-contracts = { path = "../evaporchain-contracts" }
 evaporchain-script = { path = "../evaporchain-script" }
 evaporchain-proving = { path = "../evaporchain-proving" }
 evaporchain-sharding = { path = "../evaporchain-sharding" }
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
 blake3 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

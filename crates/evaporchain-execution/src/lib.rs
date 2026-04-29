@@ -1,5 +1,6 @@
 pub mod block_stm;
 pub mod economics;
+pub mod energy_audit;
 pub mod fees;
 pub mod genesis;
 pub mod parallel;
