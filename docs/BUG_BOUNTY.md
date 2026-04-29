@@ -2,7 +2,7 @@
 
 Companion to `SECURITY.md` at the repo root, which is normative for disclosure process and severity. This document defines the **scope, reward structure, and operational policy** of the formal bug-bounty program planned to launch ahead of mainnet.
 
-**Status:** scoping draft, not yet active. The program goes live when (a) all `audit/end_to_end_audit_2026_04_27.md` Gap A code items are merged and (b) operational infrastructure (triage queue, escrow, payment rails) is in place.
+**Status:** scoping draft, not yet active. Gap A code items are merged as of 2026-04-29. Program goes live when operational infrastructure (triage queue, escrow, payment rails) is in place — see §10 open questions.
 
 ---
 

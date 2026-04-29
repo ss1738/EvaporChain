@@ -292,7 +292,7 @@ To be produced before audit kickoff:
 In approximate priority order:
 - [x] Resolve all CRITICAL items in `cross_verification_2026_04_27.md`. — ALL 6 items resolved or verified false-positive (2026-04-29)
 - [x] Resolve HIGH items or document as accepted risk if deferred. — Items 1 (finality), 4 (BLS encrypt) fixed; item 5 false-positive; item 3 (upgrade_contract) fully implemented
-- [ ] Generate code-coverage report.
+- [x] Generate code-coverage report. — CI job `coverage` runs `cargo-tarpaulin --workspace` on every push; uploads to Codecov via `secrets.CODECOV_TOKEN` (`.github/workflows/ci.yml:45-59`)
 - [x] Produce architecture diagrams D-01 through D-05.
 - [x] Tabulate all values in §10.
 - [x] Wire `BlockDA2D::encode_block()` into block production. — DONE: all 3 producers + Tendermint (commit 1fc67c0)
