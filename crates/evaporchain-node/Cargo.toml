@@ -57,6 +57,12 @@ evaporchain-refresh-market = { path = "../evaporchain-refresh-market" }
 evaporchain-script-lad = { path = "../evaporchain-script-lad" }
 evaporchain-boltzmann-stake = { path = "../evaporchain-boltzmann-stake" }
 evaporchain-sanov-slashing = { path = "../evaporchain-sanov-slashing" }
+evaporchain-braid-sequencer = { path = "../evaporchain-braid-sequencer" }
+evaporchain-decay-forget = { path = "../evaporchain-decay-forget" }
+evaporchain-wsbf = { path = "../evaporchain-wsbf" }
+evaporchain-rg-phase-map = { path = "../evaporchain-rg-phase-map" }
+evaporchain-autopoietic = { path = "../evaporchain-autopoietic" }
+evaporchain-llsa = { path = "../evaporchain-llsa" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

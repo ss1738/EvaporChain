@@ -1,0 +1,15 @@
+[package]
+name = "evaporchain-hbct-elexon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "GB Elexon BMRS oracle adapter for HBCT settlement. Implements OracleFeed against the real Elexon BMRS v1 REST API (dataset B1790 — Actual Generation Output per Generation Unit). The HBCT testnet launch-wedge demo adapter."
+
+[dependencies]
+evaporchain-hbct  = { path = "../evaporchain-hbct" }
+evaporchain-types = { path = "../evaporchain-types" }
+serde             = { workspace = true }
+serde_json        = { workspace = true }
+thiserror         = { workspace = true }
+ureq              = { version = "2", features = ["json"] }

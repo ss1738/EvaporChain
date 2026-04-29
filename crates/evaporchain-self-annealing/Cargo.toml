@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-self-annealing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Self-Annealing Validator Set (A4.3.2). Cooling schedule = λ. As chain energy evaporates, validator selection crystallises to highest-performing set. Extends Singh-Boltzmann Stake via Kirkpatrick-Gelatt-Vecchi 1983 simulated annealing."
+
+[dependencies]
+evaporchain-boltzmann-stake  = { path = "../evaporchain-boltzmann-stake" }
+evaporchain-energy-kernel    = { path = "../evaporchain-energy-kernel" }
+evaporchain-types            = { path = "../evaporchain-types" }
+serde                        = { workspace = true }
+thiserror                    = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

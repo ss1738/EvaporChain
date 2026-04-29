@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-wsbf"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Wilson-Singh Block Flow (WSBF). RG-flow on chain history: old blocks become 'effective theory' parameters. Each RG step integrates out the highest-energy short-distance degrees of freedom, rescaling λ → λ_eff. Tier 2 primitive per INVENTION_STACK.md §4.2. Wilson-Kogut 1974; Cardy 1996."
+
+[dependencies]
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
+evaporchain-types         = { path = "../evaporchain-types" }
+serde                     = { workspace = true }
+thiserror                 = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

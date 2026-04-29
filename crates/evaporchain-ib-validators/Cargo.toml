@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-ib-validators"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Information-Bottleneck Validators (A4.3.1). β = λ. Validators compress chain state representations, trading I(Z;X) vs I(Z;Y) controlled by the single-λ parameter per Tishby-Pereira-Bialek 1999."
+
+[dependencies]
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
+evaporchain-types         = { path = "../evaporchain-types" }
+serde                     = { workspace = true }
+thiserror                 = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

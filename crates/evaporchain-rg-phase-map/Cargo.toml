@@ -1,0 +1,13 @@
+[package]
+name = "evaporchain-rg-phase-map"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "RG Consensus Phase Map (A4.3.11). Extends WSBF to produce a phase diagram of consensus regimes under varying λ, validator count, and adversary fraction. Maps fixed points of the RG flow to operational regimes: liveness-stable, safety-stable, frozen, chaotic. Diagnostic tooling for L1 operators. Wilson 1971; Cardy 1996."
+
+[dependencies]
+evaporchain-wsbf  = { path = "../evaporchain-wsbf" }
+evaporchain-types = { path = "../evaporchain-types" }
+serde             = { workspace = true }
+thiserror         = { workspace = true }

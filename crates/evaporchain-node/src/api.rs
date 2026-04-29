@@ -1833,6 +1833,143 @@ async fn get_governance_fork_choice_mode(
     }
 }
 
+// ─────────── Braid-Group Sequencer commitment ─────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct BraidCommitReq {
+    /// Braid generators: positive integers are σ_i, negative are σ_i^-1.
+    pub generators: Vec<i32>,
+    /// Number of strands (n). Generators must be in [1, n-1].
+    pub n: u32,
+}
+
+/// POST /api/braid/commit — reduce a braid word to substrate-canonical form
+/// and commit via blake3. Encodes transaction ordering as a braid-group
+/// commitment (Garside 1969 / Birman 1974). §A1.4.
+async fn post_braid_commit(Json(req): Json<BraidCommitReq>) -> Json<serde_json::Value> {
+    use evaporchain_braid_sequencer::{commit_braid, reduce_canonical, BraidWord};
+    match BraidWord::new(req.generators, req.n) {
+        Ok(word) => {
+            let reduced = reduce_canonical(&word);
+            let commitment = commit_braid(&word);
+            Json(serde_json::json!({
+                "status": "ok",
+                "original_length": word.len(),
+                "reduced_length": reduced.len(),
+                "commitment_hex": hex::encode(commitment),
+                "reduced_generators": reduced.generators,
+                "detail": format!("Garside substrate-canonical form: {} generators → {} after reduction", word.len(), reduced.len())
+            }))
+        }
+        Err(e) => Json(serde_json::json!({
+            "status": "error",
+            "detail": e.to_string()
+        })),
+    }
+}
+
+// ─────────── Decay-Forget Proofs (GDPR-native) ────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct DecayForgetReq {
+    pub record_id_hex: String,
+    pub original_commitment: u64,
+    pub activated_epoch: u64,
+    pub query_epoch: u64,
+    pub forget_threshold: u64,
+}
+
+/// POST /api/decay_forget/prove — produce a DecayForgetProof showing a record's
+/// recoverability commitment has decayed below `forget_threshold`. GDPR-native:
+/// once proven, the chain *cannot* recover the record. §4.2 V2.
+async fn post_decay_forget_prove(Json(req): Json<DecayForgetReq>) -> Json<serde_json::Value> {
+    use evaporchain_decay_forget::prove_forgotten;
+    use evaporchain_energy_kernel::{ChainLambda, DEFAULT_LAMBDA};
+
+    let record_id: [u8; 32] = match hex::decode(&req.record_id_hex) {
+        Ok(b) if b.len() == 32 => {
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&b);
+            arr
+        }
+        Ok(b) => {
+            return Json(serde_json::json!({
+                "status": "error",
+                "detail": format!("record_id_hex must be 32 bytes, got {}", b.len())
+            }))
+        }
+        Err(_) => {
+            return Json(serde_json::json!({
+                "status": "error",
+                "detail": "invalid record_id_hex"
+            }))
+        }
+    };
+
+    let chain_lambda = ChainLambda::new(DEFAULT_LAMBDA);
+    let proof = prove_forgotten(
+        record_id,
+        req.original_commitment,
+        chain_lambda,
+        req.activated_epoch,
+        req.query_epoch,
+        req.forget_threshold,
+    );
+
+    let is_forgotten = proof.decayed_commitment <= req.forget_threshold;
+    Json(serde_json::json!({
+        "status": "ok",
+        "is_forgotten": is_forgotten,
+        "original_commitment": proof.original_commitment,
+        "decayed_commitment": proof.decayed_commitment,
+        "forget_threshold": proof.forget_threshold,
+        "forgotten_at_epoch": proof.forgotten_at_epoch,
+        "witness_hex": hex::encode(proof.witness),
+        "detail": if is_forgotten {
+            format!("FORGOTTEN: decayed {} → {} < threshold {}", proof.original_commitment, proof.decayed_commitment, proof.forget_threshold)
+        } else {
+            format!("NOT YET FORGOTTEN: {} > threshold {}", proof.decayed_commitment, proof.forget_threshold)
+        }
+    }))
+}
+
+/// POST /api/decay_forget/verify — verify a DecayForgetProof witness.
+async fn post_decay_forget_verify(Json(req): Json<DecayForgetReq>) -> Json<serde_json::Value> {
+    use evaporchain_decay_forget::{prove_forgotten, verify_forget_proof};
+    use evaporchain_energy_kernel::{ChainLambda, DEFAULT_LAMBDA};
+
+    let record_id: [u8; 32] = match hex::decode(&req.record_id_hex) {
+        Ok(b) if b.len() == 32 => {
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&b);
+            arr
+        }
+        _ => {
+            return Json(serde_json::json!({
+                "status": "error",
+                "detail": "invalid or non-32-byte record_id_hex"
+            }))
+        }
+    };
+
+    let chain_lambda = ChainLambda::new(DEFAULT_LAMBDA);
+    let proof = prove_forgotten(
+        record_id,
+        req.original_commitment,
+        chain_lambda,
+        req.activated_epoch,
+        req.query_epoch,
+        req.forget_threshold,
+    );
+    let valid = verify_forget_proof(&proof).is_ok();
+    Json(serde_json::json!({
+        "status": "ok",
+        "valid": valid,
+        "is_forgotten": proof.decayed_commitment <= req.forget_threshold,
+        "detail": if valid { "witness valid — proof is tamper-evident" } else { "witness INVALID — proof has been tampered" }
+    }))
+}
+
 // ─────────── Script-LAD resource checker ─────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -4045,6 +4182,172 @@ async fn post_demo_reset(State(state): State<Arc<ApiState>>) -> Json<DemoResetRe
     })
 }
 
+// ─────────────── Wilson-Singh Block Flow (WSBF / RG) ────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct WsbfRgFlowReq {
+    /// Block summaries to feed into the RG flow.
+    pub blocks: Vec<WsbfBlockSummaryDto>,
+    /// Number of blocks to coarse-grain per step (must be ≥ 1).
+    pub coarse_grain: usize,
+    /// Controls how strongly entropy shifts λ_eff (in millibits; 0 = no correction).
+    pub entropy_scale_mb: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct WsbfBlockSummaryDto {
+    pub height: u64,
+    pub total_energy: u64,
+    pub active_accounts: u64,
+    pub lambda_half_life: u64,
+}
+
+async fn post_wsbf_rg_flow(Json(req): Json<WsbfRgFlowReq>) -> Json<serde_json::Value> {
+    use evaporchain_wsbf::flow::rg_flow;
+    use evaporchain_wsbf::params::{BlockSummary, RgFlowParams};
+    if req.coarse_grain == 0 {
+        return Json(serde_json::json!({"status":"error","detail":"coarse_grain must be ≥ 1"}));
+    }
+    let blocks: Vec<BlockSummary> = req.blocks.iter().map(|b| BlockSummary {
+        height: b.height,
+        total_energy: b.total_energy,
+        active_accounts: b.active_accounts,
+        lambda_half_life: b.lambda_half_life,
+    }).collect();
+    let params = RgFlowParams { coarse_grain: req.coarse_grain, entropy_scale_mb: req.entropy_scale_mb };
+    let steps = rg_flow(&blocks, &params);
+    Json(serde_json::json!({
+        "status": "ok",
+        "input_blocks": blocks.len(),
+        "rg_steps": steps.len(),
+        "effective_params": steps.iter().map(|ep| serde_json::json!({
+            "step": ep.step,
+            "height_start": ep.height_start,
+            "height_end": ep.height_end,
+            "lambda_eff": ep.lambda_eff,
+            "effective_accounts": ep.effective_accounts,
+            "energy_density": ep.energy_density,
+            "entropy_mb": ep.entropy_mb,
+        })).collect::<Vec<_>>(),
+    }))
+}
+
+// ─────────────── RG Consensus Phase Map ─────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct RgPhaseClassifyReq {
+    pub lambda_eff: u64,
+    pub n_validators: u64,
+    /// Adversary fraction × 1000 (e.g. 333 = 33.3 %).
+    pub adversary_fraction_per_mille: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RgPhaseTrajectoryReq {
+    /// WSBF EffectiveParams sequence (use /api/wsbf/rg_flow first).
+    pub steps: Vec<WsbfEffectiveParamsDto>,
+    pub n_validators: u64,
+    pub adversary_fraction_per_mille: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct WsbfEffectiveParamsDto {
+    pub step: usize,
+    pub height_start: u64,
+    pub height_end: u64,
+    pub lambda_eff: u64,
+    pub effective_accounts: u64,
+    pub energy_density: u64,
+    pub entropy_mb: u64,
+}
+
+async fn post_rg_phase_classify(Json(req): Json<RgPhaseClassifyReq>) -> Json<serde_json::Value> {
+    use evaporchain_rg_phase_map::phase::{classify_regime, PhaseMapParams};
+    let phase = classify_regime(
+        req.lambda_eff,
+        req.n_validators,
+        req.adversary_fraction_per_mille,
+        &PhaseMapParams::default(),
+    );
+    Json(serde_json::json!({
+        "status": "ok",
+        "phase": format!("{phase:?}"),
+        "lambda_eff": req.lambda_eff,
+        "n_validators": req.n_validators,
+        "adversary_fraction_per_mille": req.adversary_fraction_per_mille,
+    }))
+}
+
+async fn post_rg_phase_trajectory(Json(req): Json<RgPhaseTrajectoryReq>) -> Json<serde_json::Value> {
+    use evaporchain_rg_phase_map::phase::{phase_trajectory, find_fixed_point, PhaseMapParams};
+    use evaporchain_wsbf::params::EffectiveParams as RgEp;
+    let steps: Vec<RgEp> = req.steps.iter().map(|s| RgEp {
+        step: s.step,
+        height_start: s.height_start,
+        height_end: s.height_end,
+        lambda_eff: s.lambda_eff,
+        effective_accounts: s.effective_accounts,
+        energy_density: s.energy_density,
+        entropy_mb: s.entropy_mb,
+    }).collect();
+    let traj = phase_trajectory(&steps, req.adversary_fraction_per_mille, req.n_validators, &PhaseMapParams::default());
+    let fixed_point = find_fixed_point(&traj);
+    Json(serde_json::json!({
+        "status": "ok",
+        "steps": traj.len(),
+        "trajectory": traj.iter().map(|p| format!("{p:?}")).collect::<Vec<_>>(),
+        "fixed_point_step": fixed_point,
+    }))
+}
+
+// ─────────────── Autopoietic Chain Health ────────────────────────────
+
+async fn get_autopoietic_health(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
+    use evaporchain_autopoietic::AutopoieticHealth;
+    use evaporchain_llsa::proof::AlwaysAcceptVerifier;
+    use evaporchain_autopoietic::ChainAutopoiesis;
+
+    // Derive current epoch from block count (proxy; production would use consensus height).
+    let epoch = {
+        let hist = safe_lock(&state.block_history);
+        hist.len() as u64
+    };
+
+    // Find the most recent sentinel vote epoch across all parameters.
+    let last_sentinel_vote = {
+        let db = safe_lock(&state.db);
+        let params = db.all_sentinel_params();
+        let mut max_epoch: Option<u64> = None;
+        for p in &params {
+            for v in db.get_sentinel_votes(p.id) {
+                max_epoch = Some(max_epoch.map_or(v.observed_epoch, |e| e.max(v.observed_epoch)));
+            }
+        }
+        max_epoch
+    };
+
+    // Known patronage covenant object IDs (the 5 demo objects seeded at startup).
+    let covenant_ids: Vec<Vec<u8>> = (1u8..=5).map(|i| vec![i, 0, 0, 0]).collect();
+
+    let book = safe_lock(&state.patronage_book);
+    let sys = ChainAutopoiesis::new(
+        AlwaysAcceptVerifier,
+        1_000,           // min_patronage_energy: 1 000 energy units
+        50,              // sentinel_heartbeat_window: 50 epochs
+    );
+    let report: AutopoieticHealth = sys.health_report(&book, &covenant_ids, last_sentinel_vote, epoch);
+
+    Json(serde_json::json!({
+        "status": format!("{:?}", report.status),
+        "patronage": format!("{:?}", report.patronage),
+        "sentinel": format!("{:?}", report.sentinel),
+        "llsa": format!("{:?}", report.llsa),
+        "total_patronage_energy": report.total_patronage_energy,
+        "epoch": report.epoch,
+        "last_sentinel_vote_epoch": last_sentinel_vote,
+    }))
+}
+
 // ─────────────── /api/docs — endpoint catalog ───────────────────────
 
 #[derive(Debug, Clone, Serialize)]
@@ -4134,9 +4437,26 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     ApiDocEntry { method: "GET",  path: "/api/validators/boltzmann_weights", category: "validators", description: "Boltzmann proposer-selection weights (stake × activity boost). Query: ?beta_mb=1000", example: Some("?beta_mb=1000") },
     ApiDocEntry { method: "POST", path: "/api/validators/sanov_slash",       category: "validators", description: "Apply Sanov KL-divergence slash. type=equivocation uses full slash; type=downtime uses missed_blocks/window miss rate.", example: Some(r#"{"validator_id":1,"slash_type":"downtime","missed_blocks":10,"window":100}"#) },
 
+    // Braid-Group Sequencer (§A1.4)
+    ApiDocEntry { method: "POST", path: "/api/braid/commit",               category: "substrate", description: "Reduce a braid word to substrate-canonical form (Garside 1969) and commit via blake3. Encodes transaction ordering as a braid-group commitment.", example: Some(r#"{"generators":[1,2,1,-2,3],"n":5}"#) },
+
+    // Decay-Forget Proofs — GDPR-native (§4.2 V2)
+    ApiDocEntry { method: "POST", path: "/api/decay_forget/prove",          category: "substrate", description: "Prove a record's recoverability commitment has λ-decayed below forget_threshold. GDPR-native: once proven, the chain cannot recover the record.", example: Some(r#"{"record_id_hex":"00..00","original_commitment":1000000,"activated_epoch":0,"query_epoch":500,"forget_threshold":100}"#) },
+    ApiDocEntry { method: "POST", path: "/api/decay_forget/verify",         category: "substrate", description: "Verify a DecayForgetProof witness — tamper-evident check that the proof was not modified.", example: Some(r#"{"record_id_hex":"00..00","original_commitment":1000000,"activated_epoch":0,"query_epoch":500,"forget_threshold":100}"#) },
+
     // Governance
     ApiDocEntry { method: "GET",  path: "/api/governance/fork_choice_mode", category: "governance", description: "Current authoritative fork-choice mode (mcc|singh_attractor) + attractor set.", example: None },
     ApiDocEntry { method: "POST", path: "/api/governance/fork_choice_mode", category: "governance", description: "Governance amendment to switch fork-choice between MCC and Singh-Attractor. Requires stake quorum from endorser_stakes.", example: Some(r#"{"mode":"singh_attractor","attractors":[{"center":1000,"basin_radius":200}],"endorser_stakes":[1000,800],"required_stake":1500}"#) },
+
+    // WSBF — Wilson-Singh Block Flow (RG on chain history)
+    ApiDocEntry { method: "POST", path: "/api/wsbf/rg_flow",               category: "substrate", description: "Apply successive Wilson-Singer RG coarse-graining steps to a block history. Returns one EffectiveParams per step: λ_eff shifts with Shannon entropy of the window (Wilson-Kogut 1974).", example: Some(r#"{"blocks":[{"height":0,"total_energy":1000,"active_accounts":10,"lambda_half_life":4096}],"coarse_grain":1,"entropy_scale_mb":500000}"#) },
+
+    // RG Phase Map — consensus regime classification
+    ApiDocEntry { method: "POST", path: "/api/rg_phase/classify",           category: "substrate", description: "Classify a (λ_eff, validator_count, adversary_fraction) tuple into a consensus regime: LivenessStable | SafetyStable | Frozen | Chaotic.", example: Some(r#"{"lambda_eff":4096,"n_validators":10,"adversary_fraction_per_mille":50}"#) },
+    ApiDocEntry { method: "POST", path: "/api/rg_phase/trajectory",         category: "substrate", description: "Classify a WSBF phase trajectory. Feed in the effective_params from /api/wsbf/rg_flow. Returns one ConsensusPhase per step + fixed_point_step index.", example: Some(r#"{"steps":[{"step":0,"height_start":0,"height_end":99,"lambda_eff":4096,"effective_accounts":10,"energy_density":1000,"entropy_mb":0}],"n_validators":10,"adversary_fraction_per_mille":50}"#) },
+
+    // Autopoietic health — Maturana-Varela viability check
+    ApiDocEntry { method: "GET",  path: "/api/autopoietic/health",          category: "substrate", description: "Autopoietic chain viability report (Maturana-Varela 1980): Patronage (self-funding), Sentinel (self-maintenance), LLSA (self-boundary). Reports Viable | Stressed | Inviable.", example: None },
 
     // Demo
     ApiDocEntry { method: "POST", path: "/api/demo/reset",            category: "demo", description: "Clear HBCT book + Sentinel votes so the dashboard demo can re-run", example: None },
@@ -7909,6 +8229,13 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/validators/boltzmann_stakes", get(get_boltzmann_stakes))
         .route("/api/validators/boltzmann_weights", get(get_boltzmann_weights))
         .route("/api/validators/sanov_slash", post(post_sanov_slash))
+        .route("/api/braid/commit", post(post_braid_commit))
+        .route("/api/decay_forget/prove", post(post_decay_forget_prove))
+        .route("/api/decay_forget/verify", post(post_decay_forget_verify))
+        .route("/api/wsbf/rg_flow", post(post_wsbf_rg_flow))
+        .route("/api/rg_phase/classify", post(post_rg_phase_classify))
+        .route("/api/rg_phase/trajectory", post(post_rg_phase_trajectory))
+        .route("/api/autopoietic/health", get(get_autopoietic_health))
         .route("/api/demo/reset", post(post_demo_reset))
         .route("/api/docs", get(get_api_docs))
         .route("/api/objects", get(get_objects))

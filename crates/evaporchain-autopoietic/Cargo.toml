@@ -1,0 +1,15 @@
+[package]
+name = "evaporchain-autopoietic"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Autopoietic Chain framing layer (A4.3.8). Ties together Sentinel (parameter self-adjustment), LLSA (upgrade self-gating), and Refresh-Pool Patronage (self-funding) into a coherent Maturana-Varela 1980 autopoietic system. The chain's four-act narrative spine: Tombstone ← Mortis ← Sentinel → Genesis."
+
+[dependencies]
+evaporchain-sentinel          = { path = "../evaporchain-sentinel" }
+evaporchain-llsa              = { path = "../evaporchain-llsa" }
+evaporchain-refresh-patronage = { path = "../evaporchain-refresh-patronage" }
+evaporchain-types             = { path = "../evaporchain-types" }
+serde                         = { workspace = true }
+thiserror                     = { workspace = true }

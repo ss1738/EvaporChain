@@ -1,13 +1,16 @@
 pub mod block_stm;
 pub mod boltzmann_stake_integration;
+pub mod demurrage_integration;
 pub mod economics;
 pub mod energy_audit;
 pub mod fees;
 pub mod genesis;
 pub mod genesis_invariant;
+pub mod lamport_integration;
 pub mod lyapunov_fees;
 pub mod parallel;
 pub mod privacy_exec;
+pub mod refresh_market_integration;
 pub mod rewards;
 pub mod sanov_slash_helpers;
 pub mod temporal;
@@ -447,6 +450,15 @@ pub struct SimpleExecutor {
     /// Populated when the chain calls `record_tur_observation`. Same
     /// observability pattern as `last_cmu_verdict`.
     pub last_tur_verdict: Option<evaporchain_tur_liveness::Verdict>,
+    /// Native demurrage parameters.  Controls the piecewise log-rate charged
+    /// on idle balances above the threshold; sink is `refresh_pool`.
+    pub demurrage_params: evaporchain_demurrage::DemurrageParams,
+    /// Decay-Lamport logical clock.  Ticked per block with total gas_used as
+    /// the energy proxy — one quantum = GAS_TRANSFER (21,000 gas).
+    pub lamport_clock: evaporchain_decay_lamport::LamportClock,
+    /// Refresh Market — AMM-priced namespace rent.  Namespaces are registered
+    /// on first object creation and charged per refresh cycle.
+    pub refresh_market: evaporchain_refresh_market::RefreshMarket,
 }
 
 /// Namespace key for the protocol-owned refresh pool. Storage rent
@@ -487,6 +499,9 @@ impl SimpleExecutor {
             last_conservation_audit: None,
             last_cmu_verdict: None,
             last_tur_verdict: None,
+            demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
+            lamport_clock: crate::lamport_integration::genesis_clock(),
+            refresh_market: crate::refresh_market_integration::genesis_market(),
         }
     }
 
@@ -501,6 +516,24 @@ impl SimpleExecutor {
     #[doc(hidden)]
     pub fn run_storage_rent_for_test(&mut self, db: &mut dyn StateDB, current_epoch: u64) {
         self.collect_storage_rent(db, current_epoch);
+    }
+
+    /// Current Decay-Lamport logical tick. Light clients and cross-block
+    /// ordering systems read this for causal ordering without a wall clock.
+    pub fn lamport_tick(&self) -> u64 {
+        self.lamport_clock.current_tick
+    }
+
+    /// Run the demurrage sweep directly (test helper / node API).
+    #[doc(hidden)]
+    pub fn run_demurrage_for_test(&mut self, db: &mut dyn StateDB, last_epoch: u64, current_epoch: u64) -> u64 {
+        crate::demurrage_integration::collect_demurrage(
+            db,
+            &mut self.refresh_pool,
+            &self.demurrage_params,
+            last_epoch,
+            current_epoch,
+        )
     }
 
     /// Per-block hook: advance the Singh-Lyapunov fee state against
@@ -620,6 +653,9 @@ impl SimpleExecutor {
             last_conservation_audit: None,
             last_cmu_verdict: None,
             last_tur_verdict: None,
+            demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
+            lamport_clock: crate::lamport_integration::genesis_clock(),
+            refresh_market: crate::refresh_market_integration::genesis_market(),
         }
     }
 
@@ -653,6 +689,9 @@ impl SimpleExecutor {
             last_conservation_audit: None,
             last_cmu_verdict: None,
             last_tur_verdict: None,
+            demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
+            lamport_clock: crate::lamport_integration::genesis_clock(),
+            refresh_market: crate::refresh_market_integration::genesis_market(),
         }
     }
 
@@ -686,6 +725,9 @@ impl SimpleExecutor {
             last_conservation_audit: None,
             last_cmu_verdict: None,
             last_tur_verdict: None,
+            demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
+            lamport_clock: crate::lamport_integration::genesis_clock(),
+            refresh_market: crate::refresh_market_integration::genesis_market(),
         }
     }
 
@@ -723,6 +765,9 @@ impl SimpleExecutor {
             last_conservation_audit: None,
             last_cmu_verdict: None,
             last_tur_verdict: None,
+            demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
+            lamport_clock: crate::lamport_integration::genesis_clock(),
+            refresh_market: crate::refresh_market_integration::genesis_market(),
         }
     }
 
@@ -760,6 +805,9 @@ impl SimpleExecutor {
             last_conservation_audit: None,
             last_cmu_verdict: None,
             last_tur_verdict: None,
+            demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
+            lamport_clock: crate::lamport_integration::genesis_clock(),
+            refresh_market: crate::refresh_market_integration::genesis_market(),
         }
     }
 
@@ -798,6 +846,9 @@ impl SimpleExecutor {
             last_conservation_audit: None,
             last_cmu_verdict: None,
             last_tur_verdict: None,
+            demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
+            lamport_clock: crate::lamport_integration::genesis_clock(),
+            refresh_market: crate::refresh_market_integration::genesis_market(),
         }
     }
 
@@ -2349,8 +2400,22 @@ impl ExecutionEngine for SimpleExecutor {
         // declare. Closes the SimpleExecutor half of #6.
         if block.epoch > db.get_last_rent_epoch() {
             self.collect_storage_rent(db, block.epoch);
+            // Native demurrage sweep — charges idle balances above the
+            // threshold and credits the refresh pool.  Fires at the same
+            // per-epoch cadence as storage rent.
+            crate::demurrage_integration::collect_demurrage(
+                db,
+                &mut self.refresh_pool,
+                &self.demurrage_params,
+                db.get_last_rent_epoch(),
+                block.epoch,
+            );
             db.put_last_rent_epoch(block.epoch);
         }
+
+        // Decay-Lamport logical clock — tick with total gas used this block.
+        self.lamport_clock =
+            crate::lamport_integration::tick_block(self.lamport_clock, gas_used);
 
         // Vesting timelock release tick — runs every block (per-block
         // schedules need responsive release). Idempotent within an

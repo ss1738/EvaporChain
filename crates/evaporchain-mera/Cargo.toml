@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-mera"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Authenticated Energy-MERA state commitment (Vidal 2007 / Evenbly-Vidal 2011). Energy filtration IS the MERA RG flow. χ=4 prototype. Per INVENTION_STACK.md §A1.4, §A1.8 PASS."
+
+[dependencies]
+evaporchain-types  = { path = "../evaporchain-types" }
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
+blake3   = { workspace = true }
+serde    = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
