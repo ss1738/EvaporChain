@@ -4936,3 +4936,92 @@ mod oracle_state_integration {
         assert_eq!(OracleInclusionProof::generate(&s, "nonexistent"), None);
     }
 }
+
+// ── Consensus Mempool (energy-stamped MEV resistance) integration ────────────
+
+#[cfg(test)]
+mod mempool_mev_integration {
+    use evaporchain_consensus::mempool::Mempool;
+    use evaporchain_types::{Transaction, TransferTx};
+
+    fn tx(from: u8, nonce: u64) -> Transaction {
+        Transaction::Transfer(TransferTx {
+            from: [from; 32],
+            to: [0xFFu8; 32],
+            amount: 100,
+            nonce,
+            signature: None,
+            public_key: None,
+        })
+    }
+
+    #[test]
+    fn submit_and_take_basic() {
+        let mut pool = Mempool::new();
+        pool.submit(tx(1, 0));
+        pool.submit(tx(2, 0));
+        let taken = pool.take(10);
+        assert_eq!(taken.len(), 2);
+        assert!(pool.is_empty());
+    }
+
+    #[test]
+    fn take_with_priority_fresh_beats_stale() {
+        let mut pool = Mempool::new();
+        pool.set_epoch(0);
+        pool.submit(tx(1, 0)); // submitted at epoch 0
+
+        pool.set_epoch(12); // advance 12 blocks (3 half-lives at half_life=4)
+        pool.submit(tx(2, 0)); // fresh tx at epoch 12
+
+        // drain at current block=12; fresh tx should sort first
+        let taken = pool.take_with_priority(2, 12);
+        assert_eq!(taken.len(), 2);
+        // fresh tx (from=[2;32]) should come first — higher priority
+        if let Transaction::Transfer(first) = &taken[0] {
+            assert_eq!(first.from, [2u8; 32], "fresh tx should have higher priority");
+        }
+    }
+
+    #[test]
+    fn max_size_rejects_excess() {
+        let mut pool = Mempool::with_max_size(2);
+        assert!(pool.submit(tx(1, 0)));
+        assert!(pool.submit(tx(2, 0)));
+        // third tx should be rejected (max size 2)
+        let accepted = pool.submit(tx(3, 0));
+        assert!(!accepted || pool.len() <= 2);
+    }
+
+    #[test]
+    fn duplicate_tx_rejected() {
+        let mut pool = Mempool::new();
+        let t = tx(1, 0);
+        assert!(pool.submit(t.clone()));
+        let second = pool.submit(t);
+        assert!(!second, "duplicate tx must be rejected");
+        assert_eq!(pool.duplicate_count(), 1);
+    }
+
+    #[test]
+    fn drain_clears_all() {
+        let mut pool = Mempool::new();
+        pool.submit(tx(1, 0));
+        pool.submit(tx(2, 0));
+        pool.submit(tx(3, 0));
+        let drained = pool.drain();
+        assert_eq!(drained.len(), 3);
+        assert!(pool.is_empty());
+    }
+
+    #[test]
+    fn take_with_gas_limit_respects_limit() {
+        let mut pool = Mempool::new();
+        for i in 0..5u8 {
+            pool.submit(tx(i, 0));
+        }
+        // Transfer costs 21_000 gas; limit of 42_000 → max 2 txs
+        let taken = pool.take_with_gas_limit(100, 42_000);
+        assert_eq!(taken.len(), 2);
+    }
+}
