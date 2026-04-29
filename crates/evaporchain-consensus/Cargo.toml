@@ -29,6 +29,7 @@ evaporchain-tur-liveness = { path = "../evaporchain-tur-liveness" }
 evaporchain-lambda-fold = { path = "../evaporchain-lambda-fold" }
 evaporchain-boltzmann-stake = { path = "../evaporchain-boltzmann-stake" }
 evaporchain-sanov-slashing = { path = "../evaporchain-sanov-slashing" }
+evaporchain-bell-beacon = { path = "../evaporchain-bell-beacon" }
 blake3 = "1"
 tokio = { workspace = true }
 serde = { workspace = true }

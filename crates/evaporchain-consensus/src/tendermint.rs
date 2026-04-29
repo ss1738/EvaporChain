@@ -2475,7 +2475,39 @@ impl TendermintConsensus {
         }
 
         // Advance randomness beacon with this block's VRF output.
+        // Bell-Certified gate (§4.2): derive a pseudo-CHSH S-value from the
+        // VRF bytes. In production this would be a real entangled-photon
+        // measurement; here we extract 4 correlation values from the VRF
+        // output. Non-gating (advisory) until hardware CHSH is plumbed —
+        // we always ingest but warn when the S-value fails the Bell test.
         if let Some(ref vrf_out) = block.vrf_output {
+            if vrf_out.len() >= 8 {
+                // Map each byte pair to a correlation in [-1000, 1000].
+                let corr = |hi: u8, lo: u8| -> i64 {
+                    let raw = i64::from(hi as i16 - 128) * 1000 / 128
+                        + i64::from(lo as i16 - 128) * 1000 / 128;
+                    raw.clamp(-1000, 1000)
+                };
+                let e_ab       = corr(vrf_out[0], vrf_out[1]);
+                let e_ab_prime = corr(vrf_out[2], vrf_out[3]);
+                let e_a_prime_b       = corr(vrf_out[4], vrf_out[5]);
+                let e_a_prime_b_prime = corr(vrf_out[6], vrf_out[7]);
+                if let Ok(s_milli) = evaporchain_bell_beacon::chsh_s_value(
+                    e_ab, e_ab_prime, e_a_prime_b, e_a_prime_b_prime,
+                ) {
+                    if !evaporchain_bell_beacon::bell_certified(
+                        s_milli, evaporchain_bell_beacon::LOCAL_REALISM_S_MILLI,
+                    ) {
+                        warn!(
+                            height = block.number,
+                            s_milli,
+                            "Bell gate: VRF-derived CHSH S-value ≤ 2 (advisory)"
+                        );
+                    } else {
+                        debug!(height = block.number, s_milli, "Bell gate: beacon certified");
+                    }
+                }
+            }
             self.randomness_beacon.ingest(block.number, vrf_out);
         }
 
