@@ -3237,3 +3237,231 @@ mod braid_sequencer_integration {
         assert_eq!(c1, c2);
     }
 }
+
+// ── p-adic Ultrametric Merkle integration ─────────────────────────────────────
+
+#[cfg(test)]
+mod padic_integration {
+    use evaporchain_padic::{valuation, ultrametric_distance, PAdicKey, PAdicMerkleTree};
+
+    #[test]
+    fn valuation_base2_counts_trailing_zeros() {
+        // v_2(8) = 3 (8 = 2³)
+        assert_eq!(valuation::<2>(8), 3);
+        // v_2(1) = 0 (odd)
+        assert_eq!(valuation::<2>(1), 0);
+        // v_2(0) = u32::MAX by convention
+        assert_eq!(valuation::<2>(0), u32::MAX);
+    }
+
+    #[test]
+    fn ultrametric_distance_strong_triangle_inequality() {
+        // d(x, z) <= max(d(x, y), d(y, z)) — strong triangle inequality
+        let x: u64 = 12; // 12 - 0 = 12 = 4·3; d(0,12) = v_2(12) = 2
+        let y: u64 = 4;  // d(0,4) = v_2(4) = 2; d(4,12) = v_2(8) = 3
+        let z: u64 = 0;
+        let dxz = ultrametric_distance::<2>(x, z);
+        let dxy = ultrametric_distance::<2>(x, y);
+        let dyz = ultrametric_distance::<2>(y, z);
+        assert!(dxz <= dxy.max(dyz), "strong triangle inequality violated");
+    }
+
+    #[test]
+    fn padic_merkle_tree_root_changes_on_insert() {
+        let mut tree = PAdicMerkleTree::<2>::new(4).unwrap();
+        let root_empty = tree.root();
+        let key = PAdicKey::<2>::new(7);
+        tree.insert(key, b"value1");
+        let root_after = tree.root();
+        assert_ne!(root_empty, root_after, "insert must change root");
+    }
+
+    #[test]
+    fn padic_merkle_tree_distinct_keys_produce_distinct_roots() {
+        let mut t1 = PAdicMerkleTree::<2>::new(4).unwrap();
+        let mut t2 = PAdicMerkleTree::<2>::new(4).unwrap();
+        t1.insert(PAdicKey::<2>::new(1), b"a");
+        t2.insert(PAdicKey::<2>::new(3), b"a");
+        assert_ne!(t1.root(), t2.root());
+    }
+}
+
+// ── TUR Liveness Detector integration ────────────────────────────────────────
+
+#[cfg(test)]
+mod tur_liveness_integration {
+    use evaporchain_tur_liveness::{tur_check, Verdict, mean, variance};
+
+    #[test]
+    fn constant_samples_are_a_cartel_signature() {
+        // Zero variance < any finite bound → violation
+        let v = tur_check(&[100, 100, 100, 100, 100], 50);
+        assert!(matches!(v, Verdict::Violation { .. }),
+            "constant block production → cartel signature");
+    }
+
+    #[test]
+    fn high_variance_samples_satisfy_tur() {
+        // Very high variance relative to mean satisfies TUR with any finite Σ
+        let v = tur_check(&[1, 1_000, 1, 1_000, 1, 1_000], 1);
+        assert!(matches!(v, Verdict::Ok { .. }));
+    }
+
+    #[test]
+    fn zero_sigma_always_ok() {
+        // Σ = 0 → bound = +∞ → every distribution is within bound
+        let v = tur_check(&[10, 10, 10], 0);
+        assert!(matches!(v, Verdict::Ok { .. }));
+    }
+
+    #[test]
+    fn mean_and_variance_basic_sanity() {
+        let samples = vec![2u64, 4, 6];
+        assert_eq!(mean(&samples), 4); // (2+4+6)/3
+        // variance([2,4,6]) = ((2-4)²+(4-4)²+(6-4)²)/3 = 8/3 = 2 (integer floor)
+        assert!(variance(&samples) > 0);
+    }
+}
+
+// ── HLTS (Half-Life Threshold Shares) integration ────────────────────────────
+
+#[cfg(test)]
+mod hlts_integration {
+    use evaporchain_hlts::{Share, quorum_alive, is_alive, count_alive};
+    use evaporchain_energy_kernel::{ChainLambda, Lambda};
+
+    fn lambda() -> ChainLambda {
+        ChainLambda::new(Lambda::from_epochs(100))
+    }
+
+    fn shares_3() -> Vec<Share> {
+        vec![
+            Share::new(1, 1_000, 0),
+            Share::new(2, 1_000, 0),
+            Share::new(3, 1_000, 0),
+        ]
+    }
+
+    #[test]
+    fn quorum_2_of_3_satisfied_at_epoch_zero() {
+        assert!(quorum_alive(&shares_3(), 2, lambda(), 0, 1));
+    }
+
+    #[test]
+    fn quorum_lost_after_decay_below_threshold() {
+        // After 1 half-life (epoch 100), energy = 500 < threshold 900
+        assert!(!quorum_alive(&shares_3(), 2, lambda(), 100, 900));
+    }
+
+    #[test]
+    fn count_alive_matches_expected_survivors() {
+        // At epoch 0, threshold=1: all 3 alive
+        assert_eq!(count_alive(&shares_3(), lambda(), 0, 1), 3);
+        // At epoch 200 (2 half-lives → 250 energy), threshold=300: all dead
+        assert_eq!(count_alive(&shares_3(), lambda(), 200, 300), 0);
+    }
+
+    #[test]
+    fn individual_share_aliveness_respects_halflife() {
+        let s = Share::new(1, 1_000, 0);
+        assert!(is_alive(&s, lambda(), 0, 999), "fresh share is alive");
+        assert!(!is_alive(&s, lambda(), 100, 600), "after 1 half-life energy=500 < 600");
+    }
+}
+
+// ── HBCT (Hour-Block Capacity Tokens) integration ────────────────────────────
+
+#[cfg(test)]
+mod hbct_integration {
+    use evaporchain_hbct::{HbctBook, HbctToken, auto_burn_at_slot_close, TokenError};
+
+    fn holder() -> [u8; 32] { [0x01u8; 32] }
+    fn location() -> Vec<u8> { b"GB:WIND-NORTH".to_vec() }
+
+    fn token(slot: u64) -> HbctToken {
+        HbctToken::new(location(), slot, 100, holder(), 0).unwrap()
+    }
+
+    #[test]
+    fn mint_and_verify_token_in_book() {
+        let mut book = HbctBook::new();
+        book.mint(token(10)).unwrap();
+        // Entry exists; total MWh = 100
+        let key = (location(), 10u64, holder());
+        assert_eq!(book.entries.get(&key), Some(&100));
+    }
+
+    #[test]
+    fn auto_burn_removes_closed_slot() {
+        let mut book = HbctBook::new();
+        book.mint(token(5)).unwrap();   // slot 5
+        book.mint(token(10)).unwrap();  // slot 10
+        // At epoch 5: slot 5 closes; slot 10 stays
+        let out = auto_burn_at_slot_close(&mut book, 5);
+        assert_eq!(out.entries_removed, 1);
+        assert_eq!(out.mwh_burnt, 100);
+        assert_eq!(book.entries.len(), 1);
+    }
+
+    #[test]
+    fn token_rejected_if_slot_in_past() {
+        let err = HbctToken::new(location(), 0, 100, holder(), 5).unwrap_err();
+        assert!(matches!(err, TokenError::SlotInPast { .. }));
+    }
+
+    #[test]
+    fn token_not_closed_before_slot_epoch() {
+        let t = token(50);
+        assert!(!t.is_closed(49), "token open before slot epoch");
+        assert!(t.is_closed(50), "token closed at slot epoch");
+    }
+}
+
+// ── CFM (Crooks-Singh Fee Equilibrium) integration ───────────────────────────
+
+#[cfg(test)]
+mod cfm_integration {
+    use evaporchain_cfm::{boltzmann_weight, cfm_equilibrium, FIXED_POINT_SCALE};
+    use evaporchain_cfm::beta::beta_millibits_per_fee;
+    use evaporchain_energy_kernel::{ChainLambda, Lambda};
+
+    fn lambda() -> ChainLambda {
+        ChainLambda::new(Lambda::from_epochs(1_000))
+    }
+
+    #[test]
+    fn boltzmann_weight_decreases_with_fee() {
+        let beta_mb = 10u64;
+        let w_low = boltzmann_weight(1, beta_mb);
+        let w_high = boltzmann_weight(100, beta_mb);
+        assert!(w_low > w_high, "higher fee → lower Boltzmann weight");
+    }
+
+    #[test]
+    fn boltzmann_weight_at_zero_fee_returns_max() {
+        assert_eq!(boltzmann_weight(0, 100), evaporchain_cfm::weight::MAX_WEIGHT);
+    }
+
+    #[test]
+    fn beta_grows_with_inverse_halflife() {
+        let fast_lambda = ChainLambda::new(Lambda::from_epochs(100));
+        let slow_lambda = ChainLambda::new(Lambda::from_epochs(10_000));
+        let beta_fast = beta_millibits_per_fee(fast_lambda).unwrap_or(0);
+        let beta_slow = beta_millibits_per_fee(slow_lambda).unwrap_or(0);
+        assert!(beta_fast > beta_slow, "shorter half-life → higher β (colder)");
+    }
+
+    #[test]
+    fn cfm_equilibrium_produces_valid_distribution() {
+        // Mempool: 3 fee tiers; pmf sums to exactly FIXED_POINT_SCALE
+        let mempool_pmf = [333_334u64, 333_333, 333_333];
+        let fees = vec![1u64, 2, 3];
+        let beta_mb = 5u64;
+        let eq = cfm_equilibrium(&mempool_pmf, &fees, beta_mb).unwrap();
+        // Must be a proper distribution summing to FIXED_POINT_SCALE
+        let sum: u64 = eq.pmf.iter().sum();
+        assert_eq!(sum, FIXED_POINT_SCALE, "equilibrium must be a proper distribution");
+        // Higher-fee tier should have lower or equal weight (Boltzmann weight decreases with fee)
+        assert!(eq.pmf[0] >= eq.pmf[2], "tier 0 (fee=1) must have >= weight of tier 2 (fee=3)");
+    }
+}

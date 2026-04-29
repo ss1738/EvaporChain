@@ -46,5 +46,10 @@ evaporchain-causal-cone = { path = "../../crates/evaporchain-causal-cone" }
 evaporchain-mortis = { path = "../../crates/evaporchain-mortis" }
 evaporchain-modular-beacon = { path = "../../crates/evaporchain-modular-beacon" }
 evaporchain-braid-sequencer = { path = "../../crates/evaporchain-braid-sequencer" }
+evaporchain-padic = { path = "../../crates/evaporchain-padic" }
+evaporchain-tur-liveness = { path = "../../crates/evaporchain-tur-liveness" }
+evaporchain-hlts = { path = "../../crates/evaporchain-hlts" }
+evaporchain-hbct = { path = "../../crates/evaporchain-hbct" }
+evaporchain-cfm = { path = "../../crates/evaporchain-cfm" }
 serde_json = "1"
 hex = "0.4"
