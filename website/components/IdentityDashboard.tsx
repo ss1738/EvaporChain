@@ -61,6 +61,13 @@ type HbctState = {
   top_entries: HbctEntry[];
 };
 
+type WsEvent = {
+  type: string;
+  ts_client: number;
+  // remaining fields are dynamic per event type
+  [key: string]: unknown;
+};
+
 type Identity = {
   chain_id: string;
   four_act: FourAct;
@@ -84,6 +91,7 @@ export default function IdentityDashboard() {
   const [endpoint, setEndpoint] = useState(DEFAULT_NODE);
   const [wsConnected, setWsConnected] = useState(false);
   const [lastBlockNumber, setLastBlockNumber] = useState<number | null>(null);
+  const [events, setEvents] = useState<WsEvent[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -115,18 +123,22 @@ export default function IdentityDashboard() {
       const wsUrl = endpoint
         .replace(/^http/, "ws")
         .replace(/\/$/, "");
-      ws = new WebSocket(`${wsUrl}/ws?subscribe=blocks`);
+      ws = new WebSocket(`${wsUrl}/ws?subscribe=all`);
       ws.onopen = () => {
         if (!cancelled) setWsConnected(true);
       };
       ws.onmessage = (ev) => {
         try {
           const m = JSON.parse(ev.data);
+          if (cancelled) return;
+          // The first message is a "connected" greeting — skip in event log.
+          if (m.type === "connected" || m.type === "warning") return;
+          // Stamp arrival time for event log ordering.
+          const stamped: WsEvent = { ...m, ts_client: Date.now() };
+          setEvents((prev) => [stamped, ...prev].slice(0, 30));
           if (m.type === "new_block") {
-            if (!cancelled) {
-              setLastBlockNumber(m.number);
-              fetchOnce();
-            }
+            setLastBlockNumber(m.number);
+            fetchOnce();
           }
         } catch {
           // ignore non-JSON
@@ -216,6 +228,7 @@ export default function IdentityDashboard() {
       <FourActPanel act={identity.four_act} endpoint={endpoint} />
       <LivenessPanel liveness={identity.tur_liveness} />
       <FoldPanel fold={identity.lambda_fold} endpoint={endpoint} />
+      <EventsPanel events={events} wsConnected={wsConnected} />
       <PrimitivesPanel primitives={identity.wired_primitives} />
 
       <DemoFooter
@@ -1020,6 +1033,118 @@ function Row({ k, v, mono = false }: { k: string; v: string; mono?: boolean }) {
       </dd>
     </div>
   );
+}
+
+function EventsPanel({
+  events,
+  wsConnected,
+}: {
+  events: WsEvent[];
+  wsConnected: boolean;
+}) {
+  return (
+    <div className="rounded-xl border border-neutral-200 bg-white p-6">
+      <div className="mb-1 flex items-baseline justify-between">
+        <h2 className="text-xl font-light text-neutral-900">
+          Live event stream
+        </h2>
+        <span
+          className={`text-xs ${
+            wsConnected ? "text-emerald-600" : "text-neutral-400"
+          }`}
+        >
+          {wsConnected ? "● connected" : "○ disconnected"}
+        </span>
+      </div>
+      <p className="mb-4 text-xs uppercase tracking-wider text-neutral-500">
+        Last {events.length} events from /ws — chain pulse in real time
+      </p>
+      {events.length === 0 ? (
+        <p className="text-sm text-neutral-500">
+          {wsConnected
+            ? "Waiting for the next chain event…"
+            : "WebSocket disconnected. Polling fallback is active."}
+        </p>
+      ) : (
+        <ul className="max-h-72 space-y-1 overflow-y-auto pr-1">
+          {events.map((e, i) => (
+            <li
+              key={i}
+              className="flex items-start gap-3 border-b border-neutral-100 py-1.5 text-xs last:border-b-0"
+            >
+              <span className="w-16 shrink-0 font-mono text-neutral-400">
+                {formatTime(e.ts_client)}
+              </span>
+              <span
+                className={`w-32 shrink-0 truncate font-mono ${eventColor(e.type)}`}
+              >
+                {e.type}
+              </span>
+              <span className="grow truncate text-neutral-600">
+                {summariseEvent(e)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function formatTime(ms: number): string {
+  const d = new Date(ms);
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
+}
+
+function eventColor(type: string): string {
+  switch (type) {
+    case "new_block":
+      return "text-emerald-700";
+    case "new_transaction":
+      return "text-blue-700";
+    case "evaporation":
+      return "text-amber-700";
+    case "grace_period":
+      return "text-amber-600";
+    case "chain_event":
+      return "text-purple-700";
+    case "peer_update":
+      return "text-neutral-600";
+    case "contract_event":
+      return "text-indigo-700";
+    default:
+      return "text-neutral-700";
+  }
+}
+
+function summariseEvent(e: WsEvent): string {
+  switch (e.type) {
+    case "new_block":
+      return `block ${e.number}, ${e.tx_count} txs, epoch ${e.epoch}`;
+    case "new_transaction":
+      return `${e.tx_type ?? ""} ${e.from ? trunc(String(e.from)) : ""}${
+        e.to ? ` → ${trunc(String(e.to))}` : ""
+      }${e.amount !== undefined ? ` (${e.amount})` : ""}`;
+    case "evaporation":
+      return `object ${trunc(String(e.object_id ?? ""))} evaporated, energy=${e.energy}`;
+    case "grace_period":
+      return `object ${trunc(String(e.object_id ?? ""))} in grace, remaining=${e.remaining_energy}`;
+    case "chain_event":
+      return `${String(e.event_type ?? "")}: ${String(e.message ?? "")}`;
+    case "peer_update":
+      return `${e.connected} peers connected`;
+    case "contract_event":
+      return `contract ${e.contract_id} fired ${e.event_name}`;
+    default: {
+      const { type: _t, ts_client: _ts, ...rest } = e;
+      void _t;
+      void _ts;
+      return JSON.stringify(rest);
+    }
+  }
 }
 
 function PrimitivesPanel({ primitives }: { primitives: string[] }) {
