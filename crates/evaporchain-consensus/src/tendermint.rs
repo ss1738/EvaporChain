@@ -941,6 +941,16 @@ impl TendermintConsensus {
             Ok(s) => s,
             Err(_) => (stake as f64 * 0.10).round() as u64,
         };
+        // Entropic Slashing advisory (§Tier2): Shannon-weighted slash for comparison.
+        // Sanov is authoritative; entropic is logged so governance can tune.
+        if let Ok(entropic) = evaporchain_entropic_slashing::entropic_slash(stake, &[0, w]) {
+            debug!(
+                validator = validator_id,
+                sanov_slash = slash_amount,
+                entropic_slash = entropic,
+                "entropic vs sanov equivocation slash (advisory)"
+            );
+        }
         self.validator_set.slash_with_amount(validator_id, slash_amount, true)
     }
 

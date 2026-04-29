@@ -30,6 +30,7 @@ evaporchain-lambda-fold = { path = "../evaporchain-lambda-fold" }
 evaporchain-boltzmann-stake = { path = "../evaporchain-boltzmann-stake" }
 evaporchain-sanov-slashing = { path = "../evaporchain-sanov-slashing" }
 evaporchain-bell-beacon = { path = "../evaporchain-bell-beacon" }
+evaporchain-entropic-slashing = { path = "../evaporchain-entropic-slashing" }
 blake3 = "1"
 tokio = { workspace = true }
 serde = { workspace = true }
