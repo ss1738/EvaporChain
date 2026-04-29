@@ -130,7 +130,7 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 - [x] **Criterion.rs benchmarks** — DONE: `benches/core_benchmarks.rs` with transfer throughput, block exec, Poseidon hash, ML-DSA sign/verify
 - [x] **Config validation** — DONE: JSON Schema at `configs/genesis-schema.json` with full validation rules
 - [ ] **Hybrid post-quantum scheme** — Optional ECDSA fallback alongside ML-DSA.
-- [ ] **Version pinning** — Cargo.toml uses range specifiers. Pin exact versions for reproducibility.
+- [x] **Version pinning** — DONE: All 12 core workspace deps in `Cargo.toml` exact-pinned (`=X.Y.Z`) using resolved versions from `Cargo.lock`
 - [x] **ADRs (Architecture Decision Records)** — DONE: 5 ADRs at `docs/architecture/adrs/`: consensus (Tendermint), evaporation model, ML-DSA signatures, Block-STM execution, Verkle trie
 
 ---
