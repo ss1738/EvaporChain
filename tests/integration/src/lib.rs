@@ -5279,3 +5279,76 @@ mod state_snapshot_integration {
         assert!(!bytes.is_empty());
     }
 }
+
+// ── DA Namespace Merkle Tree integration ─────────────────────────────────────
+
+#[cfg(test)]
+mod da_namespace_integration {
+    use evaporchain_da::namespace::{
+        NamespacedBlob, NamespaceMerkleTree, NAMESPACE_MAX, NmtBuildError,
+    };
+
+    fn ns(b: u8) -> [u8; 8] { [b; 8] }
+
+    fn blob(namespace_byte: u8, data: &[u8]) -> NamespacedBlob {
+        NamespacedBlob { namespace: ns(namespace_byte), data: data.to_vec() }
+    }
+
+    #[test]
+    fn single_blob_root_is_nonzero() {
+        let blobs = vec![blob(1, b"hello world")];
+        let nmt = NamespaceMerkleTree::from_blobs(&blobs);
+        let root = nmt.root();
+        assert_ne!(root.min_namespace, [0u8; 8]);
+    }
+
+    #[test]
+    fn reserved_namespace_max_rejected() {
+        let bad = NamespacedBlob { namespace: NAMESPACE_MAX, data: b"hack".to_vec() };
+        match NamespaceMerkleTree::try_from_blobs(&[bad]) {
+            Err(NmtBuildError::ReservedNamespace { .. }) => {}
+            _ => panic!("NAMESPACE_MAX must be rejected"),
+        }
+    }
+
+    #[test]
+    fn namespace_proof_verifies() {
+        let blobs = vec![
+            blob(1, b"blob-a"),
+            blob(2, b"blob-b"),
+            blob(3, b"blob-c"),
+        ];
+        let nmt = NamespaceMerkleTree::from_blobs(&blobs);
+        let proof = nmt.prove_namespace(&ns(2));
+        assert!(NamespaceMerkleTree::verify_namespace_proof(&proof), "valid proof must verify");
+    }
+
+    #[test]
+    fn blob_commitments_count_matches_leaves() {
+        let blobs: Vec<NamespacedBlob> = (0u8..5).map(|i| blob(i, b"data")).collect();
+        let nmt = NamespaceMerkleTree::from_blobs(&blobs);
+        let commitments = nmt.blob_commitments();
+        assert_eq!(commitments.len(), 5);
+    }
+
+    #[test]
+    fn empty_tree_can_be_constructed() {
+        let nmt = NamespaceMerkleTree::from_blobs(&[]);
+        assert_eq!(nmt.blob_commitments().len(), 0);
+    }
+
+    #[test]
+    fn two_blobs_same_namespace_both_in_proof() {
+        let blobs = vec![
+            blob(5, b"first"),
+            blob(5, b"second"),
+            blob(9, b"other"),
+        ];
+        let nmt = NamespaceMerkleTree::from_blobs(&blobs);
+        let proof = nmt.prove_namespace(&ns(5));
+        assert!(NamespaceMerkleTree::verify_namespace_proof(&proof));
+        // Both blobs under namespace 5 must be covered: end_index - start_index == 2
+        assert_eq!(proof.end_index - proof.start_index, 2);
+        assert!(!proof.is_absence);
+    }
+}
