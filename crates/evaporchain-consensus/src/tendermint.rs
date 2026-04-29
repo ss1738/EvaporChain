@@ -261,6 +261,8 @@ pub enum SlashReason {
 #[derive(Debug, Clone, Default)]
 pub struct ConsensusFourActState {
     pub eulogy_count: usize,
+    pub eulogy_trie_root: Option<[u8; 32]>,
+    pub tombstone_addresses: Vec<[u8; 32]>,
     pub refresh_pool_total: u64,
     pub mortis_triggered: bool,
     pub mortis_epoch_of_death: Option<u64>,
@@ -459,8 +461,14 @@ impl TendermintConsensus {
     /// translates this into the public-facing `api::FourActSnapshot`
     /// after each block. Per INVENTION_STACK.md Amendment 2 §A2.5.
     pub fn four_act_state(&self) -> ConsensusFourActState {
+        let trie = &self.executor.eulogy_trie;
+        // Cap surface area: latest 1024 addresses by sorted iteration.
+        let tombstone_addresses: Vec<[u8; 32]> =
+            trie.iter().take(1024).map(|(addr, _)| *addr).collect();
         ConsensusFourActState {
-            eulogy_count: self.executor.eulogy_trie.len(),
+            eulogy_count: trie.len(),
+            eulogy_trie_root: if trie.is_empty() { None } else { Some(trie.root()) },
+            tombstone_addresses,
             refresh_pool_total: self.executor.refresh_pool.total_accrued(),
             mortis_triggered: self.executor.mortis_monitor.is_triggered(),
             mortis_epoch_of_death: self.executor.mortis_certificate.as_ref().map(|c| c.epoch_of_death),

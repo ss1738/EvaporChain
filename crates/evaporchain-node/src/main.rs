@@ -3146,6 +3146,12 @@ async fn main() -> Result<()> {
                                     if let Some(api) = api_state_for_loop.as_ref() {
                                         api.update_four_act_snapshot(api::FourActSnapshot {
                                             eulogy_count: s.eulogy_count,
+                                            eulogy_trie_root: s.eulogy_trie_root.map(hex::encode),
+                                            tombstone_addresses: s
+                                                .tombstone_addresses
+                                                .iter()
+                                                .map(hex::encode)
+                                                .collect(),
                                             refresh_pool_total: s.refresh_pool_total,
                                             mortis_triggered: s.mortis_triggered,
                                             mortis_epoch_of_death: s.mortis_epoch_of_death,

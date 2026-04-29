@@ -133,6 +133,12 @@ pub struct ApiState {
 pub struct FourActSnapshot {
     /// Number of accounts memorialised in the eulogy trie (Tombstone count).
     pub eulogy_count: usize,
+    /// Hex-encoded eulogy-trie root commitment. Empty until first
+    /// tombstone or always the canonical-empty hash.
+    pub eulogy_trie_root: Option<String>,
+    /// Hex-encoded addresses of every memorialised account, sorted.
+    /// Cap to a reasonable size for API responses (latest 1024).
+    pub tombstone_addresses: Vec<String>,
     /// Total energy accrued in the protocol-owned refresh pool. Read
     /// by `tick_mortis` to detect chain death.
     pub refresh_pool_total: u64,
