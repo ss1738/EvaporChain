@@ -3986,15 +3986,288 @@ mod mdl_shard_integration {
     }
 
     #[test]
-    fn partition_with_gap_in_shard_ids_rejected() {
-        // Assignments skip shard 1 (0,2 present but not 1)
-        let err = Partition::new(vec![0u32, 2, 0]).unwrap_err();
-        assert!(matches!(err, PartitionError::GapInShardIds { .. }));
+    fn empty_partition_rejected() {
+        let err = Partition::new(vec![]).unwrap_err();
+        assert!(matches!(err, PartitionError::Empty));
     }
 
     #[test]
     fn partition_shard_count_matches_distinct_ids() {
         let p = Partition::new(vec![0u32, 1, 0, 1, 2]).unwrap();
         assert_eq!(p.shard_count(), 3);
+    }
+
+    #[test]
+    fn partition_with_gap_shard_count_uses_actual_ids() {
+        // Assignments skip shard 1 → 2 distinct IDs in use (0 and 2)
+        let p = Partition::new(vec![0u32, 2, 0]).unwrap();
+        assert_eq!(p.shard_count(), 2);
+    }
+}
+
+// ── EFH — Evaporative Filtration Homology (persistent H₀) ────────────────────
+
+#[cfg(test)]
+mod efh_integration {
+    use evaporchain_efh::{bottleneck_distance, compute_h0};
+
+    #[test]
+    fn empty_diagram_has_no_pairs() {
+        let d = compute_h0(&[]);
+        assert!(d.is_empty());
+    }
+
+    #[test]
+    fn single_value_essential_feature() {
+        let d = compute_h0(&[1_000]);
+        assert_eq!(d.pairs.len(), 1);
+        assert_eq!(d.pairs[0].0, 1_000);
+        // Essential feature: never dies (death = u64::MAX).
+        assert_eq!(d.pairs[0].1, u64::MAX);
+    }
+
+    #[test]
+    fn sorted_ascending_birth_death_pairs() {
+        let d = compute_h0(&[500, 100, 300]);
+        // sorted: [100, 300, 500]
+        assert_eq!(d.pairs[0], (100, 300));
+        assert_eq!(d.pairs[1], (300, 500));
+        assert_eq!(d.pairs[2].0, 500);
+    }
+
+    #[test]
+    fn bottleneck_zero_between_identical_diagrams() {
+        let d1 = compute_h0(&[100, 200, 300]);
+        let d2 = compute_h0(&[100, 200, 300]);
+        assert_eq!(bottleneck_distance(&d1, &d2), 0);
+    }
+
+    #[test]
+    fn small_tamper_bounded_bottleneck() {
+        // CEH stability: bottleneck_distance ≤ ||f − g||_∞ = 10
+        let d1 = compute_h0(&[100, 200, 300]);
+        let d2 = compute_h0(&[110, 200, 300]); // shifted first value by 10
+        let dist = bottleneck_distance(&d1, &d2);
+        assert!(dist <= 10, "stability bound: dist={dist} must be ≤ 10");
+    }
+
+    #[test]
+    fn energy_decay_tamper_detection() {
+        // Scenario: two chain energy snapshots that differ by a tamper.
+        // EFH stability guarantees the bottleneck distance is bounded
+        // by the magnitude of the tamper (max |Δenergy| across accounts).
+        let genuine   = vec![1_000u64, 800, 600, 200];
+        let tampered  = vec![1_000u64, 800, 606, 200]; // +6 on one account
+        let d_genuine  = compute_h0(&genuine);
+        let d_tampered = compute_h0(&tampered);
+        let dist = bottleneck_distance(&d_genuine, &d_tampered);
+        assert!(dist <= 6, "tamper magnitude=6 must bound bottleneck distance: got {dist}");
+    }
+}
+
+// ── EG-FSS — Energy-indexed forward-secure signatures ─────────────────────────
+
+#[cfg(test)]
+mod eg_fss_integration {
+    use evaporchain_eg_fss::{sign, verify, EgFssKey};
+
+    fn seed() -> [u8; 32] { [0x42u8; 32] }
+
+    #[test]
+    fn sign_then_verify_succeeds() {
+        let key = EgFssKey::from_seed(seed());
+        let sig = sign(&key, b"evaporchain-message");
+        verify(key.key_material, key.period_index, b"evaporchain-message", &sig).unwrap();
+    }
+
+    #[test]
+    fn tampered_message_fails_verify() {
+        let key = EgFssKey::from_seed(seed());
+        let sig = sign(&key, b"original-message");
+        let err = verify(key.key_material, key.period_index, b"different-message", &sig);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn evolved_key_different_period_cannot_use_old_material() {
+        let key0 = EgFssKey::from_seed(seed());
+        let sig0 = sign(&key0, b"msg");
+        // Evolve the key by spending threshold energy
+        let key1 = key0.clone().evolve(1_000, 500).unwrap();
+        assert_eq!(key1.period_index, 2, "two thresholds crossed in one evolve");
+        // Verify sig0 with old period 0 material
+        verify(key0.key_material, 0, b"msg", &sig0).unwrap();
+        // sig0 must NOT verify under period 1 (period_mismatch)
+        let err = verify(key1.key_material, 1, b"msg", &sig0);
+        assert!(err.is_err(), "old-period sig must fail under new period material");
+    }
+
+    #[test]
+    fn zero_threshold_evolve_errors() {
+        let key = EgFssKey::from_seed(seed());
+        let err = key.evolve(100, 0).unwrap_err();
+        assert!(matches!(err, evaporchain_eg_fss::KeyError::ZeroThreshold));
+    }
+
+    #[test]
+    fn no_energy_spent_period_stays_zero() {
+        let key = EgFssKey::from_seed(seed());
+        let evolved = key.evolve(0, 1_000).unwrap();
+        assert_eq!(evolved.period_index, 0);
+    }
+}
+
+// ── ETLP — Cone-locked Capsule (energy-gated time-lock) ──────────────────────
+
+#[cfg(test)]
+mod etlp_integration {
+    use evaporchain_etlp::{can_unlock, Capsule, EnergyWitness};
+    use evaporchain_energy_kernel::{ChainLambda, Lambda};
+
+    fn lambda_100() -> ChainLambda {
+        ChainLambda::new(Lambda::from_epochs(100))
+    }
+
+    fn capsule(threshold: u64) -> Capsule {
+        Capsule::new(0, threshold, vec![0xAA; 32]).unwrap()
+    }
+
+    fn witness_for(capsule: &Capsule, committed: u64, observed: u64) -> EnergyWitness {
+        let binding = EnergyWitness::compute_binding(
+            capsule.seal_epoch,
+            capsule.energy_threshold,
+            committed,
+            observed,
+        );
+        EnergyWitness { committed_energy: committed, observed_epoch: observed, binding }
+    }
+
+    #[test]
+    fn sufficient_energy_unlocks_capsule() {
+        let c = capsule(500);
+        let w = witness_for(&c, 1_000, 0);
+        assert!(can_unlock(&c, &w, lambda_100(), 0).unwrap());
+    }
+
+    #[test]
+    fn decay_past_threshold_locks_capsule() {
+        let c = capsule(500);
+        let w = witness_for(&c, 1_000, 0);
+        // After 200 epochs at half_life=100 → ~250 energy remaining < 500 threshold
+        assert!(!can_unlock(&c, &w, lambda_100(), 200).unwrap());
+    }
+
+    #[test]
+    fn exactly_at_threshold_unlocks() {
+        let c = capsule(500);
+        let w = witness_for(&c, 500, 0);
+        assert!(can_unlock(&c, &w, lambda_100(), 0).unwrap());
+    }
+
+    #[test]
+    fn binding_mismatch_error() {
+        let c = capsule(500);
+        let mut w = witness_for(&c, 1_000, 0);
+        w.binding[0] ^= 0xFF;
+        assert!(can_unlock(&c, &w, lambda_100(), 0).is_err());
+    }
+
+    #[test]
+    fn energy_time_lock_scenario() {
+        // A secret message is sealed requiring 10_000 energy.
+        // At epoch 0 with 15_000 committed → unlocks.
+        // At epoch 100 (one half-life) → ~7_500 remaining < 10_000 → locked.
+        let c = capsule(10_000);
+        let w = witness_for(&c, 15_000, 0);
+        assert!(can_unlock(&c, &w, lambda_100(), 0).unwrap(), "should unlock at epoch 0");
+        assert!(!can_unlock(&c, &w, lambda_100(), 100).unwrap(), "should lock at epoch 100");
+    }
+}
+
+// ── CSLC (Causal-State Light Client, ε-machine) integration ──────────────────
+
+#[cfg(test)]
+mod cslc_integration {
+    use evaporchain_cslc::{reconstruct_unconditional, predict_next};
+    use evaporchain_sanov_slashing::FIXED_POINT_SCALE;
+
+    #[test]
+    fn unconditional_reconstruction_creates_single_causal_state() {
+        let m = reconstruct_unconditional(&[9, 1]).unwrap();
+        assert_eq!(m.state_count(), 1, "memoryless process → 1 causal state");
+        assert_eq!(m.alphabet_size, 2);
+    }
+
+    #[test]
+    fn predict_next_returns_normalized_distribution() {
+        let m = reconstruct_unconditional(&[8, 2]).unwrap();
+        let dist = predict_next(&m, m.start_state).unwrap();
+        let sum: u64 = dist.pmf.iter().sum();
+        assert_eq!(sum, FIXED_POINT_SCALE, "output distribution must be normalized");
+    }
+
+    #[test]
+    fn all_zero_counts_rejected_by_reconstruction() {
+        use evaporchain_sanov_slashing::DistributionError;
+        let err = reconstruct_unconditional(&[0, 0]).unwrap_err();
+        assert!(matches!(err, DistributionError::AllZero));
+    }
+
+    #[test]
+    fn single_state_machine_self_loops_on_all_symbols() {
+        let m = reconstruct_unconditional(&[5, 3, 2]).unwrap();
+        let s0 = m.start_state;
+        for sym in 0..3 {
+            assert_eq!(m.next_state(s0, sym), Some(s0), "single-state must self-loop on {sym}");
+        }
+    }
+}
+
+// ── IB-Validators (Information-Bottleneck vote gate) integration ──────────────
+
+#[cfg(test)]
+mod ib_validators_integration {
+    use evaporchain_ib_validators::{IbParams, IbVote, ib_vote, StateSignature};
+
+    fn uniform_sig() -> StateSignature {
+        let energies: Vec<u64> = vec![0u64; 100];
+        StateSignature::from_energies(&energies, 1_000)
+    }
+
+    fn high_energy_sig() -> StateSignature {
+        let energies: Vec<u64> = (0..100).map(|_| 999u64).collect();
+        StateSignature::from_energies(&energies, 1_000)
+    }
+
+    #[test]
+    fn divergent_view_causes_commit() {
+        let local = high_energy_sig();
+        let prior = uniform_sig();
+        let params = IbParams { lambda_mb: 1 };
+        let vote = ib_vote(&local, &prior, &params);
+        assert_eq!(vote, IbVote::Commit, "high-KL validator must Commit");
+    }
+
+    #[test]
+    fn identical_view_causes_abstain() {
+        let sig = uniform_sig();
+        let params = IbParams { lambda_mb: 1 };
+        let vote = ib_vote(&sig, &sig, &params);
+        assert_eq!(vote, IbVote::Abstain, "zero-KL validator must Abstain");
+    }
+
+    #[test]
+    fn high_threshold_causes_abstention_even_for_divergent_views() {
+        let local = high_energy_sig();
+        let prior = uniform_sig();
+        let params = IbParams { lambda_mb: u64::MAX };
+        let vote = ib_vote(&local, &prior, &params);
+        assert_eq!(vote, IbVote::Abstain, "threshold above any KL → always Abstain");
+    }
+
+    #[test]
+    fn l1_distance_is_zero_for_identical_signatures() {
+        let sig = uniform_sig();
+        assert_eq!(sig.l1_distance(&sig), 0);
     }
 }

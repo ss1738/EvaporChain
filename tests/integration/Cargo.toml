@@ -61,5 +61,10 @@ evaporchain-eb-fs = { path = "../../crates/evaporchain-eb-fs" }
 evaporchain-allen-decay = { path = "../../crates/evaporchain-allen-decay" }
 evaporchain-mcc = { path = "../../crates/evaporchain-mcc" }
 evaporchain-mdl-shard = { path = "../../crates/evaporchain-mdl-shard" }
+evaporchain-efh = { path = "../../crates/evaporchain-efh" }
+evaporchain-eg-fss = { path = "../../crates/evaporchain-eg-fss" }
+evaporchain-etlp = { path = "../../crates/evaporchain-etlp" }
+evaporchain-cslc = { path = "../../crates/evaporchain-cslc" }
+evaporchain-ib-validators = { path = "../../crates/evaporchain-ib-validators" }
 serde_json = "1"
 hex = "0.4"
