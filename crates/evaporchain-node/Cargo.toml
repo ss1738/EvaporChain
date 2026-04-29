@@ -63,6 +63,12 @@ evaporchain-wsbf = { path = "../evaporchain-wsbf" }
 evaporchain-rg-phase-map = { path = "../evaporchain-rg-phase-map" }
 evaporchain-autopoietic = { path = "../evaporchain-autopoietic" }
 evaporchain-llsa = { path = "../evaporchain-llsa" }
+evaporchain-antichain-mempool = { path = "../evaporchain-antichain-mempool" }
+evaporchain-light-cone = { path = "../evaporchain-light-cone" }
+evaporchain-hot-cold-stake = { path = "../evaporchain-hot-cold-stake" }
+evaporchain-epv = { path = "../evaporchain-epv" }
+evaporchain-etlp = { path = "../evaporchain-etlp" }
+evaporchain-dsn = { path = "../evaporchain-dsn" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

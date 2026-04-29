@@ -17,6 +17,7 @@ evaporchain-sharding = { path = "../evaporchain-sharding" }
 evaporchain-mortis = { path = "../evaporchain-mortis" }
 evaporchain-light-cone = { path = "../evaporchain-light-cone" }
 evaporchain-causal-cone = { path = "../evaporchain-causal-cone" }
+evaporchain-antichain-mempool = { path = "../evaporchain-antichain-mempool" }
 evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
 evaporchain-mcc = { path = "../evaporchain-mcc" }
 evaporchain-singh-attractor = { path = "../evaporchain-singh-attractor" }

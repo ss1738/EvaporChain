@@ -2683,6 +2683,20 @@ async fn main() -> Result<()> {
                 }
                 Arc::new(Mutex::new(pool))
             },
+            epv_registry: {
+                let mut reg = evaporchain_epv::EpvRegistry::new();
+                // Seed the registry with the three genesis protocol versions that
+                // correspond to EvaporChain's own development phases.
+                let _ = reg.register(evaporchain_epv::ProtocolVersion::new(1, 1_000_000_000, 0));
+                let _ = reg.register(evaporchain_epv::ProtocolVersion::new(2, 1_000_000_000, 0));
+                let _ = reg.register(evaporchain_epv::ProtocolVersion::new(3, 1_000_000_000, 0));
+                Arc::new(Mutex::new(reg))
+            },
+            dsn_window: {
+                let window = evaporchain_dsn::DsnWindow::new(32)
+                    .expect("window_depth=32 is valid");
+                Arc::new(Mutex::new(window))
+            },
         });
         // Keep one Arc<ApiState> for the block-applying loop so it can
         // call update_four_act_snapshot after each commit.

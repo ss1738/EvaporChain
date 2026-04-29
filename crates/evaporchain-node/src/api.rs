@@ -135,6 +135,12 @@ pub struct ApiState {
     /// Refresh pool used by the patronage demo. Seeded at startup; in
     /// production this would be the chain's canonical RefreshPool from StateDB.
     pub patronage_pool: Arc<Mutex<evaporchain_energy_kernel::RefreshPool>>,
+    /// Evaporative Protocol Version registry. Tracks active protocol versions
+    /// and prunes those whose energy has λ-decayed below E_min.
+    pub epv_registry: Arc<Mutex<evaporchain_epv::EpvRegistry>>,
+    /// Decay-Stamped Nullifier window. Bounded-state per-window accumulator
+    /// for privacy chains (DSN §4.2). Window depth = 32 epochs.
+    pub dsn_window: Arc<Mutex<evaporchain_dsn::DsnWindow>>,
 }
 
 /// Public-facing snapshot of the four-act narrative spine state for
@@ -4182,6 +4188,380 @@ async fn post_demo_reset(State(state): State<Arc<ApiState>>) -> Json<DemoResetRe
     })
 }
 
+// ─────────────── Antichain Mempool ──────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct AntichainComputeReq {
+    /// Blocks to insert into a fresh LightCone DAG.
+    /// Each block: { id_hex: "...", parent_ids: ["...", ...], energy: u64, observed_epoch: u64 }
+    pub blocks: Vec<AntichainBlockDto>,
+    /// Energy threshold: antichain must exceed this total to be accepted.
+    pub threshold: u64,
+    /// Current epoch for decay computation.
+    pub current_epoch: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct AntichainBlockDto {
+    pub id_hex: String,
+    pub parent_ids: Vec<String>,
+    pub energy: u64,
+    pub observed_epoch: u64,
+}
+
+async fn post_antichain_compute(Json(req): Json<AntichainComputeReq>) -> Json<serde_json::Value> {
+    use evaporchain_light_cone::{Block, BlockId, LightCone};
+    use evaporchain_antichain_mempool::{extend_to_maximal, total_energy_meets_threshold};
+    use evaporchain_energy_kernel::{ChainLambda, Lambda};
+    use std::collections::BTreeSet;
+
+    fn parse_id(s: &str) -> Option<BlockId> {
+        let bytes = hex::decode(s).ok()?;
+        if bytes.len() != 32 { return None; }
+        let mut id = [0u8; 32];
+        id.copy_from_slice(&bytes);
+        Some(id)
+    }
+
+    let mut lc = LightCone::new();
+    for b in &req.blocks {
+        let id = match parse_id(&b.id_hex) {
+            Some(i) => i,
+            None => return Json(serde_json::json!({"status":"error","detail":format!("bad id_hex: {}", b.id_hex)})),
+        };
+        let mut parents = Vec::new();
+        for ph in &b.parent_ids {
+            match parse_id(ph) {
+                Some(pid) => parents.push(pid),
+                None => return Json(serde_json::json!({"status":"error","detail":format!("bad parent id: {ph}")})),
+            }
+        }
+        let block = Block::new(id, parents, b.energy, b.observed_epoch);
+        if let Err(e) = lc.insert(block) {
+            return Json(serde_json::json!({"status":"error","detail":e.to_string()}));
+        }
+    }
+
+    // Build candidate set from all block IDs (descending energy order).
+    let mut candidates: Vec<BlockId> = lc.ids().collect();
+    candidates.sort_by(|a, b| {
+        let ea = lc.get(a).map(|b| b.energy).unwrap_or(0);
+        let eb = lc.get(b).map(|b| b.energy).unwrap_or(0);
+        eb.cmp(&ea)
+    });
+
+    let seed = evaporchain_antichain_mempool::Antichain::empty();
+    let antichain = match extend_to_maximal(&seed, &lc, candidates) {
+        Ok(a) => a,
+        Err(e) => return Json(serde_json::json!({"status":"error","detail":e.to_string()})),
+    };
+
+    let chain_lambda = ChainLambda::new(Lambda::from_epochs(4096));
+    let meets = total_energy_meets_threshold(&antichain, &lc, chain_lambda, req.current_epoch, req.threshold);
+
+    let member_ids: Vec<String> = antichain.members().iter().map(|id| hex::encode(id)).collect();
+    Json(serde_json::json!({
+        "status": "ok",
+        "antichain_size": member_ids.len(),
+        "members": member_ids,
+        "meets_threshold": meets,
+        "threshold": req.threshold,
+    }))
+}
+
+// ─────────────── Hot/Cold Stake ─────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct HotColdStakeReq {
+    pub hot: u64,
+    pub cold: u64,
+    /// Hot half-life in epochs (default 100).
+    pub hot_lambda_epochs: u64,
+    /// Cold half-life in epochs (default 10000).
+    pub cold_lambda_epochs: u64,
+    pub last_touched_epoch: u64,
+    pub current_epoch: u64,
+    /// For promote/demote: amount to move.
+    pub amount: Option<u64>,
+}
+
+fn hcs_from_req(req: &HotColdStakeReq) -> evaporchain_hot_cold_stake::HotColdStake {
+    use evaporchain_energy_kernel::{ChainLambda, Lambda};
+    evaporchain_hot_cold_stake::HotColdStake::new(
+        req.hot,
+        req.cold,
+        ChainLambda::new(Lambda::from_epochs(req.hot_lambda_epochs.max(1))),
+        ChainLambda::new(Lambda::from_epochs(req.cold_lambda_epochs.max(1))),
+        req.last_touched_epoch,
+    )
+}
+
+async fn post_hot_cold_decay(Json(req): Json<HotColdStakeReq>) -> Json<serde_json::Value> {
+    let s = hcs_from_req(&req).decay(req.current_epoch);
+    Json(serde_json::json!({
+        "status": "ok",
+        "hot_after": s.hot,
+        "cold_after": s.cold,
+        "total_after": s.total(),
+        "epochs_elapsed": req.current_epoch.saturating_sub(req.last_touched_epoch),
+    }))
+}
+
+async fn post_hot_cold_promote(Json(req): Json<HotColdStakeReq>) -> Json<serde_json::Value> {
+    let amount = req.amount.unwrap_or(0);
+    let s = hcs_from_req(&req).decay(req.current_epoch);
+    match s.promote(amount) {
+        Ok(after) => Json(serde_json::json!({
+            "status": "ok",
+            "hot_after": after.hot,
+            "cold_after": after.cold,
+            "total_after": after.total(),
+            "promoted": amount,
+        })),
+        Err(e) => Json(serde_json::json!({"status":"error","detail":e.to_string()})),
+    }
+}
+
+async fn post_hot_cold_demote(Json(req): Json<HotColdStakeReq>) -> Json<serde_json::Value> {
+    let amount = req.amount.unwrap_or(0);
+    let s = hcs_from_req(&req).decay(req.current_epoch);
+    match s.demote(amount) {
+        Ok(after) => Json(serde_json::json!({
+            "status": "ok",
+            "hot_after": after.hot,
+            "cold_after": after.cold,
+            "total_after": after.total(),
+            "demoted": amount,
+        })),
+        Err(e) => Json(serde_json::json!({"status":"error","detail":e.to_string()})),
+    }
+}
+
+// ─────────────── Evaporative Protocol Versioning (EPV) ──────────────
+
+#[derive(Debug, Deserialize)]
+pub struct EpvRegisterReq {
+    pub id: u32,
+    pub seed_energy: u64,
+    pub activated_epoch: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EpvPruneReq {
+    pub current_epoch: u64,
+    pub e_min: u64,
+    /// λ half-life in epochs for version-energy decay.
+    pub lambda_epochs: u64,
+}
+
+async fn post_epv_register(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<EpvRegisterReq>,
+) -> Json<serde_json::Value> {
+    use evaporchain_epv::ProtocolVersion;
+    let mut reg = safe_lock(&state.epv_registry);
+    let v = ProtocolVersion::new(req.id, req.seed_energy, req.activated_epoch);
+    match reg.register(v) {
+        Ok(()) => Json(serde_json::json!({
+            "status": "ok",
+            "id": req.id,
+            "seed_energy": req.seed_energy,
+            "total_versions": reg.len(),
+        })),
+        Err(e) => Json(serde_json::json!({"status":"error","detail":e.to_string()})),
+    }
+}
+
+async fn get_epv_status(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
+    use evaporchain_energy_kernel::{ChainLambda, Lambda};
+    let reg = safe_lock(&state.epv_registry);
+    let epoch = {
+        let hist = safe_lock(&state.block_history);
+        hist.len() as u64
+    };
+    let chain_lambda = ChainLambda::new(Lambda::from_epochs(4096));
+    let versions: Vec<_> = reg.iter().map(|v| serde_json::json!({
+        "id": v.id,
+        "seed_energy": v.seed_energy,
+        "activated_epoch": v.activated_epoch,
+        "remaining_energy": v.remaining_at(chain_lambda, epoch),
+        "is_runnable": reg.is_runnable(v.id, chain_lambda, epoch, 1),
+    })).collect();
+    Json(serde_json::json!({
+        "status": "ok",
+        "total_versions": reg.len(),
+        "current_epoch": epoch,
+        "versions": versions,
+    }))
+}
+
+async fn post_epv_prune(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<EpvPruneReq>,
+) -> Json<serde_json::Value> {
+    use evaporchain_energy_kernel::{ChainLambda, Lambda};
+    use evaporchain_epv::prune_evaporated;
+    let lambda_safe = req.lambda_epochs.max(1);
+    let chain_lambda = ChainLambda::new(Lambda::from_epochs(lambda_safe));
+    let mut reg = safe_lock(&state.epv_registry);
+    let before = reg.len();
+    let outcome = prune_evaporated(&mut reg, chain_lambda, req.current_epoch, req.e_min);
+    Json(serde_json::json!({
+        "status": "ok",
+        "pruned": outcome.pruned,
+        "surviving": before - outcome.pruned.len(),
+        "current_epoch": req.current_epoch,
+        "e_min": req.e_min,
+    }))
+}
+
+// ─────────────── Cone-locked Capsule (ETLP) ─────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct EtlpSealReq {
+    pub seal_epoch: u64,
+    pub energy_threshold: u64,
+    pub ciphertext_hex: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EtlpWitnessReq {
+    pub seal_epoch: u64,
+    pub energy_threshold: u64,
+    pub committed_energy: u64,
+    pub observed_epoch: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EtlpUnlockReq {
+    pub seal_epoch: u64,
+    pub energy_threshold: u64,
+    pub ciphertext_hex: String,
+    pub committed_energy: u64,
+    pub observed_epoch: u64,
+    pub binding_hex: String,
+    pub current_epoch: u64,
+    /// λ half-life in epochs.
+    pub lambda_epochs: u64,
+}
+
+async fn post_etlp_seal(Json(req): Json<EtlpSealReq>) -> Json<serde_json::Value> {
+    use evaporchain_etlp::Capsule;
+    let ct = match hex::decode(&req.ciphertext_hex) {
+        Ok(b) => b,
+        Err(e) => return Json(serde_json::json!({"status":"error","detail":e.to_string()})),
+    };
+    match Capsule::new(req.seal_epoch, req.energy_threshold, ct) {
+        Ok(_) => Json(serde_json::json!({
+            "status": "ok",
+            "seal_epoch": req.seal_epoch,
+            "energy_threshold": req.energy_threshold,
+            "ciphertext_len": req.ciphertext_hex.len() / 2,
+        })),
+        Err(e) => Json(serde_json::json!({"status":"error","detail":e.to_string()})),
+    }
+}
+
+async fn post_etlp_witness(Json(req): Json<EtlpWitnessReq>) -> Json<serde_json::Value> {
+    use evaporchain_etlp::EnergyWitness;
+    let binding = EnergyWitness::compute_binding(
+        req.seal_epoch,
+        req.energy_threshold,
+        req.committed_energy,
+        req.observed_epoch,
+    );
+    Json(serde_json::json!({
+        "status": "ok",
+        "binding_hex": hex::encode(binding),
+        "committed_energy": req.committed_energy,
+        "observed_epoch": req.observed_epoch,
+    }))
+}
+
+async fn post_etlp_can_unlock(Json(req): Json<EtlpUnlockReq>) -> Json<serde_json::Value> {
+    use evaporchain_energy_kernel::{ChainLambda, Lambda};
+    use evaporchain_etlp::{Capsule, EnergyWitness, can_unlock};
+    let ct = match hex::decode(&req.ciphertext_hex) {
+        Ok(b) => b,
+        Err(e) => return Json(serde_json::json!({"status":"error","detail":e.to_string()})),
+    };
+    let binding_bytes = match hex::decode(&req.binding_hex) {
+        Ok(b) if b.len() == 32 => {
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&b);
+            arr
+        }
+        _ => return Json(serde_json::json!({"status":"error","detail":"binding_hex must be 64 hex chars"})),
+    };
+    let capsule = match Capsule::new(req.seal_epoch, req.energy_threshold, ct) {
+        Ok(c) => c,
+        Err(e) => return Json(serde_json::json!({"status":"error","detail":e.to_string()})),
+    };
+    let witness = EnergyWitness {
+        committed_energy: req.committed_energy,
+        observed_epoch: req.observed_epoch,
+        binding: binding_bytes,
+    };
+    let chain_lambda = ChainLambda::new(Lambda::from_epochs(req.lambda_epochs.max(1)));
+    match can_unlock(&capsule, &witness, chain_lambda, req.current_epoch) {
+        Ok(unlocked) => Json(serde_json::json!({
+            "status": "ok",
+            "can_unlock": unlocked,
+            "current_epoch": req.current_epoch,
+            "energy_threshold": req.energy_threshold,
+        })),
+        Err(e) => Json(serde_json::json!({"status":"error","detail":e.to_string()})),
+    }
+}
+
+// ─────────────── Decay-Stamped Nullifiers (DSN) ──────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct DsnFoldReq {
+    /// 32-byte nullifier as 64 hex chars.
+    pub nullifier_hex: String,
+}
+
+async fn post_dsn_fold_nullifier(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<DsnFoldReq>,
+) -> Json<serde_json::Value> {
+    let nullifier_bytes = match hex::decode(&req.nullifier_hex) {
+        Ok(b) if b.len() == 32 => {
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&b);
+            arr
+        }
+        _ => return Json(serde_json::json!({"status":"error","detail":"nullifier_hex must be 64 hex chars (32 bytes)"})),
+    };
+    let mut window = safe_lock(&state.dsn_window);
+    window.fold_nullifier(&nullifier_bytes);
+    Json(serde_json::json!({
+        "status": "ok",
+        "total_count": window.total_count(),
+        "aggregate_root_hex": hex::encode(window.aggregate_root()),
+    }))
+}
+
+async fn post_dsn_advance_window(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
+    let mut window = safe_lock(&state.dsn_window);
+    window.advance_window();
+    Json(serde_json::json!({
+        "status": "ok",
+        "total_count": window.total_count(),
+        "aggregate_root_hex": hex::encode(window.aggregate_root()),
+    }))
+}
+
+async fn get_dsn_status(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
+    let window = safe_lock(&state.dsn_window);
+    Json(serde_json::json!({
+        "status": "ok",
+        "total_count": window.total_count(),
+        "aggregate_root_hex": hex::encode(window.aggregate_root()),
+    }))
+}
+
 // ─────────────── Wilson-Singh Block Flow (WSBF / RG) ────────────────
 
 #[derive(Debug, Deserialize)]
@@ -4447,6 +4827,29 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     // Governance
     ApiDocEntry { method: "GET",  path: "/api/governance/fork_choice_mode", category: "governance", description: "Current authoritative fork-choice mode (mcc|singh_attractor) + attractor set.", example: None },
     ApiDocEntry { method: "POST", path: "/api/governance/fork_choice_mode", category: "governance", description: "Governance amendment to switch fork-choice between MCC and Singh-Attractor. Requires stake quorum from endorser_stakes.", example: Some(r#"{"mode":"singh_attractor","attractors":[{"center":1000,"basin_radius":200}],"endorser_stakes":[1000,800],"required_stake":1500}"#) },
+
+    // Antichain Mempool — causal-set maximal-antichain transaction ordering
+    ApiDocEntry { method: "POST", path: "/api/antichain/compute",           category: "substrate", description: "Build an in-memory LightCone DAG from submitted blocks, compute the greedy maximal antichain (descending energy), and check if total λ-decayed energy clears threshold.", example: Some(r#"{"blocks":[{"id_hex":"0000000000000000000000000000000000000000000000000000000000000001","parent_ids":[],"energy":1000,"observed_epoch":0}],"threshold":500,"current_epoch":0}"#) },
+
+    // Hot/Cold Stake — two-temperature stake simulation
+    ApiDocEntry { method: "POST", path: "/api/hot_cold_stake/decay",        category: "substrate", description: "Apply λ-decay to both hot and cold pools of a HotColdStake from last_touched_epoch to current_epoch.", example: Some(r#"{"hot":1000000,"cold":5000000,"hot_lambda_epochs":100,"cold_lambda_epochs":10000,"last_touched_epoch":0,"current_epoch":50}"#) },
+    ApiDocEntry { method: "POST", path: "/api/hot_cold_stake/promote",      category: "substrate", description: "Simulate a cold→hot stake promotion (after decay to current_epoch). Returns error if insufficient cold stake.", example: Some(r#"{"hot":100,"cold":5000000,"hot_lambda_epochs":100,"cold_lambda_epochs":10000,"last_touched_epoch":0,"current_epoch":50,"amount":500000}"#) },
+    ApiDocEntry { method: "POST", path: "/api/hot_cold_stake/demote",       category: "substrate", description: "Simulate a hot→cold stake demotion (after decay to current_epoch). Returns error if insufficient hot stake.", example: Some(r#"{"hot":1000000,"cold":0,"hot_lambda_epochs":100,"cold_lambda_epochs":10000,"last_touched_epoch":0,"current_epoch":50,"amount":100000}"#) },
+
+    // EPV — Evaporative Protocol Versioning
+    ApiDocEntry { method: "POST", path: "/api/epv/register",                category: "substrate", description: "Register a protocol version in the node's EPV registry. Each version's verifier energy λ-decays; once below E_min rollback is physically impossible.", example: Some(r#"{"id":4,"seed_energy":1000000000,"activated_epoch":0}"#) },
+    ApiDocEntry { method: "GET",  path: "/api/epv/status",                  category: "substrate", description: "List all registered protocol versions with their remaining λ-decayed energy and runnable status at current chain epoch.", example: None },
+    ApiDocEntry { method: "POST", path: "/api/epv/prune",                   category: "substrate", description: "Prune all versions whose remaining energy ≤ e_min at current_epoch (physically irrecoverable). Returns pruned IDs.", example: Some(r#"{"current_epoch":1000,"e_min":10,"lambda_epochs":4096}"#) },
+
+    // ETLP — Cone-locked Capsule (Energy Time-Lock Puzzle)
+    ApiDocEntry { method: "POST", path: "/api/etlp/seal",                   category: "substrate", description: "Validate + seal a Cone-locked Capsule (ciphertext + energy threshold). Returns ok if the capsule is well-formed.", example: Some(r#"{"seal_epoch":0,"energy_threshold":500,"ciphertext_hex":"deadbeef"}"#) },
+    ApiDocEntry { method: "POST", path: "/api/etlp/witness",                category: "substrate", description: "Compute the blake3 binding for an EnergyWitness against a capsule's (seal_epoch, threshold, committed_energy, observed_epoch).", example: Some(r#"{"seal_epoch":0,"energy_threshold":500,"committed_energy":1000,"observed_epoch":0}"#) },
+    ApiDocEntry { method: "POST", path: "/api/etlp/can_unlock",             category: "substrate", description: "Check whether an EnergyWitness unlocks a Capsule at current_epoch. Verifies binding + λ-decayed remaining energy ≥ threshold.", example: Some(r#"{"seal_epoch":0,"energy_threshold":500,"ciphertext_hex":"deadbeef","committed_energy":1000,"observed_epoch":0,"binding_hex":"<from /api/etlp/witness>","current_epoch":50,"lambda_epochs":4096}"#) },
+
+    // DSN — Decay-Stamped Nullifiers
+    ApiDocEntry { method: "POST", path: "/api/dsn/fold_nullifier",          category: "substrate", description: "Fold a 32-byte nullifier (hex) into the current DSN window accumulator.", example: Some(r#"{"nullifier_hex":"0000000000000000000000000000000000000000000000000000000000000001"}"#) },
+    ApiDocEntry { method: "POST", path: "/api/dsn/advance_window",          category: "substrate", description: "Advance the DSN sliding window by one slot, dropping the oldest accumulator.", example: None },
+    ApiDocEntry { method: "GET",  path: "/api/dsn/status",                  category: "substrate", description: "Current DSN window: total nullifier count + aggregate blake3 accumulator root.", example: None },
 
     // WSBF — Wilson-Singh Block Flow (RG on chain history)
     ApiDocEntry { method: "POST", path: "/api/wsbf/rg_flow",               category: "substrate", description: "Apply successive Wilson-Singer RG coarse-graining steps to a block history. Returns one EffectiveParams per step: λ_eff shifts with Shannon entropy of the window (Wilson-Kogut 1974).", example: Some(r#"{"blocks":[{"height":0,"total_energy":1000,"active_accounts":10,"lambda_half_life":4096}],"coarse_grain":1,"entropy_scale_mb":500000}"#) },
@@ -8232,6 +8635,19 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/braid/commit", post(post_braid_commit))
         .route("/api/decay_forget/prove", post(post_decay_forget_prove))
         .route("/api/decay_forget/verify", post(post_decay_forget_verify))
+        .route("/api/antichain/compute", post(post_antichain_compute))
+        .route("/api/hot_cold_stake/decay", post(post_hot_cold_decay))
+        .route("/api/hot_cold_stake/promote", post(post_hot_cold_promote))
+        .route("/api/hot_cold_stake/demote", post(post_hot_cold_demote))
+        .route("/api/epv/register", post(post_epv_register))
+        .route("/api/epv/status", get(get_epv_status))
+        .route("/api/epv/prune", post(post_epv_prune))
+        .route("/api/etlp/seal", post(post_etlp_seal))
+        .route("/api/etlp/witness", post(post_etlp_witness))
+        .route("/api/etlp/can_unlock", post(post_etlp_can_unlock))
+        .route("/api/dsn/fold_nullifier", post(post_dsn_fold_nullifier))
+        .route("/api/dsn/advance_window", post(post_dsn_advance_window))
+        .route("/api/dsn/status", get(get_dsn_status))
         .route("/api/wsbf/rg_flow", post(post_wsbf_rg_flow))
         .route("/api/rg_phase/classify", post(post_rg_phase_classify))
         .route("/api/rg_phase/trajectory", post(post_rg_phase_trajectory))
