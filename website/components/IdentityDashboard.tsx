@@ -161,7 +161,7 @@ export default function IdentityDashboard() {
       />
       <FourActPanel act={identity.four_act} />
       <LivenessPanel liveness={identity.tur_liveness} />
-      <FoldPanel fold={identity.lambda_fold} />
+      <FoldPanel fold={identity.lambda_fold} endpoint={endpoint} />
       <PrimitivesPanel primitives={identity.wired_primitives} />
 
       <div className="border-t border-neutral-200 pt-6 text-xs text-neutral-400">
@@ -511,15 +511,84 @@ function LivenessPanel({ liveness }: { liveness: TurLiveness }) {
   );
 }
 
-function FoldPanel({ fold }: { fold: LambdaFold }) {
+function FoldPanel({
+  fold,
+  endpoint,
+}: {
+  fold: LambdaFold;
+  endpoint: string;
+}) {
+  const [verifying, setVerifying] = useState(false);
+  const [verifyResult, setVerifyResult] = useState<{
+    ok: boolean;
+    elapsed_ms: number;
+    detail: string;
+  } | null>(null);
+
+  async function verify() {
+    if (!fold.acc_hash_hex) {
+      setVerifyResult({
+        ok: false,
+        elapsed_ms: 0,
+        detail: "fold accumulator is at identity — nothing to verify yet",
+      });
+      return;
+    }
+    setVerifying(true);
+    setVerifyResult(null);
+    const t0 = performance.now();
+    try {
+      const res = await fetch(`${endpoint}/api/lambda_fold/verify`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          expected_acc_hash_hex: fold.acc_hash_hex,
+          expected_remaining_energy: Number(fold.total_energy_remaining),
+        }),
+      });
+      const elapsed_ms = performance.now() - t0;
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setVerifyResult({
+        ok: data.status === "ok",
+        elapsed_ms,
+        detail:
+          data.detail ||
+          (data.status === "ok"
+            ? "verifier accepted in O(1) work — independent of chain length"
+            : "verifier rejected"),
+      });
+    } catch (e) {
+      setVerifyResult({
+        ok: false,
+        elapsed_ms: performance.now() - t0,
+        detail: e instanceof Error ? e.message : "verify failed",
+      });
+    } finally {
+      setVerifying(false);
+    }
+  }
+
   return (
     <div className="rounded-xl border border-neutral-200 bg-white p-6">
-      <h2 className="mb-1 text-xl font-light text-neutral-900">
-        Lambda-Fold Accumulator
-      </h2>
-      <p className="mb-4 text-xs uppercase tracking-wider text-neutral-500">
-        O(1) light-client commitment to chain state + λ-decayed energy
-      </p>
+      <div className="mb-4 flex items-baseline justify-between">
+        <div>
+          <h2 className="text-xl font-light text-neutral-900">
+            Lambda-Fold Accumulator
+          </h2>
+          <p className="text-xs uppercase tracking-wider text-neutral-500">
+            O(1) light-client commitment to chain state + λ-decayed energy
+          </p>
+        </div>
+        <button
+          onClick={verify}
+          disabled={verifying}
+          className="rounded-md border border-neutral-300 bg-white px-4 py-2 text-xs font-medium text-neutral-900 hover:bg-neutral-50 disabled:opacity-50"
+          title="Submit (acc_hash, total_energy_remaining) to /api/lambda_fold/verify"
+        >
+          {verifying ? "Verifying…" : "Verify in O(1)"}
+        </button>
+      </div>
       <dl className="space-y-2 text-sm">
         <Row k="Step count" v={fold.step_count.toLocaleString()} />
         <Row k="Latest epoch" v={fold.latest_epoch.toLocaleString()} />
@@ -529,6 +598,25 @@ function FoldPanel({ fold }: { fold: LambdaFold }) {
         />
         <Row k="Acc hash" v={fold.acc_hash_hex || "(identity)"} mono />
       </dl>
+      {verifyResult && (
+        <div
+          className={`mt-4 rounded-lg border p-3 text-xs ${
+            verifyResult.ok
+              ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+              : "border-red-200 bg-red-50 text-red-800"
+          }`}
+        >
+          <p className="font-medium">
+            {verifyResult.ok ? "✓ Verifier accepted" : "✗ Verifier rejected"}
+            {verifyResult.elapsed_ms > 0 && (
+              <span className="ml-2 font-normal opacity-70">
+                ({verifyResult.elapsed_ms.toFixed(1)} ms round trip · {fold.step_count.toLocaleString()} folded blocks)
+              </span>
+            )}
+          </p>
+          <p className="mt-1 opacity-80">{verifyResult.detail}</p>
+        </div>
+      )}
     </div>
   );
 }
