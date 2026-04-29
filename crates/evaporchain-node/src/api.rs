@@ -141,6 +141,9 @@ pub struct ApiState {
     /// Decay-Stamped Nullifier window. Bounded-state per-window accumulator
     /// for privacy chains (DSN §4.2). Window depth = 32 epochs.
     pub dsn_window: Arc<Mutex<evaporchain_dsn::DsnWindow>>,
+    /// Lyapunov-stable fee controller state. Single EIP-1559-style integrator
+    /// with λ-decay leak. Tracks cumulative block gas pressure.
+    pub fee_state: Arc<Mutex<evaporchain_fee_controller::FeeState>>,
 }
 
 /// Public-facing snapshot of the four-act narrative spine state for
@@ -4188,6 +4191,160 @@ async fn post_demo_reset(State(state): State<Arc<ApiState>>) -> Json<DemoResetRe
     })
 }
 
+// ─────────────── Entropic Slashing ──────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct EntropicSlashReq {
+    pub stake: u64,
+    /// Observed misbehaviour event counts (e.g. [n_honest, n_equivocating]).
+    pub observed_counts: Vec<u64>,
+}
+
+async fn post_entropic_slash(Json(req): Json<EntropicSlashReq>) -> Json<serde_json::Value> {
+    use evaporchain_entropic_slashing::entropic_slash;
+    match entropic_slash(req.stake, &req.observed_counts) {
+        Ok(slash) => Json(serde_json::json!({
+            "status": "ok",
+            "slash": slash,
+            "stake": req.stake,
+            "fraction_ppm": if req.stake > 0 { slash * 1_000_000 / req.stake } else { 0 },
+        })),
+        Err(e) => Json(serde_json::json!({"status":"error","detail":e.to_string()})),
+    }
+}
+
+// ─────────────── Lyapunov Fee Controller ────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct FeeControllerStepReq {
+    pub gas_used: u64,
+    pub epochs_elapsed: u64,
+}
+
+async fn post_fee_controller_step(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<FeeControllerStepReq>,
+) -> Json<serde_json::Value> {
+    use evaporchain_fee_controller::{base_fee, FeeController, FeeControllerParams};
+    let params = FeeControllerParams::default_genesis();
+    let mut fs = safe_lock(&state.fee_state);
+    match FeeController::step(&params, &*fs, req.gas_used, req.epochs_elapsed) {
+        Ok((new_state, drift)) => {
+            let fee = base_fee(&new_state, &params);
+            *fs = new_state;
+            Json(serde_json::json!({
+                "status": "ok",
+                "energy_after": new_state.energy,
+                "base_fee": fee,
+                "lyapunov_v_before": drift.v_before,
+                "lyapunov_v_after": drift.v_after,
+                "lyapunov_delta": drift.delta,
+                "gas_used": req.gas_used,
+            }))
+        }
+        Err(e) => Json(serde_json::json!({"status":"error","detail":e.to_string()})),
+    }
+}
+
+async fn get_fee_controller_status(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
+    use evaporchain_fee_controller::{base_fee, FeeControllerParams};
+    let params = FeeControllerParams::default_genesis();
+    let fs = safe_lock(&state.fee_state);
+    let fee = base_fee(&*fs, &params);
+    Json(serde_json::json!({
+        "status": "ok",
+        "energy": fs.energy,
+        "base_fee": fee,
+        "target_energy": params.target_energy,
+        "target_gas": params.target_gas,
+        "fee_response_ppm": params.fee_response_ppm,
+    }))
+}
+
+// ─────────────── Evaporated Fork Certificates ────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct ForkCertProveReq {
+    pub fork_root_hex: String,
+    pub blocks: Vec<ForkBlockDto>,
+    pub evaluated_at_epoch: u64,
+    pub threshold: u128,
+    /// λ half-life in epochs for block energy decay.
+    pub lambda_epochs: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ForkBlockDto {
+    pub seed_energy: u64,
+    pub observed_epoch: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ForkCertVerifyReq {
+    pub fork_root_hex: String,
+    pub evaluated_at_epoch: u64,
+    pub total_seed_energy: u128,
+    pub decayed_energy: u128,
+    pub threshold: u128,
+    pub witness_hex: String,
+}
+
+async fn post_fork_cert_prove(Json(req): Json<ForkCertProveReq>) -> Json<serde_json::Value> {
+    use evaporchain_energy_kernel::{ChainLambda, Lambda};
+    use evaporchain_evap_fork_cert::{prove_fork_evaporated, ForkBlock};
+
+    let fork_root = match hex::decode(&req.fork_root_hex) {
+        Ok(b) if b.len() == 32 => { let mut a = [0u8; 32]; a.copy_from_slice(&b); a }
+        _ => return Json(serde_json::json!({"status":"error","detail":"fork_root_hex must be 64 hex chars"})),
+    };
+    let blocks: Vec<ForkBlock> = req.blocks.iter().map(|b| ForkBlock {
+        seed_energy: b.seed_energy,
+        observed_epoch: b.observed_epoch,
+    }).collect();
+    let chain_lambda = ChainLambda::new(Lambda::from_epochs(req.lambda_epochs.max(1)));
+    let cert = prove_fork_evaporated(fork_root, &blocks, chain_lambda, req.evaluated_at_epoch, req.threshold);
+    let is_evaporated = cert.decayed_energy < cert.threshold;
+    Json(serde_json::json!({
+        "status": "ok",
+        "fork_root_hex": req.fork_root_hex,
+        "total_seed_energy": cert.total_seed_energy,
+        "decayed_energy": cert.decayed_energy,
+        "threshold": cert.threshold,
+        "is_evaporated": is_evaporated,
+        "witness_hex": hex::encode(cert.witness),
+    }))
+}
+
+async fn post_fork_cert_verify(Json(req): Json<ForkCertVerifyReq>) -> Json<serde_json::Value> {
+    use evaporchain_evap_fork_cert::{verify_evaporated_cert, EvaporatedForkCert};
+
+    let fork_root = match hex::decode(&req.fork_root_hex) {
+        Ok(b) if b.len() == 32 => { let mut a = [0u8; 32]; a.copy_from_slice(&b); a }
+        _ => return Json(serde_json::json!({"status":"error","detail":"fork_root_hex must be 64 hex chars"})),
+    };
+    let witness = match hex::decode(&req.witness_hex) {
+        Ok(b) if b.len() == 32 => { let mut a = [0u8; 32]; a.copy_from_slice(&b); a }
+        _ => return Json(serde_json::json!({"status":"error","detail":"witness_hex must be 64 hex chars"})),
+    };
+    let cert = EvaporatedForkCert {
+        fork_root,
+        evaluated_at_epoch: req.evaluated_at_epoch,
+        total_seed_energy: req.total_seed_energy,
+        decayed_energy: req.decayed_energy,
+        threshold: req.threshold,
+        witness,
+    };
+    match verify_evaporated_cert(&cert) {
+        Ok(()) => Json(serde_json::json!({
+            "status": "ok",
+            "verified": true,
+            "decayed_energy": cert.decayed_energy,
+            "threshold": cert.threshold,
+        })),
+        Err(e) => Json(serde_json::json!({"status":"error","detail":e.to_string(),"verified":false})),
+    }
+}
+
 // ─────────────── Antichain Mempool ──────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -4827,6 +4984,17 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     // Governance
     ApiDocEntry { method: "GET",  path: "/api/governance/fork_choice_mode", category: "governance", description: "Current authoritative fork-choice mode (mcc|singh_attractor) + attractor set.", example: None },
     ApiDocEntry { method: "POST", path: "/api/governance/fork_choice_mode", category: "governance", description: "Governance amendment to switch fork-choice between MCC and Singh-Attractor. Requires stake quorum from endorser_stakes.", example: Some(r#"{"mode":"singh_attractor","attractors":[{"center":1000,"basin_radius":200}],"endorser_stakes":[1000,800],"required_stake":1500}"#) },
+
+    // Entropic Slashing — Shannon-weighted slash
+    ApiDocEntry { method: "POST", path: "/api/entropic_slash",              category: "substrate", description: "Compute Shannon-entropy-weighted slash magnitude from observed misbehaviour counts. Higher-entropy (noisier cartel) patterns → larger slash.", example: Some(r#"{"stake":1000000,"observed_counts":[90,10]}"#) },
+
+    // Lyapunov Fee Controller — EIP-1559-style with λ-decay
+    ApiDocEntry { method: "POST", path: "/api/fee_controller/step",         category: "substrate", description: "Advance the Lyapunov-stable fee controller by one block. Returns updated base fee and Lyapunov V-function drift (negative = converging to equilibrium).", example: Some(r#"{"gas_used":25000000,"epochs_elapsed":1}"#) },
+    ApiDocEntry { method: "GET",  path: "/api/fee_controller/status",       category: "substrate", description: "Current fee controller state: accumulated energy, base fee at current pressure, target parameters.", example: None },
+
+    // Evaporated Fork Certificates
+    ApiDocEntry { method: "POST", path: "/api/fork_cert/prove",             category: "substrate", description: "Prove a competing fork has λ-decayed below the evaporation threshold. Returns a blake3-bound EvaporatedForkCert + is_evaporated verdict.", example: Some(r#"{"fork_root_hex":"0000000000000000000000000000000000000000000000000000000000000001","blocks":[{"seed_energy":1000,"observed_epoch":0}],"evaluated_at_epoch":200,"threshold":100,"lambda_epochs":100}"#) },
+    ApiDocEntry { method: "POST", path: "/api/fork_cert/verify",            category: "substrate", description: "O(1) light-client verify of an EvaporatedForkCert. Checks blake3 witness binding + decayed_energy < threshold.", example: Some(r#"{"fork_root_hex":"0000...","evaluated_at_epoch":200,"total_seed_energy":1000,"decayed_energy":50,"threshold":100,"witness_hex":"<from /api/fork_cert/prove>"}"#) },
 
     // Antichain Mempool — causal-set maximal-antichain transaction ordering
     ApiDocEntry { method: "POST", path: "/api/antichain/compute",           category: "substrate", description: "Build an in-memory LightCone DAG from submitted blocks, compute the greedy maximal antichain (descending energy), and check if total λ-decayed energy clears threshold.", example: Some(r#"{"blocks":[{"id_hex":"0000000000000000000000000000000000000000000000000000000000000001","parent_ids":[],"energy":1000,"observed_epoch":0}],"threshold":500,"current_epoch":0}"#) },
@@ -8635,6 +8803,11 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/braid/commit", post(post_braid_commit))
         .route("/api/decay_forget/prove", post(post_decay_forget_prove))
         .route("/api/decay_forget/verify", post(post_decay_forget_verify))
+        .route("/api/entropic_slash", post(post_entropic_slash))
+        .route("/api/fee_controller/step", post(post_fee_controller_step))
+        .route("/api/fee_controller/status", get(get_fee_controller_status))
+        .route("/api/fork_cert/prove", post(post_fork_cert_prove))
+        .route("/api/fork_cert/verify", post(post_fork_cert_verify))
         .route("/api/antichain/compute", post(post_antichain_compute))
         .route("/api/hot_cold_stake/decay", post(post_hot_cold_decay))
         .route("/api/hot_cold_stake/promote", post(post_hot_cold_promote))

@@ -69,6 +69,9 @@ evaporchain-hot-cold-stake = { path = "../evaporchain-hot-cold-stake" }
 evaporchain-epv = { path = "../evaporchain-epv" }
 evaporchain-etlp = { path = "../evaporchain-etlp" }
 evaporchain-dsn = { path = "../evaporchain-dsn" }
+evaporchain-entropic-slashing = { path = "../evaporchain-entropic-slashing" }
+evaporchain-fee-controller = { path = "../evaporchain-fee-controller" }
+evaporchain-evap-fork-cert = { path = "../evaporchain-evap-fork-cert" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
