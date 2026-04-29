@@ -8,8 +8,10 @@
 //! - Timeout-based round advancement when proposer is offline
 //! - Nil votes for safety (lock on first valid proposal)
 
+use crate::annealing_integration::{self, default_annealing_params};
 use crate::da_attestation::DAAttestationManager;
 use crate::encrypted_mempool::{EncryptedMempool, EncryptedTransaction};
+use crate::ib_integration::{self, DEFAULT_LAMBDA_MB};
 use evaporchain_da::block_da::BlockDA;
 use evaporchain_da::block_da_2d::{BlockDA2D, AvailabilityMetrics};
 use evaporchain_da::namespace::{NamespaceMerkleTree, NamespacedBlob};
@@ -1382,15 +1384,46 @@ impl TendermintConsensus {
 
     /// Who is the proposer for the current height/round?
     /// Uses beacon randomness when available so future leaders are unpredictable.
+    /// Applies SA acceptance test (§A4.3.2): if a higher-scoring candidate exists
+    /// and SA accepts the swap, that candidate is returned instead.
     fn proposer_for_round(&self, height: u64, round: u32) -> Option<&ValidatorInfo> {
         let virtual_epoch = height.wrapping_mul(100).wrapping_add(round as u64);
         let beacon = self.randomness_beacon.current();
-        if beacon == [0u8; 32] {
+        let base = if beacon == [0u8; 32] {
             self.validator_set.leader_for_epoch(virtual_epoch)
         } else {
             self.validator_set
                 .leader_for_epoch_with_seed(virtual_epoch, &beacon)
+        }?;
+        // SA swap gate: look for a non-jailed validator with strictly higher
+        // composite score; accept the swap probabilistically via SA temperature.
+        let sa_params = default_annealing_params();
+        let base_score = annealing_integration::sa_validator_score(
+            base.stake, base.blocks_produced, (base.health_score * 1_000.0) as u64,
+            sa_params.beta_mb,
+        );
+        let slot_nonce = virtual_epoch ^ u64::from_be_bytes(beacon[..8].try_into().unwrap_or([0u8; 8]));
+        let candidate = self.validator_set.validators().iter()
+            .filter(|v| !v.jailed && v.id != base.id)
+            .max_by_key(|v| annealing_integration::sa_validator_score(
+                v.stake, v.blocks_produced, (v.health_score * 1_000.0) as u64,
+                sa_params.beta_mb,
+            ));
+        if let Some(c) = candidate {
+            let c_score = annealing_integration::sa_validator_score(
+                c.stake, c.blocks_produced, (c.health_score * 1_000.0) as u64,
+                sa_params.beta_mb,
+            );
+            if c_score > base_score
+                && annealing_integration::accepts_validator_swap(
+                    &sa_params, self.epoch, base_score, c_score, slot_nonce,
+                )
+            {
+                debug!(from = base.id, to = c.id, epoch = self.epoch, "SA proposer swap accepted");
+                return Some(c);
+            }
         }
+        Some(base)
     }
 
     /// Am I the proposer for the current height/round?
@@ -1461,6 +1494,17 @@ impl TendermintConsensus {
                         let hash = Self::block_hash(&proposal);
                         self.round_state.prevotes.insert(self.my_id, Some(hash));
                         self.round_state.prevoted = true;
+                        // IB prevote advisory (§A4.3.1): log commit/abstain signal.
+                        // DEFAULT_LAMBDA_MB=0 → always Commit. Safe to wire at
+                        // this stage; hard-gate is a future governance amendment.
+                        {
+                            let local_stakes: Vec<u64> = self.validator_set.validators()
+                                .iter().map(|v| v.stake).collect();
+                            let _ib = ib_integration::ib_vote_from_stakes(
+                                &local_stakes, &local_stakes, DEFAULT_LAMBDA_MB,
+                            );
+                            debug!(validator = self.my_id, ib_vote = ?_ib, "IB prevote signal");
+                        }
                         let vote_hash = Some(hash);
                         let bls_sig = self.bls_sign_vote(self.height, self.round_state.round, &vote_hash, "prevote");
                         if let Some(ref sig) = bls_sig {
