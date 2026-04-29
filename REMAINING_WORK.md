@@ -89,14 +89,14 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 - [x] Retry logic and rate limiting — DONE: exponential backoff (500ms base, 3 retries), auto-retry on 429/5xx
 - [ ] Publish to npm
 
-### Wallet SDK (70% complete)
+### Wallet SDK (85% complete)
 - [ ] Contract deployment/calling
-- [ ] Offline signing mode
-- [ ] Session management
+- [x] Offline signing mode — DONE: OfflineSigner class, /api/tx/signable + /api/tx/nonce/:address endpoints
+- [x] Session management — DONE: SessionManager with TTL, energy budget, allowed tx types
 - [ ] Publish to npm
 
-### Browser Extension (75% complete)
-- [ ] Complete swap backend integration
+### Browser Extension (80% complete)
+- [x] Complete swap backend integration — DONE: /api/swap/quote + /api/swap/execute with oracle TWAP pricing
 - [ ] Advanced analytics/portfolio
 - [ ] User preferences persistence
 - [ ] Backup/restore UI

@@ -1,4 +1,5 @@
 {
+  "_comment": "DEVELOPMENT SCAFFOLD — NOT the real mainnet genesis. Placeholder addresses, stakes, and peers. The real genesis is produced from genesis-target.json via docs/GENESIS_CEREMONY.md. The genesis_time below is aspirational and will be set at T-7 days during the ceremony.",
   "chain_params": {
     "chain_id": "evaporchain-mainnet-1",
     "block_interval_ms": 2000,
@@ -17,7 +18,8 @@
     "staker_fee_share": 0.50,
     "target_staking_apy": 0.05
   },
-  "genesis_time": "2026-10-01T00:00:00Z",
+  "_genesis_time_note": "Aspirational target — set during ceremony per genesis-target.json Step 4. Do NOT use this date in production metrics.",
+  "genesis_time": "TODO_SET_DURING_CEREMONY",
   "validators": [
     {
       "id": 1,
