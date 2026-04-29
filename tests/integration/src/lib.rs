@@ -4849,3 +4849,90 @@ mod script_upgrade_integration {
         assert_eq!(r.return_value, Some(Value::U64(1)));
     }
 }
+
+// ── Oracle State + InclusionProof integration ─────────────────────────────────
+
+#[cfg(test)]
+mod oracle_state_integration {
+    use evaporchain_oracle::state::{OracleState, OracleInclusionProof};
+    use evaporchain_oracle::consensus::{FinalizedOracleValue};
+
+    fn finalized(key: &str, value: f64, round: u64) -> FinalizedOracleValue {
+        FinalizedOracleValue {
+            key: key.to_string(),
+            value,
+            round,
+            timestamp: 1_000_000,
+            voter_count: 3,
+            aggregate_hash: [0u8; 32],
+            twap: None,
+        }
+    }
+
+    #[test]
+    fn apply_finalized_stores_value() {
+        let mut s = OracleState::new(10);
+        s.apply_finalized(&finalized("btc_usd", 60_000.0, 1), 5000, 100);
+        assert_eq!(s.get_value("btc_usd"), Some(60_000.0));
+        assert_eq!(s.len(), 1);
+    }
+
+    #[test]
+    fn state_root_changes_on_update() {
+        let mut s = OracleState::new(10);
+        s.apply_finalized(&finalized("btc_usd", 60_000.0, 1), 5000, 100);
+        let root1 = s.state_root();
+        s.apply_finalized(&finalized("btc_usd", 61_000.0, 2), 5000, 100);
+        let root2 = s.state_root();
+        assert_ne!(root1, root2);
+    }
+
+    #[test]
+    fn state_root_is_deterministic() {
+        let mut s1 = OracleState::new(10);
+        let mut s2 = OracleState::new(10);
+        let f = finalized("eth_usd", 3_000.0, 5);
+        s1.apply_finalized(&f, 3000, 50);
+        s2.apply_finalized(&f, 3000, 50);
+        assert_eq!(s1.state_root(), s2.state_root());
+    }
+
+    #[test]
+    fn inclusion_proof_generated_and_verified() {
+        let mut s = OracleState::new(10);
+        s.apply_finalized(&finalized("btc_usd", 60_000.0, 1), 5000, 100);
+        let proof = OracleInclusionProof::generate(&s, "btc_usd").unwrap();
+        assert_eq!(proof.value, 60_000.0);
+        assert_eq!(proof.round, 1);
+        let root = s.state_root();
+        assert!(proof.verify(&root));
+    }
+
+    #[test]
+    fn inclusion_proof_fails_with_wrong_root() {
+        let mut s = OracleState::new(10);
+        s.apply_finalized(&finalized("btc_usd", 60_000.0, 1), 5000, 100);
+        let proof = OracleInclusionProof::generate(&s, "btc_usd").unwrap();
+        let wrong_root = [0xFFu8; 32];
+        assert!(!proof.verify(&wrong_root));
+    }
+
+    #[test]
+    fn energy_decay_reduces_over_epochs() {
+        let mut s = OracleState::new(10);
+        s.apply_finalized(&finalized("btc_usd", 60_000.0, 1), 10_000, 100);
+        let e0 = s.energy_for_key("btc_usd", 0, 0);
+        let e100 = s.energy_for_key("btc_usd", 100, 0); // 1 half-life
+        let e200 = s.energy_for_key("btc_usd", 200, 0); // 2 half-lives
+        assert_eq!(e0, 10_000);
+        assert!(e100 < e0 && e100 > e200, "energy decays monotonically");
+        assert!(e100 <= 5_001 && e100 >= 4_999, "half-life at epoch=100 ≈ half");
+    }
+
+    #[test]
+    fn missing_key_returns_none() {
+        let s = OracleState::new(10);
+        assert_eq!(s.get_value("nonexistent"), None);
+        assert_eq!(OracleInclusionProof::generate(&s, "nonexistent"), None);
+    }
+}
