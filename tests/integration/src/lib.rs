@@ -3004,3 +3004,236 @@ mod antichain_mempool_integration {
         assert!(is_maximal_antichain(&a, &lc));
     }
 }
+
+// ── Tropical Plücker commitment integration ───────────────────────────────────
+
+#[cfg(test)]
+mod tropical_integration {
+    use evaporchain_tropical::{
+        TropicalScalar, star_tree_distances, plucker_commitment, satisfies_four_point,
+        tropical_weight,
+    };
+
+    #[test]
+    fn tropical_add_is_min() {
+        let a = TropicalScalar::finite(3);
+        let b = TropicalScalar::finite(7);
+        assert_eq!(a.add(b), TropicalScalar::finite(3));
+        assert_eq!(TropicalScalar::Infinity.add(a), a, "Infinity is additive identity");
+    }
+
+    #[test]
+    fn tropical_mul_is_plus_with_infinity_absorbing() {
+        let a = TropicalScalar::finite(3);
+        let b = TropicalScalar::finite(7);
+        assert_eq!(a.mul(b), TropicalScalar::finite(10));
+        assert_eq!(TropicalScalar::Infinity.mul(a), TropicalScalar::Infinity, "Infinity absorbs");
+    }
+
+    #[test]
+    fn star_tree_satisfies_four_point_condition() {
+        let energies = vec![1u64, 2, 4, 8, 16];
+        let m = star_tree_distances(&energies);
+        assert!(satisfies_four_point(&m), "star trees are trivially tree-metrics");
+    }
+
+    #[test]
+    fn plucker_commitment_is_deterministic_and_order_sensitive() {
+        let m_a = star_tree_distances(&[1u64, 2, 4, 8]);
+        let m_b = star_tree_distances(&[8u64, 4, 2, 1]);
+        let c_a = plucker_commitment(&m_a);
+        let c_b = plucker_commitment(&m_b);
+        assert_eq!(c_a, plucker_commitment(&m_a), "commitment is deterministic");
+        assert_ne!(c_a, c_b, "different leaf orders → different commitments");
+    }
+
+    #[test]
+    fn tropical_weight_power_of_two_is_negative_log() {
+        assert_eq!(tropical_weight(1), TropicalScalar::finite(0));
+        assert_eq!(tropical_weight(2), TropicalScalar::finite(-1));
+        assert_eq!(tropical_weight(1024), TropicalScalar::finite(-10));
+        assert_eq!(tropical_weight(0), TropicalScalar::Infinity);
+    }
+}
+
+// ── Causal-Cone Validator State integration ───────────────────────────────────
+
+#[cfg(test)]
+mod causal_cone_integration {
+    use evaporchain_causal_cone::{summarize_cone, SummaryError};
+    use evaporchain_light_cone::{Block, BlockId, LightCone};
+    use evaporchain_energy_kernel::{ChainLambda, Lambda};
+
+    fn id(b: u8) -> BlockId { [b; 32] }
+
+    fn lambda() -> ChainLambda {
+        ChainLambda::new(Lambda::from_epochs(1_000))
+    }
+
+    fn linear_lc() -> LightCone {
+        let mut lc = LightCone::new();
+        lc.insert(Block::new(id(0), vec![], 10_000, 0)).unwrap();
+        lc.insert(Block::new(id(1), vec![id(0)], 9_000, 1)).unwrap();
+        lc.insert(Block::new(id(2), vec![id(1)], 8_000, 2)).unwrap();
+        lc
+    }
+
+    #[test]
+    fn genesis_block_has_zero_ancestors() {
+        let lc = linear_lc();
+        let summary = summarize_cone(id(0), &lc, lambda(), 0).unwrap();
+        assert_eq!(summary.ancestor_count, 0);
+        assert_eq!(summary.head_id, id(0));
+    }
+
+    #[test]
+    fn mid_chain_block_counts_ancestors_correctly() {
+        let lc = linear_lc();
+        let summary = summarize_cone(id(2), &lc, lambda(), 2).unwrap();
+        // id(2) has ancestors: id(1), id(0) → count = 2
+        assert_eq!(summary.ancestor_count, 2);
+    }
+
+    #[test]
+    fn absent_head_returns_error() {
+        let lc = linear_lc();
+        let missing = [0xFFu8; 32];
+        let err = summarize_cone(missing, &lc, lambda(), 0).unwrap_err();
+        assert!(matches!(err, SummaryError::AbsentHead(_)));
+    }
+
+    #[test]
+    fn canonical_hash_is_deterministic() {
+        let lc = linear_lc();
+        let s1 = summarize_cone(id(2), &lc, lambda(), 5).unwrap();
+        let s2 = summarize_cone(id(2), &lc, lambda(), 5).unwrap();
+        assert_eq!(s1.canonical_cone_hash, s2.canonical_cone_hash);
+    }
+}
+
+// ── Mortis (chain death certificate) integration ─────────────────────────────
+
+#[cfg(test)]
+mod mortis_integration {
+    use evaporchain_mortis::{
+        mint_certificate, MortisCondition, MortisMonitor, TickOutcome,
+    };
+    use evaporchain_mortis::certificate::verify_certificate;
+
+    fn cond() -> MortisCondition {
+        // floor = 1_000; trigger after 3 consecutive below-floor epochs
+        MortisCondition::new(1_000, 3)
+    }
+
+    #[test]
+    fn healthy_pool_never_triggers() {
+        let mut m = MortisMonitor::new(cond());
+        for epoch in 0..10 {
+            let out = m.tick(epoch, 5_000);
+            assert_eq!(out, TickOutcome::Healthy);
+        }
+        assert!(!m.is_triggered());
+    }
+
+    #[test]
+    fn sustained_below_floor_triggers_after_n_epochs() {
+        let mut m = MortisMonitor::new(cond());
+        assert_eq!(m.tick(0, 500), TickOutcome::Counting { consecutive_below: 1 });
+        assert_eq!(m.tick(1, 500), TickOutcome::Counting { consecutive_below: 2 });
+        assert_eq!(m.tick(2, 500), TickOutcome::JustTriggered);
+        assert!(m.is_triggered());
+    }
+
+    #[test]
+    fn trigger_is_latched_after_firing() {
+        let mut m = MortisMonitor::new(cond());
+        m.tick(0, 0);
+        m.tick(1, 0);
+        m.tick(2, 0); // JustTriggered
+        let out = m.tick(3, 0);
+        assert_eq!(out, TickOutcome::AlreadyTriggered);
+    }
+
+    #[test]
+    fn minted_certificate_verifies_correctly() {
+        let cert = mint_certificate([0x11u8; 32], [0x22u8; 32], 42, 999);
+        verify_certificate(&cert).expect("certificate must verify");
+        assert_eq!(cert.epoch_of_death, 42);
+        assert_eq!(cert.final_refresh_pool, 999);
+    }
+}
+
+// ── Modular-Form Beacon integration ──────────────────────────────────────────
+
+#[cfg(test)]
+mod modular_beacon_integration {
+    use evaporchain_modular_beacon::{compute_beacon, verify_modular_identity};
+
+    #[test]
+    fn beacon_at_tau_zero_satisfies_modular_identity_exactly() {
+        // At q=0 all q^k terms vanish; E_4=1, E_6=1, Δ=0.
+        // 1³ − 1² = 0 = 1728·0 → residual = 0 → passes at tolerance 0
+        let beacon = compute_beacon(0);
+        verify_modular_identity(&beacon, 0).expect("q=0 identity must hold exactly");
+    }
+
+    #[test]
+    fn beacon_is_deterministic_for_same_tau() {
+        let b1 = compute_beacon(42);
+        let b2 = compute_beacon(42);
+        assert_eq!(b1.e4, b2.e4);
+        assert_eq!(b1.e6, b2.e6);
+        assert_eq!(b1.delta, b2.delta);
+    }
+
+    #[test]
+    fn different_taus_produce_different_beacons() {
+        let b0 = compute_beacon(0);
+        let b1 = compute_beacon(1);
+        // At τ=1 the q-expansion adds non-zero terms → at least one field differs
+        assert!(b0.e4 != b1.e4 || b0.e6 != b1.e6 || b0.delta != b1.delta);
+    }
+}
+
+// ── Braid-Group Sequencer Commitment integration ──────────────────────────────
+
+#[cfg(test)]
+mod braid_sequencer_integration {
+    use evaporchain_braid_sequencer::{BraidWord, commit_braid, reduce_canonical};
+
+    fn w(gens: Vec<i32>) -> BraidWord {
+        BraidWord::new(gens, 6).unwrap()
+    }
+
+    #[test]
+    fn trivial_cancellation_reduces_inverse_pair_to_identity() {
+        let word = w(vec![1, -1]);
+        let reduced = reduce_canonical(&word);
+        assert!(reduced.is_empty(), "σ_1 σ_1⁻¹ = identity");
+        assert_eq!(commit_braid(&word), commit_braid(&BraidWord::identity()));
+    }
+
+    #[test]
+    fn commuting_generators_produce_same_commitment_regardless_of_order() {
+        // σ_1 and σ_3 commute (|3-1|=2 ≥ 2)
+        let a = w(vec![1, 3]);
+        let b = w(vec![3, 1]);
+        assert_eq!(commit_braid(&a), commit_braid(&b));
+    }
+
+    #[test]
+    fn non_commuting_generators_produce_different_commitments() {
+        // σ_1 and σ_2 do NOT commute (|2-1|=1)
+        let a = w(vec![1, 2]);
+        let b = w(vec![2, 1]);
+        assert_ne!(commit_braid(&a), commit_braid(&b));
+    }
+
+    #[test]
+    fn commitment_is_deterministic() {
+        let word = w(vec![1, 2, 3, -3, 2, 1]);
+        let c1 = commit_braid(&word);
+        let c2 = commit_braid(&word);
+        assert_eq!(c1, c2);
+    }
+}
