@@ -1618,6 +1618,223 @@ pub struct LamportTimeResp {
     pub tick_quantum: u64,
 }
 
+// ─────────── Singh-Attractor Consensus (Tier 2) ────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct AttractorReq {
+    pub center: u64,
+    pub basin_radius: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SinghAttractorQuery {
+    pub state_energy: u64,
+    pub attractors: Vec<AttractorReq>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SinghAttractorResp {
+    pub selected_center: Option<u64>,
+    pub selected_basin_radius: Option<u64>,
+    pub in_basin: bool,
+}
+
+async fn post_singh_attractor(
+    Json(q): Json<SinghAttractorQuery>,
+) -> Json<SinghAttractorResp> {
+    let attractors: Vec<evaporchain_singh_attractor::Attractor> = q
+        .attractors
+        .into_iter()
+        .map(|a| evaporchain_singh_attractor::Attractor::new(a.center, a.basin_radius))
+        .collect();
+    match evaporchain_singh_attractor::select_attractor(q.state_energy, &attractors) {
+        None => Json(SinghAttractorResp {
+            selected_center: None,
+            selected_basin_radius: None,
+            in_basin: false,
+        }),
+        Some(a) => Json(SinghAttractorResp {
+            selected_center: Some(a.center),
+            selected_basin_radius: Some(a.basin_radius),
+            in_basin: a.contains(q.state_energy),
+        }),
+    }
+}
+
+// ─────────── Bell-Certified Beacon (Tier 2) ────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct BellBeaconQuery {
+    pub e_ab: i64,
+    pub e_ab_prime: i64,
+    pub e_a_prime_b: i64,
+    pub e_a_prime_b_prime: i64,
+    /// Threshold S (in milli-units) above which the beacon is "Bell-
+    /// certified". Defaults to LOCAL_REALISM_S_MILLI = 2000.
+    pub threshold_milli: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BellBeaconResp {
+    pub status: &'static str,
+    pub s_value_milli: u64,
+    pub threshold_milli: u64,
+    pub bell_certified: bool,
+    pub detail: String,
+}
+
+async fn post_bell_beacon(Json(q): Json<BellBeaconQuery>) -> Json<BellBeaconResp> {
+    let s = match evaporchain_bell_beacon::chsh_s_value(
+        q.e_ab,
+        q.e_ab_prime,
+        q.e_a_prime_b,
+        q.e_a_prime_b_prime,
+    ) {
+        Ok(s) => s,
+        Err(e) => {
+            return Json(BellBeaconResp {
+                status: "error",
+                s_value_milli: 0,
+                threshold_milli: q
+                    .threshold_milli
+                    .unwrap_or(evaporchain_bell_beacon::LOCAL_REALISM_S_MILLI),
+                bell_certified: false,
+                detail: format!("{e}"),
+            });
+        }
+    };
+    let threshold = q
+        .threshold_milli
+        .unwrap_or(evaporchain_bell_beacon::LOCAL_REALISM_S_MILLI);
+    Json(BellBeaconResp {
+        status: "ok",
+        s_value_milli: s,
+        threshold_milli: threshold,
+        bell_certified: evaporchain_bell_beacon::bell_certified(s, threshold),
+        detail: String::new(),
+    })
+}
+
+// ─────────── Allen-Decay Opcodes (Tier 2) ──────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct AllenIntervalReq {
+    pub start: u64,
+    pub end: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AllenRelationQuery {
+    pub a: AllenIntervalReq,
+    pub b: AllenIntervalReq,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AllenRelationResp {
+    pub status: &'static str,
+    pub relation: Option<String>,
+    pub detail: String,
+}
+
+async fn post_allen_relation(Json(q): Json<AllenRelationQuery>) -> Json<AllenRelationResp> {
+    let a = match evaporchain_allen_decay::Interval::new(q.a.start, q.a.end) {
+        Ok(i) => i,
+        Err(e) => {
+            return Json(AllenRelationResp {
+                status: "error",
+                relation: None,
+                detail: format!("a: {e}"),
+            });
+        }
+    };
+    let b = match evaporchain_allen_decay::Interval::new(q.b.start, q.b.end) {
+        Ok(i) => i,
+        Err(e) => {
+            return Json(AllenRelationResp {
+                status: "error",
+                relation: None,
+                detail: format!("b: {e}"),
+            });
+        }
+    };
+    let r = evaporchain_allen_decay::compute_relation(a, b);
+    Json(AllenRelationResp {
+        status: "ok",
+        relation: Some(format!("{r:?}")),
+        detail: String::new(),
+    })
+}
+
+// ─────────── MDL-Shard (Tier 0 supporting) ─────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct MdlOptimalQuery {
+    pub items: Vec<u64>,
+    pub max_shards: u32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MdlOptimalResp {
+    pub status: &'static str,
+    pub assignments: Option<Vec<u32>>,
+    pub mdl_score: Option<u64>,
+    pub detail: String,
+}
+
+async fn post_mdl_optimal(Json(q): Json<MdlOptimalQuery>) -> Json<MdlOptimalResp> {
+    match evaporchain_mdl_shard::mdl_optimal(&q.items, q.max_shards) {
+        Some(p) => {
+            let score = evaporchain_mdl_shard::mdl_score(&p, &q.items);
+            Json(MdlOptimalResp {
+                status: "ok",
+                assignments: Some(p.assignments.clone()),
+                mdl_score: Some(score),
+                detail: String::new(),
+            })
+        }
+        None => Json(MdlOptimalResp {
+            status: "no-partition",
+            assignments: None,
+            mdl_score: None,
+            detail: "mdl_optimal returned None (empty items or max_shards=0)".into(),
+        }),
+    }
+}
+
+// ─────────── CSLC ε-machine reconstruction (Tier 0) ───────────────
+
+#[derive(Debug, Deserialize)]
+pub struct CslcReconstructQuery {
+    pub counts: Vec<u64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CslcReconstructResp {
+    pub status: &'static str,
+    pub state_count: usize,
+    pub alphabet_size: u32,
+    pub detail: String,
+}
+
+async fn post_cslc_reconstruct(
+    Json(q): Json<CslcReconstructQuery>,
+) -> Json<CslcReconstructResp> {
+    match evaporchain_cslc::reconstruct_unconditional(&q.counts) {
+        Ok(machine) => Json(CslcReconstructResp {
+            status: "ok",
+            state_count: machine.state_count(),
+            alphabet_size: q.counts.len() as u32,
+            detail: String::new(),
+        }),
+        Err(e) => Json(CslcReconstructResp {
+            status: "error",
+            state_count: 0,
+            alphabet_size: 0,
+            detail: format!("{e}"),
+        }),
+    }
+}
+
 // ─────────── Lambda-Fold light client (Nova-style folding) ────────
 
 #[derive(Debug, Serialize)]
@@ -5865,6 +6082,11 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/efh/bottleneck", post(post_efh_bottleneck))
         .route("/api/lambda_fold", get(get_lambda_fold))
         .route("/api/lambda_fold/verify", post(post_lambda_fold_verify))
+        .route("/api/singh_attractor", post(post_singh_attractor))
+        .route("/api/bell_beacon", post(post_bell_beacon))
+        .route("/api/allen_relation", post(post_allen_relation))
+        .route("/api/mdl_optimal", post(post_mdl_optimal))
+        .route("/api/cslc_reconstruct", post(post_cslc_reconstruct))
         .route("/api/objects", get(get_objects))
         .route("/api/object/:id", get(get_single_object))
         .route("/api/accounts", get(get_accounts))
