@@ -277,6 +277,21 @@ pub struct ConsensusFourActState {
     pub light_cone_block_count: usize,
 }
 
+/// Window size for TUR Liveness Detector observations. Per
+/// INVENTION_STACK.md §A1.3, the chain runs the Thermodynamic
+/// Uncertainty Relation against a sliding window of the per-block
+/// "current J" — gas_used here. Window is governance-set; 64 blocks
+/// is a launch placeholder that catches cartel-class steady-state
+/// signatures within ~1 minute of activity at typical block times.
+pub const TUR_WINDOW_BLOCKS: usize = 64;
+
+/// Conversion factor from window-summed gas to entropy production Σ
+/// in TUR's natural units. Launch placeholder: σ = sum(window) / 1000
+/// is order-of-magnitude correct (entropy ∝ flux), calibratable by
+/// governance once chain activity stabilises.
+pub const TUR_SIGMA_PER_GAS_NUM: u64 = 1;
+pub const TUR_SIGMA_PER_GAS_DEN: u64 = 1_000;
+
 /// Tendermint-style BFT consensus engine.
 pub struct TendermintConsensus {
     /// Parallel partial-order DAG of every committed block. Per
@@ -284,6 +299,13 @@ pub struct TendermintConsensus {
     /// Consensus replacing Tendermint as the authoritative consensus
     /// (governance amendment). Read-only observability for now.
     pub light_cone_dag: evaporchain_light_cone::LightCone,
+    /// Sliding window of per-block gas_used for TUR Liveness Detector.
+    /// Capped at TUR_WINDOW_BLOCKS; oldest entries fall off as new
+    /// blocks commit.
+    pub tur_window: std::collections::VecDeque<u64>,
+    /// Last TUR verdict computed at block-commit time. None until the
+    /// window has at least 2 samples (variance is meaningless on 1).
+    pub last_tur_verdict: Option<evaporchain_tur_liveness::Verdict>,
     /// This node's validator id.
     pub my_id: u64,
     /// Current block height being decided.
@@ -390,6 +412,8 @@ impl TendermintConsensus {
     pub fn new_with_gas_limit(my_id: u64, grace_period: u64, validator_set: ValidatorSet, block_gas_limit: u64) -> Self {
         Self {
             light_cone_dag: evaporchain_light_cone::LightCone::new(),
+            tur_window: std::collections::VecDeque::with_capacity(TUR_WINDOW_BLOCKS),
+            last_tur_verdict: None,
             my_id,
             height: 1, // Start at height 1 (genesis is 0)
             epoch: 0,
@@ -612,6 +636,17 @@ impl TendermintConsensus {
         Some(evaporchain_mcc::Trajectory::new(path))
     }
 
+    /// Most recent TUR Liveness Detector verdict. None if the
+    /// observation window hasn't filled to ≥2 samples since startup.
+    pub fn tur_liveness_verdict(&self) -> Option<evaporchain_tur_liveness::Verdict> {
+        self.last_tur_verdict
+    }
+
+    /// Number of samples currently in the TUR observation window.
+    pub fn tur_window_len(&self) -> usize {
+        self.tur_window.len()
+    }
+
     /// Number of blocks in the parallel Light-Cone DAG. Should equal
     /// `committed_heights.len() - 1` minus genesis edge cases under
     /// normal operation. Read-only observability for now.
@@ -726,6 +761,8 @@ impl TendermintConsensus {
     pub fn new_for_test(my_id: u64, grace_period: u64, validator_set: ValidatorSet) -> Self {
         Self {
             light_cone_dag: evaporchain_light_cone::LightCone::new(),
+            tur_window: std::collections::VecDeque::with_capacity(TUR_WINDOW_BLOCKS),
+            last_tur_verdict: None,
             my_id,
             height: 1,
             epoch: 0,
@@ -1894,6 +1931,30 @@ impl TendermintConsensus {
         // would have a duplicate-id rejection that we don't want to
         // propagate as a panic).
         let _ = self.light_cone_dag.insert(lc_block);
+
+        // TUR Liveness Detector observation. Push this block's gas as
+        // the chain "current J", maintain a sliding window, and run
+        // tur_check using a window-summed Σ proxy. Verdict::Violation
+        // is the cartel signature: gas too steady for the entropy
+        // budget. Per INVENTION_STACK.md §A1.3.
+        let block_gas = block
+            .transactions
+            .iter()
+            .map(|tx| tx.gas_limit)
+            .sum::<u64>();
+        self.tur_window.push_back(block_gas);
+        while self.tur_window.len() > TUR_WINDOW_BLOCKS {
+            self.tur_window.pop_front();
+        }
+        if self.tur_window.len() >= 2 {
+            let sum: u64 = self.tur_window.iter().sum();
+            let sigma = sum
+                .saturating_mul(TUR_SIGMA_PER_GAS_NUM)
+                / TUR_SIGMA_PER_GAS_DEN.max(1);
+            let samples: Vec<u64> = self.tur_window.iter().copied().collect();
+            self.last_tur_verdict =
+                Some(evaporchain_tur_liveness::tur_check(&samples, sigma));
+        }
 
         self.epoch = block.epoch;
         self.mempool.set_epoch(block.epoch);

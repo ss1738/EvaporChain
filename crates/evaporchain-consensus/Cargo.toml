@@ -19,6 +19,7 @@ evaporchain-light-cone = { path = "../evaporchain-light-cone" }
 evaporchain-causal-cone = { path = "../evaporchain-causal-cone" }
 evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
 evaporchain-mcc = { path = "../evaporchain-mcc" }
+evaporchain-tur-liveness = { path = "../evaporchain-tur-liveness" }
 blake3 = "1"
 tokio = { workspace = true }
 serde = { workspace = true }

@@ -1618,6 +1618,54 @@ pub struct LamportTimeResp {
     pub tick_quantum: u64,
 }
 
+// ─────────── TUR Liveness Detector observability ───────────────────
+
+#[derive(Debug, Serialize)]
+pub struct TurLivenessResp {
+    pub verdict: &'static str,
+    pub observed: Option<String>,
+    pub bound: Option<String>,
+    pub window_samples: usize,
+    pub window_capacity: usize,
+}
+
+async fn get_tur_liveness(State(state): State<Arc<ApiState>>) -> Json<TurLivenessResp> {
+    let tc = match state.tendermint.as_ref() {
+        Some(tc) => tc,
+        None => {
+            return Json(TurLivenessResp {
+                verdict: "no-consensus-engine",
+                observed: None,
+                bound: None,
+                window_samples: 0,
+                window_capacity: evaporchain_consensus::tendermint::TUR_WINDOW_BLOCKS,
+            });
+        }
+    };
+    let tc = safe_lock(tc);
+    let window_samples = tc.tur_window_len();
+    let (verdict, observed, bound) = match tc.tur_liveness_verdict() {
+        None => ("warming-up", None, None),
+        Some(evaporchain_tur_liveness::Verdict::Ok { observed, bound }) => (
+            "ok",
+            Some(observed.to_string()),
+            Some(bound.to_string()),
+        ),
+        Some(evaporchain_tur_liveness::Verdict::Violation { observed, bound }) => (
+            "violation",
+            Some(observed.to_string()),
+            Some(bound.to_string()),
+        ),
+    };
+    Json(TurLivenessResp {
+        verdict,
+        observed,
+        bound,
+        window_samples,
+        window_capacity: evaporchain_consensus::tendermint::TUR_WINDOW_BLOCKS,
+    })
+}
+
 // ─────────── MCC fork-choice (Jaynes 1980 + Stock 2009) ────────────
 
 #[derive(Debug, Deserialize)]
@@ -5446,6 +5494,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/light_cone", get(get_light_cone))
         .route("/api/causal_cone", get(get_causal_cone))
         .route("/api/mcc_fork_choice", get(get_mcc_fork_choice))
+        .route("/api/tur_liveness", get(get_tur_liveness))
         .route("/api/objects", get(get_objects))
         .route("/api/object/:id", get(get_single_object))
         .route("/api/accounts", get(get_accounts))
