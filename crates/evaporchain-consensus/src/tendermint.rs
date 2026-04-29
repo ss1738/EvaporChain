@@ -3041,6 +3041,18 @@ impl TendermintConsensus {
             evaporchain_energy_kernel::DEFAULT_LAMBDA.epochs(),
             crate::antichain_integration::DEFAULT_ANTICHAIN_THRESHOLD,
         );
+        // Causal-cone summary for proposer (§A1.3 Optimal Prediction Theorem).
+        // Advisory: logged for auditability; not a gate at this stage.
+        if let Some(head) = crate::antichain_integration::dag_tips(&self.light_cone_dag).first().copied() {
+            if let Some(summary) = crate::causal_cone_integration::validator_cone_summary(
+                &self.light_cone_dag,
+                head,
+                evaporchain_energy_kernel::DEFAULT_LAMBDA.epochs(),
+                self.epoch,
+            ) {
+                crate::causal_cone_integration::log_cone_summary(&summary, self.my_id);
+            }
+        }
 
         info!(
             height = self.height,
