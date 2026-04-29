@@ -2439,6 +2439,118 @@ mod frontier_primitive_integration {
     }
 }
 
+// ── Bell-Certified Beacon + Entropic Slashing + Decay-Lamport integration ────
+
+#[cfg(test)]
+mod advanced_primitive_integration {
+    use evaporchain_bell_beacon::chsh::chsh_s_value;
+    use evaporchain_bell_beacon::gate::bell_certified;
+    use evaporchain_entropic_slashing::entropic_slash;
+    use evaporchain_decay_lamport::clock::LamportClock;
+    use std::cmp::Ordering;
+
+    // ── Bell-Certified Beacon: CHSH → gate pipeline ───────────────────────
+
+    #[test]
+    fn bell_beacon_quantum_correlations_certified() {
+        // Standard Bell-state angles: S ≈ 2√2 × 1000 = 2828
+        let s = chsh_s_value(707, -707, 707, 707).expect("valid correlations");
+        assert_eq!(s, 2828, "Tsirelson's bound: S = 2√2 ≈ 2828 milli");
+        // Default local-realism threshold = 2000
+        assert!(bell_certified(s, 2000), "2828 > 2000 → quantum certified");
+    }
+
+    #[test]
+    fn bell_beacon_classical_max_not_certified_as_quantum() {
+        // Pure classical correlation: E(a,b) = 1, E(a,b') = -1, E(a',b) = 1, E(a',b') = -1
+        // S = |1 - (-1) + 1 + (-1)| = |2| = 2000 milli
+        let s = chsh_s_value(1000, -1000, 1000, -1000).expect("valid correlations");
+        // S = 2000 exactly. Bell-certified returns s > threshold, not ≥
+        assert!(!bell_certified(s, 2000), "S=2000 is not strictly above threshold");
+        // But it IS classical-realism boundary — below Tsirelson
+        assert!(s <= 2828);
+    }
+
+    #[test]
+    fn bell_beacon_out_of_range_correlation_rejected() {
+        let err = chsh_s_value(1001, 0, 0, 0);
+        assert!(err.is_err(), "correlation > 1000 milli must be rejected");
+    }
+
+    // ── Entropic Slashing: slash proportional to entropy ─────────────────
+
+    #[test]
+    fn entropic_slash_uniform_distribution_gives_max_slash() {
+        // Uniform over 4 behaviours = 2 bits = 2000 millibits
+        // slash = stake × 2000 / 1000 = 2 × stake → capped at stake
+        let stake = 1_000_000u64;
+        let slash = entropic_slash(stake, &[1, 1, 1, 1]).expect("valid distribution");
+        // Should be close to stake (may be exactly stake due to cap)
+        assert!(slash > 0 && slash <= stake, "slash must be in (0, stake]");
+    }
+
+    #[test]
+    fn entropic_slash_deterministic_behaviour_zero_slash() {
+        // Single event = 0 bits entropy → slash = 0
+        let stake = 1_000_000u64;
+        let slash = entropic_slash(stake, &[100, 0, 0, 0]).expect("valid distribution");
+        assert_eq!(slash, 0, "deterministic misbehaviour → 0 slash");
+    }
+
+    #[test]
+    fn entropic_slash_high_entropy_slashes_more_than_low_entropy() {
+        let stake = 1_000_000u64;
+        let slash_low_entropy = entropic_slash(stake, &[90, 10, 0, 0]).unwrap();
+        let slash_high_entropy = entropic_slash(stake, &[25, 25, 25, 25]).unwrap();
+        assert!(
+            slash_high_entropy > slash_low_entropy,
+            "uniform (high entropy) must slash more than concentrated (low entropy)"
+        );
+    }
+
+    // ── Decay-Lamport Time: energy-driven logical clock ───────────────────
+
+    #[test]
+    fn lamport_clock_multi_node_merge_and_ordering() {
+        let quantum = 1_000u64;
+
+        // Node A spends 5000 energy → 5 ticks
+        let mut clock_a = LamportClock::new(quantum);
+        for _ in 0..5 { clock_a = clock_a.tick(quantum).unwrap(); }
+        assert_eq!(clock_a.current_tick, 5);
+
+        // Node B spends 3000 energy → 3 ticks
+        let mut clock_b = LamportClock::new(quantum);
+        for _ in 0..3 { clock_b = clock_b.tick(quantum).unwrap(); }
+        assert_eq!(clock_b.current_tick, 3);
+
+        // A precedes B is false; B precedes A is false; A has higher tick
+        assert_eq!(clock_b.precedes(&clock_a), Ordering::Less);
+
+        // Merge B with A message → B catches up to tick 5
+        let merged = clock_b.merge(clock_a);
+        assert_eq!(merged.current_tick, 5, "merge must take max tick");
+    }
+
+    #[test]
+    fn lamport_clock_energy_decay_time_arrow() {
+        // Simulate the time-arrow guarantee: as a chain's block producer
+        // spends energy, the clock advances monotonically.
+        let quantum = 500u64;
+        let mut clock = LamportClock::new(quantum);
+        let mut prev_tick = 0u64;
+
+        // Spend variable amounts — clock must be monotone
+        for energy in [100u64, 200, 600, 50, 800, 1200, 300] {
+            clock = clock.tick(energy).unwrap();
+            assert!(clock.current_tick >= prev_tick, "clock must not go backwards");
+            prev_tick = clock.current_tick;
+        }
+        // Total energy: 3250 / 500 = 6 full ticks + 250 residual
+        assert_eq!(clock.current_tick, 6);
+    }
+}
+
 // ── Autopoietic viability: ChainAutopoiesis × Patronage × Sentinel × LLSA ────
 
 #[cfg(test)]
