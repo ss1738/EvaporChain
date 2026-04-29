@@ -57,6 +57,12 @@ pub trait ProofVerifier: Send + Sync {
 // ─────────────────────── Configuration ───────────────────────────────────
 
 /// Default timeout for each consensus phase.
+/// Window size (in slots) for Sanov equivocation slash. KL divergence is
+/// computed as 1 double-sign in 100 honest proposals → near-full slash.
+const SANOV_EQUIVOCATION_WINDOW: u64 = 100;
+/// Window size (in rounds) for Sanov downtime slash. Honest = miss 1 in 20.
+const SANOV_DOWNTIME_WINDOW: u64 = 20;
+
 const PROPOSE_TIMEOUT_MS: u64 = 8000;
 const PREVOTE_TIMEOUT_MS: u64 = 4000;
 const PRECOMMIT_TIMEOUT_MS: u64 = 4000;
@@ -921,14 +927,7 @@ impl TendermintConsensus {
             Ok(s) => s,
             Err(_) => (stake as f64 * 0.10).round() as u64,
         };
-        // Apply to validator set.
-        if let Some(v) = self.validator_set.get_mut(validator_id) {
-            v.stake = v.stake.saturating_sub(slash_amount);
-            v.total_slashed += slash_amount;
-            v.jailed = true;
-            v.health_score = 0.0;
-        }
-        slash_amount
+        self.validator_set.slash_with_amount(validator_id, slash_amount, true)
     }
 
     /// Slash a validator for downtime using the Sanov large-deviation formula.
@@ -966,14 +965,8 @@ impl TendermintConsensus {
         if slash_amount == 0 {
             return 0;
         }
-        if let Some(v) = self.validator_set.get_mut(validator_id) {
-            v.stake = v.stake.saturating_sub(slash_amount);
-            v.total_slashed += slash_amount;
-            if missed_blocks >= 3 {
-                v.jailed = true;
-            }
-        }
-        slash_amount
+        let jail = missed_blocks >= 3;
+        self.validator_set.slash_with_amount(validator_id, slash_amount, jail)
     }
 
     /// Walk from `head` back to genesis via first-parent at each step.
@@ -1866,7 +1859,7 @@ impl TendermintConsensus {
                 if let Some((_, prev_hash)) = already_proposed {
                     if *prev_hash != hash {
                         // EQUIVOCATION: same proposer, same slot, different block!
-                        let slashed = self.validator_set.slash_equivocation(proposer_id);
+                        let slashed = self.sanov_slash_equivocation(proposer_id, SANOV_EQUIVOCATION_WINDOW);
                         warn!(
                             validator = proposer_id,
                             slashed_amount = slashed,
@@ -2130,7 +2123,7 @@ impl TendermintConsensus {
                     // ── Vote Equivocation Detection ──
                     if let Some(&existing_hash) = self.round_state.prevotes.get(&validator_id) {
                         if existing_hash != block_hash {
-                            let slashed = self.validator_set.slash_equivocation(validator_id);
+                            let slashed = self.sanov_slash_equivocation(validator_id, SANOV_EQUIVOCATION_WINDOW);
                             warn!(
                                 validator = validator_id,
                                 slashed_amount = slashed,
@@ -2226,7 +2219,7 @@ impl TendermintConsensus {
                     // ── Vote Equivocation Detection ──
                     if let Some(&existing_hash) = self.round_state.precommits.get(&validator_id) {
                         if existing_hash != block_hash {
-                            let slashed = self.validator_set.slash_equivocation(validator_id);
+                            let slashed = self.sanov_slash_equivocation(validator_id, SANOV_EQUIVOCATION_WINDOW);
                             warn!(
                                 validator = validator_id,
                                 slashed_amount = slashed,
@@ -3049,7 +3042,7 @@ impl TendermintConsensus {
                 let total_misses = *misses;
 
                 if total_misses >= 3 {
-                    let slashed = self.validator_set.slash_downtime(expected_id, total_misses);
+                    let slashed = self.sanov_slash_downtime(expected_id, total_misses, SANOV_DOWNTIME_WINDOW);
                     warn!(
                         validator = expected_id,
                         missed_blocks = total_misses,
@@ -3083,7 +3076,7 @@ impl TendermintConsensus {
                 *misses += 1;
                 let total = *misses;
                 if total >= 5 {
-                    let slashed = self.validator_set.slash_downtime(*vid, total);
+                    let slashed = self.sanov_slash_downtime(*vid, total, SANOV_DOWNTIME_WINDOW);
                     warn!(
                         validator = vid,
                         missed_votes = total,

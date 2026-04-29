@@ -480,6 +480,32 @@ impl ValidatorSet {
         }
     }
 
+    /// Apply a precomputed slash amount (from Sanov or any theorem-grade
+    /// formula) to a validator. Handles jailing and auto-remove below
+    /// `MIN_STAKE`. Returns the amount actually deducted (capped at stake).
+    pub fn slash_with_amount(&mut self, validator_id: u64, amount: u64, jail: bool) -> u64 {
+        let actual = if let Some(v) = self.get_mut(validator_id) {
+            let deducted = amount.min(v.stake);
+            v.stake = v.stake.saturating_sub(deducted);
+            v.total_slashed += deducted;
+            if jail {
+                v.jailed = true;
+                v.health_score = 0.0;
+            }
+            deducted
+        } else {
+            return 0;
+        };
+        if actual > 0 {
+            if let Some(v) = self.get(validator_id) {
+                if v.stake < MIN_STAKE {
+                    self.remove_validator(validator_id);
+                }
+            }
+        }
+        actual
+    }
+
     /// Unjail a validator (allow them back into rotation).
     pub fn unjail(&mut self, validator_id: u64) -> bool {
         if let Some(v) = self.get_mut(validator_id) {
