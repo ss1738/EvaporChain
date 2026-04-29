@@ -33,6 +33,7 @@ evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
 evaporchain-decay-lamport = { path = "../evaporchain-decay-lamport" }
 evaporchain-causal-cone = { path = "../evaporchain-causal-cone" }
 evaporchain-tur-liveness = { path = "../evaporchain-tur-liveness" }
+evaporchain-cmu-gate = { path = "../evaporchain-cmu-gate" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

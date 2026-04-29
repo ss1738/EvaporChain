@@ -1618,6 +1618,46 @@ pub struct LamportTimeResp {
     pub tick_quantum: u64,
 }
 
+// ─────────── Cμ-Gate (Shalizi-Crutchfield Cμ ≤ E + hμ) ─────────────
+
+#[derive(Debug, Deserialize)]
+pub struct CmuCheckQuery {
+    /// Observed statistical complexity Cμ in millibits.
+    pub cmu_mb: u64,
+    /// Excess entropy E in millibits.
+    pub excess_entropy_mb: u64,
+    /// Entropy rate hμ in millibits.
+    pub entropy_rate_mb: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CmuCheckResp {
+    pub verdict: &'static str,
+    pub observed_cmu_mb: u64,
+    pub bound_mb: u64,
+}
+
+/// Run the chain-side Cμ ≤ E + hμ gate. Caller supplies all three
+/// information-theoretic inputs in millibits; chain returns Ok/
+/// Violation. The measurement scheme for chain-driven Cμ/E/hμ is a
+/// future governance choice; this endpoint is the substrate.
+async fn get_cmu_check(
+    axum::extract::Query(q): axum::extract::Query<CmuCheckQuery>,
+) -> Json<CmuCheckResp> {
+    let v = evaporchain_cmu_gate::cmu_check(q.cmu_mb, q.excess_entropy_mb, q.entropy_rate_mb);
+    let (verdict, observed, bound) = match v {
+        evaporchain_cmu_gate::Verdict::Ok { observed_cmu, bound } => ("ok", observed_cmu, bound),
+        evaporchain_cmu_gate::Verdict::Violation { observed_cmu, bound } => {
+            ("violation", observed_cmu, bound)
+        }
+    };
+    Json(CmuCheckResp {
+        verdict,
+        observed_cmu_mb: observed,
+        bound_mb: bound,
+    })
+}
+
 // ─────────── TUR Liveness Detector observability ───────────────────
 
 #[derive(Debug, Serialize)]
@@ -5495,6 +5535,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/causal_cone", get(get_causal_cone))
         .route("/api/mcc_fork_choice", get(get_mcc_fork_choice))
         .route("/api/tur_liveness", get(get_tur_liveness))
+        .route("/api/cmu_check", get(get_cmu_check))
         .route("/api/objects", get(get_objects))
         .route("/api/object/:id", get(get_single_object))
         .route("/api/accounts", get(get_accounts))
