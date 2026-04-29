@@ -466,6 +466,13 @@ pub struct ParallelExecutor {
     /// single-shard topology.
     pub shard_id: evaporchain_sharding::shard_assignment::ShardId,
     pub cross_shard_router: evaporchain_sharding::cross_shard::CrossShardRouter,
+    /// Four-act narrative spine state. Mirrors SimpleExecutor's
+    /// fields so production (which uses ParallelExecutor) carries
+    /// the same state.
+    pub eulogy_trie: evaporchain_tombstone::EulogyTrie,
+    pub refresh_pool: evaporchain_energy_kernel::RefreshPool,
+    pub mortis_monitor: evaporchain_mortis::MortisMonitor,
+    pub mortis_certificate: Option<evaporchain_mortis::MortisCertificate>,
 }
 
 impl ParallelExecutor {
@@ -484,6 +491,12 @@ impl ParallelExecutor {
             chain_id: String::new(),
             shard_id: evaporchain_sharding::shard_assignment::ShardId(0),
             cross_shard_router: evaporchain_sharding::cross_shard::CrossShardRouter::new(),
+            eulogy_trie: evaporchain_tombstone::EulogyTrie::new(),
+            refresh_pool: evaporchain_energy_kernel::RefreshPool::new(),
+            mortis_monitor: evaporchain_mortis::MortisMonitor::new(
+                evaporchain_mortis::MortisCondition::default_genesis(),
+            ),
+            mortis_certificate: None,
         }
     }
 
@@ -504,6 +517,12 @@ impl ParallelExecutor {
             chain_id: String::new(),
             shard_id: evaporchain_sharding::shard_assignment::ShardId(0),
             cross_shard_router: evaporchain_sharding::cross_shard::CrossShardRouter::new(),
+            eulogy_trie: evaporchain_tombstone::EulogyTrie::new(),
+            refresh_pool: evaporchain_energy_kernel::RefreshPool::new(),
+            mortis_monitor: evaporchain_mortis::MortisMonitor::new(
+                evaporchain_mortis::MortisCondition::default_genesis(),
+            ),
+            mortis_certificate: None,
         }
     }
 
@@ -523,6 +542,12 @@ impl ParallelExecutor {
             chain_id: String::new(),
             shard_id: evaporchain_sharding::shard_assignment::ShardId(0),
             cross_shard_router: evaporchain_sharding::cross_shard::CrossShardRouter::new(),
+            eulogy_trie: evaporchain_tombstone::EulogyTrie::new(),
+            refresh_pool: evaporchain_energy_kernel::RefreshPool::new(),
+            mortis_monitor: evaporchain_mortis::MortisMonitor::new(
+                evaporchain_mortis::MortisCondition::default_genesis(),
+            ),
+            mortis_certificate: None,
         }
     }
 
@@ -541,6 +566,12 @@ impl ParallelExecutor {
             chain_id: String::new(),
             shard_id: evaporchain_sharding::shard_assignment::ShardId(0),
             cross_shard_router: evaporchain_sharding::cross_shard::CrossShardRouter::new(),
+            eulogy_trie: evaporchain_tombstone::EulogyTrie::new(),
+            refresh_pool: evaporchain_energy_kernel::RefreshPool::new(),
+            mortis_monitor: evaporchain_mortis::MortisMonitor::new(
+                evaporchain_mortis::MortisCondition::default_genesis(),
+            ),
+            mortis_certificate: None,
         }
     }
 
@@ -563,6 +594,12 @@ impl ParallelExecutor {
             chain_id: String::new(),
             shard_id: evaporchain_sharding::shard_assignment::ShardId(0),
             cross_shard_router: evaporchain_sharding::cross_shard::CrossShardRouter::new(),
+            eulogy_trie: evaporchain_tombstone::EulogyTrie::new(),
+            refresh_pool: evaporchain_energy_kernel::RefreshPool::new(),
+            mortis_monitor: evaporchain_mortis::MortisMonitor::new(
+                evaporchain_mortis::MortisCondition::default_genesis(),
+            ),
+            mortis_certificate: None,
         }
     }
 
@@ -572,6 +609,30 @@ impl ParallelExecutor {
     /// `ShardId(0)` for single-shard topology.
     pub fn set_shard_id(&mut self, shard: evaporchain_sharding::shard_assignment::ShardId) {
         self.shard_id = shard;
+    }
+
+    /// Per-block hook: advance Mortis monitor against the current
+    /// refresh-pool total. Mints the death-cert NFT on first trigger.
+    /// Returns the cert iff JUST minted on this tick.
+    pub fn tick_mortis(
+        &mut self,
+        current_epoch: u64,
+        state_root: [u8; 32],
+    ) -> Option<&evaporchain_mortis::MortisCertificate> {
+        let pool_total = self.refresh_pool.total_accrued();
+        let outcome = self.mortis_monitor.tick(current_epoch, pool_total);
+        if matches!(outcome, evaporchain_mortis::TickOutcome::JustTriggered) {
+            let cert = evaporchain_mortis::mint_certificate(
+                state_root,
+                self.eulogy_trie.root(),
+                current_epoch,
+                pool_total,
+            );
+            self.mortis_certificate = Some(cert);
+            self.mortis_certificate.as_ref()
+        } else {
+            None
+        }
     }
 
     pub fn fee_controller(&self) -> Option<&fees::PidFeeController> {
@@ -1454,12 +1515,31 @@ impl ExecutionEngine for ParallelExecutor {
                     (rent, acct.balance)
                 };
                 let acct = db.get_or_create_account(&addr);
+                let actually_debited;
                 if acct.balance >= rent_info.0 {
                     acct.balance -= rent_info.0;
+                    actually_debited = rent_info.0;
                 } else {
+                    // Account zeroed out — engrave the tombstone before wiping.
+                    actually_debited = acct.balance;
+                    let final_balance_before_wipe = acct.balance;
                     acct.balance = 0;
                     acct.storage_deposit = 0;
                     acct.storage_bytes = 0;
+                    let tombstone = evaporchain_tombstone::mint(
+                        addr,
+                        final_balance_before_wipe,
+                        block.epoch,
+                        evaporchain_tombstone::CauseOfDeath::RentExhausted,
+                    );
+                    let _ = self.eulogy_trie.insert(addr, tombstone);
+                }
+                if actually_debited > 0 {
+                    self.refresh_pool.accrue(
+                        b"evaporchain-system-refresh".to_vec(),
+                        actually_debited,
+                        block.epoch,
+                    );
                 }
             }
             db.put_last_rent_epoch(block.epoch);
