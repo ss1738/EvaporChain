@@ -1496,3 +1496,116 @@ mod fork_and_nullifier_integration {
         assert!(pnt.insert_nullifier(nullifier).is_err(), "PNT must still block within its window");
     }
 }
+
+// ── Consensus substrate: WSBF→RG phase + self-annealing + Boltzmann stake ───
+
+#[cfg(test)]
+mod consensus_substrate_integration {
+    use evaporchain_wsbf::{rg_step, BlockSummary, RgFlowParams};
+    use evaporchain_rg_phase_map::{classify_regime, PhaseMapParams};
+    use evaporchain_self_annealing::{
+        AnnealingParams, AnnealedScore, accepts_candidate, effective_temperature, validator_score,
+    };
+    use evaporchain_boltzmann_stake::{proposer_weight, ValidatorStake};
+    use evaporchain_energy_kernel::{ChainLambda, Lambda};
+
+    fn make_window(n: usize, energy: u64, lambda: u64) -> Vec<BlockSummary> {
+        (0..n).map(|i| BlockSummary {
+            height: i as u64,
+            total_energy: energy,
+            active_accounts: 10,
+            lambda_half_life: lambda,
+        }).collect()
+    }
+
+    // ── WSBF → RG phase classification ───────────────────────────────
+
+    #[test]
+    fn wsbf_rg_step_classifies_liveness_stable() {
+        let params = RgFlowParams { coarse_grain: 4, entropy_scale_mb: 500 };
+        let window = make_window(4, 1_000_000, 4096);
+        let ep = rg_step(&window, 0, &params).expect("rg_step must succeed");
+
+        // With high λ_eff and no adversary, should be LivenessStable
+        let phase_params = PhaseMapParams::default();
+        let phase = classify_regime(ep.lambda_eff, 10, 0, &phase_params);
+        assert_eq!(
+            phase,
+            evaporchain_rg_phase_map::ConsensusPhase::LivenessStable,
+            "healthy network with λ_eff={} must be LivenessStable", ep.lambda_eff
+        );
+    }
+
+    #[test]
+    fn wsbf_rg_step_frozen_when_lambda_collapses() {
+        let params = RgFlowParams { coarse_grain: 4, entropy_scale_mb: 500 };
+        // Very low λ (half-life=1 epoch) → λ_eff will be tiny → Frozen
+        let window = make_window(4, 1_000_000, 1);
+        let ep = rg_step(&window, 0, &params).expect("rg_step must succeed");
+
+        let phase_params = PhaseMapParams::default();
+        let phase = classify_regime(ep.lambda_eff, 10, 0, &phase_params);
+        assert_eq!(
+            phase,
+            evaporchain_rg_phase_map::ConsensusPhase::Frozen,
+            "collapsed λ_eff={} must classify as Frozen", ep.lambda_eff
+        );
+    }
+
+    #[test]
+    fn rg_chaotic_at_high_adversary_fraction() {
+        let phase_params = PhaseMapParams::default();
+        let phase = classify_regime(4096, 10, 334, &phase_params); // 33.4% adversary
+        assert_eq!(
+            phase,
+            evaporchain_rg_phase_map::ConsensusPhase::Chaotic,
+            "adversary fraction ≥ 1/3 must be Chaotic"
+        );
+    }
+
+    // ── Self-annealing temperature → Boltzmann weight consistency ────
+
+    fn annealing_params() -> AnnealingParams {
+        AnnealingParams { lambda_half_life: 4096, beta_mb: 1_000 }
+    }
+
+    #[test]
+    fn annealing_temperature_decreases_with_epoch() {
+        let params = annealing_params();
+        let t0 = effective_temperature(&params, 0);
+        let t100 = effective_temperature(&params, 100);
+        let t1000 = effective_temperature(&params, 1000);
+        assert!(t0 >= t100, "temperature must be non-increasing over epochs");
+        assert!(t100 >= t1000, "temperature must be non-increasing over epochs");
+    }
+
+    #[test]
+    fn annealing_favors_better_candidate_at_high_temperature() {
+        let params = annealing_params();
+        let v_old = AnnealedScore { stake: 1_000, activity: 0, uptime_milli: 900 };
+        let v_new = AnnealedScore { stake: 5_000, activity: 100, uptime_milli: 999 };
+        // At epoch=0 (highest T), a clearly better candidate should always be accepted
+        let accepted = accepts_candidate(&params, 0, &v_old, &v_new, 42);
+        assert!(accepted, "clearly better candidate must be accepted at high temperature");
+    }
+
+    #[test]
+    fn boltzmann_weight_higher_for_more_active_validator() {
+        let w_inactive = proposer_weight(1_000_000, 0, 1_000);
+        let w_active   = proposer_weight(1_000_000, 100, 1_000);
+        assert!(
+            w_active > w_inactive,
+            "higher activity must produce higher Boltzmann proposer weight"
+        );
+    }
+
+    #[test]
+    fn boltzmann_weight_higher_for_more_stake() {
+        let w_low  = proposer_weight(100_000, 50, 1_000);
+        let w_high = proposer_weight(1_000_000, 50, 1_000);
+        assert!(
+            w_high > w_low,
+            "higher stake must produce higher Boltzmann proposer weight"
+        );
+    }
+}
