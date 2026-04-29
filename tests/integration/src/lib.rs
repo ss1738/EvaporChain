@@ -1609,3 +1609,158 @@ mod consensus_substrate_integration {
         );
     }
 }
+
+// ── Data availability sampling integration ───────────────────────────────────
+
+#[cfg(test)]
+mod da_integration {
+    use evaporchain_da::erasure::{ErasureConfig, ErasureEncoder};
+    use evaporchain_da::sampling::{DASampler, SampleQuery, SampleResponse};
+
+    fn make_shards(data: &[u8]) -> Vec<evaporchain_da::erasure::Shard> {
+        let cfg = ErasureConfig { data_shards: 4, parity_shards: 4 };
+        let enc = ErasureEncoder::new(cfg).unwrap();
+        enc.encode(data).unwrap().shards
+    }
+
+    // ── DASampler: commitment → proof → verify round-trip ────────────────
+
+    #[test]
+    fn da_sampler_commitment_and_proof_round_trip() {
+        let shards = make_shards(b"EvaporChain block body — DA sampling integration test");
+        let proof = DASampler::compute_commitment(&shards).expect("commitment must succeed");
+        assert_ne!(proof.commitment_root, [0u8; 32]);
+        assert_eq!(proof.total_shards, shards.len());
+
+        // Each shard's Merkle proof must verify individually
+        for shard in &shards {
+            let merkle = DASampler::generate_proof(&shards, shard.index)
+                .expect("proof generation must succeed");
+            assert!(DASampler::verify_proof(shard, &merkle), "shard {} proof must verify", shard.index);
+        }
+    }
+
+    #[test]
+    fn da_sampler_tampered_shard_proof_fails() {
+        let shards = make_shards(b"block-data-for-tamper-test-padding-padding-padding");
+        let mut bad_shard = shards[0].clone();
+        bad_shard.data[0] ^= 0xFF; // flip a byte
+
+        let merkle = DASampler::generate_proof(&shards, 0).unwrap();
+        // tampered shard data means the leaf hash won't match
+        assert!(!DASampler::verify_proof(&bad_shard, &merkle), "tampered shard must fail verification");
+    }
+
+    // ── generate_queries: determinism and bounds ──────────────────────────
+
+    #[test]
+    fn da_queries_deterministic_and_bounded() {
+        let shards = make_shards(b"determinism-test-block-data-padding-padding-padd");
+        let total = shards.len();
+        let seed = b"light-client-peer-id-12345";
+
+        let q1 = DASampler::generate_queries(100, total, 8, seed);
+        let q2 = DASampler::generate_queries(100, total, 8, seed);
+
+        assert_eq!(q1.len(), 8);
+        assert_eq!(q2.len(), 8, "generate_queries must be deterministic");
+        for (a, b) in q1.iter().zip(q2.iter()) {
+            assert_eq!(a.shard_index, b.shard_index);
+        }
+        for q in &q1 {
+            assert!(q.shard_index < total, "all queries must be in range");
+        }
+    }
+
+    // ── verify_samples: full light-client path ────────────────────────────
+
+    #[test]
+    fn da_verify_samples_full_light_client_path() {
+        let data = b"light-client-sampling-block-data-padding-padding-pad";
+        let shards = make_shards(data);
+        let da_proof = DASampler::compute_commitment(&shards).unwrap();
+
+        let queries = DASampler::generate_queries(42, shards.len(), 4, b"lc-seed");
+        let responses: Vec<SampleResponse> = queries
+            .iter()
+            .map(|q| {
+                let merkle = DASampler::generate_proof(&shards, q.shard_index).unwrap();
+                SampleResponse {
+                    shard: shards[q.shard_index].clone(),
+                    proof: merkle,
+                    attestation_signature: None,
+                    attester_public_key: None,
+                }
+            })
+            .collect();
+
+        let valid = DASampler::verify_samples(&da_proof, &responses, 4)
+            .expect("verify_samples must succeed with 4 valid responses");
+        assert!(valid, "all sampled shards must verify against the commitment");
+    }
+
+    #[test]
+    fn da_verify_samples_batch_identifies_invalid() {
+        let data = b"batch-verification-block-data-padding-padding-padd";
+        let shards = make_shards(data);
+        let da_proof = DASampler::compute_commitment(&shards).unwrap();
+
+        // Build one valid and one invalid response
+        let merkle_0 = DASampler::generate_proof(&shards, 0).unwrap();
+        let mut bad_shard = shards[1].clone();
+        bad_shard.data[0] ^= 0xFF;
+        bad_shard.hash = evaporchain_crypto::hash::blake3_hash(&bad_shard.data);
+        let merkle_1 = DASampler::generate_proof(&shards, 1).unwrap();
+
+        let responses = vec![
+            SampleResponse { shard: shards[0].clone(), proof: merkle_0, attestation_signature: None, attester_public_key: None },
+            SampleResponse { shard: bad_shard, proof: merkle_1, attestation_signature: None, attester_public_key: None },
+        ];
+
+        let batch = DASampler::verify_samples_batch(&da_proof, &responses, 1)
+            .expect("batch_verify must not error");
+        assert!(!batch.all_valid, "batch must not be all_valid when one shard is bad");
+        assert!(batch.invalid_indices.contains(&1), "shard index 1 must be flagged as invalid");
+    }
+
+    // ── Insufficient samples → error ──────────────────────────────────────
+
+    #[test]
+    fn da_verify_samples_insufficient_returns_err() {
+        let shards = make_shards(b"insufficient-samples-test-block-padding-padding-p");
+        let da_proof = DASampler::compute_commitment(&shards).unwrap();
+        let merkle = DASampler::generate_proof(&shards, 0).unwrap();
+        let responses = vec![SampleResponse {
+            shard: shards[0].clone(),
+            proof: merkle,
+            attestation_signature: None,
+            attester_public_key: None,
+        }];
+
+        // min_samples=4 but only 1 provided
+        let err = DASampler::verify_samples(&da_proof, &responses, 4);
+        assert!(err.is_err(), "insufficient samples must return Err");
+    }
+
+    // ── Erasure reconstruction: recover from parity only ─────────────────
+
+    #[test]
+    fn erasure_reconstruct_from_parity_shards() {
+        let original = b"erasure-recovery-test-data-EvaporChain-DA-padding-";
+        let cfg = ErasureConfig { data_shards: 4, parity_shards: 4 };
+        let enc = ErasureEncoder::new(cfg).unwrap();
+        let encoded = enc.encode(original).unwrap();
+        let shard_size = encoded.shard_size;
+
+        // Drop the first 4 data shards (keep only parity)
+        let mut shard_opts: Vec<Option<Vec<u8>>> = (0..8)
+            .map(|i| {
+                if i < 4 { None } else { Some(encoded.shards[i].data.clone()) }
+            })
+            .collect();
+
+        let recovered = enc.reconstruct(shard_opts).expect("must reconstruct from parity");
+        let trimmed = &recovered[..original.len()];
+        assert_eq!(trimmed, original, "reconstructed data must match original");
+    }
+}
