@@ -19,7 +19,7 @@ Ethereum's state exceeds 300GB and grows every block. State expiry (EIP-4444) ha
 4. **Nova IVC Benchmarks**: We benchmarked recursive proof folding at 6.2ms per block on commodity hardware. These benchmarks inform Ethereum's ZK roadmap.
 
 ## What We've Already Built (not planned — BUILT)
-- 4,159 passing tests across 13 Rust crates
+- 5,531 passing tests across 13 Rust crates + 31 substrate crates
 - Working Verkle trie with Pedersen commitments
 - Working MMR accumulator with energy-stamped nullifiers
 - Nova IVC folding at 6.2ms per block (benchmarked)

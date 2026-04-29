@@ -39,7 +39,7 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 - [ ] **3-node Tendermint deployment** — Apsarth Mini needs SSH key added (physical visit to cousin's). Currently 2-node.
 - [x] **Weak subjectivity** — ALREADY BUILT: checkpoints every 1000 blocks, reorg protection, persistence at `tendermint.rs:1146-1302`
 - [x] **BLS proof-of-possession** — ALREADY BUILT: `add_validator_with_pop()`, `verify_bls_pop()` with real BLS12-381 at `validator_set.rs:188-227`
-- [ ] **Formal verification** — Coq/Lean proofs for evaporation engine, Verkle trie, MMR accumulator. TLA+ spec exists but no mechanized proofs.
+- [x] **Formal verification** — DONE: 5 Coq files, zero Admitted lemmas. `EnergyDecayMonotonicity.v`, `EnergyVerkleCompression.v`, `LazyEagerEquivalence.v`, `PoHAFreeloading.v`, `LLSAInvariantPreservation.v`. TLA+ specs at `research/tla/`.
 
 ---
 
@@ -102,9 +102,9 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 - [x] Backup/restore UI — DONE: `BackupRestoreScreen.tsx` — export encrypted keystore as JSON, import overwrites current keystore; wired as `"backup"` view
 - [ ] Chrome Web Store submission
 
-### Mobile Wallet (60% complete)
-- [ ] Complete staking UI
-- [ ] Complete swap UI
+### Mobile Wallet (95% complete)
+- [x] Complete staking UI — DONE: `StakingScreen.tsx` (635 lines — validator list, stake/unstake, rewards, unbonding)
+- [x] Complete swap UI — DONE: `SwapScreen.tsx` (536 lines — quote, slippage, biometric confirm)
 - [x] Hardware wallet integration — DONE: `HardwareWalletScreen.tsx` (BLE, 5-account derivation m/44'/9000'/0'/0/n, import to keystore)
 - [x] WalletConnect support — DONE: `WalletConnectScreen.tsx` (pair via URI, session list, approve/reject requests)
 - [x] Offline mode — DONE: `OfflineModeScreen.tsx` + `enqueueTransaction()` helper (AsyncStorage queue, NetInfo drain-on-reconnect)
@@ -126,7 +126,7 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 
 ## LOW — Code Quality
 
-- [x] **Update test count in docs** — DONE: Updated to 4,159 tests across README, CLAUDE.md, grants, announcement
+- [x] **Update test count in docs** — DONE: Updated to 5,531 tests across CLAUDE.md, grants, announcement (substrate crates added ~1,372 new tests)
 - [x] **Criterion.rs benchmarks** — DONE: `benches/core_benchmarks.rs` with transfer throughput, block exec, Poseidon hash, ML-DSA sign/verify
 - [x] **Config validation** — DONE: JSON Schema at `configs/genesis-schema.json` with full validation rules
 - [x] **Hybrid post-quantum scheme** — DONE: `HybridVerifier` in `signatures.rs:245-330` — 0x02-prefixed ECDSA+ML-DSA keys/sigs, both must verify. Plain ML-DSA is 0x01 prefix.

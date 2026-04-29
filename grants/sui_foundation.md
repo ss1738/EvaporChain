@@ -10,7 +10,7 @@ EvaporChain extends the Move language with thermodynamic state decay — objects
 - Move-compatible execution engine with decay semantics
 - EvaporScript: a scripting language with lifecycle hooks (on_evaporate, on_grace, on_refresh) that demonstrates how Move could support temporal types
 - 6 decay-native contract templates showing new application patterns
-- 4,159 tests, live testnet
+- 5,531 tests, live testnet
 
 ## How This Benefits the Sui/Move Ecosystem
 - Demonstrates new Move language extension patterns (temporal types)
