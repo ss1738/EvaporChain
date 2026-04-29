@@ -46,6 +46,8 @@ members = [
     "crates/evaporchain-tombstone",
     "crates/evaporchain-mortis",
     "crates/evaporchain-sentinel",
+    "crates/evaporchain-crooks-mev-refund",
+    "crates/evaporchain-braid-sequencer",
     "crates/evaporchain-crypto",
     "crates/evaporchain-state",
     "crates/evaporchain-consensus",

@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-braid-sequencer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Braid-Group Sequencer Commitment. tx ordering = braid word in B_n with canonical Garside form. Per INVENTION_STACK.md §A1.4 (far-frontier ship-now). Cheap, unprecedented at L1; NOT 'anyonic' — no quantum claim."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+blake3 = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

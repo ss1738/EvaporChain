@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-crooks-mev-refund"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Crooks-MEV Refund. Fair restitution = ΔF computed from forward/reverse work distributions via the Crooks 1999 fluctuation theorem. Refund formula falls out of CFM. Per INVENTION_STACK.md §A1.3 (Tier-0 supporting)."
+
+[dependencies]
+evaporchain-cfm = { path = "../evaporchain-cfm" }
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
