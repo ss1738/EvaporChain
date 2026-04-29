@@ -7,6 +7,32 @@
 
 ---
 
+## CRITICAL findings — code-verified status (re-verified 2026-04-29)
+
+All 13 CRITICALs from §2 confirmed FIXED in the current source tree:
+
+| ID | Status | Evidence |
+|---|---|---|
+| C-01 stake-weighted quorum | FIXED | `check_prevote_quorum` + `check_precommit_quorum` aggregate per-validator stake against `stake_quorum_threshold()` at `crates/evaporchain-consensus/src/tendermint.rs:2654-2693` |
+| C-02 BLS verify before counting | FIXED | `cert.verify_signatures()` gates DA cert acceptance at `crates/evaporchain-consensus/src/tendermint.rs:3272`; per-vote BLS sig check on prevote/precommit messages |
+| C-03 Zero state_root in proposals | FIXED | Explicit zero-hash guard at `tendermint.rs:1604`/`1616` |
+| C-04 Reentrancy guard | FIXED | `MAX_CALL_DEPTH` + `call_depth` enforcement at `crates/evaporchain-script/src/lib.rs:332-343` |
+| C-05 Map key type discriminant | FIXED | `Value::to_map_key` prefixes by type (`u:`, `b:`, `s:`, `a:`, `n:`, `m:`, `r:`) at `crates/evaporchain-script/src/lib.rs:60-71` — eliminates `U64(42)` vs `Str("42")` collision |
+| C-06 Parser depth limit | FIXED | `expr_depth` + `MAX_EXPR_DEPTH` at `crates/evaporchain-script/src/parser.rs:472-991` |
+| C-07 ML-DSA layout safety | FIXED | `signing_key.to_bytes()` (public API) replaces byte slicing at `crates/evaporchain-crypto/src/signatures.rs:208` |
+| C-08 RocksDB rollback in-memory | FIXED | `BatchUndoLog` reverts in-memory caches at `crates/evaporchain-state/src/rocksdb_backend.rs` |
+| C-09 DA cert BLS verify | FIXED | `verify_signatures()` + dedicated test suite at `crates/evaporchain-da/src/certificate.rs:56-281` |
+| C-10 Plaintext private keys | FIXED | `chacha20poly1305` AEAD + blake3-derived `master_encryption_key` at `crates/evaporchain-node/src/auth.rs:122-132` |
+| C-11 Contracts access control | FIXED | `caller != creator` guards on every privileged template method (token mint/burn at `contracts/src/lib.rs:889-944`, NFT/staking/temporal at 1027-1788) returning `ContractError::PermissionDenied` |
+| C-12 Block-STM checked arithmetic | FIXED | `checked_add`/`checked_sub` at `crates/evaporchain-execution/src/block_stm.rs:540, 557, 745, 752, 761` |
+| C-13 Parser overflow | FIXED | "integer literal overflows u64" error path at `crates/evaporchain-script/src/parser.rs:265` + dedicated regression test `test_c13_integer_overflow_returns_parse_error` |
+
+**Verification method:** direct source grep of each cited file path; no behavioural test run as part of this verification pass — relies on the existing 2,170 unit tests for behaviour confirmation.
+
+---
+
+---
+
 ## Executive Summary
 
 **Verdict: NOT production-safe.**
