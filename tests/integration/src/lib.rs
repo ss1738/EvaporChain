@@ -5129,3 +5129,71 @@ mod encrypted_mempool_integration {
         assert!(matches!(result, Err(MevError::RevealTooEarly { .. })));
     }
 }
+
+// ── Validator Set slashing and jailing integration ────────────────────────────
+
+#[cfg(test)]
+mod validator_slashing_integration {
+    use evaporchain_consensus::validator_set::{ValidatorInfo, ValidatorSet};
+
+    fn setup() -> ValidatorSet {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 100_000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 200_000, [2u8; 32]));
+        vs
+    }
+
+    #[test]
+    fn equivocation_slash_reduces_stake_and_jails() {
+        let mut vs = setup();
+        let slashed = vs.slash_equivocation(1);
+        assert!(slashed > 0, "equivocation must slash nonzero stake");
+        let v = vs.get(1).unwrap();
+        assert!(v.jailed, "validator must be jailed after equivocation");
+        assert!(v.stake < 100_000, "stake must be reduced");
+        assert_eq!(v.total_slashed, slashed);
+    }
+
+    #[test]
+    fn downtime_slash_single_miss_no_jail() {
+        let mut vs = setup();
+        let slashed = vs.slash_downtime(2, 1);
+        assert!(slashed > 0);
+        let v = vs.get(2).unwrap();
+        assert!(!v.jailed, "single miss does not jail");
+    }
+
+    #[test]
+    fn downtime_three_misses_jails() {
+        let mut vs = setup();
+        vs.slash_downtime(2, 3);
+        let v = vs.get(2).unwrap();
+        assert!(v.jailed, "3+ misses must jail validator");
+    }
+
+    #[test]
+    fn unjail_restores_active_status() {
+        let mut vs = setup();
+        vs.slash_equivocation(1);
+        assert!(vs.get(1).unwrap().jailed);
+        let restored = vs.unjail(1);
+        assert!(restored, "unjail must succeed if stake >= min");
+        assert!(!vs.get(1).unwrap().jailed);
+    }
+
+    #[test]
+    fn slash_unknown_validator_returns_zero() {
+        let mut vs = setup();
+        assert_eq!(vs.slash_equivocation(999), 0);
+        assert_eq!(vs.slash_downtime(999, 5), 0);
+    }
+
+    #[test]
+    fn total_stake_decreases_after_slash() {
+        let mut vs = setup();
+        let before = vs.total_stake();
+        vs.slash_equivocation(1);
+        vs.slash_downtime(2, 2);
+        assert!(vs.total_stake() < before, "total stake must decrease after slashing");
+    }
+}
