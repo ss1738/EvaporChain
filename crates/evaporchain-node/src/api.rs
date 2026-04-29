@@ -122,6 +122,19 @@ pub struct ApiState {
     pub hbct_book: Arc<Mutex<evaporchain_hbct::HbctBook>>,
     /// Mock oracle feed for HBCT settlement attestations.
     pub hbct_oracle: Arc<Mutex<evaporchain_hbct::oracle::MockOracleFeed>>,
+    /// Sentinel autonomic-governance state per
+    /// `INVENTION_STACK.md` Amendment 2 §A2.5 (Life act). Off-chain
+    /// in-memory voting + parameter snapshot for launch demo;
+    /// production governance amendment promotes to chain-state.
+    pub sentinel: Arc<Mutex<SentinelState>>,
+}
+
+/// Per-parameter Sentinel state: governable bounded parameter +
+/// per-validator votes.
+#[derive(Debug, Default)]
+pub struct SentinelState {
+    pub parameters: std::collections::BTreeMap<u32, evaporchain_sentinel::BoundedParameter>,
+    pub votes: std::collections::BTreeMap<u32, Vec<evaporchain_sentinel::Vote>>,
 }
 
 /// Public-facing snapshot of the four-act narrative spine state for
@@ -1409,6 +1422,167 @@ async fn post_hbct_seed_attestation(
 /// oracle. Burns any held capacity in excess of `mwh_delivered`
 /// (under-delivery is a delivery shortfall — the held tokens were
 /// never honored). Returns the settled amount and any excess burnt.
+// ───────────────────────── Sentinel endpoints ─────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct SentinelRegisterParamReq {
+    pub parameter_id: u32,
+    pub current: u64,
+    pub min: u64,
+    pub max: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SentinelVoteReq {
+    pub parameter_id: u32,
+    pub validator_id: u64,
+    pub target: u64,
+    pub observed_epoch: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SentinelTickReq {
+    pub parameter_id: u32,
+    pub current_epoch: u64,
+    pub max_step: u64,
+    /// Half-life in epochs for vote-weight decay. Caller-supplied so
+    /// each parameter can have its own time-constant (per the doctrine
+    /// §A2.5, Sentinel's window is a per-parameter governance choice).
+    pub half_life_epochs: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SentinelParameterResp {
+    pub id: u32,
+    pub current: u64,
+    pub min: u64,
+    pub max: u64,
+    pub vote_count: usize,
+}
+
+async fn post_sentinel_register_param(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<SentinelRegisterParamReq>,
+) -> Json<HbctActionResp> {
+    let p = match evaporchain_sentinel::BoundedParameter::new(
+        req.parameter_id,
+        req.current,
+        req.min,
+        req.max,
+    ) {
+        Ok(p) => p,
+        Err(e) => {
+            return Json(HbctActionResp {
+                status: "error",
+                detail: format!("{e}"),
+            });
+        }
+    };
+    let mut s = safe_lock(&state.sentinel);
+    s.parameters.insert(req.parameter_id, p);
+    s.votes.entry(req.parameter_id).or_default();
+    Json(HbctActionResp { status: "ok", detail: "registered".into() })
+}
+
+async fn post_sentinel_vote(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<SentinelVoteReq>,
+) -> Json<HbctActionResp> {
+    let mut s = safe_lock(&state.sentinel);
+    if !s.parameters.contains_key(&req.parameter_id) {
+        return Json(HbctActionResp {
+            status: "error",
+            detail: format!("unknown parameter {}", req.parameter_id),
+        });
+    }
+    let votes = s.votes.entry(req.parameter_id).or_default();
+    // One-vote-per-validator: replace if present.
+    votes.retain(|v| v.validator_id != req.validator_id);
+    votes.push(evaporchain_sentinel::Vote::new(
+        req.validator_id,
+        req.target,
+        req.observed_epoch,
+    ));
+    Json(HbctActionResp { status: "ok", detail: "vote recorded".into() })
+}
+
+async fn post_sentinel_tick(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<SentinelTickReq>,
+) -> Json<SentinelParameterResp> {
+    let mut s = safe_lock(&state.sentinel);
+    let votes = s.votes.get(&req.parameter_id).cloned().unwrap_or_default();
+    let param = match s.parameters.get(&req.parameter_id) {
+        Some(p) => *p,
+        None => {
+            return Json(SentinelParameterResp {
+                id: req.parameter_id,
+                current: 0,
+                min: 0,
+                max: 0,
+                vote_count: 0,
+            });
+        }
+    };
+    let lambda = evaporchain_energy_kernel::ChainLambda::new(
+        evaporchain_energy_kernel::Lambda::from_epochs(req.half_life_epochs.max(1)),
+    );
+    if let Ok(new_value) = evaporchain_sentinel::propose_adjustment(
+        &param,
+        &votes,
+        lambda,
+        req.current_epoch,
+        req.max_step,
+    ) {
+        if let Some(p) = s.parameters.get_mut(&req.parameter_id) {
+            p.current = new_value;
+        }
+    }
+    let p = s.parameters.get(&req.parameter_id).unwrap();
+    Json(SentinelParameterResp {
+        id: p.id,
+        current: p.current,
+        min: p.min,
+        max: p.max,
+        vote_count: votes.len(),
+    })
+}
+
+async fn get_sentinel_param(
+    State(state): State<Arc<ApiState>>,
+    axum::extract::Path(parameter_id): axum::extract::Path<u32>,
+) -> Json<Option<SentinelParameterResp>> {
+    let s = safe_lock(&state.sentinel);
+    let p = match s.parameters.get(&parameter_id) {
+        Some(p) => *p,
+        None => return Json(None),
+    };
+    let vote_count = s.votes.get(&parameter_id).map(|v| v.len()).unwrap_or(0);
+    Json(Some(SentinelParameterResp {
+        id: p.id,
+        current: p.current,
+        min: p.min,
+        max: p.max,
+        vote_count,
+    }))
+}
+
+async fn get_sentinel_all(State(state): State<Arc<ApiState>>) -> Json<Vec<SentinelParameterResp>> {
+    let s = safe_lock(&state.sentinel);
+    let out: Vec<SentinelParameterResp> = s
+        .parameters
+        .values()
+        .map(|p| SentinelParameterResp {
+            id: p.id,
+            current: p.current,
+            min: p.min,
+            max: p.max,
+            vote_count: s.votes.get(&p.id).map(|v| v.len()).unwrap_or(0),
+        })
+        .collect();
+    Json(out)
+}
+
 async fn post_hbct_settle(
     State(state): State<Arc<ApiState>>,
     Json(req): Json<HbctBalanceQuery>,
@@ -5071,6 +5245,11 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/hbct/tick", post(post_hbct_tick))
         .route("/api/hbct/seed_attestation", post(post_hbct_seed_attestation))
         .route("/api/hbct/settle", post(post_hbct_settle))
+        .route("/api/sentinel/register", post(post_sentinel_register_param))
+        .route("/api/sentinel/vote", post(post_sentinel_vote))
+        .route("/api/sentinel/tick", post(post_sentinel_tick))
+        .route("/api/sentinel/parameter/:id", get(get_sentinel_param))
+        .route("/api/sentinel/all", get(get_sentinel_all))
         .route("/api/objects", get(get_objects))
         .route("/api/object/:id", get(get_single_object))
         .route("/api/accounts", get(get_accounts))

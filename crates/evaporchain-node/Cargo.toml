@@ -28,6 +28,8 @@ evaporchain-contracts = { path = "../evaporchain-contracts" }
 evaporchain-sharding = { path = "../evaporchain-sharding" }
 evaporchain-oracle = { path = "../evaporchain-oracle" }
 evaporchain-hbct = { path = "../evaporchain-hbct" }
+evaporchain-sentinel = { path = "../evaporchain-sentinel" }
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

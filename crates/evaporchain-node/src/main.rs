@@ -2619,6 +2619,7 @@ async fn main() -> Result<()> {
             four_act_snapshot: Arc::new(Mutex::new(api::FourActSnapshot::default())),
             hbct_book: Arc::new(Mutex::new(evaporchain_hbct::HbctBook::new())),
             hbct_oracle: Arc::new(Mutex::new(evaporchain_hbct::oracle::MockOracleFeed::default())),
+            sentinel: Arc::new(Mutex::new(api::SentinelState::default())),
         });
         // Keep one Arc<ApiState> for the block-applying loop so it can
         // call update_four_act_snapshot after each commit.
