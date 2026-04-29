@@ -1567,6 +1567,52 @@ async fn get_sentinel_param(
     }))
 }
 
+// ─────────────── Singh-Boltzmann Stake observability ────────────────
+
+#[derive(Debug, Serialize)]
+pub struct BoltzmannStakeResp {
+    pub validator_id: u64,
+    pub live_staked_amount: u64,
+    pub decayed_voting_power: u64,
+    pub decay_pct: f64,
+}
+
+async fn get_boltzmann_stake(
+    State(state): State<Arc<ApiState>>,
+    axum::extract::Path((validator_id, current_epoch)): axum::extract::Path<(u64, u64)>,
+) -> Json<Option<BoltzmannStakeResp>> {
+    let db = safe_lock(&state.db);
+    let live = match db.get_stake(validator_id) {
+        Some(s) => s.staked_amount.saturating_sub(s.slashed_amount),
+        None => return Json(None),
+    };
+    // Use the chain-global default λ for the observability view.
+    // Production governance picks a chain-specific λ via a future
+    // ConsensusFourActState extension.
+    let lambda = evaporchain_energy_kernel::ChainLambda::default_genesis();
+    let registry = evaporchain_execution::boltzmann_stake_integration::BoltzmannStakeRegistry::new();
+    let decayed =
+        evaporchain_execution::boltzmann_stake_integration::decayed_voting_power(
+            &*db,
+            &registry,
+            validator_id,
+            lambda,
+            current_epoch,
+        )
+        .unwrap_or(0);
+    let pct = if live == 0 {
+        0.0
+    } else {
+        decayed as f64 / live as f64
+    };
+    Json(Some(BoltzmannStakeResp {
+        validator_id,
+        live_staked_amount: live,
+        decayed_voting_power: decayed,
+        decay_pct: pct,
+    }))
+}
+
 async fn get_sentinel_all(State(state): State<Arc<ApiState>>) -> Json<Vec<SentinelParameterResp>> {
     let s = safe_lock(&state.sentinel);
     let out: Vec<SentinelParameterResp> = s
@@ -5250,6 +5296,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/sentinel/tick", post(post_sentinel_tick))
         .route("/api/sentinel/parameter/:id", get(get_sentinel_param))
         .route("/api/sentinel/all", get(get_sentinel_all))
+        .route("/api/boltzmann_stake/:validator_id/at/:current_epoch", get(get_boltzmann_stake))
         .route("/api/objects", get(get_objects))
         .route("/api/object/:id", get(get_single_object))
         .route("/api/accounts", get(get_accounts))
