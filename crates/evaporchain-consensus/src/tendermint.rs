@@ -501,6 +501,12 @@ impl TendermintConsensus {
             .collect()
     }
 
+    /// Look up a single tombstone by address. Returns the 32-byte
+    /// commitment if the account has been memorialised; None otherwise.
+    pub fn tombstone_for(&self, addr: &[u8; 32]) -> Option<[u8; 32]> {
+        self.executor.eulogy_trie.get(addr).map(|t| t.commitment)
+    }
+
     /// Set the proof verifier for validating Nova IVC proofs on proposed blocks.
     pub fn set_proof_verifier(&mut self, verifier: Box<dyn ProofVerifier>, genesis_state_root: [u8; 32]) {
         self.proof_verifier = Some(verifier);

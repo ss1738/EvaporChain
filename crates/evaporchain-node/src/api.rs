@@ -1286,6 +1286,52 @@ pub struct RefreshPoolResp {
     pub credits: Vec<RefreshPoolCredit>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct TombstoneDetail {
+    pub address_hex: String,
+    pub commitment_hex: String,
+    pub memorialised: bool,
+}
+
+async fn get_tombstone(
+    State(state): State<Arc<ApiState>>,
+    axum::extract::Path(addr_hex): axum::extract::Path<String>,
+) -> Json<TombstoneDetail> {
+    let addr = match parse_hex32(&addr_hex) {
+        Ok(a) => a,
+        Err(_) => {
+            return Json(TombstoneDetail {
+                address_hex: addr_hex,
+                commitment_hex: String::new(),
+                memorialised: false,
+            });
+        }
+    };
+    let tc = match state.tendermint.as_ref() {
+        Some(tc) => tc,
+        None => {
+            return Json(TombstoneDetail {
+                address_hex: hex::encode(addr),
+                commitment_hex: String::new(),
+                memorialised: false,
+            });
+        }
+    };
+    let tc = safe_lock(tc);
+    match tc.tombstone_for(&addr) {
+        Some(commitment) => Json(TombstoneDetail {
+            address_hex: hex::encode(addr),
+            commitment_hex: hex::encode(commitment),
+            memorialised: true,
+        }),
+        None => Json(TombstoneDetail {
+            address_hex: hex::encode(addr),
+            commitment_hex: String::new(),
+            memorialised: false,
+        }),
+    }
+}
+
 async fn get_refresh_pool(State(state): State<Arc<ApiState>>) -> Json<RefreshPoolResp> {
     let tc = match state.tendermint.as_ref() {
         Some(tc) => tc,
@@ -5016,6 +5062,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/four_act", get(get_four_act_status))
         .route("/api/mortis_cert", get(get_mortis_cert))
         .route("/api/refresh_pool", get(get_refresh_pool))
+        .route("/api/tombstone/:addr_hex", get(get_tombstone))
         .route("/api/hbct/state", get(get_hbct_state))
         .route("/api/hbct/mint", post(post_hbct_mint))
         .route("/api/hbct/transfer", post(post_hbct_transfer))
