@@ -54,6 +54,7 @@ evaporchain-mortis = { path = "../evaporchain-mortis" }
 evaporchain-lad-vm = { path = "../evaporchain-lad-vm" }
 evaporchain-refresh-patronage = { path = "../evaporchain-refresh-patronage" }
 evaporchain-refresh-market = { path = "../evaporchain-refresh-market" }
+evaporchain-script-lad = { path = "../evaporchain-script-lad" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

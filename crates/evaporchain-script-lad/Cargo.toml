@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-script-lad"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "LAD-mode resource annotations for EvaporScript contracts. Parses @lad directives from script source, tracks Linear/Affine/Decaying resource state across contract calls, and exposes a compile-time checker. Closes the Tier 1 script-lad compiler frontend gap. Per INVENTION_STACK.md §4.1 #12."
+
+[dependencies]
+evaporchain-script = { path = "../evaporchain-script" }
+evaporchain-lad-vm = { path = "../evaporchain-lad-vm" }
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

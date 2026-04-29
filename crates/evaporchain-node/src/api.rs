@@ -1657,6 +1657,162 @@ async fn get_governance_fork_choice_mode(
     }
 }
 
+// ─────────── Script-LAD resource checker ─────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct ScriptLadCheckReq {
+    /// EvaporScript source containing `@lad(...)` annotations.
+    pub source: String,
+    /// Epoch at which to evaluate resource state.
+    pub check_epoch: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ScriptLadVerdictEntry {
+    pub field: String,
+    pub verdict: String,
+    pub value: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ScriptLadCheckResp {
+    pub status: &'static str,
+    pub annotation_count: usize,
+    pub verdicts: Vec<ScriptLadVerdictEntry>,
+    pub unconsumed_linear: Vec<String>,
+    pub evaporated: Vec<String>,
+    pub is_clean: bool,
+    pub detail: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ScriptLadSimReq {
+    pub source: String,
+    pub created_epoch: u64,
+    /// Operations: list of {op: "use"|"drop", field: name, epoch: u64}
+    pub ops: Vec<ScriptLadOpEntry>,
+    pub final_epoch: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ScriptLadOpEntry {
+    pub op: String,
+    pub field: String,
+    pub epoch: u64,
+}
+
+/// POST /api/script_lad/check — parse @lad annotations and report resource
+/// state at check_epoch. Flags unconsumed Linear resources and evaporations.
+async fn post_script_lad_check(Json(req): Json<ScriptLadCheckReq>) -> Json<ScriptLadCheckResp> {
+    match evaporchain_script_lad::check_lad_resources(&req.source, req.check_epoch) {
+        Ok(result) => {
+            let verdicts: Vec<ScriptLadVerdictEntry> = result
+                .verdicts
+                .iter()
+                .map(|(field, v)| {
+                    let (verdict_str, value) = match v {
+                        evaporchain_script_lad::ResourceVerdict::Live { value } => {
+                            ("live", Some(*value))
+                        }
+                        evaporchain_script_lad::ResourceVerdict::Consumed => ("consumed", None),
+                        evaporchain_script_lad::ResourceVerdict::Dropped => ("dropped", None),
+                        evaporchain_script_lad::ResourceVerdict::Evaporated => {
+                            ("evaporated", None)
+                        }
+                    };
+                    ScriptLadVerdictEntry {
+                        field: field.clone(),
+                        verdict: verdict_str.into(),
+                        value,
+                    }
+                })
+                .collect();
+            let is_clean = result.is_clean();
+            let detail = if is_clean {
+                format!(
+                    "{} LAD resources all clean at epoch {}",
+                    result.annotations.len(),
+                    req.check_epoch
+                )
+            } else {
+                format!(
+                    "{} unconsumed-linear, {} evaporated",
+                    result.unconsumed_linear.len(),
+                    result.evaporated.len()
+                )
+            };
+            Json(ScriptLadCheckResp {
+                status: "ok",
+                annotation_count: result.annotations.len(),
+                verdicts,
+                unconsumed_linear: result.unconsumed_linear,
+                evaporated: result.evaporated,
+                is_clean,
+                detail,
+            })
+        }
+        Err(e) => Json(ScriptLadCheckResp {
+            status: "error",
+            annotation_count: 0,
+            verdicts: vec![],
+            unconsumed_linear: vec![],
+            evaporated: vec![],
+            is_clean: false,
+            detail: e.to_string(),
+        }),
+    }
+}
+
+/// POST /api/script_lad/simulate — simulate a full resource lifecycle with
+/// explicit use/drop operations and return final verdicts after ticking to
+/// final_epoch.
+async fn post_script_lad_simulate(Json(req): Json<ScriptLadSimReq>) -> Json<serde_json::Value> {
+    let ops: Vec<(&str, &str, u64)> = req
+        .ops
+        .iter()
+        .map(|e| (e.op.as_str(), e.field.as_str(), e.epoch))
+        .collect();
+
+    match evaporchain_script_lad::simulate_lifecycle(
+        &req.source,
+        req.created_epoch,
+        &ops,
+        req.final_epoch,
+    ) {
+        Ok(verdicts) => {
+            let v: serde_json::Map<String, serde_json::Value> = verdicts
+                .into_iter()
+                .map(|(name, verdict)| {
+                    let (verdict_str, value): (&str, serde_json::Value) = match verdict {
+                        evaporchain_script_lad::ResourceVerdict::Live { value } => {
+                            ("live", serde_json::json!(value))
+                        }
+                        evaporchain_script_lad::ResourceVerdict::Consumed => {
+                            ("consumed", serde_json::Value::Null)
+                        }
+                        evaporchain_script_lad::ResourceVerdict::Dropped => {
+                            ("dropped", serde_json::Value::Null)
+                        }
+                        evaporchain_script_lad::ResourceVerdict::Evaporated => {
+                            ("evaporated", serde_json::Value::Null)
+                        }
+                    };
+                    (name, serde_json::json!({"verdict": verdict_str, "value": value}))
+                })
+                .collect();
+            Json(serde_json::json!({
+                "status": "ok",
+                "verdicts": v,
+                "final_epoch": req.final_epoch
+            }))
+        }
+        Err(e) => Json(serde_json::json!({
+            "status": "error",
+            "detail": e.to_string()
+        })),
+    }
+}
+
 // ─────────── Mortis cert verification (tamper-evidence) ────────────
 
 #[derive(Debug, Deserialize)]
@@ -3792,6 +3948,10 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     ApiDocEntry { method: "POST", path: "/api/sentinel/tick",         category: "sentinel", description: "Manually run the homeostatic update on one parameter", example: Some(r#"{"parameter_id":1,"current_epoch":100,"max_step":5,"half_life_epochs":1000}"#) },
     ApiDocEntry { method: "GET",  path: "/api/sentinel/parameter/:id",category: "sentinel", description: "Read a single parameter by id", example: None },
     ApiDocEntry { method: "GET",  path: "/api/sentinel/all",          category: "sentinel", description: "List every registered parameter with its current value + vote count", example: None },
+
+    // Script-LAD compiler frontend (§4.1 #12 closure)
+    ApiDocEntry { method: "POST", path: "/api/script_lad/check",     category: "script-lad", description: "Parse @lad annotations from script source and report resource verdicts at check_epoch. Flags unconsumed Linear resources and evaporations.", example: Some(r#"{"source":"@lad(mode=linear, value=1000)\nlet payment: u64 = 0;","check_epoch":5}"#) },
+    ApiDocEntry { method: "POST", path: "/api/script_lad/simulate",  category: "script-lad", description: "Simulate a full LAD resource lifecycle: initialise from annotations, apply use/drop ops, tick to final_epoch, return verdicts.", example: Some(r#"{"source":"@lad(mode=decaying, window=10, value=500)\nlet voucher: u64 = 0;","created_epoch":0,"ops":[{"op":"use","field":"voucher","epoch":5}],"final_epoch":15}"#) },
 
     // Governance
     ApiDocEntry { method: "GET",  path: "/api/governance/fork_choice_mode", category: "governance", description: "Current authoritative fork-choice mode (mcc|singh_attractor) + attractor set.", example: None },
@@ -7563,6 +7723,8 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/patronage/immune", get(get_patronage_immune))
         .route("/api/governance/fork_choice_mode", get(get_governance_fork_choice_mode))
         .route("/api/governance/fork_choice_mode", post(post_governance_fork_choice_mode))
+        .route("/api/script_lad/check", post(post_script_lad_check))
+        .route("/api/script_lad/simulate", post(post_script_lad_simulate))
         .route("/api/demo/reset", post(post_demo_reset))
         .route("/api/docs", get(get_api_docs))
         .route("/api/objects", get(get_objects))
