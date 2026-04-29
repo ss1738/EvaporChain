@@ -622,6 +622,18 @@ impl TendermintConsensus {
         ))
     }
 
+    /// SlashSettle leg of the conservation triplet.
+    /// Routes `amount` slashed tokens into the executor's RefreshPool under the
+    /// canonical slash-settlement namespace (ASCII "SLSH" = [0x53,0x4c,0x53,0x48]).
+    /// Called by the node immediately after it records `stake.slashed_amount`.
+    pub fn settle_slash(&mut self, amount: u64, epoch: u64) {
+        if amount == 0 {
+            return;
+        }
+        let slash_ns: Vec<u8> = vec![0x53, 0x4c, 0x53, 0x48]; // "SLSH"
+        self.executor.refresh_pool.accrue(slash_ns, amount, epoch);
+    }
+
     /// Read-only iteration over the executor's RefreshPool credits.
     /// Returns (namespace_hex, accrued, last_touched_epoch) tuples.
     pub fn refresh_pool_credits(&self) -> Vec<(String, u64, u64)> {

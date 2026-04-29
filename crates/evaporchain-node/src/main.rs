@@ -3225,7 +3225,14 @@ async fn main() -> Result<()> {
                         let delegated_slashed = slash_delegations_for_validator(
                             &mut *db_guard, validator_id, delegation_pct,
                         );
-                        eprintln!("{} \x1b[31mSlash applied: validator={} amount={} delegated={} reason={:?} pct={:.4} (Sanov-Downtime, legacy-Equivocation)\x1b[0m", node_tag, validator_id, amount, delegated_slashed, reason, delegation_pct);
+                        drop(db_guard);
+                        // SlashSettle leg: route slashed tokens into RefreshPool.
+                        let settled = amount.saturating_add(delegated_slashed);
+                        if settled > 0 {
+                            let epoch = safe_lock(tc_ref).epoch();
+                            safe_lock(tc_ref).settle_slash(settled, epoch);
+                        }
+                        eprintln!("{} \x1b[31mSlash applied: validator={} amount={} delegated={} reason={:?} pct={:.4} settled={} -> RefreshPool\x1b[0m", node_tag, validator_id, amount, delegated_slashed, reason, delegation_pct, settled);
                         continue;
                     }
                     if let ConsensusAction::RequestSync(from, to) = action {
@@ -3932,7 +3939,13 @@ async fn main() -> Result<()> {
                             let delegated_slashed = slash_delegations_for_validator(
                                 &mut *db_guard, validator_id, delegation_pct,
                             );
-                            eprintln!("{} \x1b[31mSlash applied (follower): validator={} amount={} delegated={} reason={:?} pct={:.4} (Sanov-Downtime, legacy-Equivocation)\x1b[0m", node_tag, validator_id, amount, delegated_slashed, reason, delegation_pct);
+                            drop(db_guard);
+                            let settled = amount.saturating_add(delegated_slashed);
+                            if settled > 0 {
+                                let epoch = safe_lock(tc_ref).epoch();
+                                safe_lock(tc_ref).settle_slash(settled, epoch);
+                            }
+                            eprintln!("{} \x1b[31mSlash applied (follower): validator={} amount={} delegated={} reason={:?} pct={:.4} settled={} -> RefreshPool\x1b[0m", node_tag, validator_id, amount, delegated_slashed, reason, delegation_pct, settled);
                             continue;
                         }
                         if let ConsensusAction::RequestSync(from, to) = action {

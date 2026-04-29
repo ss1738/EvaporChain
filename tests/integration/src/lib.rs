@@ -5234,6 +5234,63 @@ mod validator_slashing_integration {
     }
 }
 
+// ── settle_slash / conservation triplet integration ──────────────────────────
+
+#[cfg(test)]
+mod settle_slash_integration {
+    use evaporchain_consensus::tendermint::TendermintConsensus;
+    use evaporchain_consensus::validator_set::{ValidatorInfo, ValidatorSet};
+
+    fn setup_tc() -> TendermintConsensus {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(0, 500_000, [0u8; 32]));
+        vs.add_validator(ValidatorInfo::new(1, 200_000, [1u8; 32]));
+        TendermintConsensus::new_for_test(0, 0, vs)
+    }
+
+    #[test]
+    fn settle_slash_accrues_into_refresh_pool() {
+        let mut tc = setup_tc();
+        let before = tc.refresh_pool_credits().iter().map(|(_, a, _)| a).sum::<u64>();
+        tc.settle_slash(50_000, 1);
+        let after = tc.refresh_pool_credits().iter().map(|(_, a, _)| a).sum::<u64>();
+        assert_eq!(after - before, 50_000, "settle_slash must accrue exact amount");
+    }
+
+    #[test]
+    fn settle_slash_zero_is_noop() {
+        let mut tc = setup_tc();
+        tc.settle_slash(50_000, 1);
+        let before = tc.refresh_pool_credits().iter().map(|(_, a, _)| a).sum::<u64>();
+        tc.settle_slash(0, 2);
+        let after = tc.refresh_pool_credits().iter().map(|(_, a, _)| a).sum::<u64>();
+        assert_eq!(before, after, "settle_slash(0) must be a no-op");
+    }
+
+    #[test]
+    fn settle_slash_accumulates_across_calls() {
+        let mut tc = setup_tc();
+        tc.settle_slash(10_000, 1);
+        tc.settle_slash(20_000, 2);
+        tc.settle_slash(5_000, 3);
+        let total = tc.refresh_pool_credits().iter().map(|(_, a, _)| a).sum::<u64>();
+        assert_eq!(total, 35_000, "multiple settle_slash calls must accumulate");
+    }
+
+    #[test]
+    fn settle_slash_uses_slash_namespace() {
+        let mut tc = setup_tc();
+        tc.settle_slash(100, 1);
+        let credits = tc.refresh_pool_credits();
+        // "SLSH" = 53 4c 53 48
+        assert!(
+            credits.iter().any(|(ns, _, _)| ns == "534c5348"),
+            "slash settlement must land in SLSH namespace; got: {:?}",
+            credits.iter().map(|(ns,_,_)| ns.as_str()).collect::<Vec<_>>()
+        );
+    }
+}
+
 // ── State Snapshot serialization integration ─────────────────────────────────
 
 #[cfg(test)]
