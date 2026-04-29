@@ -17,7 +17,7 @@ EvaporChain introduces thermodynamic state decay — every piece of on-chain sta
 - [x] ZK proving (Nova recursive proof folding)
 - [x] P2P networking (block propagation, tx gossip)
 - [x] Full node with API, dashboard, faucet, and CLI
-- [x] **4,770+ tests passing** (102 cross-crate integration tests added 2026-04-29)
+- [x] **5,500+ tests passing** (286 cross-crate integration tests across 48 modules)
 - [ ] Public testnet deployment
 
 ## Run Locally
@@ -89,11 +89,11 @@ evaporchain-mcp         MCP server for AI agent interaction (26 tools, 13 resour
 
 ## Test Coverage
 
-**4,770+ tests** across 71 crates — all passing. Includes 102 cross-crate integration tests covering the full pipeline (consensus → execution → DA → proving → contracts → frontier primitives).
+**5,500+ tests** across 71 crates — all passing. Includes 286 cross-crate integration tests covering the full pipeline (consensus → execution → DA → proving → contracts → frontier primitives → 48 substrate modules).
 
 ```bash
 cargo test --workspace
-# 4,770+ passed; 0 failed
+# 5,500+ passed; 0 failed
 ```
 
 ## License

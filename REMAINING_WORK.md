@@ -60,6 +60,7 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 - [x] **Cargo-audit in CI** — DONE: `rustsec/audit-check@v2.0.0` on every push/PR
 - [x] **Cargo-deny** — DONE: `deny.toml` config + `cargo-deny-action` in CI
 - [x] **Integration tests in CI** — DONE: `cargo test -p integration-tests -- --include-ignored` with 15min timeout
+- [x] **Full substrate integration test coverage** — DONE 2026-04-29: 286 tests across 48 modules in `tests/integration/src/lib.rs`; every substrate crate testable without live network deps is covered (script, sharding, oracle, script-lad, hbct-elexon + all 31 §A1.7 substrate crates)
 - [x] **Benchmark regression tracking** — DONE: CI benchmarks base vs PR, Python script flags regressions >10% as `::warning` and exits 1 (`.github/workflows/ci.yml:85-111`)
 - [x] **Fuzzing harnesses** — DONE: 5 `cargo-fuzz` targets at `fuzz/fuzz_targets/`: Poseidon hash, EvaporScript parser, EvaporScript compiler, Transaction JSON deser, Block JSON deser
 - [x] **Release automation** — DONE: `.github/workflows/release.yml` builds linux/mac amd64/arm64 on tag push, creates GitHub Release
