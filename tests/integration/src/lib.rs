@@ -4644,3 +4644,130 @@ mod hbct_elexon_integration {
         assert_eq!(parts[2].len(), 2);
     }
 }
+
+// ── Oracle Consensus (TWAP + BLS round) integration ──────────────────────────
+
+#[cfg(test)]
+mod oracle_consensus_integration {
+    use evaporchain_oracle::consensus::{
+        TwapAccumulator, OracleConsensusRound, make_vote, ConsensusError,
+    };
+    use evaporchain_crypto::signatures::BlsKeypair;
+
+    // ── TwapAccumulator ──
+
+    #[test]
+    fn twap_single_entry_returns_that_value() {
+        let mut t = TwapAccumulator::new(300);
+        t.push(1000, 60_000.0);
+        assert_eq!(t.twap(), Some(60_000.0));
+    }
+
+    #[test]
+    fn twap_empty_returns_none() {
+        let t = TwapAccumulator::new(300);
+        assert_eq!(t.twap(), None);
+    }
+
+    #[test]
+    fn twap_evicts_entries_outside_window() {
+        let mut t = TwapAccumulator::new(60);
+        // push a point 200s ago — will be evicted
+        t.push(800, 50_000.0);
+        // push a fresh point at t=1000
+        t.push(1000, 60_000.0);
+        // window = [940, 1000]; 800 < 940 so it should be evicted
+        assert_eq!(t.len(), 1);
+        assert_eq!(t.twap(), Some(60_000.0));
+    }
+
+    #[test]
+    fn twap_two_points_within_window() {
+        let mut t = TwapAccumulator::new(300);
+        t.push(1000, 60_000.0);
+        t.push(1100, 62_000.0);
+        // time-weighted: both within window; result between the two values
+        let twap = t.twap().unwrap();
+        assert!(twap >= 60_000.0 && twap <= 62_000.0);
+    }
+
+    // ── OracleConsensusRound ──
+
+    fn make_signed(kp: &BlsKeypair, id: u64, val: f64, round: u64) -> (evaporchain_oracle::consensus::OracleVote, evaporchain_crypto::signatures::BlsPublicKey) {
+        let mut vote = make_vote(id, "btc_usd", val, round, 1_000_000);
+        vote.sign(kp);
+        let pk = kp.public_key_bytes();
+        (vote, pk)
+    }
+
+    #[test]
+    fn single_validator_quorum_finalizes() {
+        let kp = BlsKeypair::generate();
+        let mut round = OracleConsensusRound::new("btc_usd", 1, 1, 300);
+        let (vote, pk) = make_signed(&kp, 1, 60_000.0, 1);
+        round.submit_vote(vote, &pk).unwrap();
+        assert!(round.has_quorum());
+        let finalized = round.finalize().unwrap();
+        assert_eq!(finalized.key, "btc_usd");
+        assert_eq!(finalized.value, 60_000.0);
+        assert_eq!(finalized.voter_count, 1);
+    }
+
+    #[test]
+    fn three_validators_median_finalizes() {
+        let kps: Vec<BlsKeypair> = (0..3).map(|_| BlsKeypair::generate()).collect();
+        let mut round = OracleConsensusRound::new("btc_usd", 1, 3, 300);
+        let vals = [59_000.0, 61_000.0, 60_000.0];
+        for (i, (kp, val)) in kps.iter().zip(vals.iter()).enumerate() {
+            let (vote, pk) = make_signed(kp, i as u64 + 1, *val, 1);
+            round.submit_vote(vote, &pk).unwrap();
+        }
+        assert!(round.has_quorum());
+        let finalized = round.finalize().unwrap();
+        assert_eq!(finalized.voter_count, 3);
+        assert_eq!(finalized.value, 60_000.0); // median
+    }
+
+    #[test]
+    fn duplicate_voter_rejected() {
+        let kp = BlsKeypair::generate();
+        let mut round = OracleConsensusRound::new("btc_usd", 1, 2, 300);
+        let (vote1, pk) = make_signed(&kp, 1, 60_000.0, 1);
+        let (vote2, _) = make_signed(&kp, 1, 60_100.0, 1);
+        round.submit_vote(vote1, &pk).unwrap();
+        assert!(matches!(round.submit_vote(vote2, &pk), Err(ConsensusError::DuplicateVoter(1))));
+    }
+
+    #[test]
+    fn round_mismatch_rejected() {
+        let kp = BlsKeypair::generate();
+        let mut round = OracleConsensusRound::new("btc_usd", 1, 1, 300);
+        let (vote, pk) = make_signed(&kp, 1, 60_000.0, 99); // wrong round
+        assert!(matches!(
+            round.submit_vote(vote, &pk),
+            Err(ConsensusError::RoundMismatch { expected: 1, got: 99 })
+        ));
+    }
+
+    #[test]
+    fn unsigned_vote_rejected() {
+        let kp = BlsKeypair::generate();
+        let mut round = OracleConsensusRound::new("btc_usd", 1, 1, 300);
+        let vote = make_vote(1, "btc_usd", 60_000.0, 1, 1_000_000); // not signed
+        let pk = kp.public_key_bytes();
+        assert!(matches!(round.submit_vote(vote, &pk), Err(ConsensusError::InvalidVote(_))));
+    }
+
+    #[test]
+    fn below_quorum_finalize_errors() {
+        let kp = BlsKeypair::generate();
+        let mut round = OracleConsensusRound::new("btc_usd", 1, 3, 300);
+        let (vote, pk) = make_signed(&kp, 1, 60_000.0, 1);
+        round.submit_vote(vote, &pk).unwrap();
+        assert!(!round.has_quorum());
+        assert!(matches!(
+            round.finalize(),
+            Err(ConsensusError::InsufficientVotes { have: 1, need: 3 })
+        ));
+    }
+}
