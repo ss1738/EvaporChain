@@ -4271,3 +4271,376 @@ mod ib_validators_integration {
         assert_eq!(sig.l1_distance(&sig), 0);
     }
 }
+
+// ── Oracle integration ────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod oracle_integration {
+    use evaporchain_oracle::{
+        Aggregator, FreshnessConfig, OracleReport, OracleValue, ValidationError,
+        object_id, object_id_hex, validate_freshness,
+    };
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn now() -> u64 {
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+    }
+
+    fn fresh(source: &str, key: &str, value: f64, reporter: u64) -> OracleReport {
+        OracleReport {
+            source: source.to_string(),
+            key: key.to_string(),
+            value: OracleValue::Numeric(value),
+            timestamp: now(),
+            energy: 3000,
+            half_life: 60,
+            signature: None,
+            reporter_id: reporter,
+        }
+    }
+
+    #[test]
+    fn object_id_is_20_bytes_and_deterministic() {
+        let id1 = object_id("coingecko", "btc_usd");
+        let id2 = object_id("coingecko", "btc_usd");
+        assert_eq!(id1.len(), 20);
+        assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn object_id_hex_starts_0x_length_42() {
+        let h = object_id_hex("binance", "eth_usd");
+        assert!(h.starts_with("0x"));
+        assert_eq!(h.len(), 42);
+    }
+
+    #[test]
+    fn fresh_report_passes_validation() {
+        let r = fresh("src", "key", 100.0, 1);
+        assert!(validate_freshness(&r, &FreshnessConfig::default()).is_ok());
+    }
+
+    #[test]
+    fn stale_report_is_rejected() {
+        let mut r = fresh("src", "key", 100.0, 1);
+        r.timestamp = now() - 400;
+        match validate_freshness(&r, &FreshnessConfig::default()) {
+            Err(ValidationError::Stale { .. }) => {}
+            other => panic!("expected Stale, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn aggregator_median_of_three_sources() {
+        let mut agg = Aggregator::new();
+        agg.submit(fresh("s1", "btc", 59_000.0, 1)).unwrap();
+        agg.submit(fresh("s2", "btc", 61_000.0, 2)).unwrap();
+        agg.submit(fresh("s3", "btc", 60_000.0, 3)).unwrap();
+        let result = agg.aggregate("btc").unwrap();
+        assert_eq!(result.median, 60_000.0);
+        assert_eq!(result.report_count, 3);
+    }
+
+    #[test]
+    fn aggregator_rejects_excessive_deviation() {
+        let mut agg = Aggregator::new();
+        agg.set_config("x", FreshnessConfig { max_deviation_pct: 1.0, min_sources: 1, max_age_secs: 300 });
+        agg.submit(fresh("s1", "x", 100.0, 1)).unwrap();
+        agg.submit(fresh("s2", "x", 200.0, 2)).unwrap();
+        assert!(matches!(agg.aggregate("x"), Err(ValidationError::ExcessiveDeviation { .. })));
+    }
+
+    #[test]
+    fn aggregator_deduplicates_same_source_same_reporter() {
+        let mut agg = Aggregator::new();
+        agg.submit(fresh("src1", "eth", 3000.0, 1)).unwrap();
+        agg.submit(fresh("src1", "eth", 3100.0, 1)).unwrap();
+        assert_eq!(agg.pending_count("eth"), 1);
+    }
+}
+
+// ── Sharding integration ──────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod sharding_integration {
+    use evaporchain_sharding::{
+        ShardConfig, ShardId, shard_for_object, validator_shards,
+        CrossShardMessage, CrossShardReceipt, CrossShardRouter,
+        ShardHealth, compact_shard,
+    };
+    use evaporchain_sharding::cross_shard::MessagePayload;
+    use evaporchain_sharding::compaction::find_candidates;
+
+    fn obj(first_byte: u8) -> [u8; 20] {
+        let mut id = [0u8; 20];
+        id[0] = first_byte;
+        id
+    }
+
+    #[test]
+    fn shard_assignment_is_deterministic() {
+        let cfg = ShardConfig::new(16);
+        let id = obj(0xAB);
+        assert_eq!(shard_for_object(&id, &cfg), shard_for_object(&id, &cfg));
+    }
+
+    #[test]
+    fn single_shard_config_always_returns_shard_zero() {
+        let cfg = ShardConfig::new(1);
+        for b in [0u8, 0x7F, 0xFF] {
+            assert_eq!(shard_for_object(&obj(b), &cfg), ShardId(0));
+        }
+    }
+
+    #[test]
+    fn validator_shards_partitions_all_shards() {
+        let cfg = ShardConfig::new(4);
+        let v0 = validator_shards(0, 2, &cfg);
+        let v1 = validator_shards(1, 2, &cfg);
+        assert_eq!(v0.len() + v1.len(), 4);
+        let mut combined = v0;
+        combined.extend(v1);
+        combined.sort();
+        combined.dedup();
+        assert_eq!(combined.len(), 4);
+    }
+
+    #[test]
+    fn cross_shard_router_enqueue_and_drain() {
+        let mut router = CrossShardRouter::new();
+        let msg = CrossShardMessage {
+            id: 0,
+            from_shard: ShardId(0),
+            to_shard: ShardId(1),
+            target_object: [0u8; 20],
+            payload: MessagePayload::Reference { source_object: [1u8; 20] },
+            target_energy: 5000,
+            timestamp: 1,
+        };
+        let assigned_id = router.send(msg);
+        assert_eq!(router.queue_depth(ShardId(1)), 1);
+        let drained = router.drain_for_shard(ShardId(1));
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].id, assigned_id);
+        assert_eq!(router.queue_depth(ShardId(1)), 0);
+    }
+
+    #[test]
+    fn receipt_acknowledgement_clears_pending() {
+        let mut router = CrossShardRouter::new();
+        let id = router.send(CrossShardMessage {
+            id: 0,
+            from_shard: ShardId(0),
+            to_shard: ShardId(1),
+            target_object: [0u8; 20],
+            payload: MessagePayload::Eviction { reason: "test".to_string() },
+            target_energy: 100,
+            timestamp: 0,
+        });
+        assert_eq!(router.pending_count(), 1);
+        let receipt = CrossShardReceipt {
+            message_id: id,
+            from_shard: ShardId(0),
+            to_shard: ShardId(1),
+            success: true,
+            result_hash: [0u8; 32],
+            processed_at: 1,
+        };
+        router.acknowledge(receipt);
+        assert_eq!(router.pending_count(), 0);
+    }
+
+    #[test]
+    fn dead_shard_becomes_compaction_candidate() {
+        let health = ShardHealth {
+            shard_id: ShardId(2),
+            total_objects: 50,
+            live_objects: 0,
+            total_energy: 0,
+            avg_half_life: 100,
+        };
+        let candidates = find_candidates(&[health], 1000);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].shard, ShardId(2));
+        assert_eq!(candidates[0].merge_into, ShardId(3)); // 2 XOR 1 = 3
+    }
+
+    #[test]
+    fn compact_shard_proof_hash_is_nonzero() {
+        let health = ShardHealth {
+            shard_id: ShardId(0),
+            total_objects: 10,
+            live_objects: 0,
+            total_energy: 0,
+            avg_half_life: 50,
+        };
+        let proof = compact_shard(ShardId(0), ShardId(1), &health);
+        assert_ne!(proof.proof_hash, [0u8; 32]);
+        assert_eq!(proof.source_shard, ShardId(0));
+        assert_eq!(proof.target_shard, ShardId(1));
+    }
+}
+
+// ── Script (EvaporScript engine) integration ─────────────────────────────────
+
+#[cfg(test)]
+mod script_integration {
+    use evaporchain_script::{ScriptEngine, Value};
+
+    const COUNTER_SRC: &str = r#"contract Counter {
+    state { count: u64 = 0 }
+    fn get() -> u64 {
+        return self.count
+    }
+    fn increment() {
+        self.count += 1
+    }
+}"#;
+
+    fn zero_addr() -> [u8; 32] { [0u8; 32] }
+
+    #[test]
+    fn deploy_returns_nonzero_id() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(COUNTER_SRC, zero_addr(), 5000, 100, 0).unwrap();
+        assert!(id > 0);
+    }
+
+    #[test]
+    fn get_contract_after_deploy() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(COUNTER_SRC, zero_addr(), 5000, 100, 0).unwrap();
+        let c = engine.get_contract(id).unwrap();
+        assert_eq!(c.name, "Counter");
+        assert!(!c.evaporated);
+    }
+
+    #[test]
+    fn call_get_returns_initial_zero() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(COUNTER_SRC, zero_addr(), 5000, 100, 0).unwrap();
+        let result = engine.call(id, "get", vec![], zero_addr(), 1).unwrap();
+        assert_eq!(result.return_value, Some(Value::U64(0)));
+    }
+
+    #[test]
+    fn call_increment_then_get() {
+        let mut engine = ScriptEngine::new();
+        let id = engine.deploy(COUNTER_SRC, zero_addr(), 5000, 100, 0).unwrap();
+        engine.call(id, "increment", vec![], zero_addr(), 1).unwrap();
+        engine.call(id, "increment", vec![], zero_addr(), 2).unwrap();
+        let result = engine.call(id, "get", vec![], zero_addr(), 3).unwrap();
+        assert_eq!(result.return_value, Some(Value::U64(2)));
+    }
+
+    #[test]
+    fn two_independent_contracts_have_separate_state() {
+        let mut engine = ScriptEngine::new();
+        let id1 = engine.deploy(COUNTER_SRC, zero_addr(), 5000, 100, 0).unwrap();
+        let id2 = engine.deploy(COUNTER_SRC, zero_addr(), 5000, 100, 0).unwrap();
+        engine.call(id1, "increment", vec![], zero_addr(), 1).unwrap();
+        let r1 = engine.call(id1, "get", vec![], zero_addr(), 2).unwrap();
+        let r2 = engine.call(id2, "get", vec![], zero_addr(), 2).unwrap();
+        assert_eq!(r1.return_value, Some(Value::U64(1)));
+        assert_eq!(r2.return_value, Some(Value::U64(0)));
+    }
+
+    #[test]
+    fn call_on_unknown_contract_errors() {
+        let mut engine = ScriptEngine::new();
+        assert!(engine.call(999, "get", vec![], zero_addr(), 0).is_err());
+    }
+}
+
+// ── Script-LAD integration ────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod script_lad_integration {
+    use evaporchain_script_lad::{check_lad_resources, simulate_lifecycle, ResourceVerdict};
+
+    const LINEAR_SRC: &str = "@lad(mode=linear, value=1000)\nlet payment: u64 = 0;";
+    const DECAY_SRC: &str = "@lad(mode=decaying, window=20, value=500)\nlet voucher: u64 = 0;";
+
+    #[test]
+    fn unconsumed_linear_is_flagged() {
+        let r = check_lad_resources(LINEAR_SRC, 1).unwrap();
+        assert!(!r.unconsumed_linear.is_empty());
+        assert!(!r.is_clean());
+    }
+
+    #[test]
+    fn decaying_resource_live_before_window() {
+        let r = check_lad_resources(DECAY_SRC, 10).unwrap();
+        assert!(r.evaporated.is_empty());
+    }
+
+    #[test]
+    fn decaying_resource_evaporates_after_window() {
+        let r = check_lad_resources(DECAY_SRC, 25).unwrap();
+        assert_eq!(r.evaporated, vec!["voucher"]);
+        assert!(!r.is_clean());
+    }
+
+    #[test]
+    fn simulate_use_clears_linear() {
+        let verdicts = simulate_lifecycle(LINEAR_SRC, 0, &[("use", "payment", 1)], 5).unwrap();
+        assert_eq!(verdicts["payment"], ResourceVerdict::Consumed);
+    }
+
+    #[test]
+    fn empty_source_is_clean() {
+        let r = check_lad_resources("// no annotations\nlet x = 5;", 0).unwrap();
+        assert!(r.is_clean());
+        assert!(r.annotations.is_empty());
+    }
+}
+
+// ── HBCT-Elexon integration ───────────────────────────────────────────────────
+
+#[cfg(test)]
+mod hbct_elexon_integration {
+    use evaporchain_hbct_elexon::mapping::epoch_to_elexon_slot;
+
+    const GENESIS: u64 = 1_704_067_200; // 2024-01-01T00:00:00Z
+    const EPOCH_S: u64 = 12;
+
+    #[test]
+    fn midnight_slot_is_period_1() {
+        let s = epoch_to_elexon_slot(GENESIS, EPOCH_S, 0);
+        assert_eq!(s.date, "2024-01-01");
+        assert_eq!(s.period, 1);
+    }
+
+    #[test]
+    fn half_hour_boundary_is_period_2() {
+        let s = epoch_to_elexon_slot(GENESIS, EPOCH_S, 1800 / EPOCH_S);
+        assert_eq!(s.period, 2);
+    }
+
+    #[test]
+    fn period_clamped_at_48() {
+        // 23:30 = 84600s = SP 48; 23:59 would be SP49 but clamped
+        let late_slot = (86340u64) / EPOCH_S;
+        let s = epoch_to_elexon_slot(0, EPOCH_S, late_slot);
+        assert!(s.period <= 48);
+    }
+
+    #[test]
+    fn one_day_later_is_next_date() {
+        let day_slots = 86400u64 / EPOCH_S;
+        let s = epoch_to_elexon_slot(GENESIS, EPOCH_S, day_slots);
+        assert_eq!(s.date, "2024-01-02");
+        assert_eq!(s.period, 1);
+    }
+
+    #[test]
+    fn date_is_correctly_formatted() {
+        let s = epoch_to_elexon_slot(GENESIS, EPOCH_S, 0);
+        // Must match YYYY-MM-DD
+        let parts: Vec<&str> = s.date.split('-').collect();
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0].len(), 4);
+        assert_eq!(parts[1].len(), 2);
+        assert_eq!(parts[2].len(), 2);
+    }
+}
