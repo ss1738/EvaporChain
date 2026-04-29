@@ -90,3 +90,59 @@ groups:
         annotations:
           summary: "Validator memory usage above 1.5GB"
           description: "{{ $labels.instance }} using {{ $value | humanize }}B memory"
+
+  - name: evaporchain-substrate
+    rules:
+      - alert: ChainInviable
+        expr: evaporchain_autopoietic_viability == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "EvaporChain autopoietic viability: INVIABLE"
+          description: "{{ $labels.instance }} reports Inviable — all three subsystems (Patronage, Sentinel, LLSA) are failed. Chain may die."
+
+      - alert: ChainStressed
+        expr: evaporchain_autopoietic_viability == 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "EvaporChain autopoietic viability: Stressed"
+          description: "{{ $labels.instance }} reports Stressed — at least one subsystem degraded. Check /api/autopoietic/health."
+
+      - alert: ConsensusPhaseUnstable
+        expr: evaporchain_consensus_phase < 2
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Consensus phase is Frozen or Chaotic"
+          description: "{{ $labels.instance }} consensus phase = {{ $value }} (0=Chaotic, 1=Frozen). Safety may be at risk."
+
+      - alert: FeeBaseExtreme
+        expr: evaporchain_fee_base_ppm > 50000000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Fee controller base fee is very high"
+          description: "{{ $labels.instance }} fee_base_ppm = {{ $value }} — chain may be congested or fee controller drifting."
+
+      - alert: FeeBaseNearZero
+        expr: evaporchain_fee_base_ppm < 100
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "Fee controller base fee is near zero"
+          description: "{{ $labels.instance }} fee_base_ppm = {{ $value }} — chain may be under-loaded or fee controller stuck."
+
+      - alert: EpvVersionsExhausted
+        expr: evaporchain_epv_live_versions == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No live EPV protocol versions"
+          description: "{{ $labels.instance }} has 0 live EPV versions — the upgrade registry is empty, which blocks further amendments."
