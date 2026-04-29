@@ -3673,3 +3673,206 @@ mod lad_vm_integration {
         assert!(ticked.consumed, "tick_decay must mark evaporated resource consumed");
     }
 }
+
+// ── HLWA — Half-Life Wrapped Asset (bridge-hack defence) ─────────────────────
+
+#[cfg(test)]
+mod hlwa_integration {
+    use evaporchain_hlwa::{WrappedAsset, HlwaError};
+    use evaporchain_energy_kernel::{ChainLambda, Lambda};
+
+    fn lambda_100() -> ChainLambda {
+        ChainLambda::new(Lambda::from_epochs(100))
+    }
+
+    #[test]
+    fn fresh_asset_has_no_excess() {
+        let asset = WrappedAsset::new(10_000, 10_000, 0, lambda_100());
+        let excess = asset.excess_to_burn(0).unwrap();
+        assert_eq!(excess, 0, "fresh asset with matching supply has zero excess");
+    }
+
+    #[test]
+    fn excess_grows_when_attestation_goes_stale() {
+        // Wrapped supply stays at 10_000 but origin stops attesting.
+        // At one half-life (100 epochs) effective supply drops to ~5000.
+        let asset = WrappedAsset::new(10_000, 10_000, 0, lambda_100());
+        let excess = asset.excess_to_burn(100).unwrap();
+        // After one half-life, effective supply ≈ 5000, so excess ≈ 5000.
+        assert!(excess >= 4_000, "stale attestation should produce non-trivial excess");
+        assert!(excess <= 6_000, "excess should be roughly one-half of supply");
+    }
+
+    #[test]
+    fn re_attest_resets_excess_to_zero() {
+        let asset = WrappedAsset::new(10_000, 10_000, 0, lambda_100());
+        // Fast-forward: excess has built up.
+        assert!(asset.excess_to_burn(200).unwrap() > 0);
+        // Origin re-attests at epoch 200 with the actual live supply.
+        let refreshed = asset.re_attest(10_000, 200);
+        let excess = refreshed.excess_to_burn(200).unwrap();
+        assert_eq!(excess, 0, "re-attest at same epoch should clear all excess");
+    }
+
+    #[test]
+    fn current_epoch_before_attestation_is_an_error() {
+        let asset = WrappedAsset::new(5_000, 5_000, 50, lambda_100());
+        let result = asset.effective_supply(10); // epoch 10 < attested 50
+        assert!(matches!(result, Err(HlwaError::AttestationFromFuture { .. })));
+    }
+
+    #[test]
+    fn supply_below_ceiling_has_no_excess() {
+        // Wrapped supply is lower than what the attestation covers — no burning needed.
+        let asset = WrappedAsset::new(3_000, 10_000, 0, lambda_100());
+        let excess = asset.excess_to_burn(0).unwrap();
+        assert_eq!(excess, 0, "supply below attestation ceiling has no excess");
+    }
+}
+
+// ── EB-FS — Energy-Bound Fiat-Shamir (cross-fork replay defence) ─────────────
+
+#[cfg(test)]
+mod eb_fs_integration {
+    use evaporchain_eb_fs::eb_fs_challenge;
+
+    #[test]
+    fn deterministic_under_same_inputs() {
+        let c1 = eb_fs_challenge(b"proof-transcript", 42, 1_000_000);
+        let c2 = eb_fs_challenge(b"proof-transcript", 42, 1_000_000);
+        assert_eq!(c1, c2, "EB-FS challenge must be deterministic");
+    }
+
+    #[test]
+    fn different_epoch_energy_produces_different_challenge() {
+        let c1 = eb_fs_challenge(b"same-transcript", 10, 1_000_000);
+        let c2 = eb_fs_challenge(b"same-transcript", 10, 1_000_001);
+        assert_ne!(c1, c2, "different epoch_energy must change the challenge");
+    }
+
+    #[test]
+    fn different_epoch_produces_different_challenge() {
+        let c1 = eb_fs_challenge(b"same-transcript", 10, 1_000_000);
+        let c2 = eb_fs_challenge(b"same-transcript", 11, 1_000_000);
+        assert_ne!(c1, c2, "different epoch must change the challenge");
+    }
+
+    #[test]
+    fn different_transcript_produces_different_challenge() {
+        let c1 = eb_fs_challenge(b"fork-a-proof", 10, 500_000);
+        let c2 = eb_fs_challenge(b"fork-b-proof", 10, 500_000);
+        assert_ne!(c1, c2, "different transcript must change the challenge");
+    }
+
+    #[test]
+    fn cross_fork_replay_prevented() {
+        // A proof generated on fork A (epoch_energy=1_000_000) cannot
+        // satisfy the verifier on fork B (epoch_energy=999_000) because
+        // the EB-FS challenges differ.
+        let fork_a_challenge = eb_fs_challenge(b"shared-proof-bytes", 50, 1_000_000);
+        let fork_b_challenge = eb_fs_challenge(b"shared-proof-bytes", 50, 999_000);
+        assert_ne!(
+            fork_a_challenge, fork_b_challenge,
+            "cross-fork replay must be blocked by differing epoch_energy"
+        );
+    }
+
+    #[test]
+    fn challenge_is_32_bytes() {
+        let c = eb_fs_challenge(b"test", 0, 0);
+        assert_eq!(c.len(), 32);
+    }
+}
+
+// ── Allen-Decay — 13 Allen interval relations over energy levels ──────────────
+
+#[cfg(test)]
+mod allen_decay_integration {
+    use evaporchain_allen_decay::{
+        compute_relation, AllenRelation, Interval, IntervalError,
+    };
+
+    fn i(start: u64, end: u64) -> Interval {
+        Interval::new(start, end).unwrap()
+    }
+
+    #[test]
+    fn before_relation() {
+        // [0,10) before [20,30)
+        assert_eq!(compute_relation(i(0, 10), i(20, 30)), AllenRelation::Before);
+    }
+
+    #[test]
+    fn after_relation() {
+        assert_eq!(compute_relation(i(20, 30), i(0, 10)), AllenRelation::After);
+    }
+
+    #[test]
+    fn meets_relation() {
+        // [0,10) meets [10,20)
+        assert_eq!(compute_relation(i(0, 10), i(10, 20)), AllenRelation::Meets);
+    }
+
+    #[test]
+    fn met_by_relation() {
+        assert_eq!(compute_relation(i(10, 20), i(0, 10)), AllenRelation::MetBy);
+    }
+
+    #[test]
+    fn overlaps_relation() {
+        // [0,15) overlaps [10,25)
+        assert_eq!(compute_relation(i(0, 15), i(10, 25)), AllenRelation::Overlaps);
+    }
+
+    #[test]
+    fn contains_relation() {
+        // [0,30) contains [10,20)
+        assert_eq!(compute_relation(i(0, 30), i(10, 20)), AllenRelation::Contains);
+    }
+
+    #[test]
+    fn during_relation() {
+        // [10,20) during [0,30)
+        assert_eq!(compute_relation(i(10, 20), i(0, 30)), AllenRelation::During);
+    }
+
+    #[test]
+    fn equals_relation() {
+        assert_eq!(compute_relation(i(5, 15), i(5, 15)), AllenRelation::Equals);
+    }
+
+    #[test]
+    fn inverse_symmetry() {
+        // For any two intervals, rel(a, b).inverse() == rel(b, a)
+        let pairs = [(i(0, 5), i(10, 20)), (i(5, 15), i(5, 15)), (i(0, 30), i(5, 20))];
+        for (a, b) in pairs {
+            let rel_ab = compute_relation(a, b);
+            let rel_ba = compute_relation(b, a);
+            assert_eq!(rel_ab.inverse(), rel_ba,
+                "inverse symmetry violated for a={a:?}, b={b:?}: rel_ab={rel_ab:?}, inverse={:?}, rel_ba={rel_ba:?}",
+                rel_ab.inverse());
+        }
+    }
+
+    #[test]
+    fn inverted_interval_rejected() {
+        let err = Interval::new(10, 5).unwrap_err();
+        assert!(matches!(err, IntervalError::EmptyOrInverted { .. }));
+    }
+
+    #[test]
+    fn zero_duration_rejected() {
+        assert!(Interval::new(7, 7).is_err());
+    }
+
+    #[test]
+    fn energy_decay_window_scenario() {
+        // Scenario: a contract's active energy window [1000, 5000) and the
+        // grace period [4500, 6000). They overlap (grace starts before active ends).
+        let active = i(1000, 5000);
+        let grace  = i(4500, 6000);
+        let rel = compute_relation(active, grace);
+        assert_eq!(rel, AllenRelation::Overlaps,
+            "active window should Overlap with grace period");
+    }
+}
