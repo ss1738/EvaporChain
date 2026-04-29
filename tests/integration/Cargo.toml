@@ -19,5 +19,6 @@ evaporchain-epv = { path = "../../crates/evaporchain-epv" }
 evaporchain-tombstone = { path = "../../crates/evaporchain-tombstone" }
 evaporchain-dsn = { path = "../../crates/evaporchain-dsn" }
 evaporchain-fee-controller = { path = "../../crates/evaporchain-fee-controller" }
+evaporchain-energy-kernel = { path = "../../crates/evaporchain-energy-kernel" }
 serde_json = "1"
 hex = "0.4"

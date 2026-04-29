@@ -880,7 +880,7 @@ mod substrate_integration {
     use evaporchain_mera::commit;
     use evaporchain_epv::{EpvRegistry, ProtocolVersion, prune_evaporated};
     use evaporchain_tombstone::{mint, EulogyTrie, CauseOfDeath};
-    use evaporchain_dsn::{DsnWindow, DsnError};
+    use evaporchain_dsn::DsnWindow;
     use evaporchain_fee_controller::{FeeController, FeeControllerParams, FeeState};
 
     // ── Demurrage ───────────────────────────────────────────────────
@@ -1062,5 +1062,79 @@ mod substrate_integration {
         let delta = (new_state.base_fee_ppm as i64 - state.base_fee_ppm as i64).abs();
         // Small delta acceptable (EMA smoothing), but it should be tiny
         assert!(delta < (state.base_fee_ppm as i64 / 10), "target gas should keep fee near stable");
+    }
+
+    // ── Energy Kernel — conservation invariant + redirects ───────────
+
+    #[test]
+    fn conservation_redirect_preserves_total() {
+        use evaporchain_energy_kernel::{
+            compartment::{Compartment, EnergyAccumulator},
+            conservation::ConservationCheck,
+            redirect::{EnergyRedirect, RedirectKind},
+        };
+        let before = EnergyAccumulator::new(1_000_000, 500_000, 0, 0);
+        let mut after = before;
+        EnergyRedirect::new(RedirectKind::MevBurn, 50_000)
+            .apply(&mut after)
+            .expect("mev_burn should succeed");
+        ConservationCheck::redirect(&before, &after)
+            .expect("redirect must preserve total");
+        assert_eq!(before.total(), after.total());
+        assert_eq!(after[Compartment::Accounts], 950_000);
+        assert_eq!(after[Compartment::RefreshPool], 50_000);
+    }
+
+    #[test]
+    fn conservation_decay_step_valid_within_lambda() {
+        use evaporchain_energy_kernel::{
+            compartment::EnergyAccumulator, conservation::ConservationCheck, ChainLambda, Lambda,
+        };
+        let before = EnergyAccumulator::new(1_000_000, 0, 0, 0);
+        // After one half-life (4096 epochs), minimum retained = 500_000
+        let after = EnergyAccumulator::new(700_000, 0, 0, 0);
+        let lambda = ChainLambda::new(Lambda::from_epochs(4096));
+        ConservationCheck::decay_step(&before, &after, 4096, lambda)
+            .expect("holding 700k after half-life of 1M is legal (min=500k)");
+    }
+
+    #[test]
+    fn conservation_violation_detected_on_total_increase() {
+        use evaporchain_energy_kernel::{
+            compartment::EnergyAccumulator, conservation::ConservationCheck, ChainLambda, Lambda,
+        };
+        let before = EnergyAccumulator::new(1_000_000, 0, 0, 0);
+        let after = EnergyAccumulator::new(1_000_001, 0, 0, 0); // energy created from nothing
+        let lambda = ChainLambda::new(Lambda::from_epochs(4096));
+        let result = ConservationCheck::decay_step(&before, &after, 0, lambda);
+        assert!(result.is_err(), "total increase must be a conservation violation");
+    }
+
+    #[test]
+    fn conservation_violation_detected_when_drop_exceeds_lambda() {
+        use evaporchain_energy_kernel::{
+            compartment::EnergyAccumulator, conservation::ConservationCheck, ChainLambda, Lambda,
+        };
+        let before = EnergyAccumulator::new(1_000_000, 0, 0, 0);
+        // After 4096 epochs at half_life=4096, min retained ≈ 500_000. Holding
+        // only 100_000 means we destroyed far more than λ allows.
+        let after = EnergyAccumulator::new(100_000, 0, 0, 0);
+        let lambda = ChainLambda::new(Lambda::from_epochs(4096));
+        let result = ConservationCheck::decay_step(&before, &after, 4096, lambda);
+        assert!(result.is_err(), "drop exceeding λ-bound must be rejected");
+    }
+
+    #[test]
+    fn redirect_insufficient_source_rejected() {
+        use evaporchain_energy_kernel::{
+            compartment::EnergyAccumulator,
+            redirect::{EnergyRedirect, RedirectKind},
+        };
+        let mut acc = EnergyAccumulator::new(0, 50, 0, 0);
+        let before_total = acc.total();
+        // Slash needs Stake ≥ 100; only 50 available
+        let result = EnergyRedirect::new(RedirectKind::Slash, 100).apply(&mut acc);
+        assert!(result.is_err(), "insufficient source must be rejected");
+        assert_eq!(acc.total(), before_total, "accumulator must be unchanged on rejection");
     }
 }
