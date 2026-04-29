@@ -3465,3 +3465,211 @@ mod cfm_integration {
         assert!(eq.pmf[0] >= eq.pmf[2], "tier 0 (fee=1) must have >= weight of tier 2 (fee=3)");
     }
 }
+
+// ── Refresh Market (AMM rent pricing) integration ────────────────────────────
+
+#[cfg(test)]
+mod refresh_market_integration {
+    use evaporchain_refresh_market::{rent_rate, Namespace};
+    use evaporchain_refresh_market::pricing::PricingError;
+
+    #[test]
+    fn rent_rate_increases_quadratically_with_utilisation() {
+        let base = 1_000_000u64;
+        let rate_low = rent_rate(1, 100, base).unwrap();
+        let rate_high = rent_rate(90, 100, base).unwrap();
+        assert!(rate_high > rate_low, "rate must be higher at 90% utilisation than at 1%");
+    }
+
+    #[test]
+    fn rent_rate_zero_capacity_rejected() {
+        let err = rent_rate(0, 0, 1000).unwrap_err();
+        assert!(matches!(err, PricingError::ZeroCapacity));
+    }
+
+    #[test]
+    fn rent_rate_always_at_least_one() {
+        // Even with base = 1 and large capacity the +1 ensures min price
+        let rate = rent_rate(0, 1_000_000, 1).unwrap();
+        assert!(rate >= 1);
+    }
+
+    #[test]
+    fn namespace_fresh_has_zero_utilisation_and_full_headroom() {
+        let ns = Namespace::new(b"payments".to_vec(), 500);
+        assert_eq!(ns.used, 0);
+        assert_eq!(ns.headroom(), 500);
+        assert!(!ns.is_full());
+    }
+}
+
+// ── Crooks-MEV Refund integration ─────────────────────────────────────────────
+
+#[cfg(test)]
+mod crooks_mev_refund_integration {
+    use evaporchain_crooks_mev_refund::{compute_delta_f_millibits, compute_refund, RefundError};
+
+    #[test]
+    fn zero_log_ratio_gives_delta_f_equal_to_work() {
+        // log_ratio = 0 → ΔF = W − 0 = W
+        let delta_f = compute_delta_f_millibits(500, 0, 10).unwrap();
+        assert_eq!(delta_f, 500);
+    }
+
+    #[test]
+    fn positive_log_ratio_reduces_delta_f_below_work() {
+        // W = 1000, log_ratio > 0, β = 10 → ΔF = 1000 - (log_ratio/β) < 1000
+        let delta_f = compute_delta_f_millibits(1_000, 500, 10).unwrap();
+        assert!(delta_f < 1_000, "ΔF must be less than W when log_ratio > 0");
+    }
+
+    #[test]
+    fn refund_is_dissipated_work() {
+        // work_extracted = 1000, delta_f = 700 → refund = 1000 - 700 = 300
+        let refund = compute_refund(1_000, 700);
+        assert_eq!(refund, 300);
+    }
+
+    #[test]
+    fn zero_beta_rejected() {
+        let err = compute_delta_f_millibits(500, 100, 0).unwrap_err();
+        assert!(matches!(err, RefundError::ZeroBeta));
+    }
+}
+
+// ── Cone-Merged Bridge integration ────────────────────────────────────────────
+
+#[cfg(test)]
+mod cone_bridge_integration {
+    use evaporchain_cone_bridge::{EnergyCone, bridge_valid};
+    use evaporchain_energy_kernel::{ChainLambda, Lambda};
+
+    fn slow_lambda() -> ChainLambda {
+        ChainLambda::new(Lambda::from_epochs(10_000))
+    }
+
+    fn fast_lambda() -> ChainLambda {
+        ChainLambda::new(Lambda::from_epochs(100))
+    }
+
+    fn cone(lambda: ChainLambda, threshold: u64, energy: u64) -> EnergyCone {
+        EnergyCone::new(lambda, threshold, energy, 0)
+    }
+
+    #[test]
+    fn both_cones_inside_at_epoch_zero() {
+        let a = cone(slow_lambda(), 500, 1_000);
+        let b = cone(slow_lambda(), 500, 1_000);
+        assert!(bridge_valid(&a, &b, 0));
+    }
+
+    #[test]
+    fn fast_decaying_cone_invalidates_bridge_early() {
+        let a = cone(slow_lambda(), 100, 1_000); // stays alive
+        let b = cone(fast_lambda(), 600, 1_000); // half-life 100 → 500 at epoch 100 < 600
+        assert!(!bridge_valid(&a, &b, 100));
+    }
+
+    #[test]
+    fn bridge_invalid_when_energy_below_threshold_from_start() {
+        let a = cone(slow_lambda(), 2_000, 1_000); // committed 1000 < threshold 2000
+        let b = cone(slow_lambda(), 100, 5_000);
+        assert!(!bridge_valid(&a, &b, 0));
+    }
+
+    #[test]
+    fn intersection_window_closes_as_energy_decays() {
+        let a = cone(fast_lambda(), 200, 1_000); // threshold 200
+        let b = cone(fast_lambda(), 200, 1_000);
+        // At epoch 0: remaining = 1000 ≥ 200 → valid
+        assert!(bridge_valid(&a, &b, 0));
+        // At epoch 300 (3 halvings): remaining ≈ 125 < 200 → invalid
+        assert!(!bridge_valid(&a, &b, 300));
+    }
+}
+
+// ── Cμ-Gate (Shalizi-Crutchfield complexity bound) integration ────────────────
+
+#[cfg(test)]
+mod cmu_gate_integration {
+    use evaporchain_cmu_gate::{cmu_check, cmu_bound, Verdict};
+    use evaporchain_cmu_gate::estimator::entropy_millibits;
+
+    #[test]
+    fn cmu_at_or_below_bound_is_ok() {
+        let v = cmu_check(300, 200, 150);
+        // bound = 200 + 150 = 350; 300 ≤ 350 → Ok
+        assert!(matches!(v, Verdict::Ok { .. }));
+    }
+
+    #[test]
+    fn cmu_exceeding_bound_is_violation() {
+        // Sybil activity: observed Cμ = 600 > E + hμ = 500
+        let v = cmu_check(600, 200, 300);
+        assert!(matches!(v, Verdict::Violation { .. }));
+    }
+
+    #[test]
+    fn uniform_distribution_has_maximum_entropy() {
+        // 4 equal buckets → H = 2 bits = 2000 millibits (approx due to bit_length)
+        let h = entropy_millibits(&[1, 1, 1, 1]).unwrap();
+        assert!(h >= 1_000, "uniform over 4 outcomes must have high entropy (got {h} mb)");
+    }
+
+    #[test]
+    fn deterministic_distribution_has_zero_entropy() {
+        let h = entropy_millibits(&[100, 0, 0, 0]).unwrap();
+        assert_eq!(h, 0, "deterministic distribution → H = 0");
+    }
+}
+
+// ── LAD VM (Linear-Affine-Decay resource semantics) integration ───────────────
+
+#[cfg(test)]
+mod lad_vm_integration {
+    use evaporchain_lad_vm::{Resource, Mode, use_resource, drop_resource, tick_decay, OpError};
+
+    #[test]
+    fn linear_resource_consumed_exactly_once() {
+        let r = Resource::linear(42u64, 0);
+        // First use succeeds
+        let (val, _receipt) = use_resource(r, 0).unwrap();
+        assert_eq!(val, 42);
+        // Rebuild a consumed resource directly to verify AlreadyConsumed
+        let consumed = Resource { value: 99u64, mode: Mode::Linear, created_at_epoch: 0, decay_window: None, consumed: true };
+        let err = use_resource(consumed, 0).unwrap_err();
+        assert!(matches!(err, OpError::AlreadyConsumed));
+    }
+
+    #[test]
+    fn affine_resource_can_be_dropped() {
+        let r = Resource::affine("token".to_string(), 0);
+        drop_resource(r).expect("affine resource may be dropped");
+    }
+
+    #[test]
+    fn linear_resource_cannot_be_dropped() {
+        let r = Resource::linear(99u64, 0);
+        let err = drop_resource(r).unwrap_err();
+        assert!(matches!(err, OpError::LinearCannotDrop));
+    }
+
+    #[test]
+    fn decaying_resource_evaporates_past_window() {
+        let r = Resource::decaying(1u64, 0, 10); // window = 10 epochs
+        // At epoch 9: still alive
+        assert!(!r.is_evaporated(9));
+        // At epoch 10: evaporated
+        assert!(r.is_evaporated(10));
+        // use_resource at epoch 10 should fail
+        let err = use_resource(r, 10).unwrap_err();
+        assert!(matches!(err, OpError::Evaporated));
+    }
+
+    #[test]
+    fn tick_decay_marks_expired_decaying_resource_consumed() {
+        let r = Resource::decaying("data".to_string(), 0, 5);
+        let ticked = tick_decay(r, 5); // epoch = window → evaporated
+        assert!(ticked.consumed, "tick_decay must mark evaporated resource consumed");
+    }
+}

@@ -51,5 +51,10 @@ evaporchain-tur-liveness = { path = "../../crates/evaporchain-tur-liveness" }
 evaporchain-hlts = { path = "../../crates/evaporchain-hlts" }
 evaporchain-hbct = { path = "../../crates/evaporchain-hbct" }
 evaporchain-cfm = { path = "../../crates/evaporchain-cfm" }
+evaporchain-refresh-market = { path = "../../crates/evaporchain-refresh-market" }
+evaporchain-crooks-mev-refund = { path = "../../crates/evaporchain-crooks-mev-refund" }
+evaporchain-cone-bridge = { path = "../../crates/evaporchain-cone-bridge" }
+evaporchain-cmu-gate = { path = "../../crates/evaporchain-cmu-gate" }
+evaporchain-lad-vm = { path = "../../crates/evaporchain-lad-vm" }
 serde_json = "1"
 hex = "0.4"
