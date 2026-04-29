@@ -89,7 +89,7 @@ mod tests {
     use super::*;
     use evaporchain_energy_kernel::Lambda;
     use evaporchain_state::db::InMemoryStateDB;
-    use evaporchain_types::{Account, AccountAddress, StakeRecord};
+    use evaporchain_types::{AccountAddress, StakeRecord};
 
     fn addr(b: u8) -> AccountAddress {
         [b; 32]
