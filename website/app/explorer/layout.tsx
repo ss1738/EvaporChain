@@ -8,6 +8,8 @@ import { Search, ArrowLeft } from "lucide-react";
 const TABS = [
   { label: "Overview", href: "/explorer" },
   { label: "Validators", href: "/explorer/validators" },
+  { label: "Contracts", href: "/explorer/contracts" },
+  { label: "Simulate", href: "/explorer/simulate" },
 ];
 
 export default function ExplorerLayout({ children }: { children: ReactNode }) {
@@ -15,7 +17,8 @@ export default function ExplorerLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
 
-  const isDetail = pathname !== "/explorer" && pathname !== "/explorer/validators";
+  const TAB_PATHS = new Set(TABS.map((t) => t.href));
+  const isDetail = !TAB_PATHS.has(pathname);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();

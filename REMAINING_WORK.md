@@ -113,8 +113,8 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 ### Website + Explorer (65% complete)
 - [x] Advanced explorer: filters, pagination, real-time updates — DONE: search bar, tx type filter, object state filter, load-more pagination (10/page), 8s polling for real-time
 - [ ] Complete staking/DAO pages (currently placeholders)
-- [ ] Contract interaction playground
-- [ ] Transaction simulation
+- [x] Contract interaction playground — DONE: `/explorer/contracts` page — list deployed contracts, inspect ABI, simulate method calls with form-based inputs
+- [x] Transaction simulation — DONE: `/explorer/simulate` page — dry-run transfer/create_object/refresh/call_contract against chain state; shows gas usage, state changes, warnings
 - [ ] Deploy to `evaporchain.com` or `testnet.evaporchain.com`
 
 ### dApps — All 4 (80% average)
