@@ -1932,17 +1932,14 @@ impl TendermintConsensus {
         // propagate as a panic).
         let _ = self.light_cone_dag.insert(lc_block);
 
-        // TUR Liveness Detector observation. Push this block's gas as
-        // the chain "current J", maintain a sliding window, and run
-        // tur_check using a window-summed Σ proxy. Verdict::Violation
-        // is the cartel signature: gas too steady for the entropy
-        // budget. Per INVENTION_STACK.md §A1.3.
-        let block_gas = block
-            .transactions
-            .iter()
-            .map(|tx| tx.gas_limit)
-            .sum::<u64>();
-        self.tur_window.push_back(block_gas);
+        // TUR Liveness Detector observation. Push this block's tx
+        // count as the chain "current J" (same proxy the parallel
+        // Light-Cone insert uses for per-block work), maintain a
+        // sliding window, and run tur_check using a window-summed Σ
+        // proxy. Verdict::Violation is the cartel signature: J too
+        // steady for the entropy budget. Per INVENTION_STACK.md §A1.3.
+        let block_j = block.transactions.len() as u64;
+        self.tur_window.push_back(block_j);
         while self.tur_window.len() > TUR_WINDOW_BLOCKS {
             self.tur_window.pop_front();
         }
