@@ -1130,6 +1130,80 @@ async fn get_mortis_cert_preview(
     }
 }
 
+// ─────────── Mortis cert verification (tamper-evidence) ────────────
+
+#[derive(Debug, Deserialize)]
+pub struct MortisVerifyQuery {
+    pub final_state_root_hex: String,
+    pub eulogy_trie_root_hex: String,
+    pub epoch_of_death: u64,
+    pub final_refresh_pool: u64,
+    pub witness_hex: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MortisVerifyResp {
+    pub status: &'static str,
+    pub valid: bool,
+    pub detail: String,
+}
+
+/// Re-derive the witness for a caller-supplied MortisCertificate and
+/// confirm it matches. Lets dashboards prove the cert's tamper-
+/// evidence claim end-to-end: preview → tweak any field → witness no
+/// longer matches → verifier rejects.
+async fn post_mortis_verify(Json(q): Json<MortisVerifyQuery>) -> Json<MortisVerifyResp> {
+    let final_state_root = match parse_hex32(&q.final_state_root_hex) {
+        Ok(b) => b,
+        Err(e) => {
+            return Json(MortisVerifyResp {
+                status: "error",
+                valid: false,
+                detail: format!("bad final_state_root_hex: {e}"),
+            });
+        }
+    };
+    let eulogy_trie_root = match parse_hex32(&q.eulogy_trie_root_hex) {
+        Ok(b) => b,
+        Err(e) => {
+            return Json(MortisVerifyResp {
+                status: "error",
+                valid: false,
+                detail: format!("bad eulogy_trie_root_hex: {e}"),
+            });
+        }
+    };
+    let witness = match parse_hex32(&q.witness_hex) {
+        Ok(b) => b,
+        Err(e) => {
+            return Json(MortisVerifyResp {
+                status: "error",
+                valid: false,
+                detail: format!("bad witness_hex: {e}"),
+            });
+        }
+    };
+    let cert = evaporchain_mortis::MortisCertificate {
+        final_state_root,
+        eulogy_trie_root,
+        epoch_of_death: q.epoch_of_death,
+        final_refresh_pool: q.final_refresh_pool,
+        witness,
+    };
+    match evaporchain_mortis::certificate::verify_certificate(&cert) {
+        Ok(()) => Json(MortisVerifyResp {
+            status: "ok",
+            valid: true,
+            detail: "witness re-derived and matched — certificate is intact".into(),
+        }),
+        Err(e) => Json(MortisVerifyResp {
+            status: "violation",
+            valid: false,
+            detail: format!("{e}"),
+        }),
+    }
+}
+
 // ───────── EvaporChain identity — single-call dashboard summary ─────
 
 /// Aggregate snapshot of every distinguishing chain primitive,
@@ -3140,6 +3214,7 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     ApiDocEntry { method: "GET",  path: "/api/lamport_time",          category: "identity", description: "Decay-Lamport energy-driven logical clock", example: None },
     ApiDocEntry { method: "GET",  path: "/api/refresh_pool",          category: "identity", description: "Protocol-owned refresh pool total + per-namespace credits", example: None },
     ApiDocEntry { method: "GET",  path: "/api/mortis_cert_preview",   category: "identity", description: "Preview the Mortis death-certificate NFT shape at current state — does not trigger death", example: None },
+    ApiDocEntry { method: "POST", path: "/api/mortis_cert_verify",    category: "identity", description: "Re-derive a MortisCertificate's witness and confirm it matches — proves tamper-evidence", example: Some(r#"{"final_state_root_hex":"…","eulogy_trie_root_hex":"…","epoch_of_death":N,"final_refresh_pool":N,"witness_hex":"…"}"#) },
 
     // Substrate primitives
     ApiDocEntry { method: "GET",  path: "/api/causal_cone",           category: "substrate", description: "Shalizi-Crutchfield O(1) sufficient statistic over the Light-Cone DAG", example: Some("?head_hex=0000…0000") },
@@ -6940,6 +7015,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/eb_fs_challenge", post(post_eb_fs_challenge))
         .route("/api/identity", get(get_identity))
         .route("/api/mortis_cert_preview", get(get_mortis_cert_preview))
+        .route("/api/mortis_cert_verify", post(post_mortis_verify))
         .route("/api/demo/reset", post(post_demo_reset))
         .route("/api/docs", get(get_api_docs))
         .route("/api/objects", get(get_objects))

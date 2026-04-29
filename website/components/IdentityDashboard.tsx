@@ -806,41 +806,120 @@ function FourActPanel({
         />
       </div>
       {preview && (
-        <div
-          className={`mt-6 rounded-lg border p-4 text-xs ${
-            preview.status === "preview"
-              ? "border-neutral-200 bg-neutral-50"
-              : preview.status === "already-triggered"
-                ? "border-amber-200 bg-amber-50 text-amber-900"
-                : "border-red-200 bg-red-50 text-red-900"
-          }`}
-        >
-          <p className="mb-2 font-medium uppercase tracking-wider text-neutral-600">
-            Mortis cert · {preview.status}
-          </p>
-          {preview.status === "preview" && (
-            <dl className="space-y-1.5 text-xs">
-              <Row k="Epoch of death" v={preview.epoch_of_death.toLocaleString()} />
-              <Row
-                k="Final refresh pool"
-                v={preview.final_refresh_pool.toLocaleString()}
-              />
-              <Row
-                k="Final state root"
-                v={trunc(preview.final_state_root_hex)}
-                mono
-              />
-              <Row
-                k="Eulogy trie root"
-                v={trunc(preview.eulogy_trie_root_hex)}
-                mono
-              />
-              <Row k="Witness" v={trunc(preview.witness_hex)} mono />
-            </dl>
-          )}
-          <p className="mt-2 italic opacity-80">{preview.note}</p>
-        </div>
+        <PreviewCard preview={preview} endpoint={endpoint} />
       )}
+    </div>
+  );
+}
+
+function PreviewCard({
+  preview,
+  endpoint,
+}: {
+  preview: MortisCertPreview;
+  endpoint: string;
+}) {
+  const [verifyResult, setVerifyResult] = useState<{
+    valid: boolean;
+    detail: string;
+  } | null>(null);
+  const [verifying, setVerifying] = useState(false);
+  const [tampered, setTampered] = useState(false);
+
+  async function verify(forceTamper: boolean) {
+    setVerifying(true);
+    setVerifyResult(null);
+    setTampered(forceTamper);
+    try {
+      const witness = forceTamper
+        ? "00".repeat(32) // deliberate bad witness to demonstrate rejection
+        : preview.witness_hex;
+      const res = await fetch(`${endpoint}/api/mortis_cert_verify`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          final_state_root_hex: preview.final_state_root_hex,
+          eulogy_trie_root_hex: preview.eulogy_trie_root_hex,
+          epoch_of_death: preview.epoch_of_death,
+          final_refresh_pool: preview.final_refresh_pool,
+          witness_hex: witness,
+        }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setVerifyResult({ valid: data.valid, detail: data.detail });
+    } catch (e) {
+      setVerifyResult({
+        valid: false,
+        detail: e instanceof Error ? e.message : "verify failed",
+      });
+    } finally {
+      setVerifying(false);
+    }
+  }
+
+  return (
+    <div
+      className={`mt-6 rounded-lg border p-4 text-xs ${
+        preview.status === "preview"
+          ? "border-neutral-200 bg-neutral-50"
+          : preview.status === "already-triggered"
+            ? "border-amber-200 bg-amber-50 text-amber-900"
+            : "border-red-200 bg-red-50 text-red-900"
+      }`}
+    >
+      <p className="mb-2 font-medium uppercase tracking-wider text-neutral-600">
+        Mortis cert · {preview.status}
+      </p>
+      {preview.status === "preview" && (
+        <>
+          <dl className="space-y-1.5 text-xs">
+            <Row k="Epoch of death" v={preview.epoch_of_death.toLocaleString()} />
+            <Row
+              k="Final refresh pool"
+              v={preview.final_refresh_pool.toLocaleString()}
+            />
+            <Row
+              k="Final state root"
+              v={trunc(preview.final_state_root_hex)}
+              mono
+            />
+            <Row
+              k="Eulogy trie root"
+              v={trunc(preview.eulogy_trie_root_hex)}
+              mono
+            />
+            <Row k="Witness" v={trunc(preview.witness_hex)} mono />
+          </dl>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              onClick={() => verify(false)}
+              disabled={verifying}
+              className="rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium text-neutral-900 hover:bg-neutral-50 disabled:opacity-50"
+            >
+              {verifying && !tampered ? "Verifying…" : "Verify witness"}
+            </button>
+            <button
+              onClick={() => verify(true)}
+              disabled={verifying}
+              className="rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium text-neutral-900 hover:bg-neutral-50 disabled:opacity-50"
+              title="Submit the cert with a deliberately-wrong witness — verifier should reject"
+            >
+              {verifying && tampered ? "Verifying…" : "Verify with tampered witness"}
+            </button>
+          </div>
+          {verifyResult && (
+            <p
+              className={`mt-2 text-xs ${
+                verifyResult.valid ? "text-emerald-700" : "text-red-700"
+              }`}
+            >
+              {verifyResult.valid ? "✓" : "✗"} {verifyResult.detail}
+            </p>
+          )}
+        </>
+      )}
+      <p className="mt-2 italic opacity-80">{preview.note}</p>
     </div>
   );
 }
