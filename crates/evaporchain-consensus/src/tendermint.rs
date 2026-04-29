@@ -441,6 +441,15 @@ pub struct TendermintConsensus {
     /// stake is the *effective* staking weight after continuous decay.
     /// Ticked per block: decay all → refresh proposer.
     pub boltzmann_stakes: HashMap<u64, evaporchain_boltzmann_stake::ValidatorStake>,
+    /// Sliding window of `BlockSummary` entries for WSBF RG flow.
+    /// Per INVENTION_STACK.md §A4.3.8 (Wilson-Singh Block Flow).
+    pub wsbf_window: std::collections::VecDeque<evaporchain_wsbf::params::BlockSummary>,
+    /// Latest `EffectiveParams` produced by one complete WSBF coarse-grain step.
+    /// None until the window accumulates `WSBF_COARSE_GRAIN` blocks.
+    pub last_effective_params: Option<evaporchain_wsbf::params::EffectiveParams>,
+    /// Current consensus phase from the RG Phase Map.
+    /// Per INVENTION_STACK.md §A4.3.11 (RG Consensus Phase Map).
+    pub current_consensus_phase: evaporchain_rg_phase_map::ConsensusPhase,
 }
 
 impl TendermintConsensus {
@@ -504,6 +513,9 @@ impl TendermintConsensus {
             last_block_timestamp: 0,
             fork_choice_attractors: Vec::new(),
             boltzmann_stakes: HashMap::new(),
+            wsbf_window: std::collections::VecDeque::new(),
+            last_effective_params: None,
+            current_consensus_phase: evaporchain_rg_phase_map::ConsensusPhase::LivenessStable,
         }
     }
 
@@ -1174,6 +1186,9 @@ impl TendermintConsensus {
             last_block_timestamp: 0,
             fork_choice_attractors: Vec::new(),
             boltzmann_stakes: HashMap::new(),
+            wsbf_window: std::collections::VecDeque::new(),
+            last_effective_params: None,
+            current_consensus_phase: evaporchain_rg_phase_map::ConsensusPhase::LivenessStable,
         }
     }
 
@@ -2337,6 +2352,33 @@ impl TendermintConsensus {
             evaporchain_lambda_fold::fold(self.lambda_fold, step, chain_lambda)
         {
             self.lambda_fold = folded;
+        }
+
+        // WSBF RG flow — coarse-grain per-block data into effective λ.
+        let active_accounts = self.validator_set.len() as u64;
+        if let Some(ep) = crate::wsbf_integration::on_committed_block(
+            &mut self.wsbf_window,
+            block.number,
+            block_j,
+            active_accounts,
+            block.epoch,
+            &crate::wsbf_integration::default_rg_params(),
+        ) {
+            let prev_phase = self.current_consensus_phase;
+            let n_validators = self.validator_set.len() as u64;
+            self.current_consensus_phase =
+                crate::rg_phase_integration::classify_from_effective_params(
+                    &ep,
+                    n_validators,
+                    0, // adversary fraction unknown without evidence; caller can update
+                    &evaporchain_rg_phase_map::PhaseMapParams::default(),
+                );
+            crate::rg_phase_integration::log_phase_transition(
+                prev_phase,
+                self.current_consensus_phase,
+                block.number,
+            );
+            self.last_effective_params = Some(ep);
         }
 
         self.epoch = block.epoch;

@@ -1,7 +1,11 @@
 pub mod anchor;
+pub mod annealing_integration;
 pub mod antichain_integration;
 pub mod bridge;
 pub mod causal_cone_integration;
+pub mod ib_integration;
+pub mod rg_phase_integration;
+pub mod wsbf_integration;
 pub mod da_attestation;
 pub mod encrypted_mempool;
 pub mod finality;
