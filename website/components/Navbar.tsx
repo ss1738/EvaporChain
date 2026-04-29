@@ -8,6 +8,7 @@ const TESTNET = "https://testnet.evaporchain.com";
 
 const productLinks = [
   { label: "Wallet", href: "/wallet" },
+  { label: "Faucet", href: "/faucet" },
   { label: "NFT Marketplace", href: "/nft" },
   { label: "Tokens", href: "/tokens" },
   { label: "Staking", href: "/staking" },
