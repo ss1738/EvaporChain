@@ -1647,10 +1647,20 @@ pub struct CrooksRefundResp {
 async fn post_crooks_refund(
     Json(q): Json<CrooksRefundQuery>,
 ) -> Json<CrooksRefundResp> {
-    let delta_f = match evaporchain_crooks_mev_refund::compute_delta_f_from_pmfs(
-        q.p_forward_ppm,
-        q.p_reverse_ppm,
+    let log_ratio = match evaporchain_cfm::crooks_log_ratio_millibits(q.p_forward_ppm, q.p_reverse_ppm) {
+        Ok(r) => r,
+        Err(e) => {
+            return Json(CrooksRefundResp {
+                status: "error",
+                delta_f_millibits: 0,
+                refund: 0,
+                detail: format!("crooks log-ratio: {e}"),
+            });
+        }
+    };
+    let delta_f = match evaporchain_crooks_mev_refund::compute_delta_f_millibits(
         q.work_extracted as i64,
+        log_ratio,
         q.beta_mb,
     ) {
         Ok(d) => d,
