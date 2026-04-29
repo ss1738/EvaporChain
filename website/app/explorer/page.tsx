@@ -79,17 +79,29 @@ function stateBg(state: string): string {
   }
 }
 
+const TX_PAGE_SIZE = 10;
+const OBJ_PAGE_SIZE = 10;
+
 export default function ExplorerDashboard() {
   const [status, setStatus] = useState<ChainStatus | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [objects, setObjects] = useState<ChainObject[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Filters
+  const [txTypeFilter, setTxTypeFilter] = useState<string>("all");
+  const [objStateFilter, setObjStateFilter] = useState<string>("all");
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // Pagination
+  const [txPage, setTxPage] = useState(1);
+  const [objPage, setObjPage] = useState(1);
+
   const fetchData = useCallback(async () => {
     try {
       const [statusRes, txRes, objRes] = await Promise.allSettled([
         fetch(`${API}/status`).then((r) => r.json()),
-        fetch(`${API}/transactions?limit=10`).then((r) => r.json()),
+        fetch(`${API}/transactions?limit=100`).then((r) => r.json()),
         fetch(`${API}/objects`).then((r) => r.json()),
       ]);
       if (statusRes.status === "fulfilled") setStatus(statusRes.value);
@@ -107,6 +119,32 @@ export default function ExplorerDashboard() {
     const interval = setInterval(fetchData, 8000);
     return () => clearInterval(interval);
   }, [fetchData]);
+
+  // Filtered + paginated data
+  const filteredTxs = transactions.filter((tx) => {
+    if (txTypeFilter !== "all" && tx.type !== txTypeFilter) return false;
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      return tx.hash.toLowerCase().includes(q) ||
+        tx.from.toLowerCase().includes(q) ||
+        tx.to.toLowerCase().includes(q);
+    }
+    return true;
+  });
+
+  const filteredObjs = objects.filter((obj) => {
+    if (objStateFilter !== "all" && obj.state !== objStateFilter) return false;
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      return obj.id.toLowerCase().includes(q) ||
+        obj.owner.toLowerCase().includes(q) ||
+        (obj.name && obj.name.toLowerCase().includes(q));
+    }
+    return true;
+  });
+
+  const paginatedTxs = filteredTxs.slice(0, txPage * TX_PAGE_SIZE);
+  const paginatedObjs = filteredObjs.slice(0, objPage * OBJ_PAGE_SIZE);
 
   const activeObjects = objects.filter((o) => o.state === "Active").length;
   const graceObjects = objects.filter((o) => o.state === "Grace").length;
@@ -161,6 +199,39 @@ export default function ExplorerDashboard() {
 
   return (
     <div className="space-y-8">
+      {/* Search + Filters */}
+      <div className="flex flex-col sm:flex-row gap-3">
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => { setSearchQuery(e.target.value); setTxPage(1); setObjPage(1); }}
+          placeholder="Search by hash, address, or object ID…"
+          className="flex-1 px-4 py-2.5 rounded-xl bg-bg-card border border-white/10 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-cyan/50 transition"
+        />
+        <select
+          value={txTypeFilter}
+          onChange={(e) => { setTxTypeFilter(e.target.value); setTxPage(1); }}
+          className="px-3 py-2.5 rounded-xl bg-bg-card border border-white/10 text-sm text-text-primary focus:outline-none focus:border-accent-cyan/50 transition"
+        >
+          <option value="all">All tx types</option>
+          <option value="transfer">Transfer</option>
+          <option value="create_object">Create Object</option>
+          <option value="refresh">Refresh</option>
+          <option value="call_contract">Contract Call</option>
+        </select>
+        <select
+          value={objStateFilter}
+          onChange={(e) => { setObjStateFilter(e.target.value); setObjPage(1); }}
+          className="px-3 py-2.5 rounded-xl bg-bg-card border border-white/10 text-sm text-text-primary focus:outline-none focus:border-accent-cyan/50 transition"
+        >
+          <option value="all">All object states</option>
+          <option value="Active">Active</option>
+          <option value="Grace">Grace Period</option>
+          <option value="Ghost">Ghost</option>
+          <option value="Risen">Risen</option>
+        </select>
+      </div>
+
       {/* Stats Grid */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {stats.map((stat, i) => (
@@ -199,13 +270,13 @@ export default function ExplorerDashboard() {
             </span>
           </div>
 
-          {transactions.length === 0 ? (
+          {filteredTxs.length === 0 ? (
             <div className="px-5 py-12 text-center">
-              <p className="text-sm text-text-muted">No transactions yet</p>
+              <p className="text-sm text-text-muted">No transactions found</p>
             </div>
           ) : (
             <div className="divide-y divide-white/5">
-              {transactions.slice(0, 8).map((tx) => (
+              {paginatedTxs.map((tx) => (
                 <Link
                   key={tx.hash}
                   href={`/explorer/tx/${tx.hash}`}
@@ -240,6 +311,14 @@ export default function ExplorerDashboard() {
               ))}
             </div>
           )}
+          {paginatedTxs.length < filteredTxs.length && (
+            <button
+              onClick={() => setTxPage((p) => p + 1)}
+              className="w-full py-3 text-xs text-text-muted hover:text-text-primary border-t border-white/5 transition"
+            >
+              Load more ({filteredTxs.length - paginatedTxs.length} remaining)
+            </button>
+          )}
         </motion.div>
 
         {/* Active Objects with Decay */}
@@ -260,13 +339,13 @@ export default function ExplorerDashboard() {
             </div>
           </div>
 
-          {objects.length === 0 ? (
+          {filteredObjs.length === 0 ? (
             <div className="px-5 py-12 text-center">
-              <p className="text-sm text-text-muted">No objects on chain</p>
+              <p className="text-sm text-text-muted">No objects found</p>
             </div>
           ) : (
             <div className="divide-y divide-white/5">
-              {objects.slice(0, 8).map((obj) => {
+              {paginatedObjs.map((obj) => {
                 const pct = obj.max_energy > 0
                   ? Math.round((obj.current_energy / obj.max_energy) * 100)
                   : 0;
@@ -326,6 +405,14 @@ export default function ExplorerDashboard() {
                 );
               })}
             </div>
+          )}
+          {paginatedObjs.length < filteredObjs.length && (
+            <button
+              onClick={() => setObjPage((p) => p + 1)}
+              className="w-full py-3 text-xs text-text-muted hover:text-text-primary border-t border-white/5 transition"
+            >
+              Load more ({filteredObjs.length - paginatedObjs.length} remaining)
+            </button>
           )}
         </motion.div>
       </div>

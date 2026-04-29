@@ -111,7 +111,7 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 - [ ] App Store / Play Store submission
 
 ### Website + Explorer (65% complete)
-- [ ] Advanced explorer: filters, pagination, real-time updates
+- [x] Advanced explorer: filters, pagination, real-time updates — DONE: search bar, tx type filter, object state filter, load-more pagination (10/page), 8s polling for real-time
 - [ ] Complete staking/DAO pages (currently placeholders)
 - [ ] Contract interaction playground
 - [ ] Transaction simulation
