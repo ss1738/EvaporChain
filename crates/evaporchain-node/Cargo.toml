@@ -51,6 +51,7 @@ evaporchain-eb-fs = { path = "../evaporchain-eb-fs" }
 evaporchain-cone-bridge = { path = "../evaporchain-cone-bridge" }
 evaporchain-eg-fss = { path = "../evaporchain-eg-fss" }
 evaporchain-mortis = { path = "../evaporchain-mortis" }
+evaporchain-lad-vm = { path = "../evaporchain-lad-vm" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

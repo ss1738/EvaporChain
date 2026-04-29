@@ -1130,6 +1130,221 @@ async fn get_mortis_cert_preview(
     }
 }
 
+// ─────────── LAD-VM (Linear-Affine-Decay) lifecycle simulation ─────
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LadModeReq {
+    Linear,
+    Affine,
+    Decaying,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LadActionReq {
+    /// Evaluate `use_resource(r, current_epoch)`.
+    Use,
+    /// Evaluate `drop_resource(r)`.
+    Drop,
+    /// Evaluate `tick_decay(r, current_epoch)`.
+    Tick,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LadSimQuery {
+    pub mode: LadModeReq,
+    /// Stand-in value as a u64 — substrate is generic but the API
+    /// pins to u64 for simplicity since the lifecycle outcome is
+    /// independent of T.
+    pub value: u64,
+    pub created_at_epoch: u64,
+    /// Required iff mode == Decaying. Window in epochs from creation.
+    pub decay_window: Option<u64>,
+    pub current_epoch: u64,
+    pub action: LadActionReq,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LadSimResp {
+    pub status: &'static str,
+    pub action: &'static str,
+    pub mode: &'static str,
+    /// Outcome of the action: "ok" / "evaporated" / "already-consumed"
+    /// / "linear-cannot-drop" / for Tick: "ticked-fresh" /
+    /// "ticked-evaporated" / "ticked-no-op".
+    pub outcome: &'static str,
+    pub returned_value: Option<u64>,
+    pub is_evaporated_at_query: bool,
+    pub created_at_epoch: u64,
+    pub current_epoch: u64,
+    pub decay_window: Option<u64>,
+    pub detail: String,
+}
+
+/// Simulate one LAD-VM resource-lifecycle step. Lets dApps and the
+/// dashboard probe the substructural type-system without needing the
+/// full `script-lad` compiler frontend. Per INVENTION_STACK.md §4.1
+/// row 12 ("Move resources × decay — use it or evaporate").
+async fn post_lad_vm_simulate(Json(q): Json<LadSimQuery>) -> Json<LadSimResp> {
+    let mode_str = match q.mode {
+        LadModeReq::Linear => "linear",
+        LadModeReq::Affine => "affine",
+        LadModeReq::Decaying => "decaying",
+    };
+    let action_str = match q.action {
+        LadActionReq::Use => "use",
+        LadActionReq::Drop => "drop",
+        LadActionReq::Tick => "tick",
+    };
+
+    // Validate decay_window present iff Decaying.
+    if matches!(q.mode, LadModeReq::Decaying) && q.decay_window.is_none() {
+        return Json(LadSimResp {
+            status: "error",
+            action: action_str,
+            mode: mode_str,
+            outcome: "missing-decay-window",
+            returned_value: None,
+            is_evaporated_at_query: false,
+            created_at_epoch: q.created_at_epoch,
+            current_epoch: q.current_epoch,
+            decay_window: None,
+            detail: "Decaying mode requires decay_window".into(),
+        });
+    }
+
+    let resource = match q.mode {
+        LadModeReq::Linear => evaporchain_lad_vm::Resource::linear(q.value, q.created_at_epoch),
+        LadModeReq::Affine => evaporchain_lad_vm::Resource::affine(q.value, q.created_at_epoch),
+        LadModeReq::Decaying => evaporchain_lad_vm::Resource::decaying(
+            q.value,
+            q.created_at_epoch,
+            q.decay_window.unwrap_or(0),
+        ),
+    };
+    let evap_at_query = resource.is_evaporated(q.current_epoch);
+
+    match q.action {
+        LadActionReq::Use => match evaporchain_lad_vm::use_resource(resource, q.current_epoch) {
+            Ok((value, _receipt)) => Json(LadSimResp {
+                status: "ok",
+                action: action_str,
+                mode: mode_str,
+                outcome: "ok",
+                returned_value: Some(value),
+                is_evaporated_at_query: evap_at_query,
+                created_at_epoch: q.created_at_epoch,
+                current_epoch: q.current_epoch,
+                decay_window: q.decay_window,
+                detail: "resource consumed; value returned".into(),
+            }),
+            Err(evaporchain_lad_vm::OpError::AlreadyConsumed) => Json(LadSimResp {
+                status: "error",
+                action: action_str,
+                mode: mode_str,
+                outcome: "already-consumed",
+                returned_value: None,
+                is_evaporated_at_query: evap_at_query,
+                created_at_epoch: q.created_at_epoch,
+                current_epoch: q.current_epoch,
+                decay_window: q.decay_window,
+                detail: "use rejected: resource already consumed".into(),
+            }),
+            Err(evaporchain_lad_vm::OpError::Evaporated) => Json(LadSimResp {
+                status: "error",
+                action: action_str,
+                mode: mode_str,
+                outcome: "evaporated",
+                returned_value: None,
+                is_evaporated_at_query: evap_at_query,
+                created_at_epoch: q.created_at_epoch,
+                current_epoch: q.current_epoch,
+                decay_window: q.decay_window,
+                detail: "use rejected: resource has aged past its decay window".into(),
+            }),
+            Err(e) => Json(LadSimResp {
+                status: "error",
+                action: action_str,
+                mode: mode_str,
+                outcome: "error",
+                returned_value: None,
+                is_evaporated_at_query: evap_at_query,
+                created_at_epoch: q.created_at_epoch,
+                current_epoch: q.current_epoch,
+                decay_window: q.decay_window,
+                detail: format!("{e}"),
+            }),
+        },
+        LadActionReq::Drop => match evaporchain_lad_vm::drop_resource(resource) {
+            Ok(()) => Json(LadSimResp {
+                status: "ok",
+                action: action_str,
+                mode: mode_str,
+                outcome: "ok",
+                returned_value: None,
+                is_evaporated_at_query: evap_at_query,
+                created_at_epoch: q.created_at_epoch,
+                current_epoch: q.current_epoch,
+                decay_window: q.decay_window,
+                detail: "resource dropped without consuming value".into(),
+            }),
+            Err(evaporchain_lad_vm::OpError::LinearCannotDrop) => Json(LadSimResp {
+                status: "error",
+                action: action_str,
+                mode: mode_str,
+                outcome: "linear-cannot-drop",
+                returned_value: None,
+                is_evaporated_at_query: evap_at_query,
+                created_at_epoch: q.created_at_epoch,
+                current_epoch: q.current_epoch,
+                decay_window: q.decay_window,
+                detail: "Linear resources must be consumed exactly once — drop rejected".into(),
+            }),
+            Err(e) => Json(LadSimResp {
+                status: "error",
+                action: action_str,
+                mode: mode_str,
+                outcome: "error",
+                returned_value: None,
+                is_evaporated_at_query: evap_at_query,
+                created_at_epoch: q.created_at_epoch,
+                current_epoch: q.current_epoch,
+                decay_window: q.decay_window,
+                detail: format!("{e}"),
+            }),
+        },
+        LadActionReq::Tick => {
+            let after = evaporchain_lad_vm::tick_decay(resource, q.current_epoch);
+            let outcome = if after.consumed && evap_at_query {
+                "ticked-evaporated"
+            } else if after.consumed {
+                "ticked-no-op"
+            } else {
+                "ticked-fresh"
+            };
+            Json(LadSimResp {
+                status: "ok",
+                action: action_str,
+                mode: mode_str,
+                outcome,
+                returned_value: None,
+                is_evaporated_at_query: evap_at_query,
+                created_at_epoch: q.created_at_epoch,
+                current_epoch: q.current_epoch,
+                decay_window: q.decay_window,
+                detail: if outcome == "ticked-evaporated" {
+                    "decay tick marked the resource consumed (evaporated past window)".into()
+                } else if outcome == "ticked-no-op" {
+                    "decay tick was a no-op (already consumed)".into()
+                } else {
+                    "decay tick: resource still within window, untouched".into()
+                },
+            })
+        }
+    }
+}
+
 // ─────────── Mortis cert verification (tamper-evidence) ────────────
 
 #[derive(Debug, Deserialize)]
@@ -3237,6 +3452,7 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     ApiDocEntry { method: "POST", path: "/api/singh_attractor_fork_choice", category: "substrate", description: "Singh-Attractor basin-based fork choice over candidate heads", example: Some(r#"{"candidates":"0xaa…,0xbb…","attractors":[{"center":50,"basin_radius":10}]}"#) },
     ApiDocEntry { method: "POST", path: "/api/cone_bridge",           category: "substrate", description: "Cone-Merged Bridge validity — both chains' decay cones must contain the query epoch", example: Some(r#"{"cone_a":{"half_life_epochs":100,"threshold":500,"committed_energy":1000,"observed_epoch":0},"cone_b":{...},"query_epoch":50}"#) },
     ApiDocEntry { method: "POST", path: "/api/eg_fss/sign_verify",    category: "substrate", description: "EG-FSS round-trip — evolve key by energy, sign, verify", example: Some(r#"{"seed_hex":"00…","energy_spent":1000,"threshold_per_period":100,"message_hex":"deadbeef"}"#) },
+    ApiDocEntry { method: "POST", path: "/api/lad_vm/simulate",       category: "substrate", description: "LAD-VM substructural-resource lifecycle simulator — Linear/Affine/Decaying × use/drop/tick. Substrate for the future script-lad compiler frontend.", example: Some(r#"{"mode":"decaying","value":42,"created_at_epoch":0,"decay_window":10,"current_epoch":15,"action":"use"}"#) },
 
     // HBCT launch wedge
     ApiDocEntry { method: "GET",  path: "/api/hbct/state",            category: "hbct", description: "HBCT book summary (entry count, total MWh, top positions)", example: None },
@@ -7016,6 +7232,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/identity", get(get_identity))
         .route("/api/mortis_cert_preview", get(get_mortis_cert_preview))
         .route("/api/mortis_cert_verify", post(post_mortis_verify))
+        .route("/api/lad_vm/simulate", post(post_lad_vm_simulate))
         .route("/api/demo/reset", post(post_demo_reset))
         .route("/api/docs", get(get_api_docs))
         .route("/api/objects", get(get_objects))
