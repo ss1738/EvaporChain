@@ -2700,6 +2700,10 @@ async fn main() -> Result<()> {
             fee_state: Arc::new(Mutex::new(
                 evaporchain_fee_controller::FeeState::at_equilibrium(1_000_000),
             )),
+            pnt: Arc::new(Mutex::new(
+                evaporchain_pnt::PhasedNullifierTree::new(16)
+                    .expect("window_depth=16 is valid"),
+            )),
         });
         // Keep one Arc<ApiState> for the block-applying loop so it can
         // call update_four_act_snapshot after each commit.

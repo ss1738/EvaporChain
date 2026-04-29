@@ -144,6 +144,10 @@ pub struct ApiState {
     /// Lyapunov-stable fee controller state. Single EIP-1559-style integrator
     /// with λ-decay leak. Tracks cumulative block gas pressure.
     pub fee_state: Arc<Mutex<evaporchain_fee_controller::FeeState>>,
+    /// Phased Nullifier Tree — sliding-window double-spend guard. Window
+    /// depth = 16 phases; each phase advances on explicit API call or
+    /// per-epoch consensus hook.
+    pub pnt: Arc<Mutex<evaporchain_pnt::PhasedNullifierTree>>,
 }
 
 /// Public-facing snapshot of the four-act narrative spine state for
@@ -4191,6 +4195,113 @@ async fn post_demo_reset(State(state): State<Arc<ApiState>>) -> Json<DemoResetRe
     })
 }
 
+// ─────────────── HLTS — Hashgraph-Like Threshold Shares ─────────────
+
+#[derive(Debug, Deserialize)]
+pub struct HltsQuorumReq {
+    pub shares: Vec<HltsShareDto>,
+    /// Minimum alive shares required for quorum.
+    pub k: usize,
+    /// Energy threshold below which a share is considered dead.
+    pub threshold: u64,
+    /// λ half-life in epochs.
+    pub lambda_epochs: u64,
+    /// Epoch at which to evaluate share liveness.
+    pub query_epoch: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct HltsShareDto {
+    pub idx: u32,
+    pub energy: u64,
+    pub observed_epoch: u64,
+}
+
+async fn post_hlts_quorum_check(Json(req): Json<HltsQuorumReq>) -> Json<serde_json::Value> {
+    use evaporchain_energy_kernel::{ChainLambda, Lambda};
+    use evaporchain_hlts::{count_alive, quorum_alive, Share};
+    let shares: Vec<Share> = req.shares.iter().map(|s| Share::new(s.idx, s.energy, s.observed_epoch)).collect();
+    let chain_lambda = ChainLambda::new(Lambda::from_epochs(req.lambda_epochs.max(1)));
+    let alive = count_alive(&shares, chain_lambda, req.query_epoch, req.threshold);
+    let meets = quorum_alive(&shares, req.k, chain_lambda, req.query_epoch, req.threshold);
+    Json(serde_json::json!({
+        "status": "ok",
+        "total_shares": shares.len(),
+        "alive_count": alive,
+        "k": req.k,
+        "meets_quorum": meets,
+        "query_epoch": req.query_epoch,
+        "threshold": req.threshold,
+    }))
+}
+
+// ─────────────── PNT — Phased Nullifier Tree ─────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct PntInsertReq {
+    /// 32-byte nullifier as 64 hex chars.
+    pub nullifier_hex: String,
+}
+
+async fn post_pnt_insert(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<PntInsertReq>,
+) -> Json<serde_json::Value> {
+    let n = match hex::decode(&req.nullifier_hex) {
+        Ok(b) if b.len() == 32 => { let mut a = [0u8; 32]; a.copy_from_slice(&b); a }
+        _ => return Json(serde_json::json!({"status":"error","detail":"nullifier_hex must be 64 hex chars"})),
+    };
+    let mut pnt = safe_lock(&state.pnt);
+    match pnt.insert_nullifier(n) {
+        Ok(()) => Json(serde_json::json!({
+            "status": "ok",
+            "current_phase": pnt.current_phase,
+            "nullifier_hex": req.nullifier_hex,
+        })),
+        Err(e) => Json(serde_json::json!({"status":"error","detail":e.to_string()})),
+    }
+}
+
+async fn post_pnt_advance_phase(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
+    let mut pnt = safe_lock(&state.pnt);
+    pnt.advance_phase();
+    Json(serde_json::json!({
+        "status": "ok",
+        "current_phase": pnt.current_phase,
+        "window_depth": pnt.window_depth,
+    }))
+}
+
+async fn get_pnt_status(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
+    let pnt = safe_lock(&state.pnt);
+    let total_nullifiers: usize = pnt.window.iter().map(|s| s.len()).sum();
+    Json(serde_json::json!({
+        "status": "ok",
+        "current_phase": pnt.current_phase,
+        "window_depth": pnt.window_depth,
+        "live_phases": pnt.window.len(),
+        "total_nullifiers_in_window": total_nullifiers,
+    }))
+}
+
+async fn get_pnt_is_spent(
+    State(state): State<Arc<ApiState>>,
+    Path(hex_str): Path<String>,
+) -> Json<serde_json::Value> {
+    let n = match hex::decode(&hex_str) {
+        Ok(b) if b.len() == 32 => { let mut a = [0u8; 32]; a.copy_from_slice(&b); a }
+        _ => return Json(serde_json::json!({"status":"error","detail":"path must be 64 hex chars (32 bytes)"})),
+    };
+    let pnt = safe_lock(&state.pnt);
+    let spent = pnt.is_spent_in_window(&n);
+    Json(serde_json::json!({
+        "status": "ok",
+        "nullifier_hex": hex_str,
+        "is_spent": spent,
+        "current_phase": pnt.current_phase,
+    }))
+}
+
 // ─────────────── Entropic Slashing ──────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -4984,6 +5095,15 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     // Governance
     ApiDocEntry { method: "GET",  path: "/api/governance/fork_choice_mode", category: "governance", description: "Current authoritative fork-choice mode (mcc|singh_attractor) + attractor set.", example: None },
     ApiDocEntry { method: "POST", path: "/api/governance/fork_choice_mode", category: "governance", description: "Governance amendment to switch fork-choice between MCC and Singh-Attractor. Requires stake quorum from endorser_stakes.", example: Some(r#"{"mode":"singh_attractor","attractors":[{"center":1000,"basin_radius":200}],"endorser_stakes":[1000,800],"required_stake":1500}"#) },
+
+    // HLTS — Hashgraph-Like Threshold Shares
+    ApiDocEntry { method: "POST", path: "/api/hlts/quorum_check",           category: "substrate", description: "Check k-of-n quorum liveness for Shamir-style threshold shares. Each share λ-decays; quorum is met iff at least k shares remain above energy threshold.", example: Some(r#"{"shares":[{"idx":1,"energy":1000,"observed_epoch":0},{"idx":2,"energy":800,"observed_epoch":0}],"k":2,"threshold":100,"lambda_epochs":4096,"query_epoch":100}"#) },
+
+    // PNT — Phased Nullifier Tree (sliding-window double-spend guard)
+    ApiDocEntry { method: "POST", path: "/api/pnt/insert",                  category: "substrate", description: "Insert a 32-byte nullifier into the current PNT phase. Rejects double-spends visible within the live window.", example: Some(r#"{"nullifier_hex":"0000000000000000000000000000000000000000000000000000000000000001"}"#) },
+    ApiDocEntry { method: "POST", path: "/api/pnt/advance_phase",           category: "substrate", description: "Open a fresh PNT phase, dropping the oldest if window is full.", example: None },
+    ApiDocEntry { method: "GET",  path: "/api/pnt/status",                  category: "substrate", description: "PNT current phase, live window depth, and total nullifier count across all phases.", example: None },
+    ApiDocEntry { method: "GET",  path: "/api/pnt/is_spent/:nullifier_hex", category: "substrate", description: "Check if a nullifier (64 hex chars) is recorded in any live PNT phase.", example: None },
 
     // Entropic Slashing — Shannon-weighted slash
     ApiDocEntry { method: "POST", path: "/api/entropic_slash",              category: "substrate", description: "Compute Shannon-entropy-weighted slash magnitude from observed misbehaviour counts. Higher-entropy (noisier cartel) patterns → larger slash.", example: Some(r#"{"stake":1000000,"observed_counts":[90,10]}"#) },
@@ -8803,6 +8923,11 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/braid/commit", post(post_braid_commit))
         .route("/api/decay_forget/prove", post(post_decay_forget_prove))
         .route("/api/decay_forget/verify", post(post_decay_forget_verify))
+        .route("/api/hlts/quorum_check", post(post_hlts_quorum_check))
+        .route("/api/pnt/insert", post(post_pnt_insert))
+        .route("/api/pnt/advance_phase", post(post_pnt_advance_phase))
+        .route("/api/pnt/status", get(get_pnt_status))
+        .route("/api/pnt/is_spent/:nullifier_hex", get(get_pnt_is_spent))
         .route("/api/entropic_slash", post(post_entropic_slash))
         .route("/api/fee_controller/step", post(post_fee_controller_step))
         .route("/api/fee_controller/status", get(get_fee_controller_status))

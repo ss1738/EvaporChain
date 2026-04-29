@@ -72,6 +72,8 @@ evaporchain-dsn = { path = "../evaporchain-dsn" }
 evaporchain-entropic-slashing = { path = "../evaporchain-entropic-slashing" }
 evaporchain-fee-controller = { path = "../evaporchain-fee-controller" }
 evaporchain-evap-fork-cert = { path = "../evaporchain-evap-fork-cert" }
+evaporchain-hlts = { path = "../evaporchain-hlts" }
+evaporchain-pnt = { path = "../evaporchain-pnt" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
