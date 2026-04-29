@@ -44,6 +44,7 @@ members = [
     "crates/evaporchain-eg-fss",
     "crates/evaporchain-entropic-slashing",
     "crates/evaporchain-tombstone",
+    "crates/evaporchain-mortis",
     "crates/evaporchain-crypto",
     "crates/evaporchain-state",
     "crates/evaporchain-consensus",

@@ -1,0 +1,18 @@
+[package]
+name = "evaporchain-mortis"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Mortis — auto-minted death certificate when the refresh pool falls below ε for N epochs. The 'final death' act of EvaporChain's four-act narrative spine. Per INVENTION_STACK.md Amendment 2 §A2.5."
+
+[dependencies]
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
+evaporchain-tombstone = { path = "../evaporchain-tombstone" }
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+blake3 = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
