@@ -114,6 +114,14 @@ pub struct ApiState {
     /// by `SimpleExecutor`. Until then, fields are at their default
     /// (zeroed / not-triggered).
     pub four_act_snapshot: Arc<Mutex<FourActSnapshot>>,
+    /// HBCT (Hour-Block Capacity Tokens) ledger. Per
+    /// INVENTION_STACK.md §A3.4 the launch wedge: capacity in hour
+    /// H decays to 0 at H+1. Off-chain testnet ledger backed by the
+    /// `evaporchain-hbct` crate; production wires real GB Elexon
+    /// BMRS / ENTSO-E adapters via `evaporchain_hbct::OracleFeed`.
+    pub hbct_book: Arc<Mutex<evaporchain_hbct::HbctBook>>,
+    /// Mock oracle feed for HBCT settlement attestations.
+    pub hbct_oracle: Arc<Mutex<evaporchain_hbct::oracle::MockOracleFeed>>,
 }
 
 /// Public-facing snapshot of the four-act narrative spine state for
@@ -1046,6 +1054,192 @@ async fn get_status(State(state): State<Arc<ApiState>>) -> Json<StatusResponse> 
 async fn get_four_act_status(State(state): State<Arc<ApiState>>) -> Json<FourActSnapshot> {
     let snap = safe_lock(&state.four_act_snapshot);
     Json(snap.clone())
+}
+
+// ───────────────────────── HBCT endpoints ─────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct HbctMintReq {
+    pub delivery_location: String,
+    pub hour_slot: u64,
+    pub mwh_amount: u64,
+    pub holder_hex: String,
+    pub issued_at_epoch: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HbctTransferReq {
+    pub delivery_location: String,
+    pub hour_slot: u64,
+    pub from_hex: String,
+    pub to_hex: String,
+    pub amount: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HbctBurnReq {
+    pub delivery_location: String,
+    pub hour_slot: u64,
+    pub holder_hex: String,
+    pub amount: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HbctBalanceQuery {
+    pub delivery_location: String,
+    pub hour_slot: u64,
+    pub holder_hex: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HbctBalanceResp {
+    pub mwh: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HbctStateResp {
+    pub entry_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HbctActionResp {
+    pub status: &'static str,
+    pub detail: String,
+}
+
+fn parse_hex32(s: &str) -> Result<[u8; 32], String> {
+    let bytes = hex::decode(s.trim_start_matches("0x")).map_err(|e| e.to_string())?;
+    if bytes.len() != 32 {
+        return Err(format!("expected 32 bytes, got {}", bytes.len()));
+    }
+    let mut a = [0u8; 32];
+    a.copy_from_slice(&bytes);
+    Ok(a)
+}
+
+async fn post_hbct_mint(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<HbctMintReq>,
+) -> Json<HbctActionResp> {
+    let holder = match parse_hex32(&req.holder_hex) {
+        Ok(a) => a,
+        Err(e) => {
+            return Json(HbctActionResp {
+                status: "error",
+                detail: format!("bad holder: {e}"),
+            });
+        }
+    };
+    let token = match evaporchain_hbct::HbctToken::new(
+        req.delivery_location.into_bytes(),
+        req.hour_slot,
+        req.mwh_amount,
+        holder,
+        req.issued_at_epoch,
+    ) {
+        Ok(t) => t,
+        Err(e) => {
+            return Json(HbctActionResp {
+                status: "error",
+                detail: format!("bad token: {e}"),
+            });
+        }
+    };
+    let mut book = safe_lock(&state.hbct_book);
+    match book.mint(token) {
+        Ok(()) => Json(HbctActionResp {
+            status: "ok",
+            detail: "minted".into(),
+        }),
+        Err(e) => Json(HbctActionResp {
+            status: "error",
+            detail: format!("{e}"),
+        }),
+    }
+}
+
+async fn post_hbct_transfer(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<HbctTransferReq>,
+) -> Json<HbctActionResp> {
+    let from = match parse_hex32(&req.from_hex) {
+        Ok(a) => a,
+        Err(e) => return Json(HbctActionResp { status: "error", detail: format!("bad from: {e}") }),
+    };
+    let to = match parse_hex32(&req.to_hex) {
+        Ok(a) => a,
+        Err(e) => return Json(HbctActionResp { status: "error", detail: format!("bad to: {e}") }),
+    };
+    let mut book = safe_lock(&state.hbct_book);
+    match book.transfer(
+        &req.delivery_location.into_bytes(),
+        req.hour_slot,
+        from,
+        to,
+        req.amount,
+    ) {
+        Ok(()) => Json(HbctActionResp { status: "ok", detail: "transferred".into() }),
+        Err(e) => Json(HbctActionResp { status: "error", detail: format!("{e}") }),
+    }
+}
+
+async fn post_hbct_burn(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<HbctBurnReq>,
+) -> Json<HbctActionResp> {
+    let holder = match parse_hex32(&req.holder_hex) {
+        Ok(a) => a,
+        Err(e) => return Json(HbctActionResp { status: "error", detail: format!("bad holder: {e}") }),
+    };
+    let mut book = safe_lock(&state.hbct_book);
+    match book.burn(&req.delivery_location.into_bytes(), req.hour_slot, holder, req.amount) {
+        Ok(()) => Json(HbctActionResp { status: "ok", detail: "burnt".into() }),
+        Err(e) => Json(HbctActionResp { status: "error", detail: format!("{e}") }),
+    }
+}
+
+async fn post_hbct_balance(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<HbctBalanceQuery>,
+) -> Json<HbctBalanceResp> {
+    let holder = match parse_hex32(&req.holder_hex) {
+        Ok(a) => a,
+        Err(_) => return Json(HbctBalanceResp { mwh: 0 }),
+    };
+    let book = safe_lock(&state.hbct_book);
+    Json(HbctBalanceResp {
+        mwh: book.balance(&req.delivery_location.into_bytes(), req.hour_slot, holder),
+    })
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HbctTickReq {
+    pub current_epoch: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HbctTickResp {
+    pub entries_removed: usize,
+    pub mwh_burnt: u64,
+}
+
+async fn post_hbct_tick(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<HbctTickReq>,
+) -> Json<HbctTickResp> {
+    let mut book = safe_lock(&state.hbct_book);
+    let outcome = evaporchain_hbct::auto_burn_at_slot_close(&mut book, req.current_epoch);
+    Json(HbctTickResp {
+        entries_removed: outcome.entries_removed,
+        mwh_burnt: outcome.mwh_burnt,
+    })
+}
+
+async fn get_hbct_state(State(state): State<Arc<ApiState>>) -> Json<HbctStateResp> {
+    let book = safe_lock(&state.hbct_book);
+    Json(HbctStateResp {
+        entry_count: book.len(),
+    })
 }
 
 async fn get_objects(State(state): State<Arc<ApiState>>) -> Json<Vec<ObjectResponse>> {
@@ -4645,6 +4839,12 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         // Explorer
         .route("/api/status", get(get_status))
         .route("/api/four_act", get(get_four_act_status))
+        .route("/api/hbct/state", get(get_hbct_state))
+        .route("/api/hbct/mint", post(post_hbct_mint))
+        .route("/api/hbct/transfer", post(post_hbct_transfer))
+        .route("/api/hbct/burn", post(post_hbct_burn))
+        .route("/api/hbct/balance", post(post_hbct_balance))
+        .route("/api/hbct/tick", post(post_hbct_tick))
         .route("/api/objects", get(get_objects))
         .route("/api/object/:id", get(get_single_object))
         .route("/api/accounts", get(get_accounts))

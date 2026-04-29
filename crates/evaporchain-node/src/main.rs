@@ -2571,6 +2571,8 @@ async fn main() -> Result<()> {
             light_client: Arc::clone(&light_client),
             chain_id: args.chain_id.clone(),
             four_act_snapshot: Arc::new(Mutex::new(api::FourActSnapshot::default())),
+            hbct_book: Arc::new(Mutex::new(evaporchain_hbct::HbctBook::new())),
+            hbct_oracle: Arc::new(Mutex::new(evaporchain_hbct::oracle::MockOracleFeed::default())),
         });
         // Keep one Arc<ApiState> for the block-applying loop so it can
         // call update_four_act_snapshot after each commit.
