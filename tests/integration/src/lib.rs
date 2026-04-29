@@ -1138,3 +1138,160 @@ mod substrate_integration {
         assert_eq!(acc.total(), before_total, "accumulator must be unchanged on rejection");
     }
 }
+
+// ── Cross-crate flows: LLSA → EPV, Tombstone chain, Energy-conservation pipeline ───
+
+#[cfg(test)]
+mod cross_crate_integration {
+    use evaporchain_llsa::{
+        Amendment, apply_amendment,
+        proof::{AlwaysAcceptVerifier, LlsaProof},
+    };
+    use evaporchain_epv::{EpvRegistry, ProtocolVersion, prune_evaporated};
+    use evaporchain_tombstone::{mint, EulogyTrie, CauseOfDeath};
+    use evaporchain_energy_kernel::{
+        compartment::EnergyAccumulator, conservation::ConservationCheck,
+        redirect::{EnergyRedirect, RedirectKind}, ChainLambda, Lambda,
+    };
+    use evaporchain_demurrage::{demurrage_owed, DemurrageParams};
+
+    // ── LLSA → EPV cross-crate amendment flow ──────────────────────────
+
+    fn make_amendment(from: u64, to: u64) -> Amendment {
+        let descriptor = format!("step-impl-v{to}").into_bytes();
+        let mut proof = LlsaProof {
+            coq_term_hash: [0u8; 32],
+            target_invariant_id: [0u8; 32],
+            bound_amendment_hash: [0u8; 32],
+            proof_bytes: vec![],
+        };
+        let amendment = Amendment { from_version: from, to_version: to, step_new_descriptor: descriptor, proof: proof.clone() };
+        proof.bound_amendment_hash = amendment.hash();
+        Amendment { from_version: from, to_version: to, step_new_descriptor: format!("step-impl-v{to}").into_bytes(), proof }
+    }
+
+    #[test]
+    fn llsa_amendment_registers_in_epv() {
+        let mut reg = EpvRegistry::new();
+        reg.register(ProtocolVersion::new(1, 1_000_000, 0)).unwrap();
+
+        let amendment = make_amendment(1, 2);
+        apply_amendment(&mut reg, &amendment, [0u8; 32], 500_000, 100, &AlwaysAcceptVerifier)
+            .expect("amendment should be accepted by AlwaysAcceptVerifier");
+
+        assert!(reg.contains(2), "version 2 must be registered after amendment");
+        assert_eq!(reg.live_versions().len(), 2);
+    }
+
+    #[test]
+    fn llsa_amendment_chain_v1_v2_v3() {
+        let mut reg = EpvRegistry::new();
+        reg.register(ProtocolVersion::new(1, 1_000_000, 0)).unwrap();
+
+        for (from, to) in [(1u64, 2u64), (2, 3)] {
+            let a = make_amendment(from, to);
+            apply_amendment(&mut reg, &a, [0u8; 32], 500_000, 0, &AlwaysAcceptVerifier).unwrap();
+        }
+        assert_eq!(reg.live_versions().len(), 3);
+    }
+
+    #[test]
+    fn llsa_amendment_collision_rejected() {
+        let mut reg = EpvRegistry::new();
+        reg.register(ProtocolVersion::new(1, 1_000_000, 0)).unwrap();
+        reg.register(ProtocolVersion::new(2, 1_000_000, 0)).unwrap();
+
+        let a = make_amendment(1, 2); // version 2 already exists
+        let result = apply_amendment(&mut reg, &a, [0u8; 32], 500_000, 0, &AlwaysAcceptVerifier);
+        assert!(result.is_err(), "upgrading to an existing version must fail");
+    }
+
+    #[test]
+    fn llsa_amendment_from_absent_rejected() {
+        let mut reg = EpvRegistry::new();
+        reg.register(ProtocolVersion::new(1, 1_000_000, 0)).unwrap();
+
+        let a = make_amendment(99, 100); // version 99 doesn't exist
+        let result = apply_amendment(&mut reg, &a, [0u8; 32], 500_000, 0, &AlwaysAcceptVerifier);
+        assert!(result.is_err(), "from_version absent must fail");
+    }
+
+    #[test]
+    fn epv_prune_after_amendment_removes_zero_energy() {
+        let mut reg = EpvRegistry::new();
+        reg.register(ProtocolVersion::new(1, 1_000_000, 0)).unwrap();
+
+        let a = make_amendment(1, 2);
+        apply_amendment(&mut reg, &a, [0u8; 32], 0, 0, &AlwaysAcceptVerifier).unwrap(); // seed=0 → already evaporated
+
+        let outcome = prune_evaporated(&mut reg, 1);
+        assert_eq!(outcome.pruned.len(), 1);
+        assert_eq!(outcome.pruned[0], 2);
+    }
+
+    // ── Tombstone evaporation chain ─────────────────────────────────────
+
+    #[test]
+    fn tombstone_evaporation_chain_multiple_accounts() {
+        let addrs: Vec<[u8; 32]> = (0u8..5).map(|i| [i; 32]).collect();
+        let mut trie = EulogyTrie::new();
+
+        for (epoch, addr) in addrs.iter().enumerate() {
+            let t = mint(*addr, 100 * epoch as u64, epoch as u64, CauseOfDeath::Evaporated);
+            trie.insert(*addr, t).unwrap();
+        }
+
+        let root = trie.root();
+        assert_ne!(root, [0u8; 32], "non-empty EulogyTrie root must be non-zero");
+
+        // Rebuild in reverse — root must be the same (order-independence)
+        let mut trie2 = EulogyTrie::new();
+        for (epoch, addr) in addrs.iter().enumerate().rev() {
+            let t = mint(*addr, 100 * epoch as u64, epoch as u64, CauseOfDeath::Evaporated);
+            trie2.insert(*addr, t).unwrap();
+        }
+        assert_eq!(root, trie2.root(), "insertion order must not affect EulogyTrie root");
+    }
+
+    // ── Demurrage → energy-kernel conservation pipeline ─────────────────
+
+    #[test]
+    fn demurrage_redirect_satisfies_conservation() {
+        // Simulate: an idle account accrues demurrage; that demurrage is
+        // redirected into the RefreshPool; the conservation check passes.
+        let params = DemurrageParams::new(1, 1024);
+        let balance: u64 = 50_000;
+        let owed = demurrage_owed(balance, 0, 100, &params);
+        assert!(owed > 0, "demurrage must accrue on this balance");
+
+        let before = EnergyAccumulator::new(balance, 0, 0, 0);
+        let mut after = before;
+        EnergyRedirect::new(RedirectKind::Demurrage, owed)
+            .apply(&mut after)
+            .expect("demurrage redirect must succeed");
+
+        ConservationCheck::redirect(&before, &after)
+            .expect("demurrage redirect must preserve total energy");
+        assert_eq!(before.total(), after.total(), "conservation: total unchanged");
+    }
+
+    #[test]
+    fn conservation_pipeline_redirect_then_decay() {
+        // Full block pipeline: redirect (MEV burn) then λ-decay.
+        // The composite block_step check must pass.
+        let before = EnergyAccumulator::new(2_000_000, 1_000_000, 0, 0);
+        let mut mid = before;
+        EnergyRedirect::new(RedirectKind::MevBurn, 10_000)
+            .apply(&mut mid)
+            .unwrap();
+
+        // Simulate one half-life of decay (rough: each compartment halves)
+        let after = EnergyAccumulator::new(
+            mid.total() / 2, 0, 0, 0, // all energy in Accounts for simplicity
+        );
+        let lambda = ChainLambda::new(Lambda::from_epochs(1));
+        // 1 epoch elapsed, half-life=1 → retained_min = before.total()/2
+        ConservationCheck::block_step(&before, &after, 1, lambda)
+            .expect("redirect+decay within λ must pass conservation check");
+    }
+}
