@@ -11,8 +11,9 @@
     crates/evaporchain-energy-kernel/src/ (compartment.rs, conservation.rs,
     redirect.rs, lambda.rs), and proof obligations.
 
-    Proof obligations marked [admit] are not yet discharged. Each [admit]
-    is annotated with the sub-goal required for full mechanisation.
+    All proof obligations discharged 2026-04-29. Zero [Admitted] remaining.
+    Helper lemmas [zero_div_any] and [energy_at_epoch_zero_elapsed] close
+    both base-case goals in §6.
 
     Companion files:
         research/coq/EnergyDecayMonotonicity.v   -- base decay lemma (done)
@@ -115,6 +116,32 @@ Definition BlockProduceStep (s s' : ChainState) (p : InvParams) : Prop :=
   DecayStep s s' p.
 
 (* ================================================================
+   5b. Helper Lemmas
+   ================================================================ *)
+
+(** 0 / n = 0 for all n (including n = 0, where Nat.div_0_l requires n > 0). *)
+Lemma zero_div_any : forall (n : nat), 0 / n = 0.
+Proof.
+  intro n. destruct n as [|n'].
+  - (* n = 0: 0 / 0 = 0 by Nat.divmod definition *)
+    reflexivity.
+  - (* n = S n' > 0: use Nat.div_0_l *)
+    apply Nat.div_0_l. omega.
+Qed.
+
+(** energy_at_epoch(e, hl, 0) = e — elapsed = 0 means no decay has occurred. *)
+Lemma energy_at_epoch_zero_elapsed :
+  forall (e : Energy) (hl : HalfLife),
+    energy_at_epoch e hl 0 = e.
+Proof.
+  intros e hl.
+  unfold energy_at_epoch.
+  rewrite zero_div_any.  (* 0 / hl = 0 *)
+  simpl pow2.            (* pow2 0 = 1 *)
+  apply Nat.div_1_r.     (* e / 1 = e *)
+Qed.
+
+(* ================================================================
    6. LLSA Gate: forall s, Inv(s, p) -> Inv(step_new(s), p')
    ================================================================ *)
 
@@ -140,9 +167,7 @@ Proof.
   - omega.
   split.
   - omega.
-  - unfold energy_at_epoch.
-    simpl.
-    admit. (* [ADMIT-1]: energy_at_epoch(e, hl, 0) = e; needs Nat.div_0_l + Nat.div_1_r *)
+  - rewrite energy_at_epoch_zero_elapsed. apply Nat.le_refl.
 Qed.
 
 Lemma decay_preserves_inv :
@@ -171,9 +196,7 @@ Proof.
   - omega.
   split.
   - omega.
-  - unfold energy_at_epoch.
-    simpl.
-    admit. (* [ADMIT-2]: same as ADMIT-1; energy_at_epoch(e, hl, 0) = e *)
+  - rewrite energy_at_epoch_zero_elapsed. apply Nat.le_refl.
 Qed.
 
 Lemma block_produce_preserves_inv :
@@ -222,23 +245,23 @@ Proof.
 Qed.
 
 (* ================================================================
-   7. Open Proof Obligations
+   7. Proof Obligations — CLOSED
    ================================================================ *)
 
 (**
-   [ADMIT-1] and [ADMIT-2] both require the same helper lemma:
+   [ADMIT-1] and [ADMIT-2] were both discharged 2026-04-29 by:
 
-       energy_at_epoch_zero_elapsed:
-         forall (e : Energy) (hl : HalfLife), hl >= 1 ->
-           energy_at_epoch e hl 0 = e.
+       zero_div_any : forall n, 0 / n = 0
+         Proof: destruct n; [reflexivity | Nat.div_0_l + omega]
 
-   Proof sketch:
-     - 0 / hl = 0           (Nat.div_0_l, or omega when hl >= 1)
-     - pow2 0 = 1            (by definition)
-     - e / 1 = e             (Nat.div_1_r)
+       energy_at_epoch_zero_elapsed : forall e hl, energy_at_epoch e hl 0 = e
+         Proof: unfold, rewrite zero_div_any, simpl pow2, Nat.div_1_r
 
-   Once this helper is stated and proved, both admits close by rewriting.
-   The main theorem is structurally sound modulo these two base-case lemmas.
+   Both admit sites closed by:
+       rewrite energy_at_epoch_zero_elapsed. apply Nat.le_refl.
+
+   The main theorem [llsa_conservation_invariant_preservation] is now
+   fully mechanised — zero remaining [Admitted] obligations.
 *)
 
 (* ================================================================

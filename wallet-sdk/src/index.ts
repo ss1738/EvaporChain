@@ -78,6 +78,27 @@ export {
   type NetworkConfig,
 } from "./types";
 
+// ── Offline signing ──
+
+export { OfflineSigner } from "./offline";
+
+// ── Session management ──
+
+export { SessionManager } from "./session";
+
+// ── Offline + session types ──
+
+export type {
+  OfflineTxType,
+  OfflineTransferParams,
+  OfflineCreateObjectParams,
+  OfflineRefreshParams,
+  SignableTransaction,
+  SignedTransaction,
+  SessionOptions,
+  SessionInfo,
+} from "./types";
+
 // ── Utilities ──
 
 export {

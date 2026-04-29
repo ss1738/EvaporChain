@@ -369,3 +369,68 @@ export interface NetworkConfig {
   name: string;
   rpcUrl: string;
 }
+
+// ── Offline signing ──
+
+/** Supported transaction types for offline signing. */
+export type OfflineTxType = "transfer" | "create_object" | "refresh";
+
+/** Parameters for building an offline-signable transfer transaction. */
+export interface OfflineTransferParams {
+  from: string;
+  to: string;
+  amount: number;
+}
+
+/** Parameters for building an offline-signable create_object transaction. */
+export interface OfflineCreateObjectParams {
+  creator: string;
+  objectId: string;
+  energy: number;
+  halfLife: number;
+  data?: string;
+}
+
+/** Parameters for building an offline-signable refresh transaction. */
+export interface OfflineRefreshParams {
+  objectId: string;
+  energyDeposit: number;
+}
+
+/** The signable payload returned by /api/tx/signable. */
+export interface SignableTransaction {
+  txType: OfflineTxType;
+  signableHex: string;
+  chainId: string;
+  params: Record<string, unknown>;
+}
+
+/** A transaction with an attached external signature, ready to broadcast. */
+export interface SignedTransaction {
+  txType: OfflineTxType;
+  params: Record<string, unknown>;
+  signatureHex: string;
+  publicKeyHex: string;
+}
+
+// ── Session management ──
+
+/** Options when creating a new dApp session. */
+export interface SessionOptions {
+  /** Session TTL in milliseconds. Default: 30 minutes. */
+  expiryMs?: number;
+  /** Maximum total energy spend allowed through this session. */
+  energyLimit?: number;
+  /** If provided, only these tx types are allowed without a popup. */
+  allowedTxTypes?: OfflineTxType[];
+}
+
+/** Active session metadata (stored in sessionStorage). */
+export interface SessionInfo {
+  sessionId: string;
+  createdAt: number;
+  expiresAt: number;
+  energyLimit?: number;
+  energyUsed: number;
+  allowedTxTypes?: OfflineTxType[];
+}

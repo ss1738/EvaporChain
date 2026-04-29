@@ -9241,6 +9241,98 @@ async fn get_sync_snapshot_info(
     }
 }
 
+// ─────────────────── Offline signing helpers ─────────────────────────────
+
+/// Return the current nonce for an address (next expected nonce for signing).
+async fn get_account_nonce(
+    State(state): State<Arc<ApiState>>,
+    Path(address): Path<String>,
+) -> impl IntoResponse {
+    let addr = match parse_address_value(&serde_json::Value::String(address.clone())) {
+        Ok(a) => a,
+        Err(e) => return Json(serde_json::json!({ "error": e })),
+    };
+    let db = safe_lock(&state.db);
+    let nonce = db.get_account(&addr).map(|a| a.nonce).unwrap_or(0);
+    Json(serde_json::json!({
+        "address": address,
+        "nonce": nonce,
+        "chain_id": hex::encode(&state.chain_id),
+    }))
+}
+
+#[derive(Deserialize)]
+struct SignableBytesRequest {
+    tx_type: String,
+    params: serde_json::Value,
+}
+
+/// Return the canonical bytes to sign for a transaction.
+/// The client uses these bytes with their ML-DSA private key, then submits
+/// the transaction through the normal endpoint with signature + public_key.
+async fn post_signable_bytes(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<SignableBytesRequest>,
+) -> impl IntoResponse {
+    let params = &req.params;
+
+    let tx_opt: Option<Transaction> = (|| -> Option<Transaction> {
+        match req.tx_type.as_str() {
+            "transfer" => {
+                let from = parse_address_value(params.get("from")?).ok()?;
+                let to = parse_address_value(params.get("to")?).ok()?;
+                let amount = params.get("amount")?.as_u64()?;
+                let nonce = {
+                    let db = safe_lock(&state.db);
+                    db.get_account(&from).map(|a| a.nonce).unwrap_or(0)
+                };
+                Some(Transaction::Transfer(evaporchain_types::TransferTx {
+                    from, to, amount, nonce,
+                    signature: None, public_key: None,
+                }))
+            }
+            "create_object" => {
+                let creator = parse_address_value(params.get("creator")?).ok()?;
+                let object_id = parse_address_value(params.get("object_id")?).ok()?;
+                let energy = params.get("energy")?.as_u64()?;
+                let half_life = params.get("half_life")?.as_u64()?;
+                let data = params.get("data")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.as_bytes().to_vec())
+                    .unwrap_or_else(|| b"offline".to_vec());
+                Some(Transaction::CreateObject(evaporchain_types::CreateObjectTx {
+                    creator, object_id, energy, half_life, data,
+                    decay_curve: None, signature: None, public_key: None,
+                }))
+            }
+            "refresh" => {
+                let object_id = parse_address_value(params.get("object_id")?).ok()?;
+                let energy_deposit = params.get("energy_deposit")?.as_u64()?;
+                Some(Transaction::Refresh(evaporchain_types::RefreshTx {
+                    object_id, energy_deposit, signature: None, public_key: None,
+                }))
+            }
+            _ => None,
+        }
+    })();
+
+    match tx_opt {
+        Some(tx) => {
+            let signable = tx.signing_message(&state.chain_id);
+            Json(serde_json::json!({
+                "ok": true,
+                "tx_type": req.tx_type,
+                "signable_hex": hex::encode(&signable),
+                "chain_id": hex::encode(&state.chain_id),
+            }))
+        }
+        None => Json(serde_json::json!({
+            "ok": false,
+            "error": format!("unknown or invalid tx_type: {}", req.tx_type),
+        })),
+    }
+}
+
 pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthState>) -> Router {
     let allowed_origins = [
         "https://evaporchain.com".parse().unwrap(),
@@ -9406,6 +9498,9 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/tx/refresh", post(post_refresh))
         .route("/api/tx/resurrect", post(post_resurrect))
         .route("/api/tx/batch", post(post_batch))
+        // Offline signing helpers
+        .route("/api/tx/nonce/:address", get(get_account_nonce))
+        .route("/api/tx/signable", post(post_signable_bytes))
         .route("/api/receipt/:hash", get(get_tx_receipt))
         .route("/api/address/:addr/transactions", get(get_address_txs))
         .route("/api/tx-index/stats", get(get_tx_index_stats))

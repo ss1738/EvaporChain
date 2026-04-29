@@ -41,6 +41,8 @@ import {
 } from "./types";
 
 import { EvaporChainAPI } from "./api";
+import { OfflineSigner } from "./offline";
+import { SessionManager } from "./session";
 
 type EventHandler = (...args: unknown[]) => void;
 
@@ -52,9 +54,18 @@ export class EvaporChainProvider {
   private _listeners: Map<EvaporChainEvent, Set<EventHandler>> = new Map();
   private _api: EvaporChainAPI;
 
+  /** Offline signing helper — use when extension is unavailable or for hardware wallets. */
+  public readonly offline: OfflineSigner;
+
+  /** Session manager — controls auto-approval constraints for the current dApp session. */
+  public readonly session: SessionManager;
+
   constructor(apiOptions?: { rpcUrl?: string; network?: "testnet" | "mainnet" }) {
     this._detectProvider();
     this._api = new EvaporChainAPI(apiOptions);
+    const rpcUrl = apiOptions?.rpcUrl ?? "http://localhost:8080";
+    this.offline = new OfflineSigner(rpcUrl);
+    this.session = new SessionManager();
   }
 
   // ── Connection ──
