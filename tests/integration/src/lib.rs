@@ -5197,6 +5197,41 @@ mod validator_slashing_integration {
         vs.slash_downtime(2, 2);
         assert!(vs.total_stake() < before, "total stake must decrease after slashing");
     }
+
+    #[test]
+    fn slash_with_amount_reduces_stake_and_jails() {
+        let mut vs = setup();
+        let slashed = vs.slash_with_amount(1, 30_000, true);
+        assert_eq!(slashed, 30_000, "slash_with_amount must deduct exact amount");
+        let v = vs.get(1).unwrap();
+        assert_eq!(v.stake, 70_000);
+        assert_eq!(v.total_slashed, 30_000);
+        assert!(v.jailed);
+    }
+
+    #[test]
+    fn slash_with_amount_capped_at_current_stake() {
+        let mut vs = setup();
+        // Request more than the validator has.
+        let slashed = vs.slash_with_amount(2, 999_999_999, true);
+        // Must be capped at 200_000 (the validator's stake).
+        assert_eq!(slashed, 200_000);
+    }
+
+    #[test]
+    fn slash_with_amount_no_jail_flag_leaves_unjailed() {
+        let mut vs = setup();
+        let slashed = vs.slash_with_amount(2, 10_000, false);
+        assert_eq!(slashed, 10_000);
+        let v = vs.get(2).unwrap();
+        assert!(!v.jailed, "jail=false must not jail the validator");
+    }
+
+    #[test]
+    fn slash_with_amount_unknown_returns_zero() {
+        let mut vs = setup();
+        assert_eq!(vs.slash_with_amount(999, 50_000, true), 0);
+    }
 }
 
 // ── State Snapshot serialization integration ─────────────────────────────────
