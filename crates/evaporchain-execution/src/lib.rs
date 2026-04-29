@@ -1,4 +1,5 @@
 pub mod block_stm;
+pub mod boltzmann_stake_integration;
 pub mod economics;
 pub mod energy_audit;
 pub mod fees;
