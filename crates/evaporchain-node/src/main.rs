@@ -1127,6 +1127,52 @@ fn make_tag(node_id: &str) -> String {
 
 use evaporchain_execution::BlockExecutionResult;
 
+/// Window size for the Sanov-Slashing downtime observation. Recent
+/// `SLOTS_PER_DOWNTIME_OBSERVATION` slots are interpreted as the
+/// observation window for the KL-rate function. Larger windows make
+/// short bursts of misses look less anomalous; smaller windows make
+/// the chain more aggressive. Tuneable via governance.
+const SLOTS_PER_DOWNTIME_OBSERVATION: u64 = 1000;
+
+/// Compute the proportional slash to apply to delegations for a
+/// validator under the chain-supplied `reason`.
+///
+/// **Downtime** is now flipped to Sanov-Slashing per
+/// INVENTION_STACK.md §A1.3 (Cramér 1938 / Sanov 1957) — the
+/// proportional slash is `KL(observed‖honest) × stake / stake =
+/// KL` where `observed` is the empirical (produced, missed) pmf
+/// over the last `SLOTS_PER_DOWNTIME_OBSERVATION` slots and `honest`
+/// is the chain-set baseline.
+///
+/// **Equivocation** retains the legacy `0.10` for safety: doctrine-
+/// strict Sanov returns the FULL stake (KL = ∞ when honest pmf has
+/// `P(double-sign) = 0`), which is correct in theory but a chain-
+/// killer if a false-positive equivocation report ever occurs. A
+/// future governance amendment can promote to strict Sanov via
+/// `evaporchain_execution::sanov_slash_helpers::equivocation_slash`.
+fn compute_delegation_slash_pct(
+    reason: &evaporchain_consensus::tendermint::SlashReason,
+    stake_total: u64,
+) -> f64 {
+    use evaporchain_consensus::tendermint::SlashReason;
+    match reason {
+        SlashReason::Equivocation => 0.10,
+        SlashReason::Downtime { missed_blocks } => {
+            if stake_total == 0 {
+                return 0.0;
+            }
+            let sanov_amount =
+                evaporchain_execution::sanov_slash_helpers::downtime_slash(
+                    stake_total,
+                    SLOTS_PER_DOWNTIME_OBSERVATION,
+                    *missed_blocks,
+                )
+                .unwrap_or(0);
+            (sanov_amount as f64 / stake_total as f64).clamp(0.0, 1.0)
+        }
+    }
+}
+
 /// Record a block into the API shared state (block history, stats, events).
 #[allow(clippy::too_many_arguments)]
 fn record_block(
@@ -3079,16 +3125,12 @@ async fn main() -> Result<()> {
                             stake.slashed_amount = stake.slashed_amount.saturating_add(amount);
                             db_guard.put_stake(stake);
                         }
-                        let delegation_pct = match reason {
-                            evaporchain_consensus::tendermint::SlashReason::Equivocation => 0.10,
-                            evaporchain_consensus::tendermint::SlashReason::Downtime { missed_blocks } => {
-                                ((*missed_blocks as f64) * 0.01).min(1.0)
-                            }
-                        };
+                        let stake_total = db_guard.get_stake(validator_id).map(|s| s.staked_amount).unwrap_or(0);
+                        let delegation_pct = compute_delegation_slash_pct(reason, stake_total);
                         let delegated_slashed = slash_delegations_for_validator(
                             &mut *db_guard, validator_id, delegation_pct,
                         );
-                        eprintln!("{} \x1b[31mSlash applied: validator={} amount={} delegated={} reason={:?}\x1b[0m", node_tag, validator_id, amount, delegated_slashed, reason);
+                        eprintln!("{} \x1b[31mSlash applied: validator={} amount={} delegated={} reason={:?} pct={:.4} (Sanov-Downtime, legacy-Equivocation)\x1b[0m", node_tag, validator_id, amount, delegated_slashed, reason, delegation_pct);
                         continue;
                     }
                     if let ConsensusAction::RequestSync(from, to) = action {
@@ -3750,16 +3792,12 @@ async fn main() -> Result<()> {
                                 stake.slashed_amount = stake.slashed_amount.saturating_add(amount);
                                 db_guard.put_stake(stake);
                             }
-                            let delegation_pct = match reason {
-                                evaporchain_consensus::tendermint::SlashReason::Equivocation => 0.10,
-                                evaporchain_consensus::tendermint::SlashReason::Downtime { missed_blocks } => {
-                                    ((*missed_blocks as f64) * 0.01).min(1.0)
-                                }
-                            };
+                            let stake_total = db_guard.get_stake(validator_id).map(|s| s.staked_amount).unwrap_or(0);
+                            let delegation_pct = compute_delegation_slash_pct(reason, stake_total);
                             let delegated_slashed = slash_delegations_for_validator(
                                 &mut *db_guard, validator_id, delegation_pct,
                             );
-                            eprintln!("{} \x1b[31mSlash applied (follower): validator={} amount={} delegated={} reason={:?}\x1b[0m", node_tag, validator_id, amount, delegated_slashed, reason);
+                            eprintln!("{} \x1b[31mSlash applied (follower): validator={} amount={} delegated={} reason={:?} pct={:.4} (Sanov-Downtime, legacy-Equivocation)\x1b[0m", node_tag, validator_id, amount, delegated_slashed, reason, delegation_pct);
                             continue;
                         }
                         if let ConsensusAction::RequestSync(from, to) = action {
