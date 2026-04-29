@@ -81,6 +81,7 @@ export function HomeScreen() {
         <QuickAction label="Objects" icon="◈" onClick={() => { setView("objects"); refreshObjects(); }} />
         <QuickAction label="NFTs" icon="🖼" onClick={() => setView("nfts")} />
         <QuickAction label="Energy" icon="⚡" onClick={() => setView("energy-dashboard")} />
+        <QuickAction label="Portfolio" icon="📊" onClick={() => setView("portfolio")} />
         <QuickAction
           label="Faucet"
           icon="💧"

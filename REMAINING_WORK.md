@@ -97,7 +97,7 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 
 ### Browser Extension (80% complete)
 - [x] Complete swap backend integration — DONE: /api/swap/quote + /api/swap/execute with oracle TWAP pricing
-- [ ] Advanced analytics/portfolio
+- [x] Advanced analytics/portfolio — DONE: `PortfolioScreen.tsx` — total USD value, per-token breakdown with 24h change, portfolio allocation bars, object health summary. Accessible via Home → Portfolio
 - [x] User preferences persistence — DONE: `utils/preferences.ts` (chrome.storage.local + localStorage fallback); nodeUrl/currency/autoLock/slippage/hideSmallBalances persisted; loaded on `init()`
 - [x] Backup/restore UI — DONE: `BackupRestoreScreen.tsx` — export encrypted keystore as JSON, import overwrites current keystore; wired as `"backup"` view
 - [ ] Chrome Web Store submission

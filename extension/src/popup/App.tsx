@@ -25,6 +25,7 @@ import { BridgeScreen } from "@/components/BridgeScreen";
 import { PluginStore } from "@/components/PluginStore";
 import { AiAssistant } from "@/components/AiAssistant";
 import { BackupRestoreScreen } from "@/components/BackupRestoreScreen";
+import { PortfolioScreen } from "@/components/PortfolioScreen";
 
 export function App() {
   const { view, init, completeTutorial } = useWallet();
@@ -54,6 +55,8 @@ export function App() {
       return <SettingsScreen />;
     case "backup":
       return <BackupRestoreScreen />;
+    case "portfolio":
+      return <PortfolioScreen />;
     case "swap":
       return <SwapScreen />;
     case "nfts":

@@ -11,7 +11,7 @@ import { ledgerManager, type LedgerAccount } from "@/utils/ledger";
 import { type BridgeTransfer } from "@/utils/bridge";
 import { loadPreferences, savePreferences, type UserPreferences } from "@/utils/preferences";
 
-export type View = "locked" | "create" | "import" | "home" | "send" | "receive" | "objects" | "activity" | "settings" | "backup" | "swap" | "nfts" | "nft-detail" | "buy" | "batch-refresh" | "ghost-recovery" | "energy-dashboard" | "social-login" | "tutorial" | "decay-forecast" | "walletconnect" | "ledger" | "bridge" | "plugins" | "ai-assistant";
+export type View = "locked" | "create" | "import" | "home" | "send" | "receive" | "objects" | "activity" | "settings" | "backup" | "portfolio" | "swap" | "nfts" | "nft-detail" | "buy" | "batch-refresh" | "ghost-recovery" | "energy-dashboard" | "social-login" | "tutorial" | "decay-forecast" | "walletconnect" | "ledger" | "bridge" | "plugins" | "ai-assistant";
 
 interface WalletState {
   // Auth
