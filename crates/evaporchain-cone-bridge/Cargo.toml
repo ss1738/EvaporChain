@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-cone-bridge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Cone-Merged Bridges. Bridges valid only inside intersection of both chains' decay cones — replay-immune by construction. Per INVENTION_STACK.md §4.2 (Tier 2)."
+
+[dependencies]
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
