@@ -90,7 +90,7 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 - [x] Publish to npm — CI workflow wired at `.github/workflows/publish-npm.yml` (triggers on `v*` tag push). Requires `NPM_TOKEN` secret in GitHub repo settings.
 
 ### Wallet SDK (85% complete)
-- [ ] Contract deployment/calling
+- [x] Contract deployment/calling — DONE: `provider.ts` has `deployContract()`/`callContract()`; `offline.ts` now supports `"deploy_contract"`/`"call_contract"` OfflineTxType with snake_case API mapping
 - [x] Offline signing mode — DONE: OfflineSigner class, /api/tx/signable + /api/tx/nonce/:address endpoints
 - [x] Session management — DONE: SessionManager with TTL, energy budget, allowed tx types
 - [x] Publish to npm — same `publish-npm.yml` workflow covers `@evaporchain/wallet-sdk`.

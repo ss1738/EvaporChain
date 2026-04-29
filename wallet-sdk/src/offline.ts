@@ -16,12 +16,19 @@ import type {
   OfflineTransferParams,
   OfflineCreateObjectParams,
   OfflineRefreshParams,
+  OfflineDeployContractParams,
+  OfflineCallContractParams,
   SignableTransaction,
   SignedTransaction,
   TxResult,
 } from "./types";
 
-type OfflineParams = OfflineTransferParams | OfflineCreateObjectParams | OfflineRefreshParams;
+type OfflineParams =
+  | OfflineTransferParams
+  | OfflineCreateObjectParams
+  | OfflineRefreshParams
+  | OfflineDeployContractParams
+  | OfflineCallContractParams;
 
 /** Normalise SDK camelCase params to the snake_case keys the API expects. */
 function toApiParams(
@@ -47,6 +54,27 @@ function toApiParams(
       const p = params as OfflineRefreshParams;
       return { object_id: p.objectId, energy_deposit: p.energyDeposit };
     }
+    case "deploy_contract": {
+      const p = params as OfflineDeployContractParams;
+      return {
+        deployer: p.deployer,
+        template: p.template,
+        init_args: p.initArgs,
+        energy: p.energy,
+        half_life: p.halfLife,
+        ...(p.rules !== undefined ? { rules: p.rules } : {}),
+      };
+    }
+    case "call_contract": {
+      const p = params as OfflineCallContractParams;
+      return {
+        caller: p.caller,
+        contract_id: p.contractId,
+        method: p.method,
+        args: p.args,
+        epoch: p.epoch,
+      };
+    }
   }
 }
 
@@ -68,6 +96,10 @@ function broadcastPath(txType: OfflineTxType): string {
       return "/api/tx/create-object";
     case "refresh":
       return "/api/tx/refresh";
+    case "deploy_contract":
+      return "/api/tx/deploy-contract";
+    case "call_contract":
+      return "/api/tx/call-contract";
   }
 }
 

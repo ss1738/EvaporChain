@@ -93,6 +93,8 @@ export type {
   OfflineTransferParams,
   OfflineCreateObjectParams,
   OfflineRefreshParams,
+  OfflineDeployContractParams,
+  OfflineCallContractParams,
   SignableTransaction,
   SignedTransaction,
   SessionOptions,

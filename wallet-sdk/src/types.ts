@@ -373,7 +373,7 @@ export interface NetworkConfig {
 // ── Offline signing ──
 
 /** Supported transaction types for offline signing. */
-export type OfflineTxType = "transfer" | "create_object" | "refresh";
+export type OfflineTxType = "transfer" | "create_object" | "refresh" | "deploy_contract" | "call_contract";
 
 /** Parameters for building an offline-signable transfer transaction. */
 export interface OfflineTransferParams {
@@ -395,6 +395,25 @@ export interface OfflineCreateObjectParams {
 export interface OfflineRefreshParams {
   objectId: string;
   energyDeposit: number;
+}
+
+/** Parameters for offline-signing a contract deployment. */
+export interface OfflineDeployContractParams {
+  deployer: string;
+  template: string;
+  initArgs: Record<string, unknown>;
+  energy: number;
+  halfLife: number;
+  rules?: Record<string, unknown>;
+}
+
+/** Parameters for offline-signing a contract call. */
+export interface OfflineCallContractParams {
+  caller: string;
+  contractId: number;
+  method: string;
+  args: Record<string, unknown>;
+  epoch: number;
 }
 
 /** The signable payload returned by /api/tx/signable. */
