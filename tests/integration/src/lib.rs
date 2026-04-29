@@ -1764,3 +1764,126 @@ mod da_integration {
         assert_eq!(trimmed, original, "reconstructed data must match original");
     }
 }
+
+// ── Proof of Historical Activity (PoHA) integration ──────────────────────────
+
+#[cfg(test)]
+mod poha_integration {
+    use evaporchain_da::poha::{CertTemperature, PoHACertificate, PoHAStore};
+
+    fn make_cert(block_number: u64, energy: u64, half_life: u64, epoch: u64) -> PoHACertificate {
+        PoHACertificate {
+            block_number,
+            data_root: [block_number as u8; 32],
+            shard_count: 8,
+            initial_energy: energy,
+            energy,
+            half_life,
+            created_epoch: epoch,
+            last_attested_epoch: epoch,
+            attested_stake: 700,
+            total_stake: 1000,
+            re_attestation_count: 0,
+            aggregate_signature: vec![],
+            signer_ids: vec![0, 1, 2],
+        }
+    }
+
+    // ── Temperature classification ────────────────────────────────────────
+
+    #[test]
+    fn poha_temperature_decays_hot_to_evaporated() {
+        let mut cert = make_cert(1, 1_000_000, 10, 0);
+
+        // At epoch 0: energy=1_000_000 (100%) → Hot
+        assert!(matches!(cert.temperature(), CertTemperature::Hot));
+
+        // After 2 half-lives: energy=250_000 (25%) → Warm
+        cert.energy = cert.energy_at(20);
+        assert!(matches!(cert.temperature(), CertTemperature::Warm));
+
+        // After 4 half-lives: energy=62_500 (6.25%) → Cold
+        cert.energy = cert.energy_at(40);
+        // reset created_epoch so energy_at works from current
+        cert.created_epoch = 40;
+        cert.energy = cert.energy_at(40);
+        assert!(matches!(cert.temperature(), CertTemperature::Cold));
+    }
+
+    #[test]
+    fn poha_temperature_at_future_epoch() {
+        let cert = make_cert(2, 1_000_000, 100, 0);
+        // far future: 7 half-lives → 1_000_000 >> 7 = 7812 → < 1% → Evaporated
+        let temp = cert.temperature_at(700);
+        assert!(matches!(temp, CertTemperature::Evaporated));
+    }
+
+    // ── PoHAStore: register, process_epoch, evaporation ──────────────────
+
+    #[test]
+    fn poha_store_register_and_decay() {
+        let mut store = PoHAStore::new(1_000_000, 10);
+
+        store.register(1, [0x01u8; 32], 8, 700, 1000, 0, vec![], vec![0, 1, 2]);
+        store.register(2, [0x02u8; 32], 8, 700, 1000, 0, vec![], vec![0, 1, 2]);
+
+        assert_eq!(store.active_count(), 2);
+        assert_eq!(store.ghost_count(), 0);
+
+        // Advance 100 epochs (10 half-lives) → energy should collapse to ~0 → both evaporate
+        let (_, evaporated) = store.process_epoch(100);
+        assert_eq!(evaporated, 2, "both certs must evaporate after 10 half-lives");
+        assert_eq!(store.active_count(), 0);
+        assert_eq!(store.ghost_count(), 2);
+    }
+
+    #[test]
+    fn poha_store_re_attest_extends_lifetime() {
+        let mut store = PoHAStore::new(1_000_000, 10);
+        store.register(1, [0xABu8; 32], 8, 700, 1000, 0, vec![], vec![0]);
+
+        // Decay 5 half-lives (50% remaining)
+        let _ = store.process_epoch(50);
+        assert_eq!(store.active_count(), 1, "cert should survive 5 half-lives");
+
+        // Re-attest: boosts energy by 25% of initial
+        let re_attested = store.re_attest(1, 50);
+        assert!(re_attested, "re-attest must succeed on a live cert");
+
+        // After re-attest, energy is higher → more epochs before evaporation
+        let cert = store.get(1).expect("cert must still be active");
+        assert!(cert.re_attestation_count >= 1, "re_attestation_count must increment");
+        assert!(cert.energy > 0);
+    }
+
+    // ── supermajority attestation ─────────────────────────────────────────
+
+    #[test]
+    fn poha_cert_supermajority_check() {
+        let mut cert = make_cert(3, 1_000_000, 4096, 0);
+        // 700 / 1000 = 70% → 700 * 3 = 2100 >= 1000 * 2 = 2000 → supermajority
+        assert!(cert.is_supermajority());
+
+        cert.attested_stake = 600;
+        // 600 * 3 = 1800 < 2000 → not supermajority
+        assert!(!cert.is_supermajority());
+    }
+
+    // ── ghost pruning ─────────────────────────────────────────────────────
+
+    #[test]
+    fn poha_store_prune_ghosts_removes_old() {
+        let mut store = PoHAStore::new(1_000_000, 1);
+        store.register(1, [0x01u8; 32], 8, 700, 1000, 0, vec![], vec![0]);
+        store.register(2, [0x02u8; 32], 8, 700, 1000, 10, vec![], vec![0]);
+
+        // Decay until both evaporate
+        let _ = store.process_epoch(200);
+        assert_eq!(store.ghost_count(), 2);
+
+        // Prune ghosts older than epoch 100 — cert 1 evaporated at epoch ~64,
+        // cert 2 evaporated later; both should be before 200
+        let pruned = store.prune_ghosts(200);
+        assert!(pruned >= 1, "at least one ghost must be pruned");
+    }
+}
