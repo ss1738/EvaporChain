@@ -1295,3 +1295,106 @@ mod cross_crate_integration {
             .expect("redirect+decay within λ must pass conservation check");
     }
 }
+
+// ── Privacy layer: PNT nullifier tree + PRP retention proofs ────────────────
+
+#[cfg(test)]
+mod privacy_integration {
+    use evaporchain_pnt::{PhasedNullifierTree, Nullifier};
+    use evaporchain_prp::{prove_retention, verify_retention_proof};
+    use evaporchain_energy_kernel::{ChainLambda, Lambda};
+
+    // ── PNT — Phased Nullifier Tree ──────────────────────────────────
+
+    #[test]
+    fn pnt_double_spend_same_phase_rejected() {
+        let mut tree = PhasedNullifierTree::new(4).expect("depth=4 is valid");
+        let nullifier: Nullifier = [0xABu8; 32];
+        tree.insert_nullifier(nullifier).expect("first insert must succeed");
+        let err = tree.insert_nullifier(nullifier).unwrap_err();
+        assert!(
+            format!("{err:?}").to_lowercase().contains("double") || format!("{err:?}").to_lowercase().contains("spent"),
+            "duplicate nullifier must be rejected: {err:?}"
+        );
+    }
+
+    #[test]
+    fn pnt_double_spend_after_phase_advance_still_detected() {
+        let mut tree = PhasedNullifierTree::new(4).expect("depth=4 is valid");
+        let nullifier: Nullifier = [0xCDu8; 32];
+        tree.insert_nullifier(nullifier).unwrap();
+        tree.advance_phase(); // phase 1 → 2
+        // Still within the 4-phase window → must be detected
+        let err = tree.insert_nullifier(nullifier).unwrap_err();
+        assert!(
+            format!("{err:?}").to_lowercase().contains("double") || format!("{err:?}").to_lowercase().contains("spent"),
+            "nullifier from prior phase must still be detected within window: {err:?}"
+        );
+    }
+
+    #[test]
+    fn pnt_live_count_tracks_insertions() {
+        let mut tree = PhasedNullifierTree::new(4).expect("depth=4 is valid");
+        assert_eq!(tree.live_count(), 0);
+        for i in 0u8..5 {
+            let n = [i; 32];
+            tree.insert_nullifier(n).unwrap();
+        }
+        assert_eq!(tree.live_count(), 5, "live_count must track all insertions");
+    }
+
+    #[test]
+    fn pnt_is_spent_in_window_true_after_insert() {
+        let mut tree = PhasedNullifierTree::new(4).expect("depth=4 is valid");
+        let n: Nullifier = [0x11u8; 32];
+        assert!(!tree.is_spent_in_window(&n));
+        tree.insert_nullifier(n).unwrap();
+        assert!(tree.is_spent_in_window(&n), "is_spent_in_window must return true after insert");
+    }
+
+    // ── PRP — Private Retention Proofs ───────────────────────────────
+
+    #[test]
+    fn prp_retention_proof_verify_at_activation_epoch() {
+        let state_id = [0x01u8; 32];
+        let lambda = ChainLambda::new(Lambda::from_epochs(4096));
+        let proof = prove_retention(state_id, 1_000_000, lambda, 0, 1);
+        // Verifying at activation epoch must always succeed
+        verify_retention_proof(&proof, 0)
+            .expect("proof must verify at activated_epoch");
+    }
+
+    #[test]
+    fn prp_retention_proof_expires_after_energy_decays() {
+        let state_id = [0x02u8; 32];
+        // Half-life=1 epoch, floor=1: energy decays to 0 very fast
+        let lambda = ChainLambda::new(Lambda::from_epochs(1));
+        let proof = prove_retention(state_id, 1_000, lambda, 0, 1);
+        // The proof must expire well before epoch 1_000_000
+        let result = verify_retention_proof(&proof, 1_000_000);
+        assert!(result.is_err(), "proof must expire when queried far beyond retained_until_epoch");
+    }
+
+    #[test]
+    fn prp_retention_proof_is_deterministic() {
+        let state_id = [0x03u8; 32];
+        let lambda = ChainLambda::new(Lambda::from_epochs(4096));
+        let p1 = prove_retention(state_id, 500_000, lambda, 10, 100);
+        let p2 = prove_retention(state_id, 500_000, lambda, 10, 100);
+        assert_eq!(p1.retained_until_epoch, p2.retained_until_epoch);
+        assert_eq!(p1.witness, p2.witness, "PRP witness must be deterministic");
+    }
+
+    #[test]
+    fn prp_higher_energy_retains_longer() {
+        let state_id = [0x04u8; 32];
+        let lambda = ChainLambda::new(Lambda::from_epochs(100));
+        let floor = 1_000u64;
+        let p_low  = prove_retention(state_id, 10_000, lambda, 0, floor);
+        let p_high = prove_retention(state_id, 10_000_000, lambda, 0, floor);
+        assert!(
+            p_high.retained_until_epoch > p_low.retained_until_epoch,
+            "higher committed energy must retain state for more epochs"
+        );
+    }
+}

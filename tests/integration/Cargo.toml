@@ -21,5 +21,7 @@ evaporchain-dsn = { path = "../../crates/evaporchain-dsn" }
 evaporchain-fee-controller = { path = "../../crates/evaporchain-fee-controller" }
 evaporchain-energy-kernel = { path = "../../crates/evaporchain-energy-kernel" }
 evaporchain-llsa = { path = "../../crates/evaporchain-llsa" }
+evaporchain-pnt = { path = "../../crates/evaporchain-pnt" }
+evaporchain-prp = { path = "../../crates/evaporchain-prp" }
 serde_json = "1"
 hex = "0.4"
