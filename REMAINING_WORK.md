@@ -112,7 +112,7 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 
 ### Website + Explorer (65% complete)
 - [x] Advanced explorer: filters, pagination, real-time updates — DONE: search bar, tx type filter, object state filter, load-more pagination (10/page), 8s polling for real-time
-- [ ] Complete staking/DAO pages (currently placeholders)
+- [x] Complete staking/DAO pages — DONE: `/staking` (live pool data, decaying stake explanation) and `/dao` (proposals list, live vote counts) both wired to testnet API
 - [x] Contract interaction playground — DONE: `/explorer/contracts` page — list deployed contracts, inspect ABI, simulate method calls with form-based inputs
 - [x] Transaction simulation — DONE: `/explorer/simulate` page — dry-run transfer/create_object/refresh/call_contract against chain state; shows gas usage, state changes, warnings
 - [ ] Deploy to `evaporchain.com` or `testnet.evaporchain.com`
@@ -129,7 +129,7 @@ Full audit completed across all docs, research, crates, tests, SDK, wallet, dapp
 - [x] **Update test count in docs** — DONE: Updated to 4,159 tests across README, CLAUDE.md, grants, announcement
 - [x] **Criterion.rs benchmarks** — DONE: `benches/core_benchmarks.rs` with transfer throughput, block exec, Poseidon hash, ML-DSA sign/verify
 - [x] **Config validation** — DONE: JSON Schema at `configs/genesis-schema.json` with full validation rules
-- [ ] **Hybrid post-quantum scheme** — Optional ECDSA fallback alongside ML-DSA.
+- [x] **Hybrid post-quantum scheme** — DONE: `HybridVerifier` in `signatures.rs:245-330` — 0x02-prefixed ECDSA+ML-DSA keys/sigs, both must verify. Plain ML-DSA is 0x01 prefix.
 - [x] **Version pinning** — DONE: All 12 core workspace deps in `Cargo.toml` exact-pinned (`=X.Y.Z`) using resolved versions from `Cargo.lock`
 - [x] **ADRs (Architecture Decision Records)** — DONE: 5 ADRs at `docs/architecture/adrs/`: consensus (Tendermint), evaporation model, ML-DSA signatures, Block-STM execution, Verkle trie
 
