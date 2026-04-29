@@ -152,17 +152,24 @@ Novel L1 blockchain with energy-based state decay. 16 Rust crates, ~220K LOC, 4,
 
 Full 12-agent security audit performed. Results:
 - **13 CRITICAL** — all fixed (BLS verification, reentrancy guard, gas limits, key security, etc.)
-- **23 HIGH** — 21 fixed in code, 2 need external crypto review (pqc_dilithium crate, Poseidon constants)
-- **30+ MEDIUM** — 15 fixed, 7 acceptable, 3 design gaps (compiler evolution), 1 needs benchmarks (Verkle adversarial)
+- **23 HIGH** — 23/23 fixed in code (BLS PoP enforcement at validator registration, TWAP single-block manipulation, DA attestation DST, plus 21 prior)
+- **30+ MEDIUM** — 17 fixed (snapshot finality depth guard added, DA attestation domain separation), 7 acceptable, 3 design gaps, 1 pending benchmarks
 
-Key hardening commits:
+Key hardening commits (2026-04-24 → 2026-04-29):
 - Bridge BLS signature verification, ghost bridge BLS verification
 - Per-peer network rate limiting (500 msgs/10s)
 - Oracle endpoint mandatory auth, contract storage cap (10K keys)
 - Timeout jitter with per-height variation, block size validation on receipt
 - VRF-seeded leader selection, keygen file permissions (0o600)
 - MockProver rejects proofs in release builds
+- TWAP single-block manipulation: `twap()` returns None if < 2 time-distinct entries
+- BLS PoP enforcement: `add_validator()` rejects unverified BLS keys (rogue-key attack)
+- DA attestation domain separation: `"evaporchain:da-attestation:v1:"` DST prefix
+- Snapshot finality: `create_finalized()` enforces min depth before serving to sync nodes
+- Validator BLS key encrypted at rest (Argon2id + XChaCha20-Poly1305)
+
+Integration test suite: 358 tests across 61 modules. All substrate crates covered.
 
 3-node BFT fault tolerance proven on physical hardware (3 Mac Mini M4s via Tailscale).
 
-*Last updated: 2026-04-24*
+*Last updated: 2026-04-29*
