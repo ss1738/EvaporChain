@@ -48,6 +48,7 @@ members = [
     "crates/evaporchain-sentinel",
     "crates/evaporchain-crooks-mev-refund",
     "crates/evaporchain-braid-sequencer",
+    "crates/evaporchain-hbct",
     "crates/evaporchain-crypto",
     "crates/evaporchain-state",
     "crates/evaporchain-consensus",

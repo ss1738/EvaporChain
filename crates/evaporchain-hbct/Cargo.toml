@@ -1,0 +1,15 @@
+[package]
+name = "evaporchain-hbct"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Hour-Block Capacity Tokens (HBCT). Electricity capacity for delivery hour H decays to zero at H+1 — single-λ is dimensionally honest. The launch wedge per INVENTION_STACK.md §A3.4. 'The first L1 to natively price what physics already prices.'"
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
