@@ -74,8 +74,8 @@ const SANOV_EQUIVOCATION_WINDOW: u64 = 100;
 const SANOV_DOWNTIME_WINDOW: u64 = 20;
 
 const PROPOSE_TIMEOUT_MS: u64 = 8000;
-const PREVOTE_TIMEOUT_MS: u64 = 12000;
-const PRECOMMIT_TIMEOUT_MS: u64 = 12000;
+const PREVOTE_TIMEOUT_MS: u64 = 60000;
+const PRECOMMIT_TIMEOUT_MS: u64 = 60000;
 
 /// Maximum rounds before forcing commit (prevents livelock).
 const MAX_ROUNDS_PER_HEIGHT: u32 = 10;
@@ -1704,20 +1704,20 @@ impl TendermintConsensus {
                             // (genesis bootstrap window). On chain_id starting
                             // with `mainnet-` we enforce regardless of height.
                             let mainnet = block.chain_id.starts_with("mainnet-");
-                            let enforce_da = mainnet
-                                || self.height >= self.da_enforcement_height;
-                            if enforce_da && block.data_root.is_some() {
-                                if !self.has_da_supermajority(block.number) {
-                                    warn!(
-                                        height = block.number,
-                                        "P2-04: refusing to commit — DA attestation supermajority not reached"
-                                    );
-                                    actions.push(ConsensusAction::RequestSync(
-                                        self.height,
-                                        self.height + 1,
-                                    ));
-                                    return actions;
-                                }
+                            let enforce_da = mainnet || self.height >= self.da_enforcement_height;
+                            if enforce_da
+                                && block.data_root.is_some()
+                                && !self.has_da_supermajority(block.number)
+                            {
+                                warn!(
+                                    height = block.number,
+                                    "P2-04: refusing to commit — DA attestation supermajority not reached"
+                                );
+                                actions.push(ConsensusAction::RequestSync(
+                                    self.height,
+                                    self.height + 1,
+                                ));
+                                return actions;
                             }
                             if block.commit_certificate.is_none() {
                                 block.commit_certificate = self.try_build_commit_certificate(hash);
@@ -2463,9 +2463,10 @@ impl TendermintConsensus {
                                 // P2-04: refuse to commit if block has a data_root
                                 // but DA attestation supermajority hasn't been reached.
                                 let mainnet = block.chain_id.starts_with("mainnet-");
-                                let enforce_da = mainnet
-                                    || self.height >= self.da_enforcement_height;
-                                if enforce_da && block.data_root.is_some()
+                                let enforce_da =
+                                    mainnet || self.height >= self.da_enforcement_height;
+                                if enforce_da
+                                    && block.data_root.is_some()
                                     && !self.has_da_supermajority(block.number)
                                 {
                                     warn!(
@@ -2766,7 +2767,7 @@ impl TendermintConsensus {
                 .signer_ids
                 .iter()
                 .filter_map(|id| self.validator_set.get_validator(*id))
-                .map(|v| v.effective_stake())   // P2-01
+                .map(|v| v.effective_stake()) // P2-01
                 .sum::<u64>();
             let timestamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -2797,7 +2798,7 @@ impl TendermintConsensus {
                 if let Some(my_validator) = self.validator_set.get_validator(self.my_id) {
                     let att = self.da_attestation.create_own_attestation(
                         self.my_id,
-                        my_validator.effective_stake(),   // P2-01
+                        my_validator.effective_stake(), // P2-01
                         bls_kp,
                     );
                     if let Some(attestation) = att {
@@ -3348,14 +3349,16 @@ impl TendermintConsensus {
             eprintln!(
                 "[DIAG]   precommit vid={} hash={}",
                 vid,
-                h.map(|hash| hex::encode(&hash[..4])).unwrap_or_else(|| "nil".into())
+                h.map(|hash| hex::encode(&hash[..4]))
+                    .unwrap_or_else(|| "nil".into())
             );
         }
         for (vid, h) in &self.round_state.prevotes {
             eprintln!(
                 "[DIAG]   prevote vid={} hash={}",
                 vid,
-                h.map(|hash| hex::encode(&hash[..4])).unwrap_or_else(|| "nil".into())
+                h.map(|hash| hex::encode(&hash[..4]))
+                    .unwrap_or_else(|| "nil".into())
             );
         }
         // ── Downtime Detection ──
@@ -3562,8 +3565,7 @@ impl TendermintConsensus {
         }
 
         let signer_ids: Vec<u64> = entries.iter().map(|e| e.0).collect();
-        let sigs: Vec<BlsSignature> =
-            entries.iter().map(|e| BlsSignature(e.1.clone())).collect();
+        let sigs: Vec<BlsSignature> = entries.iter().map(|e| BlsSignature(e.1.clone())).collect();
 
         let agg_sig = BlsVerifier::aggregate_signatures(&sigs)?;
         Some(CommitCertificate {
