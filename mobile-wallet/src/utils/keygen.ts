@@ -1,140 +1,207 @@
 /**
  * Wallet Key Generation for EvaporChain
  *
- * Generates ML-DSA compatible keypairs for the EvaporChain network.
- * Uses crypto.getRandomValues for entropy.
+ * Real ML-DSA-65 keypairs via @noble/post-quantum, plus a 24-word
+ * BIP-39 mnemonic with the EvaporChain custom checksum BLAKE3(entropy)[0]
+ * (matches wallet/src/mnemonic.rs).
+ *
+ * Address derivation: address = "0x" + hex(BLAKE3(pk)) — matches
+ * wallet/src/address.rs.
+ *
+ * NOTE: ML-DSA does not support seed-derived keypair generation, so
+ * recovery requires both the mnemonic AND an encrypted backup envelope
+ * (see keystore.ts).  Mnemonic-only recovery is intentionally
+ * unsupported.
  */
 
+import { ml_dsa65 } from '@noble/post-quantum/ml-dsa';
+import { blake3 } from '@noble/hashes/blake3';
+// `bip39` re-exports the English wordlist as `wordlists.english`
+// (a 2048-element string array).  This avoids depending on a JSON
+// import path that varies across module bundlers.
+import * as bip39 from 'bip39';
+
 export interface WalletKeys {
+  /** Hex-encoded ML-DSA-65 public key. */
   publicKey: string;
+  /** Hex-encoded ML-DSA-65 secret key. */
   privateKey: string;
+  /** 0x-prefixed 32-byte BLAKE3(pk) hex string. */
   address: string;
+  /** 24-word BIP-39 mnemonic with custom EvaporChain checksum. */
   seedPhrase: string;
+  /** 32 raw entropy bytes that produced the mnemonic. */
+  entropy: Uint8Array;
 }
 
-// BIP-39 English wordlist subset (2048 words) — using first 128 for demo.
-// In production, use the full BIP-39 wordlist via a dedicated library.
-const WORDLIST = [
-  'abandon', 'ability', 'able', 'about', 'above', 'absent', 'absorb', 'abstract',
-  'absurd', 'abuse', 'access', 'accident', 'account', 'accuse', 'achieve', 'acid',
-  'acoustic', 'acquire', 'across', 'act', 'action', 'actor', 'actress', 'actual',
-  'adapt', 'add', 'addict', 'address', 'adjust', 'admit', 'adult', 'advance',
-  'advice', 'aerobic', 'affair', 'afford', 'afraid', 'again', 'age', 'agent',
-  'agree', 'ahead', 'aim', 'air', 'airport', 'aisle', 'alarm', 'album',
-  'alcohol', 'alert', 'alien', 'all', 'alley', 'allow', 'almost', 'alone',
-  'alpha', 'already', 'also', 'alter', 'always', 'amateur', 'amazing', 'among',
-  'amount', 'amused', 'analyst', 'anchor', 'ancient', 'anger', 'angle', 'angry',
-  'animal', 'ankle', 'announce', 'annual', 'another', 'answer', 'antenna', 'antique',
-  'anxiety', 'any', 'apart', 'apology', 'appear', 'apple', 'approve', 'april',
-  'arch', 'arctic', 'area', 'arena', 'argue', 'arm', 'armed', 'armor',
-  'army', 'around', 'arrange', 'arrest', 'arrive', 'arrow', 'art', 'artefact',
-  'artist', 'artwork', 'ask', 'aspect', 'assault', 'asset', 'assist', 'assume',
-  'asthma', 'athlete', 'atom', 'attack', 'attend', 'attitude', 'attract', 'auction',
-  'audit', 'august', 'aunt', 'author', 'auto', 'avocado', 'avoid', 'awake',
-];
+// ─────────────────────────────── helpers ──────────────────────────────────
 
 function getRandomBytes(length: number): Uint8Array {
   const bytes = new Uint8Array(length);
-  // Use global crypto (available in React Native via hermes/JSC polyfill)
   if (typeof globalThis.crypto !== 'undefined' && globalThis.crypto.getRandomValues) {
     globalThis.crypto.getRandomValues(bytes);
   } else {
-    // Fallback for environments without crypto API
-    for (let i = 0; i < length; i++) {
-      bytes[i] = Math.floor(Math.random() * 256);
-    }
+    // No fallback — refusing to mint keys with Math.random.
+    throw new Error(
+      'Secure RNG unavailable: ensure react-native-get-random-values is imported at app entry'
+    );
   }
   return bytes;
 }
 
 function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
+  let out = '';
+  for (let i = 0; i < bytes.length; i++) {
+    out += (bytes[i] as number).toString(16).padStart(2, '0');
+  }
+  return out;
 }
 
+// ─────────────────────────────── wordlist ─────────────────────────────────
+
+// Resolve the BIP-39 English wordlist across the various shapes the
+// `bip39` package can present at runtime (CJS default-export, ESM named
+// export, bundler-rewritten module).
+const WORDLIST: string[] = (() => {
+  const mod = bip39 as unknown as Record<string, unknown> & {
+    default?: Record<string, unknown>;
+  };
+  const candidates: unknown[] = [
+    (mod.wordlists as Record<string, unknown> | undefined)?.english,
+    (mod.default?.wordlists as Record<string, unknown> | undefined)?.english,
+    (mod as Record<string, unknown>).english,
+    mod.default?.english,
+  ];
+  for (const c of candidates) {
+    if (Array.isArray(c) && c.length === 2048) return c as string[];
+  }
+  throw new Error('bip39 English wordlist failed to load (expected 2048 words)');
+})();
+
+// ─────────────────────────────── mnemonic ─────────────────────────────────
+
 /**
- * Generate a 24-word mnemonic from random entropy.
+ * Encode 32 bytes of entropy + the EvaporChain checksum byte into a
+ * 24-word phrase.  Checksum = BLAKE3(entropy)[0] — matches
+ * Mnemonic::from_entropy in wallet/src/mnemonic.rs.
  */
-function generateMnemonic(): string {
-  const entropy = getRandomBytes(32); // 256 bits
+function entropyToMnemonic(entropy: Uint8Array): string {
+  if (entropy.length !== 32) {
+    throw new Error(`entropy must be 32 bytes, got ${entropy.length}`);
+  }
+  const checksum = blake3(entropy)[0] as number;
+
+  // 256 entropy bits + 8 checksum bits = 264 bits = 24 words × 11 bits.
+  const bits: number[] = [];
+  for (let i = 0; i < 32; i++) {
+    const byte = entropy[i] as number;
+    for (let b = 7; b >= 0; b--) bits.push((byte >> b) & 1);
+  }
+  for (let b = 7; b >= 0; b--) bits.push((checksum >> b) & 1);
+
   const words: string[] = [];
-  for (let i = 0; i < 24; i++) {
-    const idx = ((entropy[i] || 0) + (entropy[(i + 12) % 32] || 0)) % WORDLIST.length;
-    words.push(WORDLIST[idx]);
+  for (let w = 0; w < 24; w++) {
+    let idx = 0;
+    for (let b = 0; b < 11; b++) {
+      idx = (idx << 1) | (bits[w * 11 + b] as number);
+    }
+    words.push(WORDLIST[idx] as string);
   }
   return words.join(' ');
 }
 
 /**
- * Derive a deterministic address from a public key using simple hashing.
- * In production, this uses BLAKE3. Here we use a JS-compatible hash.
+ * Parse a phrase into 32 entropy bytes.  Verifies the EvaporChain checksum.
  */
-function deriveAddress(pubKeyHex: string): string {
-  let hash = 0x811c9dc5; // FNV-1a offset basis
-  for (let i = 0; i < pubKeyHex.length; i++) {
-    hash ^= pubKeyHex.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  const hashHex = (hash >>> 0).toString(16).padStart(8, '0');
-  // Use first 20 bytes of pubkey + hash for address
-  return `0x${pubKeyHex.slice(0, 32)}${hashHex}`;
-}
-
-/**
- * Generate a new wallet with keypair, address, and seed phrase.
- *
- * Note: In production, this calls into the WASM bridge for real ML-DSA
- * key generation. This JS implementation provides the same interface
- * for development and testing.
- */
-export function generateWallet(): WalletKeys {
-  const seedPhrase = generateMnemonic();
-
-  // Generate keypair bytes (simulated — production uses ML-DSA via WASM)
-  const privBytes = getRandomBytes(64);
-  const pubBytes = getRandomBytes(32);
-
-  const privateKey = bytesToHex(privBytes);
-  const publicKey = bytesToHex(pubBytes);
-  const address = deriveAddress(publicKey);
-
-  return { publicKey, privateKey, address, seedPhrase };
-}
-
-/**
- * Recover a wallet from an existing seed phrase.
- *
- * Derives the same keypair deterministically from the mnemonic.
- * Production: feeds mnemonic into ML-DSA key derivation via WASM.
- */
-export function walletFromSeed(seedPhrase: string): WalletKeys {
-  const words = seedPhrase.trim().toLowerCase().split(/\s+/);
+export function mnemonicToEntropyBytes(phrase: string): Uint8Array {
+  const words = phrase.trim().toLowerCase().split(/\s+/);
   if (words.length !== 24) {
-    throw new Error('Seed phrase must be exactly 24 words');
+    throw new Error(`mnemonic must be 24 words, got ${words.length}`);
   }
 
-  // Deterministic derivation from seed (simplified — production uses BLAKE3 + ML-DSA)
-  let seed = 0;
-  for (const word of words) {
-    for (let i = 0; i < word.length; i++) {
-      seed = ((seed << 5) - seed + word.charCodeAt(i)) | 0;
-    }
+  const indexFor = new Map<string, number>();
+  for (let i = 0; i < WORDLIST.length; i++) indexFor.set(WORDLIST[i] as string, i);
+
+  const indices: number[] = [];
+  for (const w of words) {
+    const i = indexFor.get(w);
+    if (i === undefined) throw new Error(`unknown word in mnemonic: '${w}'`);
+    indices.push(i);
   }
 
-  // Generate deterministic bytes from seed
-  const privBytes = new Uint8Array(64);
-  const pubBytes = new Uint8Array(32);
-  let state = Math.abs(seed);
-  for (let i = 0; i < 64; i++) {
-    state = Math.imul(state, 1103515245) + 12345;
-    privBytes[i] = (state >>> 16) & 0xff;
-    if (i < 32) pubBytes[i] = privBytes[i] ^ 0x5a;
+  const bits: number[] = [];
+  for (const idx of indices) {
+    for (let b = 10; b >= 0; b--) bits.push((idx >> b) & 1);
   }
 
-  const privateKey = bytesToHex(privBytes);
-  const publicKey = bytesToHex(pubBytes);
-  const address = deriveAddress(publicKey);
+  const entropy = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) {
+    let byte = 0;
+    for (let b = 0; b < 8; b++) byte = (byte << 1) | (bits[i * 8 + b] as number);
+    entropy[i] = byte;
+  }
 
-  return { publicKey, privateKey, address, seedPhrase: words.join(' ') };
+  let checksum = 0;
+  for (let b = 0; b < 8; b++) checksum = (checksum << 1) | (bits[256 + b] as number);
+
+  const expected = blake3(entropy)[0] as number;
+  if (checksum !== expected) throw new Error('invalid mnemonic checksum');
+
+  return entropy;
+}
+
+/** Generate a fresh 24-word mnemonic. */
+export function generateMnemonic(): string {
+  const entropy = getRandomBytes(32);
+  return entropyToMnemonic(entropy);
+}
+
+/** Validate phrase + EvaporChain checksum. */
+export function validateMnemonic(phrase: string): boolean {
+  try {
+    mnemonicToEntropyBytes(phrase);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ─────────────────────────────── keys ─────────────────────────────────────
+
+/**
+ * Derive an EvaporChain address from a raw ML-DSA public key.
+ *   address = "0x" + hex(BLAKE3(pk))
+ */
+export function deriveAddressFromPubKey(pk: Uint8Array): string {
+  return '0x' + bytesToHex(blake3(pk));
+}
+
+/**
+ * Generate a new wallet: real ML-DSA-65 keypair + fresh mnemonic.
+ *
+ * `ml_dsa65.keygen()` accepts a 32-byte seed; we feed it secure RNG
+ * bytes (independent from the mnemonic entropy — ML-DSA cannot be
+ * deterministically re-derived from a mnemonic, so the keypair is
+ * backed up via encrypted envelope, not regenerated from seed words).
+ */
+export async function generateWallet(): Promise<WalletKeys> {
+  return generateWalletSync();
+}
+
+/**
+ * Synchronous variant for code paths that already run inside an
+ * `await` boundary or non-blocking startup.
+ */
+export function generateWalletSync(): WalletKeys {
+  const entropy = getRandomBytes(32);
+  const seedPhrase = entropyToMnemonic(entropy);
+
+  const keySeed = getRandomBytes(32);
+  const kp = ml_dsa65.keygen(keySeed);
+
+  const publicKey = bytesToHex(kp.publicKey);
+  const privateKey = bytesToHex(kp.secretKey);
+  const address = deriveAddressFromPubKey(kp.publicKey);
+
+  return { publicKey, privateKey, address, seedPhrase, entropy };
 }

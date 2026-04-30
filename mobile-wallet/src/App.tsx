@@ -4,6 +4,10 @@
  * Handles push notification registration and auto-lock enforcement.
  */
 
+// MUST be the very first import — installs a native crypto.getRandomValues
+// shim before any module that touches @noble/* / ml-dsa / mnemonic code.
+import 'react-native-get-random-values';
+
 import React, { useEffect, useRef } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';

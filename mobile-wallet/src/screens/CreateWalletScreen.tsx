@@ -36,20 +36,33 @@ const CreateWalletScreen: React.FC<Props> = ({ navigation }) => {
   const [pinError, setPinError] = useState('');
 
   useEffect(() => {
-    const keys = generateWallet();
-    setWallet(keys);
+    let cancelled = false;
+    (async () => {
+      try {
+        const keys = await generateWallet();
+        if (cancelled) return;
+        setWallet(keys);
 
-    // Pick 3 random words for confirmation
-    const words = keys.seedPhrase.split(' ');
-    const indices = new Set<number>();
-    while (indices.size < 3) {
-      indices.add(Math.floor(Math.random() * words.length));
-    }
-    setConfirmWords(
-      Array.from(indices)
-        .sort((a, b) => a - b)
-        .map((i) => ({ index: i, word: words[i] }))
-    );
+        // Pick 3 random words for confirmation
+        const words = keys.seedPhrase.split(' ');
+        const indices = new Set<number>();
+        while (indices.size < 3) {
+          indices.add(Math.floor(Math.random() * words.length));
+        }
+        setConfirmWords(
+          Array.from(indices)
+            .sort((a, b) => a - b)
+            .map((i) => ({ index: i, word: words[i] as string }))
+        );
+      } catch (err) {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : 'Failed to generate wallet';
+        Alert.alert('Error', msg);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const handleBackupDone = () => {
