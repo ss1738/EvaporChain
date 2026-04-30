@@ -1,3 +1,4 @@
+use axum::http::HeaderMap;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -5,9 +6,8 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use axum::http::HeaderMap;
-use evaporchain_consensus::MockConsensus;
 use evaporchain_consensus::tendermint::TendermintConsensus;
+use evaporchain_consensus::MockConsensus;
 use evaporchain_crypto::signatures::{MlDsaKeypair, Signer};
 use evaporchain_da::block_da::BlockDAPackage;
 use evaporchain_da::block_da_2d::BlockDA2DPackage;
@@ -263,6 +263,19 @@ impl ApiState {
         };
         txs.iter().map(tx_to_json).collect()
     }
+
+    /// Check whether a tx hash is currently sitting in the active mempool.
+    /// Wraps the consensus-layer `Mempool::contains_hash` so the API layer
+    /// doesn't reach into private fields.
+    pub fn mempool_contains_hash(&self, hash: &[u8; 32]) -> bool {
+        if let Some(ref tc) = self.tendermint {
+            let c = safe_lock(tc);
+            c.mempool.contains_hash(hash)
+        } else {
+            let c = safe_lock(&self.consensus);
+            c.mempool.contains_hash(hash)
+        }
+    }
 }
 
 // ──────────────────────────── NFT Store ────────────────────────────────
@@ -445,8 +458,15 @@ impl ThroughputTracker {
     }
 
     /// Record a new block's throughput data.
-    pub fn record_block(&mut self, timestamp_ms: u64, tx_count: usize, exec_time_us: u64, gas_used: u64) {
-        self.recent_blocks.push_back((timestamp_ms, tx_count, exec_time_us, gas_used));
+    pub fn record_block(
+        &mut self,
+        timestamp_ms: u64,
+        tx_count: usize,
+        exec_time_us: u64,
+        gas_used: u64,
+    ) {
+        self.recent_blocks
+            .push_back((timestamp_ms, tx_count, exec_time_us, gas_used));
         // Keep last 100 blocks
         while self.recent_blocks.len() > 100 {
             self.recent_blocks.pop_front();
@@ -465,7 +485,9 @@ impl ThroughputTracker {
         let now = self.recent_blocks.back().unwrap().0;
         let window_ms = 10_000; // 10-second window
         let cutoff = now.saturating_sub(window_ms);
-        let in_window: Vec<_> = self.recent_blocks.iter()
+        let in_window: Vec<_> = self
+            .recent_blocks
+            .iter()
             .filter(|(ts, _, _, _)| *ts >= cutoff)
             .collect();
         if in_window.len() < 2 {
@@ -473,27 +495,35 @@ impl ThroughputTracker {
         }
         let total_txs: usize = in_window.iter().map(|(_, tc, _, _)| tc).sum();
         let span_ms = in_window.last().unwrap().0 - in_window.first().unwrap().0;
-        if span_ms == 0 { return 0.0; }
+        if span_ms == 0 {
+            return 0.0;
+        }
         total_txs as f64 / (span_ms as f64 / 1000.0)
     }
 
     /// Average block execution time (microseconds) over recent blocks.
     pub fn avg_exec_time_us(&self) -> u64 {
-        if self.recent_blocks.is_empty() { return 0; }
+        if self.recent_blocks.is_empty() {
+            return 0;
+        }
         let total: u64 = self.recent_blocks.iter().map(|(_, _, t, _)| t).sum();
         total / self.recent_blocks.len() as u64
     }
 
     /// Average gas used per block.
     pub fn avg_gas_per_block(&self) -> u64 {
-        if self.recent_blocks.is_empty() { return 0; }
+        if self.recent_blocks.is_empty() {
+            return 0;
+        }
         let total: u64 = self.recent_blocks.iter().map(|(_, _, _, g)| g).sum();
         total / self.recent_blocks.len() as u64
     }
 
     /// Average txs per block.
     pub fn avg_txs_per_block(&self) -> f64 {
-        if self.recent_blocks.is_empty() { return 0.0; }
+        if self.recent_blocks.is_empty() {
+            return 0.0;
+        }
         let total: usize = self.recent_blocks.iter().map(|(_, tc, _, _)| tc).sum();
         total as f64 / self.recent_blocks.len() as f64
     }
@@ -512,11 +542,11 @@ pub struct EventRecord {
 
 /// Realistic 20-byte genesis addresses (hex, no 0x prefix).
 pub const GENESIS_FOUNDATION: &str = "7f3a8b2ce419d605a1c74e823fb960d4159ae378";
-pub const GENESIS_CORE_DEV:   &str = "2b91f50d68a37ce214b65903d74a8ef1c5263b90";
-pub const GENESIS_VALIDATOR1:  &str = "91e5c8f23d7b4a061f9c82e640d53a17b8f26f47";
-pub const GENESIS_VALIDATOR2:  &str = "4d02a7e91c3f86b5d24e0f738c915ba6e0d7a8b6";
-pub const GENESIS_ECOSYSTEM:   &str = "a3f71b5e928d4c063e7a50f81d9c26b34e8a1c5e";
-pub const GENESIS_COMMUNITY:   &str = "e8b12d7f94c6a35081e4f29b6d3c8a57f1e07d94";
+pub const GENESIS_CORE_DEV: &str = "2b91f50d68a37ce214b65903d74a8ef1c5263b90";
+pub const GENESIS_VALIDATOR1: &str = "91e5c8f23d7b4a061f9c82e640d53a17b8f26f47";
+pub const GENESIS_VALIDATOR2: &str = "4d02a7e91c3f86b5d24e0f738c915ba6e0d7a8b6";
+pub const GENESIS_ECOSYSTEM: &str = "a3f71b5e928d4c063e7a50f81d9c26b34e8a1c5e";
+pub const GENESIS_COMMUNITY: &str = "e8b12d7f94c6a35081e4f29b6d3c8a57f1e07d94";
 
 // ──────────────────────────── Name Helpers ─────────────────────────────
 
@@ -659,8 +689,12 @@ fn tx_to_json(tx: &Transaction) -> serde_json::Value {
         Transaction::MultiSig(_) => serde_json::json!({ "type": "multisig" }),
         Transaction::UserOp(_) => serde_json::json!({ "type": "user_op" }),
         Transaction::UpgradeContract(_) => serde_json::json!({ "type": "upgrade_contract" }),
-        Transaction::Delegate(t) => serde_json::json!({ "type": "delegate", "validator_id": t.validator_id, "amount": t.amount }),
-        Transaction::Undelegate(t) => serde_json::json!({ "type": "undelegate", "validator_id": t.validator_id, "amount": t.amount }),
+        Transaction::Delegate(t) => {
+            serde_json::json!({ "type": "delegate", "validator_id": t.validator_id, "amount": t.amount })
+        }
+        Transaction::Undelegate(t) => {
+            serde_json::json!({ "type": "undelegate", "validator_id": t.validator_id, "amount": t.amount })
+        }
         Transaction::RotateValidatorKey(t) => serde_json::json!({
             "type": "rotate_validator_key",
             "validator_id": t.validator_id,
@@ -845,13 +879,29 @@ struct FaucetResponse {
 #[serde(tag = "type")]
 enum BatchTxItem {
     #[serde(rename = "transfer")]
-    Transfer { from: serde_json::Value, to: serde_json::Value, amount: u64, nonce: u64 },
+    Transfer {
+        from: serde_json::Value,
+        to: serde_json::Value,
+        amount: u64,
+        nonce: u64,
+    },
     #[serde(rename = "create_object")]
-    CreateObject { creator: serde_json::Value, object_id: serde_json::Value, energy: u64, half_life: u64 },
+    CreateObject {
+        creator: serde_json::Value,
+        object_id: serde_json::Value,
+        energy: u64,
+        half_life: u64,
+    },
     #[serde(rename = "refresh")]
-    Refresh { object_id: serde_json::Value, energy_deposit: u64 },
+    Refresh {
+        object_id: serde_json::Value,
+        energy_deposit: u64,
+    },
     #[serde(rename = "resurrect")]
-    Resurrect { object_id: serde_json::Value, energy_deposit: u64 },
+    Resurrect {
+        object_id: serde_json::Value,
+        energy_deposit: u64,
+    },
 }
 
 #[derive(Deserialize)]
@@ -879,7 +929,11 @@ struct BatchResponse {
 
 /// Require a valid auth token OR a valid signature for transaction endpoints.
 /// Returns Ok(user_id) if authenticated, Err(response) otherwise.
-fn require_tx_auth(headers: &HeaderMap, state: &ApiState, has_signature: bool) -> Result<Option<i64>, Json<TxResultResponse>> {
+fn require_tx_auth(
+    headers: &HeaderMap,
+    state: &ApiState,
+    has_signature: bool,
+) -> Result<Option<i64>, Json<TxResultResponse>> {
     // If a cryptographic signature is provided, let the consensus layer verify it
     if has_signature {
         return Ok(None);
@@ -901,7 +955,11 @@ fn require_tx_auth(headers: &HeaderMap, state: &ApiState, has_signature: bool) -
 }
 
 /// Check that the given address belongs to the authenticated user.
-fn require_wallet_ownership(state: &ApiState, user_id: Option<i64>, addr_hex: &str) -> Result<(), Json<TxResultResponse>> {
+fn require_wallet_ownership(
+    state: &ApiState,
+    user_id: Option<i64>,
+    addr_hex: &str,
+) -> Result<(), Json<TxResultResponse>> {
     let user_id = match user_id {
         Some(id) => id,
         None => return Ok(()), // signature-based auth, no user binding
@@ -994,28 +1052,88 @@ fn sign_transaction(tx: &mut Transaction, state: &ApiState, sender_address: Opti
 /// Set the signature and public_key fields on a transaction variant.
 fn set_tx_signature(tx: &mut Transaction, sig: Vec<u8>, pk: Vec<u8>) {
     match tx {
-        Transaction::Transfer(t) => { t.signature = Some(sig); t.public_key = Some(pk); }
-        Transaction::Refresh(t) => { t.signature = Some(sig); t.public_key = Some(pk); }
-        Transaction::CreateObject(t) => { t.signature = Some(sig); t.public_key = Some(pk); }
-        Transaction::DeployContract(t) => { t.signature = Some(sig); t.public_key = Some(pk); }
-        Transaction::CallContract(t) => { t.signature = Some(sig); t.public_key = Some(pk); }
-        Transaction::DeployScript(t) => { t.signature = Some(sig); t.public_key = Some(pk); }
-        Transaction::CallScript(t) => { t.signature = Some(sig); t.public_key = Some(pk); }
-        Transaction::ValidatorStake(t) => { t.signature = Some(sig); t.public_key = Some(pk); }
-        Transaction::ValidatorExit(t) => { t.signature = Some(sig); t.public_key = Some(pk); }
-        Transaction::ValidatorClaimStake(t) => { t.signature = Some(sig); t.public_key = Some(pk); }
-        Transaction::Shield(t) => { t.signature = Some(sig); t.public_key = Some(pk); }
+        Transaction::Transfer(t) => {
+            t.signature = Some(sig);
+            t.public_key = Some(pk);
+        }
+        Transaction::Refresh(t) => {
+            t.signature = Some(sig);
+            t.public_key = Some(pk);
+        }
+        Transaction::CreateObject(t) => {
+            t.signature = Some(sig);
+            t.public_key = Some(pk);
+        }
+        Transaction::DeployContract(t) => {
+            t.signature = Some(sig);
+            t.public_key = Some(pk);
+        }
+        Transaction::CallContract(t) => {
+            t.signature = Some(sig);
+            t.public_key = Some(pk);
+        }
+        Transaction::DeployScript(t) => {
+            t.signature = Some(sig);
+            t.public_key = Some(pk);
+        }
+        Transaction::CallScript(t) => {
+            t.signature = Some(sig);
+            t.public_key = Some(pk);
+        }
+        Transaction::ValidatorStake(t) => {
+            t.signature = Some(sig);
+            t.public_key = Some(pk);
+        }
+        Transaction::ValidatorExit(t) => {
+            t.signature = Some(sig);
+            t.public_key = Some(pk);
+        }
+        Transaction::ValidatorClaimStake(t) => {
+            t.signature = Some(sig);
+            t.public_key = Some(pk);
+        }
+        Transaction::Shield(t) => {
+            t.signature = Some(sig);
+            t.public_key = Some(pk);
+        }
         Transaction::Unshield(_) | Transaction::PrivateTransfer(_) => {} // ZK-authenticated
-        Transaction::Deferred(d) => { d.signature = Some(sig); d.public_key = Some(pk); }
-        Transaction::Blob(b) => { b.signature = Some(sig); b.public_key = Some(pk); }
-        Transaction::Governance(g) => { g.signature = Some(sig); g.public_key = Some(pk); }
+        Transaction::Deferred(d) => {
+            d.signature = Some(sig);
+            d.public_key = Some(pk);
+        }
+        Transaction::Blob(b) => {
+            b.signature = Some(sig);
+            b.public_key = Some(pk);
+        }
+        Transaction::Governance(g) => {
+            g.signature = Some(sig);
+            g.public_key = Some(pk);
+        }
         Transaction::MultiSig(_) => {}
-        Transaction::UserOp(u) => { u.signature = Some(sig); u.public_key = Some(pk); }
-        Transaction::UpgradeContract(u) => { u.signature = Some(sig); u.public_key = Some(pk); }
-        Transaction::Delegate(d) => { d.signature = Some(sig); d.public_key = Some(pk); }
-        Transaction::Undelegate(u) => { u.signature = Some(sig); u.public_key = Some(pk); }
-        Transaction::RotateValidatorKey(r) => { r.signature = Some(sig); r.public_key = Some(pk); }
-        Transaction::ClaimDelegation(c) => { c.signature = Some(sig); c.public_key = Some(pk); }
+        Transaction::UserOp(u) => {
+            u.signature = Some(sig);
+            u.public_key = Some(pk);
+        }
+        Transaction::UpgradeContract(u) => {
+            u.signature = Some(sig);
+            u.public_key = Some(pk);
+        }
+        Transaction::Delegate(d) => {
+            d.signature = Some(sig);
+            d.public_key = Some(pk);
+        }
+        Transaction::Undelegate(u) => {
+            u.signature = Some(sig);
+            u.public_key = Some(pk);
+        }
+        Transaction::RotateValidatorKey(r) => {
+            r.signature = Some(sig);
+            r.public_key = Some(pk);
+        }
+        Transaction::ClaimDelegation(c) => {
+            c.signature = Some(sig);
+            c.public_key = Some(pk);
+        }
     }
 }
 
@@ -1048,14 +1166,23 @@ fn strip_html_tags(s: &str) -> String {
 /// Validate email format (basic but rejects obvious garbage).
 pub fn is_valid_email(email: &str) -> bool {
     let parts: Vec<&str> = email.split('@').collect();
-    if parts.len() != 2 { return false; }
+    if parts.len() != 2 {
+        return false;
+    }
     let local = parts[0];
     let domain = parts[1];
-    if local.is_empty() || domain.is_empty() { return false; }
-    if !domain.contains('.') { return false; }
+    if local.is_empty() || domain.is_empty() {
+        return false;
+    }
+    if !domain.contains('.') {
+        return false;
+    }
     // Reject obvious non-email characters
     let valid_chars = |c: char| c.is_alphanumeric() || "._+-".contains(c);
-    local.chars().all(valid_chars) && domain.chars().all(|c| c.is_alphanumeric() || ".-".contains(c))
+    local.chars().all(valid_chars)
+        && domain
+            .chars()
+            .all(|c| c.is_alphanumeric() || ".-".contains(c))
 }
 
 // ──────────────────────────── Handlers ─────────────────────────────────
@@ -1506,7 +1633,10 @@ async fn post_patronage_honour(
                 status: "honoured",
                 donated,
                 patronage_score: score,
-                detail: format!("donated {} at epoch {}; cumulative score {}", donated, req.epoch, score),
+                detail: format!(
+                    "donated {} at epoch {}; cumulative score {}",
+                    donated, req.epoch, score
+                ),
             })
         }
         Err(e) => Json(PatronageHonourResp {
@@ -1669,11 +1799,7 @@ async fn get_boltzmann_weights(
         let entries: Vec<BoltzmannWeightEntry> = weights
             .into_iter()
             .map(|(id, w)| {
-                let b_active = tc
-                    .boltzmann_stakes
-                    .get(&id)
-                    .map(|s| s.active)
-                    .unwrap_or(0);
+                let b_active = tc.boltzmann_stakes.get(&id).map(|s| s.active).unwrap_or(0);
                 let gov_stake = tc.validator_set.get(id).map(|v| v.stake).unwrap_or(0);
                 BoltzmannWeightEntry {
                     validator_id: id,
@@ -2042,9 +2168,7 @@ async fn post_script_lad_check(Json(req): Json<ScriptLadCheckReq>) -> Json<Scrip
                         }
                         evaporchain_script_lad::ResourceVerdict::Consumed => ("consumed", None),
                         evaporchain_script_lad::ResourceVerdict::Dropped => ("dropped", None),
-                        evaporchain_script_lad::ResourceVerdict::Evaporated => {
-                            ("evaporated", None)
-                        }
+                        evaporchain_script_lad::ResourceVerdict::Evaporated => ("evaporated", None),
                     };
                     ScriptLadVerdictEntry {
                         field: field.clone(),
@@ -2123,7 +2247,10 @@ async fn post_script_lad_simulate(Json(req): Json<ScriptLadSimReq>) -> Json<serd
                             ("evaporated", serde_json::Value::Null)
                         }
                     };
-                    (name, serde_json::json!({"verdict": verdict_str, "value": value}))
+                    (
+                        name,
+                        serde_json::json!({"verdict": verdict_str, "value": value}),
+                    )
                 })
                 .collect();
             Json(serde_json::json!({
@@ -2294,11 +2421,9 @@ async fn get_identity(State(state): State<Arc<ApiState>>) -> Json<EvaporChainIde
             let window_samples = tc.tur_window_len();
             let (verdict, observed, bound) = match tc.tur_liveness_verdict() {
                 None => ("warming-up", None, None),
-                Some(evaporchain_tur_liveness::Verdict::Ok { observed, bound }) => (
-                    "ok",
-                    Some(observed.to_string()),
-                    Some(bound.to_string()),
-                ),
+                Some(evaporchain_tur_liveness::Verdict::Ok { observed, bound }) => {
+                    ("ok", Some(observed.to_string()), Some(bound.to_string()))
+                }
                 Some(evaporchain_tur_liveness::Verdict::Violation { observed, bound }) => (
                     "violation",
                     Some(observed.to_string()),
@@ -2471,20 +2596,18 @@ pub struct HbctSeedDemoResp {
     pub detail: String,
 }
 
-async fn post_hbct_seed_demo(
-    State(state): State<Arc<ApiState>>,
-) -> Json<HbctSeedDemoResp> {
+async fn post_hbct_seed_demo(State(state): State<Arc<ApiState>>) -> Json<HbctSeedDemoResp> {
     // Realistic-shaped demo positions. Locations are GB BMU codes +
     // German bidding zone; holders are deterministic stand-ins.
     let positions: &[(&str, u64, u64, u8)] = &[
-        ("BMU-T_DRAXX-1",  481248, 250, 0xA1),
-        ("BMU-T_HEYM31",   481248, 180, 0xA2),
-        ("BMU-T_GRAIN-3",  481249,  95, 0xA1),
-        ("BMU-T_PEMB-1",   481249, 130, 0xA3),
-        ("DE-LU",          481250, 420, 0xB1),
-        ("DE-LU",          481250, 110, 0xB2),
-        ("BMU-T_HORNW-1",  481251,  75, 0xA4),
-        ("BMU-T_HORNW-1",  481252,  88, 0xA4),
+        ("BMU-T_DRAXX-1", 481248, 250, 0xA1),
+        ("BMU-T_HEYM31", 481248, 180, 0xA2),
+        ("BMU-T_GRAIN-3", 481249, 95, 0xA1),
+        ("BMU-T_PEMB-1", 481249, 130, 0xA3),
+        ("DE-LU", 481250, 420, 0xB1),
+        ("DE-LU", 481250, 110, 0xB2),
+        ("BMU-T_HORNW-1", 481251, 75, 0xA4),
+        ("BMU-T_HORNW-1", 481252, 88, 0xA4),
     ];
     let issued_at = 0u64;
     let mut book = safe_lock(&state.hbct_book);
@@ -2564,11 +2687,21 @@ async fn post_hbct_transfer(
 ) -> Json<HbctActionResp> {
     let from = match parse_hex32(&req.from_hex) {
         Ok(a) => a,
-        Err(e) => return Json(HbctActionResp { status: "error", detail: format!("bad from: {e}") }),
+        Err(e) => {
+            return Json(HbctActionResp {
+                status: "error",
+                detail: format!("bad from: {e}"),
+            })
+        }
     };
     let to = match parse_hex32(&req.to_hex) {
         Ok(a) => a,
-        Err(e) => return Json(HbctActionResp { status: "error", detail: format!("bad to: {e}") }),
+        Err(e) => {
+            return Json(HbctActionResp {
+                status: "error",
+                detail: format!("bad to: {e}"),
+            })
+        }
     };
     let mut book = safe_lock(&state.hbct_book);
     match book.transfer(
@@ -2578,8 +2711,14 @@ async fn post_hbct_transfer(
         to,
         req.amount,
     ) {
-        Ok(()) => Json(HbctActionResp { status: "ok", detail: "transferred".into() }),
-        Err(e) => Json(HbctActionResp { status: "error", detail: format!("{e}") }),
+        Ok(()) => Json(HbctActionResp {
+            status: "ok",
+            detail: "transferred".into(),
+        }),
+        Err(e) => Json(HbctActionResp {
+            status: "error",
+            detail: format!("{e}"),
+        }),
     }
 }
 
@@ -2589,12 +2728,28 @@ async fn post_hbct_burn(
 ) -> Json<HbctActionResp> {
     let holder = match parse_hex32(&req.holder_hex) {
         Ok(a) => a,
-        Err(e) => return Json(HbctActionResp { status: "error", detail: format!("bad holder: {e}") }),
+        Err(e) => {
+            return Json(HbctActionResp {
+                status: "error",
+                detail: format!("bad holder: {e}"),
+            })
+        }
     };
     let mut book = safe_lock(&state.hbct_book);
-    match book.burn(&req.delivery_location.into_bytes(), req.hour_slot, holder, req.amount) {
-        Ok(()) => Json(HbctActionResp { status: "ok", detail: "burnt".into() }),
-        Err(e) => Json(HbctActionResp { status: "error", detail: format!("{e}") }),
+    match book.burn(
+        &req.delivery_location.into_bytes(),
+        req.hour_slot,
+        holder,
+        req.amount,
+    ) {
+        Ok(()) => Json(HbctActionResp {
+            status: "ok",
+            detail: "burnt".into(),
+        }),
+        Err(e) => Json(HbctActionResp {
+            status: "error",
+            detail: format!("{e}"),
+        }),
     }
 }
 
@@ -2646,9 +2801,7 @@ pub struct MortisCertDetail {
     pub witness: String,
 }
 
-async fn get_mortis_cert(
-    State(state): State<Arc<ApiState>>,
-) -> Json<Option<MortisCertDetail>> {
+async fn get_mortis_cert(State(state): State<Arc<ApiState>>) -> Json<Option<MortisCertDetail>> {
     let tc = match state.tendermint.as_ref() {
         Some(tc) => tc,
         None => return Json(None),
@@ -2729,23 +2882,30 @@ async fn get_tombstone(
 async fn get_refresh_pool(State(state): State<Arc<ApiState>>) -> Json<RefreshPoolResp> {
     let tc = match state.tendermint.as_ref() {
         Some(tc) => tc,
-        None => return Json(RefreshPoolResp {
-            total_accrued: 0,
-            credits: vec![],
-        }),
+        None => {
+            return Json(RefreshPoolResp {
+                total_accrued: 0,
+                credits: vec![],
+            })
+        }
     };
     let tc = safe_lock(tc);
     let raw = tc.refresh_pool_credits();
-    let total: u64 = raw.iter().map(|(_, a, _)| *a).fold(0u64, |a, b| a.saturating_add(b));
+    let total: u64 = raw
+        .iter()
+        .map(|(_, a, _)| *a)
+        .fold(0u64, |a, b| a.saturating_add(b));
     Json(RefreshPoolResp {
         total_accrued: total,
         credits: raw
             .into_iter()
-            .map(|(namespace_hex, accrued, last_touched_epoch)| RefreshPoolCredit {
-                namespace_hex,
-                accrued,
-                last_touched_epoch,
-            })
+            .map(
+                |(namespace_hex, accrued, last_touched_epoch)| RefreshPoolCredit {
+                    namespace_hex,
+                    accrued,
+                    last_touched_epoch,
+                },
+            )
             .collect(),
     })
 }
@@ -2815,17 +2975,27 @@ async fn post_hbct_seed_attestation(
 ) -> Json<HbctActionResp> {
     let holder = match parse_hex32(&req.holder_hex) {
         Ok(a) => a,
-        Err(e) => return Json(HbctActionResp { status: "error", detail: format!("bad holder: {e}") }),
+        Err(e) => {
+            return Json(HbctActionResp {
+                status: "error",
+                detail: format!("bad holder: {e}"),
+            })
+        }
     };
     let mut oracle = safe_lock(&state.hbct_oracle);
-    oracle.attestations.push(evaporchain_hbct::OracleAttestation {
-        delivery_location: req.delivery_location.into_bytes(),
-        hour_slot: req.hour_slot,
-        holder,
-        mwh_delivered: req.mwh_delivered,
-        attested_at_epoch: req.attested_at_epoch,
-    });
-    Json(HbctActionResp { status: "ok", detail: "attestation recorded".into() })
+    oracle
+        .attestations
+        .push(evaporchain_hbct::OracleAttestation {
+            delivery_location: req.delivery_location.into_bytes(),
+            hour_slot: req.hour_slot,
+            holder,
+            mwh_delivered: req.mwh_delivered,
+            attested_at_epoch: req.attested_at_epoch,
+        });
+    Json(HbctActionResp {
+        status: "ok",
+        detail: "attestation recorded".into(),
+    })
 }
 
 /// Settle one (location, slot, holder) HBCT position against the
@@ -2881,15 +3051,13 @@ pub struct SentinelSeedDemoResp {
     pub detail: String,
 }
 
-async fn post_sentinel_seed_demo(
-    State(state): State<Arc<ApiState>>,
-) -> Json<SentinelSeedDemoResp> {
+async fn post_sentinel_seed_demo(State(state): State<Arc<ApiState>>) -> Json<SentinelSeedDemoResp> {
     // (id, current, min, max). Realistic-shaped chain knobs.
     let params: &[(u32, u64, u64, u64)] = &[
-        (1, 30_000_000, 5_000_000, 100_000_000),  // block gas limit
-        (2,         10,           1,          60),  // target block time (s)
-        (3,    1_000_000,      1_000,  10_000_000),  // mempool byte cap (kb)
-        (4,        4096,          64,      65_536),  // λ half-life (epochs)
+        (1, 30_000_000, 5_000_000, 100_000_000), // block gas limit
+        (2, 10, 1, 60),                          // target block time (s)
+        (3, 1_000_000, 1_000, 10_000_000),       // mempool byte cap (kb)
+        (4, 4096, 64, 65_536),                   // λ half-life (epochs)
     ];
     let mut registered: Vec<u32> = Vec::new();
     let mut last_err: Option<String> = None;
@@ -2906,9 +3074,14 @@ async fn post_sentinel_seed_demo(
         }
     }
     Json(SentinelSeedDemoResp {
-        status: if !registered.is_empty() { "ok" } else { "error" },
+        status: if !registered.is_empty() {
+            "ok"
+        } else {
+            "error"
+        },
         registered,
-        detail: last_err.unwrap_or_else(|| "block gas limit · block time · mempool cap · λ half-life".into()),
+        detail: last_err
+            .unwrap_or_else(|| "block gas limit · block time · mempool cap · λ half-life".into()),
     })
 }
 
@@ -2983,7 +3156,10 @@ async fn post_sentinel_register_param(
     };
     let mut db = safe_lock(&state.db);
     db.put_sentinel_param(p);
-    Json(HbctActionResp { status: "ok", detail: "registered".into() })
+    Json(HbctActionResp {
+        status: "ok",
+        detail: "registered".into(),
+    })
 }
 
 async fn post_sentinel_vote(
@@ -3006,7 +3182,10 @@ async fn post_sentinel_vote(
         req.observed_epoch,
     ));
     db.put_sentinel_votes(req.parameter_id, votes);
-    Json(HbctActionResp { status: "ok", detail: "vote recorded".into() })
+    Json(HbctActionResp {
+        status: "ok",
+        detail: "vote recorded".into(),
+    })
 }
 
 async fn post_sentinel_tick(
@@ -3092,16 +3271,16 @@ async fn get_boltzmann_stake(
     // Production governance picks a chain-specific λ via a future
     // ConsensusFourActState extension.
     let lambda = evaporchain_energy_kernel::ChainLambda::default_genesis();
-    let registry = evaporchain_execution::boltzmann_stake_integration::BoltzmannStakeRegistry::new();
-    let decayed =
-        evaporchain_execution::boltzmann_stake_integration::decayed_voting_power(
-            &*db,
-            &registry,
-            validator_id,
-            lambda,
-            current_epoch,
-        )
-        .unwrap_or(0);
+    let registry =
+        evaporchain_execution::boltzmann_stake_integration::BoltzmannStakeRegistry::new();
+    let decayed = evaporchain_execution::boltzmann_stake_integration::decayed_voting_power(
+        &*db,
+        &registry,
+        validator_id,
+        lambda,
+        current_epoch,
+    )
+    .unwrap_or(0);
     let pct = if live == 0 {
         0.0
     } else {
@@ -3164,9 +3343,7 @@ pub struct TropicalWeightResp {
     pub tropical_weight: String,
 }
 
-async fn post_tropical_weight(
-    Json(q): Json<TropicalWeightQuery>,
-) -> Json<TropicalWeightResp> {
+async fn post_tropical_weight(Json(q): Json<TropicalWeightQuery>) -> Json<TropicalWeightResp> {
     let w = evaporchain_tropical::tropical_weight(q.energy);
     Json(TropicalWeightResp {
         energy: q.energy,
@@ -3225,9 +3402,7 @@ pub struct SinghAttractorResp {
     pub in_basin: bool,
 }
 
-async fn post_singh_attractor(
-    Json(q): Json<SinghAttractorQuery>,
-) -> Json<SinghAttractorResp> {
+async fn post_singh_attractor(Json(q): Json<SinghAttractorQuery>) -> Json<SinghAttractorResp> {
     let attractors: Vec<evaporchain_singh_attractor::Attractor> = q
         .attractors
         .into_iter()
@@ -3402,9 +3577,7 @@ pub struct CslcReconstructResp {
     pub detail: String,
 }
 
-async fn post_cslc_reconstruct(
-    Json(q): Json<CslcReconstructQuery>,
-) -> Json<CslcReconstructResp> {
+async fn post_cslc_reconstruct(Json(q): Json<CslcReconstructQuery>) -> Json<CslcReconstructResp> {
     match evaporchain_cslc::reconstruct_unconditional(&q.counts) {
         Ok(machine) => Json(CslcReconstructResp {
             status: "ok",
@@ -3653,9 +3826,7 @@ pub struct BeaconResp {
 
 /// Compute the per-epoch modular-form beacon at `tau` and verify the
 /// E_4³ − E_6² = 1728·Δ identity. Per INVENTION_STACK.md §A1.4.
-async fn get_beacon(
-    axum::extract::Path(tau): axum::extract::Path<u64>,
-) -> Json<BeaconResp> {
+async fn get_beacon(axum::extract::Path(tau): axum::extract::Path<u64>) -> Json<BeaconResp> {
     let beacon = evaporchain_modular_beacon::compute_beacon(tau);
     // Tolerance: scales with τ since the truncated polynomial breaks
     // the identity for non-zero q. Launch placeholder; governance can
@@ -3705,20 +3876,19 @@ pub struct CrooksRefundResp {
 /// observed forward/reverse pmfs of the path, total work extracted,
 /// and β; chain returns the refund (= work_extracted − ΔF clamped at 0).
 /// Per INVENTION_STACK.md §A1.3.
-async fn post_crooks_refund(
-    Json(q): Json<CrooksRefundQuery>,
-) -> Json<CrooksRefundResp> {
-    let log_ratio = match evaporchain_cfm::crooks_log_ratio_millibits(q.p_forward_ppm, q.p_reverse_ppm) {
-        Ok(r) => r,
-        Err(e) => {
-            return Json(CrooksRefundResp {
-                status: "error",
-                delta_f_millibits: 0,
-                refund: 0,
-                detail: format!("crooks log-ratio: {e}"),
-            });
-        }
-    };
+async fn post_crooks_refund(Json(q): Json<CrooksRefundQuery>) -> Json<CrooksRefundResp> {
+    let log_ratio =
+        match evaporchain_cfm::crooks_log_ratio_millibits(q.p_forward_ppm, q.p_reverse_ppm) {
+            Ok(r) => r,
+            Err(e) => {
+                return Json(CrooksRefundResp {
+                    status: "error",
+                    delta_f_millibits: 0,
+                    refund: 0,
+                    detail: format!("crooks log-ratio: {e}"),
+                });
+            }
+        };
     let delta_f = match evaporchain_crooks_mev_refund::compute_delta_f_millibits(
         q.work_extracted as i64,
         log_ratio,
@@ -3771,10 +3941,14 @@ async fn get_cmu_check(
 ) -> Json<CmuCheckResp> {
     let v = evaporchain_cmu_gate::cmu_check(q.cmu_mb, q.excess_entropy_mb, q.entropy_rate_mb);
     let (verdict, observed, bound) = match v {
-        evaporchain_cmu_gate::Verdict::Ok { observed_cmu, bound } => ("ok", observed_cmu, bound),
-        evaporchain_cmu_gate::Verdict::Violation { observed_cmu, bound } => {
-            ("violation", observed_cmu, bound)
-        }
+        evaporchain_cmu_gate::Verdict::Ok {
+            observed_cmu,
+            bound,
+        } => ("ok", observed_cmu, bound),
+        evaporchain_cmu_gate::Verdict::Violation {
+            observed_cmu,
+            bound,
+        } => ("violation", observed_cmu, bound),
     };
     Json(CmuCheckResp {
         verdict,
@@ -3811,11 +3985,9 @@ async fn get_tur_liveness(State(state): State<Arc<ApiState>>) -> Json<TurLivenes
     let window_samples = tc.tur_window_len();
     let (verdict, observed, bound) = match tc.tur_liveness_verdict() {
         None => ("warming-up", None, None),
-        Some(evaporchain_tur_liveness::Verdict::Ok { observed, bound }) => (
-            "ok",
-            Some(observed.to_string()),
-            Some(bound.to_string()),
-        ),
+        Some(evaporchain_tur_liveness::Verdict::Ok { observed, bound }) => {
+            ("ok", Some(observed.to_string()), Some(bound.to_string()))
+        }
         Some(evaporchain_tur_liveness::Verdict::Violation { observed, bound }) => (
             "violation",
             Some(observed.to_string()),
@@ -3961,9 +4133,7 @@ pub struct EgFssSignVerifyResp {
 /// build a key from seed, evolve it by `energy_spent`, sign the
 /// message, verify against the evolved period's key material. Per
 /// INVENTION_STACK.md §4.2 (Tier 2).
-async fn post_eg_fss_sign_verify(
-    Json(q): Json<EgFssSignVerifyQuery>,
-) -> Json<EgFssSignVerifyResp> {
+async fn post_eg_fss_sign_verify(Json(q): Json<EgFssSignVerifyQuery>) -> Json<EgFssSignVerifyResp> {
     let seed = match parse_hex32(&q.seed_hex) {
         Ok(s) => s,
         Err(e) => {
@@ -4006,13 +4176,9 @@ async fn post_eg_fss_sign_verify(
         }
     };
     let sig = evaporchain_eg_fss::sign(&evolved, &message);
-    let verify_ok = evaporchain_eg_fss::verify(
-        evolved.key_material,
-        evolved.period_index,
-        &message,
-        &sig,
-    )
-    .is_ok();
+    let verify_ok =
+        evaporchain_eg_fss::verify(evolved.key_material, evolved.period_index, &message, &sig)
+            .is_ok();
     Json(EgFssSignVerifyResp {
         status: "ok",
         period_index: evolved.period_index,
@@ -4024,7 +4190,11 @@ async fn post_eg_fss_sign_verify(
             evolved.period_index,
             q.energy_spent,
             threshold,
-            if verify_ok { "verified" } else { "FAILED to verify" }
+            if verify_ok {
+                "verified"
+            } else {
+                "FAILED to verify"
+            }
         ),
     })
 }
@@ -4113,9 +4283,9 @@ async fn get_causal_cone(
         Some(tc) => tc,
         None => return Json(None),
     };
-    let half_life = q.chain_lambda_half_life_epochs.unwrap_or(
-        evaporchain_energy_kernel::ChainLambda::default_genesis().half_life(),
-    );
+    let half_life = q
+        .chain_lambda_half_life_epochs
+        .unwrap_or(evaporchain_energy_kernel::ChainLambda::default_genesis().half_life());
     let observation_epoch = q.observation_epoch.unwrap_or_else(|| {
         let tc = safe_lock(tc);
         tc.height()
@@ -4201,11 +4371,18 @@ pub struct HlwaEffectiveSupplyReq {
     pub current_epoch: u64,
 }
 
-async fn post_hlwa_effective_supply(Json(req): Json<HlwaEffectiveSupplyReq>) -> Json<serde_json::Value> {
+async fn post_hlwa_effective_supply(
+    Json(req): Json<HlwaEffectiveSupplyReq>,
+) -> Json<serde_json::Value> {
     use evaporchain_energy_kernel::{ChainLambda, Lambda};
     use evaporchain_hlwa::WrappedAsset;
     let lambda = ChainLambda::new(Lambda::from_epochs(req.attestation_lambda_epochs.max(1)));
-    let asset = WrappedAsset::new(req.current_supply, req.origin_attested_supply, req.last_attested_epoch, lambda);
+    let asset = WrappedAsset::new(
+        req.current_supply,
+        req.origin_attested_supply,
+        req.last_attested_epoch,
+        lambda,
+    );
     match asset.effective_supply(req.current_epoch) {
         Ok(eff) => {
             let excess = asset.excess_to_burn(req.current_epoch).unwrap_or(0);
@@ -4225,7 +4402,12 @@ async fn post_hlwa_re_attest(Json(req): Json<HlwaEffectiveSupplyReq>) -> Json<se
     use evaporchain_energy_kernel::{ChainLambda, Lambda};
     use evaporchain_hlwa::WrappedAsset;
     let lambda = ChainLambda::new(Lambda::from_epochs(req.attestation_lambda_epochs.max(1)));
-    let before = WrappedAsset::new(req.current_supply, req.origin_attested_supply, req.last_attested_epoch, lambda);
+    let before = WrappedAsset::new(
+        req.current_supply,
+        req.origin_attested_supply,
+        req.last_attested_epoch,
+        lambda,
+    );
     let after = before.re_attest(req.current_supply, req.current_epoch);
     Json(serde_json::json!({
         "status": "ok",
@@ -4252,13 +4434,21 @@ async fn post_llsa_apply_amendment(
     State(state): State<Arc<ApiState>>,
     Json(req): Json<LlsaApplyAmendmentReq>,
 ) -> Json<serde_json::Value> {
-    use evaporchain_llsa::{apply_amendment, Amendment};
     use evaporchain_llsa::proof::{AlwaysAcceptVerifier, LlsaProof};
+    use evaporchain_llsa::{apply_amendment, Amendment};
 
     let descriptor = hex::decode(&req.step_new_descriptor_hex).unwrap_or_default();
     let expected_invariant = match hex::decode(&req.expected_invariant_hex) {
-        Ok(b) if b.len() == 32 => { let mut a = [0u8; 32]; a.copy_from_slice(&b); a }
-        Ok(_) => return Json(serde_json::json!({"status":"error","detail":"expected_invariant_hex must be 64 hex chars"})),
+        Ok(b) if b.len() == 32 => {
+            let mut a = [0u8; 32];
+            a.copy_from_slice(&b);
+            a
+        }
+        Ok(_) => {
+            return Json(
+                serde_json::json!({"status":"error","detail":"expected_invariant_hex must be 64 hex chars"}),
+            )
+        }
         Err(_) => [0u8; 32],
     };
 
@@ -4278,7 +4468,14 @@ async fn post_llsa_apply_amendment(
     amendment.proof.bound_amendment_hash = amendment.hash();
 
     let mut reg = safe_lock(&state.epv_registry);
-    match apply_amendment(&mut reg, &amendment, expected_invariant, req.to_version_seed_energy, req.activation_epoch, &AlwaysAcceptVerifier) {
+    match apply_amendment(
+        &mut reg,
+        &amendment,
+        expected_invariant,
+        req.to_version_seed_energy,
+        req.activation_epoch,
+        &AlwaysAcceptVerifier,
+    ) {
         Ok(()) => Json(serde_json::json!({
             "status": "ok",
             "from_version": req.from_version,
@@ -4315,7 +4512,11 @@ pub struct HltsShareDto {
 async fn post_hlts_quorum_check(Json(req): Json<HltsQuorumReq>) -> Json<serde_json::Value> {
     use evaporchain_energy_kernel::{ChainLambda, Lambda};
     use evaporchain_hlts::{count_alive, quorum_alive, Share};
-    let shares: Vec<Share> = req.shares.iter().map(|s| Share::new(s.idx, s.energy, s.observed_epoch)).collect();
+    let shares: Vec<Share> = req
+        .shares
+        .iter()
+        .map(|s| Share::new(s.idx, s.energy, s.observed_epoch))
+        .collect();
     let chain_lambda = ChainLambda::new(Lambda::from_epochs(req.lambda_epochs.max(1)));
     let alive = count_alive(&shares, chain_lambda, req.query_epoch, req.threshold);
     let meets = quorum_alive(&shares, req.k, chain_lambda, req.query_epoch, req.threshold);
@@ -4343,8 +4544,16 @@ async fn post_pnt_insert(
     Json(req): Json<PntInsertReq>,
 ) -> Json<serde_json::Value> {
     let n = match hex::decode(&req.nullifier_hex) {
-        Ok(b) if b.len() == 32 => { let mut a = [0u8; 32]; a.copy_from_slice(&b); a }
-        _ => return Json(serde_json::json!({"status":"error","detail":"nullifier_hex must be 64 hex chars"})),
+        Ok(b) if b.len() == 32 => {
+            let mut a = [0u8; 32];
+            a.copy_from_slice(&b);
+            a
+        }
+        _ => {
+            return Json(
+                serde_json::json!({"status":"error","detail":"nullifier_hex must be 64 hex chars"}),
+            )
+        }
     };
     let mut pnt = safe_lock(&state.pnt);
     match pnt.insert_nullifier(n) {
@@ -4384,8 +4593,16 @@ async fn get_pnt_is_spent(
     Path(hex_str): Path<String>,
 ) -> Json<serde_json::Value> {
     let n = match hex::decode(&hex_str) {
-        Ok(b) if b.len() == 32 => { let mut a = [0u8; 32]; a.copy_from_slice(&b); a }
-        _ => return Json(serde_json::json!({"status":"error","detail":"path must be 64 hex chars (32 bytes)"})),
+        Ok(b) if b.len() == 32 => {
+            let mut a = [0u8; 32];
+            a.copy_from_slice(&b);
+            a
+        }
+        _ => {
+            return Json(
+                serde_json::json!({"status":"error","detail":"path must be 64 hex chars (32 bytes)"}),
+            )
+        }
     };
     let pnt = safe_lock(&state.pnt);
     let spent = pnt.is_spent_in_window(&n);
@@ -4500,15 +4717,33 @@ async fn post_fork_cert_prove(Json(req): Json<ForkCertProveReq>) -> Json<serde_j
     use evaporchain_evap_fork_cert::{prove_fork_evaporated, ForkBlock};
 
     let fork_root = match hex::decode(&req.fork_root_hex) {
-        Ok(b) if b.len() == 32 => { let mut a = [0u8; 32]; a.copy_from_slice(&b); a }
-        _ => return Json(serde_json::json!({"status":"error","detail":"fork_root_hex must be 64 hex chars"})),
+        Ok(b) if b.len() == 32 => {
+            let mut a = [0u8; 32];
+            a.copy_from_slice(&b);
+            a
+        }
+        _ => {
+            return Json(
+                serde_json::json!({"status":"error","detail":"fork_root_hex must be 64 hex chars"}),
+            )
+        }
     };
-    let blocks: Vec<ForkBlock> = req.blocks.iter().map(|b| ForkBlock {
-        seed_energy: b.seed_energy,
-        observed_epoch: b.observed_epoch,
-    }).collect();
+    let blocks: Vec<ForkBlock> = req
+        .blocks
+        .iter()
+        .map(|b| ForkBlock {
+            seed_energy: b.seed_energy,
+            observed_epoch: b.observed_epoch,
+        })
+        .collect();
     let chain_lambda = ChainLambda::new(Lambda::from_epochs(req.lambda_epochs.max(1)));
-    let cert = prove_fork_evaporated(fork_root, &blocks, chain_lambda, req.evaluated_at_epoch, req.threshold);
+    let cert = prove_fork_evaporated(
+        fork_root,
+        &blocks,
+        chain_lambda,
+        req.evaluated_at_epoch,
+        req.threshold,
+    );
     let is_evaporated = cert.decayed_energy < cert.threshold;
     Json(serde_json::json!({
         "status": "ok",
@@ -4525,12 +4760,28 @@ async fn post_fork_cert_verify(Json(req): Json<ForkCertVerifyReq>) -> Json<serde
     use evaporchain_evap_fork_cert::{verify_evaporated_cert, EvaporatedForkCert};
 
     let fork_root = match hex::decode(&req.fork_root_hex) {
-        Ok(b) if b.len() == 32 => { let mut a = [0u8; 32]; a.copy_from_slice(&b); a }
-        _ => return Json(serde_json::json!({"status":"error","detail":"fork_root_hex must be 64 hex chars"})),
+        Ok(b) if b.len() == 32 => {
+            let mut a = [0u8; 32];
+            a.copy_from_slice(&b);
+            a
+        }
+        _ => {
+            return Json(
+                serde_json::json!({"status":"error","detail":"fork_root_hex must be 64 hex chars"}),
+            )
+        }
     };
     let witness = match hex::decode(&req.witness_hex) {
-        Ok(b) if b.len() == 32 => { let mut a = [0u8; 32]; a.copy_from_slice(&b); a }
-        _ => return Json(serde_json::json!({"status":"error","detail":"witness_hex must be 64 hex chars"})),
+        Ok(b) if b.len() == 32 => {
+            let mut a = [0u8; 32];
+            a.copy_from_slice(&b);
+            a
+        }
+        _ => {
+            return Json(
+                serde_json::json!({"status":"error","detail":"witness_hex must be 64 hex chars"}),
+            )
+        }
     };
     let cert = EvaporatedForkCert {
         fork_root,
@@ -4547,7 +4798,9 @@ async fn post_fork_cert_verify(Json(req): Json<ForkCertVerifyReq>) -> Json<serde
             "decayed_energy": cert.decayed_energy,
             "threshold": cert.threshold,
         })),
-        Err(e) => Json(serde_json::json!({"status":"error","detail":e.to_string(),"verified":false})),
+        Err(e) => {
+            Json(serde_json::json!({"status":"error","detail":e.to_string(),"verified":false}))
+        }
     }
 }
 
@@ -4573,14 +4826,16 @@ pub struct AntichainBlockDto {
 }
 
 async fn post_antichain_compute(Json(req): Json<AntichainComputeReq>) -> Json<serde_json::Value> {
-    use evaporchain_light_cone::{Block, BlockId, LightCone};
     use evaporchain_antichain_mempool::{extend_to_maximal, total_energy_meets_threshold};
     use evaporchain_energy_kernel::{ChainLambda, Lambda};
+    use evaporchain_light_cone::{Block, BlockId, LightCone};
     use std::collections::BTreeSet;
 
     fn parse_id(s: &str) -> Option<BlockId> {
         let bytes = hex::decode(s).ok()?;
-        if bytes.len() != 32 { return None; }
+        if bytes.len() != 32 {
+            return None;
+        }
         let mut id = [0u8; 32];
         id.copy_from_slice(&bytes);
         Some(id)
@@ -4590,13 +4845,21 @@ async fn post_antichain_compute(Json(req): Json<AntichainComputeReq>) -> Json<se
     for b in &req.blocks {
         let id = match parse_id(&b.id_hex) {
             Some(i) => i,
-            None => return Json(serde_json::json!({"status":"error","detail":format!("bad id_hex: {}", b.id_hex)})),
+            None => {
+                return Json(
+                    serde_json::json!({"status":"error","detail":format!("bad id_hex: {}", b.id_hex)}),
+                )
+            }
         };
         let mut parents = Vec::new();
         for ph in &b.parent_ids {
             match parse_id(ph) {
                 Some(pid) => parents.push(pid),
-                None => return Json(serde_json::json!({"status":"error","detail":format!("bad parent id: {ph}")})),
+                None => {
+                    return Json(
+                        serde_json::json!({"status":"error","detail":format!("bad parent id: {ph}")}),
+                    )
+                }
             }
         }
         let block = Block::new(id, parents, b.energy, b.observed_epoch);
@@ -4620,9 +4883,19 @@ async fn post_antichain_compute(Json(req): Json<AntichainComputeReq>) -> Json<se
     };
 
     let chain_lambda = ChainLambda::new(Lambda::from_epochs(4096));
-    let meets = total_energy_meets_threshold(&antichain, &lc, chain_lambda, req.current_epoch, req.threshold);
+    let meets = total_energy_meets_threshold(
+        &antichain,
+        &lc,
+        chain_lambda,
+        req.current_epoch,
+        req.threshold,
+    );
 
-    let member_ids: Vec<String> = antichain.members().iter().map(|id| hex::encode(id)).collect();
+    let member_ids: Vec<String> = antichain
+        .members()
+        .iter()
+        .map(|id| hex::encode(id))
+        .collect();
     Json(serde_json::json!({
         "status": "ok",
         "antichain_size": member_ids.len(),
@@ -4743,13 +5016,18 @@ async fn get_epv_status(State(state): State<Arc<ApiState>>) -> Json<serde_json::
         hist.len() as u64
     };
     let chain_lambda = ChainLambda::new(Lambda::from_epochs(4096));
-    let versions: Vec<_> = reg.iter().map(|v| serde_json::json!({
-        "id": v.id,
-        "seed_energy": v.seed_energy,
-        "activated_epoch": v.activated_epoch,
-        "remaining_energy": v.remaining_at(chain_lambda, epoch),
-        "is_runnable": reg.is_runnable(v.id, chain_lambda, epoch, 1),
-    })).collect();
+    let versions: Vec<_> = reg
+        .iter()
+        .map(|v| {
+            serde_json::json!({
+                "id": v.id,
+                "seed_energy": v.seed_energy,
+                "activated_epoch": v.activated_epoch,
+                "remaining_energy": v.remaining_at(chain_lambda, epoch),
+                "is_runnable": reg.is_runnable(v.id, chain_lambda, epoch, 1),
+            })
+        })
+        .collect();
     Json(serde_json::json!({
         "status": "ok",
         "total_versions": reg.len(),
@@ -4843,7 +5121,7 @@ async fn post_etlp_witness(Json(req): Json<EtlpWitnessReq>) -> Json<serde_json::
 
 async fn post_etlp_can_unlock(Json(req): Json<EtlpUnlockReq>) -> Json<serde_json::Value> {
     use evaporchain_energy_kernel::{ChainLambda, Lambda};
-    use evaporchain_etlp::{Capsule, EnergyWitness, can_unlock};
+    use evaporchain_etlp::{can_unlock, Capsule, EnergyWitness};
     let ct = match hex::decode(&req.ciphertext_hex) {
         Ok(b) => b,
         Err(e) => return Json(serde_json::json!({"status":"error","detail":e.to_string()})),
@@ -4854,7 +5132,11 @@ async fn post_etlp_can_unlock(Json(req): Json<EtlpUnlockReq>) -> Json<serde_json
             arr.copy_from_slice(&b);
             arr
         }
-        _ => return Json(serde_json::json!({"status":"error","detail":"binding_hex must be 64 hex chars"})),
+        _ => {
+            return Json(
+                serde_json::json!({"status":"error","detail":"binding_hex must be 64 hex chars"}),
+            )
+        }
     };
     let capsule = match Capsule::new(req.seal_epoch, req.energy_threshold, ct) {
         Ok(c) => c,
@@ -4895,7 +5177,11 @@ async fn post_dsn_fold_nullifier(
             arr.copy_from_slice(&b);
             arr
         }
-        _ => return Json(serde_json::json!({"status":"error","detail":"nullifier_hex must be 64 hex chars (32 bytes)"})),
+        _ => {
+            return Json(
+                serde_json::json!({"status":"error","detail":"nullifier_hex must be 64 hex chars (32 bytes)"}),
+            )
+        }
     };
     let mut window = safe_lock(&state.dsn_window);
     window.fold_nullifier(&nullifier_bytes);
@@ -4951,13 +5237,20 @@ async fn post_wsbf_rg_flow(Json(req): Json<WsbfRgFlowReq>) -> Json<serde_json::V
     if req.coarse_grain == 0 {
         return Json(serde_json::json!({"status":"error","detail":"coarse_grain must be ≥ 1"}));
     }
-    let blocks: Vec<BlockSummary> = req.blocks.iter().map(|b| BlockSummary {
-        height: b.height,
-        total_energy: b.total_energy,
-        active_accounts: b.active_accounts,
-        lambda_half_life: b.lambda_half_life,
-    }).collect();
-    let params = RgFlowParams { coarse_grain: req.coarse_grain, entropy_scale_mb: req.entropy_scale_mb };
+    let blocks: Vec<BlockSummary> = req
+        .blocks
+        .iter()
+        .map(|b| BlockSummary {
+            height: b.height,
+            total_energy: b.total_energy,
+            active_accounts: b.active_accounts,
+            lambda_half_life: b.lambda_half_life,
+        })
+        .collect();
+    let params = RgFlowParams {
+        coarse_grain: req.coarse_grain,
+        entropy_scale_mb: req.entropy_scale_mb,
+    };
     let steps = rg_flow(&blocks, &params);
     Json(serde_json::json!({
         "status": "ok",
@@ -5021,19 +5314,30 @@ async fn post_rg_phase_classify(Json(req): Json<RgPhaseClassifyReq>) -> Json<ser
     }))
 }
 
-async fn post_rg_phase_trajectory(Json(req): Json<RgPhaseTrajectoryReq>) -> Json<serde_json::Value> {
-    use evaporchain_rg_phase_map::phase::{phase_trajectory, find_fixed_point, PhaseMapParams};
+async fn post_rg_phase_trajectory(
+    Json(req): Json<RgPhaseTrajectoryReq>,
+) -> Json<serde_json::Value> {
+    use evaporchain_rg_phase_map::phase::{find_fixed_point, phase_trajectory, PhaseMapParams};
     use evaporchain_wsbf::params::EffectiveParams as RgEp;
-    let steps: Vec<RgEp> = req.steps.iter().map(|s| RgEp {
-        step: s.step,
-        height_start: s.height_start,
-        height_end: s.height_end,
-        lambda_eff: s.lambda_eff,
-        effective_accounts: s.effective_accounts,
-        energy_density: s.energy_density,
-        entropy_mb: s.entropy_mb,
-    }).collect();
-    let traj = phase_trajectory(&steps, req.adversary_fraction_per_mille, req.n_validators, &PhaseMapParams::default());
+    let steps: Vec<RgEp> = req
+        .steps
+        .iter()
+        .map(|s| RgEp {
+            step: s.step,
+            height_start: s.height_start,
+            height_end: s.height_end,
+            lambda_eff: s.lambda_eff,
+            effective_accounts: s.effective_accounts,
+            energy_density: s.energy_density,
+            entropy_mb: s.entropy_mb,
+        })
+        .collect();
+    let traj = phase_trajectory(
+        &steps,
+        req.adversary_fraction_per_mille,
+        req.n_validators,
+        &PhaseMapParams::default(),
+    );
     let fixed_point = find_fixed_point(&traj);
     Json(serde_json::json!({
         "status": "ok",
@@ -5062,7 +5366,12 @@ pub struct DemurrageOwedReq {
 async fn post_demurrage_owed(Json(req): Json<DemurrageOwedReq>) -> Json<serde_json::Value> {
     use evaporchain_demurrage::{demurrage_owed, rate_ppm, DemurrageParams};
     let params = DemurrageParams::new(req.lambda_base_ppm, req.threshold);
-    let owed = demurrage_owed(req.balance, req.last_touched_epoch, req.current_epoch, &params);
+    let owed = demurrage_owed(
+        req.balance,
+        req.last_touched_epoch,
+        req.current_epoch,
+        &params,
+    );
     let rate = rate_ppm(req.balance, &params);
     let elapsed = req.current_epoch.saturating_sub(req.last_touched_epoch);
     Json(serde_json::json!({
@@ -5097,12 +5406,16 @@ pub struct MeraCommitReq {
 async fn post_mera_commit(Json(req): Json<MeraCommitReq>) -> Json<serde_json::Value> {
     use evaporchain_mera::commit;
     if req.energies.is_empty() {
-        return Json(serde_json::json!({ "status": "error", "error": "energies must be non-empty" }));
+        return Json(
+            serde_json::json!({ "status": "error", "error": "energies must be non-empty" }),
+        );
     }
     let lhl = req.lambda_half_life.max(1);
     let bhl = req.base_half_life.max(1);
     let (commitment, _tree) = commit(&req.energies, lhl, bhl);
-    let layer_hashes_hex: Vec<String> = commitment.layer_hashes.iter()
+    let layer_hashes_hex: Vec<String> = commitment
+        .layer_hashes
+        .iter()
         .map(|h| hex::encode(h))
         .collect();
     Json(serde_json::json!({
@@ -5148,7 +5461,10 @@ pub struct AnnealingAcceptReq {
 /// T(epoch) = λ × 2^(−epoch/λ). Returns 0 once fully crystallised.
 async fn post_annealing_temperature(Json(req): Json<AnnealingTempReq>) -> Json<serde_json::Value> {
     use evaporchain_self_annealing::{effective_temperature, AnnealingParams};
-    let params = AnnealingParams { lambda_half_life: req.lambda_half_life, beta_mb: req.beta_mb };
+    let params = AnnealingParams {
+        lambda_half_life: req.lambda_half_life,
+        beta_mb: req.beta_mb,
+    };
     let temp = effective_temperature(&params, req.epoch);
     let crystallised = temp == 0;
     Json(serde_json::json!({
@@ -5166,11 +5482,26 @@ async fn post_annealing_temperature(Json(req): Json<AnnealingTempReq>) -> Json<s
 /// Deterministic: given the same (epoch, slot_nonce, incumbent, candidate) every
 /// validator independently reaches the same accept/reject decision. Uses
 /// Kirkpatrick-Gelatt-Vecchi 1983 rational approximation — no PRNG.
-async fn post_annealing_accepts_candidate(Json(req): Json<AnnealingAcceptReq>) -> Json<serde_json::Value> {
-    use evaporchain_self_annealing::{accepts_candidate, effective_temperature, AnnealingParams, AnnealedScore};
-    let params = AnnealingParams { lambda_half_life: req.lambda_half_life, beta_mb: req.beta_mb };
-    let v_old = AnnealedScore { stake: req.incumbent.stake, activity: req.incumbent.activity, uptime_milli: req.incumbent.uptime_milli };
-    let v_new = AnnealedScore { stake: req.candidate.stake, activity: req.candidate.activity, uptime_milli: req.candidate.uptime_milli };
+async fn post_annealing_accepts_candidate(
+    Json(req): Json<AnnealingAcceptReq>,
+) -> Json<serde_json::Value> {
+    use evaporchain_self_annealing::{
+        accepts_candidate, effective_temperature, AnnealedScore, AnnealingParams,
+    };
+    let params = AnnealingParams {
+        lambda_half_life: req.lambda_half_life,
+        beta_mb: req.beta_mb,
+    };
+    let v_old = AnnealedScore {
+        stake: req.incumbent.stake,
+        activity: req.incumbent.activity,
+        uptime_milli: req.incumbent.uptime_milli,
+    };
+    let v_new = AnnealedScore {
+        stake: req.candidate.stake,
+        activity: req.candidate.activity,
+        uptime_milli: req.candidate.uptime_milli,
+    };
     let accepted = accepts_candidate(&params, req.epoch, &v_old, &v_new, req.slot_nonce);
     let temp = effective_temperature(&params, req.epoch);
     Json(serde_json::json!({
@@ -5211,11 +5542,14 @@ fn parse_cause(s: &str) -> evaporchain_tombstone::CauseOfDeath {
     use evaporchain_tombstone::CauseOfDeath;
     match s.to_lowercase().as_str() {
         "evaporated" => CauseOfDeath::Evaporated,
-        "forgotten"  => CauseOfDeath::ForgottenViaDecayProof,
-        "slashed"    => CauseOfDeath::SlashedToZero,
-        "rent"       => CauseOfDeath::RentExhausted,
+        "forgotten" => CauseOfDeath::ForgottenViaDecayProof,
+        "slashed" => CauseOfDeath::SlashedToZero,
+        "rent" => CauseOfDeath::RentExhausted,
         other => {
-            let n: u32 = other.strip_prefix("other:").and_then(|x| x.parse().ok()).unwrap_or(0);
+            let n: u32 = other
+                .strip_prefix("other:")
+                .and_then(|x| x.parse().ok())
+                .unwrap_or(0);
             CauseOfDeath::Other(n)
         }
     }
@@ -5229,7 +5563,11 @@ async fn post_tombstone_mint(Json(req): Json<TombstoneMintReq>) -> Json<serde_js
     use evaporchain_tombstone::mint;
     let addr = match parse_hex32(&req.address_hex) {
         Ok(a) => a,
-        Err(_) => return Json(serde_json::json!({ "status": "error", "error": "address_hex must be 64 hex chars" })),
+        Err(_) => {
+            return Json(
+                serde_json::json!({ "status": "error", "error": "address_hex must be 64 hex chars" }),
+            )
+        }
     };
     let cause = parse_cause(&req.cause);
     let tombstone = mint(addr, req.final_balance, req.final_epoch, cause);
@@ -5248,17 +5586,27 @@ async fn post_tombstone_mint(Json(req): Json<TombstoneMintReq>) -> Json<serde_js
 ///
 /// Two nodes that have observed the same tombstone set (in any order)
 /// compute the same root — safe for light-client verification.
-async fn post_tombstone_eulogy_root(Json(req): Json<TombstoneEulogyRootReq>) -> Json<serde_json::Value> {
+async fn post_tombstone_eulogy_root(
+    Json(req): Json<TombstoneEulogyRootReq>,
+) -> Json<serde_json::Value> {
     use evaporchain_tombstone::{EulogyTrie, Tombstone};
     let mut trie = EulogyTrie::new();
     for entry in &req.entries {
         let addr = match parse_hex32(&entry.address_hex) {
             Ok(a) => a,
-            Err(_) => return Json(serde_json::json!({ "status": "error", "error": format!("bad address_hex: {}", entry.address_hex) })),
+            Err(_) => {
+                return Json(
+                    serde_json::json!({ "status": "error", "error": format!("bad address_hex: {}", entry.address_hex) }),
+                )
+            }
         };
         let commitment = match parse_hex32(&entry.commitment_hex) {
             Ok(c) => c,
-            Err(_) => return Json(serde_json::json!({ "status": "error", "error": format!("bad commitment_hex: {}", entry.commitment_hex) })),
+            Err(_) => {
+                return Json(
+                    serde_json::json!({ "status": "error", "error": format!("bad commitment_hex: {}", entry.commitment_hex) }),
+                )
+            }
         };
         if let Err(e) = trie.insert(addr, Tombstone { commitment }) {
             return Json(serde_json::json!({ "status": "error", "error": e.to_string() }));
@@ -5328,12 +5676,16 @@ async fn post_energy_kernel_conservation_check(
         compartment::EnergyAccumulator, conservation::ConservationCheck, ChainLambda, Lambda,
     };
     let before = EnergyAccumulator::new(
-        req.before.accounts, req.before.stake,
-        req.before.refresh_pool, req.before.slashed_pool,
+        req.before.accounts,
+        req.before.stake,
+        req.before.refresh_pool,
+        req.before.slashed_pool,
     );
     let after = EnergyAccumulator::new(
-        req.after.accounts, req.after.stake,
-        req.after.refresh_pool, req.after.slashed_pool,
+        req.after.accounts,
+        req.after.stake,
+        req.after.refresh_pool,
+        req.after.slashed_pool,
     );
     let lambda = ChainLambda::new(Lambda::from_epochs(req.half_life_epochs.max(1)));
     match ConservationCheck::block_step(&before, &after, req.epochs_elapsed, lambda) {
@@ -5369,18 +5721,20 @@ async fn post_energy_kernel_redirect(
     Json(req): Json<EnergyRedirectReq>,
 ) -> Json<serde_json::Value> {
     use evaporchain_energy_kernel::{
-        compartment::EnergyAccumulator, redirect::{EnergyRedirect, RedirectKind},
+        compartment::EnergyAccumulator,
+        redirect::{EnergyRedirect, RedirectKind},
     };
-    let mut acc = EnergyAccumulator::new(
-        req.accounts, req.stake, req.refresh_pool, req.slashed_pool,
-    );
+    let mut acc =
+        EnergyAccumulator::new(req.accounts, req.stake, req.refresh_pool, req.slashed_pool);
     let kind = match req.redirect_kind.to_lowercase().as_str() {
-        "slash"        => RedirectKind::Slash,
+        "slash" => RedirectKind::Slash,
         "slash_settle" => RedirectKind::SlashSettle,
-        "mev_burn"     => RedirectKind::MevBurn,
-        "demurrage"    => RedirectKind::Demurrage,
+        "mev_burn" => RedirectKind::MevBurn,
+        "demurrage" => RedirectKind::Demurrage,
         "refresh_payout" => RedirectKind::RefreshPayout,
-        other => return Json(serde_json::json!({ "error": format!("unknown redirect_kind: {other}") })),
+        other => {
+            return Json(serde_json::json!({ "error": format!("unknown redirect_kind: {other}") }))
+        }
     };
     let total_before = acc.total();
     match EnergyRedirect::new(kind, req.amount).apply(&mut acc) {
@@ -5400,7 +5754,7 @@ async fn post_energy_kernel_redirect(
                     "slashed_pool": acc[Compartment::SlashedPool],
                 }
             }))
-        },
+        }
         Err(e) => Json(serde_json::json!({ "success": false, "error": e.to_string() })),
     }
 }
@@ -5409,8 +5763,8 @@ async fn post_energy_kernel_redirect(
 
 async fn get_autopoietic_health(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
     use evaporchain_autopoietic::AutopoieticHealth;
-    use evaporchain_llsa::proof::AlwaysAcceptVerifier;
     use evaporchain_autopoietic::ChainAutopoiesis;
+    use evaporchain_llsa::proof::AlwaysAcceptVerifier;
 
     // Derive current epoch from block count (proxy; production would use consensus height).
     let epoch = {
@@ -5437,10 +5791,11 @@ async fn get_autopoietic_health(State(state): State<Arc<ApiState>>) -> Json<serd
     let book = safe_lock(&state.patronage_book);
     let sys = ChainAutopoiesis::new(
         AlwaysAcceptVerifier,
-        1_000,           // min_patronage_energy: 1 000 energy units
-        50,              // sentinel_heartbeat_window: 50 epochs
+        1_000, // min_patronage_energy: 1 000 energy units
+        50,    // sentinel_heartbeat_window: 50 epochs
     );
-    let report: AutopoieticHealth = sys.health_report(&book, &covenant_ids, last_sentinel_vote, epoch);
+    let report: AutopoieticHealth =
+        sys.health_report(&book, &covenant_ids, last_sentinel_vote, epoch);
 
     Json(serde_json::json!({
         "status": format!("{:?}", report.status),
@@ -5459,15 +5814,17 @@ async fn get_consensus_phase(State(state): State<Arc<ApiState>>) -> Json<serde_j
     if let Some(tc) = &state.tendermint {
         let tc = safe_lock(tc);
         let phase = tc.consensus_phase();
-        let ep = tc.effective_params().map(|ep| serde_json::json!({
-            "step": ep.step,
-            "height_start": ep.height_start,
-            "height_end": ep.height_end,
-            "lambda_eff": ep.lambda_eff,
-            "effective_accounts": ep.effective_accounts,
-            "energy_density": ep.energy_density,
-            "entropy_mb": ep.entropy_mb,
-        }));
+        let ep = tc.effective_params().map(|ep| {
+            serde_json::json!({
+                "step": ep.step,
+                "height_start": ep.height_start,
+                "height_end": ep.height_end,
+                "lambda_eff": ep.lambda_eff,
+                "effective_accounts": ep.effective_accounts,
+                "energy_density": ep.energy_density,
+                "entropy_mb": ep.entropy_mb,
+            })
+        });
         Json(serde_json::json!({
             "status": "ok",
             "consensus_phase": format!("{phase:?}"),
@@ -5666,6 +6023,8 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     // Offline signing support (cold-wallet + hardware-wallet flows)
     ApiDocEntry { method: "GET",  path: "/api/tx/nonce/:address",      category: "identity", description: "Fetch the current nonce for an address (required for manual transaction construction). Returns nonce + chain_id.", example: None },
     ApiDocEntry { method: "POST", path: "/api/tx/signable",            category: "identity", description: "Return the canonical bytes to sign for a transaction (transfer/create_object/refresh) without executing. Caller signs with ML-DSA key and resubmits via the normal tx endpoint.", example: Some(r#"{"tx_type":"transfer","params":{"from":1,"to":2,"amount":1000}}"#) },
+    ApiDocEntry { method: "GET",  path: "/api/tx/:hash",               category: "identity", description: "Wallet-facing tx-status lookup. Returns {hash, state, block_height?, epoch?, error?} where state is one of pending|mempool|included|finalised|rejected. Lookup order: chain_store/finalised → committed-but-not-finalised → mempool → pending. Always 200 OK; pending is a typed response, not a 404.", example: Some("/api/tx/<64-hex>") },
+    ApiDocEntry { method: "GET",  path: "/api/mempool/:hash",          category: "identity", description: "Direct mempool inspection by tx hash. Returns {hash, in_mempool}. Useful for explorers; the wallet should prefer /api/tx/:hash for the full state machine.", example: Some("/api/mempool/<64-hex>") },
 
     // Energy Kernel — conservation audit + energy redirect simulation
     ApiDocEntry { method: "POST", path: "/api/energy_kernel/conservation_check", category: "substrate", description: "Audit whether a block transition (before→after EnergyAccumulator) satisfies the §1.2 conservation invariant: total energy non-increasing and any drop ≤ what the λ-decay allows. Returns {valid, before_total, after_total} or {valid:false, error}.", example: Some(r#"{"before":{"accounts":1000000,"stake":500000,"refresh_pool":0,"slashed_pool":0},"after":{"accounts":900000,"stake":500000,"refresh_pool":100000,"slashed_pool":0},"epochs_elapsed":1,"half_life_epochs":4096}"#) },
@@ -5706,10 +6065,12 @@ pub struct LightConeResp {
 async fn get_light_cone(State(state): State<Arc<ApiState>>) -> Json<LightConeResp> {
     let tc = match state.tendermint.as_ref() {
         Some(tc) => tc,
-        None => return Json(LightConeResp {
-            block_count: 0,
-            running_alongside_tendermint: false,
-        }),
+        None => {
+            return Json(LightConeResp {
+                block_count: 0,
+                running_alongside_tendermint: false,
+            })
+        }
     };
     let tc = safe_lock(tc);
     Json(LightConeResp {
@@ -5943,19 +6304,144 @@ async fn get_single_block(
     Ok(Json(block))
 }
 
+/// Wallet-facing tx-status response. Mirrors the wallet's `TxStatus` TS shape
+/// (`extension/src/utils/api.ts`) so the polling client can drop its 404
+/// special-case and progress `pending → mempool → included → finalised`
+/// from a single endpoint.
+#[derive(Clone, Serialize)]
+pub struct TxStatusResponse {
+    pub hash: String,
+    /// One of: `pending`, `mempool`, `included`, `finalised`, `rejected`.
+    pub state: &'static str,
+    /// Block height the tx landed in. Present for `included | finalised |
+    /// rejected`; absent for `pending | mempool`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_height: Option<u64>,
+    /// Epoch the containing block was produced in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub epoch: Option<u64>,
+    /// Populated when `state == "rejected"` with the upstream error string.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Normalise a wallet-supplied hex hash into the canonical 64-char lowercase
+/// form used by `TxRecord.hash` and `Mempool::contains_hash`. Strips an
+/// optional `0x` prefix and rejects anything that's not exactly 32 bytes.
+fn parse_tx_hash(input: &str) -> Option<(String, [u8; 32])> {
+    let stripped = input.trim().trim_start_matches("0x").to_lowercase();
+    if stripped.len() != 64 {
+        return None;
+    }
+    let mut buf = [0u8; 32];
+    hex::decode_to_slice(&stripped, &mut buf).ok()?;
+    Some((stripped, buf))
+}
+
+/// `GET /api/tx/:hash` — wallet-facing transaction-status lookup.
+///
+/// Lookup order:
+///   1. Finalised store (block_history entries at or below
+///      `finality_tracker.latest_finalized_height`, with chain_store as a
+///      deeper fallback for txs older than the in-memory ring).
+///   2. Committed-but-not-yet-finalised blocks — the gap between the latest
+///      committed height and `latest_finalized_height`.
+///   3. Active mempool.
+///   4. Otherwise `state: "pending"` with HTTP 200 (NOT 404), so the
+///      wallet poller can keep ticking through the state machine without
+///      having to special-case a missing hash.
 async fn get_tx_by_hash(
     State(state): State<Arc<ApiState>>,
     Path(hash): Path<String>,
-) -> Result<Json<TxRecord>, StatusCode> {
-    let history = safe_lock(&state.block_history);
-    for block in history.iter().rev() {
-        for tx in &block.transactions {
-            if tx.hash == hash {
-                return Ok(Json(tx.clone()));
+) -> Result<Json<TxStatusResponse>, StatusCode> {
+    // ── 0. Validate the hash shape upfront. ────────────────────────────
+    let (hash_hex, hash_bytes) = match parse_tx_hash(&hash) {
+        Some(h) => h,
+        None => return Err(StatusCode::BAD_REQUEST),
+    };
+
+    // ── 1. Finalised / included scan over in-memory block_history. ────
+    // In multi-validator (Tendermint) mode, finality lags commitment by the
+    // BLS commit-certificate window — blocks above `latest_finalized_height`
+    // are committed but not yet certified. In single-node MockConsensus dev
+    // mode there are no commit certificates, so `latest_finalized_height`
+    // sits at 0 forever; treat everything in `block_history` as finalised
+    // there to keep the wallet's state machine progressing.
+    let single_node_mode = state.tendermint.is_none();
+    let last_final = {
+        let ft = safe_lock(&state.finality_tracker);
+        ft.latest_finalized_height()
+    };
+    {
+        let history = safe_lock(&state.block_history);
+        for block in history.iter().rev() {
+            for tx in &block.transactions {
+                if tx.hash == hash_hex {
+                    let is_finalised = single_node_mode || block.number <= last_final;
+                    let (state_label, error) = if is_finalised {
+                        // TxRecord::status is "success" for everything in
+                        // block_history today, but preserve the spec's
+                        // success → finalised, anything-else → rejected
+                        // mapping in case future executors record reverts.
+                        if tx.status == "success" {
+                            ("finalised", None)
+                        } else {
+                            ("rejected", Some(tx.status.clone()))
+                        }
+                    } else {
+                        ("included", None)
+                    };
+                    return Ok(Json(TxStatusResponse {
+                        hash: hash_hex,
+                        state: state_label,
+                        block_height: Some(tx.block_number),
+                        epoch: Some(tx.epoch),
+                        error,
+                    }));
+                }
             }
         }
     }
-    Err(StatusCode::NOT_FOUND)
+
+    // ── 1b. Deeper fallback: chain_store tx index (RocksDB-backed). ───
+    // Older txs may have aged out of the 500-entry block_history ring but
+    // still be queryable via the persistent index. Anything found here is
+    // by definition committed and indexed → treat as finalised.
+    if let Some(ref store) = state.chain_store {
+        if let Some(receipt) = store.get_tx_receipt(&hash_hex) {
+            let (state_label, error) = match receipt.status.as_str() {
+                "success" | "confirmed" => ("finalised", None),
+                other => ("rejected", Some(other.to_string())),
+            };
+            return Ok(Json(TxStatusResponse {
+                hash: hash_hex,
+                state: state_label,
+                block_height: Some(receipt.block_number),
+                epoch: Some(receipt.epoch),
+                error: error.or(receipt.revert_reason),
+            }));
+        }
+    }
+
+    // ── 2. Mempool check. ──────────────────────────────────────────────
+    if state.mempool_contains_hash(&hash_bytes) {
+        return Ok(Json(TxStatusResponse {
+            hash: hash_hex,
+            state: "mempool",
+            block_height: None,
+            epoch: None,
+            error: None,
+        }));
+    }
+
+    // ── 3. Default: pending (HTTP 200, not 404). ──────────────────────
+    Ok(Json(TxStatusResponse {
+        hash: hash_hex,
+        state: "pending",
+        block_height: None,
+        epoch: None,
+        error: None,
+    }))
 }
 
 async fn get_transactions(
@@ -6048,19 +6534,42 @@ async fn post_transfer(
     Json(req): Json<TransferRequest>,
 ) -> Json<TxResultResponse> {
     let user_id = match require_tx_auth(&headers, &state, req.signature.is_some()) {
-        Ok(uid) => uid, Err(resp) => return resp,
+        Ok(uid) => uid,
+        Err(resp) => return resp,
     };
     if req.amount == 0 {
-        return Json(TxResultResponse { success: false, message: "Amount must be greater than zero".into(), tx_hash: None });
+        return Json(TxResultResponse {
+            success: false,
+            message: "Amount must be greater than zero".into(),
+            tx_hash: None,
+        });
     }
     let from = match parse_address_value(&req.from) {
-        Ok(a) => a, Err(e) => return Json(TxResultResponse { success: false, message: e, tx_hash: None }),
+        Ok(a) => a,
+        Err(e) => {
+            return Json(TxResultResponse {
+                success: false,
+                message: e,
+                tx_hash: None,
+            })
+        }
     };
     let to = match parse_address_value(&req.to) {
-        Ok(a) => a, Err(e) => return Json(TxResultResponse { success: false, message: e, tx_hash: None }),
+        Ok(a) => a,
+        Err(e) => {
+            return Json(TxResultResponse {
+                success: false,
+                message: e,
+                tx_hash: None,
+            })
+        }
     };
     if from == to {
-        return Json(TxResultResponse { success: false, message: "Cannot transfer to yourself".into(), tx_hash: None });
+        return Json(TxResultResponse {
+            success: false,
+            message: "Cannot transfer to yourself".into(),
+            tx_hash: None,
+        });
     }
     // Wallet ownership check
     if let Err(resp) = require_wallet_ownership(&state, user_id, &account_full(&from)) {
@@ -6071,16 +6580,33 @@ async fn post_transfer(
         let db = safe_lock(&state.db);
         if let Some(acct) = db.get_account(&from) {
             if acct.balance < req.amount {
-                return Json(TxResultResponse { success: false, message: format!("Insufficient balance: {} < {}", acct.balance, req.amount), tx_hash: None });
+                return Json(TxResultResponse {
+                    success: false,
+                    message: format!("Insufficient balance: {} < {}", acct.balance, req.amount),
+                    tx_hash: None,
+                });
             }
             if req.nonce != acct.nonce {
-                return Json(TxResultResponse { success: false, message: format!("Invalid nonce: expected {}, got {}", acct.nonce, req.nonce), tx_hash: None });
+                return Json(TxResultResponse {
+                    success: false,
+                    message: format!("Invalid nonce: expected {}, got {}", acct.nonce, req.nonce),
+                    tx_hash: None,
+                });
             }
         } else if req.amount > 0 {
-            return Json(TxResultResponse { success: false, message: "Account not found — use faucet first".into(), tx_hash: None });
+            return Json(TxResultResponse {
+                success: false,
+                message: "Account not found — use faucet first".into(),
+                tx_hash: None,
+            });
         }
     }
-    let hash = tx_hash(&format!("transfer:{}:{}:{}", hex::encode(&from[..20]), hex::encode(&to[..20]), req.amount));
+    let hash = tx_hash(&format!(
+        "transfer:{}:{}:{}",
+        hex::encode(&from[..20]),
+        hex::encode(&to[..20]),
+        req.amount
+    ));
     // Dedup check
     {
         let is_dup = state.mempool_contains(|tx| {
@@ -6091,12 +6617,19 @@ async fn post_transfer(
             }
         });
         if is_dup {
-            return Json(TxResultResponse { success: false, message: "Duplicate transaction already in mempool".into(), tx_hash: None });
+            return Json(TxResultResponse {
+                success: false,
+                message: "Duplicate transaction already in mempool".into(),
+                tx_hash: None,
+            });
         }
     }
     {
         let mut tx = Transaction::Transfer(TransferTx {
-            from, to, amount: req.amount, nonce: req.nonce,
+            from,
+            to,
+            amount: req.amount,
+            nonce: req.nonce,
             signature: req.signature.and_then(|s| hex::decode(s).ok()),
             public_key: req.public_key.and_then(|s| hex::decode(s).ok()),
         });
@@ -6108,7 +6641,9 @@ async fn post_transfer(
         success: true,
         message: format!(
             "Transfer queued: {} -> {} amount={}",
-            account_name(&from), account_name(&to), req.amount
+            account_name(&from),
+            account_name(&to),
+            req.amount
         ),
         tx_hash: Some(hash),
     })
@@ -6123,17 +6658,41 @@ async fn post_create_object(
         return resp;
     }
     let creator = match parse_address_value(&req.creator) {
-        Ok(a) => a, Err(e) => return Json(TxResultResponse { success: false, message: e, tx_hash: None }),
+        Ok(a) => a,
+        Err(e) => {
+            return Json(TxResultResponse {
+                success: false,
+                message: e,
+                tx_hash: None,
+            })
+        }
     };
     let obj_id_val = match parse_address_value(&req.object_id) {
-        Ok(a) => a, Err(e) => return Json(TxResultResponse { success: false, message: e, tx_hash: None }),
+        Ok(a) => a,
+        Err(e) => {
+            return Json(TxResultResponse {
+                success: false,
+                message: e,
+                tx_hash: None,
+            })
+        }
     };
-    let hash = tx_hash(&format!("create:{}:{}:{}", hex::encode(&obj_id_val[..8]), req.energy, req.half_life));
+    let hash = tx_hash(&format!(
+        "create:{}:{}:{}",
+        hex::encode(&obj_id_val[..8]),
+        req.energy,
+        req.half_life
+    ));
     let obj_label = hex::encode(&obj_id_val[..4]);
-    let data = req.data.map(|d| d.into_bytes())
+    let data = req
+        .data
+        .map(|d| d.into_bytes())
         .unwrap_or_else(|| format!("obj-0x{}", &obj_label).into_bytes());
     let mut tx = Transaction::CreateObject(CreateObjectTx {
-        creator, object_id: obj_id_val, energy: req.energy, half_life: req.half_life,
+        creator,
+        object_id: obj_id_val,
+        energy: req.energy,
+        half_life: req.half_life,
         data,
         decay_curve: req.decay_curve,
         signature: req.signature.and_then(|s| hex::decode(s).ok()),
@@ -6161,11 +6720,23 @@ async fn post_refresh(
         return resp;
     }
     let obj_id_val = match parse_address_value(&req.object_id) {
-        Ok(a) => a, Err(e) => return Json(TxResultResponse { success: false, message: e, tx_hash: None }),
+        Ok(a) => a,
+        Err(e) => {
+            return Json(TxResultResponse {
+                success: false,
+                message: e,
+                tx_hash: None,
+            })
+        }
     };
-    let hash = tx_hash(&format!("refresh:{}:{}", hex::encode(&obj_id_val[..8]), req.energy_deposit));
+    let hash = tx_hash(&format!(
+        "refresh:{}:{}",
+        hex::encode(&obj_id_val[..8]),
+        req.energy_deposit
+    ));
     let mut tx = Transaction::Refresh(RefreshTx {
-        object_id: obj_id_val, energy_deposit: req.energy_deposit,
+        object_id: obj_id_val,
+        energy_deposit: req.energy_deposit,
         signature: req.signature.and_then(|s| hex::decode(s).ok()),
         public_key: req.public_key.and_then(|s| hex::decode(s).ok()),
     });
@@ -6173,7 +6744,11 @@ async fn post_refresh(
     state.submit_tx(tx);
     Json(TxResultResponse {
         success: true,
-        message: format!("Refresh queued: obj=0x{} energy_deposit={}", hex::encode(&obj_id_val[..4]), req.energy_deposit),
+        message: format!(
+            "Refresh queued: obj=0x{} energy_deposit={}",
+            hex::encode(&obj_id_val[..4]),
+            req.energy_deposit
+        ),
         tx_hash: Some(hash),
     })
 }
@@ -6187,11 +6762,23 @@ async fn post_resurrect(
         return resp;
     }
     let obj_id_val = match parse_address_value(&req.object_id) {
-        Ok(a) => a, Err(e) => return Json(TxResultResponse { success: false, message: e, tx_hash: None }),
+        Ok(a) => a,
+        Err(e) => {
+            return Json(TxResultResponse {
+                success: false,
+                message: e,
+                tx_hash: None,
+            })
+        }
     };
-    let hash = tx_hash(&format!("resurrect:{}:{}", hex::encode(&obj_id_val[..8]), req.energy_deposit));
+    let hash = tx_hash(&format!(
+        "resurrect:{}:{}",
+        hex::encode(&obj_id_val[..8]),
+        req.energy_deposit
+    ));
     let mut tx = Transaction::Refresh(RefreshTx {
-        object_id: obj_id_val, energy_deposit: req.energy_deposit,
+        object_id: obj_id_val,
+        energy_deposit: req.energy_deposit,
         signature: req.signature.and_then(|s| hex::decode(s).ok()),
         public_key: req.public_key.and_then(|s| hex::decode(s).ok()),
     });
@@ -6199,7 +6786,11 @@ async fn post_resurrect(
     state.submit_tx(tx);
     Json(TxResultResponse {
         success: true,
-        message: format!("Resurrect queued: obj=0x{} energy_deposit={}", hex::encode(&obj_id_val[..4]), req.energy_deposit),
+        message: format!(
+            "Resurrect queued: obj=0x{} energy_deposit={}",
+            hex::encode(&obj_id_val[..4]),
+            req.energy_deposit
+        ),
         tx_hash: Some(hash),
     })
 }
@@ -6212,14 +6803,19 @@ async fn post_batch(
     Json(req): Json<BatchRequest>,
 ) -> Json<BatchResponse> {
     if req.transactions.is_empty() {
-        return Json(BatchResponse { submitted: 0, failed: 0, results: vec![] });
+        return Json(BatchResponse {
+            submitted: 0,
+            failed: 0,
+            results: vec![],
+        });
     }
     if req.transactions.len() > 100 {
         return Json(BatchResponse {
             submitted: 0,
             failed: 1,
             results: vec![BatchItemResult {
-                index: 0, success: false,
+                index: 0,
+                success: false,
                 message: "Batch too large: max 100 transactions".into(),
                 tx_hash: None,
             }],
@@ -6232,7 +6828,8 @@ async fn post_batch(
             submitted: 0,
             failed: 1,
             results: vec![BatchItemResult {
-                index: 0, success: false,
+                index: 0,
+                success: false,
                 message: "Authentication required".into(),
                 tx_hash: None,
             }],
@@ -6245,75 +6842,172 @@ async fn post_batch(
 
     for (i, item) in req.transactions.into_iter().enumerate() {
         let result = match item {
-            BatchTxItem::Transfer { from, to, amount, nonce } => {
-                match (parse_address_value(&from), parse_address_value(&to)) {
-                    (Ok(f), Ok(t)) if f != t && amount > 0 => {
-                        let hash = tx_hash(&format!("transfer:{}:{}:{}", hex::encode(&f[..20]), hex::encode(&t[..20]), amount));
-                        let mut tx = Transaction::Transfer(TransferTx {
-                            from: f, to: t, amount, nonce,
-                            signature: None, public_key: None,
-                        });
-                        sign_transaction(&mut tx, &state, None);
-                        state.submit_tx(tx);
-                        BatchItemResult { index: i, success: true, message: "Transfer queued".into(), tx_hash: Some(hash) }
+            BatchTxItem::Transfer {
+                from,
+                to,
+                amount,
+                nonce,
+            } => match (parse_address_value(&from), parse_address_value(&to)) {
+                (Ok(f), Ok(t)) if f != t && amount > 0 => {
+                    let hash = tx_hash(&format!(
+                        "transfer:{}:{}:{}",
+                        hex::encode(&f[..20]),
+                        hex::encode(&t[..20]),
+                        amount
+                    ));
+                    let mut tx = Transaction::Transfer(TransferTx {
+                        from: f,
+                        to: t,
+                        amount,
+                        nonce,
+                        signature: None,
+                        public_key: None,
+                    });
+                    sign_transaction(&mut tx, &state, None);
+                    state.submit_tx(tx);
+                    BatchItemResult {
+                        index: i,
+                        success: true,
+                        message: "Transfer queued".into(),
+                        tx_hash: Some(hash),
                     }
-                    (Err(e), _) | (_, Err(e)) => BatchItemResult { index: i, success: false, message: e, tx_hash: None },
-                    _ => BatchItemResult { index: i, success: false, message: "Invalid transfer parameters".into(), tx_hash: None },
                 }
-            }
-            BatchTxItem::CreateObject { creator, object_id, energy, half_life } => {
-                match (parse_address_value(&creator), parse_address_value(&object_id)) {
+                (Err(e), _) | (_, Err(e)) => BatchItemResult {
+                    index: i,
+                    success: false,
+                    message: e,
+                    tx_hash: None,
+                },
+                _ => BatchItemResult {
+                    index: i,
+                    success: false,
+                    message: "Invalid transfer parameters".into(),
+                    tx_hash: None,
+                },
+            },
+            BatchTxItem::CreateObject {
+                creator,
+                object_id,
+                energy,
+                half_life,
+            } => {
+                match (
+                    parse_address_value(&creator),
+                    parse_address_value(&object_id),
+                ) {
                     (Ok(c), Ok(oid)) => {
-                        let hash = tx_hash(&format!("create:{}:{}:{}", hex::encode(&oid[..8]), energy, half_life));
+                        let hash = tx_hash(&format!(
+                            "create:{}:{}:{}",
+                            hex::encode(&oid[..8]),
+                            energy,
+                            half_life
+                        ));
                         let mut tx = Transaction::CreateObject(CreateObjectTx {
-                            creator: c, object_id: oid, energy, half_life,
-                            data: Vec::new(), decay_curve: None,
-                            signature: None, public_key: None,
+                            creator: c,
+                            object_id: oid,
+                            energy,
+                            half_life,
+                            data: Vec::new(),
+                            decay_curve: None,
+                            signature: None,
+                            public_key: None,
                         });
                         sign_transaction(&mut tx, &state, None);
                         state.submit_tx(tx);
-                        BatchItemResult { index: i, success: true, message: "CreateObject queued".into(), tx_hash: Some(hash) }
+                        BatchItemResult {
+                            index: i,
+                            success: true,
+                            message: "CreateObject queued".into(),
+                            tx_hash: Some(hash),
+                        }
                     }
-                    (Err(e), _) | (_, Err(e)) => BatchItemResult { index: i, success: false, message: e, tx_hash: None },
+                    (Err(e), _) | (_, Err(e)) => BatchItemResult {
+                        index: i,
+                        success: false,
+                        message: e,
+                        tx_hash: None,
+                    },
                 }
             }
-            BatchTxItem::Refresh { object_id, energy_deposit } => {
-                match parse_address_value(&object_id) {
-                    Ok(oid) => {
-                        let hash = tx_hash(&format!("refresh:{}:{}", hex::encode(&oid[..8]), energy_deposit));
-                        let mut tx = Transaction::Refresh(RefreshTx {
-                            object_id: oid, energy_deposit,
-                            signature: None, public_key: None,
-                        });
-                        sign_transaction(&mut tx, &state, None);
-                        state.submit_tx(tx);
-                        BatchItemResult { index: i, success: true, message: "Refresh queued".into(), tx_hash: Some(hash) }
+            BatchTxItem::Refresh {
+                object_id,
+                energy_deposit,
+            } => match parse_address_value(&object_id) {
+                Ok(oid) => {
+                    let hash = tx_hash(&format!(
+                        "refresh:{}:{}",
+                        hex::encode(&oid[..8]),
+                        energy_deposit
+                    ));
+                    let mut tx = Transaction::Refresh(RefreshTx {
+                        object_id: oid,
+                        energy_deposit,
+                        signature: None,
+                        public_key: None,
+                    });
+                    sign_transaction(&mut tx, &state, None);
+                    state.submit_tx(tx);
+                    BatchItemResult {
+                        index: i,
+                        success: true,
+                        message: "Refresh queued".into(),
+                        tx_hash: Some(hash),
                     }
-                    Err(e) => BatchItemResult { index: i, success: false, message: e, tx_hash: None },
                 }
-            }
-            BatchTxItem::Resurrect { object_id, energy_deposit } => {
-                match parse_address_value(&object_id) {
-                    Ok(oid) => {
-                        let hash = tx_hash(&format!("resurrect:{}:{}", hex::encode(&oid[..8]), energy_deposit));
-                        let mut tx = Transaction::Refresh(RefreshTx {
-                            object_id: oid, energy_deposit,
-                            signature: None, public_key: None,
-                        });
-                        sign_transaction(&mut tx, &state, None);
-                        state.submit_tx(tx);
-                        BatchItemResult { index: i, success: true, message: "Resurrect queued".into(), tx_hash: Some(hash) }
+                Err(e) => BatchItemResult {
+                    index: i,
+                    success: false,
+                    message: e,
+                    tx_hash: None,
+                },
+            },
+            BatchTxItem::Resurrect {
+                object_id,
+                energy_deposit,
+            } => match parse_address_value(&object_id) {
+                Ok(oid) => {
+                    let hash = tx_hash(&format!(
+                        "resurrect:{}:{}",
+                        hex::encode(&oid[..8]),
+                        energy_deposit
+                    ));
+                    let mut tx = Transaction::Refresh(RefreshTx {
+                        object_id: oid,
+                        energy_deposit,
+                        signature: None,
+                        public_key: None,
+                    });
+                    sign_transaction(&mut tx, &state, None);
+                    state.submit_tx(tx);
+                    BatchItemResult {
+                        index: i,
+                        success: true,
+                        message: "Resurrect queued".into(),
+                        tx_hash: Some(hash),
                     }
-                    Err(e) => BatchItemResult { index: i, success: false, message: e, tx_hash: None },
                 }
-            }
+                Err(e) => BatchItemResult {
+                    index: i,
+                    success: false,
+                    message: e,
+                    tx_hash: None,
+                },
+            },
         };
 
-        if result.success { submitted += 1; } else { failed += 1; }
+        if result.success {
+            submitted += 1;
+        } else {
+            failed += 1;
+        }
         results.push(result);
     }
 
-    Json(BatchResponse { submitted, failed, results })
+    Json(BatchResponse {
+        submitted,
+        failed,
+        results,
+    })
 }
 
 // ── Contract request types ──
@@ -6345,25 +7039,35 @@ async fn post_deploy_contract(
     headers: HeaderMap,
     Json(req): Json<DeployContractRequest>,
 ) -> Json<TxResultResponse> {
-    if let Err(resp) = require_tx_auth(&headers, &state, false) { return resp; }
+    if let Err(resp) = require_tx_auth(&headers, &state, false) {
+        return resp;
+    }
     let mut tx = Transaction::DeployContract(DeployContractTx {
         deployer: addr_from_byte(req.deployer),
         template: req.template.clone(),
         init_args: serde_json::to_string(&req.init_args).unwrap_or_default(),
         energy: req.energy,
         half_life: req.half_life,
-        rules: req.rules.map(|r| serde_json::to_string(&r).unwrap_or_default()),
+        rules: req
+            .rules
+            .map(|r| serde_json::to_string(&r).unwrap_or_default()),
         signature: None,
         public_key: None,
     });
     sign_transaction(&mut tx, &state, None);
     state.submit_tx(tx);
-    let hash = tx_hash(&format!("deploy:{}:{}:{}", req.template, req.energy, req.half_life));
+    let hash = tx_hash(&format!(
+        "deploy:{}:{}:{}",
+        req.template, req.energy, req.half_life
+    ));
     Json(TxResultResponse {
         success: true,
         message: format!(
             "Deploy queued: template={} energy={} hl={} (mempool={})",
-            req.template, req.energy, req.half_life, state.mempool_len()
+            req.template,
+            req.energy,
+            req.half_life,
+            state.mempool_len()
         ),
         tx_hash: Some(hash),
     })
@@ -6374,7 +7078,9 @@ async fn post_call_contract(
     headers: HeaderMap,
     Json(req): Json<CallContractRequest>,
 ) -> Json<TxResultResponse> {
-    if let Err(resp) = require_tx_auth(&headers, &state, false) { return resp; }
+    if let Err(resp) = require_tx_auth(&headers, &state, false) {
+        return resp;
+    }
     let mut tx = Transaction::CallContract(CallContractTx {
         caller: addr_from_byte(req.caller),
         contract_id: req.contract_id,
@@ -6386,20 +7092,25 @@ async fn post_call_contract(
     });
     sign_transaction(&mut tx, &state, None);
     state.submit_tx(tx);
-    let hash = tx_hash(&format!("call:{}:{}:{}", req.contract_id, req.method, state.mempool_len()));
+    let hash = tx_hash(&format!(
+        "call:{}:{}:{}",
+        req.contract_id,
+        req.method,
+        state.mempool_len()
+    ));
     Json(TxResultResponse {
         success: true,
         message: format!(
             "Call queued: contract={} method={} (mempool={})",
-            req.contract_id, req.method, state.mempool_len()
+            req.contract_id,
+            req.method,
+            state.mempool_len()
         ),
         tx_hash: Some(hash),
     })
 }
 
-async fn get_contracts(
-    State(state): State<Arc<ApiState>>,
-) -> Json<serde_json::Value> {
+async fn get_contracts(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
     let c = safe_lock(&state.consensus);
     let contracts = c.executor.contract_engine.list();
     let list: Vec<serde_json::Value> = contracts
@@ -6471,7 +7182,9 @@ async fn post_deploy_script(
     headers: HeaderMap,
     Json(req): Json<DeployScriptRequest>,
 ) -> Json<TxResultResponse> {
-    if let Err(resp) = require_tx_auth(&headers, &state, false) { return resp; }
+    if let Err(resp) = require_tx_auth(&headers, &state, false) {
+        return resp;
+    }
     let mut tx = Transaction::DeployScript(evaporchain_types::DeployScriptTx {
         deployer: addr_from_byte(req.deployer),
         source_code: req.source_code.clone(),
@@ -6487,7 +7200,10 @@ async fn post_deploy_script(
         success: true,
         message: format!(
             "Script deploy queued: energy={} hl={} source={}B (mempool={})",
-            req.energy, req.half_life, req.source_code.len(), state.mempool_len()
+            req.energy,
+            req.half_life,
+            req.source_code.len(),
+            state.mempool_len()
         ),
         tx_hash: Some(hash),
     })
@@ -6498,7 +7214,9 @@ async fn post_call_script(
     headers: HeaderMap,
     Json(req): Json<CallScriptRequest>,
 ) -> Json<TxResultResponse> {
-    if let Err(resp) = require_tx_auth(&headers, &state, false) { return resp; }
+    if let Err(resp) = require_tx_auth(&headers, &state, false) {
+        return resp;
+    }
     let mut tx = Transaction::CallScript(evaporchain_types::CallScriptTx {
         caller: addr_from_byte(req.caller),
         contract_id: req.contract_id,
@@ -6510,20 +7228,25 @@ async fn post_call_script(
     });
     sign_transaction(&mut tx, &state, None);
     state.submit_tx(tx);
-    let hash = tx_hash(&format!("call-script:{}:{}:{}", req.contract_id, req.method, state.mempool_len()));
+    let hash = tx_hash(&format!(
+        "call-script:{}:{}:{}",
+        req.contract_id,
+        req.method,
+        state.mempool_len()
+    ));
     Json(TxResultResponse {
         success: true,
         message: format!(
             "Script call queued: contract={} method={} (mempool={})",
-            req.contract_id, req.method, state.mempool_len()
+            req.contract_id,
+            req.method,
+            state.mempool_len()
         ),
         tx_hash: Some(hash),
     })
 }
 
-async fn get_scripts(
-    State(state): State<Arc<ApiState>>,
-) -> Json<serde_json::Value> {
+async fn get_scripts(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
     let c = safe_lock(&state.consensus);
     let scripts = c.executor.script_engine.list();
     let list: Vec<serde_json::Value> = scripts
@@ -6544,10 +7267,7 @@ async fn get_scripts(
     Json(serde_json::json!({ "scripts": list, "count": list.len() }))
 }
 
-async fn get_script(
-    State(state): State<Arc<ApiState>>,
-    Path(id): Path<u64>,
-) -> impl IntoResponse {
+async fn get_script(State(state): State<Arc<ApiState>>, Path(id): Path<u64>) -> impl IntoResponse {
     let c = safe_lock(&state.consensus);
     match c.executor.script_engine.get(id) {
         Some(sc) => {
@@ -6587,9 +7307,7 @@ async fn get_script_abi(
 ) -> impl IntoResponse {
     let c = safe_lock(&state.consensus);
     match c.executor.script_engine.get(id) {
-        Some(sc) => {
-            (StatusCode::OK, Json(serde_json::to_value(&sc.abi).unwrap())).into_response()
-        }
+        Some(sc) => (StatusCode::OK, Json(serde_json::to_value(&sc.abi).unwrap())).into_response(),
         None => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "script not found" })),
@@ -6615,7 +7333,10 @@ async fn ws_upgrade_handler(
     Query(params): Query<crate::ws::WsSubscribeParams>,
 ) -> impl IntoResponse {
     let broadcaster = state.ws_broadcaster.clone();
-    let topics = params.subscribe.clone().unwrap_or_else(|| "all".to_string());
+    let topics = params
+        .subscribe
+        .clone()
+        .unwrap_or_else(|| "all".to_string());
     tracing::info!("WebSocket upgrade request (subscribe: {topics})");
     ws.on_upgrade(move |socket| crate::ws::handle_ws_connection(socket, broadcaster, params))
 }
@@ -6634,14 +7355,21 @@ async fn readyz(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
     let uptime_secs = state.start_time.elapsed().as_secs();
 
     let ready = has_blocks && uptime_secs > 5;
-    let status = if ready { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE };
+    let status = if ready {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
 
-    (status, Json(serde_json::json!({
-        "ready": ready,
-        "block_height": tip_height,
-        "peers": peer_count,
-        "uptime_secs": uptime_secs,
-    })))
+    (
+        status,
+        Json(serde_json::json!({
+            "ready": ready,
+            "block_height": tip_height,
+            "peers": peer_count,
+            "uptime_secs": uptime_secs,
+        })),
+    )
 }
 
 // ──────────────────────────── Address Detail ─────────────────────────────
@@ -6686,35 +7414,52 @@ async fn get_address_detail(
     };
 
     // Objects owned by this address
-    let objects: Vec<ObjectResponse> = db.all_object_ids().iter().filter_map(|id| {
-        let obj = db.get_object(id)?;
-        if obj.owner != addr_bytes { return None; }
-        let current_energy = obj.energy_at(epoch);
-        let decay_pct = if obj.energy > 0 {
-            ((obj.energy - current_energy) as f64 / obj.energy as f64) * 100.0
-        } else { 100.0 };
-        let state_str = match obj.state {
-            ObjectState::Active => "Active",
-            ObjectState::Grace => "Grace",
-            ObjectState::Ghost => "Ghost",
-            ObjectState::Resurrected => "Risen",
-        };
-        Some(ObjectResponse {
-            id: hex::encode(id), name: object_name(id, &obj.data),
-            owner: hex::encode(obj.owner), owner_name: account_name(&obj.owner),
-            energy: obj.energy, max_energy: obj.energy, half_life: obj.half_life,
-            state: state_str.to_string(), created_epoch: obj.created_at,
-            last_refreshed: obj.last_refreshed, grace_epoch: obj.grace_epoch,
-            current_energy, decay_percentage: (decay_pct * 10.0).round() / 10.0,
-            decay_curve: obj.decay_curve.clone(),
+    let objects: Vec<ObjectResponse> = db
+        .all_object_ids()
+        .iter()
+        .filter_map(|id| {
+            let obj = db.get_object(id)?;
+            if obj.owner != addr_bytes {
+                return None;
+            }
+            let current_energy = obj.energy_at(epoch);
+            let decay_pct = if obj.energy > 0 {
+                ((obj.energy - current_energy) as f64 / obj.energy as f64) * 100.0
+            } else {
+                100.0
+            };
+            let state_str = match obj.state {
+                ObjectState::Active => "Active",
+                ObjectState::Grace => "Grace",
+                ObjectState::Ghost => "Ghost",
+                ObjectState::Resurrected => "Risen",
+            };
+            Some(ObjectResponse {
+                id: hex::encode(id),
+                name: object_name(id, &obj.data),
+                owner: hex::encode(obj.owner),
+                owner_name: account_name(&obj.owner),
+                energy: obj.energy,
+                max_energy: obj.energy,
+                half_life: obj.half_life,
+                state: state_str.to_string(),
+                created_epoch: obj.created_at,
+                last_refreshed: obj.last_refreshed,
+                grace_epoch: obj.grace_epoch,
+                current_energy,
+                decay_percentage: (decay_pct * 10.0).round() / 10.0,
+                decay_curve: obj.decay_curve.clone(),
+            })
         })
-    }).collect();
+        .collect();
     drop(history);
     drop(db);
 
     // NFTs owned by this address
     let nft_store = safe_lock(&state.nft_store);
-    let nfts: Vec<NftResponse> = nft_store.tokens.iter()
+    let nfts: Vec<NftResponse> = nft_store
+        .tokens
+        .iter()
         .filter(|n| n.owner == full_hex || n.owner.contains(&addr_hex))
         .map(|n| nft_to_response(n, epoch))
         .collect();
@@ -6722,17 +7467,38 @@ async fn get_address_detail(
 
     // Token balances
     let token_store = safe_lock(&state.token_store);
-    let tokens: Vec<serde_json::Value> = token_store.tokens.iter().filter_map(|t| {
-        let bal = t.balances.get(&full_hex).or_else(|| {
-            t.balances.keys().find(|k| k.contains(&addr_hex)).and_then(|k| t.balances.get(k))
-        }).copied().unwrap_or(0);
-        if bal == 0 { return None; }
-        Some(serde_json::json!({
-            "token_id": t.id, "symbol": t.symbol, "name": t.name, "balance": bal
-        }))
-    }).collect();
+    let tokens: Vec<serde_json::Value> = token_store
+        .tokens
+        .iter()
+        .filter_map(|t| {
+            let bal = t
+                .balances
+                .get(&full_hex)
+                .or_else(|| {
+                    t.balances
+                        .keys()
+                        .find(|k| k.contains(&addr_hex))
+                        .and_then(|k| t.balances.get(k))
+                })
+                .copied()
+                .unwrap_or(0);
+            if bal == 0 {
+                return None;
+            }
+            Some(serde_json::json!({
+                "token_id": t.id, "symbol": t.symbol, "name": t.name, "balance": bal
+            }))
+        })
+        .collect();
 
-    Ok(Json(AddressDetailResponse { address: full_hex, balance, nonce, objects, nfts, tokens }))
+    Ok(Json(AddressDetailResponse {
+        address: full_hex,
+        balance,
+        nonce,
+        objects,
+        nfts,
+        tokens,
+    }))
 }
 
 // ──────────────────────────── Faucet ───────────────────────────────────
@@ -6754,7 +7520,10 @@ async fn docs_html() -> impl IntoResponse {
 
 async fn manifest_json() -> impl IntoResponse {
     (
-        [(axum::http::header::CONTENT_TYPE, "application/manifest+json")],
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "application/manifest+json",
+        )],
         include_str!("../dashboard/manifest.json"),
     )
 }
@@ -6772,14 +7541,27 @@ async fn post_faucet(
     Json(req): Json<FaucetRequest>,
 ) -> impl IntoResponse {
     if let Err(_e) = require_admin_auth(&headers) {
-        return (StatusCode::UNAUTHORIZED, Json(FaucetResponse {
-            success: false, balance: 0,
-            message: Some("unauthorized: invalid admin key".into()),
-        }));
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(FaucetResponse {
+                success: false,
+                balance: 0,
+                message: Some("unauthorized: invalid admin key".into()),
+            }),
+        );
     }
     let addr = match parse_address_value(&req.address) {
         Ok(a) => a,
-        Err(e) => return (StatusCode::OK, Json(FaucetResponse { success: false, balance: 0, message: Some(format!("Invalid address: {}", e)) })),
+        Err(e) => {
+            return (
+                StatusCode::OK,
+                Json(FaucetResponse {
+                    success: false,
+                    balance: 0,
+                    message: Some(format!("Invalid address: {}", e)),
+                }),
+            )
+        }
     };
     let addr_key = hex::encode(&addr[..20]);
 
@@ -6789,14 +7571,17 @@ async fn post_faucet(
         if let Some(last) = limits.get(&addr_key) {
             if last.elapsed().as_secs() < FAUCET_RATE_LIMIT_SECS {
                 let remaining = FAUCET_RATE_LIMIT_SECS - last.elapsed().as_secs();
-                return (StatusCode::TOO_MANY_REQUESTS, Json(FaucetResponse {
-                    success: false,
-                    balance: 0,
-                    message: Some(format!(
-                        "Rate limited. Try again in {} minutes.",
-                        remaining / 60 + 1
-                    )),
-                }));
+                return (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(FaucetResponse {
+                        success: false,
+                        balance: 0,
+                        message: Some(format!(
+                            "Rate limited. Try again in {} minutes.",
+                            remaining / 60 + 1
+                        )),
+                    }),
+                );
             }
         }
         limits.insert(addr_key, Instant::now());
@@ -6829,11 +7614,17 @@ async fn post_faucet(
         db.get_account(&addr).map(|a| a.balance).unwrap_or(0) + FAUCET_AMOUNT
     };
 
-    (StatusCode::OK, Json(FaucetResponse {
-        success: true,
-        balance,
-        message: Some("Faucet transaction submitted to consensus — balance updates after next block".into()),
-    }))
+    (
+        StatusCode::OK,
+        Json(FaucetResponse {
+            success: true,
+            balance,
+            message: Some(
+                "Faucet transaction submitted to consensus — balance updates after next block"
+                    .into(),
+            ),
+        }),
+    )
 }
 
 // ──────────────────────────── Oracle Ingest ──────────────────────────────
@@ -6894,10 +7685,21 @@ async fn post_oracle_ingest(
     let creator = [0u8; 32];
     let obj_id_val = match parse_address_value(&serde_json::Value::String(req.object_id.clone())) {
         Ok(a) => a,
-        Err(e) => return Json(TxResultResponse { success: false, message: e, tx_hash: None }),
+        Err(e) => {
+            return Json(TxResultResponse {
+                success: false,
+                message: e,
+                tx_hash: None,
+            })
+        }
     };
 
-    let hash = tx_hash(&format!("oracle:{}:{}:{}", req.source, hex::encode(&obj_id_val[..8]), req.energy));
+    let hash = tx_hash(&format!(
+        "oracle:{}:{}:{}",
+        req.source,
+        hex::encode(&obj_id_val[..8]),
+        req.energy
+    ));
 
     // Prepend source tag to data
     let data_str = format!("[{}] {}", req.source, req.data);
@@ -6917,16 +7719,17 @@ async fn post_oracle_ingest(
 
     Json(TxResultResponse {
         success: true,
-        message: format!("Oracle data ingested: {} (energy={}, half_life={})", req.source, req.energy, req.half_life),
+        message: format!(
+            "Oracle data ingested: {} (energy={}, half_life={})",
+            req.source, req.energy, req.half_life
+        ),
         tx_hash: Some(hash),
     })
 }
 
 // ──────────────────── Oracle Consensus Handlers ──────────────────────────
 
-async fn get_oracle_status(
-    State(state): State<Arc<ApiState>>,
-) -> Json<serde_json::Value> {
+async fn get_oracle_status(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
     if let Some(ref ob) = state.oracle_bridge {
         let bridge = safe_lock(ob);
         Json(serde_json::json!({
@@ -6963,9 +7766,7 @@ async fn get_oracle_feed(
 
 // ──────────────────── Shard Status Handlers ──────────────────────────────
 
-async fn get_shard_status(
-    State(state): State<Arc<ApiState>>,
-) -> Json<serde_json::Value> {
+async fn get_shard_status(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
     if let Some(ref sb) = state.shard_bridge {
         let bridge = safe_lock(sb);
         Json(serde_json::json!({
@@ -6978,23 +7779,24 @@ async fn get_shard_status(
     }
 }
 
-async fn get_shard_health(
-    State(state): State<Arc<ApiState>>,
-) -> Json<serde_json::Value> {
+async fn get_shard_health(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
     if let Some(ref sb) = state.shard_bridge {
         let bridge = safe_lock(sb);
         let healths = bridge.shard_healths();
         let candidates = bridge.find_compaction_candidates();
-        let shard_data: Vec<serde_json::Value> = healths.iter().map(|h| {
-            serde_json::json!({
-                "shard_id": h.shard_id.0,
-                "total_objects": h.total_objects,
-                "live_objects": h.live_objects,
-                "total_energy": h.total_energy,
-                "liveness_ratio": h.liveness_ratio(),
-                "is_dead": h.is_dead(),
+        let shard_data: Vec<serde_json::Value> = healths
+            .iter()
+            .map(|h| {
+                serde_json::json!({
+                    "shard_id": h.shard_id.0,
+                    "total_objects": h.total_objects,
+                    "live_objects": h.live_objects,
+                    "total_energy": h.total_energy,
+                    "liveness_ratio": h.liveness_ratio(),
+                    "is_dead": h.is_dead(),
+                })
             })
-        }).collect();
+            .collect();
         Json(serde_json::json!({
             "shards": shard_data,
             "compaction_candidates": candidates.len(),
@@ -7006,24 +7808,26 @@ async fn get_shard_health(
 
 // ──────────────────────────── Ghost Bridge Handlers ─────────────────────
 
-async fn get_ghost_list(
-    State(state): State<Arc<ApiState>>,
-) -> Json<serde_json::Value> {
+async fn get_ghost_list(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
     let db = safe_lock(&state.db);
     let ghost_ids = db.all_ghost_ids();
-    let ghosts: Vec<serde_json::Value> = ghost_ids.iter().take(100).filter_map(|id| {
-        db.get_ghost(id).map(|g| {
-            serde_json::json!({
-                "object_id": hex::encode(g.object_id),
-                "owner": hex::encode(g.owner),
-                "evaporated_at": g.evaporated_at,
-                "data_hash": hex::encode(g.data_hash),
-                "has_original_data": g.original_data.is_some(),
-                "mmr_position": g.mmr_position,
-                "original_half_life": g.original_half_life,
+    let ghosts: Vec<serde_json::Value> = ghost_ids
+        .iter()
+        .take(100)
+        .filter_map(|id| {
+            db.get_ghost(id).map(|g| {
+                serde_json::json!({
+                    "object_id": hex::encode(g.object_id),
+                    "owner": hex::encode(g.owner),
+                    "evaporated_at": g.evaporated_at,
+                    "data_hash": hex::encode(g.data_hash),
+                    "has_original_data": g.original_data.is_some(),
+                    "mmr_position": g.mmr_position,
+                    "original_half_life": g.original_half_life,
+                })
             })
         })
-    }).collect();
+        .collect();
     Json(serde_json::json!({
         "total": ghost_ids.len(),
         "ghosts": ghosts,
@@ -7116,7 +7920,11 @@ async fn get_nfts(State(state): State<Arc<ApiState>>) -> Json<Vec<NftResponse>> 
     tick_nft_lifecycle(&state, epoch);
     let store = safe_lock(&state.nft_store);
 
-    let mut nfts: Vec<NftResponse> = store.tokens.iter().map(|n| nft_to_response(n, epoch)).collect();
+    let mut nfts: Vec<NftResponse> = store
+        .tokens
+        .iter()
+        .map(|n| nft_to_response(n, epoch))
+        .collect();
     // Active first, then Grace, then Ghost
     nfts.sort_by_key(|n| match n.state.as_str() {
         "Active" => 0,
@@ -7138,7 +7946,11 @@ async fn get_single_nft(
     tick_nft_lifecycle(&state, epoch);
     let store = safe_lock(&state.nft_store);
 
-    let nft = store.tokens.iter().find(|n| n.id == id).ok_or(StatusCode::NOT_FOUND)?;
+    let nft = store
+        .tokens
+        .iter()
+        .find(|n| n.id == id)
+        .ok_or(StatusCode::NOT_FOUND)?;
     Ok(Json(nft_to_response(nft, epoch)))
 }
 
@@ -7163,26 +7975,56 @@ async fn post_mint_nft(
     };
     // Input validation
     let name = match sanitize_string(&req.name, 200) {
-        Ok(n) => n, Err(e) => return Json(TxResultResponse { success: false, message: e, tx_hash: None }),
+        Ok(n) => n,
+        Err(e) => {
+            return Json(TxResultResponse {
+                success: false,
+                message: e,
+                tx_hash: None,
+            })
+        }
     };
     if name.is_empty() {
-        return Json(TxResultResponse { success: false, message: "Name is required".into(), tx_hash: None });
+        return Json(TxResultResponse {
+            success: false,
+            message: "Name is required".into(),
+            tx_hash: None,
+        });
     }
     if req.energy == 0 {
-        return Json(TxResultResponse { success: false, message: "Energy must be greater than zero".into(), tx_hash: None });
+        return Json(TxResultResponse {
+            success: false,
+            message: "Energy must be greater than zero".into(),
+            tx_hash: None,
+        });
     }
     if req.half_life == 0 {
-        return Json(TxResultResponse { success: false, message: "Half-life must be greater than zero".into(), tx_hash: None });
+        return Json(TxResultResponse {
+            success: false,
+            message: "Half-life must be greater than zero".into(),
+            tx_hash: None,
+        });
     }
     if req.energy > 1_000_000_000 {
-        return Json(TxResultResponse { success: false, message: "Energy exceeds maximum (1,000,000,000)".into(), tx_hash: None });
+        return Json(TxResultResponse {
+            success: false,
+            message: "Energy exceeds maximum (1,000,000,000)".into(),
+            tx_hash: None,
+        });
     }
     let history = safe_lock(&state.block_history);
     let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
     drop(history);
 
     let metadata = match sanitize_string(&req.metadata, 10_000) {
-        Ok(m) => m, Err(e) => return Json(TxResultResponse { success: false, message: e, tx_hash: None }),
+        Ok(m) => m,
+        Err(e) => {
+            return Json(TxResultResponse {
+                success: false,
+                message: e,
+                tx_hash: None,
+            })
+        }
     };
     let metadata_hash = blake3::hash(metadata.as_bytes()).to_hex().to_string();
     // Owner must be a wallet owned by the caller (if auth is active)
@@ -7223,7 +8065,10 @@ async fn post_mint_nft(
     let hash = tx_hash(&format!("nft:mint:{}:{}", id, name));
     Json(TxResultResponse {
         success: true,
-        message: format!("NFT #{} '{}' minted with energy={}, half_life={}", id, req.name, req.energy, req.half_life),
+        message: format!(
+            "NFT #{} '{}' minted with energy={}, half_life={}",
+            id, req.name, req.energy, req.half_life
+        ),
         tx_hash: Some(hash),
     })
 }
@@ -7261,7 +8106,10 @@ async fn post_transfer_nft(
         let hash = tx_hash(&format!("nft:transfer:{}:{}:{}", req.nft_id, from, req.to));
         Json(TxResultResponse {
             success: true,
-            message: format!("NFT #{} transferred from {} to {}", req.nft_id, from, req.to),
+            message: format!(
+                "NFT #{} transferred from {} to {}",
+                req.nft_id, from, req.to
+            ),
             tx_hash: Some(hash),
         })
     } else {
@@ -7314,7 +8162,10 @@ async fn post_refresh_nft(
             let hash = tx_hash(&format!("nft:resurrect:{}:{}", nft.id, req.energy));
             Json(TxResultResponse {
                 success: true,
-                message: format!("NFT #{} '{}' resurrected with energy={}", nft.id, nft.name, req.energy),
+                message: format!(
+                    "NFT #{} '{}' resurrected with energy={}",
+                    nft.id, nft.name, req.energy
+                ),
                 tx_hash: Some(hash),
             })
         } else {
@@ -7329,7 +8180,10 @@ async fn post_refresh_nft(
             let hash = tx_hash(&format!("nft:refresh:{}:{}", nft.id, req.energy));
             Json(TxResultResponse {
                 success: true,
-                message: format!("NFT #{} '{}' refreshed, energy now {}", nft.id, nft.name, nft.energy),
+                message: format!(
+                    "NFT #{} '{}' refreshed, energy now {}",
+                    nft.id, nft.name, nft.energy
+                ),
                 tx_hash: Some(hash),
             })
         }
@@ -7394,14 +8248,18 @@ impl DeployedToken {
     }
 
     pub fn decay_pct(&self, epoch: u64) -> f64 {
-        if self.total_supply == 0 { return 100.0; }
+        if self.total_supply == 0 {
+            return 100.0;
+        }
         let cur = self.current_supply(epoch);
         ((self.total_supply - cur) as f64 / self.total_supply as f64 * 1000.0).round() / 10.0
     }
 
     /// Apply proportional decay to all holder balances.
     pub fn tick_decay(&mut self, epoch: u64) {
-        if epoch <= self.last_decay_epoch { return; }
+        if epoch <= self.last_decay_epoch {
+            return;
+        }
         let elapsed = epoch - self.last_decay_epoch;
         for bal in self.balances.values_mut() {
             *bal = evaporchain_types::energy_at_epoch(*bal, self.decay_half_life, elapsed);
@@ -7418,98 +8276,223 @@ pub struct TokenStore {
 
 // ── Token handlers ──
 
-async fn tokens_html() -> impl IntoResponse { Html(include_str!("../dashboard/tokens.html")) }
+async fn tokens_html() -> impl IntoResponse {
+    Html(include_str!("../dashboard/tokens.html"))
+}
 
 #[derive(Serialize)]
 struct TokenResponse {
-    id: u64, name: String, symbol: String, total_supply: u64, current_supply: u64,
-    decay_half_life: u64, deployed_epoch: u64, deployer: String,
-    decay_percentage: f64, holder_count: usize,
+    id: u64,
+    name: String,
+    symbol: String,
+    total_supply: u64,
+    current_supply: u64,
+    decay_half_life: u64,
+    deployed_epoch: u64,
+    deployer: String,
+    decay_percentage: f64,
+    holder_count: usize,
     holders: Vec<TokenHolder>,
 }
 #[derive(Serialize)]
-struct TokenHolder { address: String, balance: u64 }
+struct TokenHolder {
+    address: String,
+    balance: u64,
+}
 
 async fn get_tokens(State(state): State<Arc<ApiState>>) -> Json<Vec<TokenResponse>> {
     let history = safe_lock(&state.block_history);
     let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
     drop(history);
     let mut store = safe_lock(&state.token_store);
-    for t in store.tokens.iter_mut() { t.tick_decay(epoch); }
-    let res: Vec<TokenResponse> = store.tokens.iter().map(|t| {
-        let mut holders: Vec<TokenHolder> = t.balances.iter()
-            .filter(|(_, b)| **b > 0)
-            .map(|(a, b)| TokenHolder { address: a.clone(), balance: *b })
-            .collect();
-        holders.sort_by_key(|a| std::cmp::Reverse(a.balance));
-        TokenResponse {
-            id: t.id, name: t.name.clone(), symbol: t.symbol.clone(),
-            total_supply: t.total_supply, current_supply: t.current_supply(epoch),
-            decay_half_life: t.decay_half_life, deployed_epoch: t.deployed_epoch,
-            deployer: t.deployer.clone(), decay_percentage: t.decay_pct(epoch),
-            holder_count: holders.len(), holders,
-        }
-    }).collect();
+    for t in store.tokens.iter_mut() {
+        t.tick_decay(epoch);
+    }
+    let res: Vec<TokenResponse> = store
+        .tokens
+        .iter()
+        .map(|t| {
+            let mut holders: Vec<TokenHolder> = t
+                .balances
+                .iter()
+                .filter(|(_, b)| **b > 0)
+                .map(|(a, b)| TokenHolder {
+                    address: a.clone(),
+                    balance: *b,
+                })
+                .collect();
+            holders.sort_by_key(|a| std::cmp::Reverse(a.balance));
+            TokenResponse {
+                id: t.id,
+                name: t.name.clone(),
+                symbol: t.symbol.clone(),
+                total_supply: t.total_supply,
+                current_supply: t.current_supply(epoch),
+                decay_half_life: t.decay_half_life,
+                deployed_epoch: t.deployed_epoch,
+                deployer: t.deployer.clone(),
+                decay_percentage: t.decay_pct(epoch),
+                holder_count: holders.len(),
+                holders,
+            }
+        })
+        .collect();
     Json(res)
 }
 
-async fn get_single_token(State(state): State<Arc<ApiState>>, Path(id): Path<u64>) -> Result<Json<TokenResponse>, StatusCode> {
+async fn get_single_token(
+    State(state): State<Arc<ApiState>>,
+    Path(id): Path<u64>,
+) -> Result<Json<TokenResponse>, StatusCode> {
     let history = safe_lock(&state.block_history);
     let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
     drop(history);
     let mut store = safe_lock(&state.token_store);
-    let t = store.tokens.iter_mut().find(|t| t.id == id).ok_or(StatusCode::NOT_FOUND)?;
+    let t = store
+        .tokens
+        .iter_mut()
+        .find(|t| t.id == id)
+        .ok_or(StatusCode::NOT_FOUND)?;
     t.tick_decay(epoch);
-    let mut holders: Vec<TokenHolder> = t.balances.iter()
+    let mut holders: Vec<TokenHolder> = t
+        .balances
+        .iter()
         .filter(|(_, b)| **b > 0)
-        .map(|(a, b)| TokenHolder { address: a.clone(), balance: *b })
+        .map(|(a, b)| TokenHolder {
+            address: a.clone(),
+            balance: *b,
+        })
         .collect();
     holders.sort_by_key(|a| std::cmp::Reverse(a.balance));
     Ok(Json(TokenResponse {
-        id: t.id, name: t.name.clone(), symbol: t.symbol.clone(),
-        total_supply: t.total_supply, current_supply: t.current_supply(epoch),
-        decay_half_life: t.decay_half_life, deployed_epoch: t.deployed_epoch,
-        deployer: t.deployer.clone(), decay_percentage: t.decay_pct(epoch),
-        holder_count: holders.len(), holders,
+        id: t.id,
+        name: t.name.clone(),
+        symbol: t.symbol.clone(),
+        total_supply: t.total_supply,
+        current_supply: t.current_supply(epoch),
+        decay_half_life: t.decay_half_life,
+        deployed_epoch: t.deployed_epoch,
+        deployer: t.deployer.clone(),
+        decay_percentage: t.decay_pct(epoch),
+        holder_count: holders.len(),
+        holders,
     }))
 }
 
 #[derive(Deserialize)]
-struct DeployTokenRequest { name: String, symbol: String, total_supply: u64, decay_half_life: u64, deployer: Option<String> }
+struct DeployTokenRequest {
+    name: String,
+    symbol: String,
+    total_supply: u64,
+    decay_half_life: u64,
+    deployer: Option<String>,
+}
 
-async fn post_deploy_token(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(req): Json<DeployTokenRequest>) -> Json<TxResultResponse> {
-    if let Err(resp) = require_tx_auth(&headers, &state, false) { return resp; }
+async fn post_deploy_token(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Json(req): Json<DeployTokenRequest>,
+) -> Json<TxResultResponse> {
+    if let Err(resp) = require_tx_auth(&headers, &state, false) {
+        return resp;
+    }
     let token_name = match sanitize_string(&req.name, 100) {
-        Ok(n) => n, Err(e) => return Json(TxResultResponse { success: false, message: e, tx_hash: None }),
+        Ok(n) => n,
+        Err(e) => {
+            return Json(TxResultResponse {
+                success: false,
+                message: e,
+                tx_hash: None,
+            })
+        }
     };
     let token_symbol = match sanitize_string(&req.symbol, 20) {
-        Ok(s) => s, Err(e) => return Json(TxResultResponse { success: false, message: e, tx_hash: None }),
+        Ok(s) => s,
+        Err(e) => {
+            return Json(TxResultResponse {
+                success: false,
+                message: e,
+                tx_hash: None,
+            })
+        }
     };
-    if token_name.is_empty() { return Json(TxResultResponse { success: false, message: "Token name is required".into(), tx_hash: None }); }
-    if token_symbol.is_empty() { return Json(TxResultResponse { success: false, message: "Token symbol is required".into(), tx_hash: None }); }
-    if req.total_supply == 0 { return Json(TxResultResponse { success: false, message: "Total supply must be > 0".into(), tx_hash: None }); }
-    if req.decay_half_life == 0 { return Json(TxResultResponse { success: false, message: "Decay half-life must be > 0".into(), tx_hash: None }); }
+    if token_name.is_empty() {
+        return Json(TxResultResponse {
+            success: false,
+            message: "Token name is required".into(),
+            tx_hash: None,
+        });
+    }
+    if token_symbol.is_empty() {
+        return Json(TxResultResponse {
+            success: false,
+            message: "Token symbol is required".into(),
+            tx_hash: None,
+        });
+    }
+    if req.total_supply == 0 {
+        return Json(TxResultResponse {
+            success: false,
+            message: "Total supply must be > 0".into(),
+            tx_hash: None,
+        });
+    }
+    if req.decay_half_life == 0 {
+        return Json(TxResultResponse {
+            success: false,
+            message: "Decay half-life must be > 0".into(),
+            tx_hash: None,
+        });
+    }
     let history = safe_lock(&state.block_history);
     let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
     drop(history);
-    let deployer = req.deployer.unwrap_or_else(|| format!("0x{}", GENESIS_FOUNDATION));
+    let deployer = req
+        .deployer
+        .unwrap_or_else(|| format!("0x{}", GENESIS_FOUNDATION));
     let mut store = safe_lock(&state.token_store);
-    let id = store.next_id; store.next_id += 1;
+    let id = store.next_id;
+    store.next_id += 1;
     let mut balances = HashMap::new();
     balances.insert(deployer.clone(), req.total_supply);
     store.tokens.push(DeployedToken {
-        id, name: token_name.clone(), symbol: token_symbol.clone(),
-        total_supply: req.total_supply, decay_half_life: req.decay_half_life,
-        deployed_epoch: epoch, deployer, balances, last_decay_epoch: epoch,
+        id,
+        name: token_name.clone(),
+        symbol: token_symbol.clone(),
+        total_supply: req.total_supply,
+        decay_half_life: req.decay_half_life,
+        deployed_epoch: epoch,
+        deployer,
+        balances,
+        last_decay_epoch: epoch,
     });
-    let hash = tx_hash(&format!("token:deploy:{}:{}", token_symbol, req.total_supply));
-    Json(TxResultResponse { success: true, message: format!("{} ({}) deployed with supply={}, half_life={}", token_name, token_symbol, req.total_supply, req.decay_half_life), tx_hash: Some(hash) })
+    let hash = tx_hash(&format!(
+        "token:deploy:{}:{}",
+        token_symbol, req.total_supply
+    ));
+    Json(TxResultResponse {
+        success: true,
+        message: format!(
+            "{} ({}) deployed with supply={}, half_life={}",
+            token_name, token_symbol, req.total_supply, req.decay_half_life
+        ),
+        tx_hash: Some(hash),
+    })
 }
 
 #[derive(Deserialize)]
-struct TokenTransferRequest { token_id: u64, from: String, to: String, amount: u64 }
+struct TokenTransferRequest {
+    token_id: u64,
+    from: String,
+    to: String,
+    amount: u64,
+}
 
-async fn post_token_transfer(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(req): Json<TokenTransferRequest>) -> Json<TxResultResponse> {
+async fn post_token_transfer(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Json(req): Json<TokenTransferRequest>,
+) -> Json<TxResultResponse> {
     let user_id = match require_tx_auth(&headers, &state, false) {
         Ok(uid) => uid,
         Err(resp) => return resp,
@@ -7520,28 +8503,58 @@ async fn post_token_transfer(State(state): State<Arc<ApiState>>, headers: Header
     }
     let mut store = safe_lock(&state.token_store);
     let t = match store.tokens.iter_mut().find(|t| t.id == req.token_id) {
-        Some(t) => t, None => return Json(TxResultResponse { success: false, message: "Token not found".into(), tx_hash: None }),
+        Some(t) => t,
+        None => {
+            return Json(TxResultResponse {
+                success: false,
+                message: "Token not found".into(),
+                tx_hash: None,
+            })
+        }
     };
     let from_bal = t.balances.get(&req.from).copied().unwrap_or(0);
     if from_bal < req.amount {
-        return Json(TxResultResponse { success: false, message: format!("Insufficient balance: {} < {}", from_bal, req.amount), tx_hash: None });
+        return Json(TxResultResponse {
+            success: false,
+            message: format!("Insufficient balance: {} < {}", from_bal, req.amount),
+            tx_hash: None,
+        });
     }
     *t.balances.entry(req.from.clone()).or_insert(0) -= req.amount;
     *t.balances.entry(req.to.clone()).or_insert(0) += req.amount;
-    let hash = tx_hash(&format!("token:transfer:{}:{}:{}:{}", req.token_id, req.from, req.to, req.amount));
-    Json(TxResultResponse { success: true, message: format!("{} {} transferred from {} to {}", req.amount, t.symbol, req.from, req.to), tx_hash: Some(hash) })
+    let hash = tx_hash(&format!(
+        "token:transfer:{}:{}:{}:{}",
+        req.token_id, req.from, req.to, req.amount
+    ));
+    Json(TxResultResponse {
+        success: true,
+        message: format!(
+            "{} {} transferred from {} to {}",
+            req.amount, t.symbol, req.from, req.to
+        ),
+        tx_hash: Some(hash),
+    })
 }
 
 #[derive(Deserialize)]
-struct TokenBalanceRequest { token_id: u64, address: String }
+struct TokenBalanceRequest {
+    token_id: u64,
+    address: String,
+}
 
-async fn post_token_balance(State(state): State<Arc<ApiState>>, Json(req): Json<TokenBalanceRequest>) -> Json<serde_json::Value> {
+async fn post_token_balance(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<TokenBalanceRequest>,
+) -> Json<serde_json::Value> {
     let store = safe_lock(&state.token_store);
     let t = match store.tokens.iter().find(|t| t.id == req.token_id) {
-        Some(t) => t, None => return Json(serde_json::json!({"error":"Token not found"})),
+        Some(t) => t,
+        None => return Json(serde_json::json!({"error":"Token not found"})),
     };
     let bal = t.balances.get(&req.address).copied().unwrap_or(0);
-    Json(serde_json::json!({"token_id": req.token_id, "address": req.address, "balance": bal, "symbol": t.symbol}))
+    Json(
+        serde_json::json!({"token_id": req.token_id, "address": req.address, "balance": bal, "symbol": t.symbol}),
+    )
 }
 
 // ──────────────────────────── Swap (CFM-priced) ─────────────────────────
@@ -7581,7 +8594,11 @@ async fn post_swap_quote(
     let gross_out = (req.amount as f64 * rate) as u64;
     let fee = (gross_out * SWAP_FEE_BPS / 10_000).max(1);
     let amount_out = gross_out.saturating_sub(fee);
-    let price_impact = if gross_out > 0 { (fee as f64 / gross_out as f64) * 100.0 } else { 0.0 };
+    let price_impact = if gross_out > 0 {
+        (fee as f64 / gross_out as f64) * 100.0
+    } else {
+        0.0
+    };
     Json(serde_json::json!({
         "from_token": req.from_token,
         "to_token":   req.to_token,
@@ -7605,7 +8622,11 @@ async fn post_swap_execute(
         return resp;
     }
     if req.amount == 0 {
-        return Json(TxResultResponse { success: false, message: "amount must be > 0".into(), tx_hash: None });
+        return Json(TxResultResponse {
+            success: false,
+            message: "amount must be > 0".into(),
+            tx_hash: None,
+        });
     }
 
     let rate = oracle_rate(&state, &req.from_token, &req.to_token);
@@ -7618,7 +8639,10 @@ async fn post_swap_execute(
     if amount_out < min_out {
         return Json(TxResultResponse {
             success: false,
-            message: format!("Slippage exceeded: expected min {} but got {}", min_out, amount_out),
+            message: format!(
+                "Slippage exceeded: expected min {} but got {}",
+                min_out, amount_out
+            ),
             tx_hash: None,
         });
     }
@@ -7635,31 +8659,60 @@ async fn post_swap_execute(
         };
 
         // Determine if from/to are deployed tokens or "EVAP" (native).
-        let from_is_token = store.tokens.iter().any(|t| t.symbol.to_ascii_uppercase() == from_upper);
-        let to_is_token   = store.tokens.iter().any(|t| t.symbol.to_ascii_uppercase() == to_upper);
+        let from_is_token = store
+            .tokens
+            .iter()
+            .any(|t| t.symbol.to_ascii_uppercase() == from_upper);
+        let to_is_token = store
+            .tokens
+            .iter()
+            .any(|t| t.symbol.to_ascii_uppercase() == to_upper);
 
         if from_is_token {
             // Deduct from the token balance.
-            let token = store.tokens.iter_mut().find(|t| t.symbol.to_ascii_uppercase() == from_upper).unwrap();
+            let token = store
+                .tokens
+                .iter_mut()
+                .find(|t| t.symbol.to_ascii_uppercase() == from_upper)
+                .unwrap();
             token.tick_decay(epoch);
             let bal = token.balances.entry(req.from.clone()).or_insert(0);
             if *bal < req.amount {
-                return Json(TxResultResponse { success: false, message: format!("Insufficient {} balance: {} < {}", from_upper, bal, req.amount), tx_hash: None });
+                return Json(TxResultResponse {
+                    success: false,
+                    message: format!(
+                        "Insufficient {} balance: {} < {}",
+                        from_upper, bal, req.amount
+                    ),
+                    tx_hash: None,
+                });
             }
             *bal -= req.amount;
         } else if from_upper != "EVAP" {
-            return Json(TxResultResponse { success: false, message: format!("Unknown from_token: {}", req.from_token), tx_hash: None });
+            return Json(TxResultResponse {
+                success: false,
+                message: format!("Unknown from_token: {}", req.from_token),
+                tx_hash: None,
+            });
         }
         // EVAP debit handled below via executor.
 
         if to_is_token {
             // Credit the to_token balance.
-            let token = store.tokens.iter_mut().find(|t| t.symbol.to_ascii_uppercase() == to_upper).unwrap();
+            let token = store
+                .tokens
+                .iter_mut()
+                .find(|t| t.symbol.to_ascii_uppercase() == to_upper)
+                .unwrap();
             token.tick_decay(epoch);
             let bal = token.balances.entry(req.from.clone()).or_insert(0);
             *bal = bal.saturating_add(amount_out);
         } else if to_upper != "EVAP" {
-            return Json(TxResultResponse { success: false, message: format!("Unknown to_token: {}", req.to_token), tx_hash: None });
+            return Json(TxResultResponse {
+                success: false,
+                message: format!("Unknown to_token: {}", req.to_token),
+                tx_hash: None,
+            });
         }
         // EVAP credit handled below via executor.
     }
@@ -7668,14 +8721,27 @@ async fn post_swap_execute(
     if from_upper == "EVAP" || to_upper == "EVAP" {
         let from_addr = match parse_address_value(&serde_json::Value::String(req.from.clone())) {
             Ok(a) => a,
-            Err(e) => return Json(TxResultResponse { success: false, message: e, tx_hash: None }),
+            Err(e) => {
+                return Json(TxResultResponse {
+                    success: false,
+                    message: e,
+                    tx_hash: None,
+                })
+            }
         };
         let mut db = safe_lock(&state.db);
         if from_upper == "EVAP" {
             // Deduct EVAP.
             let acct = db.get_or_create_account(&from_addr);
             if acct.balance < req.amount {
-                return Json(TxResultResponse { success: false, message: format!("Insufficient EVAP balance: {} < {}", acct.balance, req.amount), tx_hash: None });
+                return Json(TxResultResponse {
+                    success: false,
+                    message: format!(
+                        "Insufficient EVAP balance: {} < {}",
+                        acct.balance, req.amount
+                    ),
+                    tx_hash: None,
+                });
             }
             let new_bal = acct.balance - req.amount;
             let mut updated = acct.clone();
@@ -7692,10 +8758,16 @@ async fn post_swap_execute(
         }
     }
 
-    let tx_hash = tx_hash(&format!("swap:{}:{}:{}:{}", req.from_token, req.to_token, req.amount, req.from));
+    let tx_hash = tx_hash(&format!(
+        "swap:{}:{}:{}:{}",
+        req.from_token, req.to_token, req.amount, req.from
+    ));
     Json(TxResultResponse {
         success: true,
-        message: format!("Swapped {} {} for {} {}", req.amount, from_upper, amount_out, to_upper),
+        message: format!(
+            "Swapped {} {} for {} {}",
+            req.amount, from_upper, amount_out, to_upper
+        ),
         tx_hash: Some(tx_hash),
     })
 }
@@ -7705,26 +8777,42 @@ async fn post_swap_execute(
 fn oracle_rate(state: &ApiState, from: &str, to: &str) -> f64 {
     let from_u = from.to_ascii_uppercase();
     let to_u = to.to_ascii_uppercase();
-    if from_u == to_u { return 1.0; }
+    if from_u == to_u {
+        return 1.0;
+    }
 
     let (from_usd, to_usd) = if let Some(ref ob) = state.oracle_bridge {
         let bridge = ob.lock().unwrap();
         let f = if from_u == "EVAP" {
-            bridge.get_twap("evap_usd").or_else(|| bridge.get_twap("evap_usdc")).unwrap_or(1.0)
+            bridge
+                .get_twap("evap_usd")
+                .or_else(|| bridge.get_twap("evap_usdc"))
+                .unwrap_or(1.0)
         } else {
-            bridge.get_twap(&format!("{}_usd", from_u.to_ascii_lowercase())).unwrap_or(1.0)
+            bridge
+                .get_twap(&format!("{}_usd", from_u.to_ascii_lowercase()))
+                .unwrap_or(1.0)
         };
         let t = if to_u == "EVAP" {
-            bridge.get_twap("evap_usd").or_else(|| bridge.get_twap("evap_usdc")).unwrap_or(1.0)
+            bridge
+                .get_twap("evap_usd")
+                .or_else(|| bridge.get_twap("evap_usdc"))
+                .unwrap_or(1.0)
         } else {
-            bridge.get_twap(&format!("{}_usd", to_u.to_ascii_lowercase())).unwrap_or(1.0)
+            bridge
+                .get_twap(&format!("{}_usd", to_u.to_ascii_lowercase()))
+                .unwrap_or(1.0)
         };
         (f, t)
     } else {
         (1.0, 1.0)
     };
 
-    if to_usd == 0.0 { 1.0 } else { from_usd / to_usd }
+    if to_usd == 0.0 {
+        1.0
+    } else {
+        from_usd / to_usd
+    }
 }
 
 // ──────────────────────────── Staking Store ─────────────────────────────
@@ -7733,8 +8821,8 @@ fn oracle_rate(state: &ApiState, from: &str, to: &str) -> f64 {
 pub struct StakingPool {
     pub id: u64,
     pub name: String,
-    pub reward_rate: u64,       // per epoch
-    pub reward_decay_hl: u64,   // reward decay half-life
+    pub reward_rate: u64,     // per epoch
+    pub reward_decay_hl: u64, // reward decay half-life
     pub total_staked: u64,
     pub created_epoch: u64,
     pub stakers: Vec<Staker>,
@@ -7754,9 +8842,13 @@ pub struct Staker {
 impl StakingPool {
     /// Compute pending rewards with decay for a staker.
     pub fn compute_rewards(&self, staker: &Staker, epoch: u64) -> u64 {
-        if self.total_staked == 0 || staker.amount == 0 { return 0; }
+        if self.total_staked == 0 || staker.amount == 0 {
+            return 0;
+        }
         let epochs_since_claim = epoch.saturating_sub(staker.last_claim_epoch);
-        if epochs_since_claim == 0 { return staker.pending_rewards; }
+        if epochs_since_claim == 0 {
+            return staker.pending_rewards;
+        }
         // Raw rewards: share of pool * reward_rate * epochs
         let share = staker.amount as f64 / self.total_staked as f64;
         let raw = (share * self.reward_rate as f64 * epochs_since_claim as f64) as u64;
@@ -7774,19 +8866,30 @@ pub struct StakingStore {
 
 // ── Staking handlers ──
 
-async fn staking_html() -> impl IntoResponse { Html(include_str!("../dashboard/staking.html")) }
+async fn staking_html() -> impl IntoResponse {
+    Html(include_str!("../dashboard/staking.html"))
+}
 
 #[derive(Serialize)]
 struct StakingPoolResponse {
-    id: u64, name: String, reward_rate: u64, reward_decay_hl: u64,
-    total_staked: u64, created_epoch: u64, staker_count: usize,
+    id: u64,
+    name: String,
+    reward_rate: u64,
+    reward_decay_hl: u64,
+    total_staked: u64,
+    created_epoch: u64,
+    staker_count: usize,
     stakers: Vec<StakerResponse>,
 }
 #[derive(Serialize)]
 struct StakerResponse {
-    address: String, amount: u64, staked_epoch: u64,
-    pending_rewards: u64, last_claim_epoch: u64,
-    total_claimed: u64, total_decayed: u64,
+    address: String,
+    amount: u64,
+    staked_epoch: u64,
+    pending_rewards: u64,
+    last_claim_epoch: u64,
+    total_claimed: u64,
+    total_decayed: u64,
     reward_decay_pct: f64,
 }
 
@@ -7795,50 +8898,121 @@ async fn get_staking_pools(State(state): State<Arc<ApiState>>) -> Json<Vec<Staki
     let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
     drop(history);
     let store = safe_lock(&state.staking_store);
-    let res: Vec<StakingPoolResponse> = store.pools.iter().map(|p| {
-        let stakers: Vec<StakerResponse> = p.stakers.iter().map(|s| {
-            let pending = p.compute_rewards(s, epoch);
-            let raw_epochs = epoch.saturating_sub(s.last_claim_epoch);
-            let share = if p.total_staked > 0 { s.amount as f64 / p.total_staked as f64 } else { 0.0 };
-            let raw = (share * p.reward_rate as f64 * raw_epochs as f64) as u64 + s.pending_rewards;
-            let decay_pct = if raw > 0 { ((raw - pending) as f64 / raw as f64 * 1000.0).round() / 10.0 } else { 0.0 };
-            StakerResponse {
-                address: s.address.clone(), amount: s.amount, staked_epoch: s.staked_epoch,
-                pending_rewards: pending, last_claim_epoch: s.last_claim_epoch,
-                total_claimed: s.total_claimed, total_decayed: s.total_decayed,
-                reward_decay_pct: decay_pct,
+    let res: Vec<StakingPoolResponse> = store
+        .pools
+        .iter()
+        .map(|p| {
+            let stakers: Vec<StakerResponse> = p
+                .stakers
+                .iter()
+                .map(|s| {
+                    let pending = p.compute_rewards(s, epoch);
+                    let raw_epochs = epoch.saturating_sub(s.last_claim_epoch);
+                    let share = if p.total_staked > 0 {
+                        s.amount as f64 / p.total_staked as f64
+                    } else {
+                        0.0
+                    };
+                    let raw = (share * p.reward_rate as f64 * raw_epochs as f64) as u64
+                        + s.pending_rewards;
+                    let decay_pct = if raw > 0 {
+                        ((raw - pending) as f64 / raw as f64 * 1000.0).round() / 10.0
+                    } else {
+                        0.0
+                    };
+                    StakerResponse {
+                        address: s.address.clone(),
+                        amount: s.amount,
+                        staked_epoch: s.staked_epoch,
+                        pending_rewards: pending,
+                        last_claim_epoch: s.last_claim_epoch,
+                        total_claimed: s.total_claimed,
+                        total_decayed: s.total_decayed,
+                        reward_decay_pct: decay_pct,
+                    }
+                })
+                .collect();
+            StakingPoolResponse {
+                id: p.id,
+                name: p.name.clone(),
+                reward_rate: p.reward_rate,
+                reward_decay_hl: p.reward_decay_hl,
+                total_staked: p.total_staked,
+                created_epoch: p.created_epoch,
+                staker_count: stakers.len(),
+                stakers,
             }
-        }).collect();
-        StakingPoolResponse {
-            id: p.id, name: p.name.clone(), reward_rate: p.reward_rate,
-            reward_decay_hl: p.reward_decay_hl, total_staked: p.total_staked,
-            created_epoch: p.created_epoch, staker_count: stakers.len(), stakers,
-        }
-    }).collect();
+        })
+        .collect();
     Json(res)
 }
 
-async fn get_single_pool(State(state): State<Arc<ApiState>>, Path(id): Path<u64>) -> Result<Json<StakingPoolResponse>, StatusCode> {
+async fn get_single_pool(
+    State(state): State<Arc<ApiState>>,
+    Path(id): Path<u64>,
+) -> Result<Json<StakingPoolResponse>, StatusCode> {
     let history = safe_lock(&state.block_history);
     let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
     drop(history);
     let store = safe_lock(&state.staking_store);
-    let p = store.pools.iter().find(|p| p.id == id).ok_or(StatusCode::NOT_FOUND)?;
-    let stakers: Vec<StakerResponse> = p.stakers.iter().map(|s| {
-        let pending = p.compute_rewards(s, epoch);
-        let raw_epochs = epoch.saturating_sub(s.last_claim_epoch);
-        let share = if p.total_staked > 0 { s.amount as f64 / p.total_staked as f64 } else { 0.0 };
-        let raw = (share * p.reward_rate as f64 * raw_epochs as f64) as u64 + s.pending_rewards;
-        let decay_pct = if raw > 0 { ((raw - pending) as f64 / raw as f64 * 1000.0).round() / 10.0 } else { 0.0 };
-        StakerResponse { address: s.address.clone(), amount: s.amount, staked_epoch: s.staked_epoch, pending_rewards: pending, last_claim_epoch: s.last_claim_epoch, total_claimed: s.total_claimed, total_decayed: s.total_decayed, reward_decay_pct: decay_pct }
-    }).collect();
-    Ok(Json(StakingPoolResponse { id: p.id, name: p.name.clone(), reward_rate: p.reward_rate, reward_decay_hl: p.reward_decay_hl, total_staked: p.total_staked, created_epoch: p.created_epoch, staker_count: stakers.len(), stakers }))
+    let p = store
+        .pools
+        .iter()
+        .find(|p| p.id == id)
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let stakers: Vec<StakerResponse> = p
+        .stakers
+        .iter()
+        .map(|s| {
+            let pending = p.compute_rewards(s, epoch);
+            let raw_epochs = epoch.saturating_sub(s.last_claim_epoch);
+            let share = if p.total_staked > 0 {
+                s.amount as f64 / p.total_staked as f64
+            } else {
+                0.0
+            };
+            let raw = (share * p.reward_rate as f64 * raw_epochs as f64) as u64 + s.pending_rewards;
+            let decay_pct = if raw > 0 {
+                ((raw - pending) as f64 / raw as f64 * 1000.0).round() / 10.0
+            } else {
+                0.0
+            };
+            StakerResponse {
+                address: s.address.clone(),
+                amount: s.amount,
+                staked_epoch: s.staked_epoch,
+                pending_rewards: pending,
+                last_claim_epoch: s.last_claim_epoch,
+                total_claimed: s.total_claimed,
+                total_decayed: s.total_decayed,
+                reward_decay_pct: decay_pct,
+            }
+        })
+        .collect();
+    Ok(Json(StakingPoolResponse {
+        id: p.id,
+        name: p.name.clone(),
+        reward_rate: p.reward_rate,
+        reward_decay_hl: p.reward_decay_hl,
+        total_staked: p.total_staked,
+        created_epoch: p.created_epoch,
+        staker_count: stakers.len(),
+        stakers,
+    }))
 }
 
 #[derive(Deserialize)]
-struct StakeRequest { pool_id: u64, address: String, amount: u64 }
+struct StakeRequest {
+    pool_id: u64,
+    address: String,
+    amount: u64,
+}
 
-async fn post_stake(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(req): Json<StakeRequest>) -> Json<TxResultResponse> {
+async fn post_stake(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Json(req): Json<StakeRequest>,
+) -> Json<TxResultResponse> {
     let user_id = match require_tx_auth(&headers, &state, false) {
         Ok(uid) => uid,
         Err(resp) => return resp,
@@ -7847,7 +9021,11 @@ async fn post_stake(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json
         return resp;
     }
     if req.amount == 0 {
-        return Json(TxResultResponse { success: false, message: "Amount must be greater than zero".into(), tx_hash: None });
+        return Json(TxResultResponse {
+            success: false,
+            message: "Amount must be greater than zero".into(),
+            tx_hash: None,
+        });
     }
     // Balance pre-check
     {
@@ -7856,10 +9034,18 @@ async fn post_stake(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json
             let db = safe_lock(&state.db);
             if let Some(acct) = db.get_account(&addr_bytes) {
                 if acct.balance < req.amount {
-                    return Json(TxResultResponse { success: false, message: format!("Insufficient balance: {} < {}", acct.balance, req.amount), tx_hash: None });
+                    return Json(TxResultResponse {
+                        success: false,
+                        message: format!("Insufficient balance: {} < {}", acct.balance, req.amount),
+                        tx_hash: None,
+                    });
                 }
             } else {
-                return Json(TxResultResponse { success: false, message: "Account not found — use faucet first".into(), tx_hash: None });
+                return Json(TxResultResponse {
+                    success: false,
+                    message: "Account not found — use faucet first".into(),
+                    tx_hash: None,
+                });
             }
         }
     }
@@ -7868,22 +9054,52 @@ async fn post_stake(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json
     drop(history);
     let mut store = safe_lock(&state.staking_store);
     let p = match store.pools.iter_mut().find(|p| p.id == req.pool_id) {
-        Some(p) => p, None => return Json(TxResultResponse { success: false, message: "Pool not found".into(), tx_hash: None }),
+        Some(p) => p,
+        None => {
+            return Json(TxResultResponse {
+                success: false,
+                message: "Pool not found".into(),
+                tx_hash: None,
+            })
+        }
     };
     if let Some(s) = p.stakers.iter_mut().find(|s| s.address == req.address) {
         s.amount += req.amount;
     } else {
-        p.stakers.push(Staker { address: req.address.clone(), amount: req.amount, staked_epoch: epoch, pending_rewards: 0, last_claim_epoch: epoch, total_claimed: 0, total_decayed: 0 });
+        p.stakers.push(Staker {
+            address: req.address.clone(),
+            amount: req.amount,
+            staked_epoch: epoch,
+            pending_rewards: 0,
+            last_claim_epoch: epoch,
+            total_claimed: 0,
+            total_decayed: 0,
+        });
     }
     p.total_staked += req.amount;
-    let hash = tx_hash(&format!("stake:{}:{}:{}", req.pool_id, req.address, req.amount));
-    Json(TxResultResponse { success: true, message: format!("Staked {} in {}", req.amount, p.name), tx_hash: Some(hash) })
+    let hash = tx_hash(&format!(
+        "stake:{}:{}:{}",
+        req.pool_id, req.address, req.amount
+    ));
+    Json(TxResultResponse {
+        success: true,
+        message: format!("Staked {} in {}", req.amount, p.name),
+        tx_hash: Some(hash),
+    })
 }
 
 #[derive(Deserialize)]
-struct UnstakeRequest { pool_id: u64, address: String, amount: u64 }
+struct UnstakeRequest {
+    pool_id: u64,
+    address: String,
+    amount: u64,
+}
 
-async fn post_unstake(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(req): Json<UnstakeRequest>) -> Json<TxResultResponse> {
+async fn post_unstake(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Json(req): Json<UnstakeRequest>,
+) -> Json<TxResultResponse> {
     let user_id = match require_tx_auth(&headers, &state, false) {
         Ok(uid) => uid,
         Err(resp) => return resp,
@@ -7893,24 +9109,56 @@ async fn post_unstake(State(state): State<Arc<ApiState>>, headers: HeaderMap, Js
     }
     let mut store = safe_lock(&state.staking_store);
     let p = match store.pools.iter_mut().find(|p| p.id == req.pool_id) {
-        Some(p) => p, None => return Json(TxResultResponse { success: false, message: "Pool not found".into(), tx_hash: None }),
+        Some(p) => p,
+        None => {
+            return Json(TxResultResponse {
+                success: false,
+                message: "Pool not found".into(),
+                tx_hash: None,
+            })
+        }
     };
     let s = match p.stakers.iter_mut().find(|s| s.address == req.address) {
-        Some(s) => s, None => return Json(TxResultResponse { success: false, message: "Not staked".into(), tx_hash: None }),
+        Some(s) => s,
+        None => {
+            return Json(TxResultResponse {
+                success: false,
+                message: "Not staked".into(),
+                tx_hash: None,
+            })
+        }
     };
     if s.amount < req.amount {
-        return Json(TxResultResponse { success: false, message: format!("Insufficient stake: {} < {}", s.amount, req.amount), tx_hash: None });
+        return Json(TxResultResponse {
+            success: false,
+            message: format!("Insufficient stake: {} < {}", s.amount, req.amount),
+            tx_hash: None,
+        });
     }
     s.amount -= req.amount;
     p.total_staked -= req.amount;
-    let hash = tx_hash(&format!("unstake:{}:{}:{}", req.pool_id, req.address, req.amount));
-    Json(TxResultResponse { success: true, message: format!("Unstaked {} from {}", req.amount, p.name), tx_hash: Some(hash) })
+    let hash = tx_hash(&format!(
+        "unstake:{}:{}:{}",
+        req.pool_id, req.address, req.amount
+    ));
+    Json(TxResultResponse {
+        success: true,
+        message: format!("Unstaked {} from {}", req.amount, p.name),
+        tx_hash: Some(hash),
+    })
 }
 
 #[derive(Deserialize)]
-struct ClaimRequest { pool_id: u64, address: String }
+struct ClaimRequest {
+    pool_id: u64,
+    address: String,
+}
 
-async fn post_claim(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(req): Json<ClaimRequest>) -> Json<TxResultResponse> {
+async fn post_claim(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Json(req): Json<ClaimRequest>,
+) -> Json<TxResultResponse> {
     let user_id = match require_tx_auth(&headers, &state, false) {
         Ok(uid) => uid,
         Err(resp) => return resp,
@@ -7923,16 +9171,34 @@ async fn post_claim(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json
     drop(history);
     let mut store = safe_lock(&state.staking_store);
     let p = match store.pools.iter_mut().find(|p| p.id == req.pool_id) {
-        Some(p) => p, None => return Json(TxResultResponse { success: false, message: "Pool not found".into(), tx_hash: None }),
+        Some(p) => p,
+        None => {
+            return Json(TxResultResponse {
+                success: false,
+                message: "Pool not found".into(),
+                tx_hash: None,
+            })
+        }
     };
     let reward_decay_hl = p.reward_decay_hl;
     let reward_rate = p.reward_rate;
     let total_staked = p.total_staked;
     let s = match p.stakers.iter_mut().find(|s| s.address == req.address) {
-        Some(s) => s, None => return Json(TxResultResponse { success: false, message: "Not staked".into(), tx_hash: None }),
+        Some(s) => s,
+        None => {
+            return Json(TxResultResponse {
+                success: false,
+                message: "Not staked".into(),
+                tx_hash: None,
+            })
+        }
     };
     let epochs_since = epoch.saturating_sub(s.last_claim_epoch);
-    let share = if total_staked > 0 { s.amount as f64 / total_staked as f64 } else { 0.0 };
+    let share = if total_staked > 0 {
+        s.amount as f64 / total_staked as f64
+    } else {
+        0.0
+    };
     let raw = (share * reward_rate as f64 * epochs_since as f64) as u64 + s.pending_rewards;
     let actual = evaporchain_types::energy_at_epoch(raw, reward_decay_hl, epochs_since);
     let decayed = raw.saturating_sub(actual);
@@ -7941,7 +9207,11 @@ async fn post_claim(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json
     s.pending_rewards = 0;
     s.last_claim_epoch = epoch;
     let hash = tx_hash(&format!("claim:{}:{}:{}", req.pool_id, req.address, actual));
-    Json(TxResultResponse { success: true, message: format!("Claimed {} rewards ({} decayed)", actual, decayed), tx_hash: Some(hash) })
+    Json(TxResultResponse {
+        success: true,
+        message: format!("Claimed {} rewards ({} decayed)", actual, decayed),
+        tx_hash: Some(hash),
+    })
 }
 
 // ──────────────────────────── DAO Store ─────────────────────────────────
@@ -7981,7 +9251,9 @@ impl DAOProposal {
     }
 
     pub fn tick(&mut self, epoch: u64) {
-        if self.status != "Active" { return; }
+        if self.status != "Active" {
+            return;
+        }
         if epoch >= self.end_epoch() {
             let totals = self.vote_totals();
             let winning = totals.iter().max_by_key(|(_, v)| *v);
@@ -8015,15 +9287,26 @@ pub struct DAOStore {
 
 // ── DAO handlers ──
 
-async fn dao_html() -> impl IntoResponse { Html(include_str!("../dashboard/dao.html")) }
+async fn dao_html() -> impl IntoResponse {
+    Html(include_str!("../dashboard/dao.html"))
+}
 
 #[derive(Serialize)]
 struct ProposalResponse {
-    id: u64, title: String, description: String, options: Vec<String>,
-    created_epoch: u64, voting_period: u64, end_epoch: u64,
-    creator: String, status: String, total_votes: u64,
-    vote_totals: HashMap<String, u64>, epochs_remaining: u64,
-    evaporated_epoch: Option<u64>, voter_count: usize,
+    id: u64,
+    title: String,
+    description: String,
+    options: Vec<String>,
+    created_epoch: u64,
+    voting_period: u64,
+    end_epoch: u64,
+    creator: String,
+    status: String,
+    total_votes: u64,
+    vote_totals: HashMap<String, u64>,
+    epochs_remaining: u64,
+    evaporated_epoch: Option<u64>,
+    voter_count: usize,
 }
 
 async fn get_proposals(State(state): State<Arc<ApiState>>) -> Json<Vec<ProposalResponse>> {
@@ -8031,83 +9314,189 @@ async fn get_proposals(State(state): State<Arc<ApiState>>) -> Json<Vec<ProposalR
     let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
     drop(history);
     let mut store = safe_lock(&state.dao_store);
-    for p in store.proposals.iter_mut() { p.tick(epoch); }
-    let res: Vec<ProposalResponse> = store.proposals.iter().map(|p| {
-        let remaining = if epoch < p.end_epoch() { p.end_epoch() - epoch } else { 0 };
-        ProposalResponse {
-            id: p.id, title: p.title.clone(), description: p.description.clone(),
-            options: p.options.clone(), created_epoch: p.created_epoch,
-            voting_period: p.voting_period, end_epoch: p.end_epoch(),
-            creator: p.creator.clone(), status: p.status.clone(),
-            total_votes: p.total_votes(), vote_totals: p.vote_totals(),
-            epochs_remaining: remaining, evaporated_epoch: p.evaporated_epoch,
-            voter_count: p.votes.iter().map(|v| &v.voter).collect::<std::collections::HashSet<_>>().len(),
-        }
-    }).collect();
+    for p in store.proposals.iter_mut() {
+        p.tick(epoch);
+    }
+    let res: Vec<ProposalResponse> = store
+        .proposals
+        .iter()
+        .map(|p| {
+            let remaining = if epoch < p.end_epoch() {
+                p.end_epoch() - epoch
+            } else {
+                0
+            };
+            ProposalResponse {
+                id: p.id,
+                title: p.title.clone(),
+                description: p.description.clone(),
+                options: p.options.clone(),
+                created_epoch: p.created_epoch,
+                voting_period: p.voting_period,
+                end_epoch: p.end_epoch(),
+                creator: p.creator.clone(),
+                status: p.status.clone(),
+                total_votes: p.total_votes(),
+                vote_totals: p.vote_totals(),
+                epochs_remaining: remaining,
+                evaporated_epoch: p.evaporated_epoch,
+                voter_count: p
+                    .votes
+                    .iter()
+                    .map(|v| &v.voter)
+                    .collect::<std::collections::HashSet<_>>()
+                    .len(),
+            }
+        })
+        .collect();
     Json(res)
 }
 
-async fn get_single_proposal(State(state): State<Arc<ApiState>>, Path(id): Path<u64>) -> Result<Json<ProposalResponse>, StatusCode> {
+async fn get_single_proposal(
+    State(state): State<Arc<ApiState>>,
+    Path(id): Path<u64>,
+) -> Result<Json<ProposalResponse>, StatusCode> {
     let history = safe_lock(&state.block_history);
     let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
     drop(history);
     let mut store = safe_lock(&state.dao_store);
-    let p = store.proposals.iter_mut().find(|p| p.id == id).ok_or(StatusCode::NOT_FOUND)?;
+    let p = store
+        .proposals
+        .iter_mut()
+        .find(|p| p.id == id)
+        .ok_or(StatusCode::NOT_FOUND)?;
     p.tick(epoch);
-    let remaining = if epoch < p.end_epoch() { p.end_epoch() - epoch } else { 0 };
+    let remaining = if epoch < p.end_epoch() {
+        p.end_epoch() - epoch
+    } else {
+        0
+    };
     Ok(Json(ProposalResponse {
-        id: p.id, title: p.title.clone(), description: p.description.clone(),
-        options: p.options.clone(), created_epoch: p.created_epoch,
-        voting_period: p.voting_period, end_epoch: p.end_epoch(),
-        creator: p.creator.clone(), status: p.status.clone(),
-        total_votes: p.total_votes(), vote_totals: p.vote_totals(),
-        epochs_remaining: remaining, evaporated_epoch: p.evaporated_epoch,
-        voter_count: p.votes.iter().map(|v| &v.voter).collect::<std::collections::HashSet<_>>().len(),
+        id: p.id,
+        title: p.title.clone(),
+        description: p.description.clone(),
+        options: p.options.clone(),
+        created_epoch: p.created_epoch,
+        voting_period: p.voting_period,
+        end_epoch: p.end_epoch(),
+        creator: p.creator.clone(),
+        status: p.status.clone(),
+        total_votes: p.total_votes(),
+        vote_totals: p.vote_totals(),
+        epochs_remaining: remaining,
+        evaporated_epoch: p.evaporated_epoch,
+        voter_count: p
+            .votes
+            .iter()
+            .map(|v| &v.voter)
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
     }))
 }
 
 #[derive(Deserialize)]
-struct ProposeRequest { title: String, description: String, options: Vec<String>, voting_period: u64, creator: Option<String> }
+struct ProposeRequest {
+    title: String,
+    description: String,
+    options: Vec<String>,
+    voting_period: u64,
+    creator: Option<String>,
+}
 
-async fn post_propose(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(req): Json<ProposeRequest>) -> Json<TxResultResponse> {
-    if let Err(resp) = require_tx_auth(&headers, &state, false) { return resp; }
+async fn post_propose(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Json(req): Json<ProposeRequest>,
+) -> Json<TxResultResponse> {
+    if let Err(resp) = require_tx_auth(&headers, &state, false) {
+        return resp;
+    }
     let title = match sanitize_string(&req.title, 200) {
-        Ok(t) => t, Err(e) => return Json(TxResultResponse { success: false, message: e, tx_hash: None }),
+        Ok(t) => t,
+        Err(e) => {
+            return Json(TxResultResponse {
+                success: false,
+                message: e,
+                tx_hash: None,
+            })
+        }
     };
     if title.is_empty() {
-        return Json(TxResultResponse { success: false, message: "Title is required".into(), tx_hash: None });
+        return Json(TxResultResponse {
+            success: false,
+            message: "Title is required".into(),
+            tx_hash: None,
+        });
     }
     let description = match sanitize_string(&req.description, 2000) {
-        Ok(d) => d, Err(e) => return Json(TxResultResponse { success: false, message: e, tx_hash: None }),
+        Ok(d) => d,
+        Err(e) => {
+            return Json(TxResultResponse {
+                success: false,
+                message: e,
+                tx_hash: None,
+            })
+        }
     };
     let options: Vec<String> = req.options.iter().map(|o| strip_html_tags(o)).collect();
     let history = safe_lock(&state.block_history);
     let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
     drop(history);
-    let creator = req.creator.unwrap_or_else(|| format!("0x{}", GENESIS_FOUNDATION));
+    let creator = req
+        .creator
+        .unwrap_or_else(|| format!("0x{}", GENESIS_FOUNDATION));
     let mut store = safe_lock(&state.dao_store);
-    let id = store.next_id; store.next_id += 1;
+    let id = store.next_id;
+    store.next_id += 1;
     store.proposals.push(DAOProposal {
-        id, title: title.clone(), description,
-        options, votes: vec![], created_epoch: epoch,
-        voting_period: req.voting_period, creator, status: "Active".into(),
+        id,
+        title: title.clone(),
+        description,
+        options,
+        votes: vec![],
+        created_epoch: epoch,
+        voting_period: req.voting_period,
+        creator,
+        status: "Active".into(),
         evaporated_epoch: None,
     });
     let hash = tx_hash(&format!("dao:propose:{}:{}", id, title));
-    Json(TxResultResponse { success: true, message: format!("Proposal #{} '{}' created, voting for {} epochs", id, title, req.voting_period), tx_hash: Some(hash) })
+    Json(TxResultResponse {
+        success: true,
+        message: format!(
+            "Proposal #{} '{}' created, voting for {} epochs",
+            id, title, req.voting_period
+        ),
+        tx_hash: Some(hash),
+    })
 }
 
 #[derive(Deserialize)]
-struct VoteRequest { proposal_id: u64, option: String, weight: u64, voter: Option<String> }
+struct VoteRequest {
+    proposal_id: u64,
+    option: String,
+    weight: u64,
+    voter: Option<String>,
+}
 
-async fn post_vote(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(req): Json<VoteRequest>) -> Json<TxResultResponse> {
+async fn post_vote(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Json(req): Json<VoteRequest>,
+) -> Json<TxResultResponse> {
     let user_id = match require_tx_auth(&headers, &state, false) {
         Ok(uid) => uid,
         Err(resp) => return resp,
     };
     let voter = match req.voter {
         Some(ref v) if !v.is_empty() => v.clone(),
-        _ => return Json(TxResultResponse { success: false, message: "Voter address is required".into(), tx_hash: None }),
+        _ => {
+            return Json(TxResultResponse {
+                success: false,
+                message: "Voter address is required".into(),
+                tx_hash: None,
+            })
+        }
     };
     // Ownership check: caller must own the voter address
     if let Err(resp) = require_wallet_ownership(&state, user_id, &voter) {
@@ -8115,16 +9504,30 @@ async fn post_vote(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(
     }
     // Validate vote weight: must be > 0 and <= staked amount
     if req.weight == 0 {
-        return Json(TxResultResponse { success: false, message: "Vote weight must be greater than zero".into(), tx_hash: None });
+        return Json(TxResultResponse {
+            success: false,
+            message: "Vote weight must be greater than zero".into(),
+            tx_hash: None,
+        });
     }
     {
         let staking = safe_lock(&state.staking_store);
-        let total_staked: u64 = staking.pools.iter().flat_map(|p| p.stakers.iter())
+        let total_staked: u64 = staking
+            .pools
+            .iter()
+            .flat_map(|p| p.stakers.iter())
             .filter(|s| s.address == voter)
             .map(|s| s.amount)
             .sum();
         if req.weight > total_staked {
-            return Json(TxResultResponse { success: false, message: format!("Vote weight {} exceeds your total stake {}", req.weight, total_staked), tx_hash: None });
+            return Json(TxResultResponse {
+                success: false,
+                message: format!(
+                    "Vote weight {} exceeds your total stake {}",
+                    req.weight, total_staked
+                ),
+                tx_hash: None,
+            });
         }
     }
     let history = safe_lock(&state.block_history);
@@ -8132,20 +9535,54 @@ async fn post_vote(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(
     drop(history);
     let mut store = safe_lock(&state.dao_store);
     let p = match store.proposals.iter_mut().find(|p| p.id == req.proposal_id) {
-        Some(p) => p, None => return Json(TxResultResponse { success: false, message: "Proposal not found".into(), tx_hash: None }),
+        Some(p) => p,
+        None => {
+            return Json(TxResultResponse {
+                success: false,
+                message: "Proposal not found".into(),
+                tx_hash: None,
+            })
+        }
     };
     if p.status != "Active" {
-        return Json(TxResultResponse { success: false, message: format!("Proposal is {}, cannot vote", p.status), tx_hash: None });
+        return Json(TxResultResponse {
+            success: false,
+            message: format!("Proposal is {}, cannot vote", p.status),
+            tx_hash: None,
+        });
     }
     if !p.options.contains(&req.option) {
-        return Json(TxResultResponse { success: false, message: format!("Invalid option: {}", req.option), tx_hash: None });
+        return Json(TxResultResponse {
+            success: false,
+            message: format!("Invalid option: {}", req.option),
+            tx_hash: None,
+        });
     }
     if p.votes.iter().any(|v| v.voter == voter) {
-        return Json(TxResultResponse { success: false, message: "Already voted".into(), tx_hash: None });
+        return Json(TxResultResponse {
+            success: false,
+            message: "Already voted".into(),
+            tx_hash: None,
+        });
     }
-    p.votes.push(DAOVote { voter: voter.clone(), option: req.option.clone(), weight: req.weight, epoch });
-    let hash = tx_hash(&format!("dao:vote:{}:{}:{}", req.proposal_id, voter, req.option));
-    Json(TxResultResponse { success: true, message: format!("Voted '{}' with weight {} on proposal #{}", req.option, req.weight, req.proposal_id), tx_hash: Some(hash) })
+    p.votes.push(DAOVote {
+        voter: voter.clone(),
+        option: req.option.clone(),
+        weight: req.weight,
+        epoch,
+    });
+    let hash = tx_hash(&format!(
+        "dao:vote:{}:{}:{}",
+        req.proposal_id, voter, req.option
+    ));
+    Json(TxResultResponse {
+        success: true,
+        message: format!(
+            "Voted '{}' with weight {} on proposal #{}",
+            req.option, req.weight, req.proposal_id
+        ),
+        tx_hash: Some(hash),
+    })
 }
 
 // ──────────────────────────── Router ───────────────────────────────────
@@ -8168,9 +9605,15 @@ async fn get_chain(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value
 }
 
 /// Latest block shortcut.
-async fn get_latest_block(State(state): State<Arc<ApiState>>) -> Result<Json<BlockRecord>, StatusCode> {
+async fn get_latest_block(
+    State(state): State<Arc<ApiState>>,
+) -> Result<Json<BlockRecord>, StatusCode> {
     let history = safe_lock(&state.block_history);
-    history.back().cloned().ok_or(StatusCode::NOT_FOUND).map(Json)
+    history
+        .back()
+        .cloned()
+        .ok_or(StatusCode::NOT_FOUND)
+        .map(Json)
 }
 
 /// Mempool endpoint with transaction details.
@@ -8182,13 +9625,35 @@ async fn get_mempool(State(state): State<Arc<ApiState>>) -> Json<serde_json::Val
     }))
 }
 
+/// `GET /api/mempool/:hash` — direct mempool-membership check for a single
+/// tx hash. Returns `{hash, in_mempool}`. Trivial wrapper around
+/// `Mempool::contains_hash`; primarily useful for explorer UIs that don't
+/// want to walk `/api/mempool`'s full transaction list.
+async fn get_mempool_by_hash(
+    State(state): State<Arc<ApiState>>,
+    Path(hash): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let (hash_hex, hash_bytes) = parse_tx_hash(&hash).ok_or(StatusCode::BAD_REQUEST)?;
+    let in_mempool = state.mempool_contains_hash(&hash_bytes);
+    Ok(Json(serde_json::json!({
+        "hash": hash_hex,
+        "in_mempool": in_mempool,
+    })))
+}
+
 /// Transaction receipt lookup by hash.
 async fn get_tx_receipt(
     State(state): State<Arc<ApiState>>,
     Path(hash): Path<String>,
 ) -> Result<Json<crate::persistence::TxReceipt>, StatusCode> {
-    let store = state.chain_store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    store.get_tx_receipt(&hash).map(Json).ok_or(StatusCode::NOT_FOUND)
+    let store = state
+        .chain_store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    store
+        .get_tx_receipt(&hash)
+        .map(Json)
+        .ok_or(StatusCode::NOT_FOUND)
 }
 
 /// Address transaction history.
@@ -8197,7 +9662,10 @@ async fn get_address_txs(
     Path(addr): Path<String>,
     Query(params): Query<PaginationParams>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let store = state.chain_store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let store = state
+        .chain_store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let limit = params.limit.unwrap_or(50).min(200);
     let receipts = store.get_address_transactions(&addr, limit);
     Ok(Json(serde_json::json!({
@@ -8211,7 +9679,10 @@ async fn get_address_txs(
 async fn get_tx_index_stats(
     State(state): State<Arc<ApiState>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let store = state.chain_store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let store = state
+        .chain_store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     Ok(Json(serde_json::json!({
         "indexed_transactions": store.tx_index_count(),
     })))
@@ -8236,7 +9707,10 @@ async fn get_contract_events(
     Path(contract_id): Path<u64>,
     Query(params): Query<EventQueryParams>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let store = state.chain_store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let store = state
+        .chain_store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let limit = params.limit.unwrap_or(100).min(1000);
     let events = store.get_contract_events(
         contract_id,
@@ -8257,7 +9731,10 @@ async fn get_block_contract_events(
     State(state): State<Arc<ApiState>>,
     Path(block_number): Path<u64>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let store = state.chain_store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let store = state
+        .chain_store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let events = store.get_block_events(block_number, 1000);
     Ok(Json(serde_json::json!({
         "block_number": block_number,
@@ -8270,7 +9747,10 @@ async fn get_block_contract_events(
 async fn get_event_index_stats(
     State(state): State<Arc<ApiState>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let store = state.chain_store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let store = state
+        .chain_store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     Ok(Json(serde_json::json!({
         "indexed_events": store.contract_event_count(),
         "indexed_transactions": store.tx_index_count(),
@@ -8282,11 +9762,15 @@ async fn get_nft_collections(State(state): State<Arc<ApiState>>) -> Json<serde_j
     let store = safe_lock(&state.nft_store);
     let mut collections: HashMap<String, Vec<u64>> = HashMap::new();
     for nft in &store.tokens {
-        collections.entry(nft.collection.clone()).or_default().push(nft.id);
+        collections
+            .entry(nft.collection.clone())
+            .or_default()
+            .push(nft.id);
     }
-    let result: Vec<serde_json::Value> = collections.iter().map(|(name, ids)| {
-        serde_json::json!({ "name": name, "count": ids.len(), "nft_ids": ids })
-    }).collect();
+    let result: Vec<serde_json::Value> = collections
+        .iter()
+        .map(|(name, ids)| serde_json::json!({ "name": name, "count": ids.len(), "nft_ids": ids }))
+        .collect();
     Json(serde_json::json!(result))
 }
 
@@ -8384,7 +9868,10 @@ async fn get_prometheus_metrics(
     out.push_str(&format!("evaporchain_peak_tps {:.2}\n", t.peak_tps));
     out.push_str("# HELP evaporchain_total_transactions Total transactions processed\n");
     out.push_str("# TYPE evaporchain_total_transactions counter\n");
-    out.push_str(&format!("evaporchain_total_transactions {}\n", stats.total_transactions));
+    out.push_str(&format!(
+        "evaporchain_total_transactions {}\n",
+        stats.total_transactions
+    ));
     out.push_str("# HELP evaporchain_active_objects Number of active state objects\n");
     out.push_str("# TYPE evaporchain_active_objects gauge\n");
     out.push_str(&format!("evaporchain_active_objects {}\n", active_objects));
@@ -8399,10 +9886,16 @@ async fn get_prometheus_metrics(
     out.push_str(&format!("evaporchain_peer_count {}\n", peer_count));
     out.push_str("# HELP evaporchain_avg_block_exec_ms Average block execution time in ms\n");
     out.push_str("# TYPE evaporchain_avg_block_exec_ms gauge\n");
-    out.push_str(&format!("evaporchain_avg_block_exec_ms {:.2}\n", t.avg_exec_time_us() as f64 / 1000.0));
+    out.push_str(&format!(
+        "evaporchain_avg_block_exec_ms {:.2}\n",
+        t.avg_exec_time_us() as f64 / 1000.0
+    ));
     out.push_str("# HELP evaporchain_avg_gas_per_block Average gas used per block\n");
     out.push_str("# TYPE evaporchain_avg_gas_per_block gauge\n");
-    out.push_str(&format!("evaporchain_avg_gas_per_block {}\n", t.avg_gas_per_block()));
+    out.push_str(&format!(
+        "evaporchain_avg_gas_per_block {}\n",
+        t.avg_gas_per_block()
+    ));
     out.push_str("# HELP evaporchain_uptime_seconds Node uptime in seconds\n");
     out.push_str("# TYPE evaporchain_uptime_seconds counter\n");
     out.push_str(&format!("evaporchain_uptime_seconds {}\n", uptime));
@@ -8424,7 +9917,9 @@ async fn get_prometheus_metrics(
     {
         let epv = safe_lock(&state.epv_registry);
         let live = epv.iter().count();
-        out.push_str("# HELP evaporchain_epv_live_versions Number of live EPV protocol versions tracked\n");
+        out.push_str(
+            "# HELP evaporchain_epv_live_versions Number of live EPV protocol versions tracked\n",
+        );
         out.push_str("# TYPE evaporchain_epv_live_versions gauge\n");
         out.push_str(&format!("evaporchain_epv_live_versions {}\n", live));
     }
@@ -8440,7 +9935,8 @@ async fn get_prometheus_metrics(
             let mut max_epoch: Option<u64> = None;
             for p in &params {
                 for v in db_ref.get_sentinel_votes(p.id) {
-                    max_epoch = Some(max_epoch.map_or(v.observed_epoch, |e| e.max(v.observed_epoch)));
+                    max_epoch =
+                        Some(max_epoch.map_or(v.observed_epoch, |e| e.max(v.observed_epoch)));
                 }
             }
             max_epoch
@@ -8450,13 +9946,16 @@ async fn get_prometheus_metrics(
         let sys = ChainAutopoiesis::new(AlwaysAcceptVerifier, 1_000, 50);
         let report = sys.health_report(&book, &covenant_ids, last_sentinel_vote, epoch);
         let viability_score: u64 = match report.status {
-            AutopoieticStatus::Viable   => 2,
+            AutopoieticStatus::Viable => 2,
             AutopoieticStatus::Stressed => 1,
             AutopoieticStatus::Inviable => 0,
         };
         out.push_str("# HELP evaporchain_autopoietic_viability Chain autopoietic viability: 2=Viable 1=Stressed 0=Inviable\n");
         out.push_str("# TYPE evaporchain_autopoietic_viability gauge\n");
-        out.push_str(&format!("evaporchain_autopoietic_viability {}\n", viability_score));
+        out.push_str(&format!(
+            "evaporchain_autopoietic_viability {}\n",
+            viability_score
+        ));
     }
 
     // Consensus phase — encoded as: 3=LivenessStable, 2=SafetyStable, 1=Frozen, 0=Chaotic
@@ -8466,9 +9965,9 @@ async fn get_prometheus_metrics(
             let phase = tc.consensus_phase();
             match format!("{phase:?}").as_str() {
                 s if s.contains("Liveness") => 3,
-                s if s.contains("Safety")   => 2,
-                s if s.contains("Frozen")   => 1,
-                _                           => 0,
+                s if s.contains("Safety") => 2,
+                s if s.contains("Frozen") => 1,
+                _ => 0,
             }
         } else {
             3 // MockConsensus defaults to LivenessStable
@@ -8479,9 +9978,13 @@ async fn get_prometheus_metrics(
     }
 
     (
-        [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
         out,
-    ).into_response()
+    )
+        .into_response()
 }
 
 /// GET /api/proof/latest — generate and return the latest chain proof.
@@ -8489,7 +9992,9 @@ async fn get_proof_latest(
     State(state): State<Arc<ApiState>>,
 ) -> Result<Json<ChainProofResponse>, StatusCode> {
     let p = safe_lock(&state.chain_prover);
-    let chain_proof = p.generate_chain_proof().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let chain_proof = p
+        .generate_chain_proof()
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
 
     Ok(Json(ChainProofResponse {
         genesis_state_root: hex::encode(chain_proof.genesis_state_root),
@@ -8503,9 +10008,7 @@ async fn get_proof_latest(
 }
 
 /// GET /api/proof/status — prover metrics and health.
-async fn get_proof_status(
-    State(state): State<Arc<ApiState>>,
-) -> Json<ProverStatusResponse> {
+async fn get_proof_status(State(state): State<Arc<ApiState>>) -> Json<ProverStatusResponse> {
     let p = safe_lock(&state.chain_prover);
     let m = p.metrics();
 
@@ -8539,13 +10042,11 @@ async fn get_proof_verify(
     State(state): State<Arc<ApiState>>,
     Query(q): Query<VerifyProofQuery>,
 ) -> Result<Json<VerifyProofResponse>, StatusCode> {
-    let genesis = hex::decode(&q.genesis_state_root)
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let genesis = hex::decode(&q.genesis_state_root).map_err(|_| StatusCode::BAD_REQUEST)?;
     if genesis.len() != 32 {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let proof_bytes = hex::decode(&q.proof_hex)
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let proof_bytes = hex::decode(&q.proof_hex).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     let mut genesis_arr = [0u8; 32];
     genesis_arr.copy_from_slice(&genesis);
@@ -8659,8 +10160,13 @@ async fn get_tx_inclusion_proof(
     State(state): State<Arc<ApiState>>,
     Path((block_number, tx_index)): Path<(u64, usize)>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let store = state.chain_store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let block = store.load_full_block(block_number).ok_or(StatusCode::NOT_FOUND)?;
+    let store = state
+        .chain_store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let block = store
+        .load_full_block(block_number)
+        .ok_or(StatusCode::NOT_FOUND)?;
     let proof = crate::persistence::prove_tx_inclusion(&block.transactions, tx_index, block_number)
         .ok_or(StatusCode::NOT_FOUND)?;
 
@@ -8731,7 +10237,10 @@ async fn get_light_headers(
     State(state): State<Arc<ApiState>>,
     Query(params): Query<HeadersQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let store = state.chain_store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let store = state
+        .chain_store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let history = safe_lock(&state.block_history);
     let latest = history.back().map(|b| b.number).unwrap_or(0);
     drop(history);
@@ -8796,21 +10305,25 @@ async fn get_da_block(
 
 /// JSON 404 fallback handler.
 async fn fallback_404() -> impl IntoResponse {
-    (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Not found"})))
+    (
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({"error": "Not found"})),
+    )
 }
 
 /// Security headers middleware.
 fn security_headers(response: &mut axum::http::Response<axum::body::Body>) {
     let h = response.headers_mut();
     // Only set headers not already handled by nginx reverse proxy
-    h.insert("Permissions-Policy", "camera=(), microphone=(), geolocation=()".parse().unwrap());
+    h.insert(
+        "Permissions-Policy",
+        "camera=(), microphone=(), geolocation=()".parse().unwrap(),
+    );
 }
 
 // ─────────────── Frontier Primitives ─────────────────────────────────────
 
-async fn get_frontier_status(
-    State(state): State<Arc<ApiState>>,
-) -> impl IntoResponse {
+async fn get_frontier_status(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
     let Some(ref fs_arc) = state.frontier_state else {
         return Json(serde_json::json!({"error": "frontier not enabled"}));
     };
@@ -8864,9 +10377,9 @@ async fn get_lazy_eval(
         let mut id = [0u8; 32];
         id.copy_from_slice(&bytes);
 
-        let epoch = params.epoch.unwrap_or_else(|| {
-            fs.lazy_cache.latest_anchor_epoch().unwrap_or(0)
-        });
+        let epoch = params
+            .epoch
+            .unwrap_or_else(|| fs.lazy_cache.latest_anchor_epoch().unwrap_or(0));
 
         match fs.query_lazy(&id, epoch) {
             Some(result) => Json(serde_json::json!({
@@ -8881,19 +10394,22 @@ async fn get_lazy_eval(
             None => Json(serde_json::json!({"error": "object not found in lazy cache"})),
         }
     } else {
-        let epoch = params.epoch.unwrap_or_else(|| {
-            fs.lazy_cache.latest_anchor_epoch().unwrap_or(0)
-        });
+        let epoch = params
+            .epoch
+            .unwrap_or_else(|| fs.lazy_cache.latest_anchor_epoch().unwrap_or(0));
 
         let results = fs.query_all_lazy(epoch);
-        let items: Vec<_> = results.iter().map(|r| {
-            serde_json::json!({
-                "object_id": hex::encode(r.object_id),
-                "energy": r.energy,
-                "state": format!("{:?}", r.state),
-                "half_life": r.half_life,
+        let items: Vec<_> = results
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "object_id": hex::encode(r.object_id),
+                    "energy": r.energy,
+                    "state": format!("{:?}", r.state),
+                    "half_life": r.half_life,
+                })
             })
-        }).collect();
+            .collect();
 
         Json(serde_json::json!({
             "epoch": epoch,
@@ -8914,9 +10430,7 @@ struct LazyEvalParams {
 
 // ─────────────── Data Availability Sampling ───────────────────────────────
 
-async fn get_da_status(
-    State(state): State<Arc<ApiState>>,
-) -> impl IntoResponse {
+async fn get_da_status(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
     let store = state.da_store.lock().unwrap();
     let blocks_with_da: Vec<u64> = store.keys().cloned().collect();
     let total = blocks_with_da.len();
@@ -8938,7 +10452,8 @@ async fn get_da_sample(
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": format!("no DA data for block {}", block)})),
-        ).into_response();
+        )
+            .into_response();
     };
 
     if shard_index >= package.shards.len() {
@@ -8964,11 +10479,13 @@ async fn get_da_sample(
             },
             "commitment_root": hex::encode(package.header.commitment_root),
             "total_shards": package.header.total_shards,
-        })).into_response(),
+        }))
+        .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": format!("{}", e)})),
-        ).into_response(),
+        )
+            .into_response(),
     }
 }
 
@@ -8981,13 +10498,17 @@ async fn get_da_light_sample(
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": format!("no DA data for block {}", block)})),
-        ).into_response();
+        )
+            .into_response();
     };
 
     // Generate 4 random sample queries using block hash as seed
     let seed = blake3::hash(&block.to_le_bytes());
     let queries = evaporchain_da::block_da::BlockDA::generate_sample_queries(
-        block, &package.header, 4, seed.as_bytes(),
+        block,
+        &package.header,
+        4,
+        seed.as_bytes(),
     );
 
     let da = evaporchain_da::block_da::BlockDA::new().unwrap();
@@ -8996,9 +10517,8 @@ async fn get_da_light_sample(
 
     for query in &queries {
         if let Ok(response) = da.prove_shard(package, query.shard_index) {
-            let valid = evaporchain_da::block_da::BlockDA::verify_shard_sample(
-                &package.header, &response,
-            );
+            let valid =
+                evaporchain_da::block_da::BlockDA::verify_shard_sample(&package.header, &response);
             if !valid {
                 all_valid = false;
             }
@@ -9019,7 +10539,8 @@ async fn get_da_light_sample(
         "samples_verified": samples.len(),
         "all_valid": all_valid,
         "samples": samples,
-    })).into_response()
+    }))
+    .into_response()
 }
 
 // ─────────────── 2D Cell Sampling ───────────────────────────────────
@@ -9033,7 +10554,8 @@ async fn get_da_cell_sample(
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": format!("no 2D DA data for block {}", block)})),
-        ).into_response();
+        )
+            .into_response();
     };
 
     if row >= package.header.row_roots.len() || col >= package.header.col_roots.len() {
@@ -9043,7 +10565,8 @@ async fn get_da_cell_sample(
                 "error": format!("cell ({},{}) out of range ({}x{})", row, col,
                     package.header.row_roots.len(), package.header.col_roots.len())
             })),
-        ).into_response();
+        )
+            .into_response();
     }
 
     let da2d = evaporchain_da::block_da_2d::BlockDA2D::new();
@@ -9065,11 +10588,13 @@ async fn get_da_cell_sample(
             "extended_dim": package.header.extended_dim,
             "row_proof_siblings": proof.row_siblings.iter().map(hex::encode).collect::<Vec<_>>(),
             "col_proof_siblings": proof.col_siblings.iter().map(hex::encode).collect::<Vec<_>>(),
-        })).into_response(),
+        }))
+        .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": format!("{}", e)})),
-        ).into_response(),
+        )
+            .into_response(),
     }
 }
 
@@ -9082,14 +10607,18 @@ async fn get_da_2d_light_sample(
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": format!("no 2D DA data for block {}", block)})),
-        ).into_response();
+        )
+            .into_response();
     };
 
     let da2d = evaporchain_da::block_da_2d::BlockDA2D::new();
     let seed = blake3::hash(&block.to_le_bytes());
     let num_samples = std::cmp::min(8, package.header.extended_dim * package.header.extended_dim);
     let queries = evaporchain_da::commitments::generate_2d_queries(
-        block, package.header.extended_dim, num_samples, seed.as_bytes(),
+        block,
+        package.header.extended_dim,
+        num_samples,
+        seed.as_bytes(),
     );
 
     let commitments = evaporchain_da::commitments::RowColumnCommitments {
@@ -9133,7 +10662,8 @@ async fn get_da_2d_light_sample(
         "samples_valid": valid_count,
         "confidence": confidence,
         "samples": samples,
-    })).into_response()
+    }))
+    .into_response()
 }
 
 // ─────────────── Evaporation DA Proof ────────────────────────────────
@@ -9149,13 +10679,21 @@ async fn get_evaporation_da_proof(
             arr
         }
         _ => {
-            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid object_id hex (need 32 bytes)"}))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "invalid object_id hex (need 32 bytes)"})),
+            )
+                .into_response();
         }
     };
 
     let db = state.db.lock().unwrap();
     let Some(ghost) = db.get_ghost(&object_id) else {
-        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "object not evaporated (no ghost record)"}))).into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "object not evaporated (no ghost record)"})),
+        )
+            .into_response();
     };
 
     let da_store = state.da_store.lock().unwrap();
@@ -9169,7 +10707,9 @@ async fn get_evaporation_da_proof(
             if package.shards.is_empty() {
                 continue;
             }
-            let shard_index = (u64::from_le_bytes(object_id[..8].try_into().unwrap_or([0u8; 8])) as usize) % package.shards.len();
+            let shard_index = (u64::from_le_bytes(object_id[..8].try_into().unwrap_or([0u8; 8]))
+                as usize)
+                % package.shards.len();
             let snapshot = evaporchain_da::evaporation_da::EnergySnapshot {
                 object_id,
                 energy_at_evaporation: 0,
@@ -9178,13 +10718,15 @@ async fn get_evaporation_da_proof(
                 last_refreshed: 0,
                 energy_at_refresh: 0,
             };
-            if let Ok(proof) = evaporchain_da::evaporation_da::EvaporationDAProofBuilder::create_proof(
-                object_id,
-                ghost.original_data.as_deref().unwrap_or(&ghost.data_hash),
-                snapshot,
-                &package.shards,
-                shard_index,
-            ) {
+            if let Ok(proof) =
+                evaporchain_da::evaporation_da::EvaporationDAProofBuilder::create_proof(
+                    object_id,
+                    ghost.original_data.as_deref().unwrap_or(&ghost.data_hash),
+                    snapshot,
+                    &package.shards,
+                    shard_index,
+                )
+            {
                 proof_result = Some((bn, proof));
                 break;
             }
@@ -9220,7 +10762,11 @@ async fn get_poha_certificate(
     Path(block_number): Path<u64>,
 ) -> impl IntoResponse {
     let Some(ref fs_arc) = state.frontier_state else {
-        return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": "frontier not enabled"}))).into_response();
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "frontier not enabled"})),
+        )
+            .into_response();
     };
     let fs = fs_arc.lock().unwrap();
 
@@ -9239,7 +10785,8 @@ async fn get_poha_certificate(
             "re_attestation_count": cert.re_attestation_count,
             "is_supermajority": cert.is_supermajority(),
             "signer_count": cert.signer_ids.len(),
-        })).into_response()
+        }))
+        .into_response()
     } else if let Some(ghost) = fs.poha.get_ghost(block_number) {
         Json(serde_json::json!({
             "block_number": ghost.block_number,
@@ -9249,30 +10796,37 @@ async fn get_poha_certificate(
             "total_re_attestations": ghost.total_re_attestations,
             "temperature": "Evaporated",
             "is_ghost": true,
-        })).into_response()
+        }))
+        .into_response()
     } else {
-        (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "no PoHA certificate for this block"}))).into_response()
+        (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "no PoHA certificate for this block"})),
+        )
+            .into_response()
     }
 }
 
-async fn get_poha_certificates(
-    State(state): State<Arc<ApiState>>,
-) -> impl IntoResponse {
+async fn get_poha_certificates(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
     let Some(ref fs_arc) = state.frontier_state else {
         return Json(serde_json::json!({"error": "frontier not enabled"}));
     };
     let fs = fs_arc.lock().unwrap();
     let dist = fs.poha.temperature_distribution();
 
-    let certs: Vec<_> = fs.poha.all_active().map(|(&bn, cert)| {
-        serde_json::json!({
-            "block_number": bn,
-            "energy": cert.energy,
-            "initial_energy": cert.initial_energy,
-            "temperature": format!("{:?}", cert.temperature()),
-            "re_attestations": cert.re_attestation_count,
+    let certs: Vec<_> = fs
+        .poha
+        .all_active()
+        .map(|(&bn, cert)| {
+            serde_json::json!({
+                "block_number": bn,
+                "energy": cert.energy,
+                "initial_energy": cert.initial_energy,
+                "temperature": format!("{:?}", cert.temperature()),
+                "re_attestations": cert.re_attestation_count,
+            })
         })
-    }).collect();
+        .collect();
 
     Json(serde_json::json!({
         "active_count": certs.len(),
@@ -9305,21 +10859,36 @@ async fn post_submit_encrypted_tx(
 ) -> impl IntoResponse {
     let commitment = match hex_to_32(&body.commitment) {
         Some(c) => c,
-        None => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-            "success": false, "message": "invalid commitment hex (need 64 chars)"
-        }))),
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "success": false, "message": "invalid commitment hex (need 64 chars)"
+                })),
+            )
+        }
     };
     let nonce_hash = match hex_to_32(&body.nonce_hash) {
         Some(n) => n,
-        None => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-            "success": false, "message": "invalid nonce_hash hex (need 64 chars)"
-        }))),
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "success": false, "message": "invalid nonce_hash hex (need 64 chars)"
+                })),
+            )
+        }
     };
     let encrypted_payload = match hex::decode(&body.encrypted_payload) {
         Ok(p) => p,
-        Err(_) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-            "success": false, "message": "invalid encrypted_payload hex"
-        }))),
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "success": false, "message": "invalid encrypted_payload hex"
+                })),
+            )
+        }
     };
 
     let current_epoch = if let Some(ref tc) = state.tendermint {
@@ -9340,12 +10909,15 @@ async fn post_submit_encrypted_tx(
         pool.submit_encrypted(enc_tx);
     }
 
-    (StatusCode::OK, Json(serde_json::json!({
-        "success": true,
-        "message": "encrypted transaction submitted",
-        "commitment": body.commitment,
-        "reveal_epoch": current_epoch + state.encrypted_mempool.lock().unwrap().reveal_delay(),
-    })))
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "success": true,
+            "message": "encrypted transaction submitted",
+            "commitment": body.commitment,
+            "reveal_epoch": current_epoch + state.encrypted_mempool.lock().unwrap().reveal_delay(),
+        })),
+    )
 }
 
 #[derive(Deserialize)]
@@ -9360,15 +10932,19 @@ async fn post_reveal_encrypted_tx(
 ) -> impl IntoResponse {
     let commitment = match hex_to_32(&body.commitment) {
         Some(c) => c,
-        None => return Json(serde_json::json!({
-            "success": false, "message": "invalid commitment hex"
-        })),
+        None => {
+            return Json(serde_json::json!({
+                "success": false, "message": "invalid commitment hex"
+            }))
+        }
     };
     let nonce = match hex_to_32(&body.nonce) {
         Some(n) => n,
-        None => return Json(serde_json::json!({
-            "success": false, "message": "invalid nonce hex"
-        })),
+        None => {
+            return Json(serde_json::json!({
+                "success": false, "message": "invalid nonce hex"
+            }))
+        }
     };
 
     let current_epoch = if let Some(ref tc) = state.tendermint {
@@ -9397,9 +10973,7 @@ async fn post_reveal_encrypted_tx(
     }))
 }
 
-async fn get_encrypted_mempool_status(
-    State(state): State<Arc<ApiState>>,
-) -> impl IntoResponse {
+async fn get_encrypted_mempool_status(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
     let pool = state.encrypted_mempool.lock().unwrap();
     let (encrypted, plaintext) = pool.pending_count();
     Json(serde_json::json!({
@@ -9412,7 +10986,9 @@ async fn get_encrypted_mempool_status(
 
 fn hex_to_32(s: &str) -> Option<[u8; 32]> {
     let bytes = hex::decode(s).ok()?;
-    if bytes.len() != 32 { return None; }
+    if bytes.len() != 32 {
+        return None;
+    }
     let mut arr = [0u8; 32];
     arr.copy_from_slice(&bytes);
     Some(arr)
@@ -9420,9 +10996,7 @@ fn hex_to_32(s: &str) -> Option<[u8; 32]> {
 
 // ─────────────────── Light Client ────────────────────────────────────────
 
-async fn get_light_client_status(
-    State(state): State<Arc<ApiState>>,
-) -> impl IntoResponse {
+async fn get_light_client_status(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
     let lc = state.light_client.lock().unwrap();
     let latest = lc.latest_trusted_height();
     Json(serde_json::json!({
@@ -9447,15 +11021,21 @@ async fn post_verify_header(
 ) -> impl IntoResponse {
     let block_hash = match hex_to_32(&body.block_hash) {
         Some(h) => h,
-        None => return Json(serde_json::json!({ "verified": false, "error": "invalid block_hash" })),
+        None => {
+            return Json(serde_json::json!({ "verified": false, "error": "invalid block_hash" }))
+        }
     };
     let parent_hash = match hex_to_32(&body.parent_hash) {
         Some(h) => h,
-        None => return Json(serde_json::json!({ "verified": false, "error": "invalid parent_hash" })),
+        None => {
+            return Json(serde_json::json!({ "verified": false, "error": "invalid parent_hash" }))
+        }
     };
     let state_root = match hex_to_32(&body.state_root) {
         Some(h) => h,
-        None => return Json(serde_json::json!({ "verified": false, "error": "invalid state_root" })),
+        None => {
+            return Json(serde_json::json!({ "verified": false, "error": "invalid state_root" }))
+        }
     };
 
     let lc = state.light_client.lock().unwrap();
@@ -9508,17 +11088,17 @@ async fn get_trusted_header(
 
 // ─────────────────── Finality ───────────────────────────────────────────
 
-async fn get_weak_subjectivity_checkpoint(
-    State(state): State<Arc<ApiState>>,
-) -> impl IntoResponse {
+async fn get_weak_subjectivity_checkpoint(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
     if let Some(ref tc_arc) = state.tendermint {
         let tc = tc_arc.lock().unwrap();
         let ws_period = tc.weak_subjectivity_period();
         let trusted = tc.trusted_checkpoint();
         let latest = tc.latest_checkpoint();
-        let all_checkpoints: Vec<_> = tc.checkpoints().iter().map(|(h, r)| {
-            serde_json::json!({"height": h, "state_root": hex::encode(r)})
-        }).collect();
+        let all_checkpoints: Vec<_> = tc
+            .checkpoints()
+            .iter()
+            .map(|(h, r)| serde_json::json!({"height": h, "state_root": hex::encode(r)}))
+            .collect();
 
         Json(serde_json::json!({
             "weak_subjectivity_period_blocks": ws_period,
@@ -9533,15 +11113,14 @@ async fn get_weak_subjectivity_checkpoint(
             })),
             "checkpoint_count": all_checkpoints.len(),
             "checkpoints": all_checkpoints,
-        })).into_response()
+        }))
+        .into_response()
     } else {
         Json(serde_json::json!({"error": "consensus not in Tendermint mode"})).into_response()
     }
 }
 
-async fn get_finality(
-    State(state): State<Arc<ApiState>>,
-) -> impl IntoResponse {
+async fn get_finality(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
     let ft = state.finality_tracker.lock().unwrap();
     let latest = ft.latest_finalized_height();
     let stats = ft.stats(100);
@@ -9594,9 +11173,7 @@ async fn get_finality_proof(
     }
 }
 
-async fn get_sync_snapshot_info(
-    State(state): State<Arc<ApiState>>,
-) -> impl IntoResponse {
+async fn get_sync_snapshot_info(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
     let info = state.snapshot_info.lock().unwrap();
     match *info {
         Some((height, state_root, data_len)) => Json(serde_json::json!({
@@ -9657,8 +11234,12 @@ async fn post_signable_bytes(
                     db.get_account(&from).map(|a| a.nonce).unwrap_or(0)
                 };
                 Some(Transaction::Transfer(evaporchain_types::TransferTx {
-                    from, to, amount, nonce,
-                    signature: None, public_key: None,
+                    from,
+                    to,
+                    amount,
+                    nonce,
+                    signature: None,
+                    public_key: None,
                 }))
             }
             "create_object" => {
@@ -9666,20 +11247,32 @@ async fn post_signable_bytes(
                 let object_id = parse_address_value(params.get("object_id")?).ok()?;
                 let energy = params.get("energy")?.as_u64()?;
                 let half_life = params.get("half_life")?.as_u64()?;
-                let data = params.get("data")
+                let data = params
+                    .get("data")
                     .and_then(|v| v.as_str())
                     .map(|s| s.as_bytes().to_vec())
                     .unwrap_or_else(|| b"offline".to_vec());
-                Some(Transaction::CreateObject(evaporchain_types::CreateObjectTx {
-                    creator, object_id, energy, half_life, data,
-                    decay_curve: None, signature: None, public_key: None,
-                }))
+                Some(Transaction::CreateObject(
+                    evaporchain_types::CreateObjectTx {
+                        creator,
+                        object_id,
+                        energy,
+                        half_life,
+                        data,
+                        decay_curve: None,
+                        signature: None,
+                        public_key: None,
+                    },
+                ))
             }
             "refresh" => {
                 let object_id = parse_address_value(params.get("object_id")?).ok()?;
                 let energy_deposit = params.get("energy_deposit")?.as_u64()?;
                 Some(Transaction::Refresh(evaporchain_types::RefreshTx {
-                    object_id, energy_deposit, signature: None, public_key: None,
+                    object_id,
+                    energy_deposit,
+                    signature: None,
+                    public_key: None,
                 }))
             }
             _ => None,
@@ -9711,8 +11304,15 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
     ];
     let cors = CorsLayer::new()
         .allow_origin(allowed_origins.to_vec())
-        .allow_methods([axum::http::Method::GET, axum::http::Method::POST, axum::http::Method::OPTIONS])
-        .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::header::AUTHORIZATION]);
+        .allow_methods([
+            axum::http::Method::GET,
+            axum::http::Method::POST,
+            axum::http::Method::OPTIONS,
+        ])
+        .allow_headers([
+            axum::http::header::CONTENT_TYPE,
+            axum::http::header::AUTHORIZATION,
+        ]);
 
     // Auth sub-router with its own state
     let auth_router = Router::new()
@@ -9750,7 +11350,10 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/hbct/burn", post(post_hbct_burn))
         .route("/api/hbct/balance", post(post_hbct_balance))
         .route("/api/hbct/tick", post(post_hbct_tick))
-        .route("/api/hbct/seed_attestation", post(post_hbct_seed_attestation))
+        .route(
+            "/api/hbct/seed_attestation",
+            post(post_hbct_seed_attestation),
+        )
         .route("/api/hbct/settle", post(post_hbct_settle))
         .route("/api/sentinel/register", post(post_sentinel_register_param))
         .route("/api/sentinel/vote", post(post_sentinel_vote))
@@ -9759,12 +11362,18 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/sentinel/all", get(get_sentinel_all))
         .route("/api/sentinel/seed_demo", post(post_sentinel_seed_demo))
         .route("/api/sentinel/seed_votes", post(post_sentinel_seed_votes))
-        .route("/api/boltzmann_stake/:validator_id/at/:current_epoch", get(get_boltzmann_stake))
+        .route(
+            "/api/boltzmann_stake/:validator_id/at/:current_epoch",
+            get(get_boltzmann_stake),
+        )
         .route("/api/lamport_time", get(get_lamport_time))
         .route("/api/light_cone", get(get_light_cone))
         .route("/api/causal_cone", get(get_causal_cone))
         .route("/api/mcc_fork_choice", get(get_mcc_fork_choice))
-        .route("/api/singh_attractor_fork_choice", post(post_singh_attractor_fork_choice))
+        .route(
+            "/api/singh_attractor_fork_choice",
+            post(post_singh_attractor_fork_choice),
+        )
         .route("/api/cone_bridge", post(post_cone_bridge))
         .route("/api/eg_fss/sign_verify", post(post_eg_fss_sign_verify))
         .route("/api/tur_liveness", get(get_tur_liveness))
@@ -9793,12 +11402,24 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/patronage/revoke", post(post_patronage_revoke))
         .route("/api/patronage/status", get(get_patronage_status))
         .route("/api/patronage/immune", get(get_patronage_immune))
-        .route("/api/governance/fork_choice_mode", get(get_governance_fork_choice_mode))
-        .route("/api/governance/fork_choice_mode", post(post_governance_fork_choice_mode))
+        .route(
+            "/api/governance/fork_choice_mode",
+            get(get_governance_fork_choice_mode),
+        )
+        .route(
+            "/api/governance/fork_choice_mode",
+            post(post_governance_fork_choice_mode),
+        )
         .route("/api/script_lad/check", post(post_script_lad_check))
         .route("/api/script_lad/simulate", post(post_script_lad_simulate))
-        .route("/api/validators/boltzmann_stakes", get(get_boltzmann_stakes))
-        .route("/api/validators/boltzmann_weights", get(get_boltzmann_weights))
+        .route(
+            "/api/validators/boltzmann_stakes",
+            get(get_boltzmann_stakes),
+        )
+        .route(
+            "/api/validators/boltzmann_weights",
+            get(get_boltzmann_weights),
+        )
         .route("/api/validators/sanov_slash", post(post_sanov_slash))
         .route("/api/braid/commit", post(post_braid_commit))
         .route("/api/decay_forget/prove", post(post_decay_forget_prove))
@@ -9830,17 +11451,35 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/rg_phase/classify", post(post_rg_phase_classify))
         .route("/api/rg_phase/trajectory", post(post_rg_phase_trajectory))
         .route("/api/tombstone/mint", post(post_tombstone_mint))
-        .route("/api/tombstone/eulogy_root", post(post_tombstone_eulogy_root))
+        .route(
+            "/api/tombstone/eulogy_root",
+            post(post_tombstone_eulogy_root),
+        )
         .route("/api/elexon/epoch_to_slot", post(post_elexon_epoch_to_slot))
         .route("/api/demurrage/owed", post(post_demurrage_owed))
         .route("/api/mera/commit", post(post_mera_commit))
-        .route("/api/annealing/temperature", post(post_annealing_temperature))
-        .route("/api/annealing/accepts_candidate", post(post_annealing_accepts_candidate))
-        .route("/api/hlwa/effective_supply", post(post_hlwa_effective_supply))
+        .route(
+            "/api/annealing/temperature",
+            post(post_annealing_temperature),
+        )
+        .route(
+            "/api/annealing/accepts_candidate",
+            post(post_annealing_accepts_candidate),
+        )
+        .route(
+            "/api/hlwa/effective_supply",
+            post(post_hlwa_effective_supply),
+        )
         .route("/api/hlwa/re_attest", post(post_hlwa_re_attest))
         .route("/api/llsa/apply_amendment", post(post_llsa_apply_amendment))
-        .route("/api/energy_kernel/conservation_check", post(post_energy_kernel_conservation_check))
-        .route("/api/energy_kernel/redirect", post(post_energy_kernel_redirect))
+        .route(
+            "/api/energy_kernel/conservation_check",
+            post(post_energy_kernel_conservation_check),
+        )
+        .route(
+            "/api/energy_kernel/redirect",
+            post(post_energy_kernel_redirect),
+        )
         .route("/api/autopoietic/health", get(get_autopoietic_health))
         .route("/api/consensus/phase", get(get_consensus_phase))
         .route("/api/demo/reset", post(post_demo_reset))
@@ -9857,6 +11496,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/block/:number", get(block_detail_html))
         .route("/tx/:hash", get(tx_detail_html))
         .route("/api/mempool", get(get_mempool))
+        .route("/api/mempool/:hash", get(get_mempool_by_hash))
         .route("/api/events", get(get_events))
         // Stats
         .route("/api/stats", get(get_stats_summary))
@@ -9949,9 +11589,18 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/proof/status", get(get_proof_status))
         .route("/api/proof/verify", get(get_proof_verify))
         // Data Availability sampling
-        .route("/api/light/state-proof/account/:addr", get(get_account_state_proof))
-        .route("/api/light/state-proof/object/:id", get(get_object_state_proof))
-        .route("/api/light/tx-proof/:block/:tx_index", get(get_tx_inclusion_proof))
+        .route(
+            "/api/light/state-proof/account/:addr",
+            get(get_account_state_proof),
+        )
+        .route(
+            "/api/light/state-proof/object/:id",
+            get(get_object_state_proof),
+        )
+        .route(
+            "/api/light/tx-proof/:block/:tx_index",
+            get(get_tx_inclusion_proof),
+        )
         .route("/api/light/verify-tx-proof", post(post_verify_tx_proof))
         .route("/api/light/verify-state-proof", get(get_verify_state_proof))
         .route("/api/light/headers", get(get_light_headers))
@@ -9962,8 +11611,14 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/da/sample/:block/:shard_index", get(get_da_sample))
         .route("/api/da/light-sample/:block", get(get_da_light_sample))
         .route("/api/da/cell/:block/:row/:col", get(get_da_cell_sample))
-        .route("/api/da/2d-light-sample/:block", get(get_da_2d_light_sample))
-        .route("/api/da/evaporation-proof/:object_id", get(get_evaporation_da_proof))
+        .route(
+            "/api/da/2d-light-sample/:block",
+            get(get_da_2d_light_sample),
+        )
+        .route(
+            "/api/da/evaporation-proof/:object_id",
+            get(get_evaporation_da_proof),
+        )
         // PoHA certificates
         .route("/api/da/poha", get(get_poha_certificates))
         .route("/api/da/poha/:block", get(get_poha_certificate))
@@ -9976,7 +11631,10 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/mev/reveal", post(post_reveal_encrypted_tx))
         .route("/api/mev/status", get(get_encrypted_mempool_status))
         // Finality
-        .route("/api/weak-subjectivity", get(get_weak_subjectivity_checkpoint))
+        .route(
+            "/api/weak-subjectivity",
+            get(get_weak_subjectivity_checkpoint),
+        )
         .route("/api/finality", get(get_finality))
         .route("/api/finality/proof/:height", get(get_finality_proof))
         // State sync
@@ -9993,10 +11651,12 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .merge(auth_router)
         .fallback(fallback_404)
         .layer(cors)
-        .layer(axum::middleware::map_response(|mut resp: axum::http::Response<axum::body::Body>| async move {
-            security_headers(&mut resp);
-            resp
-        }))
+        .layer(axum::middleware::map_response(
+            |mut resp: axum::http::Response<axum::body::Body>| async move {
+                security_headers(&mut resp);
+                resp
+            },
+        ))
 }
 
 // ──────────────────────────── Rate Limiter ────────────────────────────
@@ -10053,7 +11713,11 @@ async fn rate_limit_middleware(
 /// variables to PEM file paths to enable HTTPS. Without these, the server
 /// binds plaintext HTTP — suitable for localhost or behind a TLS-terminating
 /// reverse proxy (nginx, caddy), but NOT for direct internet exposure.
-pub async fn start_api_server(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthState>, port: u16) -> anyhow::Result<()> {
+pub async fn start_api_server(
+    state: Arc<ApiState>,
+    auth_state: Arc<crate::auth::AuthState>,
+    port: u16,
+) -> anyhow::Result<()> {
     let limiter = Arc::new(RateLimiter::new(200, 10));
     let app = create_router(state, auth_state)
         .layer(axum::middleware::from_fn(rate_limit_middleware))
@@ -10101,15 +11765,12 @@ fn estimate_tx_gas(tx: &Transaction) -> u64 {
         Transaction::Shield(_) => 60_000,
         Transaction::Unshield(_) => 80_000,
         Transaction::PrivateTransfer(ptx) => {
-            100_000 + 20_000 * ptx.input_nullifiers.len() as u64
+            100_000
+                + 20_000 * ptx.input_nullifiers.len() as u64
                 + 15_000 * ptx.output_commitments.len() as u64
         }
-        Transaction::Deferred(dtx) => {
-            75_000 + 5_000 * dtx.guards.len() as u64
-        }
-        Transaction::Blob(tx) => {
-            50_000 + 10 * tx.data.len() as u64
-        }
+        Transaction::Deferred(dtx) => 75_000 + 5_000 * dtx.guards.len() as u64,
+        Transaction::Blob(tx) => 50_000 + 10 * tx.data.len() as u64,
         Transaction::Governance(_) => 25_000,
         Transaction::MultiSig(_) => 50_000,
         Transaction::UserOp(tx) => 30_000 + tx.call_data.len() as u64 * 16,
