@@ -90,6 +90,16 @@ export function EnergyDashboard() {
       </div>
 
       <div className="flex-1 overflow-y-auto">
+        {/* Secondary chain-surface link */}
+        <div className="mx-4 mt-3 flex justify-end">
+          <button
+            onClick={() => setView("refresh-pool")}
+            className="text-[10px] px-2 py-1 rounded text-evap-cyan border border-evap-cyan/30 hover:border-evap-cyan/60 transition"
+          >
+            Refresh pool ↗
+          </button>
+        </div>
+
         {/* Urgency banner */}
         {expiringToday.length > 0 && (
           <div className="mx-4 mt-3 px-3 py-2 rounded-lg bg-evap-amber/10 border border-evap-amber/30">

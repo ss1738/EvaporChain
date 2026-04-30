@@ -5,7 +5,8 @@
   "description": "Post-quantum wallet for EvaporChain — live energy decay, ML-DSA signatures, self-custodial",
   "permissions": [
     "storage",
-    "activeTab"
+    "activeTab",
+    "alarms"
   ],
   "action": {
     "default_popup": "popup.html",

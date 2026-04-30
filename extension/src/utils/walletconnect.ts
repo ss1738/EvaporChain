@@ -1,23 +1,34 @@
 /**
  * WalletConnect v2 client wrapper for EvaporChain browser extension.
  *
- * Stub implementation — structured to wire up @walletconnect/web3wallet
- * once the npm dependency is installed. All public methods follow the
- * WalletConnect v2 Sign API patterns.
+ * Wraps `@walletconnect/web3wallet` (the wallet-side WC v2 SDK) and exposes
+ * a small façade tailored to the popup UI (`WalletConnectScreen`,
+ * `WcApprovalModal`).
+ *
+ * Storage: WC v2's `Core` writes its own state to `localStorage` by default —
+ * fine inside the MV3 popup process. The service worker does NOT need any WC
+ * code; all WC traffic runs in the popup.
+ *
+ * Required env var:
+ *   `VITE_WALLETCONNECT_PROJECT_ID` — your project ID from
+ *   https://cloud.reown.com (formerly cloud.walletconnect.com). If unset, the
+ *   manager falls back to a placeholder string and emits a console warning;
+ *   pairing will fail at the relay handshake until a real ID is provided.
+ *
+ * CAIP-2 chain IDs (see EIP-155-style `<namespace>:<reference>`):
+ *   `evap:1`  — testnet (default during pre-mainnet)
+ *   `evap:0`  — mainnet (reserved)
+ *
+ * The `evap` namespace is local to EvaporChain (not yet registered with the
+ * CAIP registry). dApps must advertise it explicitly in `requiredNamespaces`.
  */
 
-// ── Types ──
+import { Core } from "@walletconnect/core";
+import { Web3Wallet, type IWeb3Wallet, type Web3WalletTypes } from "@walletconnect/web3wallet";
+import type { ProposalTypes, SessionTypes } from "@walletconnect/types";
+import { getSdkError } from "@walletconnect/utils";
 
-export interface WcSessionProposal {
-  id: number;
-  params: {
-    proposer: {
-      metadata: WcPeerMeta;
-    };
-    requiredNamespaces: Record<string, WcNamespace>;
-    optionalNamespaces?: Record<string, WcNamespace>;
-  };
-}
+// ── Types (kept stable for UI consumers) ──
 
 export interface WcPeerMeta {
   name: string;
@@ -31,6 +42,14 @@ export interface WcNamespace {
   methods: string[];
   events: string[];
 }
+
+/**
+ * Session proposal shape — a thin re-export of the SDK's
+ * `Web3WalletTypes.SessionProposal` payload, kept in this module so
+ * `WcApprovalModal.tsx` and `WalletConnectScreen.tsx` don't need to import
+ * SDK types directly.
+ */
+export type WcSessionProposal = Web3WalletTypes.SessionProposal;
 
 export interface WcSession {
   topic: string;
@@ -47,13 +66,25 @@ export interface WcRequest {
   params: {
     request: {
       method: string;
-      params: unknown[];
+      params: unknown;
     };
     chainId: string;
   };
 }
 
 export type WcEventHandler<T = unknown> = (payload: T) => void;
+
+/** Handler the manager calls when a dApp invokes an EvaporChain RPC method. */
+export interface WcRequestHandler {
+  /** Returns the user's currently active EvaporChain accounts (full CAIP IDs preferred, plain addresses also accepted). */
+  getAccounts: () => string[];
+  /** Sign a transaction payload — should call into the keystore (real ML-DSA-65). */
+  signTransaction: (payload: string) => Promise<{ signature: string; publicKey: string }>;
+  /** Sign an arbitrary message — defaults to `signTransaction` if not supplied. */
+  signMessage?: (message: string) => Promise<{ signature: string; publicKey: string }>;
+  /** Broadcast a signed transaction; returns a chain hash. */
+  sendTransaction?: (tx: unknown) => Promise<{ hash: string }>;
+}
 
 // ── Error codes ──
 
@@ -63,6 +94,8 @@ export enum WcErrorCode {
   INVALID_URI = 5002,
   SESSION_NOT_FOUND = 5003,
   NOT_INITIALIZED = 5004,
+  WALLET_LOCKED = 5005,
+  SDK_ERROR = 5006,
 }
 
 export class WalletConnectError extends Error {
@@ -74,236 +107,405 @@ export class WalletConnectError extends Error {
   }
 }
 
+// ── Constants ──
+
+/**
+ * EvaporChain testnet CAIP-2 chain ID. Picked `evap:1` so testnet is `1` and
+ * mainnet (reserved) is `0`, matching how a number of L1s expose their first
+ * test network. The `evap` namespace prefix is the project's own — short,
+ * lowercase, ASCII, fits CAIP-2 grammar (`[-a-z0-9]{3,8}`).
+ */
+export const EVAP_CHAIN_TESTNET = "evap:1";
+export const EVAP_CHAIN_MAINNET = "evap:0";
+
+/** Methods the wallet advertises support for over WalletConnect. */
+export const EVAP_WC_METHODS = [
+  "evap_signTransaction",
+  "evap_signMessage",
+  "evap_sendTransaction",
+  "evap_getAccounts",
+] as const;
+
+/** Events the wallet emits over WalletConnect. */
+export const EVAP_WC_EVENTS = ["accountsChanged", "chainChanged"] as const;
+
+const WC_PROJECT_ID_ENV = "VITE_WALLETCONNECT_PROJECT_ID";
+const WC_PROJECT_ID_PLACEHOLDER = "REPLACE_ME_WALLETCONNECT_PROJECT_ID";
+
+/** Resolve the WC Cloud project ID from Vite env, with a placeholder fallback. */
+export function resolveWcProjectId(): string {
+  const fromEnv = (import.meta.env?.[WC_PROJECT_ID_ENV] as string | undefined)?.trim();
+  if (fromEnv) return fromEnv;
+  // eslint-disable-next-line no-console
+  console.warn(
+    `[walletconnect] ${WC_PROJECT_ID_ENV} is not set — using placeholder. ` +
+      `Pairing will fail until you set a real project ID from cloud.reown.com.`,
+  );
+  return WC_PROJECT_ID_PLACEHOLDER;
+}
+
+// ── Helpers ──
+
+function mapSdkError(e: unknown, fallbackCode: WcErrorCode = WcErrorCode.SDK_ERROR): WalletConnectError {
+  if (e instanceof WalletConnectError) return e;
+  const msg = e instanceof Error ? e.message : String(e);
+  return new WalletConnectError(msg, fallbackCode);
+}
+
+function structToWcSession(struct: SessionTypes.Struct): WcSession {
+  const peerMeta = struct.peer.metadata;
+  return {
+    topic: struct.topic,
+    peer: {
+      name: peerMeta.name,
+      description: peerMeta.description,
+      url: peerMeta.url,
+      icons: peerMeta.icons ?? [],
+    },
+    namespaces: Object.fromEntries(
+      Object.entries(struct.namespaces).map(([key, ns]) => [
+        key,
+        {
+          chains: ns.chains ?? [],
+          methods: ns.methods,
+          events: ns.events,
+        } satisfies WcNamespace,
+      ]),
+    ),
+    // SessionTypes.Expiry is a unix-seconds timestamp — convert to ms for the UI.
+    expiry: struct.expiry * 1000,
+    acknowledged: struct.acknowledged,
+    // WC sessions don't expose a "connectedAt" — derive a best-effort value
+    // from `expiry - 7d` (the default session lifetime).
+    connectedAt: Math.max(0, struct.expiry * 1000 - 7 * 24 * 60 * 60 * 1000),
+  };
+}
+
 // ── Manager ──
 
 /**
- * WalletConnectManager — manages WC v2 sessions for the EvaporChain wallet.
+ * WalletConnectManager — wallet-side WC v2 façade for the EvaporChain extension.
  *
- * Usage:
- * ```ts
- * const wc = new WalletConnectManager();
- * await wc.init("your-wc-project-id");
- * await wc.pair("wc:abc123...");
- * ```
+ * Lifecycle:
+ *   const wc = new WalletConnectManager();
+ *   await wc.init();                              // lazy SDK init
+ *   wc.onProposal = (p) => showApprovalCard(p);   // wire UI
+ *   wc.onRequest  = (r) => routeToHandler(r);
+ *   await wc.pair("wc:abc123...");                // start a pairing
+ *   await wc.approveProposal(proposal, [address]);
  *
- * NOTE: This is a stub implementation. Replace the internal logic with
- * @walletconnect/web3wallet once npm installed:
- *   import { Web3Wallet } from "@walletconnect/web3wallet";
+ * All async methods throw `WalletConnectError` on failure.
  */
 export class WalletConnectManager {
   private initialized = false;
-  private projectId: string | null = null;
-  private sessions: Map<string, WcSession> = new Map();
+  private initPromise: Promise<void> | null = null;
+  private client: IWeb3Wallet | null = null;
 
-  // Event handlers
+  // Event handlers exposed to the UI.
   private _onProposal: WcEventHandler<WcSessionProposal> | null = null;
   private _onRequest: WcEventHandler<WcRequest> | null = null;
   private _onDisconnect: WcEventHandler<{ topic: string }> | null = null;
 
-  /** EvaporChain namespace identifier */
-  static readonly CHAIN_ID = "evaporchain:testnet";
-  static readonly NAMESPACE = "evaporchain";
+  /** Optional handler set the manager calls when a dApp invokes an RPC method. */
+  private requestHandler: WcRequestHandler | null = null;
 
   // ── Lifecycle ──
 
   /**
-   * Initialize the WalletConnect client with a WC Cloud project ID.
-   * In production, this creates a Web3Wallet instance with Core.
+   * Initialize the WC SDK with a real `Core` instance. Idempotent and lazy:
+   * concurrent callers share a single init promise. The project ID is read
+   * from `import.meta.env.VITE_WALLETCONNECT_PROJECT_ID`; pass `projectId`
+   * explicitly to override (used in tests).
    */
-  async init(projectId: string): Promise<void> {
+  async init(projectId?: string): Promise<void> {
     if (this.initialized) return;
+    if (this.initPromise) return this.initPromise;
 
-    this.projectId = projectId;
+    const id = projectId ?? resolveWcProjectId();
 
-    // STUB: In production, initialize like this:
-    // const core = new Core({ projectId });
-    // this.client = await Web3Wallet.init({
-    //   core,
-    //   metadata: {
-    //     name: "EvaporChain Wallet",
-    //     description: "Post-quantum wallet for the blockchain that evaporates",
-    //     url: "https://evaporchain.com",
-    //     icons: ["https://evaporchain.com/icon.png"],
-    //   },
-    // });
-    // this.client.on("session_proposal", (p) => this._onProposal?.(p));
-    // this.client.on("session_request", (r) => this._onRequest?.(r));
-    // this.client.on("session_delete", (d) => this._onDisconnect?.(d));
+    this.initPromise = (async () => {
+      try {
+        // Cast the Core instance — `@walletconnect/web3wallet` re-bundles
+        // its own copy of `@walletconnect/types`, which makes the structural
+        // `ICore` interface technically incompatible across the package
+        // boundary even though the runtime classes are identical. The cast
+        // is safe and matches what every WC v2 wallet integration does.
+        const core = new Core({ projectId: id });
+        this.client = await Web3Wallet.init({
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          core: core as any,
+          metadata: {
+            name: "EvaporChain Wallet",
+            description: "Post-quantum wallet for the blockchain that evaporates",
+            url: "https://evaporchain.com",
+            icons: ["https://evaporchain.com/icon.png"],
+          },
+        });
 
-    // Restore persisted sessions
-    this._restoreSessions();
-    this.initialized = true;
+        // Wire SDK events through to the UI handlers.
+        this.client.on("session_proposal", (proposal) => {
+          this._onProposal?.(proposal);
+        });
+        this.client.on("session_request", (request) => {
+          this._onRequest?.(request as unknown as WcRequest);
+          if (this.requestHandler) {
+            void this._dispatchRequest(request as unknown as WcRequest);
+          }
+        });
+        this.client.on("session_delete", ({ topic }) => {
+          this._onDisconnect?.({ topic });
+        });
+
+        this.initialized = true;
+      } catch (e) {
+        this.initPromise = null;
+        throw mapSdkError(e, WcErrorCode.NOT_INITIALIZED);
+      }
+    })();
+
+    return this.initPromise;
   }
 
   // ── Pairing ──
 
   /**
-   * Pair with a dApp using a WalletConnect URI (wcv2:... or wc:...).
-   * This triggers the onProposal callback with the session proposal.
+   * Pair with a dApp using a WalletConnect URI (`wc:...`). The SDK will
+   * subsequently emit `session_proposal`, which the manager forwards to
+   * `onProposal`.
    */
   async pair(uri: string): Promise<void> {
     this._ensureInitialized();
-
-    if (!uri.startsWith("wc:") && !uri.startsWith("wcv2:")) {
+    const trimmed = uri.trim();
+    if (!trimmed.startsWith("wc:")) {
       throw new WalletConnectError(
-        "Invalid WalletConnect URI — must start with wc: or wcv2:",
+        "Invalid WalletConnect URI — must start with wc:",
         WcErrorCode.INVALID_URI,
       );
     }
-
-    // STUB: In production:
-    // await this.client.core.pairing.pair({ uri });
-    // The session_proposal event fires automatically after pairing.
-
-    // Simulate a proposal for development/testing
-    const stubProposal: WcSessionProposal = {
-      id: Date.now(),
-      params: {
-        proposer: {
-          metadata: {
-            name: this._extractDappName(uri),
-            description: "dApp connected via WalletConnect",
-            url: "https://dapp.example.com",
-            icons: [],
-          },
-        },
-        requiredNamespaces: {
-          [WalletConnectManager.NAMESPACE]: {
-            chains: [WalletConnectManager.CHAIN_ID],
-            methods: ["evaporchain_sendTransaction", "evaporchain_signMessage", "evaporchain_getAccounts"],
-            events: ["accountsChanged", "chainChanged"],
-          },
-        },
-      },
-    };
-
-    this._onProposal?.(stubProposal);
+    try {
+      await this.client!.pair({ uri: trimmed });
+    } catch (e) {
+      throw mapSdkError(e, WcErrorCode.INVALID_URI);
+    }
   }
 
   // ── Sessions ──
 
-  /** List all active WalletConnect sessions. */
-  getSessions(): WcSession[] {
-    return Array.from(this.sessions.values());
+  /** List all currently active WC sessions. */
+  getActiveSessions(): WcSession[] {
+    if (!this.client) return [];
+    const active = this.client.getActiveSessions();
+    return Object.values(active).map(structToWcSession);
   }
 
-  /** Approve a session proposal and establish connection. */
-  async approveSession(
-    proposal: WcSessionProposal,
-    accounts: string[],
-  ): Promise<WcSession> {
+  /** Backwards-compatible alias for {@link getActiveSessions}. */
+  getSessions(): WcSession[] {
+    return this.getActiveSessions();
+  }
+
+  /**
+   * Approve a session proposal for a list of EvaporChain accounts. Accounts
+   * are converted to CAIP-10 form (`<namespace>:<reference>:<address>`)
+   * automatically.
+   */
+  async approveProposal(proposal: WcSessionProposal, accounts: string[]): Promise<WcSession> {
     this._ensureInitialized();
+    if (accounts.length === 0) {
+      throw new WalletConnectError("No accounts to approve", WcErrorCode.USER_REJECTED);
+    }
 
-    const topic = `topic_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const namespaces: Record<string, WcNamespace> = {};
+    const required = proposal.params.requiredNamespaces ?? {};
+    const optional = proposal.params.optionalNamespaces ?? {};
 
-    for (const [key, ns] of Object.entries(proposal.params.requiredNamespaces)) {
+    // Build namespaces manually — `buildApprovedNamespaces` is strict and
+    // rejects any required-namespace key the wallet doesn't explicitly
+    // support, which is awkward when dApps under-specify chains.
+    const namespaces: Record<string, SessionTypes.Namespace> = {};
+
+    const merged: Record<string, ProposalTypes.RequiredNamespace> = {
+      ...optional,
+      ...required, // required wins on conflict
+    };
+
+    for (const [key, ns] of Object.entries(merged)) {
+      const chains = ns.chains && ns.chains.length > 0 ? ns.chains : [EVAP_CHAIN_TESTNET];
+      const caipAccounts = chains.flatMap((chain) =>
+        accounts.map((addr) => (addr.includes(":") ? addr : `${chain}:${addr}`)),
+      );
       namespaces[key] = {
-        chains: ns.chains,
-        methods: ns.methods,
-        events: ns.events,
+        chains,
+        accounts: caipAccounts,
+        // Advertise both whatever the dApp asked for AND our supported set,
+        // de-duplicated. WC requires every required method/event to appear.
+        methods: Array.from(new Set([...ns.methods, ...EVAP_WC_METHODS])),
+        events: Array.from(new Set([...ns.events, ...EVAP_WC_EVENTS])),
       };
     }
 
-    // STUB: In production:
-    // const session = await this.client.approveSession({
-    //   id: proposal.id,
-    //   namespaces: { evaporchain: { accounts: accounts.map(a => `${CHAIN_ID}:${a}`), ... } },
-    // });
-
-    const session: WcSession = {
-      topic,
-      peer: proposal.params.proposer.metadata,
-      namespaces,
-      expiry: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 days
-      acknowledged: true,
-      connectedAt: Date.now(),
-    };
-
-    this.sessions.set(topic, session);
-    this._persistSessions();
-    return session;
+    try {
+      const struct = await this.client!.approveSession({
+        id: proposal.id,
+        namespaces,
+      });
+      return structToWcSession(struct);
+    } catch (e) {
+      throw mapSdkError(e);
+    }
   }
 
-  /** Reject a session proposal. */
-  async rejectSession(proposal: WcSessionProposal): Promise<void> {
+  /** Reject a pending session proposal with USER_REJECTED. */
+  async rejectProposal(proposal: WcSessionProposal): Promise<void> {
     this._ensureInitialized();
-
-    // STUB: In production:
-    // await this.client.rejectSession({
-    //   id: proposal.id,
-    //   reason: getSdkError("USER_REJECTED"),
-    // });
-    // No-op in stub — proposal is simply not stored.
+    try {
+      await this.client!.rejectSession({
+        id: proposal.id,
+        reason: getSdkError("USER_REJECTED"),
+      });
+    } catch (e) {
+      throw mapSdkError(e);
+    }
   }
 
-  /** Disconnect an active session by topic. */
-  async disconnectSession(topic: string): Promise<void> {
+  /** Disconnect a single session by topic. */
+  async disconnect(topic: string): Promise<void> {
     this._ensureInitialized();
-
-    if (!this.sessions.has(topic)) {
+    const active = this.client!.getActiveSessions();
+    if (!active[topic]) {
       throw new WalletConnectError(
         `Session not found: ${topic}`,
         WcErrorCode.SESSION_NOT_FOUND,
       );
     }
-
-    // STUB: In production:
-    // await this.client.disconnectSession({
-    //   topic,
-    //   reason: getSdkError("USER_DISCONNECTED"),
-    // });
-
-    this.sessions.delete(topic);
-    this._persistSessions();
+    try {
+      await this.client!.disconnectSession({
+        topic,
+        reason: getSdkError("USER_DISCONNECTED"),
+      });
+    } catch (e) {
+      throw mapSdkError(e);
+    }
     this._onDisconnect?.({ topic });
   }
 
   /** Disconnect all active sessions. */
   async disconnectAll(): Promise<void> {
-    const topics = Array.from(this.sessions.keys());
+    if (!this.client) return;
+    const topics = Object.keys(this.client.getActiveSessions());
     for (const topic of topics) {
-      await this.disconnectSession(topic);
+      try {
+        await this.disconnect(topic);
+      } catch {
+        // Best-effort — keep going on individual failures.
+      }
     }
+  }
+
+  // ── Backwards-compatible aliases ──
+
+  /** Alias for {@link approveProposal}. */
+  async approveSession(proposal: WcSessionProposal, accounts: string[]): Promise<WcSession> {
+    return this.approveProposal(proposal, accounts);
+  }
+
+  /** Alias for {@link rejectProposal}. */
+  async rejectSession(proposal: WcSessionProposal): Promise<void> {
+    return this.rejectProposal(proposal);
+  }
+
+  /** Alias for {@link disconnect}. */
+  async disconnectSession(topic: string): Promise<void> {
+    return this.disconnect(topic);
   }
 
   // ── Request handling ──
 
   /**
-   * Handle an incoming JSON-RPC request from a connected dApp.
-   * Routes to the appropriate wallet method.
+   * Register a wallet-side handler for incoming `session_request` events.
+   * If set, the manager will auto-dispatch RPC calls to the handler and
+   * respond on the SDK's behalf. Set to `null` to disable.
    */
-  async handleRequest(
-    request: WcRequest,
-    handlers: {
-      getAccounts: () => string[];
-      signMessage: (message: string) => Promise<string>;
-      sendTransaction: (tx: unknown) => Promise<{ hash: string }>;
-    },
-  ): Promise<unknown> {
-    this._ensureInitialized();
+  setRequestHandler(handler: WcRequestHandler | null): void {
+    this.requestHandler = handler;
+  }
 
+  private async _dispatchRequest(request: WcRequest): Promise<void> {
+    const handler = this.requestHandler;
+    if (!handler || !this.client) return;
+
+    const { id, topic } = request;
     const { method, params } = request.params.request;
 
-    switch (method) {
-      case "evaporchain_getAccounts":
-        return handlers.getAccounts();
+    try {
+      let result: unknown;
+      switch (method) {
+        case "evap_getAccounts":
+          result = handler.getAccounts();
+          break;
 
-      case "evaporchain_signMessage":
-        return handlers.signMessage(params[0] as string);
+        case "evap_signTransaction": {
+          const payload = typeof params === "string" ? params : JSON.stringify(params);
+          result = await handler.signTransaction(payload);
+          break;
+        }
 
-      case "evaporchain_sendTransaction":
-        return handlers.sendTransaction(params[0]);
+        case "evap_signMessage": {
+          const message =
+            Array.isArray(params) && typeof params[0] === "string"
+              ? (params[0] as string)
+              : typeof params === "string"
+                ? params
+                : JSON.stringify(params);
+          if (handler.signMessage) {
+            result = await handler.signMessage(message);
+          } else {
+            // Fall back to signing the message bytes as a transaction payload.
+            result = await handler.signTransaction(message);
+          }
+          break;
+        }
 
-      default:
-        throw new WalletConnectError(
-          `Unsupported method: ${method}`,
-          WcErrorCode.UNSUPPORTED_METHOD,
-        );
+        case "evap_sendTransaction": {
+          if (!handler.sendTransaction) {
+            throw new WalletConnectError(
+              "evap_sendTransaction not supported by this wallet build",
+              WcErrorCode.UNSUPPORTED_METHOD,
+            );
+          }
+          const txParam = Array.isArray(params) ? params[0] : params;
+          result = await handler.sendTransaction(txParam);
+          break;
+        }
+
+        default:
+          throw new WalletConnectError(
+            `Unsupported method: ${method}`,
+            WcErrorCode.UNSUPPORTED_METHOD,
+          );
+      }
+
+      await this.client.respondSessionRequest({
+        topic,
+        response: { id, jsonrpc: "2.0", result },
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // Surface "Wallet locked" cleanly — the keystore throws this verbatim.
+      const sdkErr =
+        msg.toLowerCase().includes("wallet locked") || msg.toLowerCase().includes("locked")
+          ? { code: WcErrorCode.WALLET_LOCKED, message: msg }
+          : getSdkError("USER_REJECTED");
+      try {
+        await this.client.respondSessionRequest({
+          topic,
+          response: { id, jsonrpc: "2.0", error: sdkErr },
+        });
+      } catch {
+        // Last-resort: swallow — the relay may already have torn down the topic.
+      }
     }
   }
 
-  // ── Event handlers ──
+  // ── Event handler setters ──
 
   set onProposal(handler: WcEventHandler<WcSessionProposal> | null) {
     this._onProposal = handler;
@@ -317,46 +519,14 @@ export class WalletConnectManager {
     this._onDisconnect = handler;
   }
 
-  // ── Internal helpers ──
+  // ── Internals ──
 
   private _ensureInitialized(): void {
-    if (!this.initialized) {
+    if (!this.initialized || !this.client) {
       throw new WalletConnectError(
         "WalletConnectManager not initialized — call init() first",
         WcErrorCode.NOT_INITIALIZED,
       );
     }
-  }
-
-  private _persistSessions(): void {
-    try {
-      const data = JSON.stringify(Array.from(this.sessions.entries()));
-      localStorage.setItem("evaporchain_wc_sessions", data);
-    } catch {
-      // localStorage may not be available in service worker context
-    }
-  }
-
-  private _restoreSessions(): void {
-    try {
-      const raw = localStorage.getItem("evaporchain_wc_sessions");
-      if (raw) {
-        const entries: [string, WcSession][] = JSON.parse(raw);
-        const now = Date.now();
-        for (const [topic, session] of entries) {
-          if (session.expiry > now) {
-            this.sessions.set(topic, session);
-          }
-        }
-      }
-    } catch {
-      // Ignore parse errors — start fresh
-    }
-  }
-
-  private _extractDappName(uri: string): string {
-    // In production the dApp name comes from the proposal metadata.
-    // For the stub, derive a placeholder from the URI.
-    return `dApp-${uri.slice(3, 11)}`;
   }
 }

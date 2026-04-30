@@ -23,12 +23,21 @@ export function ObjectsScreen() {
           <h2 className="text-lg font-semibold text-zinc-100">Objects</h2>
           <p className="text-xs text-zinc-500">{objects.length} owned objects</p>
         </div>
-        <button
-          onClick={() => setView("home")}
-          className="text-xs text-zinc-500 hover:text-zinc-300"
-        >
-          ← Back
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setView("patronage")}
+            className="text-[10px] px-2 py-1 rounded border border-evap-cyan/30 text-evap-cyan hover:border-evap-cyan/60 transition"
+            title="Patronage Covenants — pre-fund eviction immunity"
+          >
+            Patronage
+          </button>
+          <button
+            onClick={() => setView("home")}
+            className="text-xs text-zinc-500 hover:text-zinc-300"
+          >
+            ← Back
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-2">

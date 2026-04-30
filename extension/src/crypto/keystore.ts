@@ -155,6 +155,43 @@ export class BrowserKeyStore {
     return address;
   }
 
+  /**
+   * Import a previously recovered ML-DSA-65 keypair (e.g. from a mnemonic
+   * backup) and re-encrypt it locally with the same PBKDF2-600k/AES-GCM
+   * pipeline used by `generateKey`.
+   */
+  async importKeypair(
+    name: string,
+    password: string,
+    publicKey: Uint8Array,
+    secretKey: Uint8Array,
+  ): Promise<string> {
+    if (this.data.entries.some(e => e.name === name)) {
+      throw new Error(`Duplicate account name: ${name}`);
+    }
+
+    const address = deriveAddress(publicKey);
+    const { ciphertext, iv, salt } = await encrypt(secretKey, password);
+
+    const entry: KeyEntry = {
+      name,
+      address,
+      publicKey: toHex(publicKey),
+      encryptedPrivateKey: toHex(ciphertext),
+      iv: toHex(iv),
+      salt: toHex(salt),
+      createdAt: new Date().toISOString(),
+    };
+
+    this.data.entries.push(entry);
+    if (!this.data.activeAccount) {
+      this.data.activeAccount = name;
+    }
+
+    await this.save();
+    return address;
+  }
+
   async unlockKey(name: string, password: string): Promise<Uint8Array> {
     const entry = this.data.entries.find(e => e.name === name);
     if (!entry) throw new Error(`Account not found: ${name}`);

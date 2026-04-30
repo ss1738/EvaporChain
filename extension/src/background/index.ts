@@ -4,22 +4,47 @@
  * Handles:
  * - Message routing between popup, content script, and dApps
  * - Transaction approval queue with signing
- * - Auto-lock timer
+ * - Auto-lock via chrome.alarms (survives MV3 worker suspension)
  */
 
 import { signMessage } from "@/crypto/keystore";
 import { initCrypto } from "@/crypto/wasm-bridge";
 
-const AUTO_LOCK_MS = 15 * 60 * 1000; // 15 minutes
-let lockTimer: ReturnType<typeof setTimeout> | null = null;
+const AUTO_LOCK_MINUTES = 15;
+const AUTO_LOCK_MS = AUTO_LOCK_MINUTES * 60 * 1000;
+const AUTO_LOCK_ALARM = "evaporchain_auto_lock";
 
-// Reset auto-lock on any message
+// Reset auto-lock on any message. Uses chrome.alarms (not setTimeout) because
+// MV3 service workers can be suspended at any time, so a JS-level timer would
+// silently die. Also persists `wallet_unlocked_until` so an alarm that fires
+// after the worker was woken from cold can decide whether the wallet should
+// already be locked even if the alarm hasn't fired yet.
 function resetLockTimer() {
-  if (lockTimer) clearTimeout(lockTimer);
-  lockTimer = setTimeout(() => {
-    chrome.storage.local.set({ wallet_locked: true });
-  }, AUTO_LOCK_MS);
+  const unlockedUntil = Date.now() + AUTO_LOCK_MS;
+  chrome.storage.local.set({ wallet_unlocked_until: unlockedUntil });
+  chrome.alarms.create(AUTO_LOCK_ALARM, { delayInMinutes: AUTO_LOCK_MINUTES });
 }
+
+// If the worker was suspended past the unlock window, lock immediately on
+// the next message rather than waiting for the alarm.
+async function lockIfExpired(): Promise<void> {
+  return new Promise((resolve) => {
+    chrome.storage.local.get("wallet_unlocked_until", (result) => {
+      const until = result.wallet_unlocked_until as number | undefined;
+      if (typeof until === "number" && Date.now() >= until) {
+        chrome.storage.local.set({ wallet_locked: true }, () => resolve());
+      } else {
+        resolve();
+      }
+    });
+  });
+}
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === AUTO_LOCK_ALARM) {
+    chrome.storage.local.set({ wallet_locked: true });
+  }
+});
 
 // ── Hex helpers ──
 
@@ -37,7 +62,11 @@ function fromHex(hex: string): Uint8Array {
 
 // Listen for messages from content script / popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  resetLockTimer();
+  // Lock first if the worker was suspended past the unlock window, then
+  // refresh the auto-lock window for this message.
+  lockIfExpired().then(() => {
+    resetLockTimer();
+  });
 
   switch (message.type) {
     case "EVAPORCHAIN_CONNECT": {
@@ -137,7 +166,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case "EVAPORCHAIN_SIGN": {
       // Internal: popup asks background to sign a message with the active key
-      // message.payload: { secretKeyHex, txPayload }
+      // message.payload: { secretKeyHex, txPayload, publicKeyHex? }
       handleSign(message.payload)
         .then(result => sendResponse(result))
         .catch(err => sendResponse({ error: err.message }));
@@ -160,17 +189,44 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 /**
  * Sign a transaction payload using the decrypted secret key.
  * Called by the popup when user approves a dApp transaction.
+ *
+ * `publicKeyHex` may be supplied in the payload to avoid a storage lookup;
+ * otherwise we read the active account's public key from
+ * `chrome.storage.local.evaporchain_keystore`.
  */
-async function handleSign(payload: { secretKeyHex: string; txPayload: string }): Promise<{ signature: string; publicKey: string }> {
+async function handleSign(payload: {
+  secretKeyHex: string;
+  txPayload: string;
+  publicKeyHex?: string;
+}): Promise<{ signature: string; publicKey: string }> {
   await initCrypto();
 
   const secretKey = fromHex(payload.secretKeyHex);
   const txBytes = new TextEncoder().encode(payload.txPayload);
   const signature = await signMessage(secretKey, txBytes);
 
+  let publicKey = payload.publicKeyHex ?? "";
+  if (!publicKey) {
+    publicKey = await new Promise<string>((resolve) => {
+      chrome.storage.local.get("evaporchain_keystore", (result) => {
+        try {
+          const data = result.evaporchain_keystore
+            ? JSON.parse(result.evaporchain_keystore)
+            : null;
+          const activeEntry = data?.entries?.find(
+            (e: { name: string }) => e.name === data.activeAccount,
+          );
+          resolve(activeEntry?.publicKey ?? "");
+        } catch {
+          resolve("");
+        }
+      });
+    });
+  }
+
   return {
     signature: toHex(signature),
-    publicKey: "", // Caller should provide this from the keystore
+    publicKey,
   };
 }
 

@@ -26,6 +26,9 @@ import { PluginStore } from "@/components/PluginStore";
 import { AiAssistant } from "@/components/AiAssistant";
 import { BackupRestoreScreen } from "@/components/BackupRestoreScreen";
 import { PortfolioScreen } from "@/components/PortfolioScreen";
+import { PatronageScreen } from "@/components/PatronageScreen";
+import { RefreshPoolScreen } from "@/components/RefreshPoolScreen";
+import { GovernanceScreen } from "@/components/GovernanceScreen";
 
 export function App() {
   const { view, init, completeTutorial } = useWallet();
@@ -74,7 +77,9 @@ export function App() {
     case "decay-forecast":
       return <DecayForecasting />;
     case "social-login":
-      return <SocialLogin />;
+      // Simulated OAuth flow is dev-only — in prod fall back to the real
+      // create flow until the backend is wired up. TODO real OAuth.
+      return import.meta.env.DEV ? <SocialLogin /> : <CreateAccount />;
     case "tutorial":
       return <OnboardingTutorial onComplete={completeTutorial} />;
     case "walletconnect":
@@ -87,6 +92,12 @@ export function App() {
       return <PluginStore />;
     case "ai-assistant":
       return <AiAssistant />;
+    case "patronage":
+      return <PatronageScreen />;
+    case "refresh-pool":
+      return <RefreshPoolScreen />;
+    case "governance":
+      return <GovernanceScreen />;
     default:
       return <LockScreen />;
   }

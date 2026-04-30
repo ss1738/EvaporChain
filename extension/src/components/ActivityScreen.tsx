@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { useWallet } from "@/hooks/useWallet";
+import { useWallet, type PendingTx } from "@/hooks/useWallet";
 import { Header } from "./Header";
 import { shortAddress, timeAgo } from "@/utils/format";
-import { api, type TransactionRecord } from "@/utils/api";
+import { api } from "@/utils/api";
 
 interface ActivityItem {
   type: string;
@@ -12,7 +12,7 @@ interface ActivityItem {
 }
 
 export function ActivityScreen() {
-  const { activeAccount, setView } = useWallet();
+  const { activeAccount, setView, pendingTxs, clearTx } = useWallet();
   const [transactions, setTransactions] = useState<ActivityItem[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -93,6 +93,18 @@ export function ActivityScreen() {
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 pb-4">
+        {pendingTxs.length > 0 && (
+          <div className="mb-3">
+            <p className="text-[10px] text-zinc-500 uppercase tracking-wider mb-1.5 px-1">
+              Live transactions
+            </p>
+            <div className="space-y-1">
+              {pendingTxs.map((tx) => (
+                <PendingTxRow key={tx.hash} tx={tx} onClear={() => clearTx(tx.hash)} />
+              ))}
+            </div>
+          </div>
+        )}
         {loading ? (
           <div className="flex items-center justify-center py-16">
             <div className="w-6 h-6 border-2 border-evap-cyan/30 border-t-evap-cyan rounded-full animate-spin" />
@@ -157,5 +169,55 @@ function NavBtn({ label, active, onClick }: { label: string; active?: boolean; o
     >
       {label}
     </button>
+  );
+}
+
+function PendingTxRow({ tx, onClear }: { tx: PendingTx; onClear: () => void }) {
+  const badge = (() => {
+    switch (tx.status) {
+      case "pending":   return { label: "Pending",   cls: "bg-zinc-700/40 text-zinc-300 border-zinc-600/40" };
+      case "mempool":   return { label: "Mempool",   cls: "bg-evap-amber/10 text-evap-amber border-evap-amber/30" };
+      case "included":  return { label: "Included",  cls: "bg-evap-cyan/10 text-evap-cyan border-evap-cyan/30" };
+      case "finalised": return { label: "Finalised", cls: "bg-evap-green/10 text-evap-green border-evap-green/30" };
+      case "rejected":  return { label: "Rejected",  cls: "bg-evap-red/10 text-evap-red border-evap-red/30" };
+    }
+  })();
+  const showSpinner = tx.status === "pending" || tx.status === "mempool" || tx.status === "included";
+  return (
+    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-evap-surface border border-evap-border">
+      <div className="w-6 h-6 shrink-0 flex items-center justify-center">
+        {showSpinner ? (
+          <div className="w-3 h-3 border-2 border-evap-cyan/30 border-t-evap-cyan rounded-full animate-spin" />
+        ) : tx.status === "finalised" ? (
+          <span className="text-evap-green text-sm">✓</span>
+        ) : (
+          <span className="text-evap-red text-sm">✗</span>
+        )}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[11px] font-medium text-zinc-200 truncate">{tx.summary}</span>
+          <span className={`text-[9px] px-1.5 py-0.5 rounded-full border shrink-0 ${badge.cls}`}>{badge.label}</span>
+        </div>
+        <div className="flex items-center justify-between mt-0.5 gap-2">
+          <span className="text-[9px] text-zinc-600 font-mono truncate">{shortAddress(tx.hash)}</span>
+          <span className="text-[9px] text-zinc-600 shrink-0">
+            {tx.blockHeight != null ? `Block ${tx.blockHeight}` : ""}
+          </span>
+        </div>
+        {tx.error && (
+          <p className="text-[9px] text-evap-red mt-0.5 truncate">{tx.error}</p>
+        )}
+      </div>
+      {(tx.status === "rejected" || tx.status === "finalised") && (
+        <button
+          onClick={onClear}
+          className="text-[9px] text-zinc-500 hover:text-zinc-300 px-1 shrink-0"
+          title="Dismiss"
+        >
+          ×
+        </button>
+      )}
+    </div>
   );
 }

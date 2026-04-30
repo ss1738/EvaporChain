@@ -5,13 +5,79 @@
 
 import { create } from "zustand";
 import { BrowserKeyStore, type KeyEntry, signMessage } from "@/crypto/keystore";
-import { api, type AccountDetail, type StateObject, type ChainStatus, type TokenInfo, type SwapResult, type NftItem, type GhostObject, type GhostDetail, type RefreshCostEstimate, type SocialAuthResult } from "@/utils/api";
+import {
+  api,
+  type AccountDetail,
+  type StateObject,
+  type ChainStatus,
+  type TokenInfo,
+  type SwapResult,
+  type NftItem,
+  type GhostObject,
+  type GhostDetail,
+  type RefreshCostEstimate,
+  type SocialAuthResult,
+  type TxStatus,
+  type PatronageStatusResp,
+  type PatronageImmuneResp,
+  type PatronagePledgeReq,
+  type PatronageActionReq,
+  type PatronagePledgeResp,
+  type PatronageHonourResp,
+  type PatronageRevokeResp,
+  type RefreshPoolStatus,
+  type FeeControllerStatus,
+  type ForkChoiceModeStatus,
+} from "@/utils/api";
 import type { WcSession, WcSessionProposal } from "@/utils/walletconnect";
 import { ledgerManager, type LedgerAccount } from "@/utils/ledger";
 import { type BridgeTransfer } from "@/utils/bridge";
 import { loadPreferences, savePreferences, type UserPreferences } from "@/utils/preferences";
 
-export type View = "locked" | "create" | "import" | "home" | "send" | "receive" | "objects" | "activity" | "settings" | "backup" | "portfolio" | "swap" | "nfts" | "nft-detail" | "buy" | "batch-refresh" | "ghost-recovery" | "energy-dashboard" | "social-login" | "tutorial" | "decay-forecast" | "walletconnect" | "ledger" | "bridge" | "plugins" | "ai-assistant";
+export type View =
+  | "locked"
+  | "create"
+  | "import"
+  | "home"
+  | "send"
+  | "receive"
+  | "objects"
+  | "activity"
+  | "settings"
+  | "backup"
+  | "portfolio"
+  | "swap"
+  | "nfts"
+  | "nft-detail"
+  | "buy"
+  | "batch-refresh"
+  | "ghost-recovery"
+  | "energy-dashboard"
+  | "social-login"
+  | "tutorial"
+  | "decay-forecast"
+  | "walletconnect"
+  | "ledger"
+  | "bridge"
+  | "plugins"
+  | "ai-assistant"
+  | "patronage"
+  | "refresh-pool"
+  | "governance";
+
+export type PendingTxKind = "transfer" | "swap" | "resurrect" | "batch_refresh";
+
+export interface PendingTx {
+  hash: string;
+  kind: PendingTxKind;
+  summary: string;
+  submittedAt: number;
+  status: TxStatus["state"];
+  blockHeight?: number;
+  error?: string;
+  /** Filled when the tx finalises so we can clear it after a 10s grace. */
+  finalisedAt?: number;
+}
 
 interface WalletState {
   // Auth
@@ -49,6 +115,22 @@ interface WalletState {
 
   // Bridge
   bridgeTransfers: BridgeTransfer[];
+
+  // Tx status tracking
+  pendingTxs: PendingTx[];
+
+  // Patronage
+  patronageStatus: PatronageStatusResp | null;
+  patronageImmunities: Record<string, PatronageImmuneResp>;
+
+  // Substrate visibility surfaces
+  refreshPool: RefreshPoolStatus | null;
+  feeStatus: FeeControllerStatus | null;
+  /** Last N Lyapunov deltas for the fee-controller widget sparkline. */
+  feeDriftHistory: number[];
+  /** Demurrage owed on the active account's idle balance, in EVAP. */
+  demurrageOwed: number | null;
+  forkChoiceMode: ForkChoiceModeStatus | null;
 
   // UI
   view: View;
@@ -95,12 +177,38 @@ interface WalletState {
   setNotification: (msg: string | null) => void;
   setNodeUrl: (url: string) => void;
   updatePreferences: (prefs: Partial<UserPreferences>) => Promise<void>;
+
+  // Tx tracking
+  trackTx: (hash: string, kind: PendingTxKind, summary: string) => void;
+  pollTxStatuses: () => Promise<void>;
+  clearTx: (hash: string) => void;
+
+  // Patronage
+  refreshPatronage: () => Promise<void>;
+  refreshPatronageImmunity: (objectIdHex: string, epoch: number) => Promise<void>;
+  pledgePatronage: (req: PatronagePledgeReq) => Promise<PatronagePledgeResp>;
+  honourPatronage: (req: PatronageActionReq) => Promise<PatronageHonourResp>;
+  revokePatronage: (req: PatronageActionReq) => Promise<PatronageRevokeResp>;
+
+  // Substrate visibility surfaces
+  refreshRefreshPool: () => Promise<void>;
+  refreshFeeStatus: () => Promise<void>;
+  refreshDemurrage: () => Promise<void>;
+  refreshForkChoiceMode: () => Promise<void>;
 }
 
 interface TxSendResult {
   success: boolean;
   message: string;
 }
+
+/**
+ * Module-level timer for tx-status polling. Kept outside the store
+ * so init() is idempotent — re-entry just resets the interval. Each
+ * tick short-circuits when pendingTxs is empty so the interval is
+ * effectively idle until trackTx() registers a hash.
+ */
+let txPollTimer: ReturnType<typeof setInterval> | null = null;
 
 export const useWallet = create<WalletState>((set, get) => ({
   isUnlocked: false,
@@ -122,6 +230,14 @@ export const useWallet = create<WalletState>((set, get) => ({
   ledgerConnected: false,
   ledgerAccounts: [],
   bridgeTransfers: [],
+  pendingTxs: [],
+  patronageStatus: null,
+  patronageImmunities: {},
+  refreshPool: null,
+  feeStatus: null,
+  feeDriftHistory: [],
+  demurrageOwed: null,
+  forkChoiceMode: null,
   tutorialComplete: (() => { try { return localStorage.getItem("evaporchain_tutorial_complete") === "true"; } catch { return false; } })(),
   view: "locked",
   loading: false,
@@ -145,14 +261,29 @@ export const useWallet = create<WalletState>((set, get) => ({
     const accounts = ks.listAccounts();
     const active = ks.getActiveAccount();
     api.setNode(prefs.nodeUrl);
+    // Fresh installs only land on the simulated social-login flow in dev.
+    // In prod the OAuth backend isn't wired up yet, so we route to the
+    // real `create` flow instead. TODO real OAuth.
+    const freshInstallView: View = import.meta.env.DEV ? "social-login" : "create";
     set({
       keystore: ks,
       accounts,
       activeAccount: active,
-      view: accounts.length === 0 ? "social-login" : "locked",
+      view: accounts.length === 0 ? freshInstallView : "locked",
       nodeUrl: prefs.nodeUrl,
       preferences: prefs,
     });
+
+    // Start the tx-status poll once. The tick body short-circuits
+    // when pendingTxs is empty so this is idle until a broadcast
+    // calls trackTx().
+    if (txPollTimer == null) {
+      txPollTimer = setInterval(() => {
+        if (get().pendingTxs.length > 0) {
+          get().pollTxStatuses().catch(() => { /* tolerate transient API errors */ });
+        }
+      }, 3000);
+    }
   },
 
   unlock: async (password: string) => {
@@ -283,6 +414,9 @@ export const useWallet = create<WalletState>((set, get) => ({
       const result = await api.transfer(activeAccount.address, to, amount, nonce, sigHex, pubKeyHex);
       if (result.success) {
         set({ nonce: nonce + 1, loading: false, notification: `Sent ${amount} EVAP` });
+        if (result.hash) {
+          get().trackTx(result.hash, "transfer", `Sent ${amount} EVAP to ${to.slice(0, 10)}…`);
+        }
         get().refreshBalance();
       } else {
         set({ loading: false, error: result.message });
@@ -328,6 +462,9 @@ export const useWallet = create<WalletState>((set, get) => ({
       const result = await api.executeSwap(fromToken, toToken, amount, slippage, signature, publicKey);
       if (result.success) {
         set({ loading: false, notification: `Swapped ${result.amount_in} ${fromToken} for ${result.amount_out} ${toToken}` });
+        if (result.hash) {
+          get().trackTx(result.hash, "swap", `Swap ${result.amount_in} ${fromToken} → ${result.amount_out} ${toToken}`);
+        }
         get().refreshBalance();
         get().refreshTokens();
       } else {
@@ -410,6 +547,9 @@ export const useWallet = create<WalletState>((set, get) => ({
       const result = await api.resurrectObject(id, energy, signature, publicKey);
       if (result.success) {
         set({ loading: false, notification: `Resurrected object! Spent ${energy} EVAP` });
+        if (result.hash) {
+          get().trackTx(result.hash, "resurrect", `Resurrected ${id.slice(0, 12)}… (${energy} EVAP)`);
+        }
         get().refreshGhosts();
         get().refreshBalance();
         get().refreshObjects();
@@ -435,6 +575,9 @@ export const useWallet = create<WalletState>((set, get) => ({
           loading: false,
           notification: `Refreshed ${objects.length} objects, spent ${totalEnergy} EVAP`,
         });
+        if (result.hash) {
+          get().trackTx(result.hash, "batch_refresh", `Batch refresh ${objects.length} objects (${totalEnergy} EVAP)`);
+        }
         get().refreshBalance();
         get().refreshObjects();
       } else {
@@ -551,4 +694,198 @@ export const useWallet = create<WalletState>((set, get) => ({
       api.setNode(prefs.nodeUrl);
     }
   },
+
+  // ── Tx tracking ────────────────────────────────────────────────
+
+  trackTx: (hash, kind, summary) => {
+    const existing = get().pendingTxs.find(t => t.hash === hash);
+    if (existing) return;
+    set({
+      pendingTxs: [
+        ...get().pendingTxs,
+        { hash, kind, summary, submittedAt: Date.now(), status: "pending" },
+      ],
+    });
+  },
+
+  clearTx: (hash) => {
+    set({ pendingTxs: get().pendingTxs.filter(t => t.hash !== hash) });
+  },
+
+  pollTxStatuses: async () => {
+    const txs = get().pendingTxs;
+    if (txs.length === 0) return;
+
+    const now = Date.now();
+    // First sweep: drop anything that finalised more than 10s ago.
+    const live = txs.filter(t => !t.finalisedAt || now - t.finalisedAt < 10_000);
+
+    // Query each non-terminal tx.
+    const updated = await Promise.all(live.map(async (tx) => {
+      // Skip API call if already finalised/rejected — just preserve.
+      if (tx.status === "finalised" || tx.status === "rejected") return tx;
+      try {
+        const status = await api.getTxStatus(tx.hash);
+        if (status.state === tx.status) return tx; // no change
+        const next: PendingTx = {
+          ...tx,
+          status: status.state,
+          blockHeight: status.block_height ?? tx.blockHeight,
+          error: status.error,
+        };
+        if (status.state === "finalised" || status.state === "rejected") {
+          next.finalisedAt = Date.now();
+        }
+        return next;
+      } catch {
+        return tx;
+      }
+    }));
+
+    set({ pendingTxs: updated });
+  },
+
+  // ── Patronage ─────────────────────────────────────────────────
+
+  refreshPatronage: async () => {
+    try {
+      const status = await api.getPatronageStatus();
+      set({ patronageStatus: status });
+    } catch {
+      // Endpoint unavailable; leave previous value in place.
+    }
+  },
+
+  refreshPatronageImmunity: async (objectIdHex, epoch) => {
+    try {
+      const info = await api.getPatronageImmunity(objectIdHex, epoch);
+      set({ patronageImmunities: { ...get().patronageImmunities, [objectIdHex]: info } });
+    } catch {
+      // Ignore — immunity unknown stays absent from map.
+    }
+  },
+
+  pledgePatronage: async (req) => {
+    set({ loading: true, error: null });
+    try {
+      const resp = await api.pledgePatronage(req);
+      if (resp.status === "pledged") {
+        set({ loading: false, notification: `Patronage pledged: ${resp.pre_funded} EVAP until epoch ${resp.expires_epoch}` });
+        await get().refreshPatronage();
+        await get().refreshPatronageImmunity(req.object_id_hex, req.current_epoch);
+      } else {
+        set({ loading: false, error: resp.detail || "Pledge failed" });
+      }
+      return resp;
+    } catch (e: any) {
+      set({ loading: false, error: e.message });
+      throw e;
+    }
+  },
+
+  honourPatronage: async (req) => {
+    set({ loading: true, error: null });
+    try {
+      const resp = await api.honourPatronage(req);
+      if (resp.status === "honoured") {
+        set({ loading: false, notification: `Honoured ${resp.donated} EVAP; score now ${resp.patronage_score}` });
+        await get().refreshPatronage();
+        await get().refreshPatronageImmunity(req.object_id_hex, req.epoch);
+      } else {
+        set({ loading: false, error: resp.detail || "Honour failed" });
+      }
+      return resp;
+    } catch (e: any) {
+      set({ loading: false, error: e.message });
+      throw e;
+    }
+  },
+
+  revokePatronage: async (req) => {
+    set({ loading: true, error: null });
+    try {
+      const resp = await api.revokePatronage(req);
+      if (resp.status === "revoked") {
+        set({ loading: false, notification: `Covenant revoked; ${resp.refunded ?? 0} EVAP refunded` });
+        await get().refreshPatronage();
+        await get().refreshPatronageImmunity(req.object_id_hex, req.epoch);
+      } else {
+        set({ loading: false, error: resp.detail || "Revoke failed" });
+      }
+      return resp;
+    } catch (e: any) {
+      set({ loading: false, error: e.message });
+      throw e;
+    }
+  },
+
+  // ── Substrate visibility surfaces ─────────────────────────────
+
+  refreshRefreshPool: async () => {
+    try {
+      const pool = await api.getRefreshPool();
+      set({ refreshPool: pool });
+    } catch {
+      // Endpoint unavailable; keep previous value.
+    }
+  },
+
+  refreshFeeStatus: async () => {
+    try {
+      const status = await api.getFeeControllerStatus();
+      // Append a synthetic drift sample derived from the energy delta so
+      // the widget sparkline shows movement even when the chain isn't
+      // calling /step. Real drift comes from /step responses; this is a
+      // best-effort proxy until the controller is stepped explicitly.
+      const prev = get().feeStatus;
+      const driftProxy = prev ? status.energy - prev.energy : 0;
+      const history = [...get().feeDriftHistory, driftProxy].slice(-24);
+      set({ feeStatus: status, feeDriftHistory: history });
+    } catch {
+      // Endpoint unavailable.
+    }
+  },
+
+  refreshDemurrage: async () => {
+    // The /api/address/:addr endpoint does NOT expose last_touched_epoch
+    // (see crates/evaporchain-node/src/api.rs §AddressDetailResponse,
+    // L7389-7397). Without it we cannot meaningfully compute demurrage
+    // owed on the active account. The badge component therefore gates
+    // itself behind import.meta.env.DEV and uses last_touched_epoch=0
+    // for demonstration. This action keeps the surface live so once
+    // last_touched_epoch is added to the address response it becomes a
+    // single edit here. TODO: wire real last_touched_epoch.
+    const { activeAccount, balance, chainStatus } = get();
+    if (!activeAccount || !chainStatus) {
+      set({ demurrageOwed: null });
+      return;
+    }
+    try {
+      const resp = await api.getDemurrageOwed({
+        balance,
+        last_touched_epoch: 0,
+        current_epoch: chainStatus.epoch,
+        // Default genesis params: lambda_base 1 ppm/epoch above 1024 threshold.
+        lambda_base_ppm: 1,
+        threshold: 1024,
+      });
+      set({ demurrageOwed: resp.is_disabled ? 0 : resp.owed });
+    } catch {
+      set({ demurrageOwed: null });
+    }
+  },
+
+  refreshForkChoiceMode: async () => {
+    try {
+      const mode = await api.getForkChoiceMode();
+      set({ forkChoiceMode: mode });
+    } catch {
+      // Endpoint unavailable.
+    }
+  },
 }));
+
+// Test-only escape hatch: Playwright e2e specs read the store via
+// `globalThis.__zustandStore`. Fenced behind Vite's MODE so it cannot
+// leak into production builds (`npm run build` runs as MODE=production).
+if (import.meta.env.MODE === "test") { (globalThis as any).__zustandStore = useWallet; }

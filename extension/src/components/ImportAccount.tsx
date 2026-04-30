@@ -1,6 +1,12 @@
 import { useState } from "react";
 import { useWallet } from "@/hooks/useWallet";
 import { BrowserKeyStore } from "@/crypto/keystore";
+import {
+  recoverKeypair,
+  MnemonicError,
+  type MnemonicBackup,
+} from "@/crypto/mnemonic";
+import { mlDsaDeriveAddress, initCrypto } from "@/crypto/wasm-bridge";
 
 export function ImportAccount() {
   const { setView, error, loading } = useWallet();
@@ -8,6 +14,7 @@ export function ImportAccount() {
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [mnemonic, setMnemonic] = useState("");
+  const [backupJson, setBackupJson] = useState("");
   const [keystoreJson, setKeystoreJson] = useState("");
   const [localError, setLocalError] = useState("");
 
@@ -20,15 +27,45 @@ export function ImportAccount() {
 
     const words = mnemonic.trim().split(/\s+/);
     if (words.length !== 24) return setLocalError("Mnemonic must be exactly 24 words");
+    if (!backupJson.trim()) return setLocalError("Paste the MnemonicBackup JSON from your CLI export");
 
-    // For now, create a new account (true mnemonic import requires WASM ML-DSA)
-    // The mnemonic is stored for future recovery
     try {
-      const store = useWallet.getState();
-      await store.createAccount(name.trim(), password);
-      // TODO: Derive key from mnemonic via WASM when ML-DSA bridge is ready
+      // 1. Parse the MnemonicBackup JSON exported by the Rust CLI.
+      let backup: MnemonicBackup;
+      try {
+        backup = JSON.parse(backupJson) as MnemonicBackup;
+      } catch {
+        return setLocalError("Invalid MnemonicBackup JSON");
+      }
+      if (!backup || typeof backup !== "object" || !backup.encrypted_keypair || !backup.nonce) {
+        return setLocalError("Backup is missing encrypted_keypair / nonce fields");
+      }
+
+      // 2. Recover the ML-DSA-65 keypair from phrase + backup.
+      const { publicKey, secretKey } = await recoverKeypair(mnemonic.trim(), backup);
+
+      // 3. Verify the recovered public key matches the address embedded in the backup.
+      await initCrypto();
+      const derivedAddress = mlDsaDeriveAddress(publicKey);
+      if (backup.address && derivedAddress !== backup.address) {
+        return setLocalError(
+          "Recovered keypair does not match backup address — wrong mnemonic or corrupted backup",
+        );
+      }
+
+      // 4. Re-encrypt locally with PBKDF2-600k/AES-GCM and unlock.
+      const ks = await BrowserKeyStore.load();
+      await ks.importKeypair(name.trim(), password, publicKey, secretKey);
+
+      const walletStore = useWallet.getState();
+      await walletStore.init();
+      await walletStore.unlock(password);
     } catch (err: any) {
-      setLocalError(err.message);
+      if (err instanceof MnemonicError) {
+        setLocalError(err.message);
+      } else {
+        setLocalError(err.message ?? "Mnemonic import failed");
+      }
     }
   };
 
@@ -120,6 +157,13 @@ export function ImportAccount() {
               onChange={e => setMnemonic(e.target.value)}
               rows={4}
               className="w-full px-4 py-3 rounded-lg bg-evap-surface border border-evap-border text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-evap-cyan transition resize-none"
+            />
+            <textarea
+              placeholder='Paste MnemonicBackup JSON ({"version":1,"account_index":0,"encrypted_keypair":"...","nonce":"...","address":"..."})'
+              value={backupJson}
+              onChange={e => setBackupJson(e.target.value)}
+              rows={5}
+              className="w-full px-4 py-3 rounded-lg bg-evap-surface border border-evap-border text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-evap-cyan transition resize-none font-mono"
             />
             <input
               type="password"

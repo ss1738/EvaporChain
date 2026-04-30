@@ -10,6 +10,7 @@ import {
   type BridgeTransfer,
   type BridgeStep,
 } from "@/utils/bridge";
+import { HlwaCard } from "./HlwaCard";
 
 type BridgeTab = "transfer" | "history";
 
@@ -154,6 +155,9 @@ export function BridgeScreen() {
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
         {tab === "transfer" && (
           <>
+            {/* HLWA wrapped-asset live state */}
+            <HlwaCard />
+
             {/* Source chain */}
             <div>
               <label className="text-[10px] font-medium text-zinc-500 uppercase tracking-wide">

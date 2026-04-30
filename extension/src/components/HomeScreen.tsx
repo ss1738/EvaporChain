@@ -3,12 +3,15 @@ import { useWallet } from "@/hooks/useWallet";
 import { formatBalance, shortAddress } from "@/utils/format";
 import { Header } from "./Header";
 import { QuantumBadge } from "./QuantumBadge";
+import { FeeControllerWidget } from "./FeeControllerWidget";
+import { DemurrageBadge } from "./DemurrageBadge";
 
 export function HomeScreen() {
   const {
     activeAccount, balance, chainStatus, ghosts, wcSessions,
     ledgerConnected,
     setView, claimFaucet, refreshBalance, refreshObjects, refreshGhosts,
+    refreshChainStatus, refreshFeeStatus,
     loading, notification, setNotification,
   } = useWallet();
 
@@ -17,9 +20,20 @@ export function HomeScreen() {
   useEffect(() => {
     refreshBalance();
     refreshGhosts();
-    const interval = setInterval(refreshBalance, 10_000);
-    return () => clearInterval(interval);
-  }, [refreshBalance, refreshGhosts]);
+    refreshChainStatus();
+    refreshFeeStatus();
+    const balInterval = setInterval(refreshBalance, 10_000);
+    // Substrate-status polling cadence: chain status + fee controller
+    // every 10s. Cheap reads, both endpoints are pure compute.
+    const chainInterval = setInterval(() => {
+      refreshChainStatus();
+      refreshFeeStatus();
+    }, 10_000);
+    return () => {
+      clearInterval(balInterval);
+      clearInterval(chainInterval);
+    };
+  }, [refreshBalance, refreshGhosts, refreshChainStatus, refreshFeeStatus]);
 
   useEffect(() => {
     if (notification) {
@@ -57,7 +71,10 @@ export function HomeScreen() {
 
       {/* Balance card */}
       <div className="px-4 pt-6 pb-4">
-        <p className="text-xs text-zinc-500 mb-1">Total Balance</p>
+        <div className="flex items-center justify-between mb-1">
+          <p className="text-xs text-zinc-500">Total Balance</p>
+          <DemurrageBadge />
+        </div>
         <div className="flex items-baseline gap-2">
           <span className="text-3xl font-bold text-zinc-100">
             {formatBalance(balance)}
@@ -68,6 +85,9 @@ export function HomeScreen() {
           {activeAccount.address}
         </p>
       </div>
+
+      {/* Fee controller compact card — Lyapunov-stable base fee state */}
+      <FeeControllerWidget />
 
       {/* Quick actions */}
       <div className="grid grid-cols-4 gap-2 px-4 pb-2">

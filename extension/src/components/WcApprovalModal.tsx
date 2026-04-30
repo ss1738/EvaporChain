@@ -4,7 +4,6 @@
  */
 
 import type { WcSessionProposal } from "@/utils/walletconnect";
-import { WalletConnectManager } from "@/utils/walletconnect";
 
 interface Props {
   proposal: WcSessionProposal;
@@ -14,8 +13,14 @@ interface Props {
 
 export function WcApprovalModal({ proposal, onApprove, onReject }: Props) {
   const { metadata } = proposal.params.proposer;
-  const requiredNs = proposal.params.requiredNamespaces;
-  const evapNs = requiredNs[WalletConnectManager.NAMESPACE];
+  const requiredNs = proposal.params.requiredNamespaces ?? {};
+  const optionalNs = proposal.params.optionalNamespaces ?? {};
+  // Prefer the EvaporChain namespace; fall back to any required, then optional.
+  const evapNs =
+    requiredNs["evap"] ??
+    Object.values(requiredNs)[0] ??
+    optionalNs["evap"] ??
+    Object.values(optionalNs)[0];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -75,7 +80,7 @@ export function WcApprovalModal({ proposal, onApprove, onReject }: Props) {
             Chains
           </p>
           <div className="flex flex-wrap gap-1">
-            {evapNs?.chains.map((chain) => (
+            {(evapNs?.chains ?? []).map((chain) => (
               <span
                 key={chain}
                 className="px-2 py-0.5 rounded-full bg-evap-cyan/10 border border-evap-cyan/30 text-[10px] text-evap-cyan"
@@ -110,6 +115,11 @@ export function WcApprovalModal({ proposal, onApprove, onReject }: Props) {
 
 function PermissionRow({ method }: { method: string }) {
   const labels: Record<string, { label: string; icon: string }> = {
+    evap_getAccounts: { label: "View accounts", icon: "👤" },
+    evap_signMessage: { label: "Sign messages", icon: "✍" },
+    evap_signTransaction: { label: "Sign transactions", icon: "✍" },
+    evap_sendTransaction: { label: "Send transactions", icon: "↗" },
+    // legacy / pre-rename method names
     evaporchain_getAccounts: { label: "View accounts", icon: "👤" },
     evaporchain_signMessage: { label: "Sign messages", icon: "✍" },
     evaporchain_sendTransaction: { label: "Send transactions", icon: "↗" },

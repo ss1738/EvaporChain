@@ -203,6 +203,235 @@ export interface SocialAuthResult {
   message?: string;
 }
 
+// ── Tx status tracking ──────────────────────────────────────────────
+//
+// The node exposes GET /api/tx/:hash returning a TxRecord once a
+// transaction has been included in a finalised block. Before then the
+// node returns 404. We synthesise the higher-level "pending" /
+// "mempool" states client-side: a tx we've broadcast but never seen in
+// a block yet is "pending"; once /api/tx/:hash returns we map the
+// record's `status` field — "success" → finalised, anything else →
+// rejected.
+
+export interface TxStatus {
+  hash: string;
+  state: "pending" | "mempool" | "included" | "finalised" | "rejected";
+  block_height?: number;
+  epoch?: number;
+  error?: string;
+}
+
+interface TxRecordResponse {
+  hash: string;
+  type: string;
+  from: string;
+  to: string;
+  amount?: number;
+  object_id?: string;
+  energy?: number;
+  half_life?: number;
+  method?: string;
+  gas: number;
+  block_number: number;
+  epoch: number;
+  status: string;
+}
+
+// ── Patronage Covenant types ────────────────────────────────────────
+
+export interface PatronagePledgeReq {
+  object_id_hex: string;
+  namespace_id_hex: string;
+  donation_per_epoch: number;
+  epochs: number;
+  current_epoch: number;
+}
+
+export interface PatronageActionReq {
+  object_id_hex: string;
+  epoch: number;
+}
+
+export interface PatronagePledgeResp {
+  status: string;          // "pledged" | "error"
+  object_id_hex: string;
+  pre_funded: number;
+  expires_epoch: number;
+  detail: string;
+}
+
+export interface PatronageHonourResp {
+  status: string;          // "honoured" | "error"
+  donated: number;
+  patronage_score: number;
+  detail: string;
+}
+
+export interface PatronageRevokeResp {
+  status: string;          // "revoked" | "error"
+  object_id_hex?: string;
+  patronage_score_archived?: number;
+  refunded?: number;
+  detail: string;
+}
+
+export interface PatronageStatusResp {
+  active_covenants: number;
+  total_pre_funded: number;
+  total_active_score: number;
+  patronage_ns_hex: string;
+}
+
+export interface PatronageImmuneResp {
+  object_id_hex: string;
+  epoch: number;
+  immune: boolean;
+  patronage_score: number;
+}
+
+// ── Refresh pool ────────────────────────────────────────────────────
+//
+// GET /api/refresh_pool — protocol-owned pool that funds object refreshes,
+// fed by demurrage + patronage payments. Per-namespace credits track which
+// namespace has accrued how much and when it was last touched.
+// api.rs §RefreshPoolResp / RefreshPoolCredit (~L2823-2834).
+
+export interface RefreshPoolCredit {
+  namespace_hex: string;
+  accrued: number;
+  last_touched_epoch: number;
+}
+
+export interface RefreshPoolStatus {
+  total_accrued: number;
+  credits: RefreshPoolCredit[];
+}
+
+// ── Fee controller status ──────────────────────────────────────────
+//
+// GET /api/fee_controller/status — current Lyapunov-stable fee controller
+// state. `energy` is the accumulated energy of the controller; `base_fee`
+// is the fee at the current pressure; `target_*`/`fee_response_ppm` are
+// the genesis target params used to evaluate convergence.
+// api.rs §get_fee_controller_status (~L4672) — returns serde_json::Value
+// with fields: status, energy, base_fee, target_energy, target_gas,
+// fee_response_ppm.
+
+export interface FeeControllerStatus {
+  status: string;
+  energy: number;
+  base_fee: number;
+  target_energy: number;
+  target_gas: number;
+  fee_response_ppm: number;
+}
+
+// One step return from POST /api/fee_controller/step. Used by the widget
+// to plot V-function drift trace (delta < 0 = converging).
+export interface FeeControllerStepResp {
+  status: string;
+  energy_after?: number;
+  base_fee?: number;
+  lyapunov_v_before?: number;
+  lyapunov_v_after?: number;
+  lyapunov_delta?: number;
+  gas_used?: number;
+  detail?: string;
+}
+
+// ── Demurrage owed ─────────────────────────────────────────────────
+//
+// POST /api/demurrage/owed — pure compute, no chain mutation. Returns
+// `owed` (energy units), `rate_ppm` (per-epoch rate), and the recomputed
+// remaining_balance. Note: the response does NOT include a `capped`
+// field — it includes `is_disabled` and `remaining_balance` instead.
+// api.rs §post_demurrage_owed (~L5366).
+
+export interface DemurrageOwedReq {
+  balance: number;
+  last_touched_epoch: number;
+  current_epoch: number;
+  lambda_base_ppm: number;
+  threshold: number;
+}
+
+export interface DemurrageOwedResp {
+  status: string;
+  balance: number;
+  last_touched_epoch: number;
+  current_epoch: number;
+  elapsed_epochs: number;
+  rate_ppm: number;
+  owed: number;
+  remaining_balance: number;
+  is_disabled: boolean;
+}
+
+// ── Governance fork-choice ─────────────────────────────────────────
+//
+// GET  /api/governance/fork_choice_mode (~L1951) — current mode + attractors.
+// POST /api/governance/fork_choice_mode (~L1912) — stake-quorum amendment.
+// The POST does NOT take signature/public_key — it accepts endorser_stakes
+// and required_stake; quorum is satisfied when sum(endorser_stakes) >=
+// required_stake. The mode is "mcc" or "singh_attractor".
+
+export interface ForkChoiceAttractor {
+  center: number;
+  basin_radius: number;
+}
+
+export interface ForkChoiceModeStatus {
+  fork_choice_mode: string;
+  attractors: ForkChoiceAttractor[];
+  detail: string;
+}
+
+export interface ForkChoiceAmendReq {
+  mode: string;
+  attractors?: ForkChoiceAttractor[];
+  endorser_stakes: number[];
+  required_stake: number;
+}
+
+export interface ForkChoiceAmendResp {
+  status: string;             // "amended" | "error"
+  fork_choice_mode?: string;
+  attractor_count?: number;
+  detail: string;
+}
+
+// ── HLWA — Half-Life Wrapped Asset ────────────────────────────────
+//
+// POST /api/hlwa/effective_supply (~L4374) — pure compute, no broadcast.
+// POST /api/hlwa/re_attest (~L4401) — pure simulation; returns the asset
+// state as if a fresh re-attestation had landed at current_epoch. Neither
+// endpoint takes a signature.
+
+export interface HlwaSupplyReq {
+  current_supply: number;
+  origin_attested_supply: number;
+  last_attested_epoch: number;
+  attestation_lambda_epochs: number;
+  current_epoch: number;
+}
+
+export interface HlwaSupplyResp {
+  status: string;
+  effective_supply: number;
+  current_supply: number;
+  excess_to_burn: number;
+  current_epoch: number;
+  detail?: string;
+}
+
+export interface HlwaReAttestResp {
+  status: string;
+  new_attested_supply: number;
+  new_last_attested_epoch: number;
+  effective_supply_after: number;
+  detail?: string;
+}
+
 class EvaporChainAPI {
   private baseUrl: string;
 
@@ -381,6 +610,105 @@ class EvaporChainAPI {
 
   async socialAuth(provider: "google" | "apple", token: string): Promise<SocialAuthResult> {
     return this.post("/api/auth/social", { provider, token });
+  }
+
+  // ── Tx status ──
+  //
+  // Wraps GET /api/tx/:hash. Returns "pending" while the node has no
+  // record (404) and a concrete TxRecord-derived state once it does.
+  // The node only emits records from finalised blocks, so an observed
+  // record with status="success" is mapped to "finalised", anything
+  // else to "rejected".
+  async getTxStatus(hash: string): Promise<TxStatus> {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/tx/${hash}`);
+      if (res.status === 404) {
+        return { hash, state: "pending" };
+      }
+      if (!res.ok) {
+        return { hash, state: "pending", error: `HTTP ${res.status}` };
+      }
+      const rec = (await res.json()) as TxRecordResponse;
+      const success = rec.status === "success";
+      return {
+        hash,
+        state: success ? "finalised" : "rejected",
+        block_height: rec.block_number,
+        epoch: rec.epoch,
+        error: success ? undefined : rec.status,
+      };
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { hash, state: "pending", error: msg };
+    }
+  }
+
+  // ── Patronage Covenants ──
+
+  async getPatronageStatus(): Promise<PatronageStatusResp> {
+    return this.get("/api/patronage/status");
+  }
+
+  async getPatronageImmunity(objectIdHex: string, epoch: number): Promise<PatronageImmuneResp> {
+    const q = new URLSearchParams({ object_id_hex: objectIdHex, epoch: String(epoch) });
+    return this.get(`/api/patronage/immune?${q.toString()}`);
+  }
+
+  async pledgePatronage(req: PatronagePledgeReq): Promise<PatronagePledgeResp> {
+    return this.post("/api/patronage/pledge", req);
+  }
+
+  async honourPatronage(req: PatronageActionReq): Promise<PatronageHonourResp> {
+    return this.post("/api/patronage/honour", req);
+  }
+
+  async revokePatronage(req: PatronageActionReq): Promise<PatronageRevokeResp> {
+    return this.post("/api/patronage/revoke", req);
+  }
+
+  // ── Refresh pool ──
+
+  async getRefreshPool(): Promise<RefreshPoolStatus> {
+    return this.get("/api/refresh_pool");
+  }
+
+  // ── Fee controller ──
+
+  async getFeeControllerStatus(): Promise<FeeControllerStatus> {
+    return this.get("/api/fee_controller/status");
+  }
+
+  async stepFeeController(gasUsed: number, epochsElapsed: number): Promise<FeeControllerStepResp> {
+    return this.post("/api/fee_controller/step", {
+      gas_used: gasUsed,
+      epochs_elapsed: epochsElapsed,
+    });
+  }
+
+  // ── Demurrage ──
+
+  async getDemurrageOwed(req: DemurrageOwedReq): Promise<DemurrageOwedResp> {
+    return this.post("/api/demurrage/owed", req);
+  }
+
+  // ── Governance: fork-choice ──
+
+  async getForkChoiceMode(): Promise<ForkChoiceModeStatus> {
+    return this.get("/api/governance/fork_choice_mode");
+  }
+
+  async amendForkChoiceMode(req: ForkChoiceAmendReq): Promise<ForkChoiceAmendResp> {
+    return this.post("/api/governance/fork_choice_mode", req);
+  }
+
+  // ── HLWA ──
+
+  async getHlwaEffectiveSupply(req: HlwaSupplyReq): Promise<HlwaSupplyResp> {
+    return this.post("/api/hlwa/effective_supply", req);
+  }
+
+  async reAttestHlwa(req: HlwaSupplyReq): Promise<HlwaReAttestResp> {
+    return this.post("/api/hlwa/re_attest", req);
   }
 }
 

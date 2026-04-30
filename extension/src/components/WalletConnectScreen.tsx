@@ -8,12 +8,12 @@ import { useWallet } from "@/hooks/useWallet";
 import { WalletConnectManager, type WcSessionProposal, type WcSession } from "@/utils/walletconnect";
 import { WcApprovalModal } from "./WcApprovalModal";
 
-// Singleton manager — shared across the extension lifetime
+// Singleton manager — shared across the extension lifetime. Project ID is
+// read from VITE_WALLETCONNECT_PROJECT_ID; see utils/walletconnect.ts.
 const wcManager = new WalletConnectManager();
-const WC_PROJECT_ID = "evaporchain-wallet-extension"; // Replace with real WC Cloud project ID
 
 export function WalletConnectScreen() {
-  const { setView, activeAccount, wcSessions, setWcSessions, setNotification } = useWallet();
+  const { setView, activeAccount, wcSessions, setWcSessions, setNotification, signTransaction } = useWallet();
 
   const [uri, setUri] = useState("");
   const [pairing, setPairing] = useState(false);
@@ -24,31 +24,36 @@ export function WalletConnectScreen() {
   useEffect(() => {
     const initWc = async () => {
       try {
-        await wcManager.init(WC_PROJECT_ID);
-        // Sync persisted sessions into zustand
-        setWcSessions(wcManager.getSessions());
+        await wcManager.init();
+        // Sync active sessions into zustand
+        setWcSessions(wcManager.getActiveSessions());
       } catch {
-        // Init may fail if localStorage is unavailable
+        // Init may fail if the relay is unreachable or storage is blocked
       }
     };
     initWc();
   }, [setWcSessions]);
 
-  // Wire up proposal handler
+  // Wire up proposal + request handlers
   useEffect(() => {
     wcManager.onProposal = (p: WcSessionProposal) => {
       setProposal(p);
       setPairing(false);
     };
     wcManager.onDisconnect = ({ topic }) => {
-      setWcSessions(wcManager.getSessions());
+      setWcSessions(wcManager.getActiveSessions());
       setNotification(`dApp disconnected (${topic.slice(0, 8)}...)`);
     };
+    wcManager.setRequestHandler({
+      getAccounts: () => (activeAccount ? [activeAccount.address] : []),
+      signTransaction: (payload) => signTransaction(payload),
+    });
     return () => {
       wcManager.onProposal = null;
       wcManager.onDisconnect = null;
+      wcManager.setRequestHandler(null);
     };
-  }, [setWcSessions, setNotification]);
+  }, [setWcSessions, setNotification, activeAccount, signTransaction]);
 
   // ── Handlers ──
 
@@ -69,8 +74,8 @@ export function WalletConnectScreen() {
   const handleApprove = useCallback(async () => {
     if (!proposal || !activeAccount) return;
     try {
-      await wcManager.approveSession(proposal, [activeAccount.address]);
-      setWcSessions(wcManager.getSessions());
+      await wcManager.approveProposal(proposal, [activeAccount.address]);
+      setWcSessions(wcManager.getActiveSessions());
       setProposal(null);
       setNotification("dApp connected");
     } catch (e: any) {
@@ -80,14 +85,14 @@ export function WalletConnectScreen() {
 
   const handleReject = useCallback(async () => {
     if (!proposal) return;
-    await wcManager.rejectSession(proposal);
+    await wcManager.rejectProposal(proposal);
     setProposal(null);
   }, [proposal]);
 
   const handleDisconnect = useCallback(async (topic: string) => {
     try {
-      await wcManager.disconnectSession(topic);
-      setWcSessions(wcManager.getSessions());
+      await wcManager.disconnect(topic);
+      setWcSessions(wcManager.getActiveSessions());
     } catch (e: any) {
       setError(e.message);
     }

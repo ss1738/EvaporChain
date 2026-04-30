@@ -164,6 +164,14 @@ export function SettingsScreen() {
           Backup &amp; Restore →
         </button>
 
+        {/* Chain governance */}
+        <button
+          onClick={() => setView("governance")}
+          className="w-full py-2 rounded-lg bg-evap-surface border border-evap-border text-xs text-zinc-300 hover:border-evap-cyan/40 transition text-left px-3"
+        >
+          Chain governance ↗
+        </button>
+
         {/* Lock */}
         <button
           onClick={lock}

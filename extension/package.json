@@ -7,8 +7,10 @@
   "scripts": {
     "dev": "vite build --watch --mode development",
     "build": "tsc && vite build",
+    "build:test": "vite build --mode test",
     "preview": "vite preview",
-    "lint": "eslint src --ext .ts,.tsx"
+    "lint": "eslint src --ext .ts,.tsx",
+    "test:e2e": "playwright test --config=tests/e2e/playwright.config.ts"
   },
   "dependencies": {
     "react": "^19.0.0",
@@ -16,6 +18,7 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.50.0",
     "@types/chrome": "^0.0.287",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
