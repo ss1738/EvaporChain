@@ -7,7 +7,7 @@ import { nodeClient } from "../lib/node-client";
  * Creates two wallets (alice + bob) inside one keystore — alice is
  * funded from the faucet, then sends 100 EVAP to bob. We assert:
  *   • Header shows "N pending" pill while the tx is in flight
- *   • The node returns a finalised TxRecord within 60s
+ *   • The node returns state="finalised" within 60s
  *   • bob's balance reflects the transfer node-side
  *
  * Bob's address is generated in a second wallet inside the same popup

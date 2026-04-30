@@ -205,13 +205,10 @@ export interface SocialAuthResult {
 
 // ── Tx status tracking ──────────────────────────────────────────────
 //
-// The node exposes GET /api/tx/:hash returning a TxRecord once a
-// transaction has been included in a finalised block. Before then the
-// node returns 404. We synthesise the higher-level "pending" /
-// "mempool" states client-side: a tx we've broadcast but never seen in
-// a block yet is "pending"; once /api/tx/:hash returns we map the
-// record's `status` field — "success" → finalised, anything else →
-// rejected.
+// GET /api/tx/:hash returns TxStatus directly with one of five states:
+// pending → mempool → included → finalised | rejected. Always 200
+// except invalid hex (400). The node body is not carried — fetch via
+// /api/transactions if needed.
 
 export interface TxStatus {
   hash: string;
@@ -219,22 +216,6 @@ export interface TxStatus {
   block_height?: number;
   epoch?: number;
   error?: string;
-}
-
-interface TxRecordResponse {
-  hash: string;
-  type: string;
-  from: string;
-  to: string;
-  amount?: number;
-  object_id?: string;
-  energy?: number;
-  half_life?: number;
-  method?: string;
-  gas: number;
-  block_number: number;
-  epoch: number;
-  status: string;
 }
 
 // ── Patronage Covenant types ────────────────────────────────────────
@@ -712,29 +693,17 @@ class EvaporChainAPI {
 
   // ── Tx status ──
   //
-  // Wraps GET /api/tx/:hash. Returns "pending" while the node has no
-  // record (404) and a concrete TxRecord-derived state once it does.
-  // The node only emits records from finalised blocks, so an observed
-  // record with status="success" is mapped to "finalised", anything
-  // else to "rejected".
+  // Wraps GET /api/tx/:hash. The node now returns TxStatus directly
+  // with state ∈ {pending, mempool, included, finalised, rejected};
+  // we just deserialise. Network errors degrade to "pending" with the
+  // error attached so the poller keeps retrying.
   async getTxStatus(hash: string): Promise<TxStatus> {
     try {
       const res = await fetch(`${this.baseUrl}/api/tx/${hash}`);
-      if (res.status === 404) {
-        return { hash, state: "pending" };
-      }
       if (!res.ok) {
         return { hash, state: "pending", error: `HTTP ${res.status}` };
       }
-      const rec = (await res.json()) as TxRecordResponse;
-      const success = rec.status === "success";
-      return {
-        hash,
-        state: success ? "finalised" : "rejected",
-        block_height: rec.block_number,
-        epoch: rec.epoch,
-        error: success ? undefined : rec.status,
-      };
+      return (await res.json()) as TxStatus;
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       return { hash, state: "pending", error: msg };

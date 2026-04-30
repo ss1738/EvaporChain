@@ -30,11 +30,14 @@ export interface FaucetResp {
   message?: string;
 }
 
-export interface TxRecord {
+export type TxState = "pending" | "mempool" | "included" | "finalised" | "rejected";
+
+export interface TxStatus {
   hash: string;
-  status: string; // "success" | "failed" | ...
-  block_number?: number;
+  state: TxState;
+  block_height?: number;
   epoch?: number;
+  error?: string;
 }
 
 export class NodeClient {
@@ -55,23 +58,19 @@ export class NodeClient {
   }
 
   /**
-   * Returns null while the node has no record yet (404). Returns the
-   * record once finalised. Specs should poll this with their own
-   * timeout — the node only emits records from finalised blocks, so
-   * a non-null return means the tx is on-chain.
+   * GET /api/tx/:hash. Always 200 for a valid hex hash. Returns the
+   * lifecycle state — pending → mempool → included → finalised | rejected.
+   * The body is not carried; use /api/transactions for that.
    */
-  async getTransactionRecord(hash: string): Promise<TxRecord | null> {
-    const res = await fetch(`${this.baseUrl}/api/tx/${hash}`);
-    if (res.status === 404) return null;
-    if (!res.ok) throw new Error(`getTransactionRecord ${res.status}: ${await res.text()}`);
-    return res.json() as Promise<TxRecord>;
+  async getTxStatus(hash: string): Promise<TxStatus> {
+    return this.get(`/api/tx/${hash}`);
   }
 
-  async pollUntilFinalised(hash: string, timeoutMs = 60_000, intervalMs = 1_000): Promise<TxRecord> {
+  async pollUntilFinalised(hash: string, timeoutMs = 60_000, intervalMs = 1_000): Promise<TxStatus> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      const rec = await this.getTransactionRecord(hash);
-      if (rec && rec.status) return rec;
+      const status = await this.getTxStatus(hash);
+      if (status.state === "finalised" || status.state === "rejected") return status;
       await new Promise((r) => setTimeout(r, intervalMs));
     }
     throw new Error(`pollUntilFinalised: tx ${hash} did not finalise within ${timeoutMs}ms`);
