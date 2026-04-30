@@ -67,8 +67,8 @@ const SANOV_EQUIVOCATION_WINDOW: u64 = 100;
 const SANOV_DOWNTIME_WINDOW: u64 = 20;
 
 const PROPOSE_TIMEOUT_MS: u64 = 8000;
-const PREVOTE_TIMEOUT_MS: u64 = 4000;
-const PRECOMMIT_TIMEOUT_MS: u64 = 4000;
+const PREVOTE_TIMEOUT_MS: u64 = 12000;
+const PRECOMMIT_TIMEOUT_MS: u64 = 12000;
 
 /// Maximum rounds before forcing commit (prevents livelock).
 const MAX_ROUNDS_PER_HEIGHT: u32 = 10;
@@ -1507,10 +1507,13 @@ impl TendermintConsensus {
                         };
                         actions.push(ConsensusAction::BroadcastMessage(prevote));
 
-                        // Proposer DA self-attestation: sample our own block's data
+                        // Proposer DA self-attestation: we already computed data_root
+                        // from the final tx set, so attest directly without re-encoding.
                         self.da_block_proposers.insert(proposal.number, self.my_id);
-                        if let Some(att_msg) = self.perform_da_sampling(&proposal) {
-                            actions.push(ConsensusAction::BroadcastMessage(att_msg));
+                        if let Some(data_root) = proposal.data_root {
+                            if let Some(att_msg) = self.make_da_attestation(proposal.number, data_root, 1) {
+                                actions.push(ConsensusAction::BroadcastMessage(att_msg));
+                            }
                         }
 
                         self.round_state.phase = Phase::Prevote;
@@ -2914,94 +2917,6 @@ impl TendermintConsensus {
             (None, None)
         };
 
-        // Compute DA commitment (data_root) over transaction data
-        let data_root = if !txs.is_empty() {
-            match serde_json::to_vec(&txs) {
-                Ok(tx_bytes) => {
-                    match BlockDA::new() {
-                        Ok(da) => {
-                            match da.encode_block(&tx_bytes) {
-                                Ok(package) => {
-                                    debug!(
-                                        height = self.height,
-                                        shards = package.shards.len(),
-                                        data_bytes = tx_bytes.len(),
-                                        "DA erasure-coded block data"
-                                    );
-                                    Some(package.header.commitment_root)
-                                }
-                                Err(e) => {
-                                    warn!("DA encoding failed: {e} — block produced without data_root");
-                                    None
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            warn!("DA init failed: {e} — block produced without data_root");
-                            None
-                        }
-                    }
-                }
-                Err(e) => {
-                    warn!("TX serialization failed: {e} — block produced without data_root");
-                    None
-                }
-            }
-        } else {
-            let empty_root = blake3::hash(b"evaporchain:empty_block").into();
-            Some(empty_root)
-        };
-
-        // Build namespace Merkle tree for blob commitments
-        let blob_commitments = if !txs.is_empty() {
-            let namespaced_blobs: Vec<NamespacedBlob> = txs.iter().map(|tx| {
-                let (ns_id, data) = match tx {
-                    Transaction::Blob(blob_tx) => {
-                        (blob_tx.namespace_id, blob_tx.data.clone())
-                    }
-                    _ => {
-                        // Non-blob txs go into namespace 0 (core transactions)
-                        let data = serde_json::to_vec(tx).unwrap_or_default();
-                        (0u64, data)
-                    }
-                };
-                let mut namespace = [0u8; 8];
-                namespace.copy_from_slice(&ns_id.to_be_bytes());
-                NamespacedBlob { namespace, data }
-            }).collect();
-            let nmt = NamespaceMerkleTree::from_blobs(&namespaced_blobs);
-            nmt.blob_commitment_hashes()
-        } else {
-            vec![]
-        };
-
-        // 2D DA: encode transactions into extended data square for row/col commitments
-        let (da_row_roots, da_col_roots) = if !txs.is_empty() {
-            match serde_json::to_vec(&txs) {
-                Ok(tx_bytes) => {
-                    let da2d = BlockDA2D::new();
-                    match da2d.encode_block(&tx_bytes) {
-                        Ok(package) => {
-                            debug!(
-                                height = self.height,
-                                rows = package.header.row_roots.len(),
-                                cols = package.header.col_roots.len(),
-                                "DA-2D: computed row/col roots for proposal"
-                            );
-                            (package.header.row_roots, package.header.col_roots)
-                        }
-                        Err(e) => {
-                            warn!("DA-2D encoding failed: {e}");
-                            (vec![], vec![])
-                        }
-                    }
-                }
-                Err(_) => (vec![], vec![]),
-            }
-        } else {
-            (vec![], vec![])
-        };
-
         let anchor_hash = self.anchor_provider.as_ref()
             .and_then(|p| p.anchor_hash_for_height(self.height));
 
@@ -3009,7 +2924,10 @@ impl TendermintConsensus {
         // (certificates are built asynchronously as attestations arrive from peers)
         let da_certificate = self.try_attach_pending_da_certificate();
 
-        let block = Block {
+        // Build block with placeholder DA fields.  We compute data_root, blob
+        // commitments, and 2D roots AFTER trimming so they always reflect the
+        // final transaction set that peers will see.
+        let mut block = Block {
             number: self.height,
             epoch: next_epoch,
             parent_hash: self.parent_hash,
@@ -3020,8 +2938,8 @@ impl TendermintConsensus {
             producer_id: Some(self.my_id),
             vrf_output: vrf_out,
             vrf_proof: vrf_prf,
-            data_root,
-            blob_commitments,
+            data_root: None,
+            blob_commitments: vec![],
             da_certificate,
             commit_certificate: None,
             nova_proof: None,
@@ -3029,14 +2947,13 @@ impl TendermintConsensus {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
-            da_row_roots,
-            da_col_roots,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
         };
 
         // Enforce max block size — drop transactions from the tail until the
         // serialized block fits. This prevents oversized gossip messages and
         // ensures deterministic replication limits.
-        let mut block = block;
         if let Ok(encoded) = serde_json::to_vec(&block) {
             if encoded.len() > MAX_BLOCK_SIZE_BYTES {
                 warn!(
@@ -3056,6 +2973,62 @@ impl TendermintConsensus {
                     }
                 }
             }
+        }
+
+        // Compute DA commitment fields on the final (post-trim) transaction set.
+        if block.transactions.is_empty() {
+            block.data_root = Some(blake3::hash(b"evaporchain:empty_block").into());
+        } else if let Ok(tx_bytes) = serde_json::to_vec(&block.transactions) {
+            // 1D commitment — this is the authoritative data_root stored in the header.
+            match BlockDA::new() {
+                Ok(da) => match da.encode_block(&tx_bytes) {
+                    Ok(package) => {
+                        debug!(
+                            height = self.height,
+                            shards = package.shards.len(),
+                            data_bytes = tx_bytes.len(),
+                            "DA erasure-coded block data"
+                        );
+                        block.data_root = Some(package.header.commitment_root);
+                    }
+                    Err(e) => warn!("DA encoding failed: {e} — block produced without data_root"),
+                },
+                Err(e) => warn!("DA init failed: {e} — block produced without data_root"),
+            }
+
+            // 2D row/col commitments for light-client sampling.
+            let da2d = BlockDA2D::new();
+            match da2d.encode_block(&tx_bytes) {
+                Ok(package) => {
+                    debug!(
+                        height = self.height,
+                        rows = package.header.row_roots.len(),
+                        cols = package.header.col_roots.len(),
+                        "DA-2D: computed row/col roots for proposal"
+                    );
+                    block.da_row_roots = package.header.row_roots;
+                    block.da_col_roots = package.header.col_roots;
+                }
+                Err(e) => warn!("DA-2D encoding failed: {e}"),
+            }
+
+            // Blob commitments (namespace Merkle tree).
+            let namespaced_blobs: Vec<NamespacedBlob> = block.transactions.iter().map(|tx| {
+                let (ns_id, data) = match tx {
+                    Transaction::Blob(blob_tx) => (blob_tx.namespace_id, blob_tx.data.clone()),
+                    _ => {
+                        let data = serde_json::to_vec(tx).unwrap_or_default();
+                        (0u64, data)
+                    }
+                };
+                let mut namespace = [0u8; 8];
+                namespace.copy_from_slice(&ns_id.to_be_bytes());
+                NamespacedBlob { namespace, data }
+            }).collect();
+            let nmt = NamespaceMerkleTree::from_blobs(&namespaced_blobs);
+            block.blob_commitments = nmt.blob_commitment_hashes();
+        } else {
+            warn!("TX serialization failed — block produced without data_root");
         }
 
         // Log the proposal antichain from the parallel Light-Cone DAG.
