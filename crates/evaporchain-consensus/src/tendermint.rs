@@ -1698,6 +1698,27 @@ impl TendermintConsensus {
                             actions
                                 .push(ConsensusAction::RequestSync(self.height, self.height + 1));
                         } else {
+                            // P2-04: refuse to commit if block has a data_root
+                            // but DA attestation supermajority hasn't been
+                            // reached. Below `da_enforcement_height` we skip
+                            // (genesis bootstrap window). On chain_id starting
+                            // with `mainnet-` we enforce regardless of height.
+                            let mainnet = block.chain_id.starts_with("mainnet-");
+                            let enforce_da = mainnet
+                                || self.height >= self.da_enforcement_height;
+                            if enforce_da && block.data_root.is_some() {
+                                if !self.has_da_supermajority(block.number) {
+                                    warn!(
+                                        height = block.number,
+                                        "P2-04: refusing to commit — DA attestation supermajority not reached"
+                                    );
+                                    actions.push(ConsensusAction::RequestSync(
+                                        self.height,
+                                        self.height + 1,
+                                    ));
+                                    return actions;
+                                }
+                            }
                             if block.commit_certificate.is_none() {
                                 block.commit_certificate = self.try_build_commit_certificate(hash);
                             }
@@ -2439,12 +2460,30 @@ impl TendermintConsensus {
                                     self.height + 1,
                                 ));
                             } else {
-                                if block.commit_certificate.is_none() {
-                                    block.commit_certificate =
-                                        self.try_build_commit_certificate(hash);
+                                // P2-04: refuse to commit if block has a data_root
+                                // but DA attestation supermajority hasn't been reached.
+                                let mainnet = block.chain_id.starts_with("mainnet-");
+                                let enforce_da = mainnet
+                                    || self.height >= self.da_enforcement_height;
+                                if enforce_da && block.data_root.is_some()
+                                    && !self.has_da_supermajority(block.number)
+                                {
+                                    warn!(
+                                        height = block.number,
+                                        "P2-04: refusing to commit — DA attestation supermajority not reached (msg path)"
+                                    );
+                                    actions.push(ConsensusAction::RequestSync(
+                                        self.height,
+                                        self.height + 1,
+                                    ));
+                                } else {
+                                    if block.commit_certificate.is_none() {
+                                        block.commit_certificate =
+                                            self.try_build_commit_certificate(hash);
+                                    }
+                                    self.round_state.phase = Phase::Commit;
+                                    actions.push(ConsensusAction::CommitBlock(block));
                                 }
-                                self.round_state.phase = Phase::Commit;
-                                actions.push(ConsensusAction::CommitBlock(block));
                             }
                         }
                     }
@@ -2727,7 +2766,7 @@ impl TendermintConsensus {
                 .signer_ids
                 .iter()
                 .filter_map(|id| self.validator_set.get_validator(*id))
-                .map(|v| v.stake)
+                .map(|v| v.effective_stake())   // P2-01
                 .sum::<u64>();
             let timestamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -2758,7 +2797,7 @@ impl TendermintConsensus {
                 if let Some(my_validator) = self.validator_set.get_validator(self.my_id) {
                     let att = self.da_attestation.create_own_attestation(
                         self.my_id,
-                        my_validator.stake,
+                        my_validator.effective_stake(),   // P2-01
                         bls_kp,
                     );
                     if let Some(attestation) = att {
@@ -3045,10 +3084,32 @@ impl TendermintConsensus {
             self.encrypted_mempool.process_reveals(self.epoch, &[])
         };
 
-        // Fill remaining capacity from plain mempool
+        // Fill remaining capacity from plain mempool, respecting gas limit
         let remaining = MAX_TXS_PER_BLOCK.saturating_sub(txs.len());
         if remaining > 0 {
-            txs.extend(self.mempool.take(remaining));
+            let candidates = self.mempool.take(remaining);
+            if self.executor.block_gas_limit > 0 {
+                let mut gas_used: u64 = txs
+                    .iter()
+                    .map(ParallelExecutor::estimate_gas)
+                    .fold(0u64, |a, g| a.saturating_add(g));
+                let mut rejected = Vec::new();
+                for tx in candidates {
+                    let gas = ParallelExecutor::estimate_gas(&tx);
+                    if gas_used.saturating_add(gas) > self.executor.block_gas_limit {
+                        rejected.push(tx);
+                    } else {
+                        gas_used = gas_used.saturating_add(gas);
+                        txs.push(tx);
+                    }
+                }
+                // Return over-gas txs to mempool for future blocks
+                for tx in rejected {
+                    self.mempool.submit_priority(tx);
+                }
+            } else {
+                txs.extend(candidates);
+            }
         }
 
         let timestamp = SystemTime::now()
@@ -3227,7 +3288,14 @@ impl TendermintConsensus {
 
         let mut hash_stake: HashMap<Option<[u8; 32]>, u64> = HashMap::new();
         for (vid, hash) in &self.round_state.prevotes {
-            let stake = self.validator_set.get(*vid).map(|v| v.stake).unwrap_or(0);
+            // Must match the per-validator weight used by `total_stake()`
+            // (which is what `stake_quorum_threshold` is computed from).
+            // See audit P2-01.
+            let stake = self
+                .validator_set
+                .get(*vid)
+                .map(|v| v.effective_stake())
+                .unwrap_or(0);
             *hash_stake.entry(*hash).or_insert(0) += stake;
         }
 
@@ -3246,7 +3314,12 @@ impl TendermintConsensus {
 
         let mut hash_stake: HashMap<Option<[u8; 32]>, u64> = HashMap::new();
         for (vid, hash) in &self.round_state.precommits {
-            let stake = self.validator_set.get(*vid).map(|v| v.stake).unwrap_or(0);
+            // Must match `total_stake()` weight function. See audit P2-01.
+            let stake = self
+                .validator_set
+                .get(*vid)
+                .map(|v| v.effective_stake())
+                .unwrap_or(0);
             *hash_stake.entry(*hash).or_insert(0) += stake;
         }
 
@@ -3449,26 +3522,48 @@ impl TendermintConsensus {
     }
 
     /// Try to build a CommitCertificate from collected BLS precommit signatures.
+    ///
+    /// Audit P2-05: signer_ids are sorted ascending before aggregation so
+    /// every honest node assembling the cert from the same vote set
+    /// produces a byte-identical certificate. Aggregate BLS verification is
+    /// permutation-invariant, but the cert itself is part of state — without
+    /// canonical ordering, two nodes' certs would hash differently and split
+    /// the chain. Also closes a small timing-side-channel risk where
+    /// short-circuit-on-first-fail aggregate verify would consult signers
+    /// in HashMap iteration order.
     fn try_build_commit_certificate(&self, block_hash: [u8; 32]) -> Option<CommitCertificate> {
         let threshold = self.stake_quorum_threshold();
-        let mut signer_ids = Vec::new();
-        let mut sigs = Vec::new();
-        let mut signer_stake: u64 = 0;
 
+        // Collect (vid, sig_bytes, stake) for every signer of this hash.
+        let mut entries: Vec<(u64, Vec<u8>, u64)> = Vec::new();
         for (vid, vote_hash) in &self.round_state.precommits {
-            if *vote_hash == Some(block_hash) {
-                if let Some(sig_bytes) = self.round_state.precommit_bls_sigs.get(vid) {
-                    let stake = self.validator_set.get(*vid).map(|v| v.stake).unwrap_or(0);
-                    signer_ids.push(*vid);
-                    sigs.push(BlsSignature(sig_bytes.clone()));
-                    signer_stake += stake;
-                }
+            if *vote_hash != Some(block_hash) {
+                continue;
             }
+            let Some(sig_bytes) = self.round_state.precommit_bls_sigs.get(vid) else {
+                continue;
+            };
+            // Must match `total_stake()` weight function. See audit P2-01.
+            let stake = self
+                .validator_set
+                .get(*vid)
+                .map(|v| v.effective_stake())
+                .unwrap_or(0);
+            entries.push((*vid, sig_bytes.clone(), stake));
         }
 
+        // Canonical order: sort ascending by validator id. Deterministic
+        // across all nodes that hold the same vote set.
+        entries.sort_by_key(|e| e.0);
+
+        let signer_stake: u64 = entries.iter().map(|e| e.2).sum();
         if signer_stake < threshold {
             return None;
         }
+
+        let signer_ids: Vec<u64> = entries.iter().map(|e| e.0).collect();
+        let sigs: Vec<BlsSignature> =
+            entries.iter().map(|e| BlsSignature(e.1.clone())).collect();
 
         let agg_sig = BlsVerifier::aggregate_signatures(&sigs)?;
         Some(CommitCertificate {
@@ -3506,7 +3601,8 @@ impl TendermintConsensus {
         let mut any_in_grace = false;
         for &vid in &cert.signer_ids {
             if let Some(validator) = self.validator_set.get(vid) {
-                signer_stake += validator.stake;
+                // Must match `total_stake()` weight function. See audit P2-01.
+                signer_stake += validator.effective_stake();
                 if let Some(ref bls_pk_bytes) = validator.bls_public_key {
                     // Reject if PoP was submitted but failed verification
                     if !validator.pop_verified {
@@ -3607,10 +3703,12 @@ impl TendermintConsensus {
         shards_verified: u32,
     ) -> Option<ConsensusMessage> {
         let kp = self.bls_keypair.as_ref()?;
+        // P2-01: must match `total_stake()` weight function so DA quorum
+        // computation is consistent with consensus quorum.
         let stake = self
             .validator_set
             .get(self.my_id)
-            .map(|v| v.stake)
+            .map(|v| v.effective_stake())
             .unwrap_or(0);
         let att = evaporchain_da::certificate::create_attestation(
             block_number,
@@ -3631,6 +3729,40 @@ impl TendermintConsensus {
         })
     }
 
+    /// P2-04: have we collected enough DA attestation stake (excluding the
+    /// proposer) to satisfy the consensus quorum threshold for `block_number`?
+    ///
+    /// Uses the same `effective_stake()` weight function as the consensus
+    /// quorum check (P2-01) so DA gating and consensus gating are
+    /// consistent.
+    fn has_da_supermajority(&self, block_number: u64) -> bool {
+        let threshold = self.stake_quorum_threshold();
+        if threshold == u64::MAX {
+            return false;
+        }
+        let proposer = self.da_block_proposers.get(&block_number).copied();
+        let attesters: Vec<u64> = match self.da_attestations.get(&block_number) {
+            Some(atts) => atts
+                .iter()
+                .filter(|att| Some(att.validator_id) != proposer)
+                .map(|att| att.validator_id)
+                .collect(),
+            None => return false,
+        };
+        // Dedup — multiple attestations from same validator count once.
+        let mut unique: HashSet<u64> = HashSet::new();
+        let mut weight: u64 = 0;
+        for vid in attesters {
+            if !unique.insert(vid) {
+                continue;
+            }
+            if let Some(v) = self.validator_set.get(vid) {
+                weight = weight.saturating_add(v.effective_stake());
+            }
+        }
+        weight >= threshold
+    }
+
     /// Try to build a DA certificate from collected attestations for a block.
     /// Returns serialized certificate bytes if supermajority is reached.
     pub fn try_build_da_certificate(
@@ -3646,7 +3778,14 @@ impl TendermintConsensus {
             data_root,
             total_stake,
         );
-        for att in atts {
+        // P2-05: feed attestations in canonical (validator-id ascending)
+        // order so the resulting certificate is byte-identical across nodes.
+        // The HashMap-stored Vec preserves insertion order locally but is
+        // not consistent across nodes that received attestations in
+        // different orders.
+        let mut sorted_atts: Vec<_> = atts.iter().collect();
+        sorted_atts.sort_by_key(|att| att.validator_id);
+        for att in sorted_atts {
             // Exclude the block proposer — they cannot attest to their own block's DA
             if Some(att.validator_id) == proposer {
                 continue;
