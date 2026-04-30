@@ -432,6 +432,104 @@ export interface HlwaReAttestResp {
   detail?: string;
 }
 
+// ── DSN — Decay-Stamped Nullifiers ─────────────────────────────────
+//
+// Privacy primitive: shielded transfers are made anonymous within a
+// sliding-window accumulator. The window aggregates blake3-folded
+// nullifiers; advancing rolls the oldest slot off.
+//
+// Endpoints (api.rs):
+//   POST /api/dsn/fold_nullifier  (~L5170) — { nullifier_hex } →
+//        { status, total_count, aggregate_root_hex }
+//   POST /api/dsn/advance_window  (~L5195) — no body →
+//        { status, total_count, aggregate_root_hex }
+//   GET  /api/dsn/status          (~L5205) →
+//        { status, total_count, aggregate_root_hex }
+//
+// All three responses share the same shape — they're emitted as
+// serde_json::Value so the TS interface mirrors the keys exactly.
+
+export interface DsnStatus {
+  status: string;
+  total_count: number;
+  aggregate_root_hex: string;
+}
+
+export interface DsnFoldReq {
+  nullifier_hex: string;
+}
+
+// ── LAD-VM — Linear/Affine/Decaying resource simulator ─────────────
+//
+// POST /api/lad_vm/simulate (~L1335). Pure compute, no chain mutation,
+// no signature. Returns the lifecycle outcome for a single op against
+// a Resource constructed from the request's mode + value. See
+// LadSimQuery / LadSimResp in api.rs (L1300-L1329).
+//
+// `outcome` strings (api.rs L1319-1322):
+//   "ok" | "evaporated" | "already-consumed" | "linear-cannot-drop" |
+//   "ticked-fresh" | "ticked-evaporated" | "ticked-no-op" |
+//   "missing-decay-window" | "error"
+
+export type LadMode = "linear" | "affine" | "decaying";
+export type LadAction = "use" | "drop" | "tick";
+
+export interface LadSimReq {
+  mode: LadMode;
+  value: number;
+  created_at_epoch: number;
+  /** Required iff mode == "decaying". */
+  decay_window?: number;
+  current_epoch: number;
+  action: LadAction;
+}
+
+export interface LadSimResp {
+  status: string;
+  action: string;
+  mode: string;
+  outcome: string;
+  returned_value: number | null;
+  is_evaporated_at_query: boolean;
+  created_at_epoch: number;
+  current_epoch: number;
+  decay_window: number | null;
+  detail: string;
+}
+
+// ── Bell-Beacon — CHSH quantum-randomness certification ───────────
+//
+// POST /api/bell_beacon (~L3447). CHSH inequality: S = E(a,b) − E(a,b')
+// + E(a',b) + E(a',b'). Local-realism bound is |S| ≤ 2; in milli-units
+// the threshold is 2000mb (LOCAL_REALISM_S_MILLI). Beacon is "Bell-
+// certified" iff S > threshold.
+//
+// Request (BellBeaconQuery, api.rs L3427-3436): all four expectation
+// values in milli-units (i64), optional threshold override.
+// Response (BellBeaconResp, api.rs L3438-3445): { status, s_value_milli,
+// threshold_milli, bell_certified, detail }.
+//
+// There is no read-only GET form for Bell-Beacon — beacon S-values are
+// computed per-block and would need to be surfaced via the chain header
+// to be queryable cheaply. The card therefore reflects a single design-
+// target simulation on mount.
+
+export interface BellBeaconReq {
+  e_ab: number;
+  e_ab_prime: number;
+  e_a_prime_b: number;
+  e_a_prime_b_prime: number;
+  threshold_milli?: number;
+}
+
+export interface BellBeaconResp {
+  status: string;
+  s_value_milli: number;
+  threshold_milli: number;
+  bell_certified: boolean;
+  detail: string;
+}
+
 class EvaporChainAPI {
   private baseUrl: string;
 
@@ -709,6 +807,32 @@ class EvaporChainAPI {
 
   async reAttestHlwa(req: HlwaSupplyReq): Promise<HlwaReAttestResp> {
     return this.post("/api/hlwa/re_attest", req);
+  }
+
+  // ── DSN — Decay-Stamped Nullifiers ──
+
+  async getDsnStatus(): Promise<DsnStatus> {
+    return this.get("/api/dsn/status");
+  }
+
+  async foldDsnNullifier(req: DsnFoldReq): Promise<DsnStatus> {
+    return this.post("/api/dsn/fold_nullifier", req);
+  }
+
+  async advanceDsnWindow(): Promise<DsnStatus> {
+    return this.post("/api/dsn/advance_window", {});
+  }
+
+  // ── LAD-VM ──
+
+  async simulateLadVm(req: LadSimReq): Promise<LadSimResp> {
+    return this.post("/api/lad_vm/simulate", req);
+  }
+
+  // ── Bell-Beacon ──
+
+  async getBellBeacon(req: BellBeaconReq): Promise<BellBeaconResp> {
+    return this.post("/api/bell_beacon", req);
   }
 }
 

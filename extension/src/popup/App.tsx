@@ -29,6 +29,7 @@ import { PortfolioScreen } from "@/components/PortfolioScreen";
 import { PatronageScreen } from "@/components/PatronageScreen";
 import { RefreshPoolScreen } from "@/components/RefreshPoolScreen";
 import { GovernanceScreen } from "@/components/GovernanceScreen";
+import { DsnDetailsScreen } from "@/components/DsnBadge";
 
 export function App() {
   const { view, init, completeTutorial } = useWallet();
@@ -98,6 +99,8 @@ export function App() {
       return <RefreshPoolScreen />;
     case "governance":
       return <GovernanceScreen />;
+    case "dsn-details":
+      return <DsnDetailsScreen />;
     default:
       return <LockScreen />;
   }

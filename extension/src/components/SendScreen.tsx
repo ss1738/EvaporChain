@@ -3,6 +3,7 @@ import { useWallet } from "@/hooks/useWallet";
 import { formatBalance } from "@/utils/format";
 import { Header } from "./Header";
 import { TxSimulation } from "./TxSimulation";
+import { LadVmPreview } from "./LadVmPreview";
 
 type SendStep = "form" | "preview" | "sent";
 
@@ -90,6 +91,12 @@ export function SendScreen() {
             onConfirm={handleConfirm}
             onCancel={handleCancelPreview}
           />
+
+          {/* LAD-VM substructural-resource preview. Self-gates behind
+              import.meta.env.DEV — the chain doesn't yet expose an
+              is_lad_typed flag on objects, so until then this is a
+              manual probe tool. See LadVmPreview.tsx file header. */}
+          <LadVmPreview />
 
           {loading && (
             <div className="mt-3 flex items-center justify-center gap-2">

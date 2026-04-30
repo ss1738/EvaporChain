@@ -5,6 +5,7 @@ import { Header } from "./Header";
 import { QuantumBadge } from "./QuantumBadge";
 import { FeeControllerWidget } from "./FeeControllerWidget";
 import { DemurrageBadge } from "./DemurrageBadge";
+import { DsnBadge } from "./DsnBadge";
 
 export function HomeScreen() {
   const {
@@ -88,6 +89,9 @@ export function HomeScreen() {
 
       {/* Fee controller compact card — Lyapunov-stable base fee state */}
       <FeeControllerWidget />
+
+      {/* DSN privacy badge — shielded-transfer anonymity set size */}
+      <DsnBadge />
 
       {/* Quick actions */}
       <div className="grid grid-cols-4 gap-2 px-4 pb-2">

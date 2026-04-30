@@ -3,6 +3,7 @@ import { useWallet } from "@/hooks/useWallet";
 import { api, type StateObject, type EnergyPortfolio, type EnergyHistory } from "@/utils/api";
 import { EnergyBar } from "./EnergyBar";
 import { energyPercent, energyColor } from "@/utils/format";
+import { BellBeaconCard } from "./BellBeaconCard";
 
 export function EnergyDashboard() {
   const { activeAccount, objects, setView, refreshObjects } = useWallet();
@@ -98,6 +99,11 @@ export function EnergyDashboard() {
           >
             Refresh pool ↗
           </button>
+        </div>
+
+        {/* Bell-Beacon CHSH card — quantum-randomness certification */}
+        <div className="mx-4 mt-3">
+          <BellBeaconCard />
         </div>
 
         {/* Urgency banner */}

@@ -28,6 +28,8 @@ import {
   type RefreshPoolStatus,
   type FeeControllerStatus,
   type ForkChoiceModeStatus,
+  type DsnStatus,
+  type BellBeaconReq,
 } from "@/utils/api";
 import type { WcSession, WcSessionProposal } from "@/utils/walletconnect";
 import { ledgerManager, type LedgerAccount } from "@/utils/ledger";
@@ -63,7 +65,8 @@ export type View =
   | "ai-assistant"
   | "patronage"
   | "refresh-pool"
-  | "governance";
+  | "governance"
+  | "dsn-details";
 
 export type PendingTxKind = "transfer" | "swap" | "resurrect" | "batch_refresh";
 
@@ -131,6 +134,15 @@ interface WalletState {
   /** Demurrage owed on the active account's idle balance, in EVAP. */
   demurrageOwed: number | null;
   forkChoiceMode: ForkChoiceModeStatus | null;
+  /** DSN privacy-window status: total folded count + aggregate root. */
+  dsnStatus: DsnStatus | null;
+  /** Last Bell-Beacon CHSH S-value (milli-units), from a single read. */
+  bellSValue: number | null;
+  /** Bell threshold from the same read; cached so the badge can render
+   *  without re-fetching. */
+  bellThreshold: number | null;
+  /** Whether the last Bell read certified S > threshold. */
+  bellCertified: boolean | null;
 
   // UI
   view: View;
@@ -195,6 +207,8 @@ interface WalletState {
   refreshFeeStatus: () => Promise<void>;
   refreshDemurrage: () => Promise<void>;
   refreshForkChoiceMode: () => Promise<void>;
+  refreshDsnStatus: () => Promise<void>;
+  refreshBellBeacon: (req?: BellBeaconReq) => Promise<void>;
 }
 
 interface TxSendResult {
@@ -238,6 +252,10 @@ export const useWallet = create<WalletState>((set, get) => ({
   feeDriftHistory: [],
   demurrageOwed: null,
   forkChoiceMode: null,
+  dsnStatus: null,
+  bellSValue: null,
+  bellThreshold: null,
+  bellCertified: null,
   tutorialComplete: (() => { try { return localStorage.getItem("evaporchain_tutorial_complete") === "true"; } catch { return false; } })(),
   view: "locked",
   loading: false,
@@ -284,6 +302,11 @@ export const useWallet = create<WalletState>((set, get) => ({
         }
       }, 3000);
     }
+
+    // DSN privacy-set status — fetched once on init alongside chain
+    // status. Subsequent refreshes happen after each tx finalises, in
+    // pollTxStatuses() below.
+    get().refreshDsnStatus().catch(() => { /* swallow */ });
   },
 
   unlock: async (password: string) => {
@@ -721,6 +744,7 @@ export const useWallet = create<WalletState>((set, get) => ({
     const live = txs.filter(t => !t.finalisedAt || now - t.finalisedAt < 10_000);
 
     // Query each non-terminal tx.
+    let anyNewlyFinalised = false;
     const updated = await Promise.all(live.map(async (tx) => {
       // Skip API call if already finalised/rejected — just preserve.
       if (tx.status === "finalised" || tx.status === "rejected") return tx;
@@ -735,6 +759,7 @@ export const useWallet = create<WalletState>((set, get) => ({
         };
         if (status.state === "finalised" || status.state === "rejected") {
           next.finalisedAt = Date.now();
+          if (status.state === "finalised") anyNewlyFinalised = true;
         }
         return next;
       } catch {
@@ -743,6 +768,13 @@ export const useWallet = create<WalletState>((set, get) => ({
     }));
 
     set({ pendingTxs: updated });
+
+    // Spec: refresh DSN status after each tx finalises so the privacy
+    // badge reflects the new accumulator if the tx was a shielded
+    // transfer.
+    if (anyNewlyFinalised) {
+      get().refreshDsnStatus().catch(() => { /* swallow */ });
+    }
   },
 
   // ── Patronage ─────────────────────────────────────────────────
@@ -881,6 +913,40 @@ export const useWallet = create<WalletState>((set, get) => ({
       set({ forkChoiceMode: mode });
     } catch {
       // Endpoint unavailable.
+    }
+  },
+
+  refreshDsnStatus: async () => {
+    try {
+      const status = await api.getDsnStatus();
+      set({ dsnStatus: status });
+    } catch {
+      // Endpoint unavailable; keep previous value.
+    }
+  },
+
+  refreshBellBeacon: async (req) => {
+    // Read-only POST: api.rs does not expose a GET form (Bell certifications
+    // come from per-block validator attestations, not a queryable cache).
+    // We feed the documented worked-example expectation values from
+    // §api.rs L5884 so the card shows the design-target S-value the
+    // beacon should hit. Real per-block S is reported in the chain
+    // header, not via this endpoint.
+    const body: BellBeaconReq = req ?? {
+      e_ab: 500,
+      e_ab_prime: -500,
+      e_a_prime_b: 500,
+      e_a_prime_b_prime: 500,
+    };
+    try {
+      const resp = await api.getBellBeacon(body);
+      set({
+        bellSValue: resp.s_value_milli,
+        bellThreshold: resp.threshold_milli,
+        bellCertified: resp.bell_certified,
+      });
+    } catch {
+      // Endpoint unavailable; keep previous values.
     }
   },
 }));
