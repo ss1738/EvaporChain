@@ -54,8 +54,15 @@ pub struct AutopoieticHealth {
 }
 
 impl AutopoieticHealth {
-    fn compute_status(p: SubsystemHealth, s: SubsystemHealth, l: SubsystemHealth) -> AutopoieticStatus {
-        let failed = [p, s, l].iter().filter(|&&h| h == SubsystemHealth::Failed).count();
+    fn compute_status(
+        p: SubsystemHealth,
+        s: SubsystemHealth,
+        l: SubsystemHealth,
+    ) -> AutopoieticStatus {
+        let failed = [p, s, l]
+            .iter()
+            .filter(|&&h| h == SubsystemHealth::Failed)
+            .count();
         match failed {
             0 => AutopoieticStatus::Viable,
             3 => AutopoieticStatus::Inviable,
@@ -77,7 +84,11 @@ pub struct ChainAutopoiesis<V: ProofVerifier> {
 
 impl<V: ProofVerifier> ChainAutopoiesis<V> {
     pub fn new(verifier: V, min_patronage_energy: Energy, sentinel_heartbeat_window: u64) -> Self {
-        Self { verifier, min_patronage_energy, sentinel_heartbeat_window }
+        Self {
+            verifier,
+            min_patronage_energy,
+            sentinel_heartbeat_window,
+        }
     }
 
     /// Produce a full autopoietic health report.
@@ -158,7 +169,7 @@ mod tests {
     use evaporchain_refresh_patronage::PatronageBook;
 
     fn empty_book() -> PatronageBook {
-        PatronageBook::default()
+        PatronageBook::new(b"empty-test-ns".to_vec())
     }
 
     #[test]
@@ -202,9 +213,9 @@ mod tests {
     #[test]
     fn viability_requires_sentinel_within_window() {
         let sys = ChainAutopoiesis::new(AlwaysAcceptVerifier, 0, 5);
-        let in_window  = sys.health_report(&empty_book(), &[], Some(95), 100);
+        let in_window = sys.health_report(&empty_book(), &[], Some(95), 100);
         let out_window = sys.health_report(&empty_book(), &[], Some(90), 100);
-        assert_eq!(in_window.sentinel,  SubsystemHealth::Healthy);
+        assert_eq!(in_window.sentinel, SubsystemHealth::Healthy);
         assert_eq!(out_window.sentinel, SubsystemHealth::Degraded);
     }
 }
