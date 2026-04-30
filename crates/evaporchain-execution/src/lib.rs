@@ -423,6 +423,7 @@ pub struct SimpleExecutor {
     /// Protocol-owned refresh pool. Storage rent + slash settlement
     /// + MEV burn flow into here under the system namespace, then pay
     /// out via `RedirectKind::RefreshPayout` for namespace keep-alive.
+    ///
     /// Per INVENTION_STACK.md §1.2 conservation invariant: energy is
     /// never destroyed, only redirected.
     pub refresh_pool: evaporchain_energy_kernel::RefreshPool,
@@ -947,9 +948,10 @@ impl SimpleExecutor {
             return Err(ExecutionError::ZeroAmount);
         }
 
-        // Check sender nonce
+        // Check sender nonce (skipped for the all-zeros faucet/mint address).
+        let is_faucet = tx.from == [0u8; 32];
         let sender = db.get_or_create_account(&tx.from);
-        if sender.nonce != tx.nonce {
+        if !is_faucet && sender.nonce != tx.nonce {
             return Err(ExecutionError::InvalidNonce {
                 expected: sender.nonce,
                 got: tx.nonce,
@@ -965,7 +967,9 @@ impl SimpleExecutor {
 
         // Debit sender
         sender.balance -= tx.amount;
-        sender.nonce += 1;
+        if !is_faucet {
+            sender.nonce += 1;
+        }
 
         // Credit receiver
         let receiver = db.get_or_create_account(&tx.to);

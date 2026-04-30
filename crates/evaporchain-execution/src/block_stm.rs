@@ -778,10 +778,11 @@ fn exec_transfer(view: &mut TxView, tx: &TransferTx) -> Result<(), TxViewError> 
         return Err(ExecutionError::ZeroAmount.into());
     }
 
+    let is_faucet = tx.from == [0u8; 32];
     let sender_balance = view.read_balance(&tx.from).map_err(TxViewError::Blocked)?;
     let sender_nonce = view.read_nonce(&tx.from).map_err(TxViewError::Blocked)?;
 
-    if sender_nonce != tx.nonce {
+    if !is_faucet && sender_nonce != tx.nonce {
         return Err(ExecutionError::InvalidNonce {
             expected: sender_nonce,
             got: tx.nonce,
@@ -805,11 +806,15 @@ fn exec_transfer(view: &mut TxView, tx: &TransferTx) -> Result<(), TxViewError> 
             required: tx.amount,
         })
     })?;
-    let new_sender_nonce = sender_nonce.checked_add(1).ok_or_else(|| {
-        TxViewError::ExecutionError(ExecutionError::ContractError(
-            "nonce overflow".into(),
-        ))
-    })?;
+    let new_sender_nonce = if is_faucet {
+        sender_nonce
+    } else {
+        sender_nonce.checked_add(1).ok_or_else(|| {
+            TxViewError::ExecutionError(ExecutionError::ContractError(
+                "nonce overflow".into(),
+            ))
+        })?
+    };
     view.write_account(tx.from, new_sender_balance, new_sender_nonce);
 
     let recv_balance = view.read_balance(&tx.to).map_err(TxViewError::Blocked)?;

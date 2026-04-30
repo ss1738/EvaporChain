@@ -940,7 +940,11 @@ impl ParallelExecutor {
         }
 
         let sender = db.get_or_create_account(&tx.from);
-        if sender.nonce != tx.nonce {
+        // Skip nonce check for the all-zeros faucet/mint address — it is a
+        // special pre-seeded account not owned by any user keypair, so
+        // concurrent faucet txs can arrive in any nonce order and all succeed.
+        let is_faucet = tx.from == [0u8; 32];
+        if !is_faucet && sender.nonce != tx.nonce {
             return Err(ExecutionError::InvalidNonce {
                 expected: sender.nonce,
                 got: tx.nonce,
@@ -954,7 +958,9 @@ impl ParallelExecutor {
             });
         }
         sender.balance -= tx.amount;
-        sender.nonce += 1;
+        if !is_faucet {
+            sender.nonce += 1;
+        }
 
         let receiver = db.get_or_create_account(&tx.to);
         receiver.balance = receiver.balance.saturating_add(tx.amount);
