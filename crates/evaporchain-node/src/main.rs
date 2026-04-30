@@ -4480,6 +4480,7 @@ async fn main() -> Result<()> {
                 // where a late-joining node never catches up.
                 if tendermint.is_some() {
                     let expected_next = local_height + 1;
+                    let block_number = block.number;
                     if block.number > expected_next && !sync_in_flight {
                         let gap = block.number - local_height;
                         if gap > 1000 && state_sync.is_none() {
@@ -4536,7 +4537,7 @@ async fn main() -> Result<()> {
                     // For blocks at expected_next in Tendermint mode,
                     // consensus round handles them — skip to avoid double-apply.
                     // But clear sync_in_flight so subsequent syncs can be requested.
-                    if block.number == expected_next {
+                    if block_number == expected_next {
                         sync_in_flight = false;
                     }
                     continue;
