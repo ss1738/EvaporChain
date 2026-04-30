@@ -1746,17 +1746,19 @@ impl TendermintConsensus {
         }
 
         // If we receive a message for a future height, we are behind — request sync.
-        // Trigger on gap >= 1: if a peer is even 1 block ahead, we should sync.
-        // Use self.height (not self.height + 1) as the from so that gap=1 produces
-        // RequestSync(h, h) rather than the backwards RequestSync(h+1, h).
+        // Only trigger sync for gap > 1: gap=1 means the peer just committed our
+        // current round and moved on; those peers still gossip precommits that let
+        // our round succeed without needing external sync.
         if msg.height() > self.height {
-            tracing::warn!(
-                local_height = self.height,
-                msg_height = msg.height(),
-                "Behind by {} blocks — requesting sync",
-                msg.height() - self.height
-            );
-            actions.push(ConsensusAction::RequestSync(self.height, msg.height().saturating_sub(1)));
+            if msg.height() > self.height + 1 {
+                tracing::warn!(
+                    local_height = self.height,
+                    msg_height = msg.height(),
+                    "Behind by {} blocks — requesting sync",
+                    msg.height() - self.height
+                );
+                actions.push(ConsensusAction::RequestSync(self.height, msg.height().saturating_sub(1)));
+            }
             return actions;
         }
 

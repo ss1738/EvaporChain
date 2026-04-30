@@ -4534,7 +4534,11 @@ async fn main() -> Result<()> {
                         }
                     }
                     // For blocks at expected_next in Tendermint mode,
-                    // consensus round handles them — skip to avoid double-apply
+                    // consensus round handles them — skip to avoid double-apply.
+                    // But clear sync_in_flight so subsequent syncs can be requested.
+                    if block.number == expected_next {
+                        sync_in_flight = false;
+                    }
                     continue;
                 }
 
