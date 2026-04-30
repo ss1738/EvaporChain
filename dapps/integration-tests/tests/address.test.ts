@@ -60,13 +60,33 @@ describe("Address & Transfers", () => {
     expect([200, 404]).toContain(res.status);
   });
 
-  it("GET /api/tx/:hash returns transaction detail", async () => {
+  it("GET /api/tx/:hash returns lifecycle status", async () => {
+    // Post commit d0394b1 the endpoint returns TxStatusResponse:
+    //   { hash, state: "pending"|"mempool"|"included"|"finalised"|"rejected",
+    //     block_height?, epoch?, error? }
+    // The originating tx body (type/from/to/amount) is no longer carried
+    // here — those fields live on /api/transactions. Tests that need
+    // them should redirect there.
     const txs = await get<{ transactions: Array<{ hash: string }> }>("/api/transactions");
     if (!txs.data.transactions || txs.data.transactions.length === 0) return;
 
-    const res = await get<Record<string, unknown>>(`/api/tx/${txs.data.transactions[0].hash}`);
+    const hash = txs.data.transactions[0].hash;
+    const res = await get<{
+      hash: string;
+      state: "pending" | "mempool" | "included" | "finalised" | "rejected";
+      block_height?: number;
+      epoch?: number;
+      error?: string;
+    }>(`/api/tx/${hash}`);
     expect(res.ok).toBe(true);
     expect(res.data).toHaveProperty("hash");
+    expect(res.data).toHaveProperty("state");
+    // Anything pulled from /api/transactions has already landed in a
+    // block, so it must be included or finalised (single-node dev mode
+    // collapses the gap and reports finalised).
+    expect(["included", "finalised"]).toContain(res.data.state);
+    expect(typeof res.data.block_height).toBe("number");
+    expect(typeof res.data.epoch).toBe("number");
   });
 
   it("faucet-funded address has positive balance", async () => {

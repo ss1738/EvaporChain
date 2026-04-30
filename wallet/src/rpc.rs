@@ -130,7 +130,13 @@ pub struct BlockRecord {
     pub transactions: Vec<TxRecord>,
 }
 
-/// Transaction record from GET /api/transactions or /api/tx/:hash.
+/// Transaction record from GET /api/transactions (the historical list).
+///
+/// NOTE: The `/api/tx/:hash` endpoint no longer returns this shape. It now
+/// returns [`TxStatus`] (lifecycle state only — no tx body). If a caller
+/// needs the originating tx fields (`from`, `to`, `amount`, `tx_type`,
+/// etc.) for a known hash, it must scan `/api/transactions` for a
+/// matching `hash`.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TxRecord {
     pub hash: String,
@@ -147,6 +153,41 @@ pub struct TxRecord {
     pub block_number: u64,
     pub epoch: u64,
     pub status: String,
+}
+
+/// Lifecycle state of a transaction, as returned by `GET /api/tx/:hash`.
+///
+/// Wire-format strings are lowercase (`"pending"`, `"mempool"`,
+/// `"included"`, `"finalised"`, `"rejected"`) so the JSON deserialises
+/// directly from the node's `TxStatusResponse.state` field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TxState {
+    Pending,
+    Mempool,
+    Included,
+    Finalised,
+    Rejected,
+}
+
+/// Transaction status from `GET /api/tx/:hash` (new shape, post commit
+/// `d0394b1`). Carries lifecycle state only — no tx body. Use
+/// [`RpcClient::get_transactions`] to fetch the full body for a hash.
+///
+/// `block_height` / `epoch` are present once the tx is `included`,
+/// `finalised`, or `rejected`. `error` is populated only when
+/// `state == TxState::Rejected`.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TxStatus {
+    /// Canonical 64-char lowercase hex (no `0x` prefix) per the node API.
+    pub hash: String,
+    pub state: TxState,
+    #[serde(default)]
+    pub block_height: Option<u64>,
+    #[serde(default)]
+    pub epoch: Option<u64>,
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 /// Stats summary from GET /api/stats/summary.
@@ -528,13 +569,20 @@ impl RpcClient {
     }
 
     /// Create a new RPC client with rate limiting enabled.
-    pub fn with_rate_limit(base_url: &str, requests_per_second: f64, burst: u32) -> Result<Self, RpcError> {
+    pub fn with_rate_limit(
+        base_url: &str,
+        requests_per_second: f64,
+        burst: u32,
+    ) -> Result<Self, RpcError> {
         let url = Url::parse(base_url)?;
         Ok(Self {
             base_url: url,
             client: Client::new(),
             auth_token: None,
-            rate_limiter: Some(crate::rate_limit::RateLimiter::new(requests_per_second, burst)),
+            rate_limiter: Some(crate::rate_limit::RateLimiter::new(
+                requests_per_second,
+                burst,
+            )),
         })
     }
 
@@ -738,8 +786,15 @@ impl RpcClient {
         self.get(&path).await
     }
 
-    /// Get a transaction by hash.
-    pub async fn get_tx(&self, hash: &str) -> Result<TxRecord, RpcError> {
+    /// Get a transaction's lifecycle status by hash.
+    ///
+    /// Returns the new [`TxStatus`] shape (post commit `d0394b1`): hash +
+    /// `pending | mempool | included | finalised | rejected` state, with
+    /// optional `block_height` / `epoch` once the tx has been included.
+    /// Does NOT return the tx body — use [`RpcClient::get_transactions`]
+    /// (the historical list) if you need `from`/`to`/`amount`/etc. for a
+    /// given hash.
+    pub async fn get_tx(&self, hash: &str) -> Result<TxStatus, RpcError> {
         self.get(&format!("/api/tx/{}", hash)).await
     }
 
@@ -762,10 +817,7 @@ impl RpcClient {
     }
 
     /// Submit a refresh transaction.
-    pub async fn submit_refresh(
-        &self,
-        req: &RefreshRequest,
-    ) -> Result<TxResultResponse, RpcError> {
+    pub async fn submit_refresh(&self, req: &RefreshRequest) -> Result<TxResultResponse, RpcError> {
         self.post("/api/tx/refresh", req).await
     }
 
@@ -824,10 +876,7 @@ impl RpcClient {
     }
 
     /// Refresh an NFT's energy (requires auth token).
-    pub async fn refresh_nft(
-        &self,
-        req: &RefreshNftRequest,
-    ) -> Result<TxResultResponse, RpcError> {
+    pub async fn refresh_nft(&self, req: &RefreshNftRequest) -> Result<TxResultResponse, RpcError> {
         self.post("/api/nft/refresh", req).await
     }
 
@@ -963,13 +1012,19 @@ mod tests {
     #[test]
     fn test_url_building() {
         let client = RpcClient::new("http://localhost:3000").unwrap();
-        assert_eq!(client.url("/api/status"), "http://localhost:3000/api/status");
+        assert_eq!(
+            client.url("/api/status"),
+            "http://localhost:3000/api/status"
+        );
     }
 
     #[test]
     fn test_url_building_trailing_slash() {
         let client = RpcClient::new("http://localhost:3000/").unwrap();
-        assert_eq!(client.url("/api/status"), "http://localhost:3000/api/status");
+        assert_eq!(
+            client.url("/api/status"),
+            "http://localhost:3000/api/status"
+        );
     }
 
     #[test]
@@ -1094,6 +1149,8 @@ mod tests {
 
     #[test]
     fn test_deserialize_tx_record() {
+        // TxRecord is now only emitted from /api/transactions (the
+        // historical list), not /api/tx/:hash.
         let json = r#"{
             "hash": "0xabc123",
             "type": "transfer",
@@ -1109,6 +1166,65 @@ mod tests {
         assert_eq!(resp.tx_type, "transfer");
         assert_eq!(resp.amount, Some(1000));
         assert!(resp.object_id.is_none());
+    }
+
+    #[test]
+    fn test_deserialize_tx_status_finalised() {
+        // GET /api/tx/:hash new shape — finalised tx carries
+        // block_height + epoch.
+        let json = r#"{
+            "hash": "abc123",
+            "state": "finalised",
+            "block_height": 42,
+            "epoch": 42
+        }"#;
+        let resp: TxStatus = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.hash, "abc123");
+        assert_eq!(resp.state, TxState::Finalised);
+        assert_eq!(resp.block_height, Some(42));
+        assert_eq!(resp.epoch, Some(42));
+        assert!(resp.error.is_none());
+    }
+
+    #[test]
+    fn test_deserialize_tx_status_pending() {
+        // pending / mempool — no block_height, no epoch, no error.
+        let json = r#"{"hash": "deadbeef", "state": "pending"}"#;
+        let resp: TxStatus = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.state, TxState::Pending);
+        assert!(resp.block_height.is_none());
+        assert!(resp.epoch.is_none());
+    }
+
+    #[test]
+    fn test_deserialize_tx_status_rejected() {
+        let json = r#"{
+            "hash": "abc",
+            "state": "rejected",
+            "block_height": 7,
+            "epoch": 7,
+            "error": "insufficient balance"
+        }"#;
+        let resp: TxStatus = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.state, TxState::Rejected);
+        assert_eq!(resp.error.as_deref(), Some("insufficient balance"));
+    }
+
+    #[test]
+    fn test_tx_state_lowercase_roundtrip() {
+        // serde(rename_all = "lowercase") on TxState — strings on the
+        // wire match the node's `pending|mempool|included|finalised|rejected`.
+        for (s, st) in [
+            ("\"pending\"", TxState::Pending),
+            ("\"mempool\"", TxState::Mempool),
+            ("\"included\"", TxState::Included),
+            ("\"finalised\"", TxState::Finalised),
+            ("\"rejected\"", TxState::Rejected),
+        ] {
+            let parsed: TxState = serde_json::from_str(s).unwrap();
+            assert_eq!(parsed, st);
+            assert_eq!(serde_json::to_string(&st).unwrap(), s);
+        }
     }
 
     #[test]

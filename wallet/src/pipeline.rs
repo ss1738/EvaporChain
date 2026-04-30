@@ -382,10 +382,7 @@ impl TxPipeline {
     // ── Faucet ─────────────────────────────────────────────────────────
 
     /// Request testnet tokens from the faucet.
-    pub async fn faucet(
-        &mut self,
-        address: &str,
-    ) -> Result<rpc::FaucetResponse, PipelineError> {
+    pub async fn faucet(&mut self, address: &str) -> Result<rpc::FaucetResponse, PipelineError> {
         let resp = self.rpc.faucet(address).await?;
         Ok(resp)
     }
@@ -405,24 +402,37 @@ impl TxPipeline {
         });
     }
 
-    /// Poll the node for a transaction's confirmation status.
-    /// Returns the tx record if found, or None after max_attempts.
+    /// Poll the node for a transaction's lifecycle status.
+    ///
+    /// Returns the [`rpc::TxStatus`] once the tx has reached `included`,
+    /// `finalised`, or `rejected` — i.e. it has landed in a block (or been
+    /// rejected at execution). Returns `None` after `max_attempts` if the
+    /// tx is still `pending` or sitting in `mempool`.
+    ///
+    /// TODO: callers that need the originating tx body (sender, recipient,
+    /// amount, type) must call `/api/transactions` (the historical list)
+    /// to find the matching hash — the new `/api/tx/:hash` endpoint
+    /// returns lifecycle state only.
     pub async fn confirm_tx(
         &self,
         tx_hash: &str,
         max_attempts: u32,
         delay_ms: u64,
-    ) -> Result<Option<rpc::TxRecord>, PipelineError> {
+    ) -> Result<Option<rpc::TxStatus>, PipelineError> {
         for _ in 0..max_attempts {
             match self.rpc.get_tx(tx_hash).await {
-                Ok(tx) => {
-                    if tx.status == "confirmed" || tx.status == "included" {
+                Ok(tx) => match tx.state {
+                    rpc::TxState::Included
+                    | rpc::TxState::Finalised
+                    | rpc::TxState::Rejected => {
                         return Ok(Some(tx));
                     }
-                    // Still pending — wait and retry
-                }
+                    rpc::TxState::Pending | rpc::TxState::Mempool => {
+                        // Not yet landed — wait and retry.
+                    }
+                },
                 Err(_) => {
-                    // Tx not found yet — wait and retry
+                    // Transient lookup error — wait and retry.
                 }
             }
             tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
@@ -511,7 +521,10 @@ mod tests {
         assert_eq!(pipeline.history().len(), 1);
         assert_eq!(pipeline.history()[0].tx_type, "transfer");
         assert_eq!(pipeline.history()[0].tx_hash, "0xabc123");
-        assert!(matches!(pipeline.history()[0].status, TxStatus::Confirmed(_)));
+        assert!(matches!(
+            pipeline.history()[0].status,
+            TxStatus::Confirmed(_)
+        ));
     }
 
     #[test]
@@ -611,12 +624,18 @@ mod tests {
     #[test]
     fn test_multiple_operations_history() {
         let mut pipeline = make_pipeline();
-        for (i, tx_type) in ["transfer", "create_object", "refresh", "mint_nft"].iter().enumerate() {
-            pipeline.record(tx_type, &TxResultResponse {
-                success: true,
-                message: format!("op {}", i),
-                tx_hash: Some(format!("0x{}", i)),
-            });
+        for (i, tx_type) in ["transfer", "create_object", "refresh", "mint_nft"]
+            .iter()
+            .enumerate()
+        {
+            pipeline.record(
+                tx_type,
+                &TxResultResponse {
+                    success: true,
+                    message: format!("op {}", i),
+                    tx_hash: Some(format!("0x{}", i)),
+                },
+            );
         }
         assert_eq!(pipeline.history().len(), 4);
         assert_eq!(pipeline.history()[0].tx_type, "transfer");

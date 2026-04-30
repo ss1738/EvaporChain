@@ -1880,9 +1880,17 @@ pub enum ScheduleAction {
 #[derive(Subcommand)]
 pub enum AllowlistAction {
     /// Add an address to allow list.
-    Allow { address: String, #[arg(long, default_value = "")] note: String },
+    Allow {
+        address: String,
+        #[arg(long, default_value = "")]
+        note: String,
+    },
     /// Add an address to deny list.
-    Deny { address: String, #[arg(long, default_value = "")] note: String },
+    Deny {
+        address: String,
+        #[arg(long, default_value = "")]
+        note: String,
+    },
     /// Remove an address from lists.
     Remove { address: String },
     /// Check if an address is allowed/denied.
@@ -2023,7 +2031,11 @@ pub enum GasStationAction {
     /// List sponsors.
     Sponsors,
     /// Add a gas sponsor.
-    AddSponsor { address: String, name: String, budget: u64 },
+    AddSponsor {
+        address: String,
+        name: String,
+        budget: u64,
+    },
     /// Show gas station stats.
     Stats,
 }
@@ -2077,7 +2089,12 @@ pub enum TokenRegistryAction {
 #[derive(Subcommand)]
 pub enum FeeBumpAction {
     /// Track a pending transaction.
-    Track { tx_hash: String, sender: String, nonce: u64, fee: u64 },
+    Track {
+        tx_hash: String,
+        sender: String,
+        nonce: u64,
+        fee: u64,
+    },
     /// List tracked transactions.
     List,
     /// Show a tracked transaction.
@@ -2153,7 +2170,14 @@ pub enum PeerAction {
 #[derive(Subcommand)]
 pub enum MempoolAction {
     /// Add a pending transaction.
-    Add { tx_hash: String, sender: String, receiver: String, amount: u64, fee: u64, nonce: u64 },
+    Add {
+        tx_hash: String,
+        sender: String,
+        receiver: String,
+        amount: u64,
+        fee: u64,
+        nonce: u64,
+    },
     /// Remove a transaction.
     Remove { tx_hash: String },
     /// List pending transactions.
@@ -2202,7 +2226,10 @@ pub enum NetHealthAction {
     /// Show epoch progress.
     Epoch { expected_blocks: u64 },
     /// Show recent events.
-    Events { #[arg(default_value = "20")] count: usize },
+    Events {
+        #[arg(default_value = "20")]
+        count: usize,
+    },
     /// Show full network stats.
     Stats,
 }
@@ -2210,7 +2237,11 @@ pub enum NetHealthAction {
 #[derive(Subcommand)]
 pub enum PriceAction {
     /// Register a token for price tracking.
-    Register { token_id: String, symbol: String, price: f64 },
+    Register {
+        token_id: String,
+        symbol: String,
+        price: f64,
+    },
     /// Update a token price.
     Update { token_id: String, price: f64 },
     /// Show token price.
@@ -2218,13 +2249,22 @@ pub enum PriceAction {
     /// List all tracked tokens.
     List,
     /// Set a price alert.
-    Alert { token_id: String, #[arg(long)] above: Option<f64>, #[arg(long)] below: Option<f64> },
+    Alert {
+        token_id: String,
+        #[arg(long)]
+        above: Option<f64>,
+        #[arg(long)]
+        below: Option<f64>,
+    },
     /// Check all alerts.
     CheckAlerts,
     /// Valuate portfolio.
     Portfolio,
     /// Show top gainers/losers.
-    Movers { #[arg(default_value = "5")] count: usize },
+    Movers {
+        #[arg(default_value = "5")]
+        count: usize,
+    },
     /// Show feed stats.
     Stats,
 }
@@ -2248,7 +2288,15 @@ pub enum RiskAction {
 #[derive(Subcommand)]
 pub enum DecodeAction {
     /// Decode a transaction.
-    Tx { tx_hash: String, selector: String, from: String, #[arg(long)] to: Option<String>, #[arg(long, default_value = "0")] value: u64 },
+    Tx {
+        tx_hash: String,
+        selector: String,
+        from: String,
+        #[arg(long)]
+        to: Option<String>,
+        #[arg(long, default_value = "0")]
+        value: u64,
+    },
     /// List registered methods.
     Methods,
     /// List known contracts.
@@ -2296,7 +2344,12 @@ pub enum AbiAction {
 #[derive(Subcommand)]
 pub enum NameAction {
     /// Register a name.
-    Register { name: String, owner: String, #[arg(long, default_value = "2099-01-01T00:00:00+00:00")] expires: String },
+    Register {
+        name: String,
+        owner: String,
+        #[arg(long, default_value = "2099-01-01T00:00:00+00:00")]
+        expires: String,
+    },
     /// Resolve a name to address.
     Resolve { name: String },
     /// Reverse resolve address to name.
@@ -2312,9 +2365,18 @@ pub enum NameAction {
 #[derive(Subcommand)]
 pub enum PreviewAction {
     /// Preview a transfer.
-    Transfer { from: String, to: String, value: u64, #[arg(long, default_value = "100000")] balance: u64 },
+    Transfer {
+        from: String,
+        to: String,
+        value: u64,
+        #[arg(long, default_value = "100000")]
+        balance: u64,
+    },
     /// Show recent previews.
-    Recent { #[arg(default_value = "10")] count: usize },
+    Recent {
+        #[arg(default_value = "10")]
+        count: usize,
+    },
     /// Show preview stats.
     Stats,
 }
@@ -2344,7 +2406,11 @@ pub enum PrivacyAction {
     /// Blind an amount.
     Blind { amount: u64 },
     /// Create a mix request.
-    Mix { amount: u64, #[arg(long, default_value = "single")] strategy: String },
+    Mix {
+        amount: u64,
+        #[arg(long, default_value = "single")]
+        strategy: String,
+    },
     /// Score address privacy.
     Score { address: String },
     /// Show privacy stats.
@@ -2354,9 +2420,16 @@ pub enum PrivacyAction {
 #[derive(Subcommand)]
 pub enum KeyRotAction {
     /// Add a managed key.
-    Add { id: String, key_type: String, public_key: String },
+    Add {
+        id: String,
+        key_type: String,
+        public_key: String,
+    },
     /// Rotate a key.
-    Rotate { key_id: String, new_public_key: String },
+    Rotate {
+        key_id: String,
+        new_public_key: String,
+    },
     /// List managed keys.
     List,
     /// Show key rotation stats.
@@ -2366,7 +2439,12 @@ pub enum KeyRotAction {
 #[derive(Subcommand)]
 pub enum AccessAction2 {
     /// Add a user.
-    AddUser { id: String, name: String, #[arg(long, default_value = "viewer")] role: String },
+    AddUser {
+        id: String,
+        name: String,
+        #[arg(long, default_value = "viewer")]
+        role: String,
+    },
     /// Remove a user.
     RemoveUser { id: String },
     /// Check access for a user.
@@ -2396,15 +2474,34 @@ pub enum ThreatAction {
 #[derive(Subcommand)]
 pub enum PoolAction {
     /// Add a liquidity pool.
-    Add { id: String, token_a: String, token_b: String, #[arg(long, default_value = "constant_product")] pool_type: String, #[arg(long, default_value_t = 30)] fee_bps: u32 },
+    Add {
+        id: String,
+        token_a: String,
+        token_b: String,
+        #[arg(long, default_value = "constant_product")]
+        pool_type: String,
+        #[arg(long, default_value_t = 30)]
+        fee_bps: u32,
+    },
     /// Add a LP position.
-    Deposit { id: String, pool_id: String, amount_a: u64, amount_b: u64, lp_tokens: u64 },
+    Deposit {
+        id: String,
+        pool_id: String,
+        amount_a: u64,
+        amount_b: u64,
+        lp_tokens: u64,
+    },
     /// Withdraw a position.
     Withdraw { position_id: String },
     /// Claim rewards for a position.
     Claim { position_id: String },
     /// Estimate swap output.
-    Estimate { pool_id: String, amount: u64, #[arg(long)] a_to_b: bool },
+    Estimate {
+        pool_id: String,
+        amount: u64,
+        #[arg(long)]
+        a_to_b: bool,
+    },
     /// List pools sorted by APY.
     List,
     /// Show pool stats.
@@ -2414,9 +2511,23 @@ pub enum PoolAction {
 #[derive(Subcommand)]
 pub enum FarmAction {
     /// Add a yield farm.
-    Add { id: String, name: String, protocol: String, stake_token: String, reward_token: String, #[arg(long, default_value_t = 12.0)] apy: f64 },
+    Add {
+        id: String,
+        name: String,
+        protocol: String,
+        stake_token: String,
+        reward_token: String,
+        #[arg(long, default_value_t = 12.0)]
+        apy: f64,
+    },
     /// Stake into a farm.
-    Stake { id: String, farm_id: String, amount: u64, #[arg(long, default_value = "manual")] compound: String },
+    Stake {
+        id: String,
+        farm_id: String,
+        amount: u64,
+        #[arg(long, default_value = "manual")]
+        compound: String,
+    },
     /// Unstake a position.
     Unstake { position_id: String },
     /// Harvest rewards.
@@ -2424,7 +2535,10 @@ pub enum FarmAction {
     /// Auto-compound a position.
     Compound { position_id: String },
     /// Show top farms by APY.
-    Best { #[arg(long, default_value_t = 10)] n: usize },
+    Best {
+        #[arg(long, default_value_t = 10)]
+        n: usize,
+    },
     /// Show farming stats.
     Stats,
 }
@@ -2432,13 +2546,29 @@ pub enum FarmAction {
 #[derive(Subcommand)]
 pub enum CrossSwapAction {
     /// Add a swap route.
-    AddRoute { id: String, source_chain: String, dest_chain: String, source_token: String, dest_token: String, #[arg(long, default_value_t = 1.0)] rate: f64, #[arg(long, default_value_t = 25)] fee_bps: u32, #[arg(long, default_value = "bridge")] provider: String },
+    AddRoute {
+        id: String,
+        source_chain: String,
+        dest_chain: String,
+        source_token: String,
+        dest_token: String,
+        #[arg(long, default_value_t = 1.0)]
+        rate: f64,
+        #[arg(long, default_value_t = 25)]
+        fee_bps: u32,
+        #[arg(long, default_value = "bridge")]
+        provider: String,
+    },
     /// Initiate a cross-chain swap.
     Swap { route_id: String, amount: u64 },
     /// Lock a pending swap.
     Lock { swap_id: String },
     /// Complete a swap.
-    Complete { swap_id: String, actual_output: u64, dest_tx: String },
+    Complete {
+        swap_id: String,
+        actual_output: u64,
+        dest_tx: String,
+    },
     /// Refund a swap.
     Refund { swap_id: String },
     /// List active swaps.
@@ -2450,13 +2580,32 @@ pub enum CrossSwapAction {
 #[derive(Subcommand)]
 pub enum FlashAction2 {
     /// Create a flash loan plan.
-    Create { name: String, token: String, amount: u64, #[arg(long, default_value_t = 9)] fee_bps: u32 },
+    Create {
+        name: String,
+        token: String,
+        amount: u64,
+        #[arg(long, default_value_t = 9)]
+        fee_bps: u32,
+    },
     /// Add borrow action.
-    Borrow { plan_id: String, token: String, amount: u64 },
+    Borrow {
+        plan_id: String,
+        token: String,
+        amount: u64,
+    },
     /// Add swap action.
-    Swap { plan_id: String, from: String, to: String, amount: u64 },
+    Swap {
+        plan_id: String,
+        from: String,
+        to: String,
+        amount: u64,
+    },
     /// Add repay action.
-    Repay { plan_id: String, token: String, amount: u64 },
+    Repay {
+        plan_id: String,
+        token: String,
+        amount: u64,
+    },
     /// Simulate a plan.
     Simulate { plan_id: String },
     /// Execute a plan.
@@ -2472,7 +2621,19 @@ pub enum FlashAction2 {
 #[derive(Subcommand)]
 pub enum DcaAction {
     /// Create a DCA plan.
-    Create { id: String, name: String, token_from: String, token_to: String, amount: u64, #[arg(long, default_value = "daily")] frequency: String, #[arg(long)] max_buys: Option<u32>, #[arg(long)] budget: Option<u64> },
+    Create {
+        id: String,
+        name: String,
+        token_from: String,
+        token_to: String,
+        amount: u64,
+        #[arg(long, default_value = "daily")]
+        frequency: String,
+        #[arg(long)]
+        max_buys: Option<u32>,
+        #[arg(long)]
+        budget: Option<u64>,
+    },
     /// Pause a plan.
     Pause { id: String },
     /// Resume a plan.
@@ -2480,7 +2641,11 @@ pub enum DcaAction {
     /// Cancel a plan.
     Cancel { id: String },
     /// Simulate a buy execution.
-    Buy { plan_id: String, price: f64, received: u64 },
+    Buy {
+        plan_id: String,
+        price: f64,
+        received: u64,
+    },
     /// List active plans.
     Active,
     /// Show DCA stats.
@@ -2490,13 +2655,27 @@ pub enum DcaAction {
 #[derive(Subcommand)]
 pub enum LimitAction {
     /// Place a limit order.
-    Place { id: String, token_from: String, token_to: String, #[arg(long, default_value = "buy")] side: String, amount: u64, price: f64, #[arg(long)] expires: Option<String> },
+    Place {
+        id: String,
+        token_from: String,
+        token_to: String,
+        #[arg(long, default_value = "buy")]
+        side: String,
+        amount: u64,
+        price: f64,
+        #[arg(long)]
+        expires: Option<String>,
+    },
     /// Cancel an order.
     Cancel { id: String },
     /// Fill an order (simulate).
     Fill { id: String, amount: u64, price: f64 },
     /// Check trigger prices.
-    CheckTriggers { token_from: String, token_to: String, current_price: f64 },
+    CheckTriggers {
+        token_from: String,
+        token_to: String,
+        current_price: f64,
+    },
     /// List open orders.
     Open,
     /// Show order stats.
@@ -2506,11 +2685,24 @@ pub enum LimitAction {
 #[derive(Subcommand)]
 pub enum RebalAction {
     /// Create a portfolio with target allocations (token:pct pairs).
-    Create { id: String, name: String, #[arg(long, default_value_t = 5.0)] threshold: f64 },
+    Create {
+        id: String,
+        name: String,
+        #[arg(long, default_value_t = 5.0)]
+        threshold: f64,
+    },
     /// Set a target allocation.
-    SetTarget { portfolio_id: String, token: String, pct: f64 },
+    SetTarget {
+        portfolio_id: String,
+        token: String,
+        pct: f64,
+    },
     /// Update holdings value.
-    SetHolding { portfolio_id: String, token: String, value: u64 },
+    SetHolding {
+        portfolio_id: String,
+        token: String,
+        value: u64,
+    },
     /// Check drift and show allocations.
     Check { portfolio_id: String },
     /// Generate and execute a rebalance plan.
@@ -2524,11 +2716,23 @@ pub enum RebalAction {
 #[derive(Subcommand)]
 pub enum SmartAlertAction {
     /// Create a price alert.
-    PriceAbove { id: String, token: String, threshold: f64 },
+    PriceAbove {
+        id: String,
+        token: String,
+        threshold: f64,
+    },
     /// Create a price-below alert.
-    PriceBelow { id: String, token: String, threshold: f64 },
+    PriceBelow {
+        id: String,
+        token: String,
+        threshold: f64,
+    },
     /// Create a balance-below alert.
-    BalanceBelow { id: String, token: String, threshold: u64 },
+    BalanceBelow {
+        id: String,
+        token: String,
+        threshold: u64,
+    },
     /// Acknowledge an alert.
     Ack { id: String },
     /// Dismiss an alert.
@@ -2542,7 +2746,12 @@ pub enum SmartAlertAction {
 #[derive(Subcommand)]
 pub enum RecoveryAction3 {
     /// Add a guardian.
-    AddGuardian { id: String, name: String, address: String, public_key: String },
+    AddGuardian {
+        id: String,
+        name: String,
+        address: String,
+        public_key: String,
+    },
     /// Remove a guardian.
     RemoveGuardian { id: String },
     /// Revoke a guardian.
@@ -2552,7 +2761,11 @@ pub enum RecoveryAction3 {
     /// Initiate recovery.
     Initiate { requester: String, new_key: String },
     /// Approve a recovery request.
-    Approve { request_id: String, guardian_id: String, signature: String },
+    Approve {
+        request_id: String,
+        guardian_id: String,
+        signature: String,
+    },
     /// Complete a recovery.
     Complete { request_id: String },
     /// Show recovery stats.
@@ -2562,15 +2775,36 @@ pub enum RecoveryAction3 {
 #[derive(Subcommand)]
 pub enum VaultAction {
     /// Create a shared vault.
-    Create { id: String, name: String, #[arg(long, default_value_t = 2)] threshold: u32 },
+    Create {
+        id: String,
+        name: String,
+        #[arg(long, default_value_t = 2)]
+        threshold: u32,
+    },
     /// Add a member.
-    AddMember { vault_id: String, id: String, name: String, address: String, #[arg(long, default_value = "signer")] role: String },
+    AddMember {
+        vault_id: String,
+        id: String,
+        name: String,
+        address: String,
+        #[arg(long, default_value = "signer")]
+        role: String,
+    },
     /// Remove a member.
     RemoveMember { vault_id: String, member_id: String },
     /// Propose a transfer.
-    Propose { vault_id: String, proposer: String, to: String, amount: u64, token: String },
+    Propose {
+        vault_id: String,
+        proposer: String,
+        to: String,
+        amount: u64,
+        token: String,
+    },
     /// Approve a proposal.
-    ApproveProposal { proposal_id: String, member_id: String },
+    ApproveProposal {
+        proposal_id: String,
+        member_id: String,
+    },
     /// Execute a proposal.
     ExecuteProposal { proposal_id: String },
     /// List vaults.
@@ -2582,7 +2816,17 @@ pub enum VaultAction {
 #[derive(Subcommand)]
 pub enum StreamAction {
     /// Create a payment stream.
-    Create { id: String, name: String, sender: String, recipient: String, token: String, total: u64, rate: u64, #[arg(long, default_value = "salary")] stream_type: String },
+    Create {
+        id: String,
+        name: String,
+        sender: String,
+        recipient: String,
+        token: String,
+        total: u64,
+        rate: u64,
+        #[arg(long, default_value = "salary")]
+        stream_type: String,
+    },
     /// Pause a stream.
     Pause { id: String },
     /// Resume a stream.
@@ -2600,7 +2844,16 @@ pub enum StreamAction {
 #[derive(Subcommand)]
 pub enum EscrowAction {
     /// Create an escrow.
-    Create { id: String, buyer: String, seller: String, token: String, amount: u64, #[arg(long, default_value_t = 100)] fee_bps: u32, description: String },
+    Create {
+        id: String,
+        buyer: String,
+        seller: String,
+        token: String,
+        amount: u64,
+        #[arg(long, default_value_t = 100)]
+        fee_bps: u32,
+        description: String,
+    },
     /// Fund an escrow.
     Fund { id: String },
     /// Release escrow to seller.
@@ -2610,7 +2863,11 @@ pub enum EscrowAction {
     /// Dispute an escrow.
     Dispute { id: String, reason: String },
     /// Resolve a dispute.
-    Resolve { id: String, #[arg(long, default_value = "seller")] to: String },
+    Resolve {
+        id: String,
+        #[arg(long, default_value = "seller")]
+        to: String,
+    },
     /// List active escrows.
     Active,
     /// Show escrow stats.
@@ -2620,9 +2877,19 @@ pub enum EscrowAction {
 #[derive(Subcommand)]
 pub enum PnlAction {
     /// Record a buy.
-    Buy { token: String, amount: u64, price: f64 },
+    Buy {
+        token: String,
+        amount: u64,
+        price: f64,
+    },
     /// Record a sale.
-    Sell { token: String, amount: u64, price: f64, #[arg(long, default_value = "fifo")] method: String },
+    Sell {
+        token: String,
+        amount: u64,
+        price: f64,
+        #[arg(long, default_value = "fifo")]
+        method: String,
+    },
     /// Show unrealized P&L.
     Unrealized { token: String, current_price: f64 },
     /// Show token P&L summary.
@@ -2636,15 +2903,27 @@ pub enum PnlAction {
 #[derive(Subcommand)]
 pub enum AnalyticsAction2 {
     /// Record a daily portfolio value.
-    Record { token: String, date: String, value: f64 },
+    Record {
+        token: String,
+        date: String,
+        value: f64,
+    },
     /// Show Sharpe ratio.
-    Sharpe { token: String, #[arg(long, default_value_t = 0.02)] risk_free: f64 },
+    Sharpe {
+        token: String,
+        #[arg(long, default_value_t = 0.02)]
+        risk_free: f64,
+    },
     /// Show max drawdown.
     Drawdown { token: String },
     /// Show diversification score.
     Diversify,
     /// Show full risk metrics.
-    Risk { token: String, #[arg(long, default_value_t = 0.02)] risk_free: f64 },
+    Risk {
+        token: String,
+        #[arg(long, default_value_t = 0.02)]
+        risk_free: f64,
+    },
     /// Show analytics stats.
     Stats,
 }
@@ -2652,11 +2931,23 @@ pub enum AnalyticsAction2 {
 #[derive(Subcommand)]
 pub enum ComplianceAction {
     /// Add a transaction for compliance tracking.
-    AddTx { tx_hash: String, token: String, amount: u64, value_usd: f64, #[arg(long, default_value = "unknown")] category: String },
+    AddTx {
+        tx_hash: String,
+        token: String,
+        amount: u64,
+        value_usd: f64,
+        #[arg(long, default_value = "unknown")]
+        category: String,
+    },
     /// Flag a transaction.
     Flag { tx_hash: String },
     /// Generate a report.
-    Report { #[arg(long, default_value = "annual")] report_type: String, #[arg(long, default_value = "US")] jurisdiction: String },
+    Report {
+        #[arg(long, default_value = "annual")]
+        report_type: String,
+        #[arg(long, default_value = "US")]
+        jurisdiction: String,
+    },
     /// Mark a report as reviewed.
     Review { report_id: String },
     /// Show compliance stats.
@@ -2666,15 +2957,26 @@ pub enum ComplianceAction {
 #[derive(Subcommand)]
 pub enum WhaleAction {
     /// Track a whale address.
-    Track { address: String, #[arg(long)] label: Option<String>, balance: u64 },
+    Track {
+        address: String,
+        #[arg(long)]
+        label: Option<String>,
+        balance: u64,
+    },
     /// Untrack a whale.
     Untrack { address: String },
     /// Update whale balance.
     Update { address: String, balance: u64 },
     /// Show top whales.
-    Top { #[arg(long, default_value_t = 10)] n: usize },
+    Top {
+        #[arg(long, default_value_t = 10)]
+        n: usize,
+    },
     /// Show recent whale movements.
-    Movements { #[arg(long, default_value_t = 20)] n: usize },
+    Movements {
+        #[arg(long, default_value_t = 20)]
+        n: usize,
+    },
     /// Show whale stats.
     Stats,
 }
@@ -2682,7 +2984,15 @@ pub enum WhaleAction {
 #[derive(Subcommand)]
 pub enum EnergyOptAction {
     /// Track an object for energy optimization.
-    Track { id: String, owner: String, energy: u64, max_energy: u64, decay_rate: u64, #[arg(long, default_value_t = 5)] priority: u32 },
+    Track {
+        id: String,
+        owner: String,
+        energy: u64,
+        max_energy: u64,
+        decay_rate: u64,
+        #[arg(long, default_value_t = 5)]
+        priority: u32,
+    },
     /// Forecast decay for an object.
     Forecast { id: String },
     /// Forecast all tracked objects.
@@ -2690,7 +3000,10 @@ pub enum EnergyOptAction {
     /// Show critical objects.
     Critical,
     /// Optimize a batch of objects.
-    Batch { #[arg(required = true)] ids: Vec<String> },
+    Batch {
+        #[arg(required = true)]
+        ids: Vec<String>,
+    },
     /// Auto-create a refresh plan.
     AutoPlan,
     /// Execute a refresh plan.
@@ -2702,7 +3015,15 @@ pub enum EnergyOptAction {
 #[derive(Subcommand)]
 pub enum ObjMgrAction {
     /// Add an object.
-    Add { id: String, name: String, owner: String, #[arg(long, default_value = "data")] obj_type: String, energy: u64, max_energy: u64 },
+    Add {
+        id: String,
+        name: String,
+        owner: String,
+        #[arg(long, default_value = "data")]
+        obj_type: String,
+        energy: u64,
+        max_energy: u64,
+    },
     /// Refresh an object's energy.
     Refresh { id: String, energy: u64 },
     /// Transfer ownership.
@@ -2714,7 +3035,10 @@ pub enum ObjMgrAction {
     /// Plan resurrection of a ghost.
     Resurrect { id: String },
     /// List low-energy objects.
-    LowEnergy { #[arg(long, default_value_t = 0.25)] threshold: f64 },
+    LowEnergy {
+        #[arg(long, default_value_t = 0.25)]
+        threshold: f64,
+    },
     /// Show object stats.
     Stats,
 }
@@ -2722,13 +3046,31 @@ pub enum ObjMgrAction {
 #[derive(Subcommand)]
 pub enum DeployAction {
     /// Create a contract deployment.
-    Create { id: String, name: String, deployer: String, #[arg(long, default_value = "standard")] contract_type: String },
+    Create {
+        id: String,
+        name: String,
+        deployer: String,
+        #[arg(long, default_value = "standard")]
+        contract_type: String,
+    },
     /// Compile contract bytecode.
     Compile { id: String, bytecode_hex: String },
     /// Deploy to chain.
-    DeployContract { id: String, address: String, tx_hash: String, #[arg(long, default_value_t = 0)] gas: u64 },
+    DeployContract {
+        id: String,
+        address: String,
+        tx_hash: String,
+        #[arg(long, default_value_t = 0)]
+        gas: u64,
+    },
     /// Upgrade a deployed contract.
-    Upgrade { id: String, new_bytecode_hex: String, version: String, #[arg(long, default_value = "")] notes: String },
+    Upgrade {
+        id: String,
+        new_bytecode_hex: String,
+        version: String,
+        #[arg(long, default_value = "")]
+        notes: String,
+    },
     /// List deployed contracts.
     List,
     /// Show deployer stats.
@@ -2738,17 +3080,39 @@ pub enum DeployAction {
 #[derive(Subcommand)]
 pub enum GovAction {
     /// Add a proposal.
-    Propose { id: String, title: String, proposer: String, #[arg(long, default_value_t = 1000)] quorum: u64, #[arg(long, default_value_t = 10000)] voting_power: u64 },
+    Propose {
+        id: String,
+        title: String,
+        proposer: String,
+        #[arg(long, default_value_t = 1000)]
+        quorum: u64,
+        #[arg(long, default_value_t = 10000)]
+        voting_power: u64,
+    },
     /// Start voting on a proposal.
-    StartVoting { id: String, #[arg(long, default_value = "2099-01-01T00:00:00Z")] end: String },
+    StartVoting {
+        id: String,
+        #[arg(long, default_value = "2099-01-01T00:00:00Z")]
+        end: String,
+    },
     /// Cast a vote.
-    Vote { proposal_id: String, voter: String, choice: String, #[arg(long, default_value_t = 1)] power: u64 },
+    Vote {
+        proposal_id: String,
+        voter: String,
+        choice: String,
+        #[arg(long, default_value_t = 1)]
+        power: u64,
+    },
     /// Finalize a proposal.
     Finalize { id: String },
     /// Execute a passed proposal.
     ExecuteProposal { id: String },
     /// Delegate voting power.
-    Delegate { from: String, to: String, power: u64 },
+    Delegate {
+        from: String,
+        to: String,
+        power: u64,
+    },
     /// Show active proposals.
     Active,
     /// Show governance stats.
@@ -2758,7 +3122,13 @@ pub enum GovAction {
 #[derive(Subcommand)]
 pub enum FeeOptAction {
     /// Record a fee data point.
-    Record { gas_price: u64, #[arg(long, default_value_t = 50.0)] utilization: f64, #[arg(long, default_value_t = 100)] tx_count: u32 },
+    Record {
+        gas_price: u64,
+        #[arg(long, default_value_t = 50.0)]
+        utilization: f64,
+        #[arg(long, default_value_t = 100)]
+        tx_count: u32,
+    },
     /// Get fee estimates for all speeds.
     Estimate,
     /// Market analysis.
@@ -2774,9 +3144,20 @@ pub enum FeeOptAction {
 #[derive(Subcommand)]
 pub enum BatchExecAction {
     /// Create a batch job.
-    Create { name: String, #[arg(long, default_value = "stop")] policy: String },
+    Create {
+        name: String,
+        #[arg(long, default_value = "stop")]
+        policy: String,
+    },
     /// Add a transaction to a batch.
-    Add { batch_id: String, description: String, to: String, amount: u64, #[arg(long, default_value = "EVP")] token: String },
+    Add {
+        batch_id: String,
+        description: String,
+        to: String,
+        amount: u64,
+        #[arg(long, default_value = "EVP")]
+        token: String,
+    },
     /// Validate a batch.
     Validate { batch_id: String },
     /// Execute a batch.
@@ -2792,9 +3173,18 @@ pub enum BatchExecAction {
 #[derive(Subcommand)]
 pub enum MigrateAction2 {
     /// Start migration from another wallet.
-    Start { #[arg(long, default_value = "metamask")] source: String },
+    Start {
+        #[arg(long, default_value = "metamask")]
+        source: String,
+    },
     /// Import an account.
-    Import { job_id: String, original_address: String, new_address: String, #[arg(long, default_value = "hex")] format: String },
+    Import {
+        job_id: String,
+        original_address: String,
+        new_address: String,
+        #[arg(long, default_value = "hex")]
+        format: String,
+    },
     /// Complete a migration.
     Complete { job_id: String },
     /// Show active migrations.
@@ -3318,9 +3708,17 @@ pub enum ThemeAction {
     /// List all themes.
     List,
     /// Duplicate a theme.
-    Duplicate { id: String, new_id: String, new_name: String },
+    Duplicate {
+        id: String,
+        new_id: String,
+        new_name: String,
+    },
     /// Set a custom variable on a theme.
-    SetVar { theme_id: String, key: String, value: String },
+    SetVar {
+        theme_id: String,
+        key: String,
+        value: String,
+    },
     /// Export a theme as JSON.
     Export { id: String },
     /// Show stats.
@@ -3903,7 +4301,16 @@ pub async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Commands::Tx { hash } => cmd_tx(rpc, &hash).await?,
         Commands::Account { action } => cmd_account(action, rpc, &keystore_path).await?,
         Commands::Send { to, amount, wait } => {
-            cmd_send(rpc, &keystore_path, &contacts_path, &history_path, &to, amount, wait).await?
+            cmd_send(
+                rpc,
+                &keystore_path,
+                &contacts_path,
+                &history_path,
+                &to,
+                amount,
+                wait,
+            )
+            .await?
         }
         Commands::Faucet => cmd_faucet(rpc, &keystore_path).await?,
         Commands::Objects => cmd_objects(rpc).await?,
@@ -3924,7 +4331,9 @@ pub async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Commands::Gas { action } => cmd_gas(action, rpc).await?,
         Commands::Config { action } => cmd_config(action, &config_path)?,
         Commands::Offline { action } => cmd_offline(action, rpc, &keystore_path).await?,
-        Commands::Simulate { action } => cmd_simulate(action, rpc, &keystore_path, &contacts_path).await?,
+        Commands::Simulate { action } => {
+            cmd_simulate(action, rpc, &keystore_path, &contacts_path).await?
+        }
         Commands::Spending { action } => cmd_spending(action)?,
         Commands::Multisig { action } => cmd_multisig(action, &keystore_path)?,
         Commands::Hooks { action } => cmd_hooks(action)?,
@@ -4069,18 +4478,33 @@ async fn cmd_blocks(rpc: RpcClient, limit: usize) -> Result<(), Box<dyn std::err
 }
 
 async fn cmd_tx(rpc: RpcClient, hash: &str) -> Result<(), Box<dyn std::error::Error>> {
+    // /api/tx/:hash now returns TxStatus (lifecycle state only) — see
+    // commit d0394b1. Body fields (type/from/to/amount) live on the
+    // historical /api/transactions list now.
+    //
+    // TODO: if a user needs the tx body for a known hash, scan
+    // `rpc.get_transactions(...)` for a matching `hash` and render that
+    // record. Not wired here yet — keep this command focused on status.
     let tx = rpc.get_tx(hash).await?;
+    let state = match tx.state {
+        crate::rpc::TxState::Pending => "pending",
+        crate::rpc::TxState::Mempool => "mempool",
+        crate::rpc::TxState::Included => "included",
+        crate::rpc::TxState::Finalised => "finalised",
+        crate::rpc::TxState::Rejected => "rejected",
+    };
     println!("{}", "Transaction".bold().cyan());
     println!("  Hash:   {}", tx.hash);
-    println!("  Type:   {}", tx.tx_type);
-    println!("  From:   {}", tx.from);
-    println!("  To:     {}", tx.to);
-    if let Some(amt) = tx.amount {
-        println!("  Amount: {}", amt);
+    println!("  State:  {}", state);
+    if let Some(h) = tx.block_height {
+        println!("  Block:  {}", h);
     }
-    println!("  Gas:    {}", tx.gas);
-    println!("  Block:  {}", tx.block_number);
-    println!("  Status: {}", tx.status);
+    if let Some(e) = tx.epoch {
+        println!("  Epoch:  {}", e);
+    }
+    if let Some(err) = tx.error.as_deref() {
+        println!("  Error:  {}", err);
+    }
     Ok(())
 }
 
@@ -4116,7 +4540,10 @@ async fn cmd_account(
                     .collect();
                 crate::output::print_json(&json_accounts);
             } else if accounts.is_empty() {
-                println!("No accounts. Run: {} account create <name>", "wallet".bold());
+                println!(
+                    "No accounts. Run: {} account create <name>",
+                    "wallet".bold()
+                );
             } else {
                 println!("{}", "Accounts".bold().cyan());
                 for a in &accounts {
@@ -4140,7 +4567,10 @@ async fn cmd_account(
                 let (balance, nonce) = mgr.refresh_balance(&n).await?;
                 println!("{}: {} EVAP (nonce: {})", n, balance, nonce);
             } else {
-                println!("No active account. Run: {} account create <name>", "wallet".bold());
+                println!(
+                    "No active account. Run: {} account create <name>",
+                    "wallet".bold()
+                );
             }
         }
         AccountAction::Detail { name } => {
@@ -4199,7 +4629,14 @@ async fn cmd_send(
     let result = pipeline.transfer(&signer, &to_addr, amount, nonce).await?;
 
     if let Some(ref hash) = result.tx_hash {
-        record_tx(history_path, "Transfer", &from_addr, Some(&resolved), Some(amount), hash);
+        record_tx(
+            history_path,
+            "Transfer",
+            &from_addr,
+            Some(&resolved),
+            Some(amount),
+            hash,
+        );
     }
 
     if crate::output::is_json_mode() {
@@ -4216,29 +4653,39 @@ async fn cmd_send(
     Ok(())
 }
 
-async fn cmd_faucet(
-    rpc: RpcClient,
-    keystore_path: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn cmd_faucet(rpc: RpcClient, keystore_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let keystore = load_or_create_keystore(keystore_path);
     let mgr = AccountManager::new(keystore, rpc);
-    let addr = mgr.active_address_hex()
+    let addr = mgr
+        .active_address_hex()
         .ok_or("No active account. Run: wallet account create <name>")?;
 
     let rpc2 = RpcClient::new(mgr.rpc().base_url())?;
     let mut pipeline = TxPipeline::new(rpc2);
     let result = pipeline.faucet(&addr).await?;
     if result.success {
-        println!("{} Received tokens! Balance: {} EVAP", "OK".green().bold(), result.balance);
+        println!(
+            "{} Received tokens! Balance: {} EVAP",
+            "OK".green().bold(),
+            result.balance
+        );
     } else {
-        println!("{} {}", "FAIL".red().bold(), result.message.unwrap_or_default());
+        println!(
+            "{} {}",
+            "FAIL".red().bold(),
+            result.message.unwrap_or_default()
+        );
     }
     Ok(())
 }
 
 async fn cmd_objects(rpc: RpcClient) -> Result<(), Box<dyn std::error::Error>> {
     let objects = rpc.get_objects().await?;
-    println!("{} ({} total)", "State Objects".bold().cyan(), objects.len());
+    println!(
+        "{} ({} total)",
+        "State Objects".bold().cyan(),
+        objects.len()
+    );
     for o in &objects {
         let state_color = match o.state.as_str() {
             "Active" => o.state.green(),
@@ -4347,11 +4794,26 @@ async fn cmd_nft(
             println!("  Decay:      {:.1}%", n.decay_percentage);
             println!("  Remaining:  {} epochs", n.epochs_remaining);
         }
-        NftAction::Mint { name, energy, half_life, collection, metadata } => {
+        NftAction::Mint {
+            name,
+            energy,
+            half_life,
+            collection,
+            metadata,
+        } => {
             show_gas_estimate(rpc.base_url(), "nft mint").await;
             let rpc2 = RpcClient::new(rpc.base_url())?;
             let mut pipeline = TxPipeline::new(rpc2);
-            let result = pipeline.mint_nft(&name, collection.as_deref(), &metadata, energy, half_life, None).await?;
+            let result = pipeline
+                .mint_nft(
+                    &name,
+                    collection.as_deref(),
+                    &metadata,
+                    energy,
+                    half_life,
+                    None,
+                )
+                .await?;
             if let Some(ref hash) = result.tx_hash {
                 record_tx(history_path, "MintNFT", "", None, None, hash);
             }
@@ -4408,23 +4870,41 @@ async fn cmd_token(
             println!("  Decay:      {:.1}%", t.decay_percentage);
             println!("  Holders:    {}", t.holder_count);
         }
-        TokenAction::Deploy { name, symbol, supply, half_life } => {
+        TokenAction::Deploy {
+            name,
+            symbol,
+            supply,
+            half_life,
+        } => {
             show_gas_estimate(rpc.base_url(), "token deploy").await;
             let rpc2 = RpcClient::new(rpc.base_url())?;
             let mut pipeline = TxPipeline::new(rpc2);
-            let result = pipeline.deploy_token(&name, &symbol, supply, half_life, None).await?;
+            let result = pipeline
+                .deploy_token(&name, &symbol, supply, half_life, None)
+                .await?;
             if let Some(ref hash) = result.tx_hash {
                 record_tx(history_path, "DeployToken", "", None, None, hash);
             }
             println!("{} {}", "OK".green().bold(), result.message);
         }
-        TokenAction::Transfer { token_id, to, amount } => {
+        TokenAction::Transfer {
+            token_id,
+            to,
+            amount,
+        } => {
             show_gas_estimate(rpc.base_url(), "token transfer").await;
             let rpc2 = RpcClient::new(rpc.base_url())?;
             let mut pipeline = TxPipeline::new(rpc2);
             let result = pipeline.transfer_token(token_id, "", &to, amount).await?;
             if let Some(ref hash) = result.tx_hash {
-                record_tx(history_path, "TransferToken", "", Some(&to), Some(amount), hash);
+                record_tx(
+                    history_path,
+                    "TransferToken",
+                    "",
+                    Some(&to),
+                    Some(amount),
+                    hash,
+                );
             }
             println!("{} {}", "OK".green().bold(), result.message);
         }
@@ -4464,7 +4944,11 @@ async fn cmd_energy(
                 } else if alerts.is_empty() {
                     println!("{} All assets above 50% energy", "OK".green().bold());
                 } else {
-                    println!("{} ({} alerts)", "Energy Alerts".bold().cyan(), alerts.len());
+                    println!(
+                        "{} ({} alerts)",
+                        "Energy Alerts".bold().cyan(),
+                        alerts.len()
+                    );
                     for a in &alerts {
                         let sev = match a.severity {
                             AlertSeverity::Critical => "CRITICAL".red().bold(),
@@ -4480,7 +4964,10 @@ async fn cmd_energy(
                             sev, a.asset_name, a.asset_id, a.current_energy_pct, eta
                         );
                     }
-                    println!("\n  Total energy at risk: {}", portfolio.total_energy_at_risk);
+                    println!(
+                        "\n  Total energy at risk: {}",
+                        portfolio.total_energy_at_risk
+                    );
                 }
             }
         }
@@ -4499,26 +4986,41 @@ async fn cmd_energy(
                 created_epoch: obj.created_epoch,
                 last_refreshed: obj.last_refreshed,
                 decay_percentage: obj.decay_percentage,
-                epochs_until_zero: crate::assets::epochs_until_zero(obj.current_energy, obj.half_life),
+                epochs_until_zero: crate::assets::epochs_until_zero(
+                    obj.current_energy,
+                    obj.half_life,
+                ),
             };
             let forecast = monitor.forecast_object(&owned);
 
             println!("{} {}", "Decay Forecast".bold().cyan(), forecast.asset_name);
-            println!("  Energy: {}/{}", forecast.current_energy, forecast.max_energy);
+            println!(
+                "  Energy: {}/{}",
+                forecast.current_energy, forecast.max_energy
+            );
             println!("  Half-Life: {} epochs", forecast.half_life);
             println!("\n  {} Milestones:", "Decay".yellow());
             for m in &forecast.milestones {
-                println!("    {}% — epoch +{} (energy={})", m.target_pct, m.at_epoch, m.energy_at);
+                println!(
+                    "    {}% — epoch +{} (energy={})",
+                    m.target_pct, m.at_epoch, m.energy_at
+                );
             }
             if let Some(zero) = forecast.zero_epoch {
                 println!("    {}  — epoch +{}", "EVAPORATES".red().bold(), zero);
             }
         }
-        EnergyAction::AutoRefresh { threshold, interval, max_energy, once } => {
+        EnergyAction::AutoRefresh {
+            threshold,
+            interval,
+            max_energy,
+            once,
+        } => {
             validation::validate_threshold(threshold)?;
             validation::validate_energy(max_energy)?;
 
-            let addr_hex = mgr.active_address_hex()
+            let addr_hex = mgr
+                .active_address_hex()
                 .ok_or("No active account. Run: wallet account create <name>")?;
             let password = prompt_password("Enter password")?;
             let name = require_active(&mgr)?;
@@ -4540,10 +5042,18 @@ async fn cmd_energy(
 
             if once {
                 let rpc2 = RpcClient::new(mgr.rpc().base_url())?;
-                let actions = refresher.execute_cycle(&rpc2, &signer, &addr_hex).await
-                    .map_err(|e| -> Box<dyn std::error::Error> { Box::new(std::io::Error::other(e.to_string())) })?;
+                let actions = refresher
+                    .execute_cycle(&rpc2, &signer, &addr_hex)
+                    .await
+                    .map_err(|e| -> Box<dyn std::error::Error> {
+                        Box::new(std::io::Error::other(e.to_string()))
+                    })?;
                 if actions.is_empty() {
-                    println!("{} All assets above {}% energy", "OK".green().bold(), threshold);
+                    println!(
+                        "{} All assets above {}% energy",
+                        "OK".green().bold(),
+                        threshold
+                    );
                 } else {
                     for a in &actions {
                         let status = if a.submitted {
@@ -4582,7 +5092,9 @@ async fn cmd_energy(
                         }
                     })
                     .await
-                    .map_err(|e| -> Box<dyn std::error::Error> { Box::new(std::io::Error::other(e.to_string())) })?;
+                    .map_err(|e| -> Box<dyn std::error::Error> {
+                        Box::new(std::io::Error::other(e.to_string()))
+                    })?;
 
                 println!("\n{}", "Auto-Refresh Stopped".bold().yellow());
                 println!("  Reason:    {}", summary.shutdown_reason);
@@ -4595,10 +5107,7 @@ async fn cmd_energy(
     Ok(())
 }
 
-async fn cmd_ghost(
-    action: GhostAction,
-    rpc: RpcClient,
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn cmd_ghost(action: GhostAction, rpc: RpcClient) -> Result<(), Box<dyn std::error::Error>> {
     match action {
         GhostAction::List => {
             let ghosts = rpc.get_ghosts().await?;
@@ -4644,7 +5153,8 @@ async fn cmd_stake(
         StakeAction::In { pool_id, amount } => {
             let keystore = load_or_create_keystore(keystore_path);
             let acct_mgr = AccountManager::new(keystore, rpc);
-            let addr = acct_mgr.active_address_hex()
+            let addr = acct_mgr
+                .active_address_hex()
                 .ok_or("No active account. Run: wallet account create <name>")?;
             show_gas_estimate(acct_mgr.rpc().base_url(), "stake").await;
             let rpc2 = RpcClient::new(acct_mgr.rpc().base_url())?;
@@ -4658,7 +5168,8 @@ async fn cmd_stake(
         StakeAction::Out { pool_id, amount } => {
             let keystore = load_or_create_keystore(keystore_path);
             let acct_mgr = AccountManager::new(keystore, rpc);
-            let addr = acct_mgr.active_address_hex()
+            let addr = acct_mgr
+                .active_address_hex()
                 .ok_or("No active account. Run: wallet account create <name>")?;
             let rpc2 = RpcClient::new(acct_mgr.rpc().base_url())?;
             let staking = StakingManager::new(rpc2);
@@ -4671,7 +5182,8 @@ async fn cmd_stake(
         StakeAction::Claim { pool_id } => {
             let keystore = load_or_create_keystore(keystore_path);
             let acct_mgr = AccountManager::new(keystore, rpc);
-            let addr = acct_mgr.active_address_hex()
+            let addr = acct_mgr
+                .active_address_hex()
                 .ok_or("No active account. Run: wallet account create <name>")?;
             let rpc2 = RpcClient::new(acct_mgr.rpc().base_url())?;
             let staking = StakingManager::new(rpc2);
@@ -4681,7 +5193,11 @@ async fn cmd_stake(
             }
             println!("{} {}", "OK".green().bold(), result.message);
         }
-        StakeAction::Forecast { pool_id, amount, epochs } => {
+        StakeAction::Forecast {
+            pool_id,
+            amount,
+            epochs,
+        } => {
             let staking = StakingManager::new(rpc);
             let pool = staking.get_pool(pool_id).await?;
             let forecast = StakingManager::reward_forecast(
@@ -4696,22 +5212,30 @@ async fn cmd_stake(
             println!("  Stake Amount:   {}", amount);
             println!("  Epochs:         {}", epochs);
             println!("  Gross Rewards:  {}", forecast.gross_rewards);
-            println!("  Decay Loss:     {} ({})", forecast.decay_loss, "rewards decay too!".yellow());
-            println!("  Net Rewards:    {}", forecast.net_rewards.to_string().green());
+            println!(
+                "  Decay Loss:     {} ({})",
+                forecast.decay_loss,
+                "rewards decay too!".yellow()
+            );
+            println!(
+                "  Net Rewards:    {}",
+                forecast.net_rewards.to_string().green()
+            );
         }
     }
     Ok(())
 }
 
-async fn cmd_dao(
-    action: DaoAction,
-    rpc: RpcClient,
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn cmd_dao(action: DaoAction, rpc: RpcClient) -> Result<(), Box<dyn std::error::Error>> {
     let gov = GovernanceManager::new(rpc);
     match action {
         DaoAction::Proposals => {
             let proposals = gov.list_proposals().await?;
-            println!("{} ({} total)", "DAO Proposals".bold().cyan(), proposals.len());
+            println!(
+                "{} ({} total)",
+                "DAO Proposals".bold().cyan(),
+                proposals.len()
+            );
             for p in &proposals {
                 let status_color = match p.status.as_str() {
                     "Active" => p.status.green(),
@@ -4745,10 +5269,7 @@ async fn cmd_dao(
     Ok(())
 }
 
-fn cmd_backup(
-    action: BackupAction,
-    keystore_path: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn cmd_backup(action: BackupAction, keystore_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     match action {
         BackupAction::Export { file } => {
             let keystore = load_or_create_keystore(keystore_path);
@@ -4788,10 +5309,7 @@ fn cmd_backup(
 
 // ──────────────────────────── Seed Commands ───────────────────────────
 
-fn cmd_seed(
-    action: SeedAction,
-    keystore_path: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn cmd_seed(action: SeedAction, keystore_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     match action {
         SeedAction::Generate => {
             let mnemonic = Mnemonic::generate();
@@ -4809,7 +5327,10 @@ fn cmd_seed(
                 "  {} Write these words down and store them safely!",
                 "WARNING".red().bold()
             );
-            println!("  {} Never share your seed phrase with anyone.", "WARNING".red().bold());
+            println!(
+                "  {} Never share your seed phrase with anyone.",
+                "WARNING".red().bold()
+            );
         }
         SeedAction::Backup { name, file } => {
             let keystore = load_or_create_keystore(keystore_path);
@@ -4855,11 +5376,7 @@ fn cmd_seed(
             let addr = keystore.import_key(&name, &password, &pk, sk)?;
             keystore.save(keystore_path)?;
 
-            println!(
-                "{} Recovered keypair as '{}'",
-                "OK".green().bold(),
-                name
-            );
+            println!("{} Recovered keypair as '{}'", "OK".green().bold(), name);
             println!("  Address: {}", format_address(&addr));
         }
     }
@@ -4875,17 +5392,33 @@ fn cmd_contacts(
     let mut book = AddressBook::load(contacts_path).unwrap_or_default();
 
     match action {
-        ContactAction::Add { name, address, note } => {
+        ContactAction::Add {
+            name,
+            address,
+            note,
+        } => {
             book.add(&name, &address, note.as_deref())?;
             book.save(contacts_path)?;
-            println!("{} Contact '{}' added ({})", "OK".green().bold(), name, address);
+            println!(
+                "{} Contact '{}' added ({})",
+                "OK".green().bold(),
+                name,
+                address
+            );
         }
         ContactAction::List => {
             let contacts = book.list();
             if contacts.is_empty() {
-                println!("No contacts. Run: {} contacts add <name> <address>", "wallet".bold());
+                println!(
+                    "No contacts. Run: {} contacts add <name> <address>",
+                    "wallet".bold()
+                );
             } else {
-                println!("{} ({} contacts)", "Address Book".bold().cyan(), contacts.len());
+                println!(
+                    "{} ({} contacts)",
+                    "Address Book".bold().cyan(),
+                    contacts.len()
+                );
                 for c in contacts {
                     let note = c.note.as_deref().unwrap_or("");
                     println!("  {:<15} {} {}", c.name, c.address, note.dimmed());
@@ -4990,10 +5523,7 @@ fn cmd_history(
                         .as_deref()
                         .map(|h| if h.len() > 16 { &h[..16] } else { h })
                         .unwrap_or("—");
-                    let amount_str = e
-                        .amount
-                        .map(|a| format!(" {} EVAP", a))
-                        .unwrap_or_default();
+                    let amount_str = e.amount.map(|a| format!(" {} EVAP", a)).unwrap_or_default();
                     println!(
                         "  [{}] {:<12} {}...{} → {}{}",
                         status,
@@ -5053,10 +5583,7 @@ fn cmd_history(
 
 // ──────────────────────────── Gas Commands ────────────────────────────
 
-async fn cmd_gas(
-    action: GasAction,
-    rpc: RpcClient,
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn cmd_gas(action: GasAction, rpc: RpcClient) -> Result<(), Box<dyn std::error::Error>> {
     match action {
         GasAction::Transfer => {
             let estimator = GasEstimator::from_rpc(&rpc).await?;
@@ -5210,14 +5737,22 @@ async fn cmd_batch(
                 "operations": batch.operations.len()
             }));
         } else {
-            println!("  {} Dry run — no transactions submitted.", "OK".green().bold());
+            println!(
+                "  {} Dry run — no transactions submitted.",
+                "OK".green().bold()
+            );
             for (i, op) in batch.operations.iter().enumerate() {
                 match op {
                     BatchOperation::Transfer { to, amount } => {
                         println!("  #{}: Transfer {} EVAP → {}", i + 1, amount, to);
                     }
                     BatchOperation::Refresh { object_id, energy } => {
-                        println!("  #{}: Refresh {} +{} energy", i + 1, &object_id[..16], energy);
+                        println!(
+                            "  #{}: Refresh {} +{} energy",
+                            i + 1,
+                            &object_id[..16],
+                            energy
+                        );
                     }
                 }
             }
@@ -5251,7 +5786,14 @@ async fn cmd_batch(
                     Ok(resp) => {
                         let hash = resp.tx_hash.clone();
                         if let Some(ref h) = hash {
-                            record_tx(history_path, "Transfer", &from_addr, Some(to), Some(*amount), h);
+                            record_tx(
+                                history_path,
+                                "Transfer",
+                                &from_addr,
+                                Some(to),
+                                Some(*amount),
+                                h,
+                            );
                         }
                         if !crate::output::is_json_mode() {
                             println!(
@@ -5296,7 +5838,14 @@ async fn cmd_batch(
                     Ok(resp) => {
                         let hash = resp.tx_hash.clone();
                         if let Some(ref h) = hash {
-                            record_tx(history_path, "Refresh", &from_addr, Some(object_id), None, h);
+                            record_tx(
+                                history_path,
+                                "Refresh",
+                                &from_addr,
+                                Some(object_id),
+                                None,
+                                h,
+                            );
                         }
                         if !crate::output::is_json_mode() {
                             println!(
@@ -5369,10 +5918,7 @@ async fn cmd_batch(
 
 // ──────────────────────────── Doctor ──────────────────────────────────────
 
-async fn cmd_doctor(
-    node_url: &str,
-    keystore_path: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn cmd_doctor(node_url: &str, keystore_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     use crate::doctor::{run_checks, CheckStatus};
 
     let results = run_checks(node_url, keystore_path).await;
@@ -5419,9 +5965,15 @@ async fn cmd_doctor(
     );
 
     if fail_count > 0 {
-        println!("\n  {} Fix the issues above before using the wallet.", "Action needed:".red().bold());
+        println!(
+            "\n  {} Fix the issues above before using the wallet.",
+            "Action needed:".red().bold()
+        );
     } else if warn_count > 0 {
-        println!("\n  {} Wallet is usable but some things could be better.", "Note:".yellow());
+        println!(
+            "\n  {} Wallet is usable but some things could be better.",
+            "Note:".yellow()
+        );
     } else {
         println!("\n  {} Everything looks good!", "All clear!".green().bold());
     }
@@ -5440,7 +5992,10 @@ async fn cmd_dashboard(
     let accounts = mgr.list_accounts();
 
     if accounts.is_empty() {
-        println!("No accounts. Run: {} account create <name>", "wallet".bold());
+        println!(
+            "No accounts. Run: {} account create <name>",
+            "wallet".bold()
+        );
         return Ok(());
     }
 
@@ -5581,10 +6136,7 @@ async fn cmd_dashboard(
 
 // ──────────────────────────── Watch Mode ──────────────────────────────────
 
-async fn cmd_watch(
-    rpc: RpcClient,
-    address: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn cmd_watch(rpc: RpcClient, address: &str) -> Result<(), Box<dyn std::error::Error>> {
     validation::validate_address(address)?;
 
     let rpc2 = RpcClient::new(rpc.base_url())?;
@@ -5616,7 +6168,11 @@ async fn cmd_watch(
     if detail.objects.is_empty() {
         println!("  No state objects.");
     } else {
-        println!("  {} ({} total)", "State Objects".bold(), detail.objects.len());
+        println!(
+            "  {} ({} total)",
+            "State Objects".bold(),
+            detail.objects.len()
+        );
         for o in &detail.objects {
             let state_color = match o.state.as_str() {
                 "Active" => o.state.green(),
@@ -5625,7 +6181,10 @@ async fn cmd_watch(
                 _ => o.state.normal(),
             };
             let pct = if o.max_energy > 0 {
-                format!("{:.1}%", (o.current_energy as f64 / o.max_energy as f64) * 100.0)
+                format!(
+                    "{:.1}%",
+                    (o.current_energy as f64 / o.max_energy as f64) * 100.0
+                )
             } else {
                 "—".to_string()
             };
@@ -5667,7 +6226,11 @@ async fn cmd_watch(
     let monitor = EnergyMonitor::new();
     let alerts = monitor.scan_portfolio(&portfolio);
     if !alerts.is_empty() {
-        println!("  {} ({} alerts)", "Energy Alerts".bold().yellow(), alerts.len());
+        println!(
+            "  {} ({} alerts)",
+            "Energy Alerts".bold().yellow(),
+            alerts.len()
+        );
         for a in &alerts {
             let sev = match a.severity {
                 AlertSeverity::Critical => "CRIT".red().bold(),
@@ -5686,7 +6249,11 @@ async fn cmd_watch(
         println!();
     }
 
-    println!("  {} {}", "Energy at risk:".bold(), portfolio.total_energy_at_risk);
+    println!(
+        "  {} {}",
+        "Energy at risk:".bold(),
+        portfolio.total_energy_at_risk
+    );
 
     Ok(())
 }
@@ -5744,7 +6311,12 @@ async fn cmd_interactive(
             }
             1 => {
                 // Account
-                let account_actions = vec!["Create new account", "List accounts", "Switch account", "Back"];
+                let account_actions = vec![
+                    "Create new account",
+                    "List accounts",
+                    "Switch account",
+                    "Back",
+                ];
                 let sel = Select::new()
                     .with_prompt("Account action")
                     .items(&account_actions)
@@ -5753,17 +6325,19 @@ async fn cmd_interactive(
 
                 match sel {
                     Some(0) => {
-                        let name: String = Input::new()
-                            .with_prompt("Account name")
-                            .interact_text()?;
+                        let name: String =
+                            Input::new().with_prompt("Account name").interact_text()?;
                         let rpc2 = RpcClient::new(rpc.base_url())?;
-                        if let Err(e) = cmd_account(AccountAction::Create { name }, rpc2, keystore_path).await {
+                        if let Err(e) =
+                            cmd_account(AccountAction::Create { name }, rpc2, keystore_path).await
+                        {
                             println!("  {} {}", "Error:".red(), e);
                         }
                     }
                     Some(1) => {
                         let rpc2 = RpcClient::new(rpc.base_url())?;
-                        if let Err(e) = cmd_account(AccountAction::List, rpc2, keystore_path).await {
+                        if let Err(e) = cmd_account(AccountAction::List, rpc2, keystore_path).await
+                        {
                             println!("  {} {}", "Error:".red(), e);
                         }
                     }
@@ -5772,7 +6346,9 @@ async fn cmd_interactive(
                             .with_prompt("Account name to switch to")
                             .interact_text()?;
                         let rpc2 = RpcClient::new(rpc.base_url())?;
-                        if let Err(e) = cmd_account(AccountAction::Switch { name }, rpc2, keystore_path).await {
+                        if let Err(e) =
+                            cmd_account(AccountAction::Switch { name }, rpc2, keystore_path).await
+                        {
                             println!("  {} {}", "Error:".red(), e);
                         }
                     }
@@ -5782,7 +6358,9 @@ async fn cmd_interactive(
             2 => {
                 // Balance
                 let rpc2 = RpcClient::new(rpc.base_url())?;
-                if let Err(e) = cmd_account(AccountAction::Balance { name: None }, rpc2, keystore_path).await {
+                if let Err(e) =
+                    cmd_account(AccountAction::Balance { name: None }, rpc2, keystore_path).await
+                {
                     println!("  {} {}", "Error:".red(), e);
                 }
             }
@@ -5791,12 +6369,20 @@ async fn cmd_interactive(
                 let to: String = Input::new()
                     .with_prompt("Recipient (address or contact name)")
                     .interact_text()?;
-                let amount: u64 = Input::new()
-                    .with_prompt("Amount (EVAP)")
-                    .interact_text()?;
+                let amount: u64 = Input::new().with_prompt("Amount (EVAP)").interact_text()?;
 
                 let rpc2 = RpcClient::new(rpc.base_url())?;
-                if let Err(e) = cmd_send(rpc2, keystore_path, contacts_path, history_path, &to, amount, false).await {
+                if let Err(e) = cmd_send(
+                    rpc2,
+                    keystore_path,
+                    contacts_path,
+                    history_path,
+                    &to,
+                    amount,
+                    false,
+                )
+                .await
+                {
                     println!("  {} {}", "Error:".red(), e);
                 }
             }
@@ -5857,14 +6443,22 @@ fn cmd_completions(shell: &str) -> Result<(), Box<dyn std::error::Error>> {
         "fish" => Shell::Fish,
         "powershell" | "ps" => Shell::PowerShell,
         "elvish" => Shell::Elvish,
-        other => return Err(format!(
-            "Unsupported shell '{}'. Supported: bash, zsh, fish, powershell, elvish",
-            other
-        ).into()),
+        other => {
+            return Err(format!(
+                "Unsupported shell '{}'. Supported: bash, zsh, fish, powershell, elvish",
+                other
+            )
+            .into())
+        }
     };
 
     let mut cmd = Cli::command();
-    generate(shell, &mut cmd, "evaporchain-wallet", &mut std::io::stdout());
+    generate(
+        shell,
+        &mut cmd,
+        "evaporchain-wallet",
+        &mut std::io::stdout(),
+    );
     Ok(())
 }
 
@@ -5876,7 +6470,12 @@ async fn cmd_offline(
     keystore_path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match action {
-        OfflineAction::Sign { to, amount, nonce, file } => {
+        OfflineAction::Sign {
+            to,
+            amount,
+            nonce,
+            file,
+        } => {
             validation::validate_address(&to)?;
             validation::validate_amount(amount)?;
 
@@ -5890,7 +6489,11 @@ async fn cmd_offline(
             let signed = OfflineSigner::sign_transfer(&signer, &to_addr, amount, nonce);
             signed.save(&file)?;
 
-            println!("{} Signed transfer saved to {:?}", "OK".green().bold(), file);
+            println!(
+                "{} Signed transfer saved to {:?}",
+                "OK".green().bold(),
+                file
+            );
             println!("  From:   {}", signed.from);
             println!("  To:     {}", signed.to.as_deref().unwrap_or("—"));
             println!("  Amount: {}", amount);
@@ -5937,8 +6540,16 @@ async fn cmd_offline(
             }
             println!("  Nonce:     {}", signed.nonce);
             println!("  Signed At: {}", signed.signed_at);
-            println!("  Signature: {}...{}", &signed.signature[..16], &signed.signature[signed.signature.len().saturating_sub(16)..]);
-            println!("  Public Key: {}...{}", &signed.public_key[..16], &signed.public_key[signed.public_key.len().saturating_sub(16)..]);
+            println!(
+                "  Signature: {}...{}",
+                &signed.signature[..16],
+                &signed.signature[signed.signature.len().saturating_sub(16)..]
+            );
+            println!(
+                "  Public Key: {}...{}",
+                &signed.public_key[..16],
+                &signed.public_key[signed.public_key.len().saturating_sub(16)..]
+            );
             if let Some(ref extra) = signed.extra {
                 println!("  Extra:     {}", serde_json::to_string_pretty(extra)?);
             }
@@ -6006,10 +6617,18 @@ async fn await_confirmation(pipeline: &TxPipeline, tx_hash: &str) {
 
 /// Show a gas estimate for a transfer (non-fatal if node unreachable).
 async fn show_gas_estimate(rpc_url: &str, label: &str) {
-    let Ok(rpc) = RpcClient::new(rpc_url) else { return };
+    let Ok(rpc) = RpcClient::new(rpc_url) else {
+        return;
+    };
     if let Ok(est) = GasEstimator::from_rpc(&rpc).await {
         let fee = est.estimate_transfer();
-        println!("  {} {}: ~{} units (base_fee={})", "Gas".yellow(), label, fee.total_fee, fee.base_fee);
+        println!(
+            "  {} {}: ~{} units (base_fee={})",
+            "Gas".yellow(),
+            label,
+            fee.total_fee,
+            fee.base_fee
+        );
     }
 }
 
@@ -6065,7 +6684,9 @@ async fn cmd_simulate(
             };
 
             println!("{}", "Simulating Transfer...".bold().cyan());
-            let result = simulator.simulate_transfer(&from_addr, &to_addr, amount).await?;
+            let result = simulator
+                .simulate_transfer(&from_addr, &to_addr, amount)
+                .await?;
 
             crate::output::json_or(&result, || {
                 if result.success {
@@ -6079,7 +6700,8 @@ async fn cmd_simulate(
                 println!();
 
                 for bc in &result.balance_changes {
-                    println!("  {} {} — {} EVAP → {} EVAP (Δ {})",
+                    println!(
+                        "  {} {} — {} EVAP → {} EVAP (Δ {})",
                         "Balance:".bold(),
                         bc.label,
                         bc.before,
@@ -6115,7 +6737,8 @@ async fn cmd_simulate(
 
                 if let Some(ref ec) = result.energy_change {
                     println!();
-                    println!("  {} {} → {} energy (Δ +{})",
+                    println!(
+                        "  {} {} → {} energy (Δ +{})",
                         "Energy:".bold(),
                         ec.energy_before,
                         ec.energy_after,
@@ -6138,7 +6761,7 @@ async fn cmd_simulate(
 // ──────────────────────────── Spending ────────────────────────────────
 
 fn cmd_spending(action: SpendingAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::spending::{SpendingPolicy, EnforcementMode};
+    use crate::spending::{EnforcementMode, SpendingPolicy};
 
     let policy_path = crate::spending::default_policy_path();
     let mut policy = if policy_path.exists() {
@@ -6151,8 +6774,22 @@ fn cmd_spending(action: SpendingAction) -> Result<(), Box<dyn std::error::Error>
         SpendingAction::Show => {
             println!("{}", "Spending Policy".bold().cyan());
             println!("  Mode:         {:?}", policy.mode);
-            println!("  Per-tx limit: {}", if policy.per_tx_limit == 0 { "unlimited".to_string() } else { format!("{} EVAP", policy.per_tx_limit) });
-            println!("  Daily limit:  {}", if policy.daily_limit == 0 { "unlimited".to_string() } else { format!("{} EVAP", policy.daily_limit) });
+            println!(
+                "  Per-tx limit: {}",
+                if policy.per_tx_limit == 0 {
+                    "unlimited".to_string()
+                } else {
+                    format!("{} EVAP", policy.per_tx_limit)
+                }
+            );
+            println!(
+                "  Daily limit:  {}",
+                if policy.daily_limit == 0 {
+                    "unlimited".to_string()
+                } else {
+                    format!("{} EVAP", policy.daily_limit)
+                }
+            );
             println!("  Allowlist:    {} addresses", policy.allowlist.len());
             for addr in &policy.allowlist {
                 println!("    - {}", addr);
@@ -6177,7 +6814,11 @@ fn cmd_spending(action: SpendingAction) -> Result<(), Box<dyn std::error::Error>
                 "enforce" => EnforcementMode::Enforce,
                 "warn" => EnforcementMode::Warn,
                 "disabled" | "off" => EnforcementMode::Disabled,
-                _ => return Err(format!("Invalid mode: {} (use enforce/warn/disabled)", mode).into()),
+                _ => {
+                    return Err(
+                        format!("Invalid mode: {} (use enforce/warn/disabled)", mode).into(),
+                    )
+                }
             };
             policy.mode = m;
             policy.save(&policy_path)?;
@@ -6224,7 +6865,10 @@ fn cmd_spending(action: SpendingAction) -> Result<(), Box<dyn std::error::Error>
 
 // ──────────────────────────── Multisig ────────────────────────────────
 
-fn cmd_multisig(action: MultisigAction, keystore_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn cmd_multisig(
+    action: MultisigAction,
+    keystore_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     use crate::multisig::MultisigStore;
 
     let ms_path = crate::multisig::default_multisig_path();
@@ -6235,12 +6879,22 @@ fn cmd_multisig(action: MultisigAction, keystore_path: &str) -> Result<(), Box<d
     };
 
     match action {
-        MultisigAction::CreateGroup { name, members, threshold } => {
-            let member_list: Vec<String> = members.split(',').map(|s| s.trim().to_string()).collect();
+        MultisigAction::CreateGroup {
+            name,
+            members,
+            threshold,
+        } => {
+            let member_list: Vec<String> =
+                members.split(',').map(|s| s.trim().to_string()).collect();
             store.create_group(&name, member_list, threshold)?;
             store.save(&ms_path)?;
-            println!("{} Created multisig group '{}' ({}-of-{})",
-                "✓".green(), name, threshold, members.split(',').count());
+            println!(
+                "{} Created multisig group '{}' ({}-of-{})",
+                "✓".green(),
+                name,
+                threshold,
+                members.split(',').count()
+            );
         }
         MultisigAction::Groups => {
             let groups = store.list_groups();
@@ -6249,20 +6903,32 @@ fn cmd_multisig(action: MultisigAction, keystore_path: &str) -> Result<(), Box<d
             } else {
                 println!("{}", "Multisig Groups".bold().cyan());
                 for g in groups {
-                    println!("  {} — {}-of-{} ({} members)",
-                        g.name.bold(), g.threshold, g.members.len(), g.members.len());
+                    println!(
+                        "  {} — {}-of-{} ({} members)",
+                        g.name.bold(),
+                        g.threshold,
+                        g.members.len(),
+                        g.members.len()
+                    );
                     for m in &g.members {
                         println!("    - {}", m);
                     }
                 }
             }
         }
-        MultisigAction::Propose { group, to, amount, memo } => {
+        MultisigAction::Propose {
+            group,
+            to,
+            amount,
+            memo,
+        } => {
             let config = WalletConfig::load_or_default(WalletConfig::default_path())?;
-            let active_name = config.active_account
+            let active_name = config
+                .active_account
                 .ok_or("No active account — run: wallet account switch <name>")?;
             let ks = KeyStore::load(keystore_path)?;
-            let from_addr = ks.get_address(&active_name)
+            let from_addr = ks
+                .get_address(&active_name)
                 .map(|a| crate::address::format_address(&a))
                 .ok_or("Active account not found in keystore")?;
 
@@ -6280,10 +6946,12 @@ fn cmd_multisig(action: MultisigAction, keystore_path: &str) -> Result<(), Box<d
         }
         MultisigAction::Approve { id } => {
             let config = WalletConfig::load_or_default(WalletConfig::default_path())?;
-            let active_name = config.active_account
+            let active_name = config
+                .active_account
                 .ok_or("No active account — run: wallet account switch <name>")?;
             let ks = KeyStore::load(keystore_path)?;
-            let signer_addr = ks.get_address(&active_name)
+            let signer_addr = ks
+                .get_address(&active_name)
                 .map(|a| crate::address::format_address(&a))
                 .ok_or("Active account not found in keystore")?;
 
@@ -6305,13 +6973,19 @@ fn cmd_multisig(action: MultisigAction, keystore_path: &str) -> Result<(), Box<d
             } else {
                 println!("{}", format!("Proposals for '{}'", group).bold().cyan());
                 for p in proposals {
-                    println!("  {} — {:?} — {} approvals — {}",
-                        p.id.bold(), p.status, p.approvals.len(), p.tx.describe());
+                    println!(
+                        "  {} — {:?} — {} approvals — {}",
+                        p.id.bold(),
+                        p.status,
+                        p.approvals.len(),
+                        p.tx.describe()
+                    );
                 }
             }
         }
         MultisigAction::ShowProposal { id } => {
-            let proposal = store.get_proposal(&id)
+            let proposal = store
+                .get_proposal(&id)
                 .ok_or_else(|| format!("Proposal not found: {}", id))?;
             println!("{}", "Proposal Details".bold().cyan());
             println!("  ID:       {}", proposal.id);
@@ -6338,7 +7012,7 @@ fn cmd_multisig(action: MultisigAction, keystore_path: &str) -> Result<(), Box<d
 // ──────────────────────────── Hooks ──────────────────────────────────
 
 fn cmd_hooks(action: HooksAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::hooks::{HookRegistry, Hook, HookAction};
+    use crate::hooks::{Hook, HookAction, HookRegistry};
 
     let hooks_path = crate::hooks::default_hooks_path();
     let mut registry = if hooks_path.exists() {
@@ -6355,9 +7029,14 @@ fn cmd_hooks(action: HooksAction) -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 println!("{}", "Transaction Hooks".bold().cyan());
                 for h in hooks {
-                    let status = if h.enabled { "enabled".green() } else { "disabled".red() };
+                    let status = if h.enabled {
+                        "enabled".green()
+                    } else {
+                        "disabled".red()
+                    };
                     let block = if h.blocking { " [blocking]" } else { "" };
-                    println!("  {} — {} on {} — {} {}",
+                    println!(
+                        "  {} — {} on {} — {} {}",
                         h.name.bold(),
                         h.action.describe(),
                         h.event.label(),
@@ -6367,7 +7046,12 @@ fn cmd_hooks(action: HooksAction) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        HooksAction::AddShell { name, event, command, blocking } => {
+        HooksAction::AddShell {
+            name,
+            event,
+            command,
+            blocking,
+        } => {
             let ev = parse_hook_event(&event)?;
             registry.register(Hook {
                 name: name.clone(),
@@ -6379,7 +7063,12 @@ fn cmd_hooks(action: HooksAction) -> Result<(), Box<dyn std::error::Error>> {
             registry.save(&hooks_path)?;
             println!("{} Shell hook '{}' added on {}", "✓".green(), name, event);
         }
-        HooksAction::AddLog { name, event, file, format } => {
+        HooksAction::AddLog {
+            name,
+            event,
+            file,
+            format,
+        } => {
             let ev = parse_hook_event(&event)?;
             registry.register(Hook {
                 name: name.clone(),
@@ -6417,14 +7106,18 @@ fn parse_hook_event(s: &str) -> Result<crate::hooks::HookEvent, Box<dyn std::err
         "pre_refresh" => Ok(crate::hooks::HookEvent::PreRefresh),
         "post_refresh" => Ok(crate::hooks::HookEvent::PostRefresh),
         "on_error" => Ok(crate::hooks::HookEvent::OnError),
-        _ => Err(format!("Invalid event: {} (use pre_send/post_send/pre_refresh/post_refresh/on_error)", s).into()),
+        _ => Err(format!(
+            "Invalid event: {} (use pre_send/post_send/pre_refresh/post_refresh/on_error)",
+            s
+        )
+        .into()),
     }
 }
 
 // ──────────────────────────── Labels ──────────────────────────────────
 
 fn cmd_labels(action: LabelsAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::labels::{LabelStore, AddressCategory};
+    use crate::labels::{AddressCategory, LabelStore};
 
     let labels_path = crate::labels::default_labels_path();
     let mut store = if labels_path.exists() {
@@ -6434,15 +7127,32 @@ fn cmd_labels(action: LabelsAction) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     match action {
-        LabelsAction::Add { address, name, category, tags, note } => {
+        LabelsAction::Add {
+            address,
+            name,
+            category,
+            tags,
+            note,
+        } => {
             let cat = AddressCategory::from_str(&category)
                 .ok_or_else(|| format!("Invalid category: {} (use personal/exchange/defi/contract/dao/staking/nft/faucet)", category))?;
             let tag_list: Vec<String> = tags
-                .map(|t| t.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+                .map(|t| {
+                    t.split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                })
                 .unwrap_or_default();
             store.label_address(&address, &name, cat, tag_list, note.as_deref())?;
             store.save(&labels_path)?;
-            println!("{} Labeled {} as '{}' ({})", "✓".green(), address, name, category);
+            println!(
+                "{} Labeled {} as '{}' ({})",
+                "✓".green(),
+                address,
+                name,
+                category
+            );
         }
         LabelsAction::List => {
             let labels = store.list_address_labels();
@@ -6451,9 +7161,18 @@ fn cmd_labels(action: LabelsAction) -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 println!("{}", "Address Labels".bold().cyan());
                 for l in labels {
-                    let tags = if l.tags.is_empty() { String::new() } else { format!(" [{}]", l.tags.join(", ")) };
-                    println!("  {} — {} ({}){}",
-                        l.name.bold(), l.address, l.category.label(), tags);
+                    let tags = if l.tags.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" [{}]", l.tags.join(", "))
+                    };
+                    println!(
+                        "  {} — {} ({}){}",
+                        l.name.bold(),
+                        l.address,
+                        l.category.label(),
+                        tags
+                    );
                     if let Some(ref note) = l.note {
                         println!("    Note: {}", note);
                     }
@@ -6463,10 +7182,23 @@ fn cmd_labels(action: LabelsAction) -> Result<(), Box<dyn std::error::Error>> {
             let anns = store.list_tx_annotations();
             if !anns.is_empty() {
                 println!();
-                println!("{} ({} annotations)", "Tx Annotations".bold().cyan(), anns.len());
+                println!(
+                    "{} ({} annotations)",
+                    "Tx Annotations".bold().cyan(),
+                    anns.len()
+                );
                 for a in anns.iter().rev().take(10) {
-                    let tags = if a.tags.is_empty() { String::new() } else { format!(" [{}]", a.tags.join(", ")) };
-                    println!("  {} — {}{}", a.tx_hash, a.note.as_deref().unwrap_or("-"), tags);
+                    let tags = if a.tags.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" [{}]", a.tags.join(", "))
+                    };
+                    println!(
+                        "  {} — {}{}",
+                        a.tx_hash,
+                        a.note.as_deref().unwrap_or("-"),
+                        tags
+                    );
                 }
             }
         }
@@ -6475,9 +7207,19 @@ fn cmd_labels(action: LabelsAction) -> Result<(), Box<dyn std::error::Error>> {
             if results.is_empty() {
                 println!("No labels matching '{}'.", query);
             } else {
-                println!("{}", format!("Search: '{}' ({} results)", query, results.len()).bold().cyan());
+                println!(
+                    "{}",
+                    format!("Search: '{}' ({} results)", query, results.len())
+                        .bold()
+                        .cyan()
+                );
                 for l in results {
-                    println!("  {} — {} ({})", l.name.bold(), l.address, l.category.label());
+                    println!(
+                        "  {} — {} ({})",
+                        l.name.bold(),
+                        l.address,
+                        l.category.label()
+                    );
                 }
             }
         }
@@ -6486,9 +7228,19 @@ fn cmd_labels(action: LabelsAction) -> Result<(), Box<dyn std::error::Error>> {
             store.save(&labels_path)?;
             println!("{} Label removed for {}", "✓".green(), address);
         }
-        LabelsAction::Annotate { tx_hash, note, tags, category } => {
+        LabelsAction::Annotate {
+            tx_hash,
+            note,
+            tags,
+            category,
+        } => {
             let tag_list: Vec<String> = tags
-                .map(|t| t.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+                .map(|t| {
+                    t.split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                })
                 .unwrap_or_default();
             store.annotate_tx(&tx_hash, note.as_deref(), tag_list, category.as_deref())?;
             store.save(&labels_path)?;
@@ -6501,9 +7253,19 @@ fn cmd_labels(action: LabelsAction) -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 println!("{}", "Transaction Annotations".bold().cyan());
                 for a in anns {
-                    let tags = if a.tags.is_empty() { String::new() } else { format!(" [{}]", a.tags.join(", ")) };
+                    let tags = if a.tags.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" [{}]", a.tags.join(", "))
+                    };
                     let cat = a.category.as_deref().unwrap_or("-");
-                    println!("  {} — {} — cat:{}{}", a.tx_hash, a.note.as_deref().unwrap_or("-"), cat, tags);
+                    println!(
+                        "  {} — {} — cat:{}{}",
+                        a.tx_hash,
+                        a.note.as_deref().unwrap_or("-"),
+                        cat,
+                        tags
+                    );
                 }
             }
         }
@@ -6524,43 +7286,49 @@ async fn cmd_fees(action: FeesAction, rpc: RpcClient) -> Result<(), Box<dyn std:
     };
 
     match action {
-        FeesAction::Stats => {
-            match tracker.stats() {
-                Ok(stats) => {
-                    crate::output::json_or(&stats, || {
-                        println!("{}", "Fee Market Stats".bold().cyan());
-                        println!("  Samples:     {}", stats.samples);
-                        println!("  Current:     {} ({}th percentile)", stats.current, stats.current_percentile as u64);
-                        println!("  Min / Max:   {} / {}", stats.min, stats.max);
-                        println!("  Median:      {}", stats.median);
-                        println!("  P25 / P75:   {} / {}", stats.p25, stats.p75);
-                        println!("  P90:         {}", stats.p90);
-                        println!("  Average:     {}", stats.avg);
-                        println!("  Trend:       {:?}", stats.trend);
-                    });
-                }
-                Err(e) => {
-                    println!("{} {} — run 'wallet fees record' to collect data", "⚠".yellow(), e);
-                }
+        FeesAction::Stats => match tracker.stats() {
+            Ok(stats) => {
+                crate::output::json_or(&stats, || {
+                    println!("{}", "Fee Market Stats".bold().cyan());
+                    println!("  Samples:     {}", stats.samples);
+                    println!(
+                        "  Current:     {} ({}th percentile)",
+                        stats.current, stats.current_percentile as u64
+                    );
+                    println!("  Min / Max:   {} / {}", stats.min, stats.max);
+                    println!("  Median:      {}", stats.median);
+                    println!("  P25 / P75:   {} / {}", stats.p25, stats.p75);
+                    println!("  P90:         {}", stats.p90);
+                    println!("  Average:     {}", stats.avg);
+                    println!("  Trend:       {:?}", stats.trend);
+                });
             }
-        }
-        FeesAction::Timing => {
-            match tracker.timing_advice() {
-                Ok(advice) => {
-                    crate::output::json_or(&advice, || {
-                        println!("{}", "Fee Timing Advice".bold().cyan());
-                        println!("  Level: {}", advice.level.to_uppercase());
-                        println!("  {}", advice.advice);
-                        if advice.potential_savings_pct > 0.0 {
-                            println!("  Potential savings: ~{:.1}% by waiting", advice.potential_savings_pct);
-                        }
-                    });
-                }
-                Err(e) => {
-                    println!("{} {} — run 'wallet fees record' first", "⚠".yellow(), e);
-                }
+            Err(e) => {
+                println!(
+                    "{} {} — run 'wallet fees record' to collect data",
+                    "⚠".yellow(),
+                    e
+                );
             }
-        }
+        },
+        FeesAction::Timing => match tracker.timing_advice() {
+            Ok(advice) => {
+                crate::output::json_or(&advice, || {
+                    println!("{}", "Fee Timing Advice".bold().cyan());
+                    println!("  Level: {}", advice.level.to_uppercase());
+                    println!("  {}", advice.advice);
+                    if advice.potential_savings_pct > 0.0 {
+                        println!(
+                            "  Potential savings: ~{:.1}% by waiting",
+                            advice.potential_savings_pct
+                        );
+                    }
+                });
+            }
+            Err(e) => {
+                println!("{} {} — run 'wallet fees record' first", "⚠".yellow(), e);
+            }
+        },
         FeesAction::Record => {
             let blocks = rpc.get_blocks(Some(10)).await?;
             let mut recorded = 0;
@@ -6571,7 +7339,12 @@ async fn cmd_fees(action: FeesAction, rpc: RpcClient) -> Result<(), Box<dyn std:
             // Check alerts
             let triggered = tracker.check_alerts();
             tracker.save(&fee_path)?;
-            println!("{} Recorded {} fee samples ({} total)", "✓".green(), recorded, tracker.len());
+            println!(
+                "{} Recorded {} fee samples ({} total)",
+                "✓".green(),
+                recorded,
+                tracker.len()
+            );
             for alert_name in &triggered {
                 println!("  {} Fee alert '{}' triggered!", "🔔".yellow(), alert_name);
             }
@@ -6579,7 +7352,12 @@ async fn cmd_fees(action: FeesAction, rpc: RpcClient) -> Result<(), Box<dyn std:
         FeesAction::Alert { name, target } => {
             tracker.add_alert(&name, target);
             tracker.save(&fee_path)?;
-            println!("{} Fee alert '{}' set (target: ≤ {})", "✓".green(), name, target);
+            println!(
+                "{} Fee alert '{}' set (target: ≤ {})",
+                "✓".green(),
+                name,
+                target
+            );
         }
         FeesAction::Alerts => {
             let alerts = tracker.list_alerts();
@@ -6595,7 +7373,12 @@ async fn cmd_fees(action: FeesAction, rpc: RpcClient) -> Result<(), Box<dyn std:
                     } else {
                         "active".green().to_string()
                     };
-                    println!("  {} — target ≤ {} — {}", a.name.bold(), a.target_fee, status);
+                    println!(
+                        "  {} — target ≤ {} — {}",
+                        a.name.bold(),
+                        a.target_fee,
+                        status
+                    );
                 }
             }
         }
@@ -6614,7 +7397,7 @@ async fn cmd_fees(action: FeesAction, rpc: RpcClient) -> Result<(), Box<dyn std:
 // ──────────────────────────── Hardware ────────────────────────────────
 
 fn cmd_hardware(action: HardwareAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::hardware::{DeviceRegistry, SimulatedDevice, HardwareWallet};
+    use crate::hardware::{DeviceRegistry, HardwareWallet, SimulatedDevice};
 
     let device_path = crate::hardware::default_device_path();
     let mut registry = if device_path.exists() {
@@ -6632,11 +7415,13 @@ fn cmd_hardware(action: HardwareAction) -> Result<(), Box<dyn std::error::Error>
             } else {
                 println!("{}", "Hardware Devices".bold().cyan());
                 for d in devices {
-                    println!("  {} — {} ({}) addr: {}",
+                    println!(
+                        "  {} — {} ({}) addr: {}",
                         d.id.bold(),
                         d.name,
                         d.device_type.label(),
-                        d.address.as_deref().unwrap_or("-"));
+                        d.address.as_deref().unwrap_or("-")
+                    );
                 }
             }
         }
@@ -6659,20 +7444,21 @@ fn cmd_hardware(action: HardwareAction) -> Result<(), Box<dyn std::error::Error>
                 println!("Device '{}' not found.", id);
             }
         }
-        HardwareAction::Info { id } => {
-            match registry.get(&id) {
-                Some(d) => {
-                    println!("{}", "Device Info".bold().cyan());
-                    println!("  ID:           {}", d.id);
-                    println!("  Name:         {}", d.name);
-                    println!("  Type:         {}", d.device_type.label());
-                    println!("  Address:      {}", d.address.as_deref().unwrap_or("-"));
-                    println!("  Registered:   {}", d.registered_at);
-                    println!("  Last used:    {}", d.last_used.as_deref().unwrap_or("never"));
-                }
-                None => println!("Device '{}' not found.", id),
+        HardwareAction::Info { id } => match registry.get(&id) {
+            Some(d) => {
+                println!("{}", "Device Info".bold().cyan());
+                println!("  ID:           {}", d.id);
+                println!("  Name:         {}", d.name);
+                println!("  Type:         {}", d.device_type.label());
+                println!("  Address:      {}", d.address.as_deref().unwrap_or("-"));
+                println!("  Registered:   {}", d.registered_at);
+                println!(
+                    "  Last used:    {}",
+                    d.last_used.as_deref().unwrap_or("never")
+                );
             }
-        }
+            None => println!("Device '{}' not found.", id),
+        },
     }
     Ok(())
 }
@@ -6698,7 +7484,12 @@ fn cmd_dapp(action: DappAction, keystore_path: &str) -> Result<(), Box<dyn std::
             if sessions.is_empty() {
                 println!("No active dApp sessions.");
             } else {
-                println!("{}", format!("Active dApp Sessions ({})", sessions.len()).bold().cyan());
+                println!(
+                    "{}",
+                    format!("Active dApp Sessions ({})", sessions.len())
+                        .bold()
+                        .cyan()
+                );
                 for s in sessions {
                     let perms: Vec<&str> = s.permissions.iter().map(|p| p.label()).collect();
                     println!("  {} — {} ({})", s.id.bold(), s.name, s.origin);
@@ -6710,7 +7501,12 @@ fn cmd_dapp(action: DappAction, keystore_path: &str) -> Result<(), Box<dyn std::
             }
             connector.save(&dapp_path)?;
         }
-        DappAction::Connect { origin, name, permissions, hours } => {
+        DappAction::Connect {
+            origin,
+            name,
+            permissions,
+            hours,
+        } => {
             let perms: Vec<Permission> = permissions
                 .split(',')
                 .filter_map(|s| Permission::from_str(s.trim()))
@@ -6720,14 +7516,15 @@ fn cmd_dapp(action: DappAction, keystore_path: &str) -> Result<(), Box<dyn std::
             }
 
             let config = WalletConfig::load_or_default(WalletConfig::default_path())?;
-            let account = config.active_account
-                .ok_or("No active account")?;
+            let account = config.active_account.ok_or("No active account")?;
             let ks = KeyStore::load(keystore_path)?;
-            let account_addr = ks.get_address(&account)
+            let account_addr = ks
+                .get_address(&account)
                 .map(|a| crate::address::format_address(&a))
                 .ok_or("Active account not found in keystore")?;
 
-            let session = connector.create_session(&origin, &name, perms.clone(), &account_addr, hours)?;
+            let session =
+                connector.create_session(&origin, &name, perms.clone(), &account_addr, hours)?;
             let sess_id = session.id.clone();
             connector.save(&dapp_path)?;
 
@@ -6744,35 +7541,42 @@ fn cmd_dapp(action: DappAction, keystore_path: &str) -> Result<(), Box<dyn std::
         DappAction::RevokeOrigin { origin } => {
             let count = connector.revoke_origin(&origin);
             connector.save(&dapp_path)?;
-            println!("{} Revoked {} session(s) for {}", "✓".green(), count, origin);
+            println!(
+                "{} Revoked {} session(s) for {}",
+                "✓".green(),
+                count,
+                origin
+            );
         }
-        DappAction::Show { id } => {
-            match connector.get_session(&id) {
-                Some(s) => {
-                    let perms: Vec<&str> = s.permissions.iter().map(|p| p.label()).collect();
-                    println!("{}", "dApp Session".bold().cyan());
-                    println!("  ID:          {}", s.id);
-                    println!("  Origin:      {}", s.origin);
-                    println!("  Name:        {}", s.name);
-                    println!("  Account:     {}", s.account);
-                    println!("  Status:      {:?}", s.status);
-                    println!("  Permissions: {}", perms.join(", "));
-                    println!("  Requests:    {}", s.request_count);
-                    println!("  Created:     {}", s.created_at);
-                    println!("  Expires:     {}", s.expires_at);
+        DappAction::Show { id } => match connector.get_session(&id) {
+            Some(s) => {
+                let perms: Vec<&str> = s.permissions.iter().map(|p| p.label()).collect();
+                println!("{}", "dApp Session".bold().cyan());
+                println!("  ID:          {}", s.id);
+                println!("  Origin:      {}", s.origin);
+                println!("  Name:        {}", s.name);
+                println!("  Account:     {}", s.account);
+                println!("  Status:      {:?}", s.status);
+                println!("  Permissions: {}", perms.join(", "));
+                println!("  Requests:    {}", s.request_count);
+                println!("  Created:     {}", s.created_at);
+                println!("  Expires:     {}", s.expires_at);
 
-                    let reqs = connector.session_requests(&id);
-                    if !reqs.is_empty() {
-                        println!("  Recent requests:");
-                        for r in reqs.iter().rev().take(5) {
-                            let status = if r.approved == Some(true) { "✓" } else { "✗" };
-                            println!("    {} {} — {}", status, r.request_type, r.timestamp);
-                        }
+                let reqs = connector.session_requests(&id);
+                if !reqs.is_empty() {
+                    println!("  Recent requests:");
+                    for r in reqs.iter().rev().take(5) {
+                        let status = if r.approved == Some(true) {
+                            "✓"
+                        } else {
+                            "✗"
+                        };
+                        println!("    {} {} — {}", status, r.request_type, r.timestamp);
                     }
                 }
-                None => println!("Session '{}' not found.", id),
             }
-        }
+            None => println!("Session '{}' not found.", id),
+        },
     }
     Ok(())
 }
@@ -6780,7 +7584,7 @@ fn cmd_dapp(action: DappAction, keystore_path: &str) -> Result<(), Box<dyn std::
 // ── Notifications handler ──
 
 fn cmd_notifications(action: NotificationsAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::notifications::{NotificationCenter, EventCategory};
+    use crate::notifications::{EventCategory, NotificationCenter};
 
     let data_dir = crate::config::default_data_dir();
     let path = data_dir.join("notifications.json");
@@ -6796,10 +7600,20 @@ fn cmd_notifications(action: NotificationsAction) -> Result<(), Box<dyn std::err
             if unread.is_empty() {
                 println!("{}", "No unread notifications.".dimmed());
             } else {
-                println!("{} ({})", "Unread Notifications".bold().cyan(), unread.len());
+                println!(
+                    "{} ({})",
+                    "Unread Notifications".bold().cyan(),
+                    unread.len()
+                );
                 for n in &unread {
                     let icon = n.priority.icon();
-                    println!("  {} [{}] {} — {}", icon, &n.id[..8], n.title.bold(), n.message);
+                    println!(
+                        "  {} [{}] {} — {}",
+                        icon,
+                        &n.id[..8],
+                        n.title.bold(),
+                        n.message
+                    );
                 }
             }
         }
@@ -6812,7 +7626,14 @@ fn cmd_notifications(action: NotificationsAction) -> Result<(), Box<dyn std::err
                 for n in &recent {
                     let icon = n.priority.icon();
                     let read_mark = if n.read { " " } else { "*" };
-                    println!("  {}{} [{}] {} — {}", read_mark, icon, &n.id[..8], n.title.bold(), n.message);
+                    println!(
+                        "  {}{} [{}] {} — {}",
+                        read_mark,
+                        icon,
+                        &n.id[..8],
+                        n.title.bold(),
+                        n.message
+                    );
                 }
             }
         }
@@ -6844,10 +7665,20 @@ fn cmd_notifications(action: NotificationsAction) -> Result<(), Box<dyn std::err
             if filtered.is_empty() {
                 println!("{}", "No notifications in this category.".dimmed());
             } else {
-                println!("{} ({} results)", "Filtered Notifications".bold().cyan(), filtered.len());
+                println!(
+                    "{} ({} results)",
+                    "Filtered Notifications".bold().cyan(),
+                    filtered.len()
+                );
                 for n in &filtered {
                     let icon = n.priority.icon();
-                    println!("  {} [{}] {} — {}", icon, &n.id[..8], n.title.bold(), n.message);
+                    println!(
+                        "  {} [{}] {} — {}",
+                        icon,
+                        &n.id[..8],
+                        n.title.bold(),
+                        n.message
+                    );
                 }
             }
         }
@@ -6869,7 +7700,10 @@ fn cmd_notifications(action: NotificationsAction) -> Result<(), Box<dyn std::err
 
 // ── Session Keys handler ──
 
-fn cmd_session_keys(action: SessionKeysAction, keystore_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn cmd_session_keys(
+    action: SessionKeysAction,
+    keystore_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     use crate::session_keys::AbstractionStore;
 
     let data_dir = crate::config::default_data_dir();
@@ -6888,19 +7722,40 @@ fn cmd_session_keys(action: SessionKeysAction, keystore_path: &str) -> Result<()
             } else {
                 println!("{} ({} active)", "Session Keys".bold().cyan(), keys.len());
                 for k in &keys {
-                    println!("  {} {} — max/tx: {}, ops: {:?}", k.id[..8].dimmed(), k.label.bold(), k.max_per_tx, k.allowed_ops);
+                    println!(
+                        "  {} {} — max/tx: {}, ops: {:?}",
+                        k.id[..8].dimmed(),
+                        k.label.bold(),
+                        k.max_per_tx,
+                        k.allowed_ops
+                    );
                 }
             }
         }
-        SessionKeysAction::Create { label, max_per_tx, total_limit, ops, hours } => {
+        SessionKeysAction::Create {
+            label,
+            max_per_tx,
+            total_limit,
+            ops,
+            hours,
+        } => {
             let config = WalletConfig::load_or_default(WalletConfig::default_path())?;
             let active_name = config.active_account.as_ref().ok_or("No active account")?;
             let ks = KeyStore::load(keystore_path)?;
-            let addr = ks.get_address(active_name).ok_or("Account not found in keystore")?;
+            let addr = ks
+                .get_address(active_name)
+                .ok_or("Account not found in keystore")?;
             let addr_hex = format!("0x{}", hex::encode(addr));
 
             let allowed: Vec<String> = ops.split(',').map(|s| s.trim().to_string()).collect();
-            let key = store.create_session_key(&label, &addr_hex, max_per_tx, total_limit, allowed, hours);
+            let key = store.create_session_key(
+                &label,
+                &addr_hex,
+                max_per_tx,
+                total_limit,
+                allowed,
+                hours,
+            );
             let key_id = key.id.clone();
             let key_label = key.label.clone();
             let key_max = key.max_per_tx;
@@ -6916,27 +7771,30 @@ fn cmd_session_keys(action: SessionKeysAction, keystore_path: &str) -> Result<()
             store.save(&path)?;
             println!("{} Session key revoked.", "✓".green());
         }
-        SessionKeysAction::Show { id } => {
-            match store.get_session_key(&id) {
-                Some(k) => {
-                    println!("{}", "Session Key".bold().cyan());
-                    println!("  ID:       {}", k.id);
-                    println!("  Label:    {}", k.label);
-                    println!("  Account:  {}", k.account);
-                    println!("  Max/tx:   {}", k.max_per_tx);
-                    println!("  Used:     {}", k.total_spent);
-                    println!("  Ops:      {:?}", k.allowed_ops);
-                    println!("  Active:   {}", k.active);
-                    println!("  Expires:  {}", k.expires_at);
-                }
-                None => eprintln!("{} Session key not found: {}", "Error:".red().bold(), id),
+        SessionKeysAction::Show { id } => match store.get_session_key(&id) {
+            Some(k) => {
+                println!("{}", "Session Key".bold().cyan());
+                println!("  ID:       {}", k.id);
+                println!("  Label:    {}", k.label);
+                println!("  Account:  {}", k.account);
+                println!("  Max/tx:   {}", k.max_per_tx);
+                println!("  Used:     {}", k.total_spent);
+                println!("  Ops:      {:?}", k.allowed_ops);
+                println!("  Active:   {}", k.active);
+                println!("  Expires:  {}", k.expires_at);
             }
-        }
-        SessionKeysAction::SetupRecovery { threshold, delay_hours } => {
+            None => eprintln!("{} Session key not found: {}", "Error:".red().bold(), id),
+        },
+        SessionKeysAction::SetupRecovery {
+            threshold,
+            delay_hours,
+        } => {
             let config = WalletConfig::load_or_default(WalletConfig::default_path())?;
             let active_name = config.active_account.as_ref().ok_or("No active account")?;
             let ks = KeyStore::load(keystore_path)?;
-            let addr = ks.get_address(active_name).ok_or("Account not found in keystore")?;
+            let addr = ks
+                .get_address(active_name)
+                .ok_or("Account not found in keystore")?;
             let addr_hex = format!("0x{}", hex::encode(addr));
 
             store.setup_recovery(&addr_hex, threshold, delay_hours)?;
@@ -6946,31 +7804,35 @@ fn cmd_session_keys(action: SessionKeysAction, keystore_path: &str) -> Result<()
             println!("  Delay:       {}h", delay_hours);
         }
         SessionKeysAction::AddGuardian { address, name } => {
-            let recovery = store.recovery.as_mut().ok_or("Social recovery not set up. Run: wallet session-keys setup-recovery <threshold>")?;
+            let recovery = store.recovery.as_mut().ok_or(
+                "Social recovery not set up. Run: wallet session-keys setup-recovery <threshold>",
+            )?;
             recovery.add_guardian(&address, &name)?;
             store.save(&path)?;
             println!("{} Guardian added: {} ({})", "✓".green(), name, address);
         }
-        SessionKeysAction::RecoveryInfo => {
-            match &store.recovery {
-                Some(r) => {
-                    println!("{}", "Social Recovery".bold().cyan());
-                    println!("  Account:   {}", r.account);
-                    println!("  Threshold: {}/{}", r.threshold, r.guardian_count());
-                    println!("  Delay:     {}h", r.delay_hours);
-                    if r.guardians.is_empty() {
-                        println!("  Guardians: (none)");
-                    } else {
-                        println!("  Guardians:");
-                        for g in &r.guardians {
-                            println!("    {} — {}", g.name, g.address);
-                        }
+        SessionKeysAction::RecoveryInfo => match &store.recovery {
+            Some(r) => {
+                println!("{}", "Social Recovery".bold().cyan());
+                println!("  Account:   {}", r.account);
+                println!("  Threshold: {}/{}", r.threshold, r.guardian_count());
+                println!("  Delay:     {}h", r.delay_hours);
+                if r.guardians.is_empty() {
+                    println!("  Guardians: (none)");
+                } else {
+                    println!("  Guardians:");
+                    for g in &r.guardians {
+                        println!("    {} — {}", g.name, g.address);
                     }
                 }
-                None => println!("{}", "Social recovery not configured.".dimmed()),
             }
-        }
-        SessionKeysAction::SetSponsor { address, max_gas, daily_budget } => {
+            None => println!("{}", "Social recovery not configured.".dimmed()),
+        },
+        SessionKeysAction::SetSponsor {
+            address,
+            max_gas,
+            daily_budget,
+        } => {
             store.setup_sponsor(&address, max_gas, daily_budget);
             store.save(&path)?;
             println!("{} Gas sponsor configured.", "✓".green());
@@ -6978,19 +7840,17 @@ fn cmd_session_keys(action: SessionKeysAction, keystore_path: &str) -> Result<()
             println!("  Max gas/tx:   {}", max_gas);
             println!("  Daily budget: {}", daily_budget);
         }
-        SessionKeysAction::SponsorInfo => {
-            match store.gas_sponsor.as_mut() {
-                Some(s) => {
-                    let remaining = s.remaining();
-                    println!("{}", "Gas Sponsor".bold().cyan());
-                    println!("  Sponsor:      {}", s.sponsor_address);
-                    println!("  Max gas/tx:   {}", s.max_gas_per_tx);
-                    println!("  Daily budget: {}", s.daily_budget);
-                    println!("  Remaining:    {}", remaining);
-                }
-                None => println!("{}", "No gas sponsor configured.".dimmed()),
+        SessionKeysAction::SponsorInfo => match store.gas_sponsor.as_mut() {
+            Some(s) => {
+                let remaining = s.remaining();
+                println!("{}", "Gas Sponsor".bold().cyan());
+                println!("  Sponsor:      {}", s.sponsor_address);
+                println!("  Max gas/tx:   {}", s.max_gas_per_tx);
+                println!("  Daily budget: {}", s.daily_budget);
+                println!("  Remaining:    {}", remaining);
             }
-        }
+            None => println!("{}", "No gas sponsor configured.".dimmed()),
+        },
     }
     Ok(())
 }
@@ -6998,7 +7858,7 @@ fn cmd_session_keys(action: SessionKeysAction, keystore_path: &str) -> Result<()
 // ── Bridge handler ──
 
 fn cmd_bridge(action: BridgeAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::bridge::{BridgeManager, ChainId, Bridge, BridgeType};
+    use crate::bridge::{Bridge, BridgeManager, BridgeType, ChainId};
 
     let path = crate::bridge::default_bridge_path();
     let mut mgr = if path.exists() {
@@ -7013,11 +7873,20 @@ fn cmd_bridge(action: BridgeAction) -> Result<(), Box<dyn std::error::Error>> {
             if bridges.is_empty() {
                 println!("{}", "No bridges registered.".dimmed());
             } else {
-                println!("{} ({} bridges)", "Cross-Chain Bridges".bold().cyan(), bridges.len());
+                println!(
+                    "{} ({} bridges)",
+                    "Cross-Chain Bridges".bold().cyan(),
+                    bridges.len()
+                );
                 for b in bridges {
-                    println!("  {} {} → {} ({:?}) fee: {}%",
-                        b.id[..8].dimmed(), b.source_chain.label(), b.dest_chain.label(),
-                        b.bridge_type, b.fee_pct);
+                    println!(
+                        "  {} {} → {} ({:?}) fee: {}%",
+                        b.id[..8].dimmed(),
+                        b.source_chain.label(),
+                        b.dest_chain.label(),
+                        b.bridge_type,
+                        b.fee_pct
+                    );
                 }
             }
         }
@@ -7028,14 +7897,29 @@ fn cmd_bridge(action: BridgeAction) -> Result<(), Box<dyn std::error::Error>> {
             if found.is_empty() {
                 println!("{}", "No bridges found for this route.".dimmed());
             } else {
-                println!("{} ({} results)", "Bridges Found".bold().cyan(), found.len());
+                println!(
+                    "{} ({} results)",
+                    "Bridges Found".bold().cyan(),
+                    found.len()
+                );
                 for b in &found {
-                    println!("  {} {} — fee: {}%, ~{}min",
-                        b.id[..8].dimmed(), b.name, b.fee_pct, b.estimated_time_min);
+                    println!(
+                        "  {} {} — fee: {}%, ~{}min",
+                        b.id[..8].dimmed(),
+                        b.name,
+                        b.fee_pct,
+                        b.estimated_time_min
+                    );
                 }
             }
         }
-        BridgeAction::Register { name, source, dest, bridge_type, fee_pct } => {
+        BridgeAction::Register {
+            name,
+            source,
+            dest,
+            bridge_type,
+            fee_pct,
+        } => {
             let bt = match bridge_type.to_lowercase().as_str() {
                 "lock_mint" | "lockmint" => BridgeType::LockMint,
                 "burn_mint" | "burnmint" => BridgeType::BurnMint,
@@ -7044,7 +7928,10 @@ fn cmd_bridge(action: BridgeAction) -> Result<(), Box<dyn std::error::Error>> {
                 _ => BridgeType::LockMint,
             };
             let bridge = Bridge {
-                id: format!("br_{}", &blake3::hash(format!("{}{}{}", name, source, dest).as_bytes()).to_hex()[..12]),
+                id: format!(
+                    "br_{}",
+                    &blake3::hash(format!("{}{}{}", name, source, dest).as_bytes()).to_hex()[..12]
+                ),
                 name,
                 source_chain: ChainId::from_str(&source),
                 dest_chain: ChainId::from_str(&dest),
@@ -7062,8 +7949,15 @@ fn cmd_bridge(action: BridgeAction) -> Result<(), Box<dyn std::error::Error>> {
             mgr.save(&path)?;
             println!("{} Bridge registered: {}", "✓".green(), id);
         }
-        BridgeAction::Transfer { bridge_id, token, amount, sender, recipient } => {
-            let transfer = mgr.initiate_transfer(&bridge_id, &token, amount, &sender, &recipient)?;
+        BridgeAction::Transfer {
+            bridge_id,
+            token,
+            amount,
+            sender,
+            recipient,
+        } => {
+            let transfer =
+                mgr.initiate_transfer(&bridge_id, &token, amount, &sender, &recipient)?;
             let tid = transfer.id.clone();
             mgr.save(&path)?;
             println!("{} Bridge transfer initiated: {}", "✓".green(), tid);
@@ -7076,28 +7970,35 @@ fn cmd_bridge(action: BridgeAction) -> Result<(), Box<dyn std::error::Error>> {
             if pending.is_empty() {
                 println!("{}", "No pending bridge transfers.".dimmed());
             } else {
-                println!("{} ({} pending)", "Pending Transfers".bold().cyan(), pending.len());
+                println!(
+                    "{} ({} pending)",
+                    "Pending Transfers".bold().cyan(),
+                    pending.len()
+                );
                 for t in &pending {
-                    println!("  {} {} {} — {:?}",
-                        t.id[..8].dimmed(), t.amount, t.token, t.status);
+                    println!(
+                        "  {} {} {} — {:?}",
+                        t.id[..8].dimmed(),
+                        t.amount,
+                        t.token,
+                        t.status
+                    );
                 }
             }
         }
-        BridgeAction::Show { id } => {
-            match mgr.get_transfer(&id) {
-                Some(t) => {
-                    println!("{}", "Bridge Transfer".bold().cyan());
-                    println!("  ID:       {}", t.id);
-                    println!("  Bridge:   {}", t.bridge_id);
-                    println!("  Token:    {} {}", t.amount, t.token);
-                    println!("  Sender:   {}", t.sender);
-                    println!("  Recipient:{}", t.recipient);
-                    println!("  Status:   {:?}", t.status);
-                    println!("  Created:  {}", t.created_at);
-                }
-                None => eprintln!("{} Transfer not found: {}", "Error:".red().bold(), id),
+        BridgeAction::Show { id } => match mgr.get_transfer(&id) {
+            Some(t) => {
+                println!("{}", "Bridge Transfer".bold().cyan());
+                println!("  ID:       {}", t.id);
+                println!("  Bridge:   {}", t.bridge_id);
+                println!("  Token:    {} {}", t.amount, t.token);
+                println!("  Sender:   {}", t.sender);
+                println!("  Recipient:{}", t.recipient);
+                println!("  Status:   {:?}", t.status);
+                println!("  Created:  {}", t.created_at);
             }
-        }
+            None => eprintln!("{} Transfer not found: {}", "Error:".red().bold(), id),
+        },
         BridgeAction::Remove { id } => {
             mgr.remove_bridge(&id)?;
             mgr.save(&path)?;
@@ -7137,13 +8038,22 @@ fn cmd_lang(action: LangAction) -> Result<(), Box<dyn std::error::Error>> {
             i18n.set_locale_str(&locale)?;
             std::fs::create_dir_all(&data_dir)?;
             std::fs::write(&locale_path, i18n.locale().code())?;
-            println!("{} Locale set to {} ({})", "✓".green(), i18n.locale().code(), i18n.locale().native_name());
+            println!(
+                "{} Locale set to {} ({})",
+                "✓".green(),
+                i18n.locale().code(),
+                i18n.locale().native_name()
+            );
             println!("  {}", i18n.get(MsgKey::Welcome));
         }
         LangAction::List => {
             println!("{}", "Supported Locales".bold().cyan());
             for (locale, name) in i18n.supported_locales() {
-                let current = if locale == i18n.locale() { " (current)" } else { "" };
+                let current = if locale == i18n.locale() {
+                    " (current)"
+                } else {
+                    ""
+                };
                 let pct = i18n.completeness(locale);
                 println!("  {} — {} [{:.0}%]{}", locale.code(), name, pct, current);
             }
@@ -7165,7 +8075,12 @@ fn cmd_lang(action: LangAction) -> Result<(), Box<dyn std::error::Error>> {
                     return Ok(());
                 }
             };
-            println!("{} [{}] {}", "Message".bold().cyan(), i18n.locale().code(), i18n.get(msg_key));
+            println!(
+                "{} [{}] {}",
+                "Message".bold().cyan(),
+                i18n.locale().code(),
+                i18n.get(msg_key)
+            );
         }
     }
     Ok(())
@@ -7174,7 +8089,7 @@ fn cmd_lang(action: LangAction) -> Result<(), Box<dyn std::error::Error>> {
 // ── Templates handler ──
 
 fn cmd_templates(action: TemplatesAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::templates::{TemplateStore, Frequency};
+    use crate::templates::{Frequency, TemplateStore};
 
     let path = crate::templates::default_templates_path();
     let mut store = if path.exists() {
@@ -7189,16 +8104,35 @@ fn cmd_templates(action: TemplatesAction) -> Result<(), Box<dyn std::error::Erro
             if templates.is_empty() {
                 println!("{}", "No templates saved.".dimmed());
             } else {
-                println!("{} ({} templates)", "Transaction Templates".bold().cyan(), templates.len());
+                println!(
+                    "{} ({} templates)",
+                    "Transaction Templates".bold().cyan(),
+                    templates.len()
+                );
                 for t in templates {
-                    let status = if t.enabled { "active".green() } else { "disabled".dimmed() };
-                    println!("  {} [{}] {} — {} ({}x executed, {})",
-                        t.name.bold(), t.tx_type.label(), t.description,
-                        t.frequency.label(), t.exec_count, status);
+                    let status = if t.enabled {
+                        "active".green()
+                    } else {
+                        "disabled".dimmed()
+                    };
+                    println!(
+                        "  {} [{}] {} — {} ({}x executed, {})",
+                        t.name.bold(),
+                        t.tx_type.label(),
+                        t.description,
+                        t.frequency.label(),
+                        t.exec_count,
+                        status
+                    );
                 }
             }
         }
-        TemplatesAction::CreateTransfer { name, to, amount, frequency } => {
+        TemplatesAction::CreateTransfer {
+            name,
+            to,
+            amount,
+            frequency,
+        } => {
             let freq = Frequency::from_str(&frequency)?;
             let tmpl = store.create_transfer(&name, &to, amount, freq)?;
             let tname = tmpl.name.clone();
@@ -7207,7 +8141,12 @@ fn cmd_templates(action: TemplatesAction) -> Result<(), Box<dyn std::error::Erro
             println!("{} Template created: {}", "✓".green(), tname);
             println!("  {}", tdesc);
         }
-        TemplatesAction::CreateRefresh { name, object_id, energy, frequency } => {
+        TemplatesAction::CreateRefresh {
+            name,
+            object_id,
+            energy,
+            frequency,
+        } => {
             let freq = Frequency::from_str(&frequency)?;
             let tmpl = store.create_refresh(&name, &object_id, energy, freq)?;
             let tname = tmpl.name.clone();
@@ -7216,30 +8155,28 @@ fn cmd_templates(action: TemplatesAction) -> Result<(), Box<dyn std::error::Erro
             println!("{} Template created: {}", "✓".green(), tname);
             println!("  {}", tdesc);
         }
-        TemplatesAction::Show { name } => {
-            match store.get(&name) {
-                Some(t) => {
-                    println!("{}", "Template".bold().cyan());
-                    println!("  Name:      {}", t.name);
-                    println!("  Type:      {}", t.tx_type.label());
-                    println!("  Desc:      {}", t.description);
-                    println!("  Frequency: {}", t.frequency.label());
-                    println!("  Enabled:   {}", t.enabled);
-                    println!("  Executed:  {}x", t.exec_count);
-                    if let Some(ref last) = t.last_executed {
-                        println!("  Last exec: {}", last);
-                    }
-                    if let Some(ref next) = t.next_execution {
-                        println!("  Next exec: {}", next);
-                    }
-                    println!("  Params:");
-                    for (k, v) in &t.params {
-                        println!("    {}: {}", k, v);
-                    }
+        TemplatesAction::Show { name } => match store.get(&name) {
+            Some(t) => {
+                println!("{}", "Template".bold().cyan());
+                println!("  Name:      {}", t.name);
+                println!("  Type:      {}", t.tx_type.label());
+                println!("  Desc:      {}", t.description);
+                println!("  Frequency: {}", t.frequency.label());
+                println!("  Enabled:   {}", t.enabled);
+                println!("  Executed:  {}x", t.exec_count);
+                if let Some(ref last) = t.last_executed {
+                    println!("  Last exec: {}", last);
                 }
-                None => eprintln!("{} Template not found: {}", "Error:".red().bold(), name),
+                if let Some(ref next) = t.next_execution {
+                    println!("  Next exec: {}", next);
+                }
+                println!("  Params:");
+                for (k, v) in &t.params {
+                    println!("    {}: {}", k, v);
+                }
             }
-        }
+            None => eprintln!("{} Template not found: {}", "Error:".red().bold(), name),
+        },
         TemplatesAction::Remove { name } => {
             store.remove(&name)?;
             store.save(&path)?;
@@ -7276,9 +8213,18 @@ fn cmd_templates(action: TemplatesAction) -> Result<(), Box<dyn std::error::Erro
             if recurring.is_empty() {
                 println!("{}", "No recurring templates.".dimmed());
             } else {
-                println!("{} ({} recurring)", "Recurring Templates".bold().cyan(), recurring.len());
+                println!(
+                    "{} ({} recurring)",
+                    "Recurring Templates".bold().cyan(),
+                    recurring.len()
+                );
                 for t in &recurring {
-                    println!("  {} — {} ({})", t.name.bold(), t.description, t.frequency.label());
+                    println!(
+                        "  {} — {} ({})",
+                        t.name.bold(),
+                        t.description,
+                        t.frequency.label()
+                    );
                 }
             }
         }
@@ -7287,7 +8233,11 @@ fn cmd_templates(action: TemplatesAction) -> Result<(), Box<dyn std::error::Erro
             if results.is_empty() {
                 println!("{}", "No matching templates.".dimmed());
             } else {
-                println!("{} ({} results)", "Search Results".bold().cyan(), results.len());
+                println!(
+                    "{} ({} results)",
+                    "Search Results".bold().cyan(),
+                    results.len()
+                );
                 for t in &results {
                     println!("  {} — {}", t.name.bold(), t.description);
                 }
@@ -7300,7 +8250,7 @@ fn cmd_templates(action: TemplatesAction) -> Result<(), Box<dyn std::error::Erro
 // ── Analytics handler ──
 
 fn cmd_analytics(action: AnalyticsAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::analytics::{AnalyticsTracker, Period, EventType};
+    use crate::analytics::{AnalyticsTracker, EventType, Period};
 
     let path = crate::analytics::default_analytics_path();
     let mut tracker = if path.exists() {
@@ -7333,23 +8283,41 @@ fn cmd_analytics(action: AnalyticsAction) -> Result<(), Box<dyn std::error::Erro
             } else {
                 println!("{} ({})", "Spending Breakdown".bold().cyan(), p.label());
                 for b in &bd {
-                    println!("  {:16} {:>8} EVAP ({:>5.1}%) [{} txns]",
-                        b.category, b.total_amount, b.percentage, b.count);
+                    println!(
+                        "  {:16} {:>8} EVAP ({:>5.1}%) [{} txns]",
+                        b.category, b.total_amount, b.percentage, b.count
+                    );
                 }
             }
         }
         AnalyticsAction::Trend { period } => {
             let p = Period::from_str(&period)?;
             let t = tracker.trend(p);
-            println!("{} ({} vs prev {})", "Trend Report".bold().cyan(), p.label(), p.label());
+            println!(
+                "{} ({} vs prev {})",
+                "Trend Report".bold().cyan(),
+                p.label(),
+                p.label()
+            );
             println!("  Outflow:  {:+.1}%", t.outflow_change_pct);
             println!("  Inflow:   {:+.1}%", t.inflow_change_pct);
             println!("  Energy:   {:+.1}%", t.energy_change_pct);
             println!("  Volume:   {:+.1}%", t.volume_change_pct);
-            println!("  Current:  {} events, net {} EVAP", t.current.events, t.current.net_flow);
-            println!("  Previous: {} events, net {} EVAP", t.previous.events, t.previous.net_flow);
+            println!(
+                "  Current:  {} events, net {} EVAP",
+                t.current.events, t.current.net_flow
+            );
+            println!(
+                "  Previous: {} events, net {} EVAP",
+                t.previous.events, t.previous.net_flow
+            );
         }
-        AnalyticsAction::Record { event, amount, balance, reference } => {
+        AnalyticsAction::Record {
+            event,
+            amount,
+            balance,
+            reference,
+        } => {
             let ev = match event.to_lowercase().as_str() {
                 "transfer_out" | "out" => EventType::TransferOut,
                 "transfer_in" | "in" => EventType::TransferIn,
@@ -7372,12 +8340,10 @@ fn cmd_analytics(action: AnalyticsAction) -> Result<(), Box<dyn std::error::Erro
             tracker.save(&path)?;
             println!("{} Event recorded.", "✓".green());
         }
-        AnalyticsAction::Balance => {
-            match tracker.latest_balance() {
-                Some(b) => println!("Latest tracked balance: {} EVAP", b),
-                None => println!("{}", "No analytics data yet.".dimmed()),
-            }
-        }
+        AnalyticsAction::Balance => match tracker.latest_balance() {
+            Some(b) => println!("Latest tracked balance: {} EVAP", b),
+            None => println!("{}", "No analytics data yet.".dimmed()),
+        },
         AnalyticsAction::Clear => {
             tracker.clear();
             tracker.save(&path)?;
@@ -7404,10 +8370,28 @@ fn cmd_reputation(action: ReputationAction) -> Result<(), Box<dyn std::error::Er
             let assessment = store.assess(&address);
             let icon = assessment.trust_level.icon();
             println!("{} {} {}", icon, "Risk Assessment".bold().cyan(), address);
-            println!("  Trust:  {} ({})", assessment.trust_level.label(), assessment.trust_level.icon());
+            println!(
+                "  Trust:  {} ({})",
+                assessment.trust_level.label(),
+                assessment.trust_level.icon()
+            );
             println!("  Score:  {}/100", assessment.risk_score);
-            println!("  Block:  {}", if assessment.should_block { "YES".red().bold().to_string() } else { "no".to_string() });
-            println!("  Warn:   {}", if assessment.should_warn { "yes".yellow().to_string() } else { "no".to_string() });
+            println!(
+                "  Block:  {}",
+                if assessment.should_block {
+                    "YES".red().bold().to_string()
+                } else {
+                    "no".to_string()
+                }
+            );
+            println!(
+                "  Warn:   {}",
+                if assessment.should_warn {
+                    "yes".yellow().to_string()
+                } else {
+                    "no".to_string()
+                }
+            );
             if !assessment.warnings.is_empty() {
                 println!("  Warnings:");
                 for w in &assessment.warnings {
@@ -7415,7 +8399,11 @@ fn cmd_reputation(action: ReputationAction) -> Result<(), Box<dyn std::error::Er
                 }
             }
         }
-        ReputationAction::Flag { address, flag, note } => {
+        ReputationAction::Flag {
+            address,
+            flag,
+            note,
+        } => {
             let rf = match flag.to_lowercase().as_str() {
                 "scam" => RiskFlag::Scam,
                 "phishing" => RiskFlag::Phishing,
@@ -7457,12 +8445,24 @@ fn cmd_reputation(action: ReputationAction) -> Result<(), Box<dyn std::error::Er
             if dangerous.is_empty() {
                 println!("{}", "No dangerous addresses flagged.".dimmed());
             } else {
-                println!("{} ({} addresses)", "Dangerous Addresses".bold().red(), dangerous.len());
+                println!(
+                    "{} ({} addresses)",
+                    "Dangerous Addresses".bold().red(),
+                    dangerous.len()
+                );
                 for r in &dangerous {
                     let label = r.label.as_deref().unwrap_or("—");
-                    println!("  {} {} [score: {}] flags: {}",
-                        r.address, label, r.risk_score,
-                        r.flags.iter().map(|f| f.label()).collect::<Vec<_>>().join(", "));
+                    println!(
+                        "  {} {} [score: {}] flags: {}",
+                        r.address,
+                        label,
+                        r.risk_score,
+                        r.flags
+                            .iter()
+                            .map(|f| f.label())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
                 }
             }
         }
@@ -7471,7 +8471,11 @@ fn cmd_reputation(action: ReputationAction) -> Result<(), Box<dyn std::error::Er
             if verified.is_empty() {
                 println!("{}", "No verified addresses.".dimmed());
             } else {
-                println!("{} ({} addresses)", "Verified Addresses".bold().green(), verified.len());
+                println!(
+                    "{} ({} addresses)",
+                    "Verified Addresses".bold().green(),
+                    verified.len()
+                );
                 for r in &verified {
                     let label = r.label.as_deref().unwrap_or("—");
                     println!("  {} — {}", r.address, label);
@@ -7483,18 +8487,36 @@ fn cmd_reputation(action: ReputationAction) -> Result<(), Box<dyn std::error::Er
             if results.is_empty() {
                 println!("{}", "No matching addresses.".dimmed());
             } else {
-                println!("{} ({} results)", "Reputation Search".bold().cyan(), results.len());
+                println!(
+                    "{} ({} results)",
+                    "Reputation Search".bold().cyan(),
+                    results.len()
+                );
                 for r in &results {
-                    println!("  {} {} [{}] score: {}",
-                        r.trust_level.icon(), r.address, r.trust_level.label(), r.risk_score);
+                    println!(
+                        "  {} {} [{}] score: {}",
+                        r.trust_level.icon(),
+                        r.address,
+                        r.trust_level.label(),
+                        r.risk_score
+                    );
                 }
             }
         }
         ReputationAction::Thresholds { block, warn } => {
-            if let Some(b) = block { store.set_block_threshold(b); }
-            if let Some(w) = warn { store.set_warn_threshold(w); }
+            if let Some(b) = block {
+                store.set_block_threshold(b);
+            }
+            if let Some(w) = warn {
+                store.set_warn_threshold(w);
+            }
             store.save(&path)?;
-            println!("{} Thresholds updated: block={}, warn={}", "✓".green(), store.block_threshold, store.warn_threshold);
+            println!(
+                "{} Thresholds updated: block={}, warn={}",
+                "✓".green(),
+                store.block_threshold,
+                store.warn_threshold
+            );
         }
     }
     Ok(())
@@ -7503,7 +8525,7 @@ fn cmd_reputation(action: ReputationAction) -> Result<(), Box<dyn std::error::Er
 // ── Watchtower handler ──
 
 fn cmd_watchtower(action: WatchtowerAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::watchtower::{Watchtower, WatchTarget, Condition, WatchAction};
+    use crate::watchtower::{Condition, WatchAction, WatchTarget, Watchtower};
 
     let path = crate::watchtower::default_watchtower_path();
     let mut wt = if path.exists() {
@@ -7520,53 +8542,100 @@ fn cmd_watchtower(action: WatchtowerAction) -> Result<(), Box<dyn std::error::Er
             } else {
                 println!("{} ({} watches)", "Watchtower".bold().cyan(), watches.len());
                 for w in watches {
-                    let status = if w.enabled { "active".green() } else { "disabled".dimmed() };
-                    println!("  {} {} — {} ({}s interval, {}x triggered, {})",
-                        w.name.bold(), w.target.label(), w.condition.label(),
-                        w.interval_secs, w.trigger_count, status);
+                    let status = if w.enabled {
+                        "active".green()
+                    } else {
+                        "disabled".dimmed()
+                    };
+                    println!(
+                        "  {} {} — {} ({}s interval, {}x triggered, {})",
+                        w.name.bold(),
+                        w.target.label(),
+                        w.condition.label(),
+                        w.interval_secs,
+                        w.trigger_count,
+                        status
+                    );
                 }
             }
         }
-        WatchtowerAction::WatchBalance { name, address, threshold, interval } => {
+        WatchtowerAction::WatchBalance {
+            name,
+            address,
+            threshold,
+            interval,
+        } => {
             let w = wt.add_watch(
                 &name,
-                WatchTarget::Balance { address: address.clone() },
+                WatchTarget::Balance {
+                    address: address.clone(),
+                },
                 Condition::Below(threshold),
                 WatchAction::Notify,
                 interval,
             )?;
             let wname = w.name.clone();
             wt.save(&path)?;
-            println!("{} Watch created: {} (alert when balance < {})", "✓".green(), wname, threshold);
+            println!(
+                "{} Watch created: {} (alert when balance < {})",
+                "✓".green(),
+                wname,
+                threshold
+            );
         }
-        WatchtowerAction::WatchEnergy { name, object_id, threshold, interval, auto_refresh } => {
+        WatchtowerAction::WatchEnergy {
+            name,
+            object_id,
+            threshold,
+            interval,
+            auto_refresh,
+        } => {
             let action = if auto_refresh > 0 {
-                WatchAction::AutoRefresh { energy: auto_refresh }
+                WatchAction::AutoRefresh {
+                    energy: auto_refresh,
+                }
             } else {
                 WatchAction::Notify
             };
             let w = wt.add_watch(
                 &name,
-                WatchTarget::Energy { object_id: object_id.clone() },
+                WatchTarget::Energy {
+                    object_id: object_id.clone(),
+                },
                 Condition::Below(threshold),
                 action,
                 interval,
             )?;
             let wname = w.name.clone();
             wt.save(&path)?;
-            println!("{} Watch created: {} (alert when energy < {}%)", "✓".green(), wname, threshold);
+            println!(
+                "{} Watch created: {} (alert when energy < {}%)",
+                "✓".green(),
+                wname,
+                threshold
+            );
         }
-        WatchtowerAction::WatchBridge { name, transfer_id, interval } => {
+        WatchtowerAction::WatchBridge {
+            name,
+            transfer_id,
+            interval,
+        } => {
             let w = wt.add_watch(
                 &name,
-                WatchTarget::BridgeTransfer { transfer_id: transfer_id.clone() },
+                WatchTarget::BridgeTransfer {
+                    transfer_id: transfer_id.clone(),
+                },
                 Condition::StatusEquals("completed".into()),
                 WatchAction::Notify,
                 interval,
             )?;
             let wname = w.name.clone();
             wt.save(&path)?;
-            println!("{} Watch created: {} (alert when bridge completes)", "✓".green(), wname);
+            println!(
+                "{} Watch created: {} (alert when bridge completes)",
+                "✓".green(),
+                wname
+            );
         }
         WatchtowerAction::Remove { name } => {
             wt.remove_watch(&name)?;
@@ -7583,37 +8652,44 @@ fn cmd_watchtower(action: WatchtowerAction) -> Result<(), Box<dyn std::error::Er
             wt.save(&path)?;
             println!("{} Watch disabled.", "✓".green());
         }
-        WatchtowerAction::Show { name } => {
-            match wt.get(&name) {
-                Some(w) => {
-                    println!("{}", "Watch Details".bold().cyan());
-                    println!("  ID:        {}", w.id);
-                    println!("  Name:      {}", w.name);
-                    println!("  Target:    {}", w.target.label());
-                    println!("  Condition: {}", w.condition.label());
-                    println!("  Action:    {}", w.action.label());
-                    println!("  Enabled:   {}", w.enabled);
-                    println!("  Interval:  {}s", w.interval_secs);
-                    println!("  Triggered: {}x", w.trigger_count);
-                    if let Some(ref v) = w.last_value {
-                        println!("  Last val:  {}", v);
-                    }
-                    if let Some(ref t) = w.last_triggered {
-                        println!("  Last fire: {}", t);
-                    }
+        WatchtowerAction::Show { name } => match wt.get(&name) {
+            Some(w) => {
+                println!("{}", "Watch Details".bold().cyan());
+                println!("  ID:        {}", w.id);
+                println!("  Name:      {}", w.name);
+                println!("  Target:    {}", w.target.label());
+                println!("  Condition: {}", w.condition.label());
+                println!("  Action:    {}", w.action.label());
+                println!("  Enabled:   {}", w.enabled);
+                println!("  Interval:  {}s", w.interval_secs);
+                println!("  Triggered: {}x", w.trigger_count);
+                if let Some(ref v) = w.last_value {
+                    println!("  Last val:  {}", v);
                 }
-                None => eprintln!("{} Watch not found: {}", "Error:".red().bold(), name),
+                if let Some(ref t) = w.last_triggered {
+                    println!("  Last fire: {}", t);
+                }
             }
-        }
+            None => eprintln!("{} Watch not found: {}", "Error:".red().bold(), name),
+        },
         WatchtowerAction::Alerts { limit } => {
             let alerts = wt.recent_alerts(limit);
             if alerts.is_empty() {
                 println!("{}", "No alerts fired.".dimmed());
             } else {
-                println!("{} ({} alerts)", "Recent Alerts".bold().yellow(), alerts.len());
+                println!(
+                    "{} ({} alerts)",
+                    "Recent Alerts".bold().yellow(),
+                    alerts.len()
+                );
                 for a in &alerts {
-                    println!("  [{}] {} — {} ({})",
-                        &a.timestamp[..19], a.watch_name.bold(), a.condition, a.action);
+                    println!(
+                        "  [{}] {} — {} ({})",
+                        &a.timestamp[..19],
+                        a.watch_name.bold(),
+                        a.condition,
+                        a.action
+                    );
                 }
             }
         }
@@ -7658,25 +8734,42 @@ fn cmd_audit(action: AuditAction2) -> Result<(), Box<dyn std::error::Error>> {
                         Severity::Warning => "WARN".yellow(),
                         Severity::Critical => "CRIT".red().bold(),
                     };
-                    println!("  [{}] {} {} — {} ({})",
-                        &e.timestamp[..19], sev, e.action.label(), e.description, e.account);
+                    println!(
+                        "  [{}] {} {} — {} ({})",
+                        &e.timestamp[..19],
+                        sev,
+                        e.action.label(),
+                        e.description,
+                        e.account
+                    );
                 }
             }
         }
-        AuditAction2::Verify => {
-            match log.verify_chain() {
-                Ok(()) => println!("{} Audit chain integrity verified ({} entries).", "✓".green(), log.len()),
-                Err(e) => println!("{} {}", "INTEGRITY VIOLATION:".red().bold(), e),
-            }
-        }
+        AuditAction2::Verify => match log.verify_chain() {
+            Ok(()) => println!(
+                "{} Audit chain integrity verified ({} entries).",
+                "✓".green(),
+                log.len()
+            ),
+            Err(e) => println!("{} {}", "INTEGRITY VIOLATION:".red().bold(), e),
+        },
         AuditAction2::Search { query } => {
             let results = log.search(&query);
             if results.is_empty() {
                 println!("{}", "No matching entries.".dimmed());
             } else {
-                println!("{} ({} results)", "Audit Search".bold().cyan(), results.len());
+                println!(
+                    "{} ({} results)",
+                    "Audit Search".bold().cyan(),
+                    results.len()
+                );
                 for e in &results {
-                    println!("  [{}] {} — {}", &e.timestamp[..19], e.action.label(), e.description);
+                    println!(
+                        "  [{}] {} — {}",
+                        &e.timestamp[..19],
+                        e.action.label(),
+                        e.description
+                    );
                 }
             }
         }
@@ -7691,21 +8784,41 @@ fn cmd_audit(action: AuditAction2) -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
             let filtered = log.filter_severity(min);
-            println!("{} ({} entries >= {:?})", "Audit Filter".bold().cyan(), filtered.len(), min);
+            println!(
+                "{} ({} entries >= {:?})",
+                "Audit Filter".bold().cyan(),
+                filtered.len(),
+                min
+            );
             for e in &filtered {
-                println!("  [{}] {:?} {} — {}", &e.timestamp[..19], e.severity, e.action.label(), e.description);
+                println!(
+                    "  [{}] {:?} {} — {}",
+                    &e.timestamp[..19],
+                    e.severity,
+                    e.action.label(),
+                    e.description
+                );
             }
         }
         AuditAction2::Export { file } => {
             let csv = log.to_csv();
             std::fs::write(&file, &csv)?;
-            println!("{} Audit log exported to {} ({} entries)", "✓".green(), file.display(), log.len());
+            println!(
+                "{} Audit log exported to {} ({} entries)",
+                "✓".green(),
+                file.display(),
+                log.len()
+            );
         }
         AuditAction2::Stats => {
             println!("{}", "Audit Stats".bold().cyan());
             println!("  Total entries: {}", log.len());
             if let Some(latest) = log.latest() {
-                println!("  Latest:       {} — {}", &latest.timestamp[..19], latest.action.label());
+                println!(
+                    "  Latest:       {} — {}",
+                    &latest.timestamp[..19],
+                    latest.action.label()
+                );
                 println!("  Chain hash:   {}...", &latest.hash[..16]);
             }
             let info_count = log.filter_severity(Severity::Info).len();
@@ -7722,7 +8835,7 @@ fn cmd_audit(action: AuditAction2) -> Result<(), Box<dyn std::error::Error>> {
 // ── Tax handler ──
 
 fn cmd_tax(action: TaxAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::tax::{TaxTracker, CostBasisMethod};
+    use crate::tax::{CostBasisMethod, TaxTracker};
 
     let path = crate::tax::default_tax_path();
     let mut tracker = if path.exists() {
@@ -7732,32 +8845,75 @@ fn cmd_tax(action: TaxAction) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     match action {
-        TaxAction::Acquire { amount, cost, source, reference } => {
+        TaxAction::Acquire {
+            amount,
+            cost,
+            source,
+            reference,
+        } => {
             tracker.acquire(amount, cost, &source, &reference);
             tracker.save(&path)?;
-            println!("{} Acquired {} tokens @ {:.4}/unit ({})",
-                "✓".green(), amount, cost, source);
+            println!(
+                "{} Acquired {} tokens @ {:.4}/unit ({})",
+                "✓".green(),
+                amount,
+                cost,
+                source
+            );
         }
-        TaxAction::Dispose { amount, proceeds, disposal_type, reference } => {
+        TaxAction::Dispose {
+            amount,
+            proceeds,
+            disposal_type,
+            reference,
+        } => {
             let d = tracker.dispose(amount, proceeds, &disposal_type, &reference)?;
             tracker.save(&path)?;
-            println!("{} Disposed {} tokens @ {:.4}/unit", "✓".green(), amount, proceeds);
+            println!(
+                "{} Disposed {} tokens @ {:.4}/unit",
+                "✓".green(),
+                amount,
+                proceeds
+            );
             println!("  Proceeds:   {:.2}", d.total_proceeds);
             println!("  Cost basis: {:.2}", d.cost_basis);
-            println!("  Gain/Loss:  {:.2}{}", d.gain_loss,
-                if d.gain_loss >= 0.0 { " (gain)".green().to_string() } else { " (loss)".red().to_string() });
-            println!("  Term:       {}", if d.long_term { "long-term" } else { "short-term" });
+            println!(
+                "  Gain/Loss:  {:.2}{}",
+                d.gain_loss,
+                if d.gain_loss >= 0.0 {
+                    " (gain)".green().to_string()
+                } else {
+                    " (loss)".red().to_string()
+                }
+            );
+            println!(
+                "  Term:       {}",
+                if d.long_term {
+                    "long-term"
+                } else {
+                    "short-term"
+                }
+            );
         }
         TaxAction::Lots => {
             if tracker.lots.is_empty() {
                 println!("{}", "No open lots.".dimmed());
             } else {
-                println!("{} ({} lots, {} tokens)", "Open Lots".bold().cyan(),
-                    tracker.lots.len(), tracker.total_holdings());
+                println!(
+                    "{} ({} lots, {} tokens)",
+                    "Open Lots".bold().cyan(),
+                    tracker.lots.len(),
+                    tracker.total_holdings()
+                );
                 for l in &tracker.lots {
-                    println!("  {} — {} remaining (of {}) @ {:.4}/unit [{}]",
-                        &l.acquired_at[..10], l.amount, l.original_amount,
-                        l.cost_per_unit, l.source);
+                    println!(
+                        "  {} — {} remaining (of {}) @ {:.4}/unit [{}]",
+                        &l.acquired_at[..10],
+                        l.amount,
+                        l.original_amount,
+                        l.cost_per_unit,
+                        l.source
+                    );
                 }
                 println!("  Total cost basis: {:.2}", tracker.total_cost_basis());
             }
@@ -7766,16 +8922,26 @@ fn cmd_tax(action: TaxAction) -> Result<(), Box<dyn std::error::Error>> {
             if tracker.disposals.is_empty() {
                 println!("{}", "No disposals recorded.".dimmed());
             } else {
-                println!("{} ({} disposals)", "Disposal History".bold().cyan(), tracker.disposals.len());
+                println!(
+                    "{} ({} disposals)",
+                    "Disposal History".bold().cyan(),
+                    tracker.disposals.len()
+                );
                 for d in &tracker.disposals {
                     let gl = if d.gain_loss >= 0.0 {
                         format!("+{:.2}", d.gain_loss).to_string()
                     } else {
                         format!("{:.2}", d.gain_loss)
                     };
-                    println!("  {} — {} tokens, proceeds {:.2}, basis {:.2}, {} ({})",
-                        &d.timestamp[..10], d.amount, d.total_proceeds, d.cost_basis,
-                        gl, d.method.label());
+                    println!(
+                        "  {} — {} tokens, proceeds {:.2}, basis {:.2}, {} ({})",
+                        &d.timestamp[..10],
+                        d.amount,
+                        d.total_proceeds,
+                        d.cost_basis,
+                        gl,
+                        d.method.label()
+                    );
                 }
             }
         }
@@ -7783,7 +8949,10 @@ fn cmd_tax(action: TaxAction) -> Result<(), Box<dyn std::error::Error>> {
             let s = tracker.annual_summary(year);
             println!("{} ({})", "Annual Tax Summary".bold().cyan(), year);
             println!("  Method:        {}", s.method.label());
-            println!("  Disposals:     {} ({} tokens)", s.disposal_count, s.total_disposals);
+            println!(
+                "  Disposals:     {} ({} tokens)",
+                s.disposal_count, s.total_disposals
+            );
             println!("  Proceeds:      {:.2}", s.total_proceeds);
             println!("  Cost basis:    {:.2}", s.total_cost_basis);
             println!("  Gain/Loss:     {:.2}", s.total_gain_loss);
@@ -7799,16 +8968,29 @@ fn cmd_tax(action: TaxAction) -> Result<(), Box<dyn std::error::Error>> {
             tracker.save(&path)?;
             println!("{} Cost basis method set to {}", "✓".green(), m.label());
         }
-        TaxAction::EnergyCost { amount, description, reference } => {
+        TaxAction::EnergyCost {
+            amount,
+            description,
+            reference,
+        } => {
             tracker.record_energy_cost(amount, &description, &reference);
             tracker.save(&path)?;
-            println!("{} Energy cost recorded: {:.2} ({})", "✓".green(), amount, description);
+            println!(
+                "{} Energy cost recorded: {:.2} ({})",
+                "✓".green(),
+                amount,
+                description
+            );
         }
         TaxAction::ExportCsv { file } => {
             let csv = tracker.disposals_csv();
             std::fs::write(&file, &csv)?;
-            println!("{} Disposals exported to {} ({} entries)",
-                "✓".green(), file.display(), tracker.disposals.len());
+            println!(
+                "{} Disposals exported to {} ({} entries)",
+                "✓".green(),
+                file.display(),
+                tracker.disposals.len()
+            );
         }
     }
     Ok(())
@@ -7817,7 +8999,7 @@ fn cmd_tax(action: TaxAction) -> Result<(), Box<dyn std::error::Error>> {
 // ── Policy handler ──
 
 fn cmd_policy(action: PolicyAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::policy_engine::{PolicyEngine, Rule, Enforcement, TxContext};
+    use crate::policy_engine::{Enforcement, PolicyEngine, Rule, TxContext};
 
     let path = crate::policy_engine::default_policy_path();
     let mut engine = if path.exists() {
@@ -7841,64 +9023,116 @@ fn cmd_policy(action: PolicyAction) -> Result<(), Box<dyn std::error::Error>> {
             if policies.is_empty() {
                 println!("{}", "No policies configured.".dimmed());
             } else {
-                println!("{} ({} policies, {} active)", "Transaction Policies".bold().cyan(),
-                    engine.count(), engine.active_count());
+                println!(
+                    "{} ({} policies, {} active)",
+                    "Transaction Policies".bold().cyan(),
+                    engine.count(),
+                    engine.active_count()
+                );
                 for p in policies {
-                    let status = if p.enabled { "active".green() } else { "disabled".dimmed() };
+                    let status = if p.enabled {
+                        "active".green()
+                    } else {
+                        "disabled".dimmed()
+                    };
                     let rules: Vec<String> = p.rules.iter().map(|r| r.label()).collect();
-                    println!("  {} [{}] {:?} — {} ({})",
-                        p.name.bold(), status, p.enforcement, p.description,
-                        rules.join(", "));
+                    println!(
+                        "  {} [{}] {:?} — {} ({})",
+                        p.name.bold(),
+                        status,
+                        p.enforcement,
+                        p.description,
+                        rules.join(", ")
+                    );
                 }
             }
         }
-        PolicyAction::AddMaxAmount { name, max, enforcement } => {
+        PolicyAction::AddMaxAmount {
+            name,
+            max,
+            enforcement,
+        } => {
             let policy = crate::policy_engine::make_policy(
-                &name, &format!("Block if amount > {}", max),
-                vec![Rule::MaxAmount(max)], parse_enforcement(&enforcement), 10,
+                &name,
+                &format!("Block if amount > {}", max),
+                vec![Rule::MaxAmount(max)],
+                parse_enforcement(&enforcement),
+                10,
             );
             engine.add_policy(policy)?;
             engine.save(&path)?;
-            println!("{} Policy '{}' created: max amount {}", "✓".green(), name, max);
+            println!(
+                "{} Policy '{}' created: max amount {}",
+                "✓".green(),
+                name,
+                max
+            );
         }
-        PolicyAction::AddBlocklist { name, addresses, enforcement } => {
+        PolicyAction::AddBlocklist {
+            name,
+            addresses,
+            enforcement,
+        } => {
             let addrs: Vec<String> = addresses.split(',').map(|s| s.trim().to_string()).collect();
             let count = addrs.len();
             let policy = crate::policy_engine::make_policy(
-                &name, &format!("Block {} addresses", count),
-                vec![Rule::BlockedRecipients(addrs)], parse_enforcement(&enforcement), 10,
+                &name,
+                &format!("Block {} addresses", count),
+                vec![Rule::BlockedRecipients(addrs)],
+                parse_enforcement(&enforcement),
+                10,
             );
             engine.add_policy(policy)?;
             engine.save(&path)?;
-            println!("{} Policy '{}' created: {} blocked addresses", "✓".green(), name, count);
+            println!(
+                "{} Policy '{}' created: {} blocked addresses",
+                "✓".green(),
+                name,
+                count
+            );
         }
-        PolicyAction::AddTimelock { name, deny_after, deny_before, enforcement } => {
+        PolicyAction::AddTimelock {
+            name,
+            deny_after,
+            deny_before,
+            enforcement,
+        } => {
             let policy = crate::policy_engine::make_policy(
-                &name, &format!("Block between {}h-{}h", deny_after, deny_before),
-                vec![Rule::TimeRestriction { deny_after, deny_before }], parse_enforcement(&enforcement), 10,
+                &name,
+                &format!("Block between {}h-{}h", deny_after, deny_before),
+                vec![Rule::TimeRestriction {
+                    deny_after,
+                    deny_before,
+                }],
+                parse_enforcement(&enforcement),
+                10,
             );
             engine.add_policy(policy)?;
             engine.save(&path)?;
-            println!("{} Policy '{}' created: time lock {}h-{}h", "✓".green(), name, deny_after, deny_before);
+            println!(
+                "{} Policy '{}' created: time lock {}h-{}h",
+                "✓".green(),
+                name,
+                deny_after,
+                deny_before
+            );
         }
-        PolicyAction::Show { name } => {
-            match engine.get(&name) {
-                Some(p) => {
-                    println!("{}", "Policy".bold().cyan());
-                    println!("  Name:        {}", p.name);
-                    println!("  Description: {}", p.description);
-                    println!("  Enforcement: {:?}", p.enforcement);
-                    println!("  Combine:     {:?}", p.combine);
-                    println!("  Enabled:     {}", p.enabled);
-                    println!("  Priority:    {}", p.priority);
-                    println!("  Rules:");
-                    for r in &p.rules {
-                        println!("    - {}", r.label());
-                    }
+        PolicyAction::Show { name } => match engine.get(&name) {
+            Some(p) => {
+                println!("{}", "Policy".bold().cyan());
+                println!("  Name:        {}", p.name);
+                println!("  Description: {}", p.description);
+                println!("  Enforcement: {:?}", p.enforcement);
+                println!("  Combine:     {:?}", p.combine);
+                println!("  Enabled:     {}", p.enabled);
+                println!("  Priority:    {}", p.priority);
+                println!("  Rules:");
+                for r in &p.rules {
+                    println!("    - {}", r.label());
                 }
-                None => eprintln!("{} Policy not found: {}", "Error:".red().bold(), name),
             }
-        }
+            None => eprintln!("{} Policy not found: {}", "Error:".red().bold(), name),
+        },
         PolicyAction::Remove { name } => {
             engine.remove_policy(&name)?;
             engine.save(&path)?;
@@ -7917,7 +9151,9 @@ fn cmd_policy(action: PolicyAction) -> Result<(), Box<dyn std::error::Error>> {
         PolicyAction::Test { to, amount } => {
             let ctx = TxContext::new("transfer", &to, amount, "self");
             let results = engine.evaluate(&ctx);
-            let blocked = results.iter().any(|r| !r.passed && r.enforcement == Enforcement::Block);
+            let blocked = results
+                .iter()
+                .any(|r| !r.passed && r.enforcement == Enforcement::Block);
             if blocked {
                 println!("{} Transaction would be BLOCKED", "✗".red().bold());
             } else {
@@ -7925,7 +9161,13 @@ fn cmd_policy(action: PolicyAction) -> Result<(), Box<dyn std::error::Error>> {
             }
             for r in &results {
                 if !r.passed {
-                    println!("  {} {} — {:?}: {:?}", "✗".red(), r.policy_name, r.enforcement, r.violations);
+                    println!(
+                        "  {} {} — {:?}: {:?}",
+                        "✗".red(),
+                        r.policy_name,
+                        r.enforcement,
+                        r.violations
+                    );
                 } else {
                     println!("  {} {}", "✓".green(), r.policy_name);
                 }
@@ -7938,7 +9180,7 @@ fn cmd_policy(action: PolicyAction) -> Result<(), Box<dyn std::error::Error>> {
 // ── Export handler ──
 
 fn cmd_export(action: ExportAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::export::{Exporter, AccountSummary, HistoryRow};
+    use crate::export::{AccountSummary, Exporter, HistoryRow};
 
     match action {
         ExportAction::History { file } => {
@@ -7946,8 +9188,10 @@ fn cmd_export(action: ExportAction) -> Result<(), Box<dyn std::error::Error>> {
             let analytics_path = crate::analytics::default_analytics_path();
             if analytics_path.exists() {
                 let tracker = crate::analytics::AnalyticsTracker::load(&analytics_path)?;
-                let rows: Vec<HistoryRow> = tracker.data_points.iter().map(|dp| {
-                    HistoryRow {
+                let rows: Vec<HistoryRow> = tracker
+                    .data_points
+                    .iter()
+                    .map(|dp| HistoryRow {
                         timestamp: dp.timestamp.clone(),
                         tx_type: dp.event.label().to_string(),
                         from: "self".into(),
@@ -7956,11 +9200,16 @@ fn cmd_export(action: ExportAction) -> Result<(), Box<dyn std::error::Error>> {
                         fee: 0,
                         status: "confirmed".into(),
                         reference: dp.reference.clone(),
-                    }
-                }).collect();
+                    })
+                    .collect();
                 let fmt = Exporter::detect_format(&file.to_string_lossy());
                 let count = Exporter::export_history(&rows, &file, fmt)?;
-                println!("{} Exported {} history entries to {}", "✓".green(), count, file.display());
+                println!(
+                    "{} Exported {} history entries to {}",
+                    "✓".green(),
+                    count,
+                    file.display()
+                );
             } else {
                 println!("{}", "No analytics data to export. Record events first with: wallet analytics record".dimmed());
             }
@@ -7982,12 +9231,19 @@ fn cmd_export(action: ExportAction) -> Result<(), Box<dyn std::error::Error>> {
             };
             let fmt = Exporter::detect_format(&file.to_string_lossy());
             Exporter::export_summary(&summary, &file, fmt)?;
-            println!("{} Account summary exported to {}", "✓".green(), file.display());
+            println!(
+                "{} Account summary exported to {}",
+                "✓".green(),
+                file.display()
+            );
         }
         ExportAction::Dump { file } => {
             let mut data = std::collections::HashMap::new();
             data.insert("version".into(), serde_json::json!("1.0.0"));
-            data.insert("exported_at".into(), serde_json::json!(chrono::Utc::now().to_rfc3339()));
+            data.insert(
+                "exported_at".into(),
+                serde_json::json!(chrono::Utc::now().to_rfc3339()),
+            );
 
             // Include config
             let config_path = WalletConfig::default_path();
@@ -8113,10 +9369,7 @@ fn cmd_metrics(action: MetricsAction) -> Result<(), Box<dyn std::error::Error>> 
                             println!("  [gauge]   {} = {}", g.name, g.value);
                         }
                         crate::metrics::Metric::Histogram(h) => {
-                            println!(
-                                "  [hist]    {} count={} sum={}",
-                                h.name, h.count, h.sum
-                            );
+                            println!("  [hist]    {} count={} sum={}", h.name, h.count, h.sum);
                         }
                     }
                 }
@@ -8139,7 +9392,11 @@ fn cmd_metrics(action: MetricsAction) -> Result<(), Box<dyn std::error::Error>> 
             let json = serde_json::to_string_pretty(&registry)?;
             std::fs::create_dir_all(path.parent().unwrap())?;
             std::fs::write(&path, json)?;
-            println!("{} Default wallet metrics registered ({})", "✓".green(), registry.list().len());
+            println!(
+                "{} Default wallet metrics registered ({})",
+                "✓".green(),
+                registry.list().len()
+            );
         }
     }
     Ok(())
@@ -8385,7 +9642,10 @@ fn cmd_health(action: HealthAction) -> Result<(), Box<dyn std::error::Error>> {
             if crate::health::quick_check(&data_dir) {
                 println!("{} Wallet OK", "✓".green());
             } else {
-                println!("{} Wallet needs attention. Run 'health check' for details.", "✗".red());
+                println!(
+                    "{} Wallet needs attention. Run 'health check' for details.",
+                    "✗".red()
+                );
             }
         }
     }
@@ -8412,35 +9672,29 @@ fn cmd_plugin(action: PluginAction2) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        PluginAction2::Show { name } => {
-            match registry.get(&name) {
-                Some(p) => {
-                    println!("{} v{}", p.manifest.name.bold().cyan(), p.manifest.version);
-                    println!("  Author:      {}", p.manifest.author);
-                    println!("  Description: {}", p.manifest.description);
-                    println!("  Enabled:     {}", p.enabled);
-                    println!("  Installed:   {}", p.installed_at);
-                    println!("  Executions:  {}", p.execution_count);
-                    println!("  Hooks:       {:?}", p.manifest.hooks);
-                    println!("  Permissions: {:?}", p.manifest.permissions);
-                    if !p.config.is_empty() {
-                        println!("  Config:");
-                        for (k, v) in &p.config {
-                            println!("    {} = {}", k, v);
-                        }
-                    }
-                    let dangerous = p.dangerous_permissions();
-                    if !dangerous.is_empty() {
-                        println!(
-                            "  {} Dangerous permissions: {:?}",
-                            "⚠".yellow(),
-                            dangerous
-                        );
+        PluginAction2::Show { name } => match registry.get(&name) {
+            Some(p) => {
+                println!("{} v{}", p.manifest.name.bold().cyan(), p.manifest.version);
+                println!("  Author:      {}", p.manifest.author);
+                println!("  Description: {}", p.manifest.description);
+                println!("  Enabled:     {}", p.enabled);
+                println!("  Installed:   {}", p.installed_at);
+                println!("  Executions:  {}", p.execution_count);
+                println!("  Hooks:       {:?}", p.manifest.hooks);
+                println!("  Permissions: {:?}", p.manifest.permissions);
+                if !p.config.is_empty() {
+                    println!("  Config:");
+                    for (k, v) in &p.config {
+                        println!("    {} = {}", k, v);
                     }
                 }
-                None => println!("{} Plugin '{}' not found", "✗".red(), name),
+                let dangerous = p.dangerous_permissions();
+                if !dangerous.is_empty() {
+                    println!("  {} Dangerous permissions: {:?}", "⚠".yellow(), dangerous);
+                }
             }
-        }
+            None => println!("{} Plugin '{}' not found", "✗".red(), name),
+        },
         PluginAction2::Install { file } => {
             let data = std::fs::read_to_string(&file)?;
             let manifest: crate::plugin::PluginManifest = serde_json::from_str(&data)?;
@@ -8525,28 +9779,26 @@ fn cmd_schedule(action: ScheduleAction) -> Result<(), Box<dyn std::error::Error>
                 }
             }
         }
-        ScheduleAction::Show { id } => {
-            match scheduler.get(&id) {
-                Some(j) => {
-                    println!("{} ({})", j.name.bold().cyan(), j.id);
-                    println!("  Schedule:    {}", j.schedule.to_human());
-                    println!("  Enabled:     {}", j.enabled);
-                    println!("  Run count:   {}", j.run_count);
-                    println!("  Fail count:  {}", j.fail_count);
-                    println!("  Action:      {:?}", j.action);
-                    if let Some(ref last) = j.last_run {
-                        println!("  Last run:    {}", last);
-                    }
-                    if let Some(ref next) = j.next_run {
-                        println!("  Next run:    {}", next);
-                    }
-                    if let Some(ref err) = j.last_error {
-                        println!("  Last error:  {}", err);
-                    }
+        ScheduleAction::Show { id } => match scheduler.get(&id) {
+            Some(j) => {
+                println!("{} ({})", j.name.bold().cyan(), j.id);
+                println!("  Schedule:    {}", j.schedule.to_human());
+                println!("  Enabled:     {}", j.enabled);
+                println!("  Run count:   {}", j.run_count);
+                println!("  Fail count:  {}", j.fail_count);
+                println!("  Action:      {:?}", j.action);
+                if let Some(ref last) = j.last_run {
+                    println!("  Last run:    {}", last);
                 }
-                None => println!("{} Job '{}' not found", "✗".red(), id),
+                if let Some(ref next) = j.next_run {
+                    println!("  Next run:    {}", next);
+                }
+                if let Some(ref err) = j.last_error {
+                    println!("  Last error:  {}", err);
+                }
             }
-        }
+            None => println!("{} Job '{}' not found", "✗".red(), id),
+        },
         ScheduleAction::Add {
             id,
             name,
@@ -8620,17 +9872,15 @@ fn cmd_allowlist(action: AllowlistAction) -> Result<(), Box<dyn std::error::Erro
         }
         AllowlistAction::Check { address } => {
             let verdict = store.check(&address);
-            crate::output::json_or(&verdict, || {
-                match &verdict {
-                    crate::allowlist::Verdict::Allowed => {
-                        println!("{} {} is allowed", "✓".green(), address);
-                    }
-                    crate::allowlist::Verdict::Denied { reason } => {
-                        println!("{} {} is denied: {}", "✗".red(), address, reason);
-                    }
-                    crate::allowlist::Verdict::NotListed => {
-                        println!("  {} is not listed (default policy applies)", address);
-                    }
+            crate::output::json_or(&verdict, || match &verdict {
+                crate::allowlist::Verdict::Allowed => {
+                    println!("{} {} is allowed", "✓".green(), address);
+                }
+                crate::allowlist::Verdict::Denied { reason } => {
+                    println!("{} {} is denied: {}", "✗".red(), address, reason);
+                }
+                crate::allowlist::Verdict::NotListed => {
+                    println!("  {} is not listed (default policy applies)", address);
                 }
             });
         }
@@ -8643,13 +9893,21 @@ fn cmd_allowlist(action: AllowlistAction) -> Result<(), Box<dyn std::error::Erro
                 if !allowed.is_empty() {
                     println!("{}", "Allowed".bold().green());
                     for e in &allowed {
-                        println!("  {} {}", e.address, if e.note.is_empty() { "" } else { &e.note });
+                        println!(
+                            "  {} {}",
+                            e.address,
+                            if e.note.is_empty() { "" } else { &e.note }
+                        );
                     }
                 }
                 if !denied.is_empty() {
                     println!("{}", "Denied".bold().red());
                     for e in &denied {
-                        println!("  {} {}", e.address, if e.note.is_empty() { "" } else { &e.note });
+                        println!(
+                            "  {} {}",
+                            e.address,
+                            if e.note.is_empty() { "" } else { &e.note }
+                        );
                     }
                 }
             }
@@ -8684,11 +9942,24 @@ fn cmd_timelock(action: TimelockAction) -> Result<(), Box<dyn std::error::Error>
             cancellable,
         } => {
             let id = format!("tl-{}", store.timelocks.len() + 1);
-            let lock = crate::timelock::Timelock::new(&id, "self", &recipient, amount, &unlock_at, cancellable);
+            let lock = crate::timelock::Timelock::new(
+                &id,
+                "self",
+                &recipient,
+                amount,
+                &unlock_at,
+                cancellable,
+            );
             store.add_timelock(lock)?;
             std::fs::create_dir_all(path.parent().unwrap())?;
             store.save(&path)?;
-            println!("{} Timelock {} created — {} EVAP locked until {}", "✓".green(), id, amount, unlock_at);
+            println!(
+                "{} Timelock {} created — {} EVAP locked until {}",
+                "✓".green(),
+                id,
+                amount,
+                unlock_at
+            );
         }
         TimelockAction::List => {
             let locks = store.list_timelocks();
@@ -8699,45 +9970,55 @@ fn cmd_timelock(action: TimelockAction) -> Result<(), Box<dyn std::error::Error>
                 for l in locks {
                     println!(
                         "  {} — {} EVAP to {} [unlock: {}] ({:?})",
-                        l.id, l.remaining(), l.recipient, l.unlock_at, l.status
+                        l.id,
+                        l.remaining(),
+                        l.recipient,
+                        l.unlock_at,
+                        l.status
                     );
                 }
             }
         }
-        TimelockAction::Show { id } => {
-            match store.get_timelock(&id) {
-                Some(l) => {
-                    println!("{} ({:?})", l.id.bold().cyan(), l.status);
-                    println!("  Recipient:  {}", l.recipient);
-                    println!("  Amount:     {} EVAP", l.total_amount);
-                    println!("  Claimed:    {} EVAP", l.claimed_amount);
-                    println!("  Unlock at:  {}", l.unlock_at);
-                    println!("  Cancellable: {}", l.cancellable);
-                }
-                None => println!("{} Timelock '{}' not found", "✗".red(), id),
+        TimelockAction::Show { id } => match store.get_timelock(&id) {
+            Some(l) => {
+                println!("{} ({:?})", l.id.bold().cyan(), l.status);
+                println!("  Recipient:  {}", l.recipient);
+                println!("  Amount:     {} EVAP", l.total_amount);
+                println!("  Claimed:    {} EVAP", l.claimed_amount);
+                println!("  Unlock at:  {}", l.unlock_at);
+                println!("  Cancellable: {}", l.cancellable);
             }
-        }
+            None => println!("{} Timelock '{}' not found", "✗".red(), id),
+        },
         TimelockAction::Claim { id } => {
             let now = chrono::Utc::now().to_rfc3339();
             match store.get_timelock_mut(&id) {
                 Some(l) => {
                     let claimed = l.claim(&now)?;
                     store.save(&path)?;
-                    println!("{} Claimed {} EVAP from timelock {}", "✓".green(), claimed, id);
+                    println!(
+                        "{} Claimed {} EVAP from timelock {}",
+                        "✓".green(),
+                        claimed,
+                        id
+                    );
                 }
                 None => println!("{} Timelock '{}' not found", "✗".red(), id),
             }
         }
-        TimelockAction::Cancel { id } => {
-            match store.get_timelock_mut(&id) {
-                Some(l) => {
-                    let refund = l.cancel()?;
-                    store.save(&path)?;
-                    println!("{} Cancelled timelock {} — {} EVAP refunded", "✓".green(), id, refund);
-                }
-                None => println!("{} Timelock '{}' not found", "✗".red(), id),
+        TimelockAction::Cancel { id } => match store.get_timelock_mut(&id) {
+            Some(l) => {
+                let refund = l.cancel()?;
+                store.save(&path)?;
+                println!(
+                    "{} Cancelled timelock {} — {} EVAP refunded",
+                    "✓".green(),
+                    id,
+                    refund
+                );
             }
-        }
+            None => println!("{} Timelock '{}' not found", "✗".red(), id),
+        },
         TimelockAction::Vest {
             beneficiary,
             amount,
@@ -8746,10 +10027,23 @@ fn cmd_timelock(action: TimelockAction) -> Result<(), Box<dyn std::error::Error>
             end,
         } => {
             let id = format!("vest-{}", store.vestings.len() + 1);
-            let v = crate::timelock::VestingSchedule::new(&id, &beneficiary, amount, &start, &cliff, &end)?;
+            let v = crate::timelock::VestingSchedule::new(
+                &id,
+                &beneficiary,
+                amount,
+                &start,
+                &cliff,
+                &end,
+            )?;
             store.add_vesting(v)?;
             store.save(&path)?;
-            println!("{} Vesting {} created — {} EVAP for {}", "✓".green(), id, amount, beneficiary);
+            println!(
+                "{} Vesting {} created — {} EVAP for {}",
+                "✓".green(),
+                id,
+                amount,
+                beneficiary
+            );
         }
         TimelockAction::Vestings => {
             let vestings = store.list_vestings();
@@ -8761,8 +10055,11 @@ fn cmd_timelock(action: TimelockAction) -> Result<(), Box<dyn std::error::Error>
                     let now = chrono::Utc::now().timestamp();
                     println!(
                         "  {} — {} EVAP for {} ({:.1}% vested, {} remaining)",
-                        v.id, v.total_amount, v.beneficiary,
-                        v.percent_vested(now), v.remaining()
+                        v.id,
+                        v.total_amount,
+                        v.beneficiary,
+                        v.percent_vested(now),
+                        v.remaining()
                     );
                 }
             }
@@ -8801,7 +10098,10 @@ fn cmd_memo(action: MemoAction2) -> Result<(), Box<dyn std::error::Error>> {
                     let tx = m.tx_hash.as_deref().unwrap_or("(no tx)");
                     println!(
                         "  {} → {} [{}] \"{}\"",
-                        m.id, m.recipient, tx, m.display_content()
+                        m.id,
+                        m.recipient,
+                        tx,
+                        m.display_content()
                     );
                 }
             }
@@ -8816,22 +10116,20 @@ fn cmd_memo(action: MemoAction2) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        MemoAction2::Show { id } => {
-            match store.get(&id) {
-                Some(m) => {
-                    println!("{}", m.id.bold().cyan());
-                    println!("  Sender:    {}", m.sender);
-                    println!("  Recipient: {}", m.recipient);
-                    println!("  Content:   {}", m.display_content());
-                    println!("  Visibility: {:?}", m.visibility);
-                    if let Some(ref tx) = m.tx_hash {
-                        println!("  Tx hash:   {}", tx);
-                    }
-                    println!("  Created:   {}", m.created_at);
+        MemoAction2::Show { id } => match store.get(&id) {
+            Some(m) => {
+                println!("{}", m.id.bold().cyan());
+                println!("  Sender:    {}", m.sender);
+                println!("  Recipient: {}", m.recipient);
+                println!("  Content:   {}", m.display_content());
+                println!("  Visibility: {:?}", m.visibility);
+                if let Some(ref tx) = m.tx_hash {
+                    println!("  Tx hash:   {}", tx);
                 }
-                None => println!("{} Memo '{}' not found", "✗".red(), id),
+                println!("  Created:   {}", m.created_at);
             }
-        }
+            None => println!("{} Memo '{}' not found", "✗".red(), id),
+        },
         MemoAction2::Delete { id } => {
             if store.remove(&id).is_some() {
                 store.save(&path)?;
@@ -8869,36 +10167,36 @@ fn cmd_recovery(action: RecoveryAction2) -> Result<(), Box<dyn std::error::Error
                 dms.check_in();
                 let days = dms.days_remaining();
                 store.save(&path)?;
-                println!("{} Checked in — next deadline in {} days", "✓".green(), days);
+                println!(
+                    "{} Checked in — next deadline in {} days",
+                    "✓".green(),
+                    days
+                );
             } else {
                 println!("{} No dead man's switch configured", "✗".red());
             }
         }
-        RecoveryAction2::DeadmanStatus => {
-            match &store.dead_man_switch {
-                Some(dms) => {
-                    println!("{}", "Dead Man's Switch".bold().cyan());
-                    println!("  Enabled:     {}", dms.enabled);
-                    println!("  Beneficiary: {}", dms.beneficiary);
-                    println!("  Interval:    {} days", dms.check_in_interval_days);
-                    println!("  Last check:  {}", dms.last_check_in);
-                    println!("  Deadline:    {}", dms.deadline);
-                    println!("  Days left:   {}", dms.days_remaining());
-                    println!("  Status:      {:?}", dms.status);
-                }
-                None => println!("No dead man's switch configured."),
+        RecoveryAction2::DeadmanStatus => match &store.dead_man_switch {
+            Some(dms) => {
+                println!("{}", "Dead Man's Switch".bold().cyan());
+                println!("  Enabled:     {}", dms.enabled);
+                println!("  Beneficiary: {}", dms.beneficiary);
+                println!("  Interval:    {} days", dms.check_in_interval_days);
+                println!("  Last check:  {}", dms.last_check_in);
+                println!("  Deadline:    {}", dms.deadline);
+                println!("  Days left:   {}", dms.days_remaining());
+                println!("  Status:      {:?}", dms.status);
             }
-        }
-        RecoveryAction2::DeadmanDisable => {
-            match store.dead_man_switch.as_mut() {
-                Some(dms) => {
-                    dms.disable();
-                    store.save(&path)?;
-                    println!("{} Dead man's switch disabled", "✓".green());
-                }
-                None => println!("{} No dead man's switch configured", "✗".red()),
+            None => println!("No dead man's switch configured."),
+        },
+        RecoveryAction2::DeadmanDisable => match store.dead_man_switch.as_mut() {
+            Some(dms) => {
+                dms.disable();
+                store.save(&path)?;
+                println!("{} Dead man's switch disabled", "✓".green());
             }
-        }
+            None => println!("{} No dead man's switch configured", "✗".red()),
+        },
         RecoveryAction2::SocialSetup {
             threshold,
             delay_hours,
@@ -8913,50 +10211,51 @@ fn cmd_recovery(action: RecoveryAction2) -> Result<(), Box<dyn std::error::Error
                 delay_hours
             );
         }
-        RecoveryAction2::AddGuardian { address, name } => {
-            match store.social_recovery.as_mut() {
-                Some(sr) => {
-                    sr.add_guardian(&address, &name)?;
-                    store.save(&path)?;
-                    println!("{} Guardian '{}' ({}) added", "✓".green(), name, address);
-                }
-                None => println!("{} Social recovery not configured. Run 'recovery social-setup' first.", "✗".red()),
+        RecoveryAction2::AddGuardian { address, name } => match store.social_recovery.as_mut() {
+            Some(sr) => {
+                sr.add_guardian(&address, &name)?;
+                store.save(&path)?;
+                println!("{} Guardian '{}' ({}) added", "✓".green(), name, address);
             }
-        }
-        RecoveryAction2::RemoveGuardian { address } => {
-            match store.social_recovery.as_mut() {
-                Some(sr) => {
-                    let g = sr.remove_guardian(&address)?;
-                    store.save(&path)?;
-                    println!("{} Guardian '{}' removed", "✓".green(), g.name);
-                }
-                None => println!("{} Social recovery not configured", "✗".red()),
+            None => println!(
+                "{} Social recovery not configured. Run 'recovery social-setup' first.",
+                "✗".red()
+            ),
+        },
+        RecoveryAction2::RemoveGuardian { address } => match store.social_recovery.as_mut() {
+            Some(sr) => {
+                let g = sr.remove_guardian(&address)?;
+                store.save(&path)?;
+                println!("{} Guardian '{}' removed", "✓".green(), g.name);
             }
-        }
-        RecoveryAction2::Guardians => {
-            match &store.social_recovery {
-                Some(sr) => {
-                    let guardians = sr.list_guardians();
-                    if guardians.is_empty() {
-                        println!("No guardians configured.");
-                    } else {
-                        println!("{} (threshold: {})", "Guardians".bold().cyan(), sr.threshold);
-                        for g in guardians {
-                            println!("  {} — {}", g.name, g.address);
-                        }
-                        if !sr.is_valid() {
-                            println!(
-                                "  {} Need at least {} guardians (have {})",
-                                "⚠".yellow(),
-                                sr.threshold,
-                                sr.guardians.len()
-                            );
-                        }
+            None => println!("{} Social recovery not configured", "✗".red()),
+        },
+        RecoveryAction2::Guardians => match &store.social_recovery {
+            Some(sr) => {
+                let guardians = sr.list_guardians();
+                if guardians.is_empty() {
+                    println!("No guardians configured.");
+                } else {
+                    println!(
+                        "{} (threshold: {})",
+                        "Guardians".bold().cyan(),
+                        sr.threshold
+                    );
+                    for g in guardians {
+                        println!("  {} — {}", g.name, g.address);
+                    }
+                    if !sr.is_valid() {
+                        println!(
+                            "  {} Need at least {} guardians (have {})",
+                            "⚠".yellow(),
+                            sr.threshold,
+                            sr.guardians.len()
+                        );
                     }
                 }
-                None => println!("Social recovery not configured."),
             }
-        }
+            None => println!("Social recovery not configured."),
+        },
         RecoveryAction2::Status => {
             println!("{}", "Recovery Status".bold().cyan());
             match &store.dead_man_switch {
@@ -9036,47 +10335,48 @@ fn cmd_delegation(action: DelegationAction) -> Result<(), Box<dyn std::error::Er
                         let status = format!("{:?}", d.status);
                         println!(
                             "  {} → {} ({}) cap={} spent={} [{}]",
-                            d.id, d.delegate, d.delegation_type.name(), d.spending_cap, d.spent, status
+                            d.id,
+                            d.delegate,
+                            d.delegation_type.name(),
+                            d.spending_cap,
+                            d.spent,
+                            status
                         );
                     }
                 }
             });
         }
-        DelegationAction::Show { id } => {
-            match store.get(&id) {
-                Some(d) => {
-                    crate::output::json_or(&d, || {
-                        println!("{}", "Delegation Detail".bold().cyan());
-                        println!("  ID:        {}", d.id);
-                        println!("  Delegate:  {}", d.delegate);
-                        println!("  Type:      {}", d.delegation_type.name());
-                        println!("  Cap:       {}", d.spending_cap);
-                        println!("  Spent:     {}", d.spent);
-                        println!("  Remaining: {}", d.remaining());
-                        println!("  Status:    {:?}", d.status);
-                        println!("  Created:   {}", d.created_at);
-                        if let Some(ref exp) = d.expires_at {
-                            println!("  Expires:   {}", exp);
-                        }
-                        if let Some(limit) = d.per_tx_limit {
-                            println!("  Per-Tx:    {}", limit);
-                        }
-                        println!("  History:   {} transactions", d.spend_history.len());
-                    });
-                }
-                None => println!("Delegation not found: {}", id),
+        DelegationAction::Show { id } => match store.get(&id) {
+            Some(d) => {
+                crate::output::json_or(&d, || {
+                    println!("{}", "Delegation Detail".bold().cyan());
+                    println!("  ID:        {}", d.id);
+                    println!("  Delegate:  {}", d.delegate);
+                    println!("  Type:      {}", d.delegation_type.name());
+                    println!("  Cap:       {}", d.spending_cap);
+                    println!("  Spent:     {}", d.spent);
+                    println!("  Remaining: {}", d.remaining());
+                    println!("  Status:    {:?}", d.status);
+                    println!("  Created:   {}", d.created_at);
+                    if let Some(ref exp) = d.expires_at {
+                        println!("  Expires:   {}", exp);
+                    }
+                    if let Some(limit) = d.per_tx_limit {
+                        println!("  Per-Tx:    {}", limit);
+                    }
+                    println!("  History:   {} transactions", d.spend_history.len());
+                });
             }
-        }
-        DelegationAction::Revoke { id } => {
-            match store.get_mut(&id) {
-                Some(d) => {
-                    d.revoke()?;
-                    store.save(&path)?;
-                    println!("Delegation {} revoked.", id);
-                }
-                None => println!("Delegation not found: {}", id),
+            None => println!("Delegation not found: {}", id),
+        },
+        DelegationAction::Revoke { id } => match store.get_mut(&id) {
+            Some(d) => {
+                d.revoke()?;
+                store.save(&path)?;
+                println!("Delegation {} revoked.", id);
             }
-        }
+            None => println!("Delegation not found: {}", id),
+        },
         DelegationAction::RevokeAll => {
             let count = store.revoke_all("self");
             store.save(&path)?;
@@ -9105,15 +10405,18 @@ fn cmd_sync(action: SyncAction) -> Result<(), Box<dyn std::error::Error>> {
             crate::output::json_or(
                 &serde_json::json!({"exported_to": file.display().to_string(), "contacts": store.contacts.len()}),
                 || {
-                    println!("Exported {} contacts to {}", store.contacts.len(), file.display());
+                    println!(
+                        "Exported {} contacts to {}",
+                        store.contacts.len(),
+                        file.display()
+                    );
                 },
             );
         }
         SyncAction::Import { file } => {
             let mut local = store;
             let data = std::fs::read_to_string(&file)?;
-            let remote: crate::addressbook_sync::SyncableAddressBook =
-                serde_json::from_str(&data)?;
+            let remote: crate::addressbook_sync::SyncableAddressBook = serde_json::from_str(&data)?;
             let result = local.merge(
                 &remote,
                 crate::addressbook_sync::ConflictResolution::KeepNewer,
@@ -9162,7 +10465,12 @@ fn cmd_gas_station(action: GasStationAction) -> Result<(), Box<dyn std::error::E
                         let reliability = r.reliability();
                         println!(
                             "  {} ({}) — {:?} | reliability={:.1}% latency={}ms fee={:.2}%",
-                            r.name, r.url, r.status, reliability * 100.0, r.avg_latency_ms, r.fee_percent
+                            r.name,
+                            r.url,
+                            r.status,
+                            reliability * 100.0,
+                            r.avg_latency_ms,
+                            r.fee_percent
                         );
                     }
                 }
@@ -9179,21 +10487,19 @@ fn cmd_gas_station(action: GasStationAction) -> Result<(), Box<dyn std::error::E
             station.save(&path)?;
             println!("Relay removed: {}", url);
         }
-        GasStationAction::BestRelay => {
-            match station.best_relay() {
-                Some(r) => {
-                    crate::output::json_or(&r, || {
-                        println!("{}", "Best Relay".bold().cyan());
-                        println!("  Name:        {}", r.name);
-                        println!("  URL:         {}", r.url);
-                        println!("  Reliability: {:.1}%", r.reliability() * 100.0);
-                        println!("  Latency:     {}ms", r.avg_latency_ms);
-                        println!("  Fee:         {:.2}%", r.fee_percent);
-                    });
-                }
-                None => println!("No active relays available."),
+        GasStationAction::BestRelay => match station.best_relay() {
+            Some(r) => {
+                crate::output::json_or(&r, || {
+                    println!("{}", "Best Relay".bold().cyan());
+                    println!("  Name:        {}", r.name);
+                    println!("  URL:         {}", r.url);
+                    println!("  Reliability: {:.1}%", r.reliability() * 100.0);
+                    println!("  Latency:     {}ms", r.avg_latency_ms);
+                    println!("  Fee:         {:.2}%", r.fee_percent);
+                });
             }
-        }
+            None => println!("No active relays available."),
+        },
         GasStationAction::Sponsors => {
             let sponsors: Vec<&crate::gas_station::GasSponsor> =
                 station.sponsors.values().collect();
@@ -9205,7 +10511,12 @@ fn cmd_gas_station(action: GasStationAction) -> Result<(), Box<dyn std::error::E
                     for s in &sponsors {
                         println!(
                             "  {} ({}) budget={} spent={} remaining={} txs={}",
-                            s.name, s.address, s.budget, s.spent, s.remaining(), s.tx_count
+                            s.name,
+                            s.address,
+                            s.budget,
+                            s.spent,
+                            s.remaining(),
+                            s.tx_count
                         );
                     }
                 }
@@ -9243,7 +10554,10 @@ fn cmd_gas_station(action: GasStationAction) -> Result<(), Box<dyn std::error::E
             });
             crate::output::json_or(&stats, || {
                 println!("{}", "Gas Station Stats".bold().cyan());
-                println!("  Relays:       {} ({} active)", total_relays, active_relays);
+                println!(
+                    "  Relays:       {} ({} active)",
+                    total_relays, active_relays
+                );
                 println!("  Sponsors:     {}", total_sponsors);
                 println!("  Total Budget: {}", total_budget);
                 println!("  Total Spent:  {}", total_spent);
@@ -9289,8 +10603,7 @@ fn cmd_intent(action: IntentAction) -> Result<(), Box<dyn std::error::Error>> {
             });
         }
         IntentAction::List => {
-            let intents: Vec<&crate::intent::Intent> =
-                engine.intents.values().collect();
+            let intents: Vec<&crate::intent::Intent> = engine.intents.values().collect();
             crate::output::json_or(&intents, || {
                 if intents.is_empty() {
                     println!("No intents.");
@@ -9308,38 +10621,34 @@ fn cmd_intent(action: IntentAction) -> Result<(), Box<dyn std::error::Error>> {
                 }
             });
         }
-        IntentAction::Show { id } => {
-            match engine.get_intent(&id) {
-                Some(i) => {
-                    crate::output::json_or(&i, || {
-                        println!("{}", "Intent Detail".bold().cyan());
-                        println!("  ID:          {}", i.id);
-                        println!("  Type:        {}", i.intent_type.name());
-                        println!("  Status:      {:?}", i.status);
-                        println!("  Sender:      {}", i.sender);
-                        println!("  Description: {}", i.description);
-                        println!("  Created:     {}", i.created_at);
-                        println!("  Constraints: {}", i.constraints.len());
-                        let solutions = engine.solutions_for(&i.id);
-                        println!("  Solutions:   {}", solutions.len());
-                        if let Some(best) = engine.best_solution(&i.id) {
-                            println!("  Best Solver: {} (score={})", best.solver_id, best.score);
-                        }
-                    });
-                }
-                None => println!("Intent not found: {}", id),
+        IntentAction::Show { id } => match engine.get_intent(&id) {
+            Some(i) => {
+                crate::output::json_or(&i, || {
+                    println!("{}", "Intent Detail".bold().cyan());
+                    println!("  ID:          {}", i.id);
+                    println!("  Type:        {}", i.intent_type.name());
+                    println!("  Status:      {:?}", i.status);
+                    println!("  Sender:      {}", i.sender);
+                    println!("  Description: {}", i.description);
+                    println!("  Created:     {}", i.created_at);
+                    println!("  Constraints: {}", i.constraints.len());
+                    let solutions = engine.solutions_for(&i.id);
+                    println!("  Solutions:   {}", solutions.len());
+                    if let Some(best) = engine.best_solution(&i.id) {
+                        println!("  Best Solver: {} (score={})", best.solver_id, best.score);
+                    }
+                });
             }
-        }
-        IntentAction::Cancel { id } => {
-            match engine.get_intent_mut(&id) {
-                Some(i) => {
-                    i.cancel()?;
-                    engine.save(&path)?;
-                    println!("Intent {} cancelled.", id);
-                }
-                None => println!("Intent not found: {}", id),
+            None => println!("Intent not found: {}", id),
+        },
+        IntentAction::Cancel { id } => match engine.get_intent_mut(&id) {
+            Some(i) => {
+                i.cancel()?;
+                engine.save(&path)?;
+                println!("Intent {} cancelled.", id);
             }
-        }
+            None => println!("Intent not found: {}", id),
+        },
         IntentAction::Solvers => {
             let solvers = engine.list_solvers();
             crate::output::json_or(&solvers, || {
@@ -9380,7 +10689,12 @@ fn cmd_token_registry(action: TokenRegistryAction) -> Result<(), Box<dyn std::er
     let mut registry = crate::token_registry::TokenRegistry::load_or_default(&path)?;
 
     match action {
-        TokenRegistryAction::Register { address, name, symbol, decimals } => {
+        TokenRegistryAction::Register {
+            address,
+            name,
+            symbol,
+            decimals,
+        } => {
             let token = crate::token_registry::TokenInfo::new(&address, &name, &symbol, decimals);
             registry.register(token)?;
             registry.save(&path)?;
@@ -9396,35 +10710,42 @@ fn cmd_token_registry(action: TokenRegistryAction) -> Result<(), Box<dyn std::er
                 } else {
                     println!("{}", "Token Registry".bold().cyan());
                     for t in &tokens {
-                        let flags = if t.verified { " [verified]" } else if t.flagged_scam { " [SCAM]" } else { "" };
-                        println!("  {} ({}) dec={}{} — {}", t.name, t.symbol, t.decimals, flags, t.address);
+                        let flags = if t.verified {
+                            " [verified]"
+                        } else if t.flagged_scam {
+                            " [SCAM]"
+                        } else {
+                            ""
+                        };
+                        println!(
+                            "  {} ({}) dec={}{} — {}",
+                            t.name, t.symbol, t.decimals, flags, t.address
+                        );
                     }
                 }
             });
         }
-        TokenRegistryAction::Show { address } => {
-            match registry.get(&address) {
-                Some(t) => {
-                    crate::output::json_or(&t, || {
-                        println!("{}", "Token Detail".bold().cyan());
-                        println!("  Address:   {}", t.address);
-                        println!("  Name:      {}", t.name);
-                        println!("  Symbol:    {}", t.symbol);
-                        println!("  Decimals:  {}", t.decimals);
-                        println!("  Verified:  {}", t.verified);
-                        println!("  Scam:      {}", t.flagged_scam);
-                        if let Some(ref url) = t.logo_url {
-                            println!("  Logo:      {}", url);
-                        }
-                        if let Some(ref url) = t.website {
-                            println!("  Website:   {}", url);
-                        }
-                        println!("  Tags:      {}", t.tags.join(", "));
-                    });
-                }
-                None => println!("Token not found: {}", address),
+        TokenRegistryAction::Show { address } => match registry.get(&address) {
+            Some(t) => {
+                crate::output::json_or(&t, || {
+                    println!("{}", "Token Detail".bold().cyan());
+                    println!("  Address:   {}", t.address);
+                    println!("  Name:      {}", t.name);
+                    println!("  Symbol:    {}", t.symbol);
+                    println!("  Decimals:  {}", t.decimals);
+                    println!("  Verified:  {}", t.verified);
+                    println!("  Scam:      {}", t.flagged_scam);
+                    if let Some(ref url) = t.logo_url {
+                        println!("  Logo:      {}", url);
+                    }
+                    if let Some(ref url) = t.website {
+                        println!("  Website:   {}", url);
+                    }
+                    println!("  Tags:      {}", t.tags.join(", "));
+                });
             }
-        }
+            None => println!("Token not found: {}", address),
+        },
         TokenRegistryAction::Remove { address } => {
             registry.remove(&address)?;
             registry.save(&path)?;
@@ -9436,7 +10757,12 @@ fn cmd_token_registry(action: TokenRegistryAction) -> Result<(), Box<dyn std::er
                 if results.is_empty() {
                     println!("No tokens matching '{}'.", query);
                 } else {
-                    println!("{}", format!("Search: '{}' ({} results)", query, results.len()).bold().cyan());
+                    println!(
+                        "{}",
+                        format!("Search: '{}' ({} results)", query, results.len())
+                            .bold()
+                            .cyan()
+                    );
                     for t in &results {
                         println!("  {} ({}) — {}", t.name, t.symbol, t.address);
                     }
@@ -9475,7 +10801,12 @@ fn cmd_fee_bump(action: FeeBumpAction) -> Result<(), Box<dyn std::error::Error>>
     let mut bumper = crate::fee_bumper::FeeBumper::load_or_default(&path);
 
     match action {
-        FeeBumpAction::Track { tx_hash, sender, nonce, fee } => {
+        FeeBumpAction::Track {
+            tx_hash,
+            sender,
+            nonce,
+            fee,
+        } => {
             let tx = crate::fee_bumper::TrackedTx::new(&tx_hash, &sender, nonce, fee);
             bumper.track(tx)?;
             bumper.save(&path)?;
@@ -9499,25 +10830,23 @@ fn cmd_fee_bump(action: FeeBumpAction) -> Result<(), Box<dyn std::error::Error>>
                 }
             });
         }
-        FeeBumpAction::Show { tx_hash } => {
-            match bumper.get(&tx_hash) {
-                Some(t) => {
-                    crate::output::json_or(&t, || {
-                        println!("{}", "Transaction Detail".bold().cyan());
-                        println!("  Hash:         {}", t.tx_hash);
-                        println!("  Sender:       {}", t.sender);
-                        println!("  Nonce:        {}", t.nonce);
-                        println!("  Original Fee: {}", t.original_fee);
-                        println!("  Current Fee:  {}", t.current_fee);
-                        println!("  State:        {:?}", t.state);
-                        println!("  Bumps:        {}/{}", t.bump_count, t.max_bumps);
-                        println!("  Submitted:    {}", t.submitted_at);
-                        println!("  Fee Increase: +{}", t.total_fee_increase());
-                    });
-                }
-                None => println!("Transaction not found: {}", tx_hash),
+        FeeBumpAction::Show { tx_hash } => match bumper.get(&tx_hash) {
+            Some(t) => {
+                crate::output::json_or(&t, || {
+                    println!("{}", "Transaction Detail".bold().cyan());
+                    println!("  Hash:         {}", t.tx_hash);
+                    println!("  Sender:       {}", t.sender);
+                    println!("  Nonce:        {}", t.nonce);
+                    println!("  Original Fee: {}", t.original_fee);
+                    println!("  Current Fee:  {}", t.current_fee);
+                    println!("  State:        {:?}", t.state);
+                    println!("  Bumps:        {}/{}", t.bump_count, t.max_bumps);
+                    println!("  Submitted:    {}", t.submitted_at);
+                    println!("  Fee Increase: +{}", t.total_fee_increase());
+                });
             }
-        }
+            None => println!("Transaction not found: {}", tx_hash),
+        },
         FeeBumpAction::DetectStuck => {
             let stuck = bumper.detect_stuck();
             bumper.save(&path)?;
@@ -9525,7 +10854,12 @@ fn cmd_fee_bump(action: FeeBumpAction) -> Result<(), Box<dyn std::error::Error>>
                 if stuck.is_empty() {
                     println!("No stuck transactions detected.");
                 } else {
-                    println!("{}", format!("{} stuck transaction(s):", stuck.len()).bold().yellow());
+                    println!(
+                        "{}",
+                        format!("{} stuck transaction(s):", stuck.len())
+                            .bold()
+                            .yellow()
+                    );
                     for hash in &stuck {
                         println!("  {}", hash);
                     }
@@ -9544,7 +10878,12 @@ fn cmd_fee_bump(action: FeeBumpAction) -> Result<(), Box<dyn std::error::Error>>
                 if results.is_empty() {
                     println!("No stuck transactions to bump.");
                 } else {
-                    println!("{}", format!("Bumped {} transaction(s):", results.len()).bold().cyan());
+                    println!(
+                        "{}",
+                        format!("Bumped {} transaction(s):", results.len())
+                            .bold()
+                            .cyan()
+                    );
                     for (hash, fee) in &results {
                         println!("  {} → fee={}", hash, fee);
                     }
@@ -9586,8 +10925,16 @@ fn cmd_snapshot(action: SnapshotAction) -> Result<(), Box<dyn std::error::Error>
             let config_path = crate::config::WalletConfig::default_path();
             let config = crate::config::WalletConfig::load_or_default(&config_path)?;
             let entries: Vec<(String, String, String)> = vec![
-                ("config.node_url".into(), config.node_url.clone(), "config".into()),
-                ("config.default_account".into(), config.active_account.clone().unwrap_or_default(), "config".into()),
+                (
+                    "config.node_url".into(),
+                    config.node_url.clone(),
+                    "config".into(),
+                ),
+                (
+                    "config.default_account".into(),
+                    config.active_account.clone().unwrap_or_default(),
+                    "config".into(),
+                ),
             ];
             let id = store.capture(&label, entries);
             store.save(&path)?;
@@ -9603,28 +10950,32 @@ fn cmd_snapshot(action: SnapshotAction) -> Result<(), Box<dyn std::error::Error>
                 } else {
                     println!("{}", "Snapshots".bold().cyan());
                     for s in snaps {
-                        println!("  {} — {} ({} entries, {}B)", s.id, s.label, s.entry_count(), s.size_bytes);
+                        println!(
+                            "  {} — {} ({} entries, {}B)",
+                            s.id,
+                            s.label,
+                            s.entry_count(),
+                            s.size_bytes
+                        );
                     }
                 }
             });
         }
-        SnapshotAction::Show { id } => {
-            match store.get(&id) {
-                Some(s) => {
-                    crate::output::json_or(&s, || {
-                        println!("{}", "Snapshot Detail".bold().cyan());
-                        println!("  ID:       {}", s.id);
-                        println!("  Label:    {}", s.label);
-                        println!("  Created:  {}", s.created_at);
-                        println!("  Entries:  {}", s.entry_count());
-                        println!("  Size:     {}B", s.size_bytes);
-                        println!("  Checksum: {}", s.checksum);
-                        println!("  Valid:    {}", s.verify());
-                    });
-                }
-                None => println!("Snapshot not found: {}", id),
+        SnapshotAction::Show { id } => match store.get(&id) {
+            Some(s) => {
+                crate::output::json_or(&s, || {
+                    println!("{}", "Snapshot Detail".bold().cyan());
+                    println!("  ID:       {}", s.id);
+                    println!("  Label:    {}", s.label);
+                    println!("  Created:  {}", s.created_at);
+                    println!("  Entries:  {}", s.entry_count());
+                    println!("  Size:     {}B", s.size_bytes);
+                    println!("  Checksum: {}", s.checksum);
+                    println!("  Valid:    {}", s.verify());
+                });
             }
-        }
+            None => println!("Snapshot not found: {}", id),
+        },
         SnapshotAction::Diff { from, to } => {
             let diff = store.diff(&from, &to)?;
             crate::output::json_or(&diff, || {
@@ -9700,25 +11051,26 @@ fn cmd_watchonly(action: WatchOnlyAction) -> Result<(), Box<dyn std::error::Erro
                 }
             });
         }
-        WatchOnlyAction::Show { address } => {
-            match store.get(&address) {
-                Some(a) => {
-                    crate::output::json_or(&a, || {
-                        println!("{}", "Watched Account".bold().cyan());
-                        println!("  Address:   {}", a.address);
-                        println!("  Label:     {}", a.label);
-                        println!("  Balance:   {}", a.last_balance);
-                        println!("  Priority:  {:?}", a.priority);
-                        println!("  Threshold: {}", a.alert_threshold);
-                        println!("  Alerts:    {}", if a.alerts_enabled { "on" } else { "off" });
-                        println!("  Active:    {}", a.active);
-                        println!("  Added:     {}", a.added_at);
-                        println!("  History:   {} snapshots", a.balance_history.len());
-                    });
-                }
-                None => println!("Not watching: {}", address),
+        WatchOnlyAction::Show { address } => match store.get(&address) {
+            Some(a) => {
+                crate::output::json_or(&a, || {
+                    println!("{}", "Watched Account".bold().cyan());
+                    println!("  Address:   {}", a.address);
+                    println!("  Label:     {}", a.label);
+                    println!("  Balance:   {}", a.last_balance);
+                    println!("  Priority:  {:?}", a.priority);
+                    println!("  Threshold: {}", a.alert_threshold);
+                    println!(
+                        "  Alerts:    {}",
+                        if a.alerts_enabled { "on" } else { "off" }
+                    );
+                    println!("  Active:    {}", a.active);
+                    println!("  Added:     {}", a.added_at);
+                    println!("  History:   {} snapshots", a.balance_history.len());
+                });
             }
-        }
+            None => println!("Not watching: {}", address),
+        },
         WatchOnlyAction::UpdateBalance { address, balance } => {
             match store.update_balance(&address, balance)? {
                 Some(alert) => {
@@ -9737,7 +11089,10 @@ fn cmd_watchonly(action: WatchOnlyAction) -> Result<(), Box<dyn std::error::Erro
                 if alerts.is_empty() {
                     println!("No unread alerts.");
                 } else {
-                    println!("{}", format!("{} Unread Alert(s)", alerts.len()).bold().yellow());
+                    println!(
+                        "{}",
+                        format!("{} Unread Alert(s)", alerts.len()).bold().yellow()
+                    );
                     for a in &alerts {
                         println!("  [{}] {} — {}", a.created_at, a.address, a.message);
                     }
@@ -9794,27 +11149,30 @@ fn cmd_peers(action: PeerAction) -> Result<(), Box<dyn std::error::Error>> {
                     for p in &peers {
                         println!(
                             "  {} ({}) [{:?}] score={:.2} latency={}ms reliability={:.1}%",
-                            p.name, p.url, p.status, p.score(), p.latency_ms, p.reliability() * 100.0
+                            p.name,
+                            p.url,
+                            p.status,
+                            p.score(),
+                            p.latency_ms,
+                            p.reliability() * 100.0
                         );
                     }
                 }
             });
         }
-        PeerAction::Best => {
-            match registry.best_peer() {
-                Some(p) => {
-                    crate::output::json_or(&p, || {
-                        println!("{}", "Best Peer".bold().cyan());
-                        println!("  Name:        {}", p.name);
-                        println!("  URL:         {}", p.url);
-                        println!("  Score:       {:.2}", p.score());
-                        println!("  Latency:     {}ms", p.latency_ms);
-                        println!("  Reliability: {:.1}%", p.reliability() * 100.0);
-                    });
-                }
-                None => println!("No available peers."),
+        PeerAction::Best => match registry.best_peer() {
+            Some(p) => {
+                crate::output::json_or(&p, || {
+                    println!("{}", "Best Peer".bold().cyan());
+                    println!("  Name:        {}", p.name);
+                    println!("  URL:         {}", p.url);
+                    println!("  Score:       {:.2}", p.score());
+                    println!("  Latency:     {}ms", p.latency_ms);
+                    println!("  Reliability: {:.1}%", p.reliability() * 100.0);
+                });
             }
-        }
+            None => println!("No available peers."),
+        },
         PeerAction::RecordSuccess { url, latency_ms } => {
             registry.record_success(&url, latency_ms)?;
             registry.save(&path)?;
@@ -9855,8 +11213,23 @@ fn cmd_mempool(action: MempoolAction) -> Result<(), Box<dyn std::error::Error>> 
     let mut monitor = crate::mempool_monitor::MempoolMonitor::load_or_default(&path);
 
     match action {
-        MempoolAction::Add { tx_hash, sender, receiver, amount, fee, nonce } => {
-            let tx = crate::mempool_monitor::PendingTx::new(tx_hash.clone(), sender, receiver, amount, fee, nonce, "transfer".into());
+        MempoolAction::Add {
+            tx_hash,
+            sender,
+            receiver,
+            amount,
+            fee,
+            nonce,
+        } => {
+            let tx = crate::mempool_monitor::PendingTx::new(
+                tx_hash.clone(),
+                sender,
+                receiver,
+                amount,
+                fee,
+                nonce,
+                "transfer".into(),
+            );
             monitor.add_tx(tx)?;
             monitor.save(&path)?;
             println!("Tracking pending tx: {} (fee={})", tx_hash, fee);
@@ -9872,9 +11245,15 @@ fn cmd_mempool(action: MempoolAction) -> Result<(), Box<dyn std::error::Error>> 
                 if txs.is_empty() {
                     println!("Mempool empty.");
                 } else {
-                    println!("{}", format!("Mempool ({} pending)", txs.len()).bold().cyan());
+                    println!(
+                        "{}",
+                        format!("Mempool ({} pending)", txs.len()).bold().cyan()
+                    );
                     for t in &txs {
-                        println!("  {} {} → {} amt={} fee={} [{:?}]", t.tx_hash, t.sender, t.receiver, t.amount, t.fee, t.priority);
+                        println!(
+                            "  {} {} → {} amt={} fee={} [{:?}]",
+                            t.tx_hash, t.sender, t.receiver, t.amount, t.fee, t.priority
+                        );
                     }
                 }
             });
@@ -9893,20 +11272,29 @@ fn cmd_mempool(action: MempoolAction) -> Result<(), Box<dyn std::error::Error>> 
                 "medium" => crate::mempool_monitor::TxPriority::Medium,
                 "low" => crate::mempool_monitor::TxPriority::Low,
                 _ => {
-                    println!("Unknown priority: {} (use urgent/high/medium/low)", priority);
+                    println!(
+                        "Unknown priority: {} (use urgent/high/medium/low)",
+                        priority
+                    );
                     return Ok(());
                 }
             };
             let fee = monitor.recommend_fee(&p);
-            crate::output::json_or(&serde_json::json!({"priority": priority, "recommended_fee": fee}), || {
-                println!("Recommended fee ({:?}): {}", p, fee);
-            });
+            crate::output::json_or(
+                &serde_json::json!({"priority": priority, "recommended_fee": fee}),
+                || {
+                    println!("Recommended fee ({:?}): {}", p, fee);
+                },
+            );
         }
         MempoolAction::Congestion => {
             let level = monitor.congestion();
-            crate::output::json_or(&serde_json::json!({"congestion": format!("{:?}", level)}), || {
-                println!("Congestion: {:?}", level);
-            });
+            crate::output::json_or(
+                &serde_json::json!({"congestion": format!("{:?}", level)}),
+                || {
+                    println!("Congestion: {:?}", level);
+                },
+            );
         }
         MempoolAction::Stats => {
             let stats = monitor.stats();
@@ -9932,7 +11320,13 @@ fn cmd_indexer(action: IndexerAction) -> Result<(), Box<dyn std::error::Error>> 
     let indexer = crate::chain_indexer::ChainIndexer::load_or_default(&path);
 
     match action {
-        IndexerAction::Query { from, to, event_type: _, min_block, max_block } => {
+        IndexerAction::Query {
+            from,
+            to,
+            event_type: _,
+            min_block,
+            max_block,
+        } => {
             let mut filter = crate::chain_indexer::EventFilter::new();
             if let Some(ref addr) = from {
                 filter = filter.with_from(addr);
@@ -9958,39 +11352,35 @@ fn cmd_indexer(action: IndexerAction) -> Result<(), Box<dyn std::error::Error>> 
                 }
             });
         }
-        IndexerAction::Receipt { tx_hash } => {
-            match indexer.get_receipt(&tx_hash) {
-                Some(r) => {
-                    crate::output::json_or(&r, || {
-                        println!("{}", "Transaction Receipt".bold().cyan());
-                        println!("  Hash:    {}", r.tx_hash);
-                        println!("  Block:   {}", r.block_height);
-                        println!("  Status:  {:?}", r.status);
-                        println!("  Gas:     {}", r.gas_used);
-                        println!("  Fee:     {}", r.fee_paid);
-                        if let Some(ref err) = r.error_message {
-                            println!("  Error:   {}", err);
-                        }
-                    });
-                }
-                None => println!("Receipt not found: {}", tx_hash),
+        IndexerAction::Receipt { tx_hash } => match indexer.get_receipt(&tx_hash) {
+            Some(r) => {
+                crate::output::json_or(&r, || {
+                    println!("{}", "Transaction Receipt".bold().cyan());
+                    println!("  Hash:    {}", r.tx_hash);
+                    println!("  Block:   {}", r.block_height);
+                    println!("  Status:  {:?}", r.status);
+                    println!("  Gas:     {}", r.gas_used);
+                    println!("  Fee:     {}", r.fee_paid);
+                    if let Some(ref err) = r.error_message {
+                        println!("  Error:   {}", err);
+                    }
+                });
             }
-        }
-        IndexerAction::Latest => {
-            match indexer.latest_block() {
-                Some(b) => {
-                    crate::output::json_or(&b, || {
-                        println!("{}", "Latest Indexed Block".bold().cyan());
-                        println!("  Height: {}", b.height);
-                        println!("  Hash:   {}", b.hash);
-                        println!("  Txs:    {}", b.tx_count);
-                        println!("  Events: {}", b.event_count);
-                        println!("  Time:   {}", b.timestamp);
-                    });
-                }
-                None => println!("No blocks indexed yet."),
+            None => println!("Receipt not found: {}", tx_hash),
+        },
+        IndexerAction::Latest => match indexer.latest_block() {
+            Some(b) => {
+                crate::output::json_or(&b, || {
+                    println!("{}", "Latest Indexed Block".bold().cyan());
+                    println!("  Height: {}", b.height);
+                    println!("  Hash:   {}", b.hash);
+                    println!("  Txs:    {}", b.tx_count);
+                    println!("  Events: {}", b.event_count);
+                    println!("  Time:   {}", b.timestamp);
+                });
             }
-        }
+            None => println!("No blocks indexed yet."),
+        },
         IndexerAction::Stats => {
             let stats = indexer.stats();
             crate::output::json_or(&stats, || {
@@ -10018,44 +11408,56 @@ fn cmd_net_health(action: NetHealthAction) -> Result<(), Box<dyn std::error::Err
         NetHealthAction::Grade => {
             let grade = monitor.health_grade();
             let desc = crate::network_health::NetworkHealthMonitor::grade_description(&grade);
-            crate::output::json_or(&serde_json::json!({"grade": format!("{:?}", grade), "description": desc}), || {
-                println!("{}", "Network Health".bold().cyan());
-                println!("  Grade: {:?}", grade);
-                println!("  {}", desc);
-            });
+            crate::output::json_or(
+                &serde_json::json!({"grade": format!("{:?}", grade), "description": desc}),
+                || {
+                    println!("{}", "Network Health".bold().cyan());
+                    println!("  Grade: {:?}", grade);
+                    println!("  {}", desc);
+                },
+            );
         }
         NetHealthAction::BlockTimes => {
             let avg = monitor.avg_block_time();
             let median = monitor.median_block_time();
-            crate::output::json_or(&serde_json::json!({"avg_ms": avg, "median_ms": median}), || {
-                println!("{}", "Block Times".bold().cyan());
-                println!("  Average: {}ms", avg);
-                println!("  Median:  {}ms", median);
-            });
+            crate::output::json_or(
+                &serde_json::json!({"avg_ms": avg, "median_ms": median}),
+                || {
+                    println!("{}", "Block Times".bold().cyan());
+                    println!("  Average: {}ms", avg);
+                    println!("  Median:  {}ms", median);
+                },
+            );
         }
         NetHealthAction::Reorgs => {
             let count = monitor.reorg_count();
             let max_depth = monitor.max_reorg_depth();
-            crate::output::json_or(&serde_json::json!({"count": count, "max_depth": max_depth}), || {
-                println!("{}", "Reorg History".bold().cyan());
-                println!("  Total Reorgs: {}", count);
-                println!("  Max Depth:    {}", max_depth);
-            });
+            crate::output::json_or(
+                &serde_json::json!({"count": count, "max_depth": max_depth}),
+                || {
+                    println!("{}", "Reorg History".bold().cyan());
+                    println!("  Total Reorgs: {}", count);
+                    println!("  Max Depth:    {}", max_depth);
+                },
+            );
         }
         NetHealthAction::Epoch { expected_blocks } => {
             let progress = monitor.epoch_progress(expected_blocks);
             match monitor.current_epoch_info() {
                 Some(e) => {
-                    crate::output::json_or(&serde_json::json!({
-                        "epoch": e.epoch,
-                        "progress": format!("{:.1}%", progress * 100.0),
-                        "block_count": e.block_count,
-                    }), || {
-                        println!("{}", "Epoch Progress".bold().cyan());
-                        println!("  Epoch:    {}", e.epoch);
-                        println!("  Progress: {:.1}%", progress * 100.0);
-                        println!("  Blocks:   {}", e.block_count);
-                    });
+                    crate::output::json_or(
+                        &serde_json::json!({
+                            "epoch": e.epoch,
+                            "progress": format!("{:.1}%", progress * 100.0),
+                            "block_count": e.block_count,
+                        }),
+                        || {
+                            println!("{}", "Epoch Progress".bold().cyan());
+                            println!("  Epoch:    {}", e.epoch);
+                            println!("  Progress: {:.1}%", progress * 100.0);
+                            println!("  Blocks:   {}", e.block_count);
+                        },
+                    );
                 }
                 None => println!("No epoch data available."),
             }
@@ -10066,7 +11468,10 @@ fn cmd_net_health(action: NetHealthAction) -> Result<(), Box<dyn std::error::Err
                 if events.is_empty() {
                     println!("No network events.");
                 } else {
-                    println!("{}", format!("Recent Events ({})", events.len()).bold().cyan());
+                    println!(
+                        "{}",
+                        format!("Recent Events ({})", events.len()).bold().cyan()
+                    );
                     for (ts, ev) in &events {
                         println!("  [{}] {:?}", ts, ev);
                     }
@@ -10099,35 +11504,45 @@ fn cmd_price(action: PriceAction) -> Result<(), Box<dyn std::error::Error>> {
     let mut feed = crate::price_feed::PriceFeed::load_or_default(&path);
 
     match action {
-        PriceAction::Register { token_id, symbol, price } => {
-            let token = crate::price_feed::TokenPrice::new(&token_id, &symbol, price, crate::price_feed::Currency::Usd);
+        PriceAction::Register {
+            token_id,
+            symbol,
+            price,
+        } => {
+            let token = crate::price_feed::TokenPrice::new(
+                &token_id,
+                &symbol,
+                price,
+                crate::price_feed::Currency::Usd,
+            );
             feed.register_token(token);
             feed.save(&path)?;
-            println!("Token registered: {} ({}) @ ${:.4}", token_id, symbol, price);
+            println!(
+                "Token registered: {} ({}) @ ${:.4}",
+                token_id, symbol, price
+            );
         }
         PriceAction::Update { token_id, price } => {
             feed.update_price(&token_id, price, 0.0)?;
             feed.save(&path)?;
             println!("Price updated: {} → ${:.4}", token_id, price);
         }
-        PriceAction::Show { token_id } => {
-            match feed.get_price(&token_id) {
-                Some(t) => {
-                    crate::output::json_or(&t, || {
-                        println!("{}", "Token Price".bold().cyan());
-                        println!("  Token:    {} ({})", t.token_id, t.symbol);
-                        println!("  Price:    ${:.4}", t.current_price);
-                        println!("  24h:      {:.2}%", t.change_24h);
-                        println!("  High:     ${:.4}", t.high_24h);
-                        println!("  Low:      ${:.4}", t.low_24h);
-                        println!("  Avg:      ${:.4}", t.average_price());
-                        println!("  Trend:    {:.2}%", t.trend());
-                        println!("  History:  {} points", t.history.len());
-                    });
-                }
-                None => println!("Token not found: {}", token_id),
+        PriceAction::Show { token_id } => match feed.get_price(&token_id) {
+            Some(t) => {
+                crate::output::json_or(&t, || {
+                    println!("{}", "Token Price".bold().cyan());
+                    println!("  Token:    {} ({})", t.token_id, t.symbol);
+                    println!("  Price:    ${:.4}", t.current_price);
+                    println!("  24h:      {:.2}%", t.change_24h);
+                    println!("  High:     ${:.4}", t.high_24h);
+                    println!("  Low:      ${:.4}", t.low_24h);
+                    println!("  Avg:      ${:.4}", t.average_price());
+                    println!("  Trend:    {:.2}%", t.trend());
+                    println!("  History:  {} points", t.history.len());
+                });
             }
-        }
+            None => println!("Token not found: {}", token_id),
+        },
         PriceAction::List => {
             let tokens = feed.list_tokens();
             crate::output::json_or(&tokens, || {
@@ -10136,12 +11551,19 @@ fn cmd_price(action: PriceAction) -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     println!("{}", "Price Feed".bold().cyan());
                     for t in &tokens {
-                        println!("  {} ({}) ${:.4} [{:+.2}%]", t.token_id, t.symbol, t.current_price, t.change_24h);
+                        println!(
+                            "  {} ({}) ${:.4} [{:+.2}%]",
+                            t.token_id, t.symbol, t.current_price, t.change_24h
+                        );
                     }
                 }
             });
         }
-        PriceAction::Alert { token_id, above, below } => {
+        PriceAction::Alert {
+            token_id,
+            above,
+            below,
+        } => {
             let condition = if let Some(v) = above {
                 crate::price_feed::PriceAlertCondition::Above(v)
             } else if let Some(v) = below {
@@ -10162,14 +11584,23 @@ fn cmd_price(action: PriceAction) -> Result<(), Box<dyn std::error::Error>> {
             if triggered.is_empty() {
                 println!("No alerts triggered.");
             } else {
-                println!("{}", format!("{} alert(s) triggered:", triggered.len()).bold().yellow());
+                println!(
+                    "{}",
+                    format!("{} alert(s) triggered:", triggered.len())
+                        .bold()
+                        .yellow()
+                );
                 for id in &triggered {
                     println!("  {}", id);
                 }
             }
         }
         PriceAction::Portfolio => {
-            let holdings: Vec<(String, f64)> = feed.list_tokens().iter().map(|t| (t.token_id.clone(), 1.0)).collect();
+            let holdings: Vec<(String, f64)> = feed
+                .list_tokens()
+                .iter()
+                .map(|t| (t.token_id.clone(), 1.0))
+                .collect();
             let val = feed.valuate_portfolio(&holdings);
             crate::output::json_or(&val, || {
                 println!("{}", "Portfolio Valuation".bold().cyan());
@@ -10182,16 +11613,19 @@ fn cmd_price(action: PriceAction) -> Result<(), Box<dyn std::error::Error>> {
         PriceAction::Movers { count } => {
             let gainers = feed.top_gainers(count);
             let losers = feed.top_losers(count);
-            crate::output::json_or(&serde_json::json!({"gainers": gainers, "losers": losers}), || {
-                println!("{}", "Top Gainers".bold().green());
-                for t in &gainers {
-                    println!("  {} {:+.2}%", t.symbol, t.change_24h);
-                }
-                println!("{}", "Top Losers".bold().red());
-                for t in &losers {
-                    println!("  {} {:+.2}%", t.symbol, t.change_24h);
-                }
-            });
+            crate::output::json_or(
+                &serde_json::json!({"gainers": gainers, "losers": losers}),
+                || {
+                    println!("{}", "Top Gainers".bold().green());
+                    for t in &gainers {
+                        println!("  {} {:+.2}%", t.symbol, t.change_24h);
+                    }
+                    println!("{}", "Top Losers".bold().red());
+                    for t in &losers {
+                        println!("  {} {:+.2}%", t.symbol, t.change_24h);
+                    }
+                },
+            );
         }
         PriceAction::Stats => {
             let stats = feed.stats();
@@ -10217,39 +11651,40 @@ fn cmd_risk(action: RiskAction) -> Result<(), Box<dyn std::error::Error>> {
     match action {
         RiskAction::Score { address } => {
             let profile = scorer.score_address(&address);
-            crate::output::json_or(&serde_json::json!({
-                "address": profile.address,
-                "risk_level": format!("{:?}", profile.risk_level),
-                "risk_score": profile.risk_score,
-            }), || {
-                println!("{}", "Risk Score".bold().cyan());
-                println!("  Address: {}", profile.address);
-                println!("  Level:   {:?}", profile.risk_level);
-                println!("  Score:   {}/100", profile.risk_score);
-                if !profile.factors.is_empty() {
-                    println!("  Factors: {:?}", profile.factors);
-                }
-            });
+            crate::output::json_or(
+                &serde_json::json!({
+                    "address": profile.address,
+                    "risk_level": format!("{:?}", profile.risk_level),
+                    "risk_score": profile.risk_score,
+                }),
+                || {
+                    println!("{}", "Risk Score".bold().cyan());
+                    println!("  Address: {}", profile.address);
+                    println!("  Level:   {:?}", profile.risk_level);
+                    println!("  Score:   {}/100", profile.risk_score);
+                    if !profile.factors.is_empty() {
+                        println!("  Factors: {:?}", profile.factors);
+                    }
+                },
+            );
             scorer.save(&path)?;
         }
-        RiskAction::Show { address } => {
-            match scorer.get_profile(&address) {
-                Some(p) => {
-                    crate::output::json_or(&p, || {
-                        println!("{}", "Address Profile".bold().cyan());
-                        println!("  Address:  {}", p.address);
-                        println!("  Level:    {:?}", p.risk_level);
-                        println!("  Score:    {}/100", p.risk_score);
-                        println!("  Factors:  {:?}", p.factors);
-                        println!("  Labels:   {}", p.labels.join(", "));
-                        println!("  Txs:      {}", p.tx_count);
-                        println!("  Volume:   {}", p.total_volume);
-                        println!("  Verified: {}", p.verified);
-                    });
-                }
-                None => println!("No profile for: {}", address),
+        RiskAction::Show { address } => match scorer.get_profile(&address) {
+            Some(p) => {
+                crate::output::json_or(&p, || {
+                    println!("{}", "Address Profile".bold().cyan());
+                    println!("  Address:  {}", p.address);
+                    println!("  Level:    {:?}", p.risk_level);
+                    println!("  Score:    {}/100", p.risk_score);
+                    println!("  Factors:  {:?}", p.factors);
+                    println!("  Labels:   {}", p.labels.join(", "));
+                    println!("  Txs:      {}", p.tx_count);
+                    println!("  Volume:   {}", p.total_volume);
+                    println!("  Verified: {}", p.verified);
+                });
             }
-        }
+            None => println!("No profile for: {}", address),
+        },
         RiskAction::Blacklist { address } => {
             scorer.add_to_blacklist(&address);
             scorer.save(&path)?;
@@ -10271,7 +11706,10 @@ fn cmd_risk(action: RiskAction) -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     println!("{}", "Risky Addresses".bold().red());
                     for p in &risky {
-                        println!("  {} [{:?}] score={}", p.address, p.risk_level, p.risk_score);
+                        println!(
+                            "  {} [{:?}] score={}",
+                            p.address, p.risk_level, p.risk_score
+                        );
                     }
                 }
             });
@@ -10303,7 +11741,13 @@ fn cmd_decode(action: DecodeAction) -> Result<(), Box<dyn std::error::Error>> {
     decoder.register_defaults();
 
     match action {
-        DecodeAction::Tx { tx_hash, selector, from, to, value } => {
+        DecodeAction::Tx {
+            tx_hash,
+            selector,
+            from,
+            to,
+            value,
+        } => {
             let decoded = decoder.decode(&tx_hash, &selector, &from, to.as_deref(), value, 0, &[]);
             decoder.save(&path)?;
             crate::output::json_or(&decoded, || {
@@ -10321,16 +11765,22 @@ fn cmd_decode(action: DecodeAction) -> Result<(), Box<dyn std::error::Error>> {
         }
         DecodeAction::Contracts => {
             let contracts = decoder.list_contracts();
-            crate::output::json_or(&serde_json::json!(contracts.iter().map(|(a,n)| serde_json::json!({"address": a, "name": n})).collect::<Vec<_>>()), || {
-                if contracts.is_empty() {
-                    println!("No known contracts.");
-                } else {
-                    println!("{}", "Known Contracts".bold().cyan());
-                    for (addr, name) in &contracts {
-                        println!("  {} → {}", addr, name);
+            crate::output::json_or(
+                &serde_json::json!(contracts
+                    .iter()
+                    .map(|(a, n)| serde_json::json!({"address": a, "name": n}))
+                    .collect::<Vec<_>>()),
+                || {
+                    if contracts.is_empty() {
+                        println!("No known contracts.");
+                    } else {
+                        println!("{}", "Known Contracts".bold().cyan());
+                        for (addr, name) in &contracts {
+                            println!("  {} → {}", addr, name);
+                        }
                     }
-                }
-            });
+                },
+            );
         }
         DecodeAction::RegisterContract { address, name } => {
             decoder.register_contract(&address, &name);
@@ -10378,50 +11828,47 @@ fn cmd_rules(action: RulesAction) -> Result<(), Box<dyn std::error::Error>> {
                     println!("{}", "Notification Rules".bold().cyan());
                     for r in &rules {
                         let status = if r.enabled { "on" } else { "off" };
-                        println!("  {} ({}) [{:?}] {} — triggers={}", r.id, r.name, r.priority, status, r.trigger_count);
+                        println!(
+                            "  {} ({}) [{:?}] {} — triggers={}",
+                            r.id, r.name, r.priority, status, r.trigger_count
+                        );
                     }
                 }
             });
         }
-        RulesAction::Show { id } => {
-            match engine.get_rule(&id) {
-                Some(r) => {
-                    crate::output::json_or(&r, || {
-                        println!("{}", "Rule Detail".bold().cyan());
-                        println!("  ID:         {}", r.id);
-                        println!("  Name:       {}", r.name);
-                        println!("  Priority:   {:?}", r.priority);
-                        println!("  Enabled:    {}", r.enabled);
-                        println!("  Conditions: {}", r.conditions.len());
-                        println!("  Actions:    {}", r.actions.len());
-                        println!("  Channels:   {}", r.channels.len());
-                        println!("  Triggers:   {}", r.trigger_count);
-                        println!("  Cooldown:   {}s", r.cooldown_secs);
-                    });
-                }
-                None => println!("Rule not found: {}", id),
+        RulesAction::Show { id } => match engine.get_rule(&id) {
+            Some(r) => {
+                crate::output::json_or(&r, || {
+                    println!("{}", "Rule Detail".bold().cyan());
+                    println!("  ID:         {}", r.id);
+                    println!("  Name:       {}", r.name);
+                    println!("  Priority:   {:?}", r.priority);
+                    println!("  Enabled:    {}", r.enabled);
+                    println!("  Conditions: {}", r.conditions.len());
+                    println!("  Actions:    {}", r.actions.len());
+                    println!("  Channels:   {}", r.channels.len());
+                    println!("  Triggers:   {}", r.trigger_count);
+                    println!("  Cooldown:   {}s", r.cooldown_secs);
+                });
             }
-        }
-        RulesAction::Enable { id } => {
-            match engine.get_rule_mut(&id) {
-                Some(r) => {
-                    r.enable();
-                    engine.save(&path)?;
-                    println!("Rule {} enabled.", id);
-                }
-                None => println!("Rule not found: {}", id),
+            None => println!("Rule not found: {}", id),
+        },
+        RulesAction::Enable { id } => match engine.get_rule_mut(&id) {
+            Some(r) => {
+                r.enable();
+                engine.save(&path)?;
+                println!("Rule {} enabled.", id);
             }
-        }
-        RulesAction::Disable { id } => {
-            match engine.get_rule_mut(&id) {
-                Some(r) => {
-                    r.disable();
-                    engine.save(&path)?;
-                    println!("Rule {} disabled.", id);
-                }
-                None => println!("Rule not found: {}", id),
+            None => println!("Rule not found: {}", id),
+        },
+        RulesAction::Disable { id } => match engine.get_rule_mut(&id) {
+            Some(r) => {
+                r.disable();
+                engine.save(&path)?;
+                println!("Rule {} disabled.", id);
             }
-        }
+            None => println!("Rule not found: {}", id),
+        },
         RulesAction::Stats => {
             let stats = engine.stats();
             crate::output::json_or(&stats, || {
@@ -10465,32 +11912,36 @@ fn cmd_abi(action: AbiAction) -> Result<(), Box<dyn std::error::Error>> {
                     println!("{}", "Contract ABIs".bold().cyan());
                     for c in &contracts {
                         let v = if c.verified { " [verified]" } else { "" };
-                        println!("  {} ({}) — {} entries{}", c.name, c.address, c.entry_count(), v);
+                        println!(
+                            "  {} ({}) — {} entries{}",
+                            c.name,
+                            c.address,
+                            c.entry_count(),
+                            v
+                        );
                     }
                 }
             });
         }
-        AbiAction::Show { address } => {
-            match store.get(&address) {
-                Some(c) => {
-                    crate::output::json_or(&c, || {
-                        println!("{}", "Contract ABI".bold().cyan());
-                        println!("  Address:   {}", c.address);
-                        println!("  Name:      {}", c.name);
-                        println!("  Verified:  {}", c.verified);
-                        println!("  Functions: {}", c.functions().len());
-                        println!("  Events:    {}", c.events().len());
-                        for f in c.functions() {
-                            println!("    fn {} [{:?}]", f.signature(), f.state_mutability);
-                        }
-                        for e in c.events() {
-                            println!("    event {}", e.signature());
-                        }
-                    });
-                }
-                None => println!("Contract not found: {}", address),
+        AbiAction::Show { address } => match store.get(&address) {
+            Some(c) => {
+                crate::output::json_or(&c, || {
+                    println!("{}", "Contract ABI".bold().cyan());
+                    println!("  Address:   {}", c.address);
+                    println!("  Name:      {}", c.name);
+                    println!("  Verified:  {}", c.verified);
+                    println!("  Functions: {}", c.functions().len());
+                    println!("  Events:    {}", c.events().len());
+                    for f in c.functions() {
+                        println!("    fn {} [{:?}]", f.signature(), f.state_mutability);
+                    }
+                    for e in c.events() {
+                        println!("    event {}", e.signature());
+                    }
+                });
             }
-        }
+            None => println!("Contract not found: {}", address),
+        },
         AbiAction::Search { query } => {
             let results = store.search(&query);
             crate::output::json_or(&results, || {
@@ -10526,32 +11977,35 @@ fn cmd_names(action: NameAction) -> Result<(), Box<dyn std::error::Error>> {
     let mut ns = crate::name_service::NameService::load_or_default(&path);
 
     match action {
-        NameAction::Register { name, owner, expires } => {
+        NameAction::Register {
+            name,
+            owner,
+            expires,
+        } => {
             let reg = crate::name_service::RegisteredName::new(&name, &owner, &expires);
             ns.register(reg)?;
             ns.save(&path)?;
             println!("Name registered: {} → {}", name, owner);
         }
-        NameAction::Resolve { name } => {
-            match ns.resolve(&name) {
-                Some(addr) => {
-                    crate::output::json_or(&serde_json::json!({"name": name, "address": addr}), || {
-                        println!("{} → {}", name, addr);
-                    });
-                }
-                None => println!("Name not found or expired: {}", name),
+        NameAction::Resolve { name } => match ns.resolve(&name) {
+            Some(addr) => {
+                crate::output::json_or(&serde_json::json!({"name": name, "address": addr}), || {
+                    println!("{} → {}", name, addr);
+                });
             }
-        }
-        NameAction::Reverse { address } => {
-            match ns.reverse_resolve(&address) {
-                Some(name) => {
-                    crate::output::json_or(&serde_json::json!({"address": address, "name": name}), || {
+            None => println!("Name not found or expired: {}", name),
+        },
+        NameAction::Reverse { address } => match ns.reverse_resolve(&address) {
+            Some(name) => {
+                crate::output::json_or(
+                    &serde_json::json!({"address": address, "name": name}),
+                    || {
                         println!("{} → {}", address, name);
-                    });
-                }
-                None => println!("No name for address: {}", address),
+                    },
+                );
             }
-        }
+            None => println!("No name for address: {}", address),
+        },
         NameAction::Transfer { name, new_owner } => {
             ns.transfer(&name, &new_owner)?;
             ns.save(&path)?;
@@ -10594,7 +12048,12 @@ fn cmd_preview(action: PreviewAction) -> Result<(), Box<dyn std::error::Error>> 
     let mut previewer = crate::tx_preview::TxPreviewer::load_or_default(&path);
 
     match action {
-        PreviewAction::Transfer { from, to, value, balance } => {
+        PreviewAction::Transfer {
+            from,
+            to,
+            value,
+            balance,
+        } => {
             let gas = crate::tx_preview::GasEstimate::new(1000, 100, 2000);
             let preview = previewer.preview_transfer(&from, &to, value, gas, balance);
             previewer.save(&path)?;
@@ -10610,7 +12069,14 @@ fn cmd_preview(action: PreviewAction) -> Result<(), Box<dyn std::error::Error>> 
                 } else {
                     println!("{}", "Recent Previews".bold().cyan());
                     for p in &previews {
-                        println!("  [{:?}] {} → {:?} val={} warnings={}", p.status, p.from_address, p.to_address, p.value, p.warning_count());
+                        println!(
+                            "  [{:?}] {} → {:?} val={} warnings={}",
+                            p.status,
+                            p.from_address,
+                            p.to_address,
+                            p.value,
+                            p.warning_count()
+                        );
                     }
                 }
             });
@@ -10647,7 +12113,10 @@ fn cmd_connect(action: ConnectAction) -> Result<(), Box<dyn std::error::Error>> 
                 } else {
                     println!("{}", "Active Sessions".bold().cyan());
                     for s in &sessions {
-                        println!("  {} — {} ({}) reqs={}", s.id, s.dapp.name, s.dapp.url, s.request_count);
+                        println!(
+                            "  {} — {} ({}) reqs={}",
+                            s.id, s.dapp.name, s.dapp.url, s.request_count
+                        );
                     }
                 }
             });
@@ -10665,7 +12134,10 @@ fn cmd_connect(action: ConnectAction) -> Result<(), Box<dyn std::error::Error>> 
                 } else {
                     println!("{}", "Pending Requests".bold().yellow());
                     for r in &reqs {
-                        println!("  {} [{:?}] session={} from={}", r.id, r.request_type, r.session_id, r.from_address);
+                        println!(
+                            "  {} [{:?}] session={} from={}",
+                            r.id, r.request_type, r.session_id, r.from_address
+                        );
                     }
                 }
             });
@@ -10704,7 +12176,7 @@ fn cmd_connect(action: ConnectAction) -> Result<(), Box<dyn std::error::Error>> 
 // ──────────────────────── Tier 14 handlers ────────────────────────────
 
 fn cmd_privacy(action: PrivacyAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::privacy_shield::{PrivacyShield, MixStrategy};
+    use crate::privacy_shield::{MixStrategy, PrivacyShield};
     let dir = crate::config::default_data_dir();
     let path = dir.join("privacy_shield.json");
     let mut shield = PrivacyShield::load_or_default(&path);
@@ -10715,27 +12187,33 @@ fn cmd_privacy(action: PrivacyAction) -> Result<(), Box<dyn std::error::Error>> 
             let addr = sa.one_time_key.clone();
             let ephemeral = sa.shared_secret.clone();
             shield.save(&path)?;
-            crate::output::json_or(&serde_json::json!({
-                "one_time_key": addr,
-                "shared_secret": ephemeral,
-            }), || {
-                println!("{}", "Stealth Address Generated".bold().cyan());
-                println!("  One-Time Key:   {}", addr);
-                println!("  Shared Secret:  {}", ephemeral);
-            });
+            crate::output::json_or(
+                &serde_json::json!({
+                    "one_time_key": addr,
+                    "shared_secret": ephemeral,
+                }),
+                || {
+                    println!("{}", "Stealth Address Generated".bold().cyan());
+                    println!("  One-Time Key:   {}", addr);
+                    println!("  Shared Secret:  {}", ephemeral);
+                },
+            );
         }
         PrivacyAction::Blind { amount } => {
             let ba = shield.blind_amount(amount);
             let commitment = ba.commitment.clone();
             shield.save(&path)?;
-            crate::output::json_or(&serde_json::json!({
-                "amount": amount,
-                "commitment": commitment,
-            }), || {
-                println!("{}", "Amount Blinded".bold().cyan());
-                println!("  Original:   {}", amount);
-                println!("  Commitment: {}", commitment);
-            });
+            crate::output::json_or(
+                &serde_json::json!({
+                    "amount": amount,
+                    "commitment": commitment,
+                }),
+                || {
+                    println!("{}", "Amount Blinded".bold().cyan());
+                    println!("  Original:   {}", amount);
+                    println!("  Commitment: {}", commitment);
+                },
+            );
         }
         PrivacyAction::Mix { amount, strategy } => {
             let strat = match strategy.as_str() {
@@ -10746,28 +12224,34 @@ fn cmd_privacy(action: PrivacyAction) -> Result<(), Box<dyn std::error::Error>> 
             };
             let id = shield.create_mix(amount, strat);
             shield.save(&path)?;
-            crate::output::json_or(&serde_json::json!({
-                "mix_id": id,
-                "amount": amount,
-                "strategy": strategy,
-            }), || {
-                println!("{}", "Mix Request Created".bold().cyan());
-                println!("  ID:       {}", id);
-                println!("  Amount:   {}", amount);
-                println!("  Strategy: {}", strategy);
-            });
+            crate::output::json_or(
+                &serde_json::json!({
+                    "mix_id": id,
+                    "amount": amount,
+                    "strategy": strategy,
+                }),
+                || {
+                    println!("{}", "Mix Request Created".bold().cyan());
+                    println!("  ID:       {}", id);
+                    println!("  Amount:   {}", amount);
+                    println!("  Strategy: {}", strategy);
+                },
+            );
         }
         PrivacyAction::Score { address } => {
             let score = shield.score_address(&address, 10, 5, false, false);
             shield.save(&path)?;
-            crate::output::json_or(&serde_json::json!({
-                "address": address,
-                "privacy_score": score,
-            }), || {
-                println!("{}", "Privacy Score".bold().cyan());
-                println!("  Address: {}", address);
-                println!("  Score:   {}/100", score);
-            });
+            crate::output::json_or(
+                &serde_json::json!({
+                    "address": address,
+                    "privacy_score": score,
+                }),
+                || {
+                    println!("{}", "Privacy Score".bold().cyan());
+                    println!("  Address: {}", address);
+                    println!("  Score:   {}/100", score);
+                },
+            );
         }
         PrivacyAction::Stats => {
             let stats = shield.stats();
@@ -10787,13 +12271,17 @@ fn cmd_privacy(action: PrivacyAction) -> Result<(), Box<dyn std::error::Error>> 
 }
 
 fn cmd_key_rotation(action: KeyRotAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::key_rotation::{KeyRotationManager, ManagedKey, KeyType, RotationReason};
+    use crate::key_rotation::{KeyRotationManager, KeyType, ManagedKey, RotationReason};
     let dir = crate::config::default_data_dir();
     let path = dir.join("key_rotation.json");
     let mut mgr = KeyRotationManager::load_or_default(&path);
 
     match action {
-        KeyRotAction::Add { id, key_type, public_key } => {
+        KeyRotAction::Add {
+            id,
+            key_type,
+            public_key,
+        } => {
             let kt = match key_type.to_lowercase().as_str() {
                 "encryption" => KeyType::Encryption,
                 "authentication" | "auth" => KeyType::Authentication,
@@ -10803,41 +12291,53 @@ fn cmd_key_rotation(action: KeyRotAction) -> Result<(), Box<dyn std::error::Erro
             let key = ManagedKey::new(&id, kt, &public_key);
             mgr.add_key(key)?;
             mgr.save(&path)?;
-            crate::output::json_or(&serde_json::json!({
-                "id": id,
-                "key_type": key_type,
-                "status": "active",
-            }), || {
-                println!("{}", "Key Added".bold().cyan());
-                println!("  ID:   {}", id);
-                println!("  Type: {}", key_type);
-            });
+            crate::output::json_or(
+                &serde_json::json!({
+                    "id": id,
+                    "key_type": key_type,
+                    "status": "active",
+                }),
+                || {
+                    println!("{}", "Key Added".bold().cyan());
+                    println!("  ID:   {}", id);
+                    println!("  Type: {}", key_type);
+                },
+            );
         }
-        KeyRotAction::Rotate { key_id, new_public_key } => {
+        KeyRotAction::Rotate {
+            key_id,
+            new_public_key,
+        } => {
             let new_id = mgr.rotate_key(&key_id, &new_public_key, RotationReason::Manual)?;
             mgr.save(&path)?;
-            crate::output::json_or(&serde_json::json!({
-                "old_key": key_id,
-                "new_key": new_id,
-            }), || {
-                println!("{}", "Key Rotated".bold().cyan());
-                println!("  Old Key: {}", key_id);
-                println!("  New Key: {}", new_id);
-            });
+            crate::output::json_or(
+                &serde_json::json!({
+                    "old_key": key_id,
+                    "new_key": new_id,
+                }),
+                || {
+                    println!("{}", "Key Rotated".bold().cyan());
+                    println!("  Old Key: {}", key_id);
+                    println!("  New Key: {}", new_id);
+                },
+            );
         }
         KeyRotAction::List => {
             let keys = mgr.active_keys();
-            crate::output::json_or(&serde_json::json!({
-                "active_keys": keys.len(),
-            }), || {
-                println!("{}", "Active Keys".bold().cyan());
-                for k in &keys {
-                    println!("  {} ({:?}) — {}", k.id, k.key_type, k.public_key);
-                }
-                if keys.is_empty() {
-                    println!("  (none)");
-                }
-            });
+            crate::output::json_or(
+                &serde_json::json!({
+                    "active_keys": keys.len(),
+                }),
+                || {
+                    println!("{}", "Active Keys".bold().cyan());
+                    for k in &keys {
+                        println!("  {} ({:?}) — {}", k.id, k.key_type, k.public_key);
+                    }
+                    if keys.is_empty() {
+                        println!("  (none)");
+                    }
+                },
+            );
         }
         KeyRotAction::Stats => {
             let stats = mgr.stats();
@@ -10857,7 +12357,7 @@ fn cmd_key_rotation(action: KeyRotAction) -> Result<(), Box<dyn std::error::Erro
 }
 
 fn cmd_access(action: AccessAction2) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::access_control::{AccessController, WalletUser, Role, Action};
+    use crate::access_control::{AccessController, Action, Role, WalletUser};
     let dir = crate::config::default_data_dir();
     let path = dir.join("access_control.json");
     let mut ctrl = AccessController::load_or_default(&path);
@@ -10873,26 +12373,32 @@ fn cmd_access(action: AccessAction2) -> Result<(), Box<dyn std::error::Error>> {
             let user = WalletUser::new(&id, &name, r);
             ctrl.add_user(user)?;
             ctrl.save(&path)?;
-            crate::output::json_or(&serde_json::json!({
-                "id": id,
-                "name": name,
-                "role": role,
-            }), || {
-                println!("{}", "User Added".bold().cyan());
-                println!("  ID:   {}", id);
-                println!("  Name: {}", name);
-                println!("  Role: {}", role);
-            });
+            crate::output::json_or(
+                &serde_json::json!({
+                    "id": id,
+                    "name": name,
+                    "role": role,
+                }),
+                || {
+                    println!("{}", "User Added".bold().cyan());
+                    println!("  ID:   {}", id);
+                    println!("  Name: {}", name);
+                    println!("  Role: {}", role);
+                },
+            );
         }
         AccessAction2::RemoveUser { id } => {
             let user = ctrl.remove_user(&id)?;
             ctrl.save(&path)?;
-            crate::output::json_or(&serde_json::json!({
-                "removed": user.id,
-                "name": user.name,
-            }), || {
-                println!("Removed user '{}' ({}).", user.id, user.name);
-            });
+            crate::output::json_or(
+                &serde_json::json!({
+                    "removed": user.id,
+                    "name": user.name,
+                }),
+                || {
+                    println!("Removed user '{}' ({}).", user.id, user.name);
+                },
+            );
         }
         AccessAction2::Check { user_id, action } => {
             let act = match action.to_lowercase().as_str() {
@@ -10910,31 +12416,37 @@ fn cmd_access(action: AccessAction2) -> Result<(), Box<dyn std::error::Error>> {
             };
             let decision = ctrl.check_access(&user_id, &act)?;
             ctrl.save(&path)?;
-            crate::output::json_or(&serde_json::json!({
-                "user_id": user_id,
-                "action": action,
-                "decision": format!("{:?}", decision),
-            }), || {
-                println!("{}", "Access Check".bold().cyan());
-                println!("  User:     {}", user_id);
-                println!("  Action:   {}", action);
-                println!("  Decision: {:?}", decision);
-            });
+            crate::output::json_or(
+                &serde_json::json!({
+                    "user_id": user_id,
+                    "action": action,
+                    "decision": format!("{:?}", decision),
+                }),
+                || {
+                    println!("{}", "Access Check".bold().cyan());
+                    println!("  User:     {}", user_id);
+                    println!("  Action:   {}", action);
+                    println!("  Decision: {:?}", decision);
+                },
+            );
         }
         AccessAction2::Users => {
             let users = ctrl.list_users();
-            crate::output::json_or(&serde_json::json!({
-                "users": users.len(),
-            }), || {
-                println!("{}", "Wallet Users".bold().cyan());
-                for u in &users {
-                    let status = if u.active { "active" } else { "inactive" };
-                    println!("  {} — {} ({:?}, {})", u.id, u.name, u.role, status);
-                }
-                if users.is_empty() {
-                    println!("  (none)");
-                }
-            });
+            crate::output::json_or(
+                &serde_json::json!({
+                    "users": users.len(),
+                }),
+                || {
+                    println!("{}", "Wallet Users".bold().cyan());
+                    for u in &users {
+                        let status = if u.active { "active" } else { "inactive" };
+                        println!("  {} — {} ({:?}, {})", u.id, u.name, u.role, status);
+                    }
+                    if users.is_empty() {
+                        println!("  (none)");
+                    }
+                },
+            );
         }
         AccessAction2::Stats => {
             let stats = ctrl.stats();
@@ -10960,61 +12472,79 @@ fn cmd_threats(action: ThreatAction) -> Result<(), Box<dyn std::error::Error>> {
     match action {
         ThreatAction::CheckUrl { url } => {
             let level = mon.check_url(&url);
-            crate::output::json_or(&serde_json::json!({
-                "url": url,
-                "threat_level": format!("{:?}", level),
-            }), || {
-                println!("{}", "URL Threat Check".bold().cyan());
-                println!("  URL:   {}", url);
-                println!("  Level: {:?}", level);
-            });
+            crate::output::json_or(
+                &serde_json::json!({
+                    "url": url,
+                    "threat_level": format!("{:?}", level),
+                }),
+                || {
+                    println!("{}", "URL Threat Check".bold().cyan());
+                    println!("  URL:   {}", url);
+                    println!("  Level: {:?}", level);
+                },
+            );
         }
         ThreatAction::CheckContract { address } => {
             let level = mon.check_contract(&address);
-            crate::output::json_or(&serde_json::json!({
-                "address": address,
-                "threat_level": format!("{:?}", level),
-            }), || {
-                println!("{}", "Contract Threat Check".bold().cyan());
-                println!("  Address: {}", address);
-                println!("  Level:   {:?}", level);
-            });
+            crate::output::json_or(
+                &serde_json::json!({
+                    "address": address,
+                    "threat_level": format!("{:?}", level),
+                }),
+                || {
+                    println!("{}", "Contract Threat Check".bold().cyan());
+                    println!("  Address: {}", address);
+                    println!("  Level:   {:?}", level);
+                },
+            );
         }
         ThreatAction::ReportPhishing { url } => {
             mon.report_phishing(&url, "cli_user");
             mon.save(&path)?;
-            crate::output::json_or(&serde_json::json!({
-                "reported": url,
-                "type": "phishing",
-            }), || {
-                println!("Reported phishing URL: {}", url);
-            });
+            crate::output::json_or(
+                &serde_json::json!({
+                    "reported": url,
+                    "type": "phishing",
+                }),
+                || {
+                    println!("Reported phishing URL: {}", url);
+                },
+            );
         }
         ThreatAction::ReportContract { address, reason } => {
             use crate::threat_monitor::ThreatLevel;
             mon.report_malicious_contract(&address, &reason, ThreatLevel::High);
             mon.save(&path)?;
-            crate::output::json_or(&serde_json::json!({
-                "reported": address,
-                "reason": reason,
-                "type": "malicious_contract",
-            }), || {
-                println!("Reported malicious contract: {} ({})", address, reason);
-            });
+            crate::output::json_or(
+                &serde_json::json!({
+                    "reported": address,
+                    "reason": reason,
+                    "type": "malicious_contract",
+                }),
+                || {
+                    println!("Reported malicious contract: {} ({})", address, reason);
+                },
+            );
         }
         ThreatAction::Active => {
             let threats = mon.active_threats();
-            crate::output::json_or(&serde_json::json!({
-                "active_threats": threats.len(),
-            }), || {
-                println!("{}", "Active Threats".bold().cyan());
-                for t in &threats {
-                    println!("  [{}] {:?} — {:?}: {}", t.id, t.level, t.threat_type, t.description);
-                }
-                if threats.is_empty() {
-                    println!("  No active threats.");
-                }
-            });
+            crate::output::json_or(
+                &serde_json::json!({
+                    "active_threats": threats.len(),
+                }),
+                || {
+                    println!("{}", "Active Threats".bold().cyan());
+                    for t in &threats {
+                        println!(
+                            "  [{}] {:?} — {:?}: {}",
+                            t.id, t.level, t.threat_type, t.description
+                        );
+                    }
+                    if threats.is_empty() {
+                        println!("  No active threats.");
+                    }
+                },
+            );
         }
         ThreatAction::Stats => {
             let stats = mon.stats();
@@ -11037,23 +12567,38 @@ fn cmd_threats(action: ThreatAction) -> Result<(), Box<dyn std::error::Error>> {
 // ──────────────────────── Tier 15 handlers ────────────────────────────
 
 fn cmd_pool(action: PoolAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::liquidity_pool::{LiquidityPoolManager, LiquidityPool, LpPosition, PoolType, PositionStatus};
+    use crate::liquidity_pool::{
+        LiquidityPool, LiquidityPoolManager, LpPosition, PoolType, PositionStatus,
+    };
     let dir = crate::config::default_data_dir();
     let path = dir.join("liquidity_pool.json");
     let mut mgr = LiquidityPoolManager::load_or_default(&path);
 
     match action {
-        PoolAction::Add { id, token_a, token_b, pool_type, fee_bps } => {
+        PoolAction::Add {
+            id,
+            token_a,
+            token_b,
+            pool_type,
+            fee_bps,
+        } => {
             let pt = match pool_type.as_str() {
                 "stable" | "stableswap" => PoolType::StableSwap,
                 "concentrated" => PoolType::Concentrated,
                 _ => PoolType::ConstantProduct,
             };
             let pool = LiquidityPool {
-                id: id.clone(), token_a: token_a.clone(), token_b: token_b.clone(),
-                pool_type: pt, reserve_a: 0, reserve_b: 0, total_lp_tokens: 0,
-                fee_bps, created_at: chrono::Utc::now().to_rfc3339(),
-                volume_24h: 0, apy_estimate: 0.0,
+                id: id.clone(),
+                token_a: token_a.clone(),
+                token_b: token_b.clone(),
+                pool_type: pt,
+                reserve_a: 0,
+                reserve_b: 0,
+                total_lp_tokens: 0,
+                fee_bps,
+                created_at: chrono::Utc::now().to_rfc3339(),
+                volume_24h: 0,
+                apy_estimate: 0.0,
             };
             mgr.add_pool(pool)?;
             mgr.save(&path)?;
@@ -11061,11 +12606,23 @@ fn cmd_pool(action: PoolAction) -> Result<(), Box<dyn std::error::Error>> {
                 println!("Pool '{}' added ({}/{}).", id, token_a, token_b);
             });
         }
-        PoolAction::Deposit { id, pool_id, amount_a, amount_b, lp_tokens } => {
+        PoolAction::Deposit {
+            id,
+            pool_id,
+            amount_a,
+            amount_b,
+            lp_tokens,
+        } => {
             let pos = LpPosition {
-                id: id.clone(), pool_id, lp_tokens, deposited_a: amount_a, deposited_b: amount_b,
-                deposit_time: chrono::Utc::now().to_rfc3339(), status: PositionStatus::Active,
-                rewards_claimed: 0, pending_rewards: 0,
+                id: id.clone(),
+                pool_id,
+                lp_tokens,
+                deposited_a: amount_a,
+                deposited_b: amount_b,
+                deposit_time: chrono::Utc::now().to_rfc3339(),
+                status: PositionStatus::Active,
+                rewards_claimed: 0,
+                pending_rewards: 0,
             };
             mgr.add_position(pos)?;
             mgr.save(&path)?;
@@ -11082,10 +12639,17 @@ fn cmd_pool(action: PoolAction) -> Result<(), Box<dyn std::error::Error>> {
             let claimed = mgr.claim_rewards(&position_id)?;
             mgr.save(&path)?;
             crate::output::json_or(&serde_json::json!({"claimed": claimed}), || {
-                println!("Claimed {} rewards from position '{}'.", claimed, position_id);
+                println!(
+                    "Claimed {} rewards from position '{}'.",
+                    claimed, position_id
+                );
             });
         }
-        PoolAction::Estimate { pool_id, amount, a_to_b } => {
+        PoolAction::Estimate {
+            pool_id,
+            amount,
+            a_to_b,
+        } => {
             let out = mgr.estimate_output(&pool_id, amount, a_to_b)?;
             crate::output::json_or(&serde_json::json!({"input": amount, "output": out}), || {
                 println!("Estimated output: {} -> {}", amount, out);
@@ -11096,10 +12660,19 @@ fn cmd_pool(action: PoolAction) -> Result<(), Box<dyn std::error::Error>> {
             crate::output::json_or(&serde_json::json!({"pools": pools.len()}), || {
                 println!("{}", "Liquidity Pools (by APY)".bold().cyan());
                 for p in &pools {
-                    println!("  {} {}/{} — APY {:.2}% TVL {} fee {}bp",
-                        p.id, p.token_a, p.token_b, p.apy_estimate, p.reserve_a + p.reserve_b, p.fee_bps);
+                    println!(
+                        "  {} {}/{} — APY {:.2}% TVL {} fee {}bp",
+                        p.id,
+                        p.token_a,
+                        p.token_b,
+                        p.apy_estimate,
+                        p.reserve_a + p.reserve_b,
+                        p.fee_bps
+                    );
                 }
-                if pools.is_empty() { println!("  (none)"); }
+                if pools.is_empty() {
+                    println!("  (none)");
+                }
             });
         }
         PoolAction::Stats => {
@@ -11119,17 +12692,35 @@ fn cmd_pool(action: PoolAction) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn cmd_farm(action: FarmAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::yield_farming::{YieldFarmManager, YieldFarm, FarmPosition, FarmStatus, CompoundStrategy, RewardType};
+    use crate::yield_farming::{
+        CompoundStrategy, FarmPosition, FarmStatus, RewardType, YieldFarm, YieldFarmManager,
+    };
     let dir = crate::config::default_data_dir();
     let path = dir.join("yield_farming.json");
     let mut mgr = YieldFarmManager::load_or_default(&path);
 
     match action {
-        FarmAction::Add { id, name, protocol, stake_token, reward_token, apy } => {
+        FarmAction::Add {
+            id,
+            name,
+            protocol,
+            stake_token,
+            reward_token,
+            apy,
+        } => {
             let farm = YieldFarm {
-                id: id.clone(), name: name.clone(), protocol, stake_token, reward_token,
-                reward_type: RewardType::Token, apy, tvl: 0, status: FarmStatus::Active,
-                start_date: chrono::Utc::now().to_rfc3339(), end_date: None, min_stake: 0,
+                id: id.clone(),
+                name: name.clone(),
+                protocol,
+                stake_token,
+                reward_token,
+                reward_type: RewardType::Token,
+                apy,
+                tvl: 0,
+                status: FarmStatus::Active,
+                start_date: chrono::Utc::now().to_rfc3339(),
+                end_date: None,
+                min_stake: 0,
             };
             mgr.add_farm(farm)?;
             mgr.save(&path)?;
@@ -11137,16 +12728,26 @@ fn cmd_farm(action: FarmAction) -> Result<(), Box<dyn std::error::Error>> {
                 println!("Farm '{}' ({}) added — APY {:.2}%.", id, name, apy);
             });
         }
-        FarmAction::Stake { id, farm_id, amount, compound } => {
+        FarmAction::Stake {
+            id,
+            farm_id,
+            amount,
+            compound,
+        } => {
             let strat = match compound.as_str() {
                 "daily" => CompoundStrategy::AutoDaily,
                 "weekly" => CompoundStrategy::AutoWeekly,
                 _ => CompoundStrategy::Manual,
             };
             let pos = FarmPosition {
-                id: id.clone(), farm_id, staked_amount: amount,
-                entry_time: chrono::Utc::now().to_rfc3339(), last_harvest: None,
-                total_harvested: 0, pending_rewards: 0, compound_strategy: strat,
+                id: id.clone(),
+                farm_id,
+                staked_amount: amount,
+                entry_time: chrono::Utc::now().to_rfc3339(),
+                last_harvest: None,
+                total_harvested: 0,
+                pending_rewards: 0,
+                compound_strategy: strat,
                 auto_compound_count: 0,
             };
             mgr.stake(pos)?;
@@ -11183,7 +12784,9 @@ fn cmd_farm(action: FarmAction) -> Result<(), Box<dyn std::error::Error>> {
                 for f in &farms {
                     println!("  {} — {} APY {:.2}% TVL {}", f.id, f.name, f.apy, f.tvl);
                 }
-                if farms.is_empty() { println!("  (none)"); }
+                if farms.is_empty() {
+                    println!("  (none)");
+                }
             });
         }
         FarmAction::Stats => {
@@ -11204,7 +12807,7 @@ fn cmd_farm(action: FarmAction) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn cmd_cross_swap(action: CrossSwapAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::cross_chain_swap::{CrossChainManager, SwapRoute, ChainId};
+    use crate::cross_chain_swap::{ChainId, CrossChainManager, SwapRoute};
     let dir = crate::config::default_data_dir();
     let path = dir.join("cross_chain_swap.json");
     let mut mgr = CrossChainManager::load_or_default(&path);
@@ -11222,12 +12825,27 @@ fn cmd_cross_swap(action: CrossSwapAction) -> Result<(), Box<dyn std::error::Err
     }
 
     match action {
-        CrossSwapAction::AddRoute { id, source_chain, dest_chain, source_token, dest_token, rate, fee_bps, provider } => {
+        CrossSwapAction::AddRoute {
+            id,
+            source_chain,
+            dest_chain,
+            source_token,
+            dest_token,
+            rate,
+            fee_bps,
+            provider,
+        } => {
             let route = SwapRoute {
-                id: id.clone(), source_chain: parse_chain(&source_chain),
-                dest_chain: parse_chain(&dest_chain), source_token, dest_token,
-                exchange_rate: rate, fee_bps, estimated_time_secs: 300,
-                provider, max_slippage_bps: 100,
+                id: id.clone(),
+                source_chain: parse_chain(&source_chain),
+                dest_chain: parse_chain(&dest_chain),
+                source_token,
+                dest_token,
+                exchange_rate: rate,
+                fee_bps,
+                estimated_time_secs: 300,
+                provider,
+                max_slippage_bps: 100,
             };
             mgr.add_route(route)?;
             mgr.save(&path)?;
@@ -11247,7 +12865,11 @@ fn cmd_cross_swap(action: CrossSwapAction) -> Result<(), Box<dyn std::error::Err
             mgr.save(&path)?;
             println!("Swap '{}' locked.", swap_id);
         }
-        CrossSwapAction::Complete { swap_id, actual_output, dest_tx } => {
+        CrossSwapAction::Complete {
+            swap_id,
+            actual_output,
+            dest_tx,
+        } => {
             mgr.complete_swap(&swap_id, actual_output, &dest_tx)?;
             mgr.save(&path)?;
             println!("Swap '{}' completed (output: {}).", swap_id, actual_output);
@@ -11262,9 +12884,14 @@ fn cmd_cross_swap(action: CrossSwapAction) -> Result<(), Box<dyn std::error::Err
             crate::output::json_or(&serde_json::json!({"active": swaps.len()}), || {
                 println!("{}", "Active Cross-Chain Swaps".bold().cyan());
                 for s in &swaps {
-                    println!("  {} — {} → {:?} (amount: {})", s.id, s.source_amount, s.status, s.expected_output);
+                    println!(
+                        "  {} — {} → {:?} (amount: {})",
+                        s.id, s.source_amount, s.status, s.expected_output
+                    );
                 }
-                if swaps.is_empty() { println!("  (none)"); }
+                if swaps.is_empty() {
+                    println!("  (none)");
+                }
             });
         }
         CrossSwapAction::Stats => {
@@ -11287,31 +12914,71 @@ fn cmd_cross_swap(action: CrossSwapAction) -> Result<(), Box<dyn std::error::Err
 }
 
 fn cmd_flash(action: FlashAction2) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::flash_loan::{FlashLoanManager, FlashAction};
+    use crate::flash_loan::{FlashAction, FlashLoanManager};
     let dir = crate::config::default_data_dir();
     let path = dir.join("flash_loan.json");
     let mut mgr = FlashLoanManager::load_or_default(&path);
 
     match action {
-        FlashAction2::Create { name, token, amount, fee_bps } => {
+        FlashAction2::Create {
+            name,
+            token,
+            amount,
+            fee_bps,
+        } => {
             let id = mgr.create_plan(&name, &token, amount, fee_bps);
             mgr.save(&path)?;
             crate::output::json_or(&serde_json::json!({"plan_id": id}), || {
                 println!("Flash loan plan created: {}", id);
             });
         }
-        FlashAction2::Borrow { plan_id, token, amount } => {
-            mgr.add_action(&plan_id, FlashAction::Borrow { token: token.clone(), amount })?;
+        FlashAction2::Borrow {
+            plan_id,
+            token,
+            amount,
+        } => {
+            mgr.add_action(
+                &plan_id,
+                FlashAction::Borrow {
+                    token: token.clone(),
+                    amount,
+                },
+            )?;
             mgr.save(&path)?;
             println!("Added borrow({} {}) to plan '{}'.", amount, token, plan_id);
         }
-        FlashAction2::Swap { plan_id, from, to, amount } => {
-            mgr.add_action(&plan_id, FlashAction::Swap { from: from.clone(), to: to.clone(), amount })?;
+        FlashAction2::Swap {
+            plan_id,
+            from,
+            to,
+            amount,
+        } => {
+            mgr.add_action(
+                &plan_id,
+                FlashAction::Swap {
+                    from: from.clone(),
+                    to: to.clone(),
+                    amount,
+                },
+            )?;
             mgr.save(&path)?;
-            println!("Added swap({} {} → {}) to plan '{}'.", amount, from, to, plan_id);
+            println!(
+                "Added swap({} {} → {}) to plan '{}'.",
+                amount, from, to, plan_id
+            );
         }
-        FlashAction2::Repay { plan_id, token, amount } => {
-            mgr.add_action(&plan_id, FlashAction::Repay { token: token.clone(), amount })?;
+        FlashAction2::Repay {
+            plan_id,
+            token,
+            amount,
+        } => {
+            mgr.add_action(
+                &plan_id,
+                FlashAction::Repay {
+                    token: token.clone(),
+                    amount,
+                },
+            )?;
             mgr.save(&path)?;
             println!("Added repay({} {}) to plan '{}'.", amount, token, plan_id);
         }
@@ -11347,9 +13014,14 @@ fn cmd_flash(action: FlashAction2) -> Result<(), Box<dyn std::error::Error>> {
             crate::output::json_or(&serde_json::json!({"plans": plans.len()}), || {
                 println!("{}", "Flash Loan Plans".bold().cyan());
                 for p in &plans {
-                    println!("  {} — {} ({:?}) borrow {} {}", p.id, p.name, p.status, p.borrow_amount, p.borrow_token);
+                    println!(
+                        "  {} — {} ({:?}) borrow {} {}",
+                        p.id, p.name, p.status, p.borrow_amount, p.borrow_token
+                    );
                 }
-                if plans.is_empty() { println!("  (none)"); }
+                if plans.is_empty() {
+                    println!("  (none)");
+                }
             });
         }
         FlashAction2::Stats => {
@@ -11373,13 +13045,22 @@ fn cmd_flash(action: FlashAction2) -> Result<(), Box<dyn std::error::Error>> {
 // ──────────────────────── Tier 16 handlers ────────────────────────────
 
 fn cmd_dca(action: DcaAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::dca_engine::{DcaEngine, DcaPlan, DcaFrequency, DcaStatus};
+    use crate::dca_engine::{DcaEngine, DcaFrequency, DcaPlan, DcaStatus};
     let dir = crate::config::default_data_dir();
     let path = dir.join("dca_engine.json");
     let mut engine = DcaEngine::load_or_default(&path);
 
     match action {
-        DcaAction::Create { id, name, token_from, token_to, amount, frequency, max_buys, budget } => {
+        DcaAction::Create {
+            id,
+            name,
+            token_from,
+            token_to,
+            amount,
+            frequency,
+            max_buys,
+            budget,
+        } => {
             let freq = match frequency.as_str() {
                 "hourly" => DcaFrequency::Hourly,
                 "weekly" => DcaFrequency::Weekly,
@@ -11387,11 +13068,24 @@ fn cmd_dca(action: DcaAction) -> Result<(), Box<dyn std::error::Error>> {
                 _ => DcaFrequency::Daily,
             };
             let plan = DcaPlan {
-                id: id.clone(), name: name.clone(), token_from, token_to,
-                amount_per_buy: amount, frequency: freq, total_budget: budget,
-                spent: 0, buys_completed: 0, max_buys, status: DcaStatus::Active,
-                created_at: chrono::Utc::now().to_rfc3339(), last_buy: None, next_buy: None,
-                min_price: None, max_price: None, total_received: 0, avg_price: 0.0,
+                id: id.clone(),
+                name: name.clone(),
+                token_from,
+                token_to,
+                amount_per_buy: amount,
+                frequency: freq,
+                total_budget: budget,
+                spent: 0,
+                buys_completed: 0,
+                max_buys,
+                status: DcaStatus::Active,
+                created_at: chrono::Utc::now().to_rfc3339(),
+                last_buy: None,
+                next_buy: None,
+                min_price: None,
+                max_price: None,
+                total_received: 0,
+                avg_price: 0.0,
             };
             engine.create_plan(plan)?;
             engine.save(&path)?;
@@ -11414,23 +13108,38 @@ fn cmd_dca(action: DcaAction) -> Result<(), Box<dyn std::error::Error>> {
             engine.save(&path)?;
             println!("DCA plan '{}' cancelled.", id);
         }
-        DcaAction::Buy { plan_id, price, received } => {
+        DcaAction::Buy {
+            plan_id,
+            price,
+            received,
+        } => {
             let exec = engine.execute_buy(&plan_id, price, received, None)?;
             let ts = exec.timestamp.clone();
             let spent = exec.amount_spent;
             engine.save(&path)?;
-            crate::output::json_or(&serde_json::json!({"plan": plan_id, "spent": spent, "received": received, "price": price}), || {
-                println!("Buy executed at {} — spent {} received {} @ {:.4}", ts, spent, received, price);
-            });
+            crate::output::json_or(
+                &serde_json::json!({"plan": plan_id, "spent": spent, "received": received, "price": price}),
+                || {
+                    println!(
+                        "Buy executed at {} — spent {} received {} @ {:.4}",
+                        ts, spent, received, price
+                    );
+                },
+            );
         }
         DcaAction::Active => {
             let plans = engine.active_plans();
             crate::output::json_or(&serde_json::json!({"active": plans.len()}), || {
                 println!("{}", "Active DCA Plans".bold().cyan());
                 for p in &plans {
-                    println!("  {} — {} {}->{} ({}ea, {} buys)", p.id, p.name, p.token_from, p.token_to, p.amount_per_buy, p.buys_completed);
+                    println!(
+                        "  {} — {} {}->{} ({}ea, {} buys)",
+                        p.id, p.name, p.token_from, p.token_to, p.amount_per_buy, p.buys_completed
+                    );
                 }
-                if plans.is_empty() { println!("  (none)"); }
+                if plans.is_empty() {
+                    println!("  (none)");
+                }
             });
         }
         DcaAction::Stats => {
@@ -11452,22 +13161,40 @@ fn cmd_dca(action: DcaAction) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn cmd_limit_order(action: LimitAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::limit_order::{LimitOrderManager, LimitOrder, OrderSide, OrderType, OrderStatus};
+    use crate::limit_order::{LimitOrder, LimitOrderManager, OrderSide, OrderStatus, OrderType};
     let dir = crate::config::default_data_dir();
     let path = dir.join("limit_order.json");
     let mut mgr = LimitOrderManager::load_or_default(&path);
 
     match action {
-        LimitAction::Place { id, token_from, token_to, side, amount, price, expires } => {
+        LimitAction::Place {
+            id,
+            token_from,
+            token_to,
+            side,
+            amount,
+            price,
+            expires,
+        } => {
             let s = match side.to_lowercase().as_str() {
                 "sell" => OrderSide::Sell,
                 _ => OrderSide::Buy,
             };
             let order = LimitOrder {
-                id: id.clone(), token_from, token_to, side: s, order_type: OrderType::Limit,
-                amount, filled_amount: 0, price, trigger_price: None,
-                status: OrderStatus::Open, created_at: chrono::Utc::now().to_rfc3339(),
-                expires_at: expires, filled_at: None, fills: Vec::new(),
+                id: id.clone(),
+                token_from,
+                token_to,
+                side: s,
+                order_type: OrderType::Limit,
+                amount,
+                filled_amount: 0,
+                price,
+                trigger_price: None,
+                status: OrderStatus::Open,
+                created_at: chrono::Utc::now().to_rfc3339(),
+                expires_at: expires,
+                filled_at: None,
+                fills: Vec::new(),
             };
             mgr.place_order(order)?;
             mgr.save(&path)?;
@@ -11485,7 +13212,11 @@ fn cmd_limit_order(action: LimitAction) -> Result<(), Box<dyn std::error::Error>
             mgr.save(&path)?;
             println!("Filled {} @ {:.4} on order '{}'.", amount, price, id);
         }
-        LimitAction::CheckTriggers { token_from, token_to, current_price } => {
+        LimitAction::CheckTriggers {
+            token_from,
+            token_to,
+            current_price,
+        } => {
             let pair = format!("{}/{}", token_from, token_to);
             let triggered = mgr.check_triggers(current_price, &pair);
             crate::output::json_or(&serde_json::json!({"triggered": triggered}), || {
@@ -11493,7 +13224,9 @@ fn cmd_limit_order(action: LimitAction) -> Result<(), Box<dyn std::error::Error>
                 for id in &triggered {
                     println!("  {}", id);
                 }
-                if triggered.is_empty() { println!("  (none)"); }
+                if triggered.is_empty() {
+                    println!("  (none)");
+                }
             });
         }
         LimitAction::Open => {
@@ -11501,9 +13234,14 @@ fn cmd_limit_order(action: LimitAction) -> Result<(), Box<dyn std::error::Error>
             crate::output::json_or(&serde_json::json!({"open": orders.len()}), || {
                 println!("{}", "Open Orders".bold().cyan());
                 for o in &orders {
-                    println!("  {} {:?} {} @ {:.4} (filled {}/{})", o.id, o.side, o.token_from, o.price, o.filled_amount, o.amount);
+                    println!(
+                        "  {} {:?} {} @ {:.4} (filled {}/{})",
+                        o.id, o.side, o.token_from, o.price, o.filled_amount, o.amount
+                    );
                 }
-                if orders.is_empty() { println!("  (none)"); }
+                if orders.is_empty() {
+                    println!("  (none)");
+                }
             });
         }
         LimitAction::Stats => {
@@ -11524,28 +13262,43 @@ fn cmd_limit_order(action: LimitAction) -> Result<(), Box<dyn std::error::Error>
 }
 
 fn cmd_rebalance(action: RebalAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::portfolio_rebalance::{RebalanceManager, Portfolio, RebalanceStrategy};
+    use crate::portfolio_rebalance::{Portfolio, RebalanceManager, RebalanceStrategy};
     let dir = crate::config::default_data_dir();
     let path = dir.join("portfolio_rebalance.json");
     let mut mgr = RebalanceManager::load_or_default(&path);
 
     match action {
-        RebalAction::Create { id, name, threshold } => {
+        RebalAction::Create {
+            id,
+            name,
+            threshold,
+        } => {
             let portfolio = Portfolio {
-                id: id.clone(), name: name.clone(),
+                id: id.clone(),
+                name: name.clone(),
                 targets: std::collections::HashMap::new(),
                 holdings: std::collections::HashMap::new(),
                 strategy: RebalanceStrategy::Threshold(threshold),
-                threshold_pct: threshold, last_rebalance: None, rebalance_count: 0,
+                threshold_pct: threshold,
+                last_rebalance: None,
+                rebalance_count: 0,
             };
             mgr.create_portfolio(portfolio)?;
             mgr.save(&path)?;
             crate::output::json_or(&serde_json::json!({"id": id}), || {
-                println!("Portfolio '{}' ({}) created with {}% threshold.", id, name, threshold);
+                println!(
+                    "Portfolio '{}' ({}) created with {}% threshold.",
+                    id, name, threshold
+                );
             });
         }
-        RebalAction::SetTarget { portfolio_id, token, pct } => {
-            let p = mgr.get_portfolio(&portfolio_id)
+        RebalAction::SetTarget {
+            portfolio_id,
+            token,
+            pct,
+        } => {
+            let p = mgr
+                .get_portfolio(&portfolio_id)
                 .ok_or_else(|| format!("Portfolio '{}' not found", portfolio_id))?;
             let mut targets = p.targets.clone();
             targets.insert(token.clone(), pct);
@@ -11556,7 +13309,11 @@ fn cmd_rebalance(action: RebalAction) -> Result<(), Box<dyn std::error::Error>> 
             mgr.save(&path)?;
             println!("Set {} target to {:.1}% in '{}'.", token, pct, portfolio_id);
         }
-        RebalAction::SetHolding { portfolio_id, token, value } => {
+        RebalAction::SetHolding {
+            portfolio_id,
+            token,
+            value,
+        } => {
             let mut holdings = std::collections::HashMap::new();
             if let Some(p) = mgr.get_portfolio(&portfolio_id) {
                 holdings = p.holdings.clone();
@@ -11570,20 +13327,29 @@ fn cmd_rebalance(action: RebalAction) -> Result<(), Box<dyn std::error::Error>> 
             let allocs = mgr.calculate_allocations(&portfolio_id)?;
             let drift = mgr.check_drift(&portfolio_id)?;
             let needs = mgr.needs_rebalance(&portfolio_id)?;
-            crate::output::json_or(&serde_json::json!({"drift": drift, "needs_rebalance": needs}), || {
-                println!("{}", "Portfolio Allocations".bold().cyan());
-                for a in &allocs {
-                    println!("  {} — target {:.1}% current {:.1}% drift {:+.1}%", a.token, a.target_pct, a.current_pct, a.drift);
-                }
-                println!("  Max Drift: {:.1}%  Needs Rebalance: {}", drift, needs);
-            });
+            crate::output::json_or(
+                &serde_json::json!({"drift": drift, "needs_rebalance": needs}),
+                || {
+                    println!("{}", "Portfolio Allocations".bold().cyan());
+                    for a in &allocs {
+                        println!(
+                            "  {} — target {:.1}% current {:.1}% drift {:+.1}%",
+                            a.token, a.target_pct, a.current_pct, a.drift
+                        );
+                    }
+                    println!("  Max Drift: {:.1}%  Needs Rebalance: {}", drift, needs);
+                },
+            );
         }
         RebalAction::Execute { portfolio_id } => {
             let plan_id = mgr.generate_plan(&portfolio_id)?;
             mgr.execute_plan(&plan_id)?;
             mgr.save(&path)?;
             crate::output::json_or(&serde_json::json!({"plan_id": plan_id}), || {
-                println!("Rebalance plan '{}' executed for '{}'.", plan_id, portfolio_id);
+                println!(
+                    "Rebalance plan '{}' executed for '{}'.",
+                    plan_id, portfolio_id
+                );
             });
         }
         RebalAction::List => {
@@ -11591,9 +13357,17 @@ fn cmd_rebalance(action: RebalAction) -> Result<(), Box<dyn std::error::Error>> 
             crate::output::json_or(&serde_json::json!({"portfolios": portfolios.len()}), || {
                 println!("{}", "Portfolios".bold().cyan());
                 for p in &portfolios {
-                    println!("  {} — {} ({} targets, {} rebalances)", p.id, p.name, p.targets.len(), p.rebalance_count);
+                    println!(
+                        "  {} — {} ({} targets, {} rebalances)",
+                        p.id,
+                        p.name,
+                        p.targets.len(),
+                        p.rebalance_count
+                    );
                 }
-                if portfolios.is_empty() { println!("  (none)"); }
+                if portfolios.is_empty() {
+                    println!("  (none)");
+                }
             });
         }
         RebalAction::Stats => {
@@ -11612,20 +13386,37 @@ fn cmd_rebalance(action: RebalAction) -> Result<(), Box<dyn std::error::Error>> 
 }
 
 fn cmd_smart_alerts(action: SmartAlertAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::smart_alerts::{SmartAlertEngine, SmartAlert, AlertCondition, AlertSeverity, AlertStatus, AlertAction};
+    use crate::smart_alerts::{
+        AlertAction, AlertCondition, AlertSeverity, AlertStatus, SmartAlert, SmartAlertEngine,
+    };
     let dir = crate::config::default_data_dir();
     let path = dir.join("smart_alerts.json");
     let mut engine = SmartAlertEngine::load_or_default(&path);
 
     match action {
-        SmartAlertAction::PriceAbove { id, token, threshold } => {
+        SmartAlertAction::PriceAbove {
+            id,
+            token,
+            threshold,
+        } => {
             let alert = SmartAlert {
-                id: id.clone(), name: format!("{} > {}", token, threshold),
-                conditions: vec![AlertCondition::PriceAbove { token: token.clone(), threshold }],
-                actions: vec![AlertAction::Notify { message: format!("{} price above {}", token, threshold) }],
-                severity: AlertSeverity::Warning, status: AlertStatus::Active,
-                created_at: chrono::Utc::now().to_rfc3339(), triggered_at: None,
-                trigger_count: 0, cooldown_secs: 300, last_triggered: None, expires_at: None,
+                id: id.clone(),
+                name: format!("{} > {}", token, threshold),
+                conditions: vec![AlertCondition::PriceAbove {
+                    token: token.clone(),
+                    threshold,
+                }],
+                actions: vec![AlertAction::Notify {
+                    message: format!("{} price above {}", token, threshold),
+                }],
+                severity: AlertSeverity::Warning,
+                status: AlertStatus::Active,
+                created_at: chrono::Utc::now().to_rfc3339(),
+                triggered_at: None,
+                trigger_count: 0,
+                cooldown_secs: 300,
+                last_triggered: None,
+                expires_at: None,
             };
             engine.create_alert(alert)?;
             engine.save(&path)?;
@@ -11633,14 +13424,29 @@ fn cmd_smart_alerts(action: SmartAlertAction) -> Result<(), Box<dyn std::error::
                 println!("Alert '{}' created: {} > {}.", id, token, threshold);
             });
         }
-        SmartAlertAction::PriceBelow { id, token, threshold } => {
+        SmartAlertAction::PriceBelow {
+            id,
+            token,
+            threshold,
+        } => {
             let alert = SmartAlert {
-                id: id.clone(), name: format!("{} < {}", token, threshold),
-                conditions: vec![AlertCondition::PriceBelow { token: token.clone(), threshold }],
-                actions: vec![AlertAction::Notify { message: format!("{} price below {}", token, threshold) }],
-                severity: AlertSeverity::Critical, status: AlertStatus::Active,
-                created_at: chrono::Utc::now().to_rfc3339(), triggered_at: None,
-                trigger_count: 0, cooldown_secs: 300, last_triggered: None, expires_at: None,
+                id: id.clone(),
+                name: format!("{} < {}", token, threshold),
+                conditions: vec![AlertCondition::PriceBelow {
+                    token: token.clone(),
+                    threshold,
+                }],
+                actions: vec![AlertAction::Notify {
+                    message: format!("{} price below {}", token, threshold),
+                }],
+                severity: AlertSeverity::Critical,
+                status: AlertStatus::Active,
+                created_at: chrono::Utc::now().to_rfc3339(),
+                triggered_at: None,
+                trigger_count: 0,
+                cooldown_secs: 300,
+                last_triggered: None,
+                expires_at: None,
             };
             engine.create_alert(alert)?;
             engine.save(&path)?;
@@ -11648,14 +13454,29 @@ fn cmd_smart_alerts(action: SmartAlertAction) -> Result<(), Box<dyn std::error::
                 println!("Alert '{}' created: {} < {}.", id, token, threshold);
             });
         }
-        SmartAlertAction::BalanceBelow { id, token, threshold } => {
+        SmartAlertAction::BalanceBelow {
+            id,
+            token,
+            threshold,
+        } => {
             let alert = SmartAlert {
-                id: id.clone(), name: format!("{} balance < {}", token, threshold),
-                conditions: vec![AlertCondition::BalanceBelow { token: token.clone(), threshold }],
-                actions: vec![AlertAction::Notify { message: format!("{} balance below {}", token, threshold) }],
-                severity: AlertSeverity::Emergency, status: AlertStatus::Active,
-                created_at: chrono::Utc::now().to_rfc3339(), triggered_at: None,
-                trigger_count: 0, cooldown_secs: 60, last_triggered: None, expires_at: None,
+                id: id.clone(),
+                name: format!("{} balance < {}", token, threshold),
+                conditions: vec![AlertCondition::BalanceBelow {
+                    token: token.clone(),
+                    threshold,
+                }],
+                actions: vec![AlertAction::Notify {
+                    message: format!("{} balance below {}", token, threshold),
+                }],
+                severity: AlertSeverity::Emergency,
+                status: AlertStatus::Active,
+                created_at: chrono::Utc::now().to_rfc3339(),
+                triggered_at: None,
+                trigger_count: 0,
+                cooldown_secs: 60,
+                last_triggered: None,
+                expires_at: None,
             };
             engine.create_alert(alert)?;
             engine.save(&path)?;
@@ -11680,7 +13501,9 @@ fn cmd_smart_alerts(action: SmartAlertAction) -> Result<(), Box<dyn std::error::
                 for a in &alerts {
                     println!("  {} — {} ({:?})", a.id, a.name, a.severity);
                 }
-                if alerts.is_empty() { println!("  (none)"); }
+                if alerts.is_empty() {
+                    println!("  (none)");
+                }
             });
         }
         SmartAlertAction::Stats => {
@@ -11702,17 +13525,27 @@ fn cmd_smart_alerts(action: SmartAlertAction) -> Result<(), Box<dyn std::error::
 // ──────────────────────── Tier 17 handlers ────────────────────────────
 
 fn cmd_social_recovery(action: RecoveryAction3) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::social_recovery::{SocialRecoveryManager, Guardian, GuardianStatus};
+    use crate::social_recovery::{Guardian, GuardianStatus, SocialRecoveryManager};
     let dir = crate::config::default_data_dir();
     let path = dir.join("social_recovery.json");
     let mut mgr = SocialRecoveryManager::load_or_default(&path);
 
     match action {
-        RecoveryAction3::AddGuardian { id, name, address, public_key } => {
+        RecoveryAction3::AddGuardian {
+            id,
+            name,
+            address,
+            public_key,
+        } => {
             let guardian = Guardian {
-                id: id.clone(), name: name.clone(), address, public_key,
-                status: GuardianStatus::Active, added_at: chrono::Utc::now().to_rfc3339(),
-                last_confirmed: None, trust_score: 80,
+                id: id.clone(),
+                name: name.clone(),
+                address,
+                public_key,
+                status: GuardianStatus::Active,
+                added_at: chrono::Utc::now().to_rfc3339(),
+                last_confirmed: None,
+                trust_score: 80,
             };
             mgr.add_guardian(guardian)?;
             mgr.save(&path)?;
@@ -11737,7 +13570,9 @@ fn cmd_social_recovery(action: RecoveryAction3) -> Result<(), Box<dyn std::error
                 for g in &guardians {
                     println!("  {} — {} (trust: {})", g.id, g.name, g.trust_score);
                 }
-                if guardians.is_empty() { println!("  (none)"); }
+                if guardians.is_empty() {
+                    println!("  (none)");
+                }
             });
         }
         RecoveryAction3::Initiate { requester, new_key } => {
@@ -11747,10 +13582,17 @@ fn cmd_social_recovery(action: RecoveryAction3) -> Result<(), Box<dyn std::error
                 println!("Recovery initiated: {}", req_id);
             });
         }
-        RecoveryAction3::Approve { request_id, guardian_id, signature } => {
+        RecoveryAction3::Approve {
+            request_id,
+            guardian_id,
+            signature,
+        } => {
             mgr.approve_recovery(&request_id, &guardian_id, &signature)?;
             mgr.save(&path)?;
-            println!("Guardian '{}' approved recovery '{}'.", guardian_id, request_id);
+            println!(
+                "Guardian '{}' approved recovery '{}'.",
+                guardian_id, request_id
+            );
         }
         RecoveryAction3::Complete { request_id } => {
             mgr.complete_recovery(&request_id)?;
@@ -11774,26 +13616,47 @@ fn cmd_social_recovery(action: RecoveryAction3) -> Result<(), Box<dyn std::error
 }
 
 fn cmd_vault(action: VaultAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::shared_vault::{SharedVaultManager, Vault, VaultMember, VaultProposal, VaultRole, ProposalType, ProposalStatus};
+    use crate::shared_vault::{
+        ProposalStatus, ProposalType, SharedVaultManager, Vault, VaultMember, VaultProposal,
+        VaultRole,
+    };
     let dir = crate::config::default_data_dir();
     let path = dir.join("shared_vault.json");
     let mut mgr = SharedVaultManager::load_or_default(&path);
 
     match action {
-        VaultAction::Create { id, name, threshold } => {
+        VaultAction::Create {
+            id,
+            name,
+            threshold,
+        } => {
             let vault = Vault {
-                id: id.clone(), name: name.clone(),
+                id: id.clone(),
+                name: name.clone(),
                 members: std::collections::HashMap::new(),
-                threshold, balance: 0, created_at: chrono::Utc::now().to_rfc3339(),
-                total_proposals: 0, spending_limit_daily: None, spent_today: 0,
+                threshold,
+                balance: 0,
+                created_at: chrono::Utc::now().to_rfc3339(),
+                total_proposals: 0,
+                spending_limit_daily: None,
+                spent_today: 0,
             };
             mgr.create_vault(vault)?;
             mgr.save(&path)?;
             crate::output::json_or(&serde_json::json!({"id": id}), || {
-                println!("Vault '{}' ({}) created with threshold {}.", id, name, threshold);
+                println!(
+                    "Vault '{}' ({}) created with threshold {}.",
+                    id, name, threshold
+                );
             });
         }
-        VaultAction::AddMember { vault_id, id, name, address, role } => {
+        VaultAction::AddMember {
+            vault_id,
+            id,
+            name,
+            address,
+            role,
+        } => {
             let r = match role.to_lowercase().as_str() {
                 "owner" => VaultRole::Owner,
                 "admin" => VaultRole::Admin,
@@ -11801,26 +13664,44 @@ fn cmd_vault(action: VaultAction) -> Result<(), Box<dyn std::error::Error>> {
                 _ => VaultRole::Signer,
             };
             let member = VaultMember {
-                id: id.clone(), name: name.clone(), address, role: r,
-                added_at: chrono::Utc::now().to_rfc3339(), last_active: None,
+                id: id.clone(),
+                name: name.clone(),
+                address,
+                role: r,
+                added_at: chrono::Utc::now().to_rfc3339(),
+                last_active: None,
             };
             mgr.add_member(&vault_id, member)?;
             mgr.save(&path)?;
             println!("Member '{}' added to vault '{}'.", id, vault_id);
         }
-        VaultAction::RemoveMember { vault_id, member_id } => {
+        VaultAction::RemoveMember {
+            vault_id,
+            member_id,
+        } => {
             mgr.remove_member(&vault_id, &member_id)?;
             mgr.save(&path)?;
             println!("Member '{}' removed from vault '{}'.", member_id, vault_id);
         }
-        VaultAction::Propose { vault_id, proposer, to, amount, token } => {
+        VaultAction::Propose {
+            vault_id,
+            proposer,
+            to,
+            amount,
+            token,
+        } => {
             let prop_id = format!("prop_{}", chrono::Utc::now().timestamp_millis());
             let proposal = VaultProposal {
-                id: prop_id.clone(), vault_id: vault_id.clone(), proposer,
+                id: prop_id.clone(),
+                vault_id: vault_id.clone(),
+                proposer,
                 proposal_type: ProposalType::Transfer { to, amount, token },
-                status: ProposalStatus::Pending, created_at: chrono::Utc::now().to_rfc3339(),
+                status: ProposalStatus::Pending,
+                created_at: chrono::Utc::now().to_rfc3339(),
                 expires_at: (chrono::Utc::now() + chrono::Duration::hours(72)).to_rfc3339(),
-                approvals: Vec::new(), rejections: Vec::new(), executed_at: None,
+                approvals: Vec::new(),
+                rejections: Vec::new(),
+                executed_at: None,
             };
             mgr.create_proposal(proposal)?;
             mgr.save(&path)?;
@@ -11828,10 +13709,16 @@ fn cmd_vault(action: VaultAction) -> Result<(), Box<dyn std::error::Error>> {
                 println!("Proposal '{}' created for vault '{}'.", prop_id, vault_id);
             });
         }
-        VaultAction::ApproveProposal { proposal_id, member_id } => {
+        VaultAction::ApproveProposal {
+            proposal_id,
+            member_id,
+        } => {
             mgr.approve_proposal(&proposal_id, &member_id)?;
             mgr.save(&path)?;
-            println!("Member '{}' approved proposal '{}'.", member_id, proposal_id);
+            println!(
+                "Member '{}' approved proposal '{}'.",
+                member_id, proposal_id
+            );
         }
         VaultAction::ExecuteProposal { proposal_id } => {
             mgr.execute_proposal(&proposal_id)?;
@@ -11843,9 +13730,17 @@ fn cmd_vault(action: VaultAction) -> Result<(), Box<dyn std::error::Error>> {
             crate::output::json_or(&serde_json::json!({"vaults": vaults.len()}), || {
                 println!("{}", "Shared Vaults".bold().cyan());
                 for v in &vaults {
-                    println!("  {} — {} ({} members, threshold {})", v.id, v.name, v.members.len(), v.threshold);
+                    println!(
+                        "  {} — {} ({} members, threshold {})",
+                        v.id,
+                        v.name,
+                        v.members.len(),
+                        v.threshold
+                    );
                 }
-                if vaults.is_empty() { println!("  (none)"); }
+                if vaults.is_empty() {
+                    println!("  (none)");
+                }
             });
         }
         VaultAction::Stats => {
@@ -11865,33 +13760,55 @@ fn cmd_vault(action: VaultAction) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn cmd_stream(action: StreamAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::payment_stream::{PaymentStreamManager, PaymentStream, StreamType, StreamStatus};
+    use crate::payment_stream::{PaymentStream, PaymentStreamManager, StreamStatus, StreamType};
     let dir = crate::config::default_data_dir();
     let path = dir.join("payment_stream.json");
     let mut mgr = PaymentStreamManager::load_or_default(&path);
 
     match action {
-        StreamAction::Create { id, name, sender, recipient, token, total, rate, stream_type } => {
+        StreamAction::Create {
+            id,
+            name,
+            sender,
+            recipient,
+            token,
+            total,
+            rate,
+            stream_type,
+        } => {
             let st = match stream_type.as_str() {
                 "subscription" => StreamType::Subscription,
                 "vesting" => StreamType::Vesting,
                 _ => StreamType::Salary,
             };
             let now = chrono::Utc::now();
-            #[allow(clippy::manual_checked_ops)]
+            #[allow(unknown_lints, clippy::manual_checked_ops)]
             let duration_secs = if rate > 0 { total / rate } else { 3600 };
             let end = now + chrono::Duration::seconds(duration_secs as i64);
             let stream = PaymentStream {
-                id: id.clone(), name: name.clone(), sender, recipient, token,
-                total_amount: total, withdrawn: 0, rate_per_second: rate,
-                stream_type: st, status: StreamStatus::Active,
-                created_at: now.to_rfc3339(), start_time: now.to_rfc3339(),
-                end_time: end.to_rfc3339(), last_withdrawal: None, cancellable: true,
+                id: id.clone(),
+                name: name.clone(),
+                sender,
+                recipient,
+                token,
+                total_amount: total,
+                withdrawn: 0,
+                rate_per_second: rate,
+                stream_type: st,
+                status: StreamStatus::Active,
+                created_at: now.to_rfc3339(),
+                start_time: now.to_rfc3339(),
+                end_time: end.to_rfc3339(),
+                last_withdrawal: None,
+                cancellable: true,
             };
             mgr.create_stream(stream)?;
             mgr.save(&path)?;
             crate::output::json_or(&serde_json::json!({"id": id}), || {
-                println!("Stream '{}' ({}) created — {} total @ {}/s.", id, name, total, rate);
+                println!(
+                    "Stream '{}' ({}) created — {} total @ {}/s.",
+                    id, name, total, rate
+                );
             });
         }
         StreamAction::Pause { id } => {
@@ -11922,9 +13839,14 @@ fn cmd_stream(action: StreamAction) -> Result<(), Box<dyn std::error::Error>> {
             crate::output::json_or(&serde_json::json!({"active": streams.len()}), || {
                 println!("{}", "Active Payment Streams".bold().cyan());
                 for s in &streams {
-                    println!("  {} — {} {}->{} ({}/s)", s.id, s.name, s.sender, s.recipient, s.rate_per_second);
+                    println!(
+                        "  {} — {} {}->{} ({}/s)",
+                        s.id, s.name, s.sender, s.recipient, s.rate_per_second
+                    );
                 }
-                if streams.is_empty() { println!("  (none)"); }
+                if streams.is_empty() {
+                    println!("  (none)");
+                }
             });
         }
         StreamAction::Stats => {
@@ -11945,20 +13867,38 @@ fn cmd_stream(action: StreamAction) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn cmd_escrow(action: EscrowAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::escrow::{EscrowManager, Escrow, EscrowStatus, DisputeResolution};
+    use crate::escrow::{DisputeResolution, Escrow, EscrowManager, EscrowStatus};
     let dir = crate::config::default_data_dir();
     let path = dir.join("escrow.json");
     let mut mgr = EscrowManager::load_or_default(&path);
 
     match action {
-        EscrowAction::Create { id, buyer, seller, token, amount, fee_bps, description } => {
+        EscrowAction::Create {
+            id,
+            buyer,
+            seller,
+            token,
+            amount,
+            fee_bps,
+            description,
+        } => {
             let token_display = token.clone();
             let escrow = Escrow {
-                id: id.clone(), buyer, seller, arbiter: None, token, amount, fee_bps,
-                status: EscrowStatus::Created, created_at: chrono::Utc::now().to_rfc3339(),
+                id: id.clone(),
+                buyer,
+                seller,
+                arbiter: None,
+                token,
+                amount,
+                fee_bps,
+                status: EscrowStatus::Created,
+                created_at: chrono::Utc::now().to_rfc3339(),
                 funded_at: None,
                 expires_at: (chrono::Utc::now() + chrono::Duration::days(30)).to_rfc3339(),
-                released_at: None, description, milestones: Vec::new(), dispute_reason: None,
+                released_at: None,
+                description,
+                milestones: Vec::new(),
+                dispute_reason: None,
             };
             mgr.create_escrow(escrow)?;
             mgr.save(&path)?;
@@ -12002,7 +13942,9 @@ fn cmd_escrow(action: EscrowAction) -> Result<(), Box<dyn std::error::Error>> {
                 for e in &escrows {
                     println!("  {} — {} {} ({:?})", e.id, e.amount, e.token, e.status);
                 }
-                if escrows.is_empty() { println!("  (none)"); }
+                if escrows.is_empty() {
+                    println!("  (none)");
+                }
             });
         }
         EscrowAction::Stats => {
@@ -12025,20 +13967,32 @@ fn cmd_escrow(action: EscrowAction) -> Result<(), Box<dyn std::error::Error>> {
 // ──────────────────────── Tier 18 handlers ────────────────────────────
 
 fn cmd_pnl(action: PnlAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::pnl_tracker::{PnlTracker, CostBasisMethod, TradeType};
+    use crate::pnl_tracker::{CostBasisMethod, PnlTracker, TradeType};
     let dir = crate::config::default_data_dir();
     let path = dir.join("pnl_tracker.json");
     let mut tracker = PnlTracker::load_or_default(&path);
 
     match action {
-        PnlAction::Buy { token, amount, price } => {
+        PnlAction::Buy {
+            token,
+            amount,
+            price,
+        } => {
             let lot_id = tracker.record_buy(&token, amount, price, TradeType::Buy);
             tracker.save(&path)?;
             crate::output::json_or(&serde_json::json!({"lot_id": lot_id}), || {
-                println!("Recorded buy: {} {} @ {:.4} (lot {})", amount, token, price, lot_id);
+                println!(
+                    "Recorded buy: {} {} @ {:.4} (lot {})",
+                    amount, token, price, lot_id
+                );
             });
         }
-        PnlAction::Sell { token, amount, price, method } => {
+        PnlAction::Sell {
+            token,
+            amount,
+            price,
+            method,
+        } => {
             let m = match method.to_lowercase().as_str() {
                 "lifo" => CostBasisMethod::Lifo,
                 "hifo" => CostBasisMethod::Hifo,
@@ -12047,17 +14001,32 @@ fn cmd_pnl(action: PnlAction) -> Result<(), Box<dyn std::error::Error>> {
             };
             let sale = tracker.record_sale(&token, amount, price, Some(m))?;
             tracker.save(&path)?;
-            crate::output::json_or(&serde_json::json!({"realized_pnl": sale.realized_pnl}), || {
-                println!("Sold {} {} @ {:.4} — P&L: {:.2}", amount, token, price, sale.realized_pnl);
-            });
+            crate::output::json_or(
+                &serde_json::json!({"realized_pnl": sale.realized_pnl}),
+                || {
+                    println!(
+                        "Sold {} {} @ {:.4} — P&L: {:.2}",
+                        amount, token, price, sale.realized_pnl
+                    );
+                },
+            );
         }
-        PnlAction::Unrealized { token, current_price } => {
+        PnlAction::Unrealized {
+            token,
+            current_price,
+        } => {
             let pnl = tracker.unrealized_pnl(&token, current_price);
-            crate::output::json_or(&serde_json::json!({"token": token, "unrealized_pnl": pnl}), || {
-                println!("Unrealized P&L for {}: {:.2}", token, pnl);
-            });
+            crate::output::json_or(
+                &serde_json::json!({"token": token, "unrealized_pnl": pnl}),
+                || {
+                    println!("Unrealized P&L for {}: {:.2}", token, pnl);
+                },
+            );
         }
-        PnlAction::Token { token, current_price } => {
+        PnlAction::Token {
+            token,
+            current_price,
+        } => {
             let tp = tracker.token_pnl(&token, current_price);
             crate::output::json_or(&tp, || {
                 println!("{}", format!("P&L — {}", token).bold().cyan());
@@ -12106,15 +14075,21 @@ fn cmd_analytics2(action: AnalyticsAction2) -> Result<(), Box<dyn std::error::Er
         }
         AnalyticsAction2::Sharpe { token, risk_free } => {
             let ratio = analytics.sharpe_ratio(&token, risk_free)?;
-            crate::output::json_or(&serde_json::json!({"token": token, "sharpe_ratio": ratio}), || {
-                println!("Sharpe Ratio for {}: {:.4}", token, ratio);
-            });
+            crate::output::json_or(
+                &serde_json::json!({"token": token, "sharpe_ratio": ratio}),
+                || {
+                    println!("Sharpe Ratio for {}: {:.4}", token, ratio);
+                },
+            );
         }
         AnalyticsAction2::Drawdown { token } => {
             let dd = analytics.max_drawdown(&token)?;
-            crate::output::json_or(&serde_json::json!({"token": token, "max_drawdown_pct": dd}), || {
-                println!("Max Drawdown for {}: {:.2}%", token, dd);
-            });
+            crate::output::json_or(
+                &serde_json::json!({"token": token, "max_drawdown_pct": dd}),
+                || {
+                    println!("Max Drawdown for {}: {:.2}%", token, dd);
+                },
+            );
         }
         AnalyticsAction2::Diversify => {
             let holdings = std::collections::HashMap::new();
@@ -12155,13 +14130,21 @@ fn cmd_analytics2(action: AnalyticsAction2) -> Result<(), Box<dyn std::error::Er
 }
 
 fn cmd_compliance(action: ComplianceAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::compliance_report::{ComplianceManager, CategorizedTx, TxCategory, ReportType, Jurisdiction};
+    use crate::compliance_report::{
+        CategorizedTx, ComplianceManager, Jurisdiction, ReportType, TxCategory,
+    };
     let dir = crate::config::default_data_dir();
     let path = dir.join("compliance_report.json");
     let mut mgr = ComplianceManager::load_or_default(&path);
 
     match action {
-        ComplianceAction::AddTx { tx_hash, token, amount, value_usd, category } => {
+        ComplianceAction::AddTx {
+            tx_hash,
+            token,
+            amount,
+            value_usd,
+            category,
+        } => {
             let cat = match category.to_lowercase().as_str() {
                 "trade" => TxCategory::Trade,
                 "income" => TxCategory::Income,
@@ -12174,9 +14157,15 @@ fn cmd_compliance(action: ComplianceAction) -> Result<(), Box<dyn std::error::Er
                 _ => TxCategory::Unknown,
             };
             let tx = CategorizedTx {
-                tx_hash: tx_hash.clone(), timestamp: chrono::Utc::now().to_rfc3339(),
-                category: cat, token, amount, value_usd,
-                counterparty: None, notes: String::new(), flagged: false,
+                tx_hash: tx_hash.clone(),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                category: cat,
+                token,
+                amount,
+                value_usd,
+                counterparty: None,
+                notes: String::new(),
+                flagged: false,
             };
             mgr.add_transaction(tx);
             mgr.save(&path)?;
@@ -12187,7 +14176,10 @@ fn cmd_compliance(action: ComplianceAction) -> Result<(), Box<dyn std::error::Er
             mgr.save(&path)?;
             println!("Transaction '{}' flagged.", tx_hash);
         }
-        ComplianceAction::Report { report_type, jurisdiction } => {
+        ComplianceAction::Report {
+            report_type,
+            jurisdiction,
+        } => {
             let rt = match report_type.to_lowercase().as_str() {
                 "quarterly" => ReportType::Quarterly,
                 "monthly" => ReportType::Monthly,
@@ -12229,19 +14221,29 @@ fn cmd_compliance(action: ComplianceAction) -> Result<(), Box<dyn std::error::Er
 }
 
 fn cmd_whale(action: WhaleAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::whale_tracker::{WhaleTracker, WhaleAccount, WhaleActivity};
+    use crate::whale_tracker::{WhaleAccount, WhaleActivity, WhaleTracker};
     let dir = crate::config::default_data_dir();
     let path = dir.join("whale_tracker.json");
     let mut tracker = WhaleTracker::load_or_default(&path);
 
     match action {
-        WhaleAction::Track { address, label, balance } => {
+        WhaleAction::Track {
+            address,
+            label,
+            balance,
+        } => {
             let account = WhaleAccount {
-                address: address.clone(), label, balance,
+                address: address.clone(),
+                label,
+                balance,
                 first_seen: chrono::Utc::now().to_rfc3339(),
                 last_active: chrono::Utc::now().to_rfc3339(),
-                activity: WhaleActivity::Holding, cluster_id: None,
-                is_exchange: false, total_inflow: 0, total_outflow: 0, tx_count: 0,
+                activity: WhaleActivity::Holding,
+                cluster_id: None,
+                is_exchange: false,
+                total_inflow: 0,
+                total_outflow: 0,
+                tx_count: 0,
             };
             tracker.track_whale(account)?;
             tracker.save(&path)?;
@@ -12263,9 +14265,14 @@ fn cmd_whale(action: WhaleAction) -> Result<(), Box<dyn std::error::Error>> {
                 println!("{}", "Top Whales".bold().cyan());
                 for w in &whales {
                     let lbl = w.label.as_deref().unwrap_or("—");
-                    println!("  {} ({}) — {} ({:?})", w.address, lbl, w.balance, w.activity);
+                    println!(
+                        "  {} ({}) — {} ({:?})",
+                        w.address, lbl, w.balance, w.activity
+                    );
                 }
-                if whales.is_empty() { println!("  (none)"); }
+                if whales.is_empty() {
+                    println!("  (none)");
+                }
             });
         }
         WhaleAction::Movements { n } => {
@@ -12273,9 +14280,14 @@ fn cmd_whale(action: WhaleAction) -> Result<(), Box<dyn std::error::Error>> {
             crate::output::json_or(&serde_json::json!({"movements": moves.len()}), || {
                 println!("{}", "Recent Whale Movements".bold().cyan());
                 for m in &moves {
-                    println!("  {} -> {} : {} {} ({:?})", m.from, m.to, m.amount, m.token, m.movement_type);
+                    println!(
+                        "  {} -> {} : {} {} ({:?})",
+                        m.from, m.to, m.amount, m.token, m.movement_type
+                    );
                 }
-                if moves.is_empty() { println!("  (none)"); }
+                if moves.is_empty() {
+                    println!("  (none)");
+                }
             });
         }
         WhaleAction::Stats => {
@@ -12298,26 +14310,50 @@ fn cmd_whale(action: WhaleAction) -> Result<(), Box<dyn std::error::Error>> {
 // ──────────────────────── Tier 19 handlers ────────────────────────────
 
 fn cmd_energy_opt(action: EnergyOptAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::energy_optimizer::{EnergyOptimizer, TrackedObject, ObjectState};
+    use crate::energy_optimizer::{EnergyOptimizer, ObjectState, TrackedObject};
     let dir = crate::config::default_data_dir();
     let path = dir.join("energy_optimizer.json");
     let mut opt = EnergyOptimizer::load_or_default(&path);
 
     match action {
-        EnergyOptAction::Track { id, owner, energy, max_energy, decay_rate, priority } => {
+        EnergyOptAction::Track {
+            id,
+            owner,
+            energy,
+            max_energy,
+            decay_rate,
+            priority,
+        } => {
             let obj = TrackedObject {
-                object_id: id.clone(), owner, current_energy: energy, max_energy,
-                decay_rate, last_refresh: chrono::Utc::now().to_rfc3339(),
+                object_id: id.clone(),
+                owner,
+                current_energy: energy,
+                max_energy,
+                decay_rate,
+                last_refresh: chrono::Utc::now().to_rfc3339(),
                 epochs_since_refresh: 0,
-                #[allow(clippy::manual_checked_ops)]
-                estimated_grace_epoch: if decay_rate > 0 { (energy * 80 / 100 / decay_rate) as u32 } else { 0 },
-                #[allow(clippy::manual_checked_ops)]
-                estimated_evaporation_epoch: if decay_rate > 0 { (energy / decay_rate) as u32 } else { 0 },
-                state: ObjectState::Healthy, refresh_cost: decay_rate * 10, priority,
+                #[allow(unknown_lints, clippy::manual_checked_ops)]
+                estimated_grace_epoch: if decay_rate > 0 {
+                    (energy * 80 / 100 / decay_rate) as u32
+                } else {
+                    0
+                },
+                #[allow(unknown_lints, clippy::manual_checked_ops)]
+                estimated_evaporation_epoch: if decay_rate > 0 {
+                    (energy / decay_rate) as u32
+                } else {
+                    0
+                },
+                state: ObjectState::Healthy,
+                refresh_cost: decay_rate * 10,
+                priority,
             };
             opt.track_object(obj)?;
             opt.save(&path)?;
-            println!("Tracking object '{}' ({}/{}energy, decay {}/epoch).", id, energy, max_energy, decay_rate);
+            println!(
+                "Tracking object '{}' ({}/{}energy, decay {}/epoch).",
+                id, energy, max_energy, decay_rate
+            );
         }
         EnergyOptAction::Forecast { id } => {
             let fc = opt.forecast(&id)?;
@@ -12337,10 +14373,14 @@ fn cmd_energy_opt(action: EnergyOptAction) -> Result<(), Box<dyn std::error::Err
             crate::output::json_or(&serde_json::json!({"forecasts": forecasts.len()}), || {
                 println!("{}", "All Decay Forecasts".bold().cyan());
                 for fc in &forecasts {
-                    println!("  {} — {:.1}% ({:?}), grace in {} epochs",
-                        fc.object_id, fc.current_energy_pct, fc.urgency, fc.epochs_to_grace);
+                    println!(
+                        "  {} — {:.1}% ({:?}), grace in {} epochs",
+                        fc.object_id, fc.current_energy_pct, fc.urgency, fc.epochs_to_grace
+                    );
                 }
-                if forecasts.is_empty() { println!("  (none)"); }
+                if forecasts.is_empty() {
+                    println!("  (none)");
+                }
             });
         }
         EnergyOptAction::Critical => {
@@ -12348,10 +14388,16 @@ fn cmd_energy_opt(action: EnergyOptAction) -> Result<(), Box<dyn std::error::Err
             crate::output::json_or(&serde_json::json!({"critical": critical.len()}), || {
                 println!("{}", "Critical Objects (<10% energy)".bold().red());
                 for o in &critical {
-                    let pct = if o.max_energy > 0 { o.current_energy as f64 / o.max_energy as f64 * 100.0 } else { 0.0 };
+                    let pct = if o.max_energy > 0 {
+                        o.current_energy as f64 / o.max_energy as f64 * 100.0
+                    } else {
+                        0.0
+                    };
                     println!("  {} — {:.1}% ({:?})", o.object_id, pct, o.state);
                 }
-                if critical.is_empty() { println!("  All objects healthy!"); }
+                if critical.is_empty() {
+                    println!("  All objects healthy!");
+                }
             });
         }
         EnergyOptAction::Batch { ids } => {
@@ -12361,20 +14407,21 @@ fn cmd_energy_opt(action: EnergyOptAction) -> Result<(), Box<dyn std::error::Err
                 println!("  Objects:         {}", result.batch_size);
                 println!("  Individual Cost: {}", result.total_individual_cost);
                 println!("  Batch Cost:      {}", result.total_batch_cost);
-                println!("  Savings:         {} ({:.1}%)", result.savings, result.savings_pct);
+                println!(
+                    "  Savings:         {} ({:.1}%)",
+                    result.savings, result.savings_pct
+                );
             });
         }
-        EnergyOptAction::AutoPlan => {
-            match opt.auto_plan() {
-                Some(plan_id) => {
-                    opt.save(&path)?;
-                    crate::output::json_or(&serde_json::json!({"plan_id": plan_id}), || {
-                        println!("Auto-plan created: {}", plan_id);
-                    });
-                }
-                None => println!("No objects need urgent refresh."),
+        EnergyOptAction::AutoPlan => match opt.auto_plan() {
+            Some(plan_id) => {
+                opt.save(&path)?;
+                crate::output::json_or(&serde_json::json!({"plan_id": plan_id}), || {
+                    println!("Auto-plan created: {}", plan_id);
+                });
             }
-        }
+            None => println!("No objects need urgent refresh."),
+        },
         EnergyOptAction::Execute { plan_id } => {
             opt.execute_plan(&plan_id)?;
             opt.save(&path)?;
@@ -12391,7 +14438,10 @@ fn cmd_energy_opt(action: EnergyOptAction) -> Result<(), Box<dyn std::error::Err
                 println!("  Ghost:     {}", stats.ghost_count);
                 println!("  Refresh $: {}", stats.total_refresh_cost);
                 println!("  Avg Energy:{:.1}%", stats.avg_energy_pct);
-                println!("  Plans:     {}/{} executed", stats.plans_executed, stats.plans_created);
+                println!(
+                    "  Plans:     {}/{} executed",
+                    stats.plans_executed, stats.plans_created
+                );
             });
         }
     }
@@ -12399,13 +14449,20 @@ fn cmd_energy_opt(action: EnergyOptAction) -> Result<(), Box<dyn std::error::Err
 }
 
 fn cmd_obj_mgr(action: ObjMgrAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::object_manager::{ObjectManager, ManagedObject, ObjType, ObjLifecycle};
+    use crate::object_manager::{ManagedObject, ObjLifecycle, ObjType, ObjectManager};
     let dir = crate::config::default_data_dir();
     let path = dir.join("object_manager.json");
     let mut mgr = ObjectManager::load_or_default(&path);
 
     match action {
-        ObjMgrAction::Add { id, name, owner, obj_type, energy, max_energy } => {
+        ObjMgrAction::Add {
+            id,
+            name,
+            owner,
+            obj_type,
+            energy,
+            max_energy,
+        } => {
             let ot = match obj_type.as_str() {
                 "contract" => ObjType::Contract,
                 "nft" => ObjType::NFT,
@@ -12413,10 +14470,20 @@ fn cmd_obj_mgr(action: ObjMgrAction) -> Result<(), Box<dyn std::error::Error>> {
                 _ => ObjType::Data,
             };
             let obj = ManagedObject {
-                id: id.clone(), obj_type: ot, owner, name: name.clone(), energy, max_energy,
-                lifecycle: ObjLifecycle::Active, created_at: chrono::Utc::now().to_rfc3339(),
-                last_refreshed: None, transfer_count: 0,
-                metadata: std::collections::HashMap::new(), frozen: false, size_bytes: 0, tags: Vec::new(),
+                id: id.clone(),
+                obj_type: ot,
+                owner,
+                name: name.clone(),
+                energy,
+                max_energy,
+                lifecycle: ObjLifecycle::Active,
+                created_at: chrono::Utc::now().to_rfc3339(),
+                last_refreshed: None,
+                transfer_count: 0,
+                metadata: std::collections::HashMap::new(),
+                frozen: false,
+                size_bytes: 0,
+                tags: Vec::new(),
             };
             mgr.add_object(obj)?;
             mgr.save(&path)?;
@@ -12450,18 +14517,31 @@ fn cmd_obj_mgr(action: ObjMgrAction) -> Result<(), Box<dyn std::error::Error>> {
                 println!("  Cost:    {}", plan.cost);
                 println!("  Energy:  {}", plan.energy_restored);
                 println!("  Viable:  {}", plan.viable);
-                if let Some(ref r) = plan.reason { println!("  Note:    {}", r); }
+                if let Some(ref r) = plan.reason {
+                    println!("  Note:    {}", r);
+                }
             });
         }
         ObjMgrAction::LowEnergy { threshold } => {
             let objs = mgr.low_energy_objects(threshold);
             crate::output::json_or(&serde_json::json!({"low_energy": objs.len()}), || {
-                println!("{}", format!("Objects Below {:.0}% Energy", threshold * 100.0).bold().cyan());
+                println!(
+                    "{}",
+                    format!("Objects Below {:.0}% Energy", threshold * 100.0)
+                        .bold()
+                        .cyan()
+                );
                 for o in &objs {
-                    let pct = if o.max_energy > 0 { o.energy as f64 / o.max_energy as f64 * 100.0 } else { 0.0 };
+                    let pct = if o.max_energy > 0 {
+                        o.energy as f64 / o.max_energy as f64 * 100.0
+                    } else {
+                        0.0
+                    };
                     println!("  {} — {:.1}% ({:?})", o.id, pct, o.lifecycle);
                 }
-                if objs.is_empty() { println!("  All objects healthy."); }
+                if objs.is_empty() {
+                    println!("  All objects healthy.");
+                }
             });
         }
         ObjMgrAction::Stats => {
@@ -12483,13 +14563,20 @@ fn cmd_obj_mgr(action: ObjMgrAction) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn cmd_deploy(action: DeployAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::contract_deployer::{ContractDeployer, ContractDeployment, ContractType, DeployStatus};
+    use crate::contract_deployer::{
+        ContractDeployer, ContractDeployment, ContractType, DeployStatus,
+    };
     let dir = crate::config::default_data_dir();
     let path = dir.join("contract_deployer.json");
     let mut dep = ContractDeployer::load_or_default(&path);
 
     match action {
-        DeployAction::Create { id, name, deployer, contract_type } => {
+        DeployAction::Create {
+            id,
+            name,
+            deployer,
+            contract_type,
+        } => {
             let ct = match contract_type.as_str() {
                 "proxy" => ContractType::Proxy,
                 "library" => ContractType::Library,
@@ -12497,12 +14584,21 @@ fn cmd_deploy(action: DeployAction) -> Result<(), Box<dyn std::error::Error>> {
                 _ => ContractType::Standard,
             };
             let deployment = ContractDeployment {
-                id: id.clone(), name: name.clone(), contract_type: ct,
-                bytecode_hash: String::new(), source_hash: None,
-                status: DeployStatus::Draft, address: None, deployer,
-                deploy_tx: None, created_at: chrono::Utc::now().to_rfc3339(),
-                deployed_at: None, gas_used: None, constructor_args: Vec::new(),
-                version: "1.0.0".to_string(), previous_version: None,
+                id: id.clone(),
+                name: name.clone(),
+                contract_type: ct,
+                bytecode_hash: String::new(),
+                source_hash: None,
+                status: DeployStatus::Draft,
+                address: None,
+                deployer,
+                deploy_tx: None,
+                created_at: chrono::Utc::now().to_rfc3339(),
+                deployed_at: None,
+                gas_used: None,
+                constructor_args: Vec::new(),
+                version: "1.0.0".to_string(),
+                previous_version: None,
             };
             dep.create_contract(deployment)?;
             dep.save(&path)?;
@@ -12513,12 +14609,22 @@ fn cmd_deploy(action: DeployAction) -> Result<(), Box<dyn std::error::Error>> {
             dep.save(&path)?;
             println!("Contract '{}' compiled.", id);
         }
-        DeployAction::DeployContract { id, address, tx_hash, gas } => {
+        DeployAction::DeployContract {
+            id,
+            address,
+            tx_hash,
+            gas,
+        } => {
             dep.deploy(&id, &address, &tx_hash, gas)?;
             dep.save(&path)?;
             println!("Contract '{}' deployed at {}.", id, address);
         }
-        DeployAction::Upgrade { id, new_bytecode_hex, version, notes } => {
+        DeployAction::Upgrade {
+            id,
+            new_bytecode_hex,
+            version,
+            notes,
+        } => {
             dep.upgrade(&id, new_bytecode_hex.as_bytes(), &version, &notes)?;
             dep.save(&path)?;
             println!("Contract '{}' upgraded to v{}.", id, version);
@@ -12531,7 +14637,9 @@ fn cmd_deploy(action: DeployAction) -> Result<(), Box<dyn std::error::Error>> {
                     let addr = c.address.as_deref().unwrap_or("—");
                     println!("  {} — {} v{} @ {}", c.id, c.name, c.version, addr);
                 }
-                if deployed.is_empty() { println!("  (none)"); }
+                if deployed.is_empty() {
+                    println!("  (none)");
+                }
             });
         }
         DeployAction::Stats => {
@@ -12551,20 +14659,36 @@ fn cmd_deploy(action: DeployAction) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn cmd_gov(action: GovAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::governance_dashboard::{GovernanceDashboard, GovernanceProposal, Vote, VoteChoice, ProposalState};
+    use crate::governance_dashboard::{
+        GovernanceDashboard, GovernanceProposal, ProposalState, Vote, VoteChoice,
+    };
     let dir = crate::config::default_data_dir();
     let path = dir.join("governance_dashboard.json");
     let mut gov = GovernanceDashboard::load_or_default(&path);
 
     match action {
-        GovAction::Propose { id, title, proposer, quorum, voting_power } => {
+        GovAction::Propose {
+            id,
+            title,
+            proposer,
+            quorum,
+            voting_power,
+        } => {
             let proposal = GovernanceProposal {
-                id: id.clone(), title: title.clone(), description: String::new(),
-                proposer, state: ProposalState::Discussion,
+                id: id.clone(),
+                title: title.clone(),
+                description: String::new(),
+                proposer,
+                state: ProposalState::Discussion,
                 created_at: chrono::Utc::now().to_rfc3339(),
-                voting_start: None, voting_end: None, executed_at: None,
-                votes_for: 0, votes_against: 0, votes_abstain: 0,
-                quorum_required: quorum, total_voting_power: voting_power,
+                voting_start: None,
+                voting_end: None,
+                executed_at: None,
+                votes_for: 0,
+                votes_against: 0,
+                votes_abstain: 0,
+                quorum_required: quorum,
+                total_voting_power: voting_power,
             };
             gov.add_proposal(proposal)?;
             gov.save(&path)?;
@@ -12575,24 +14699,39 @@ fn cmd_gov(action: GovAction) -> Result<(), Box<dyn std::error::Error>> {
             gov.save(&path)?;
             println!("Voting started on proposal '{}'.", id);
         }
-        GovAction::Vote { proposal_id, voter, choice, power } => {
+        GovAction::Vote {
+            proposal_id,
+            voter,
+            choice,
+            power,
+        } => {
             let c = match choice.to_lowercase().as_str() {
                 "against" | "no" => VoteChoice::Against,
                 "abstain" => VoteChoice::Abstain,
                 _ => VoteChoice::For,
             };
             let vote = Vote {
-                proposal_id: proposal_id.clone(), voter: voter.clone(), choice: c,
-                voting_power: power, timestamp: chrono::Utc::now().to_rfc3339(), reason: None,
+                proposal_id: proposal_id.clone(),
+                voter: voter.clone(),
+                choice: c,
+                voting_power: power,
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                reason: None,
             };
             gov.cast_vote(vote)?;
             gov.save(&path)?;
-            println!("{} voted '{}' on proposal '{}' (power: {}).", voter, choice, proposal_id, power);
+            println!(
+                "{} voted '{}' on proposal '{}' (power: {}).",
+                voter, choice, proposal_id, power
+            );
         }
         GovAction::Finalize { id } => {
             gov.finalize_proposal(&id)?;
             gov.save(&path)?;
-            let state = gov.get_proposal(&id).map(|p| format!("{:?}", p.state)).unwrap_or_default();
+            let state = gov
+                .get_proposal(&id)
+                .map(|p| format!("{:?}", p.state))
+                .unwrap_or_default();
             println!("Proposal '{}' finalized: {}.", id, state);
         }
         GovAction::ExecuteProposal { id } => {
@@ -12612,7 +14751,9 @@ fn cmd_gov(action: GovAction) -> Result<(), Box<dyn std::error::Error>> {
                 for p in &proposals {
                     println!("  {} — {} ({:?})", p.id, p.title, p.state);
                 }
-                if proposals.is_empty() { println!("  (none)"); }
+                if proposals.is_empty() {
+                    println!("  (none)");
+                }
             });
         }
         GovAction::Stats => {
@@ -12636,29 +14777,43 @@ fn cmd_gov(action: GovAction) -> Result<(), Box<dyn std::error::Error>> {
 // ──────────────────────── Tier 20 handlers ────────────────────────────
 
 fn cmd_fee_opt(action: FeeOptAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::fee_optimizer::{FeeOptimizer, FeeHistoryEntry};
+    use crate::fee_optimizer::{FeeHistoryEntry, FeeOptimizer};
     let dir = crate::config::default_data_dir();
     let path = dir.join("fee_optimizer.json");
     let mut opt = FeeOptimizer::load_or_default(&path);
 
     match action {
-        FeeOptAction::Record { gas_price, utilization, tx_count } => {
+        FeeOptAction::Record {
+            gas_price,
+            utilization,
+            tx_count,
+        } => {
             let entry = FeeHistoryEntry {
                 timestamp: chrono::Utc::now().to_rfc3339(),
-                gas_price, block_utilization_pct: utilization, tx_count,
+                gas_price,
+                block_utilization_pct: utilization,
+                tx_count,
             };
             opt.record_fee(entry);
             opt.save(&path)?;
-            println!("Recorded fee: gas={} util={:.1}% txs={}", gas_price, utilization, tx_count);
+            println!(
+                "Recorded fee: gas={} util={:.1}% txs={}",
+                gas_price, utilization, tx_count
+            );
         }
         FeeOptAction::Estimate => {
             let estimates = opt.estimate_fees();
             crate::output::json_or(&serde_json::json!({"estimates": estimates.len()}), || {
                 println!("{}", "Fee Estimates".bold().cyan());
                 for e in &estimates {
-                    println!("  {:?}: {} gas (~{}s, {:.0}% confidence)", e.speed, e.gas_price, e.estimated_time_secs, e.confidence_pct);
+                    println!(
+                        "  {:?}: {} gas (~{}s, {:.0}% confidence)",
+                        e.speed, e.gas_price, e.estimated_time_secs, e.confidence_pct
+                    );
                 }
-                if estimates.is_empty() { println!("  Not enough data."); }
+                if estimates.is_empty() {
+                    println!("  Not enough data.");
+                }
             });
         }
         FeeOptAction::Market => {
@@ -12668,7 +14823,10 @@ fn cmd_fee_opt(action: FeeOptAction) -> Result<(), Box<dyn std::error::Error>> {
                 println!("  Condition: {:?}", analysis.current_condition);
                 println!("  Avg 24h:   {:.1}", analysis.avg_gas_24h);
                 println!("  Median:    {:.1}", analysis.median_gas_24h);
-                println!("  Min/Max:   {}/{}", analysis.min_gas_24h, analysis.max_gas_24h);
+                println!(
+                    "  Min/Max:   {}/{}",
+                    analysis.min_gas_24h, analysis.max_gas_24h
+                );
                 println!("  Trend:     {:.2}", analysis.trend);
                 println!("  Best Hour: {}:00", analysis.best_hour);
                 println!("  Worst Hour:{}:00", analysis.worst_hour);
@@ -12680,15 +14838,19 @@ fn cmd_fee_opt(action: FeeOptAction) -> Result<(), Box<dyn std::error::Error>> {
                 println!("{}", "Optimal Submission Windows".bold().cyan());
                 for w in &windows {
                     let rec = if w.recommended { " *" } else { "" };
-                    println!("  {:02}:00-{:02}:00 — {:.1}% savings{}", w.start_hour, w.end_hour, w.avg_savings_pct, rec);
+                    println!(
+                        "  {:02}:00-{:02}:00 — {:.1}% savings{}",
+                        w.start_hour, w.end_hour, w.avg_savings_pct, rec
+                    );
                 }
             });
         }
         FeeOptAction::ShouldSubmit { max_gas } => {
             let should = opt.should_submit_now(max_gas);
             crate::output::json_or(&serde_json::json!({"should_submit": should}), || {
-                if should { println!("Yes, current gas is within budget."); }
-                else {
+                if should {
+                    println!("Yes, current gas is within budget.");
+                } else {
                     let wait = opt.wait_recommendation(max_gas);
                     match wait {
                         Some(h) => println!("No. Wait ~{} hours for lower gas.", h),
@@ -12712,7 +14874,7 @@ fn cmd_fee_opt(action: FeeOptAction) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn cmd_batch_exec(action: BatchExecAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::batch_executor::{BatchExecutor, BatchTx, TxStatus, RollbackPolicy};
+    use crate::batch_executor::{BatchExecutor, BatchTx, RollbackPolicy, TxStatus};
     let dir = crate::config::default_data_dir();
     let path = dir.join("batch_executor.json");
     let mut exec = BatchExecutor::load_or_default(&path);
@@ -12731,13 +14893,31 @@ fn cmd_batch_exec(action: BatchExecAction) -> Result<(), Box<dyn std::error::Err
                 println!("Batch '{}' created ({}).", id, name);
             });
         }
-        BatchExecAction::Add { batch_id, description, to, amount, token } => {
+        BatchExecAction::Add {
+            batch_id,
+            description,
+            to,
+            amount,
+            token,
+        } => {
             let tx_id = format!("tx_{}", chrono::Utc::now().timestamp_millis());
-            let order = exec.get_batch(&batch_id).map(|b| b.transactions.len() as u32).unwrap_or(0);
+            let order = exec
+                .get_batch(&batch_id)
+                .map(|b| b.transactions.len() as u32)
+                .unwrap_or(0);
             let tx = BatchTx {
-                id: tx_id.clone(), description, tx_type: "transfer".to_string(),
-                to, amount, token, status: TxStatus::Pending,
-                tx_hash: None, error: None, gas_used: None, order, depends_on: None,
+                id: tx_id.clone(),
+                description,
+                tx_type: "transfer".to_string(),
+                to,
+                amount,
+                token,
+                status: TxStatus::Pending,
+                tx_hash: None,
+                error: None,
+                gas_used: None,
+                order,
+                depends_on: None,
             };
             exec.add_tx(&batch_id, tx)?;
             exec.save(&path)?;
@@ -12748,7 +14928,9 @@ fn cmd_batch_exec(action: BatchExecAction) -> Result<(), Box<dyn std::error::Err
             exec.save(&path)?;
             crate::output::json_or(&serde_json::json!({"warnings": warnings}), || {
                 println!("Batch '{}' validated.", batch_id);
-                for w in &warnings { println!("  Warning: {}", w); }
+                for w in &warnings {
+                    println!("  Warning: {}", w);
+                }
             });
         }
         BatchExecAction::Execute { batch_id } => {
@@ -12773,9 +14955,17 @@ fn cmd_batch_exec(action: BatchExecAction) -> Result<(), Box<dyn std::error::Err
             crate::output::json_or(&serde_json::json!({"pending": batches.len()}), || {
                 println!("{}", "Pending Batches".bold().cyan());
                 for b in &batches {
-                    println!("  {} — {} ({} txs, {:?})", b.id, b.name, b.transactions.len(), b.status);
+                    println!(
+                        "  {} — {} ({} txs, {:?})",
+                        b.id,
+                        b.name,
+                        b.transactions.len(),
+                        b.status
+                    );
                 }
-                if batches.is_empty() { println!("  (none)"); }
+                if batches.is_empty() {
+                    println!("  (none)");
+                }
             });
         }
         BatchExecAction::Stats => {
@@ -12796,7 +14986,7 @@ fn cmd_batch_exec(action: BatchExecAction) -> Result<(), Box<dyn std::error::Err
 }
 
 fn cmd_migrate2(action: MigrateAction2) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::wallet_migration::{WalletMigrator, SourceWallet, ImportedAccount, KeyFormat};
+    use crate::wallet_migration::{ImportedAccount, KeyFormat, SourceWallet, WalletMigrator};
     let dir = crate::config::default_data_dir();
     let path = dir.join("wallet_migration.json");
     let mut migrator = WalletMigrator::load_or_default(&path);
@@ -12817,7 +15007,12 @@ fn cmd_migrate2(action: MigrateAction2) -> Result<(), Box<dyn std::error::Error>
                 println!("Migration started from {}: {}", source, id);
             });
         }
-        MigrateAction2::Import { job_id, original_address, new_address, format } => {
+        MigrateAction2::Import {
+            job_id,
+            original_address,
+            new_address,
+            format,
+        } => {
             let fmt = match format.to_lowercase().as_str() {
                 "base58" => KeyFormat::Base58,
                 "bech32" => KeyFormat::Bech32,
@@ -12826,13 +15021,20 @@ fn cmd_migrate2(action: MigrateAction2) -> Result<(), Box<dyn std::error::Error>
                 _ => KeyFormat::Hex,
             };
             let account = ImportedAccount {
-                original_address: original_address.clone(), new_address,
-                source: SourceWallet::MetaMask, key_format: fmt,
-                label: None, imported_at: chrono::Utc::now().to_rfc3339(), balance_snapshot: 0,
+                original_address: original_address.clone(),
+                new_address,
+                source: SourceWallet::MetaMask,
+                key_format: fmt,
+                label: None,
+                imported_at: chrono::Utc::now().to_rfc3339(),
+                balance_snapshot: 0,
             };
             migrator.import_account(&job_id, account)?;
             migrator.save(&path)?;
-            println!("Imported account {} into job '{}'.", original_address, job_id);
+            println!(
+                "Imported account {} into job '{}'.",
+                original_address, job_id
+            );
         }
         MigrateAction2::Complete { job_id } => {
             let report = migrator.complete_migration(&job_id)?;
@@ -12852,7 +15054,9 @@ fn cmd_migrate2(action: MigrateAction2) -> Result<(), Box<dyn std::error::Error>
                 for j in &jobs {
                     println!("  {} — {:?} ({:?})", j.id, j.source, j.status);
                 }
-                if jobs.is_empty() { println!("  (none)"); }
+                if jobs.is_empty() {
+                    println!("  (none)");
+                }
             });
         }
         MigrateAction2::Stats => {
@@ -12880,7 +15084,10 @@ fn cmd_diag(action: DiagAction) -> Result<(), Box<dyn std::error::Error>> {
         DiagAction::Init => {
             engine.register_default_checks();
             engine.save(&path)?;
-            println!("Registered {} default diagnostic checks.", engine.registered_checks.len());
+            println!(
+                "Registered {} default diagnostic checks.",
+                engine.registered_checks.len()
+            );
         }
         DiagAction::RunAll => {
             let report = engine.run_all_checks();
@@ -12888,8 +15095,10 @@ fn cmd_diag(action: DiagAction) -> Result<(), Box<dyn std::error::Error>> {
             crate::output::json_or(&report, || {
                 println!("{}", "Diagnostic Report".bold().cyan());
                 println!("  Overall: {:?}", report.overall_status);
-                println!("  Pass: {}  Warn: {}  Fail: {}  Skip: {}",
-                    report.pass_count, report.warn_count, report.fail_count, report.skip_count);
+                println!(
+                    "  Pass: {}  Warn: {}  Fail: {}  Skip: {}",
+                    report.pass_count, report.warn_count, report.fail_count, report.skip_count
+                );
                 for c in &report.checks {
                     let icon = match c.status {
                         crate::diagnostic::CheckStatus::Pass => "+",
@@ -12915,19 +15124,20 @@ fn cmd_diag(action: DiagAction) -> Result<(), Box<dyn std::error::Error>> {
                 println!("Repair {:?}: {}", result.action, result.message);
             });
         }
-        DiagAction::Report => {
-            match engine.latest_report() {
-                Some(report) => {
-                    crate::output::json_or(report, || {
-                        println!("{}", "Latest Diagnostic Report".bold().cyan());
-                        println!("  Date:    {}", report.created_at);
-                        println!("  Status:  {:?}", report.overall_status);
-                        println!("  Pass: {}  Warn: {}  Fail: {}", report.pass_count, report.warn_count, report.fail_count);
-                    });
-                }
-                None => println!("No reports yet. Run 'diag run-all' first."),
+        DiagAction::Report => match engine.latest_report() {
+            Some(report) => {
+                crate::output::json_or(report, || {
+                    println!("{}", "Latest Diagnostic Report".bold().cyan());
+                    println!("  Date:    {}", report.created_at);
+                    println!("  Status:  {:?}", report.overall_status);
+                    println!(
+                        "  Pass: {}  Warn: {}  Fail: {}",
+                        report.pass_count, report.warn_count, report.fail_count
+                    );
+                });
             }
-        }
+            None => println!("No reports yet. Run 'diag run-all' first."),
+        },
         DiagAction::Stats => {
             let stats = engine.stats();
             crate::output::json_or(&stats, || {
@@ -12946,13 +15156,17 @@ fn cmd_diag(action: DiagAction) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn cmd_ws(action: WsAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::ws_subscriber::{WsSubscriber, Subscription, SubStatus};
+    use crate::ws_subscriber::{SubStatus, Subscription, WsSubscriber};
     let dir = crate::config::default_data_dir();
     let path = dir.join("ws_subscriber.json");
     let mut ws = WsSubscriber::load_or_default(&path);
 
     match action {
-        WsAction::Subscribe { id, event_type, endpoint } => {
+        WsAction::Subscribe {
+            id,
+            event_type,
+            endpoint,
+        } => {
             let et = parse_event_type(&event_type);
             let sub = Subscription {
                 id: id.clone(),
@@ -12997,8 +15211,10 @@ fn cmd_ws(action: WsAction) -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     println!("{}", "WebSocket Subscriptions".bold().cyan());
                     for s in &subs {
-                        println!("  {} — {:?} [{:?}] events={} endpoint={}",
-                            s.id, s.event_type, s.status, s.event_count, s.endpoint);
+                        println!(
+                            "  {} — {:?} [{:?}] events={} endpoint={}",
+                            s.id, s.event_type, s.status, s.event_count, s.endpoint
+                        );
                     }
                 }
             });
@@ -13011,8 +15227,10 @@ fn cmd_ws(action: WsAction) -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     println!("{}", "Recent Events".bold().cyan());
                     for e in &events {
-                        println!("  [{}] {:?} sub={} block={:?}",
-                            e.timestamp, e.event_type, e.subscription_id, e.block_number);
+                        println!(
+                            "  [{}] {:?} sub={} block={:?}",
+                            e.timestamp, e.event_type, e.subscription_id, e.block_number
+                        );
                     }
                 }
             });
@@ -13048,7 +15266,7 @@ fn parse_event_type(s: &str) -> crate::ws_subscriber::EventType {
 }
 
 fn cmd_event_bus(action: EventBusAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::event_bus::{EventBus, EventHandler, HandlerStatus, BusEvent, EventPriority};
+    use crate::event_bus::{BusEvent, EventBus, EventHandler, EventPriority, HandlerStatus};
     let dir = crate::config::default_data_dir();
     let path = dir.join("event_bus.json");
     let mut bus = EventBus::load_or_default(&path);
@@ -13084,7 +15302,11 @@ fn cmd_event_bus(action: EventBusAction) -> Result<(), Box<dyn std::error::Error
             bus.save(&path)?;
             println!("Handler disabled: {}", id);
         }
-        EventBusAction::Publish { topic, priority, source } => {
+        EventBusAction::Publish {
+            topic,
+            priority,
+            source,
+        } => {
             let prio = match priority.to_lowercase().as_str() {
                 "low" => EventPriority::Low,
                 "high" => EventPriority::High,
@@ -13108,7 +15330,11 @@ fn cmd_event_bus(action: EventBusAction) -> Result<(), Box<dyn std::error::Error
         EventBusAction::Process { event_id } => {
             let matched = bus.process_event(&event_id)?;
             bus.save(&path)?;
-            println!("Processed event {}. Matched {} handlers.", event_id, matched.len());
+            println!(
+                "Processed event {}. Matched {} handlers.",
+                event_id,
+                matched.len()
+            );
             for h in &matched {
                 println!("  → {}", h);
             }
@@ -13121,8 +15347,10 @@ fn cmd_event_bus(action: EventBusAction) -> Result<(), Box<dyn std::error::Error
                 } else {
                     println!("{}", "Event Handlers".bold().cyan());
                     for h in &handlers {
-                        println!("  {} — topic={} [{:?}] invocations={}",
-                            h.id, h.topic_filter, h.status, h.invocation_count);
+                        println!(
+                            "  {} — topic={} [{:?}] invocations={}",
+                            h.id, h.topic_filter, h.status, h.invocation_count
+                        );
                     }
                 }
             });
@@ -13135,8 +15363,10 @@ fn cmd_event_bus(action: EventBusAction) -> Result<(), Box<dyn std::error::Error
                 } else {
                     println!("{}", "Pending Events".bold().cyan());
                     for e in &pending {
-                        println!("  {} — topic={} [{:?}] from={}",
-                            e.id, e.topic, e.priority, e.source);
+                        println!(
+                            "  {} — topic={} [{:?}] from={}",
+                            e.id, e.topic, e.priority, e.source
+                        );
                     }
                 }
             });
@@ -13150,8 +15380,10 @@ fn cmd_event_bus(action: EventBusAction) -> Result<(), Box<dyn std::error::Error
                     println!("{}", "Event Logs".bold().cyan());
                     for l in &logs {
                         let icon = if l.success { "+" } else { "X" };
-                        println!("  [{}] evt={} handler={} {}ms",
-                            icon, l.event_id, l.handler_id, l.duration_ms);
+                        println!(
+                            "  [{}] evt={} handler={} {}ms",
+                            icon, l.event_id, l.handler_id, l.duration_ms
+                        );
                     }
                 }
             });
@@ -13174,13 +15406,23 @@ fn cmd_event_bus(action: EventBusAction) -> Result<(), Box<dyn std::error::Error
 }
 
 fn cmd_receipts(action: ReceiptAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::tx_receipt_store::{TxReceiptStore, TxReceipt};
+    use crate::tx_receipt_store::{TxReceipt, TxReceiptStore};
     let dir = crate::config::default_data_dir();
     let path = dir.join("tx_receipts.json");
     let mut store = TxReceiptStore::load_or_default(&path);
 
     match action {
-        ReceiptAction::Store { tx_hash, from, to, amount, token, tx_type, status, gas_used, fee } => {
+        ReceiptAction::Store {
+            tx_hash,
+            from,
+            to,
+            amount,
+            token,
+            tx_type,
+            status,
+            gas_used,
+            fee,
+        } => {
             let tt = parse_tx_type2(&tx_type);
             let st = parse_receipt_status(&status);
             let receipt = TxReceipt {
@@ -13194,7 +15436,11 @@ fn cmd_receipts(action: ReceiptAction) -> Result<(), Box<dyn std::error::Error>>
                 tx_type: tt,
                 status: st,
                 gas_used,
-                gas_price: if gas_used > 0 { fee / gas_used.max(1) } else { 0 },
+                gas_price: if gas_used > 0 {
+                    fee / gas_used.max(1)
+                } else {
+                    0
+                },
                 fee,
                 nonce: 0,
                 timestamp: chrono::Utc::now().to_rfc3339(),
@@ -13207,30 +15453,33 @@ fn cmd_receipts(action: ReceiptAction) -> Result<(), Box<dyn std::error::Error>>
             store.save(&path)?;
             println!("Receipt stored: {}", tx_hash);
         }
-        ReceiptAction::Show { tx_hash } => {
-            match store.get_receipt(&tx_hash) {
-                Some(r) => {
-                    crate::output::json_or(r, || {
-                        println!("{}", "Transaction Receipt".bold().cyan());
-                        println!("  Hash:     {}", r.tx_hash);
-                        println!("  From:     {}", r.from);
-                        println!("  To:       {}", r.to);
-                        println!("  Amount:   {} {}", r.amount, r.token);
-                        println!("  Type:     {:?}", r.tx_type);
-                        println!("  Status:   {:?}", r.status);
-                        println!("  Gas:      {} (fee: {})", r.gas_used, r.fee);
-                        println!("  Block:    {:?}", r.block_number);
-                        println!("  Confirms: {}", r.confirmations);
-                        println!("  Time:     {}", r.timestamp);
-                        if let Some(note) = &r.notes {
-                            println!("  Note:     {}", note);
-                        }
-                    });
-                }
-                None => println!("Receipt not found: {}", tx_hash),
+        ReceiptAction::Show { tx_hash } => match store.get_receipt(&tx_hash) {
+            Some(r) => {
+                crate::output::json_or(r, || {
+                    println!("{}", "Transaction Receipt".bold().cyan());
+                    println!("  Hash:     {}", r.tx_hash);
+                    println!("  From:     {}", r.from);
+                    println!("  To:       {}", r.to);
+                    println!("  Amount:   {} {}", r.amount, r.token);
+                    println!("  Type:     {:?}", r.tx_type);
+                    println!("  Status:   {:?}", r.status);
+                    println!("  Gas:      {} (fee: {})", r.gas_used, r.fee);
+                    println!("  Block:    {:?}", r.block_number);
+                    println!("  Confirms: {}", r.confirmations);
+                    println!("  Time:     {}", r.timestamp);
+                    if let Some(note) = &r.notes {
+                        println!("  Note:     {}", note);
+                    }
+                });
             }
-        }
-        ReceiptAction::Update { tx_hash, status, confirmations, block } => {
+            None => println!("Receipt not found: {}", tx_hash),
+        },
+        ReceiptAction::Update {
+            tx_hash,
+            status,
+            confirmations,
+            block,
+        } => {
             let st = parse_receipt_status(&status);
             store.update_receipt(&tx_hash, st, block, confirmations.unwrap_or(0))?;
             store.save(&path)?;
@@ -13249,8 +15498,10 @@ fn cmd_receipts(action: ReceiptAction) -> Result<(), Box<dyn std::error::Error>>
                 } else {
                     println!("{} receipts for {}", receipts.len(), address);
                     for r in &receipts {
-                        println!("  {} {:?} {} {} [{:?}]",
-                            r.tx_hash, r.tx_type, r.amount, r.token, r.status);
+                        println!(
+                            "  {} {:?} {} {} [{:?}]",
+                            r.tx_hash, r.tx_type, r.amount, r.token, r.status
+                        );
                     }
                 }
             });
@@ -13260,8 +15511,10 @@ fn cmd_receipts(action: ReceiptAction) -> Result<(), Box<dyn std::error::Error>>
             crate::output::json_or(&results, || {
                 println!("{} results for '{}'", results.len(), query);
                 for r in &results {
-                    println!("  {} — {:?} {} {} [{:?}]",
-                        r.tx_hash, r.tx_type, r.amount, r.token, r.status);
+                    println!(
+                        "  {} — {:?} {} {} [{:?}]",
+                        r.tx_hash, r.tx_type, r.amount, r.token, r.status
+                    );
                 }
             });
         }
@@ -13299,8 +15552,10 @@ fn cmd_receipts(action: ReceiptAction) -> Result<(), Box<dyn std::error::Error>>
                 } else {
                     println!("{}", "Recent Receipts".bold().cyan());
                     for r in &recent {
-                        println!("  {} {:?} {} {} [{:?}] {}",
-                            r.tx_hash, r.tx_type, r.amount, r.token, r.status, r.timestamp);
+                        println!(
+                            "  {} {:?} {} {} [{:?}] {}",
+                            r.tx_hash, r.tx_type, r.amount, r.token, r.status, r.timestamp
+                        );
                     }
                 }
             });
@@ -13326,8 +15581,10 @@ fn cmd_receipts(action: ReceiptAction) -> Result<(), Box<dyn std::error::Error>>
                 } else {
                     println!("{}", "Failed Receipts".bold().cyan());
                     for r in &failed {
-                        println!("  {} — {:?} err={:?}",
-                            r.tx_hash, r.tx_type, r.error_message);
+                        println!(
+                            "  {} — {:?} err={:?}",
+                            r.tx_hash, r.tx_type, r.error_message
+                        );
                     }
                 }
             });
@@ -13364,7 +15621,7 @@ fn parse_receipt_status(s: &str) -> crate::tx_receipt_store::TxReceiptStatus {
 }
 
 fn cmd_state_sync(action: StateSyncAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::state_sync::{StateSyncManager, SyncMode, SyncConflict, ConflictResolution};
+    use crate::state_sync::{ConflictResolution, StateSyncManager, SyncConflict, SyncMode};
     let dir = crate::config::default_data_dir();
     let path = dir.join("state_sync.json");
     let mut mgr = StateSyncManager::load_or_default(&path);
@@ -13396,7 +15653,12 @@ fn cmd_state_sync(action: StateSyncAction) -> Result<(), Box<dyn std::error::Err
             mgr.save(&path)?;
             println!("Remote block set to {} for {}", block, account);
         }
-        StateSyncAction::Conflict { account, field, local_value, remote_value } => {
+        StateSyncAction::Conflict {
+            account,
+            field,
+            local_value,
+            remote_value,
+        } => {
             let id = format!("conflict_{}", chrono::Utc::now().timestamp_millis());
             let conflict = SyncConflict {
                 id: id.clone(),
@@ -13412,7 +15674,10 @@ fn cmd_state_sync(action: StateSyncAction) -> Result<(), Box<dyn std::error::Err
             mgr.save(&path)?;
             println!("Conflict recorded: {}", id);
         }
-        StateSyncAction::Resolve { conflict_id, strategy } => {
+        StateSyncAction::Resolve {
+            conflict_id,
+            strategy,
+        } => {
             let res = match strategy.to_lowercase().as_str() {
                 "prefer_local" | "local" => ConflictResolution::PreferLocal,
                 "prefer_remote" | "remote" => ConflictResolution::PreferRemote,
@@ -13423,7 +15688,11 @@ fn cmd_state_sync(action: StateSyncAction) -> Result<(), Box<dyn std::error::Err
             mgr.save(&path)?;
             println!("Conflict resolved: {}", conflict_id);
         }
-        StateSyncAction::Checkpoint { block_number, block_hash, state_root } => {
+        StateSyncAction::Checkpoint {
+            block_number,
+            block_hash,
+            state_root,
+        } => {
             let synced = mgr.accounts.len() as u32;
             mgr.create_checkpoint(block_number, &block_hash, &state_root, synced);
             mgr.save(&path)?;
@@ -13437,8 +15706,10 @@ fn cmd_state_sync(action: StateSyncAction) -> Result<(), Box<dyn std::error::Err
                 } else {
                     println!("{}", "Accounts Behind".bold().cyan());
                     for a in &behind {
-                        println!("  {} — {} blocks behind (local={}, remote={})",
-                            a.account, a.blocks_behind, a.local_block, a.remote_block);
+                        println!(
+                            "  {} — {} blocks behind (local={}, remote={})",
+                            a.account, a.blocks_behind, a.local_block, a.remote_block
+                        );
                     }
                 }
             });
@@ -13464,7 +15735,10 @@ fn cmd_state_sync(action: StateSyncAction) -> Result<(), Box<dyn std::error::Err
                 println!("  Synced:     {}", stats.synced);
                 println!("  Behind:     {}", stats.behind);
                 println!("  Errors:     {}", stats.errors);
-                println!("  Conflicts:  {} ({} resolved)", stats.total_conflicts, stats.resolved_conflicts);
+                println!(
+                    "  Conflicts:  {} ({} resolved)",
+                    stats.total_conflicts, stats.resolved_conflicts
+                );
                 println!("  Checkpoints: {}", stats.checkpoints);
                 if let Some(last) = &stats.last_full_sync {
                     println!("  Last Sync:  {}", last);
@@ -13476,7 +15750,7 @@ fn cmd_state_sync(action: StateSyncAction) -> Result<(), Box<dyn std::error::Err
 }
 
 fn cmd_debug(action: DebugAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::debug_console::{DebugConsole, Breakpoint, BreakpointStatus};
+    use crate::debug_console::{Breakpoint, BreakpointStatus, DebugConsole};
     let dir = crate::config::default_data_dir();
     let path = dir.join("debug_console.json");
     let mut console = DebugConsole::load_or_default(&path);
@@ -13502,7 +15776,11 @@ fn cmd_debug(action: DebugAction) -> Result<(), Box<dyn std::error::Error>> {
             console.save(&path)?;
             println!("Session resumed: {}", id);
         }
-        DebugAction::Break { id, bp_type, condition } => {
+        DebugAction::Break {
+            id,
+            bp_type,
+            condition,
+        } => {
             let bpt = parse_bp_type(&bp_type);
             let bp = Breakpoint {
                 id: id.clone(),
@@ -13540,7 +15818,10 @@ fn cmd_debug(action: DebugAction) -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     println!("{}", "Active Debug Sessions".bold().cyan());
                     for s in &sessions {
-                        println!("  {} — {} [{:?}] cmds={}", s.id, s.name, s.status, s.commands_run);
+                        println!(
+                            "  {} — {} [{:?}] cmds={}",
+                            s.id, s.name, s.status, s.commands_run
+                        );
                     }
                 }
             });
@@ -13553,8 +15834,10 @@ fn cmd_debug(action: DebugAction) -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     println!("{}", "Enabled Breakpoints".bold().cyan());
                     for b in &bps {
-                        println!("  {} — {:?} cond='{}' hits={}",
-                            b.id, b.bp_type, b.condition, b.hit_count);
+                        println!(
+                            "  {} — {:?} cond='{}' hits={}",
+                            b.id, b.bp_type, b.condition, b.hit_count
+                        );
                     }
                 }
             });
@@ -13581,8 +15864,10 @@ fn cmd_debug(action: DebugAction) -> Result<(), Box<dyn std::error::Error>> {
                     println!("{}", "Recent Replays".bold().cyan());
                     for r in &replays {
                         let icon = if r.success { "+" } else { "X" };
-                        println!("  [{}] {} gas={} replayed={}",
-                            icon, r.tx_hash, r.gas_used, r.replayed_at);
+                        println!(
+                            "  [{}] {} gas={} replayed={}",
+                            icon, r.tx_hash, r.gas_used, r.replayed_at
+                        );
                     }
                 }
             });
@@ -13591,8 +15876,14 @@ fn cmd_debug(action: DebugAction) -> Result<(), Box<dyn std::error::Error>> {
             let stats = console.stats();
             crate::output::json_or(&stats, || {
                 println!("{}", "Debug Console Stats".bold().cyan());
-                println!("  Sessions:     {} ({} active)", stats.total_sessions, stats.active_sessions);
-                println!("  Breakpoints:  {} ({} enabled)", stats.total_breakpoints, stats.enabled_breakpoints);
+                println!(
+                    "  Sessions:     {} ({} active)",
+                    stats.total_sessions, stats.active_sessions
+                );
+                println!(
+                    "  Breakpoints:  {} ({} enabled)",
+                    stats.total_breakpoints, stats.enabled_breakpoints
+                );
                 println!("  Logs:         {}", stats.total_logs);
                 println!("  Replays:      {}", stats.total_replays);
                 println!("  Commands:     {}", stats.commands_executed);
@@ -13632,7 +15923,14 @@ fn cmd_gas_profile(action: GasProfileAction) -> Result<(), Box<dyn std::error::E
             profiler.save(&path)?;
             println!("Profile removed: {}", id);
         }
-        GasProfileAction::Sample { profile_id, tx_hash, gas_used, gas_limit, gas_price, block } => {
+        GasProfileAction::Sample {
+            profile_id,
+            tx_hash,
+            gas_used,
+            gas_limit,
+            gas_price,
+            block,
+        } => {
             let sample = GasSample {
                 tx_hash,
                 op_type: OpType::Custom("sample".into()),
@@ -13647,27 +15945,25 @@ fn cmd_gas_profile(action: GasProfileAction) -> Result<(), Box<dyn std::error::E
             profiler.save(&path)?;
             println!("Sample added to {}", profile_id);
         }
-        GasProfileAction::Show { id } => {
-            match profiler.get_profile(&id) {
-                Some(p) => {
-                    crate::output::json_or(p, || {
-                        println!("{}", format!("Profile: {}", p.id).bold().cyan());
-                        println!("  Type:     {:?}", p.op_type);
-                        println!("  Samples:  {}", p.samples.len());
-                        if !p.samples.is_empty() {
-                            println!("  Avg Gas:  {:.0}", p.avg_gas());
-                            println!("  Min:      {}", p.min_gas());
-                            println!("  Max:      {}", p.max_gas());
-                            println!("  Median:   {}", p.median_gas());
-                            println!("  P95:      {}", p.p95_gas());
-                            println!("  Eff:      {:.1}%", p.efficiency());
-                            println!("  Cost:     {}", p.total_cost());
-                        }
-                    });
-                }
-                None => println!("Profile not found: {}", id),
+        GasProfileAction::Show { id } => match profiler.get_profile(&id) {
+            Some(p) => {
+                crate::output::json_or(p, || {
+                    println!("{}", format!("Profile: {}", p.id).bold().cyan());
+                    println!("  Type:     {:?}", p.op_type);
+                    println!("  Samples:  {}", p.samples.len());
+                    if !p.samples.is_empty() {
+                        println!("  Avg Gas:  {:.0}", p.avg_gas());
+                        println!("  Min:      {}", p.min_gas());
+                        println!("  Max:      {}", p.max_gas());
+                        println!("  Median:   {}", p.median_gas());
+                        println!("  P95:      {}", p.p95_gas());
+                        println!("  Eff:      {:.1}%", p.efficiency());
+                        println!("  Cost:     {}", p.total_cost());
+                    }
+                });
             }
-        }
+            None => println!("Profile not found: {}", id),
+        },
         GasProfileAction::Hotspots => {
             let hotspots = profiler.detect_hotspots();
             crate::output::json_or(&hotspots, || {
@@ -13676,8 +15972,14 @@ fn cmd_gas_profile(action: GasProfileAction) -> Result<(), Box<dyn std::error::E
                 } else {
                     println!("{}", "Gas Hotspots".bold().cyan());
                     for h in &hotspots {
-                        println!("  {:?} — avg={:.0} samples={} cost={} ({:.1}%)",
-                            h.op_type, h.avg_gas, h.sample_count, h.total_cost, h.percentage_of_total);
+                        println!(
+                            "  {:?} — avg={:.0} samples={} cost={} ({:.1}%)",
+                            h.op_type,
+                            h.avg_gas,
+                            h.sample_count,
+                            h.total_cost,
+                            h.percentage_of_total
+                        );
                     }
                 }
             });
@@ -13690,8 +15992,10 @@ fn cmd_gas_profile(action: GasProfileAction) -> Result<(), Box<dyn std::error::E
                 } else {
                     println!("{}", "Optimization Suggestions".bold().cyan());
                     for s in &suggestions {
-                        println!("  [{:?}] {:?} — {} (est. savings: {})",
-                            s.priority, s.op_type, s.suggestion, s.estimated_savings);
+                        println!(
+                            "  [{:?}] {:?} — {} (est. savings: {})",
+                            s.priority, s.op_type, s.suggestion, s.estimated_savings
+                        );
                     }
                 }
             });
@@ -13732,13 +16036,17 @@ fn parse_op_type(s: &str) -> crate::gas_profiler::OpType {
 }
 
 fn cmd_verify(action: VerifyAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::contract_verifier::{ContractVerifier, CompilerVersion};
+    use crate::contract_verifier::{CompilerVersion, ContractVerifier};
     let dir = crate::config::default_data_dir();
     let path = dir.join("contract_verifier.json");
     let mut verifier = ContractVerifier::load_or_default(&path);
 
     match action {
-        VerifyAction::Register { address, source, compiler } => {
+        VerifyAction::Register {
+            address,
+            source,
+            compiler,
+        } => {
             let cv = match compiler.to_lowercase().as_str() {
                 "v2" => CompilerVersion::V2,
                 "v3" => CompilerVersion::V3,
@@ -13772,18 +16080,16 @@ fn cmd_verify(action: VerifyAction) -> Result<(), Box<dyn std::error::Error>> {
                 }
             });
         }
-        VerifyAction::Report { address } => {
-            match verifier.get_latest_report(&address) {
-                Some(r) => {
-                    crate::output::json_or(r, || {
-                        println!("{}", "Latest Report".bold().cyan());
-                        println!("  Status:   {:?}", r.status);
-                        println!("  Verified: {}", r.verified_at);
-                    });
-                }
-                None => println!("No report for {}", address),
+        VerifyAction::Report { address } => match verifier.get_latest_report(&address) {
+            Some(r) => {
+                crate::output::json_or(r, || {
+                    println!("{}", "Latest Report".bold().cyan());
+                    println!("  Status:   {:?}", r.status);
+                    println!("  Verified: {}", r.verified_at);
+                });
             }
-        }
+            None => println!("No report for {}", address),
+        },
         VerifyAction::Verified => {
             let list = verifier.verified_contracts();
             crate::output::json_or(&list, || {
@@ -13835,7 +16141,7 @@ fn cmd_verify(action: VerifyAction) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn cmd_simulate2(action: SimAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::tx_simulator::{TxSimulator, SimulatedTx, ForkSource};
+    use crate::tx_simulator::{ForkSource, SimulatedTx, TxSimulator};
     let dir = crate::config::default_data_dir();
     let path = dir.join("tx_simulator.json");
     let mut sim = TxSimulator::load_or_default(&path);
@@ -13859,7 +16165,12 @@ fn cmd_simulate2(action: SimAction) -> Result<(), Box<dyn std::error::Error>> {
             sim.save(&path)?;
             println!("Fork removed: {}", id);
         }
-        SimAction::Run { from, to, amount, gas_limit } => {
+        SimAction::Run {
+            from,
+            to,
+            amount,
+            gas_limit,
+        } => {
             let tx_id = format!("sim_{}", chrono::Utc::now().timestamp_millis());
             let tx = SimulatedTx {
                 id: tx_id.clone(),
@@ -13884,39 +16195,39 @@ fn cmd_simulate2(action: SimAction) -> Result<(), Box<dyn std::error::Error>> {
         SimAction::RunScenario { id } => {
             let results = sim.run_scenario(&id)?;
             sim.save(&path)?;
-            println!("Scenario {} — {} transactions simulated:", id, results.len());
+            println!(
+                "Scenario {} — {} transactions simulated:",
+                id,
+                results.len()
+            );
             for r in &results {
                 println!("  {} — {:?} gas={}", r.id, r.status, r.gas_used);
             }
         }
-        SimAction::Show { id } => {
-            match sim.get_result(&id) {
-                Some(r) => {
-                    crate::output::json_or(r, || {
-                        println!("{}", "Simulation Result".bold().cyan());
-                        println!("  ID:      {}", r.id);
-                        println!("  Status:  {:?}", r.status);
-                        println!("  From:    {}", r.tx.from);
-                        println!("  To:      {}", r.tx.to);
-                        println!("  Amount:  {}", r.tx.amount);
-                        println!("  Gas:     {} / {}", r.gas_used, r.tx.gas_limit);
-                        println!("  Changes: {}", r.state_changes.len());
-                        if let Some(reason) = &r.revert_reason {
-                            println!("  Revert:  {:?}", reason);
-                        }
-                    });
-                }
-                None => println!("Simulation not found: {}", id),
+        SimAction::Show { id } => match sim.get_result(&id) {
+            Some(r) => {
+                crate::output::json_or(r, || {
+                    println!("{}", "Simulation Result".bold().cyan());
+                    println!("  ID:      {}", r.id);
+                    println!("  Status:  {:?}", r.status);
+                    println!("  From:    {}", r.tx.from);
+                    println!("  To:      {}", r.tx.to);
+                    println!("  Amount:  {}", r.tx.amount);
+                    println!("  Gas:     {} / {}", r.gas_used, r.tx.gas_limit);
+                    println!("  Changes: {}", r.state_changes.len());
+                    if let Some(reason) = &r.revert_reason {
+                        println!("  Revert:  {:?}", reason);
+                    }
+                });
             }
-        }
-        SimAction::Revert { id } => {
-            match sim.revert_analysis(&id)? {
-                Some(reason) => {
-                    println!("Revert reason for {}: {:?}", id, reason);
-                }
-                None => println!("No revert for simulation {}", id),
+            None => println!("Simulation not found: {}", id),
+        },
+        SimAction::Revert { id } => match sim.revert_analysis(&id)? {
+            Some(reason) => {
+                println!("Revert reason for {}: {:?}", id, reason);
             }
-        }
+            None => println!("No revert for simulation {}", id),
+        },
         SimAction::Recent { count } => {
             let recent = sim.recent_simulations(count);
             crate::output::json_or(&recent, || {
@@ -13925,7 +16236,10 @@ fn cmd_simulate2(action: SimAction) -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     println!("{}", "Recent Simulations".bold().cyan());
                     for r in &recent {
-                        println!("  {} — {:?} gas={} {}", r.id, r.status, r.gas_used, r.executed_at);
+                        println!(
+                            "  {} — {:?} gas={} {}",
+                            r.id, r.status, r.gas_used, r.executed_at
+                        );
                     }
                 }
             });
@@ -13948,13 +16262,18 @@ fn cmd_simulate2(action: SimAction) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn cmd_audit_trail(action: AuditTrailAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::audit_trail::{AuditTrail, AuditSeverity};
+    use crate::audit_trail::{AuditSeverity, AuditTrail};
     let dir = crate::config::default_data_dir();
     let path = dir.join("audit_trail.json");
     let mut trail = AuditTrail::load_or_default(&path);
 
     match action {
-        AuditTrailAction::Record { action_type, severity, actor, target } => {
+        AuditTrailAction::Record {
+            action_type,
+            severity,
+            actor,
+            target,
+        } => {
             let act = parse_audit_action(&action_type);
             let sev = match severity.to_lowercase().as_str() {
                 "warning" | "warn" => AuditSeverity::Warning,
@@ -13967,14 +16286,17 @@ fn cmd_audit_trail(action: AuditTrailAction) -> Result<(), Box<dyn std::error::E
         }
         AuditTrailAction::Verify => {
             let result = trail.verify_chain();
-            crate::output::json_or(&result, || {
-                match &result {
-                    crate::audit_trail::VerifyResult::Valid => {
-                        println!("{}", "Chain integrity: VALID".bold().green());
-                    }
-                    crate::audit_trail::VerifyResult::Broken(idx) => {
-                        println!("{}", format!("Chain integrity: BROKEN at index {}", idx).bold().red());
-                    }
+            crate::output::json_or(&result, || match &result {
+                crate::audit_trail::VerifyResult::Valid => {
+                    println!("{}", "Chain integrity: VALID".bold().green());
+                }
+                crate::audit_trail::VerifyResult::Broken(idx) => {
+                    println!(
+                        "{}",
+                        format!("Chain integrity: BROKEN at index {}", idx)
+                            .bold()
+                            .red()
+                    );
                 }
             });
         }
@@ -13986,8 +16308,10 @@ fn cmd_audit_trail(action: AuditTrailAction) -> Result<(), Box<dyn std::error::E
                 } else {
                     println!("{}", "Recent Audit Entries".bold().cyan());
                     for e in &entries {
-                        println!("  [{}] {:?} ({:?}) {} → {} [{}]",
-                            e.sequence, e.action, e.severity, e.actor, e.target, e.timestamp);
+                        println!(
+                            "  [{}] {:?} ({:?}) {} → {} [{}]",
+                            e.sequence, e.action, e.severity, e.actor, e.target, e.timestamp
+                        );
                     }
                 }
             });
@@ -14000,7 +16324,10 @@ fn cmd_audit_trail(action: AuditTrailAction) -> Result<(), Box<dyn std::error::E
                 } else {
                     println!("{}", "Critical Audit Entries".bold().red());
                     for e in &entries {
-                        println!("  [{}] {:?} {} → {}", e.sequence, e.action, e.actor, e.target);
+                        println!(
+                            "  [{}] {:?} {} → {}",
+                            e.sequence, e.action, e.actor, e.target
+                        );
                     }
                 }
             });
@@ -14010,7 +16337,10 @@ fn cmd_audit_trail(action: AuditTrailAction) -> Result<(), Box<dyn std::error::E
             crate::output::json_or(&results, || {
                 println!("{} results for '{}'", results.len(), query);
                 for e in &results {
-                    println!("  [{}] {:?} {} → {}", e.sequence, e.action, e.actor, e.target);
+                    println!(
+                        "  [{}] {:?} {} → {}",
+                        e.sequence, e.action, e.actor, e.target
+                    );
                 }
             });
         }
@@ -14068,7 +16398,12 @@ fn cmd_anomaly(action: AnomalyAction) -> Result<(), Box<dyn std::error::Error>> 
     let mut detector = AnomalyDetector::load_or_default(&path);
 
     match action {
-        AnomalyAction::AddRule { id, anomaly_type, threshold, desc } => {
+        AnomalyAction::AddRule {
+            id,
+            anomaly_type,
+            threshold,
+            desc,
+        } => {
             let at = parse_anomaly_type(&anomaly_type);
             let rule = DetectionRule {
                 id: id.clone(),
@@ -14098,22 +16433,20 @@ fn cmd_anomaly(action: AnomalyAction) -> Result<(), Box<dyn std::error::Error>> 
             detector.save(&path)?;
             println!("Rule disabled: {}", id);
         }
-        AnomalyAction::Profile { address } => {
-            match detector.get_profile(&address) {
-                Some(p) => {
-                    crate::output::json_or(p, || {
-                        println!("{}", format!("Profile: {}", p.address).bold().cyan());
-                        println!("  Avg Amount:    {:.2}", p.avg_amount);
-                        println!("  Max Amount:    {}", p.max_amount);
-                        println!("  Tx Count:      {}", p.tx_count);
-                        println!("  Recipients:    {}", p.unique_recipients);
-                        println!("  Avg Gas:       {:.2}", p.avg_gas);
-                        println!("  Common Hours:  {:?}", p.common_hours);
-                    });
-                }
-                None => println!("No profile for {}", address),
+        AnomalyAction::Profile { address } => match detector.get_profile(&address) {
+            Some(p) => {
+                crate::output::json_or(p, || {
+                    println!("{}", format!("Profile: {}", p.address).bold().cyan());
+                    println!("  Avg Amount:    {:.2}", p.avg_amount);
+                    println!("  Max Amount:    {}", p.max_amount);
+                    println!("  Tx Count:      {}", p.tx_count);
+                    println!("  Recipients:    {}", p.unique_recipients);
+                    println!("  Avg Gas:       {:.2}", p.avg_gas);
+                    println!("  Common Hours:  {:?}", p.common_hours);
+                });
             }
-        }
+            None => println!("No profile for {}", address),
+        },
         AnomalyAction::Alerts => {
             let alerts = detector.unacknowledged_alerts();
             crate::output::json_or(&alerts, || {
@@ -14122,8 +16455,10 @@ fn cmd_anomaly(action: AnomalyAction) -> Result<(), Box<dyn std::error::Error>> 
                 } else {
                     println!("{}", "Unacknowledged Alerts".bold().red());
                     for a in &alerts {
-                        println!("  [{}] {:?} ({:?}) tx={} — {}",
-                            a.id, a.anomaly_type, a.risk_level, a.tx_hash, a.details);
+                        println!(
+                            "  [{}] {:?} ({:?}) tx={} — {}",
+                            a.id, a.anomaly_type, a.risk_level, a.tx_hash, a.details
+                        );
                     }
                 }
             });
@@ -14146,7 +16481,10 @@ fn cmd_anomaly(action: AnomalyAction) -> Result<(), Box<dyn std::error::Error>> 
                     println!("{}", "Recent Alerts".bold().cyan());
                     for a in &alerts {
                         let ack = if a.acknowledged { "ack" } else { "NEW" };
-                        println!("  [{}] {:?} ({:?}) [{}]", a.id, a.anomaly_type, a.risk_level, ack);
+                        println!(
+                            "  [{}] {:?} ({:?}) [{}]",
+                            a.id, a.anomaly_type, a.risk_level, ack
+                        );
                     }
                 }
             });
@@ -14155,8 +16493,14 @@ fn cmd_anomaly(action: AnomalyAction) -> Result<(), Box<dyn std::error::Error>> 
             let stats = detector.stats();
             crate::output::json_or(&stats, || {
                 println!("{}", "Anomaly Detector Stats".bold().cyan());
-                println!("  Rules:     {} ({} enabled)", stats.total_rules, stats.enabled_rules);
-                println!("  Alerts:    {} ({} unack)", stats.total_alerts, stats.unacknowledged);
+                println!(
+                    "  Rules:     {} ({} enabled)",
+                    stats.total_rules, stats.enabled_rules
+                );
+                println!(
+                    "  Alerts:    {} ({} unack)",
+                    stats.total_alerts, stats.unacknowledged
+                );
                 println!("  Samples:   {}", stats.total_samples);
                 println!("  Profiles:  {}", stats.profiles);
             });
@@ -14180,13 +16524,18 @@ fn parse_anomaly_type(s: &str) -> crate::anomaly_detector::AnomalyType {
 }
 
 fn cmd_enclave(action: EnclaveAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::secure_enclave::{SecureEnclave, KeyPurpose};
+    use crate::secure_enclave::{KeyPurpose, SecureEnclave};
     let dir = crate::config::default_data_dir();
     let path = dir.join("secure_enclave.json");
     let mut enclave = SecureEnclave::load_or_default(&path);
 
     match action {
-        EnclaveAction::Store { id, material, purpose, expires } => {
+        EnclaveAction::Store {
+            id,
+            material,
+            purpose,
+            expires,
+        } => {
             let p = match purpose.to_lowercase().as_str() {
                 "encryption" => KeyPurpose::Encryption,
                 "authentication" | "auth" => KeyPurpose::Authentication,
@@ -14243,8 +16592,10 @@ fn cmd_enclave(action: EnclaveAction) -> Result<(), Box<dyn std::error::Error>> 
                 } else {
                     println!("{}", "Active Enclave Keys".bold().cyan());
                     for k in &keys {
-                        println!("  {} — {:?} [{:?}] accesses={}",
-                            k.id, k.purpose, k.status, k.access_count);
+                        println!(
+                            "  {} — {:?} [{:?}] accesses={}",
+                            k.id, k.purpose, k.status, k.access_count
+                        );
                     }
                 }
             });
@@ -14254,7 +16605,10 @@ fn cmd_enclave(action: EnclaveAction) -> Result<(), Box<dyn std::error::Error>> 
             crate::output::json_or(&stats, || {
                 println!("{}", "Secure Enclave Stats".bold().cyan());
                 println!("  Status:   {:?}", stats.enclave_status);
-                println!("  Keys:     {} ({} active)", stats.total_keys, stats.active_keys);
+                println!(
+                    "  Keys:     {} ({} active)",
+                    stats.total_keys, stats.active_keys
+                );
                 println!("  Locked:   {}", stats.locked_keys);
                 println!("  Expired:  {}", stats.expired_keys);
                 println!("  Wiped:    {}", stats.wiped_keys);
@@ -14267,13 +16621,19 @@ fn cmd_enclave(action: EnclaveAction) -> Result<(), Box<dyn std::error::Error>> 
 }
 
 fn cmd_perms(action: PermAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::permission_manager::{PermissionManager, Permission, PermissionStatus3, SpendLimit};
+    use crate::permission_manager::{Permission, PermissionManager, PermissionStatus3, SpendLimit};
     let dir = crate::config::default_data_dir();
     let path = dir.join("permission_manager.json");
     let mut mgr = PermissionManager::load_or_default(&path);
 
     match action {
-        PermAction::Grant { id, dapp, perm_type, max_uses, expires } => {
+        PermAction::Grant {
+            id,
+            dapp,
+            perm_type,
+            max_uses,
+            expires,
+        } => {
             let pt = parse_perm_type(&perm_type);
             let perm = Permission {
                 id: id.clone(),
@@ -14300,7 +16660,12 @@ fn cmd_perms(action: PermAction) -> Result<(), Box<dyn std::error::Error>> {
             mgr.save(&path)?;
             println!("Permission denied: {}", id);
         }
-        PermAction::Limit { dapp, token, max_per_tx, max_daily } => {
+        PermAction::Limit {
+            dapp,
+            token,
+            max_per_tx,
+            max_daily,
+        } => {
             let limit = SpendLimit {
                 dapp_id: dapp.clone(),
                 contract_address: None,
@@ -14312,14 +16677,15 @@ fn cmd_perms(action: PermAction) -> Result<(), Box<dyn std::error::Error>> {
             };
             mgr.set_spend_limit(limit);
             mgr.save(&path)?;
-            println!("Spend limit set for {}: {} per tx, {} daily", dapp, max_per_tx, max_daily);
+            println!(
+                "Spend limit set for {}: {} per tx, {} daily",
+                dapp, max_per_tx, max_daily
+            );
         }
-        PermAction::CheckSpend { dapp, amount } => {
-            match mgr.check_spend(&dapp, amount) {
-                Ok(()) => println!("{}", "Spend allowed.".bold().green()),
-                Err(e) => println!("{}", format!("Spend denied: {}", e).bold().red()),
-            }
-        }
+        PermAction::CheckSpend { dapp, amount } => match mgr.check_spend(&dapp, amount) {
+            Ok(()) => println!("{}", "Spend allowed.".bold().green()),
+            Err(e) => println!("{}", format!("Spend denied: {}", e).bold().red()),
+        },
         PermAction::Spend { dapp, amount } => {
             mgr.record_spend(&dapp, amount)?;
             mgr.save(&path)?;
@@ -14338,9 +16704,14 @@ fn cmd_perms(action: PermAction) -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     println!("{}", format!("Permissions for {}", dapp).bold().cyan());
                     for p in &perms {
-                        println!("  {} — {:?} [{:?}] uses={}/{}",
-                            p.id, p.permission_type, p.status, p.use_count,
-                            p.max_uses.map(|m| m.to_string()).unwrap_or("∞".into()));
+                        println!(
+                            "  {} — {:?} [{:?}] uses={}/{}",
+                            p.id,
+                            p.permission_type,
+                            p.status,
+                            p.use_count,
+                            p.max_uses.map(|m| m.to_string()).unwrap_or("∞".into())
+                        );
                     }
                 }
             });
@@ -14353,8 +16724,10 @@ fn cmd_perms(action: PermAction) -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     println!("{}", "Pending Approvals".bold().yellow());
                     for a in &pending {
-                        println!("  {} — dapp={} {:?} reason={}",
-                            a.id, a.dapp_id, a.permission_type, a.reason);
+                        println!(
+                            "  {} — dapp={} {:?} reason={}",
+                            a.id, a.dapp_id, a.permission_type, a.reason
+                        );
                     }
                 }
             });
@@ -14383,7 +16756,10 @@ fn cmd_perms(action: PermAction) -> Result<(), Box<dyn std::error::Error>> {
                 println!("  Expired:  {}", stats.expired);
                 println!("  Revoked:  {}", stats.revoked);
                 println!("  Limits:   {}", stats.total_spend_limits);
-                println!("  Approvals: {} ({} pending)", stats.total_approvals, stats.pending_approvals);
+                println!(
+                    "  Approvals: {} ({} pending)",
+                    stats.total_approvals, stats.pending_approvals
+                );
             });
         }
     }
@@ -14405,7 +16781,7 @@ fn parse_perm_type(s: &str) -> crate::permission_manager::PermissionType {
 }
 
 fn cmd_theme(action: ThemeAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::theme_engine::{ThemeEngine, Theme, ThemeColors, ColorScheme, LayoutPreset};
+    use crate::theme_engine::{ColorScheme, LayoutPreset, Theme, ThemeColors, ThemeEngine};
     let dir = crate::config::default_data_dir();
     let path = dir.join("theme_engine.json");
     let mut engine = ThemeEngine::load_or_default(&path);
@@ -14416,7 +16792,12 @@ fn cmd_theme(action: ThemeAction) -> Result<(), Box<dyn std::error::Error>> {
             engine.save(&path)?;
             println!("Registered {} built-in themes.", engine.list_themes().len());
         }
-        ThemeAction::Add { id, name, scheme, layout } => {
+        ThemeAction::Add {
+            id,
+            name,
+            scheme,
+            layout,
+        } => {
             let cs = match scheme.to_lowercase().as_str() {
                 "dark" => ColorScheme::Dark,
                 "high_contrast" => ColorScheme::HighContrast,
@@ -14457,33 +16838,42 @@ fn cmd_theme(action: ThemeAction) -> Result<(), Box<dyn std::error::Error>> {
             engine.save(&path)?;
             println!("Active theme: {}", id);
         }
-        ThemeAction::Active => {
-            match engine.get_active() {
-                Some(t) => {
-                    crate::output::json_or(t, || {
-                        println!("{}", format!("Active: {} ({})", t.name, t.id).bold().cyan());
-                        println!("  Scheme: {:?}  Layout: {:?}", t.scheme, t.layout);
-                    });
-                }
-                None => println!("No active theme set."),
+        ThemeAction::Active => match engine.get_active() {
+            Some(t) => {
+                crate::output::json_or(t, || {
+                    println!("{}", format!("Active: {} ({})", t.name, t.id).bold().cyan());
+                    println!("  Scheme: {:?}  Layout: {:?}", t.scheme, t.layout);
+                });
             }
-        }
+            None => println!("No active theme set."),
+        },
         ThemeAction::List => {
             let themes = engine.list_themes();
             crate::output::json_or(&themes, || {
                 println!("{}", "Themes".bold().cyan());
                 for t in &themes {
                     let builtin = if t.is_builtin { " [builtin]" } else { "" };
-                    println!("  {} — {} {:?}/{:?}{}", t.id, t.name, t.scheme, t.layout, builtin);
+                    println!(
+                        "  {} — {} {:?}/{:?}{}",
+                        t.id, t.name, t.scheme, t.layout, builtin
+                    );
                 }
             });
         }
-        ThemeAction::Duplicate { id, new_id, new_name } => {
+        ThemeAction::Duplicate {
+            id,
+            new_id,
+            new_name,
+        } => {
             engine.duplicate_theme(&id, &new_id, &new_name)?;
             engine.save(&path)?;
             println!("Theme duplicated: {} → {}", id, new_id);
         }
-        ThemeAction::SetVar { theme_id, key, value } => {
+        ThemeAction::SetVar {
+            theme_id,
+            key,
+            value,
+        } => {
             engine.set_custom_var(&theme_id, &key, &value)?;
             engine.save(&path)?;
             println!("Set {}={} on {}", key, value, theme_id);
@@ -14515,7 +16905,13 @@ fn cmd_palette(action: PaletteAction) -> Result<(), Box<dyn std::error::Error>> 
     let mut palette = CommandPalette::load_or_default(&path);
 
     match action {
-        PaletteAction::Register { id, name, desc, category, usage } => {
+        PaletteAction::Register {
+            id,
+            name,
+            desc,
+            category,
+            usage,
+        } => {
             let cat = parse_cmd_category(&category);
             let cmd = PaletteCommand {
                 id: id.clone(),
@@ -14555,7 +16951,10 @@ fn cmd_palette(action: PaletteAction) -> Result<(), Box<dyn std::error::Error>> 
                 } else {
                     println!("{}", format!("Results for '{}'", query).bold().cyan());
                     for r in &results {
-                        println!("  [{:.0}] {} — {}", r.score, r.command.name, r.command.description);
+                        println!(
+                            "  [{:.0}] {} — {}",
+                            r.score, r.command.name, r.command.description
+                        );
                     }
                 }
             });
@@ -14618,7 +17017,7 @@ fn parse_cmd_category(s: &str) -> crate::command_palette::CommandCategory {
 }
 
 fn cmd_onboard(action: OnboardAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::onboarding::{OnboardingManager, FlowType};
+    use crate::onboarding::{FlowType, OnboardingManager};
     let dir = crate::config::default_data_dir();
     let path = dir.join("onboarding.json");
     let mut mgr = OnboardingManager::load_or_default(&path);
@@ -14654,20 +17053,18 @@ fn cmd_onboard(action: OnboardAction) -> Result<(), Box<dyn std::error::Error>> 
             mgr.save(&path)?;
             println!("Step skipped: {}", step_id);
         }
-        OnboardAction::Current => {
-            match mgr.get_current_step() {
-                Some(s) => {
-                    crate::output::json_or(s, || {
-                        println!("{}", format!("Current: {}", s.title).bold().cyan());
-                        println!("  {}", s.description);
-                        for tip in &s.tips {
-                            println!("  Tip: {}", tip);
-                        }
-                    });
-                }
-                None => println!("No current step (flow complete or not started)."),
+        OnboardAction::Current => match mgr.get_current_step() {
+            Some(s) => {
+                crate::output::json_or(s, || {
+                    println!("{}", format!("Current: {}", s.title).bold().cyan());
+                    println!("  {}", s.description);
+                    for tip in &s.tips {
+                        println!("  Tip: {}", tip);
+                    }
+                });
             }
-        }
+            None => println!("No current step (flow complete or not started)."),
+        },
         OnboardAction::Progress => {
             if let Some(flow) = mgr.active_flow() {
                 let flow_id = flow.id.clone();
@@ -14704,11 +17101,19 @@ fn cmd_onboard(action: OnboardAction) -> Result<(), Box<dyn std::error::Error>> 
             let stats = mgr.stats();
             crate::output::json_or(&stats, || {
                 println!("{}", "Onboarding Stats".bold().cyan());
-                println!("  Flows:     {} ({} completed)", stats.total_flows, stats.completed_flows);
-                println!("  Steps:     {} ({} done, {} skipped)",
-                    stats.total_steps, stats.completed_steps, stats.skipped_steps);
+                println!(
+                    "  Flows:     {} ({} completed)",
+                    stats.total_flows, stats.completed_flows
+                );
+                println!(
+                    "  Steps:     {} ({} done, {} skipped)",
+                    stats.total_steps, stats.completed_steps, stats.skipped_steps
+                );
                 println!("  Progress:  {:.0}%", stats.progress_pct);
-                println!("  Tips:      {}/{} shown", stats.tips_shown, stats.tips_total);
+                println!(
+                    "  Tips:      {}/{} shown",
+                    stats.tips_shown, stats.tips_total
+                );
             });
         }
     }
@@ -14716,7 +17121,7 @@ fn cmd_onboard(action: OnboardAction) -> Result<(), Box<dyn std::error::Error>> 
 }
 
 fn cmd_help(action: HelpAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::help_system::{HelpSystem, Difficulty};
+    use crate::help_system::{Difficulty, HelpSystem};
     let dir = crate::config::default_data_dir();
     let path = dir.join("help_system.json");
     let mut help = HelpSystem::load_or_default(&path);
@@ -14791,25 +17196,30 @@ fn cmd_help(action: HelpAction) -> Result<(), Box<dyn std::error::Error>> {
                     println!("{}", "Tutorials".bold().cyan());
                     for t in &tutorials {
                         let done = if t.completed { " [done]" } else { "" };
-                        println!("  {} — {} ({:?}, ~{}min){}",
-                            t.id, t.title, t.difficulty, t.estimated_minutes, done);
+                        println!(
+                            "  {} — {} ({:?}, ~{}min){}",
+                            t.id, t.title, t.difficulty, t.estimated_minutes, done
+                        );
                     }
                 }
             });
         }
-        HelpAction::Explain { code } => {
-            match help.explain_error(&code) {
-                Some(e) => {
-                    crate::output::json_or(e, || {
-                        println!("{}", format!("Error: {} — {}", e.error_code, e.title).bold().red());
-                        println!("{}", e.explanation);
-                        println!("\n{}", "Solution:".bold().green());
-                        println!("{}", e.solution);
-                    });
-                }
-                None => println!("No explanation for error code '{}'", code),
+        HelpAction::Explain { code } => match help.explain_error(&code) {
+            Some(e) => {
+                crate::output::json_or(e, || {
+                    println!(
+                        "{}",
+                        format!("Error: {} — {}", e.error_code, e.title)
+                            .bold()
+                            .red()
+                    );
+                    println!("{}", e.explanation);
+                    println!("\n{}", "Solution:".bold().green());
+                    println!("{}", e.solution);
+                });
             }
-        }
+            None => println!("No explanation for error code '{}'", code),
+        },
         HelpAction::Popular { count } => {
             let topics = help.popular_topics(count);
             crate::output::json_or(&topics, || {
@@ -14829,7 +17239,10 @@ fn cmd_help(action: HelpAction) -> Result<(), Box<dyn std::error::Error>> {
                 println!("{}", "Help System Stats".bold().cyan());
                 println!("  Topics:    {}", stats.total_topics);
                 println!("  FAQs:      {}", stats.total_faqs);
-                println!("  Tutorials: {} ({} done)", stats.total_tutorials, stats.completed_tutorials);
+                println!(
+                    "  Tutorials: {} ({} done)",
+                    stats.total_tutorials, stats.completed_tutorials
+                );
                 println!("  Views:     {}", stats.total_views);
                 println!("  Errors:    {}", stats.error_explanations);
                 if let Some(top) = &stats.most_viewed {
@@ -14862,7 +17275,12 @@ fn cmd_breaker(action: BreakerAction) -> Result<(), Box<dyn std::error::Error>> 
     let mut mgr = CircuitBreakerManager::load_or_default(&path);
 
     match action {
-        BreakerAction::Register { id, service, threshold, timeout } => {
+        BreakerAction::Register {
+            id,
+            service,
+            threshold,
+            timeout,
+        } => {
             let config = CircuitConfig {
                 failure_threshold: threshold,
                 timeout_seconds: timeout,
@@ -14880,13 +17298,19 @@ fn cmd_breaker(action: BreakerAction) -> Result<(), Box<dyn std::error::Error>> 
         BreakerAction::Success { id } => {
             mgr.record_success(&id)?;
             mgr.save(&path)?;
-            let state = mgr.get_circuit(&id).map(|c| format!("{:?}", c.state)).unwrap_or_default();
+            let state = mgr
+                .get_circuit(&id)
+                .map(|c| format!("{:?}", c.state))
+                .unwrap_or_default();
             println!("Success recorded for {} [{}]", id, state);
         }
         BreakerAction::Failure { id } => {
             mgr.record_failure(&id)?;
             mgr.save(&path)?;
-            let state = mgr.get_circuit(&id).map(|c| format!("{:?}", c.state)).unwrap_or_default();
+            let state = mgr
+                .get_circuit(&id)
+                .map(|c| format!("{:?}", c.state))
+                .unwrap_or_default();
             println!("Failure recorded for {} [{}]", id, state);
         }
         BreakerAction::Check { id } => {
@@ -14916,7 +17340,10 @@ fn cmd_breaker(action: BreakerAction) -> Result<(), Box<dyn std::error::Error>> 
                 } else {
                     println!("{}", "Open Circuits".bold().red());
                     for c in &open {
-                        println!("  {} — {} failures={}", c.id, c.service_name, c.failure_count);
+                        println!(
+                            "  {} — {} failures={}",
+                            c.id, c.service_name, c.failure_count
+                        );
                     }
                 }
             });
@@ -14929,7 +17356,10 @@ fn cmd_breaker(action: BreakerAction) -> Result<(), Box<dyn std::error::Error>> 
                 } else {
                     println!("{}", "Circuit Events".bold().cyan());
                     for e in &events {
-                        println!("  {} — {} {:?}→{:?}", e.circuit_id, e.event_type, e.from_state, e.to_state);
+                        println!(
+                            "  {} — {} {:?}→{:?}",
+                            e.circuit_id, e.event_type, e.from_state, e.to_state
+                        );
                     }
                 }
             });
@@ -14951,13 +17381,19 @@ fn cmd_breaker(action: BreakerAction) -> Result<(), Box<dyn std::error::Error>> 
 }
 
 fn cmd_cache(action: CacheAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::cache_manager::{CacheManager, CacheConfig2, CacheLayer, EvictionPolicy};
+    use crate::cache_manager::{CacheConfig2, CacheLayer, CacheManager, EvictionPolicy};
     let dir = crate::config::default_data_dir();
     let path = dir.join("cache_manager.json");
     let mut mgr = CacheManager::load_or_default(&path);
 
     match action {
-        CacheAction::Create { id, name, layer, max_entries, eviction } => {
+        CacheAction::Create {
+            id,
+            name,
+            layer,
+            max_entries,
+            eviction,
+        } => {
             let l = match layer.to_lowercase().as_str() {
                 "disk" => CacheLayer::Disk,
                 "remote" => CacheLayer::Remote,
@@ -14986,7 +17422,12 @@ fn cmd_cache(action: CacheAction) -> Result<(), Box<dyn std::error::Error>> {
             mgr.save(&path)?;
             println!("Cache removed: {}", id);
         }
-        CacheAction::Put { cache_id, key, value, ttl } => {
+        CacheAction::Put {
+            cache_id,
+            key,
+            value,
+            ttl,
+        } => {
             mgr.put(&cache_id, &key, &value, ttl)?;
             mgr.save(&path)?;
             println!("Cached {}={}", key, value);
@@ -15041,8 +17482,12 @@ fn cmd_config_val(action: ConfigValAction) -> Result<(), Box<dyn std::error::Err
     let mut mgr = ConfigValidator::load_or_default(&path);
 
     match action {
-        ConfigValAction::Validate { schema_id, config_json } => {
-            let config: std::collections::HashMap<String, String> = serde_json::from_str(&config_json)?;
+        ConfigValAction::Validate {
+            schema_id,
+            config_json,
+        } => {
+            let config: std::collections::HashMap<String, String> =
+                serde_json::from_str(&config_json)?;
             let result = mgr.validate(&schema_id, &config)?;
             crate::output::json_or(&result, || {
                 if result.valid {
@@ -15066,7 +17511,13 @@ fn cmd_config_val(action: ConfigValAction) -> Result<(), Box<dyn std::error::Err
                 } else {
                     println!("{}", "Config Schemas".bold().cyan());
                     for s in &schemas {
-                        println!("  {} v{} — {} ({} fields)", s.id, s.version, s.name, s.fields.len());
+                        println!(
+                            "  {} v{} — {} ({} fields)",
+                            s.id,
+                            s.version,
+                            s.name,
+                            s.fields.len()
+                        );
                     }
                 }
             });
@@ -15079,7 +17530,10 @@ fn cmd_config_val(action: ConfigValAction) -> Result<(), Box<dyn std::error::Err
                 } else {
                     println!("{}", "Pending Migrations".bold().yellow());
                     for m in &pending {
-                        println!("  {} — v{} → v{}: {}", m.id, m.from_version, m.to_version, m.description);
+                        println!(
+                            "  {} — v{} → v{}: {}",
+                            m.id, m.from_version, m.to_version, m.description
+                        );
                     }
                 }
             });
@@ -15092,32 +17546,38 @@ fn cmd_config_val(action: ConfigValAction) -> Result<(), Box<dyn std::error::Err
                 } else {
                     println!("{}", "Applied Migrations".bold().green());
                     for m in &applied {
-                        println!("  {} — v{} → v{} [{}]", m.id, m.from_version, m.to_version,
-                            m.applied_at.as_deref().unwrap_or("?"));
+                        println!(
+                            "  {} — v{} → v{} [{}]",
+                            m.id,
+                            m.from_version,
+                            m.to_version,
+                            m.applied_at.as_deref().unwrap_or("?")
+                        );
                     }
                 }
             });
         }
-        ConfigValAction::Backup => {
-            match mgr.latest_backup() {
-                Some(b) => {
-                    crate::output::json_or(b, || {
-                        println!("{}", "Latest Backup".bold().cyan());
-                        println!("  Version: {}", b.version);
-                        println!("  Date:    {}", b.created_at);
-                        println!("  Fields:  {}", b.data.len());
-                    });
-                }
-                None => println!("No backups."),
+        ConfigValAction::Backup => match mgr.latest_backup() {
+            Some(b) => {
+                crate::output::json_or(b, || {
+                    println!("{}", "Latest Backup".bold().cyan());
+                    println!("  Version: {}", b.version);
+                    println!("  Date:    {}", b.created_at);
+                    println!("  Fields:  {}", b.data.len());
+                });
             }
-        }
+            None => println!("No backups."),
+        },
         ConfigValAction::Stats => {
             let stats = mgr.stats();
             crate::output::json_or(&stats, || {
                 println!("{}", "Config Validator Stats".bold().cyan());
                 println!("  Schemas:     {}", stats.total_schemas);
                 println!("  Validations: {}", stats.total_validations);
-                println!("  Migrations:  {} ({} applied)", stats.total_migrations, stats.applied_migrations);
+                println!(
+                    "  Migrations:  {} ({} applied)",
+                    stats.total_migrations, stats.applied_migrations
+                );
                 println!("  Rolled Back: {}", stats.rolled_back);
                 println!("  Failed:      {}", stats.failed_validations);
                 println!("  Backups:     {}", stats.backups);
@@ -15128,13 +17588,18 @@ fn cmd_config_val(action: ConfigValAction) -> Result<(), Box<dyn std::error::Err
 }
 
 fn cmd_tasks(action: TaskQueueAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::task_queue::{TaskQueue, QueueTask, TaskPriority2, TaskStatus3, TaskType2};
+    use crate::task_queue::{QueueTask, TaskPriority2, TaskQueue, TaskStatus3, TaskType2};
     let dir = crate::config::default_data_dir();
     let path = dir.join("task_queue.json");
     let mut queue = TaskQueue::load_or_default(&path);
 
     match action {
-        TaskQueueAction::Enqueue { id, task_type, priority, max_retries } => {
+        TaskQueueAction::Enqueue {
+            id,
+            task_type,
+            priority,
+            max_retries,
+        } => {
             let tt = match task_type.to_lowercase().as_str() {
                 "tx_submit" | "tx" => TaskType2::TxSubmit,
                 "balance_refresh" | "balance" => TaskType2::BalanceRefresh,
@@ -15169,15 +17634,16 @@ fn cmd_tasks(action: TaskQueueAction) -> Result<(), Box<dyn std::error::Error>> 
             queue.save(&path)?;
             println!("Task enqueued: {}", id);
         }
-        TaskQueueAction::Dequeue => {
-            match queue.dequeue() {
-                Some(task) => {
-                    queue.save(&path)?;
-                    println!("Dequeued: {} ({:?}, {:?})", task.id, task.task_type, task.priority);
-                }
-                None => println!("Queue empty."),
+        TaskQueueAction::Dequeue => match queue.dequeue() {
+            Some(task) => {
+                queue.save(&path)?;
+                println!(
+                    "Dequeued: {} ({:?}, {:?})",
+                    task.id, task.task_type, task.priority
+                );
             }
-        }
+            None => println!("Queue empty."),
+        },
         TaskQueueAction::Complete { id, result } => {
             queue.complete_task(&id, &result)?;
             queue.save(&path)?;
@@ -15186,7 +17652,10 @@ fn cmd_tasks(action: TaskQueueAction) -> Result<(), Box<dyn std::error::Error>> 
         TaskQueueAction::Fail { id, error } => {
             queue.fail_task(&id, &error)?;
             queue.save(&path)?;
-            let status = queue.get_task(&id).map(|t| format!("{:?}", t.status)).unwrap_or("dead_letter".into());
+            let status = queue
+                .get_task(&id)
+                .map(|t| format!("{:?}", t.status))
+                .unwrap_or("dead_letter".into());
             println!("Task failed: {} [{}]", id, status);
         }
         TaskQueueAction::Cancel { id } => {
@@ -15225,7 +17694,10 @@ fn cmd_tasks(action: TaskQueueAction) -> Result<(), Box<dyn std::error::Error>> 
                 } else {
                     println!("{}", "Dead Letter Queue".bold().red());
                     for d in &dl {
-                        println!("  {} — {} (retries: {})", d.task.id, d.reason, d.task.retry_count);
+                        println!(
+                            "  {} — {} (retries: {})",
+                            d.task.id, d.reason, d.task.retry_count
+                        );
                     }
                 }
             });
@@ -15258,13 +17730,20 @@ fn cmd_tasks(action: TaskQueueAction) -> Result<(), Box<dyn std::error::Error>> 
 }
 
 fn cmd_changelog(action: ChangelogAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::changelog::{Changelog, ChangeEntry, ChangeType, ChangeScope};
+    use crate::changelog::{ChangeEntry, ChangeScope, ChangeType, Changelog};
     let dir = crate::config::default_data_dir();
     let path = dir.join("changelog.json");
     let mut cl = Changelog::load_or_default(&path);
 
     match action {
-        ChangelogAction::Add { id, change_type, scope, description, author, breaking } => {
+        ChangelogAction::Add {
+            id,
+            change_type,
+            scope,
+            description,
+            author,
+            breaking,
+        } => {
             let ct = match change_type.to_lowercase().as_str() {
                 "changed" => ChangeType::Changed,
                 "fixed" => ChangeType::Fixed,
@@ -15303,8 +17782,17 @@ fn cmd_changelog(action: ChangelogAction) -> Result<(), Box<dyn std::error::Erro
             cl.save(&path)?;
             println!("Entry removed: {}", id);
         }
-        ChangelogAction::Tag { version, name, entries, notes } => {
-            let ids: Vec<String> = entries.split(',').filter(|s| !s.is_empty()).map(|s| s.trim().to_string()).collect();
+        ChangelogAction::Tag {
+            version,
+            name,
+            entries,
+            notes,
+        } => {
+            let ids: Vec<String> = entries
+                .split(',')
+                .filter(|s| !s.is_empty())
+                .map(|s| s.trim().to_string())
+                .collect();
             cl.tag_version(&version, &name, ids, notes)?;
             cl.save(&path)?;
             println!("Version tagged: {}", version);
@@ -15362,13 +17850,18 @@ fn cmd_changelog(action: ChangelogAction) -> Result<(), Box<dyn std::error::Erro
 }
 
 fn cmd_flags(action: FlagAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::feature_flags::{FeatureFlagManager, FeatureFlag, FlagStatus2, FlagCategory};
+    use crate::feature_flags::{FeatureFlag, FeatureFlagManager, FlagCategory, FlagStatus2};
     let dir = crate::config::default_data_dir();
     let path = dir.join("feature_flags.json");
     let mut mgr = FeatureFlagManager::load_or_default(&path);
 
     match action {
-        FlagAction::Register { id, name, category, desc } => {
+        FlagAction::Register {
+            id,
+            name,
+            category,
+            desc,
+        } => {
             let cat = match category.to_lowercase().as_str() {
                 "core" => FlagCategory::Core,
                 "beta" => FlagCategory::Beta,
@@ -15424,7 +17917,11 @@ fn cmd_flags(action: FlagAction) -> Result<(), Box<dyn std::error::Error>> {
                 println!("Feature disabled for this user.");
             }
         }
-        FlagAction::Override { flag_id, user_id, enabled } => {
+        FlagAction::Override {
+            flag_id,
+            user_id,
+            enabled,
+        } => {
             mgr.add_override(&flag_id, &user_id, enabled)?;
             mgr.save(&path)?;
             println!("Override set: {}={} for {}", flag_id, enabled, user_id);
@@ -15473,7 +17970,7 @@ fn cmd_flags(action: FlagAction) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn cmd_telemetry(action: TelemetryAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::telemetry::{TelemetryManager, TelemetryLevel};
+    use crate::telemetry::{TelemetryLevel, TelemetryManager};
     let dir = crate::config::default_data_dir();
     let path = dir.join("telemetry.json");
     let mut mgr = TelemetryManager::load_or_default(&path);
@@ -15514,7 +18011,10 @@ fn cmd_telemetry(action: TelemetryAction) -> Result<(), Box<dyn std::error::Erro
                 } else {
                     println!("{}", "Top Commands".bold().cyan());
                     for p in &top {
-                        println!("  {} — {} uses, avg {:.0}ms", p.command, p.count, p.avg_duration_ms);
+                        println!(
+                            "  {} — {} uses, avg {:.0}ms",
+                            p.command, p.count, p.avg_duration_ms
+                        );
                     }
                 }
             });
@@ -15554,13 +18054,19 @@ fn cmd_telemetry(action: TelemetryAction) -> Result<(), Box<dyn std::error::Erro
 }
 
 fn cmd_api(action: ApiAction) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::wallet_api::{WalletApi, ApiEndpoint, HttpMethod, ApiVersion, AuthType};
+    use crate::wallet_api::{ApiEndpoint, ApiVersion, AuthType, HttpMethod, WalletApi};
     let dir = crate::config::default_data_dir();
     let path = dir.join("wallet_api.json");
     let mut api = WalletApi::load_or_default(&path);
 
     match action {
-        ApiAction::Register { id, path: ep_path, method, version, desc } => {
+        ApiAction::Register {
+            id,
+            path: ep_path,
+            method,
+            version,
+            desc,
+        } => {
             let m = match method.to_lowercase().as_str() {
                 "post" => HttpMethod::Post,
                 "put" => HttpMethod::Put,
@@ -15590,8 +18096,15 @@ fn cmd_api(action: ApiAction) -> Result<(), Box<dyn std::error::Error>> {
             api.save(&path)?;
             println!("Endpoint removed: {}", id);
         }
-        ApiAction::CreateKey { key, name, permissions } => {
-            let perms: Vec<String> = permissions.split(',').map(|s| s.trim().to_string()).collect();
+        ApiAction::CreateKey {
+            key,
+            name,
+            permissions,
+        } => {
+            let perms: Vec<String> = permissions
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .collect();
             api.create_api_key(&key, &name, perms, None)?;
             api.save(&path)?;
             println!("API key created: {}", name);
@@ -15609,7 +18122,10 @@ fn cmd_api(action: ApiAction) -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     println!("{}", "Active API Keys".bold().cyan());
                     for k in &keys {
-                        println!("  {} — {} perms={:?} reqs={}", k.key, k.name, k.permissions, k.request_count);
+                        println!(
+                            "  {} — {} perms={:?} reqs={}",
+                            k.key, k.name, k.permissions, k.request_count
+                        );
                     }
                 }
             });
@@ -15640,7 +18156,10 @@ fn cmd_api(action: ApiAction) -> Result<(), Box<dyn std::error::Error>> {
                 println!("{}", "Wallet API Stats".bold().cyan());
                 println!("  Endpoints: {}", stats.total_endpoints);
                 println!("  Requests:  {}", stats.total_requests);
-                println!("  Keys:      {} ({} active)", stats.total_api_keys, stats.active_keys);
+                println!(
+                    "  Keys:      {} ({} active)",
+                    stats.total_api_keys, stats.active_keys
+                );
                 println!("  Avg Resp:  {:.0}ms", stats.avg_response_ms);
             });
         }
@@ -15656,7 +18175,11 @@ fn cmd_harness(action: HarnessAction) -> Result<(), Box<dyn std::error::Error>> 
     let mut harness = crate::test_harness::TestHarness::load_or_default(&path);
 
     match action {
-        HarnessAction::AddFixture { id, name, fixture_type } => {
+        HarnessAction::AddFixture {
+            id,
+            name,
+            fixture_type,
+        } => {
             let ft = match fixture_type.to_lowercase().as_str() {
                 "transaction" | "tx" => crate::test_harness::FixtureType::Transaction,
                 "block" => crate::test_harness::FixtureType::Block,
@@ -15785,9 +18308,15 @@ fn cmd_fuzz(action: FuzzAction) -> Result<(), Box<dyn std::error::Error>> {
             let campaign = fuzzer.start_campaign(&target_id, runs)?;
             let cid = campaign.id.clone();
             fuzzer.save(&path)?;
-            crate::output::json_or(&serde_json::json!({"status":"ok","campaign_id":&cid,"runs":runs}), || {
-                println!("Campaign '{}' started: {} runs against '{}'.", cid, runs, target_id);
-            });
+            crate::output::json_or(
+                &serde_json::json!({"status":"ok","campaign_id":&cid,"runs":runs}),
+                || {
+                    println!(
+                        "Campaign '{}' started: {} runs against '{}'.",
+                        cid, runs, target_id
+                    );
+                },
+            );
         }
         FuzzAction::Failures => {
             let fails = fuzzer.failing_runs();
@@ -15836,7 +18365,13 @@ fn cmd_regression(action: RegressionAction) -> Result<(), Box<dyn std::error::Er
     let mut tracker = crate::regression_tracker::RegressionTracker::load_or_default(&path);
 
     match action {
-        RegressionAction::Report { id, title, severity, module, desc } => {
+        RegressionAction::Report {
+            id,
+            title,
+            severity,
+            module,
+            desc,
+        } => {
             let sev = match severity.to_lowercase().as_str() {
                 "critical" => crate::regression_tracker::IssueSeverity2::Critical,
                 "high" => crate::regression_tracker::IssueSeverity2::High,
@@ -15877,7 +18412,9 @@ fn cmd_regression(action: RegressionAction) -> Result<(), Box<dyn std::error::Er
             });
         }
         RegressionAction::Open => {
-            let open: Vec<_> = tracker.issues.values()
+            let open: Vec<_> = tracker
+                .issues
+                .values()
                 .filter(|i| i.status == crate::regression_tracker::IssueStatus2::Open)
                 .collect();
             crate::output::json_or(&open, || {
@@ -15891,7 +18428,9 @@ fn cmd_regression(action: RegressionAction) -> Result<(), Box<dyn std::error::Er
             });
         }
         RegressionAction::Regressed => {
-            let regressed: Vec<_> = tracker.issues.values()
+            let regressed: Vec<_> = tracker
+                .issues
+                .values()
                 .filter(|i| i.status == crate::regression_tracker::IssueStatus2::Regressed)
                 .collect();
             crate::output::json_or(&regressed, || {
@@ -15940,7 +18479,16 @@ fn cmd_coverage(action: CoverageAction) -> Result<(), Box<dyn std::error::Error>
     let mut tracker = crate::coverage_report::CoverageTracker::load_or_default(&path);
 
     match action {
-        CoverageAction::Add { id, module_name, total_lines, covered_lines, total_functions, covered_functions, total_branches, covered_branches } => {
+        CoverageAction::Add {
+            id,
+            module_name,
+            total_lines,
+            covered_lines,
+            total_functions,
+            covered_functions,
+            total_branches,
+            covered_branches,
+        } => {
             let module = crate::coverage_report::ModuleCoverage {
                 id: id.clone(),
                 module_name,
@@ -15959,7 +18507,12 @@ fn cmd_coverage(action: CoverageAction) -> Result<(), Box<dyn std::error::Error>
                 println!("Module '{}' added.", id);
             });
         }
-        CoverageAction::Update { id, covered_lines, covered_functions, covered_branches } => {
+        CoverageAction::Update {
+            id,
+            covered_lines,
+            covered_functions,
+            covered_branches,
+        } => {
             tracker.update_module(&id, covered_lines, covered_functions, covered_branches)?;
             tracker.save(&path)?;
             crate::output::json_or(&serde_json::json!({"status":"updated","id":&id}), || {
@@ -16028,7 +18581,9 @@ mod tests {
     fn test_parse_account_create() {
         let cli = Cli::parse_from(["wallet", "account", "create", "alice"]);
         match cli.command {
-            Commands::Account { action: AccountAction::Create { name } } => {
+            Commands::Account {
+                action: AccountAction::Create { name },
+            } => {
                 assert_eq!(name, "alice");
             }
             _ => panic!("expected Account Create"),
@@ -16053,7 +18608,9 @@ mod tests {
         let cli = Cli::parse_from(["wallet", "energy", "scan"]);
         assert!(matches!(
             cli.command,
-            Commands::Energy { action: EnergyAction::Scan }
+            Commands::Energy {
+                action: EnergyAction::Scan
+            }
         ));
     }
 
@@ -16062,7 +18619,12 @@ mod tests {
         let cli = Cli::parse_from(["wallet", "stake", "forecast", "1", "50000", "100"]);
         match cli.command {
             Commands::Stake {
-                action: StakeAction::Forecast { pool_id, amount, epochs },
+                action:
+                    StakeAction::Forecast {
+                        pool_id,
+                        amount,
+                        epochs,
+                    },
             } => {
                 assert_eq!(pool_id, 1);
                 assert_eq!(amount, 50000);
@@ -16083,7 +18645,9 @@ mod tests {
         let cli = Cli::parse_from(["wallet", "seed", "generate"]);
         assert!(matches!(
             cli.command,
-            Commands::Seed { action: SeedAction::Generate }
+            Commands::Seed {
+                action: SeedAction::Generate
+            }
         ));
     }
 
@@ -16094,7 +18658,12 @@ mod tests {
         ]);
         match cli.command {
             Commands::Contacts {
-                action: ContactAction::Add { name, address, note },
+                action:
+                    ContactAction::Add {
+                        name,
+                        address,
+                        note,
+                    },
             } => {
                 assert_eq!(name, "alice");
                 assert_eq!(address, "0xabc");
@@ -16122,7 +18691,9 @@ mod tests {
         let cli = Cli::parse_from(["wallet", "gas", "transfer"]);
         assert!(matches!(
             cli.command,
-            Commands::Gas { action: GasAction::Transfer }
+            Commands::Gas {
+                action: GasAction::Transfer
+            }
         ));
     }
 
@@ -16144,7 +18715,9 @@ mod tests {
         let cli = Cli::parse_from(["wallet", "config", "show"]);
         assert!(matches!(
             cli.command,
-            Commands::Config { action: ConfigAction::Show }
+            Commands::Config {
+                action: ConfigAction::Show
+            }
         ));
     }
 
@@ -16165,11 +18738,24 @@ mod tests {
     #[test]
     fn test_parse_offline_sign() {
         let cli = Cli::parse_from([
-            "wallet", "offline", "sign", "0xabcd", "5000", "3", "-f", "my_tx.json",
+            "wallet",
+            "offline",
+            "sign",
+            "0xabcd",
+            "5000",
+            "3",
+            "-f",
+            "my_tx.json",
         ]);
         match cli.command {
             Commands::Offline {
-                action: OfflineAction::Sign { to, amount, nonce, file },
+                action:
+                    OfflineAction::Sign {
+                        to,
+                        amount,
+                        nonce,
+                        file,
+                    },
             } => {
                 assert_eq!(to, "0xabcd");
                 assert_eq!(amount, 5000);
@@ -16198,18 +18784,33 @@ mod tests {
         let cli = Cli::parse_from(["wallet", "offline", "inspect", "tx.json"]);
         assert!(matches!(
             cli.command,
-            Commands::Offline { action: OfflineAction::Inspect { .. } }
+            Commands::Offline {
+                action: OfflineAction::Inspect { .. }
+            }
         ));
     }
 
     #[test]
     fn test_parse_energy_auto_refresh() {
         let cli = Cli::parse_from([
-            "wallet", "energy", "auto-refresh", "--threshold", "15.0", "--interval", "30", "--once",
+            "wallet",
+            "energy",
+            "auto-refresh",
+            "--threshold",
+            "15.0",
+            "--interval",
+            "30",
+            "--once",
         ]);
         match cli.command {
             Commands::Energy {
-                action: EnergyAction::AutoRefresh { threshold, interval, max_energy, once },
+                action:
+                    EnergyAction::AutoRefresh {
+                        threshold,
+                        interval,
+                        max_energy,
+                        once,
+                    },
             } => {
                 assert!((threshold - 15.0).abs() < f64::EPSILON);
                 assert_eq!(interval, 30);
@@ -16236,7 +18837,13 @@ mod tests {
     #[test]
     fn test_parse_offline_sign_refresh() {
         let cli = Cli::parse_from([
-            "wallet", "offline", "sign-refresh", "0xobj123", "500", "-f", "refresh.json",
+            "wallet",
+            "offline",
+            "sign-refresh",
+            "0xobj123",
+            "500",
+            "-f",
+            "refresh.json",
         ]);
         match cli.command {
             Commands::Offline {
@@ -16328,7 +18935,9 @@ mod tests {
         assert!(cli.json);
         assert!(matches!(
             cli.command,
-            Commands::Account { action: AccountAction::List }
+            Commands::Account {
+                action: AccountAction::List
+            }
         ));
     }
 
@@ -16336,7 +18945,9 @@ mod tests {
     fn test_parse_simulate_send() {
         let cli = Cli::parse_from(["wallet", "simulate", "send", "0xabc", "1000"]);
         match cli.command {
-            Commands::Simulate { action: SimulateAction::Send { to, amount } } => {
+            Commands::Simulate {
+                action: SimulateAction::Send { to, amount },
+            } => {
                 assert_eq!(to, "0xabc");
                 assert_eq!(amount, 1000);
             }
@@ -16349,7 +18960,9 @@ mod tests {
         let addr = format!("0x{}", "ab".repeat(32));
         let cli = Cli::parse_from(["wallet", "simulate", "refresh", &addr, "500"]);
         match cli.command {
-            Commands::Simulate { action: SimulateAction::Refresh { id, energy } } => {
+            Commands::Simulate {
+                action: SimulateAction::Refresh { id, energy },
+            } => {
                 assert_eq!(id, addr);
                 assert_eq!(energy, 500);
             }
@@ -16360,14 +18973,21 @@ mod tests {
     #[test]
     fn test_parse_spending_show() {
         let cli = Cli::parse_from(["wallet", "spending", "show"]);
-        assert!(matches!(cli.command, Commands::Spending { action: SpendingAction::Show }));
+        assert!(matches!(
+            cli.command,
+            Commands::Spending {
+                action: SpendingAction::Show
+            }
+        ));
     }
 
     #[test]
     fn test_parse_spending_set_tx_limit() {
         let cli = Cli::parse_from(["wallet", "spending", "set-tx-limit", "10000"]);
         match cli.command {
-            Commands::Spending { action: SpendingAction::SetTxLimit { amount } } => {
+            Commands::Spending {
+                action: SpendingAction::SetTxLimit { amount },
+            } => {
                 assert_eq!(amount, 10000);
             }
             _ => panic!("expected SetTxLimit"),
@@ -16378,7 +18998,9 @@ mod tests {
     fn test_parse_spending_set_mode() {
         let cli = Cli::parse_from(["wallet", "spending", "set-mode", "enforce"]);
         match cli.command {
-            Commands::Spending { action: SpendingAction::SetMode { mode } } => {
+            Commands::Spending {
+                action: SpendingAction::SetMode { mode },
+            } => {
                 assert_eq!(mode, "enforce");
             }
             _ => panic!("expected SetMode"),
@@ -16389,7 +19011,9 @@ mod tests {
     fn test_parse_spending_allow() {
         let cli = Cli::parse_from(["wallet", "spending", "allow", "0xfriend"]);
         match cli.command {
-            Commands::Spending { action: SpendingAction::Allow { address } } => {
+            Commands::Spending {
+                action: SpendingAction::Allow { address },
+            } => {
                 assert_eq!(address, "0xfriend");
             }
             _ => panic!("expected Allow"),
@@ -16400,7 +19024,9 @@ mod tests {
     fn test_parse_spending_block() {
         let cli = Cli::parse_from(["wallet", "spending", "block", "0xenemy"]);
         match cli.command {
-            Commands::Spending { action: SpendingAction::Block { address } } => {
+            Commands::Spending {
+                action: SpendingAction::Block { address },
+            } => {
                 assert_eq!(address, "0xenemy");
             }
             _ => panic!("expected Block"),
@@ -16409,9 +19035,23 @@ mod tests {
 
     #[test]
     fn test_parse_multisig_create_group() {
-        let cli = Cli::parse_from(["wallet", "multisig", "create-group", "treasury", "0xa,0xb,0xc", "2"]);
+        let cli = Cli::parse_from([
+            "wallet",
+            "multisig",
+            "create-group",
+            "treasury",
+            "0xa,0xb,0xc",
+            "2",
+        ]);
         match cli.command {
-            Commands::Multisig { action: MultisigAction::CreateGroup { name, members, threshold } } => {
+            Commands::Multisig {
+                action:
+                    MultisigAction::CreateGroup {
+                        name,
+                        members,
+                        threshold,
+                    },
+            } => {
                 assert_eq!(name, "treasury");
                 assert!(members.contains("0xa"));
                 assert_eq!(threshold, 2);
@@ -16423,14 +19063,29 @@ mod tests {
     #[test]
     fn test_parse_multisig_groups() {
         let cli = Cli::parse_from(["wallet", "multisig", "groups"]);
-        assert!(matches!(cli.command, Commands::Multisig { action: MultisigAction::Groups }));
+        assert!(matches!(
+            cli.command,
+            Commands::Multisig {
+                action: MultisigAction::Groups
+            }
+        ));
     }
 
     #[test]
     fn test_parse_multisig_propose() {
-        let cli = Cli::parse_from(["wallet", "multisig", "propose", "treasury", "0xdest", "5000", "--memo", "monthly"]);
+        let cli = Cli::parse_from([
+            "wallet", "multisig", "propose", "treasury", "0xdest", "5000", "--memo", "monthly",
+        ]);
         match cli.command {
-            Commands::Multisig { action: MultisigAction::Propose { group, to, amount, memo } } => {
+            Commands::Multisig {
+                action:
+                    MultisigAction::Propose {
+                        group,
+                        to,
+                        amount,
+                        memo,
+                    },
+            } => {
                 assert_eq!(group, "treasury");
                 assert_eq!(to, "0xdest");
                 assert_eq!(amount, 5000);
@@ -16444,7 +19099,9 @@ mod tests {
     fn test_parse_multisig_approve() {
         let cli = Cli::parse_from(["wallet", "multisig", "approve", "prop_123"]);
         match cli.command {
-            Commands::Multisig { action: MultisigAction::Approve { id } } => {
+            Commands::Multisig {
+                action: MultisigAction::Approve { id },
+            } => {
                 assert_eq!(id, "prop_123");
             }
             _ => panic!("expected Approve"),
@@ -16454,14 +19111,35 @@ mod tests {
     #[test]
     fn test_parse_hooks_list() {
         let cli = Cli::parse_from(["wallet", "hooks", "list"]);
-        assert!(matches!(cli.command, Commands::Hooks { action: HooksAction::List }));
+        assert!(matches!(
+            cli.command,
+            Commands::Hooks {
+                action: HooksAction::List
+            }
+        ));
     }
 
     #[test]
     fn test_parse_hooks_add_shell() {
-        let cli = Cli::parse_from(["wallet", "hooks", "add-shell", "notify", "post_send", "echo done", "--blocking"]);
+        let cli = Cli::parse_from([
+            "wallet",
+            "hooks",
+            "add-shell",
+            "notify",
+            "post_send",
+            "echo done",
+            "--blocking",
+        ]);
         match cli.command {
-            Commands::Hooks { action: HooksAction::AddShell { name, event, command, blocking } } => {
+            Commands::Hooks {
+                action:
+                    HooksAction::AddShell {
+                        name,
+                        event,
+                        command,
+                        blocking,
+                    },
+            } => {
                 assert_eq!(name, "notify");
                 assert_eq!(event, "post_send");
                 assert_eq!(command, "echo done");
@@ -16473,9 +19151,24 @@ mod tests {
 
     #[test]
     fn test_parse_hooks_add_log() {
-        let cli = Cli::parse_from(["wallet", "hooks", "add-log", "logger", "on_error", "/tmp/err.log"]);
+        let cli = Cli::parse_from([
+            "wallet",
+            "hooks",
+            "add-log",
+            "logger",
+            "on_error",
+            "/tmp/err.log",
+        ]);
         match cli.command {
-            Commands::Hooks { action: HooksAction::AddLog { name, event, file, format } } => {
+            Commands::Hooks {
+                action:
+                    HooksAction::AddLog {
+                        name,
+                        event,
+                        file,
+                        format,
+                    },
+            } => {
                 assert_eq!(name, "logger");
                 assert_eq!(event, "on_error");
                 assert_eq!(file, "/tmp/err.log");
@@ -16489,7 +19182,9 @@ mod tests {
     fn test_parse_hooks_remove() {
         let cli = Cli::parse_from(["wallet", "hooks", "remove", "old_hook"]);
         match cli.command {
-            Commands::Hooks { action: HooksAction::Remove { name } } => {
+            Commands::Hooks {
+                action: HooksAction::Remove { name },
+            } => {
                 assert_eq!(name, "old_hook");
             }
             _ => panic!("expected Remove"),
@@ -16500,7 +19195,9 @@ mod tests {
     fn test_parse_hooks_enable() {
         let cli = Cli::parse_from(["wallet", "hooks", "enable", "my_hook"]);
         match cli.command {
-            Commands::Hooks { action: HooksAction::Enable { name } } => {
+            Commands::Hooks {
+                action: HooksAction::Enable { name },
+            } => {
                 assert_eq!(name, "my_hook");
             }
             _ => panic!("expected Enable"),
@@ -16511,7 +19208,9 @@ mod tests {
     fn test_parse_hooks_disable() {
         let cli = Cli::parse_from(["wallet", "hooks", "disable", "my_hook"]);
         match cli.command {
-            Commands::Hooks { action: HooksAction::Disable { name } } => {
+            Commands::Hooks {
+                action: HooksAction::Disable { name },
+            } => {
                 assert_eq!(name, "my_hook");
             }
             _ => panic!("expected Disable"),
@@ -16522,9 +19221,28 @@ mod tests {
 
     #[test]
     fn test_parse_labels_add() {
-        let cli = Cli::parse_from(["wallet", "labels", "add", "0xabc", "Binance", "--category", "exchange", "--tags", "cex,hot"]);
+        let cli = Cli::parse_from([
+            "wallet",
+            "labels",
+            "add",
+            "0xabc",
+            "Binance",
+            "--category",
+            "exchange",
+            "--tags",
+            "cex,hot",
+        ]);
         match cli.command {
-            Commands::Labels { action: LabelsAction::Add { address, name, category, tags, .. } } => {
+            Commands::Labels {
+                action:
+                    LabelsAction::Add {
+                        address,
+                        name,
+                        category,
+                        tags,
+                        ..
+                    },
+            } => {
                 assert_eq!(address, "0xabc");
                 assert_eq!(name, "Binance");
                 assert_eq!(category, "exchange");
@@ -16537,14 +19255,21 @@ mod tests {
     #[test]
     fn test_parse_labels_list() {
         let cli = Cli::parse_from(["wallet", "labels", "list"]);
-        assert!(matches!(cli.command, Commands::Labels { action: LabelsAction::List }));
+        assert!(matches!(
+            cli.command,
+            Commands::Labels {
+                action: LabelsAction::List
+            }
+        ));
     }
 
     #[test]
     fn test_parse_labels_search() {
         let cli = Cli::parse_from(["wallet", "labels", "search", "binance"]);
         match cli.command {
-            Commands::Labels { action: LabelsAction::Search { query } } => {
+            Commands::Labels {
+                action: LabelsAction::Search { query },
+            } => {
                 assert_eq!(query, "binance");
             }
             _ => panic!("expected Labels Search"),
@@ -16553,9 +19278,19 @@ mod tests {
 
     #[test]
     fn test_parse_labels_annotate() {
-        let cli = Cli::parse_from(["wallet", "labels", "annotate", "0xhash", "--note", "salary", "--tags", "income"]);
+        let cli = Cli::parse_from([
+            "wallet", "labels", "annotate", "0xhash", "--note", "salary", "--tags", "income",
+        ]);
         match cli.command {
-            Commands::Labels { action: LabelsAction::Annotate { tx_hash, note, tags, .. } } => {
+            Commands::Labels {
+                action:
+                    LabelsAction::Annotate {
+                        tx_hash,
+                        note,
+                        tags,
+                        ..
+                    },
+            } => {
                 assert_eq!(tx_hash, "0xhash");
                 assert_eq!(note.as_deref(), Some("salary"));
                 assert!(tags.unwrap().contains("income"));
@@ -16569,26 +19304,43 @@ mod tests {
     #[test]
     fn test_parse_fees_stats() {
         let cli = Cli::parse_from(["wallet", "fees", "stats"]);
-        assert!(matches!(cli.command, Commands::Fees { action: FeesAction::Stats }));
+        assert!(matches!(
+            cli.command,
+            Commands::Fees {
+                action: FeesAction::Stats
+            }
+        ));
     }
 
     #[test]
     fn test_parse_fees_timing() {
         let cli = Cli::parse_from(["wallet", "fees", "timing"]);
-        assert!(matches!(cli.command, Commands::Fees { action: FeesAction::Timing }));
+        assert!(matches!(
+            cli.command,
+            Commands::Fees {
+                action: FeesAction::Timing
+            }
+        ));
     }
 
     #[test]
     fn test_parse_fees_record() {
         let cli = Cli::parse_from(["wallet", "fees", "record"]);
-        assert!(matches!(cli.command, Commands::Fees { action: FeesAction::Record }));
+        assert!(matches!(
+            cli.command,
+            Commands::Fees {
+                action: FeesAction::Record
+            }
+        ));
     }
 
     #[test]
     fn test_parse_fees_alert() {
         let cli = Cli::parse_from(["wallet", "fees", "alert", "cheap", "50"]);
         match cli.command {
-            Commands::Fees { action: FeesAction::Alert { name, target } } => {
+            Commands::Fees {
+                action: FeesAction::Alert { name, target },
+            } => {
                 assert_eq!(name, "cheap");
                 assert_eq!(target, 50);
             }
@@ -16601,14 +19353,21 @@ mod tests {
     #[test]
     fn test_parse_hardware_list() {
         let cli = Cli::parse_from(["wallet", "hardware", "list"]);
-        assert!(matches!(cli.command, Commands::Hardware { action: HardwareAction::List }));
+        assert!(matches!(
+            cli.command,
+            Commands::Hardware {
+                action: HardwareAction::List
+            }
+        ));
     }
 
     #[test]
     fn test_parse_hardware_add_simulated() {
         let cli = Cli::parse_from(["wallet", "hardware", "add-simulated", "my-ledger"]);
         match cli.command {
-            Commands::Hardware { action: HardwareAction::AddSimulated { name } } => {
+            Commands::Hardware {
+                action: HardwareAction::AddSimulated { name },
+            } => {
                 assert_eq!(name, "my-ledger");
             }
             _ => panic!("expected AddSimulated"),
@@ -16619,7 +19378,9 @@ mod tests {
     fn test_parse_hardware_info() {
         let cli = Cli::parse_from(["wallet", "hardware", "info", "sim_abc"]);
         match cli.command {
-            Commands::Hardware { action: HardwareAction::Info { id } } => {
+            Commands::Hardware {
+                action: HardwareAction::Info { id },
+            } => {
                 assert_eq!(id, "sim_abc");
             }
             _ => panic!("expected Info"),
@@ -16631,14 +19392,36 @@ mod tests {
     #[test]
     fn test_parse_dapp_sessions() {
         let cli = Cli::parse_from(["wallet", "dapp", "sessions"]);
-        assert!(matches!(cli.command, Commands::Dapp { action: DappAction::Sessions }));
+        assert!(matches!(
+            cli.command,
+            Commands::Dapp {
+                action: DappAction::Sessions
+            }
+        ));
     }
 
     #[test]
     fn test_parse_dapp_connect() {
-        let cli = Cli::parse_from(["wallet", "dapp", "connect", "https://swap.io", "Swap", "view_account,request_sign", "--hours", "48"]);
+        let cli = Cli::parse_from([
+            "wallet",
+            "dapp",
+            "connect",
+            "https://swap.io",
+            "Swap",
+            "view_account,request_sign",
+            "--hours",
+            "48",
+        ]);
         match cli.command {
-            Commands::Dapp { action: DappAction::Connect { origin, name, permissions, hours } } => {
+            Commands::Dapp {
+                action:
+                    DappAction::Connect {
+                        origin,
+                        name,
+                        permissions,
+                        hours,
+                    },
+            } => {
                 assert_eq!(origin, "https://swap.io");
                 assert_eq!(name, "Swap");
                 assert!(permissions.contains("view_account"));
@@ -16652,7 +19435,9 @@ mod tests {
     fn test_parse_dapp_revoke() {
         let cli = Cli::parse_from(["wallet", "dapp", "revoke", "sess_123"]);
         match cli.command {
-            Commands::Dapp { action: DappAction::Revoke { id } } => {
+            Commands::Dapp {
+                action: DappAction::Revoke { id },
+            } => {
                 assert_eq!(id, "sess_123");
             }
             _ => panic!("expected Revoke"),
@@ -16663,7 +19448,9 @@ mod tests {
     fn test_parse_dapp_revoke_origin() {
         let cli = Cli::parse_from(["wallet", "dapp", "revoke-origin", "https://bad.io"]);
         match cli.command {
-            Commands::Dapp { action: DappAction::RevokeOrigin { origin } } => {
+            Commands::Dapp {
+                action: DappAction::RevokeOrigin { origin },
+            } => {
                 assert_eq!(origin, "https://bad.io");
             }
             _ => panic!("expected RevokeOrigin"),
@@ -16675,14 +19462,21 @@ mod tests {
     #[test]
     fn test_parse_notifications_unread() {
         let cli = Cli::parse_from(["wallet", "notifications", "unread"]);
-        assert!(matches!(cli.command, Commands::Notifications { action: NotificationsAction::Unread }));
+        assert!(matches!(
+            cli.command,
+            Commands::Notifications {
+                action: NotificationsAction::Unread
+            }
+        ));
     }
 
     #[test]
     fn test_parse_notifications_recent() {
         let cli = Cli::parse_from(["wallet", "notifications", "recent", "--limit", "5"]);
         match cli.command {
-            Commands::Notifications { action: NotificationsAction::Recent { limit } } => {
+            Commands::Notifications {
+                action: NotificationsAction::Recent { limit },
+            } => {
                 assert_eq!(limit, 5);
             }
             _ => panic!("expected Recent"),
@@ -16693,7 +19487,9 @@ mod tests {
     fn test_parse_notifications_filter() {
         let cli = Cli::parse_from(["wallet", "notifications", "filter", "energy_decay"]);
         match cli.command {
-            Commands::Notifications { action: NotificationsAction::Filter { category } } => {
+            Commands::Notifications {
+                action: NotificationsAction::Filter { category },
+            } => {
                 assert_eq!(category, "energy_decay");
             }
             _ => panic!("expected Filter"),
@@ -16703,7 +19499,12 @@ mod tests {
     #[test]
     fn test_parse_notifications_count() {
         let cli = Cli::parse_from(["wallet", "notifications", "count"]);
-        assert!(matches!(cli.command, Commands::Notifications { action: NotificationsAction::Count }));
+        assert!(matches!(
+            cli.command,
+            Commands::Notifications {
+                action: NotificationsAction::Count
+            }
+        ));
     }
 
     // ── Session Keys tests ──
@@ -16711,14 +19512,36 @@ mod tests {
     #[test]
     fn test_parse_session_keys_list() {
         let cli = Cli::parse_from(["wallet", "session-keys", "list"]);
-        assert!(matches!(cli.command, Commands::SessionKeys { action: SessionKeysAction::List }));
+        assert!(matches!(
+            cli.command,
+            Commands::SessionKeys {
+                action: SessionKeysAction::List
+            }
+        ));
     }
 
     #[test]
     fn test_parse_session_keys_create() {
-        let cli = Cli::parse_from(["wallet", "session-keys", "create", "my-dapp", "--max-per-tx", "5000", "--hours", "48"]);
+        let cli = Cli::parse_from([
+            "wallet",
+            "session-keys",
+            "create",
+            "my-dapp",
+            "--max-per-tx",
+            "5000",
+            "--hours",
+            "48",
+        ]);
         match cli.command {
-            Commands::SessionKeys { action: SessionKeysAction::Create { label, max_per_tx, hours, .. } } => {
+            Commands::SessionKeys {
+                action:
+                    SessionKeysAction::Create {
+                        label,
+                        max_per_tx,
+                        hours,
+                        ..
+                    },
+            } => {
                 assert_eq!(label, "my-dapp");
                 assert_eq!(max_per_tx, 5000);
                 assert_eq!(hours, 48);
@@ -16731,7 +19554,9 @@ mod tests {
     fn test_parse_session_keys_revoke() {
         let cli = Cli::parse_from(["wallet", "session-keys", "revoke", "sk_123"]);
         match cli.command {
-            Commands::SessionKeys { action: SessionKeysAction::Revoke { id } } => {
+            Commands::SessionKeys {
+                action: SessionKeysAction::Revoke { id },
+            } => {
                 assert_eq!(id, "sk_123");
             }
             _ => panic!("expected Revoke"),
@@ -16740,9 +19565,22 @@ mod tests {
 
     #[test]
     fn test_parse_session_keys_setup_recovery() {
-        let cli = Cli::parse_from(["wallet", "session-keys", "setup-recovery", "3", "--delay-hours", "72"]);
+        let cli = Cli::parse_from([
+            "wallet",
+            "session-keys",
+            "setup-recovery",
+            "3",
+            "--delay-hours",
+            "72",
+        ]);
         match cli.command {
-            Commands::SessionKeys { action: SessionKeysAction::SetupRecovery { threshold, delay_hours } } => {
+            Commands::SessionKeys {
+                action:
+                    SessionKeysAction::SetupRecovery {
+                        threshold,
+                        delay_hours,
+                    },
+            } => {
                 assert_eq!(threshold, 3);
                 assert_eq!(delay_hours, 72);
             }
@@ -16755,14 +19593,21 @@ mod tests {
     #[test]
     fn test_parse_bridge_list() {
         let cli = Cli::parse_from(["wallet", "bridge", "list"]);
-        assert!(matches!(cli.command, Commands::Bridge { action: BridgeAction::List }));
+        assert!(matches!(
+            cli.command,
+            Commands::Bridge {
+                action: BridgeAction::List
+            }
+        ));
     }
 
     #[test]
     fn test_parse_bridge_find() {
         let cli = Cli::parse_from(["wallet", "bridge", "find", "evaporchain", "ethereum"]);
         match cli.command {
-            Commands::Bridge { action: BridgeAction::Find { source, dest } } => {
+            Commands::Bridge {
+                action: BridgeAction::Find { source, dest },
+            } => {
                 assert_eq!(source, "evaporchain");
                 assert_eq!(dest, "ethereum");
             }
@@ -16773,14 +19618,37 @@ mod tests {
     #[test]
     fn test_parse_bridge_pending() {
         let cli = Cli::parse_from(["wallet", "bridge", "pending"]);
-        assert!(matches!(cli.command, Commands::Bridge { action: BridgeAction::Pending }));
+        assert!(matches!(
+            cli.command,
+            Commands::Bridge {
+                action: BridgeAction::Pending
+            }
+        ));
     }
 
     #[test]
     fn test_parse_bridge_transfer() {
-        let cli = Cli::parse_from(["wallet", "bridge", "transfer", "br_abc", "EVAP", "1000", "0xsender", "0xrecipient"]);
+        let cli = Cli::parse_from([
+            "wallet",
+            "bridge",
+            "transfer",
+            "br_abc",
+            "EVAP",
+            "1000",
+            "0xsender",
+            "0xrecipient",
+        ]);
         match cli.command {
-            Commands::Bridge { action: BridgeAction::Transfer { bridge_id, token, amount, sender, recipient } } => {
+            Commands::Bridge {
+                action:
+                    BridgeAction::Transfer {
+                        bridge_id,
+                        token,
+                        amount,
+                        sender,
+                        recipient,
+                    },
+            } => {
                 assert_eq!(bridge_id, "br_abc");
                 assert_eq!(token, "EVAP");
                 assert_eq!(amount, 1000);
@@ -16796,14 +19664,21 @@ mod tests {
     #[test]
     fn test_parse_lang_show() {
         let cli = Cli::parse_from(["wallet", "lang", "show"]);
-        assert!(matches!(cli.command, Commands::Lang { action: LangAction::Show }));
+        assert!(matches!(
+            cli.command,
+            Commands::Lang {
+                action: LangAction::Show
+            }
+        ));
     }
 
     #[test]
     fn test_parse_lang_set() {
         let cli = Cli::parse_from(["wallet", "lang", "set", "es"]);
         match cli.command {
-            Commands::Lang { action: LangAction::Set { locale } } => {
+            Commands::Lang {
+                action: LangAction::Set { locale },
+            } => {
                 assert_eq!(locale, "es");
             }
             _ => panic!("expected Set"),
@@ -16813,14 +19688,21 @@ mod tests {
     #[test]
     fn test_parse_lang_list() {
         let cli = Cli::parse_from(["wallet", "lang", "list"]);
-        assert!(matches!(cli.command, Commands::Lang { action: LangAction::List }));
+        assert!(matches!(
+            cli.command,
+            Commands::Lang {
+                action: LangAction::List
+            }
+        ));
     }
 
     #[test]
     fn test_parse_lang_test() {
         let cli = Cli::parse_from(["wallet", "lang", "test", "success"]);
         match cli.command {
-            Commands::Lang { action: LangAction::Test { key } } => {
+            Commands::Lang {
+                action: LangAction::Test { key },
+            } => {
                 assert_eq!(key, "success");
             }
             _ => panic!("expected Test"),
@@ -16832,14 +19714,36 @@ mod tests {
     #[test]
     fn test_parse_templates_list() {
         let cli = Cli::parse_from(["wallet", "templates", "list"]);
-        assert!(matches!(cli.command, Commands::Templates { action: TemplatesAction::List }));
+        assert!(matches!(
+            cli.command,
+            Commands::Templates {
+                action: TemplatesAction::List
+            }
+        ));
     }
 
     #[test]
     fn test_parse_templates_create_transfer() {
-        let cli = Cli::parse_from(["wallet", "templates", "create-transfer", "rent", "0xlandlord", "5000", "--frequency", "monthly"]);
+        let cli = Cli::parse_from([
+            "wallet",
+            "templates",
+            "create-transfer",
+            "rent",
+            "0xlandlord",
+            "5000",
+            "--frequency",
+            "monthly",
+        ]);
         match cli.command {
-            Commands::Templates { action: TemplatesAction::CreateTransfer { name, to, amount, frequency } } => {
+            Commands::Templates {
+                action:
+                    TemplatesAction::CreateTransfer {
+                        name,
+                        to,
+                        amount,
+                        frequency,
+                    },
+            } => {
                 assert_eq!(name, "rent");
                 assert_eq!(to, "0xlandlord");
                 assert_eq!(amount, 5000);
@@ -16852,14 +19756,21 @@ mod tests {
     #[test]
     fn test_parse_templates_due() {
         let cli = Cli::parse_from(["wallet", "templates", "due"]);
-        assert!(matches!(cli.command, Commands::Templates { action: TemplatesAction::Due }));
+        assert!(matches!(
+            cli.command,
+            Commands::Templates {
+                action: TemplatesAction::Due
+            }
+        ));
     }
 
     #[test]
     fn test_parse_templates_execute() {
         let cli = Cli::parse_from(["wallet", "templates", "execute", "rent"]);
         match cli.command {
-            Commands::Templates { action: TemplatesAction::Execute { name } } => {
+            Commands::Templates {
+                action: TemplatesAction::Execute { name },
+            } => {
                 assert_eq!(name, "rent");
             }
             _ => panic!("expected Execute"),
@@ -16872,7 +19783,9 @@ mod tests {
     fn test_parse_analytics_summary() {
         let cli = Cli::parse_from(["wallet", "analytics", "summary", "month"]);
         match cli.command {
-            Commands::Analytics { action: AnalyticsAction::Summary { period } } => {
+            Commands::Analytics {
+                action: AnalyticsAction::Summary { period },
+            } => {
                 assert_eq!(period, "month");
             }
             _ => panic!("expected Summary"),
@@ -16882,14 +19795,21 @@ mod tests {
     #[test]
     fn test_parse_analytics_breakdown() {
         let cli = Cli::parse_from(["wallet", "analytics", "breakdown"]);
-        assert!(matches!(cli.command, Commands::Analytics { action: AnalyticsAction::Breakdown { .. } }));
+        assert!(matches!(
+            cli.command,
+            Commands::Analytics {
+                action: AnalyticsAction::Breakdown { .. }
+            }
+        ));
     }
 
     #[test]
     fn test_parse_analytics_trend() {
         let cli = Cli::parse_from(["wallet", "analytics", "trend", "week"]);
         match cli.command {
-            Commands::Analytics { action: AnalyticsAction::Trend { period } } => {
+            Commands::Analytics {
+                action: AnalyticsAction::Trend { period },
+            } => {
                 assert_eq!(period, "week");
             }
             _ => panic!("expected Trend"),
@@ -16898,9 +19818,26 @@ mod tests {
 
     #[test]
     fn test_parse_analytics_record() {
-        let cli = Cli::parse_from(["wallet", "analytics", "record", "transfer_out", "1000", "49000", "--reference", "tx_abc"]);
+        let cli = Cli::parse_from([
+            "wallet",
+            "analytics",
+            "record",
+            "transfer_out",
+            "1000",
+            "49000",
+            "--reference",
+            "tx_abc",
+        ]);
         match cli.command {
-            Commands::Analytics { action: AnalyticsAction::Record { event, amount, balance, reference } } => {
+            Commands::Analytics {
+                action:
+                    AnalyticsAction::Record {
+                        event,
+                        amount,
+                        balance,
+                        reference,
+                    },
+            } => {
                 assert_eq!(event, "transfer_out");
                 assert_eq!(amount, 1000);
                 assert_eq!(balance, 49000);
@@ -16916,7 +19853,9 @@ mod tests {
     fn test_parse_reputation_check() {
         let cli = Cli::parse_from(["wallet", "reputation", "check", "0xsuspect"]);
         match cli.command {
-            Commands::Reputation { action: ReputationAction::Check { address } } => {
+            Commands::Reputation {
+                action: ReputationAction::Check { address },
+            } => {
                 assert_eq!(address, "0xsuspect");
             }
             _ => panic!("expected Check"),
@@ -16925,9 +19864,24 @@ mod tests {
 
     #[test]
     fn test_parse_reputation_flag() {
-        let cli = Cli::parse_from(["wallet", "reputation", "flag", "0xbad", "scam", "--note", "reported"]);
+        let cli = Cli::parse_from([
+            "wallet",
+            "reputation",
+            "flag",
+            "0xbad",
+            "scam",
+            "--note",
+            "reported",
+        ]);
         match cli.command {
-            Commands::Reputation { action: ReputationAction::Flag { address, flag, note } } => {
+            Commands::Reputation {
+                action:
+                    ReputationAction::Flag {
+                        address,
+                        flag,
+                        note,
+                    },
+            } => {
                 assert_eq!(address, "0xbad");
                 assert_eq!(flag, "scam");
                 assert_eq!(note.as_deref(), Some("reported"));
@@ -16938,9 +19892,18 @@ mod tests {
 
     #[test]
     fn test_parse_reputation_verify() {
-        let cli = Cli::parse_from(["wallet", "reputation", "verify", "0xgood", "--label", "My Exchange"]);
+        let cli = Cli::parse_from([
+            "wallet",
+            "reputation",
+            "verify",
+            "0xgood",
+            "--label",
+            "My Exchange",
+        ]);
         match cli.command {
-            Commands::Reputation { action: ReputationAction::Verify { address, label } } => {
+            Commands::Reputation {
+                action: ReputationAction::Verify { address, label },
+            } => {
                 assert_eq!(address, "0xgood");
                 assert_eq!(label.as_deref(), Some("My Exchange"));
             }
@@ -16951,7 +19914,12 @@ mod tests {
     #[test]
     fn test_parse_reputation_dangerous() {
         let cli = Cli::parse_from(["wallet", "reputation", "dangerous"]);
-        assert!(matches!(cli.command, Commands::Reputation { action: ReputationAction::Dangerous }));
+        assert!(matches!(
+            cli.command,
+            Commands::Reputation {
+                action: ReputationAction::Dangerous
+            }
+        ));
     }
 
     // ── Watchtower tests ──
@@ -16959,14 +19927,36 @@ mod tests {
     #[test]
     fn test_parse_watchtower_list() {
         let cli = Cli::parse_from(["wallet", "watchtower", "list"]);
-        assert!(matches!(cli.command, Commands::Watchtower { action: WatchtowerAction::List }));
+        assert!(matches!(
+            cli.command,
+            Commands::Watchtower {
+                action: WatchtowerAction::List
+            }
+        ));
     }
 
     #[test]
     fn test_parse_watchtower_watch_balance() {
-        let cli = Cli::parse_from(["wallet", "watchtower", "watch-balance", "low-bal", "0xaddr", "1000", "--interval", "30"]);
+        let cli = Cli::parse_from([
+            "wallet",
+            "watchtower",
+            "watch-balance",
+            "low-bal",
+            "0xaddr",
+            "1000",
+            "--interval",
+            "30",
+        ]);
         match cli.command {
-            Commands::Watchtower { action: WatchtowerAction::WatchBalance { name, address, threshold, interval } } => {
+            Commands::Watchtower {
+                action:
+                    WatchtowerAction::WatchBalance {
+                        name,
+                        address,
+                        threshold,
+                        interval,
+                    },
+            } => {
                 assert_eq!(name, "low-bal");
                 assert_eq!(address, "0xaddr");
                 assert_eq!(threshold, 1000.0);
@@ -16978,9 +19968,27 @@ mod tests {
 
     #[test]
     fn test_parse_watchtower_watch_energy() {
-        let cli = Cli::parse_from(["wallet", "watchtower", "watch-energy", "nft-watch", "obj_42", "10", "--auto-refresh", "5000"]);
+        let cli = Cli::parse_from([
+            "wallet",
+            "watchtower",
+            "watch-energy",
+            "nft-watch",
+            "obj_42",
+            "10",
+            "--auto-refresh",
+            "5000",
+        ]);
         match cli.command {
-            Commands::Watchtower { action: WatchtowerAction::WatchEnergy { name, object_id, threshold, auto_refresh, .. } } => {
+            Commands::Watchtower {
+                action:
+                    WatchtowerAction::WatchEnergy {
+                        name,
+                        object_id,
+                        threshold,
+                        auto_refresh,
+                        ..
+                    },
+            } => {
                 assert_eq!(name, "nft-watch");
                 assert_eq!(object_id, "obj_42");
                 assert_eq!(threshold, 10.0);
@@ -16993,14 +20001,21 @@ mod tests {
     #[test]
     fn test_parse_watchtower_status() {
         let cli = Cli::parse_from(["wallet", "watchtower", "status"]);
-        assert!(matches!(cli.command, Commands::Watchtower { action: WatchtowerAction::Status }));
+        assert!(matches!(
+            cli.command,
+            Commands::Watchtower {
+                action: WatchtowerAction::Status
+            }
+        ));
     }
 
     #[test]
     fn test_parse_watchtower_alerts() {
         let cli = Cli::parse_from(["wallet", "watchtower", "alerts", "--limit", "5"]);
         match cli.command {
-            Commands::Watchtower { action: WatchtowerAction::Alerts { limit } } => {
+            Commands::Watchtower {
+                action: WatchtowerAction::Alerts { limit },
+            } => {
                 assert_eq!(limit, 5);
             }
             _ => panic!("expected Alerts"),
@@ -17013,7 +20028,9 @@ mod tests {
     fn test_parse_audit_recent() {
         let cli = Cli::parse_from(["wallet", "audit", "recent", "--limit", "10"]);
         match cli.command {
-            Commands::Audit { action: AuditAction2::Recent { limit } } => assert_eq!(limit, 10),
+            Commands::Audit {
+                action: AuditAction2::Recent { limit },
+            } => assert_eq!(limit, 10),
             _ => panic!("expected Recent"),
         }
     }
@@ -17021,14 +20038,21 @@ mod tests {
     #[test]
     fn test_parse_audit_verify() {
         let cli = Cli::parse_from(["wallet", "audit", "verify"]);
-        assert!(matches!(cli.command, Commands::Audit { action: AuditAction2::Verify }));
+        assert!(matches!(
+            cli.command,
+            Commands::Audit {
+                action: AuditAction2::Verify
+            }
+        ));
     }
 
     #[test]
     fn test_parse_audit_search() {
         let cli = Cli::parse_from(["wallet", "audit", "search", "transfer"]);
         match cli.command {
-            Commands::Audit { action: AuditAction2::Search { query } } => assert_eq!(query, "transfer"),
+            Commands::Audit {
+                action: AuditAction2::Search { query },
+            } => assert_eq!(query, "transfer"),
             _ => panic!("expected Search"),
         }
     }
@@ -17037,9 +20061,19 @@ mod tests {
 
     #[test]
     fn test_parse_tax_acquire() {
-        let cli = Cli::parse_from(["wallet", "tax", "acquire", "1000", "1.5", "--source", "purchase"]);
+        let cli = Cli::parse_from([
+            "wallet", "tax", "acquire", "1000", "1.5", "--source", "purchase",
+        ]);
         match cli.command {
-            Commands::Tax { action: TaxAction::Acquire { amount, cost, source, .. } } => {
+            Commands::Tax {
+                action:
+                    TaxAction::Acquire {
+                        amount,
+                        cost,
+                        source,
+                        ..
+                    },
+            } => {
                 assert_eq!(amount, 1000);
                 assert_eq!(cost, 1.5);
                 assert_eq!(source, "purchase");
@@ -17052,7 +20086,12 @@ mod tests {
     fn test_parse_tax_dispose() {
         let cli = Cli::parse_from(["wallet", "tax", "dispose", "500", "3.0"]);
         match cli.command {
-            Commands::Tax { action: TaxAction::Dispose { amount, proceeds, .. } } => {
+            Commands::Tax {
+                action:
+                    TaxAction::Dispose {
+                        amount, proceeds, ..
+                    },
+            } => {
                 assert_eq!(amount, 500);
                 assert_eq!(proceeds, 3.0);
             }
@@ -17064,7 +20103,9 @@ mod tests {
     fn test_parse_tax_summary() {
         let cli = Cli::parse_from(["wallet", "tax", "summary", "2025"]);
         match cli.command {
-            Commands::Tax { action: TaxAction::Summary { year } } => assert_eq!(year, 2025),
+            Commands::Tax {
+                action: TaxAction::Summary { year },
+            } => assert_eq!(year, 2025),
             _ => panic!("expected Summary"),
         }
     }
@@ -17072,7 +20113,12 @@ mod tests {
     #[test]
     fn test_parse_tax_lots() {
         let cli = Cli::parse_from(["wallet", "tax", "lots"]);
-        assert!(matches!(cli.command, Commands::Tax { action: TaxAction::Lots }));
+        assert!(matches!(
+            cli.command,
+            Commands::Tax {
+                action: TaxAction::Lots
+            }
+        ));
     }
 
     // ── Policy tests ──
@@ -17080,14 +20126,34 @@ mod tests {
     #[test]
     fn test_parse_policy_list() {
         let cli = Cli::parse_from(["wallet", "policy", "list"]);
-        assert!(matches!(cli.command, Commands::Policy { action: PolicyAction::List }));
+        assert!(matches!(
+            cli.command,
+            Commands::Policy {
+                action: PolicyAction::List
+            }
+        ));
     }
 
     #[test]
     fn test_parse_policy_add_max() {
-        let cli = Cli::parse_from(["wallet", "policy", "add-max-amount", "big-tx", "10000", "--enforcement", "warn"]);
+        let cli = Cli::parse_from([
+            "wallet",
+            "policy",
+            "add-max-amount",
+            "big-tx",
+            "10000",
+            "--enforcement",
+            "warn",
+        ]);
         match cli.command {
-            Commands::Policy { action: PolicyAction::AddMaxAmount { name, max, enforcement } } => {
+            Commands::Policy {
+                action:
+                    PolicyAction::AddMaxAmount {
+                        name,
+                        max,
+                        enforcement,
+                    },
+            } => {
                 assert_eq!(name, "big-tx");
                 assert_eq!(max, 10000);
                 assert_eq!(enforcement, "warn");
@@ -17100,7 +20166,9 @@ mod tests {
     fn test_parse_policy_test() {
         let cli = Cli::parse_from(["wallet", "policy", "test", "0xrecipient", "5000"]);
         match cli.command {
-            Commands::Policy { action: PolicyAction::Test { to, amount } } => {
+            Commands::Policy {
+                action: PolicyAction::Test { to, amount },
+            } => {
                 assert_eq!(to, "0xrecipient");
                 assert_eq!(amount, 5000);
             }
@@ -17112,7 +20180,15 @@ mod tests {
     fn test_parse_policy_add_timelock() {
         let cli = Cli::parse_from(["wallet", "policy", "add-timelock", "nighttime", "22", "6"]);
         match cli.command {
-            Commands::Policy { action: PolicyAction::AddTimelock { name, deny_after, deny_before, .. } } => {
+            Commands::Policy {
+                action:
+                    PolicyAction::AddTimelock {
+                        name,
+                        deny_after,
+                        deny_before,
+                        ..
+                    },
+            } => {
                 assert_eq!(name, "nighttime");
                 assert_eq!(deny_after, 22);
                 assert_eq!(deny_before, 6);
@@ -17127,7 +20203,9 @@ mod tests {
     fn test_parse_export_history() {
         let cli = Cli::parse_from(["wallet", "export", "history", "output.csv"]);
         match cli.command {
-            Commands::Export { action: ExportAction::History { file } } => {
+            Commands::Export {
+                action: ExportAction::History { file },
+            } => {
                 assert_eq!(file.to_string_lossy(), "output.csv");
             }
             _ => panic!("expected History"),
@@ -17138,7 +20216,9 @@ mod tests {
     fn test_parse_export_dump() {
         let cli = Cli::parse_from(["wallet", "export", "dump", "state.json"]);
         match cli.command {
-            Commands::Export { action: ExportAction::Dump { file } } => {
+            Commands::Export {
+                action: ExportAction::Dump { file },
+            } => {
                 assert_eq!(file.to_string_lossy(), "state.json");
             }
             _ => panic!("expected Dump"),
@@ -17149,7 +20229,9 @@ mod tests {
     fn test_parse_export_summary() {
         let cli = Cli::parse_from(["wallet", "export", "summary", "account.txt"]);
         match cli.command {
-            Commands::Export { action: ExportAction::Summary { file } } => {
+            Commands::Export {
+                action: ExportAction::Summary { file },
+            } => {
                 assert_eq!(file.to_string_lossy(), "account.txt");
             }
             _ => panic!("expected Summary"),
