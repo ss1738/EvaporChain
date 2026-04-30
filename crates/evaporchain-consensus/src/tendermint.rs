@@ -8,25 +8,32 @@
 //! - Timeout-based round advancement when proposer is offline
 //! - Nil votes for safety (lock on first valid proposal)
 
-use evaporchain_bell_beacon::{chsh_s_value as bell_chsh_s_value, bell_certified as bell_is_certified, LOCAL_REALISM_S_MILLI as BELL_LOCAL_REALISM_S_MILLI};
-use evaporchain_entropic_slashing::entropic_slash;
 use crate::da_attestation::DAAttestationManager;
 use crate::encrypted_mempool::{EncryptedMempool, EncryptedTransaction};
-use crate::ib_integration::{self, DEFAULT_LAMBDA_MB};
-use evaporchain_da::block_da::BlockDA;
-use evaporchain_da::block_da_2d::{BlockDA2D, AvailabilityMetrics};
-use evaporchain_da::namespace::{NamespaceMerkleTree, NamespacedBlob};
 use crate::finality::FinalityTracker;
+use crate::ib_integration::{self, DEFAULT_LAMBDA_MB};
 use crate::mempool::Mempool;
-use crate::validator_set::{ValidatorInfo, ValidatorSet, EpochTransitionManager, ValidatorSetChange};
+use crate::validator_set::{
+    EpochTransitionManager, ValidatorInfo, ValidatorSet, ValidatorSetChange,
+};
 use crate::{BlockProductionResult, ConsensusError};
+use evaporchain_bell_beacon::{
+    bell_certified as bell_is_certified, chsh_s_value as bell_chsh_s_value,
+    LOCAL_REALISM_S_MILLI as BELL_LOCAL_REALISM_S_MILLI,
+};
+use evaporchain_da::block_da::BlockDA;
+use evaporchain_da::block_da_2d::{AvailabilityMetrics, BlockDA2D};
+use evaporchain_da::namespace::{NamespaceMerkleTree, NamespacedBlob};
+use evaporchain_entropic_slashing::entropic_slash;
 
 use evaporchain_crypto::hash::blake3_hash;
 use evaporchain_crypto::signatures::{BlsKeypair, BlsPublicKey, BlsSignature, BlsVerifier};
-use evaporchain_crypto::vrf::{RandomnessBeacon, VrfKeypair, VrfOutput, VrfProof, leader_vrf_input, vrf_verify};
+use evaporchain_crypto::vrf::{
+    leader_vrf_input, vrf_verify, RandomnessBeacon, VrfKeypair, VrfOutput, VrfProof,
+};
 use evaporchain_execution::fees::PidFeeController;
-use evaporchain_execution::ExecutionEngine;
 use evaporchain_execution::parallel::ParallelExecutor;
+use evaporchain_execution::ExecutionEngine;
 use evaporchain_state::db::StateDB;
 use evaporchain_types::{Block, CommitCertificate, Epoch, Transaction};
 
@@ -277,7 +284,10 @@ impl std::fmt::Display for GovernanceAmendmentError {
         match self {
             Self::UnrecognisedMode(m) => write!(f, "unrecognised fork-choice mode: {m:?}"),
             Self::EmptyAttractors => write!(f, "singh_attractor mode requires ≥1 attractor"),
-            Self::InsufficientStake { endorsing, required } => write!(
+            Self::InsufficientStake {
+                endorsing,
+                required,
+            } => write!(
                 f,
                 "endorsing stake {endorsing} < required quorum {required}"
             ),
@@ -468,7 +478,12 @@ impl TendermintConsensus {
     }
 
     /// Create with a custom block gas limit (for high-throughput mode).
-    pub fn new_with_gas_limit(my_id: u64, grace_period: u64, validator_set: ValidatorSet, block_gas_limit: u64) -> Self {
+    pub fn new_with_gas_limit(
+        my_id: u64,
+        grace_period: u64,
+        validator_set: ValidatorSet,
+        block_gas_limit: u64,
+    ) -> Self {
         Self {
             light_cone_dag: evaporchain_light_cone::LightCone::new(),
             tur_window: std::collections::VecDeque::with_capacity(TUR_WINDOW_BLOCKS),
@@ -570,12 +585,24 @@ impl TendermintConsensus {
             trie.iter().take(1024).map(|(addr, _)| *addr).collect();
         ConsensusFourActState {
             eulogy_count: trie.len(),
-            eulogy_trie_root: if trie.is_empty() { None } else { Some(trie.root()) },
+            eulogy_trie_root: if trie.is_empty() {
+                None
+            } else {
+                Some(trie.root())
+            },
             tombstone_addresses,
             refresh_pool_total: self.executor.refresh_pool.total_accrued(),
             mortis_triggered: self.executor.mortis_monitor.is_triggered(),
-            mortis_epoch_of_death: self.executor.mortis_certificate.as_ref().map(|c| c.epoch_of_death),
-            mortis_final_state_root: self.executor.mortis_certificate.as_ref().map(|c| c.final_state_root),
+            mortis_epoch_of_death: self
+                .executor
+                .mortis_certificate
+                .as_ref()
+                .map(|c| c.epoch_of_death),
+            mortis_final_state_root: self
+                .executor
+                .mortis_certificate
+                .as_ref()
+                .map(|c| c.final_state_root),
             last_conservation_audit_ok: self
                 .executor
                 .last_conservation_audit
@@ -665,9 +692,7 @@ impl TendermintConsensus {
         observation_epoch: u64,
     ) -> Option<evaporchain_causal_cone::CausalConeSummary> {
         let lambda = evaporchain_energy_kernel::ChainLambda::new(
-            evaporchain_energy_kernel::Lambda::from_epochs(
-                chain_lambda_half_life_epochs.max(1),
-            ),
+            evaporchain_energy_kernel::Lambda::from_epochs(chain_lambda_half_life_epochs.max(1)),
         );
         evaporchain_causal_cone::summarize_cone(
             head,
@@ -738,11 +763,7 @@ impl TendermintConsensus {
     /// `beta_mb` is the chain-set inverse-temperature (Jaynes
     /// multiplier-of-energy) for the caliber penalty term. The launch
     /// default 10_000 is governance-set.
-    pub fn mcc_choose_fork(
-        &self,
-        candidate_heads: &[[u8; 32]],
-        beta_mb: u64,
-    ) -> Option<[u8; 32]> {
+    pub fn mcc_choose_fork(&self, candidate_heads: &[[u8; 32]], beta_mb: u64) -> Option<[u8; 32]> {
         let trajectories: Vec<evaporchain_mcc::Trajectory> = candidate_heads
             .iter()
             .filter_map(|head| self.trajectory_to_genesis(*head))
@@ -806,7 +827,10 @@ impl TendermintConsensus {
         if mode == "singh_attractor" && attractors.is_empty() {
             return Err(GovernanceAmendmentError::EmptyAttractors);
         }
-        let total_endorsing: u64 = endorser_stakes.iter().copied().fold(0u64, u64::saturating_add);
+        let total_endorsing: u64 = endorser_stakes
+            .iter()
+            .copied()
+            .fold(0u64, u64::saturating_add);
         if total_endorsing < required_stake {
             return Err(GovernanceAmendmentError::InsufficientStake {
                 endorsing: total_endorsing,
@@ -855,9 +879,8 @@ impl TendermintConsensus {
     /// Called once per committed block.
     pub fn decay_all_boltzmann_stakes(&mut self, current_epoch: u64) {
         use evaporchain_boltzmann_stake::decay_validator_stake;
-        let chain_lambda = evaporchain_energy_kernel::ChainLambda::new(
-            evaporchain_energy_kernel::DEFAULT_LAMBDA,
-        );
+        let chain_lambda =
+            evaporchain_energy_kernel::ChainLambda::new(evaporchain_energy_kernel::DEFAULT_LAMBDA);
         // Seed any validator that doesn't have an entry yet.
         let validator_ids: Vec<u64> = self
             .validator_set
@@ -952,7 +975,8 @@ impl TendermintConsensus {
                 "entropic vs sanov equivocation slash (advisory)"
             );
         }
-        self.validator_set.slash_with_amount(validator_id, slash_amount, true)
+        self.validator_set
+            .slash_with_amount(validator_id, slash_amount, true)
     }
 
     /// Slash a validator for downtime using the Sanov large-deviation formula.
@@ -991,16 +1015,14 @@ impl TendermintConsensus {
             return 0;
         }
         let jail = missed_blocks >= 3;
-        self.validator_set.slash_with_amount(validator_id, slash_amount, jail)
+        self.validator_set
+            .slash_with_amount(validator_id, slash_amount, jail)
     }
 
     /// Walk from `head` back to genesis via first-parent at each step.
     /// Returns the trajectory in genesis-first order, or None if `head`
     /// isn't in the Light-Cone DAG.
-    fn trajectory_to_genesis(
-        &self,
-        head: [u8; 32],
-    ) -> Option<evaporchain_mcc::Trajectory> {
+    fn trajectory_to_genesis(&self, head: [u8; 32]) -> Option<evaporchain_mcc::Trajectory> {
         if !self.light_cone_dag.contains(&head) {
             return None;
         }
@@ -1063,7 +1085,11 @@ impl TendermintConsensus {
     }
 
     /// Set the proof verifier for validating Nova IVC proofs on proposed blocks.
-    pub fn set_proof_verifier(&mut self, verifier: Box<dyn ProofVerifier>, genesis_state_root: [u8; 32]) {
+    pub fn set_proof_verifier(
+        &mut self,
+        verifier: Box<dyn ProofVerifier>,
+        genesis_state_root: [u8; 32],
+    ) {
         self.proof_verifier = Some(verifier);
         self.genesis_state_root = genesis_state_root;
     }
@@ -1103,11 +1129,13 @@ impl TendermintConsensus {
     /// Generate a KeyAnnounce message for broadcasting our BLS public key
     /// along with a proof-of-possession (prevents rogue-key attacks).
     pub fn make_key_announce(&self) -> Option<ConsensusMessage> {
-        self.bls_keypair.as_ref().map(|kp| ConsensusMessage::KeyAnnounce {
-            validator_id: self.my_id,
-            bls_public_key: kp.public_key_bytes().0.clone(),
-            proof_of_possession: kp.proof_of_possession().0.clone(),
-        })
+        self.bls_keypair
+            .as_ref()
+            .map(|kp| ConsensusMessage::KeyAnnounce {
+                validator_id: self.my_id,
+                bls_public_key: kp.public_key_bytes().0.clone(),
+                proof_of_possession: kp.proof_of_possession().0.clone(),
+            })
     }
 
     /// Set the VRF keypair for this validator (enables VRF-based leader election).
@@ -1236,7 +1264,13 @@ impl TendermintConsensus {
     }
 
     /// Restore state after a restart, including the latest committed state root.
-    pub fn restore_state_with_root(&mut self, block_number: u64, epoch: Epoch, parent_hash: [u8; 32], state_root: [u8; 32]) {
+    pub fn restore_state_with_root(
+        &mut self,
+        block_number: u64,
+        epoch: Epoch,
+        parent_hash: [u8; 32],
+        state_root: [u8; 32],
+    ) {
         self.restore_state(block_number, epoch, parent_hash);
         self.current_state_root = state_root;
     }
@@ -1248,10 +1282,7 @@ impl TendermintConsensus {
     /// should treat them as fatal startup failures.
     ///
     /// Closes punch-list 1b.
-    pub fn restore_privacy_from_db(
-        &mut self,
-        db: &dyn StateDB,
-    ) -> Result<usize, String> {
+    pub fn restore_privacy_from_db(&mut self, db: &dyn StateDB) -> Result<usize, String> {
         self.executor
             .privacy_executor
             .restore_from_db(db)
@@ -1384,7 +1415,7 @@ impl TendermintConsensus {
         // ceiling(2n/3): strictly more than 2/3 of validators.
         // With n=3 this gives 2, so 2-of-3 is quorum (correct BFT for equal-stake 3-node).
         // `n*2/3 + 1` would give 3 for n=3, requiring unanimity — wrong for equal-stake.
-        (n * 2 + 2) / 3
+        (n * 2).div_ceil(3)
     }
 
     /// Stake threshold for a 2f+1 quorum (stake-weighted).
@@ -1397,7 +1428,7 @@ impl TendermintConsensus {
         // With 3 equal-stake validators (total=3000) this gives 2000, so any
         // 2-of-3 combination reaches quorum. Using `total*2/3 + 1` = 2001 would
         // demand all three validators — impossible if any one times out or lags.
-        (total * 2 + 2) / 3
+        (total * 2).div_ceil(3)
     }
 
     /// Who is the proposer for the current height/round?
@@ -1457,7 +1488,11 @@ impl TendermintConsensus {
         self.validator_set.refresh_delegated_stakes(&*db);
 
         // Re-broadcast BLS KeyAnnounce every 50 blocks so late-joining peers get our key
-        if self.height > 0 && self.height.is_multiple_of(50) && self.round_state.phase == Phase::Propose && self.round_state.round == 0 {
+        if self.height > 0
+            && self.height.is_multiple_of(50)
+            && self.round_state.phase == Phase::Propose
+            && self.round_state.round == 0
+        {
             if let Some(msg) = self.make_key_announce() {
                 actions.push(ConsensusAction::BroadcastMessage(msg));
             }
@@ -1486,17 +1521,30 @@ impl TendermintConsensus {
                         // DEFAULT_LAMBDA_MB=0 → always Commit. Safe to wire at
                         // this stage; hard-gate is a future governance amendment.
                         {
-                            let local_stakes: Vec<u64> = self.validator_set.validators()
-                                .iter().map(|v| v.stake).collect();
+                            let local_stakes: Vec<u64> = self
+                                .validator_set
+                                .validators()
+                                .iter()
+                                .map(|v| v.stake)
+                                .collect();
                             let _ib = ib_integration::ib_vote_from_stakes(
-                                &local_stakes, &local_stakes, DEFAULT_LAMBDA_MB,
+                                &local_stakes,
+                                &local_stakes,
+                                DEFAULT_LAMBDA_MB,
                             );
                             debug!(validator = self.my_id, ib_vote = ?_ib, "IB prevote signal");
                         }
                         let vote_hash = Some(hash);
-                        let bls_sig = self.bls_sign_vote(self.height, self.round_state.round, &vote_hash, "prevote");
+                        let bls_sig = self.bls_sign_vote(
+                            self.height,
+                            self.round_state.round,
+                            &vote_hash,
+                            "prevote",
+                        );
                         if let Some(ref sig) = bls_sig {
-                            self.round_state.prevote_bls_sigs.insert(self.my_id, sig.clone());
+                            self.round_state
+                                .prevote_bls_sigs
+                                .insert(self.my_id, sig.clone());
                         }
                         let prevote = ConsensusMessage::Prevote {
                             height: self.height,
@@ -1511,7 +1559,9 @@ impl TendermintConsensus {
                         // from the final tx set, so attest directly without re-encoding.
                         self.da_block_proposers.insert(proposal.number, self.my_id);
                         if let Some(data_root) = proposal.data_root {
-                            if let Some(att_msg) = self.make_da_attestation(proposal.number, data_root, 1) {
+                            if let Some(att_msg) =
+                                self.make_da_attestation(proposal.number, data_root, 1)
+                            {
                                 actions.push(ConsensusAction::BroadcastMessage(att_msg));
                             }
                         }
@@ -1526,9 +1576,16 @@ impl TendermintConsensus {
                     if !self.round_state.prevoted {
                         self.round_state.prevoted = true;
                         let nil_hash: Option<[u8; 32]> = None;
-                        let bls_sig = self.bls_sign_vote(self.height, self.round_state.round, &nil_hash, "prevote");
+                        let bls_sig = self.bls_sign_vote(
+                            self.height,
+                            self.round_state.round,
+                            &nil_hash,
+                            "prevote",
+                        );
                         if let Some(ref sig) = bls_sig {
-                            self.round_state.prevote_bls_sigs.insert(self.my_id, sig.clone());
+                            self.round_state
+                                .prevote_bls_sigs
+                                .insert(self.my_id, sig.clone());
                         }
                         let prevote = ConsensusMessage::Prevote {
                             height: self.height,
@@ -1564,9 +1621,16 @@ impl TendermintConsensus {
                             }
                         }
 
-                        let bls_sig = self.bls_sign_vote(self.height, self.round_state.round, &hash, "precommit");
+                        let bls_sig = self.bls_sign_vote(
+                            self.height,
+                            self.round_state.round,
+                            &hash,
+                            "precommit",
+                        );
                         if let Some(ref sig) = bls_sig {
-                            self.round_state.precommit_bls_sigs.insert(self.my_id, sig.clone());
+                            self.round_state
+                                .precommit_bls_sigs
+                                .insert(self.my_id, sig.clone());
                         }
                         let precommit = ConsensusMessage::Precommit {
                             height: self.height,
@@ -1587,9 +1651,16 @@ impl TendermintConsensus {
                     if !self.round_state.precommitted {
                         self.round_state.precommitted = true;
                         let nil_hash: Option<[u8; 32]> = None;
-                        let bls_sig = self.bls_sign_vote(self.height, self.round_state.round, &nil_hash, "precommit");
+                        let bls_sig = self.bls_sign_vote(
+                            self.height,
+                            self.round_state.round,
+                            &nil_hash,
+                            "precommit",
+                        );
                         if let Some(ref sig) = bls_sig {
-                            self.round_state.precommit_bls_sigs.insert(self.my_id, sig.clone());
+                            self.round_state
+                                .precommit_bls_sigs
+                                .insert(self.my_id, sig.clone());
                         }
                         let precommit = ConsensusMessage::Precommit {
                             height: self.height,
@@ -1624,7 +1695,8 @@ impl TendermintConsensus {
                                 self.mempool.submit_priority(tx.clone());
                             }
                             // We don't have the correct block — request sync
-                            actions.push(ConsensusAction::RequestSync(self.height, self.height + 1));
+                            actions
+                                .push(ConsensusAction::RequestSync(self.height, self.height + 1));
                         } else {
                             if block.commit_certificate.is_none() {
                                 block.commit_certificate = self.try_build_commit_certificate(hash);
@@ -1668,9 +1740,18 @@ impl TendermintConsensus {
         let mut actions = Vec::new();
 
         // Handle KeyAnnounce before height filters (height-independent)
-        if let ConsensusMessage::KeyAnnounce { validator_id, ref bls_public_key, ref proof_of_possession } = msg {
+        if let ConsensusMessage::KeyAnnounce {
+            validator_id,
+            ref bls_public_key,
+            ref proof_of_possession,
+        } = msg
+        {
             if bls_public_key.len() != 48 {
-                warn!(validator_id, len = bls_public_key.len(), "Invalid BLS key length (expected 48)");
+                warn!(
+                    validator_id,
+                    len = bls_public_key.len(),
+                    "Invalid BLS key length (expected 48)"
+                );
                 return actions;
             }
 
@@ -1689,9 +1770,14 @@ impl TendermintConsensus {
             }
 
             if let Some(vi) = self.validator_set.get_mut(validator_id) {
-                if vi.bls_public_key.is_none() || vi.bls_public_key.as_ref() != Some(bls_public_key) {
+                if vi.bls_public_key.is_none() || vi.bls_public_key.as_ref() != Some(bls_public_key)
+                {
                     vi.bls_public_key = Some(bls_public_key.clone());
-                    vi.bls_pop = if proof_of_possession.is_empty() { None } else { Some(proof_of_possession.clone()) };
+                    vi.bls_pop = if proof_of_possession.is_empty() {
+                        None
+                    } else {
+                        Some(proof_of_possession.clone())
+                    };
                     vi.pop_verified = !proof_of_possession.is_empty();
                     info!(
                         validator = validator_id,
@@ -1706,10 +1792,20 @@ impl TendermintConsensus {
 
         // Handle DA attestations (height-independent — may arrive after block commit)
         if let ConsensusMessage::DAAttestation {
-            block_number, data_root, validator_id, samples_verified, stake, ref signature, ref public_key,
-        } = msg {
+            block_number,
+            data_root,
+            validator_id,
+            samples_verified,
+            stake,
+            ref signature,
+            ref public_key,
+        } = msg
+        {
             if self.validator_set.get(validator_id).is_none() {
-                warn!(validator_id, "Rejecting DA attestation from unknown validator");
+                warn!(
+                    validator_id,
+                    "Rejecting DA attestation from unknown validator"
+                );
                 return actions;
             }
             let att = evaporchain_da::certificate::DAAttestation {
@@ -1760,7 +1856,10 @@ impl TendermintConsensus {
                     "Behind by {} blocks — requesting sync",
                     msg.height() - self.height
                 );
-                actions.push(ConsensusAction::RequestSync(self.height, msg.height().saturating_sub(1)));
+                actions.push(ConsensusAction::RequestSync(
+                    self.height,
+                    msg.height().saturating_sub(1),
+                ));
             }
             return actions;
         }
@@ -1792,9 +1891,7 @@ impl TendermintConsensus {
                 proposer_id,
             } => {
                 // Verify proposer is legitimate for this round
-                let expected_proposer = self
-                    .proposer_for_round(height, round)
-                    .map(|v| v.id);
+                let expected_proposer = self.proposer_for_round(height, round).map(|v| v.id);
                 if expected_proposer != Some(proposer_id) {
                     warn!(
                         expected = ?expected_proposer,
@@ -1840,7 +1937,9 @@ impl TendermintConsensus {
 
                 // Reject proposals that exceed the block gas limit
                 if self.executor.block_gas_limit > 0 {
-                    let total_gas: u64 = block.transactions.iter()
+                    let total_gas: u64 = block
+                        .transactions
+                        .iter()
                         .map(ParallelExecutor::estimate_gas)
                         .fold(0u64, |a, g| a.saturating_add(g));
                     if total_gas > self.executor.block_gas_limit {
@@ -1856,7 +1955,10 @@ impl TendermintConsensus {
                 }
 
                 // Verify chain_id matches (prevents cross-chain replay)
-                if !self.chain_id.is_empty() && !block.chain_id.is_empty() && block.chain_id != self.chain_id {
+                if !self.chain_id.is_empty()
+                    && !block.chain_id.is_empty()
+                    && block.chain_id != self.chain_id
+                {
                     warn!(
                         height = height,
                         round = round,
@@ -1885,7 +1987,8 @@ impl TendermintConsensus {
                 }
 
                 // Timestamp monotonicity: block timestamp must not decrease
-                if block.timestamp > 0 && self.last_block_timestamp > 0
+                if block.timestamp > 0
+                    && self.last_block_timestamp > 0
                     && block.timestamp < self.last_block_timestamp
                 {
                     warn!(
@@ -1909,7 +2012,8 @@ impl TendermintConsensus {
                 if let Some((_, prev_hash)) = already_proposed {
                     if *prev_hash != hash {
                         // EQUIVOCATION: same proposer, same slot, different block!
-                        let slashed = self.sanov_slash_equivocation(proposer_id, SANOV_EQUIVOCATION_WINDOW);
+                        let slashed =
+                            self.sanov_slash_equivocation(proposer_id, SANOV_EQUIVOCATION_WINDOW);
                         warn!(
                             validator = proposer_id,
                             slashed_amount = slashed,
@@ -2014,7 +2118,8 @@ impl TendermintConsensus {
                 if let Some(ref provider) = self.anchor_provider {
                     if let Some(proposed_anchor) = block.anchor_hash {
                         if let Some(local_anchor) = provider.anchor_hash_for_height(height) {
-                            if local_anchor != [0u8; 32] && proposed_anchor != [0u8; 32]
+                            if local_anchor != [0u8; 32]
+                                && proposed_anchor != [0u8; 32]
                                 && proposed_anchor != local_anchor
                             {
                                 // Anchor divergence after node rejoin is expected
@@ -2099,9 +2204,16 @@ impl TendermintConsensus {
                     };
 
                     self.round_state.prevotes.insert(self.my_id, vote_hash);
-                    let bls_sig = self.bls_sign_vote(self.height, self.round_state.round, &vote_hash, "prevote");
+                    let bls_sig = self.bls_sign_vote(
+                        self.height,
+                        self.round_state.round,
+                        &vote_hash,
+                        "prevote",
+                    );
                     if let Some(ref sig) = bls_sig {
-                        self.round_state.prevote_bls_sigs.insert(self.my_id, sig.clone());
+                        self.round_state
+                            .prevote_bls_sigs
+                            .insert(self.my_id, sig.clone());
                     }
                     let prevote = ConsensusMessage::Prevote {
                         height: self.height,
@@ -2152,13 +2264,17 @@ impl TendermintConsensus {
 
                     // ── BLS Signature Verification ──
                     if let Some(ref bls_pk_bytes) = validator.bls_public_key {
-                        let msg = Self::bls_vote_message(self.height, round, &block_hash, "prevote");
+                        let msg =
+                            Self::bls_vote_message(self.height, round, &block_hash, "prevote");
                         match &bls_signature {
                             Some(sig) => {
                                 let pk = BlsPublicKey(bls_pk_bytes.clone());
                                 let sig = BlsSignature(sig.clone());
                                 if !BlsVerifier::verify(&msg, &sig, &pk) {
-                                    warn!(validator_id, "Rejecting prevote with invalid BLS signature");
+                                    warn!(
+                                        validator_id,
+                                        "Rejecting prevote with invalid BLS signature"
+                                    );
                                     return actions;
                                 }
                             }
@@ -2168,14 +2284,18 @@ impl TendermintConsensus {
                             }
                         }
                     } else if self.validator_set.has_bls_keys() {
-                        warn!(validator_id, "Rejecting prevote: validator missing BLS key in BLS-enabled set");
+                        warn!(
+                            validator_id,
+                            "Rejecting prevote: validator missing BLS key in BLS-enabled set"
+                        );
                         return actions;
                     }
 
                     // ── Vote Equivocation Detection ──
                     if let Some(&existing_hash) = self.round_state.prevotes.get(&validator_id) {
                         if existing_hash != block_hash {
-                            let slashed = self.sanov_slash_equivocation(validator_id, SANOV_EQUIVOCATION_WINDOW);
+                            let slashed = self
+                                .sanov_slash_equivocation(validator_id, SANOV_EQUIVOCATION_WINDOW);
                             warn!(
                                 validator = validator_id,
                                 slashed_amount = slashed,
@@ -2198,16 +2318,25 @@ impl TendermintConsensus {
                                 if let Some(ref quorum_hash) = hash {
                                     if let Some(ref proposed) = self.round_state.proposed_block {
                                         if Self::block_hash(proposed) == *quorum_hash {
-                                            self.locked_block = self.round_state.proposed_block.clone();
+                                            self.locked_block =
+                                                self.round_state.proposed_block.clone();
                                             self.locked_round = Some(self.round_state.round);
-                                            self.valid_block = self.round_state.proposed_block.clone();
+                                            self.valid_block =
+                                                self.round_state.proposed_block.clone();
                                             self.valid_round = Some(self.round_state.round);
                                         }
                                     }
                                 }
-                                let bls_sig = self.bls_sign_vote(self.height, self.round_state.round, &hash, "precommit");
+                                let bls_sig = self.bls_sign_vote(
+                                    self.height,
+                                    self.round_state.round,
+                                    &hash,
+                                    "precommit",
+                                );
                                 if let Some(ref sig) = bls_sig {
-                                    self.round_state.precommit_bls_sigs.insert(self.my_id, sig.clone());
+                                    self.round_state
+                                        .precommit_bls_sigs
+                                        .insert(self.my_id, sig.clone());
                                 }
                                 let precommit = ConsensusMessage::Precommit {
                                     height: self.height,
@@ -2248,13 +2377,17 @@ impl TendermintConsensus {
 
                     // ── BLS Signature Verification ──
                     if let Some(ref bls_pk_bytes) = validator.bls_public_key {
-                        let msg = Self::bls_vote_message(self.height, round, &block_hash, "precommit");
+                        let msg =
+                            Self::bls_vote_message(self.height, round, &block_hash, "precommit");
                         match &bls_signature {
                             Some(sig) => {
                                 let pk = BlsPublicKey(bls_pk_bytes.clone());
                                 let sig = BlsSignature(sig.clone());
                                 if !BlsVerifier::verify(&msg, &sig, &pk) {
-                                    warn!(validator_id, "Rejecting precommit with invalid BLS signature");
+                                    warn!(
+                                        validator_id,
+                                        "Rejecting precommit with invalid BLS signature"
+                                    );
                                     return actions;
                                 }
                             }
@@ -2264,14 +2397,18 @@ impl TendermintConsensus {
                             }
                         }
                     } else if self.validator_set.has_bls_keys() {
-                        warn!(validator_id, "Rejecting precommit: validator missing BLS key in BLS-enabled set");
+                        warn!(
+                            validator_id,
+                            "Rejecting precommit: validator missing BLS key in BLS-enabled set"
+                        );
                         return actions;
                     }
 
                     // ── Vote Equivocation Detection ──
                     if let Some(&existing_hash) = self.round_state.precommits.get(&validator_id) {
                         if existing_hash != block_hash {
-                            let slashed = self.sanov_slash_equivocation(validator_id, SANOV_EQUIVOCATION_WINDOW);
+                            let slashed = self
+                                .sanov_slash_equivocation(validator_id, SANOV_EQUIVOCATION_WINDOW);
                             warn!(
                                 validator = validator_id,
                                 slashed_amount = slashed,
@@ -2284,7 +2421,9 @@ impl TendermintConsensus {
                     }
                     self.round_state.precommits.insert(validator_id, block_hash);
                     if let Some(sig) = bls_signature {
-                        self.round_state.precommit_bls_sigs.insert(validator_id, sig);
+                        self.round_state
+                            .precommit_bls_sigs
+                            .insert(validator_id, sig);
                     }
 
                     // Check if we can commit now
@@ -2295,10 +2434,14 @@ impl TendermintConsensus {
                                 for tx in block.transactions.iter().rev() {
                                     self.mempool.submit_priority(tx.clone());
                                 }
-                                actions.push(ConsensusAction::RequestSync(self.height, self.height + 1));
+                                actions.push(ConsensusAction::RequestSync(
+                                    self.height,
+                                    self.height + 1,
+                                ));
                             } else {
                                 if block.commit_certificate.is_none() {
-                                    block.commit_certificate = self.try_build_commit_certificate(hash);
+                                    block.commit_certificate =
+                                        self.try_build_commit_certificate(hash);
                                 }
                                 self.round_state.phase = Phase::Commit;
                                 actions.push(ConsensusAction::CommitBlock(block));
@@ -2397,12 +2540,9 @@ impl TendermintConsensus {
         }
         if self.tur_window.len() >= 2 {
             let sum: u64 = self.tur_window.iter().sum();
-            let sigma = sum
-                .saturating_mul(TUR_SIGMA_PER_GAS_NUM)
-                / TUR_SIGMA_PER_GAS_DEN.max(1);
+            let sigma = sum.saturating_mul(TUR_SIGMA_PER_GAS_NUM) / TUR_SIGMA_PER_GAS_DEN.max(1);
             let samples: Vec<u64> = self.tur_window.iter().copied().collect();
-            self.last_tur_verdict =
-                Some(evaporchain_tur_liveness::tur_check(&samples, sigma));
+            self.last_tur_verdict = Some(evaporchain_tur_liveness::tur_check(&samples, sigma));
         }
 
         // Lambda-Fold per-block step. Each committed block contributes
@@ -2411,14 +2551,8 @@ impl TendermintConsensus {
         // memory regardless of chain length. Out-of-order steps are
         // ignored (Tendermint commits monotone in epoch in practice).
         let chain_lambda = evaporchain_energy_kernel::ChainLambda::default_genesis();
-        let step = evaporchain_lambda_fold::StepWitness::new(
-            state_root,
-            block_j,
-            block.epoch,
-        );
-        if let Ok(folded) =
-            evaporchain_lambda_fold::fold(self.lambda_fold, step, chain_lambda)
-        {
+        let step = evaporchain_lambda_fold::StepWitness::new(state_root, block_j, block.epoch);
+        if let Ok(folded) = evaporchain_lambda_fold::fold(self.lambda_fold, step, chain_lambda) {
             self.lambda_fold = folded;
         }
 
@@ -2484,23 +2618,23 @@ impl TendermintConsensus {
                         + i64::from(lo as i16 - 128) * 1000 / 128;
                     raw.clamp(-1000, 1000)
                 };
-                let e_ab       = corr(vrf_out[0], vrf_out[1]);
+                let e_ab = corr(vrf_out[0], vrf_out[1]);
                 let e_ab_prime = corr(vrf_out[2], vrf_out[3]);
-                let e_a_prime_b       = corr(vrf_out[4], vrf_out[5]);
+                let e_a_prime_b = corr(vrf_out[4], vrf_out[5]);
                 let e_a_prime_b_prime = corr(vrf_out[6], vrf_out[7]);
-                if let Ok(s_milli) = bell_chsh_s_value(
-                    e_ab, e_ab_prime, e_a_prime_b, e_a_prime_b_prime,
-                ) {
-                    if !bell_is_certified(
-                        s_milli, BELL_LOCAL_REALISM_S_MILLI,
-                    ) {
+                if let Ok(s_milli) =
+                    bell_chsh_s_value(e_ab, e_ab_prime, e_a_prime_b, e_a_prime_b_prime)
+                {
+                    if !bell_is_certified(s_milli, BELL_LOCAL_REALISM_S_MILLI) {
                         warn!(
                             height = block.number,
-                            s_milli,
-                            "Bell gate: VRF-derived CHSH S-value ≤ 2 (advisory)"
+                            s_milli, "Bell gate: VRF-derived CHSH S-value ≤ 2 (advisory)"
                         );
                     } else {
-                        debug!(height = block.number, s_milli, "Bell gate: beacon certified");
+                        debug!(
+                            height = block.number,
+                            s_milli, "Bell gate: beacon certified"
+                        );
                     }
                 }
             }
@@ -2534,10 +2668,8 @@ impl TendermintConsensus {
                         stake_tx.stake_amount,
                         stake_tx.validator_address,
                     );
-                    self.epoch_manager.queue_change(
-                        ValidatorSetChange::Join(info),
-                        block.epoch,
-                    );
+                    self.epoch_manager
+                        .queue_change(ValidatorSetChange::Join(info), block.epoch);
                     debug!(
                         validator = stake_tx.validator_id,
                         stake = stake_tx.stake_amount,
@@ -2578,7 +2710,6 @@ impl TendermintConsensus {
             }
         }
 
-
         // ── Finality Tracking ──
         // Record finality if we have a commit certificate (single-slot finality).
         if let Some(ref cert) = block.commit_certificate {
@@ -2592,7 +2723,9 @@ impl TendermintConsensus {
                 );
             }
             let total_stake = self.validator_set.total_stake();
-            let signing_stake = cert.signer_ids.iter()
+            let signing_stake = cert
+                .signer_ids
+                .iter()
                 .filter_map(|id| self.validator_set.get_validator(*id))
                 .map(|v| v.stake)
                 .sum::<u64>();
@@ -2617,7 +2750,8 @@ impl TendermintConsensus {
         // Validators will sample shards and submit attestations.
         if let Some(data_root) = block.data_root {
             let total_stake = self.validator_set.total_stake();
-            self.da_attestation.start_round(block.number, data_root, total_stake);
+            self.da_attestation
+                .start_round(block.number, data_root, total_stake);
 
             // If we have a BLS keypair, create our own attestation immediately
             if let Some(ref bls_kp) = self.bls_keypair {
@@ -2717,7 +2851,12 @@ impl TendermintConsensus {
 
     /// Set a trusted checkpoint for safe bootstrap.
     /// New nodes joining the network MUST call this before syncing.
-    pub fn set_trusted_checkpoint(&mut self, height: u64, state_root: [u8; 32], block_hash: [u8; 32]) {
+    pub fn set_trusted_checkpoint(
+        &mut self,
+        height: u64,
+        state_root: [u8; 32],
+        block_hash: [u8; 32],
+    ) {
         info!(
             height = height,
             state_root = %hex::encode(&state_root[..8]),
@@ -2754,7 +2893,8 @@ impl TendermintConsensus {
         let ws_period = self.weak_subjectivity_period();
         let cutoff = self.height.saturating_sub(ws_period);
         if self.weak_subjectivity_checkpoints.len() > 1 {
-            let keep_from = self.weak_subjectivity_checkpoints
+            let keep_from = self
+                .weak_subjectivity_checkpoints
                 .iter()
                 .rposition(|&(h, _)| h <= cutoff)
                 .unwrap_or(0);
@@ -2773,18 +2913,17 @@ impl TendermintConsensus {
     ) -> Result<BlockProductionResult, ConsensusError> {
         // Weak subjectivity check: refuse blocks that reorg past a checkpoint
         if !self.check_weak_subjectivity(block) {
-            return Err(ConsensusError::ExecutionFailed(
-                format!(
-                    "Block {} violates weak subjectivity checkpoint",
-                    block.number
-                ),
-            ));
+            return Err(ConsensusError::ExecutionFailed(format!(
+                "Block {} violates weak subjectivity checkpoint",
+                block.number
+            )));
         }
 
-        let execution = self
-            .executor
-            .execute_block(db, block)
-            .map_err(|e: evaporchain_execution::ExecutionError| ConsensusError::ExecutionFailed(e.to_string()))?;
+        let execution = self.executor.execute_block(db, block).map_err(
+            |e: evaporchain_execution::ExecutionError| {
+                ConsensusError::ExecutionFailed(e.to_string())
+            },
+        )?;
 
         // Apply any validator BLS key rotations emitted by execution. Done
         // after execute_block but before on_block_committed so the new
@@ -2792,7 +2931,11 @@ impl TendermintConsensus {
         if !execution.validator_key_rotations.is_empty() {
             let applied = self.apply_validator_key_rotations(&execution.validator_key_rotations);
             if applied > 0 {
-                info!(applied, block = block.number, "Validator key rotations applied");
+                info!(
+                    applied,
+                    block = block.number,
+                    "Validator key rotations applied"
+                );
             }
         }
         // Cheap sweep: drop any prev pubkey whose grace window has elapsed.
@@ -2819,16 +2962,21 @@ impl TendermintConsensus {
         db: &mut dyn StateDB,
         block: &Block,
     ) -> Result<BlockProductionResult, ConsensusError> {
-        let execution = self
-            .executor
-            .execute_block(db, block)
-            .map_err(|e: evaporchain_execution::ExecutionError| ConsensusError::ExecutionFailed(e.to_string()))?;
+        let execution = self.executor.execute_block(db, block).map_err(
+            |e: evaporchain_execution::ExecutionError| {
+                ConsensusError::ExecutionFailed(e.to_string())
+            },
+        )?;
 
         // Same post-commit application as in apply_block_sync above.
         if !execution.validator_key_rotations.is_empty() {
             let applied = self.apply_validator_key_rotations(&execution.validator_key_rotations);
             if applied > 0 {
-                info!(applied, block = block.number, "Validator key rotations applied");
+                info!(
+                    applied,
+                    block = block.number,
+                    "Validator key rotations applied"
+                );
             }
         }
         self.purge_expired_prev_keys();
@@ -2881,7 +3029,7 @@ impl TendermintConsensus {
         let next_epoch = self.epoch + 1;
 
         // Process encrypted mempool reveals first (MEV-protected txs get priority)
-        let reveals: Vec<([u8; 32], [u8; 32])> = self.pending_reveals.drain(..).collect();
+        let reveals: Vec<([u8; 32], [u8; 32])> = std::mem::take(&mut self.pending_reveals);
         let mut txs: Vec<Transaction> = if !reveals.is_empty() {
             let revealed = self.encrypted_mempool.process_reveals(self.epoch, &reveals);
             if !revealed.is_empty() {
@@ -2917,7 +3065,9 @@ impl TendermintConsensus {
             (None, None)
         };
 
-        let anchor_hash = self.anchor_provider.as_ref()
+        let anchor_hash = self
+            .anchor_provider
+            .as_ref()
             .and_then(|p| p.anchor_hash_for_height(self.height));
 
         // Attach DA certificate from the previous block if supermajority was reached
@@ -3013,18 +3163,22 @@ impl TendermintConsensus {
             }
 
             // Blob commitments (namespace Merkle tree).
-            let namespaced_blobs: Vec<NamespacedBlob> = block.transactions.iter().map(|tx| {
-                let (ns_id, data) = match tx {
-                    Transaction::Blob(blob_tx) => (blob_tx.namespace_id, blob_tx.data.clone()),
-                    _ => {
-                        let data = serde_json::to_vec(tx).unwrap_or_default();
-                        (0u64, data)
-                    }
-                };
-                let mut namespace = [0u8; 8];
-                namespace.copy_from_slice(&ns_id.to_be_bytes());
-                NamespacedBlob { namespace, data }
-            }).collect();
+            let namespaced_blobs: Vec<NamespacedBlob> = block
+                .transactions
+                .iter()
+                .map(|tx| {
+                    let (ns_id, data) = match tx {
+                        Transaction::Blob(blob_tx) => (blob_tx.namespace_id, blob_tx.data.clone()),
+                        _ => {
+                            let data = serde_json::to_vec(tx).unwrap_or_default();
+                            (0u64, data)
+                        }
+                    };
+                    let mut namespace = [0u8; 8];
+                    namespace.copy_from_slice(&ns_id.to_be_bytes());
+                    NamespacedBlob { namespace, data }
+                })
+                .collect();
             let nmt = NamespaceMerkleTree::from_blobs(&namespaced_blobs);
             block.blob_commitments = nmt.blob_commitment_hashes();
         } else {
@@ -3041,7 +3195,10 @@ impl TendermintConsensus {
         );
         // Causal-cone summary for proposer (§A1.3 Optimal Prediction Theorem).
         // Advisory: logged for auditability; not a gate at this stage.
-        if let Some(head) = crate::antichain_integration::dag_tips(&self.light_cone_dag).first().copied() {
+        if let Some(head) = crate::antichain_integration::dag_tips(&self.light_cone_dag)
+            .first()
+            .copied()
+        {
             if let Some(summary) = crate::causal_cone_integration::validator_cone_summary(
                 &self.light_cone_dag,
                 head,
@@ -3070,9 +3227,7 @@ impl TendermintConsensus {
 
         let mut hash_stake: HashMap<Option<[u8; 32]>, u64> = HashMap::new();
         for (vid, hash) in &self.round_state.prevotes {
-            let stake = self.validator_set.get(*vid)
-                .map(|v| v.stake)
-                .unwrap_or(0);
+            let stake = self.validator_set.get(*vid).map(|v| v.stake).unwrap_or(0);
             *hash_stake.entry(*hash).or_insert(0) += stake;
         }
 
@@ -3091,9 +3246,7 @@ impl TendermintConsensus {
 
         let mut hash_stake: HashMap<Option<[u8; 32]>, u64> = HashMap::new();
         for (vid, hash) in &self.round_state.precommits {
-            let stake = self.validator_set.get(*vid)
-                .map(|v| v.stake)
-                .unwrap_or(0);
+            let stake = self.validator_set.get(*vid).map(|v| v.stake).unwrap_or(0);
             *hash_stake.entry(*hash).or_insert(0) += stake;
         }
 
@@ -3108,6 +3261,30 @@ impl TendermintConsensus {
 
     /// Move to the next round within the same height.
     fn advance_round(&mut self) {
+        // TEMP DIAG: dump vote state when round advances
+        eprintln!(
+            "[DIAG] advance_round h={} r={} phase={:?} prevotes={} precommits={} proposed={}",
+            self.height,
+            self.round_state.round,
+            self.round_state.phase,
+            self.round_state.prevotes.len(),
+            self.round_state.precommits.len(),
+            self.round_state.proposed_block.is_some()
+        );
+        for (vid, h) in &self.round_state.precommits {
+            eprintln!(
+                "[DIAG]   precommit vid={} hash={}",
+                vid,
+                h.map(|hash| hex::encode(&hash[..4])).unwrap_or_else(|| "nil".into())
+            );
+        }
+        for (vid, h) in &self.round_state.prevotes {
+            eprintln!(
+                "[DIAG]   prevote vid={} hash={}",
+                vid,
+                h.map(|hash| hex::encode(&hash[..4])).unwrap_or_else(|| "nil".into())
+            );
+        }
         // ── Downtime Detection ──
         // If no proposal was received this round, the expected proposer missed.
         // Track consecutive misses and slash after threshold.
@@ -3119,7 +3296,8 @@ impl TendermintConsensus {
                 let total_misses = *misses;
 
                 if total_misses >= 500 {
-                    let slashed = self.sanov_slash_downtime(expected_id, total_misses, SANOV_DOWNTIME_WINDOW);
+                    let slashed =
+                        self.sanov_slash_downtime(expected_id, total_misses, SANOV_DOWNTIME_WINDOW);
                     warn!(
                         validator = expected_id,
                         missed_blocks = total_misses,
@@ -3140,7 +3318,9 @@ impl TendermintConsensus {
 
         // ── Vote Liveness Detection ──
         // Track validators who failed to cast prevotes or precommits.
-        let active_ids: Vec<u64> = self.validator_set.validators()
+        let active_ids: Vec<u64> = self
+            .validator_set
+            .validators()
             .iter()
             .filter(|v| !v.jailed)
             .map(|v| v.id)
@@ -3215,15 +3395,19 @@ impl TendermintConsensus {
     fn set_timeouts_for_round(&mut self, round: u32) {
         let shift = std::cmp::min(round, 6) as u64;
         let multiplier = 1u64 << shift;
-        let jitter_seed = self.height
+        let jitter_seed = self
+            .height
             .wrapping_mul(31)
             .wrapping_add(round as u64)
             .wrapping_mul(17)
             .wrapping_add(self.my_id.wrapping_mul(7));
         let jitter_ms = (jitter_seed % 11) * multiplier;
-        self.propose_timeout = Duration::from_millis(PROPOSE_TIMEOUT_MS.saturating_mul(multiplier) + jitter_ms);
-        self.prevote_timeout = Duration::from_millis(PREVOTE_TIMEOUT_MS.saturating_mul(multiplier) + jitter_ms);
-        self.precommit_timeout = Duration::from_millis(PRECOMMIT_TIMEOUT_MS.saturating_mul(multiplier) + jitter_ms);
+        self.propose_timeout =
+            Duration::from_millis(PROPOSE_TIMEOUT_MS.saturating_mul(multiplier) + jitter_ms);
+        self.prevote_timeout =
+            Duration::from_millis(PREVOTE_TIMEOUT_MS.saturating_mul(multiplier) + jitter_ms);
+        self.precommit_timeout =
+            Duration::from_millis(PRECOMMIT_TIMEOUT_MS.saturating_mul(multiplier) + jitter_ms);
     }
 
     /// Get current proposer info for display.
@@ -3234,7 +3418,12 @@ impl TendermintConsensus {
     // ──────────────── BLS Aggregate Signatures ─────────────────────────
 
     /// Construct the canonical message to BLS-sign for a vote.
-    pub fn bls_vote_message(height: u64, round: u32, block_hash: &Option<[u8; 32]>, phase: &str) -> Vec<u8> {
+    pub fn bls_vote_message(
+        height: u64,
+        round: u32,
+        block_hash: &Option<[u8; 32]>,
+        phase: &str,
+    ) -> Vec<u8> {
         let mut msg = Vec::with_capacity(48);
         msg.extend_from_slice(phase.as_bytes());
         msg.extend_from_slice(&height.to_le_bytes());
@@ -3246,7 +3435,13 @@ impl TendermintConsensus {
     }
 
     /// BLS-sign a vote if we have a keypair. Returns signature bytes or None.
-    fn bls_sign_vote(&self, height: u64, round: u32, block_hash: &Option<[u8; 32]>, phase: &str) -> Option<Vec<u8>> {
+    fn bls_sign_vote(
+        &self,
+        height: u64,
+        round: u32,
+        block_hash: &Option<[u8; 32]>,
+        phase: &str,
+    ) -> Option<Vec<u8>> {
         self.bls_keypair.as_ref().map(|kp| {
             let msg = Self::bls_vote_message(height, round, block_hash, phase);
             kp.sign(&msg).0
@@ -3315,7 +3510,10 @@ impl TendermintConsensus {
                 if let Some(ref bls_pk_bytes) = validator.bls_public_key {
                     // Reject if PoP was submitted but failed verification
                     if !validator.pop_verified {
-                        warn!(validator_id = vid, "Rejecting cert: signer has no verified proof-of-possession");
+                        warn!(
+                            validator_id = vid,
+                            "Rejecting cert: signer has no verified proof-of-possession"
+                        );
                         return false;
                     }
                     pks.push(BlsPublicKey(bls_pk_bytes.clone()));
@@ -3336,7 +3534,8 @@ impl TendermintConsensus {
             return false;
         }
 
-        let msg = Self::bls_vote_message(cert.height, cert.round, &Some(cert.block_hash), "precommit");
+        let msg =
+            Self::bls_vote_message(cert.height, cert.round, &Some(cert.block_hash), "precommit");
         let agg_sig = BlsSignature(cert.aggregate_signature.clone());
 
         // Pass 1: current keys.
@@ -3366,7 +3565,10 @@ impl TendermintConsensus {
             let v = match self.validator_set.get(vid) {
                 Some(v) => v,
                 None => {
-                    warn!(validator_id = vid, "cert grace verify: signer not in validator set — rejecting");
+                    warn!(
+                        validator_id = vid,
+                        "cert grace verify: signer not in validator set — rejecting"
+                    );
                     return false;
                 }
             };
@@ -3375,14 +3577,19 @@ impl TendermintConsensus {
                 .map(|exp| self.epoch <= exp)
                 .unwrap_or(false);
             let pk_bytes_opt = if in_grace {
-                v.bls_public_key_prev.clone().or_else(|| v.bls_public_key.clone())
+                v.bls_public_key_prev
+                    .clone()
+                    .or_else(|| v.bls_public_key.clone())
             } else {
                 v.bls_public_key.clone()
             };
             let pk_bytes = match pk_bytes_opt {
                 Some(b) => b,
                 None => {
-                    warn!(validator_id = vid, "cert grace verify: signer has no registered BLS key — rejecting");
+                    warn!(
+                        validator_id = vid,
+                        "cert grace verify: signer has no registered BLS key — rejecting"
+                    );
                     return false;
                 }
             };
@@ -3393,13 +3600,25 @@ impl TendermintConsensus {
 
     /// Create a DA attestation message for a committed block.
     /// Returns None if this validator has no BLS keypair.
-    pub fn make_da_attestation(&self, block_number: u64, data_root: [u8; 32], shards_verified: u32) -> Option<ConsensusMessage> {
+    pub fn make_da_attestation(
+        &self,
+        block_number: u64,
+        data_root: [u8; 32],
+        shards_verified: u32,
+    ) -> Option<ConsensusMessage> {
         let kp = self.bls_keypair.as_ref()?;
-        let stake = self.validator_set.get(self.my_id)
+        let stake = self
+            .validator_set
+            .get(self.my_id)
             .map(|v| v.stake)
             .unwrap_or(0);
         let att = evaporchain_da::certificate::create_attestation(
-            block_number, &data_root, self.my_id, shards_verified, stake, kp,
+            block_number,
+            &data_root,
+            self.my_id,
+            shards_verified,
+            stake,
+            kp,
         );
         Some(ConsensusMessage::DAAttestation {
             block_number: att.block_number,
@@ -3414,12 +3633,18 @@ impl TendermintConsensus {
 
     /// Try to build a DA certificate from collected attestations for a block.
     /// Returns serialized certificate bytes if supermajority is reached.
-    pub fn try_build_da_certificate(&mut self, block_number: u64, data_root: [u8; 32]) -> Option<Vec<u8>> {
+    pub fn try_build_da_certificate(
+        &mut self,
+        block_number: u64,
+        data_root: [u8; 32],
+    ) -> Option<Vec<u8>> {
         let atts = self.da_attestations.get(&block_number)?;
         let proposer = self.da_block_proposers.get(&block_number).copied();
         let total_stake = self.validator_set.total_stake();
         let mut builder = evaporchain_da::certificate::CertificateBuilder::new(
-            block_number, data_root, total_stake,
+            block_number,
+            data_root,
+            total_stake,
         );
         for att in atts {
             // Exclude the block proposer — they cannot attest to their own block's DA
@@ -3448,7 +3673,9 @@ impl TendermintConsensus {
         let start = self.height.saturating_sub(10);
         for bn in (start..self.height).rev() {
             if let Some(atts) = self.da_attestations.get(&bn) {
-                if atts.is_empty() { continue; }
+                if atts.is_empty() {
+                    continue;
+                }
                 if let Some(&data_root) = atts.first().map(|a| &a.data_root) {
                     if let Some(cert_bytes) = self.try_build_da_certificate(bn, data_root) {
                         info!(
@@ -3536,17 +3763,10 @@ impl TendermintConsensus {
 
             // 16 cells -> confidence ~ 1 - 2^(-16) ~ 0.999985 if all valid
             let num_samples = 16usize;
-            let (results, _all_valid) = da2d.light_client_sample(
-                &package,
-                block.number,
-                num_samples,
-                &seed,
-            );
+            let (results, _all_valid) =
+                da2d.light_client_sample(&package, block.number, num_samples, &seed);
 
-            let metrics = AvailabilityMetrics::from_samples(
-                &results,
-                package.header.extended_dim,
-            );
+            let metrics = AvailabilityMetrics::from_samples(&results, package.header.extended_dim);
 
             if metrics.confidence < self.da_confidence_threshold {
                 warn!(
@@ -3572,11 +3792,7 @@ impl TendermintConsensus {
                 "DA-2D sampling passed"
             );
 
-            return self.make_da_attestation(
-                block.number,
-                data_root,
-                metrics.valid_samples as u32,
-            );
+            return self.make_da_attestation(block.number, data_root, metrics.valid_samples as u32);
         }
 
         // ── 1D fallback path ────────────────────────────────────────────
@@ -3599,12 +3815,8 @@ impl TendermintConsensus {
             s
         };
         let num_samples = 6usize.min(package.shards.len());
-        let queries = BlockDA::generate_sample_queries(
-            block.number,
-            &package.header,
-            num_samples,
-            &seed,
-        );
+        let queries =
+            BlockDA::generate_sample_queries(block.number, &package.header, num_samples, &seed);
 
         let mut verified = 0u32;
         for q in &queries {
@@ -3667,13 +3879,17 @@ impl TendermintConsensus {
         };
 
         // Certificate is present — always verify fully regardless of height
-        let cert: evaporchain_da::certificate::DACertificate = match serde_json::from_slice(cert_bytes) {
-            Ok(c) => c,
-            Err(_) => {
-                warn!(block = block.number, "DA certificate deserialization failed");
-                return false;
-            }
-        };
+        let cert: evaporchain_da::certificate::DACertificate =
+            match serde_json::from_slice(cert_bytes) {
+                Ok(c) => c,
+                Err(_) => {
+                    warn!(
+                        block = block.number,
+                        "DA certificate deserialization failed"
+                    );
+                    return false;
+                }
+            };
         // Verify supermajority stake
         if !cert.is_supermajority() {
             warn!(
@@ -3736,7 +3952,10 @@ mod tests {
 
     /// Build a 4-validator set with real BLS keypairs and PoP-verified
     /// pubkeys. Returns (validator_set, keypairs_indexed_by_id).
-    fn make_real_keyed_validators() -> (ValidatorSet, Vec<evaporchain_crypto::signatures::BlsKeypair>) {
+    fn make_real_keyed_validators() -> (
+        ValidatorSet,
+        Vec<evaporchain_crypto::signatures::BlsKeypair>,
+    ) {
         use evaporchain_crypto::signatures::BlsKeypair;
         let mut vs = ValidatorSet::new();
         let mut kps = Vec::new();
@@ -3780,7 +3999,10 @@ mod tests {
         assert!(vs.rotate_validator_key(1, new_pk.clone(), new_pop, 10));
         // Sanity: validator 1's current key is now the NEW key, prev = OLD.
         assert_eq!(vs.get(1).unwrap().bls_public_key.as_ref().unwrap(), &new_pk);
-        assert_eq!(vs.get(1).unwrap().bls_public_key_prev.as_ref().unwrap(), &old_pk);
+        assert_eq!(
+            vs.get(1).unwrap().bls_public_key_prev.as_ref().unwrap(),
+            &old_pk
+        );
 
         let mut tc = TendermintConsensus::new_for_test(1, 5, vs);
 
@@ -3923,7 +4145,12 @@ mod tests {
         let applied = tc.apply_validator_key_rotations(&[rotation]);
         assert_eq!(applied, 0, "bad continuity proof must be rejected");
         // Validator 1's key should be UNCHANGED.
-        assert!(tc.validator_set.get(1).unwrap().bls_public_key_prev.is_none());
+        assert!(tc
+            .validator_set
+            .get(1)
+            .unwrap()
+            .bls_public_key_prev
+            .is_none());
     }
 
     #[test]
@@ -3982,8 +4209,8 @@ mod tests {
             address: addr(1),
             balance: 1_000_000,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
         });
 
         let mut tc = make_consensus(1, &[1]);
@@ -4013,18 +4240,16 @@ mod tests {
     #[test]
     fn test_multi_validator_consensus_simulation() {
         let ids = &[1u64, 2, 3, 4];
-        let mut validators: Vec<TendermintConsensus> = ids
-            .iter()
-            .map(|&id| make_consensus(id, ids))
-            .collect();
+        let mut validators: Vec<TendermintConsensus> =
+            ids.iter().map(|&id| make_consensus(id, ids)).collect();
 
         let mut db = InMemoryStateDB::new();
         db.put_account(Account {
             address: addr(1),
             balance: 1_000_000,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
         });
 
         // Tick all validators — the proposer should create a proposal
@@ -4041,7 +4266,7 @@ mod tests {
         // Deliver all messages to all validators
         let mut commit_actions = Vec::new();
         for _ in 0..20 {
-            let current_msgs: Vec<_> = messages.drain(..).collect();
+            let current_msgs: Vec<_> = std::mem::take(&mut messages);
             for msg in &current_msgs {
                 for v in &mut validators {
                     let actions = v.on_message(msg.clone());
@@ -4166,9 +4391,11 @@ mod tests {
         let actions = tc.tick(&mut db);
         // Should send nil prevote after timeout
         let has_nil_prevote = actions.iter().any(|a| {
-            matches!(a,
+            matches!(
+                a,
                 ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote {
-                    block_hash: None, ..
+                    block_hash: None,
+                    ..
                 })
             )
         });
@@ -4220,7 +4447,9 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         let actions = nodes[proposer_idx].tick(&mut db);
         let proposal = actions.iter().find_map(|a| match a {
-            ConsensusAction::BroadcastMessage(msg @ ConsensusMessage::Proposal { .. }) => Some(msg.clone()),
+            ConsensusAction::BroadcastMessage(msg @ ConsensusMessage::Proposal { .. }) => {
+                Some(msg.clone())
+            }
             _ => None,
         });
         assert!(proposal.is_some(), "Proposer should create a proposal");
@@ -4231,7 +4460,9 @@ mod tests {
 
         // Validator 2 should send a prevote
         let prevote = actions.iter().find_map(|a| match a {
-            ConsensusAction::BroadcastMessage(msg @ ConsensusMessage::Prevote { .. }) => Some(msg.clone()),
+            ConsensusAction::BroadcastMessage(msg @ ConsensusMessage::Prevote { .. }) => {
+                Some(msg.clone())
+            }
             _ => None,
         });
         assert!(prevote.is_some(), "Should generate a prevote");
@@ -4243,10 +4474,19 @@ mod tests {
         // The second delivery shouldn't cause different behavior than if it hadn't happened
         // (the vote is already recorded, so it's a no-op)
         // We just verify no crash and no duplicate commit
-        let commits1 = actions1.iter().filter(|a| matches!(a, ConsensusAction::CommitBlock(_))).count();
-        let commits2 = actions2.iter().filter(|a| matches!(a, ConsensusAction::CommitBlock(_))).count();
+        let commits1 = actions1
+            .iter()
+            .filter(|a| matches!(a, ConsensusAction::CommitBlock(_)))
+            .count();
+        let commits2 = actions2
+            .iter()
+            .filter(|a| matches!(a, ConsensusAction::CommitBlock(_)))
+            .count();
         // Should not commit from duplicate votes alone
-        assert!(commits1 + commits2 <= 1, "Duplicate votes should not cause multiple commits");
+        assert!(
+            commits1 + commits2 <= 1,
+            "Duplicate votes should not cause multiple commits"
+        );
     }
 
     #[test]
@@ -4292,7 +4532,15 @@ mod tests {
 
         let actions = tc.on_message(fake_proposal);
         // Should not generate a prevote for a wrong proposer's block
-        let prevotes: Vec<_> = actions.iter().filter(|a| matches!(a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. }))).collect();
+        let prevotes: Vec<_> = actions
+            .iter()
+            .filter(|a| {
+                matches!(
+                    a,
+                    ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. })
+                )
+            })
+            .collect();
         assert!(prevotes.is_empty(), "Should not prevote for wrong proposer");
     }
 
@@ -4302,7 +4550,6 @@ mod tests {
         let mut tc = make_consensus(1, &[1, 2, 3, 4]);
         let mut db = InMemoryStateDB::new();
 
-
         let initial_round = tc.round();
 
         // Simulate timeout-driven advancement:
@@ -4310,13 +4557,19 @@ mod tests {
         // AFTER the tick resets it, then tick again to trigger the timeout.
         for _ in 0..20 {
             // Set phase_start far in the past to trigger timeout
-            tc.round_state.phase_start = std::time::Instant::now() - std::time::Duration::from_secs(10);
+            tc.round_state.phase_start =
+                std::time::Instant::now() - std::time::Duration::from_secs(10);
             // Now tick — this should detect the timeout and advance
             tc.tick(&mut db);
         }
 
         // Round should have advanced (timeout-driven round rotation)
-        assert!(tc.round() > initial_round, "Timeouts should advance rounds: was {} now {}", initial_round, tc.round());
+        assert!(
+            tc.round() > initial_round,
+            "Timeouts should advance rounds: was {} now {}",
+            initial_round,
+            tc.round()
+        );
     }
 
     // ─── BLS Aggregate Signature Tests ────────────────────────────────
@@ -4336,10 +4589,9 @@ mod tests {
         let vs = ValidatorSet::with_validators(validators);
         let mut tc = TendermintConsensus::new_for_test(my_id, 5, vs);
 
-        // Set BLS keypair for this node
-        let my_idx = ids.iter().position(|&id| id == my_id).unwrap();
-        // Generate a new keypair for this node (can't move from vec)
-        // Instead, we'll use from_secret_bytes to reconstruct
+        // Set BLS keypair for this node.
+        // Generate a fresh keypair (can't move from vec; we just use it for the
+        // validator's pop / signing).
         let kp = BlsKeypair::generate();
         // Update the validator's BLS key to match
         tc.validator_set.get_mut(my_id).unwrap().bls_public_key = Some(kp.public_key_bytes().0);
@@ -4354,10 +4606,16 @@ mod tests {
         assert_eq!(msg1, msg2, "Same inputs should produce same message");
 
         let msg3 = TendermintConsensus::bls_vote_message(10, 0, &Some([2u8; 32]), "prevote");
-        assert_ne!(msg1, msg3, "Different hash should produce different message");
+        assert_ne!(
+            msg1, msg3,
+            "Different hash should produce different message"
+        );
 
         let msg4 = TendermintConsensus::bls_vote_message(10, 0, &Some([1u8; 32]), "precommit");
-        assert_ne!(msg1, msg4, "Different phase should produce different message");
+        assert_ne!(
+            msg1, msg4,
+            "Different phase should produce different message"
+        );
     }
 
     #[test]
@@ -4365,12 +4623,16 @@ mod tests {
         let mut tc = make_consensus(1, &[1, 2, 3, 4]);
 
         // Without BLS keypair, should return None
-        assert!(tc.bls_sign_vote(1, 0, &Some([1u8; 32]), "prevote").is_none());
+        assert!(tc
+            .bls_sign_vote(1, 0, &Some([1u8; 32]), "prevote")
+            .is_none());
 
         // With BLS keypair, should return Some
         let kp = BlsKeypair::generate();
         tc.set_bls_keypair(kp);
-        assert!(tc.bls_sign_vote(1, 0, &Some([1u8; 32]), "prevote").is_some());
+        assert!(tc
+            .bls_sign_vote(1, 0, &Some([1u8; 32]), "prevote")
+            .is_some());
     }
 
     #[test]
@@ -4381,13 +4643,18 @@ mod tests {
         // Single validator with BLS — tick should produce prevote with BLS sig
         let actions = tc.tick(&mut db);
         let has_bls_prevote = actions.iter().any(|a| {
-            matches!(a,
+            matches!(
+                a,
                 ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote {
-                    bls_signature: Some(_), ..
+                    bls_signature: Some(_),
+                    ..
                 })
             )
         });
-        assert!(has_bls_prevote, "Prevote should include BLS signature when keypair is set");
+        assert!(
+            has_bls_prevote,
+            "Prevote should include BLS signature when keypair is set"
+        );
     }
 
     #[test]
@@ -4408,12 +4675,12 @@ mod tests {
 
         let mut nodes: Vec<_> = ids
             .iter()
-            .enumerate()
-            .map(|(i, &id)| {
+            .map(|&id| {
                 let mut tc = TendermintConsensus::new_for_test(id, 5, vs.clone());
                 // We need to generate new keypairs since we can't clone BlsKeypair
                 let kp = BlsKeypair::generate();
-                tc.validator_set.get_mut(id).unwrap().bls_public_key = Some(kp.public_key_bytes().0);
+                tc.validator_set.get_mut(id).unwrap().bls_public_key =
+                    Some(kp.public_key_bytes().0);
                 // Also update in all other nodes' validator sets
                 tc.set_bls_keypair(kp);
                 tc
@@ -4421,10 +4688,19 @@ mod tests {
             .collect();
 
         // Synchronize BLS public keys across all nodes
-        let pks: Vec<(u64, Vec<u8>)> = nodes.iter().map(|n| {
-            let pk = n.validator_set.get(n.my_id).unwrap().bls_public_key.clone().unwrap();
-            (n.my_id, pk)
-        }).collect();
+        let pks: Vec<(u64, Vec<u8>)> = nodes
+            .iter()
+            .map(|n| {
+                let pk = n
+                    .validator_set
+                    .get(n.my_id)
+                    .unwrap()
+                    .bls_public_key
+                    .clone()
+                    .unwrap();
+                (n.my_id, pk)
+            })
+            .collect();
         for node in &mut nodes {
             for (id, pk) in &pks {
                 let vi = node.validator_set.get_mut(*id).unwrap();
@@ -4438,8 +4714,8 @@ mod tests {
             address: addr(1),
             balance: 1_000_000,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
         });
 
         // Run consensus
@@ -4455,7 +4731,7 @@ mod tests {
 
         let mut committed_blocks = Vec::new();
         for _ in 0..20 {
-            let current_msgs: Vec<_> = messages.drain(..).collect();
+            let current_msgs: Vec<_> = std::mem::take(&mut messages);
             for msg in &current_msgs {
                 for v in &mut nodes {
                     let actions = v.on_message(msg.clone());
@@ -4493,8 +4769,14 @@ mod tests {
         );
 
         let cert = block.commit_certificate.as_ref().unwrap();
-        assert!(cert.signer_ids.len() >= 3, "Certificate should have >= quorum signers");
-        assert!(!cert.aggregate_signature.is_empty(), "Aggregate signature should not be empty");
+        assert!(
+            cert.signer_ids.len() >= 3,
+            "Certificate should have >= quorum signers"
+        );
+        assert!(
+            !cert.aggregate_signature.is_empty(),
+            "Aggregate signature should not be empty"
+        );
 
         // Verify the certificate against any node's validator set
         assert!(
@@ -4513,8 +4795,8 @@ mod tests {
             address: addr(1),
             balance: 1_000_000,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
         });
 
         let mut messages = Vec::new();
@@ -4529,7 +4811,7 @@ mod tests {
 
         let mut committed_blocks = Vec::new();
         for _ in 0..20 {
-            let current_msgs: Vec<_> = messages.drain(..).collect();
+            let current_msgs: Vec<_> = std::mem::take(&mut messages);
             for msg in &current_msgs {
                 for v in &mut nodes {
                     let actions = v.on_message(msg.clone());
@@ -4557,7 +4839,10 @@ mod tests {
             }
         }
 
-        assert!(!committed_blocks.is_empty(), "Non-BLS consensus should still work");
+        assert!(
+            !committed_blocks.is_empty(),
+            "Non-BLS consensus should still work"
+        );
         // Without BLS keys, no certificate should be attached
         assert!(
             committed_blocks[0].commit_certificate.is_none(),
@@ -4618,7 +4903,12 @@ mod tests {
 
         let actions = tc.on_message(msg);
         // Should generate a prevote (proof accepted)
-        let has_prevote = actions.iter().any(|a| matches!(a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. })));
+        let has_prevote = actions.iter().any(|a| {
+            matches!(
+                a,
+                ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. })
+            )
+        });
         assert!(has_prevote, "Valid proof should result in prevote");
     }
 
@@ -4663,7 +4953,12 @@ mod tests {
 
         let actions = tc.on_message(msg);
         // Should NOT generate a prevote (proof rejected)
-        let has_prevote = actions.iter().any(|a| matches!(a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. })));
+        let has_prevote = actions.iter().any(|a| {
+            matches!(
+                a,
+                ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. })
+            )
+        });
         assert!(!has_prevote, "Invalid proof should prevent prevote");
     }
 
@@ -4708,7 +5003,12 @@ mod tests {
         };
 
         let actions = tc.on_message(msg);
-        let has_prevote = actions.iter().any(|a| matches!(a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. })));
+        let has_prevote = actions.iter().any(|a| {
+            matches!(
+                a,
+                ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. })
+            )
+        });
         assert!(has_prevote, "Without verifier, block should be accepted");
     }
 }
@@ -4746,10 +5046,8 @@ mod integration_tests {
             .map(|&id| {
                 let mut tc = TendermintConsensus::new_for_test(id, 5, vs.clone());
                 let kp = BlsKeypair::generate();
-                tc.validator_set
-                    .get_mut(id)
-                    .unwrap()
-                    .bls_public_key = Some(kp.public_key_bytes().0);
+                tc.validator_set.get_mut(id).unwrap().bls_public_key =
+                    Some(kp.public_key_bytes().0);
                 tc.set_bls_keypair(kp);
                 tc
             })
@@ -4804,7 +5102,7 @@ mod integration_tests {
             if !committed.is_empty() {
                 break;
             }
-            let current: Vec<_> = messages.drain(..).collect();
+            let current: Vec<_> = std::mem::take(&mut messages);
             for msg in &current {
                 for v in nodes.iter_mut() {
                     for a in v.on_message(msg.clone()) {
@@ -4842,8 +5140,8 @@ mod integration_tests {
             address: addr(1),
             balance: 10_000_000,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
         });
 
         // Run 3 consecutive heights
@@ -4897,8 +5195,8 @@ mod integration_tests {
             address: addr(1),
             balance: 10_000_000,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
         });
 
         // Submit a blob transaction to the proposer's mempool
@@ -4921,9 +5219,10 @@ mod integration_tests {
 
         let block = &committed[0];
         // The blob tx should be in the block's transactions
-        let has_blob = block.transactions.iter().any(|tx| {
-            matches!(tx, Transaction::Blob(_))
-        });
+        let has_blob = block
+            .transactions
+            .iter()
+            .any(|tx| matches!(tx, Transaction::Blob(_)));
         assert!(has_blob, "Block should contain the blob transaction");
     }
 
@@ -4940,8 +5239,8 @@ mod integration_tests {
             address: addr(1),
             balance: 10_000_000,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
         });
 
         // Remove validator 4 from the active set (simulate offline)
@@ -4975,8 +5274,8 @@ mod integration_tests {
             address: addr(1),
             balance: 10_000_000,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
         });
 
         let committed = run_consensus_round(&mut nodes, &mut db, 30);
@@ -5000,9 +5299,9 @@ mod integration_tests {
 
     #[test]
     fn test_da_commitment_pipeline() {
+        use evaporchain_da::certificate::{create_attestation, CertificateBuilder};
+        use evaporchain_da::commitments::{generate_2d_queries, RowColumnCommitments};
         use evaporchain_da::erasure2d::ErasureEncoder2D;
-        use evaporchain_da::commitments::{RowColumnCommitments, generate_2d_queries};
-        use evaporchain_da::certificate::{CertificateBuilder, create_attestation};
 
         // Simulate what happens when a proposer encodes blob data for DA
         let blob_data = vec![0xABu8; 512];
@@ -5018,14 +5317,15 @@ mod integration_tests {
         let num_validators = 4u64;
         let num_samples = 8;
         let mut builder = CertificateBuilder::new(
-            1,     // block_number
+            1, // block_number
             data_root,
             num_validators * 1000, // total_stake
         );
 
         for vid in 1..=num_validators {
             let seed = blake3::hash(&vid.to_le_bytes());
-            let queries = generate_2d_queries(1, matrix.extended_dim(), num_samples, seed.as_bytes());
+            let queries =
+                generate_2d_queries(1, matrix.extended_dim(), num_samples, seed.as_bytes());
 
             // Verify each sampled cell
             let mut all_valid = true;
@@ -5038,16 +5338,20 @@ mod integration_tests {
                     break;
                 }
             }
-            assert!(all_valid, "All sampled cells should verify for validator {}", vid);
+            assert!(
+                all_valid,
+                "All sampled cells should verify for validator {}",
+                vid
+            );
 
             // Create BLS attestation
             let kp = BlsKeypair::generate();
             let attestation = create_attestation(
-                1,         // block_number
+                1, // block_number
                 &data_root,
                 vid,
                 num_samples as u32,
-                1000,      // stake
+                1000, // stake
                 &kp,
             );
             builder.add_attestation(attestation);
@@ -5064,10 +5368,7 @@ mod integration_tests {
         assert_eq!(cert.block_number, 1);
         assert_eq!(cert.data_root, data_root);
         assert_eq!(cert.attestations.len(), 4);
-        assert!(
-            cert.is_supermajority(),
-            "4/4 validators = supermajority"
-        );
+        assert!(cert.is_supermajority(), "4/4 validators = supermajority");
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -5076,9 +5377,9 @@ mod integration_tests {
 
     #[test]
     fn test_full_e2e_consensus_da_bls() {
-        use evaporchain_da::erasure2d::ErasureEncoder2D;
+        use evaporchain_da::certificate::{create_attestation, CertificateBuilder};
         use evaporchain_da::commitments::RowColumnCommitments;
-        use evaporchain_da::certificate::{CertificateBuilder, create_attestation};
+        use evaporchain_da::erasure2d::ErasureEncoder2D;
 
         let ids = &[1u64, 2, 3, 4];
         let mut nodes = make_bls_network(ids);
@@ -5087,8 +5388,8 @@ mod integration_tests {
             address: addr(1),
             balance: 10_000_000,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
         });
 
         // === Height 1: Commit a block with BLS certificate ===
@@ -5155,8 +5456,8 @@ mod integration_tests {
             address: addr(1),
             balance: 10_000_000,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
         });
 
         let mut all_messages = Vec::new();
@@ -5174,7 +5475,7 @@ mod integration_tests {
 
         // Run a few rounds to collect prevotes and precommits
         for _ in 0..20 {
-            let current: Vec<_> = messages.drain(..).collect();
+            let current: Vec<_> = std::mem::take(&mut messages);
             for msg in &current {
                 for v in nodes.iter_mut() {
                     for a in v.on_message(msg.clone()) {
@@ -5196,13 +5497,31 @@ mod integration_tests {
         }
 
         // Check that prevotes have BLS signatures
-        let bls_prevotes = all_messages.iter().filter(|m| {
-            matches!(m, ConsensusMessage::Prevote { bls_signature: Some(_), .. })
-        }).count();
+        let bls_prevotes = all_messages
+            .iter()
+            .filter(|m| {
+                matches!(
+                    m,
+                    ConsensusMessage::Prevote {
+                        bls_signature: Some(_),
+                        ..
+                    }
+                )
+            })
+            .count();
 
-        let bls_precommits = all_messages.iter().filter(|m| {
-            matches!(m, ConsensusMessage::Precommit { bls_signature: Some(_), .. })
-        }).count();
+        let bls_precommits = all_messages
+            .iter()
+            .filter(|m| {
+                matches!(
+                    m,
+                    ConsensusMessage::Precommit {
+                        bls_signature: Some(_),
+                        ..
+                    }
+                )
+            })
+            .count();
 
         assert!(
             bls_prevotes >= 1,
@@ -5231,7 +5550,9 @@ mod integration_tests {
 #[cfg(test)]
 mod vrf_tests {
     use super::*;
-    use evaporchain_crypto::vrf::{VrfKeypair, VrfOutput, VrfProof, leader_vrf_input, vrf_verify, vrf_leader_check};
+    use evaporchain_crypto::vrf::{
+        leader_vrf_input, vrf_leader_check, vrf_verify, VrfKeypair, VrfOutput, VrfProof,
+    };
     use evaporchain_state::InMemoryStateDB;
     use evaporchain_types::Account;
 
@@ -5270,17 +5591,13 @@ mod vrf_tests {
                 let mut tc = TendermintConsensus::new_for_test(id, 5, vs.clone());
                 // Set BLS keypair
                 let bls_kp = BlsKeypair::generate();
-                tc.validator_set
-                    .get_mut(id)
-                    .unwrap()
-                    .bls_public_key = Some(bls_kp.public_key_bytes().0);
+                tc.validator_set.get_mut(id).unwrap().bls_public_key =
+                    Some(bls_kp.public_key_bytes().0);
                 tc.set_bls_keypair(bls_kp);
                 // Set VRF keypair
                 let vrf_kp = VrfKeypair::generate();
-                tc.validator_set
-                    .get_mut(id)
-                    .unwrap()
-                    .vrf_public_key = Some(vrf_kp.public_key_bytes());
+                tc.validator_set.get_mut(id).unwrap().vrf_public_key =
+                    Some(vrf_kp.public_key_bytes());
                 tc.set_vrf_keypair(vrf_kp);
                 tc
             })
@@ -5318,17 +5635,18 @@ mod vrf_tests {
             address: addr(1),
             balance: 10_000_000,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
         });
 
         // Tick to get the proposer to create a block
         let mut proposal = None;
         for v in nodes.iter_mut() {
             for a in v.tick(&mut db) {
-                if let ConsensusAction::BroadcastMessage(
-                    ConsensusMessage::Proposal { ref block, .. }
-                ) = a
+                if let ConsensusAction::BroadcastMessage(ConsensusMessage::Proposal {
+                    ref block,
+                    ..
+                }) = a
                 {
                     proposal = Some(block.clone());
                 }
@@ -5340,10 +5658,7 @@ mod vrf_tests {
             block.vrf_output.is_some(),
             "Block should contain VRF output"
         );
-        assert!(
-            block.vrf_proof.is_some(),
-            "Block should contain VRF proof"
-        );
+        assert!(block.vrf_proof.is_some(), "Block should contain VRF proof");
 
         // Verify VRF proof
         let proposer_id = block.producer_id.unwrap();
@@ -5373,8 +5688,8 @@ mod vrf_tests {
             address: addr(1),
             balance: 10_000_000,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
         });
 
         // Run full consensus round with VRF-enabled validators
@@ -5395,7 +5710,7 @@ mod vrf_tests {
             if !committed.is_empty() {
                 break;
             }
-            let current: Vec<_> = messages.drain(..).collect();
+            let current: Vec<_> = std::mem::take(&mut messages);
             for msg in &current {
                 for v in nodes.iter_mut() {
                     for a in v.on_message(msg.clone()) {
@@ -5418,7 +5733,10 @@ mod vrf_tests {
             }
         }
 
-        assert!(!committed.is_empty(), "VRF-enabled network should reach consensus");
+        assert!(
+            !committed.is_empty(),
+            "VRF-enabled network should reach consensus"
+        );
         let block = &committed[0];
         assert!(block.vrf_output.is_some());
         assert!(block.vrf_proof.is_some());
@@ -5443,7 +5761,7 @@ mod vrf_tests {
             timestamp: 0,
             chain_id: String::new(),
             producer_id: Some(proposer_id),
-            vrf_output: Some([0xAA; 32]),    // Fake VRF output
+            vrf_output: Some([0xAA; 32]),     // Fake VRF output
             vrf_proof: Some(vec![0xBB; 100]), // Fake VRF proof
             data_root: None,
             da_row_roots: vec![],
@@ -5468,7 +5786,10 @@ mod vrf_tests {
         // Non-proposer should reject the invalid VRF proof
         let actions = nodes[non_proposer_idx].on_message(msg);
         let has_prevote = actions.iter().any(|a| {
-            matches!(a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. }))
+            matches!(
+                a,
+                ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. })
+            )
         });
         assert!(
             !has_prevote,
@@ -5499,8 +5820,8 @@ mod vrf_tests {
             address: addr(1),
             balance: 10_000_000,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
         });
 
         let beacon_before = nodes[0].randomness_beacon().current();
@@ -5518,8 +5839,10 @@ mod vrf_tests {
             }
         }
         for _ in 0..30 {
-            if !committed.is_empty() { break; }
-            let current: Vec<_> = messages.drain(..).collect();
+            if !committed.is_empty() {
+                break;
+            }
+            let current: Vec<_> = std::mem::take(&mut messages);
             for msg in &current {
                 for v in nodes.iter_mut() {
                     for a in v.on_message(msg.clone()) {
@@ -5567,8 +5890,8 @@ mod vrf_tests {
             address: addr(1),
             balance: 10_000_000,
             nonce: 0,
-        storage_deposit: 0,
-        storage_bytes: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
         });
 
         let mut vrf_outputs = Vec::new();
@@ -5588,8 +5911,10 @@ mod vrf_tests {
             }
 
             for _ in 0..30 {
-                if !committed.is_empty() { break; }
-                let current: Vec<_> = messages.drain(..).collect();
+                if !committed.is_empty() {
+                    break;
+                }
+                let current: Vec<_> = std::mem::take(&mut messages);
                 for msg in &current {
                     for v in nodes.iter_mut() {
                         for a in v.on_message(msg.clone()) {
@@ -5615,7 +5940,11 @@ mod vrf_tests {
             assert!(!committed.is_empty(), "Height {} should commit", height);
             let block = &committed[0];
             assert_eq!(block.number, height);
-            assert!(block.vrf_output.is_some(), "Height {} should have VRF output", height);
+            assert!(
+                block.vrf_output.is_some(),
+                "Height {} should have VRF output",
+                height
+            );
             vrf_outputs.push(block.vrf_output.unwrap());
 
             let state_root = [height as u8; 32];
@@ -5631,12 +5960,11 @@ mod vrf_tests {
     }
 }
 
-
 #[cfg(test)]
 mod epoch_tests {
     use super::*;
-    use crate::validator_set::{ValidatorInfo, ValidatorSet, EpochTransitionManager};
-    use evaporchain_types::{Transaction, ValidatorStakeTx, ValidatorExitTx, Block};
+    use crate::validator_set::{EpochTransitionManager, ValidatorInfo, ValidatorSet};
+    use evaporchain_types::{Block, Transaction, ValidatorExitTx, ValidatorStakeTx};
 
     fn make_validator_set(n: u64, stake: u64) -> ValidatorSet {
         let mut vs = ValidatorSet::new();
@@ -5910,7 +6238,6 @@ mod epoch_tests {
     }
 }
 
-
 // ─────────────── MEV-Protected Mempool Tests ──────────────────────────
 
 #[cfg(test)]
@@ -6010,7 +6337,7 @@ mod mev_tests {
         // Reveals should be drained
         let (_, enc_count, reveals) = tc.mempool_stats();
         assert_eq!(enc_count, 0); // encrypted tx consumed
-        assert_eq!(reveals, 0);   // reveals consumed
+        assert_eq!(reveals, 0); // reveals consumed
     }
 
     #[test]
@@ -6147,7 +6474,6 @@ mod mev_tests {
     }
 }
 
-
 // ─────────────── DA Integration Tests ─────────────────────────────────
 
 #[cfg(test)]
@@ -6190,7 +6516,10 @@ mod da_tests {
 
         let block = tc.create_proposal(&mut db).unwrap();
         assert_eq!(block.transactions.len(), 3);
-        assert!(block.data_root.is_some(), "block with txs should have data_root");
+        assert!(
+            block.data_root.is_some(),
+            "block with txs should have data_root"
+        );
 
         // Verify the data_root is a valid commitment
         let data_root = block.data_root.unwrap();
@@ -6206,7 +6535,11 @@ mod da_tests {
         let block = tc.create_proposal(&mut db).unwrap();
         assert_eq!(block.transactions.len(), 0);
         let expected = blake3::hash(b"evaporchain:empty_block").into();
-        assert_eq!(block.data_root, Some(expected), "empty block should have sentinel data_root");
+        assert_eq!(
+            block.data_root,
+            Some(expected),
+            "empty block should have sentinel data_root"
+        );
     }
 
     #[test]
@@ -6272,7 +6605,8 @@ mod da_tests {
             let proof = da.prove_shard(&package, i).unwrap();
             assert!(
                 BlockDA::verify_shard_sample(&package.header, &proof),
-                "shard {} should verify against data_root", i
+                "shard {} should verify against data_root",
+                i
             );
             assert_eq!(package.header.commitment_root, data_root);
         }
@@ -6301,7 +6635,10 @@ mod da_tests {
         assert_eq!(block.blob_commitments.len(), 3);
         // Each commitment should be non-zero
         for (i, commitment) in block.blob_commitments.iter().enumerate() {
-            assert_ne!(*commitment, [0u8; 32], "blob_commitment[{i}] should not be zero");
+            assert_ne!(
+                *commitment, [0u8; 32],
+                "blob_commitment[{i}] should not be zero"
+            );
         }
     }
 
@@ -6363,7 +6700,10 @@ mod da_tests {
         });
 
         // Should return early (empty actions = rejected)
-        assert!(actions.is_empty(), "equivocating prevote should be rejected");
+        assert!(
+            actions.is_empty(),
+            "equivocating prevote should be rejected"
+        );
         // Validator 2 should be jailed
         let v = tc.validator_set.get(2).unwrap();
         assert!(v.jailed, "equivocating validator should be jailed");
@@ -6395,7 +6735,10 @@ mod da_tests {
             bls_signature: None,
         });
 
-        assert!(actions.is_empty(), "equivocating precommit should be rejected");
+        assert!(
+            actions.is_empty(),
+            "equivocating precommit should be rejected"
+        );
         let v = tc.validator_set.get(3).unwrap();
         assert!(v.jailed);
         assert_eq!(v.total_slashed, 100);
@@ -6477,7 +6820,11 @@ mod da_tests {
         // Validator 2 should never be leader
         for epoch in 0..20 {
             if let Some(leader) = tc.validator_set.leader_for_epoch(epoch) {
-                assert_ne!(leader.id, 2, "Jailed validator should not lead at epoch {}", epoch);
+                assert_ne!(
+                    leader.id, 2,
+                    "Jailed validator should not lead at epoch {}",
+                    epoch
+                );
             }
         }
     }
@@ -6507,15 +6854,30 @@ mod da_tests {
 
         tc.mempool.submit(dummy_transfer(42));
         let block = tc.create_proposal(&mut db).unwrap();
-        assert!(block.data_root.is_some(), "Block with txs should have data_root");
+        assert!(
+            block.data_root.is_some(),
+            "Block with txs should have data_root"
+        );
 
         let att = tc.perform_da_sampling(&block);
-        assert!(att.is_some(), "DA sampling should produce an attestation for a valid block");
+        assert!(
+            att.is_some(),
+            "DA sampling should produce an attestation for a valid block"
+        );
 
-        if let Some(ConsensusMessage::DAAttestation { block_number, samples_verified, .. }) = att {
+        if let Some(ConsensusMessage::DAAttestation {
+            block_number,
+            samples_verified,
+            ..
+        }) = att
+        {
             assert_eq!(block_number, block.number);
             // 2D path samples 16 cells; 1D fallback verifies at least 4 shards
-            assert!(samples_verified >= 4, "Should verify at least 4 samples, got {}", samples_verified);
+            assert!(
+                samples_verified >= 4,
+                "Should verify at least 4 samples, got {}",
+                samples_verified
+            );
         } else {
             panic!("Expected DAAttestation message");
         }
@@ -6531,7 +6893,11 @@ mod da_tests {
 
         let block = tc.create_proposal(&mut db).unwrap();
         let expected: [u8; 32] = blake3::hash(b"evaporchain:empty_block").into();
-        assert_eq!(block.data_root, Some(expected), "Empty block should have sentinel data_root");
+        assert_eq!(
+            block.data_root,
+            Some(expected),
+            "Empty block should have sentinel data_root"
+        );
     }
 
     #[test]
@@ -6545,7 +6911,7 @@ mod da_tests {
         tc.mempool.submit(dummy_transfer(42));
         let mut block = tc.create_proposal(&mut db).unwrap();
         block.data_root = Some([0xFFu8; 32]); // Tamper
-        // Clear 2D roots so sampling falls through to 1D path where data_root is checked
+                                              // Clear 2D roots so sampling falls through to 1D path where data_root is checked
         block.da_row_roots.clear();
         block.da_col_roots.clear();
 
@@ -6565,9 +6931,24 @@ mod da_tests {
         let actions = tc.tick(&mut db);
 
         // Should have: Proposal + Prevote + DAAttestation
-        let has_proposal = actions.iter().any(|a| matches!(a, ConsensusAction::BroadcastMessage(ConsensusMessage::Proposal { .. })));
-        let has_prevote = actions.iter().any(|a| matches!(a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. })));
-        let has_da_att = actions.iter().any(|a| matches!(a, ConsensusAction::BroadcastMessage(ConsensusMessage::DAAttestation { .. })));
+        let has_proposal = actions.iter().any(|a| {
+            matches!(
+                a,
+                ConsensusAction::BroadcastMessage(ConsensusMessage::Proposal { .. })
+            )
+        });
+        let has_prevote = actions.iter().any(|a| {
+            matches!(
+                a,
+                ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. })
+            )
+        });
+        let has_da_att = actions.iter().any(|a| {
+            matches!(
+                a,
+                ConsensusAction::BroadcastMessage(ConsensusMessage::DAAttestation { .. })
+            )
+        });
 
         assert!(has_proposal, "Proposer should broadcast proposal");
         assert!(has_prevote, "Proposer should broadcast prevote");
@@ -6601,16 +6982,32 @@ mod da_tests {
         let proposal_msg = ConsensusMessage::Proposal {
             height: 1,
             round: 0,
-            block: block,
+            block,
             proposer_id,
         };
         let actions = tc_receiver.on_message(proposal_msg);
 
-        let has_prevote = actions.iter().any(|a| matches!(a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { block_hash: Some(_), .. })));
-        let has_da_att = actions.iter().any(|a| matches!(a, ConsensusAction::BroadcastMessage(ConsensusMessage::DAAttestation { .. })));
+        let has_prevote = actions.iter().any(|a| {
+            matches!(
+                a,
+                ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote {
+                    block_hash: Some(_),
+                    ..
+                })
+            )
+        });
+        let has_da_att = actions.iter().any(|a| {
+            matches!(
+                a,
+                ConsensusAction::BroadcastMessage(ConsensusMessage::DAAttestation { .. })
+            )
+        });
 
         assert!(has_prevote, "Validator should prevote for valid proposal");
-        assert!(has_da_att, "Validator should broadcast DA attestation after sampling");
+        assert!(
+            has_da_att,
+            "Validator should broadcast DA attestation after sampling"
+        );
     }
 
     #[test]
@@ -6643,14 +7040,26 @@ mod da_tests {
         let block = tc.create_proposal(&mut db).unwrap();
 
         // Blocks from create_proposal should have 2D roots populated
-        assert!(!block.da_row_roots.is_empty(), "Block should have da_row_roots");
-        assert!(!block.da_col_roots.is_empty(), "Block should have da_col_roots");
+        assert!(
+            !block.da_row_roots.is_empty(),
+            "Block should have da_row_roots"
+        );
+        assert!(
+            !block.da_col_roots.is_empty(),
+            "Block should have da_col_roots"
+        );
         assert!(block.data_root.is_some(), "Block should have data_root");
 
         let att = tc.perform_da_sampling(&block);
-        assert!(att.is_some(), "2D DA sampling should produce an attestation");
+        assert!(
+            att.is_some(),
+            "2D DA sampling should produce an attestation"
+        );
 
-        if let Some(ConsensusMessage::DAAttestation { samples_verified, .. }) = att {
+        if let Some(ConsensusMessage::DAAttestation {
+            samples_verified, ..
+        }) = att
+        {
             // 2D path samples 16 cells, all should verify for a valid block
             assert_eq!(samples_verified, 16, "2D path should verify all 16 samples");
         } else {
@@ -6674,7 +7083,10 @@ mod da_tests {
         block.da_row_roots[0] = [0xFF; 32];
 
         let att = tc.perform_da_sampling(&block);
-        assert!(att.is_none(), "Tampered row roots should fail 2D DA sampling");
+        assert!(
+            att.is_none(),
+            "Tampered row roots should fail 2D DA sampling"
+        );
     }
 
     #[test]
@@ -6695,9 +7107,15 @@ mod da_tests {
         let att = tc.perform_da_sampling(&block);
         assert!(att.is_some(), "Should fall back to 1D DA sampling");
 
-        if let Some(ConsensusMessage::DAAttestation { samples_verified, .. }) = att {
+        if let Some(ConsensusMessage::DAAttestation {
+            samples_verified, ..
+        }) = att
+        {
             // 1D path samples min(6, shard_count) and requires at least 4
-            assert!(samples_verified >= 4, "1D fallback should verify at least 4 shards");
+            assert!(
+                samples_verified >= 4,
+                "1D fallback should verify at least 4 shards"
+            );
         } else {
             panic!("Expected DAAttestation from 1D fallback");
         }
@@ -6755,7 +7173,7 @@ mod da_tests {
 
     /// Helper: create a valid DA certificate with BLS-signed attestations.
     fn make_valid_da_cert(block_number: u64, num_validators: u64) -> Vec<u8> {
-        use evaporchain_da::certificate::{CertificateBuilder, create_attestation};
+        use evaporchain_da::certificate::{create_attestation, CertificateBuilder};
 
         let data_root = [0xDAu8; 32];
         let stake_per = 1000u64;
@@ -6782,7 +7200,11 @@ mod da_tests {
     #[test]
     fn test_da_enforcement_default_height() {
         let tc = make_test_tc();
-        assert_eq!(tc.da_enforcement_height(), 100, "default enforcement height should be 100");
+        assert_eq!(
+            tc.da_enforcement_height(),
+            100,
+            "default enforcement height should be 100"
+        );
     }
 
     #[test]
