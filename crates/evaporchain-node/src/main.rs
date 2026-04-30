@@ -2399,11 +2399,14 @@ async fn main() -> Result<()> {
         }
     }
 
-    // DA certificate enforcement starts 200 blocks after the restored tip,
-    // giving time for BLS key exchange and DA attestation rounds to stabilize.
-    if !args.no_da_enforcement {
-        if let Some(ref tc) = tendermint {
-            let mut c = safe_lock(tc);
+    // DA certificate enforcement: disabled entirely in devnet/demo mode (u64::MAX),
+    // otherwise starts 200 blocks after the restored tip so BLS key exchange and
+    // DA attestation rounds can stabilize before enforcement goes live.
+    if let Some(ref tc) = tendermint {
+        let mut c = safe_lock(tc);
+        if args.no_da_enforcement {
+            c.set_da_enforcement_height(u64::MAX);
+        } else {
             let da_start = c.height().saturating_add(200);
             c.set_da_enforcement_height(da_start);
         }
