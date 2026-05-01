@@ -124,7 +124,8 @@ export default function ComposeMessage({ senderAddress, onSent }: Props) {
 
         {success && (
           <div className="rounded-lg border border-evap-green/20 bg-green-50 p-3 text-sm text-evap-green">
-            Message sent successfully! It will start decaying immediately.
+            Contract deploy queued — once it finalises the seal step locks
+            in your message. Decay starts as soon as the contract is on-chain.
           </div>
         )}
 
