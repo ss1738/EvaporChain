@@ -6779,48 +6779,56 @@ async fn get_tx_by_hash(
         None => return Err(StatusCode::BAD_REQUEST),
     };
 
-    // Resolve a deploy tx → its chain-assigned contract_id by walking the
-    // engine matching the tx_type. Match by (truncated-deployer-hex,
-    // created_epoch) — the same prefix `tx_sender_hex` writes, so the
-    // ring and the registry agree.
+    // Resolve a deploy tx → its chain-assigned contract_id.
     //
-    // Caveats:
-    //  - `tx.from` is the 4-byte-truncated `0xXXXXXXXX` form.
-    //    Multiple deployers sharing the same first 4 bytes would alias.
-    //    Real production indexes by full address; this is the best
-    //    available without a `tx_hash → contract_id` index (TODO at
-    //    bottom of `index_block_transactions` in persistence.rs).
-    //  - If a single deployer ships >1 contract in the same epoch, we
-    //    return the highest id (most recent), which is what the dapp's
-    //    seal-handoff flow needs.
-    let resolve_deploy_contract_id = |tx_type: &str, deployer_prefix_hex: &str, epoch: u64| -> Option<u64> {
-        let consensus = safe_lock(&state.consensus);
-        let mut best: Option<u64> = None;
-        let consider = |id: u64, creator: &[u8; 32], created_epoch: u64, best: &mut Option<u64>| {
-            if created_epoch != epoch {
-                return;
+    // Lookup order:
+    //   1. Persistent index (CF_DEPLOY_INDEX, written at block-include time
+    //      when a deploy tx executes). Authoritative, full-address keyed,
+    //      no aliasing. Available whenever chain_store is attached.
+    //   2. Heuristic fallback: walk the live script_engine /
+    //      contract_engine registry and match by (truncated deployer hex,
+    //      created_epoch). Used in light/dev mode where chain_store isn't
+    //      set, or for deploys that pre-date the persistent index. Aliases
+    //      deployers sharing the same first 4 bytes — log-only severity.
+    //
+    // Both paths return `None` for non-deploy tx types or unresolvable hashes.
+    let resolve_deploy_contract_id =
+        |tx_type: &str, tx_hash_hex: &str, deployer_prefix_hex: &str, epoch: u64| -> Option<u64> {
+            // Path 1: persistent index.
+            if let Some(ref store) = state.chain_store {
+                if let Some(id) = store.get_deployed_contract_id(tx_hash_hex) {
+                    return Some(id);
+                }
             }
-            // Match against the same prefix the ring writes (`0x` + first 4 bytes).
-            let creator_prefix = format!("0x{}", hex::encode(&creator[..4]));
-            if creator_prefix.eq_ignore_ascii_case(deployer_prefix_hex) {
-                *best = Some(best.map_or(id, |b| b.max(id)));
+
+            // Path 2: heuristic over the live engine.
+            let consensus = safe_lock(&state.consensus);
+            let mut best: Option<u64> = None;
+            let consider =
+                |id: u64, creator: &[u8; 32], created_epoch: u64, best: &mut Option<u64>| {
+                    if created_epoch != epoch {
+                        return;
+                    }
+                    let creator_prefix = format!("0x{}", hex::encode(&creator[..4]));
+                    if creator_prefix.eq_ignore_ascii_case(deployer_prefix_hex) {
+                        *best = Some(best.map_or(id, |b| b.max(id)));
+                    }
+                };
+            match tx_type {
+                "deploy_contract" => {
+                    for ci in consensus.executor.contract_engine.list() {
+                        consider(ci.id, &ci.creator, ci.created_epoch, &mut best);
+                    }
+                }
+                "deploy_script" => {
+                    for sc in consensus.executor.script_engine.list() {
+                        consider(sc.id, &sc.creator, sc.created_epoch, &mut best);
+                    }
+                }
+                _ => {}
             }
+            best
         };
-        match tx_type {
-            "deploy_contract" => {
-                for ci in consensus.executor.contract_engine.list() {
-                    consider(ci.id, &ci.creator, ci.created_epoch, &mut best);
-                }
-            }
-            "deploy_script" => {
-                for sc in consensus.executor.script_engine.list() {
-                    consider(sc.id, &sc.creator, sc.created_epoch, &mut best);
-                }
-            }
-            _ => {}
-        }
-        best
-    };
 
     // ── 1. Finalised / included scan over in-memory block_history. ────
     // In multi-validator (Tendermint) mode, finality lags commitment by the
@@ -6866,7 +6874,7 @@ async fn get_tx_by_hash(
                     };
                     let gas_used = if tx.gas > 0 { Some(tx.gas) } else { None };
                     let contract_id = if state_label != "rejected" {
-                        resolve_deploy_contract_id(&tx.tx_type, &tx.from, tx.epoch)
+                        resolve_deploy_contract_id(&tx.tx_type, &tx.hash, &tx.from, tx.epoch)
                     } else {
                         None
                     };
@@ -6905,6 +6913,7 @@ async fn get_tx_by_hash(
                     .and_then(|from| {
                         resolve_deploy_contract_id(
                             &receipt.tx_type,
+                            &receipt.tx_hash,
                             from,
                             receipt.epoch,
                         )

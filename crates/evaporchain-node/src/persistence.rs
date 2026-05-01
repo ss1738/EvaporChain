@@ -29,6 +29,12 @@ const CF_CONTRACT_EVENTS: &str = "contract_events";
 const CF_SCRIPT_CONTRACTS: &str = "script_contracts";
 /// Template-based ContractInstance objects keyed by ID.
 const CF_TEMPLATE_CONTRACTS: &str = "template_contracts";
+/// Deploy-tx-hash → contract_id index. Closes the seal-handoff gap that
+/// the dapp's auto-seal flow used to plug with a 4-byte deployer-prefix
+/// heuristic. Key = 32-byte tx_hash; value = contract_id (u64 LE).
+/// Written at block-include time when a deploy_contract / deploy_script
+/// tx executes successfully and the engine has assigned an id.
+const CF_DEPLOY_INDEX: &str = "deploy_index";
 
 /// Persistent storage for chain data beyond the state DB.
 pub struct ChainStore {
@@ -53,6 +59,7 @@ impl ChainStore {
             ColumnFamilyDescriptor::new(CF_CONTRACT_EVENTS, Options::default()),
             ColumnFamilyDescriptor::new(CF_SCRIPT_CONTRACTS, Options::default()),
             ColumnFamilyDescriptor::new(CF_TEMPLATE_CONTRACTS, Options::default()),
+            ColumnFamilyDescriptor::new(CF_DEPLOY_INDEX, Options::default()),
         ];
 
         let db = DB::open_cf_descriptors(&opts, path, cf_descriptors)
@@ -583,6 +590,88 @@ impl ChainStore {
         let cf = self.db.cf_handle(CF_TX_INDEX).unwrap();
         let data = self.db.get_cf(cf, &hash_bytes).ok()??;
         serde_json::from_slice(&data).ok()
+    }
+
+    /// Record the (deploy tx_hash → contract_id) mapping written when a
+    /// `Transaction::DeployContract` or `Transaction::DeployScript` executes
+    /// successfully. The chain-execution layer is the only thing that knows
+    /// the chain-assigned id; this is the surface that persists it for
+    /// later receipt lookups via [`Self::get_deployed_contract_id`].
+    ///
+    /// Idempotent: re-recording the same (tx_hash, contract_id) is a no-op
+    /// at the data level. The block applier should call this exactly once
+    /// per successful deploy; recording twice with conflicting ids would
+    /// silently overwrite.
+    pub fn record_deployed_contract(
+        &self,
+        tx_hash: &[u8; 32],
+        contract_id: u64,
+    ) -> Result<(), String> {
+        let cf = self.db.cf_handle(CF_DEPLOY_INDEX).unwrap();
+        self.db
+            .put_cf(cf, tx_hash, contract_id.to_le_bytes())
+            .map_err(|e| e.to_string())
+    }
+
+    /// Walk every deploy_contract / deploy_script tx in `block` and resolve
+    /// each one's chain-assigned contract_id via the supplied lookup, then
+    /// persist (tx_hash → contract_id) into [`CF_DEPLOY_INDEX`].
+    ///
+    /// `lookup` is called as `lookup(tx_type, deployer, epoch)` and must
+    /// return the contract id assigned to that deploy. Caller is expected
+    /// to walk the live engines (ContractEngine.list / ScriptEngine.list)
+    /// and match by (deployer, epoch). When multiple contracts share the
+    /// same (deployer, epoch) tuple — e.g. one operator deploying two
+    /// contracts in one block — the lookup should return the *highest*
+    /// id and we'll associate it with the latest tx in the block, which
+    /// matches block-execution order.
+    ///
+    /// Returns the count of deploys indexed. Block applier should call
+    /// this exactly once per block, after `index_block_transactions`.
+    pub fn index_block_deploys<F>(
+        &self,
+        block: &Block,
+        mut lookup: F,
+    ) -> Result<usize, String>
+    where
+        F: FnMut(&str, &[u8; 32], u64) -> Option<u64>,
+    {
+        let cf = self.db.cf_handle(CF_DEPLOY_INDEX).unwrap();
+        let mut indexed = 0;
+        for tx in block.transactions.iter() {
+            let (tx_type, deployer): (&str, [u8; 32]) = match tx {
+                Transaction::DeployContract(t) => ("deploy_contract", t.deployer),
+                Transaction::DeployScript(t) => ("deploy_script", t.deployer),
+                _ => continue,
+            };
+            if let Some(id) = lookup(tx_type, &deployer, block.epoch) {
+                let tx_hash = Self::compute_tx_hash(tx);
+                self.db
+                    .put_cf(cf, tx_hash, id.to_le_bytes())
+                    .map_err(|e| e.to_string())?;
+                indexed += 1;
+            }
+        }
+        Ok(indexed)
+    }
+
+    /// Look up the contract id assigned to a deploy tx by its 32-byte hash
+    /// (hex form). Returns `None` for non-deploy hashes, hashes that haven't
+    /// been indexed yet (deploy still in mempool / pre-include), or a
+    /// malformed hex input.
+    pub fn get_deployed_contract_id(&self, hash_hex: &str) -> Option<u64> {
+        let hash_bytes = hex::decode(hash_hex.trim_start_matches("0x")).ok()?;
+        if hash_bytes.len() != 32 {
+            return None;
+        }
+        let cf = self.db.cf_handle(CF_DEPLOY_INDEX).unwrap();
+        let data = self.db.get_cf(cf, &hash_bytes).ok()??;
+        if data.len() != 8 {
+            return None;
+        }
+        let mut buf = [0u8; 8];
+        buf.copy_from_slice(&data);
+        Some(u64::from_le_bytes(buf))
     }
 
     /// Get transaction history for an address (hex prefix, e.g. "0x01000000").

@@ -251,6 +251,78 @@ fn persist_contracts(
     }
 }
 
+/// Index every deploy_contract / deploy_script tx in `block` against the
+/// chain-assigned contract id. Snapshots the relevant engine entries
+/// (so the closure inside `index_block_deploys` doesn't need to hold any
+/// consensus lock) then writes (tx_hash → contract_id) per deploy.
+///
+/// Single source of truth for the seal-handoff resolver — both Tendermint
+/// commits and MockConsensus commits call this so the dapp's auto-seal
+/// flow has the same authoritative index regardless of consensus mode.
+fn index_block_deploys_via_consensus(
+    chain_store: &persistence::ChainStore,
+    block: &evaporchain_types::Block,
+    tendermint: Option<&Arc<Mutex<evaporchain_consensus::tendermint::TendermintConsensus>>>,
+    consensus: &Arc<Mutex<evaporchain_consensus::MockConsensus>>,
+) {
+    // Snapshot (id, deployer, created_epoch) for both engines under one
+    // lock acquisition. Tendermint when present, else mock.
+    let scripts: Vec<(u64, [u8; 32], u64)>;
+    let templates: Vec<(u64, [u8; 32], u64)>;
+    if let Some(tc_ref) = tendermint {
+        let tc = safe_lock(tc_ref);
+        scripts = tc
+            .script_engine()
+            .list()
+            .iter()
+            .map(|s| (s.id, s.creator, s.created_epoch))
+            .collect();
+        templates = tc
+            .contract_engine()
+            .list()
+            .iter()
+            .map(|c| (c.id, c.creator, c.created_epoch))
+            .collect();
+    } else {
+        let c = safe_lock(consensus);
+        scripts = c
+            .executor
+            .script_engine
+            .list()
+            .iter()
+            .map(|s| (s.id, s.creator, s.created_epoch))
+            .collect();
+        templates = c
+            .executor
+            .contract_engine
+            .list()
+            .iter()
+            .map(|c| (c.id, c.creator, c.created_epoch))
+            .collect();
+    }
+
+    // Highest-id tie-break — when one operator deploys >1 contract per
+    // block, the latest tx in the block should map to the latest id.
+    let resolve = |tx_type: &str, deployer: &[u8; 32], epoch: u64| -> Option<u64> {
+        let table = match tx_type {
+            "deploy_script" => &scripts,
+            "deploy_contract" => &templates,
+            _ => return None,
+        };
+        table
+            .iter()
+            .filter(|(_, c, ce)| ce == &epoch && c == deployer)
+            .map(|(id, _, _)| *id)
+            .max()
+    };
+    log_persist_err(
+        "deploy_index",
+        chain_store
+            .index_block_deploys(block, resolve)
+            .map(|_| ()),
+    );
+}
+
 // ──────────────── Nova Proof Verifier (bridge to ChainProver) ───────────
 
 /// Implements `ProofVerifier` for consensus by delegating to a `ChainProver`.
@@ -4224,6 +4296,7 @@ async fn main() -> Result<()> {
                                 }
                                 fatal_persist_err("full_block", chain_store.save_full_block(&block));
                                 log_persist_err("tx_index", chain_store.index_block_transactions(&block).map(|_| ()));
+                                index_block_deploys_via_consensus(&chain_store, &block, tendermint.as_ref(), &consensus);
                                 {
                                     let history = safe_lock(&block_history);
                                     if let Some(record) = history.back() {
@@ -4908,6 +4981,7 @@ async fn main() -> Result<()> {
                                     }
                                     fatal_persist_err("full_block", chain_store.save_full_block(&block));
                                     log_persist_err("tx_index", chain_store.index_block_transactions(&block).map(|_| ()));
+                                    index_block_deploys_via_consensus(&chain_store, &block, tendermint.as_ref(), &consensus);
                                     index_contract_events_from_exec(&chain_store, &block, &result.execution);
                                     {
                                         let history = safe_lock(&block_history);
@@ -5098,6 +5172,7 @@ async fn main() -> Result<()> {
                     ));
                     fatal_persist_err("full_block", chain_store.save_full_block(&result.block));
                 log_persist_err("tx_index", chain_store.index_block_transactions(&result.block).map(|_| ()));
+                index_block_deploys_via_consensus(&chain_store, &result.block, tendermint.as_ref(), &consensus);
                     index_contract_events_from_exec(&chain_store, &result.block, &result.execution);
                     {
                         let history = safe_lock(&block_history);
@@ -5442,6 +5517,7 @@ async fn main() -> Result<()> {
                                         log_persist_err("block", chain_store.save_block(&record));
                                         fatal_persist_err("full_block", chain_store.save_full_block(block));
                                         log_persist_err("tx_index", chain_store.index_block_transactions(block).map(|_| ()));
+                                        index_block_deploys_via_consensus(&chain_store, block, tendermint.as_ref(), &consensus);
                                     }
                                     // Update chain stats (same as record_block_production)
                                     {
