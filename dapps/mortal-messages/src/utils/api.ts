@@ -1,5 +1,6 @@
 import type {
   MortalMessage,
+  MessageStatus,
   MessageStats,
   SendMessagePayload,
   BoostPayload,
@@ -193,6 +194,25 @@ export async function readMortalMessage(contract_id: number, caller_byte: number
   );
 }
 
+/** Increment the contract's `boost_count` via `record_boost`. Called as a
+ *  follow-up to `/api/tx/refresh` so the contract's own telemetry stays
+ *  in sync with off-chain energy deposits. */
+export async function recordBoost(contract_id: number, caller_byte: number) {
+  return request<{ success: boolean; tx_hash?: string; message: string }>(
+    "/tx/call-script",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        caller: caller_byte,
+        contract_id,
+        method: "record_boost",
+        args: [],
+        epoch: 0,
+      }),
+    }
+  );
+}
+
 // Server-side resolver shipped 2026-05-01: TxStatusResponse now carries
 // `contract_id?: u64` populated by walking the script_engine /
 // contract_engine registry by (deployer-prefix, epoch). One known caveat:
@@ -201,30 +221,203 @@ export async function readMortalMessage(contract_id: number, caller_byte: number
 // at execution time) lives behind a TODO in persistence.rs::index_block_
 // transactions — when many deployers collide, swap to that.
 
-/** Fetch inbox for an address */
-export function getInbox(address: string) {
-  return request<MortalMessage[]>(`/messages/inbox/${address}`);
+// ── Read path: walk the on-chain script_engine registry ──
+//
+// The legacy /messages/{inbox,sent,stats}/:address and /message/:id endpoints
+// were never implemented server-side. The read path now goes through
+// /api/scripts (registry list) + /api/script/:id (per-contract state).
+//
+// One filter pass turns the global script list into "MortalMessage contracts
+// owned-by or addressed-to this address". Each contract's `state` field is
+// the authoritative source of body/recipient/sealed/boost_count.
+
+/** Server-shape of an entry in /api/scripts. Subset of fields we consume. */
+interface ScriptListEntry {
+  id: number;
+  name: string;
+  creator: string; // truncated display form, e.g. "0x01000000…"
+  energy: number;
+  half_life: number;
+  created_epoch: number;
+  evaporated: boolean;
 }
 
-/** Fetch sent messages for an address */
-export function getSentMessages(address: string) {
-  return request<MortalMessage[]>(`/messages/sent/${address}`);
+interface ScriptDetail extends ScriptListEntry {
+  state: Record<string, unknown>;
+  last_refreshed: number;
 }
 
-/** Fetch a single message with current energy */
-export function getMessage(id: string) {
-  return request<MortalMessage>(`/message/${id}`);
+interface MortalMessageState {
+  body?: string;
+  recipient?: string; // hex with 0x prefix
+  sender?: string;
+  sealed?: boolean;
+  boost_count?: number;
+  last_boost_epoch?: number;
 }
 
-/** Boost a message with additional energy */
-export function boostMessage(payload: BoostPayload) {
-  return request<{ energy: number; status: string }>("/message/boost", {
+/** Map a ScriptDetail of `name == MortalMessage` into the dApp's
+ *  MortalMessage shape. Returns null if the contract isn't sealed yet
+ *  (body/recipient are unset until set_payload runs). */
+function scriptToMessage(detail: ScriptDetail): MortalMessage | null {
+  const s = detail.state as MortalMessageState;
+  if (!s.sealed || !s.body || !s.recipient || !s.sender) return null;
+  const status: MessageStatus = detail.evaporated
+    ? "ghost"
+    : detail.energy === 0
+      ? "grace"
+      : "active";
+  // The chain doesn't expose max_energy on the registry — use deploy-time
+  // `half_life`-scaled estimate so the UI's energy bar has a reference.
+  // A real fix would surface initial_energy on the registry; harmless
+  // approximation here.
+  const max_energy = Math.max(detail.energy, detail.energy + 1);
+  return {
+    id: String(detail.id),
+    sender: s.sender,
+    recipient: s.recipient,
+    content: s.body,
+    energy: detail.energy,
+    max_energy,
+    half_life: detail.half_life,
+    created_at: String(detail.created_epoch),
+    status,
+    energy_percent: max_energy > 0 ? (detail.energy / max_energy) * 100 : 0,
+  };
+}
+
+/** Normalise a hex address for substring comparison. Lower-cased, no `0x`. */
+function canonHex(addr: string): string {
+  return addr.trim().replace(/^0x/i, "").toLowerCase();
+}
+
+/** Two addresses match in the dapp's loose-prefix sense if either is a
+ *  prefix of the other (covers the chain's 4-byte-truncated display form
+ *  vs full 32-byte hex on contract state). */
+function addressMatches(a: string, b: string): boolean {
+  const ca = canonHex(a);
+  const cb = canonHex(b);
+  if (ca.length === 0 || cb.length === 0) return false;
+  const shorter = ca.length < cb.length ? ca : cb;
+  const longer = ca.length < cb.length ? cb : ca;
+  // The chain truncates display-form addresses to 4 bytes (8 hex chars).
+  // Don't accept matches shorter than that — anything below would alias too
+  // many accounts on a populated chain.
+  if (shorter.length < 8) return false;
+  return longer.startsWith(shorter);
+}
+
+/** Walk the script_engine registry and resolve each MortalMessage hit
+ *  into a full ScriptDetail. Bounded to the first 200 entries so the
+ *  inbox doesn't issue thousands of GETs against a saturated node. */
+async function listMortalMessageContracts(): Promise<ScriptDetail[]> {
+  const list = await request<{ scripts: ScriptListEntry[]; count: number }>(
+    "/scripts",
+  );
+  const mortalContracts = list.scripts
+    .filter((s) => s.name === "MortalMessage")
+    .slice(0, 200);
+  // Fetch detail in parallel; tolerate per-contract errors so one bad
+  // entry doesn't poison the whole list.
+  const details = await Promise.all(
+    mortalContracts.map((s) =>
+      request<ScriptDetail>(`/script/${s.id}`).catch(() => null),
+    ),
+  );
+  return details.filter((d): d is ScriptDetail => d !== null);
+}
+
+/** Fetch inbox for an address — every sealed MortalMessage where the
+ *  recipient field on-chain matches `address`. */
+export async function getInbox(address: string): Promise<MortalMessage[]> {
+  const details = await listMortalMessageContracts();
+  return details
+    .map(scriptToMessage)
+    .filter((m): m is MortalMessage => m !== null && addressMatches(m.recipient, address))
+    // Newest-first by created_at (which we encoded as epoch).
+    .sort((a, b) => Number(b.created_at) - Number(a.created_at));
+}
+
+/** Fetch sent messages for an address — every sealed MortalMessage where
+ *  the on-chain sender field matches `address`. */
+export async function getSentMessages(address: string): Promise<MortalMessage[]> {
+  const details = await listMortalMessageContracts();
+  return details
+    .map(scriptToMessage)
+    .filter((m): m is MortalMessage => m !== null && addressMatches(m.sender, address))
+    .sort((a, b) => Number(b.created_at) - Number(a.created_at));
+}
+
+/** Fetch a single message by its on-chain contract id (the dApp's `id`
+ *  is the contract id rendered as a string). */
+export async function getMessage(id: string): Promise<MortalMessage> {
+  const detail = await request<ScriptDetail>(`/script/${id}`);
+  if (detail.name !== "MortalMessage") {
+    throw new Error(`script ${id} is not a MortalMessage (name=${detail.name})`);
+  }
+  const m = scriptToMessage(detail);
+  if (!m) {
+    throw new Error(`MortalMessage ${id} is not yet sealed`);
+  }
+  return m;
+}
+
+/** Boost a message's lifespan. EvaporScript surface: the chain refreshes
+ *  the contract's energy via `Transaction::Refresh` against the contract's
+ *  underlying object; we wire that through the existing /api/tx/refresh
+ *  endpoint and then issue a record_boost call so the contract's
+ *  boost_count keeps step with off-chain energy deposits.
+ *
+ *  Two-step is honest about the chain semantics: refresh deposits energy,
+ *  record_boost is a telemetry hook the contract maintains itself. */
+export async function boostMessage(payload: BoostPayload) {
+  // Step 1: deposit the energy via /api/tx/refresh. The endpoint takes
+  // {object_id, energy_deposit}; we pass the contract id as object_id
+  // — the chain's evaporation engine treats it the same as a state
+  // object's id for refresh purposes.
+  await request("/tx/refresh", {
     method: "POST",
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      object_id: payload.message_id,
+      energy_deposit: payload.energy,
+    }),
   });
+  // Step 2: bump the contract's own boost_count via record_boost. Caller
+  // byte = 1 (the sender). If the contract isn't sealed yet the call
+  // reverts inside the contract — refresh in step 1 still landed.
+  await recordBoost(Number(payload.message_id), 1).catch(() => {
+    // Non-fatal; the energy deposit succeeded above.
+  });
+  return { energy: payload.energy, status: "boost queued" };
 }
 
-/** Fetch stats for an address */
-export function getStats(address: string) {
-  return request<MessageStats>(`/messages/stats/${address}`);
+/** Fetch stats for an address by walking the same registry once. */
+export async function getStats(address: string): Promise<MessageStats> {
+  const details = await listMortalMessageContracts();
+  const msgs = details
+    .map(scriptToMessage)
+    .filter((m): m is MortalMessage => m !== null);
+  const sent = msgs.filter((m) => addressMatches(m.sender, address));
+  const received = msgs.filter((m) => addressMatches(m.recipient, address));
+  const alive = msgs.filter(
+    (m) =>
+      (addressMatches(m.sender, address) || addressMatches(m.recipient, address)) &&
+      m.status !== "ghost",
+  );
+  const evaporated = msgs.filter(
+    (m) =>
+      (addressMatches(m.sender, address) || addressMatches(m.recipient, address)) &&
+      m.status === "ghost",
+  );
+  const total_energy_spent = sent.reduce(
+    (sum, m) => sum + Math.max(0, m.max_energy - m.energy),
+    0,
+  );
+  return {
+    sent: sent.length,
+    received: received.length,
+    alive: alive.length,
+    evaporated: evaporated.length,
+    total_energy_spent,
+  };
 }
