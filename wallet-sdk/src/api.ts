@@ -32,6 +32,30 @@ import type {
   CallScriptParams,
   ScriptAbi,
   ContractEvent,
+  PatronageStatus,
+  PatronageImmunity,
+  PatronagePledgeParams,
+  PatronagePledgeResult,
+  PatronageActionParams,
+  PatronageHonourResult,
+  PatronageRevokeResult,
+  ForkChoiceModeStatus,
+  ForkChoiceAmendParams,
+  RefreshPoolStatus,
+  FeeControllerStatus,
+  FeeControllerStepParams,
+  FeeControllerStepResult,
+  DemurrageOwedParams,
+  DemurrageOwedResult,
+  SettleDemurrageParams,
+  SettleDemurrageResult,
+  HlwaEffectiveSupplyParams,
+  DsnStatus,
+  LadSimulateParams,
+  LadSimulateResult,
+  BellBeaconLatest,
+  BellBeaconParams,
+  BellBeaconResult,
 } from "./types";
 
 const NETWORKS: Record<NetworkId, NetworkConfig> = {
@@ -421,5 +445,200 @@ export class EvaporChainAPI {
   /** Get messaging stats for an address. */
   async getMessageStats(address: string): Promise<{ sent: number; received: number; active: number; ghosted: number }> {
     return this._get(`/api/messages/stats/${address}`);
+  }
+
+  // ── Substrate primitives: Patronage covenants ──
+
+  /** GET /api/patronage/status — summary of all active covenants. */
+  async getPatronageStatus(): Promise<PatronageStatus> {
+    return this._get("/api/patronage/status");
+  }
+
+  /** GET /api/patronage/immune — eviction-immunity + score for an object at an epoch. */
+  async getPatronageImmunity(objectIdHex: string, epoch: number): Promise<PatronageImmunity> {
+    return this._get(
+      `/api/patronage/immune?object_id_hex=${encodeURIComponent(objectIdHex)}&epoch=${epoch}`,
+    );
+  }
+
+  /** POST /api/patronage/pledge — open a Patronage Covenant. */
+  async submitPatronagePledge(params: PatronagePledgeParams): Promise<PatronagePledgeResult> {
+    return this._post("/api/patronage/pledge", {
+      object_id_hex: params.objectIdHex,
+      namespace_id_hex: params.namespaceIdHex,
+      donation_per_epoch: params.donationPerEpoch,
+      epochs: params.epochs,
+      current_epoch: params.currentEpoch,
+    });
+  }
+
+  /** POST /api/patronage/honour — release one epoch's donation from a covenant. */
+  async submitPatronageHonour(params: PatronageActionParams): Promise<PatronageHonourResult> {
+    return this._post("/api/patronage/honour", {
+      object_id_hex: params.objectIdHex,
+      epoch: params.epoch,
+    });
+  }
+
+  /** POST /api/patronage/revoke — close a covenant; refund unused pre-funded surplus. */
+  async submitPatronageRevoke(params: PatronageActionParams): Promise<PatronageRevokeResult> {
+    return this._post("/api/patronage/revoke", {
+      object_id_hex: params.objectIdHex,
+      epoch: params.epoch,
+    });
+  }
+
+  // ── Substrate primitives: Governance fork-choice ──
+
+  /** GET /api/governance/fork_choice_mode — current mode + attractor set. */
+  async getForkChoiceMode(): Promise<ForkChoiceModeStatus> {
+    return this._get("/api/governance/fork_choice_mode");
+  }
+
+  /**
+   * POST /api/governance/fork_choice_mode — amendment to switch fork-choice
+   * between MCC and Singh-Attractor. Stake-quorum authorised.
+   */
+  async submitForkChoiceAmend(params: ForkChoiceAmendParams): Promise<unknown> {
+    return this._post("/api/governance/fork_choice_mode", {
+      mode: params.mode,
+      attractors: params.attractors?.map((a) => ({
+        center: a.center,
+        basin_radius: a.basinRadius,
+      })),
+      endorser_stakes: params.endorserStakes,
+      required_stake: params.requiredStake,
+    });
+  }
+
+  // ── Substrate primitives: Refresh pool / fee controller / demurrage ──
+
+  /** GET /api/refresh_pool — protocol-owned pool total + per-namespace credits. */
+  async getRefreshPool(): Promise<RefreshPoolStatus> {
+    return this._get("/api/refresh_pool");
+  }
+
+  /** GET /api/fee_controller/status — current Lyapunov fee-controller state. */
+  async getFeeControllerStatus(): Promise<FeeControllerStatus> {
+    return this._get("/api/fee_controller/status");
+  }
+
+  /** POST /api/fee_controller/step — advance the fee controller by one block. */
+  async submitFeeControllerStep(params: FeeControllerStepParams): Promise<FeeControllerStepResult> {
+    return this._post("/api/fee_controller/step", {
+      gas_used: params.gasUsed,
+      epochs_elapsed: params.epochsElapsed,
+    });
+  }
+
+  /** POST /api/demurrage/owed — pure compute helper. */
+  async computeDemurrageOwed(params: DemurrageOwedParams): Promise<DemurrageOwedResult> {
+    return this._post("/api/demurrage/owed", {
+      balance: params.balance,
+      last_touched_epoch: params.lastTouchedEpoch,
+      current_epoch: params.currentEpoch,
+      lambda_base_ppm: params.lambdaBasePpm,
+      threshold: params.threshold,
+    });
+  }
+
+  /**
+   * POST /api/tx/settle_demurrage — debit `owed` from `from`'s balance,
+   * credit refresh pool. The `signature` MUST be an ML-DSA signature
+   * over the canonical payload returned by
+   * `EvaporChainAPI.settleDemurrageSignablePayload`.
+   */
+  async submitSettleDemurrage(params: SettleDemurrageParams): Promise<SettleDemurrageResult> {
+    return this._post("/api/tx/settle_demurrage", {
+      from: params.from,
+      signature: params.signature,
+      public_key: params.publicKey,
+    });
+  }
+
+  /**
+   * Compute the canonical signing payload string for /api/tx/settle_demurrage.
+   * Layout matches api.rs::post_settle_demurrage byte-for-byte:
+   *   `JSON({type:"settle_demurrage",from,current_epoch})`
+   *
+   * dApps should sign the UTF-8 bytes of this string with the user's
+   * ML-DSA key (e.g. via the wallet provider) and submit hex-encoded
+   * `signature` + `publicKey` through `submitSettleDemurrage`.
+   */
+  static settleDemurrageSignablePayload(from: string, currentEpoch: number): string {
+    return `{"type":"settle_demurrage","from":"${from}","current_epoch":${currentEpoch}}`;
+  }
+
+  // ── Substrate primitives: HLWA ──
+
+  /** POST /api/hlwa/effective_supply — read-only λ-decay simulation. */
+  async hlwaEffectiveSupply(params: HlwaEffectiveSupplyParams): Promise<unknown> {
+    return this._post("/api/hlwa/effective_supply", {
+      current_supply: params.currentSupply,
+      origin_attested_supply: params.originAttestedSupply,
+      last_attested_epoch: params.lastAttestedEpoch,
+      attestation_lambda_epochs: params.attestationLambdaEpochs,
+      current_epoch: params.currentEpoch,
+    });
+  }
+
+  /** POST /api/hlwa/re_attest — read-only re-attestation simulation. */
+  async hlwaReAttest(params: HlwaEffectiveSupplyParams): Promise<unknown> {
+    return this._post("/api/hlwa/re_attest", {
+      current_supply: params.currentSupply,
+      origin_attested_supply: params.originAttestedSupply,
+      last_attested_epoch: params.lastAttestedEpoch,
+      attestation_lambda_epochs: params.attestationLambdaEpochs,
+      current_epoch: params.currentEpoch,
+    });
+  }
+
+  // ── Substrate primitives: DSN ──
+
+  /** GET /api/dsn/status — current DSN window total + accumulator root. */
+  async getDsnStatus(): Promise<DsnStatus> {
+    return this._get("/api/dsn/status");
+  }
+
+  /** POST /api/dsn/fold_nullifier — fold a 32-byte nullifier into the window. */
+  async submitDsnFoldNullifier(nullifierHex: string): Promise<DsnStatus> {
+    return this._post("/api/dsn/fold_nullifier", { nullifier_hex: nullifierHex });
+  }
+
+  /** POST /api/dsn/advance_window — slide the window by one slot. */
+  async submitDsnAdvanceWindow(): Promise<DsnStatus> {
+    return this._post("/api/dsn/advance_window", {});
+  }
+
+  // ── Substrate primitives: LAD-VM ──
+
+  /** POST /api/lad_vm/simulate — single substructural-resource step. */
+  async ladVmSimulate(params: LadSimulateParams): Promise<LadSimulateResult> {
+    return this._post("/api/lad_vm/simulate", {
+      mode: params.mode,
+      value: params.value,
+      created_at_epoch: params.createdAtEpoch,
+      decay_window: params.decayWindow,
+      current_epoch: params.currentEpoch,
+      action: params.action,
+    });
+  }
+
+  // ── Substrate primitives: Bell-Beacon ──
+
+  /** GET /api/bell/latest — most recent live VRF-derived CHSH measurement. */
+  async getBellLatest(): Promise<BellBeaconLatest> {
+    return this._get("/api/bell/latest");
+  }
+
+  /** POST /api/bell_beacon — worked-example CHSH S-value simulator. */
+  async bellBeaconSimulate(params: BellBeaconParams): Promise<BellBeaconResult> {
+    return this._post("/api/bell_beacon", {
+      e_ab: params.eAb,
+      e_ab_prime: params.eAbPrime,
+      e_a_prime_b: params.eAPrimeB,
+      e_a_prime_b_prime: params.eAPrimeBPrime,
+      threshold_milli: params.thresholdMilli,
+    });
   }
 }

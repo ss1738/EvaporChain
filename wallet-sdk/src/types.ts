@@ -51,6 +51,258 @@ export interface Balance {
   nonce: number;
 }
 
+// ── Substrate primitives ──
+//
+// Wire format on the node is snake_case, but the wallet-sdk `_get` /
+// `_post` helpers run every response through `toCamelCase`, so the TS
+// surface here is camelCase. Request methods accept camelCase params
+// and convert them to snake_case when serialising the body.
+
+/** GET /api/patronage/status */
+export interface PatronageStatus {
+  activeCovenants: number;
+  totalPreFunded: number;
+  totalActiveScore: number;
+  patronageNsHex: string;
+}
+
+/** GET /api/patronage/immune */
+export interface PatronageImmunity {
+  objectIdHex: string;
+  epoch: number;
+  immune: boolean;
+  patronageScore: number;
+}
+
+/** Params for /api/patronage/pledge */
+export interface PatronagePledgeParams {
+  objectIdHex: string;
+  namespaceIdHex: string;
+  donationPerEpoch: number;
+  epochs: number;
+  currentEpoch: number;
+}
+
+/** /api/patronage/pledge response */
+export interface PatronagePledgeResult {
+  status: string;
+  objectIdHex: string;
+  preFunded: number;
+  expiresEpoch: number;
+  detail: string;
+}
+
+/** Params for /api/patronage/{honour,revoke} */
+export interface PatronageActionParams {
+  objectIdHex: string;
+  epoch: number;
+}
+
+/** /api/patronage/honour response */
+export interface PatronageHonourResult {
+  status: string;
+  donated: number;
+  patronageScore: number;
+  detail: string;
+}
+
+/** /api/patronage/revoke response (free-form) */
+export interface PatronageRevokeResult {
+  status: string;
+  objectIdHex?: string;
+  patronageScoreArchived?: number;
+  refunded?: number;
+  detail: string;
+}
+
+/** Attractor inside fork-choice amendment */
+export interface AttractorSpec {
+  center: number;
+  basinRadius: number;
+}
+
+/** GET /api/governance/fork_choice_mode */
+export interface ForkChoiceModeStatus {
+  forkChoiceMode: string;
+  attractors: AttractorSpec[];
+  detail: string;
+}
+
+/**
+ * Params for POST /api/governance/fork_choice_mode. Authorised by stake
+ * quorum; no signature on the body. Mirrors api.rs::ForkChoiceAmendReq.
+ */
+export interface ForkChoiceAmendParams {
+  /** "mcc" or "singh_attractor" */
+  mode: string;
+  /** Required when mode === "singh_attractor" */
+  attractors?: AttractorSpec[];
+  endorserStakes: number[];
+  requiredStake: number;
+}
+
+export interface RefreshPoolCredit {
+  namespaceHex: string;
+  accrued: number;
+  lastTouchedEpoch: number;
+}
+
+/** GET /api/refresh_pool */
+export interface RefreshPoolStatus {
+  totalAccrued: number;
+  credits: RefreshPoolCredit[];
+}
+
+/** GET /api/fee_controller/status */
+export interface FeeControllerStatus {
+  status: string;
+  energy: number;
+  baseFee: number;
+  targetEnergy: number;
+  targetGas: number;
+  feeResponsePpm: number;
+}
+
+/** Params for POST /api/fee_controller/step */
+export interface FeeControllerStepParams {
+  gasUsed: number;
+  epochsElapsed: number;
+}
+
+/** POST /api/fee_controller/step response */
+export interface FeeControllerStepResult {
+  status: string;
+  energyAfter?: number;
+  baseFee?: number;
+  lyapunovVBefore?: number;
+  lyapunovVAfter?: number;
+  lyapunovDelta?: number;
+  gasUsed?: number;
+  detail?: string;
+}
+
+/** Params for POST /api/demurrage/owed */
+export interface DemurrageOwedParams {
+  balance: number;
+  lastTouchedEpoch: number;
+  currentEpoch: number;
+  /** λ_base in ppm/epoch (0 = disabled) */
+  lambdaBasePpm: number;
+  threshold: number;
+}
+
+/** POST /api/demurrage/owed response */
+export interface DemurrageOwedResult {
+  status: string;
+  balance: number;
+  lastTouchedEpoch: number;
+  currentEpoch: number;
+  elapsedEpochs: number;
+  ratePpm: number;
+  owed: number;
+  remainingBalance: number;
+  isDisabled: boolean;
+}
+
+/**
+ * Params for POST /api/tx/settle_demurrage. ML-DSA signed; canonical
+ * signing payload: JSON({type:"settle_demurrage",from,current_epoch}).
+ * Use `EvaporChainAPI.settleDemurrageSignablePayload` to get the bytes.
+ */
+export interface SettleDemurrageParams {
+  from: string;
+  /** Hex-encoded ML-DSA signature over the canonical payload */
+  signature: string;
+  /** Hex-encoded ML-DSA public key */
+  publicKey: string;
+}
+
+/** POST /api/tx/settle_demurrage response */
+export interface SettleDemurrageResult {
+  /** "settled" | "nothing_owed" | "error" */
+  status: string;
+  settled: number;
+  newBalance: number;
+  newLastTouchedEpoch: number;
+  detail: string;
+}
+
+/** Params for POST /api/hlwa/{effective_supply,re_attest} */
+export interface HlwaEffectiveSupplyParams {
+  currentSupply: number;
+  originAttestedSupply: number;
+  lastAttestedEpoch: number;
+  /** Half-life of attestation freshness, in epochs */
+  attestationLambdaEpochs: number;
+  currentEpoch: number;
+}
+
+/** GET /api/dsn/status / fold / advance response */
+export interface DsnStatus {
+  status?: string;
+  totalCount: number;
+  aggregateRootHex: string;
+}
+
+export type LadMode = "linear" | "affine" | "decaying";
+export type LadAction = "use" | "drop" | "tick";
+
+/** Params for POST /api/lad_vm/simulate */
+export interface LadSimulateParams {
+  mode: LadMode;
+  value: number;
+  createdAtEpoch: number;
+  /** Required iff mode === "decaying" */
+  decayWindow?: number;
+  currentEpoch: number;
+  action: LadAction;
+}
+
+/** POST /api/lad_vm/simulate response */
+export interface LadSimulateResult {
+  status: string;
+  action: string;
+  mode: string;
+  outcome: string;
+  returnedValue: number | null;
+  isEvaporatedAtQuery: boolean;
+  createdAtEpoch: number;
+  currentEpoch: number;
+  decayWindow: number | null;
+  detail: string;
+}
+
+/** GET /api/bell/latest */
+export interface BellBeaconLatest {
+  /** "ok" | "no_data" | "error" */
+  status: string;
+  sValueMilli: number;
+  thresholdMilli: number;
+  bellCertified: boolean;
+  blockHeight: number;
+  epoch: number;
+  detail: string;
+}
+
+/** Params for POST /api/bell_beacon (worked-example simulator) */
+export interface BellBeaconParams {
+  eAb: number;
+  eAbPrime: number;
+  eAPrimeB: number;
+  eAPrimeBPrime: number;
+  /** Defaults to LOCAL_REALISM_S_MILLI = 2000 if omitted */
+  thresholdMilli?: number;
+}
+
+/** POST /api/bell_beacon response */
+export interface BellBeaconResult {
+  status: string;
+  sValueMilli: number;
+  thresholdMilli: number;
+  bellCertified: boolean;
+  detail: string;
+}
+
 /** Chain status snapshot. */
 export interface ChainStatus {
   chainName: string;

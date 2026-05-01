@@ -546,6 +546,260 @@ pub struct FaucetRequest {
     pub address: String,
 }
 
+// ──────────────────────────── Substrate primitives ─────────────────────
+//
+// Typed request/response shapes mirroring `crates/evaporchain-node/src/
+// api.rs` byte-for-byte. Field names match the node structs exactly so
+// JSON round-trips without renames.
+
+// ─── Patronage covenants ─────────────────────────────────────────────
+
+/// GET /api/patronage/status response.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PatronageStatus {
+    pub active_covenants: usize,
+    pub total_pre_funded: u64,
+    pub total_active_score: u64,
+    pub patronage_ns_hex: String,
+}
+
+/// GET /api/patronage/immune response.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PatronageImmunity {
+    pub object_id_hex: String,
+    pub epoch: u64,
+    pub immune: bool,
+    pub patronage_score: u64,
+}
+
+/// POST /api/patronage/pledge request body.
+#[derive(Debug, Clone, Serialize)]
+pub struct PatronagePledgeRequest {
+    pub object_id_hex: String,
+    pub namespace_id_hex: String,
+    pub donation_per_epoch: u64,
+    pub epochs: u64,
+    pub current_epoch: u64,
+}
+
+/// POST /api/patronage/pledge response.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PatronagePledgeResponse {
+    pub status: String,
+    pub object_id_hex: String,
+    pub pre_funded: u64,
+    pub expires_epoch: u64,
+    pub detail: String,
+}
+
+/// POST /api/patronage/honour and /revoke share `{object_id_hex, epoch}`.
+#[derive(Debug, Clone, Serialize)]
+pub struct PatronageActionRequest {
+    pub object_id_hex: String,
+    pub epoch: u64,
+}
+
+/// POST /api/patronage/honour response.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PatronageHonourResponse {
+    pub status: String,
+    pub donated: u64,
+    pub patronage_score: u64,
+    pub detail: String,
+}
+
+// ─── Governance fork-choice ──────────────────────────────────────────
+
+/// One attractor entry inside a fork-choice amendment.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttractorSpec {
+    pub center: u64,
+    pub basin_radius: u64,
+}
+
+/// POST /api/governance/fork_choice_mode request body. The amendment is
+/// authorised by the supplied `endorser_stakes` summing to at least
+/// `required_stake` — there is no separate signature on the body
+/// (matches `ForkChoiceAmendReq` in api.rs).
+#[derive(Debug, Clone, Serialize)]
+pub struct ForkChoiceAmendRequest {
+    /// `"mcc"` or `"singh_attractor"`.
+    pub mode: String,
+    /// Required when `mode == "singh_attractor"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attractors: Option<Vec<AttractorSpec>>,
+    pub endorser_stakes: Vec<u64>,
+    pub required_stake: u64,
+}
+
+// ─── Refresh pool / fee controller / demurrage ───────────────────────
+
+/// One per-namespace credit row inside the refresh pool.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RefreshPoolCredit {
+    pub namespace_hex: String,
+    pub accrued: u64,
+    pub last_touched_epoch: u64,
+}
+
+/// GET /api/refresh_pool response.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RefreshPoolStatus {
+    pub total_accrued: u64,
+    pub credits: Vec<RefreshPoolCredit>,
+}
+
+/// POST /api/fee_controller/step request body.
+#[derive(Debug, Clone, Serialize)]
+pub struct FeeControllerStepRequest {
+    pub gas_used: u64,
+    pub epochs_elapsed: u64,
+}
+
+/// POST /api/demurrage/owed request body.
+#[derive(Debug, Clone, Serialize)]
+pub struct DemurrageOwedRequest {
+    pub balance: u64,
+    pub last_touched_epoch: u64,
+    pub current_epoch: u64,
+    pub lambda_base_ppm: u64,
+    pub threshold: u64,
+}
+
+/// POST /api/tx/settle_demurrage request body. ML-DSA signed; canonical
+/// signing payload is `JSON({type:"settle_demurrage",from,current_epoch})`
+/// — exactly the format consumed by `post_settle_demurrage` in api.rs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettleDemurrageRequest {
+    pub from: String,
+    pub signature: String,
+    pub public_key: String,
+}
+
+/// POST /api/tx/settle_demurrage response.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SettleDemurrageResponse {
+    /// `"settled" | "nothing_owed" | "error"`.
+    pub status: String,
+    pub settled: u64,
+    pub new_balance: u64,
+    pub new_last_touched_epoch: u64,
+    pub detail: String,
+}
+
+// ─── HLWA — Half-Life Wrapped Asset ──────────────────────────────────
+
+/// Shared body for /api/hlwa/effective_supply and /api/hlwa/re_attest.
+#[derive(Debug, Clone, Serialize)]
+pub struct HlwaEffectiveSupplyRequest {
+    pub current_supply: u64,
+    pub origin_attested_supply: u64,
+    pub last_attested_epoch: u64,
+    pub attestation_lambda_epochs: u64,
+    pub current_epoch: u64,
+}
+
+// ─── DSN — Decay-Stamped Nullifiers ──────────────────────────────────
+
+/// POST /api/dsn/fold_nullifier request body.
+#[derive(Debug, Clone, Serialize)]
+pub struct DsnFoldRequest {
+    pub nullifier_hex: String,
+}
+
+/// GET /api/dsn/status response (also returned by fold/advance).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DsnStatus {
+    /// `"ok"` for the bare GET; fold/advance also include this field.
+    #[serde(default)]
+    pub status: Option<String>,
+    pub total_count: u64,
+    pub aggregate_root_hex: String,
+}
+
+// ─── LAD-VM ──────────────────────────────────────────────────────────
+
+/// LAD-VM substructural mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LadMode {
+    Linear,
+    Affine,
+    Decaying,
+}
+
+/// LAD-VM action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LadAction {
+    Use,
+    Drop,
+    Tick,
+}
+
+/// POST /api/lad_vm/simulate request body.
+#[derive(Debug, Clone, Serialize)]
+pub struct LadSimulateRequest {
+    pub mode: LadMode,
+    pub value: u64,
+    pub created_at_epoch: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decay_window: Option<u64>,
+    pub current_epoch: u64,
+    pub action: LadAction,
+}
+
+/// POST /api/lad_vm/simulate response.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LadSimulateResponse {
+    pub status: String,
+    pub action: String,
+    pub mode: String,
+    pub outcome: String,
+    pub returned_value: Option<u64>,
+    pub is_evaporated_at_query: bool,
+    pub created_at_epoch: u64,
+    pub current_epoch: u64,
+    pub decay_window: Option<u64>,
+    pub detail: String,
+}
+
+// ─── Bell-Beacon ─────────────────────────────────────────────────────
+
+/// GET /api/bell/latest response.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct BellBeaconLatest {
+    /// `"ok" | "no_data" | "error"`.
+    pub status: String,
+    pub s_value_milli: u64,
+    pub threshold_milli: u64,
+    pub bell_certified: bool,
+    pub block_height: u64,
+    pub epoch: u64,
+    pub detail: String,
+}
+
+/// POST /api/bell_beacon request body (worked-example simulator).
+#[derive(Debug, Clone, Serialize)]
+pub struct BellBeaconRequest {
+    pub e_ab: i64,
+    pub e_ab_prime: i64,
+    pub e_a_prime_b: i64,
+    pub e_a_prime_b_prime: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub threshold_milli: Option<u64>,
+}
+
+/// POST /api/bell_beacon response.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct BellBeaconResponse {
+    pub status: String,
+    pub s_value_milli: u64,
+    pub threshold_milli: u64,
+    pub bell_certified: bool,
+    pub detail: String,
+}
+
 // ──────────────────────────── RPC Client ───────────────────────────────
 
 /// Async HTTP client for the EvaporChain node REST API.
@@ -988,6 +1242,184 @@ impl RpcClient {
             address: address.to_string(),
         };
         self.post("/api/faucet", &req).await
+    }
+
+    // ── Patronage covenants ────────────────────────────────────────────
+
+    /// GET /api/patronage/status — summary of all active covenants.
+    pub async fn get_patronage_status(&self) -> Result<PatronageStatus, RpcError> {
+        self.get("/api/patronage/status").await
+    }
+
+    /// GET /api/patronage/immune?object_id_hex=&epoch= — eviction-immunity
+    /// and patronage-score query for a single object at an epoch.
+    pub async fn get_patronage_immune(
+        &self,
+        object_id_hex: &str,
+        epoch: u64,
+    ) -> Result<PatronageImmunity, RpcError> {
+        self.get(&format!(
+            "/api/patronage/immune?object_id_hex={}&epoch={}",
+            object_id_hex, epoch
+        ))
+        .await
+    }
+
+    /// POST /api/patronage/pledge — create a Patronage Covenant for an object.
+    pub async fn submit_patronage_pledge(
+        &self,
+        req: &PatronagePledgeRequest,
+    ) -> Result<PatronagePledgeResponse, RpcError> {
+        self.post("/api/patronage/pledge", req).await
+    }
+
+    /// POST /api/patronage/honour — release one epoch's donation from a covenant.
+    pub async fn submit_patronage_honour(
+        &self,
+        req: &PatronageActionRequest,
+    ) -> Result<PatronageHonourResponse, RpcError> {
+        self.post("/api/patronage/honour", req).await
+    }
+
+    /// POST /api/patronage/revoke — remove a covenant early; refunds unused
+    /// pre-funded surplus back to the namespace pool credit. Node returns a
+    /// free-form JSON envelope (`status`, `refunded`, etc.).
+    pub async fn submit_patronage_revoke(
+        &self,
+        req: &PatronageActionRequest,
+    ) -> Result<serde_json::Value, RpcError> {
+        self.post("/api/patronage/revoke", req).await
+    }
+
+    // ── Governance fork-choice ────────────────────────────────────────
+
+    /// GET /api/governance/fork_choice_mode — current fork-choice mode +
+    /// attractor set. Returns the raw envelope so callers can read both
+    /// `fork_choice_mode` and the `attractors` array.
+    pub async fn get_fork_choice_mode(&self) -> Result<serde_json::Value, RpcError> {
+        self.get("/api/governance/fork_choice_mode").await
+    }
+
+    /// POST /api/governance/fork_choice_mode — governance amendment to
+    /// switch fork-choice between MCC and Singh-Attractor. Authorised by
+    /// stake quorum (`endorser_stakes` summing to ≥ `required_stake`).
+    pub async fn submit_fork_choice_amend(
+        &self,
+        req: &ForkChoiceAmendRequest,
+    ) -> Result<serde_json::Value, RpcError> {
+        self.post("/api/governance/fork_choice_mode", req).await
+    }
+
+    // ── Refresh pool / fee controller / demurrage ─────────────────────
+
+    /// GET /api/refresh_pool — protocol-owned refresh pool total +
+    /// per-namespace credits.
+    pub async fn get_refresh_pool(&self) -> Result<RefreshPoolStatus, RpcError> {
+        self.get("/api/refresh_pool").await
+    }
+
+    /// GET /api/fee_controller/status — Lyapunov fee-controller state.
+    pub async fn get_fee_controller_status(&self) -> Result<serde_json::Value, RpcError> {
+        self.get("/api/fee_controller/status").await
+    }
+
+    /// POST /api/fee_controller/step — advance the fee controller by one
+    /// block (compute helper; mutates server-side fee state).
+    pub async fn submit_fee_controller_step(
+        &self,
+        req: &FeeControllerStepRequest,
+    ) -> Result<serde_json::Value, RpcError> {
+        self.post("/api/fee_controller/step", req).await
+    }
+
+    /// POST /api/demurrage/owed — pure compute: how much demurrage an
+    /// idle balance owes at `current_epoch`.
+    pub async fn compute_demurrage_owed(
+        &self,
+        req: &DemurrageOwedRequest,
+    ) -> Result<serde_json::Value, RpcError> {
+        self.post("/api/demurrage/owed", req).await
+    }
+
+    /// POST /api/tx/settle_demurrage — debit `owed` from `from`'s balance
+    /// and credit it to the refresh pool. Body must already carry an
+    /// ML-DSA signature over the canonical signing payload — use
+    /// [`crate::tx_builder::TxBuilder::build_settle_demurrage_request`]
+    /// to produce one.
+    pub async fn submit_settle_demurrage(
+        &self,
+        req: &SettleDemurrageRequest,
+    ) -> Result<SettleDemurrageResponse, RpcError> {
+        self.post("/api/tx/settle_demurrage", req).await
+    }
+
+    // ── HLWA — Half-Life Wrapped Asset ────────────────────────────────
+
+    /// POST /api/hlwa/effective_supply — read-only simulation of effective
+    /// wrapped-asset supply after λ-decay of attestation freshness.
+    pub async fn hlwa_effective_supply(
+        &self,
+        req: &HlwaEffectiveSupplyRequest,
+    ) -> Result<serde_json::Value, RpcError> {
+        self.post("/api/hlwa/effective_supply", req).await
+    }
+
+    /// POST /api/hlwa/re_attest — read-only simulation of a re-attestation
+    /// from the origin chain.
+    pub async fn hlwa_re_attest(
+        &self,
+        req: &HlwaEffectiveSupplyRequest,
+    ) -> Result<serde_json::Value, RpcError> {
+        self.post("/api/hlwa/re_attest", req).await
+    }
+
+    // ── DSN — Decay-Stamped Nullifiers ────────────────────────────────
+
+    /// GET /api/dsn/status — current sliding-window total + aggregate root.
+    pub async fn get_dsn_status(&self) -> Result<DsnStatus, RpcError> {
+        self.get("/api/dsn/status").await
+    }
+
+    /// POST /api/dsn/fold_nullifier — fold a 32-byte nullifier hex into
+    /// the current DSN window accumulator.
+    pub async fn submit_dsn_fold_nullifier(
+        &self,
+        req: &DsnFoldRequest,
+    ) -> Result<DsnStatus, RpcError> {
+        self.post("/api/dsn/fold_nullifier", req).await
+    }
+
+    /// POST /api/dsn/advance_window — advance the sliding window by one
+    /// slot, dropping the oldest accumulator. No body.
+    pub async fn submit_dsn_advance_window(&self) -> Result<DsnStatus, RpcError> {
+        self.post("/api/dsn/advance_window", &serde_json::json!({}))
+            .await
+    }
+
+    // ── LAD-VM ────────────────────────────────────────────────────────
+
+    /// POST /api/lad_vm/simulate — single LAD-VM resource-lifecycle step.
+    pub async fn lad_vm_simulate(
+        &self,
+        req: &LadSimulateRequest,
+    ) -> Result<LadSimulateResponse, RpcError> {
+        self.post("/api/lad_vm/simulate", req).await
+    }
+
+    // ── Bell-Beacon ───────────────────────────────────────────────────
+
+    /// GET /api/bell/latest — most recent live VRF-derived CHSH S-value.
+    pub async fn get_bell_latest(&self) -> Result<BellBeaconLatest, RpcError> {
+        self.get("/api/bell/latest").await
+    }
+
+    /// POST /api/bell_beacon — worked-example CHSH S-value + Bell
+    /// certification simulator.
+    pub async fn bell_beacon_simulate(
+        &self,
+        req: &BellBeaconRequest,
+    ) -> Result<BellBeaconResponse, RpcError> {
+        self.post("/api/bell_beacon", req).await
     }
 }
 

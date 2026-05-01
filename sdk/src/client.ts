@@ -22,6 +22,31 @@ import type {
   StateProofResponse,
   TxInclusionProof,
   CompactHeader,
+  PatronageStatus,
+  PatronageImmunity,
+  PatronagePledgeRequest,
+  PatronagePledgeResponse,
+  PatronageActionRequest,
+  PatronageHonourResponse,
+  PatronageRevokeResponse,
+  ForkChoiceModeStatus,
+  ForkChoiceAmendRequest,
+  RefreshPoolStatus,
+  FeeControllerStatus,
+  FeeControllerStepRequest,
+  FeeControllerStepResponse,
+  DemurrageOwedRequest,
+  DemurrageOwedResponse,
+  SettleDemurrageRequest,
+  SettleDemurrageResponse,
+  HlwaEffectiveSupplyRequest,
+  DsnFoldRequest,
+  DsnStatus,
+  LadSimulateRequest,
+  LadSimulateResponse,
+  BellBeaconLatest,
+  BellBeaconRequest,
+  BellBeaconResponse,
 } from "./types";
 import { EventEmitter } from "events";
 
@@ -447,6 +472,143 @@ export class EvaporChain {
    */
   async claimFaucet(address: number): Promise<FaucetResult> {
     return this.post<FaucetResult>("/api/faucet", { address });
+  }
+
+  // ── Substrate primitives: Patronage covenants ──
+
+  /** GET /api/patronage/status — summary of all active covenants. */
+  async getPatronageStatus(): Promise<PatronageStatus> {
+    return this.get<PatronageStatus>("/api/patronage/status");
+  }
+
+  /** GET /api/patronage/immune — eviction-immunity + score for an object at an epoch. */
+  async getPatronageImmunity(objectIdHex: string, epoch: number): Promise<PatronageImmunity> {
+    return this.get<PatronageImmunity>(
+      `/api/patronage/immune?object_id_hex=${encodeURIComponent(objectIdHex)}&epoch=${epoch}`,
+    );
+  }
+
+  /** POST /api/patronage/pledge — open a Patronage Covenant. */
+  async submitPatronagePledge(req: PatronagePledgeRequest): Promise<PatronagePledgeResponse> {
+    return this.post<PatronagePledgeResponse>("/api/patronage/pledge", req);
+  }
+
+  /** POST /api/patronage/honour — release one epoch's donation. */
+  async submitPatronageHonour(req: PatronageActionRequest): Promise<PatronageHonourResponse> {
+    return this.post<PatronageHonourResponse>("/api/patronage/honour", req);
+  }
+
+  /** POST /api/patronage/revoke — close a covenant; refund unused pre-funded surplus. */
+  async submitPatronageRevoke(req: PatronageActionRequest): Promise<PatronageRevokeResponse> {
+    return this.post<PatronageRevokeResponse>("/api/patronage/revoke", req);
+  }
+
+  // ── Substrate primitives: Governance fork-choice ──
+
+  /** GET /api/governance/fork_choice_mode — current mode + attractor set. */
+  async getForkChoiceMode(): Promise<ForkChoiceModeStatus> {
+    return this.get<ForkChoiceModeStatus>("/api/governance/fork_choice_mode");
+  }
+
+  /**
+   * POST /api/governance/fork_choice_mode — amendment to switch
+   * fork-choice between MCC and Singh-Attractor. Stake-quorum
+   * authorised; no per-tx signature on the body.
+   */
+  async submitForkChoiceAmend(req: ForkChoiceAmendRequest): Promise<unknown> {
+    return this.post<unknown>("/api/governance/fork_choice_mode", req);
+  }
+
+  // ── Substrate primitives: Refresh pool / fee controller / demurrage ──
+
+  /** GET /api/refresh_pool — protocol-owned refresh pool total + credits. */
+  async getRefreshPool(): Promise<RefreshPoolStatus> {
+    return this.get<RefreshPoolStatus>("/api/refresh_pool");
+  }
+
+  /** GET /api/fee_controller/status — current Lyapunov fee-controller state. */
+  async getFeeControllerStatus(): Promise<FeeControllerStatus> {
+    return this.get<FeeControllerStatus>("/api/fee_controller/status");
+  }
+
+  /** POST /api/fee_controller/step — advance the fee controller by one block. */
+  async submitFeeControllerStep(req: FeeControllerStepRequest): Promise<FeeControllerStepResponse> {
+    return this.post<FeeControllerStepResponse>("/api/fee_controller/step", req);
+  }
+
+  /** POST /api/demurrage/owed — pure compute helper. */
+  async computeDemurrageOwed(req: DemurrageOwedRequest): Promise<DemurrageOwedResponse> {
+    return this.post<DemurrageOwedResponse>("/api/demurrage/owed", req);
+  }
+
+  /**
+   * POST /api/tx/settle_demurrage — debit `owed` from `from`'s balance,
+   * credit refresh pool. Body MUST already carry an ML-DSA signature
+   * over the canonical payload `JSON({type:"settle_demurrage",from,
+   * current_epoch})`.
+   */
+  async submitSettleDemurrage(req: SettleDemurrageRequest): Promise<SettleDemurrageResponse> {
+    return this.post<SettleDemurrageResponse>("/api/tx/settle_demurrage", req);
+  }
+
+  /**
+   * Compute the canonical signing payload bytes for /api/tx/settle_demurrage.
+   * Layout matches api.rs::post_settle_demurrage exactly:
+   *   `JSON({type:"settle_demurrage",from,current_epoch})`
+   *
+   * Wallet should sign the UTF-8 bytes of the returned string with ML-DSA
+   * and submit the hex signature + public key via `submitSettleDemurrage`.
+   */
+  static settleDemurrageSignablePayload(from: string, currentEpoch: number): string {
+    return `{"type":"settle_demurrage","from":"${from}","current_epoch":${currentEpoch}}`;
+  }
+
+  // ── Substrate primitives: HLWA ──
+
+  /** POST /api/hlwa/effective_supply — read-only λ-decay simulation. */
+  async hlwaEffectiveSupply(req: HlwaEffectiveSupplyRequest): Promise<unknown> {
+    return this.post<unknown>("/api/hlwa/effective_supply", req);
+  }
+
+  /** POST /api/hlwa/re_attest — read-only re-attestation simulation. */
+  async hlwaReAttest(req: HlwaEffectiveSupplyRequest): Promise<unknown> {
+    return this.post<unknown>("/api/hlwa/re_attest", req);
+  }
+
+  // ── Substrate primitives: DSN ──
+
+  /** GET /api/dsn/status — current DSN window total + accumulator root. */
+  async getDsnStatus(): Promise<DsnStatus> {
+    return this.get<DsnStatus>("/api/dsn/status");
+  }
+
+  /** POST /api/dsn/fold_nullifier — fold a 32-byte nullifier into the window. */
+  async submitDsnFoldNullifier(req: DsnFoldRequest): Promise<DsnStatus> {
+    return this.post<DsnStatus>("/api/dsn/fold_nullifier", req);
+  }
+
+  /** POST /api/dsn/advance_window — slide the window by one slot. */
+  async submitDsnAdvanceWindow(): Promise<DsnStatus> {
+    return this.post<DsnStatus>("/api/dsn/advance_window", {});
+  }
+
+  // ── Substrate primitives: LAD-VM ──
+
+  /** POST /api/lad_vm/simulate — single substructural-resource step. */
+  async ladVmSimulate(req: LadSimulateRequest): Promise<LadSimulateResponse> {
+    return this.post<LadSimulateResponse>("/api/lad_vm/simulate", req);
+  }
+
+  // ── Substrate primitives: Bell-Beacon ──
+
+  /** GET /api/bell/latest — most recent live VRF-derived CHSH measurement. */
+  async getBellLatest(): Promise<BellBeaconLatest> {
+    return this.get<BellBeaconLatest>("/api/bell/latest");
+  }
+
+  /** POST /api/bell_beacon — worked-example CHSH S-value simulator. */
+  async bellBeaconSimulate(req: BellBeaconRequest): Promise<BellBeaconResponse> {
+    return this.post<BellBeaconResponse>("/api/bell_beacon", req);
   }
 
   // ── Utilities (unique to EvaporChain) ──
