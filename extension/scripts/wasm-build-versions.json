@@ -1,6 +1,6 @@
 {
-  "_comment": "Pinned toolchain versions for the reproducible WASM build. Bumping any of these requires re-pinning checksums.json. See scripts/README.md.",
-  "rust": "1.83.0",
+  "_comment": "Pinned toolchain versions for the reproducible WASM build. Bumping any of these requires re-pinning checksums.json. See scripts/README.md. Rust bumped from 1.83.0 → 1.95.0 because wasm-bindgen-cli 0.2.117's transitive idna_adapter 1.2.2 requires edition2024 (stable in 1.85.0+).",
+  "rust": "1.95.0",
   "wasm_pack": "0.13.1",
   "wasm_opt": "version_121",
   "wasm_opt_human": "121",
