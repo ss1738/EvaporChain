@@ -415,7 +415,7 @@ pub struct BlockRecord {
 }
 
 /// Transaction record with hash and structured data.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TxRecord {
     pub hash: String,
     #[serde(rename = "type")]
@@ -7326,6 +7326,7 @@ async fn get_account_detail(
     let db = safe_lock(&state.db);
 
     let acc = db.get_account(&addr);
+    let acc_present = acc.is_some();
     let (balance, nonce) = match &acc {
         Some(a) => (a.balance, a.nonce),
         // Address with no account record but possibly mentioned in tx history
@@ -7333,6 +7334,7 @@ async fn get_account_detail(
         // explorer still renders the row instead of 404'ing.
         None => (0, 0),
     };
+    drop(acc);
 
     // Owned objects: scan all_object_ids and filter. Capped preview to keep
     // the response small; total count is exact.
@@ -7369,7 +7371,7 @@ async fn get_account_detail(
         (None, None)
     };
 
-    if acc.is_none() && owned_total == 0 && indexed_tx_count.unwrap_or(0) == 0 {
+    if !acc_present && owned_total == 0 && indexed_tx_count.unwrap_or(0) == 0 {
         return Err(StatusCode::NOT_FOUND);
     }
 
