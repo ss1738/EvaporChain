@@ -70,36 +70,66 @@ export function computeDemurrage(req: DemurrageOwedRequest) {
  *      contract is unreadable until sealed (`read()` reverts on
  *      `sealed == false`).
  *
- * Why this isn't one call: `/api/tx/deploy-script` returns a tx_hash
- * immediately, but the chain assigns the actual `contract_id` only at
- * execution time. The seal call needs that id. Today's `/api/tx/:hash`
- * does not yet surface `contract_id` on its receipt — that's a known
- * server-side gap (TODO at the bottom of this file).
+ * The chain assigns `contract_id` at execution time. We poll
+ * `/api/tx/:hash` for `state == "finalised"` (or `"included"` in
+ * single-node dev mode) and read `contract_id` off the receipt — the
+ * server-side resolver matches by (deployer-prefix, epoch) over the
+ * script-engine registry. Then we issue the seal call.
  *
- * Until the receipt exposes contract_id, this function does **only the
- * deploy** and returns its tx_hash. The UI must then either: (a) wait for
- * the deploy to finalise and read contract_id off the deployer account's
- * latest contract list, or (b) call `sealMortalMessage(contract_id, …)`
- * once that id is known by some other means.
- *
- * This is honest: the pilot proves the dapp can reach EvaporScript via
- * deploy-script. Closing the seal-handoff loop needs one server-side
- * change (extend `TxStatusResponse` with `contract_id?: u64` for
- * deploy-script tx types).
+ * Polling budget: 30 cycles × 2s = 60s. Plenty for a chain producing
+ * blocks at the default 2s interval; bounded so a stuck deploy can't
+ * pin the dapp forever.
  */
 export async function sendMessage(payload: SendMessagePayload) {
   const deploy = await deployMortalMessageContract(payload.energy, payload.half_life);
-  // Stash the seal arguments on the response so a follow-up handler can
-  // pick them up once contract_id is known. The legacy `id` field
-  // is repurposed as the deploy tx_hash to preserve the call shape.
+  // Schedule the seal in the background. The UI returns immediately with
+  // a "queued" state; the seal resolves once the deploy lands on-chain.
+  sealMortalMessageWhenReady(
+    deploy.tx_hash ?? "",
+    payload.content,
+    payload.to,
+  ).catch((err) => console.warn("[mortal-messages] seal handoff failed:", err));
   return {
     id: deploy.tx_hash ?? "",
     tx_hash: deploy.tx_hash ?? "",
-    pending_seal: {
-      body: payload.content,
-      recipient_hex: payload.to,
-    },
   };
+}
+
+/** Background helper: poll `/api/tx/:hash` until the deploy finalises,
+ *  pull `contract_id` from the receipt, then seal. Bounded retry. */
+async function sealMortalMessageWhenReady(
+  deploy_tx_hash: string,
+  body: string,
+  recipient_hex: string,
+): Promise<void> {
+  if (!deploy_tx_hash) {
+    throw new Error("missing deploy tx_hash; deploy may have been rejected");
+  }
+  for (let i = 0; i < 30; i++) {
+    await new Promise((r) => setTimeout(r, 2000));
+    try {
+      const status = await request<{
+        state: string;
+        contract_id?: number;
+      }>(`/tx/${deploy_tx_hash}`);
+      if (
+        (status.state === "finalised" || status.state === "included") &&
+        typeof status.contract_id === "number"
+      ) {
+        await sealMortalMessage(status.contract_id, body, recipient_hex);
+        return;
+      }
+      if (status.state === "rejected") {
+        throw new Error(`deploy tx rejected: ${deploy_tx_hash}`);
+      }
+    } catch (e) {
+      if (e instanceof Error && e.message.includes("rejected")) throw e;
+      // Other transient errors during polling are non-fatal; retry.
+    }
+  }
+  throw new Error(
+    `deploy tx ${deploy_tx_hash} did not finalise within 60s — seal not issued`,
+  );
 }
 
 /** Step 1 — deploys a fresh `MortalMessage` instance with the operator's
@@ -163,12 +193,13 @@ export async function readMortalMessage(contract_id: number, caller_byte: number
   );
 }
 
-// TODO(server): extend `TxStatusResponse` (api.rs) with `contract_id?: u64`
-// populated from the receipt for `Transaction::DeployContract` and
-// `Transaction::DeployScript`. Without it, the seal step has no way to
-// learn the chain-assigned contract id — the dapp ends up needing
-// out-of-band signalling. One-line backend change; deferred until the
-// pilot UX demands it.
+// Server-side resolver shipped 2026-05-01: TxStatusResponse now carries
+// `contract_id?: u64` populated by walking the script_engine /
+// contract_engine registry by (deployer-prefix, epoch). One known caveat:
+// the prefix match aliases deployers sharing the same first 4 bytes.
+// Production-grade fix (full-address index `tx_hash → contract_id` written
+// at execution time) lives behind a TODO in persistence.rs::index_block_
+// transactions — when many deployers collide, swap to that.
 
 /** Fetch inbox for an address */
 export function getInbox(address: string) {

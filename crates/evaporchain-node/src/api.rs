@@ -6733,6 +6733,15 @@ pub struct TxStatusResponse {
     /// Total mempool depth at the moment of the lookup (`state == "mempool"`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mempool_size: Option<usize>,
+    /// Chain-assigned contract id, populated for `Transaction::DeployContract`
+    /// and `Transaction::DeployScript` once the deploy has been included in a
+    /// block. Closes the seal-handoff gap for dapps that deploy a contract
+    /// then immediately need to call into it: poll `/api/tx/:hash`, wait for
+    /// `state == "finalised"` (or `"included"` if you accept pre-finality
+    /// reads), pull `contract_id`, issue the follow-up `call-script`/`call-
+    /// contract` against that id. Absent for non-deploy tx types.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contract_id: Option<u64>,
 }
 
 /// Normalise a wallet-supplied hex hash into the canonical 64-char lowercase
@@ -6768,6 +6777,49 @@ async fn get_tx_by_hash(
     let (hash_hex, hash_bytes) = match parse_tx_hash(&hash) {
         Some(h) => h,
         None => return Err(StatusCode::BAD_REQUEST),
+    };
+
+    // Resolve a deploy tx → its chain-assigned contract_id by walking the
+    // engine matching the tx_type. Match by (truncated-deployer-hex,
+    // created_epoch) — the same prefix `tx_sender_hex` writes, so the
+    // ring and the registry agree.
+    //
+    // Caveats:
+    //  - `tx.from` is the 4-byte-truncated `0xXXXXXXXX` form.
+    //    Multiple deployers sharing the same first 4 bytes would alias.
+    //    Real production indexes by full address; this is the best
+    //    available without a `tx_hash → contract_id` index (TODO at
+    //    bottom of `index_block_transactions` in persistence.rs).
+    //  - If a single deployer ships >1 contract in the same epoch, we
+    //    return the highest id (most recent), which is what the dapp's
+    //    seal-handoff flow needs.
+    let resolve_deploy_contract_id = |tx_type: &str, deployer_prefix_hex: &str, epoch: u64| -> Option<u64> {
+        let consensus = safe_lock(&state.consensus);
+        let mut best: Option<u64> = None;
+        let consider = |id: u64, creator: &[u8; 32], created_epoch: u64, best: &mut Option<u64>| {
+            if created_epoch != epoch {
+                return;
+            }
+            // Match against the same prefix the ring writes (`0x` + first 4 bytes).
+            let creator_prefix = format!("0x{}", hex::encode(&creator[..4]));
+            if creator_prefix.eq_ignore_ascii_case(deployer_prefix_hex) {
+                *best = Some(best.map_or(id, |b| b.max(id)));
+            }
+        };
+        match tx_type {
+            "deploy_contract" => {
+                for ci in consensus.executor.contract_engine.list() {
+                    consider(ci.id, &ci.creator, ci.created_epoch, &mut best);
+                }
+            }
+            "deploy_script" => {
+                for sc in consensus.executor.script_engine.list() {
+                    consider(sc.id, &sc.creator, sc.created_epoch, &mut best);
+                }
+            }
+            _ => {}
+        }
+        best
     };
 
     // ── 1. Finalised / included scan over in-memory block_history. ────
@@ -6813,6 +6865,11 @@ async fn get_tx_by_hash(
                         ("included", None)
                     };
                     let gas_used = if tx.gas > 0 { Some(tx.gas) } else { None };
+                    let contract_id = if state_label != "rejected" {
+                        resolve_deploy_contract_id(&tx.tx_type, &tx.from, tx.epoch)
+                    } else {
+                        None
+                    };
                     return Ok(Json(TxStatusResponse {
                         hash: hash_hex,
                         state: state_label,
@@ -6824,6 +6881,7 @@ async fn get_tx_by_hash(
                         gas_used,
                         mempool_position: None,
                         mempool_size: None,
+                        contract_id,
                     }));
                 }
             }
@@ -6840,6 +6898,20 @@ async fn get_tx_by_hash(
                 "success" | "confirmed" => ("finalised", None),
                 other => ("rejected", Some(other.to_string())),
             };
+            let contract_id = if state_label != "rejected" {
+                receipt
+                    .from
+                    .as_deref()
+                    .and_then(|from| {
+                        resolve_deploy_contract_id(
+                            &receipt.tx_type,
+                            from,
+                            receipt.epoch,
+                        )
+                    })
+            } else {
+                None
+            };
             return Ok(Json(TxStatusResponse {
                 hash: hash_hex,
                 state: state_label,
@@ -6851,6 +6923,7 @@ async fn get_tx_by_hash(
                 gas_used: if receipt.gas_used > 0 { Some(receipt.gas_used) } else { None },
                 mempool_position: None,
                 mempool_size: None,
+                contract_id,
             }));
         }
     }
@@ -6872,6 +6945,7 @@ async fn get_tx_by_hash(
             gas_used: None,
             mempool_position: pos,
             mempool_size: total,
+            contract_id: None,
         }));
     }
 
@@ -6887,6 +6961,7 @@ async fn get_tx_by_hash(
         gas_used: None,
         mempool_position: None,
         mempool_size: None,
+        contract_id: None,
     }))
 }
 
