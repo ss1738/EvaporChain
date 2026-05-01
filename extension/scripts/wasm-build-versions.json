@@ -1,0 +1,8 @@
+{
+  "_comment": "Pinned toolchain versions for the reproducible WASM build. Bumping any of these requires re-pinning checksums.json. See scripts/README.md.",
+  "rust": "1.83.0",
+  "wasm_pack": "0.13.1",
+  "wasm_opt": "version_121",
+  "wasm_opt_human": "121",
+  "binaryen": "121"
+}

@@ -1,0 +1,9 @@
+{
+  "evaporchain_crypto_wasm_bg.wasm": "0000000000000000000000000000000000000000000000000000000000000000",
+  "evaporchain_crypto_wasm.js": "0000000000000000000000000000000000000000000000000000000000000000",
+  "built_at": null,
+  "rust": "1.83.0",
+  "wasm_pack": "0.13.1",
+  "wasm_opt": "121",
+  "pinned_commit": "unset"
+}
