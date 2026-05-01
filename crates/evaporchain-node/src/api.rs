@@ -281,6 +281,26 @@ impl ApiState {
             c.mempool.contains_hash(hash)
         }
     }
+
+    /// Position of `hash` within the FIFO `pending()` queue, plus the total
+    /// pending depth. Returns `None` when the tx isn't in the mempool. Used
+    /// by `/api/tx/:hash` so the wallet can render "12 of 80 ahead".
+    pub fn mempool_position(&self, hash: &[u8; 32]) -> Option<(usize, usize)> {
+        let scan = |pending: &std::collections::VecDeque<Transaction>| -> Option<usize> {
+            pending.iter().position(|tx| {
+                &crate::persistence::ChainStore::compute_tx_hash(tx) == hash
+            })
+        };
+        if let Some(ref tc) = self.tendermint {
+            let c = safe_lock(tc);
+            let total = c.mempool.len();
+            scan(c.mempool.pending()).map(|p| (p, total))
+        } else {
+            let c = safe_lock(&self.consensus);
+            let total = c.mempool.len();
+            scan(c.mempool.pending()).map(|p| (p, total))
+        }
+    }
 }
 
 // ──────────────────────────── NFT Store ────────────────────────────────
@@ -6357,7 +6377,7 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     // Offline signing support (cold-wallet + hardware-wallet flows)
     ApiDocEntry { method: "GET",  path: "/api/tx/nonce/:address",      category: "identity", description: "Fetch the current nonce for an address (required for manual transaction construction). Returns nonce + chain_id.", example: None },
     ApiDocEntry { method: "POST", path: "/api/tx/signable",            category: "identity", description: "Return the canonical bytes to sign for a transaction (transfer/create_object/refresh) without executing. Caller signs with ML-DSA key and resubmits via the normal tx endpoint.", example: Some(r#"{"tx_type":"transfer","params":{"from":1,"to":2,"amount":1000}}"#) },
-    ApiDocEntry { method: "GET",  path: "/api/tx/:hash",               category: "identity", description: "Wallet-facing tx-status lookup. Returns {hash, state, block_height?, epoch?, error?} where state is one of pending|mempool|included|finalised|rejected. Lookup order: chain_store/finalised → committed-but-not-finalised → mempool → pending. Always 200 OK; pending is a typed response, not a 404.", example: Some("/api/tx/<64-hex>") },
+    ApiDocEntry { method: "GET",  path: "/api/tx/:hash",               category: "identity", description: "Wallet-facing tx-status lookup. Returns {hash, state, block_height?, epoch?, error?, confirmations?, tx_index?, gas_used?, mempool_position?, mempool_size?} where state ∈ {pending|mempool|included|finalised|rejected}. Lookup order: chain_store/finalised → committed-but-not-finalised → mempool → pending. Always 200 OK; pending is a typed response, not a 404.", example: Some("/api/tx/<64-hex>") },
     ApiDocEntry { method: "GET",  path: "/api/mempool/:hash",          category: "identity", description: "Direct mempool inspection by tx hash. Returns {hash, in_mempool}. Useful for explorers; the wallet should prefer /api/tx/:hash for the full state machine.", example: Some("/api/mempool/<64-hex>") },
 
     // Energy Kernel — conservation audit + energy redirect simulation
@@ -6664,6 +6684,9 @@ async fn get_single_block(
 /// (`extension/src/utils/api.ts`) so the polling client can drop its 404
 /// special-case and progress `pending → mempool → included → finalised`
 /// from a single endpoint.
+///
+/// All enrichment fields below are optional — older wallets that only consume
+/// `state`, `block_height`, `epoch`, `error` will continue to work.
 #[derive(Clone, Serialize)]
 pub struct TxStatusResponse {
     pub hash: String,
@@ -6679,6 +6702,23 @@ pub struct TxStatusResponse {
     /// Populated when `state == "rejected"` with the upstream error string.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Confirmations on top of the inclusion block: `head_height − block_height`.
+    /// Wallets typically gate "safe" UI states at ≥6 confs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confirmations: Option<u64>,
+    /// Position of the tx within its block (only available for txs read out
+    /// of the persistent chain_store index, not the in-memory ring).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tx_index: Option<u32>,
+    /// Gas units consumed by the tx, when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gas_used: Option<u64>,
+    /// Zero-indexed FIFO position of the tx in the mempool (`state == "mempool"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mempool_position: Option<usize>,
+    /// Total mempool depth at the moment of the lookup (`state == "mempool"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mempool_size: Option<usize>,
 }
 
 /// Normalise a wallet-supplied hex hash into the canonical 64-char lowercase
@@ -6728,6 +6768,17 @@ async fn get_tx_by_hash(
         let ft = safe_lock(&state.finality_tracker);
         ft.latest_finalized_height()
     };
+    let head_height = {
+        let history = safe_lock(&state.block_history);
+        history.back().map(|b| b.number).unwrap_or(0)
+    };
+    let confirmations_for = |block_number: u64| -> Option<u64> {
+        if head_height >= block_number {
+            Some(head_height - block_number)
+        } else {
+            None
+        }
+    };
     {
         let history = safe_lock(&state.block_history);
         for block in history.iter().rev() {
@@ -6747,12 +6798,18 @@ async fn get_tx_by_hash(
                     } else {
                         ("included", None)
                     };
+                    let gas_used = if tx.gas > 0 { Some(tx.gas) } else { None };
                     return Ok(Json(TxStatusResponse {
                         hash: hash_hex,
                         state: state_label,
                         block_height: Some(tx.block_number),
                         epoch: Some(tx.epoch),
                         error,
+                        confirmations: confirmations_for(tx.block_number),
+                        tx_index: None,
+                        gas_used,
+                        mempool_position: None,
+                        mempool_size: None,
                     }));
                 }
             }
@@ -6775,18 +6832,32 @@ async fn get_tx_by_hash(
                 block_height: Some(receipt.block_number),
                 epoch: Some(receipt.epoch),
                 error: error.or(receipt.revert_reason),
+                confirmations: confirmations_for(receipt.block_number),
+                tx_index: Some(receipt.tx_index),
+                gas_used: if receipt.gas_used > 0 { Some(receipt.gas_used) } else { None },
+                mempool_position: None,
+                mempool_size: None,
             }));
         }
     }
 
     // ── 2. Mempool check. ──────────────────────────────────────────────
     if state.mempool_contains_hash(&hash_bytes) {
+        let (pos, total) = state
+            .mempool_position(&hash_bytes)
+            .map(|(p, t)| (Some(p), Some(t)))
+            .unwrap_or((None, Some(state.mempool_len())));
         return Ok(Json(TxStatusResponse {
             hash: hash_hex,
             state: "mempool",
             block_height: None,
             epoch: None,
             error: None,
+            confirmations: None,
+            tx_index: None,
+            gas_used: None,
+            mempool_position: pos,
+            mempool_size: total,
         }));
     }
 
@@ -6797,6 +6868,11 @@ async fn get_tx_by_hash(
         block_height: None,
         epoch: None,
         error: None,
+        confirmations: None,
+        tx_index: None,
+        gas_used: None,
+        mempool_position: None,
+        mempool_size: None,
     }))
 }
 

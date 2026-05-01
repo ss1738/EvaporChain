@@ -286,6 +286,16 @@ export interface TxStatus {
   block_height?: number;
   epoch?: number;
   error?: string;
+  /** head_height − block_height. ≥6 is the typical "safe" UI gate. */
+  confirmations?: number;
+  /** Position within the block (only set for chain_store-indexed txs). */
+  tx_index?: number;
+  /** Gas units consumed, when known. */
+  gas_used?: number;
+  /** Zero-indexed FIFO position when state === "mempool". */
+  mempool_position?: number;
+  /** Total mempool depth at lookup time when state === "mempool". */
+  mempool_size?: number;
 }
 
 // ── Patronage Covenant types ────────────────────────────────────────
