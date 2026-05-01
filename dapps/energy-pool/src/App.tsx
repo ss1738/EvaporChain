@@ -7,6 +7,7 @@ import { PoolDetail } from "@/components/PoolDetail";
 import { CreatePoolModal } from "@/components/CreatePoolModal";
 import { StakeModal } from "@/components/StakeModal";
 import { Dashboard } from "@/components/Dashboard";
+import { FeeControllerWidget } from "@/components/FeeControllerWidget";
 
 type View = "pools" | "detail" | "dashboard";
 
@@ -127,6 +128,11 @@ export function App() {
       <div className="max-w-6xl mx-auto px-4 py-6">
         {view === "pools" && (
           <>
+            {/* Fee-controller awareness — shows base fee + Lyapunov drift */}
+            <div className="mb-6">
+              <FeeControllerWidget />
+            </div>
+
             {/* Hero stats */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
               <StatCard

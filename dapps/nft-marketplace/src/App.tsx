@@ -6,6 +6,8 @@ import { NftCard } from "@/components/NftCard";
 import { MintModal } from "@/components/MintModal";
 import { RefreshModal } from "@/components/RefreshModal";
 import { TransferModal } from "@/components/TransferModal";
+import { SponsorModal } from "@/components/SponsorModal";
+import { RefreshPoolFooter } from "@/components/RefreshPoolFooter";
 
 type Tab = "all" | "mine" | "ghosts";
 
@@ -17,6 +19,8 @@ export function App() {
   const [showMint, setShowMint] = useState(false);
   const [refreshTarget, setRefreshTarget] = useState<Nft | null>(null);
   const [transferTarget, setTransferTarget] = useState<Nft | null>(null);
+  const [sponsorTarget, setSponsorTarget] = useState<Nft | null>(null);
+  const [patronageNsHex, setPatronageNsHex] = useState<string>("");
   const [loading, setLoading] = useState(true);
 
   const fetchData = useCallback(async () => {
@@ -39,6 +43,22 @@ export function App() {
     const interval = setInterval(fetchData, 5000);
     return () => clearInterval(interval);
   }, [fetchData]);
+
+  // Fetch the chain's patronage namespace once — required to open a covenant.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getPatronageStatus()
+      .then((res) => {
+        if (!cancelled && res.patronage_ns_hex) setPatronageNsHex(res.patronage_ns_hex);
+      })
+      .catch(() => {
+        /* covenants disabled or namespace not yet provisioned */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const filteredNfts = nfts.filter(nft => {
     if (tab === "mine") return wallet.address && nft.owner.toLowerCase() === wallet.address.toLowerCase();
@@ -155,6 +175,8 @@ export function App() {
                 isOwner={wallet.address?.toLowerCase() === nft.owner.toLowerCase()}
                 onRefresh={setRefreshTarget}
                 onTransfer={setTransferTarget}
+                onSponsor={patronageNsHex ? setSponsorTarget : undefined}
+                currentEpoch={status?.epoch}
               />
             ))}
           </div>
@@ -171,6 +193,9 @@ export function App() {
             )}
           </div>
         )}
+
+        {/* Refresh-pool stake widget */}
+        <RefreshPoolFooter />
       </div>
 
       {/* Footer */}
@@ -205,6 +230,18 @@ export function App() {
           nft={transferTarget}
           onClose={() => setTransferTarget(null)}
           onTransferred={fetchData}
+        />
+      )}
+      {sponsorTarget && status && patronageNsHex && (
+        <SponsorModal
+          nft={sponsorTarget}
+          currentEpoch={status.epoch}
+          patronageNsHex={patronageNsHex}
+          onClose={() => setSponsorTarget(null)}
+          onSponsored={() => {
+            setSponsorTarget(null);
+            fetchData();
+          }}
         />
       )}
     </div>

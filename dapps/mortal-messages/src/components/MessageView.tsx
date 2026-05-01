@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
-import { getMessage } from "@/utils/api";
+import { getMessage, getStatus } from "@/utils/api";
 import type { MortalMessage } from "@/utils/types";
 import BoostModal from "./BoostModal";
+import PatronageDialog from "./PatronageDialog";
+import DecayForecastBar from "./DecayForecastBar";
 
 interface Props {
   messageId: string;
@@ -14,6 +16,8 @@ export default function MessageView({ messageId, currentAddress, onBack }: Props
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showBoost, setShowBoost] = useState(false);
+  const [showPatronage, setShowPatronage] = useState(false);
+  const [currentEpoch, setCurrentEpoch] = useState<number | null>(null);
 
   const fetchMessage = useCallback(async () => {
     try {
@@ -32,6 +36,25 @@ export default function MessageView({ messageId, currentAddress, onBack }: Props
     const interval = setInterval(fetchMessage, 6000);
     return () => clearInterval(interval);
   }, [fetchMessage]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const tick = () => {
+      getStatus()
+        .then((s) => {
+          if (!cancelled) setCurrentEpoch(s.epoch);
+        })
+        .catch(() => {
+          /* keep previous epoch on transient failure */
+        });
+    };
+    tick();
+    const id = setInterval(tick, 12_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
 
   if (loading) {
     return <div className="py-12 text-center text-sm text-zinc-400">Loading message...</div>;
@@ -149,14 +172,32 @@ export default function MessageView({ messageId, currentAddress, onBack }: Props
           </div>
         </div>
 
-        {/* Boost button */}
-        {canBoost && (
-          <button
-            onClick={() => setShowBoost(true)}
-            className="mt-4 w-full rounded-lg border border-evap-cyan bg-evap-cyan/5 px-4 py-2 text-sm font-medium text-evap-cyan transition-colors hover:bg-evap-cyan/10"
-          >
-            Boost Energy to Extend Life
-          </button>
+        {/* Decay forecast bar */}
+        <div className="mt-4">
+          <DecayForecastBar
+            message={message}
+            currentEpoch={currentEpoch ?? undefined}
+          />
+        </div>
+
+        {/* Boost + Patronage actions */}
+        {!isGhost && (
+          <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {canBoost && (
+              <button
+                onClick={() => setShowBoost(true)}
+                className="rounded-lg border border-evap-cyan bg-evap-cyan/5 px-4 py-2 text-sm font-medium text-evap-cyan transition-colors hover:bg-evap-cyan/10"
+              >
+                Boost Energy to Extend Life
+              </button>
+            )}
+            <button
+              onClick={() => setShowPatronage(true)}
+              className="rounded-lg border border-evap-purple/30 bg-purple-50 px-4 py-2 text-sm font-medium text-evap-purple transition-colors hover:bg-purple-100"
+            >
+              Donate to keep this alive
+            </button>
+          </div>
         )}
       </div>
 
@@ -167,6 +208,17 @@ export default function MessageView({ messageId, currentAddress, onBack }: Props
           onClose={() => setShowBoost(false)}
           onBoosted={() => {
             setShowBoost(false);
+            fetchMessage();
+          }}
+        />
+      )}
+      {showPatronage && currentEpoch !== null && (
+        <PatronageDialog
+          message={message}
+          currentEpoch={currentEpoch}
+          onClose={() => setShowPatronage(false)}
+          onPledged={() => {
+            setShowPatronage(false);
             fetchMessage();
           }}
         />

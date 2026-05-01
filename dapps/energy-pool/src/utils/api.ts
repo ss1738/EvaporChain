@@ -6,6 +6,12 @@ import type {
   UserDashboard,
   ChainStatus,
   DistributionStrategy,
+  RefreshPoolStatus,
+  RefreshPoolContributeRequest,
+  FeeControllerStatus,
+  FeeControllerStepRequest,
+  FeeControllerStepResponse,
+  PatronageStatusResponse,
 } from "./types";
 
 const BASE = "/api";
@@ -54,4 +60,35 @@ export const api = {
 
   getDashboard: (address: string) =>
     get<UserDashboard>(`/pool/dashboard/${address}`),
+
+  // ── Substrate primitives ──
+  getRefreshPool: () => get<RefreshPoolStatus>("/refresh_pool"),
+
+  // The substrate exposes /api/refresh_pool/contribute as the "public good"
+  // path; we attempt that first and fall back to a transfer into the
+  // patronage namespace's vault address (returned via /api/patronage/status)
+  // when it isn't wired on the deployed node.
+  contributeToRefreshPool: async (req: RefreshPoolContributeRequest): Promise<TxResult> => {
+    try {
+      return await post<TxResult>("/refresh_pool/contribute", req);
+    } catch (firstErr) {
+      // Fallback: simulate via transfer to patronage_ns_hex.
+      try {
+        const patronage = await get<PatronageStatusResponse>("/patronage/status");
+        return await post<TxResult>("/tx/transfer", {
+          from: req.from,
+          to: patronage.patronage_ns_hex,
+          amount: req.amount,
+          nonce: 0,
+          memo: req.memo ?? "refresh_pool/contribute",
+        });
+      } catch {
+        throw firstErr;
+      }
+    }
+  },
+
+  getFeeControllerStatus: () => get<FeeControllerStatus>("/fee_controller/status"),
+  stepFeeController: (req: FeeControllerStepRequest) =>
+    post<FeeControllerStepResponse>("/fee_controller/step", req),
 };

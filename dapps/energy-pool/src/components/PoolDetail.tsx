@@ -3,6 +3,7 @@ import { api } from "@/utils/api";
 import type { Pool, Contributor, PoolActivity } from "@/utils/types";
 import { EnergyGauge, EnergyBar } from "./EnergyGauge";
 import { ContributorRow } from "./ContributorRow";
+import { RefreshPoolContributor } from "./RefreshPoolContributor";
 
 interface PoolDetailProps {
   poolId: string;
@@ -141,6 +142,11 @@ export function PoolDetail({ poolId, walletAddress, onBack, onStake }: PoolDetai
             {pool.creator.slice(0, 8)}...{pool.creator.slice(-6)}
           </span>
         </div>
+      </div>
+
+      {/* Substrate primitive: contribute pool yield to the protocol refresh pool */}
+      <div className="mb-6">
+        <RefreshPoolContributor pool={pool} walletAddress={walletAddress} />
       </div>
 
       {/* Tabs */}

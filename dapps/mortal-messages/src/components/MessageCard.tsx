@@ -1,12 +1,14 @@
 import type { MortalMessage } from "@/utils/types";
+import DecayForecastBar from "./DecayForecastBar";
 
 interface Props {
   message: MortalMessage;
   perspective: "inbox" | "sent";
   onClick: (id: string) => void;
+  currentEpoch?: number;
 }
 
-export default function MessageCard({ message, perspective, onClick }: Props) {
+export default function MessageCard({ message, perspective, onClick, currentEpoch }: Props) {
   const isGhost = message.status === "ghost";
   const isGrace = message.status === "grace";
   const energyPct = message.energy_percent;
@@ -90,6 +92,13 @@ export default function MessageCard({ message, perspective, onClick }: Props) {
         <span>{new Date(message.created_at).toLocaleDateString()}</span>
         <span>{message.energy.toFixed(1)} / {message.max_energy.toFixed(1)} EVP</span>
       </div>
+
+      {/* Decay forecast: emerald → red bar with evaporation estimate */}
+      {message.status !== "ghost" && (
+        <div className="mt-3" onClick={(e) => e.stopPropagation()}>
+          <DecayForecastBar message={message} currentEpoch={currentEpoch} />
+        </div>
+      )}
     </button>
   );
 }

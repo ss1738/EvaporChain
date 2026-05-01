@@ -1,4 +1,18 @@
-import type { Nft, ChainStatus, TxResult, NftCollection } from "./types";
+import type {
+  Nft,
+  ChainStatus,
+  TxResult,
+  NftCollection,
+  PatronagePledgeRequest,
+  PatronagePledgeResponse,
+  PatronageStatusResponse,
+  PatronageImmunityResponse,
+  RefreshPoolStatus,
+  DemurrageOwedRequest,
+  DemurrageOwedResponse,
+  HlwaEffectiveSupplyRequest,
+  HlwaEffectiveSupplyResponse,
+} from "./types";
 
 const BASE = "/api";
 
@@ -38,4 +52,25 @@ export const api = {
 
   refreshNft: (nftId: number, energy: number) =>
     post<TxResult>("/nft/refresh", { nft_id: nftId, energy }),
+
+  // ── Substrate primitives ──
+  // Patronage covenants (object-level immunity from auto-eviction).
+  pledgePatronage: (req: PatronagePledgeRequest) =>
+    post<PatronagePledgeResponse>("/patronage/pledge", req),
+  getPatronageStatus: () => get<PatronageStatusResponse>("/patronage/status"),
+  getPatronageImmunity: (objectIdHex: string, epoch: number) =>
+    get<PatronageImmunityResponse>(
+      `/patronage/immune?object_id_hex=${encodeURIComponent(objectIdHex)}&epoch=${epoch}`,
+    ),
+
+  // Refresh pool: protocol-owned bucket of EVAP funding object refreshes.
+  getRefreshPool: () => get<RefreshPoolStatus>("/refresh_pool"),
+
+  // Demurrage: pure-compute helper to surface what an account owes.
+  computeDemurrage: (req: DemurrageOwedRequest) =>
+    post<DemurrageOwedResponse>("/demurrage/owed", req),
+
+  // HLWA: pure-compute λ-decay simulation for wrapped bridge assets.
+  hlwaEffectiveSupply: (req: HlwaEffectiveSupplyRequest) =>
+    post<HlwaEffectiveSupplyResponse>("/hlwa/effective_supply", req),
 };

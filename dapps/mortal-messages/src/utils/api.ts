@@ -1,4 +1,16 @@
-import type { MortalMessage, MessageStats, SendMessagePayload, BoostPayload } from "./types";
+import type {
+  MortalMessage,
+  MessageStats,
+  SendMessagePayload,
+  BoostPayload,
+  PatronagePledgeRequest,
+  PatronagePledgeResponse,
+  PatronageStatusResponse,
+  DemurrageOwedRequest,
+  DemurrageOwedResponse,
+  ChainStatusResponse,
+  DecayForecastResponse,
+} from "./types";
 
 const BASE = "/api";
 
@@ -12,6 +24,37 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     throw new Error(`API ${res.status}: ${body}`);
   }
   return res.json() as Promise<T>;
+}
+
+/** Fetch chain status — used to align decay forecasts to the current epoch. */
+export function getStatus() {
+  return request<ChainStatusResponse>("/status");
+}
+
+/** Decay forecast: projected energy curve + evaporation epoch for an object. */
+export function getDecayForecast(objectId: string) {
+  return request<DecayForecastResponse>(`/object/${objectId}/forecast`);
+}
+
+/** Open a Patronage Covenant against the message's underlying state object. */
+export function pledgePatronage(req: PatronagePledgeRequest) {
+  return request<PatronagePledgeResponse>("/patronage/pledge", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+/** Read the chain's patronage namespace + active covenant summary. */
+export function getPatronageStatus() {
+  return request<PatronageStatusResponse>("/patronage/status");
+}
+
+/** Pure-compute helper: how much demurrage does an account currently owe? */
+export function computeDemurrage(req: DemurrageOwedRequest) {
+  return request<DemurrageOwedResponse>("/demurrage/owed", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
 }
 
 /** Send a mortal message */

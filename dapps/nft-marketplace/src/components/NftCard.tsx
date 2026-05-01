@@ -1,15 +1,19 @@
 import { useEffect, useRef } from "react";
 import type { Nft } from "@/utils/types";
 import { generateNftArt } from "@/utils/art";
+import { DemurrageChip } from "./DemurrageChip";
+import { HlwaSupplyChip } from "./HlwaSupplyChip";
 
 interface NftCardProps {
   nft: Nft;
   onRefresh?: (nft: Nft) => void;
   onTransfer?: (nft: Nft) => void;
+  onSponsor?: (nft: Nft) => void;
   isOwner?: boolean;
+  currentEpoch?: number;
 }
 
-export function NftCard({ nft, onRefresh, onTransfer, isOwner }: NftCardProps) {
+export function NftCard({ nft, onRefresh, onTransfer, onSponsor, isOwner, currentEpoch }: NftCardProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const energyPercent = nft.max_energy > 0
     ? Math.round((nft.current_energy / nft.max_energy) * 100)
@@ -45,9 +49,14 @@ export function NftCard({ nft, onRefresh, onTransfer, isOwner }: NftCardProps) {
           height={200}
           className="w-full h-48 object-cover"
         />
-        <span className={`absolute top-2 right-2 text-[10px] px-2 py-0.5 rounded-full border ${stateColors[nft.state] ?? ""}`}>
-          {nft.state}
-        </span>
+        <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
+          <span className={`text-[10px] px-2 py-0.5 rounded-full border ${stateColors[nft.state] ?? ""}`}>
+            {nft.state}
+          </span>
+          {currentEpoch !== undefined && (
+            <HlwaSupplyChip nft={nft} currentEpoch={currentEpoch} />
+          )}
+        </div>
         {nft.state !== "Ghost" && (
           <div className="absolute bottom-0 left-0 right-0 h-1">
             <div
@@ -84,30 +93,57 @@ export function NftCard({ nft, onRefresh, onTransfer, isOwner }: NftCardProps) {
         </div>
 
         {/* Owner */}
-        <p className="text-[10px] text-zinc-400 font-mono truncate mb-3">
-          Owner: {nft.owner.slice(0, 10)}...{nft.owner.slice(-6)}
-        </p>
+        <div className="mb-3 flex items-center justify-between">
+          <p className="text-[10px] text-zinc-400 font-mono truncate">
+            Owner: {nft.owner.slice(0, 10)}...{nft.owner.slice(-6)}
+          </p>
+          {currentEpoch !== undefined && nft.state !== "Ghost" && (
+            <DemurrageChip
+              ownerAddress={nft.owner}
+              lastTouchedEpoch={nft.last_refreshed > 0 ? nft.last_refreshed : nft.minted_epoch}
+              currentEpoch={currentEpoch}
+            />
+          )}
+        </div>
 
         {/* Actions */}
         {isOwner && nft.state !== "Ghost" && (
-          <div className="flex gap-2">
-            {onRefresh && (
+          <div className="space-y-2">
+            <div className="flex gap-2">
+              {onRefresh && (
+                <button
+                  onClick={() => onRefresh(nft)}
+                  className="flex-1 py-2 rounded-lg bg-evap-cyan/10 text-evap-cyan text-xs font-medium hover:bg-evap-cyan/20 transition border border-evap-cyan/20"
+                >
+                  ⟳ Refresh
+                </button>
+              )}
+              {onTransfer && (
+                <button
+                  onClick={() => onTransfer(nft)}
+                  className="flex-1 py-2 rounded-lg bg-evap-purple/10 text-evap-purple text-xs font-medium hover:bg-evap-purple/20 transition border border-evap-purple/20"
+                >
+                  ↗ Transfer
+                </button>
+              )}
+            </div>
+            {onSponsor && (
               <button
-                onClick={() => onRefresh(nft)}
-                className="flex-1 py-2 rounded-lg bg-evap-cyan/10 text-evap-cyan text-xs font-medium hover:bg-evap-cyan/20 transition border border-evap-cyan/20"
+                onClick={() => onSponsor(nft)}
+                className="w-full py-2 rounded-lg bg-gradient-to-r from-evap-cyan/10 to-evap-purple/10 text-evap-purple text-xs font-medium hover:from-evap-cyan/20 hover:to-evap-purple/20 transition border border-evap-purple/20"
               >
-                ⟳ Refresh
-              </button>
-            )}
-            {onTransfer && (
-              <button
-                onClick={() => onTransfer(nft)}
-                className="flex-1 py-2 rounded-lg bg-evap-purple/10 text-evap-purple text-xs font-medium hover:bg-evap-purple/20 transition border border-evap-purple/20"
-              >
-                ↗ Transfer
+                ✦ Sponsor (Patronage)
               </button>
             )}
           </div>
+        )}
+        {!isOwner && nft.state !== "Ghost" && onSponsor && (
+          <button
+            onClick={() => onSponsor(nft)}
+            className="w-full py-2 rounded-lg bg-gradient-to-r from-evap-cyan/10 to-evap-purple/10 text-evap-purple text-xs font-medium hover:from-evap-cyan/20 hover:to-evap-purple/20 transition border border-evap-purple/20"
+          >
+            ✦ Sponsor this NFT
+          </button>
         )}
         {nft.state === "Ghost" && onRefresh && (
           <button

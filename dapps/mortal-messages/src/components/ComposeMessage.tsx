@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { sendMessage } from "@/utils/api";
 import LifespanPicker from "./LifespanPicker";
+import SenderDemurrageWarning from "./SenderDemurrageWarning";
 
 interface Props {
   senderAddress: string;
@@ -58,6 +59,9 @@ export default function ComposeMessage({ senderAddress, onSent }: Props) {
         <div className="rounded-lg bg-zinc-50 px-3 py-2 text-xs text-zinc-500">
           From: <span className="font-mono">{senderAddress}</span>
         </div>
+
+        {/* Defensive UX: warn if sender owes demurrage. */}
+        <SenderDemurrageWarning senderAddress={senderAddress} />
 
         {/* Recipient */}
         <div>
