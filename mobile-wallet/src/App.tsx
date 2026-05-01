@@ -10,6 +10,12 @@
 // MUST be the very first import — installs a native crypto.getRandomValues
 // shim before any module that touches @noble/* / ml-dsa / mnemonic code.
 import 'react-native-get-random-values';
+// WHATWG URL primitive for the WalletConnect v2 SDK (RN's built-in URL
+// is incomplete — `URL.canParse`, `searchParams`, etc. are missing).
+import 'react-native-url-polyfill/auto';
+// TextEncoder / TextDecoder polyfill — Hermes ships TextEncoder but not
+// TextDecoder pre-RN-0.74; the WC SDK needs both.
+import 'text-encoding-polyfill';
 
 import React, { useEffect, useRef } from 'react';
 import { StatusBar } from 'expo-status-bar';
@@ -23,6 +29,7 @@ import { txTracker } from './utils/txTracker';
 import { NetworkBanner } from './components/NetworkBanner';
 import { TxToastContainer } from './components/TxToast';
 import { TxStoreProvider } from './state/txStore';
+import { WalletConnectProvider } from './state/wcContext';
 
 const App: React.FC = () => {
   const navigationRef = useRef<NavigationContainerRef<RootStackParamList>>(null);
@@ -54,10 +61,12 @@ const App: React.FC = () => {
   return (
     <SafeAreaProvider>
       <TxStoreProvider>
-        <StatusBar style="dark" />
-        <NetworkBanner />
-        <AppNavigator navigationRef={navigationRef} />
-        <TxToastContainer />
+        <WalletConnectProvider>
+          <StatusBar style="dark" />
+          <NetworkBanner />
+          <AppNavigator navigationRef={navigationRef} />
+          <TxToastContainer />
+        </WalletConnectProvider>
       </TxStoreProvider>
     </SafeAreaProvider>
   );

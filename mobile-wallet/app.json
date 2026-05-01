@@ -38,6 +38,9 @@
       "expo-local-authentication",
       "expo-notifications",
       "expo-secure-store"
-    ]
+    ],
+    "extra": {
+      "walletconnectProjectId": "REPLACE_ME"
+    }
   }
 }

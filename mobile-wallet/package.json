@@ -8,7 +8,9 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "ts:check": "tsc --noEmit"
+    "ts:check": "tsc --noEmit",
+    "test:e2e": "bash .maestro/run.sh",
+    "test:e2e:01": "maestro test .maestro/01-create-wallet.yaml"
   },
   "dependencies": {
     "@noble/ciphers": "^1.2.0",
@@ -22,6 +24,7 @@
     "expo": "~52.0.0",
     "expo-camera": "~16.0.0",
     "expo-clipboard": "~7.0.0",
+    "expo-constants": "~17.0.0",
     "expo-crypto": "~14.0.0",
     "expo-local-authentication": "~15.0.0",
     "expo-notifications": "~0.29.0",
