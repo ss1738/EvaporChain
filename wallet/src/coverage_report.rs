@@ -282,7 +282,11 @@ impl CoverageTracker {
             (0.0, 0.0, 0.0)
         } else {
             let sum_line: f64 = self.modules.values().map(|m| m.line_coverage_pct()).sum();
-            let sum_func: f64 = self.modules.values().map(|m| m.function_coverage_pct()).sum();
+            let sum_func: f64 = self
+                .modules
+                .values()
+                .map(|m| m.function_coverage_pct())
+                .sum();
             let sum_branch: f64 = self.modules.values().map(|m| m.branch_coverage_pct()).sum();
             (
                 sum_line / total_modules as f64,
@@ -300,11 +304,8 @@ impl CoverageTracker {
             .values()
             .filter(|m| m.coverage_level() == CoverageLevel2::None)
             .count();
-        let total_uncovered_paths: usize = self
-            .modules
-            .values()
-            .map(|m| m.uncovered_paths.len())
-            .sum();
+        let total_uncovered_paths: usize =
+            self.modules.values().map(|m| m.uncovered_paths.len()).sum();
 
         CoverageStats2 {
             total_modules,
@@ -375,16 +376,23 @@ mod tests {
     #[test]
     fn test_duplicate_module() {
         let mut tracker = CoverageTracker::new();
-        tracker.add_module(make_module("m1", "wallet", 100, 80)).unwrap();
+        tracker
+            .add_module(make_module("m1", "wallet", 100, 80))
+            .unwrap();
         let result = tracker.add_module(make_module("m1", "wallet", 100, 80));
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), CoverageReportError::DuplicateModule(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            CoverageReportError::DuplicateModule(_)
+        ));
     }
 
     #[test]
     fn test_remove_module() {
         let mut tracker = CoverageTracker::new();
-        tracker.add_module(make_module("m1", "wallet", 100, 80)).unwrap();
+        tracker
+            .add_module(make_module("m1", "wallet", 100, 80))
+            .unwrap();
         let removed = tracker.remove_module("m1").unwrap();
         assert_eq!(removed.id, "m1");
         assert!(tracker.get_module("m1").is_none());
@@ -394,13 +402,18 @@ mod tests {
     fn test_remove_module_not_found() {
         let mut tracker = CoverageTracker::new();
         let result = tracker.remove_module("nonexistent");
-        assert!(matches!(result.unwrap_err(), CoverageReportError::ModuleNotFound(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            CoverageReportError::ModuleNotFound(_)
+        ));
     }
 
     #[test]
     fn test_update_module_records_trend() {
         let mut tracker = CoverageTracker::new();
-        tracker.add_module(make_module("m1", "wallet", 100, 50)).unwrap();
+        tracker
+            .add_module(make_module("m1", "wallet", 100, 50))
+            .unwrap();
         tracker.update_module("m1", 80, 9, 18).unwrap();
         let m = tracker.get_module("m1").unwrap();
         assert_eq!(m.covered_lines, 80);
@@ -415,7 +428,10 @@ mod tests {
     fn test_update_module_not_found() {
         let mut tracker = CoverageTracker::new();
         let result = tracker.update_module("nope", 1, 1, 1);
-        assert!(matches!(result.unwrap_err(), CoverageReportError::ModuleNotFound(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            CoverageReportError::ModuleNotFound(_)
+        ));
     }
 
     #[test]
@@ -469,7 +485,9 @@ mod tests {
     #[test]
     fn test_add_uncovered_path() {
         let mut tracker = CoverageTracker::new();
-        tracker.add_module(make_module("m1", "wallet", 100, 80)).unwrap();
+        tracker
+            .add_module(make_module("m1", "wallet", 100, 80))
+            .unwrap();
         let p = UncoveredPath {
             path: "src/lib.rs".to_string(),
             line_start: 10,
@@ -484,8 +502,12 @@ mod tests {
     #[test]
     fn test_modules_by_coverage() {
         let mut tracker = CoverageTracker::new();
-        tracker.add_module(make_module("m1", "low", 100, 30)).unwrap();
-        tracker.add_module(make_module("m2", "high", 100, 90)).unwrap();
+        tracker
+            .add_module(make_module("m1", "low", 100, 30))
+            .unwrap();
+        tracker
+            .add_module(make_module("m2", "high", 100, 90))
+            .unwrap();
         let result = tracker.modules_by_coverage(50.0);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, "m2");
@@ -494,8 +516,12 @@ mod tests {
     #[test]
     fn test_modules_below_threshold() {
         let mut tracker = CoverageTracker::new();
-        tracker.add_module(make_module("m1", "low", 100, 30)).unwrap();
-        tracker.add_module(make_module("m2", "high", 100, 90)).unwrap();
+        tracker
+            .add_module(make_module("m1", "low", 100, 30))
+            .unwrap();
+        tracker
+            .add_module(make_module("m2", "high", 100, 90))
+            .unwrap();
         let result = tracker.modules_below_threshold(50.0);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, "m1");
@@ -504,7 +530,9 @@ mod tests {
     #[test]
     fn test_generate_report() {
         let mut tracker = CoverageTracker::new();
-        tracker.add_module(make_module("m1", "wallet", 100, 80)).unwrap();
+        tracker
+            .add_module(make_module("m1", "wallet", 100, 80))
+            .unwrap();
         let report = tracker.generate_report("weekly");
         assert_eq!(report.name, "weekly");
         assert!((report.total_coverage - 80.0).abs() < f64::EPSILON);
@@ -515,9 +543,13 @@ mod tests {
     fn test_overall_coverage_weighted() {
         let mut tracker = CoverageTracker::new();
         // 200 lines, 100 covered => 50%
-        tracker.add_module(make_module("m1", "big", 200, 100)).unwrap();
+        tracker
+            .add_module(make_module("m1", "big", 200, 100))
+            .unwrap();
         // 100 lines, 100 covered => 100%
-        tracker.add_module(make_module("m2", "small", 100, 100)).unwrap();
+        tracker
+            .add_module(make_module("m2", "small", 100, 100))
+            .unwrap();
         // weighted: (100+100) / (200+100) = 200/300 = 66.666...%
         let cov = tracker.overall_coverage();
         assert!((cov - 66.66666666666667).abs() < 0.001);
@@ -526,7 +558,9 @@ mod tests {
     #[test]
     fn test_uncovered_paths_all() {
         let mut tracker = CoverageTracker::new();
-        tracker.add_module(make_module("m1", "wallet", 100, 80)).unwrap();
+        tracker
+            .add_module(make_module("m1", "wallet", 100, 80))
+            .unwrap();
         let p = UncoveredPath {
             path: "src/lib.rs".to_string(),
             line_start: 1,
@@ -543,8 +577,12 @@ mod tests {
     #[test]
     fn test_stats() {
         let mut tracker = CoverageTracker::new();
-        tracker.add_module(make_module("m1", "wallet", 100, 95)).unwrap();
-        tracker.add_module(make_module("m2", "staking", 100, 0)).unwrap();
+        tracker
+            .add_module(make_module("m1", "wallet", 100, 95))
+            .unwrap();
+        tracker
+            .add_module(make_module("m2", "staking", 100, 0))
+            .unwrap();
         tracker.generate_report("r1");
         let stats = tracker.stats();
         assert_eq!(stats.total_modules, 2);
@@ -557,7 +595,9 @@ mod tests {
     fn test_save_and_load() {
         let path = test_path("save_load");
         let mut tracker = CoverageTracker::new();
-        tracker.add_module(make_module("m1", "wallet", 100, 80)).unwrap();
+        tracker
+            .add_module(make_module("m1", "wallet", 100, 80))
+            .unwrap();
         tracker.save(&path).unwrap();
         let loaded = CoverageTracker::load(&path).unwrap();
         assert!(loaded.get_module("m1").is_some());

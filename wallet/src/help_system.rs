@@ -200,8 +200,7 @@ impl HelpSystem {
         self.faqs
             .iter()
             .filter(|f| {
-                f.question.to_lowercase().contains(&q)
-                    || f.answer.to_lowercase().contains(&q)
+                f.question.to_lowercase().contains(&q) || f.answer.to_lowercase().contains(&q)
             })
             .collect()
     }
@@ -332,7 +331,11 @@ mod tests {
     use std::process;
 
     fn test_path(name: &str) -> std::path::PathBuf {
-        temp_dir().join(format!("evaporchain_help_test_{}_{}.json", process::id(), name))
+        temp_dir().join(format!(
+            "evaporchain_help_test_{}_{}.json",
+            process::id(),
+            name
+        ))
     }
 
     fn make_topic(id: &str, category: HelpCategory2) -> HelpTopic {
@@ -395,13 +398,17 @@ mod tests {
         sys.add_topic(topic.clone()).unwrap();
         let result = sys.add_topic(topic);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), HelpSystemError::DuplicateTopic(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            HelpSystemError::DuplicateTopic(_)
+        ));
     }
 
     #[test]
     fn test_remove_topic() {
         let mut sys = HelpSystem::new();
-        sys.add_topic(make_topic("t1", HelpCategory2::Accounts)).unwrap();
+        sys.add_topic(make_topic("t1", HelpCategory2::Accounts))
+            .unwrap();
         let removed = sys.remove_topic("t1").unwrap();
         assert_eq!(removed.id, "t1");
         assert!(sys.topics.is_empty());
@@ -411,13 +418,17 @@ mod tests {
     fn test_remove_topic_not_found() {
         let mut sys = HelpSystem::new();
         let result = sys.remove_topic("nonexistent");
-        assert!(matches!(result.unwrap_err(), HelpSystemError::TopicNotFound(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            HelpSystemError::TopicNotFound(_)
+        ));
     }
 
     #[test]
     fn test_view_topic_increments_views() {
         let mut sys = HelpSystem::new();
-        sys.add_topic(make_topic("t1", HelpCategory2::Security)).unwrap();
+        sys.add_topic(make_topic("t1", HelpCategory2::Security))
+            .unwrap();
         let topic = sys.view_topic("t1").unwrap();
         assert_eq!(topic.views, 1);
         assert!(topic.last_viewed.is_some());
@@ -429,7 +440,10 @@ mod tests {
     fn test_view_topic_not_found() {
         let mut sys = HelpSystem::new();
         let result = sys.view_topic("missing");
-        assert!(matches!(result.unwrap_err(), HelpSystemError::TopicNotFound(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            HelpSystemError::TopicNotFound(_)
+        ));
     }
 
     #[test]
@@ -465,9 +479,12 @@ mod tests {
     #[test]
     fn test_topics_by_category() {
         let mut sys = HelpSystem::new();
-        sys.add_topic(make_topic("t1", HelpCategory2::DeFi)).unwrap();
-        sys.add_topic(make_topic("t2", HelpCategory2::Security)).unwrap();
-        sys.add_topic(make_topic("t3", HelpCategory2::DeFi)).unwrap();
+        sys.add_topic(make_topic("t1", HelpCategory2::DeFi))
+            .unwrap();
+        sys.add_topic(make_topic("t2", HelpCategory2::Security))
+            .unwrap();
+        sys.add_topic(make_topic("t3", HelpCategory2::DeFi))
+            .unwrap();
         let defi = sys.topics_by_category(&HelpCategory2::DeFi);
         assert_eq!(defi.len(), 2);
     }
@@ -478,7 +495,8 @@ mod tests {
         let mut t1 = make_topic("t1", HelpCategory2::Accounts);
         t1.related = vec!["t2".to_string(), "t3".to_string()];
         sys.add_topic(t1).unwrap();
-        sys.add_topic(make_topic("t2", HelpCategory2::Accounts)).unwrap();
+        sys.add_topic(make_topic("t2", HelpCategory2::Accounts))
+            .unwrap();
         // t3 doesn't exist — should be silently skipped
         let related = sys.related_topics("t1").unwrap();
         assert_eq!(related.len(), 1);
@@ -498,7 +516,11 @@ mod tests {
     fn test_add_and_search_faq() {
         let mut sys = HelpSystem::new();
         sys.add_faq(make_faq("f1", "How do I stake?", "Go to the staking page."));
-        sys.add_faq(make_faq("f2", "What is energy?", "Energy powers transactions."));
+        sys.add_faq(make_faq(
+            "f2",
+            "What is energy?",
+            "Energy powers transactions.",
+        ));
         let results = sys.search_faq("stake");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "f1");
@@ -528,14 +550,17 @@ mod tests {
     #[test]
     fn test_add_tutorial() {
         let mut sys = HelpSystem::new();
-        assert!(sys.add_tutorial(make_tutorial("tut1", Difficulty::Beginner, 3)).is_ok());
+        assert!(sys
+            .add_tutorial(make_tutorial("tut1", Difficulty::Beginner, 3))
+            .is_ok());
         assert_eq!(sys.tutorials.len(), 1);
     }
 
     #[test]
     fn test_add_duplicate_tutorial() {
         let mut sys = HelpSystem::new();
-        sys.add_tutorial(make_tutorial("tut1", Difficulty::Beginner, 2)).unwrap();
+        sys.add_tutorial(make_tutorial("tut1", Difficulty::Beginner, 2))
+            .unwrap();
         let result = sys.add_tutorial(make_tutorial("tut1", Difficulty::Advanced, 1));
         assert!(result.is_err());
     }
@@ -543,7 +568,8 @@ mod tests {
     #[test]
     fn test_complete_tutorial_steps() {
         let mut sys = HelpSystem::new();
-        sys.add_tutorial(make_tutorial("tut1", Difficulty::Intermediate, 2)).unwrap();
+        sys.add_tutorial(make_tutorial("tut1", Difficulty::Intermediate, 2))
+            .unwrap();
         sys.complete_tutorial_step("tut1", 1).unwrap();
         assert!(!sys.tutorials["tut1"].completed);
         sys.complete_tutorial_step("tut1", 2).unwrap();
@@ -554,15 +580,21 @@ mod tests {
     fn test_complete_tutorial_step_not_found() {
         let mut sys = HelpSystem::new();
         let result = sys.complete_tutorial_step("nope", 1);
-        assert!(matches!(result.unwrap_err(), HelpSystemError::TutorialNotFound(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            HelpSystemError::TutorialNotFound(_)
+        ));
     }
 
     #[test]
     fn test_tutorials_by_difficulty() {
         let mut sys = HelpSystem::new();
-        sys.add_tutorial(make_tutorial("b1", Difficulty::Beginner, 1)).unwrap();
-        sys.add_tutorial(make_tutorial("a1", Difficulty::Advanced, 1)).unwrap();
-        sys.add_tutorial(make_tutorial("b2", Difficulty::Beginner, 2)).unwrap();
+        sys.add_tutorial(make_tutorial("b1", Difficulty::Beginner, 1))
+            .unwrap();
+        sys.add_tutorial(make_tutorial("a1", Difficulty::Advanced, 1))
+            .unwrap();
+        sys.add_tutorial(make_tutorial("b2", Difficulty::Beginner, 2))
+            .unwrap();
         let beginners = sys.tutorials_by_difficulty(&Difficulty::Beginner);
         assert_eq!(beginners.len(), 2);
     }
@@ -611,7 +643,8 @@ mod tests {
         let mut tut = make_tutorial("tut1", Difficulty::Beginner, 1);
         tut.completed = true;
         sys.add_tutorial(tut).unwrap();
-        sys.add_tutorial(make_tutorial("tut2", Difficulty::Advanced, 2)).unwrap();
+        sys.add_tutorial(make_tutorial("tut2", Difficulty::Advanced, 2))
+            .unwrap();
         sys.add_error_explanation(ErrorExplanation {
             error_code: "E1".to_string(),
             title: "Err".to_string(),
@@ -633,9 +666,11 @@ mod tests {
     fn test_persistence_roundtrip() {
         let path = test_path("roundtrip");
         let mut sys = HelpSystem::new();
-        sys.add_topic(make_topic("t1", HelpCategory2::Transactions)).unwrap();
+        sys.add_topic(make_topic("t1", HelpCategory2::Transactions))
+            .unwrap();
         sys.add_faq(make_faq("f1", "Q?", "A."));
-        sys.add_tutorial(make_tutorial("tut1", Difficulty::Beginner, 2)).unwrap();
+        sys.add_tutorial(make_tutorial("tut1", Difficulty::Beginner, 2))
+            .unwrap();
         sys.save(&path).unwrap();
 
         let loaded = HelpSystem::load(&path).unwrap();

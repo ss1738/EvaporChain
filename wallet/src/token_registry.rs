@@ -130,7 +130,12 @@ impl TokenInfo {
         let divisor = 10u64.pow(self.decimals as u32);
         let whole = raw / divisor;
         let frac = raw % divisor;
-        format!("{}.{:0>width$}", whole, frac, width = self.decimals as usize)
+        format!(
+            "{}.{:0>width$}",
+            whole,
+            frac,
+            width = self.decimals as usize
+        )
     }
 
     /// Parse a display string back into a raw integer amount.
@@ -144,19 +149,15 @@ impl TokenInfo {
         let parts: Vec<&str> = display.split('.').collect();
         match parts.len() {
             1 => {
-                let whole: u64 = parts[0]
-                    .parse()
-                    .map_err(|e: std::num::ParseIntError| {
-                        TokenRegistryError::InvalidAmount(e.to_string())
-                    })?;
+                let whole: u64 = parts[0].parse().map_err(|e: std::num::ParseIntError| {
+                    TokenRegistryError::InvalidAmount(e.to_string())
+                })?;
                 Ok(whole * 10u64.pow(self.decimals as u32))
             }
             2 => {
-                let whole: u64 = parts[0]
-                    .parse()
-                    .map_err(|e: std::num::ParseIntError| {
-                        TokenRegistryError::InvalidAmount(e.to_string())
-                    })?;
+                let whole: u64 = parts[0].parse().map_err(|e: std::num::ParseIntError| {
+                    TokenRegistryError::InvalidAmount(e.to_string())
+                })?;
                 let frac_str = parts[1];
                 if frac_str.len() > self.decimals as usize {
                     return Err(TokenRegistryError::InvalidAmount(format!(
@@ -167,11 +168,9 @@ impl TokenInfo {
                 }
                 // Pad to the right so "1.5" with 6 decimals becomes 500000
                 let padded = format!("{:0<width$}", frac_str, width = self.decimals as usize);
-                let frac: u64 = padded
-                    .parse()
-                    .map_err(|e: std::num::ParseIntError| {
-                        TokenRegistryError::InvalidAmount(e.to_string())
-                    })?;
+                let frac: u64 = padded.parse().map_err(|e: std::num::ParseIntError| {
+                    TokenRegistryError::InvalidAmount(e.to_string())
+                })?;
                 Ok(whole * 10u64.pow(self.decimals as u32) + frac)
             }
             _ => Err(TokenRegistryError::InvalidAmount(
@@ -222,11 +221,7 @@ impl TokenRegistry {
     }
 
     /// Update an existing token. Fails if the address is not registered.
-    pub fn update(
-        &mut self,
-        address: &str,
-        token: TokenInfo,
-    ) -> Result<(), TokenRegistryError> {
+    pub fn update(&mut self, address: &str, token: TokenInfo) -> Result<(), TokenRegistryError> {
         if !self.tokens.contains_key(address) {
             return Err(TokenRegistryError::NotFound(address.to_string()));
         }
@@ -287,17 +282,12 @@ impl TokenRegistry {
 
     /// List all tokens that have a given tag.
     pub fn list_by_tag(&self, tag: &str) -> Vec<&TokenInfo> {
-        self.tokens
-            .values()
-            .filter(|t| t.has_tag(tag))
-            .collect()
+        self.tokens.values().filter(|t| t.has_tag(tag)).collect()
     }
 
     /// Check whether an address is flagged as a scam.
     pub fn is_scam(&self, address: &str) -> bool {
-        self.tokens
-            .get(address)
-            .is_some_and(|t| t.flagged_scam)
+        self.tokens.get(address).is_some_and(|t| t.flagged_scam)
     }
 
     /// Mark a token as verified. Fails if the address is not registered.
@@ -312,11 +302,7 @@ impl TokenRegistry {
     }
 
     /// Flag a token as a scam. Fails if the address is not registered.
-    pub fn flag_token(
-        &mut self,
-        address: &str,
-        reason: &str,
-    ) -> Result<(), TokenRegistryError> {
+    pub fn flag_token(&mut self, address: &str, reason: &str) -> Result<(), TokenRegistryError> {
         let token = self
             .tokens
             .get_mut(address)
@@ -424,10 +410,7 @@ mod tests {
     use super::*;
 
     fn test_path(name: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
-            "token_reg_test_{}_{name}",
-            std::process::id()
-        ))
+        std::env::temp_dir().join(format!("token_reg_test_{}_{name}", std::process::id()))
     }
 
     fn sample_token(addr: &str, name: &str, symbol: &str) -> TokenInfo {
@@ -692,10 +675,7 @@ mod tests {
             token.custom_fields.get("coingecko_id").unwrap(),
             "alpha-token"
         );
-        assert_eq!(
-            token.custom_fields.get("chain").unwrap(),
-            "evaporchain"
-        );
+        assert_eq!(token.custom_fields.get("chain").unwrap(), "evaporchain");
         assert_eq!(token.custom_fields.len(), 2);
     }
 

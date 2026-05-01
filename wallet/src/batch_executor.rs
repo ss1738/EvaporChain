@@ -208,10 +208,7 @@ impl BatchExecutor {
     }
 
     /// Validate a batch: check dependencies exist, return warnings, set Validating.
-    pub fn validate_batch(
-        &mut self,
-        batch_id: &str,
-    ) -> Result<Vec<String>, BatchExecutorError> {
+    pub fn validate_batch(&mut self, batch_id: &str) -> Result<Vec<String>, BatchExecutorError> {
         let job = self
             .jobs
             .get(batch_id)
@@ -248,10 +245,7 @@ impl BatchExecutor {
     }
 
     /// Simulate execution of a batch.
-    pub fn execute_batch(
-        &mut self,
-        batch_id: &str,
-    ) -> Result<BatchResult, BatchExecutorError> {
+    pub fn execute_batch(&mut self, batch_id: &str) -> Result<BatchResult, BatchExecutorError> {
         let job = self
             .jobs
             .get(batch_id)
@@ -294,8 +288,7 @@ impl BatchExecutor {
             if dep_failed {
                 let dep_id = job.transactions[i].depends_on.clone().unwrap();
                 job.transactions[i].status = TxStatus::Skipped;
-                job.transactions[i].error =
-                    Some(format!("Dependency {} failed", dep_id));
+                job.transactions[i].error = Some(format!("Dependency {} failed", dep_id));
                 skipped_count += 1;
                 continue;
             }
@@ -304,8 +297,7 @@ impl BatchExecutor {
             let gas = 21000_u64;
             if job.transactions[i].amount > 0 {
                 job.transactions[i].status = TxStatus::Success;
-                job.transactions[i].tx_hash =
-                    Some(format!("0xhash_{}", job.transactions[i].id));
+                job.transactions[i].tx_hash = Some(format!("0xhash_{}", job.transactions[i].id));
                 job.transactions[i].gas_used = Some(gas);
                 total_gas += gas;
                 success_count += 1;
@@ -426,8 +418,7 @@ impl BatchExecutor {
                     || j.status == BatchStatus::RolledBack
             })
             .count();
-        let total_transactions: usize =
-            self.jobs.values().map(|j| j.transactions.len()).sum();
+        let total_transactions: usize = self.jobs.values().map(|j| j.transactions.len()).sum();
         let total_gas_used: u64 = self.jobs.values().map(|j| j.total_gas).sum();
         let avg_batch_size = if total_batches > 0 {
             total_transactions as f64 / total_batches as f64
@@ -480,8 +471,11 @@ mod tests {
     use std::path::PathBuf;
 
     fn tmp_path(name: &str) -> PathBuf {
-        std::env::temp_dir()
-            .join(format!("evaporchain_batch_executor_test_{}_{}", std::process::id(), name))
+        std::env::temp_dir().join(format!(
+            "evaporchain_batch_executor_test_{}_{}",
+            std::process::id(),
+            name
+        ))
     }
 
     fn sample_tx(id: &str, amount: u64, order: u32) -> BatchTx {
@@ -671,7 +665,10 @@ mod tests {
         exec.rollback_batch(&id).unwrap();
         let job = exec.get_batch(&id).unwrap();
         assert_eq!(job.status, BatchStatus::RolledBack);
-        assert!(job.transactions.iter().all(|t| t.status == TxStatus::Skipped));
+        assert!(job
+            .transactions
+            .iter()
+            .all(|t| t.status == TxStatus::Skipped));
     }
 
     #[test]

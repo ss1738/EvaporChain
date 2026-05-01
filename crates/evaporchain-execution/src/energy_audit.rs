@@ -10,15 +10,15 @@
 //! ## What `compartment_snapshot` populates
 //!
 //! - `Accounts`     ← Σ over `db.all_account_addresses()` of
-//!                    `db.get_account(addr).balance`.
+//!   `db.get_account(addr).balance`.
 //! - `Stake`        ← Σ over `db.all_stakes()` of `r.staked_amount −
-//!                    r.slashed_amount` (live stake only).
+//!   r.slashed_amount` (live stake only).
 //! - `RefreshPool`  ← 0 (the kernel's `RefreshPool` ledger lives
-//!                    outside the existing `StateDB`; consumers that
-//!                    have already wired one in pass it through).
+//!   outside the existing `StateDB`; consumers that
+//!   have already wired one in pass it through).
 //! - `SlashedPool`  ← Σ over `db.all_stakes()` of `r.slashed_amount`
-//!                    (held in the kernel's slashed-pool until a
-//!                    `SlashSettle` redirect drains it into RefreshPool).
+//!   (held in the kernel's slashed-pool until a
+//!   `SlashSettle` redirect drains it into RefreshPool).
 //!
 //! ## Why this is the right first integration
 //!
@@ -44,18 +44,20 @@ pub fn compartment_snapshot(db: &dyn StateDB) -> EnergyAccumulator {
 /// Same as [`compartment_snapshot`] but with an explicit refresh-
 /// pool total (the kernel's per-namespace `RefreshPool::total_accrued`
 /// is the natural source).
-pub fn compartment_snapshot_with_pool(db: &dyn StateDB, refresh_pool_total: u64) -> EnergyAccumulator {
+pub fn compartment_snapshot_with_pool(
+    db: &dyn StateDB,
+    refresh_pool_total: u64,
+) -> EnergyAccumulator {
     let accounts: u64 = db
         .all_account_addresses()
         .into_iter()
         .filter_map(|addr| db.get_account(&addr).map(|a| a.balance))
         .fold(0u64, |a, b| a.saturating_add(b));
 
-    let (stake, slashed): (u64, u64) =
-        db.all_stakes().iter().fold((0u64, 0u64), |(s, sl), r| {
-            let live = r.staked_amount.saturating_sub(r.slashed_amount);
-            (s.saturating_add(live), sl.saturating_add(r.slashed_amount))
-        });
+    let (stake, slashed): (u64, u64) = db.all_stakes().iter().fold((0u64, 0u64), |(s, sl), r| {
+        let live = r.staked_amount.saturating_sub(r.slashed_amount);
+        (s.saturating_add(live), sl.saturating_add(r.slashed_amount))
+    });
 
     EnergyAccumulator::new(accounts, stake, refresh_pool_total, slashed)
 }
@@ -123,8 +125,8 @@ mod tests {
     fn snapshot_sums_accounts_and_stake_and_slashed() {
         let db = db_with_accounts_and_stake();
         let snap = compartment_snapshot(&db);
-        assert_eq!(snap[Compartment::Accounts], 1_500);     // 1000 + 500
-        // Live stake = 800 + (1200 - 200) = 1800.
+        assert_eq!(snap[Compartment::Accounts], 1_500); // 1000 + 500
+                                                        // Live stake = 800 + (1200 - 200) = 1800.
         assert_eq!(snap[Compartment::Stake], 1_800);
         assert_eq!(snap[Compartment::RefreshPool], 0);
         // Slashed-but-not-settled = 200.
@@ -159,7 +161,10 @@ mod tests {
         after.credit(Compartment::Accounts, 1);
         let lambda = ChainLambda::new(Lambda::from_epochs(100));
         let err = audit_block_step(&before, &after, 0, lambda).unwrap_err();
-        assert!(matches!(err, ConservationViolation::DecayIncreasedTotal { .. }));
+        assert!(matches!(
+            err,
+            ConservationViolation::DecayIncreasedTotal { .. }
+        ));
     }
 
     #[test]
@@ -169,7 +174,10 @@ mod tests {
         let after = EnergyAccumulator::new(400, 0, 0, 0);
         let lambda = ChainLambda::new(Lambda::from_epochs(100));
         let err = audit_block_step(&before, &after, 100, lambda).unwrap_err();
-        assert!(matches!(err, ConservationViolation::DecayExceededLambda { .. }));
+        assert!(matches!(
+            err,
+            ConservationViolation::DecayExceededLambda { .. }
+        ));
     }
 
     #[test]

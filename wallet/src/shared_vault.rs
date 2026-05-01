@@ -250,10 +250,7 @@ impl SharedVaultManager {
     // ── Proposal Management ─────────────────────────────────────────────
 
     /// Create a proposal. Errors if the vault does not exist.
-    pub fn create_proposal(
-        &mut self,
-        proposal: VaultProposal,
-    ) -> Result<(), SharedVaultError> {
+    pub fn create_proposal(&mut self, proposal: VaultProposal) -> Result<(), SharedVaultError> {
         if !self.vaults.contains_key(&proposal.vault_id) {
             return Err(SharedVaultError::VaultNotFound(proposal.vault_id.clone()));
         }
@@ -315,10 +312,7 @@ impl SharedVaultManager {
     }
 
     /// Execute an approved proposal. Errors if the proposal is not in Approved status.
-    pub fn execute_proposal(
-        &mut self,
-        proposal_id: &str,
-    ) -> Result<(), SharedVaultError> {
+    pub fn execute_proposal(&mut self, proposal_id: &str) -> Result<(), SharedVaultError> {
         let proposal = self
             .proposals
             .get_mut(proposal_id)

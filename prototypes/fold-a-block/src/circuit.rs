@@ -67,18 +67,14 @@ impl<G: Group> StepCircuit<G::Scalar> for EvaporBlockCircuit<G> {
                 .take(NUM_TXS)
                 .map(|t| t.amount)
                 .sum();
-            let vol = AllocatedNum::alloc(
-                cs.namespace(|| format!("{}_vol", bp)),
-                || Ok(G::Scalar::from(total_volume)),
-            )?;
+            let vol = AllocatedNum::alloc(cs.namespace(|| format!("{}_vol", bp)), || {
+                Ok(G::Scalar::from(total_volume))
+            })?;
             // Enforce: vol * vol = vol^2 (non-trivial constraint proving tx batch)
-            let vol_sq = AllocatedNum::alloc(
-                cs.namespace(|| format!("{}_vsq", bp)),
-                || {
-                    let v = vol.get_value().ok_or(SynthesisError::AssignmentMissing)?;
-                    Ok(v * v)
-                },
-            )?;
+            let vol_sq = AllocatedNum::alloc(cs.namespace(|| format!("{}_vsq", bp)), || {
+                let v = vol.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+                Ok(v * v)
+            })?;
             cs.enforce(
                 || format!("{}_tx", bp),
                 |lc| lc + vol.get_variable(),
@@ -96,18 +92,18 @@ impl<G: Group> StepCircuit<G::Scalar> for EvaporBlockCircuit<G> {
                 let new_e = old_e.saturating_sub(witness.decay_rate);
                 let delta = old_e - new_e;
 
-                let old_alloc = AllocatedNum::alloc(
-                    cs.namespace(|| format!("{}_{}_oe", bp, i)),
-                    || Ok(G::Scalar::from(old_e)),
-                )?;
-                let new_alloc = AllocatedNum::alloc(
-                    cs.namespace(|| format!("{}_{}_ne", bp, i)),
-                    || Ok(G::Scalar::from(new_e)),
-                )?;
-                let delta_alloc = AllocatedNum::alloc(
-                    cs.namespace(|| format!("{}_{}_d", bp, i)),
-                    || Ok(G::Scalar::from(delta)),
-                )?;
+                let old_alloc =
+                    AllocatedNum::alloc(cs.namespace(|| format!("{}_{}_oe", bp, i)), || {
+                        Ok(G::Scalar::from(old_e))
+                    })?;
+                let new_alloc =
+                    AllocatedNum::alloc(cs.namespace(|| format!("{}_{}_ne", bp, i)), || {
+                        Ok(G::Scalar::from(new_e))
+                    })?;
+                let delta_alloc =
+                    AllocatedNum::alloc(cs.namespace(|| format!("{}_{}_d", bp, i)), || {
+                        Ok(G::Scalar::from(delta))
+                    })?;
 
                 // old_energy = new_energy + delta (handles saturation)
                 cs.enforce(
@@ -119,15 +115,12 @@ impl<G: Group> StepCircuit<G::Scalar> for EvaporBlockCircuit<G> {
             }
 
             // === Epoch increment ===
-            let new_epoch = AllocatedNum::alloc(
-                cs.namespace(|| format!("{}_ep", bp)),
-                || {
-                    let e = current_epoch
-                        .get_value()
-                        .ok_or(SynthesisError::AssignmentMissing)?;
-                    Ok(e + G::Scalar::from(1u64))
-                },
-            )?;
+            let new_epoch = AllocatedNum::alloc(cs.namespace(|| format!("{}_ep", bp)), || {
+                let e = current_epoch
+                    .get_value()
+                    .ok_or(SynthesisError::AssignmentMissing)?;
+                Ok(e + G::Scalar::from(1u64))
+            })?;
             cs.enforce(
                 || format!("{}_ei", bp),
                 |lc| lc + new_epoch.get_variable(),

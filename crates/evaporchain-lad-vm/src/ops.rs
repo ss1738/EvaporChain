@@ -11,9 +11,7 @@ pub enum OpError {
     AlreadyConsumed,
     #[error("resource has evaporated past its decay window")]
     Evaporated,
-    #[error(
-        "Linear resource cannot be dropped — must be consumed exactly once"
-    )]
+    #[error("Linear resource cannot be dropped — must be consumed exactly once")]
     LinearCannotDrop,
 }
 

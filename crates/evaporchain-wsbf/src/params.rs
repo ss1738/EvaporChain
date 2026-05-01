@@ -28,7 +28,10 @@ pub struct RgFlowParams {
 
 impl Default for RgFlowParams {
     fn default() -> Self {
-        Self { coarse_grain: 100, entropy_scale_mb: 1_000 }
+        Self {
+            coarse_grain: 100,
+            entropy_scale_mb: 1_000,
+        }
     }
 }
 

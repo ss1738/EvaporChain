@@ -201,7 +201,9 @@ impl NamespaceMerkleTree {
     pub fn try_from_blobs(blobs: &[NamespacedBlob]) -> Result<Self, NmtBuildError> {
         for b in blobs {
             if is_reserved_namespace(&b.namespace) {
-                return Err(NmtBuildError::ReservedNamespace { namespace: b.namespace });
+                return Err(NmtBuildError::ReservedNamespace {
+                    namespace: b.namespace,
+                });
             }
         }
         Ok(Self::from_blobs(blobs))
@@ -264,7 +266,9 @@ impl NamespaceMerkleTree {
     pub fn try_from_leaves(leaves: Vec<NmtLeaf>) -> Result<Self, NmtBuildError> {
         for l in &leaves {
             if is_reserved_namespace(&l.namespace) {
-                return Err(NmtBuildError::ReservedNamespace { namespace: l.namespace });
+                return Err(NmtBuildError::ReservedNamespace {
+                    namespace: l.namespace,
+                });
             }
         }
         Ok(Self::from_leaves(leaves))
@@ -272,11 +276,14 @@ impl NamespaceMerkleTree {
 
     /// Get the root node (namespace range + hash).
     pub fn root(&self) -> &NmtNode {
-        self.layers.last().and_then(|l| l.first()).unwrap_or(&NmtNode {
-            min_namespace: NAMESPACE_MAX,
-            max_namespace: NAMESPACE_MIN,
-            hash: [0u8; 32],
-        })
+        self.layers
+            .last()
+            .and_then(|l| l.first())
+            .unwrap_or(&NmtNode {
+                min_namespace: NAMESPACE_MAX,
+                max_namespace: NAMESPACE_MIN,
+                hash: [0u8; 32],
+            })
     }
 
     /// Get blob commitments (namespace + hash for each blob).
@@ -306,14 +313,8 @@ impl NamespaceMerkleTree {
         }
 
         // Find the range of leaves with this namespace
-        let start = self
-            .leaves
-            .iter()
-            .position(|l| l.namespace >= *namespace);
-        let end = self
-            .leaves
-            .iter()
-            .rposition(|l| l.namespace <= *namespace);
+        let start = self.leaves.iter().position(|l| l.namespace >= *namespace);
+        let end = self.leaves.iter().rposition(|l| l.namespace <= *namespace);
 
         match (start, end) {
             (Some(s), Some(e)) if self.leaves[s].namespace == *namespace => {
@@ -376,7 +377,8 @@ impl NamespaceMerkleTree {
                 let right = &proof.siblings[1];
                 // The left neighbor's max namespace must be less than queried,
                 // and right neighbor's min must be greater.
-                if !left.is_empty() && !right.is_empty()
+                if !left.is_empty()
+                    && !right.is_empty()
                     && (left.max_namespace >= proof.namespace
                         || right.min_namespace <= proof.namespace)
                 {
@@ -400,8 +402,7 @@ impl NamespaceMerkleTree {
         }
 
         // Verify root namespace range contains the queried namespace
-        if proof.namespace < proof.root.min_namespace
-            || proof.namespace > proof.root.max_namespace
+        if proof.namespace < proof.root.min_namespace || proof.namespace > proof.root.max_namespace
         {
             return false;
         }
@@ -489,11 +490,7 @@ mod tests {
 
     #[test]
     fn test_nmt_basic_construction() {
-        let blobs = vec![
-            blob(1, b"hello"),
-            blob(2, b"world"),
-            blob(1, b"foo"),
-        ];
+        let blobs = vec![blob(1, b"hello"), blob(2, b"world"), blob(1, b"foo")];
         let tree = NamespaceMerkleTree::from_blobs(&blobs);
         let root = tree.root();
 
@@ -522,12 +519,7 @@ mod tests {
 
     #[test]
     fn test_nmt_namespace_inclusion_proof() {
-        let blobs = vec![
-            blob(1, b"a"),
-            blob(2, b"b"),
-            blob(2, b"c"),
-            blob(3, b"d"),
-        ];
+        let blobs = vec![blob(1, b"a"), blob(2, b"b"), blob(2, b"c"), blob(3, b"d")];
         let tree = NamespaceMerkleTree::from_blobs(&blobs);
 
         // Prove namespace 2 exists
@@ -617,7 +609,10 @@ mod tests {
     // ─── Reserved-namespace enforcement (Gap-A #9) ────────────────────────
 
     fn blob_with_ns(namespace: NamespaceId, data: &[u8]) -> NamespacedBlob {
-        NamespacedBlob { namespace, data: data.to_vec() }
+        NamespacedBlob {
+            namespace,
+            data: data.to_vec(),
+        }
     }
 
     #[test]
@@ -645,7 +640,12 @@ mod tests {
     fn test_try_from_blobs_rejects_reserved_max_namespace() {
         let blobs = vec![blob_with_ns(NAMESPACE_MAX, b"x"), blob(7, b"valid")];
         let err = NamespaceMerkleTree::try_from_blobs(&blobs).unwrap_err();
-        assert_eq!(err, NmtBuildError::ReservedNamespace { namespace: NAMESPACE_MAX });
+        assert_eq!(
+            err,
+            NmtBuildError::ReservedNamespace {
+                namespace: NAMESPACE_MAX
+            }
+        );
     }
 
     #[test]
@@ -658,10 +658,21 @@ mod tests {
     #[test]
     fn test_try_from_leaves_rejects_reserved_max_namespace() {
         let leaves = vec![
-            NmtLeaf { namespace: ns(7), data_hash: [0u8; 32] },
-            NmtLeaf { namespace: NAMESPACE_MAX, data_hash: [0u8; 32] },
+            NmtLeaf {
+                namespace: ns(7),
+                data_hash: [0u8; 32],
+            },
+            NmtLeaf {
+                namespace: NAMESPACE_MAX,
+                data_hash: [0u8; 32],
+            },
         ];
         let err = NamespaceMerkleTree::try_from_leaves(leaves).unwrap_err();
-        assert_eq!(err, NmtBuildError::ReservedNamespace { namespace: NAMESPACE_MAX });
+        assert_eq!(
+            err,
+            NmtBuildError::ReservedNamespace {
+                namespace: NAMESPACE_MAX
+            }
+        );
     }
 }

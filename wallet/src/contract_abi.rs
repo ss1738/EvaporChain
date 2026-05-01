@@ -161,7 +161,10 @@ impl AbiEntry {
 
     /// True if state mutability is Pure or View.
     pub fn is_readonly(&self) -> bool {
-        matches!(self.state_mutability, StateMutability::Pure | StateMutability::View)
+        matches!(
+            self.state_mutability,
+            StateMutability::Pure | StateMutability::View
+        )
     }
 }
 
@@ -198,11 +201,17 @@ impl ContractAbi {
     }
 
     pub fn functions(&self) -> Vec<&AbiEntry> {
-        self.entries.iter().filter(|e| e.abi_type == AbiType::Function).collect()
+        self.entries
+            .iter()
+            .filter(|e| e.abi_type == AbiType::Function)
+            .collect()
     }
 
     pub fn events(&self) -> Vec<&AbiEntry> {
-        self.entries.iter().filter(|e| e.abi_type == AbiType::Event).collect()
+        self.entries
+            .iter()
+            .filter(|e| e.abi_type == AbiType::Event)
+            .collect()
     }
 
     pub fn get_function(&self, name: &str) -> Option<&AbiEntry> {
@@ -232,8 +241,7 @@ impl ContractAbi {
         self.entries
             .iter()
             .filter(|e| {
-                e.abi_type == AbiType::Function
-                    && e.state_mutability == StateMutability::Payable
+                e.abi_type == AbiType::Function && e.state_mutability == StateMutability::Payable
             })
             .collect()
     }
@@ -428,9 +436,7 @@ impl AbiStore {
         let q = query.to_lowercase();
         self.contracts
             .values()
-            .filter(|c| {
-                c.name.to_lowercase().contains(&q) || c.address.to_lowercase().contains(&q)
-            })
+            .filter(|c| c.name.to_lowercase().contains(&q) || c.address.to_lowercase().contains(&q))
             .collect()
     }
 
@@ -478,11 +484,7 @@ impl AbiStore {
     }
 
     pub fn stats(&self) -> AbiStats {
-        let total_functions: usize = self
-            .contracts
-            .values()
-            .map(|c| c.functions().len())
-            .sum();
+        let total_functions: usize = self.contracts.values().map(|c| c.functions().len()).sum();
         let total_events: usize = self.contracts.values().map(|c| c.events().len()).sum();
         let verified_contracts = self.contracts.values().filter(|c| c.verified).count();
         AbiStats {
@@ -540,9 +542,7 @@ mod tests {
                 .add_input(AbiParam::new("owner", ParamKind::Address))
                 .add_output(AbiParam::new("balance", ParamKind::Uint256)),
         );
-        abi.add_entry(
-            AbiEntry::new_function("deposit", StateMutability::Payable),
-        );
+        abi.add_entry(AbiEntry::new_function("deposit", StateMutability::Payable));
         abi.add_entry(
             AbiEntry::new_event("Transfer")
                 .add_input(AbiParam::new("from", ParamKind::Address).with_indexed())
@@ -579,16 +579,28 @@ mod tests {
 
     #[test]
     fn test_abi_param_type_string() {
-        assert_eq!(AbiParam::new("a", ParamKind::Uint256).type_string(), "uint256");
-        assert_eq!(AbiParam::new("b", ParamKind::Address).type_string(), "address");
-        assert_eq!(AbiParam::new("c", ParamKind::BytesN(32)).type_string(), "bytes32");
+        assert_eq!(
+            AbiParam::new("a", ParamKind::Uint256).type_string(),
+            "uint256"
+        );
+        assert_eq!(
+            AbiParam::new("b", ParamKind::Address).type_string(),
+            "address"
+        );
+        assert_eq!(
+            AbiParam::new("c", ParamKind::BytesN(32)).type_string(),
+            "bytes32"
+        );
         assert_eq!(
             AbiParam::new("d", ParamKind::Array(Box::new(ParamKind::Uint256))).type_string(),
             "uint256[]"
         );
         assert_eq!(
-            AbiParam::new("e", ParamKind::Tuple(vec![ParamKind::Address, ParamKind::Bool]))
-                .type_string(),
+            AbiParam::new(
+                "e",
+                ParamKind::Tuple(vec![ParamKind::Address, ParamKind::Bool])
+            )
+            .type_string(),
             "(address,bool)"
         );
     }
@@ -807,18 +819,14 @@ mod tests {
         let mut store = AbiStore::new();
         store.register(sample_contract()).unwrap();
         store.log_event(
-            EventLog::new("Transfer", "0xABC123", 42, "0xTXHASH", 0)
-                .add_param("from", "0x111"),
+            EventLog::new("Transfer", "0xABC123", 42, "0xTXHASH", 0).add_param("from", "0x111"),
         );
 
         store.save(&path).unwrap();
         let loaded = AbiStore::load(&path).unwrap();
         assert_eq!(loaded.contracts.len(), 1);
         assert_eq!(loaded.event_logs.len(), 1);
-        assert_eq!(
-            loaded.get("0xABC123").unwrap().name,
-            "TestToken"
-        );
+        assert_eq!(loaded.get("0xABC123").unwrap().name, "TestToken");
 
         // Clean up
         let _ = std::fs::remove_file(&path);

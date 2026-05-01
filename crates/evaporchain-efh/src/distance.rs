@@ -64,11 +64,7 @@ pub fn bottleneck_distance(d1: &PersistenceDiagram, d2: &PersistenceDiagram) -> 
 }
 
 fn abs_diff(a: Energy, b: Energy) -> Energy {
-    if a >= b {
-        a - b
-    } else {
-        b - a
-    }
+    a.abs_diff(b)
 }
 
 #[cfg(test)]

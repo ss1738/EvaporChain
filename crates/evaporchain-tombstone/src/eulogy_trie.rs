@@ -36,7 +36,11 @@ impl EulogyTrie {
 
     /// Insert a tombstone for `addr`. Rejects re-insertion: an
     /// account can only evaporate once. The chain's death is final.
-    pub fn insert(&mut self, addr: AccountAddress, tombstone: Tombstone) -> Result<(), EulogyError> {
+    pub fn insert(
+        &mut self,
+        addr: AccountAddress,
+        tombstone: Tombstone,
+    ) -> Result<(), EulogyError> {
         if self.entries.contains_key(&addr) {
             return Err(EulogyError::AlreadyMemorialised(addr));
         }

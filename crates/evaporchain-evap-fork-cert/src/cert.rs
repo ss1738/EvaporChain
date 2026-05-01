@@ -28,9 +28,7 @@ pub enum CertError {
         "fork's decayed energy ({decayed}) is not below threshold ({threshold}) — fork has not evaporated"
     )]
     NotEvaporated { decayed: u128, threshold: u128 },
-    #[error(
-        "witness mismatch: re-derived {derived:?}, certificate carries {claimed:?}"
-    )]
+    #[error("witness mismatch: re-derived {derived:?}, certificate carries {claimed:?}")]
     WitnessMismatch {
         derived: [u8; 32],
         claimed: [u8; 32],

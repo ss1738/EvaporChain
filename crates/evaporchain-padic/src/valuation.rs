@@ -19,7 +19,7 @@ pub fn valuation<const P: usize>(n: u64) -> u32 {
     let p = P as u64;
     let mut v = 0u32;
     let mut x = n;
-    while x % p == 0 {
+    while x.is_multiple_of(p) {
         x /= p;
         v += 1;
     }
@@ -95,9 +95,6 @@ mod tests {
         // Spot-check.
         let x = 12u64; // 2^2 * 3
         let y = 9u64; //  3^2
-        assert_eq!(
-            valuation::<3>(x * y),
-            valuation::<3>(x) + valuation::<3>(y)
-        );
+        assert_eq!(valuation::<3>(x * y), valuation::<3>(x) + valuation::<3>(y));
     }
 }

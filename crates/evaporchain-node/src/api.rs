@@ -744,19 +744,16 @@ struct ObjectResponse {
     /// Whether this object is governed by the LAD-VM substructural-
     /// resource type system (linear/affine/decaying).
     ///
-    /// TODO: `evaporchain-lad-vm` ships only the `Resource<T>` runtime
-    /// data structures (crates/evaporchain-lad-vm/src/{mode,resource,
-    /// ops}.rs); `evaporchain-types::StateObject` (L23-37) carries no
-    /// LAD marker. To populate this with real data we need to:
-    ///   1. Add `pub lad_mode: Option<evaporchain_lad_vm::Mode>` to
-    ///      `StateObject` (serde default = None for legacy objects).
-    ///   2. Stamp it during `CreateObjectTx` execution when the
-    ///      future `script-lad` compiler frontend lowers an
-    ///      annotated declaration (`@lad(mode=…)`).
-    ///   3. Map `lad_mode.is_some()` → `is_lad_typed` here.
-    /// Until that lands we serve `false`, which makes the wallet treat
-    /// every object as classical (non-substructural).
+    /// Backed by `StateObject.lad_mode.is_some()`. `is_lad_typed` is the
+    /// boolean shorthand the wallet uses to gate UI affordances; the
+    /// richer `lad_mode` field below carries the actual variant.
     is_lad_typed: bool,
+    /// LAD-VM substructural mode (`"linear"` | `"affine"` | `"decaying"`)
+    /// when this object is LAD-typed; `null` for ordinary objects.
+    /// Lets the wallet show the actual mode (e.g. "LAD · linear") rather
+    /// than just a generic LAD pill.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lad_mode: Option<evaporchain_types::LadMode>,
 }
 
 #[derive(Serialize)]
@@ -5566,10 +5563,7 @@ async fn post_settle_demurrage(
         settled: to_debit,
         new_balance,
         new_last_touched_epoch: current_epoch,
-        detail: format!(
-            "settled {} EVAP demurrage to refresh pool (DEMU)",
-            to_debit
-        ),
+        detail: format!("settled {} EVAP demurrage to refresh pool (DEMU)", to_debit),
     })
 }
 
@@ -5597,22 +5591,30 @@ pub struct BellBeaconLatestResp {
 /// GET /api/bell/latest — most recent Bell-Beacon measurement.
 ///
 /// The consensus layer derives a per-block CHSH S-value from the VRF
-/// output (crates/evaporchain-consensus/src/tendermint.rs L2647-2682)
-/// but does NOT currently persist it in chain state — only an advisory
-/// `warn!` / `debug!` log line. Until that lands, this endpoint reports
-/// `status: "no_data"` with the latest block_height + epoch so wallets
-/// can render a "no live measurement" badge alongside the design-target
-/// fallback.
-///
-/// TODO: To populate real values:
-///   1. Add `last_bell_s_milli: Option<u64>` (and a paired height /
-///      epoch) field to `TendermintConsensus`.
-///   2. Set it from the Bell gate in the VRF-output handler at
-///      tendermint.rs L2665-2680 (right after `bell_chsh_s_value`).
-///   3. Expose it via a getter (mirroring `refresh_pool_credits` at
-///      tendermint.rs L669-675) and read it here from
-///      `state.tendermint`.
+/// output in the commit pipeline (Bell-Certified gate in
+/// `crates/evaporchain-consensus/src/tendermint.rs`) and persists it
+/// on `TendermintConsensus`, exposed via `last_bell_reading()`. This
+/// handler returns the live measurement when Tendermint is bound and
+/// has produced at least one VRF-derived S-value; otherwise it falls
+/// back to `status: "no_data"` with the latest block height + epoch
+/// from the in-memory history so wallets can render a "no live
+/// measurement" badge alongside the design-target fallback.
 async fn get_bell_latest(State(state): State<Arc<ApiState>>) -> Json<BellBeaconLatestResp> {
+    if let Some(tc_handle) = state.tendermint.as_ref() {
+        let tc = safe_lock(tc_handle);
+        if let Some(r) = tc.last_bell_reading() {
+            return Json(BellBeaconLatestResp {
+                status: "ok",
+                s_value_milli: r.s_value_milli,
+                threshold_milli: r.threshold_milli,
+                bell_certified: r.bell_certified,
+                block_height: r.block_height,
+                epoch: r.epoch,
+                detail: "live VRF-derived CHSH measurement".into(),
+            });
+        }
+    }
+
     let history = safe_lock(&state.block_history);
     let (block_height, epoch) = history
         .back()
@@ -5627,9 +5629,9 @@ async fn get_bell_latest(State(state): State<Arc<ApiState>>) -> Json<BellBeaconL
         bell_certified: false,
         block_height,
         epoch,
-        detail: "consensus layer measures CHSH S per-block from VRF \
-                 output but does not yet persist it; see TODO at \
-                 get_bell_latest in api.rs"
+        detail: "no Bell-Beacon measurement yet — Tendermint either not \
+                 bound (mock / devnet mode) or no block with a \
+                 VRF-derived CHSH S-value has been committed"
             .into(),
     })
 }
@@ -6444,10 +6446,8 @@ async fn get_objects(State(state): State<Arc<ApiState>>) -> Json<Vec<ObjectRespo
                 current_energy,
                 decay_percentage: (decay_pct * 10.0).round() / 10.0,
                 decay_curve: obj.decay_curve.clone(),
-                // TODO: pulled from a real StateObject.lad_mode once the
-                // field lands on evaporchain-types::StateObject. See
-                // struct comment.
-                is_lad_typed: false,
+                is_lad_typed: obj.lad_mode.is_some(),
+                lad_mode: obj.lad_mode,
             })
         })
         .collect();
@@ -6512,9 +6512,8 @@ async fn get_single_object(
         current_energy,
         decay_percentage: (decay_pct * 10.0).round() / 10.0,
         decay_curve: obj.decay_curve.clone(),
-        // TODO: pulled from a real StateObject.lad_mode once the field
-        // lands on evaporchain-types::StateObject. See struct comment.
-        is_lad_typed: false,
+        is_lad_typed: obj.lad_mode.is_some(),
+        lad_mode: obj.lad_mode,
     }))
 }
 
@@ -6951,6 +6950,7 @@ async fn post_create_object(
         half_life: req.half_life,
         data,
         decay_curve: req.decay_curve,
+        lad_mode: None,
         signature: req.signature.and_then(|s| hex::decode(s).ok()),
         public_key: req.public_key.and_then(|s| hex::decode(s).ok()),
     });
@@ -7165,6 +7165,7 @@ async fn post_batch(
                             half_life,
                             data: Vec::new(),
                             decay_curve: None,
+                            lad_mode: None,
                             signature: None,
                             public_key: None,
                         });
@@ -7709,10 +7710,8 @@ async fn get_address_detail(
                 current_energy,
                 decay_percentage: (decay_pct * 10.0).round() / 10.0,
                 decay_curve: obj.decay_curve.clone(),
-                // TODO: pulled from a real StateObject.lad_mode once the
-                // field lands on evaporchain-types::StateObject. See
-                // struct comment.
-                is_lad_typed: false,
+                is_lad_typed: obj.lad_mode.is_some(),
+                lad_mode: obj.lad_mode,
             })
         })
         .collect();
@@ -7976,6 +7975,7 @@ async fn post_oracle_ingest(
         half_life: req.half_life,
         data: data_str.into_bytes(),
         decay_curve: None,
+        lad_mode: None,
         signature: None,
         public_key: None,
     });
@@ -11525,6 +11525,7 @@ async fn post_signable_bytes(
                         half_life,
                         data,
                         decay_curve: None,
+                        lad_mode: None,
                         signature: None,
                         public_key: None,
                     },

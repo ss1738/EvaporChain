@@ -19,8 +19,8 @@
 
 use evaporchain_hbct::oracle::OracleFeed;
 use evaporchain_hbct_elexon::client::{ElexonConfig, ElexonOracleFeed};
-use evaporchain_oracle::OracleValue;
 use evaporchain_oracle::consensus::OracleVote;
+use evaporchain_oracle::OracleValue;
 use tracing::{debug, warn};
 
 /// Oracle feed key used in `OracleBridge` rounds for HBCT energy data.
@@ -39,7 +39,11 @@ pub fn production_feed(genesis_unix_ts: u64, epoch_duration_s: u64) -> ElexonOra
 }
 
 /// Build the Elexon feed pointing at a custom base URL (test / staging).
-pub fn feed_with_url(base_url: &str, genesis_unix_ts: u64, epoch_duration_s: u64) -> ElexonOracleFeed {
+pub fn feed_with_url(
+    base_url: &str,
+    genesis_unix_ts: u64,
+    epoch_duration_s: u64,
+) -> ElexonOracleFeed {
     ElexonOracleFeed::new(ElexonConfig {
         base_url: base_url.to_owned(),
         genesis_unix_ts,
@@ -68,10 +72,7 @@ pub fn attest_and_vote(
     let mwh = attestation.mwh_delivered;
     debug!(
         validator_id,
-        bmu_id,
-        epoch,
-        mwh,
-        "HBCT-Elexon attestation obtained"
+        bmu_id, epoch, mwh, "HBCT-Elexon attestation obtained"
     );
 
     Some(OracleVote {
@@ -88,8 +89,7 @@ pub fn attest_and_vote(
 pub fn warn_feed_miss(bmu_id: &str, epoch: u64) {
     warn!(
         bmu_id,
-        epoch,
-        "HBCT-Elexon feed returned no attestation — oracle round proceeds without HBCT vote"
+        epoch, "HBCT-Elexon feed returned no attestation — oracle round proceeds without HBCT vote"
     );
 }
 

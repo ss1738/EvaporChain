@@ -144,10 +144,7 @@ impl HealthReport {
 
     pub fn to_text(&self) -> String {
         let mut out = String::new();
-        out.push_str(&format!(
-            "Wallet Health: [{}]\n",
-            self.overall.emoji()
-        ));
+        out.push_str(&format!("Wallet Health: [{}]\n", self.overall.emoji()));
         out.push_str(&format!("Version: {}\n\n", self.wallet_version));
         for check in &self.checks {
             out.push_str(&format!(
@@ -267,10 +264,7 @@ impl HealthChecker {
                         if serde_json::from_str::<serde_json::Value>(&content).is_ok() {
                             CheckResult::healthy(
                                 "keystore",
-                                &format!(
-                                    "Keystore valid ({} bytes)",
-                                    meta.len()
-                                ),
+                                &format!("Keystore valid ({} bytes)", meta.len()),
                             )
                         } else {
                             CheckResult::critical(
@@ -370,11 +364,7 @@ impl HealthChecker {
                         "Free up disk space",
                     )
                 } else {
-                    CheckResult::warning(
-                        "disk_space",
-                        &msg,
-                        "Check disk space and permissions",
-                    )
+                    CheckResult::warning("disk_space", &msg, "Check disk space and permissions")
                 }
             }
         }
@@ -400,10 +390,7 @@ impl HealthChecker {
                         "Run 'wallet backup export' to create a backup",
                     )
                 } else {
-                    CheckResult::healthy(
-                        "backup",
-                        &format!("{} backup(s) found", count),
-                    )
+                    CheckResult::healthy("backup", &format!("{} backup(s) found", count))
                 }
             }
             Err(_) => CheckResult::warning(
@@ -433,9 +420,7 @@ impl HealthChecker {
 
 /// Quick check: is the wallet in a usable state?
 pub fn quick_check(data_dir: &Path) -> bool {
-    data_dir.exists()
-        && data_dir.is_dir()
-        && data_dir.join("keystore.json").exists()
+    data_dir.exists() && data_dir.is_dir() && data_dir.join("keystore.json").exists()
 }
 
 /// Count issues at each severity level
@@ -458,9 +443,7 @@ mod tests {
 
     fn test_dir() -> PathBuf {
         let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
-        let dir = std::env::temp_dir().join(format!(
-            "evap_health_{}_{}", std::process::id(), id
-        ));
+        let dir = std::env::temp_dir().join(format!("evap_health_{}_{}", std::process::id(), id));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -577,11 +560,7 @@ mod tests {
     #[test]
     fn test_checker_data_dir_exists() {
         let dir = test_dir();
-        let checker = HealthChecker::new(
-            dir.clone(),
-            dir.join("ks.json"),
-            dir.join("config.json"),
-        );
+        let checker = HealthChecker::new(dir.clone(), dir.join("ks.json"), dir.join("config.json"));
         let result = checker.check_data_dir();
         assert_eq!(result.status, HealthStatus::Healthy);
         cleanup(&dir);
@@ -591,11 +570,7 @@ mod tests {
     fn test_checker_data_dir_missing() {
         let dir = std::env::temp_dir().join("evap_health_missing_12345");
         let _ = std::fs::remove_dir_all(&dir);
-        let checker = HealthChecker::new(
-            dir.clone(),
-            dir.join("ks.json"),
-            dir.join("config.json"),
-        );
+        let checker = HealthChecker::new(dir.clone(), dir.join("ks.json"), dir.join("config.json"));
         let result = checker.check_data_dir();
         assert_eq!(result.status, HealthStatus::Warning);
     }
@@ -649,11 +624,8 @@ mod tests {
     #[test]
     fn test_checker_config_missing() {
         let dir = test_dir();
-        let checker = HealthChecker::new(
-            dir.clone(),
-            dir.join("ks.json"),
-            dir.join("no_config.json"),
-        );
+        let checker =
+            HealthChecker::new(dir.clone(), dir.join("ks.json"), dir.join("no_config.json"));
         let result = checker.check_config();
         assert_eq!(result.status, HealthStatus::Warning);
         cleanup(&dir);
@@ -673,11 +645,7 @@ mod tests {
     #[test]
     fn test_checker_disk_space() {
         let dir = test_dir();
-        let checker = HealthChecker::new(
-            dir.clone(),
-            dir.join("ks.json"),
-            dir.join("config.json"),
-        );
+        let checker = HealthChecker::new(dir.clone(), dir.join("ks.json"), dir.join("config.json"));
         let result = checker.check_disk_space();
         assert_eq!(result.status, HealthStatus::Healthy);
         cleanup(&dir);
@@ -686,11 +654,7 @@ mod tests {
     #[test]
     fn test_checker_no_stale_locks() {
         let dir = test_dir();
-        let checker = HealthChecker::new(
-            dir.clone(),
-            dir.join("ks.json"),
-            dir.join("config.json"),
-        );
+        let checker = HealthChecker::new(dir.clone(), dir.join("ks.json"), dir.join("config.json"));
         let result = checker.check_stale_locks();
         assert_eq!(result.status, HealthStatus::Healthy);
         cleanup(&dir);
@@ -700,11 +664,7 @@ mod tests {
     fn test_checker_stale_lock_detected() {
         let dir = test_dir();
         std::fs::write(dir.join(".lock"), "pid=1234").unwrap();
-        let checker = HealthChecker::new(
-            dir.clone(),
-            dir.join("ks.json"),
-            dir.join("config.json"),
-        );
+        let checker = HealthChecker::new(dir.clone(), dir.join("ks.json"), dir.join("config.json"));
         let result = checker.check_stale_locks();
         assert_eq!(result.status, HealthStatus::Warning);
         cleanup(&dir);
@@ -713,11 +673,7 @@ mod tests {
     #[test]
     fn test_checker_backup_no_dir() {
         let dir = test_dir();
-        let checker = HealthChecker::new(
-            dir.clone(),
-            dir.join("ks.json"),
-            dir.join("config.json"),
-        );
+        let checker = HealthChecker::new(dir.clone(), dir.join("ks.json"), dir.join("config.json"));
         let result = checker.check_backup_age();
         assert_eq!(result.status, HealthStatus::Warning);
         cleanup(&dir);
@@ -729,11 +685,7 @@ mod tests {
         let backup_dir = dir.join("backups");
         std::fs::create_dir_all(&backup_dir).unwrap();
         std::fs::write(backup_dir.join("backup_001.enc"), "data").unwrap();
-        let checker = HealthChecker::new(
-            dir.clone(),
-            dir.join("ks.json"),
-            dir.join("config.json"),
-        );
+        let checker = HealthChecker::new(dir.clone(), dir.join("ks.json"), dir.join("config.json"));
         let result = checker.check_backup_age();
         assert_eq!(result.status, HealthStatus::Healthy);
         cleanup(&dir);

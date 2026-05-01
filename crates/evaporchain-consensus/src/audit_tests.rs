@@ -5,8 +5,8 @@
 mod adversarial_tests {
     use crate::tendermint::*;
     use crate::validator_set::{ValidatorInfo, ValidatorSet};
-    use evaporchain_state::InMemoryStateDB;
     use evaporchain_state::db::StateDB;
+    use evaporchain_state::InMemoryStateDB;
     use evaporchain_types::{Account, Block, Transaction, TransferTx};
 
     fn addr(b: u8) -> [u8; 32] {
@@ -95,7 +95,10 @@ mod adversarial_tests {
 
         let committed = run_consensus_round(&mut nodes, &mut db, 50);
         // 3/4 nodes should still reach consensus (quorum = 3)
-        assert!(!committed.is_empty(), "consensus should succeed with 3/4 validators");
+        assert!(
+            !committed.is_empty(),
+            "consensus should succeed with 3/4 validators"
+        );
     }
 
     /// With 2 of 4 validators silent, consensus should NOT be reached.
@@ -111,7 +114,10 @@ mod adversarial_tests {
         nodes.pop();
 
         let committed = run_consensus_round(&mut nodes, &mut db, 30);
-        assert!(committed.is_empty(), "consensus must NOT succeed with only 2/4 validators");
+        assert!(
+            committed.is_empty(),
+            "consensus must NOT succeed with only 2/4 validators"
+        );
     }
 
     /// Equivocating proposal: proposer sends different blocks to different validators.
@@ -153,9 +159,16 @@ mod adversarial_tests {
             let equivocation_actions = nodes[1].on_message(equivocating_proposal);
 
             // The equivocating proposer should be penalized (health score decreased)
-            let proposer_health = nodes[1].validator_set.get(1).map(|v| v.health_score).unwrap_or(100.0);
+            let proposer_health = nodes[1]
+                .validator_set
+                .get(1)
+                .map(|v| v.health_score)
+                .unwrap_or(100.0);
             // After equivocation detection, health should be reduced from default
-            assert!(proposer_health <= 100.0, "equivocation should affect proposer health");
+            assert!(
+                proposer_health <= 100.0,
+                "equivocation should affect proposer health"
+            );
         }
     }
 
@@ -178,8 +191,14 @@ mod adversarial_tests {
 
         let actions = node.on_message(fake_msg);
         // Should produce no actions — the message is simply dropped
-        let commits: Vec<_> = actions.iter().filter(|a| matches!(a, ConsensusAction::CommitBlock(_))).collect();
-        assert!(commits.is_empty(), "unknown validator should not cause commits");
+        let commits: Vec<_> = actions
+            .iter()
+            .filter(|a| matches!(a, ConsensusAction::CommitBlock(_)))
+            .collect();
+        assert!(
+            commits.is_empty(),
+            "unknown validator should not cause commits"
+        );
     }
 
     /// Prevotes for wrong height should be ignored.
@@ -200,8 +219,14 @@ mod adversarial_tests {
         };
 
         let actions = node.on_message(future_msg);
-        let commits: Vec<_> = actions.iter().filter(|a| matches!(a, ConsensusAction::CommitBlock(_))).collect();
-        assert!(commits.is_empty(), "future height messages should not trigger commits");
+        let commits: Vec<_> = actions
+            .iter()
+            .filter(|a| matches!(a, ConsensusAction::CommitBlock(_)))
+            .collect();
+        assert!(
+            commits.is_empty(),
+            "future height messages should not trigger commits"
+        );
     }
 
     /// Past height messages should be ignored.
@@ -227,7 +252,10 @@ mod adversarial_tests {
 
         let actions = nodes[0].on_message(stale_msg);
         // No commits should result from stale messages
-        let commits: Vec<_> = actions.iter().filter(|a| matches!(a, ConsensusAction::CommitBlock(_))).collect();
+        let commits: Vec<_> = actions
+            .iter()
+            .filter(|a| matches!(a, ConsensusAction::CommitBlock(_)))
+            .collect();
         assert!(commits.is_empty(), "past height messages should be dropped");
     }
 
@@ -282,10 +310,16 @@ mod adversarial_tests {
         }
 
         // All committed blocks at the same height must have identical state roots
-        assert!(!all_committed.is_empty(), "at least one block should commit");
+        assert!(
+            !all_committed.is_empty(),
+            "at least one block should commit"
+        );
         let height = all_committed[0].number;
         for block in &all_committed {
-            assert_eq!(block.number, height, "all commits should be at the same height");
+            assert_eq!(
+                block.number, height,
+                "all commits should be at the same height"
+            );
             assert_eq!(
                 block.state_root, all_committed[0].state_root,
                 "SAFETY VIOLATION: different state roots at height {height}"
@@ -304,7 +338,10 @@ mod adversarial_tests {
         let mut heights_committed = Vec::new();
         for _ in 0..5 {
             let committed = run_consensus_round(&mut nodes, &mut db, 50);
-            assert!(!committed.is_empty(), "liveness failure: round did not commit");
+            assert!(
+                !committed.is_empty(),
+                "liveness failure: round did not commit"
+            );
             let block = &committed[0];
             heights_committed.push(block.number);
 
@@ -316,7 +353,10 @@ mod adversarial_tests {
 
         // Heights should be strictly increasing
         for window in heights_committed.windows(2) {
-            assert!(window[1] > window[0], "block heights must be monotonically increasing");
+            assert!(
+                window[1] > window[0],
+                "block heights must be monotonically increasing"
+            );
         }
     }
 
@@ -350,8 +390,14 @@ mod adversarial_tests {
                 bls_signature: None,
             };
             let actions = node.on_message(nil_precommit);
-            let commits: Vec<_> = actions.iter().filter(|a| matches!(a, ConsensusAction::CommitBlock(_))).collect();
-            assert!(commits.is_empty(), "nil precommits must never produce a committed block");
+            let commits: Vec<_> = actions
+                .iter()
+                .filter(|a| matches!(a, ConsensusAction::CommitBlock(_)))
+                .collect();
+            assert!(
+                commits.is_empty(),
+                "nil precommits must never produce a committed block"
+            );
         }
     }
 
@@ -424,8 +470,8 @@ mod adversarial_tests {
 mod proptest_consensus {
     use crate::tendermint::*;
     use crate::validator_set::{ValidatorInfo, ValidatorSet};
-    use evaporchain_state::InMemoryStateDB;
     use evaporchain_state::db::StateDB;
+    use evaporchain_state::InMemoryStateDB;
     use evaporchain_types::Account;
     use proptest::prelude::*;
 

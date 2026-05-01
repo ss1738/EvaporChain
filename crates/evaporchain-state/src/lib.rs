@@ -13,4 +13,4 @@ pub use evaporation::{EvaporationEngine, EvaporationResult};
 pub use evaporchain_crypto::TrieHealth;
 pub use refresh::{RefreshEngine, RefreshError};
 pub use rocksdb_backend::RocksDBStateDB;
-pub use wal::{WriteAheadLog, WalEntry, WalMutation};
+pub use wal::{WalEntry, WalMutation, WriteAheadLog};

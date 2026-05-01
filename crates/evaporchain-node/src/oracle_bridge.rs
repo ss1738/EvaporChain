@@ -7,8 +7,8 @@
 use evaporchain_consensus::validator_set::ValidatorSet;
 use evaporchain_crypto::signatures::BlsPublicKey;
 use evaporchain_oracle::consensus::{FinalizedOracleValue, OracleConsensusRound, OracleVote};
-use evaporchain_oracle::state::{OracleInclusionProof, OracleState};
 use evaporchain_oracle::presets;
+use evaporchain_oracle::state::{OracleInclusionProof, OracleState};
 use std::collections::HashMap;
 
 pub struct OracleBridge {
@@ -32,7 +32,8 @@ impl OracleBridge {
 
     pub fn start_round(&mut self, key: &str) -> u64 {
         self.round_counter += 1;
-        let round = OracleConsensusRound::new(key, self.round_counter, self.quorum, self.twap_window);
+        let round =
+            OracleConsensusRound::new(key, self.round_counter, self.quorum, self.twap_window);
         self.active_rounds.insert(key.to_string(), round);
         self.round_counter
     }
@@ -52,9 +53,13 @@ impl OracleBridge {
         vote: OracleVote,
         validator_pubkey: &BlsPublicKey,
     ) -> Result<(), String> {
-        let round = self.active_rounds.get_mut(key)
+        let round = self
+            .active_rounds
+            .get_mut(key)
             .ok_or_else(|| format!("no active round for key '{}'", key))?;
-        round.submit_vote(vote, validator_pubkey).map_err(|e| format!("{:?}", e))
+        round
+            .submit_vote(vote, validator_pubkey)
+            .map_err(|e| format!("{:?}", e))
     }
 
     /// Submit a vote and resolve the validator's BLS pubkey from the
@@ -73,9 +78,9 @@ impl OracleBridge {
         vote: OracleVote,
         validator_set: &ValidatorSet,
     ) -> Result<(), String> {
-        let info = validator_set.get(vote.validator_id).ok_or_else(|| {
-            format!("validator {} unknown to validator set", vote.validator_id)
-        })?;
+        let info = validator_set
+            .get(vote.validator_id)
+            .ok_or_else(|| format!("validator {} unknown to validator set", vote.validator_id))?;
         let pk_bytes = info.bls_public_key.as_ref().ok_or_else(|| {
             format!(
                 "validator {} has no registered BLS public key",
@@ -94,9 +99,15 @@ impl OracleBridge {
         match round.finalize() {
             Ok(finalized) => {
                 let preset = match key {
-                    k if k.contains("usd") => (presets::PRICE_FEED.energy, presets::PRICE_FEED.half_life),
-                    k if k.contains("weather") => (presets::WEATHER.energy, presets::WEATHER.half_life),
-                    k if k.contains("earthquake") => (presets::EARTHQUAKE.energy, presets::EARTHQUAKE.half_life),
+                    k if k.contains("usd") => {
+                        (presets::PRICE_FEED.energy, presets::PRICE_FEED.half_life)
+                    }
+                    k if k.contains("weather") => {
+                        (presets::WEATHER.energy, presets::WEATHER.half_life)
+                    }
+                    k if k.contains("earthquake") => {
+                        (presets::EARTHQUAKE.energy, presets::EARTHQUAKE.half_life)
+                    }
                     _ => (3000, 300),
                 };
                 self.state.apply_finalized(&finalized, preset.0, preset.1);

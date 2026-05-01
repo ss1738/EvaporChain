@@ -56,9 +56,17 @@ pub enum IbVote {
 /// `params.lambda_mb` = λ in millibits (the β threshold).
 ///
 /// Returns `Commit` iff `KL(local || prior) > lambda_mb`.
-pub fn ib_vote(local_sig: &StateSignature, prior_sig: &StateSignature, params: &IbParams) -> IbVote {
+pub fn ib_vote(
+    local_sig: &StateSignature,
+    prior_sig: &StateSignature,
+    params: &IbParams,
+) -> IbVote {
     let kl = local_sig.kl_millibits(prior_sig);
-    if kl > params.lambda_mb {
+    // `>=` so a zero information barrier (lambda=0) always commits, even
+    // when the local and prior distributions normalise to the same PMF
+    // (KL = 0). Strict `>` would treat zero-lambda as "never commit",
+    // which contradicts the IB-as-threshold semantics.
+    if kl >= params.lambda_mb {
         IbVote::Commit
     } else {
         IbVote::Abstain
@@ -102,7 +110,7 @@ mod tests {
     fn identical_views_give_abstain() {
         let sig = uniform_sig();
         let params = IbParams { lambda_mb: 0 }; // threshold=0: KL>0 required to commit
-        // KL(x||x) = 0, so with threshold=0: 0 > 0 is false → Abstain.
+                                                // KL(x||x) = 0, so with threshold=0: 0 > 0 is false → Abstain.
         assert_eq!(ib_vote(&sig, &sig, &params), IbVote::Abstain);
     }
 
@@ -111,7 +119,7 @@ mod tests {
         let local = concentrated_sig();
         let prior = uniform_sig();
         let params = IbParams { lambda_mb: 0 }; // threshold=0
-        // KL(concentrated || uniform) > 0 → Commit.
+                                                // KL(concentrated || uniform) > 0 → Commit.
         assert_eq!(ib_vote(&local, &prior, &params), IbVote::Commit);
     }
 
@@ -120,7 +128,9 @@ mod tests {
         let local = uniform_sig();
         let prior = uniform_sig();
         // Very high threshold; KL(uniform||uniform) = 0 < threshold → Abstain.
-        let params = IbParams { lambda_mb: 1_000_000_000 };
+        let params = IbParams {
+            lambda_mb: 1_000_000_000,
+        };
         assert_eq!(ib_vote(&local, &prior, &params), IbVote::Abstain);
     }
 
@@ -137,8 +147,10 @@ mod tests {
     #[test]
     fn ib_params_small_lambda_strict_gate() {
         // With lambda_mb=1 only validators with KL > 1 millibit commit.
-        let params_strict  = IbParams { lambda_mb: 1_000_000 };
-        let params_loose   = IbParams { lambda_mb: 1 };
+        let params_strict = IbParams {
+            lambda_mb: 1_000_000,
+        };
+        let params_loose = IbParams { lambda_mb: 1 };
         let local = concentrated_sig();
         let prior = uniform_sig();
         // Loose gate should also commit (any KL > 1 millibit).

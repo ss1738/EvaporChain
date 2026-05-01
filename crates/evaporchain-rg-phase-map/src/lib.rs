@@ -45,4 +45,4 @@
 
 pub mod phase;
 
-pub use phase::{ConsensusPhase, PhaseMapParams, classify_regime, phase_trajectory};
+pub use phase::{classify_regime, phase_trajectory, ConsensusPhase, PhaseMapParams};

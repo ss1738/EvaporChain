@@ -202,10 +202,7 @@ impl WalletMigrator {
     }
 
     /// Complete a migration and generate a report.
-    pub fn complete_migration(
-        &mut self,
-        job_id: &str,
-    ) -> Result<MigrationReport, MigrationError> {
+    pub fn complete_migration(&mut self, job_id: &str) -> Result<MigrationReport, MigrationError> {
         let job = self
             .jobs
             .get_mut(job_id)
@@ -291,7 +288,9 @@ impl WalletMigrator {
     pub fn active_migrations(&self) -> Vec<&MigrationJob> {
         self.jobs
             .values()
-            .filter(|j| j.status == MigrationStatus::Pending || j.status == MigrationStatus::InProgress)
+            .filter(|j| {
+                j.status == MigrationStatus::Pending || j.status == MigrationStatus::InProgress
+            })
             .collect()
     }
 
@@ -314,16 +313,16 @@ impl WalletMigrator {
     pub fn validate_key_format(&self, key: &str, format: &KeyFormat) -> bool {
         match format {
             KeyFormat::Hex => {
-                !key.is_empty() && key.len().is_multiple_of(2) && key.chars().all(|c| c.is_ascii_hexdigit())
+                !key.is_empty()
+                    && key.len().is_multiple_of(2)
+                    && key.chars().all(|c| c.is_ascii_hexdigit())
             }
             KeyFormat::Base58 => {
                 const BASE58_CHARS: &str =
                     "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
                 !key.is_empty() && key.chars().all(|c| BASE58_CHARS.contains(c))
             }
-            KeyFormat::Bech32 => {
-                !key.is_empty() && key.contains('1') && key.len() >= 8
-            }
+            KeyFormat::Bech32 => !key.is_empty() && key.contains('1') && key.len() >= 8,
             KeyFormat::Mnemonic12 => {
                 let words: Vec<&str> = key.split_whitespace().collect();
                 words.len() == 12
@@ -359,16 +358,8 @@ impl WalletMigrator {
             .values()
             .filter(|j| j.status == MigrationStatus::Failed)
             .count();
-        let total_accounts_imported: u32 = self
-            .jobs
-            .values()
-            .map(|j| j.accounts_imported)
-            .sum();
-        let total_tokens_imported: u32 = self
-            .jobs
-            .values()
-            .map(|j| j.tokens_imported)
-            .sum();
+        let total_accounts_imported: u32 = self.jobs.values().map(|j| j.accounts_imported).sum();
+        let total_tokens_imported: u32 = self.jobs.values().map(|j| j.tokens_imported).sum();
         let mut sources_used: Vec<String> = self
             .jobs
             .values()
@@ -617,7 +608,10 @@ mod tests {
     #[test]
     fn test_validate_base58() {
         let m = WalletMigrator::new();
-        assert!(m.validate_key_format("5HueCGU8rMjxEXxiPuD5BDku4MkFqeZyd4dZ1jvhTVqvbTLvyTJ", &KeyFormat::Base58));
+        assert!(m.validate_key_format(
+            "5HueCGU8rMjxEXxiPuD5BDku4MkFqeZyd4dZ1jvhTVqvbTLvyTJ",
+            &KeyFormat::Base58
+        ));
         assert!(!m.validate_key_format("0OIl", &KeyFormat::Base58)); // invalid base58 chars
         assert!(!m.validate_key_format("", &KeyFormat::Base58));
     }

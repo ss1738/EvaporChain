@@ -34,7 +34,10 @@ pub struct Attractor {
 
 impl Attractor {
     pub const fn new(center: Energy, basin_radius: Energy) -> Self {
-        Self { center, basin_radius }
+        Self {
+            center,
+            basin_radius,
+        }
     }
 
     /// True iff `state_energy` is inside this attractor's basin.
@@ -58,13 +61,9 @@ pub fn select_attractor(state_energy: Energy, attractors: &[Attractor]) -> Optio
         return Some(a);
     }
     // Fallback: nearest center.
-    attractors.iter().min_by_key(|a| {
-        if a.center >= state_energy {
-            a.center - state_energy
-        } else {
-            state_energy - a.center
-        }
-    })
+    attractors
+        .iter()
+        .min_by_key(|a| a.center.abs_diff(state_energy))
 }
 
 #[cfg(test)]
@@ -99,10 +98,7 @@ mod tests {
 
     #[test]
     fn select_falls_back_to_nearest_when_no_basin() {
-        let attractors = [
-            Attractor::new(100, 10),
-            Attractor::new(1000, 100),
-        ];
+        let attractors = [Attractor::new(100, 10), Attractor::new(1000, 100)];
         // 500 is not in any basin; nearest center is 1000 (distance
         // 500) vs 100 (distance 400). 100 wins.
         let a = select_attractor(500, &attractors).unwrap();

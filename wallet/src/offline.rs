@@ -180,10 +180,12 @@ impl Broadcaster {
     ) -> Result<TxResultResponse, OfflineError> {
         match signed.tx_type.as_str() {
             "Transfer" => {
-                let to = signed.to.as_deref()
-                    .ok_or_else(|| OfflineError::UnsupportedType("Transfer missing 'to' field".into()))?;
-                let amount = signed.amount
-                    .ok_or_else(|| OfflineError::UnsupportedType("Transfer missing 'amount' field".into()))?;
+                let to = signed.to.as_deref().ok_or_else(|| {
+                    OfflineError::UnsupportedType("Transfer missing 'to' field".into())
+                })?;
+                let amount = signed.amount.ok_or_else(|| {
+                    OfflineError::UnsupportedType("Transfer missing 'amount' field".into())
+                })?;
 
                 let req = TransferRequest {
                     from: signed.from.clone(),

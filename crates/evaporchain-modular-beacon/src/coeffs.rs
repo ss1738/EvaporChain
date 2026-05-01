@@ -15,9 +15,7 @@ pub const TRUNCATION_DEPTH: usize = 8;
 
 /// Coefficients of the q-expansion of `E_4`. `E4_COEFFS[k]` is the
 /// coefficient of `q^k`.
-pub const E4_COEFFS: [i128; TRUNCATION_DEPTH] = [
-    1, 240, 2160, 6720, 17520, 30240, 60480, 82560,
-];
+pub const E4_COEFFS: [i128; TRUNCATION_DEPTH] = [1, 240, 2160, 6720, 17520, 30240, 60480, 82560];
 
 /// Coefficients of the q-expansion of `E_6`. `E6_COEFFS[k]` is the
 /// coefficient of `q^k`. Note negative leading correction.
@@ -28,9 +26,7 @@ pub const E6_COEFFS: [i128; TRUNCATION_DEPTH] = [
 /// Coefficients of the q-expansion of `Δ / q`. `DELTA_COEFFS[k]` is
 /// the coefficient of `q^k` in `Δ(q) / q`. The Ramanujan tau-function
 /// `τ(n) = DELTA_COEFFS[n - 1]`.
-pub const DELTA_COEFFS: [i128; TRUNCATION_DEPTH] = [
-    1, -24, 252, -1472, 4830, -6048, -16744, 84480,
-];
+pub const DELTA_COEFFS: [i128; TRUNCATION_DEPTH] = [1, -24, 252, -1472, 4830, -6048, -16744, 84480];
 
 #[cfg(test)]
 mod tests {

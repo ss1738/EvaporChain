@@ -3,8 +3,8 @@
 //! Measures TPS, block execution time, decay engine throughput,
 //! and proof generation speed.
 
-use evaporchain_execution::ExecutionEngine;
 use evaporchain_execution::parallel::ParallelExecutor;
+use evaporchain_execution::ExecutionEngine;
 use evaporchain_state::db::{InMemoryStateDB, StateDB};
 use evaporchain_types::{
     Account, Block, CreateObjectTx, ObjectState, RefreshTx, StateObject, Transaction, TransferTx,
@@ -31,21 +31,53 @@ pub fn run_benchmarks() {
     println!("╔══════════════════════════════════════════════════════════╗");
     println!("║                    Summary                              ║");
     println!("╠══════════════════════════════════════════════════════════╣");
-    println!("║  Transfer TPS:          {:>10.0} tx/s               ║", tps);
-    println!("║  Block execution:       {:>10.2} ms/block            ║", block_exec);
-    println!("║  Decay engine:          {:>10.0} objects/s           ║", decay);
-    println!("║  Object creation:       {:>10.0} objects/s           ║", obj_creation);
-    println!("║  Refresh throughput:    {:>10.0} refreshes/s         ║", refresh);
-    println!("║  Stress test (50K):     {:>10.0} tx/s               ║", stress_tps);
-    println!("║  Mixed workload:        {:>10.0} tx/s               ║", mixed_tps);
-    println!("║  Sustained multi-block: {:>10.0} tx/s               ║", multi_block_tps);
+    println!(
+        "║  Transfer TPS:          {:>10.0} tx/s               ║",
+        tps
+    );
+    println!(
+        "║  Block execution:       {:>10.2} ms/block            ║",
+        block_exec
+    );
+    println!(
+        "║  Decay engine:          {:>10.0} objects/s           ║",
+        decay
+    );
+    println!(
+        "║  Object creation:       {:>10.0} objects/s           ║",
+        obj_creation
+    );
+    println!(
+        "║  Refresh throughput:    {:>10.0} refreshes/s         ║",
+        refresh
+    );
+    println!(
+        "║  Stress test (50K):     {:>10.0} tx/s               ║",
+        stress_tps
+    );
+    println!(
+        "║  Mixed workload:        {:>10.0} tx/s               ║",
+        mixed_tps
+    );
+    println!(
+        "║  Sustained multi-block: {:>10.0} tx/s               ║",
+        multi_block_tps
+    );
     println!("╠══════════════════════════════════════════════════════════╣");
     let target = 1000.0;
     let best = stress_tps.max(tps).max(multi_block_tps);
     if best >= target {
-        println!("║  ✅ TARGET 1000 TPS: ACHIEVED ({:.0} TPS)              ║", best);
+        println!(
+            "║  ✅ TARGET 1000 TPS: ACHIEVED ({:.0} TPS)              ║",
+            best
+        );
     } else {
-        println!("║  ⚠ TARGET 1000 TPS: {:.0}/{:.0} ({:.0}% there)              ║", best, target, best / target * 100.0);
+        println!(
+            "║  ⚠ TARGET 1000 TPS: {:.0}/{:.0} ({:.0}% there)              ║",
+            best,
+            target,
+            best / target * 100.0
+        );
     }
     println!("╚══════════════════════════════════════════════════════════╝");
 }
@@ -99,17 +131,17 @@ fn bench_transaction_throughput() -> f64 {
         producer_id: None,
         vrf_output: None,
         vrf_proof: None,
-            data_root: None,
-            blob_commitments: vec![],
-            da_certificate: None,
-            commit_certificate: None,
-            nova_proof: None,
-            anchor_hash: None,
-            state_function_commitment: None,
-            oracle_state_root: None,
-            shard_count: None,
-            da_row_roots: vec![],
-            da_col_roots: vec![],
+        data_root: None,
+        blob_commitments: vec![],
+        da_certificate: None,
+        commit_certificate: None,
+        nova_proof: None,
+        anchor_hash: None,
+        state_function_commitment: None,
+        oracle_state_root: None,
+        shard_count: None,
+        da_row_roots: vec![],
+        da_col_roots: vec![],
     };
 
     let mut executor = ParallelExecutor::new(5);
@@ -118,7 +150,11 @@ fn bench_transaction_throughput() -> f64 {
     let elapsed = start.elapsed();
 
     let tps = num_txs as f64 / elapsed.as_secs_f64();
-    println!("{:>10.0} tx/s  ({:.1}ms)", tps, elapsed.as_secs_f64() * 1000.0);
+    println!(
+        "{:>10.0} tx/s  ({:.1}ms)",
+        tps,
+        elapsed.as_secs_f64() * 1000.0
+    );
     tps
 }
 
@@ -217,6 +253,7 @@ fn bench_decay_engine() -> f64 {
                 grace_epoch: None,
                 data: vec![0u8; 64],
                 decay_curve: None,
+                lad_mode: None,
             }
         })
         .collect();
@@ -234,10 +271,7 @@ fn bench_decay_engine() -> f64 {
 
     let elapsed = start.elapsed();
     let ops_per_sec = num_objects as f64 / elapsed.as_secs_f64();
-    println!(
-        "{:>10.0} obj/s  ({} evaporated)",
-        ops_per_sec, evaporated
-    );
+    println!("{:>10.0} obj/s  ({} evaporated)", ops_per_sec, evaporated);
     ops_per_sec
 }
 
@@ -269,6 +303,7 @@ fn bench_object_creation() -> f64 {
                 half_life: 100,
                 data: vec![0u8; 32],
                 decay_curve: None,
+                lad_mode: None,
                 signature: None,
                 public_key: None,
             })
@@ -286,17 +321,17 @@ fn bench_object_creation() -> f64 {
         producer_id: None,
         vrf_output: None,
         vrf_proof: None,
-            data_root: None,
-            blob_commitments: vec![],
-            da_certificate: None,
-            commit_certificate: None,
-            nova_proof: None,
-            anchor_hash: None,
-            state_function_commitment: None,
-            oracle_state_root: None,
-            shard_count: None,
-            da_row_roots: vec![],
-            da_col_roots: vec![],
+        data_root: None,
+        blob_commitments: vec![],
+        da_certificate: None,
+        commit_certificate: None,
+        nova_proof: None,
+        anchor_hash: None,
+        state_function_commitment: None,
+        oracle_state_root: None,
+        shard_count: None,
+        da_row_roots: vec![],
+        da_col_roots: vec![],
     };
 
     let mut executor = ParallelExecutor::new(5);
@@ -305,7 +340,11 @@ fn bench_object_creation() -> f64 {
     let elapsed = start.elapsed();
 
     let ops_per_sec = num_objects as f64 / elapsed.as_secs_f64();
-    println!("{:>10.0} obj/s  ({:.1}ms)", ops_per_sec, elapsed.as_secs_f64() * 1000.0);
+    println!(
+        "{:>10.0} obj/s  ({:.1}ms)",
+        ops_per_sec,
+        elapsed.as_secs_f64() * 1000.0
+    );
     ops_per_sec
 }
 
@@ -340,6 +379,7 @@ fn bench_refresh_throughput() -> f64 {
             grace_epoch: None,
             data: vec![],
             decay_curve: None,
+            lad_mode: None,
         });
     }
 
@@ -367,17 +407,17 @@ fn bench_refresh_throughput() -> f64 {
         producer_id: None,
         vrf_output: None,
         vrf_proof: None,
-            data_root: None,
-            blob_commitments: vec![],
-            da_certificate: None,
-            commit_certificate: None,
-            nova_proof: None,
-            anchor_hash: None,
-            state_function_commitment: None,
-            oracle_state_root: None,
-            shard_count: None,
-            da_row_roots: vec![],
-            da_col_roots: vec![],
+        data_root: None,
+        blob_commitments: vec![],
+        da_certificate: None,
+        commit_certificate: None,
+        nova_proof: None,
+        anchor_hash: None,
+        state_function_commitment: None,
+        oracle_state_root: None,
+        shard_count: None,
+        da_row_roots: vec![],
+        da_col_roots: vec![],
     };
 
     let mut executor = ParallelExecutor::new(5);
@@ -386,7 +426,11 @@ fn bench_refresh_throughput() -> f64 {
     let elapsed = start.elapsed();
 
     let ops_per_sec = num_refreshes as f64 / elapsed.as_secs_f64();
-    println!("{:>10.0} ref/s  ({:.1}ms)", ops_per_sec, elapsed.as_secs_f64() * 1000.0);
+    println!(
+        "{:>10.0} ref/s  ({:.1}ms)",
+        ops_per_sec,
+        elapsed.as_secs_f64() * 1000.0
+    );
     ops_per_sec
 }
 
@@ -447,10 +491,10 @@ fn bench_stress_test() -> f64 {
         nova_proof: None,
         anchor_hash: None,
         state_function_commitment: None,
-            oracle_state_root: None,
-            shard_count: None,
-            da_row_roots: vec![],
-            da_col_roots: vec![],
+        oracle_state_root: None,
+        shard_count: None,
+        da_row_roots: vec![],
+        da_col_roots: vec![],
     };
 
     let mut executor = ParallelExecutor::new(5);
@@ -459,7 +503,11 @@ fn bench_stress_test() -> f64 {
     let elapsed = start.elapsed();
 
     let tps = num_txs as f64 / elapsed.as_secs_f64();
-    println!("{:>10.0} tx/s  ({:.1}ms)", tps, elapsed.as_secs_f64() * 1000.0);
+    println!(
+        "{:>10.0} tx/s  ({:.1}ms)",
+        tps,
+        elapsed.as_secs_f64() * 1000.0
+    );
     tps
 }
 
@@ -499,6 +547,7 @@ fn bench_mixed_workload() -> f64 {
             grace_epoch: None,
             data: vec![],
             decay_curve: None,
+            lad_mode: None,
         });
     }
 
@@ -535,6 +584,7 @@ fn bench_mixed_workload() -> f64 {
             half_life: 100,
             data: vec![0u8; 16],
             decay_curve: None,
+            lad_mode: None,
             signature: None,
             public_key: None,
         }));
@@ -571,10 +621,10 @@ fn bench_mixed_workload() -> f64 {
         nova_proof: None,
         anchor_hash: None,
         state_function_commitment: None,
-            oracle_state_root: None,
-            shard_count: None,
-            da_row_roots: vec![],
-            da_col_roots: vec![],
+        oracle_state_root: None,
+        shard_count: None,
+        da_row_roots: vec![],
+        da_col_roots: vec![],
     };
 
     let mut executor = ParallelExecutor::new(5);
@@ -583,7 +633,12 @@ fn bench_mixed_workload() -> f64 {
     let elapsed = start.elapsed();
 
     let tps = total_txs as f64 / elapsed.as_secs_f64();
-    println!("{:>10.0} tx/s  ({} txs, {:.1}ms)", tps, total_txs, elapsed.as_secs_f64() * 1000.0);
+    println!(
+        "{:>10.0} tx/s  ({} txs, {:.1}ms)",
+        tps,
+        total_txs,
+        elapsed.as_secs_f64() * 1000.0
+    );
     tps
 }
 
@@ -625,7 +680,8 @@ fn bench_multi_block_sustained() -> f64 {
                     from,
                     to,
                     amount: 1,
-                    nonce: (block_num * txs_per_block / num_accounts as usize + i / num_accounts as usize) as u64,
+                    nonce: (block_num * txs_per_block / num_accounts as usize
+                        + i / num_accounts as usize) as u64,
                     signature: None,
                     public_key: None,
                 })
@@ -664,7 +720,12 @@ fn bench_multi_block_sustained() -> f64 {
 
     let elapsed = start.elapsed();
     let tps = total_txs as f64 / elapsed.as_secs_f64();
-    println!("{:>10.0} tx/s  ({} blocks, {} txs, {:.1}ms)",
-        tps, num_blocks, total_txs, elapsed.as_secs_f64() * 1000.0);
+    println!(
+        "{:>10.0} tx/s  ({} blocks, {} txs, {:.1}ms)",
+        tps,
+        num_blocks,
+        total_txs,
+        elapsed.as_secs_f64() * 1000.0
+    );
     tps
 }

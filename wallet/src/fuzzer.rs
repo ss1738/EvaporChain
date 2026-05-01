@@ -235,11 +235,7 @@ impl Fuzzer {
     }
 
     /// Runs a single fuzz iteration for the given target. Checks all enabled invariants.
-    pub fn run_fuzz(
-        &mut self,
-        target_id: &str,
-        input: FuzzInput,
-    ) -> Result<FuzzRun, FuzzerError> {
+    pub fn run_fuzz(&mut self, target_id: &str, input: FuzzInput) -> Result<FuzzRun, FuzzerError> {
         let target = self
             .targets
             .get(target_id)
@@ -392,7 +388,11 @@ impl Fuzzer {
 mod tests {
     use super::*;
 
-    fn make_target(id: &str, input_types: Vec<InputType>, invariants: Vec<Invariant>) -> FuzzTarget {
+    fn make_target(
+        id: &str,
+        input_types: Vec<InputType>,
+        invariants: Vec<Invariant>,
+    ) -> FuzzTarget {
         FuzzTarget {
             id: id.to_string(),
             name: format!("Target {}", id),

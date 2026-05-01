@@ -55,11 +55,30 @@ impl std::fmt::Display for LoanStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum FlashAction {
-    Borrow { token: String, amount: u64 },
-    Swap { from: String, to: String, amount: u64 },
-    Repay { token: String, amount: u64 },
-    Arbitrage { token_a: String, token_b: String, amount: u64 },
-    Liquidate { target: String, collateral: String, debt: String, amount: u64 },
+    Borrow {
+        token: String,
+        amount: u64,
+    },
+    Swap {
+        from: String,
+        to: String,
+        amount: u64,
+    },
+    Repay {
+        token: String,
+        amount: u64,
+    },
+    Arbitrage {
+        token_a: String,
+        token_b: String,
+        amount: u64,
+    },
+    Liquidate {
+        target: String,
+        collateral: String,
+        debt: String,
+        amount: u64,
+    },
 }
 
 // ──────────────────────────── Plan ──────────────────────────────────────
@@ -166,11 +185,7 @@ impl FlashLoanManager {
     }
 
     /// Append an action to a draft plan.
-    pub fn add_action(
-        &mut self,
-        plan_id: &str,
-        action: FlashAction,
-    ) -> Result<(), FlashLoanError> {
+    pub fn add_action(&mut self, plan_id: &str, action: FlashAction) -> Result<(), FlashLoanError> {
         let plan = self
             .plans
             .get_mut(plan_id)
@@ -227,7 +242,10 @@ impl FlashLoanManager {
             .ok_or_else(|| FlashLoanError::PlanNotFound(plan_id.to_string()))?;
 
         // Check a Borrow action exists
-        let has_borrow = plan.actions.iter().any(|a| matches!(a, FlashAction::Borrow { .. }));
+        let has_borrow = plan
+            .actions
+            .iter()
+            .any(|a| matches!(a, FlashAction::Borrow { .. }));
         if !has_borrow {
             let result = SimulationResult {
                 plan_id: plan_id.to_string(),
@@ -381,11 +399,28 @@ impl FlashLoanManager {
         let mut tokens = std::collections::HashSet::new();
         for action in &plan.actions {
             match action {
-                FlashAction::Borrow { token, .. } => { tokens.insert(token.clone()); }
-                FlashAction::Swap { from, to, .. } => { tokens.insert(from.clone()); tokens.insert(to.clone()); }
-                FlashAction::Repay { token, .. } => { tokens.insert(token.clone()); }
-                FlashAction::Arbitrage { token_a, token_b, .. } => { tokens.insert(token_a.clone()); tokens.insert(token_b.clone()); }
-                FlashAction::Liquidate { collateral, debt, .. } => { tokens.insert(collateral.clone()); tokens.insert(debt.clone()); }
+                FlashAction::Borrow { token, .. } => {
+                    tokens.insert(token.clone());
+                }
+                FlashAction::Swap { from, to, .. } => {
+                    tokens.insert(from.clone());
+                    tokens.insert(to.clone());
+                }
+                FlashAction::Repay { token, .. } => {
+                    tokens.insert(token.clone());
+                }
+                FlashAction::Arbitrage {
+                    token_a, token_b, ..
+                } => {
+                    tokens.insert(token_a.clone());
+                    tokens.insert(token_b.clone());
+                }
+                FlashAction::Liquidate {
+                    collateral, debt, ..
+                } => {
+                    tokens.insert(collateral.clone());
+                    tokens.insert(debt.clone());
+                }
             }
         }
 
@@ -424,14 +459,12 @@ impl FlashLoanManager {
                     successful += 1;
                     total_borrowed += plan.borrow_amount;
                     total_profit += plan.expected_profit;
-                    total_fees_paid +=
-                        (plan.borrow_amount * plan.fee_bps as u64) / 10_000;
+                    total_fees_paid += (plan.borrow_amount * plan.fee_bps as u64) / 10_000;
                 }
                 LoanStatus::Failed => {
                     failed += 1;
                     total_borrowed += plan.borrow_amount;
-                    total_fees_paid +=
-                        (plan.borrow_amount * plan.fee_bps as u64) / 10_000;
+                    total_fees_paid += (plan.borrow_amount * plan.fee_bps as u64) / 10_000;
                 }
                 _ => {}
             }
@@ -505,8 +538,23 @@ mod tests {
     fn test_add_action() {
         let mut mgr = FlashLoanManager::new();
         let id = mgr.create_plan("test", "ETH", 100, 10);
-        mgr.add_action(&id, FlashAction::Borrow { token: "ETH".into(), amount: 100 }).unwrap();
-        mgr.add_action(&id, FlashAction::Swap { from: "ETH".into(), to: "USDC".into(), amount: 100 }).unwrap();
+        mgr.add_action(
+            &id,
+            FlashAction::Borrow {
+                token: "ETH".into(),
+                amount: 100,
+            },
+        )
+        .unwrap();
+        mgr.add_action(
+            &id,
+            FlashAction::Swap {
+                from: "ETH".into(),
+                to: "USDC".into(),
+                amount: 100,
+            },
+        )
+        .unwrap();
         assert_eq!(mgr.get_plan(&id).unwrap().actions.len(), 2);
     }
 
@@ -515,14 +563,26 @@ mod tests {
         let mut mgr = FlashLoanManager::new();
         let id = mgr.create_plan("test", "ETH", 100, 10);
         mgr.execute(&id).unwrap();
-        let res = mgr.add_action(&id, FlashAction::Borrow { token: "ETH".into(), amount: 100 });
+        let res = mgr.add_action(
+            &id,
+            FlashAction::Borrow {
+                token: "ETH".into(),
+                amount: 100,
+            },
+        );
         assert!(res.is_err());
     }
 
     #[test]
     fn test_add_action_plan_not_found() {
         let mut mgr = FlashLoanManager::new();
-        let res = mgr.add_action("nonexistent", FlashAction::Borrow { token: "ETH".into(), amount: 1 });
+        let res = mgr.add_action(
+            "nonexistent",
+            FlashAction::Borrow {
+                token: "ETH".into(),
+                amount: 1,
+            },
+        );
         assert!(res.is_err());
     }
 
@@ -530,8 +590,22 @@ mod tests {
     fn test_remove_action() {
         let mut mgr = FlashLoanManager::new();
         let id = mgr.create_plan("test", "ETH", 100, 10);
-        mgr.add_action(&id, FlashAction::Borrow { token: "ETH".into(), amount: 100 }).unwrap();
-        mgr.add_action(&id, FlashAction::Repay { token: "ETH".into(), amount: 100 }).unwrap();
+        mgr.add_action(
+            &id,
+            FlashAction::Borrow {
+                token: "ETH".into(),
+                amount: 100,
+            },
+        )
+        .unwrap();
+        mgr.add_action(
+            &id,
+            FlashAction::Repay {
+                token: "ETH".into(),
+                amount: 100,
+            },
+        )
+        .unwrap();
         let removed = mgr.remove_action(&id, 0).unwrap();
         assert!(matches!(removed, FlashAction::Borrow { .. }));
         assert_eq!(mgr.get_plan(&id).unwrap().actions.len(), 1);
@@ -549,9 +623,31 @@ mod tests {
     fn test_simulate_success() {
         let mut mgr = FlashLoanManager::new();
         let id = mgr.create_plan("arb", "ETH", 1000, 30); // fee = 3
-        mgr.add_action(&id, FlashAction::Borrow { token: "ETH".into(), amount: 1000 }).unwrap();
-        mgr.add_action(&id, FlashAction::Swap { from: "ETH".into(), to: "USDC".into(), amount: 1000 }).unwrap();
-        mgr.add_action(&id, FlashAction::Repay { token: "ETH".into(), amount: 1050 }).unwrap();
+        mgr.add_action(
+            &id,
+            FlashAction::Borrow {
+                token: "ETH".into(),
+                amount: 1000,
+            },
+        )
+        .unwrap();
+        mgr.add_action(
+            &id,
+            FlashAction::Swap {
+                from: "ETH".into(),
+                to: "USDC".into(),
+                amount: 1000,
+            },
+        )
+        .unwrap();
+        mgr.add_action(
+            &id,
+            FlashAction::Repay {
+                token: "ETH".into(),
+                amount: 1050,
+            },
+        )
+        .unwrap();
         let result = mgr.simulate(&id).unwrap();
         assert!(result.success);
         assert!(result.profit > 0);
@@ -563,21 +659,50 @@ mod tests {
     fn test_simulate_no_borrow() {
         let mut mgr = FlashLoanManager::new();
         let id = mgr.create_plan("bad", "ETH", 1000, 30);
-        mgr.add_action(&id, FlashAction::Repay { token: "ETH".into(), amount: 1000 }).unwrap();
+        mgr.add_action(
+            &id,
+            FlashAction::Repay {
+                token: "ETH".into(),
+                amount: 1000,
+            },
+        )
+        .unwrap();
         let result = mgr.simulate(&id).unwrap();
         assert!(!result.success);
-        assert!(result.failure_reason.as_ref().unwrap().contains("no borrow"));
+        assert!(result
+            .failure_reason
+            .as_ref()
+            .unwrap()
+            .contains("no borrow"));
     }
 
     #[test]
     fn test_simulate_insufficient_repay() {
         let mut mgr = FlashLoanManager::new();
         let id = mgr.create_plan("short", "ETH", 1000, 30);
-        mgr.add_action(&id, FlashAction::Borrow { token: "ETH".into(), amount: 1000 }).unwrap();
-        mgr.add_action(&id, FlashAction::Repay { token: "ETH".into(), amount: 500 }).unwrap();
+        mgr.add_action(
+            &id,
+            FlashAction::Borrow {
+                token: "ETH".into(),
+                amount: 1000,
+            },
+        )
+        .unwrap();
+        mgr.add_action(
+            &id,
+            FlashAction::Repay {
+                token: "ETH".into(),
+                amount: 500,
+            },
+        )
+        .unwrap();
         let result = mgr.simulate(&id).unwrap();
         assert!(!result.success);
-        assert!(result.failure_reason.as_ref().unwrap().contains("insufficient"));
+        assert!(result
+            .failure_reason
+            .as_ref()
+            .unwrap()
+            .contains("insufficient"));
     }
 
     #[test]
@@ -629,7 +754,10 @@ mod tests {
         // 1000 borrowed at 30 bps = 1000 + 3 = 1003
         assert_eq!(FlashLoanManager::calculate_required_repay(1000, 30), 1003);
         // 10000 at 100 bps = 10000 + 100 = 10100
-        assert_eq!(FlashLoanManager::calculate_required_repay(10_000, 100), 10_100);
+        assert_eq!(
+            FlashLoanManager::calculate_required_repay(10_000, 100),
+            10_100
+        );
         // Zero fee
         assert_eq!(FlashLoanManager::calculate_required_repay(500, 0), 500);
     }
@@ -638,8 +766,22 @@ mod tests {
     fn test_calculate_profit() {
         let mut mgr = FlashLoanManager::new();
         let id = mgr.create_plan("profit", "ETH", 1000, 30);
-        mgr.add_action(&id, FlashAction::Borrow { token: "ETH".into(), amount: 1000 }).unwrap();
-        mgr.add_action(&id, FlashAction::Repay { token: "ETH".into(), amount: 1100 }).unwrap();
+        mgr.add_action(
+            &id,
+            FlashAction::Borrow {
+                token: "ETH".into(),
+                amount: 1000,
+            },
+        )
+        .unwrap();
+        mgr.add_action(
+            &id,
+            FlashAction::Repay {
+                token: "ETH".into(),
+                amount: 1100,
+            },
+        )
+        .unwrap();
         // profit = repaid(1100) - borrowed(1000) - fee(3) = 97
         let profit = mgr.calculate_profit(&id).unwrap();
         assert_eq!(profit, 97);
@@ -649,10 +791,40 @@ mod tests {
     fn test_risk_assessment() {
         let mut mgr = FlashLoanManager::new();
         let id = mgr.create_plan("risky", "ETH", 50_000_000, 30);
-        mgr.add_action(&id, FlashAction::Borrow { token: "ETH".into(), amount: 50_000_000 }).unwrap();
-        mgr.add_action(&id, FlashAction::Swap { from: "ETH".into(), to: "USDC".into(), amount: 25_000_000 }).unwrap();
-        mgr.add_action(&id, FlashAction::Arbitrage { token_a: "USDC".into(), token_b: "DAI".into(), amount: 25_000_000 }).unwrap();
-        mgr.add_action(&id, FlashAction::Repay { token: "ETH".into(), amount: 51_000_000 }).unwrap();
+        mgr.add_action(
+            &id,
+            FlashAction::Borrow {
+                token: "ETH".into(),
+                amount: 50_000_000,
+            },
+        )
+        .unwrap();
+        mgr.add_action(
+            &id,
+            FlashAction::Swap {
+                from: "ETH".into(),
+                to: "USDC".into(),
+                amount: 25_000_000,
+            },
+        )
+        .unwrap();
+        mgr.add_action(
+            &id,
+            FlashAction::Arbitrage {
+                token_a: "USDC".into(),
+                token_b: "DAI".into(),
+                amount: 25_000_000,
+            },
+        )
+        .unwrap();
+        mgr.add_action(
+            &id,
+            FlashAction::Repay {
+                token: "ETH".into(),
+                amount: 51_000_000,
+            },
+        )
+        .unwrap();
 
         let risk = mgr.risk_assessment(&id).unwrap();
         assert!(risk > 0 && risk <= 100);
@@ -664,8 +836,22 @@ mod tests {
         // Create and simulate 3 plans
         for i in 0..3 {
             let id = mgr.create_plan(&format!("plan{}", i), "ETH", 1000, 10);
-            mgr.add_action(&id, FlashAction::Borrow { token: "ETH".into(), amount: 1000 }).unwrap();
-            mgr.add_action(&id, FlashAction::Repay { token: "ETH".into(), amount: 1100 }).unwrap();
+            mgr.add_action(
+                &id,
+                FlashAction::Borrow {
+                    token: "ETH".into(),
+                    amount: 1000,
+                },
+            )
+            .unwrap();
+            mgr.add_action(
+                &id,
+                FlashAction::Repay {
+                    token: "ETH".into(),
+                    amount: 1100,
+                },
+            )
+            .unwrap();
             mgr.simulate(&id).unwrap();
         }
         let recent = mgr.recent_simulations(2);
@@ -694,7 +880,14 @@ mod tests {
         let path = test_path("roundtrip");
         let mut mgr = FlashLoanManager::new();
         let id = mgr.create_plan("persist", "ETH", 5000, 25);
-        mgr.add_action(&id, FlashAction::Borrow { token: "ETH".into(), amount: 5000 }).unwrap();
+        mgr.add_action(
+            &id,
+            FlashAction::Borrow {
+                token: "ETH".into(),
+                amount: 5000,
+            },
+        )
+        .unwrap();
         mgr.save(&path).unwrap();
 
         let loaded = FlashLoanManager::load(&path).unwrap();

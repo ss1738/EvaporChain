@@ -427,7 +427,10 @@ mod tests {
         let mut mgr = PaymentStreamManager::new();
         mgr.create_stream(sample_stream("s1")).unwrap();
         assert!(mgr.cancel_stream("s1").is_ok());
-        assert_eq!(mgr.get_stream("s1").unwrap().status, StreamStatus::Cancelled);
+        assert_eq!(
+            mgr.get_stream("s1").unwrap().status,
+            StreamStatus::Cancelled
+        );
     }
 
     #[test]
@@ -536,7 +539,10 @@ mod tests {
         mgr.create_stream(past_stream("s1")).unwrap();
         // Past stream has 3600 available, withdraw all
         mgr.withdraw("s1", 3600).unwrap();
-        assert_eq!(mgr.get_stream("s1").unwrap().status, StreamStatus::Completed);
+        assert_eq!(
+            mgr.get_stream("s1").unwrap().status,
+            StreamStatus::Completed
+        );
     }
 
     #[test]

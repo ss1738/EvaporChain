@@ -44,13 +44,21 @@ export interface StateObject {
   decay_percentage: number;
   /**
    * Whether this object is governed by the LAD-VM substructural-resource
-   * type system (linear/affine/decaying). The node currently serves
-   * `false` for every object because StateObject does not yet carry a
-   * LAD marker; once that lands the wallet can show a "LAD" pill and
-   * gate substructural previews accordingly.
+   * type system (linear/affine/decaying). Backed by
+   * `StateObject.lad_mode.is_some()` on the node side. Use this as the
+   * cheap boolean gate for showing the "LAD" pill / LAD-VM preview;
+   * read `lad_mode` below if you need to discriminate which substructural
+   * mode actually applies.
    * api.rs §ObjectResponse.is_lad_typed.
    */
   is_lad_typed?: boolean;
+  /**
+   * The actual LAD-VM substructural mode when `is_lad_typed === true`.
+   * Wire format is the lowercase enum variant; absent (or `null`) for
+   * ordinary non-substructural objects.
+   * api.rs §ObjectResponse.lad_mode.
+   */
+  lad_mode?: "linear" | "affine" | "decaying";
 }
 
 export interface NftItem {

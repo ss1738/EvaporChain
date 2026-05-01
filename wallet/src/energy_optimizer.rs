@@ -226,8 +226,7 @@ impl EnergyOptimizer {
         }
 
         let discount = batch_discount(object_ids.len());
-        let total_batch_cost =
-            (total_individual_cost as f64 * (1.0 - discount)).round() as u64;
+        let total_batch_cost = (total_individual_cost as f64 * (1.0 - discount)).round() as u64;
         let savings = total_individual_cost.saturating_sub(total_batch_cost);
         let savings_pct = if total_individual_cost > 0 {
             (savings as f64 / total_individual_cost as f64) * 100.0
@@ -297,7 +296,9 @@ impl EnergyOptimizer {
             .ok_or_else(|| EnergyOptimizerError::PlanNotFound(plan_id.to_string()))?;
 
         if plan.executed {
-            return Err(EnergyOptimizerError::PlanAlreadyExecuted(plan_id.to_string()));
+            return Err(EnergyOptimizerError::PlanAlreadyExecuted(
+                plan_id.to_string(),
+            ));
         }
 
         let ts = Utc::now().to_rfc3339();
@@ -339,7 +340,8 @@ impl EnergyOptimizer {
             return None;
         }
 
-        self.create_plan(urgent_ids, RefreshStrategy::CostOptimal).ok()
+        self.create_plan(urgent_ids, RefreshStrategy::CostOptimal)
+            .ok()
     }
 
     // -- misc ---------------------------------------------------------------
@@ -574,7 +576,8 @@ mod tests {
     #[test]
     fn test_track_duplicate_errors() {
         let mut opt = EnergyOptimizer::new();
-        opt.track_object(make_object("obj1", 1000, 1000, 10, 50)).unwrap();
+        opt.track_object(make_object("obj1", 1000, 1000, 10, 50))
+            .unwrap();
         let res = opt.track_object(make_object("obj1", 500, 1000, 10, 50));
         assert!(res.is_err());
     }
@@ -582,7 +585,8 @@ mod tests {
     #[test]
     fn test_untrack_object() {
         let mut opt = EnergyOptimizer::new();
-        opt.track_object(make_object("obj1", 1000, 1000, 10, 50)).unwrap();
+        opt.track_object(make_object("obj1", 1000, 1000, 10, 50))
+            .unwrap();
         let removed = opt.untrack_object("obj1").unwrap();
         assert_eq!(removed.object_id, "obj1");
         assert!(opt.objects.is_empty());
@@ -597,7 +601,8 @@ mod tests {
     #[test]
     fn test_update_energy() {
         let mut opt = EnergyOptimizer::new();
-        opt.track_object(make_object("obj1", 1000, 1000, 10, 50)).unwrap();
+        opt.track_object(make_object("obj1", 1000, 1000, 10, 50))
+            .unwrap();
         opt.update_energy("obj1", 400).unwrap();
         let obj = opt.objects.get("obj1").unwrap();
         assert_eq!(obj.current_energy, 400);
@@ -613,7 +618,8 @@ mod tests {
     #[test]
     fn test_forecast() {
         let mut opt = EnergyOptimizer::new();
-        opt.track_object(make_object("obj1", 800, 1000, 10, 50)).unwrap();
+        opt.track_object(make_object("obj1", 800, 1000, 10, 50))
+            .unwrap();
         let fc = opt.forecast("obj1").unwrap();
         assert_eq!(fc.object_id, "obj1");
         assert!((fc.current_energy_pct - 80.0).abs() < 0.01);
@@ -624,7 +630,8 @@ mod tests {
     #[test]
     fn test_forecast_critical() {
         let mut opt = EnergyOptimizer::new();
-        opt.track_object(make_object("obj1", 50, 1000, 10, 50)).unwrap();
+        opt.track_object(make_object("obj1", 50, 1000, 10, 50))
+            .unwrap();
         let fc = opt.forecast("obj1").unwrap();
         assert_eq!(fc.urgency, DecayUrgency::Critical);
     }
@@ -632,8 +639,10 @@ mod tests {
     #[test]
     fn test_forecast_all() {
         let mut opt = EnergyOptimizer::new();
-        opt.track_object(make_object("a", 900, 1000, 10, 50)).unwrap();
-        opt.track_object(make_object("b", 100, 1000, 10, 50)).unwrap();
+        opt.track_object(make_object("a", 900, 1000, 10, 50))
+            .unwrap();
+        opt.track_object(make_object("b", 100, 1000, 10, 50))
+            .unwrap();
         let forecasts = opt.forecast_all();
         assert_eq!(forecasts.len(), 2);
     }
@@ -641,8 +650,10 @@ mod tests {
     #[test]
     fn test_critical_objects() {
         let mut opt = EnergyOptimizer::new();
-        opt.track_object(make_object("healthy", 900, 1000, 10, 50)).unwrap();
-        opt.track_object(make_object("critical", 50, 1000, 10, 50)).unwrap();
+        opt.track_object(make_object("healthy", 900, 1000, 10, 50))
+            .unwrap();
+        opt.track_object(make_object("critical", 50, 1000, 10, 50))
+            .unwrap();
         let crits = opt.critical_objects();
         assert_eq!(crits.len(), 1);
         assert_eq!(crits[0].object_id, "critical");
@@ -651,8 +662,10 @@ mod tests {
     #[test]
     fn test_objects_by_urgency() {
         let mut opt = EnergyOptimizer::new();
-        opt.track_object(make_object("safe", 900, 1000, 10, 50)).unwrap();
-        opt.track_object(make_object("high", 200, 1000, 10, 50)).unwrap();
+        opt.track_object(make_object("safe", 900, 1000, 10, 50))
+            .unwrap();
+        opt.track_object(make_object("high", 200, 1000, 10, 50))
+            .unwrap();
         let safe = opt.objects_by_urgency(&DecayUrgency::Safe);
         assert_eq!(safe.len(), 1);
     }
@@ -660,8 +673,10 @@ mod tests {
     #[test]
     fn test_batch_optimize_small() {
         let mut opt = EnergyOptimizer::new();
-        opt.track_object(make_object("a", 500, 1000, 10, 100)).unwrap();
-        opt.track_object(make_object("b", 500, 1000, 10, 100)).unwrap();
+        opt.track_object(make_object("a", 500, 1000, 10, 100))
+            .unwrap();
+        opt.track_object(make_object("b", 500, 1000, 10, 100))
+            .unwrap();
         let bo = opt.batch_optimize(&["a".into(), "b".into()]).unwrap();
         assert_eq!(bo.batch_size, 2);
         assert_eq!(bo.total_individual_cost, 200);
@@ -674,7 +689,8 @@ mod tests {
         let mut opt = EnergyOptimizer::new();
         for i in 0..12 {
             let oid = format!("obj{}", i);
-            opt.track_object(make_object(&oid, 500, 1000, 10, 100)).unwrap();
+            opt.track_object(make_object(&oid, 500, 1000, 10, 100))
+                .unwrap();
         }
         let ids: Vec<String> = (0..12).map(|i| format!("obj{}", i)).collect();
         let bo = opt.batch_optimize(&ids).unwrap();
@@ -690,8 +706,10 @@ mod tests {
     #[test]
     fn test_create_plan() {
         let mut opt = EnergyOptimizer::new();
-        opt.track_object(make_object("a", 500, 1000, 10, 100)).unwrap();
-        opt.track_object(make_object("b", 500, 1000, 10, 100)).unwrap();
+        opt.track_object(make_object("a", 500, 1000, 10, 100))
+            .unwrap();
+        opt.track_object(make_object("b", 500, 1000, 10, 100))
+            .unwrap();
         let plan_id = opt
             .create_plan(vec!["a".into(), "b".into()], RefreshStrategy::Immediate)
             .unwrap();
@@ -704,7 +722,8 @@ mod tests {
     #[test]
     fn test_execute_plan() {
         let mut opt = EnergyOptimizer::new();
-        opt.track_object(make_object("a", 500, 1000, 10, 100)).unwrap();
+        opt.track_object(make_object("a", 500, 1000, 10, 100))
+            .unwrap();
         let plan_id = opt
             .create_plan(vec!["a".into()], RefreshStrategy::Immediate)
             .unwrap();
@@ -719,7 +738,8 @@ mod tests {
     #[test]
     fn test_execute_plan_twice_errors() {
         let mut opt = EnergyOptimizer::new();
-        opt.track_object(make_object("a", 500, 1000, 10, 100)).unwrap();
+        opt.track_object(make_object("a", 500, 1000, 10, 100))
+            .unwrap();
         let plan_id = opt
             .create_plan(vec!["a".into()], RefreshStrategy::Immediate)
             .unwrap();
@@ -730,8 +750,10 @@ mod tests {
     #[test]
     fn test_auto_plan_creates_for_urgent() {
         let mut opt = EnergyOptimizer::new();
-        opt.track_object(make_object("crit", 50, 1000, 10, 100)).unwrap();
-        opt.track_object(make_object("safe", 900, 1000, 10, 100)).unwrap();
+        opt.track_object(make_object("crit", 50, 1000, 10, 100))
+            .unwrap();
+        opt.track_object(make_object("safe", 900, 1000, 10, 100))
+            .unwrap();
         let plan_id = opt.auto_plan();
         assert!(plan_id.is_some());
         let plan = opt.plans.get(&plan_id.unwrap()).unwrap();
@@ -742,14 +764,16 @@ mod tests {
     #[test]
     fn test_auto_plan_none_when_all_safe() {
         let mut opt = EnergyOptimizer::new();
-        opt.track_object(make_object("safe", 900, 1000, 10, 100)).unwrap();
+        opt.track_object(make_object("safe", 900, 1000, 10, 100))
+            .unwrap();
         assert!(opt.auto_plan().is_none());
     }
 
     #[test]
     fn test_resurrection_cost() {
         let mut opt = EnergyOptimizer::new();
-        opt.track_object(make_object("ghost", 5, 1000, 10, 100)).unwrap();
+        opt.track_object(make_object("ghost", 5, 1000, 10, 100))
+            .unwrap();
         let cost = opt.resurrection_cost("ghost").unwrap();
         assert_eq!(cost, 200); // 2x normal refresh cost
     }
@@ -757,16 +781,20 @@ mod tests {
     #[test]
     fn test_total_refresh_budget() {
         let mut opt = EnergyOptimizer::new();
-        opt.track_object(make_object("a", 500, 1000, 10, 100)).unwrap();
-        opt.track_object(make_object("b", 500, 1000, 10, 200)).unwrap();
+        opt.track_object(make_object("a", 500, 1000, 10, 100))
+            .unwrap();
+        opt.track_object(make_object("b", 500, 1000, 10, 200))
+            .unwrap();
         assert_eq!(opt.total_refresh_budget(), 300);
     }
 
     #[test]
     fn test_stats() {
         let mut opt = EnergyOptimizer::new();
-        opt.track_object(make_object("safe", 900, 1000, 10, 100)).unwrap();
-        opt.track_object(make_object("crit", 50, 1000, 10, 100)).unwrap();
+        opt.track_object(make_object("safe", 900, 1000, 10, 100))
+            .unwrap();
+        opt.track_object(make_object("crit", 50, 1000, 10, 100))
+            .unwrap();
         let plan_id = opt
             .create_plan(vec!["safe".into()], RefreshStrategy::Immediate)
             .unwrap();
@@ -782,7 +810,8 @@ mod tests {
     fn test_save_and_load() {
         let path = temp_path("save_load.json");
         let mut opt = EnergyOptimizer::new();
-        opt.track_object(make_object("obj1", 800, 1000, 10, 50)).unwrap();
+        opt.track_object(make_object("obj1", 800, 1000, 10, 50))
+            .unwrap();
         opt.save(&path).unwrap();
 
         let loaded = EnergyOptimizer::load(&path).unwrap();

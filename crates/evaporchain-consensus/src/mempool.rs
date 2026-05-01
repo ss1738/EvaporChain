@@ -167,7 +167,10 @@ impl Mempool {
             }
         }
         if self.verify_signatures
-            && !matches!(tx, Transaction::Unshield(_) | Transaction::PrivateTransfer(_))
+            && !matches!(
+                tx,
+                Transaction::Unshield(_) | Transaction::PrivateTransfer(_)
+            )
         {
             if let (Some(sig), Some(pk)) = (tx.signature(), tx.public_key()) {
                 let msg = tx.signing_message(&self.chain_id);
@@ -245,10 +248,8 @@ impl Mempool {
     /// by sender hash for determinism across validators.
     pub fn take(&mut self, n: usize) -> Vec<Transaction> {
         let all: Vec<Transaction> = self.pending.drain(..).collect();
-        let mut with_hash: Vec<([u8; 32], Transaction)> = all
-            .into_iter()
-            .map(|tx| (tx.tx_hash(), tx))
-            .collect();
+        let mut with_hash: Vec<([u8; 32], Transaction)> =
+            all.into_iter().map(|tx| (tx.tx_hash(), tx)).collect();
         Self::sort_nonce_aware(&mut with_hash);
 
         let take_count = n.min(with_hash.len());
@@ -267,9 +268,7 @@ impl Mempool {
         }
 
         self.pending = remaining;
-        self.total_bytes = self.pending.iter()
-            .map(Self::estimate_tx_size)
-            .sum();
+        self.total_bytes = self.pending.iter().map(Self::estimate_tx_size).sum();
         taken
     }
 
@@ -303,7 +302,11 @@ impl Mempool {
             .into_iter()
             .map(|tx| {
                 let hash = tx.tx_hash();
-                let submit = self.tx_submit_epoch.get(&hash).copied().unwrap_or(current_block);
+                let submit = self
+                    .tx_submit_epoch
+                    .get(&hash)
+                    .copied()
+                    .unwrap_or(current_block);
                 let elapsed = current_block.saturating_sub(submit);
                 let priority = energy_at_epoch(
                     BASE_INCLUSION_ENERGY,
@@ -350,10 +353,8 @@ impl Mempool {
 
     pub fn take_with_hashes(&mut self, n: usize) -> Vec<([u8; 32], Transaction)> {
         let all: Vec<Transaction> = self.pending.drain(..).collect();
-        let mut with_hash: Vec<([u8; 32], Transaction)> = all
-            .into_iter()
-            .map(|tx| (tx.tx_hash(), tx))
-            .collect();
+        let mut with_hash: Vec<([u8; 32], Transaction)> =
+            all.into_iter().map(|tx| (tx.tx_hash(), tx)).collect();
         Self::sort_nonce_aware(&mut with_hash);
 
         let take_count = n.min(with_hash.len());
@@ -366,19 +367,15 @@ impl Mempool {
             self.tx_submit_epoch.remove(h);
             self.track_account_remove(tx);
         }
-        self.total_bytes = self.pending.iter()
-            .map(Self::estimate_tx_size)
-            .sum();
+        self.total_bytes = self.pending.iter().map(Self::estimate_tx_size).sum();
         result
     }
 
     /// Take transactions up to a gas limit with nonce-aware ordering.
     pub fn take_with_gas_limit(&mut self, max_txs: usize, gas_limit: u64) -> Vec<Transaction> {
         let all: Vec<Transaction> = self.pending.drain(..).collect();
-        let mut with_hash: Vec<([u8; 32], Transaction)> = all
-            .into_iter()
-            .map(|tx| (tx.tx_hash(), tx))
-            .collect();
+        let mut with_hash: Vec<([u8; 32], Transaction)> =
+            all.into_iter().map(|tx| (tx.tx_hash(), tx)).collect();
         Self::sort_nonce_aware(&mut with_hash);
 
         let mut taken = Vec::new();
@@ -409,7 +406,8 @@ impl Mempool {
         txs.sort_by(|a, b| {
             let sender_a = a.1.sender().copied().unwrap_or([0xff; 32]);
             let sender_b = b.1.sender().copied().unwrap_or([0xff; 32]);
-            sender_a.cmp(&sender_b)
+            sender_a
+                .cmp(&sender_b)
                 .then_with(|| {
                     let nonce_a = a.1.nonce().unwrap_or(0);
                     let nonce_b = b.1.nonce().unwrap_or(0);
@@ -434,7 +432,8 @@ impl Mempool {
             Transaction::Shield(_) => 60_000,
             Transaction::Unshield(_) => 80_000,
             Transaction::PrivateTransfer(ptx) => {
-                100_000 + 20_000 * ptx.input_nullifiers.len() as u64
+                100_000
+                    + 20_000 * ptx.input_nullifiers.len() as u64
                     + 15_000 * ptx.output_commitments.len() as u64
             }
             Transaction::Deferred(dtx) => 75_000 + 5_000 * dtx.guards.len() as u64,
@@ -504,38 +503,51 @@ impl Mempool {
                     + t.public_key.as_ref().map_or(0, |p| p.len())
             }
             Transaction::DeployContract(t) => {
-                32 + t.template.len() + t.init_args.len() + 16
+                32 + t.template.len()
+                    + t.init_args.len()
+                    + 16
                     + t.signature.as_ref().map_or(0, |s| s.len())
                     + t.public_key.as_ref().map_or(0, |p| p.len())
             }
             Transaction::CallContract(t) => {
-                32 + 32 + t.method.len() + t.args.len() + 16
+                32 + 32
+                    + t.method.len()
+                    + t.args.len()
+                    + 16
                     + t.signature.as_ref().map_or(0, |s| s.len())
                     + t.public_key.as_ref().map_or(0, |p| p.len())
             }
             Transaction::DeployScript(t) => {
-                32 + t.source_code.len() + 16
+                32 + t.source_code.len()
+                    + 16
                     + t.signature.as_ref().map_or(0, |s| s.len())
                     + t.public_key.as_ref().map_or(0, |p| p.len())
             }
             Transaction::CallScript(t) => {
-                32 + 8 + t.method.len() + t.args.len() + 16
+                32 + 8
+                    + t.method.len()
+                    + t.args.len()
+                    + 16
                     + t.signature.as_ref().map_or(0, |s| s.len())
                     + t.public_key.as_ref().map_or(0, |p| p.len())
             }
             Transaction::ValidatorStake(t) => {
-                32 + 8 + 8 + 8
+                32 + 8
+                    + 8
+                    + 8
                     + t.bls_public_key.as_ref().map_or(0, |k| k.len())
                     + t.signature.as_ref().map_or(0, |s| s.len())
                     + t.public_key.as_ref().map_or(0, |p| p.len())
             }
             Transaction::ValidatorExit(t) => {
-                32 + 8 + 8
+                32 + 8
+                    + 8
                     + t.signature.as_ref().map_or(0, |s| s.len())
                     + t.public_key.as_ref().map_or(0, |p| p.len())
             }
             Transaction::ValidatorClaimStake(t) => {
-                32 + 8 + 8
+                32 + 8
+                    + 8
                     + t.signature.as_ref().map_or(0, |s| s.len())
                     + t.public_key.as_ref().map_or(0, |p| p.len())
             }
@@ -558,41 +570,57 @@ impl Mempool {
                 32 + 8 + 8 + dtx.guards.len() * 50 + dtx.inner_tx_bytes.len()
             }
             Transaction::Blob(tx) => {
-                32 + tx.data.len() + 8 + 8
+                32 + tx.data.len()
+                    + 8
+                    + 8
                     + tx.signature.as_ref().map_or(0, |s| s.len())
                     + tx.public_key.as_ref().map_or(0, |p| p.len())
             }
             Transaction::Governance(tx) => {
-                32 + 8 + 64
+                32 + 8
+                    + 64
                     + tx.signature.as_ref().map_or(0, |s| s.len())
                     + tx.public_key.as_ref().map_or(0, |p| p.len())
             }
             Transaction::MultiSig(tx) => {
-                32 + 1 + 8 + tx.signers.len() * 32 + tx.inner_tx_bytes.len()
+                32 + 1
+                    + 8
+                    + tx.signers.len() * 32
+                    + tx.inner_tx_bytes.len()
                     + tx.signatures.len() * 64
             }
             Transaction::UserOp(tx) => {
-                32 + 8 + 8 + tx.call_data.len()
+                32 + 8
+                    + 8
+                    + tx.call_data.len()
                     + tx.signature.as_ref().map_or(0, |s| s.len())
                     + tx.public_key.as_ref().map_or(0, |p| p.len())
             }
             Transaction::UpgradeContract(tx) => {
-                32 + 8 + 8 + tx.new_bytecode.len()
+                32 + 8
+                    + 8
+                    + tx.new_bytecode.len()
                     + tx.signature.as_ref().map_or(0, |s| s.len())
                     + tx.public_key.as_ref().map_or(0, |p| p.len())
             }
             Transaction::Delegate(tx) => {
-                32 + 8 + 8 + 8
+                32 + 8
+                    + 8
+                    + 8
                     + tx.signature.as_ref().map_or(0, |s| s.len())
                     + tx.public_key.as_ref().map_or(0, |p| p.len())
             }
             Transaction::Undelegate(tx) => {
-                32 + 8 + 8 + 8
+                32 + 8
+                    + 8
+                    + 8
                     + tx.signature.as_ref().map_or(0, |s| s.len())
                     + tx.public_key.as_ref().map_or(0, |p| p.len())
             }
             Transaction::RotateValidatorKey(tx) => {
-                32 + 8 + 8 + 8
+                32 + 8
+                    + 8
+                    + 8
                     + tx.new_bls_public_key.len()
                     + tx.bls_pop_old.len()
                     + tx.bls_pop_new.len()
@@ -600,7 +628,8 @@ impl Mempool {
                     + tx.public_key.as_ref().map_or(0, |p| p.len())
             }
             Transaction::ClaimDelegation(tx) => {
-                32 + 8 + 8
+                32 + 8
+                    + 8
                     + tx.signature.as_ref().map_or(0, |s| s.len())
                     + tx.public_key.as_ref().map_or(0, |p| p.len())
             }
@@ -711,16 +740,28 @@ mod tests {
     fn test_take_deterministic_order() {
         let mut pool = Mempool::new();
         let tx_a = Transaction::Transfer(TransferTx {
-            from: [1u8; 32], to: [2u8; 32], amount: 100, nonce: 0,
-            signature: None, public_key: None,
+            from: [1u8; 32],
+            to: [2u8; 32],
+            amount: 100,
+            nonce: 0,
+            signature: None,
+            public_key: None,
         });
         let tx_b = Transaction::Transfer(TransferTx {
-            from: [1u8; 32], to: [2u8; 32], amount: 200, nonce: 1,
-            signature: None, public_key: None,
+            from: [1u8; 32],
+            to: [2u8; 32],
+            amount: 200,
+            nonce: 1,
+            signature: None,
+            public_key: None,
         });
         let tx_c = Transaction::Transfer(TransferTx {
-            from: [1u8; 32], to: [2u8; 32], amount: 300, nonce: 2,
-            signature: None, public_key: None,
+            from: [1u8; 32],
+            to: [2u8; 32],
+            amount: 300,
+            nonce: 2,
+            signature: None,
+            public_key: None,
         });
 
         // Submit in one order
@@ -750,8 +791,12 @@ mod tests {
         let mut pool = Mempool::new();
         for i in 0..5u64 {
             pool.submit(Transaction::Transfer(TransferTx {
-                from: [1u8; 32], to: [2u8; 32], amount: i * 100, nonce: i,
-                signature: None, public_key: None,
+                from: [1u8; 32],
+                to: [2u8; 32],
+                amount: i * 100,
+                nonce: i,
+                signature: None,
+                public_key: None,
             }));
         }
         let taken = pool.take(3);
@@ -773,12 +818,20 @@ mod tests {
     fn test_different_nonces_not_duplicate() {
         let mut pool = Mempool::new();
         let tx1 = Transaction::Transfer(TransferTx {
-            from: [1u8; 32], to: [2u8; 32], amount: 100, nonce: 0,
-            signature: None, public_key: None,
+            from: [1u8; 32],
+            to: [2u8; 32],
+            amount: 100,
+            nonce: 0,
+            signature: None,
+            public_key: None,
         });
         let tx2 = Transaction::Transfer(TransferTx {
-            from: [1u8; 32], to: [2u8; 32], amount: 100, nonce: 1,
-            signature: None, public_key: None,
+            from: [1u8; 32],
+            to: [2u8; 32],
+            amount: 100,
+            nonce: 1,
+            signature: None,
+            public_key: None,
         });
         assert!(pool.submit(tx1));
         assert!(pool.submit(tx2));

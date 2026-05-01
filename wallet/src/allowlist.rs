@@ -325,14 +325,13 @@ impl AddressListStore {
 
     /// JSON persistence
     pub fn save(&self, path: &Path) -> Result<(), AllowlistError> {
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| AllowlistError::Json(e.to_string()))?;
+        let json =
+            serde_json::to_string_pretty(self).map_err(|e| AllowlistError::Json(e.to_string()))?;
         std::fs::write(path, json).map_err(|e| AllowlistError::Io(e.to_string()))
     }
 
     pub fn load(path: &Path) -> Result<Self, AllowlistError> {
-        let data =
-            std::fs::read_to_string(path).map_err(|e| AllowlistError::Io(e.to_string()))?;
+        let data = std::fs::read_to_string(path).map_err(|e| AllowlistError::Io(e.to_string()))?;
         serde_json::from_str(&data).map_err(|e| AllowlistError::Json(e.to_string()))
     }
 
@@ -350,7 +349,9 @@ mod tests {
     #[test]
     fn test_add_allow() {
         let mut store = AddressListStore::new();
-        store.add("evap1abc", ListType::Allow, "trusted", "me").unwrap();
+        store
+            .add("evap1abc", ListType::Allow, "trusted", "me")
+            .unwrap();
         assert_eq!(store.entries.len(), 1);
         assert_eq!(store.allowed().len(), 1);
     }
@@ -358,7 +359,9 @@ mod tests {
     #[test]
     fn test_add_deny() {
         let mut store = AddressListStore::new();
-        store.add("evap1bad", ListType::Deny, "scammer", "me").unwrap();
+        store
+            .add("evap1bad", ListType::Deny, "scammer", "me")
+            .unwrap();
         assert_eq!(store.denied().len(), 1);
     }
 
@@ -414,7 +417,9 @@ mod tests {
     #[test]
     fn test_wildcard_pattern_allow() {
         let mut store = AddressListStore::new();
-        store.add("evap1abc*", ListType::Allow, "prefix", "me").unwrap();
+        store
+            .add("evap1abc*", ListType::Allow, "prefix", "me")
+            .unwrap();
         assert!(store.check("evap1abc123").is_allowed());
         assert!(store.check("evap1abcxyz").is_allowed());
         assert_eq!(store.check("evap1def"), Verdict::NotListed);
@@ -423,7 +428,9 @@ mod tests {
     #[test]
     fn test_wildcard_pattern_deny() {
         let mut store = AddressListStore::new();
-        store.add("evap1bad*", ListType::Deny, "bad prefix", "me").unwrap();
+        store
+            .add("evap1bad*", ListType::Deny, "bad prefix", "me")
+            .unwrap();
         assert!(store.check("evap1bad999").is_denied());
     }
 
@@ -445,7 +452,13 @@ mod tests {
     fn test_expiry() {
         let mut store = AddressListStore::new();
         store
-            .add_with_expiry("evap1exp", ListType::Deny, "temp", "me", "2020-01-01T00:00:00Z")
+            .add_with_expiry(
+                "evap1exp",
+                ListType::Deny,
+                "temp",
+                "me",
+                "2020-01-01T00:00:00Z",
+            )
             .unwrap();
         // Should be expired, so check should fall through to default
         assert_eq!(store.check("evap1exp"), Verdict::NotListed);
@@ -455,7 +468,13 @@ mod tests {
     fn test_non_expired() {
         let mut store = AddressListStore::new();
         store
-            .add_with_expiry("evap1ok", ListType::Deny, "future", "me", "2099-01-01T00:00:00Z")
+            .add_with_expiry(
+                "evap1ok",
+                ListType::Deny,
+                "future",
+                "me",
+                "2099-01-01T00:00:00Z",
+            )
             .unwrap();
         assert!(store.check("evap1ok").is_denied());
     }
@@ -496,7 +515,9 @@ mod tests {
     #[test]
     fn test_to_csv() {
         let mut store = AddressListStore::new();
-        store.add("evap1abc", ListType::Allow, "friend", "me").unwrap();
+        store
+            .add("evap1abc", ListType::Allow, "friend", "me")
+            .unwrap();
         store.add("evap1bad", ListType::Deny, "scam", "me").unwrap();
         let csv = store.to_csv();
         assert!(csv.contains("evap1abc,allow,friend"));
@@ -540,12 +561,11 @@ mod tests {
 
     #[test]
     fn test_save_load() {
-        let path = std::env::temp_dir().join(format!(
-            "evap_allowlist_{}.json",
-            std::process::id()
-        ));
+        let path = std::env::temp_dir().join(format!("evap_allowlist_{}.json", std::process::id()));
         let mut store = AddressListStore::new();
-        store.add("evap1abc", ListType::Allow, "test", "me").unwrap();
+        store
+            .add("evap1abc", ListType::Allow, "test", "me")
+            .unwrap();
         store.save(&path).unwrap();
         let loaded = AddressListStore::load(&path).unwrap();
         assert_eq!(loaded.entries.len(), 1);

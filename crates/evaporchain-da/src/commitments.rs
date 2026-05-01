@@ -289,7 +289,12 @@ mod tests {
         for r in 0..matrix.extended_dim().min(4) {
             for c in 0..matrix.extended_dim().min(4) {
                 let proof = rc.generate_cell_proof(&matrix, r, c).unwrap();
-                assert!(rc.verify_cell_proof(&proof), "Proof failed at ({}, {})", r, c);
+                assert!(
+                    rc.verify_cell_proof(&proof),
+                    "Proof failed at ({}, {})",
+                    r,
+                    c
+                );
             }
         }
     }

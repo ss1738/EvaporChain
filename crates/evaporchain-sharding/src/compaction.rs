@@ -4,8 +4,8 @@
 //! (merged into its neighbor). This is unique to EvaporChain — thermodynamic
 //! decay guarantees that dead shards have zero dangling cross-shard references.
 
-use serde::{Deserialize, Serialize};
 use super::shard_assignment::ShardId;
+use serde::{Deserialize, Serialize};
 
 /// Health metrics for a shard.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,10 +71,7 @@ impl ShardCompactionProof {
 }
 
 /// Find compaction candidates from a set of shard health metrics.
-pub fn find_candidates(
-    healths: &[ShardHealth],
-    energy_threshold: u64,
-) -> Vec<CompactionCandidate> {
+pub fn find_candidates(healths: &[ShardHealth], energy_threshold: u64) -> Vec<CompactionCandidate> {
     let mut candidates = Vec::new();
     for health in healths {
         if health.is_dead() {

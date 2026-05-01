@@ -239,7 +239,10 @@ impl BridgeManager {
         self.bridges
             .iter()
             .filter(|b| {
-                b.active && b.supported_tokens.iter().any(|t| t.to_lowercase() == token_lower)
+                b.active
+                    && b.supported_tokens
+                        .iter()
+                        .any(|t| t.to_lowercase() == token_lower)
             })
             .collect()
     }
@@ -255,7 +258,8 @@ impl BridgeManager {
         sender: &str,
         recipient: &str,
     ) -> Result<&BridgeTransfer, BridgeError> {
-        let bridge = self.get_bridge(bridge_id)
+        let bridge = self
+            .get_bridge(bridge_id)
             .ok_or_else(|| BridgeError::BridgeNotFound(bridge_id.to_string()))?;
 
         let fee = (amount as f64 * bridge.fee_pct / 100.0) as u64;
@@ -290,7 +294,9 @@ impl BridgeManager {
         status: TransferStatus,
         tx_hash: Option<&str>,
     ) -> Result<(), BridgeError> {
-        let transfer = self.transfers.iter_mut()
+        let transfer = self
+            .transfers
+            .iter_mut()
             .find(|t| t.id == transfer_id)
             .ok_or_else(|| BridgeError::TransferNotFound(transfer_id.to_string()))?;
 
@@ -427,7 +433,9 @@ mod tests {
     #[test]
     fn test_initiate_transfer() {
         let mut mgr = make_manager();
-        let xfer = mgr.initiate_transfer("evap-eth-v1", "EVAP", 10000, "0xsender", "0xrecipient").unwrap();
+        let xfer = mgr
+            .initiate_transfer("evap-eth-v1", "EVAP", 10000, "0xsender", "0xrecipient")
+            .unwrap();
         assert_eq!(xfer.status, TransferStatus::Initiated);
         assert_eq!(xfer.amount, 10000);
         assert_eq!(xfer.fee, 30); // 0.3% of 10000
@@ -436,22 +444,32 @@ mod tests {
     #[test]
     fn test_initiate_transfer_bridge_not_found() {
         let mut mgr = BridgeManager::new();
-        let err = mgr.initiate_transfer("nope", "EVAP", 100, "0x1", "0x2").unwrap_err();
+        let err = mgr
+            .initiate_transfer("nope", "EVAP", 100, "0x1", "0x2")
+            .unwrap_err();
         assert!(matches!(err, BridgeError::BridgeNotFound(_)));
     }
 
     #[test]
     fn test_update_transfer_status() {
         let mut mgr = make_manager();
-        let xfer = mgr.initiate_transfer("evap-eth-v1", "EVAP", 1000, "0x1", "0x2").unwrap();
+        let xfer = mgr
+            .initiate_transfer("evap-eth-v1", "EVAP", 1000, "0x1", "0x2")
+            .unwrap();
         let xfer_id = xfer.id.clone();
 
-        mgr.update_transfer_status(&xfer_id, TransferStatus::SourceConfirmed, Some("0xsrc_hash")).unwrap();
+        mgr.update_transfer_status(
+            &xfer_id,
+            TransferStatus::SourceConfirmed,
+            Some("0xsrc_hash"),
+        )
+        .unwrap();
         let xfer = mgr.get_transfer(&xfer_id).unwrap();
         assert_eq!(xfer.status, TransferStatus::SourceConfirmed);
         assert_eq!(xfer.source_tx.as_deref(), Some("0xsrc_hash"));
 
-        mgr.update_transfer_status(&xfer_id, TransferStatus::Completed, Some("0xdst_hash")).unwrap();
+        mgr.update_transfer_status(&xfer_id, TransferStatus::Completed, Some("0xdst_hash"))
+            .unwrap();
         let xfer = mgr.get_transfer(&xfer_id).unwrap();
         assert_eq!(xfer.status, TransferStatus::Completed);
         assert!(xfer.completed_at.is_some());
@@ -460,13 +478,16 @@ mod tests {
     #[test]
     fn test_pending_transfers() {
         let mut mgr = make_manager();
-        mgr.initiate_transfer("evap-eth-v1", "EVAP", 100, "0x1", "0x2").unwrap();
-        mgr.initiate_transfer("evap-eth-v1", "EVAP", 200, "0x1", "0x2").unwrap();
+        mgr.initiate_transfer("evap-eth-v1", "EVAP", 100, "0x1", "0x2")
+            .unwrap();
+        mgr.initiate_transfer("evap-eth-v1", "EVAP", 200, "0x1", "0x2")
+            .unwrap();
 
         assert_eq!(mgr.pending_transfers().len(), 2);
 
         let id = mgr.transfers[0].id.clone();
-        mgr.update_transfer_status(&id, TransferStatus::Completed, None).unwrap();
+        mgr.update_transfer_status(&id, TransferStatus::Completed, None)
+            .unwrap();
         assert_eq!(mgr.pending_transfers().len(), 1);
     }
 
@@ -517,7 +538,8 @@ mod tests {
     #[test]
     fn test_json_roundtrip() {
         let mut mgr = make_manager();
-        mgr.initiate_transfer("evap-eth-v1", "EVAP", 100, "0x1", "0x2").unwrap();
+        mgr.initiate_transfer("evap-eth-v1", "EVAP", 100, "0x1", "0x2")
+            .unwrap();
 
         let json = serde_json::to_string_pretty(&mgr).unwrap();
         let loaded: BridgeManager = serde_json::from_str(&json).unwrap();

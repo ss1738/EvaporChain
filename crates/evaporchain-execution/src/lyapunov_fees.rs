@@ -22,8 +22,7 @@
 
 use evaporchain_energy_kernel::ChainLambda;
 use evaporchain_fee_controller::{
-    base_fee, controller::FeeControllerError, FeeController, FeeControllerParams, FeeState,
-    Drift,
+    base_fee, controller::FeeControllerError, Drift, FeeController, FeeControllerParams, FeeState,
 };
 use evaporchain_types::Energy;
 
@@ -80,7 +79,10 @@ mod tests {
         let s = FeeState::new(p.target_energy + 100_000);
         let (s2, drift) = step(&p, &s, p.target_gas, 1).unwrap();
         assert!(s2.energy < s.energy);
-        assert!(drift.delta <= 0, "Lyapunov drift must be non-positive on empty blocks");
+        assert!(
+            drift.delta <= 0,
+            "Lyapunov drift must be non-positive on empty blocks"
+        );
     }
 
     #[test]

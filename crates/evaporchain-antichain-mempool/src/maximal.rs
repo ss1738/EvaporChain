@@ -53,7 +53,6 @@ pub fn extend_to_maximal<I: IntoIterator<Item = BlockId>>(
     Antichain::from_set(members, lc)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -68,7 +67,8 @@ mod tests {
         lc.insert(Block::new(id(0), vec![], 1000, 0)).unwrap();
         lc.insert(Block::new(id(1), vec![id(0)], 900, 1)).unwrap();
         lc.insert(Block::new(id(2), vec![id(0)], 900, 1)).unwrap();
-        lc.insert(Block::new(id(3), vec![id(1), id(2)], 800, 2)).unwrap();
+        lc.insert(Block::new(id(3), vec![id(1), id(2)], 800, 2))
+            .unwrap();
         lc
     }
 

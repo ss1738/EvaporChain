@@ -1,6 +1,6 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BatchSize};
-use evaporchain_execution::ExecutionEngine;
+use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
 use evaporchain_execution::parallel::ParallelExecutor;
+use evaporchain_execution::ExecutionEngine;
 use evaporchain_state::db::{InMemoryStateDB, StateDB};
 use evaporchain_types::{Account, Block, Transaction, TransferTx};
 
@@ -98,9 +98,7 @@ fn bench_block_execution(c: &mut Criterion) {
                 let executor = ParallelExecutor::new(5);
                 (db, block, executor)
             },
-            |(mut db, block, mut executor)| {
-                black_box(executor.execute_block(&mut db, &block))
-            },
+            |(mut db, block, mut executor)| black_box(executor.execute_block(&mut db, &block)),
             BatchSize::SmallInput,
         );
     });
@@ -122,9 +120,7 @@ fn bench_signature(c: &mut Criterion) {
     let msg = b"benchmark message for signing";
 
     let mut group = c.benchmark_group("ml_dsa");
-    group.bench_function("sign", |b| {
-        b.iter(|| black_box(kp.sign(msg)))
-    });
+    group.bench_function("sign", |b| b.iter(|| black_box(kp.sign(msg))));
 
     let sig = kp.sign(msg);
     let pk = kp.public_key_bytes();

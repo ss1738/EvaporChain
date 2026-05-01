@@ -197,11 +197,7 @@ impl WriteAheadLog {
     fn scan_last_committed(file: &mut File) -> io::Result<Option<u64>> {
         file.seek(SeekFrom::Start(HEADER_SIZE as u64))?;
         let entries = Self::read_all_entries(file)?;
-        let last = entries
-            .iter()
-            .rev()
-            .find(|e| e.committed)
-            .map(|e| e.height);
+        let last = entries.iter().rev().find(|e| e.committed).map(|e| e.height);
         Ok(last)
     }
 
@@ -425,20 +421,40 @@ mod tests {
     fn test_multiple_mutations_roundtrip() {
         let (mut wal, f) = tmp_wal();
         let mutations = vec![
-            WalMutation::PutAccount { address: [1u8; 20], data: vec![10] },
+            WalMutation::PutAccount {
+                address: [1u8; 20],
+                data: vec![10],
+            },
             WalMutation::DeleteAccount { address: [2u8; 20] },
-            WalMutation::PutObject { id: [3u8; 20], data: vec![30] },
+            WalMutation::PutObject {
+                id: [3u8; 20],
+                data: vec![30],
+            },
             WalMutation::DeleteObject { id: [4u8; 20] },
-            WalMutation::PutGhost { id: [5u8; 20], data: vec![50] },
+            WalMutation::PutGhost {
+                id: [5u8; 20],
+                data: vec![50],
+            },
             WalMutation::RemoveGhost { id: [6u8; 20] },
-            WalMutation::PutStake { validator_id: 7, data: vec![70] },
+            WalMutation::PutStake {
+                validator_id: 7,
+                data: vec![70],
+            },
             WalMutation::RemoveStake { validator_id: 8 },
-            WalMutation::SpendNullifier { nullifier: [9u8; 32] },
+            WalMutation::SpendNullifier {
+                nullifier: [9u8; 32],
+            },
             WalMutation::SetNoteTreeRoot { root: [10u8; 32] },
             WalMutation::SetShieldedPoolBalance { balance: 1000 },
             WalMutation::SetNoteCount { count: 42 },
-            WalMutation::PutProposal { proposal_id: 1, data: vec![1, 2] },
-            WalMutation::PutGovernanceParam { key: "max_gas".into(), value: "10000000".into() },
+            WalMutation::PutProposal {
+                proposal_id: 1,
+                data: vec![1, 2],
+            },
+            WalMutation::PutGovernanceParam {
+                key: "max_gas".into(),
+                value: "10000000".into(),
+            },
         ];
         wal.begin_block(99, [0xCC; 32], &mutations).unwrap();
 

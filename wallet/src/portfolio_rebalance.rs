@@ -358,8 +358,7 @@ impl RebalanceManager {
     }
 
     pub fn load(path: &Path) -> Result<Self, RebalanceError> {
-        let data =
-            std::fs::read_to_string(path).map_err(|e| RebalanceError::Io(e.to_string()))?;
+        let data = std::fs::read_to_string(path).map_err(|e| RebalanceError::Io(e.to_string()))?;
         serde_json::from_str(&data).map_err(|e| RebalanceError::Json(e.to_string()))
     }
 

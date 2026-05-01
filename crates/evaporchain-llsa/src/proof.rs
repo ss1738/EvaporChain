@@ -32,13 +32,12 @@ pub struct LlsaProof {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ProofError {
-    #[error(
-        "proof targets invariant {got:?} but the chain expects {expected:?}"
-    )]
-    WrongInvariant { got: InvariantId, expected: InvariantId },
-    #[error(
-        "proof bound to amendment {got:?} but supplied for amendment {expected:?}"
-    )]
+    #[error("proof targets invariant {got:?} but the chain expects {expected:?}")]
+    WrongInvariant {
+        got: InvariantId,
+        expected: InvariantId,
+    },
+    #[error("proof bound to amendment {got:?} but supplied for amendment {expected:?}")]
     WrongAmendment {
         got: AmendmentHash,
         expected: AmendmentHash,
@@ -102,7 +101,9 @@ impl ProofVerifier for AlwaysRejectVerifier {
         _expected_invariant: InvariantId,
         _expected_amendment: AmendmentHash,
     ) -> Result<(), ProofError> {
-        Err(ProofError::VerifierRejected("AlwaysRejectVerifier".to_string()))
+        Err(ProofError::VerifierRejected(
+            "AlwaysRejectVerifier".to_string(),
+        ))
     }
 }
 

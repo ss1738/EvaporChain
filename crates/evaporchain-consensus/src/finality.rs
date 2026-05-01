@@ -125,6 +125,13 @@ pub struct FinalityTracker {
     /// `records`). Sized at `max_records * 2` to keep gap memory longer
     /// than finalization memory.
     max_seen: usize,
+    /// High-water mark of every height that was ever recorded *and then
+    /// pruned* from `records`. Backfill at any height ≤ this watermark is
+    /// rejected even when `seen_proposals` would otherwise allow it,
+    /// because a record at that height already escaped to light clients
+    /// and a replay would shift the cluster's apparent finality state.
+    /// Closes THREAT_MODEL §4.9 "Finality records pollution" residual.
+    superseded_floor: u64,
 }
 
 impl FinalityTracker {
@@ -137,6 +144,7 @@ impl FinalityTracker {
             total_finalized: 0,
             seen_proposals: BTreeSet::new(),
             max_seen: 20_000,
+            superseded_floor: 0,
         }
     }
 
@@ -149,6 +157,7 @@ impl FinalityTracker {
             total_finalized: 0,
             seen_proposals: BTreeSet::new(),
             max_seen: max_records * 2,
+            superseded_floor: 0,
         }
     }
 
@@ -158,9 +167,7 @@ impl FinalityTracker {
     /// are accepted later. Heights NOT observed here cannot be back-filled
     /// once they fall below `latest_finalized`.
     pub fn observe_proposal(&mut self, height: u64) {
-        if self.seen_proposals.insert(height)
-            && self.seen_proposals.len() > self.max_seen
-        {
+        if self.seen_proposals.insert(height) && self.seen_proposals.len() > self.max_seen {
             // Prune the oldest observed height to bound memory.
             if let Some(&oldest) = self.seen_proposals.iter().next() {
                 self.seen_proposals.remove(&oldest);
@@ -191,6 +198,18 @@ impl FinalityTracker {
     ) -> bool {
         if self.records.contains_key(&height) {
             return false; // Already recorded — duplicate-finalization guard
+        }
+        // P2-05B follow-up: any height at or below `superseded_floor` was
+        // previously finalized and then pruned by the LRU. A replay of an
+        // old certificate at such a height would re-insert a record that
+        // light clients have already trusted and discarded. Reject.
+        if height > 0 && height <= self.superseded_floor {
+            debug!(
+                height,
+                superseded_floor = self.superseded_floor,
+                "Rejecting backfill: height ≤ superseded watermark"
+            );
+            return false;
         }
         // Cross_verification §1 hardening: if this finalization is a
         // back-fill (height < latest_finalized), only accept it when the
@@ -243,13 +262,23 @@ impl FinalityTracker {
         }
         self.total_finalized += 1;
 
-        // Prune old records
+        // Prune old records and bump the superseded watermark so
+        // pruned heights cannot be re-inserted by a certificate replay.
         while self.records.len() > self.max_records {
             let oldest = *self.records.keys().next().unwrap();
             self.records.remove(&oldest);
+            if oldest > self.superseded_floor {
+                self.superseded_floor = oldest;
+            }
         }
 
         true
+    }
+
+    /// High-water mark of pruned-and-finalized heights. Backfill at or
+    /// below this is rejected. Exposed for diagnostics + tests.
+    pub fn superseded_floor(&self) -> u64 {
+        self.superseded_floor
     }
 
     /// Get the latest finalized height.
@@ -335,12 +364,7 @@ impl FinalityTracker {
 
     /// Get finality statistics over the last N blocks.
     pub fn stats(&self, window: usize) -> FinalityStats {
-        let records: Vec<&FinalityRecord> = self
-            .records
-            .values()
-            .rev()
-            .take(window)
-            .collect();
+        let records: Vec<&FinalityRecord> = self.records.values().rev().take(window).collect();
 
         if records.is_empty() {
             return FinalityStats::default();
@@ -455,9 +479,7 @@ mod tests {
         assert_eq!(ft.latest_finalized_height(), 0);
 
         let cert = make_cert(1, [1u8; 32], vec![0, 1, 2]);
-        let recorded = ft.on_block_finalized(
-            1, [1u8; 32], [0xAA; 32], 0, cert, 3000, 4000, 100,
-        );
+        let recorded = ft.on_block_finalized(1, [1u8; 32], [0xAA; 32], 0, cert, 3000, 4000, 100);
         assert!(recorded);
         assert_eq!(ft.latest_finalized_height(), 1);
         assert_eq!(ft.total_finalized(), 1);
@@ -568,7 +590,14 @@ mod tests {
             let signing_stake = if h <= 5 { 3000 } else { 4000 };
             let cert = make_cert(h, [h as u8; 32], signers);
             ft.on_block_finalized(
-                h, [h as u8; 32], [h as u8; 32], 0, cert, signing_stake, 4000, h * 10,
+                h,
+                [h as u8; 32],
+                [h as u8; 32],
+                0,
+                cert,
+                signing_stake,
+                4000,
+                h * 10,
             );
         }
 
@@ -659,8 +688,7 @@ mod tests {
         // Height 3 was never observed. Even with a perfectly valid 2/3
         // certificate, this back-fill must be rejected.
         let cert3 = make_cert(3, [3u8; 32], vec![0, 1, 2]);
-        let accepted =
-            ft.on_block_finalized(3, [3u8; 32], [3u8; 32], 0, cert3, 3000, 4000, 30);
+        let accepted = ft.on_block_finalized(3, [3u8; 32], [3u8; 32], 0, cert3, 3000, 4000, 30);
         assert!(!accepted, "unobserved backfill must be rejected");
         assert_eq!(ft.record_count(), 1);
         assert_eq!(ft.latest_finalized_height(), 5);
@@ -693,8 +721,78 @@ mod tests {
         proof.certificate.signer_ids.clear();
         // Recompute proof hash to isolate the empty-signer check
         proof.proof_hash = FinalityTracker::compute_proof_hash(
-            proof.height, &proof.block_hash, &proof.state_root, &proof.certificate,
+            proof.height,
+            &proof.block_hash,
+            &proof.state_root,
+            &proof.certificate,
         );
         assert!(!FinalityTracker::verify_proof(&proof));
+    }
+
+    // ── THREAT_MODEL §4.9 — Finality records pollution regression ─────────
+
+    #[test]
+    fn superseded_floor_blocks_replay_after_prune() {
+        // max_records = 2 forces the LRU to evict heights 1, 2, 3 as we
+        // record 4 and 5. The watermark must rise to 3 once height 3 is
+        // pruned, and a replay of the height-1 cert must be rejected
+        // even though seen_proposals would otherwise allow it.
+        let mut ft = FinalityTracker::with_max_records(2);
+        for h in 1..=5u64 {
+            ft.observe_proposal(h);
+            let cert = make_cert(h, [h as u8; 32], vec![0, 1, 2]);
+            assert!(ft.on_block_finalized(
+                h,
+                [h as u8; 32],
+                [0xAAu8; 32],
+                0,
+                cert,
+                3000,
+                4000,
+                100 + h
+            ));
+        }
+        assert_eq!(ft.latest_finalized_height(), 5);
+        assert!(
+            ft.superseded_floor() >= 3,
+            "watermark should rise as records 1..=3 are pruned (got {})",
+            ft.superseded_floor()
+        );
+
+        // Replay a legitimate cert at height 1. seen_proposals still
+        // contains 1, so the prior gate would let it through. The
+        // watermark must reject it.
+        let replay_cert = make_cert(1, [1u8; 32], vec![0, 1, 2]);
+        let admitted =
+            ft.on_block_finalized(1, [1u8; 32], [0xAAu8; 32], 0, replay_cert, 3000, 4000, 999);
+        assert!(!admitted, "replay at superseded height must be rejected");
+    }
+
+    #[test]
+    fn superseded_floor_does_not_block_legitimate_gap_fill_above_watermark() {
+        // Height 7 is observed but not yet finalized; heights 4..=8 are
+        // finalized in order so that the LRU keeps roughly the most
+        // recent. After finalizing 4, 5, 6, 8, 9, 10 (skipping 7), a
+        // legitimate gap-fill at height 7 should be accepted as long as
+        // 7 is above the watermark.
+        let mut ft = FinalityTracker::with_max_records(8);
+        for h in 4..=10u64 {
+            ft.observe_proposal(h);
+            if h == 7 {
+                continue; // gap
+            }
+            let cert = make_cert(h, [h as u8; 32], vec![0, 1, 2]);
+            ft.on_block_finalized(h, [h as u8; 32], [0xAAu8; 32], 0, cert, 3000, 4000, 100 + h);
+        }
+        assert_eq!(ft.latest_finalized_height(), 10);
+        // 7 was never recorded, so the LRU could not have pruned it. The
+        // watermark stays at 0 (no records have been pruned yet at this
+        // size); but even if it had pruned the oldest, 7 > watermark.
+        assert!(7 > ft.superseded_floor());
+
+        let gap_cert = make_cert(7, [7u8; 32], vec![0, 1, 2]);
+        let admitted =
+            ft.on_block_finalized(7, [7u8; 32], [0xAAu8; 32], 0, gap_cert, 3000, 4000, 700);
+        assert!(admitted, "legitimate gap-fill above watermark must succeed");
     }
 }

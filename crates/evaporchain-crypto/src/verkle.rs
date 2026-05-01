@@ -202,17 +202,11 @@ impl VerkleTrie {
 
                     if existing_idx == new_idx {
                         // Same index at this depth — recurse deeper
-                        let child = Self::insert_recursive(
-                            Node::Leaf(existing),
-                            key,
-                            value,
-                            depth + 1,
-                        );
+                        let child =
+                            Self::insert_recursive(Node::Leaf(existing), key, value, depth + 1);
                         internal.children.insert(new_idx, child);
                     } else {
-                        internal
-                            .children
-                            .insert(existing_idx, Node::Leaf(existing));
+                        internal.children.insert(existing_idx, Node::Leaf(existing));
                         internal.children.insert(
                             new_idx,
                             Node::Leaf(LeafNode {
@@ -472,9 +466,7 @@ impl VerkleTrie {
         match node {
             Node::Empty => 0,
             Node::Leaf(_) => 1,
-            Node::Internal(internal) => {
-                internal.children.values().map(Self::count_leaves).sum()
-            }
+            Node::Internal(internal) => internal.children.values().map(Self::count_leaves).sum(),
         }
     }
 }

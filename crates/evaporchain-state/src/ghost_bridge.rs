@@ -163,21 +163,25 @@ pub fn verify_ghost_bridge_proof_with_keys(
     let structural_valid = proof.state_root_proof.validator_signatures.len() >= 2
         && proof.state_root_proof.state_root == proof.state_root
         && has_unique_validator_ids(&proof.state_root_proof.validator_signatures)
-        && proof.state_root_proof.validator_signatures.iter().all(|sig| {
-            !sig.signature.is_empty() && sig.signature.len() >= 48
-        });
+        && proof
+            .state_root_proof
+            .validator_signatures
+            .iter()
+            .all(|sig| !sig.signature.is_empty() && sig.signature.len() >= 48);
 
     checks.attestation_valid = if structural_valid {
         match validator_pubkeys {
-            Some(keys) => {
-                proof.state_root_proof.validator_signatures.iter().all(|sig| {
+            Some(keys) => proof
+                .state_root_proof
+                .validator_signatures
+                .iter()
+                .all(|sig| {
                     keys.get(&sig.validator_id).is_some_and(|pk_bytes| {
                         let pk = BlsPublicKey(pk_bytes.clone());
                         let bls_sig = BlsSignature(sig.signature.clone());
                         BlsVerifier::verify(&proof.state_root, &bls_sig, &pk)
                     })
-                })
-            }
+                }),
             None => true,
         }
     } else {
@@ -272,10 +276,8 @@ impl GhostBridgeRegistry {
         if self.processed_nonces.contains(&proof.bridge_nonce) {
             return Err("bridge nonce already processed (replay)");
         }
-        let verification = verify_ghost_bridge_proof_with_keys(
-            &proof,
-            self.validator_pubkeys.as_ref(),
-        );
+        let verification =
+            verify_ghost_bridge_proof_with_keys(&proof, self.validator_pubkeys.as_ref());
         if !verification.overall_valid {
             return Err("ghost bridge proof verification failed");
         }
@@ -443,12 +445,32 @@ mod tests {
         let ghost1 = make_ghost(1, 50);
         let ghost2 = make_ghost(2, 60);
         let p1 = builder.build_proof(
-            ghost1, 0, vec![], [0u8; 32], [0xAA; 32], 100, 50,
-            vec![ValidatorSig { validator_id: 0, signature: vec![1] }], 42,
+            ghost1,
+            0,
+            vec![],
+            [0u8; 32],
+            [0xAA; 32],
+            100,
+            50,
+            vec![ValidatorSig {
+                validator_id: 0,
+                signature: vec![1],
+            }],
+            42,
         );
         let p2 = builder.build_proof(
-            ghost2, 1, vec![], [0u8; 32], [0xAA; 32], 101, 51,
-            vec![ValidatorSig { validator_id: 0, signature: vec![1] }], 42,
+            ghost2,
+            1,
+            vec![],
+            [0u8; 32],
+            [0xAA; 32],
+            101,
+            51,
+            vec![ValidatorSig {
+                validator_id: 0,
+                signature: vec![1],
+            }],
+            42,
         );
         assert_eq!(p1.bridge_nonce, 1);
         assert_eq!(p2.bridge_nonce, 2);
@@ -496,8 +518,14 @@ mod tests {
         let ghost = make_ghost(1, 50);
         let mut proof = make_bridge_proof(ghost, 42);
         proof.state_root_proof.validator_signatures = vec![
-            ValidatorSig { validator_id: 0, signature: vec![0xAA; 96] },
-            ValidatorSig { validator_id: 1, signature: vec![0xBB; 10] }, // too short
+            ValidatorSig {
+                validator_id: 0,
+                signature: vec![0xAA; 96],
+            },
+            ValidatorSig {
+                validator_id: 1,
+                signature: vec![0xBB; 10],
+            }, // too short
         ];
         let result = verify_ghost_bridge_proof(&proof);
         assert!(!result.attestation_valid, "signature must be >= 48 bytes");
@@ -508,8 +536,14 @@ mod tests {
         let ghost = make_ghost(1, 50);
         let mut proof = make_bridge_proof(ghost, 42);
         proof.state_root_proof.validator_signatures = vec![
-            ValidatorSig { validator_id: 0, signature: vec![0xAA; 96] },
-            ValidatorSig { validator_id: 0, signature: vec![0xBB; 96] }, // duplicate
+            ValidatorSig {
+                validator_id: 0,
+                signature: vec![0xAA; 96],
+            },
+            ValidatorSig {
+                validator_id: 0,
+                signature: vec![0xBB; 96],
+            }, // duplicate
         ];
         let result = verify_ghost_bridge_proof(&proof);
         assert!(!result.attestation_valid, "duplicate validator IDs");

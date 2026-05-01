@@ -74,7 +74,10 @@ impl TrustLevel {
     }
 
     pub fn should_warn(&self) -> bool {
-        matches!(self, TrustLevel::Dangerous | TrustLevel::Suspicious | TrustLevel::Unknown)
+        matches!(
+            self,
+            TrustLevel::Dangerous | TrustLevel::Suspicious | TrustLevel::Unknown
+        )
     }
 }
 
@@ -136,7 +139,7 @@ impl RiskFlag {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AddressType {
-    Eoa,       // Externally Owned Account
+    Eoa, // Externally Owned Account
     Contract,
     Exchange,
     Defi,
@@ -222,13 +225,17 @@ impl ReputationStore {
     /// Look up an address.
     pub fn get(&self, address: &str) -> Option<&AddressReputation> {
         let addr = address.to_lowercase();
-        self.records.iter().find(|r| r.address.to_lowercase() == addr)
+        self.records
+            .iter()
+            .find(|r| r.address.to_lowercase() == addr)
     }
 
     /// Look up mutable.
     pub fn get_mut(&mut self, address: &str) -> Option<&mut AddressReputation> {
         let addr = address.to_lowercase();
-        self.records.iter_mut().find(|r| r.address.to_lowercase() == addr)
+        self.records
+            .iter_mut()
+            .find(|r| r.address.to_lowercase() == addr)
     }
 
     /// Add or update an address record.
@@ -241,7 +248,12 @@ impl ReputationStore {
     }
 
     /// Flag an address with a risk flag.
-    pub fn flag(&mut self, address: &str, flag: RiskFlag, note: Option<&str>) -> Result<(), ReputationError> {
+    pub fn flag(
+        &mut self,
+        address: &str,
+        flag: RiskFlag,
+        note: Option<&str>,
+    ) -> Result<(), ReputationError> {
         let addr = address.to_lowercase();
         if let Some(record) = self.get_mut(&addr) {
             if !record.flags.contains(&flag) {
@@ -282,7 +294,8 @@ impl ReputationStore {
 
     /// Remove a flag from an address.
     pub fn unflag(&mut self, address: &str, flag: &RiskFlag) -> Result<(), ReputationError> {
-        let record = self.get_mut(address)
+        let record = self
+            .get_mut(address)
             .ok_or_else(|| ReputationError::NotFound(address.to_string()))?;
         record.flags.retain(|f| f != flag);
         record.risk_score = Self::compute_score(&record.flags);
@@ -334,7 +347,8 @@ impl ReputationStore {
                     address: address.to_string(),
                     trust_level: record.trust_level,
                     risk_score: record.risk_score,
-                    should_block: record.trust_level == TrustLevel::Dangerous || record.risk_score >= self.block_threshold,
+                    should_block: record.trust_level == TrustLevel::Dangerous
+                        || record.risk_score >= self.block_threshold,
                     should_warn: record.trust_level.should_warn(),
                     warnings,
                 }
@@ -355,21 +369,24 @@ impl ReputationStore {
 
     /// List all dangerous addresses.
     pub fn dangerous(&self) -> Vec<&AddressReputation> {
-        self.records.iter()
+        self.records
+            .iter()
             .filter(|r| r.trust_level == TrustLevel::Dangerous)
             .collect()
     }
 
     /// List all flagged addresses.
     pub fn flagged(&self) -> Vec<&AddressReputation> {
-        self.records.iter()
+        self.records
+            .iter()
             .filter(|r| !r.flags.is_empty())
             .collect()
     }
 
     /// List verified addresses.
     pub fn verified(&self) -> Vec<&AddressReputation> {
-        self.records.iter()
+        self.records
+            .iter()
             .filter(|r| r.trust_level == TrustLevel::Verified)
             .collect()
     }
@@ -377,10 +394,13 @@ impl ReputationStore {
     /// Search records by address or label.
     pub fn search(&self, query: &str) -> Vec<&AddressReputation> {
         let q = query.to_lowercase();
-        self.records.iter()
+        self.records
+            .iter()
             .filter(|r| {
                 r.address.to_lowercase().contains(&q)
-                    || r.label.as_ref().is_some_and(|l| l.to_lowercase().contains(&q))
+                    || r.label
+                        .as_ref()
+                        .is_some_and(|l| l.to_lowercase().contains(&q))
             })
             .collect()
     }
@@ -408,10 +428,15 @@ impl ReputationStore {
     }
 
     fn score_to_trust(score: u8) -> TrustLevel {
-        if score >= 15 { TrustLevel::Dangerous }
-        else if score >= 8 { TrustLevel::Suspicious }
-        else if score >= 4 { TrustLevel::Neutral }
-        else { TrustLevel::Unknown }
+        if score >= 15 {
+            TrustLevel::Dangerous
+        } else if score >= 8 {
+            TrustLevel::Suspicious
+        } else if score >= 4 {
+            TrustLevel::Neutral
+        } else {
+            TrustLevel::Unknown
+        }
     }
 }
 
@@ -434,7 +459,9 @@ mod tests {
 
     fn make_store() -> ReputationStore {
         let mut store = ReputationStore::new();
-        store.flag("0xscammer", RiskFlag::Scam, Some("reported in Discord")).unwrap();
+        store
+            .flag("0xscammer", RiskFlag::Scam, Some("reported in Discord"))
+            .unwrap();
         store.flag("0xscammer", RiskFlag::Phishing, None).unwrap();
         store.verify("0xexchange", Some("EvapSwap DEX"));
         store.flag("0xfresh", RiskFlag::FreshWallet, None).unwrap();
@@ -465,7 +492,7 @@ mod tests {
         let fresh = store.get("0xfresh").unwrap();
         assert_eq!(fresh.flags.len(), 1);
         assert_eq!(fresh.risk_score, 3); // FreshWallet severity = 3
-        // Score 3 → Unknown trust
+                                         // Score 3 → Unknown trust
         assert_eq!(fresh.trust_level, TrustLevel::Unknown);
     }
 
@@ -576,7 +603,10 @@ mod tests {
         };
         store.upsert(rep);
         assert_eq!(store.count(), count_before); // Updated, not added
-        assert_eq!(store.get("0xscammer").unwrap().label.as_deref(), Some("reformed"));
+        assert_eq!(
+            store.get("0xscammer").unwrap().label.as_deref(),
+            Some("reformed")
+        );
     }
 
     #[test]
@@ -655,8 +685,12 @@ mod tests {
         store.flag("0xbad", RiskFlag::Mixer, None).unwrap();
         store.flag("0xbad", RiskFlag::TaintedFunds, None).unwrap();
         store.flag("0xbad", RiskFlag::DustAttack, None).unwrap();
-        store.flag("0xbad", RiskFlag::UnverifiedContract, None).unwrap();
-        store.flag("0xbad", RiskFlag::CommunityReport, None).unwrap();
+        store
+            .flag("0xbad", RiskFlag::UnverifiedContract, None)
+            .unwrap();
+        store
+            .flag("0xbad", RiskFlag::CommunityReport, None)
+            .unwrap();
         let record = store.get("0xbad").unwrap();
         assert!(record.risk_score <= 100);
     }

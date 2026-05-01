@@ -4,8 +4,8 @@
 //! multi-account backups, and recovery failure modes.
 
 use evaporchain_crypto::signatures::{MlDsaKeypair, MlDsaVerifier, Signer, Verifier};
-use evaporchain_wallet::mnemonic::{Mnemonic, MnemonicBackup, MnemonicError, MNEMONIC_WORD_COUNT};
 use evaporchain_wallet::address::derive_address;
+use evaporchain_wallet::mnemonic::{Mnemonic, MnemonicBackup, MnemonicError, MNEMONIC_WORD_COUNT};
 
 // ═══════════════════════════════════════════════════════════════════════
 // Scenario 1: Full backup and recovery lifecycle
@@ -47,12 +47,20 @@ fn full_backup_recovery_lifecycle() {
     assert_eq!(derive_address(&recovered.public_key_bytes()), original_addr);
 
     // Step 8: Verify old signature with recovered key
-    assert!(MlDsaVerifier::verify(msg, &sig_before, &recovered.public_key_bytes()));
+    assert!(MlDsaVerifier::verify(
+        msg,
+        &sig_before,
+        &recovered.public_key_bytes()
+    ));
 
     // Step 9: Sign new message with recovered key
     let new_msg = b"test message after recovery";
     let new_sig = recovered.sign(new_msg);
-    assert!(MlDsaVerifier::verify(new_msg, &new_sig, &recovered.public_key_bytes()));
+    assert!(MlDsaVerifier::verify(
+        new_msg,
+        &new_sig,
+        &recovered.public_key_bytes()
+    ));
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -79,11 +87,9 @@ fn multi_account_backup_different_indices() {
     for i in 0..5 {
         for j in (i + 1)..5 {
             assert_ne!(
-                backups[i].encrypted_keypair,
-                backups[j].encrypted_keypair,
+                backups[i].encrypted_keypair, backups[j].encrypted_keypair,
                 "backups {} and {} should differ",
-                i,
-                j
+                i, j
             );
         }
     }
@@ -142,9 +148,19 @@ fn phrase_roundtrip_deterministic() {
 fn phrase_case_insensitive() {
     let m = Mnemonic::generate();
     let upper = m.phrase().to_uppercase();
-    let mixed = m.words().iter().enumerate().map(|(i, w)| {
-        if i % 2 == 0 { w.to_uppercase() } else { w.clone() }
-    }).collect::<Vec<_>>().join(" ");
+    let mixed = m
+        .words()
+        .iter()
+        .enumerate()
+        .map(|(i, w)| {
+            if i % 2 == 0 {
+                w.to_uppercase()
+            } else {
+                w.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
 
     let from_upper = Mnemonic::from_phrase(&upper).unwrap();
     let from_mixed = Mnemonic::from_phrase(&mixed).unwrap();

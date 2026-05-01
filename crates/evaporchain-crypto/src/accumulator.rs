@@ -427,11 +427,7 @@ impl Accumulator for InMemoryAccumulator {
         let mmr_proof = self.mmr.prove(leaf_index)?;
 
         // Convert MMR proof to legacy MembershipProof format
-        let mut path: Vec<Option<[u8; 32]>> = mmr_proof
-            .siblings
-            .iter()
-            .map(|s| Some(*s))
-            .collect();
+        let mut path: Vec<Option<[u8; 32]>> = mmr_proof.siblings.iter().map(|s| Some(*s)).collect();
         // Append peak hashes for complete verification
         for ph in &mmr_proof.peak_hashes {
             path.push(Some(*ph));
@@ -633,7 +629,11 @@ mod tests {
         for i in 0u8..20 {
             mmr.append(blake3_hash(&[i]));
             let new_root = mmr.root();
-            assert_ne!(prev_root, new_root, "Root did not change after append {}", i);
+            assert_ne!(
+                prev_root, new_root,
+                "Root did not change after append {}",
+                i
+            );
             prev_root = new_root;
         }
     }

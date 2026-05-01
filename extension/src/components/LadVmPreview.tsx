@@ -17,22 +17,30 @@ import { api, type LadAction, type LadMode, type LadSimResp } from "@/utils/api"
  *   { status, action, mode, outcome, returned_value, is_evaporated_at_query,
  *     created_at_epoch, current_epoch, decay_window, detail }
  *
- * /api/objects (ObjectResponse) now carries an `is_lad_typed` field but
- * the chain returns `false` for every object until
- * `evaporchain-types::StateObject` carries a real LAD marker. The Send
- * screen also doesn't take a target-object context (only a recipient
- * address), so even with the flag wired we can't auto-decide whether to
- * render this preview alongside a transfer. Two reasons to keep this
- * dev-gated until both are resolved:
- *   1. Chain `is_lad_typed` is stub-`false`; rendering would always be a
- *      no-op in production.
- *   2. SendScreen has no `objectId`-shaped input to look up.
- * TODO: wire into the live tx-simulation flow once (a) the chain stamps
- * a real LAD mode on StateObject and (b) Send / refresh / dApp call
- * paths carry a target-object context.
+ * /api/objects (ObjectResponse) now carries a real `is_lad_typed` and
+ * `lad_mode` (sourced from `StateObject.lad_mode`), so condition (1) of
+ * the original gating reasoning is resolved. The remaining blocker is
+ * (2): SendScreen takes a recipient *address*, not an object id, so
+ * there is no target-object context to attach this preview to a live
+ * transfer flow. Until SendScreen (and the refresh / dApp call paths)
+ * carry an object-id-shaped input, auto-rendering this alongside a Send
+ * would have nothing to key off of.
+ *
+ * TODO: remove the dev gate below once SendScreen / refresh / dApp call
+ * UX threads a target `objectId` through to this component. At that
+ * point flip the gate to render only when `obj.is_lad_typed === true`
+ * for the resolved object.
  */
 export function LadVmPreview() {
-  // Dev-only gate — see TODO in file header.
+  // Dev-only gate.
+  //
+  // TODO(LAD-VM live wiring): the chain side is now real
+  // (StateObject.lad_mode → ObjectResponse.{is_lad_typed,lad_mode}),
+  // but SendScreen still takes a recipient address with no object-id
+  // context, so there is nothing to look up `is_lad_typed` against in
+  // the live tx-simulation flow. Once SendScreen / refresh / dApp call
+  // surfaces accept an `objectId`, drop this gate and instead render
+  // when the resolved StateObject has `is_lad_typed === true`.
   if (!import.meta.env.DEV) return null;
   return <LadVmPreviewInner />;
 }

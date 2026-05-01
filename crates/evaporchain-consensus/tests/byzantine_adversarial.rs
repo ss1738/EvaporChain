@@ -4,9 +4,7 @@
 //! minority stake attacks, stale replays, invalid BLS, round skips,
 //! missing commit certificates, and partial network partitions.
 
-use evaporchain_consensus::tendermint::{
-    ConsensusAction, ConsensusMessage, TendermintConsensus,
-};
+use evaporchain_consensus::tendermint::{ConsensusAction, ConsensusMessage, TendermintConsensus};
 use evaporchain_consensus::validator_set::{ValidatorInfo, ValidatorSet};
 use evaporchain_state::db::InMemoryStateDB;
 use evaporchain_types::Block;
@@ -57,7 +55,7 @@ fn make_test_block(height: u64, producer_id: u64) -> Block {
 fn test_byzantine_double_vote_prevote_detected() {
     let vs = make_validator_set_3();
     let mut tc = TendermintConsensus::new_for_test(1, 10, vs);
-    let block = make_test_block(1, 1);
+    let _block = make_test_block(1, 1);
     let block_hash = [0xAAu8; 32];
     let block_hash2 = [0xBBu8; 32];
 
@@ -77,12 +75,14 @@ fn test_byzantine_double_vote_prevote_detected() {
         bls_signature: None,
     };
 
-    let actions1 = tc.on_message(msg1);
+    let _actions1 = tc.on_message(msg1);
     let actions2 = tc.on_message(msg2);
 
     // The second vote should be rejected (equivocation detection) or slashed
     // Either no actions or a slash action
-    let has_slash = actions2.iter().any(|a| matches!(a, ConsensusAction::BroadcastMessage(_)));
+    let has_slash = actions2
+        .iter()
+        .any(|a| matches!(a, ConsensusAction::BroadcastMessage(_)));
     // At minimum, the consensus should not commit with conflicting votes
     assert!(
         actions2.is_empty() || has_slash,
@@ -152,7 +152,12 @@ fn test_byzantine_equivocation_dual_proposals() {
     let actions2 = tc.on_message(msg2);
 
     // Second proposal for the same height/round should be ignored
-    let voted_twice = actions2.iter().any(|a| matches!(a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. })));
+    let voted_twice = actions2.iter().any(|a| {
+        matches!(
+            a,
+            ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { .. })
+        )
+    });
     assert!(
         !voted_twice,
         "Should not vote on a second proposal for the same height/round"
@@ -192,7 +197,15 @@ fn test_byzantine_proposal_wrong_height() {
     };
 
     let actions = tc.on_message(msg);
-    let voted = actions.iter().any(|a| matches!(a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { block_hash: Some(_), .. })));
+    let voted = actions.iter().any(|a| {
+        matches!(
+            a,
+            ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote {
+                block_hash: Some(_),
+                ..
+            })
+        )
+    });
     assert!(!voted, "Should not vote for a proposal with wrong height");
 }
 
@@ -213,8 +226,19 @@ fn test_byzantine_proposal_zero_state_root_rejected() {
     };
 
     let actions = tc.on_message(msg);
-    let voted = actions.iter().any(|a| matches!(a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { block_hash: Some(_), .. })));
-    assert!(!voted, "Should reject proposal with zero state_root on non-genesis block");
+    let voted = actions.iter().any(|a| {
+        matches!(
+            a,
+            ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote {
+                block_hash: Some(_),
+                ..
+            })
+        )
+    });
+    assert!(
+        !voted,
+        "Should reject proposal with zero state_root on non-genesis block"
+    );
 }
 
 #[test]
@@ -232,7 +256,15 @@ fn test_byzantine_proposal_wrong_proposer() {
 
     let actions = tc.on_message(msg);
     // Should either reject or not vote for it
-    let voted = actions.iter().any(|a| matches!(a, ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote { block_hash: Some(_), .. })));
+    let voted = actions.iter().any(|a| {
+        matches!(
+            a,
+            ConsensusAction::BroadcastMessage(ConsensusMessage::Prevote {
+                block_hash: Some(_),
+                ..
+            })
+        )
+    });
     // It's ok if the proposer check doesn't reject (round-robin might match),
     // but tampered parent_hash/state_root should still be validated.
     // This test documents the behavior.
@@ -248,7 +280,7 @@ fn test_byzantine_minority_stake_cannot_reach_quorum() {
     let vs = make_validator_set_3();
     let mut tc = TendermintConsensus::new_for_test(1, 10, vs);
 
-    let block = make_test_block(1, 1);
+    let _block = make_test_block(1, 1);
     let block_hash = [0xAAu8; 32];
 
     // Only validator 2 prevotes
@@ -332,7 +364,10 @@ fn test_byzantine_stale_prevote_from_old_height() {
             ConsensusAction::BroadcastMessage(ConsensusMessage::Precommit { .. })
         )
     });
-    assert!(!precommitted, "Stale message from old height should be ignored");
+    assert!(
+        !precommitted,
+        "Stale message from old height should be ignored"
+    );
 }
 
 #[test]
@@ -411,8 +446,13 @@ fn test_byzantine_future_round_precommit_ignored() {
     let actions = tc.on_message(msg);
 
     // Should not commit or advance to round 99
-    let committed = actions.iter().any(|a| matches!(a, ConsensusAction::CommitBlock(_)));
-    assert!(!committed, "Future round precommit should not trigger commit");
+    let committed = actions
+        .iter()
+        .any(|a| matches!(a, ConsensusAction::CommitBlock(_)));
+    assert!(
+        !committed,
+        "Future round precommit should not trigger commit"
+    );
 }
 
 // ─── 9. Missing Commit Certificate ──────────────────────────────────────────
@@ -433,7 +473,10 @@ fn test_byzantine_block_without_commit_certificate() {
     // (finality requires a valid CommitCertificate)
     let block_hash = [0u8; 32];
     let finalized = tc.finality_tracker.is_block_finalized(1, &block_hash);
-    assert!(!finalized, "Block without commit certificate should not be finalized");
+    assert!(
+        !finalized,
+        "Block without commit certificate should not be finalized"
+    );
 }
 
 // ─── 10. Partial Network Partition ──────────────────────────────────────────
@@ -545,7 +588,9 @@ fn test_byzantine_nil_prevote_quorum_does_not_commit() {
     // Nil quorum should NOT commit — should trigger round advance
     let mut db = InMemoryStateDB::new();
     let actions = tc.tick(&mut db);
-    let committed = actions.iter().any(|a| matches!(a, ConsensusAction::CommitBlock(_)));
+    let committed = actions
+        .iter()
+        .any(|a| matches!(a, ConsensusAction::CommitBlock(_)));
     assert!(!committed, "Nil prevote quorum should not commit a block");
 }
 
@@ -574,7 +619,9 @@ fn test_byzantine_conflicting_precommits_no_commit() {
     let actions = tc.on_message(msg3);
 
     // No quorum on any single block → should not commit
-    let committed = actions.iter().any(|a| matches!(a, ConsensusAction::CommitBlock(_)));
+    let committed = actions
+        .iter()
+        .any(|a| matches!(a, ConsensusAction::CommitBlock(_)));
     assert!(
         !committed,
         "Conflicting precommits (different hashes) should not reach quorum"

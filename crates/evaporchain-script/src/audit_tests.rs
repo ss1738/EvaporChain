@@ -3,8 +3,8 @@
 
 #[cfg(test)]
 mod vm_safety_tests {
-    use crate::parser;
     use crate::compiler;
+    use crate::parser;
     use crate::vm::EvaporVM;
     use crate::{ExecutionContext, ScriptEngine, ScriptError, Value};
     use std::collections::HashMap;
@@ -52,17 +52,22 @@ contract GasEater {
         let state = HashMap::from([("count".to_string(), Value::U64(0))]);
 
         // With a tight gas limit, execution should fail gracefully
-        let result = EvaporVM::execute_with_gas_limit(
-            &bytecode, "burn", vec![], state, &ctx, 1_000,
-        );
+        let result =
+            EvaporVM::execute_with_gas_limit(&bytecode, "burn", vec![], state, &ctx, 1_000);
 
         // Should either succeed with limited iterations or fail with gas error — NOT panic
         match result {
             Ok(r) => assert!(r.gas_used <= 1_000, "gas used should not exceed limit"),
-            Err(e) => assert!(format!("{:?}", e).contains("gas") || format!("{:?}", e).contains("Gas")
-                || format!("{:?}", e).contains("limit") || format!("{:?}", e).contains("Limit")
-                || format!("{:?}", e).contains("iteration") || format!("{:?}", e).contains("Loop"),
-                "error should mention gas/limit/iteration, got: {:?}", e),
+            Err(e) => assert!(
+                format!("{:?}", e).contains("gas")
+                    || format!("{:?}", e).contains("Gas")
+                    || format!("{:?}", e).contains("limit")
+                    || format!("{:?}", e).contains("Limit")
+                    || format!("{:?}", e).contains("iteration")
+                    || format!("{:?}", e).contains("Loop"),
+                "error should mention gas/limit/iteration, got: {:?}",
+                e
+            ),
         }
     }
 
@@ -90,15 +95,17 @@ contract LoopTest {
         let result = EvaporVM::execute(&bytecode, "loop_forever", vec![], state, &ctx);
 
         // Must either terminate within bounds or error — never hang
-        match result {
-            Ok(r) => {
-                // VM should cap iterations
-                if let Value::U64(v) = r.return_value {
-                    assert!(v <= 100_001, "loop should be bounded to ~100K iterations, got {}", v);
-                }
+        if let Ok(r) = result {
+            // VM should cap iterations
+            if let Value::U64(v) = r.return_value {
+                assert!(
+                    v <= 100_001,
+                    "loop should be bounded to ~100K iterations, got {}",
+                    v
+                );
             }
-            Err(_) => {} // expected — iteration limit exceeded
         }
+        // Err is also fine — iteration limit exceeded
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -117,17 +124,21 @@ contract LoopTest {
     fn test_garbage_source_error() {
         let inputs = [
             "asdf1234!@#$",
-            "contract { }",  // missing name
-            "contract X { fn () }",  // missing method name
-            "\x00\x01\x02\x03",  // binary garbage
-            "contract X { state { x: unknown_type } }",  // unknown type
-            &"a".repeat(100_000),  // very long input
+            "contract { }",                             // missing name
+            "contract X { fn () }",                     // missing method name
+            "\x00\x01\x02\x03",                         // binary garbage
+            "contract X { state { x: unknown_type } }", // unknown type
+            &"a".repeat(100_000),                       // very long input
         ];
 
         for input in &inputs {
             let result = parser::parse(input);
             // Must not panic
-            assert!(result.is_err(), "garbage input should produce error: {:?}", &input[..input.len().min(50)]);
+            assert!(
+                result.is_err(),
+                "garbage input should produce error: {:?}",
+                &input[..input.len().min(50)]
+            );
         }
     }
 
@@ -167,14 +178,15 @@ contract X {
 
         // Pass a string instead of u64
         let result = EvaporVM::execute(
-            &bytecode, "add", vec![Value::Str("not_a_number".to_string())], state, &ctx,
+            &bytecode,
+            "add",
+            vec![Value::Str("not_a_number".to_string())],
+            state,
+            &ctx,
         );
         // Should either error or handle gracefully — never panic
         // (The VM may coerce types or reject)
-        match result {
-            Ok(_) => {} // some VMs allow this
-            Err(_) => {} // expected
-        }
+        let _ = result;
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -206,8 +218,12 @@ contract Counter {
 
         // Contract 2 should still be at 0
         let result = engine.call(id2, "increment", vec![], creator, 10).unwrap();
-        assert_eq!(result.return_value, Value::U64(1),
-            "contract 2 should start from 0, got {:?}", result.return_value);
+        assert_eq!(
+            result.return_value,
+            Value::U64(1),
+            "contract 2 should start from 0, got {:?}",
+            result.return_value
+        );
     }
 
     /// Evaporated contract should not be callable.
@@ -263,8 +279,10 @@ contract GasTest {
         let result = EvaporVM::execute(&bytecode, "work", vec![], state, &ctx).unwrap();
 
         // Gas must be tracked even without explicit gas limit
-        assert!(result.gas_used > 0,
-            "H-08: execute() without explicit gas limit must still meter gas, got gas_used=0");
+        assert!(
+            result.gas_used > 0,
+            "H-08: execute() without explicit gas limit must still meter gas, got gas_used=0"
+        );
     }
 
     /// H-08: A long-running script called via execute() must eventually hit the default
@@ -291,14 +309,17 @@ contract RunAway {
         // execute() uses DEFAULT_GAS_LIMIT; this loop would run ~1B iterations without it
         let result = EvaporVM::execute(&bytecode, "burn_all_gas", vec![], state, &ctx);
 
-        assert!(result.is_err(),
-            "H-08: runaway script must be terminated by default gas limit");
+        assert!(
+            result.is_err(),
+            "H-08: runaway script must be terminated by default gas limit"
+        );
         match result {
             Err(ScriptError::GasLimitExceeded { used, limit }) => {
-                assert!(used > limit,
-                    "gas_used ({used}) should exceed limit ({limit})");
-                assert!(limit > 0,
-                    "gas limit must not be zero");
+                assert!(
+                    used > limit,
+                    "gas_used ({used}) should exceed limit ({limit})"
+                );
+                assert!(limit > 0, "gas limit must not be zero");
             }
             Err(ScriptError::StepLimitExceeded { .. }) => {
                 // Step limit is also acceptable as a safety bound
@@ -306,7 +327,9 @@ contract RunAway {
             Err(ScriptError::Runtime(msg)) if msg.contains("loop iteration limit") => {
                 // Loop iteration limit is also an acceptable safety bound
             }
-            Err(e) => panic!("H-08: expected GasLimitExceeded, StepLimitExceeded, or loop limit, got: {e:?}"),
+            Err(e) => panic!(
+                "H-08: expected GasLimitExceeded, StepLimitExceeded, or loop limit, got: {e:?}"
+            ),
             Ok(_) => unreachable!(),
         }
     }
@@ -328,12 +351,12 @@ contract Trivial {
         let state = HashMap::from([("v".to_string(), Value::U64(0))]);
 
         // Passing gas_limit=0 must NOT mean "unlimited" — it means 0 gas available
-        let result = EvaporVM::execute_with_gas_limit(
-            &bytecode, "noop", vec![], state, &ctx, 0,
-        );
+        let result = EvaporVM::execute_with_gas_limit(&bytecode, "noop", vec![], state, &ctx, 0);
 
-        assert!(result.is_err(),
-            "H-08: gas_limit=0 must cause immediate gas exhaustion, not disable metering");
+        assert!(
+            result.is_err(),
+            "H-08: gas_limit=0 must cause immediate gas exhaustion, not disable metering"
+        );
         match result {
             Err(ScriptError::GasLimitExceeded { .. }) => {} // correct
             Err(e) => panic!("H-08: expected GasLimitExceeded, got: {e:?}"),
@@ -361,8 +384,10 @@ contract GasCheck {
         let id = engine.deploy(src, creator, 10_000, 100, 1).unwrap();
 
         let result = engine.call(id, "small_work", vec![], creator, 10).unwrap();
-        assert!(result.gas_used > 0,
-            "H-08: ScriptEngine::call() must track gas usage");
+        assert!(
+            result.gas_used > 0,
+            "H-08: ScriptEngine::call() must track gas usage"
+        );
     }
 
     /// Gas used should be proportional to work done.
@@ -385,14 +410,19 @@ contract Work {
         let ctx = test_ctx();
 
         let state1 = HashMap::from([("v".to_string(), Value::U64(0))]);
-        let r1 = EvaporVM::execute(&bytecode, "do_work", vec![Value::U64(10)], state1, &ctx).unwrap();
+        let r1 =
+            EvaporVM::execute(&bytecode, "do_work", vec![Value::U64(10)], state1, &ctx).unwrap();
 
         let state2 = HashMap::from([("v".to_string(), Value::U64(0))]);
-        let r2 = EvaporVM::execute(&bytecode, "do_work", vec![Value::U64(100)], state2, &ctx).unwrap();
+        let r2 =
+            EvaporVM::execute(&bytecode, "do_work", vec![Value::U64(100)], state2, &ctx).unwrap();
 
-        assert!(r2.gas_used > r1.gas_used,
+        assert!(
+            r2.gas_used > r1.gas_used,
             "more work should use more gas: 10 iterations={}, 100 iterations={}",
-            r1.gas_used, r2.gas_used);
+            r1.gas_used,
+            r2.gas_used
+        );
     }
 }
 

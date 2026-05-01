@@ -357,9 +357,7 @@ pub async fn call_tool(ctx: &Context, params: &Value) -> Result<Value, String> {
                 .and_then(|v| v.as_u64())
                 .unwrap_or(20)
                 .min(50);
-            let data = ctx
-                .get_json(&format!("/api/blocks?limit={limit}"))
-                .await?;
+            let data = ctx.get_json(&format!("/api/blocks?limit={limit}")).await?;
             format_text_result(&data)
         }
         "get_block" => {
@@ -371,13 +369,8 @@ pub async fn call_tool(ctx: &Context, params: &Value) -> Result<Value, String> {
             format_text_result(&data)
         }
         "get_recent_events" => {
-            let limit = args
-                .get("limit")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(30);
-            let data = ctx
-                .get_json(&format!("/api/events?limit={limit}"))
-                .await?;
+            let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(30);
+            let data = ctx.get_json(&format!("/api/events?limit={limit}")).await?;
             format_text_result(&data)
         }
         "list_contracts" => {
@@ -512,7 +505,9 @@ pub async fn call_tool(ctx: &Context, params: &Value) -> Result<Value, String> {
                 "epochs_elapsed": args.get("epochs_elapsed").and_then(|v| v.as_u64()).unwrap_or(1),
                 "half_life_epochs": args.get("half_life_epochs").and_then(|v| v.as_u64()).unwrap_or(4096),
             });
-            let data = ctx.post_json("/api/energy_kernel/conservation_check", &body).await?;
+            let data = ctx
+                .post_json("/api/energy_kernel/conservation_check", &body)
+                .await?;
             format_text_result(&data)
         }
         _ => Err(format!("Unknown tool: {name}"))?,
@@ -570,9 +565,16 @@ mod tests {
     #[test]
     fn test_read_tools_have_no_required_params_except_getters() {
         let tools = list_tools();
-        let no_required = ["get_chain_status", "list_objects", "list_accounts",
-                          "list_ghosts", "get_recent_blocks", "get_recent_events",
-                          "list_contracts", "get_stats"];
+        let no_required = [
+            "get_chain_status",
+            "list_objects",
+            "list_accounts",
+            "list_ghosts",
+            "get_recent_blocks",
+            "get_recent_events",
+            "list_contracts",
+            "get_stats",
+        ];
         for tool in tools["tools"].as_array().unwrap() {
             let name = tool["name"].as_str().unwrap();
             if no_required.contains(&name) {
@@ -580,7 +582,9 @@ mod tests {
                 // These may have optional params but no required ones
                 // (get_recent_blocks has optional "limit")
                 assert!(
-                    required.is_empty() || name == "get_recent_blocks" || name == "get_recent_events",
+                    required.is_empty()
+                        || name == "get_recent_blocks"
+                        || name == "get_recent_events",
                     "{name} should have no required params"
                 );
             }
@@ -590,16 +594,18 @@ mod tests {
     #[test]
     fn test_write_tools_have_required_params() {
         let tools = list_tools();
-        let write_tools = ["transfer", "create_object", "refresh_object",
-                          "resurrect_object", "request_faucet"];
+        let write_tools = [
+            "transfer",
+            "create_object",
+            "refresh_object",
+            "resurrect_object",
+            "request_faucet",
+        ];
         for tool in tools["tools"].as_array().unwrap() {
             let name = tool["name"].as_str().unwrap();
             if write_tools.contains(&name) {
                 let required = tool["inputSchema"]["required"].as_array().unwrap();
-                assert!(
-                    !required.is_empty(),
-                    "{name} should have required params"
-                );
+                assert!(!required.is_empty(), "{name} should have required params");
             }
         }
     }

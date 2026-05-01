@@ -23,10 +23,14 @@ pub enum AuditError {
 }
 
 impl From<std::io::Error> for AuditError {
-    fn from(e: std::io::Error) -> Self { AuditError::Io(e.to_string()) }
+    fn from(e: std::io::Error) -> Self {
+        AuditError::Io(e.to_string())
+    }
 }
 impl From<serde_json::Error> for AuditError {
-    fn from(e: serde_json::Error) -> Self { AuditError::Json(e.to_string()) }
+    fn from(e: serde_json::Error) -> Self {
+        AuditError::Json(e.to_string())
+    }
 }
 
 /// Category of auditable action.
@@ -153,9 +157,14 @@ impl AuditEntry {
     fn compute_hash(&self) -> String {
         let content = format!(
             "{}|{}|{}|{:?}|{}|{}|{:?}|{}",
-            self.index, self.timestamp, self.action.label(),
-            self.severity, self.account, self.description,
-            self.metadata, self.prev_hash
+            self.index,
+            self.timestamp,
+            self.action.label(),
+            self.severity,
+            self.account,
+            self.description,
+            self.metadata,
+            self.prev_hash
         );
         blake3::hash(content.as_bytes()).to_hex().to_string()
     }
@@ -217,7 +226,9 @@ impl AuditLog {
         metadata: std::collections::HashMap<String, String>,
     ) -> &AuditEntry {
         let index = self.entries.len() as u64;
-        let prev_hash = self.entries.last()
+        let prev_hash = self
+            .entries
+            .last()
             .map(|e| e.hash.clone())
             .unwrap_or_else(|| "0".repeat(64)); // genesis
 
@@ -245,23 +256,25 @@ impl AuditLog {
     }
 
     /// Convenience: log an info-level action.
-    pub fn info(
-        &mut self,
-        action: AuditAction,
-        account: &str,
-        description: &str,
-    ) -> &AuditEntry {
-        self.append(action, Severity::Info, account, description, std::collections::HashMap::new())
+    pub fn info(&mut self, action: AuditAction, account: &str, description: &str) -> &AuditEntry {
+        self.append(
+            action,
+            Severity::Info,
+            account,
+            description,
+            std::collections::HashMap::new(),
+        )
     }
 
     /// Convenience: log a warning-level action.
-    pub fn warn(
-        &mut self,
-        action: AuditAction,
-        account: &str,
-        description: &str,
-    ) -> &AuditEntry {
-        self.append(action, Severity::Warning, account, description, std::collections::HashMap::new())
+    pub fn warn(&mut self, action: AuditAction, account: &str, description: &str) -> &AuditEntry {
+        self.append(
+            action,
+            Severity::Warning,
+            account,
+            description,
+            std::collections::HashMap::new(),
+        )
     }
 
     /// Convenience: log a critical-level action.
@@ -271,7 +284,13 @@ impl AuditLog {
         account: &str,
         description: &str,
     ) -> &AuditEntry {
-        self.append(action, Severity::Critical, account, description, std::collections::HashMap::new())
+        self.append(
+            action,
+            Severity::Critical,
+            account,
+            description,
+            std::collections::HashMap::new(),
+        )
     }
 
     /// Verify the entire chain. Returns Ok(()) if intact, Err with first broken index.
@@ -314,7 +333,10 @@ impl AuditLog {
 
     /// Filter by action type.
     pub fn filter_action(&self, action: &AuditAction) -> Vec<&AuditEntry> {
-        self.entries.iter().filter(|e| &e.action == action).collect()
+        self.entries
+            .iter()
+            .filter(|e| &e.action == action)
+            .collect()
     }
 
     /// Filter by severity.
@@ -325,7 +347,10 @@ impl AuditLog {
     /// Filter by account.
     pub fn filter_account(&self, account: &str) -> Vec<&AuditEntry> {
         let acc = account.to_lowercase();
-        self.entries.iter().filter(|e| e.account.to_lowercase() == acc).collect()
+        self.entries
+            .iter()
+            .filter(|e| e.account.to_lowercase() == acc)
+            .collect()
     }
 
     /// Recent entries.
@@ -336,7 +361,8 @@ impl AuditLog {
     /// Search description text.
     pub fn search(&self, query: &str) -> Vec<&AuditEntry> {
         let q = query.to_lowercase();
-        self.entries.iter()
+        self.entries
+            .iter()
             .filter(|e| e.description.to_lowercase().contains(&q) || e.action.label().contains(&q))
             .collect()
     }
@@ -356,8 +382,13 @@ impl AuditLog {
         for e in &self.entries {
             csv.push_str(&format!(
                 "{},{},{},{:?},{},{},{}\n",
-                e.index, e.timestamp, e.action.label(), e.severity,
-                e.account, e.description.replace(',', ";"), &e.hash[..16]
+                e.index,
+                e.timestamp,
+                e.action.label(),
+                e.severity,
+                e.account,
+                e.description.replace(',', ";"),
+                &e.hash[..16]
             ));
         }
         csv
@@ -365,7 +396,9 @@ impl AuditLog {
 }
 
 impl Default for AuditLog {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Default path.
@@ -382,9 +415,21 @@ mod tests {
     fn make_log() -> AuditLog {
         let mut log = AuditLog::new();
         log.info(AuditAction::AccountCreate, "alice", "Created account alice");
-        log.info(AuditAction::TransferSend, "alice", "Sent 1000 EVAP to 0xbob");
-        log.warn(AuditAction::SpendingPolicyChange, "alice", "Daily limit changed to 50000");
-        log.critical(AuditAction::PasswordChange, "alice", "Master password changed");
+        log.info(
+            AuditAction::TransferSend,
+            "alice",
+            "Sent 1000 EVAP to 0xbob",
+        );
+        log.warn(
+            AuditAction::SpendingPolicyChange,
+            "alice",
+            "Daily limit changed to 50000",
+        );
+        log.critical(
+            AuditAction::PasswordChange,
+            "alice",
+            "Master password changed",
+        );
         log
     }
 
@@ -527,7 +572,13 @@ mod tests {
         let mut meta = std::collections::HashMap::new();
         meta.insert("tx_hash".into(), "0xabc".into());
         meta.insert("amount".into(), "1000".into());
-        log.append(AuditAction::TransferSend, Severity::Info, "alice", "Transfer", meta);
+        log.append(
+            AuditAction::TransferSend,
+            Severity::Info,
+            "alice",
+            "Transfer",
+            meta,
+        );
         let entry = log.latest().unwrap();
         assert_eq!(entry.metadata.get("tx_hash").unwrap(), "0xabc");
         assert!(entry.verify());
@@ -536,7 +587,11 @@ mod tests {
     #[test]
     fn test_custom_action() {
         let mut log = AuditLog::new();
-        log.info(AuditAction::Custom("import_csv".into()), "admin", "Imported CSV data");
+        log.info(
+            AuditAction::Custom("import_csv".into()),
+            "admin",
+            "Imported CSV data",
+        );
         assert_eq!(log.latest().unwrap().action.label(), "custom.import_csv");
     }
 

@@ -90,9 +90,8 @@ impl RewardAccumulator {
 
             // Staker share (accumulated for proportional distribution)
             if dist.to_stakers > 0 {
-                self.pending_staker_rewards = self
-                    .pending_staker_rewards
-                    .saturating_add(dist.to_stakers);
+                self.pending_staker_rewards =
+                    self.pending_staker_rewards.saturating_add(dist.to_stakers);
                 self.total_to_stakers = self.total_to_stakers.saturating_add(dist.to_stakers);
             }
 
@@ -134,7 +133,10 @@ impl RewardAccumulator {
             return 0;
         }
 
-        let total_stake: u64 = stakers.iter().map(|(_, s)| *s).fold(0u64, |a, s| a.saturating_add(s));
+        let total_stake: u64 = stakers
+            .iter()
+            .map(|(_, s)| *s)
+            .fold(0u64, |a, s| a.saturating_add(s));
         if total_stake == 0 {
             return 0;
         }

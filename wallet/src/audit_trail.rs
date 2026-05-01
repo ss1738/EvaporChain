@@ -167,7 +167,10 @@ impl AuditTrail {
     }
 
     pub fn entries_by_action(&self, action: &AuditAction) -> Vec<&AuditEntry> {
-        self.entries.iter().filter(|e| &e.action == action).collect()
+        self.entries
+            .iter()
+            .filter(|e| &e.action == action)
+            .collect()
     }
 
     pub fn entries_by_severity(&self, severity: &AuditSeverity) -> Vec<&AuditEntry> {
@@ -347,9 +350,27 @@ mod tests {
     #[test]
     fn test_record_multiple_chain_links() {
         let mut trail = AuditTrail::new();
-        trail.record(AuditAction::KeyGenerated, AuditSeverity::Info, "alice", "w1", HashMap::new());
-        trail.record(AuditAction::TxSigned, AuditSeverity::Info, "alice", "tx1", HashMap::new());
-        trail.record(AuditAction::TxSubmitted, AuditSeverity::Warning, "bob", "tx1", HashMap::new());
+        trail.record(
+            AuditAction::KeyGenerated,
+            AuditSeverity::Info,
+            "alice",
+            "w1",
+            HashMap::new(),
+        );
+        trail.record(
+            AuditAction::TxSigned,
+            AuditSeverity::Info,
+            "alice",
+            "tx1",
+            HashMap::new(),
+        );
+        trail.record(
+            AuditAction::TxSubmitted,
+            AuditSeverity::Warning,
+            "bob",
+            "tx1",
+            HashMap::new(),
+        );
 
         assert_eq!(trail.entries.len(), 3);
         // First entry has genesis prev_hash
@@ -363,7 +384,13 @@ mod tests {
     #[test]
     fn test_get_entry() {
         let mut trail = AuditTrail::new();
-        let id = trail.record(AuditAction::KeyGenerated, AuditSeverity::Info, "alice", "w1", HashMap::new());
+        let id = trail.record(
+            AuditAction::KeyGenerated,
+            AuditSeverity::Info,
+            "alice",
+            "w1",
+            HashMap::new(),
+        );
         let entry = trail.get_entry(&id);
         assert!(entry.is_some());
         assert_eq!(entry.unwrap().actor, "alice");
@@ -378,8 +405,20 @@ mod tests {
     #[test]
     fn test_get_by_sequence() {
         let mut trail = AuditTrail::new();
-        trail.record(AuditAction::KeyGenerated, AuditSeverity::Info, "alice", "w1", HashMap::new());
-        trail.record(AuditAction::TxSigned, AuditSeverity::Info, "bob", "tx1", HashMap::new());
+        trail.record(
+            AuditAction::KeyGenerated,
+            AuditSeverity::Info,
+            "alice",
+            "w1",
+            HashMap::new(),
+        );
+        trail.record(
+            AuditAction::TxSigned,
+            AuditSeverity::Info,
+            "bob",
+            "tx1",
+            HashMap::new(),
+        );
 
         let entry = trail.get_by_sequence(1).unwrap();
         assert_eq!(entry.actor, "bob");
@@ -389,9 +428,27 @@ mod tests {
     #[test]
     fn test_entries_by_actor() {
         let mut trail = AuditTrail::new();
-        trail.record(AuditAction::KeyGenerated, AuditSeverity::Info, "alice", "w1", HashMap::new());
-        trail.record(AuditAction::TxSigned, AuditSeverity::Info, "bob", "tx1", HashMap::new());
-        trail.record(AuditAction::TxSubmitted, AuditSeverity::Info, "alice", "tx2", HashMap::new());
+        trail.record(
+            AuditAction::KeyGenerated,
+            AuditSeverity::Info,
+            "alice",
+            "w1",
+            HashMap::new(),
+        );
+        trail.record(
+            AuditAction::TxSigned,
+            AuditSeverity::Info,
+            "bob",
+            "tx1",
+            HashMap::new(),
+        );
+        trail.record(
+            AuditAction::TxSubmitted,
+            AuditSeverity::Info,
+            "alice",
+            "tx2",
+            HashMap::new(),
+        );
 
         let alice_entries = trail.entries_by_actor("alice");
         assert_eq!(alice_entries.len(), 2);
@@ -400,9 +457,27 @@ mod tests {
     #[test]
     fn test_entries_by_action() {
         let mut trail = AuditTrail::new();
-        trail.record(AuditAction::TxSigned, AuditSeverity::Info, "alice", "tx1", HashMap::new());
-        trail.record(AuditAction::TxSigned, AuditSeverity::Info, "bob", "tx2", HashMap::new());
-        trail.record(AuditAction::KeyGenerated, AuditSeverity::Info, "carol", "w1", HashMap::new());
+        trail.record(
+            AuditAction::TxSigned,
+            AuditSeverity::Info,
+            "alice",
+            "tx1",
+            HashMap::new(),
+        );
+        trail.record(
+            AuditAction::TxSigned,
+            AuditSeverity::Info,
+            "bob",
+            "tx2",
+            HashMap::new(),
+        );
+        trail.record(
+            AuditAction::KeyGenerated,
+            AuditSeverity::Info,
+            "carol",
+            "w1",
+            HashMap::new(),
+        );
 
         let signed = trail.entries_by_action(&AuditAction::TxSigned);
         assert_eq!(signed.len(), 2);
@@ -411,10 +486,34 @@ mod tests {
     #[test]
     fn test_entries_by_severity() {
         let mut trail = AuditTrail::new();
-        trail.record(AuditAction::TxSigned, AuditSeverity::Info, "a", "t", HashMap::new());
-        trail.record(AuditAction::KeyDeleted, AuditSeverity::Critical, "a", "t", HashMap::new());
-        trail.record(AuditAction::LoginAttempt, AuditSeverity::Warning, "a", "t", HashMap::new());
-        trail.record(AuditAction::BackupCreated, AuditSeverity::Critical, "a", "t", HashMap::new());
+        trail.record(
+            AuditAction::TxSigned,
+            AuditSeverity::Info,
+            "a",
+            "t",
+            HashMap::new(),
+        );
+        trail.record(
+            AuditAction::KeyDeleted,
+            AuditSeverity::Critical,
+            "a",
+            "t",
+            HashMap::new(),
+        );
+        trail.record(
+            AuditAction::LoginAttempt,
+            AuditSeverity::Warning,
+            "a",
+            "t",
+            HashMap::new(),
+        );
+        trail.record(
+            AuditAction::BackupCreated,
+            AuditSeverity::Critical,
+            "a",
+            "t",
+            HashMap::new(),
+        );
 
         let critical = trail.entries_by_severity(&AuditSeverity::Critical);
         assert_eq!(critical.len(), 2);
@@ -423,8 +522,20 @@ mod tests {
     #[test]
     fn test_search_actor() {
         let mut trail = AuditTrail::new();
-        trail.record(AuditAction::TxSigned, AuditSeverity::Info, "alice_wonder", "tx1", HashMap::new());
-        trail.record(AuditAction::TxSigned, AuditSeverity::Info, "bob", "tx2", HashMap::new());
+        trail.record(
+            AuditAction::TxSigned,
+            AuditSeverity::Info,
+            "alice_wonder",
+            "tx1",
+            HashMap::new(),
+        );
+        trail.record(
+            AuditAction::TxSigned,
+            AuditSeverity::Info,
+            "bob",
+            "tx2",
+            HashMap::new(),
+        );
 
         let results = trail.search("alice");
         assert_eq!(results.len(), 1);
@@ -434,7 +545,13 @@ mod tests {
     #[test]
     fn test_search_target() {
         let mut trail = AuditTrail::new();
-        trail.record(AuditAction::TxSigned, AuditSeverity::Info, "a", "my-wallet-42", HashMap::new());
+        trail.record(
+            AuditAction::TxSigned,
+            AuditSeverity::Info,
+            "a",
+            "my-wallet-42",
+            HashMap::new(),
+        );
 
         let results = trail.search("wallet-42");
         assert_eq!(results.len(), 1);
@@ -444,7 +561,13 @@ mod tests {
     fn test_search_details() {
         let mut trail = AuditTrail::new();
         let details = make_details(&[("note", "important transaction")]);
-        trail.record(AuditAction::TxSigned, AuditSeverity::Info, "a", "t", details);
+        trail.record(
+            AuditAction::TxSigned,
+            AuditSeverity::Info,
+            "a",
+            "t",
+            details,
+        );
 
         let results = trail.search("important");
         assert_eq!(results.len(), 1);
@@ -453,9 +576,27 @@ mod tests {
     #[test]
     fn test_verify_chain_valid() {
         let mut trail = AuditTrail::new();
-        trail.record(AuditAction::KeyGenerated, AuditSeverity::Info, "a", "t", HashMap::new());
-        trail.record(AuditAction::TxSigned, AuditSeverity::Info, "a", "t", HashMap::new());
-        trail.record(AuditAction::TxConfirmed, AuditSeverity::Info, "a", "t", HashMap::new());
+        trail.record(
+            AuditAction::KeyGenerated,
+            AuditSeverity::Info,
+            "a",
+            "t",
+            HashMap::new(),
+        );
+        trail.record(
+            AuditAction::TxSigned,
+            AuditSeverity::Info,
+            "a",
+            "t",
+            HashMap::new(),
+        );
+        trail.record(
+            AuditAction::TxConfirmed,
+            AuditSeverity::Info,
+            "a",
+            "t",
+            HashMap::new(),
+        );
 
         assert_eq!(trail.verify_chain(), VerifyResult::Valid);
     }
@@ -469,9 +610,27 @@ mod tests {
     #[test]
     fn test_verify_chain_tampered() {
         let mut trail = AuditTrail::new();
-        trail.record(AuditAction::KeyGenerated, AuditSeverity::Info, "a", "t", HashMap::new());
-        trail.record(AuditAction::TxSigned, AuditSeverity::Info, "a", "t", HashMap::new());
-        trail.record(AuditAction::TxConfirmed, AuditSeverity::Info, "a", "t", HashMap::new());
+        trail.record(
+            AuditAction::KeyGenerated,
+            AuditSeverity::Info,
+            "a",
+            "t",
+            HashMap::new(),
+        );
+        trail.record(
+            AuditAction::TxSigned,
+            AuditSeverity::Info,
+            "a",
+            "t",
+            HashMap::new(),
+        );
+        trail.record(
+            AuditAction::TxConfirmed,
+            AuditSeverity::Info,
+            "a",
+            "t",
+            HashMap::new(),
+        );
 
         // Tamper with the second entry's details — hash won't match
         trail.entries[1]
@@ -492,8 +651,20 @@ mod tests {
     #[test]
     fn test_export_all() {
         let mut trail = AuditTrail::new();
-        trail.record(AuditAction::KeyGenerated, AuditSeverity::Info, "a", "t", HashMap::new());
-        trail.record(AuditAction::TxSigned, AuditSeverity::Info, "a", "t", HashMap::new());
+        trail.record(
+            AuditAction::KeyGenerated,
+            AuditSeverity::Info,
+            "a",
+            "t",
+            HashMap::new(),
+        );
+        trail.record(
+            AuditAction::TxSigned,
+            AuditSeverity::Info,
+            "a",
+            "t",
+            HashMap::new(),
+        );
 
         let export = trail.export_all();
         assert_eq!(export.total_entries, 2);
@@ -524,7 +695,13 @@ mod tests {
     fn test_recent_entries() {
         let mut trail = AuditTrail::new();
         for _ in 0..5 {
-            trail.record(AuditAction::TxSigned, AuditSeverity::Info, "a", "t", HashMap::new());
+            trail.record(
+                AuditAction::TxSigned,
+                AuditSeverity::Info,
+                "a",
+                "t",
+                HashMap::new(),
+            );
         }
 
         let recent = trail.recent_entries(2);
@@ -536,7 +713,13 @@ mod tests {
     #[test]
     fn test_recent_entries_more_than_available() {
         let mut trail = AuditTrail::new();
-        trail.record(AuditAction::TxSigned, AuditSeverity::Info, "a", "t", HashMap::new());
+        trail.record(
+            AuditAction::TxSigned,
+            AuditSeverity::Info,
+            "a",
+            "t",
+            HashMap::new(),
+        );
 
         let recent = trail.recent_entries(10);
         assert_eq!(recent.len(), 1);
@@ -545,8 +728,20 @@ mod tests {
     #[test]
     fn test_critical_entries() {
         let mut trail = AuditTrail::new();
-        trail.record(AuditAction::TxSigned, AuditSeverity::Info, "a", "t", HashMap::new());
-        trail.record(AuditAction::KeyDeleted, AuditSeverity::Critical, "a", "t", HashMap::new());
+        trail.record(
+            AuditAction::TxSigned,
+            AuditSeverity::Info,
+            "a",
+            "t",
+            HashMap::new(),
+        );
+        trail.record(
+            AuditAction::KeyDeleted,
+            AuditSeverity::Critical,
+            "a",
+            "t",
+            HashMap::new(),
+        );
 
         let critical = trail.critical_entries();
         assert_eq!(critical.len(), 1);
@@ -556,9 +751,27 @@ mod tests {
     #[test]
     fn test_stats() {
         let mut trail = AuditTrail::new();
-        trail.record(AuditAction::KeyGenerated, AuditSeverity::Info, "alice", "t", HashMap::new());
-        trail.record(AuditAction::TxSigned, AuditSeverity::Warning, "bob", "t", HashMap::new());
-        trail.record(AuditAction::KeyGenerated, AuditSeverity::Critical, "alice", "t", HashMap::new());
+        trail.record(
+            AuditAction::KeyGenerated,
+            AuditSeverity::Info,
+            "alice",
+            "t",
+            HashMap::new(),
+        );
+        trail.record(
+            AuditAction::TxSigned,
+            AuditSeverity::Warning,
+            "bob",
+            "t",
+            HashMap::new(),
+        );
+        trail.record(
+            AuditAction::KeyGenerated,
+            AuditSeverity::Critical,
+            "alice",
+            "t",
+            HashMap::new(),
+        );
 
         let stats = trail.stats();
         assert_eq!(stats.total_entries, 3);
@@ -574,8 +787,20 @@ mod tests {
     fn test_persistence_roundtrip() {
         let path = test_path("roundtrip");
         let mut trail = AuditTrail::new();
-        trail.record(AuditAction::KeyGenerated, AuditSeverity::Info, "alice", "w1", HashMap::new());
-        trail.record(AuditAction::TxSigned, AuditSeverity::Warning, "bob", "tx1", HashMap::new());
+        trail.record(
+            AuditAction::KeyGenerated,
+            AuditSeverity::Info,
+            "alice",
+            "w1",
+            HashMap::new(),
+        );
+        trail.record(
+            AuditAction::TxSigned,
+            AuditSeverity::Warning,
+            "bob",
+            "tx1",
+            HashMap::new(),
+        );
 
         trail.save(&path).unwrap();
         let loaded = AuditTrail::load(&path).unwrap();
@@ -600,7 +825,13 @@ mod tests {
     #[test]
     fn test_genesis_hash() {
         let mut trail = AuditTrail::new();
-        trail.record(AuditAction::KeyGenerated, AuditSeverity::Info, "a", "t", HashMap::new());
+        trail.record(
+            AuditAction::KeyGenerated,
+            AuditSeverity::Info,
+            "a",
+            "t",
+            HashMap::new(),
+        );
         assert_eq!(trail.entries[0].prev_hash, "genesis");
     }
 

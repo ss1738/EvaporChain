@@ -9,9 +9,10 @@ use serde::{Deserialize, Serialize};
 
 use evaporchain_types::Energy;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Filtration {
     /// Sweep parameter low → high; features appear at low values.
+    #[default]
     Sublevel,
     /// Sweep parameter high → low.
     Superlevel,
@@ -23,12 +24,6 @@ pub struct PersistenceDiagram {
     /// features that never die in a finite filtration.
     pub pairs: Vec<(Energy, Energy)>,
     pub filtration: Filtration,
-}
-
-impl Default for Filtration {
-    fn default() -> Self {
-        Filtration::Sublevel
-    }
 }
 
 impl PersistenceDiagram {
@@ -73,19 +68,13 @@ mod tests {
 
     #[test]
     fn persistences_sub_birth() {
-        let d = PersistenceDiagram::new(
-            vec![(0, 5), (2, 7), (3, 3)],
-            Filtration::Sublevel,
-        );
+        let d = PersistenceDiagram::new(vec![(0, 5), (2, 7), (3, 3)], Filtration::Sublevel);
         assert_eq!(d.persistences(), vec![5, 5, 0]);
     }
 
     #[test]
     fn essential_feature_max_persistence() {
-        let d = PersistenceDiagram::new(
-            vec![(0, Energy::MAX)],
-            Filtration::Sublevel,
-        );
+        let d = PersistenceDiagram::new(vec![(0, Energy::MAX)], Filtration::Sublevel);
         assert_eq!(d.persistences(), vec![Energy::MAX]);
     }
 }

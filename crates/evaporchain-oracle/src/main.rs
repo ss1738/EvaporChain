@@ -256,7 +256,10 @@ impl Oracle {
                         iss.iss_position.latitude, iss.iss_position.longitude, iss.timestamp
                     );
                     // ISS position: high energy (important), short half-life (stale fast)
-                    if self.submit_object("nasa:iss", "position", 5000, 30, &data).await {
+                    if self
+                        .submit_object("nasa:iss", "position", 5000, 30, &data)
+                        .await
+                    {
                         info!(
                             "\x1b[34m[NASA]\x1b[0m ISS at ({}, {})",
                             iss.iss_position.latitude, iss.iss_position.longitude
@@ -290,13 +293,28 @@ impl Oracle {
                         // Energy scales with magnitude (exponential)
                         let energy = (1000.0 * (10.0_f64).powf(mag / 2.0)) as u64;
                         // Larger quakes stay relevant longer
-                        let half_life = if mag >= 6.0 { 3600 } else if mag >= 4.0 { 600 } else { 120 };
+                        let half_life = if mag >= 6.0 {
+                            3600
+                        } else if mag >= 4.0 {
+                            600
+                        } else {
+                            120
+                        };
 
                         let data = format!(
                             "{{\"source\":\"USGS\",\"type\":\"EARTHQUAKE\",\"magnitude\":{:.1},\"place\":\"{}\",\"lat\":{:.4},\"lon\":{:.4},\"depth_km\":{:.1}}}",
                             mag, place.replace('"', "'"), lat, lon, depth
                         );
-                        if self.submit_object("usgs:quake", &format!("m{:.0}", mag * 10.0), energy, half_life, &data).await {
+                        if self
+                            .submit_object(
+                                "usgs:quake",
+                                &format!("m{:.0}", mag * 10.0),
+                                energy,
+                                half_life,
+                                &data,
+                            )
+                            .await
+                        {
                             info!(
                                 "\x1b[31m[USGS]\x1b[0m M{:.1} earthquake — {} (depth {:.0}km)",
                                 mag, place, depth
@@ -304,7 +322,10 @@ impl Oracle {
                         }
                     }
                     if count > 0 {
-                        info!("\x1b[31m[USGS]\x1b[0m {} earthquakes in the last hour", count);
+                        info!(
+                            "\x1b[31m[USGS]\x1b[0m {} earthquakes in the last hour",
+                            count
+                        );
                     }
                 }
                 Err(e) => warn!("[USGS] Parse error: {}", e),
@@ -333,7 +354,10 @@ impl Oracle {
                                 time_tag, density, speed, temperature
                             );
                             // Solar wind: moderate energy, decays in minutes
-                            if self.submit_object("noaa:solar", "wind", 3000, 120, &data).await {
+                            if self
+                                .submit_object("noaa:solar", "wind", 3000, 120, &data)
+                                .await
+                            {
                                 info!(
                                     "\x1b[33m[NOAA]\x1b[0m Solar wind: density={}p/cm³ speed={}km/s temp={}K",
                                     density, speed, temperature
@@ -374,11 +398,18 @@ impl Oracle {
                                 "{{\"source\":\"NOAA_SWPC\",\"type\":\"KP_INDEX\",\"time\":\"{}\",\"kp\":{},\"storm\":{}}}",
                                 time_tag, kp, kp_val >= 5.0
                             );
-                            if self.submit_object("noaa:kp", "index", energy, 300, &data).await {
+                            if self
+                                .submit_object("noaa:kp", "index", energy, 300, &data)
+                                .await
+                            {
                                 info!(
                                     "\x1b[33m[NOAA]\x1b[0m Kp index: {} {}",
                                     kp,
-                                    if kp_val >= 5.0 { "⚡ GEOMAGNETIC STORM" } else { "(quiet)" }
+                                    if kp_val >= 5.0 {
+                                        "⚡ GEOMAGNETIC STORM"
+                                    } else {
+                                        "(quiet)"
+                                    }
                                 );
                             }
                         }
@@ -397,21 +428,33 @@ impl Oracle {
             "https://api.weather.gov/stations/{}/observations/latest",
             station
         );
-        match self.client.get(&url)
-            .header("User-Agent", "EvaporChain-Oracle/1.0 (satyawansinghinuk@gmail.com)")
-            .send().await
+        match self
+            .client
+            .get(&url)
+            .header(
+                "User-Agent",
+                "EvaporChain-Oracle/1.0 (satyawansinghinuk@gmail.com)",
+            )
+            .send()
+            .await
         {
             Ok(resp) => match resp.json::<NoaaObservation>().await {
                 Ok(obs) => {
-                    let temp = obs.properties.temperature
+                    let temp = obs
+                        .properties
+                        .temperature
                         .and_then(|t| t.value)
                         .map(|c| format!("{:.1}", c))
                         .unwrap_or_else(|| "null".to_string());
-                    let wind = obs.properties.wind_speed
+                    let wind = obs
+                        .properties
+                        .wind_speed
                         .and_then(|w| w.value)
                         .map(|s| format!("{:.1}", s))
                         .unwrap_or_else(|| "null".to_string());
-                    let pressure = obs.properties.barometric_pressure
+                    let pressure = obs
+                        .properties
+                        .barometric_pressure
                         .and_then(|p| p.value)
                         .map(|p| format!("{:.0}", p))
                         .unwrap_or_else(|| "null".to_string());
@@ -421,7 +464,10 @@ impl Oracle {
                         "{{\"source\":\"NOAA_NWS\",\"type\":\"WEATHER\",\"station\":\"{}\",\"temp_c\":{},\"wind_kph\":{},\"pressure_pa\":{},\"description\":\"{}\"}}",
                         station, temp, wind, pressure, desc.replace('"', "'")
                     );
-                    if self.submit_object("noaa:weather", station, 2000, 300, &data).await {
+                    if self
+                        .submit_object("noaa:weather", station, 2000, 300, &data)
+                        .await
+                    {
                         info!(
                             "\x1b[33m[NOAA]\x1b[0m {} weather: {}°C, wind {}kph — {}",
                             station, temp, wind, desc
@@ -446,7 +492,8 @@ impl Oracle {
                     let total = states.len();
 
                     // Submit top 5 aircraft by altitude
-                    let mut aircraft: Vec<_> = states.iter()
+                    let mut aircraft: Vec<_> = states
+                        .iter()
                         .filter_map(|s| {
                             let callsign = s.get(1)?.as_str().unwrap_or("").trim().to_string();
                             let country = s.get(2)?.as_str().unwrap_or("?").to_string();
@@ -457,7 +504,8 @@ impl Oracle {
                             Some((callsign, country, lat, lon, alt, velocity))
                         })
                         .collect();
-                    aircraft.sort_by(|a, b| b.4.partial_cmp(&a.4).unwrap_or(std::cmp::Ordering::Equal));
+                    aircraft
+                        .sort_by(|a, b| b.4.partial_cmp(&a.4).unwrap_or(std::cmp::Ordering::Equal));
 
                     for (callsign, country, lat, lon, alt, velocity) in aircraft.iter().take(5) {
                         let data = format!(
@@ -465,7 +513,10 @@ impl Oracle {
                             callsign, country, lat, lon, alt, velocity
                         );
                         // Aircraft position: stale very fast
-                        if self.submit_object("opensky:aircraft", callsign, 2000, 30, &data).await {
+                        if self
+                            .submit_object("opensky:aircraft", callsign, 2000, 30, &data)
+                            .await
+                        {
                             info!(
                                 "\x1b[36m[OpenSky]\x1b[0m {} ({}) at {:.0}m, {:.0}m/s",
                                 callsign, country, alt, velocity
@@ -478,7 +529,8 @@ impl Oracle {
                         "{{\"source\":\"OpenSky\",\"type\":\"AIRSPACE_SUMMARY\",\"region\":\"UK\",\"total_aircraft\":{},\"timestamp\":{}}}",
                         total, sky.time
                     );
-                    self.submit_object("opensky:summary", "uk", 3000, 60, &summary).await;
+                    self.submit_object("opensky:summary", "uk", 3000, 60, &summary)
+                        .await;
                     info!("\x1b[36m[OpenSky]\x1b[0m {} aircraft in UK airspace", total);
                 }
                 Err(e) => warn!("[OpenSky] Parse error: {}", e),
@@ -504,9 +556,14 @@ impl Oracle {
         };
 
         if let Some(stats) = stats {
-            let fee_str = fees.as_ref()
-                .map(|f| format!(",\"fastest_sat_vb\":{},\"half_hour_sat_vb\":{},\"hour_sat_vb\":{}",
-                    f.fastest_fee, f.half_hour_fee, f.hour_fee))
+            let fee_str = fees
+                .as_ref()
+                .map(|f| {
+                    format!(
+                        ",\"fastest_sat_vb\":{},\"half_hour_sat_vb\":{},\"hour_sat_vb\":{}",
+                        f.fastest_fee, f.half_hour_fee, f.hour_fee
+                    )
+                })
                 .unwrap_or_default();
 
             let data = format!(
@@ -514,7 +571,10 @@ impl Oracle {
                 stats.count, stats.vsize, stats.total_fee / 100_000_000.0, fee_str
             );
             // Mempool state: changes every second
-            if self.submit_object("bitcoin:mempool", "stats", 4000, 30, &data).await {
+            if self
+                .submit_object("bitcoin:mempool", "stats", 4000, 30, &data)
+                .await
+            {
                 info!(
                     "\x1b[35m[Bitcoin]\x1b[0m Mempool: {} unconfirmed txs, {:.2} MB, fastest fee: {} sat/vB",
                     stats.count,
@@ -536,16 +596,29 @@ impl Oracle {
                         if let Some(data_obj) = prices.get(coin) {
                             let usd = data_obj.get("usd").and_then(|v| v.as_f64()).unwrap_or(0.0);
                             let gbp = data_obj.get("gbp").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                            let change = data_obj.get("usd_24h_change").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                            let mcap = data_obj.get("usd_market_cap").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                            let change = data_obj
+                                .get("usd_24h_change")
+                                .and_then(|v| v.as_f64())
+                                .unwrap_or(0.0);
+                            let mcap = data_obj
+                                .get("usd_market_cap")
+                                .and_then(|v| v.as_f64())
+                                .unwrap_or(0.0);
 
                             let data = format!(
                                 "{{\"source\":\"CoinGecko\",\"type\":\"CRYPTO_PRICE\",\"coin\":\"{}\",\"usd\":{:.2},\"gbp\":{:.2},\"change_24h\":{:.2},\"market_cap\":{:.0}}}",
                                 coin, usd, gbp, change, mcap
                             );
                             // Price data: moderate decay
-                            if self.submit_object("coingecko:price", coin, 3000, 60, &data).await {
-                                let arrow = if change >= 0.0 { "\x1b[32m+" } else { "\x1b[31m" };
+                            if self
+                                .submit_object("coingecko:price", coin, 3000, 60, &data)
+                                .await
+                            {
+                                let arrow = if change >= 0.0 {
+                                    "\x1b[32m+"
+                                } else {
+                                    "\x1b[31m"
+                                };
                                 info!(
                                     "\x1b[35m[CoinGecko]\x1b[0m {}: ${:.2} ({}${:.2}%\x1b[0m)",
                                     coin, usd, arrow, change
@@ -567,13 +640,13 @@ impl Oracle {
 async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
     let args: Vec<String> = std::env::args().collect();
-    let node_url = args.iter()
+    let node_url = args
+        .iter()
         .position(|a| a == "--node")
         .and_then(|i| args.get(i + 1))
         .map(|s| s.as_str())
@@ -591,10 +664,18 @@ async fn main() {
     let mut oracle = Oracle::new(node_url);
 
     // Verify node is reachable
-    match oracle.client.get(format!("{}/api/status", node_url)).send().await {
+    match oracle
+        .client
+        .get(format!("{}/api/status", node_url))
+        .send()
+        .await
+    {
         Ok(resp) => {
             if let Ok(status) = resp.json::<serde_json::Value>().await {
-                let height = status.get("block_height").and_then(|v| v.as_u64()).unwrap_or(0);
+                let height = status
+                    .get("block_height")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
                 println!("  Chain:   \x1b[32mConnected\x1b[0m (height={})", height);
             }
         }

@@ -36,6 +36,6 @@ pub mod certificate;
 pub mod condition;
 pub mod monitor;
 
-pub use certificate::{mint_certificate, MortisCertificate, CertificateError};
+pub use certificate::{mint_certificate, CertificateError, MortisCertificate};
 pub use condition::MortisCondition;
 pub use monitor::{MortisMonitor, TickOutcome};

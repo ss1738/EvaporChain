@@ -194,10 +194,7 @@ impl RegressionTracker {
 
     // -- Baseline management ------------------------------------------------
 
-    pub fn add_baseline(
-        &mut self,
-        baseline: TestBaseline,
-    ) -> Result<(), RegressionTrackerError> {
+    pub fn add_baseline(&mut self, baseline: TestBaseline) -> Result<(), RegressionTrackerError> {
         if self.baselines.contains_key(&baseline.id) {
             return Err(RegressionTrackerError::DuplicateIssue(baseline.id));
         }
@@ -339,7 +336,11 @@ mod tests {
     use std::process;
 
     fn test_path(name: &str) -> std::path::PathBuf {
-        temp_dir().join(format!("regression_tracker_{}_{}.json", process::id(), name))
+        temp_dir().join(format!(
+            "regression_tracker_{}_{}.json",
+            process::id(),
+            name
+        ))
     }
 
     fn make_issue(id: &str, severity: IssueSeverity2, module: &str) -> KnownIssue {

@@ -153,7 +153,10 @@ fn now_secs() -> u64 {
         .as_secs()
 }
 
-pub fn validate_freshness(report: &OracleReport, config: &FreshnessConfig) -> Result<(), ValidationError> {
+pub fn validate_freshness(
+    report: &OracleReport,
+    config: &FreshnessConfig,
+) -> Result<(), ValidationError> {
     let now = now_secs();
 
     if report.timestamp > now + 5 {
@@ -174,7 +177,11 @@ pub fn validate_freshness(report: &OracleReport, config: &FreshnessConfig) -> Re
     Ok(())
 }
 
-pub fn validate_report(report: &OracleReport, config: &FreshnessConfig, require_signature: bool) -> Result<(), ValidationError> {
+pub fn validate_report(
+    report: &OracleReport,
+    config: &FreshnessConfig,
+    require_signature: bool,
+) -> Result<(), ValidationError> {
     validate_freshness(report, config)?;
 
     if require_signature && report.signature.is_none() {
@@ -202,13 +209,14 @@ impl Aggregator {
     }
 
     pub fn submit(&mut self, report: OracleReport) -> Result<(), ValidationError> {
-        let config = self.config.get(&report.key)
-            .cloned()
-            .unwrap_or_default();
+        let config = self.config.get(&report.key).cloned().unwrap_or_default();
         validate_freshness(&report, &config)?;
 
         let reports = self.pending.entry(report.key.clone()).or_default();
-        if !reports.iter().any(|r| r.source == report.source && r.reporter_id == report.reporter_id) {
+        if !reports
+            .iter()
+            .any(|r| r.source == report.source && r.reporter_id == report.reporter_id)
+        {
             reports.push(report);
         }
         Ok(())
@@ -225,12 +233,13 @@ impl Aggregator {
             });
         }
 
-        let mut values: Vec<f64> = reports.iter()
-            .filter_map(|r| r.value.as_f64())
-            .collect();
+        let mut values: Vec<f64> = reports.iter().filter_map(|r| r.value.as_f64()).collect();
 
         if values.is_empty() {
-            return Err(ValidationError::InsufficientSources { have: 0, need: config.min_sources });
+            return Err(ValidationError::InsufficientSources {
+                have: 0,
+                need: config.min_sources,
+            });
         }
 
         values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
@@ -255,7 +264,11 @@ impl Aggregator {
         }
 
         let confidence = if values.len() >= 3 {
-            let spread = if median > 0.0 { (max - min) / median } else { 0.0 };
+            let spread = if median > 0.0 {
+                (max - min) / median
+            } else {
+                0.0
+            };
             (1.0 - spread).clamp(0.0, 1.0)
         } else if values.len() == 2 {
             0.8
@@ -304,13 +317,34 @@ pub struct EnergyPreset {
 pub mod presets {
     use super::EnergyPreset;
 
-    pub const PRICE_FEED: EnergyPreset = EnergyPreset { energy: 3000, half_life: 60 };
-    pub const WEATHER: EnergyPreset = EnergyPreset { energy: 2000, half_life: 300 };
-    pub const EARTHQUAKE: EnergyPreset = EnergyPreset { energy: 10000, half_life: 3600 };
-    pub const SATELLITE_POSITION: EnergyPreset = EnergyPreset { energy: 5000, half_life: 30 };
-    pub const MEMPOOL_STATE: EnergyPreset = EnergyPreset { energy: 4000, half_life: 30 };
-    pub const GEOMAGNETIC_STORM: EnergyPreset = EnergyPreset { energy: 50000, half_life: 1800 };
-    pub const AIRCRAFT_POSITION: EnergyPreset = EnergyPreset { energy: 2000, half_life: 30 };
+    pub const PRICE_FEED: EnergyPreset = EnergyPreset {
+        energy: 3000,
+        half_life: 60,
+    };
+    pub const WEATHER: EnergyPreset = EnergyPreset {
+        energy: 2000,
+        half_life: 300,
+    };
+    pub const EARTHQUAKE: EnergyPreset = EnergyPreset {
+        energy: 10000,
+        half_life: 3600,
+    };
+    pub const SATELLITE_POSITION: EnergyPreset = EnergyPreset {
+        energy: 5000,
+        half_life: 30,
+    };
+    pub const MEMPOOL_STATE: EnergyPreset = EnergyPreset {
+        energy: 4000,
+        half_life: 30,
+    };
+    pub const GEOMAGNETIC_STORM: EnergyPreset = EnergyPreset {
+        energy: 50000,
+        half_life: 1800,
+    };
+    pub const AIRCRAFT_POSITION: EnergyPreset = EnergyPreset {
+        energy: 2000,
+        half_life: 30,
+    };
 }
 
 // ─────────────────────── Tests ────────────────────────────────────────
@@ -332,7 +366,13 @@ mod tests {
         }
     }
 
-    fn make_report_at(source: &str, key: &str, value: f64, reporter: u64, timestamp: u64) -> OracleReport {
+    fn make_report_at(
+        source: &str,
+        key: &str,
+        value: f64,
+        reporter: u64,
+        timestamp: u64,
+    ) -> OracleReport {
         OracleReport {
             source: source.to_string(),
             key: key.to_string(),
@@ -404,9 +444,12 @@ mod tests {
     #[test]
     fn test_stale_report_rejected() {
         let r = make_report_at("src", "key", 42.0, 1, now_secs() - 600);
-        let config = FreshnessConfig { max_age_secs: 300, ..Default::default() };
+        let config = FreshnessConfig {
+            max_age_secs: 300,
+            ..Default::default()
+        };
         match validate_freshness(&r, &config) {
-            Err(ValidationError::Stale { .. }) => {},
+            Err(ValidationError::Stale { .. }) => {}
             other => panic!("expected Stale, got {:?}", other),
         }
     }
@@ -416,7 +459,7 @@ mod tests {
         let r = make_report_at("src", "key", 42.0, 1, now_secs() + 100);
         let config = FreshnessConfig::default();
         match validate_freshness(&r, &config) {
-            Err(ValidationError::FutureTimestamp { .. }) => {},
+            Err(ValidationError::FutureTimestamp { .. }) => {}
             other => panic!("expected FutureTimestamp, got {:?}", other),
         }
     }
@@ -435,7 +478,7 @@ mod tests {
         let r = make_report("src", "key", 42.0, 1);
         let config = FreshnessConfig::default();
         match validate_report(&r, &config, true) {
-            Err(ValidationError::NoSignature) => {},
+            Err(ValidationError::NoSignature) => {}
             other => panic!("expected NoSignature, got {:?}", other),
         }
     }
@@ -460,7 +503,8 @@ mod tests {
     #[test]
     fn test_single_source_aggregation() {
         let mut agg = Aggregator::new();
-        agg.submit(make_report("src1", "btc_usd", 60000.0, 1)).unwrap();
+        agg.submit(make_report("src1", "btc_usd", 60000.0, 1))
+            .unwrap();
         let result = agg.aggregate("btc_usd").unwrap();
         assert_eq!(result.value, 60000.0);
         assert_eq!(result.report_count, 1);
@@ -470,8 +514,10 @@ mod tests {
     #[test]
     fn test_two_source_median() {
         let mut agg = Aggregator::new();
-        agg.submit(make_report("src1", "btc_usd", 60000.0, 1)).unwrap();
-        agg.submit(make_report("src2", "btc_usd", 60200.0, 2)).unwrap();
+        agg.submit(make_report("src1", "btc_usd", 60000.0, 1))
+            .unwrap();
+        agg.submit(make_report("src2", "btc_usd", 60200.0, 2))
+            .unwrap();
         let result = agg.aggregate("btc_usd").unwrap();
         assert_eq!(result.median, 60100.0);
         assert_eq!(result.report_count, 2);
@@ -481,9 +527,12 @@ mod tests {
     #[test]
     fn test_three_source_median() {
         let mut agg = Aggregator::new();
-        agg.submit(make_report("src1", "btc_usd", 60000.0, 1)).unwrap();
-        agg.submit(make_report("src2", "btc_usd", 60500.0, 2)).unwrap();
-        agg.submit(make_report("src3", "btc_usd", 60200.0, 3)).unwrap();
+        agg.submit(make_report("src1", "btc_usd", 60000.0, 1))
+            .unwrap();
+        agg.submit(make_report("src2", "btc_usd", 60500.0, 2))
+            .unwrap();
+        agg.submit(make_report("src3", "btc_usd", 60200.0, 3))
+            .unwrap();
         let result = agg.aggregate("btc_usd").unwrap();
         assert_eq!(result.median, 60200.0);
         assert_eq!(result.report_count, 3);
@@ -493,7 +542,8 @@ mod tests {
     #[test]
     fn test_aggregation_clears_pending() {
         let mut agg = Aggregator::new();
-        agg.submit(make_report("src1", "btc_usd", 60000.0, 1)).unwrap();
+        agg.submit(make_report("src1", "btc_usd", 60000.0, 1))
+            .unwrap();
         assert_eq!(agg.pending_count("btc_usd"), 1);
         let _ = agg.aggregate("btc_usd").unwrap();
         assert_eq!(agg.pending_count("btc_usd"), 0);
@@ -503,9 +553,10 @@ mod tests {
     fn test_insufficient_sources_rejected() {
         let mut agg = Aggregator::new();
         agg.set_config("btc_usd", FreshnessConfig::price_feed());
-        agg.submit(make_report("src1", "btc_usd", 60000.0, 1)).unwrap();
+        agg.submit(make_report("src1", "btc_usd", 60000.0, 1))
+            .unwrap();
         match agg.aggregate("btc_usd") {
-            Err(ValidationError::InsufficientSources { have: 1, need: 2 }) => {},
+            Err(ValidationError::InsufficientSources { have: 1, need: 2 }) => {}
             other => panic!("expected InsufficientSources, got {:?}", other),
         }
     }
@@ -513,15 +564,20 @@ mod tests {
     #[test]
     fn test_excessive_deviation_rejected() {
         let mut agg = Aggregator::new();
-        agg.set_config("btc_usd", FreshnessConfig {
-            max_deviation_pct: 1.0,
-            min_sources: 1,
-            ..Default::default()
-        });
-        agg.submit(make_report("src1", "btc_usd", 60000.0, 1)).unwrap();
-        agg.submit(make_report("src2", "btc_usd", 65000.0, 2)).unwrap();
+        agg.set_config(
+            "btc_usd",
+            FreshnessConfig {
+                max_deviation_pct: 1.0,
+                min_sources: 1,
+                ..Default::default()
+            },
+        );
+        agg.submit(make_report("src1", "btc_usd", 60000.0, 1))
+            .unwrap();
+        agg.submit(make_report("src2", "btc_usd", 65000.0, 2))
+            .unwrap();
         match agg.aggregate("btc_usd") {
-            Err(ValidationError::ExcessiveDeviation { .. }) => {},
+            Err(ValidationError::ExcessiveDeviation { .. }) => {}
             other => panic!("expected ExcessiveDeviation, got {:?}", other),
         }
     }
@@ -529,26 +585,36 @@ mod tests {
     #[test]
     fn test_dedup_same_source_same_reporter() {
         let mut agg = Aggregator::new();
-        agg.submit(make_report("src1", "btc_usd", 60000.0, 1)).unwrap();
-        agg.submit(make_report("src1", "btc_usd", 61000.0, 1)).unwrap();
+        agg.submit(make_report("src1", "btc_usd", 60000.0, 1))
+            .unwrap();
+        agg.submit(make_report("src1", "btc_usd", 61000.0, 1))
+            .unwrap();
         assert_eq!(agg.pending_count("btc_usd"), 1);
     }
 
     #[test]
     fn test_same_source_different_reporter_accepted() {
         let mut agg = Aggregator::new();
-        agg.submit(make_report("src1", "btc_usd", 60000.0, 1)).unwrap();
-        agg.submit(make_report("src1", "btc_usd", 60100.0, 2)).unwrap();
+        agg.submit(make_report("src1", "btc_usd", 60000.0, 1))
+            .unwrap();
+        agg.submit(make_report("src1", "btc_usd", 60100.0, 2))
+            .unwrap();
         assert_eq!(agg.pending_count("btc_usd"), 2);
     }
 
     #[test]
     fn test_stale_report_not_aggregated() {
         let mut agg = Aggregator::new();
-        agg.set_config("btc_usd", FreshnessConfig { max_age_secs: 60, ..Default::default() });
+        agg.set_config(
+            "btc_usd",
+            FreshnessConfig {
+                max_age_secs: 60,
+                ..Default::default()
+            },
+        );
         let stale = make_report_at("src1", "btc_usd", 60000.0, 1, now_secs() - 120);
         match agg.submit(stale) {
-            Err(ValidationError::Stale { .. }) => {},
+            Err(ValidationError::Stale { .. }) => {}
             other => panic!("expected Stale, got {:?}", other),
         }
         assert_eq!(agg.pending_count("btc_usd"), 0);
@@ -557,8 +623,10 @@ mod tests {
     #[test]
     fn test_clear_removes_pending() {
         let mut agg = Aggregator::new();
-        agg.submit(make_report("src1", "btc_usd", 60000.0, 1)).unwrap();
-        agg.submit(make_report("src1", "eth_usd", 3000.0, 1)).unwrap();
+        agg.submit(make_report("src1", "btc_usd", 60000.0, 1))
+            .unwrap();
+        agg.submit(make_report("src1", "eth_usd", 3000.0, 1))
+            .unwrap();
         agg.clear("btc_usd");
         assert_eq!(agg.pending_count("btc_usd"), 0);
         assert_eq!(agg.pending_count("eth_usd"), 1);
@@ -567,8 +635,10 @@ mod tests {
     #[test]
     fn test_clear_all() {
         let mut agg = Aggregator::new();
-        agg.submit(make_report("src1", "btc_usd", 60000.0, 1)).unwrap();
-        agg.submit(make_report("src1", "eth_usd", 3000.0, 1)).unwrap();
+        agg.submit(make_report("src1", "btc_usd", 60000.0, 1))
+            .unwrap();
+        agg.submit(make_report("src1", "eth_usd", 3000.0, 1))
+            .unwrap();
         agg.clear_all();
         assert_eq!(agg.pending_count("btc_usd"), 0);
         assert_eq!(agg.pending_count("eth_usd"), 0);
@@ -600,7 +670,7 @@ mod tests {
     fn test_empty_key_aggregation_fails() {
         let mut agg = Aggregator::new();
         match agg.aggregate("nonexistent") {
-            Err(ValidationError::InsufficientSources { have: 0, .. }) => {},
+            Err(ValidationError::InsufficientSources { have: 0, .. }) => {}
             other => panic!("expected InsufficientSources, got {:?}", other),
         }
     }
@@ -608,16 +678,24 @@ mod tests {
     #[test]
     fn test_five_source_outlier_handling() {
         let mut agg = Aggregator::new();
-        agg.set_config("btc_usd", FreshnessConfig {
-            min_sources: 3,
-            max_deviation_pct: 5.0,
-            ..Default::default()
-        });
-        agg.submit(make_report("src1", "btc_usd", 60000.0, 1)).unwrap();
-        agg.submit(make_report("src2", "btc_usd", 60100.0, 2)).unwrap();
-        agg.submit(make_report("src3", "btc_usd", 60050.0, 3)).unwrap();
-        agg.submit(make_report("src4", "btc_usd", 60080.0, 4)).unwrap();
-        agg.submit(make_report("src5", "btc_usd", 60020.0, 5)).unwrap();
+        agg.set_config(
+            "btc_usd",
+            FreshnessConfig {
+                min_sources: 3,
+                max_deviation_pct: 5.0,
+                ..Default::default()
+            },
+        );
+        agg.submit(make_report("src1", "btc_usd", 60000.0, 1))
+            .unwrap();
+        agg.submit(make_report("src2", "btc_usd", 60100.0, 2))
+            .unwrap();
+        agg.submit(make_report("src3", "btc_usd", 60050.0, 3))
+            .unwrap();
+        agg.submit(make_report("src4", "btc_usd", 60080.0, 4))
+            .unwrap();
+        agg.submit(make_report("src5", "btc_usd", 60020.0, 5))
+            .unwrap();
         let result = agg.aggregate("btc_usd").unwrap();
         assert_eq!(result.median, 60050.0);
         assert_eq!(result.report_count, 5);
@@ -627,7 +705,13 @@ mod tests {
     #[test]
     fn test_min_max_correct() {
         let mut agg = Aggregator::new();
-        agg.set_config("x", FreshnessConfig { max_deviation_pct: 200.0, ..Default::default() });
+        agg.set_config(
+            "x",
+            FreshnessConfig {
+                max_deviation_pct: 200.0,
+                ..Default::default()
+            },
+        );
         agg.submit(make_report("src1", "x", 10.0, 1)).unwrap();
         agg.submit(make_report("src2", "x", 30.0, 2)).unwrap();
         agg.submit(make_report("src3", "x", 20.0, 3)).unwrap();
@@ -639,7 +723,12 @@ mod tests {
     // ── Energy presets ──
 
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn test_presets_reasonable() {
+        // These are const-fold-constant assertions that pin the relative
+        // ordering between presets. They're guards against a future
+        // edit accidentally inverting two constants — the assertion
+        // form is intentional even though clippy can fold them.
         assert!(presets::EARTHQUAKE.energy > presets::WEATHER.energy);
         assert!(presets::EARTHQUAKE.half_life > presets::PRICE_FEED.half_life);
         assert!(presets::SATELLITE_POSITION.half_life <= presets::WEATHER.half_life);
@@ -659,7 +748,8 @@ mod tests {
     #[test]
     fn test_aggregated_report_serialization() {
         let mut agg = Aggregator::new();
-        agg.submit(make_report("src1", "btc_usd", 60000.0, 1)).unwrap();
+        agg.submit(make_report("src1", "btc_usd", 60000.0, 1))
+            .unwrap();
         let result = agg.aggregate("btc_usd").unwrap();
         let json = serde_json::to_string(&result).unwrap();
         let r2: AggregatedReport = serde_json::from_str(&json).unwrap();

@@ -342,7 +342,10 @@ mod tests {
         let data = b"same input";
         let ph = poseidon_hash(data);
         let bh = blake3_hash(data);
-        assert_ne!(ph, bh, "Poseidon and BLAKE3 should produce different outputs");
+        assert_ne!(
+            ph, bh,
+            "Poseidon and BLAKE3 should produce different outputs"
+        );
     }
 
     // ── HashEngine interchangeability ──

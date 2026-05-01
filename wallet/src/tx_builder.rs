@@ -5,9 +5,9 @@
 //! from the signer.
 
 use evaporchain_types::{
-    AccountAddress, CallContractTx, CallScriptTx, CreateObjectTx, DeployContractTx,
-    DeployScriptTx, Energy, Epoch, HalfLife, ObjectId, RefreshTx, Transaction, TransferTx,
-    ValidatorExitTx, ValidatorStakeTx,
+    AccountAddress, CallContractTx, CallScriptTx, CreateObjectTx, DeployContractTx, DeployScriptTx,
+    Energy, Epoch, HalfLife, ObjectId, RefreshTx, Transaction, TransferTx, ValidatorExitTx,
+    ValidatorStakeTx,
 };
 
 /// Transaction builder for constructing and optionally signing transactions.
@@ -48,6 +48,7 @@ impl TxBuilder {
             half_life,
             data,
             decay_curve: None,
+            lad_mode: None,
             signature: None,
             public_key: None,
         })

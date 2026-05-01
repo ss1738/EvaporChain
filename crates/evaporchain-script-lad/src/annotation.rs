@@ -42,7 +42,10 @@ pub fn parse_annotations(source: &str) -> Result<Vec<LadAnnotation>, LadScriptEr
     let mut i = 0;
     while i < lines.len() {
         let trimmed = lines[i].trim();
-        if let Some(inner) = trimmed.strip_prefix("@lad(").and_then(|s| s.strip_suffix(')')) {
+        if let Some(inner) = trimmed
+            .strip_prefix("@lad(")
+            .and_then(|s| s.strip_suffix(')'))
+        {
             // Look ahead for the field name on the next non-blank line.
             let field_name = find_next_let_name(&lines, i + 1);
             if let Some(name) = field_name {
@@ -109,7 +112,11 @@ fn parse_inner(inner: &str, field_name: String) -> Result<LadAnnotation, LadScri
                 "unknown lad mode {other:?}; expected linear|affine|decaying"
             )))
         }
-        None => return Err(LadScriptError::BadAnnotation("@lad annotation missing mode=".into())),
+        None => {
+            return Err(LadScriptError::BadAnnotation(
+                "@lad annotation missing mode=".into(),
+            ))
+        }
     };
 
     Ok(LadAnnotation {

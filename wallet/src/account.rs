@@ -135,7 +135,9 @@ impl AccountManager {
         public_key: &[u8],
         secret_key: &[u8],
     ) -> Result<AccountAddress, AccountError> {
-        let addr = self.keystore.import_key(name, password, public_key, secret_key)?;
+        let addr = self
+            .keystore
+            .import_key(name, password, public_key, secret_key)?;
         if self.active_account.is_none() {
             self.active_account = Some(name.to_string());
         }

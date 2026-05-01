@@ -294,10 +294,7 @@ impl KeyRotationManager {
     }
 
     pub fn by_status(&self, status: &KeyStatus) -> Vec<&ManagedKey> {
-        self.keys
-            .values()
-            .filter(|k| &k.status == status)
-            .collect()
+        self.keys.values().filter(|k| &k.status == status).collect()
     }
 
     /// Rotate a key: create a new key, link old->new, mark old as rotated,
@@ -365,7 +362,11 @@ impl KeyRotationManager {
             for policy in &self.policies {
                 if policy.key_type == key.key_type && policy.needs_rotation(key) {
                     let reason = if key.age_days() > policy.max_age_days {
-                        format!("age {} days exceeds max {}", key.age_days(), policy.max_age_days)
+                        format!(
+                            "age {} days exceeds max {}",
+                            key.age_days(),
+                            policy.max_age_days
+                        )
                     } else {
                         format!(
                             "usage {} exceeds max {}",
@@ -426,10 +427,7 @@ impl KeyRotationManager {
         }
 
         // Also walk forward from the original key via successors
-        current_id = self
-            .keys
-            .get(key_id)
-            .and_then(|k| k.successor_id.clone());
+        current_id = self.keys.get(key_id).and_then(|k| k.successor_id.clone());
         while let Some(ref id) = current_id {
             if ids_back.contains(id) {
                 break; // avoid loops
@@ -699,9 +697,7 @@ mod tests {
         let k2 = mgr
             .rotate_key("k1", "pub2", RotationReason::Manual)
             .unwrap();
-        let k3 = mgr
-            .rotate_key(&k2, "pub3", RotationReason::Manual)
-            .unwrap();
+        let k3 = mgr.rotate_key(&k2, "pub3", RotationReason::Manual).unwrap();
 
         let chain = mgr.key_chain(&k3);
         assert_eq!(chain.len(), 3);
@@ -739,7 +735,7 @@ mod tests {
         mgr.get_key_mut("k2").unwrap().mark_compromised();
         mgr.add_policy(RotationPolicy::new(KeyType::Signing, 90));
 
-        let k3 = mgr
+        let _k3 = mgr
             .rotate_key("k1", "pub3", RotationReason::Manual)
             .unwrap();
 

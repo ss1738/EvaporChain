@@ -53,9 +53,16 @@ impl OracleState {
         }
     }
 
-    pub fn apply_finalized(&mut self, finalized: &FinalizedOracleValue, energy: u64, half_life: u64) {
-        let entry = self.entries.entry(finalized.key.clone()).or_insert_with(|| {
-            OracleEntry {
+    pub fn apply_finalized(
+        &mut self,
+        finalized: &FinalizedOracleValue,
+        energy: u64,
+        half_life: u64,
+    ) {
+        let entry = self
+            .entries
+            .entry(finalized.key.clone())
+            .or_insert_with(|| OracleEntry {
                 key: finalized.key.clone(),
                 current_value: 0.0,
                 current_twap: None,
@@ -65,8 +72,7 @@ impl OracleState {
                 initial_energy: energy,
                 half_life,
                 history: Vec::new(),
-            }
-        });
+            });
 
         entry.current_value = finalized.value;
         entry.current_twap = finalized.twap;

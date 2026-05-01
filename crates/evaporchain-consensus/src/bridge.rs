@@ -88,11 +88,7 @@ impl ValidatorSetCommitment {
     /// against the live `ValidatorSet` which carries prev-key history.
     /// Bridge-level verification operates on the snapshot as it stood at
     /// commitment time, so the live grace window is not in scope here.
-    pub fn verify_certificate_signature(
-        &self,
-        cert: &CommitCertificate,
-        vote_msg: &[u8],
-    ) -> bool {
+    pub fn verify_certificate_signature(&self, cert: &CommitCertificate, vote_msg: &[u8]) -> bool {
         // Collect public keys of signers
         let pks: Vec<BlsPublicKey> = cert
             .signer_ids
@@ -188,9 +184,7 @@ pub enum BridgePayload {
         new_commitment: ValidatorSetCommitment,
     },
     /// Arbitrary data relay.
-    DataRelay {
-        data: Vec<u8>,
-    },
+    DataRelay { data: Vec<u8> },
 }
 
 // ─────────────────────── Bridge Proof Builder ───────────────────────────
@@ -366,10 +360,7 @@ pub enum VerifyResult {
 
 impl BridgeVerifier {
     /// Create a new verifier with the initial validator set commitment.
-    pub fn new(
-        expected_source: String,
-        initial_commitment: ValidatorSetCommitment,
-    ) -> Self {
+    pub fn new(expected_source: String, initial_commitment: ValidatorSetCommitment) -> Self {
         let epoch = initial_commitment.epoch;
         let mut validator_sets = BTreeMap::new();
         validator_sets.insert(epoch, initial_commitment);
@@ -741,8 +732,16 @@ mod tests {
 
         let cert = make_signed_certificate(1, [0xAA; 32], 0, &keypairs, &[0, 1, 2]);
         let msg = builder.build_transfer(
-            "ethereum", 1, [0xAA; 32], [0xBB; 32], 1, cert,
-            [0x01; 32], vec![], 100, vec![],
+            "ethereum",
+            1,
+            [0xAA; 32],
+            [0xBB; 32],
+            1,
+            cert,
+            [0x01; 32],
+            vec![],
+            100,
+            vec![],
         );
 
         match verifier.verify(&msg) {
@@ -762,8 +761,16 @@ mod tests {
         // Only 2/4 signers (50% < 66.7%)
         let cert = make_signed_certificate(1, [0xAA; 32], 0, &keypairs, &[0, 1]);
         let msg = builder.build_transfer(
-            "ethereum", 1, [0xAA; 32], [0xBB; 32], 1, cert,
-            [0x01; 32], vec![], 100, vec![],
+            "ethereum",
+            1,
+            [0xAA; 32],
+            [0xBB; 32],
+            1,
+            cert,
+            [0x01; 32],
+            vec![],
+            100,
+            vec![],
         );
 
         match verifier.verify(&msg) {
@@ -787,8 +794,15 @@ mod tests {
         let state_root = proof.state_root;
 
         let msg = builder.build_transfer(
-            "ethereum", 1, [0xAA; 32], state_root, 1, cert,
-            [0x01; 32], vec![0x02; 20], 1_000_000,
+            "ethereum",
+            1,
+            [0xAA; 32],
+            state_root,
+            1,
+            cert,
+            [0x01; 32],
+            vec![0x02; 20],
+            1_000_000,
             vec![proof],
         );
 
@@ -814,8 +828,16 @@ mod tests {
         };
 
         let msg = builder.build_transfer(
-            "ethereum", 1, [0xAA; 32], [0xBB; 32], 1, cert,
-            [0x01; 32], vec![], 100, vec![proof],
+            "ethereum",
+            1,
+            [0xAA; 32],
+            [0xBB; 32],
+            1,
+            cert,
+            [0x01; 32],
+            vec![],
+            100,
+            vec![proof],
         );
 
         match verifier.verify(&msg) {
@@ -840,7 +862,13 @@ mod tests {
         let cert = make_signed_certificate(100, [0xDD; 32], 0, &keypairs, &[0, 1, 2]);
 
         let msg = builder.build_validator_set_update(
-            "ethereum", 100, [0xDD; 32], [0xEE; 32], 1, cert, commitment2,
+            "ethereum",
+            100,
+            [0xDD; 32],
+            [0xEE; 32],
+            1,
+            cert,
+            commitment2,
         );
 
         assert_eq!(verifier.verify(&msg), VerifyResult::Valid);
@@ -850,8 +878,16 @@ mod tests {
         // Now messages signed with epoch 2 validators should also be accepted
         let cert2 = make_signed_certificate(200, [0xFF; 32], 0, &new_keypairs, &[0, 1, 2, 3]);
         let msg2 = builder.build_transfer(
-            "ethereum", 200, [0xFF; 32], [0x11; 32], 2, cert2,
-            [0x01; 32], vec![], 100, vec![],
+            "ethereum",
+            200,
+            [0xFF; 32],
+            [0x11; 32],
+            2,
+            cert2,
+            [0x01; 32],
+            vec![],
+            100,
+            vec![],
         );
 
         assert_eq!(verifier.verify(&msg2), VerifyResult::Valid);
@@ -868,8 +904,16 @@ mod tests {
         // Send message 1
         let cert1 = make_signed_certificate(1, [0xAA; 32], 0, &keypairs, &[0, 1, 2]);
         let msg1 = builder.build_transfer(
-            "ethereum", 1, [0xAA; 32], [0xBB; 32], 1, cert1,
-            [0x01; 32], vec![], 100, vec![],
+            "ethereum",
+            1,
+            [0xAA; 32],
+            [0xBB; 32],
+            1,
+            cert1,
+            [0x01; 32],
+            vec![],
+            100,
+            vec![],
         );
         assert_eq!(verifier.verify(&msg1), VerifyResult::Valid);
         verifier.accept(&msg1);
@@ -877,8 +921,16 @@ mod tests {
         // Send message 2
         let cert2 = make_signed_certificate(2, [0xCC; 32], 0, &keypairs, &[0, 1, 2]);
         let msg2 = builder.build_transfer(
-            "ethereum", 2, [0xCC; 32], [0xDD; 32], 1, cert2,
-            [0x01; 32], vec![], 200, vec![],
+            "ethereum",
+            2,
+            [0xCC; 32],
+            [0xDD; 32],
+            1,
+            cert2,
+            [0x01; 32],
+            vec![],
+            200,
+            vec![],
         );
         assert_eq!(verifier.verify(&msg2), VerifyResult::Valid);
         verifier.accept(&msg2);
@@ -897,8 +949,16 @@ mod tests {
 
         let cert = make_signed_certificate(1, [0xAA; 32], 0, &keypairs, &[0, 1, 2]);
         let mut msg = builder.build_transfer(
-            "ethereum", 1, [0xAA; 32], [0xBB; 32], 1, cert,
-            [0x01; 32], vec![], 100, vec![],
+            "ethereum",
+            1,
+            [0xAA; 32],
+            [0xBB; 32],
+            1,
+            cert,
+            [0x01; 32],
+            vec![],
+            100,
+            vec![],
         );
 
         // Tamper with message hash

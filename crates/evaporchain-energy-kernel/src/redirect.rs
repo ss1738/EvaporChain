@@ -81,7 +81,10 @@ impl EnergyRedirect {
     ///
     /// Total energy across compartments is *exactly* preserved on success.
     /// On failure, `acc` is unchanged.
-    pub fn apply(&self, acc: &mut EnergyAccumulator) -> Result<(Compartment, Compartment), RedirectError> {
+    pub fn apply(
+        &self,
+        acc: &mut EnergyAccumulator,
+    ) -> Result<(Compartment, Compartment), RedirectError> {
         let (from, to) = self.kind.flow();
         let avail = acc[from];
         if avail < self.amount {
@@ -172,7 +175,10 @@ mod tests {
         let err = EnergyRedirect::new(RedirectKind::Slash, 100)
             .apply(&mut acc)
             .unwrap_err();
-        assert_eq!(err, RedirectError::InsufficientSource(Compartment::Stake, 50, 100));
+        assert_eq!(
+            err,
+            RedirectError::InsufficientSource(Compartment::Stake, 50, 100)
+        );
         assert_eq!(acc, before, "accumulator must be untouched on rejection");
     }
 }

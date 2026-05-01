@@ -217,10 +217,7 @@ impl WhaleTracker {
         self.movements.push(movement);
     }
 
-    pub fn detect_activity(
-        &self,
-        address: &str,
-    ) -> Result<WhaleActivity, WhaleTrackerError> {
+    pub fn detect_activity(&self, address: &str) -> Result<WhaleActivity, WhaleTrackerError> {
         let whale = self
             .whales
             .get(address)
@@ -321,10 +318,7 @@ impl WhaleTracker {
             .collect()
     }
 
-    pub fn accumulation_score(
-        &self,
-        address: &str,
-    ) -> Result<f64, WhaleTrackerError> {
+    pub fn accumulation_score(&self, address: &str) -> Result<f64, WhaleTrackerError> {
         let whale = self
             .whales
             .get(address)
@@ -500,8 +494,12 @@ mod tests {
     #[test]
     fn test_record_movement() {
         let mut tracker = WhaleTracker::new();
-        tracker.track_whale(make_whale("sender", 10_000_000)).unwrap();
-        tracker.track_whale(make_whale("receiver", 1_000_000)).unwrap();
+        tracker
+            .track_whale(make_whale("sender", 10_000_000))
+            .unwrap();
+        tracker
+            .track_whale(make_whale("receiver", 1_000_000))
+            .unwrap();
 
         let movement = make_movement("m1", "sender", "receiver", 500_000);
         tracker.record_movement(movement);

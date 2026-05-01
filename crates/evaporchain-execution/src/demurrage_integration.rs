@@ -41,7 +41,9 @@ pub fn collect_demurrage(
 
     for addr in addrs {
         let (balance, owed) = {
-            let Some(acct) = db.get_account(&addr) else { continue };
+            let Some(acct) = db.get_account(&addr) else {
+                continue;
+            };
             let b = acct.balance;
             let o = demurrage_owed(b, last_epoch, current_epoch, params);
             (b, o)
@@ -117,7 +119,10 @@ mod tests {
         let mut pool = RefreshPool::new();
         let params = DemurrageParams::new(100, 1_000); // aggressive for test
         let collected = collect_demurrage(&mut db, &mut pool, &params, 0, 10);
-        assert!(collected > 0, "should charge non-zero demurrage on large balance");
+        assert!(
+            collected > 0,
+            "should charge non-zero demurrage on large balance"
+        );
         assert_eq!(pool.total_accrued(), collected);
         let new_bal = db.get_account(&addr(1)).unwrap().balance;
         assert_eq!(new_bal, 10_000_000 - collected);

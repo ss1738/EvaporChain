@@ -350,10 +350,7 @@ impl CircuitBreakerManager {
     }
 
     pub fn events_for_circuit(&self, id: &str) -> Vec<&CircuitEvent> {
-        self.events
-            .iter()
-            .filter(|e| e.circuit_id == id)
-            .collect()
+        self.events.iter().filter(|e| e.circuit_id == id).collect()
     }
 
     pub fn stats(&self) -> BreakerStats {
@@ -431,7 +428,8 @@ mod tests {
     #[test]
     fn test_register() {
         let mut mgr = CircuitBreakerManager::new();
-        mgr.register("c1", "service-a", CircuitConfig::default()).unwrap();
+        mgr.register("c1", "service-a", CircuitConfig::default())
+            .unwrap();
         assert!(mgr.get_circuit("c1").is_some());
         assert_eq!(mgr.get_circuit("c1").unwrap().state, CircuitState::Closed);
     }
@@ -609,7 +607,15 @@ mod tests {
     #[test]
     fn test_events_for_circuit() {
         let mut mgr = CircuitBreakerManager::new();
-        mgr.register("a", "s1", CircuitConfig { failure_threshold: 1, ..Default::default() }).unwrap();
+        mgr.register(
+            "a",
+            "s1",
+            CircuitConfig {
+                failure_threshold: 1,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         mgr.register("b", "s2", CircuitConfig::default()).unwrap();
         mgr.record_failure("a").unwrap();
         mgr.force_open("b").unwrap();
@@ -622,7 +628,15 @@ mod tests {
     #[test]
     fn test_stats() {
         let mut mgr = CircuitBreakerManager::new();
-        mgr.register("a", "s1", CircuitConfig { failure_threshold: 1, ..Default::default() }).unwrap();
+        mgr.register(
+            "a",
+            "s1",
+            CircuitConfig {
+                failure_threshold: 1,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         mgr.register("b", "s2", CircuitConfig::default()).unwrap();
         mgr.record_failure("a").unwrap(); // opens a
         mgr.record_success("b").unwrap();
@@ -664,12 +678,30 @@ mod tests {
     #[test]
     fn test_not_found_errors() {
         let mut mgr = CircuitBreakerManager::new();
-        assert!(matches!(mgr.record_success("x"), Err(CircuitBreakerError::CircuitNotFound(_))));
-        assert!(matches!(mgr.record_failure("x"), Err(CircuitBreakerError::CircuitNotFound(_))));
-        assert!(matches!(mgr.can_execute("x"), Err(CircuitBreakerError::CircuitNotFound(_))));
-        assert!(matches!(mgr.unregister("x"), Err(CircuitBreakerError::CircuitNotFound(_))));
-        assert!(matches!(mgr.force_open("x"), Err(CircuitBreakerError::CircuitNotFound(_))));
-        assert!(matches!(mgr.force_close("x"), Err(CircuitBreakerError::CircuitNotFound(_))));
+        assert!(matches!(
+            mgr.record_success("x"),
+            Err(CircuitBreakerError::CircuitNotFound(_))
+        ));
+        assert!(matches!(
+            mgr.record_failure("x"),
+            Err(CircuitBreakerError::CircuitNotFound(_))
+        ));
+        assert!(matches!(
+            mgr.can_execute("x"),
+            Err(CircuitBreakerError::CircuitNotFound(_))
+        ));
+        assert!(matches!(
+            mgr.unregister("x"),
+            Err(CircuitBreakerError::CircuitNotFound(_))
+        ));
+        assert!(matches!(
+            mgr.force_open("x"),
+            Err(CircuitBreakerError::CircuitNotFound(_))
+        ));
+        assert!(matches!(
+            mgr.force_close("x"),
+            Err(CircuitBreakerError::CircuitNotFound(_))
+        ));
     }
 
     // 23 (bonus — default config values)

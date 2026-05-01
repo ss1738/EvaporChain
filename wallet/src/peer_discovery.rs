@@ -139,8 +139,7 @@ impl Peer {
         if self.success_count == 0 && self.latency_ms == 0 {
             self.latency_ms = latency_ms;
         } else {
-            self.latency_ms =
-                (self.latency_ms as f64 * 0.7 + latency_ms as f64 * 0.3) as u64;
+            self.latency_ms = (self.latency_ms as f64 * 0.7 + latency_ms as f64 * 0.3) as u64;
         }
         self.success_count += 1;
         self.consecutive_failures = 0;
@@ -266,9 +265,11 @@ impl PeerRegistry {
 
     /// Best peer by score among available.
     pub fn best_peer(&self) -> Option<&Peer> {
-        self.available()
-            .into_iter()
-            .max_by(|a, b| a.score().partial_cmp(&b.score()).unwrap_or(std::cmp::Ordering::Equal))
+        self.available().into_iter().max_by(|a, b| {
+            a.score()
+                .partial_cmp(&b.score())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
     }
 
     /// Select the best peer URL. If it differs from the last selection,
@@ -277,7 +278,11 @@ impl PeerRegistry {
         let best = self
             .available()
             .into_iter()
-            .max_by(|a, b| a.score().partial_cmp(&b.score()).unwrap_or(std::cmp::Ordering::Equal))
+            .max_by(|a, b| {
+                a.score()
+                    .partial_cmp(&b.score())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .map(|p| p.url.clone());
 
         if let Some(ref url) = best {
@@ -331,11 +336,7 @@ impl PeerRegistry {
     }
 
     /// Record a successful call against a peer.
-    pub fn record_success(
-        &mut self,
-        url: &str,
-        latency_ms: u64,
-    ) -> Result<(), PeerDiscoveryError> {
+    pub fn record_success(&mut self, url: &str, latency_ms: u64) -> Result<(), PeerDiscoveryError> {
         self.peers
             .get_mut(url)
             .ok_or_else(|| PeerDiscoveryError::NotFound(url.to_string()))?
@@ -457,10 +458,7 @@ mod tests {
     use super::*;
 
     fn test_path(name: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
-            "peer_disc_test_{}_{name}",
-            std::process::id()
-        ))
+        std::env::temp_dir().join(format!("peer_disc_test_{}_{name}", std::process::id()))
     }
 
     fn make_peer(url: &str, name: &str) -> Peer {
@@ -640,8 +638,10 @@ mod tests {
     #[test]
     fn test_by_region() {
         let mut reg = PeerRegistry::new();
-        reg.add_peer(make_peer("https://local.example.com", "local").with_region(PeerRegion::Local))
-            .unwrap();
+        reg.add_peer(
+            make_peer("https://local.example.com", "local").with_region(PeerRegion::Local),
+        )
+        .unwrap();
         reg.add_peer(
             make_peer("https://remote.example.com", "remote").with_region(PeerRegion::Remote),
         )

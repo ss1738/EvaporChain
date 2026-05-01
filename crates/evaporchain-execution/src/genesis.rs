@@ -72,6 +72,7 @@ pub fn initialize_genesis(
             grace_epoch: None,
             data: go.data.clone(),
             decay_curve: None,
+            lad_mode: None,
         };
         db.put_object(obj);
     }
@@ -91,17 +92,17 @@ pub fn initialize_genesis(
         producer_id: None,
         vrf_output: None,
         vrf_proof: None,
-            data_root: None,
-            blob_commitments: vec![],
-            da_certificate: None,
-            commit_certificate: None,
-            nova_proof: None,
-            anchor_hash: None,
-            state_function_commitment: None,
-            oracle_state_root: None,
-            shard_count: None,
-            da_row_roots: vec![],
-            da_col_roots: vec![],
+        data_root: None,
+        blob_commitments: vec![],
+        da_certificate: None,
+        commit_certificate: None,
+        nova_proof: None,
+        anchor_hash: None,
+        state_function_commitment: None,
+        oracle_state_root: None,
+        shard_count: None,
+        da_row_roots: vec![],
+        da_col_roots: vec![],
     };
 
     Ok(GenesisResult {

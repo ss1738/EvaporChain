@@ -3,11 +3,10 @@
 //! Verifies ML-DSA signing and verification across all 9 transaction types,
 //! keystore-backed signing, and signature integrity properties.
 
-use evaporchain_crypto::signatures::{MlDsaKeypair, MlDsaVerifier, Signer, Verifier};
-use evaporchain_types::*;
+use evaporchain_crypto::signatures::{MlDsaKeypair, MlDsaVerifier, Verifier};
+use evaporchain_wallet::address::derive_address;
 use evaporchain_wallet::keystore::KeyStore;
 use evaporchain_wallet::signer::WalletSigner;
-use evaporchain_wallet::address::derive_address;
 use evaporchain_wallet::tx_builder::TxBuilder;
 
 fn make_signer() -> WalletSigner {
@@ -32,27 +31,50 @@ fn sign_and_verify_all_transaction_types() {
 
     let transactions = vec![
         ("Transfer", builder.transfer(recipient, 1000, 0)),
-        ("CreateObject", builder.create_object(obj_id, 5000, 100, vec![0xAB; 16])),
+        (
+            "CreateObject",
+            builder.create_object(obj_id, 5000, 100, vec![0xAB; 16]),
+        ),
         ("Refresh", builder.refresh(obj_id, 500)),
-        ("DeployContract", builder.deploy_contract("Token", "{}", 10000, 200)),
-        ("CallContract", builder.call_contract(1, "transfer", "{}", 42)),
-        ("DeployScript", builder.deploy_script("fn main() {}", 8000, 150)),
+        (
+            "DeployContract",
+            builder.deploy_contract("Token", "{}", 10000, 200),
+        ),
+        (
+            "CallContract",
+            builder.call_contract(1, "transfer", "{}", 42),
+        ),
+        (
+            "DeployScript",
+            builder.deploy_script("fn main() {}", 8000, 150),
+        ),
         ("CallScript", builder.call_script(1, "run", "[]", 10)),
-        ("ValidatorStake", builder.validator_stake(1, 100_000, 0, None)),
+        (
+            "ValidatorStake",
+            builder.validator_stake(1, 100_000, 0, None),
+        ),
         ("ValidatorExit", builder.validator_exit(1, 3)),
     ];
 
     for (name, tx) in transactions {
         // All start unsigned
         assert!(tx.signature().is_none(), "{} should start unsigned", name);
-        assert!(tx.public_key().is_none(), "{} should have no pubkey initially", name);
+        assert!(
+            tx.public_key().is_none(),
+            "{} should have no pubkey initially",
+            name
+        );
 
         // Sign
         let signed = signer.sign(&tx);
 
         // Signature and pubkey are set
-        let sig = signed.signature().expect(&format!("{} missing signature", name));
-        let pk = signed.public_key().expect(&format!("{} missing pubkey", name));
+        let sig = signed
+            .signature()
+            .unwrap_or_else(|| panic!("{} missing signature", name));
+        let pk = signed
+            .public_key()
+            .unwrap_or_else(|| panic!("{} missing pubkey", name));
         assert!(!sig.is_empty(), "{} signature empty", name);
         assert!(!pk.is_empty(), "{} pubkey empty", name);
 
@@ -114,8 +136,16 @@ fn different_signers_different_signatures() {
     // Both verify with their own keys
     let msg1 = signed1.signable_bytes();
     let msg2 = signed2.signable_bytes();
-    assert!(MlDsaVerifier::verify(&msg1, signed1.signature().unwrap(), signed1.public_key().unwrap()));
-    assert!(MlDsaVerifier::verify(&msg2, signed2.signature().unwrap(), signed2.public_key().unwrap()));
+    assert!(MlDsaVerifier::verify(
+        &msg1,
+        signed1.signature().unwrap(),
+        signed1.public_key().unwrap()
+    ));
+    assert!(MlDsaVerifier::verify(
+        &msg2,
+        signed2.signature().unwrap(),
+        signed2.public_key().unwrap()
+    ));
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -173,7 +203,11 @@ fn signer_from_keystore_by_address() {
     assert_eq!(*signer.address(), addr);
 
     let sig = signer.sign_bytes(b"test");
-    assert!(MlDsaVerifier::verify(b"test", &sig, &signer.public_key_bytes()));
+    assert!(MlDsaVerifier::verify(
+        b"test",
+        &sig,
+        &signer.public_key_bytes()
+    ));
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -197,12 +231,12 @@ fn sign_bytes_various_payloads() {
     let pk = signer.public_key_bytes();
 
     let payloads: Vec<&[u8]> = vec![
-        b"",                                // empty
-        b"a",                               // single byte
-        b"hello evaporchain",               // short
-        &[0u8; 1024],                       // 1KB zeros
-        &[0xFF; 4096],                      // 4KB max bytes
-        b"\x00\x01\x02\x03\x04",          // binary
+        b"",                     // empty
+        b"a",                    // single byte
+        b"hello evaporchain",    // short
+        &[0u8; 1024],            // 1KB zeros
+        &[0xFF; 4096],           // 4KB max bytes
+        b"\x00\x01\x02\x03\x04", // binary
     ];
 
     for payload in payloads {

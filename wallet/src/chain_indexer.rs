@@ -344,9 +344,7 @@ impl ChainIndexer {
     pub fn events_for_address(&self, address: &str) -> Vec<&IndexedEvent> {
         self.events
             .iter()
-            .filter(|e| {
-                e.from_address == address || e.to_address.as_deref() == Some(address)
-            })
+            .filter(|e| e.from_address == address || e.to_address.as_deref() == Some(address))
             .collect()
     }
 
@@ -448,7 +446,13 @@ mod tests {
         std::env::temp_dir().join(format!("chain_idx_test_{}", std::process::id()))
     }
 
-    fn make_event(id: &str, event_type: EventType, block: u64, tx: &str, from: &str) -> IndexedEvent {
+    fn make_event(
+        id: &str,
+        event_type: EventType,
+        block: u64,
+        tx: &str,
+        from: &str,
+    ) -> IndexedEvent {
         IndexedEvent::new(id, event_type, block, tx, from)
     }
 
@@ -526,12 +530,10 @@ mod tests {
     #[test]
     fn test_query_events_by_to_address() {
         let mut indexer = ChainIndexer::new();
-        indexer.index_event(
-            make_event("e1", EventType::Transfer, 1, "tx1", "alice").with_to("bob"),
-        );
-        indexer.index_event(
-            make_event("e2", EventType::Transfer, 2, "tx2", "alice").with_to("carol"),
-        );
+        indexer
+            .index_event(make_event("e1", EventType::Transfer, 1, "tx1", "alice").with_to("bob"));
+        indexer
+            .index_event(make_event("e2", EventType::Transfer, 2, "tx2", "alice").with_to("carol"));
 
         let filter = EventFilter::new().with_to("bob");
         let results = indexer.query_events(&filter);
@@ -567,12 +569,10 @@ mod tests {
     #[test]
     fn test_query_events_by_min_amount() {
         let mut indexer = ChainIndexer::new();
-        indexer.index_event(
-            make_event("e1", EventType::Transfer, 1, "tx1", "alice").with_amount(100),
-        );
-        indexer.index_event(
-            make_event("e2", EventType::Transfer, 2, "tx2", "bob").with_amount(500),
-        );
+        indexer
+            .index_event(make_event("e1", EventType::Transfer, 1, "tx1", "alice").with_amount(100));
+        indexer
+            .index_event(make_event("e2", EventType::Transfer, 2, "tx2", "bob").with_amount(500));
         indexer.index_event(make_event("e3", EventType::Transfer, 3, "tx3", "carol"));
 
         let filter = EventFilter::new().with_min_amount(200);
@@ -613,9 +613,8 @@ mod tests {
     fn test_events_for_address() {
         let mut indexer = ChainIndexer::new();
         indexer.index_event(make_event("e1", EventType::Transfer, 1, "tx1", "alice"));
-        indexer.index_event(
-            make_event("e2", EventType::Transfer, 2, "tx2", "bob").with_to("alice"),
-        );
+        indexer
+            .index_event(make_event("e2", EventType::Transfer, 2, "tx2", "bob").with_to("alice"));
         indexer.index_event(make_event("e3", EventType::Transfer, 3, "tx3", "carol"));
 
         let results = indexer.events_for_address("alice");
@@ -676,12 +675,10 @@ mod tests {
         let mut indexer = ChainIndexer::new();
         indexer.index_receipt(TxReceipt::new("tx1", 1, ReceiptStatus::Success, 21000, 100));
         indexer.index_receipt(
-            TxReceipt::new("tx2", 2, ReceiptStatus::Failed, 21000, 50)
-                .with_error("out of gas"),
+            TxReceipt::new("tx2", 2, ReceiptStatus::Failed, 21000, 50).with_error("out of gas"),
         );
         indexer.index_receipt(
-            TxReceipt::new("tx3", 3, ReceiptStatus::Failed, 15000, 30)
-                .with_error("reverted"),
+            TxReceipt::new("tx3", 3, ReceiptStatus::Failed, 15000, 30).with_error("reverted"),
         );
 
         let failed = indexer.failed_receipts();

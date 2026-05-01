@@ -14,7 +14,9 @@ pub struct Tensor {
 
 impl Tensor {
     pub fn zeros(size: usize) -> Self {
-        Self { data: vec![0.0; size] }
+        Self {
+            data: vec![0.0; size],
+        }
     }
 
     pub fn from_vec(data: Vec<f64>) -> Self {
@@ -47,12 +49,7 @@ impl Tensor {
 /// where `scale = 2^32` (so the coordinates stay in [0, 1] for u64 inputs).
 pub fn encode_energy(energy: u64) -> Tensor {
     let e = (energy as f64) / (u32::MAX as f64 + 1.0); // normalise to [0, 1)
-    let mut t = Tensor::from_vec(vec![
-        1.0,
-        e,
-        e * e,
-        e * e * e,
-    ]);
+    let mut t = Tensor::from_vec(vec![1.0, e, e * e, e * e * e]);
     t.normalise();
     t
 }
@@ -119,8 +116,14 @@ mod tests {
     #[test]
     fn encode_zero_energy_normalises() {
         let t = encode_energy(0);
-        assert!((t.norm() - 1.0).abs() < 1e-10, "zero energy should normalise to unit vector");
-        assert!((t.data[0] - 1.0).abs() < 1e-10, "first component should dominate");
+        assert!(
+            (t.norm() - 1.0).abs() < 1e-10,
+            "zero energy should normalise to unit vector"
+        );
+        assert!(
+            (t.data[0] - 1.0).abs() < 1e-10,
+            "first component should dominate"
+        );
     }
 
     #[test]
@@ -144,7 +147,8 @@ mod tests {
         let t = Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0]);
         let b = t.as_bytes();
         assert_eq!(b.len(), 4 * 8);
-        let recovered: Vec<f64> = b.chunks(8)
+        let recovered: Vec<f64> = b
+            .chunks(8)
             .map(|c| f64::from_le_bytes(c.try_into().unwrap()))
             .collect();
         assert_eq!(recovered, t.data);

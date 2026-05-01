@@ -1,9 +1,13 @@
+#[cfg(test)]
+mod audit_tests;
 pub mod block_stm;
 pub mod boltzmann_stake_integration;
 pub mod demurrage_integration;
 pub mod economics;
 pub mod energy_audit;
 pub mod fees;
+#[cfg(test)]
+mod four_act_integration_tests;
 pub mod genesis;
 pub mod genesis_invariant;
 pub mod lamport_integration;
@@ -15,15 +19,13 @@ pub mod refresh_market_integration;
 pub mod rewards;
 pub mod sanov_slash_helpers;
 pub mod temporal;
-#[cfg(test)]
-mod audit_tests;
-#[cfg(test)]
-mod four_act_integration_tests;
 
 use evaporchain_contracts::{ContractEngine, ContractTemplate};
 use evaporchain_crypto::signatures::{HybridVerifier, Verifier};
 use evaporchain_crypto::MerkleMountainRange;
-use evaporchain_proving::evaporation_proof::{EvaporationClaim, EvaporationProof, EvaporationProver};
+use evaporchain_proving::evaporation_proof::{
+    EvaporationClaim, EvaporationProof, EvaporationProver,
+};
 use evaporchain_script::ScriptEngine;
 use evaporchain_state::db::StateDB;
 use evaporchain_state::{EvaporationEngine, RefreshEngine};
@@ -255,7 +257,11 @@ fn decide_proposal_outcome(proposal: &GovernanceProposal) -> ProposalStatus {
     if total_weight < QUORUM_MIN_TOTAL_WEIGHT || proposal.voters.len() < QUORUM_MIN_VOTERS {
         return ProposalStatus::Rejected;
     }
-    if proposal.votes_for > proposal.votes_against.saturating_mul(PASS_THRESHOLD_MULTIPLIER) {
+    if proposal.votes_for
+        > proposal
+            .votes_against
+            .saturating_mul(PASS_THRESHOLD_MULTIPLIER)
+    {
         ProposalStatus::Passed
     } else {
         ProposalStatus::Rejected
@@ -272,7 +278,10 @@ fn validate_param_value(key: &str, value: &str) -> Result<(), String> {
                 if (1_000..=10_000_000_000).contains(&v) {
                     Ok(())
                 } else {
-                    Err(format!("block_gas_limit out of range [1_000, 10_000_000_000]: {}", v))
+                    Err(format!(
+                        "block_gas_limit out of range [1_000, 10_000_000_000]: {}",
+                        v
+                    ))
                 }
             }),
         "base_fee_floor" | "base_fee_ceiling" => value
@@ -286,7 +295,10 @@ fn validate_param_value(key: &str, value: &str) -> Result<(), String> {
                 if (0.0..=1.0).contains(&v) {
                     Ok(())
                 } else {
-                    Err(format!("target_gas_utilization out of range [0.0, 1.0]: {}", v))
+                    Err(format!(
+                        "target_gas_utilization out of range [0.0, 1.0]: {}",
+                        v
+                    ))
                 }
             }),
         k if k.starts_with("upgrade_contract:") => {
@@ -296,7 +308,10 @@ fn validate_param_value(key: &str, value: &str) -> Result<(), String> {
                 Err("upgrade_contract value must be 64-char hex (blake3 of new bytecode)".into())
             }
         }
-        _ => Err(format!("param_key '{}' is not on the governable allowlist", key)),
+        _ => Err(format!(
+            "param_key '{}' is not on the governable allowlist",
+            key
+        )),
     }
 }
 
@@ -360,11 +375,14 @@ impl ExecutionCache {
             }
         }
         let key = Self::cache_key(tx_hash, pre_state_root);
-        self.entries.insert(key, CachedResult {
-            gas_used,
-            success,
-            last_used_height: height,
-        });
+        self.entries.insert(
+            key,
+            CachedResult {
+                gas_used,
+                success,
+                last_used_height: height,
+            },
+        );
     }
 
     pub fn len(&self) -> usize {
@@ -384,9 +402,7 @@ impl ExecutionCache {
 /// Higher-gas txs (contract deploys, scripts) get priority over simple transfers,
 /// maximising block value when gas limit is enforced.
 pub fn sort_txs_by_gas_priority(txs: &mut [Transaction]) {
-    txs.sort_by(|a, b| {
-        SimpleExecutor::estimate_gas(b).cmp(&SimpleExecutor::estimate_gas(a))
-    });
+    txs.sort_by(|a, b| SimpleExecutor::estimate_gas(b).cmp(&SimpleExecutor::estimate_gas(a)));
 }
 
 /// Simple executor that processes transactions sequentially and runs
@@ -420,8 +436,8 @@ pub struct SimpleExecutor {
     /// evaporates (storage rent zeros it out) is recorded here.
     /// Append-only — the deliberate exception to §2.2 of the doctrine.
     pub eulogy_trie: evaporchain_tombstone::EulogyTrie,
-    /// Protocol-owned refresh pool. Storage rent + slash settlement
-    /// + MEV burn flow into here under the system namespace, then pay
+    /// Protocol-owned refresh pool. Storage rent + slash settlement +
+    /// MEV burn flow into here under the system namespace, then pay
     /// out via `RedirectKind::RefreshPayout` for namespace keep-alive.
     ///
     /// Per INVENTION_STACK.md §1.2 conservation invariant: energy is
@@ -533,7 +549,12 @@ impl SimpleExecutor {
 
     /// Run the demurrage sweep directly (test helper / node API).
     #[doc(hidden)]
-    pub fn run_demurrage_for_test(&mut self, db: &mut dyn StateDB, last_epoch: u64, current_epoch: u64) -> u64 {
+    pub fn run_demurrage_for_test(
+        &mut self,
+        db: &mut dyn StateDB,
+        last_epoch: u64,
+        current_epoch: u64,
+    ) -> u64 {
         crate::demurrage_integration::collect_demurrage(
             db,
             &mut self.refresh_pool,
@@ -553,7 +574,10 @@ impl SimpleExecutor {
         &mut self,
         gas_used: u64,
         epochs_elapsed: u64,
-    ) -> Result<(evaporchain_types::Energy, evaporchain_fee_controller::Drift), evaporchain_fee_controller::controller::FeeControllerError> {
+    ) -> Result<
+        (evaporchain_types::Energy, evaporchain_fee_controller::Drift),
+        evaporchain_fee_controller::controller::FeeControllerError,
+    > {
         let (new_state, drift) = evaporchain_fee_controller::FeeController::step(
             &self.lyapunov_fee_params,
             &self.lyapunov_fee_state,
@@ -561,7 +585,10 @@ impl SimpleExecutor {
             epochs_elapsed,
         )?;
         self.lyapunov_fee_state = new_state;
-        let new_fee = evaporchain_fee_controller::base_fee(&self.lyapunov_fee_state, &self.lyapunov_fee_params);
+        let new_fee = evaporchain_fee_controller::base_fee(
+            &self.lyapunov_fee_state,
+            &self.lyapunov_fee_params,
+        );
         Ok((new_fee, drift))
     }
 
@@ -575,11 +602,8 @@ impl SimpleExecutor {
         excess_entropy_mb: u64,
         entropy_rate_mb: u64,
     ) -> evaporchain_cmu_gate::Verdict {
-        let v = evaporchain_cmu_gate::cmu_check(
-            observed_cmu_mb,
-            excess_entropy_mb,
-            entropy_rate_mb,
-        );
+        let v =
+            evaporchain_cmu_gate::cmu_check(observed_cmu_mb, excess_entropy_mb, entropy_rate_mb);
         self.last_cmu_verdict = Some(v);
         v
     }
@@ -878,9 +902,9 @@ impl SimpleExecutor {
     fn estimate_gas(tx: &Transaction) -> u64 {
         match tx {
             Transaction::Transfer(_) => GAS_TRANSFER,
-            Transaction::CreateObject(create) => {
-                GAS_CREATE_OBJECT_BASE.saturating_add(GAS_CREATE_OBJECT_PER_BYTE.saturating_mul(create.data.len() as u64))
-            }
+            Transaction::CreateObject(create) => GAS_CREATE_OBJECT_BASE.saturating_add(
+                GAS_CREATE_OBJECT_PER_BYTE.saturating_mul(create.data.len() as u64),
+            ),
             Transaction::Refresh(_) => GAS_REFRESH,
             Transaction::DeployContract(_) => GAS_DEPLOY_CONTRACT,
             Transaction::CallContract(_) => GAS_CALL_CONTRACT,
@@ -894,17 +918,16 @@ impl SimpleExecutor {
             Transaction::PrivateTransfer(ptx) => {
                 privacy_exec::PrivacyExecutor::estimate_private_transfer_gas(ptx)
             }
-            Transaction::Deferred(dtx) => {
-                temporal::GAS_DEFERRED_SUBMIT
-                    .saturating_add(temporal::GAS_PER_GUARD.saturating_mul(dtx.guards.len() as u64))
-            }
-            Transaction::Blob(tx) => {
-                GAS_CREATE_OBJECT_BASE.saturating_add(GAS_CREATE_OBJECT_PER_BYTE.saturating_mul(tx.data.len() as u64))
-            }
+            Transaction::Deferred(dtx) => temporal::GAS_DEFERRED_SUBMIT
+                .saturating_add(temporal::GAS_PER_GUARD.saturating_mul(dtx.guards.len() as u64)),
+            Transaction::Blob(tx) => GAS_CREATE_OBJECT_BASE
+                .saturating_add(GAS_CREATE_OBJECT_PER_BYTE.saturating_mul(tx.data.len() as u64)),
             Transaction::Governance(_) => GAS_GOVERNANCE,
             Transaction::MultiSig(_) => GAS_MULTISIG,
             Transaction::UserOp(tx) => GAS_USER_OP.saturating_add(tx.call_data.len() as u64 * 16),
-            Transaction::UpgradeContract(tx) => GAS_UPGRADE_CONTRACT.saturating_add(tx.new_bytecode.len() as u64 * 200),
+            Transaction::UpgradeContract(tx) => {
+                GAS_UPGRADE_CONTRACT.saturating_add(tx.new_bytecode.len() as u64 * 200)
+            }
             Transaction::Delegate(_) => GAS_DELEGATE,
             Transaction::Undelegate(_) => GAS_UNDELEGATE,
             Transaction::RotateValidatorKey(_) => GAS_ROTATE_VALIDATOR_KEY,
@@ -920,7 +943,10 @@ impl SimpleExecutor {
         }
 
         // ZK-authenticated transactions don't use signatures
-        if matches!(tx, Transaction::Unshield(_) | Transaction::PrivateTransfer(_)) {
+        if matches!(
+            tx,
+            Transaction::Unshield(_) | Transaction::PrivateTransfer(_)
+        ) {
             return Ok(());
         }
 
@@ -1000,7 +1026,9 @@ impl SimpleExecutor {
     ) -> Result<(), ExecutionError> {
         // Check if object already exists
         if db.get_object(&tx.object_id).is_some() {
-            return Err(ExecutionError::ObjectAlreadyExists(hex::encode(tx.object_id)));
+            return Err(ExecutionError::ObjectAlreadyExists(hex::encode(
+                tx.object_id,
+            )));
         }
 
         // Storage rent: creator must hold at least MIN_STORAGE_DEPOSIT EVAP
@@ -1020,7 +1048,8 @@ impl SimpleExecutor {
                 });
             }
             creator.balance -= evaporchain_types::MIN_STORAGE_DEPOSIT;
-            creator.storage_deposit = creator.storage_deposit
+            creator.storage_deposit = creator
+                .storage_deposit
                 .saturating_add(evaporchain_types::MIN_STORAGE_DEPOSIT);
             // Storage-deposit lock-up debits balance — stamp the demurrage anchor.
             creator.last_touched_epoch = epoch;
@@ -1038,6 +1067,11 @@ impl SimpleExecutor {
             grace_epoch: None,
             data: tx.data.clone(),
             decay_curve: tx.decay_curve.clone(),
+            // Stamp the LAD-VM substructural mode on the new object.
+            // `None` (the default) produces an ordinary state object;
+            // a `Some(mode)` makes it LAD-typed and is what the
+            // wallet's LAD pill / LadVmPreview keys off of.
+            lad_mode: tx.lad_mode,
         };
 
         db.put_object(obj);
@@ -1111,7 +1145,15 @@ impl SimpleExecutor {
 
         let id = self
             .contract_engine
-            .deploy(template, init_args, rules, tx.deployer, tx.energy, tx.half_life, epoch)
+            .deploy(
+                template,
+                init_args,
+                rules,
+                tx.deployer,
+                tx.energy,
+                tx.half_life,
+                epoch,
+            )
             .map_err(|e| ExecutionError::ContractError(e.to_string()))?;
 
         debug!(contract_id = id, template = %tx.template, "Contract deployed");
@@ -1119,10 +1161,7 @@ impl SimpleExecutor {
     }
 
     /// Execute a contract call transaction.
-    fn execute_call_contract(
-        &mut self,
-        tx: &CallContractTx,
-    ) -> Result<(), ExecutionError> {
+    fn execute_call_contract(&mut self, tx: &CallContractTx) -> Result<(), ExecutionError> {
         if self.call_depth >= MAX_CALL_DEPTH {
             return Err(ExecutionError::CallDepthExceeded(MAX_CALL_DEPTH));
         }
@@ -1166,10 +1205,7 @@ impl SimpleExecutor {
     }
 
     /// Execute a script call transaction.
-    fn execute_call_script(
-        &mut self,
-        tx: &CallScriptTx,
-    ) -> Result<(), ExecutionError> {
+    fn execute_call_script(&mut self, tx: &CallScriptTx) -> Result<(), ExecutionError> {
         if self.call_depth >= MAX_CALL_DEPTH {
             return Err(ExecutionError::CallDepthExceeded(MAX_CALL_DEPTH));
         }
@@ -1193,9 +1229,10 @@ impl SimpleExecutor {
 
         if !result.structured_events.is_empty() {
             self.pending_events.extend(
-                result.structured_events.into_iter().map(|event| {
-                    (tx.contract_id, event)
-                })
+                result
+                    .structured_events
+                    .into_iter()
+                    .map(|event| (tx.contract_id, event)),
             );
         }
 
@@ -1242,7 +1279,10 @@ impl SimpleExecutor {
         // Stake locks balance and bumps nonce — stamp the demurrage anchor.
         sender.last_touched_epoch = epoch;
 
-        let existing_stake = db.get_stake(tx.validator_id).map(|s| s.staked_amount).unwrap_or(0);
+        let existing_stake = db
+            .get_stake(tx.validator_id)
+            .map(|s| s.staked_amount)
+            .unwrap_or(0);
         db.put_stake(StakeRecord {
             validator_id: tx.validator_id,
             validator_address: tx.validator_address,
@@ -1361,10 +1401,13 @@ impl SimpleExecutor {
         let mut record = db
             .get_delegation(&tx.delegator, tx.validator_id)
             .cloned()
-            .ok_or_else(|| ExecutionError::ContractError(format!(
-                "no delegation from {} to validator-id {}",
-                hex::encode(tx.delegator), tx.validator_id
-            )))?;
+            .ok_or_else(|| {
+                ExecutionError::ContractError(format!(
+                    "no delegation from {} to validator-id {}",
+                    hex::encode(tx.delegator),
+                    tx.validator_id
+                ))
+            })?;
         if record.amount < tx.amount {
             return Err(ExecutionError::ContractError(format!(
                 "delegation has only {} but tried to undelegate {}",
@@ -1410,18 +1453,21 @@ impl SimpleExecutor {
         let mut record = db
             .get_delegation(&tx.delegator, tx.validator_id)
             .cloned()
-            .ok_or_else(|| ExecutionError::ContractError(format!(
-                "no delegation from {} to validator-id {}",
-                hex::encode(tx.delegator), tx.validator_id
-            )))?;
+            .ok_or_else(|| {
+                ExecutionError::ContractError(format!(
+                    "no delegation from {} to validator-id {}",
+                    hex::encode(tx.delegator),
+                    tx.validator_id
+                ))
+            })?;
         if record.unbonding_amount == 0 {
             return Err(ExecutionError::ContractError(
                 "no unbonding amount to claim".into(),
             ));
         }
-        let unbonding_started = record.unbonding_epoch.ok_or_else(|| {
-            ExecutionError::ContractError("unbonding_epoch unset".into())
-        })?;
+        let unbonding_started = record
+            .unbonding_epoch
+            .ok_or_else(|| ExecutionError::ContractError("unbonding_epoch unset".into()))?;
         let claim_ready_at = unbonding_started.saturating_add(UNBONDING_PERIOD_EPOCHS);
         if current_epoch < claim_ready_at {
             return Err(ExecutionError::ContractError(format!(
@@ -1476,9 +1522,10 @@ impl SimpleExecutor {
         sender.last_touched_epoch = current_epoch;
 
         let mut stake = db.get_stake(tx.validator_id).cloned().ok_or_else(|| {
-            ExecutionError::ObjectNotFound(
-                format!("no stake record for validator {}", tx.validator_id),
-            )
+            ExecutionError::ObjectNotFound(format!(
+                "no stake record for validator {}",
+                tx.validator_id
+            ))
         })?;
 
         if stake.validator_address != tx.validator_address {
@@ -1511,9 +1558,12 @@ impl SimpleExecutor {
         current_epoch: u64,
     ) -> Result<(), ExecutionError> {
         let stake = db.get_stake(tx.validator_id).cloned();
-        let stake = stake.ok_or_else(|| ExecutionError::ObjectNotFound(
-            format!("no stake record for validator {}", tx.validator_id)
-        ))?;
+        let stake = stake.ok_or_else(|| {
+            ExecutionError::ObjectNotFound(format!(
+                "no stake record for validator {}",
+                tx.validator_id
+            ))
+        })?;
 
         if stake.validator_address != tx.validator_address {
             return Err(ExecutionError::InvalidSignature);
@@ -1576,24 +1626,32 @@ impl SimpleExecutor {
         sender.last_touched_epoch = current_epoch;
 
         match &tx.action {
-            GovernanceAction::CreateProposal { title, param_key, param_value, voting_epochs } => {
+            GovernanceAction::CreateProposal {
+                title,
+                param_key,
+                param_value,
+                voting_epochs,
+            } => {
                 // Gap-A #4: bound checks on proposal admission.
                 if title.len() > MAX_PROPOSAL_TITLE_BYTES {
                     return Err(ExecutionError::ContractError(format!(
                         "proposal title exceeds {} bytes ({})",
-                        MAX_PROPOSAL_TITLE_BYTES, title.len()
+                        MAX_PROPOSAL_TITLE_BYTES,
+                        title.len()
                     )));
                 }
                 if param_key.len() > MAX_PARAM_KEY_BYTES {
                     return Err(ExecutionError::ContractError(format!(
                         "param_key exceeds {} bytes ({})",
-                        MAX_PARAM_KEY_BYTES, param_key.len()
+                        MAX_PARAM_KEY_BYTES,
+                        param_key.len()
                     )));
                 }
                 if param_value.len() > MAX_PARAM_VALUE_BYTES {
                     return Err(ExecutionError::ContractError(format!(
                         "param_value exceeds {} bytes ({})",
-                        MAX_PARAM_VALUE_BYTES, param_value.len()
+                        MAX_PARAM_VALUE_BYTES,
+                        param_value.len()
                     )));
                 }
                 if !(MIN_VOTING_EPOCHS..=MAX_VOTING_EPOCHS).contains(voting_epochs) {
@@ -1610,7 +1668,8 @@ impl SimpleExecutor {
                 }
                 if let Err(e) = validate_param_value(param_key, param_value) {
                     return Err(ExecutionError::ContractError(format!(
-                        "invalid param_value: {}", e
+                        "invalid param_value: {}",
+                        e
                     )));
                 }
 
@@ -1633,13 +1692,13 @@ impl SimpleExecutor {
             }
             GovernanceAction::CastVote { proposal_id, vote } => {
                 let proposal = db.get_proposal(*proposal_id).cloned();
-                let mut proposal = proposal.ok_or_else(|| ExecutionError::ContractError(
-                    format!("proposal {} not found", proposal_id)
-                ))?;
+                let mut proposal = proposal.ok_or_else(|| {
+                    ExecutionError::ContractError(format!("proposal {} not found", proposal_id))
+                })?;
 
                 if proposal.status != ProposalStatus::Active {
                     return Err(ExecutionError::ContractError(
-                        "proposal is not active".to_string()
+                        "proposal is not active".to_string(),
                     ));
                 }
 
@@ -1648,7 +1707,7 @@ impl SimpleExecutor {
                     proposal.status = decide_proposal_outcome(&proposal);
                     db.put_proposal(proposal);
                     return Err(ExecutionError::ContractError(
-                        "voting period has ended".to_string()
+                        "voting period has ended".to_string(),
                     ));
                 }
 
@@ -1687,7 +1746,8 @@ impl SimpleExecutor {
         if (tx.signatures.len() as u8) < tx.threshold {
             return Err(ExecutionError::ContractError(format!(
                 "multi-sig requires {} signatures, got {}",
-                tx.threshold, tx.signatures.len()
+                tx.threshold,
+                tx.signatures.len()
             )));
         }
 
@@ -1700,7 +1760,7 @@ impl SimpleExecutor {
             }
             if !tx.signers.contains(signer_addr) {
                 return Err(ExecutionError::ContractError(
-                    "signer not in authorized signers list".to_string()
+                    "signer not in authorized signers list".to_string(),
                 ));
             }
         }
@@ -1871,9 +1931,9 @@ impl SimpleExecutor {
                 if acct.storage_bytes == 0 {
                     continue;
                 }
-                let rent = acct.storage_bytes.saturating_mul(
-                    evaporchain_types::STORAGE_RENT_PER_BYTE_PER_EPOCH
-                );
+                let rent = acct
+                    .storage_bytes
+                    .saturating_mul(evaporchain_types::STORAGE_RENT_PER_BYTE_PER_EPOCH);
                 (rent, acct.balance)
             };
             let acct = db.get_or_create_account(&addr);
@@ -2101,10 +2161,7 @@ impl ExecutionEngine for SimpleExecutor {
         let mut txs_failed = 0;
         let mut gas_used = 0u64;
         let mut total_fees = 0u64;
-        let base_fee = self
-            .fee_controller
-            .as_ref()
-            .map_or(0, |fc| fc.base_fee);
+        let base_fee = self.fee_controller.as_ref().map_or(0, |fc| fc.base_fee);
         let mut validator_key_rotations: Vec<ValidatorKeyRotation> = Vec::new();
 
         // Execute transactions
@@ -2137,9 +2194,7 @@ impl ExecutionEngine for SimpleExecutor {
                     Transaction::CreateObject(create) => {
                         fc.compute_creation_deposit(create.data.len())
                     }
-                    Transaction::Refresh(refresh) => {
-                        fc.compute_refresh_fee(refresh.energy_deposit)
-                    }
+                    Transaction::Refresh(refresh) => fc.compute_refresh_fee(refresh.energy_deposit),
                     _ => 0,
                 };
                 let total_tx_fee = gas_fee + extra_fee;
@@ -2168,9 +2223,9 @@ impl ExecutionEngine for SimpleExecutor {
             };
 
             // Snapshot sender state before execution for revert-on-failure
-            let sender_snapshot = tx.sender().and_then(|addr| {
-                db.get_account(addr).map(|acct| (acct.balance, acct.nonce))
-            });
+            let sender_snapshot = tx
+                .sender()
+                .and_then(|addr| db.get_account(addr).map(|acct| (acct.balance, acct.nonce)));
 
             let result = match tx {
                 Transaction::Transfer(transfer) => {
@@ -2180,9 +2235,13 @@ impl ExecutionEngine for SimpleExecutor {
                     self.execute_create_object(db, create, block.epoch)
                 }
                 Transaction::Refresh(refresh) => self.execute_refresh(db, refresh, block.epoch),
-                Transaction::DeployContract(deploy) => self.execute_deploy_contract(deploy, block.epoch),
+                Transaction::DeployContract(deploy) => {
+                    self.execute_deploy_contract(deploy, block.epoch)
+                }
                 Transaction::CallContract(call) => self.execute_call_contract(call),
-                Transaction::DeployScript(deploy) => self.execute_deploy_script(deploy, block.epoch),
+                Transaction::DeployScript(deploy) => {
+                    self.execute_deploy_script(deploy, block.epoch)
+                }
                 Transaction::CallScript(call) => self.execute_call_script(call),
                 Transaction::ValidatorStake(stake) => {
                     self.execute_validator_stake(db, stake, block.epoch)
@@ -2210,21 +2269,26 @@ impl ExecutionEngine for SimpleExecutor {
                         .map(|_| ())
                         .map_err(|e| ExecutionError::ContractError(e.to_string()))
                 }
-                Transaction::Deferred(dtx) => {
-                    self.deferred_queue
-                        .submit(dtx.clone())
-                        .map(|_| ())
-                        .map_err(|e| ExecutionError::ContractError(e.to_string()))
-                }
+                Transaction::Deferred(dtx) => self
+                    .deferred_queue
+                    .submit(dtx.clone())
+                    .map(|_| ())
+                    .map_err(|e| ExecutionError::ContractError(e.to_string())),
                 Transaction::Blob(blob) => {
                     if blob.data.is_empty() {
-                        Err(ExecutionError::ContractError("blob data cannot be empty".into()))
+                        Err(ExecutionError::ContractError(
+                            "blob data cannot be empty".into(),
+                        ))
                     } else if blob.data.len() > MAX_BLOB_SIZE {
                         Err(ExecutionError::ContractError(format!(
-                            "blob size {} exceeds limit {}", blob.data.len(), MAX_BLOB_SIZE
+                            "blob size {} exceeds limit {}",
+                            blob.data.len(),
+                            MAX_BLOB_SIZE
                         )))
                     } else if blob.namespace_id == 0 {
-                        Err(ExecutionError::ContractError("reserved namespace_id 0".into()))
+                        Err(ExecutionError::ContractError(
+                            "reserved namespace_id 0".into(),
+                        ))
                     } else {
                         Ok(())
                     }
@@ -2254,9 +2318,8 @@ impl ExecutionEngine for SimpleExecutor {
                             rot.new_bls_public_key.len()
                         )))
                     } else {
-                        let stake_addr = db
-                            .get_stake(rot.validator_id)
-                            .map(|s| s.validator_address);
+                        let stake_addr =
+                            db.get_stake(rot.validator_id).map(|s| s.validator_address);
                         match stake_addr {
                             None => Err(ExecutionError::ContractError(format!(
                                 "RotateValidatorKey: validator_id {} has no stake record",
@@ -2278,13 +2341,16 @@ impl ExecutionEngine for SimpleExecutor {
                                         expected_nonce, rot.nonce
                                     )))
                                 } else if !{
-                                    use evaporchain_crypto::signatures::{BlsPublicKey, BlsSignature, BlsVerifier};
+                                    use evaporchain_crypto::signatures::{
+                                        BlsPublicKey, BlsSignature, BlsVerifier,
+                                    };
                                     let pk = BlsPublicKey(rot.new_bls_public_key.clone());
                                     let pop = BlsSignature(rot.bls_pop_new.clone());
                                     BlsVerifier::verify_proof_of_possession(&pk, &pop)
                                 } {
                                     Err(ExecutionError::ContractError(
-                                        "RotateValidatorKey: bls_pop_new failed verification".into(),
+                                        "RotateValidatorKey: bls_pop_new failed verification"
+                                            .into(),
                                     ))
                                 } else {
                                     if let Some(acct) = db.get_account_mut(&rot.validator_address) {
@@ -2297,7 +2363,8 @@ impl ExecutionEngine for SimpleExecutor {
                                         new_bls_public_key: rot.new_bls_public_key.clone(),
                                         bls_pop_old: rot.bls_pop_old.clone(),
                                         new_bls_pop: rot.bls_pop_new.clone(),
-                                        prev_key_expiry_epoch: rot.effective_epoch
+                                        prev_key_expiry_epoch: rot
+                                            .effective_epoch
                                             .saturating_add(KEY_ROTATION_GRACE_EPOCHS),
                                     });
                                     Ok(())
@@ -2306,7 +2373,9 @@ impl ExecutionEngine for SimpleExecutor {
                         }
                     }
                 }
-                Transaction::ClaimDelegation(c) => self.execute_claim_delegation(db, c, block.epoch),
+                Transaction::ClaimDelegation(c) => {
+                    self.execute_claim_delegation(db, c, block.epoch)
+                }
             };
 
             match result {
@@ -2320,7 +2389,9 @@ impl ExecutionEngine for SimpleExecutor {
                     // but KEEP the fee deduction (sender still pays for gas used).
                     // Snapshot was taken AFTER fee deduction but BEFORE execution,
                     // so restoring it reverts execution changes while keeping fees burned.
-                    if let (Some(sender_addr), Some((snap_balance, snap_nonce))) = (tx.sender(), sender_snapshot) {
+                    if let (Some(sender_addr), Some((snap_balance, snap_nonce))) =
+                        (tx.sender(), sender_snapshot)
+                    {
                         if let Some(acct) = db.get_account_mut(sender_addr) {
                             acct.balance = snap_balance;
                             acct.nonce = snap_nonce;
@@ -2334,7 +2405,9 @@ impl ExecutionEngine for SimpleExecutor {
         }
 
         // Run evaporation at end of block (with MMR nullifier accumulation)
-        let evap_result = self.evaporation_engine.process_epoch_with_mmr(db, block.epoch, &mut self.mmr);
+        let evap_result =
+            self.evaporation_engine
+                .process_epoch_with_mmr(db, block.epoch, &mut self.mmr);
 
         // Generate batch evaporation proof for all evaporated objects.
         // Uses ghost records (created during evaporation) as proof witnesses.
@@ -2380,8 +2453,8 @@ impl ExecutionEngine for SimpleExecutor {
         // Process decay watchers (fire callbacks when energy crosses thresholds).
         let watcher_result = self.decay_watchers.process(block.epoch, db);
         for (contract_id, method, args) in &watcher_result.callbacks {
-            let args_val: serde_json::Value = serde_json::from_str(args)
-                .unwrap_or(serde_json::Value::Null);
+            let args_val: serde_json::Value =
+                serde_json::from_str(args).unwrap_or(serde_json::Value::Null);
             let _ = self.contract_engine.call(
                 *contract_id,
                 method,
@@ -2500,8 +2573,7 @@ impl ExecutionEngine for SimpleExecutor {
         }
 
         // Decay-Lamport logical clock — tick with total gas used this block.
-        self.lamport_clock =
-            crate::lamport_integration::tick_block(self.lamport_clock, gas_used);
+        self.lamport_clock = crate::lamport_integration::tick_block(self.lamport_clock, gas_used);
 
         // Vesting timelock release tick — runs every block (per-block
         // schedules need responsive release). Idempotent within an
@@ -2530,7 +2602,9 @@ impl ExecutionEngine for SimpleExecutor {
             "Block executed"
         );
 
-        let contract_events: Vec<BlockContractEvent> = self.pending_events.drain(..)
+        let contract_events: Vec<BlockContractEvent> = self
+            .pending_events
+            .drain(..)
             .map(|(contract_id, event)| BlockContractEvent {
                 contract_id,
                 tx_index: 0,
@@ -2551,7 +2625,9 @@ impl ExecutionEngine for SimpleExecutor {
         // tracks block.epoch via db.get_last_rent_epoch — use the same
         // delta convention here so the audit's λ-decay matches what
         // collect_storage_rent assumed.
-        let epochs_elapsed = block.epoch.saturating_sub(db.get_last_rent_epoch().saturating_sub(0));
+        let epochs_elapsed = block
+            .epoch
+            .saturating_sub(db.get_last_rent_epoch().saturating_sub(0));
         self.last_conservation_audit = Some(crate::energy_audit::audit_block_step(
             &conservation_before,
             &conservation_after,
@@ -2560,7 +2636,11 @@ impl ExecutionEngine for SimpleExecutor {
         ));
 
         let mera_root = crate::mera_integration::compute_mera_commitment(db);
-        let mera_commitment = if mera_root == [0u8; 32] { None } else { Some(mera_root) };
+        let mera_commitment = if mera_root == [0u8; 32] {
+            None
+        } else {
+            Some(mera_root)
+        };
 
         Ok(BlockExecutionResult {
             state_root,
@@ -2861,12 +2941,20 @@ mod tests {
         let mut executor = SimpleExecutor::new_for_test(7);
         // Same transfer submitted twice in the same block
         let tx1 = Transaction::Transfer(TransferTx {
-            from: addr(1), to: addr(2), amount: 100, nonce: 0,
-            signature: None, public_key: None,
+            from: addr(1),
+            to: addr(2),
+            amount: 100,
+            nonce: 0,
+            signature: None,
+            public_key: None,
         });
         let tx2 = Transaction::Transfer(TransferTx {
-            from: addr(1), to: addr(2), amount: 100, nonce: 0,
-            signature: None, public_key: None,
+            from: addr(1),
+            to: addr(2),
+            amount: 100,
+            nonce: 0,
+            signature: None,
+            public_key: None,
         });
         let block = make_block(1, 1, vec![tx1, tx2]);
         let result = executor.execute_block(&mut db, &block).unwrap();
@@ -2882,12 +2970,20 @@ mod tests {
 
         let mut executor = SimpleExecutor::new_for_test(7);
         let tx1 = Transaction::Transfer(TransferTx {
-            from: addr(1), to: addr(2), amount: 100, nonce: 0,
-            signature: None, public_key: None,
+            from: addr(1),
+            to: addr(2),
+            amount: 100,
+            nonce: 0,
+            signature: None,
+            public_key: None,
         });
         let tx2 = Transaction::Transfer(TransferTx {
-            from: addr(1), to: addr(2), amount: 100, nonce: 1,
-            signature: None, public_key: None,
+            from: addr(1),
+            to: addr(2),
+            amount: 100,
+            nonce: 1,
+            signature: None,
+            public_key: None,
         });
         let block = make_block(1, 1, vec![tx1, tx2]);
         let result = executor.execute_block(&mut db, &block).unwrap();
@@ -2915,6 +3011,7 @@ mod tests {
                 half_life: 100,
                 data: vec![0xDE, 0xAD],
                 decay_curve: None,
+                lad_mode: None,
                 signature: None,
                 public_key: None,
             })],
@@ -2931,6 +3028,8 @@ mod tests {
         assert_eq!(obj.state, ObjectState::Active);
         assert_eq!(obj.data, vec![0xDE, 0xAD]);
         assert_eq!(obj.owner, addr(1));
+        // Default `lad_mode = None` produces a non-substructural object.
+        assert!(obj.lad_mode.is_none());
     }
 
     #[test]
@@ -2948,7 +3047,10 @@ mod tests {
                 energy: 10_000,
                 half_life: 50,
                 data: vec![0xCA, 0xFE],
-                decay_curve: Some(evaporchain_types::DecayCurve::Linear { rate_per_epoch: 100 }),
+                decay_curve: Some(evaporchain_types::DecayCurve::Linear {
+                    rate_per_epoch: 100,
+                }),
+                lad_mode: None,
                 signature: None,
                 public_key: None,
             })],
@@ -2960,7 +3062,9 @@ mod tests {
         let obj = db.get_object(&obj_id(77)).unwrap();
         assert_eq!(
             obj.decay_curve,
-            Some(evaporchain_types::DecayCurve::Linear { rate_per_epoch: 100 })
+            Some(evaporchain_types::DecayCurve::Linear {
+                rate_per_epoch: 100
+            })
         );
     }
 
@@ -2979,6 +3083,7 @@ mod tests {
             half_life: 50,
             data: vec![],
             decay_curve: None,
+            lad_mode: None,
             signature: None,
             public_key: None,
         });
@@ -3028,6 +3133,7 @@ mod tests {
                     half_life: 50,
                     data: vec![1],
                     decay_curve: None,
+                    lad_mode: None,
                     signature: None,
                     public_key: None,
                 }),
@@ -3116,6 +3222,7 @@ mod tests {
             grace_epoch: None,
             data: vec![0xAB],
             decay_curve: None,
+            lad_mode: None,
         });
 
         let mut executor = SimpleExecutor::new_for_test(3);
@@ -3159,6 +3266,7 @@ mod tests {
             grace_epoch: None,
             data: vec![],
             decay_curve: None,
+            lad_mode: None,
         });
 
         let mut executor = SimpleExecutor::new_for_test(5);
@@ -3446,6 +3554,7 @@ mod tests {
             half_life: 100,
             data: vec![0xDE, 0xAD],
             decay_curve: None,
+            lad_mode: None,
             signature: None,
             public_key: None,
         });
@@ -3471,6 +3580,7 @@ mod tests {
             grace_epoch: None,
             data: vec![],
             decay_curve: None,
+            lad_mode: None,
         });
 
         let mut executor = SimpleExecutor::new_with_sig_verification_for_test(7);
@@ -3567,17 +3677,15 @@ contract Counter {
         let call_block = make_block(
             2,
             2,
-            vec![Transaction::CallScript(
-                evaporchain_types::CallScriptTx {
-                    caller: addr(2),
-                    contract_id: 1,
-                    method: "increment".to_string(),
-                    args: r#"[{"U64": 42}]"#.to_string(),
-                    epoch: 2,
-                    signature: None,
-                    public_key: None,
-                },
-            )],
+            vec![Transaction::CallScript(evaporchain_types::CallScriptTx {
+                caller: addr(2),
+                contract_id: 1,
+                method: "increment".to_string(),
+                args: r#"[{"U64": 42}]"#.to_string(),
+                epoch: 2,
+                signature: None,
+                public_key: None,
+            })],
         );
         let result = executor.execute_block(&mut db, &call_block).unwrap();
         assert_eq!(result.txs_executed, 1);
@@ -3703,8 +3811,12 @@ contract Counter {
         let kp = MlDsaKeypair::generate();
 
         let mut tx = Transaction::Transfer(TransferTx {
-            from: addr(1), to: addr(2), amount: 100, nonce: 0,
-            signature: None, public_key: None,
+            from: addr(1),
+            to: addr(2),
+            amount: 100,
+            nonce: 0,
+            signature: None,
+            public_key: None,
         });
         sign_tx(&mut tx, &kp);
 
@@ -3721,8 +3833,12 @@ contract Counter {
         fund_account(&mut db, 1, 1000);
 
         let tx = Transaction::Transfer(TransferTx {
-            from: addr(1), to: addr(2), amount: 100, nonce: 0,
-            signature: None, public_key: None,
+            from: addr(1),
+            to: addr(2),
+            amount: 100,
+            nonce: 0,
+            signature: None,
+            public_key: None,
         });
 
         let mut executor = SimpleExecutor::new_with_sig_verification_for_test(7);
@@ -3739,8 +3855,12 @@ contract Counter {
         let kp = MlDsaKeypair::generate();
 
         let mut tx = Transaction::Transfer(TransferTx {
-            from: addr(1), to: addr(2), amount: 100, nonce: 0,
-            signature: None, public_key: None,
+            from: addr(1),
+            to: addr(2),
+            amount: 100,
+            nonce: 0,
+            signature: None,
+            public_key: None,
         });
         sign_tx(&mut tx, &kp);
 
@@ -3766,8 +3886,12 @@ contract Counter {
         let kp2 = MlDsaKeypair::generate();
 
         let mut tx = Transaction::Transfer(TransferTx {
-            from: addr(1), to: addr(2), amount: 100, nonce: 0,
-            signature: None, public_key: None,
+            from: addr(1),
+            to: addr(2),
+            amount: 100,
+            nonce: 0,
+            signature: None,
+            public_key: None,
         });
         // Sign with kp1 but attach kp2's public key
         let msg = tx.signing_message("");
@@ -3792,8 +3916,12 @@ contract Counter {
         let kp = MlDsaKeypair::generate();
 
         let mut tx = Transaction::Transfer(TransferTx {
-            from: addr(1), to: addr(2), amount: 100, nonce: 0,
-            signature: None, public_key: None,
+            from: addr(1),
+            to: addr(2),
+            amount: 100,
+            nonce: 0,
+            signature: None,
+            public_key: None,
         });
         sign_tx(&mut tx, &kp);
 
@@ -3815,8 +3943,12 @@ contract Counter {
         fund_account(&mut db, 1, 1000);
 
         let tx = Transaction::Transfer(TransferTx {
-            from: addr(1), to: addr(2), amount: 100, nonce: 0,
-            signature: None, public_key: None,
+            from: addr(1),
+            to: addr(2),
+            amount: 100,
+            nonce: 0,
+            signature: None,
+            public_key: None,
         });
 
         // SimpleExecutor::new() has verify_signatures: false
@@ -3837,19 +3969,29 @@ contract Counter {
         let fc = fees::PidFeeController::testnet_config();
         let mut executor = SimpleExecutor::new_with_fees_for_test(7, fc, 500_000);
 
-        let block = make_block(1, 1, vec![
-            Transaction::Transfer(TransferTx {
-                from: addr(1), to: addr(2), amount: 100, nonce: 0,
-                signature: None, public_key: None,
-            }),
-        ]);
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::Transfer(TransferTx {
+                from: addr(1),
+                to: addr(2),
+                amount: 100,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })],
+        );
         let result = executor.execute_block(&mut db, &block).unwrap();
         assert_eq!(result.txs_executed, 1);
         assert!(result.total_fees > 0, "Fees should be collected");
 
         let sender = db.get_account(&addr(1)).unwrap();
         // Balance should be: 1_000_000 - 100 (transfer) - gas_fee
-        assert!(sender.balance < 1_000_000 - 100, "Fees should have been deducted: balance={}", sender.balance);
+        assert!(
+            sender.balance < 1_000_000 - 100,
+            "Fees should have been deducted: balance={}",
+            sender.balance
+        );
     }
 
     #[test]
@@ -3861,12 +4003,18 @@ contract Counter {
         let fc = fees::PidFeeController::testnet_config();
         let mut executor = SimpleExecutor::new_with_fees_for_test(7, fc, 500_000);
 
-        let block = make_block(1, 1, vec![
-            Transaction::Transfer(TransferTx {
-                from: addr(1), to: addr(2), amount: 5, nonce: 0,
-                signature: None, public_key: None,
-            }),
-        ]);
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::Transfer(TransferTx {
+                from: addr(1),
+                to: addr(2),
+                amount: 5,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })],
+        );
         let result = executor.execute_block(&mut db, &block).unwrap();
         assert_eq!(result.txs_executed, 0);
         assert_eq!(result.txs_failed, 1);
@@ -3884,20 +4032,33 @@ contract Counter {
         let fc = fees::PidFeeController::testnet_config();
         let mut executor = SimpleExecutor::new_with_fees_for_test(7, fc, 500_000);
 
-        let block = make_block(1, 1, vec![
-            Transaction::Transfer(TransferTx {
-                from: addr(1), to: addr(2), amount: 999_999, nonce: 0,
-                signature: None, public_key: None,
-            }),
-        ]);
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::Transfer(TransferTx {
+                from: addr(1),
+                to: addr(2),
+                amount: 999_999,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })],
+        );
         let result = executor.execute_block(&mut db, &block).unwrap();
         assert_eq!(result.txs_executed, 0);
         assert_eq!(result.txs_failed, 1);
-        assert!(result.total_fees > 0, "Fee should still be burned on failure");
+        assert!(
+            result.total_fees > 0,
+            "Fee should still be burned on failure"
+        );
 
         // Balance should be reduced by gas fee even though transfer failed
         let sender = db.get_account(&addr(1)).unwrap();
-        assert!(sender.balance < 50_000, "Gas fee should have been deducted: balance={}", sender.balance);
+        assert!(
+            sender.balance < 50_000,
+            "Gas fee should have been deducted: balance={}",
+            sender.balance
+        );
     }
 
     #[test]
@@ -3908,18 +4069,21 @@ contract Counter {
         let fc = fees::PidFeeController::testnet_config();
         let mut executor = SimpleExecutor::new_with_fees_for_test(7, fc, 500_000);
 
-        let block = make_block(1, 1, vec![
-            Transaction::CreateObject(CreateObjectTx {
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::CreateObject(CreateObjectTx {
                 creator: addr(1),
                 object_id: obj_id(42),
                 energy: 5000,
                 half_life: 100,
                 data: vec![1, 2, 3, 4, 5],
                 decay_curve: None,
+                lad_mode: None,
                 signature: None,
                 public_key: None,
-            }),
-        ]);
+            })],
+        );
         let result = executor.execute_block(&mut db, &block).unwrap();
         assert_eq!(result.txs_executed, 1);
 
@@ -3927,7 +4091,11 @@ contract Counter {
         // Gas: 50000 + 200*5 = 51000; fee = 51000 * 1 = 51000
         // Creation deposit: max(100 * 5, 1000) = 1000
         // Total: 52000
-        assert!(result.total_fees >= 52_000, "Creation deposit should be included: fees={}", result.total_fees);
+        assert!(
+            result.total_fees >= 52_000,
+            "Creation deposit should be included: fees={}",
+            result.total_fees
+        );
     }
 
     #[test]
@@ -3940,12 +4108,18 @@ contract Counter {
         let fc = fees::PidFeeController::testnet_config();
         let mut executor = SimpleExecutor::new_with_fees_for_test(7, fc, 500_000);
 
-        let block = make_block(1, 1, vec![
-            Transaction::Transfer(TransferTx {
-                from: addr(1), to: addr(2), amount: 999_999, nonce: 0,
-                signature: None, public_key: None,
-            }),
-        ]);
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::Transfer(TransferTx {
+                from: addr(1),
+                to: addr(2),
+                amount: 999_999,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })],
+        );
         let result = executor.execute_block(&mut db, &block).unwrap();
         assert_eq!(result.txs_executed, 0);
         assert_eq!(result.txs_failed, 1);
@@ -3965,12 +4139,18 @@ contract Counter {
         fund_account(&mut db, 1, 1000);
 
         let mut executor = SimpleExecutor::new_for_test(7); // No fee controller
-        let block = make_block(1, 1, vec![
-            Transaction::Transfer(TransferTx {
-                from: addr(1), to: addr(2), amount: 100, nonce: 0,
-                signature: None, public_key: None,
-            }),
-        ]);
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::Transfer(TransferTx {
+                from: addr(1),
+                to: addr(2),
+                amount: 100,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })],
+        );
         let result = executor.execute_block(&mut db, &block).unwrap();
         assert_eq!(result.txs_executed, 1);
         assert_eq!(result.total_fees, 0);
@@ -4049,6 +4229,7 @@ contract Counter {
                 state: ObjectState::Active,
                 grace_epoch: None,
                 decay_curve: None,
+                lad_mode: None,
             });
         }
 
@@ -4150,13 +4331,17 @@ contract Counter {
 
         let mut controller = PidFeeController::new(0.5, 0.1, 0.01, 0.05, u64::MAX / 2, 1, u64::MAX);
         let fee = controller.update(u64::MAX, u64::MAX);
-        assert!(fee > 0, "Fee should remain positive even at overflow boundaries");
+        assert!(
+            fee > 0,
+            "Fee should remain positive even at overflow boundaries"
+        );
     }
 
     #[test]
     fn stress_block_gas_limit_enforcement() {
         let mut db = InMemoryStateDB::new();
-        let fee_controller = crate::fees::PidFeeController::new(0.5, 0.1, 0.01, 0.05, 1000, 1, 1_000_000_000);
+        let fee_controller =
+            crate::fees::PidFeeController::new(0.5, 0.1, 0.01, 0.05, 1000, 1, 1_000_000_000);
         let mut executor = SimpleExecutor::new_with_fees_for_test(7, fee_controller, 100_000);
 
         fund_account(&mut db, 1, 10_000_000);
@@ -4207,6 +4392,7 @@ contract Counter {
                     energy: 500,
                     half_life: 5,
                     decay_curve: None,
+                    lad_mode: None,
                     signature: None,
                     public_key: None,
                 })
@@ -4264,19 +4450,31 @@ contract Counter {
             grace_epoch: None,
             data: b"short-lived".to_vec(),
             decay_curve: None,
+            lad_mode: None,
         };
         db.put_object(obj);
 
-        assert_eq!(executor.mmr_root(), [0u8; 32], "MMR should be empty at start");
+        assert_eq!(
+            executor.mmr_root(),
+            [0u8; 32],
+            "MMR should be empty at start"
+        );
         assert_eq!(executor.mmr_size(), 0);
 
         for epoch in 1..=20 {
             let block = make_block(epoch, epoch, vec![]);
             let result = executor.execute_block(&mut db, &block).unwrap();
             if result.objects_evaporated > 0 {
-                assert_ne!(result.mmr_root, [0u8; 32], "MMR root should be non-zero after evaporation");
+                assert_ne!(
+                    result.mmr_root, [0u8; 32],
+                    "MMR root should be non-zero after evaporation"
+                );
                 assert_eq!(executor.mmr_size(), 1, "Exactly one nullifier in MMR");
-                assert_eq!(executor.mmr_root(), result.mmr_root, "Trait accessor matches result");
+                assert_eq!(
+                    executor.mmr_root(),
+                    result.mmr_root,
+                    "Trait accessor matches result"
+                );
                 return;
             }
         }
@@ -4303,6 +4501,7 @@ contract Counter {
                 grace_epoch: None,
                 data: vec![i],
                 decay_curve: None,
+                lad_mode: None,
             };
             db.put_object(obj);
         }
@@ -4316,9 +4515,15 @@ contract Counter {
             total_evaporated += result.objects_evaporated;
 
             if result.objects_evaporated > 0 {
-                assert_ne!(result.mmr_root, prev_root, "MMR root should change on evaporation");
+                assert_ne!(
+                    result.mmr_root, prev_root,
+                    "MMR root should change on evaporation"
+                );
             } else {
-                assert_eq!(result.mmr_root, prev_root, "MMR root should not change without evaporation");
+                assert_eq!(
+                    result.mmr_root, prev_root,
+                    "MMR root should not change without evaporation"
+                );
             }
             prev_root = result.mmr_root;
         }
@@ -4349,7 +4554,10 @@ contract Counter {
             from_shard: ShardId(0),
             to_shard: ShardId(1),
             target_object: to_20,
-            payload: MessagePayload::Transfer { from: from_20, amount: 500 },
+            payload: MessagePayload::Transfer {
+                from: from_20,
+                amount: 500,
+            },
             target_energy: 100,
             timestamp: 1,
         };
@@ -4382,7 +4590,10 @@ contract Counter {
             from_shard: ShardId(0),
             to_shard: ShardId(1),
             target_object: to_20,
-            payload: MessagePayload::Transfer { from: from_20, amount: 500 },
+            payload: MessagePayload::Transfer {
+                from: from_20,
+                amount: 500,
+            },
             target_energy: 100,
             timestamp: 1,
         };
@@ -4413,6 +4624,7 @@ contract Counter {
             grace_epoch: None,
             data: vec![],
             decay_curve: None,
+            lad_mode: None,
         });
 
         let mut target = [0u8; 20];
@@ -4423,7 +4635,9 @@ contract Counter {
             from_shard: ShardId(0),
             to_shard: ShardId(1),
             target_object: target,
-            payload: MessagePayload::Eviction { reason: "low energy".into() },
+            payload: MessagePayload::Eviction {
+                reason: "low energy".into(),
+            },
             target_energy: 0,
             timestamp: 1,
         };
@@ -4457,7 +4671,8 @@ contract Counter {
 
         let mut executor = SimpleExecutor::new_for_test(7);
         let block = make_block(
-            1, 1,
+            1,
+            1,
             vec![Transaction::Delegate(DelegateTx {
                 delegator: addr(1),
                 validator_id: 7,
@@ -4475,7 +4690,9 @@ contract Counter {
         assert_eq!(acct.balance, 4_000, "1000 should be debited from delegator");
         assert_eq!(acct.nonce, 1);
 
-        let rec = db.get_delegation(&addr(1), 7).expect("delegation must exist");
+        let rec = db
+            .get_delegation(&addr(1), 7)
+            .expect("delegation must exist");
         assert_eq!(rec.amount, 1_000);
         assert_eq!(rec.unbonding_amount, 0);
         assert!(rec.unbonding_epoch.is_none());
@@ -4489,7 +4706,8 @@ contract Counter {
 
         let mut executor = SimpleExecutor::new_for_test(7);
         let block = make_block(
-            1, 1,
+            1,
+            1,
             vec![Transaction::Delegate(DelegateTx {
                 delegator: addr(1),
                 validator_id: 99,
@@ -4514,7 +4732,8 @@ contract Counter {
 
         let mut executor = SimpleExecutor::new_for_test(7);
         let block = make_block(
-            1, 1,
+            1,
+            1,
             vec![Transaction::Delegate(DelegateTx {
                 delegator: addr(1),
                 validator_id: 7,
@@ -4537,24 +4756,37 @@ contract Counter {
 
         let mut executor = SimpleExecutor::new_for_test(7);
         let block1 = make_block(
-            1, 1,
+            1,
+            1,
             vec![Transaction::Delegate(DelegateTx {
-                delegator: addr(1), validator_id: 7, amount: 1_000, nonce: 0,
-                signature: None, public_key: None,
+                delegator: addr(1),
+                validator_id: 7,
+                amount: 1_000,
+                nonce: 0,
+                signature: None,
+                public_key: None,
             })],
         );
         executor.execute_block(&mut db, &block1).unwrap();
         let block2 = make_block(
-            2, 2,
+            2,
+            2,
             vec![Transaction::Delegate(DelegateTx {
-                delegator: addr(1), validator_id: 7, amount: 2_500, nonce: 1,
-                signature: None, public_key: None,
+                delegator: addr(1),
+                validator_id: 7,
+                amount: 2_500,
+                nonce: 1,
+                signature: None,
+                public_key: None,
             })],
         );
         executor.execute_block(&mut db, &block2).unwrap();
 
         let rec = db.get_delegation(&addr(1), 7).unwrap();
-        assert_eq!(rec.amount, 3_500, "delegations to same validator should be additive");
+        assert_eq!(
+            rec.amount, 3_500,
+            "delegations to same validator should be additive"
+        );
         assert_eq!(db.get_account(&addr(1)).unwrap().balance, 6_500);
     }
 
@@ -4567,20 +4799,30 @@ contract Counter {
         let mut executor = SimpleExecutor::new_for_test(7);
         // First delegate so there's something to undelegate.
         let b1 = make_block(
-            1, 1,
+            1,
+            1,
             vec![Transaction::Delegate(DelegateTx {
-                delegator: addr(1), validator_id: 7, amount: 1_000, nonce: 0,
-                signature: None, public_key: None,
+                delegator: addr(1),
+                validator_id: 7,
+                amount: 1_000,
+                nonce: 0,
+                signature: None,
+                public_key: None,
             })],
         );
         executor.execute_block(&mut db, &b1).unwrap();
         let pre_balance = db.get_account(&addr(1)).unwrap().balance;
 
         let b2 = make_block(
-            2, 5,
+            2,
+            5,
             vec![Transaction::Undelegate(UndelegateTx {
-                delegator: addr(1), validator_id: 7, amount: 600, nonce: 1,
-                signature: None, public_key: None,
+                delegator: addr(1),
+                validator_id: 7,
+                amount: 600,
+                nonce: 1,
+                signature: None,
+                public_key: None,
             })],
         );
         executor.execute_block(&mut db, &b2).unwrap();
@@ -4605,19 +4847,29 @@ contract Counter {
 
         let mut executor = SimpleExecutor::new_for_test(7);
         let b1 = make_block(
-            1, 1,
+            1,
+            1,
             vec![Transaction::Delegate(DelegateTx {
-                delegator: addr(1), validator_id: 7, amount: 1_000, nonce: 0,
-                signature: None, public_key: None,
+                delegator: addr(1),
+                validator_id: 7,
+                amount: 1_000,
+                nonce: 0,
+                signature: None,
+                public_key: None,
             })],
         );
         executor.execute_block(&mut db, &b1).unwrap();
 
         let b2 = make_block(
-            2, 2,
+            2,
+            2,
             vec![Transaction::Undelegate(UndelegateTx {
-                delegator: addr(1), validator_id: 7, amount: 5_000, nonce: 1,
-                signature: None, public_key: None,
+                delegator: addr(1),
+                validator_id: 7,
+                amount: 5_000,
+                nonce: 1,
+                signature: None,
+                public_key: None,
             })],
         );
         let r = executor.execute_block(&mut db, &b2).unwrap();
@@ -4639,41 +4891,82 @@ contract Counter {
 
         let mut executor = SimpleExecutor::new_for_test(7);
         // Delegate then undelegate at epoch 5.
-        executor.execute_block(&mut db, &make_block(
-            1, 1,
-            vec![Transaction::Delegate(DelegateTx {
-                delegator: addr(1), validator_id: 7, amount: 2_000, nonce: 0,
-                signature: None, public_key: None,
-            })],
-        )).unwrap();
-        executor.execute_block(&mut db, &make_block(
-            2, 5,
-            vec![Transaction::Undelegate(UndelegateTx {
-                delegator: addr(1), validator_id: 7, amount: 1_500, nonce: 1,
-                signature: None, public_key: None,
-            })],
-        )).unwrap();
+        executor
+            .execute_block(
+                &mut db,
+                &make_block(
+                    1,
+                    1,
+                    vec![Transaction::Delegate(DelegateTx {
+                        delegator: addr(1),
+                        validator_id: 7,
+                        amount: 2_000,
+                        nonce: 0,
+                        signature: None,
+                        public_key: None,
+                    })],
+                ),
+            )
+            .unwrap();
+        executor
+            .execute_block(
+                &mut db,
+                &make_block(
+                    2,
+                    5,
+                    vec![Transaction::Undelegate(UndelegateTx {
+                        delegator: addr(1),
+                        validator_id: 7,
+                        amount: 1_500,
+                        nonce: 1,
+                        signature: None,
+                        public_key: None,
+                    })],
+                ),
+            )
+            .unwrap();
         let pre_claim_balance = db.get_account(&addr(1)).unwrap().balance;
 
         // Claim before unbonding period elapses → must fail.
-        let early = executor.execute_block(&mut db, &make_block(
-            3, 50,
-            vec![Transaction::ClaimDelegation(ClaimDelegationTx {
-                delegator: addr(1), validator_id: 7, nonce: 2,
-                signature: None, public_key: None,
-            })],
-        )).unwrap();
-        assert_eq!(early.txs_failed, 1, "claim before unbonding period must fail");
+        let early = executor
+            .execute_block(
+                &mut db,
+                &make_block(
+                    3,
+                    50,
+                    vec![Transaction::ClaimDelegation(ClaimDelegationTx {
+                        delegator: addr(1),
+                        validator_id: 7,
+                        nonce: 2,
+                        signature: None,
+                        public_key: None,
+                    })],
+                ),
+            )
+            .unwrap();
+        assert_eq!(
+            early.txs_failed, 1,
+            "claim before unbonding period must fail"
+        );
         assert_eq!(db.get_account(&addr(1)).unwrap().balance, pre_claim_balance);
 
         // Claim after unbonding period (5 + 256 = 261) → succeeds.
-        let ready = executor.execute_block(&mut db, &make_block(
-            4, 261,
-            vec![Transaction::ClaimDelegation(ClaimDelegationTx {
-                delegator: addr(1), validator_id: 7, nonce: 2,
-                signature: None, public_key: None,
-            })],
-        )).unwrap();
+        let ready = executor
+            .execute_block(
+                &mut db,
+                &make_block(
+                    4,
+                    261,
+                    vec![Transaction::ClaimDelegation(ClaimDelegationTx {
+                        delegator: addr(1),
+                        validator_id: 7,
+                        nonce: 2,
+                        signature: None,
+                        public_key: None,
+                    })],
+                ),
+            )
+            .unwrap();
         assert_eq!(ready.txs_executed, 1);
         assert_eq!(
             db.get_account(&addr(1)).unwrap().balance,
@@ -4693,27 +4986,56 @@ contract Counter {
         fund_account(&mut db, 1, 5_000);
 
         let mut executor = SimpleExecutor::new_for_test(7);
-        executor.execute_block(&mut db, &make_block(
-            1, 1,
-            vec![Transaction::Delegate(DelegateTx {
-                delegator: addr(1), validator_id: 7, amount: 2_000, nonce: 0,
-                signature: None, public_key: None,
-            })],
-        )).unwrap();
-        executor.execute_block(&mut db, &make_block(
-            2, 1,
-            vec![Transaction::Undelegate(UndelegateTx {
-                delegator: addr(1), validator_id: 7, amount: 2_000, nonce: 1,
-                signature: None, public_key: None,
-            })],
-        )).unwrap();
-        executor.execute_block(&mut db, &make_block(
-            3, 257,
-            vec![Transaction::ClaimDelegation(ClaimDelegationTx {
-                delegator: addr(1), validator_id: 7, nonce: 2,
-                signature: None, public_key: None,
-            })],
-        )).unwrap();
+        executor
+            .execute_block(
+                &mut db,
+                &make_block(
+                    1,
+                    1,
+                    vec![Transaction::Delegate(DelegateTx {
+                        delegator: addr(1),
+                        validator_id: 7,
+                        amount: 2_000,
+                        nonce: 0,
+                        signature: None,
+                        public_key: None,
+                    })],
+                ),
+            )
+            .unwrap();
+        executor
+            .execute_block(
+                &mut db,
+                &make_block(
+                    2,
+                    1,
+                    vec![Transaction::Undelegate(UndelegateTx {
+                        delegator: addr(1),
+                        validator_id: 7,
+                        amount: 2_000,
+                        nonce: 1,
+                        signature: None,
+                        public_key: None,
+                    })],
+                ),
+            )
+            .unwrap();
+        executor
+            .execute_block(
+                &mut db,
+                &make_block(
+                    3,
+                    257,
+                    vec![Transaction::ClaimDelegation(ClaimDelegationTx {
+                        delegator: addr(1),
+                        validator_id: 7,
+                        nonce: 2,
+                        signature: None,
+                        public_key: None,
+                    })],
+                ),
+            )
+            .unwrap();
 
         assert!(
             db.get_delegation(&addr(1), 7).is_none(),
@@ -4728,21 +5050,40 @@ contract Counter {
         fund_account(&mut db, 1, 5_000);
 
         let mut executor = SimpleExecutor::new_for_test(7);
-        executor.execute_block(&mut db, &make_block(
-            1, 1,
-            vec![Transaction::Delegate(DelegateTx {
-                delegator: addr(1), validator_id: 7, amount: 1_000, nonce: 0,
-                signature: None, public_key: None,
-            })],
-        )).unwrap();
+        executor
+            .execute_block(
+                &mut db,
+                &make_block(
+                    1,
+                    1,
+                    vec![Transaction::Delegate(DelegateTx {
+                        delegator: addr(1),
+                        validator_id: 7,
+                        amount: 1_000,
+                        nonce: 0,
+                        signature: None,
+                        public_key: None,
+                    })],
+                ),
+            )
+            .unwrap();
 
-        let r = executor.execute_block(&mut db, &make_block(
-            2, 500,
-            vec![Transaction::ClaimDelegation(ClaimDelegationTx {
-                delegator: addr(1), validator_id: 7, nonce: 1,
-                signature: None, public_key: None,
-            })],
-        )).unwrap();
+        let r = executor
+            .execute_block(
+                &mut db,
+                &make_block(
+                    2,
+                    500,
+                    vec![Transaction::ClaimDelegation(ClaimDelegationTx {
+                        delegator: addr(1),
+                        validator_id: 7,
+                        nonce: 1,
+                        signature: None,
+                        public_key: None,
+                    })],
+                ),
+            )
+            .unwrap();
         assert_eq!(r.txs_failed, 1, "claim without unbonding must fail");
     }
 

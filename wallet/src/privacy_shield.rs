@@ -64,8 +64,10 @@ impl StealthAddress {
         let now = chrono::Utc::now().to_rfc3339();
         let otk_input = format!("{}{}_otk", public_key, now);
         let ss_input = format!("{}{}_ss", public_key, now);
-        let one_time_key = blake3::hash(otk_input.as_bytes()).to_hex().to_string()[..40].to_string();
-        let shared_secret = blake3::hash(ss_input.as_bytes()).to_hex().to_string()[..40].to_string();
+        let one_time_key =
+            blake3::hash(otk_input.as_bytes()).to_hex().to_string()[..40].to_string();
+        let shared_secret =
+            blake3::hash(ss_input.as_bytes()).to_hex().to_string()[..40].to_string();
         Self {
             public_key: public_key.to_string(),
             one_time_key,
@@ -608,7 +610,7 @@ mod tests {
 
     #[test]
     fn test_score_clamped() {
-        let mut shield = PrivacyShield::new();
+        let shield = PrivacyShield::new();
         // Enhanced privacy gives +10
         let mut shield = shield.with_default_privacy(PrivacyLevel::Enhanced);
         let score = shield.score_address("addr4", 10, 5, true, true);
@@ -628,7 +630,10 @@ mod tests {
         assert_eq!(shield.recommend_strategy(500), MixStrategy::SingleHop);
         assert_eq!(shield.recommend_strategy(5000), MixStrategy::MultiHop(2));
         assert_eq!(shield.recommend_strategy(50000), MixStrategy::MultiHop(3));
-        assert_eq!(shield.recommend_strategy(200000), MixStrategy::SplitAmount(4));
+        assert_eq!(
+            shield.recommend_strategy(200000),
+            MixStrategy::SplitAmount(4)
+        );
     }
 
     #[test]

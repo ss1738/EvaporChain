@@ -36,18 +36,24 @@ impl TropicalScalar {
     }
 
     /// Tropical addition: `min(a, b)`.
+    #[allow(clippy::should_implement_trait)]
     pub fn add(self, other: Self) -> Self {
         match (self, other) {
             (TropicalScalar::Infinity, x) | (x, TropicalScalar::Infinity) => x,
-            (TropicalScalar::Finite(a), TropicalScalar::Finite(b)) => TropicalScalar::Finite(a.min(b)),
+            (TropicalScalar::Finite(a), TropicalScalar::Finite(b)) => {
+                TropicalScalar::Finite(a.min(b))
+            }
         }
     }
 
     /// Tropical multiplication: `a + b` on the finite values; `Infinity`
     /// absorbs (the tropical "zero times anything is zero").
+    #[allow(clippy::should_implement_trait)]
     pub fn mul(self, other: Self) -> Self {
         match (self, other) {
-            (TropicalScalar::Infinity, _) | (_, TropicalScalar::Infinity) => TropicalScalar::Infinity,
+            (TropicalScalar::Infinity, _) | (_, TropicalScalar::Infinity) => {
+                TropicalScalar::Infinity
+            }
             (TropicalScalar::Finite(a), TropicalScalar::Finite(b)) => {
                 TropicalScalar::Finite(a.saturating_add(b))
             }

@@ -3,7 +3,7 @@
 //! Validates the builder pattern, all 9 transaction types, field correctness,
 //! and integration with the signer for build-then-sign workflows.
 
-use evaporchain_crypto::signatures::{MlDsaKeypair, MlDsaVerifier, Signer, Verifier};
+use evaporchain_crypto::signatures::{MlDsaKeypair, MlDsaVerifier, Verifier};
 use evaporchain_types::*;
 use evaporchain_wallet::signer::WalletSigner;
 use evaporchain_wallet::tx_builder::TxBuilder;
@@ -73,10 +73,10 @@ fn transfer_fields_correct() {
 
     // Various amounts and nonces
     let test_cases = vec![
-        (0u64, 0u64),           // zero transfer
-        (1, 1),                 // minimum
-        (u64::MAX, u64::MAX),   // maximum
-        (1_000_000_000, 42),    // realistic
+        (0u64, 0u64),         // zero transfer
+        (1, 1),               // minimum
+        (u64::MAX, u64::MAX), // maximum
+        (1_000_000_000, 42),  // realistic
     ];
 
     for (amount, nonce) in test_cases {
@@ -142,7 +142,7 @@ fn deploy_and_call_contract_workflow() {
     }
 
     // Call methods on deployed contract
-    let methods = vec![
+    let methods = [
         ("transfer", r#"{"to":"0xbb...","amount":100}"#),
         ("approve", r#"{"spender":"0xcc...","amount":500}"#),
         ("burn", r#"{"amount":50}"#),
@@ -257,7 +257,7 @@ fn signable_bytes_uniqueness() {
     let tx1 = builder.transfer(recipient(), 1000, 0);
     let tx2 = builder.transfer(recipient(), 1001, 0); // different amount
     let tx3 = builder.transfer(recipient(), 1000, 1); // different nonce
-    let tx4 = builder.transfer([0xCC; 32], 1000, 0);  // different recipient
+    let tx4 = builder.transfer([0xCC; 32], 1000, 0); // different recipient
 
     let bytes1 = tx1.signable_bytes();
     let bytes2 = tx2.signable_bytes();
@@ -265,9 +265,18 @@ fn signable_bytes_uniqueness() {
     let bytes4 = tx4.signable_bytes();
 
     // All different
-    assert_ne!(bytes1, bytes2, "different amount should produce different bytes");
-    assert_ne!(bytes1, bytes3, "different nonce should produce different bytes");
-    assert_ne!(bytes1, bytes4, "different recipient should produce different bytes");
+    assert_ne!(
+        bytes1, bytes2,
+        "different amount should produce different bytes"
+    );
+    assert_ne!(
+        bytes1, bytes3,
+        "different nonce should produce different bytes"
+    );
+    assert_ne!(
+        bytes1, bytes4,
+        "different recipient should produce different bytes"
+    );
 
     // Different tx types
     let tx_refresh = builder.refresh(obj_id(), 500);

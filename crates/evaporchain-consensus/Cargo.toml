@@ -44,3 +44,8 @@ aes-gcm = "0.10"
 [dev-dependencies]
 tempfile = "3"
 proptest = "1"
+
+[features]
+# Historical test-utils gate in tendermint.rs DA self-attestation path.
+# Empty default; opt-in with --features test-utils when re-introduced.
+test-utils = []

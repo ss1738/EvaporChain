@@ -164,8 +164,12 @@ impl CertificateBuilder {
             return false;
         }
 
-        // Reconstruct the signed message and verify the BLS signature
-        let mut msg = Vec::with_capacity(8 + 32 + 8 + 4);
+        // Reconstruct the signed message and verify the BLS signature.
+        // MUST mirror create_attestation byte-for-byte, including the
+        // DA_ATTESTATION_DST prefix — without it, every attestation
+        // produced by create_attestation fails verification.
+        let mut msg = Vec::with_capacity(DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4);
+        msg.extend_from_slice(DA_ATTESTATION_DST);
         msg.extend_from_slice(&att.block_number.to_le_bytes());
         msg.extend_from_slice(&att.data_root);
         msg.extend_from_slice(&att.validator_id.to_le_bytes());
@@ -326,7 +330,7 @@ mod tests {
     fn test_verify_signatures_rejects_inflated_attested_stake() {
         let mut cert = build_valid_cert(3);
         // Inflate the claimed attested_stake beyond what attestations sum to
-        cert.attested_stake = cert.attested_stake + 999_999;
+        cert.attested_stake += 999_999;
         assert!(!cert.verify_signatures());
     }
 
@@ -345,8 +349,8 @@ mod tests {
             total_stake: 10_000, // 10% < 66.7%
         };
         assert!(cert.verify_signatures()); // sigs valid
-        assert!(!cert.is_supermajority());  // but not enough stake
-        assert!(!cert.verify_all());        // full validation fails
+        assert!(!cert.is_supermajority()); // but not enough stake
+        assert!(!cert.verify_all()); // full validation fails
     }
 
     #[test]
@@ -379,8 +383,8 @@ mod tests {
                     validator_id: 1,
                     samples_verified: 16,
                     stake: 50_000,
-                    signature: vec![0x42; 96],   // garbage
-                    public_key: vec![0x13; 48],  // garbage
+                    signature: vec![0x42; 96],  // garbage
+                    public_key: vec![0x13; 48], // garbage
                 },
                 DAAttestation {
                     block_number: 100,
@@ -388,8 +392,8 @@ mod tests {
                     validator_id: 2,
                     samples_verified: 16,
                     stake: 50_000,
-                    signature: vec![0x43; 96],   // garbage
-                    public_key: vec![0x14; 48],  // garbage
+                    signature: vec![0x43; 96],  // garbage
+                    public_key: vec![0x14; 48], // garbage
                 },
             ],
             attested_stake: 100_000,

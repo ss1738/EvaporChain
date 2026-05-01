@@ -93,15 +93,8 @@ mod tests {
         let mut r = EpvRegistry::new();
         let inv = [42u8; 32];
         let a = well_formed_amendment(inv);
-        let err = apply_amendment(
-            &mut r,
-            &a,
-            inv,
-            1_000_000,
-            100,
-            &AlwaysAcceptVerifier,
-        )
-        .unwrap_err();
+        let err =
+            apply_amendment(&mut r, &a, inv, 1_000_000, 100, &AlwaysAcceptVerifier).unwrap_err();
         assert_eq!(err, AmendmentError::FromVersionAbsent(1));
     }
 
@@ -111,15 +104,8 @@ mod tests {
         r.register(ProtocolVersion::new(2, 100, 50)).unwrap();
         let inv = [42u8; 32];
         let a = well_formed_amendment(inv);
-        let err = apply_amendment(
-            &mut r,
-            &a,
-            inv,
-            1_000_000,
-            100,
-            &AlwaysAcceptVerifier,
-        )
-        .unwrap_err();
+        let err =
+            apply_amendment(&mut r, &a, inv, 1_000_000, 100, &AlwaysAcceptVerifier).unwrap_err();
         assert_eq!(err, AmendmentError::ToVersionExists(2));
     }
 
@@ -128,15 +114,8 @@ mod tests {
         let mut r = fresh_registry();
         let inv = [42u8; 32];
         let a = well_formed_amendment(inv);
-        let err = apply_amendment(
-            &mut r,
-            &a,
-            inv,
-            1_000_000,
-            100,
-            &AlwaysRejectVerifier,
-        )
-        .unwrap_err();
+        let err =
+            apply_amendment(&mut r, &a, inv, 1_000_000, 100, &AlwaysRejectVerifier).unwrap_err();
         assert!(matches!(err, AmendmentError::Proof(_)));
         // To-version is NOT registered after rejection.
         assert!(!r.contains(2));
@@ -150,15 +129,8 @@ mod tests {
         // Tamper with the amendment AFTER proof was bound — proof's
         // hash no longer matches.
         a.step_new_descriptor = b"different-impl".to_vec();
-        let err = apply_amendment(
-            &mut r,
-            &a,
-            inv,
-            1_000_000,
-            100,
-            &AlwaysAcceptVerifier,
-        )
-        .unwrap_err();
+        let err =
+            apply_amendment(&mut r, &a, inv, 1_000_000, 100, &AlwaysAcceptVerifier).unwrap_err();
         match err {
             AmendmentError::Proof(crate::proof::ProofError::WrongAmendment { .. }) => {}
             other => panic!("wrong error: {other:?}"),

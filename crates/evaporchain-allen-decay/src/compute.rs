@@ -29,7 +29,7 @@ pub fn compute_relation(a: Interval, b: Interval) -> AllenRelation {
     }
     // Overlap cases — match on (s, e) ordering.
     match (s, e) {
-        (Less, Less) => Overlaps,         // a starts first, ends inside b
+        (Less, Less) => Overlaps, // a starts first, ends inside b
         (Equal, Less) => Starts,
         (Greater, Less) => During,
         (Greater, Equal) => Finishes,
@@ -62,7 +62,10 @@ mod tests {
 
     #[test]
     fn overlaps() {
-        assert_eq!(compute_relation(iv(1, 5), iv(3, 7)), AllenRelation::Overlaps);
+        assert_eq!(
+            compute_relation(iv(1, 5), iv(3, 7)),
+            AllenRelation::Overlaps
+        );
     }
 
     #[test]
@@ -77,7 +80,10 @@ mod tests {
 
     #[test]
     fn finishes() {
-        assert_eq!(compute_relation(iv(3, 7), iv(1, 7)), AllenRelation::Finishes);
+        assert_eq!(
+            compute_relation(iv(3, 7), iv(1, 7)),
+            AllenRelation::Finishes
+        );
     }
 
     #[test]
@@ -87,17 +93,26 @@ mod tests {
 
     #[test]
     fn finished_by() {
-        assert_eq!(compute_relation(iv(1, 7), iv(3, 7)), AllenRelation::FinishedBy);
+        assert_eq!(
+            compute_relation(iv(1, 7), iv(3, 7)),
+            AllenRelation::FinishedBy
+        );
     }
 
     #[test]
     fn contains() {
-        assert_eq!(compute_relation(iv(1, 7), iv(3, 5)), AllenRelation::Contains);
+        assert_eq!(
+            compute_relation(iv(1, 7), iv(3, 5)),
+            AllenRelation::Contains
+        );
     }
 
     #[test]
     fn started_by() {
-        assert_eq!(compute_relation(iv(1, 7), iv(1, 3)), AllenRelation::StartedBy);
+        assert_eq!(
+            compute_relation(iv(1, 7), iv(1, 3)),
+            AllenRelation::StartedBy
+        );
     }
 
     #[test]
@@ -123,9 +138,6 @@ mod tests {
         // For any (a, b), compute_relation(b, a) == compute_relation(a, b).inverse()
         let a = iv(2, 5);
         let b = iv(1, 7);
-        assert_eq!(
-            compute_relation(b, a),
-            compute_relation(a, b).inverse()
-        );
+        assert_eq!(compute_relation(b, a), compute_relation(a, b).inverse());
     }
 }

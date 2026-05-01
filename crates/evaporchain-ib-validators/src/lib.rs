@@ -49,5 +49,5 @@
 pub mod ib;
 pub mod signature;
 
-pub use ib::{IbParams, IbVote, ib_vote};
+pub use ib::{ib_vote, IbParams, IbVote};
 pub use signature::{StateSignature, N_BINS};

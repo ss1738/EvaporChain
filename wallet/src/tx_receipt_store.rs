@@ -459,20 +459,35 @@ mod tests {
         let mut store = TxReceiptStore::new();
         store
             .store_receipt(make_receipt(
-                "tx1", "alice", "bob", 100,
-                TxReceiptStatus::Success, TxType2::Transfer, "2026-01-01T00:00:00Z",
+                "tx1",
+                "alice",
+                "bob",
+                100,
+                TxReceiptStatus::Success,
+                TxType2::Transfer,
+                "2026-01-01T00:00:00Z",
             ))
             .unwrap();
         store
             .store_receipt(make_receipt(
-                "tx2", "charlie", "alice", 200,
-                TxReceiptStatus::Success, TxType2::Transfer, "2026-01-02T00:00:00Z",
+                "tx2",
+                "charlie",
+                "alice",
+                200,
+                TxReceiptStatus::Success,
+                TxType2::Transfer,
+                "2026-01-02T00:00:00Z",
             ))
             .unwrap();
         store
             .store_receipt(make_receipt(
-                "tx3", "dave", "eve", 300,
-                TxReceiptStatus::Success, TxType2::Transfer, "2026-01-03T00:00:00Z",
+                "tx3",
+                "dave",
+                "eve",
+                300,
+                TxReceiptStatus::Success,
+                TxType2::Transfer,
+                "2026-01-03T00:00:00Z",
             ))
             .unwrap();
 
@@ -486,14 +501,24 @@ mod tests {
         let mut store = TxReceiptStore::new();
         store
             .store_receipt(make_receipt(
-                "tx1", "a", "b", 100,
-                TxReceiptStatus::Success, TxType2::Transfer, "2026-01-01T00:00:00Z",
+                "tx1",
+                "a",
+                "b",
+                100,
+                TxReceiptStatus::Success,
+                TxType2::Transfer,
+                "2026-01-01T00:00:00Z",
             ))
             .unwrap();
         store
             .store_receipt(make_receipt(
-                "tx2", "a", "b", 100,
-                TxReceiptStatus::Success, TxType2::Stake, "2026-01-01T00:00:00Z",
+                "tx2",
+                "a",
+                "b",
+                100,
+                TxReceiptStatus::Success,
+                TxType2::Stake,
+                "2026-01-01T00:00:00Z",
             ))
             .unwrap();
 
@@ -507,14 +532,24 @@ mod tests {
         let mut store = TxReceiptStore::new();
         store
             .store_receipt(make_receipt(
-                "tx1", "a", "b", 100,
-                TxReceiptStatus::Success, TxType2::Transfer, "2026-01-01T00:00:00Z",
+                "tx1",
+                "a",
+                "b",
+                100,
+                TxReceiptStatus::Success,
+                TxType2::Transfer,
+                "2026-01-01T00:00:00Z",
             ))
             .unwrap();
         store
             .store_receipt(make_receipt(
-                "tx2", "a", "b", 100,
-                TxReceiptStatus::Failed, TxType2::Transfer, "2026-01-01T00:00:00Z",
+                "tx2",
+                "a",
+                "b",
+                100,
+                TxReceiptStatus::Failed,
+                TxType2::Transfer,
+                "2026-01-01T00:00:00Z",
             ))
             .unwrap();
 
@@ -528,14 +563,24 @@ mod tests {
         let mut store = TxReceiptStore::new();
         store
             .store_receipt(make_receipt(
-                "tx1", "a", "b", 100,
-                TxReceiptStatus::Pending, TxType2::Transfer, "2026-01-01T00:00:00Z",
+                "tx1",
+                "a",
+                "b",
+                100,
+                TxReceiptStatus::Pending,
+                TxType2::Transfer,
+                "2026-01-01T00:00:00Z",
             ))
             .unwrap();
         store
             .store_receipt(make_receipt(
-                "tx2", "a", "b", 100,
-                TxReceiptStatus::Success, TxType2::Transfer, "2026-01-01T00:00:00Z",
+                "tx2",
+                "a",
+                "b",
+                100,
+                TxReceiptStatus::Success,
+                TxType2::Transfer,
+                "2026-01-01T00:00:00Z",
             ))
             .unwrap();
 
@@ -548,8 +593,13 @@ mod tests {
         let mut store = TxReceiptStore::new();
         store
             .store_receipt(make_receipt(
-                "tx1", "a", "b", 100,
-                TxReceiptStatus::Failed, TxType2::Transfer, "2026-01-01T00:00:00Z",
+                "tx1",
+                "a",
+                "b",
+                100,
+                TxReceiptStatus::Failed,
+                TxType2::Transfer,
+                "2026-01-01T00:00:00Z",
             ))
             .unwrap();
 
@@ -562,20 +612,35 @@ mod tests {
         let mut store = TxReceiptStore::new();
         store
             .store_receipt(make_receipt(
-                "tx1", "a", "b", 100,
-                TxReceiptStatus::Success, TxType2::Transfer, "2026-01-01T00:00:00Z",
+                "tx1",
+                "a",
+                "b",
+                100,
+                TxReceiptStatus::Success,
+                TxType2::Transfer,
+                "2026-01-01T00:00:00Z",
             ))
             .unwrap();
         store
             .store_receipt(make_receipt(
-                "tx2", "a", "b", 100,
-                TxReceiptStatus::Success, TxType2::Transfer, "2026-06-15T00:00:00Z",
+                "tx2",
+                "a",
+                "b",
+                100,
+                TxReceiptStatus::Success,
+                TxType2::Transfer,
+                "2026-06-15T00:00:00Z",
             ))
             .unwrap();
         store
             .store_receipt(make_receipt(
-                "tx3", "a", "b", 100,
-                TxReceiptStatus::Success, TxType2::Transfer, "2026-12-31T00:00:00Z",
+                "tx3",
+                "a",
+                "b",
+                100,
+                TxReceiptStatus::Success,
+                TxType2::Transfer,
+                "2026-12-31T00:00:00Z",
             ))
             .unwrap();
 
@@ -589,20 +654,35 @@ mod tests {
         let mut store = TxReceiptStore::new();
         store
             .store_receipt(make_receipt(
-                "tx1", "a", "b", 100,
-                TxReceiptStatus::Success, TxType2::Transfer, "2026-01-01T00:00:00Z",
+                "tx1",
+                "a",
+                "b",
+                100,
+                TxReceiptStatus::Success,
+                TxType2::Transfer,
+                "2026-01-01T00:00:00Z",
             ))
             .unwrap();
         store
             .store_receipt(make_receipt(
-                "tx2", "a", "b", 100,
-                TxReceiptStatus::Success, TxType2::Transfer, "2026-06-01T00:00:00Z",
+                "tx2",
+                "a",
+                "b",
+                100,
+                TxReceiptStatus::Success,
+                TxType2::Transfer,
+                "2026-06-01T00:00:00Z",
             ))
             .unwrap();
         store
             .store_receipt(make_receipt(
-                "tx3", "a", "b", 100,
-                TxReceiptStatus::Success, TxType2::Transfer, "2026-12-01T00:00:00Z",
+                "tx3",
+                "a",
+                "b",
+                100,
+                TxReceiptStatus::Success,
+                TxType2::Transfer,
+                "2026-12-01T00:00:00Z",
             ))
             .unwrap();
 
@@ -637,14 +717,24 @@ mod tests {
         let mut store = TxReceiptStore::new();
         store
             .store_receipt(make_receipt(
-                "abc123", "alice", "bob", 100,
-                TxReceiptStatus::Success, TxType2::Transfer, "2026-01-01T00:00:00Z",
+                "abc123",
+                "alice",
+                "bob",
+                100,
+                TxReceiptStatus::Success,
+                TxType2::Transfer,
+                "2026-01-01T00:00:00Z",
             ))
             .unwrap();
         store
             .store_receipt(make_receipt(
-                "def456", "charlie", "dave", 200,
-                TxReceiptStatus::Success, TxType2::Transfer, "2026-01-01T00:00:00Z",
+                "def456",
+                "charlie",
+                "dave",
+                200,
+                TxReceiptStatus::Success,
+                TxType2::Transfer,
+                "2026-01-01T00:00:00Z",
             ))
             .unwrap();
 
@@ -660,14 +750,24 @@ mod tests {
         let mut store = TxReceiptStore::new();
         store
             .store_receipt(make_receipt(
-                "tx1", "alice", "bob", 100,
-                TxReceiptStatus::Success, TxType2::Transfer, "2026-01-01T00:00:00Z",
+                "tx1",
+                "alice",
+                "bob",
+                100,
+                TxReceiptStatus::Success,
+                TxType2::Transfer,
+                "2026-01-01T00:00:00Z",
             ))
             .unwrap();
         store
             .store_receipt(make_receipt(
-                "tx2", "alice", "charlie", 200,
-                TxReceiptStatus::Failed, TxType2::Transfer, "2026-06-01T00:00:00Z",
+                "tx2",
+                "alice",
+                "charlie",
+                200,
+                TxReceiptStatus::Failed,
+                TxType2::Transfer,
+                "2026-06-01T00:00:00Z",
             ))
             .unwrap();
 
@@ -708,14 +808,24 @@ mod tests {
         let mut store = TxReceiptStore::new();
         store
             .store_receipt(make_receipt(
-                "tx1", "alice", "bob", 100,
-                TxReceiptStatus::Success, TxType2::Transfer, "2026-01-01T00:00:00Z",
+                "tx1",
+                "alice",
+                "bob",
+                100,
+                TxReceiptStatus::Success,
+                TxType2::Transfer,
+                "2026-01-01T00:00:00Z",
             ))
             .unwrap();
         store
             .store_receipt(make_receipt(
-                "tx2", "charlie", "dave", 500,
-                TxReceiptStatus::Success, TxType2::Transfer, "2026-01-01T00:00:00Z",
+                "tx2",
+                "charlie",
+                "dave",
+                500,
+                TxReceiptStatus::Success,
+                TxType2::Transfer,
+                "2026-01-01T00:00:00Z",
             ))
             .unwrap();
 

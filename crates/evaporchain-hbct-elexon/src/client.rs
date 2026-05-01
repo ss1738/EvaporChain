@@ -133,7 +133,10 @@ mod tests {
     #[test]
     fn default_config_has_expected_base_url() {
         let feed = ElexonOracleFeed::new(ElexonConfig::default());
-        assert!(feed.config.base_url.starts_with("https://data.elexon.co.uk"));
+        assert!(feed
+            .config
+            .base_url
+            .starts_with("https://data.elexon.co.uk"));
     }
 
     /// Non-UTF-8 location bytes return None without panicking.

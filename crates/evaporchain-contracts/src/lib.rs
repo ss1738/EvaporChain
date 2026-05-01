@@ -483,8 +483,7 @@ impl ContractEngine {
                     }
                     RuleAction::CostEnergy(cost) => {
                         energy_cost += cost;
-                        rules_triggered
-                            .push(format!("CostEnergy({cost}) on {method}"));
+                        rules_triggered.push(format!("CostEnergy({cost}) on {method}"));
                     }
                     RuleAction::EmitEvent(msg) => {
                         events.push(msg.clone());
@@ -504,14 +503,23 @@ impl ContractEngine {
             .ok_or(ContractError::NotFound(contract_id))?;
         let creator = contract.creator;
         let state_snapshot = contract.state.clone();
-        let return_value =
-            execute_method(&contract.template, &mut contract.state, method, args, caller, &creator, current_epoch)
-                .inspect_err(|_| {
-                    contract.state = state_snapshot.clone();
-                })?;
+        let return_value = execute_method(
+            &contract.template,
+            &mut contract.state,
+            method,
+            args,
+            caller,
+            &creator,
+            current_epoch,
+        )
+        .inspect_err(|_| {
+            contract.state = state_snapshot.clone();
+        })?;
 
         // Enforce per-contract storage quota
-        let state_size = serde_json::to_vec(&contract.state).map(|v| v.len()).unwrap_or(0);
+        let state_size = serde_json::to_vec(&contract.state)
+            .map(|v| v.len())
+            .unwrap_or(0);
         if state_size > MAX_CONTRACT_STATE_BYTES {
             contract.state = state_snapshot;
             return Err(ContractError::StorageQuotaExceeded {
@@ -578,11 +586,7 @@ impl ContractEngine {
                 if rule.trigger != RuleTrigger::OnTick {
                     continue;
                 }
-                if evaluate_condition(
-                    &rule.condition,
-                    &serde_json::Value::Null,
-                    &contract.state,
-                ) {
+                if evaluate_condition(&rule.condition, &serde_json::Value::Null, &contract.state) {
                     if let RuleAction::EmitEvent(msg) = &rule.action {
                         result.events.push(msg.clone());
                     }
@@ -862,13 +866,25 @@ fn execute_method(
 ) -> Result<serde_json::Value, ContractError> {
     match template {
         ContractTemplate::DecayingToken => exec_token(state, method, args, caller, creator),
-        ContractTemplate::MortalNFT => exec_nft(state, method, args, caller, creator, current_epoch),
-        ContractTemplate::ThermodynamicEscrow => exec_escrow(state, method, args, caller, current_epoch),
-        ContractTemplate::DecayingAuction => exec_auction(state, method, args, caller, current_epoch),
-        ContractTemplate::StakingPool => exec_staking(state, method, args, caller, creator, current_epoch),
+        ContractTemplate::MortalNFT => {
+            exec_nft(state, method, args, caller, creator, current_epoch)
+        }
+        ContractTemplate::ThermodynamicEscrow => {
+            exec_escrow(state, method, args, caller, current_epoch)
+        }
+        ContractTemplate::DecayingAuction => {
+            exec_auction(state, method, args, caller, current_epoch)
+        }
+        ContractTemplate::StakingPool => {
+            exec_staking(state, method, args, caller, creator, current_epoch)
+        }
         ContractTemplate::DAOVote => exec_dao(state, method, args, caller, current_epoch),
-        ContractTemplate::DecayingDAO => decaying_dao::exec(state, method, args, caller, current_epoch),
-        ContractTemplate::TemporalContract => exec_temporal(state, method, args, caller, creator, current_epoch),
+        ContractTemplate::DecayingDAO => {
+            decaying_dao::exec(state, method, args, caller, current_epoch)
+        }
+        ContractTemplate::TemporalContract => {
+            exec_temporal(state, method, args, caller, creator, current_epoch)
+        }
     }
 }
 
@@ -894,12 +910,13 @@ fn exec_token(
             let to = get_str(args, "to")?;
             let amount = get_u64(args, "amount")?;
             let bal = ts.balances.entry(to).or_insert(0);
-            *bal = bal.checked_add(amount).ok_or_else(|| {
-                ContractError::StateError("balance overflow".into())
-            })?;
-            ts.total_minted = ts.total_minted.checked_add(amount).ok_or_else(|| {
-                ContractError::StateError("total_minted overflow".into())
-            })?;
+            *bal = bal
+                .checked_add(amount)
+                .ok_or_else(|| ContractError::StateError("balance overflow".into()))?;
+            ts.total_minted = ts
+                .total_minted
+                .checked_add(amount)
+                .ok_or_else(|| ContractError::StateError("total_minted overflow".into()))?;
             serde_json::json!({ "minted": amount })
         }
         "transfer" => {
@@ -922,9 +939,9 @@ fn exec_token(
                 });
             }
             let to_bal = ts.balances.get(&to).copied().unwrap_or(0);
-            let new_to_bal = to_bal.checked_add(amount).ok_or_else(|| {
-                ContractError::StateError("balance overflow".into())
-            })?;
+            let new_to_bal = to_bal
+                .checked_add(amount)
+                .ok_or_else(|| ContractError::StateError("balance overflow".into()))?;
             *ts.balances.entry(from).or_insert(0) -= amount;
             *ts.balances.entry(to).or_insert(0) = new_to_bal;
             serde_json::json!({ "transferred": amount })
@@ -1035,9 +1052,9 @@ fn exec_nft(
                 .ok_or_else(|| ContractError::StateError(format!("NFT {token_id} not found")))?;
             // Only the NFT owner or contract creator can transfer it.
             if !nft.owner.eq_ignore_ascii_case(&caller_hex) && caller != creator {
-                return Err(ContractError::PermissionDenied(
-                    format!("caller does not own NFT {token_id}"),
-                ));
+                return Err(ContractError::PermissionDenied(format!(
+                    "caller does not own NFT {token_id}"
+                )));
             }
             nft.owner = to;
             serde_json::json!({ "transferred": token_id })
@@ -1081,9 +1098,9 @@ fn exec_nft(
                 .get_mut(&token_id)
                 .ok_or_else(|| ContractError::StateError(format!("NFT {token_id} not found")))?;
             if !nft.owner.eq_ignore_ascii_case(&caller_hex) && caller != creator {
-                return Err(ContractError::PermissionDenied(
-                    format!("caller does not own NFT {token_id}"),
-                ));
+                return Err(ContractError::PermissionDenied(format!(
+                    "caller does not own NFT {token_id}"
+                )));
             }
             // Subscription gate: when renewal_fee > 0, debit the caller's
             // pre-deposited renewal balance and credit the renewal_recipient.
@@ -1096,20 +1113,24 @@ fn exec_nft(
                          (caller has {bal}); call deposit_renewal first"
                     )));
                 }
-                ns.renewal_balances.insert(caller_hex.clone(), bal - renewal_fee);
-                let r = ns.renewal_balances.get(&recipient_key).copied().unwrap_or(0);
-                ns.renewal_balances.insert(recipient_key, r.saturating_add(renewal_fee));
+                ns.renewal_balances
+                    .insert(caller_hex.clone(), bal - renewal_fee);
+                let r = ns
+                    .renewal_balances
+                    .get(&recipient_key)
+                    .copied()
+                    .unwrap_or(0);
+                ns.renewal_balances
+                    .insert(recipient_key, r.saturating_add(renewal_fee));
                 // Re-borrow nft after the second mutable borrow above.
                 let nft = ns.tokens.get_mut(&token_id).expect("checked above");
-                let current = energy_at_epoch(
-                    nft.energy, nft.half_life, current_epoch - nft.minted_epoch,
-                );
+                let current =
+                    energy_at_epoch(nft.energy, nft.half_life, current_epoch - nft.minted_epoch);
                 nft.energy = current + energy;
                 nft.minted_epoch = current_epoch;
             } else {
-                let current = energy_at_epoch(
-                    nft.energy, nft.half_life, current_epoch - nft.minted_epoch,
-                );
+                let current =
+                    energy_at_epoch(nft.energy, nft.half_life, current_epoch - nft.minted_epoch);
                 nft.energy = current + energy;
                 nft.minted_epoch = current_epoch;
             }
@@ -1122,7 +1143,8 @@ fn exec_nft(
             // this method on the NFT contract during a transfer.
             let amount = get_u64(args, "amount")?;
             let bal = ns.renewal_balances.get(&caller_hex).copied().unwrap_or(0);
-            ns.renewal_balances.insert(caller_hex.clone(), bal.saturating_add(amount));
+            ns.renewal_balances
+                .insert(caller_hex.clone(), bal.saturating_add(amount));
             serde_json::json!({ "balance": bal.saturating_add(amount) })
         }
         "renewal_balance" => {
@@ -1138,9 +1160,9 @@ fn exec_nft(
                 .ok_or_else(|| ContractError::StateError(format!("NFT {token_id} not found")))?;
             // Only the NFT owner or contract creator can burn.
             if !nft.owner.eq_ignore_ascii_case(&caller_hex) && caller != creator {
-                return Err(ContractError::PermissionDenied(
-                    format!("caller cannot burn NFT {token_id}"),
-                ));
+                return Err(ContractError::PermissionDenied(format!(
+                    "caller cannot burn NFT {token_id}"
+                )));
             }
             ns.tokens.remove(&token_id);
             serde_json::json!({ "burned": token_id })
@@ -1171,7 +1193,9 @@ fn exec_escrow(
                 return Err(ContractError::StateError("escrow already settled".into()));
             }
             if !caller_hex.eq_ignore_ascii_case(&es.receiver) {
-                return Err(ContractError::PermissionDenied("only receiver can claim".into()));
+                return Err(ContractError::PermissionDenied(
+                    "only receiver can claim".into(),
+                ));
             }
             if current_epoch < es.release_epoch {
                 return Err(ContractError::StateError("not yet released".into()));
@@ -1184,7 +1208,9 @@ fn exec_escrow(
                 return Err(ContractError::StateError("escrow already settled".into()));
             }
             if !caller_hex.eq_ignore_ascii_case(&es.sender) {
-                return Err(ContractError::PermissionDenied("only sender can refund".into()));
+                return Err(ContractError::PermissionDenied(
+                    "only sender can refund".into(),
+                ));
             }
             if current_epoch < es.release_epoch + es.decay_after_epochs {
                 return Err(ContractError::StateError("decay period not elapsed".into()));
@@ -1242,7 +1268,9 @@ fn exec_auction(
             }
             let bidder = get_str(args, "bidder")?.to_string();
             if !caller_hex.eq_ignore_ascii_case(&bidder) {
-                return Err(ContractError::PermissionDenied("caller must be the bidder".into()));
+                return Err(ContractError::PermissionDenied(
+                    "caller must be the bidder".into(),
+                ));
             }
             let amount = get_u64(args, "amount")?;
             if amount < aus.min_bid {
@@ -1253,7 +1281,9 @@ fn exec_auction(
             }
             let highest = aus.bids.last().map(|(_, a)| *a).unwrap_or(0);
             if amount <= highest {
-                return Err(ContractError::StateError("bid must exceed current highest".into()));
+                return Err(ContractError::StateError(
+                    "bid must exceed current highest".into(),
+                ));
             }
             aus.bids.push((bidder, amount));
             serde_json::json!({ "bid_accepted": amount })
@@ -1264,7 +1294,9 @@ fn exec_auction(
             }
             let ended = current_epoch >= aus.start_epoch + aus.duration_epochs;
             if !ended && !caller_hex.eq_ignore_ascii_case(&aus.seller) {
-                return Err(ContractError::PermissionDenied("only seller can finalize before auction ends".into()));
+                return Err(ContractError::PermissionDenied(
+                    "only seller can finalize before auction ends".into(),
+                ));
             }
             aus.finalized = true;
             if let Some((winner, amount)) = aus.bids.last() {
@@ -1279,7 +1311,10 @@ fn exec_auction(
             }
         }
         "highest_bid" => {
-            let highest = aus.bids.last().map(|(b, a)| serde_json::json!({ "bidder": b, "amount": a }));
+            let highest = aus
+                .bids
+                .last()
+                .map(|(b, a)| serde_json::json!({ "bidder": b, "amount": a }));
             serde_json::json!({ "highest": highest })
         }
         "status" => {
@@ -1416,7 +1451,9 @@ fn exec_dao(
             }
             let voter = get_str(args, "voter")?.to_string();
             if !caller_hex.eq_ignore_ascii_case(&voter) {
-                return Err(ContractError::PermissionDenied("caller must be the voter".into()));
+                return Err(ContractError::PermissionDenied(
+                    "caller must be the voter".into(),
+                ));
             }
             let option_idx = get_u64(args, "option_idx")? as usize;
             let weight = get_u64(args, "weight")?;
@@ -1573,7 +1610,9 @@ fn tick_escrow(state: &mut serde_json::Value, current_epoch: Epoch) -> Vec<Strin
     };
     let mut events = Vec::new();
 
-    if !es.claimed && !es.refunded && !es.decayed
+    if !es.claimed
+        && !es.refunded
+        && !es.decayed
         && current_epoch >= es.release_epoch + es.decay_after_epochs
     {
         es.decayed = true;
@@ -1634,7 +1673,7 @@ fn tick_staking(state: &mut serde_json::Value, current_epoch: Epoch) -> Vec<Stri
             continue;
         }
         // New rewards = rate * epochs * (stake / total_staked)
-        #[allow(clippy::manual_checked_ops)]
+        #[allow(unknown_lints, clippy::manual_checked_ops)]
         let new_rewards = if ss.total_staked > 0 {
             ss.reward_rate_per_epoch * epochs_elapsed * info.amount / ss.total_staked
         } else {
@@ -1728,10 +1767,7 @@ fn evaluate_condition(
         RuleCondition::Always => true,
         RuleCondition::If { field, op, value } => {
             // Try to extract the field value from args.
-            let field_val = args
-                .get(field)
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
+            let field_val = args.get(field).and_then(|v| v.as_u64()).unwrap_or(0);
 
             match op {
                 ComparisonOp::Gt => field_val > *value,
@@ -1763,12 +1799,15 @@ fn exec_temporal(
         .map_err(|e| ContractError::StateError(e.to_string()))?;
 
     if ts.completed {
-        return Err(ContractError::StateError("temporal contract has completed all phases".into()));
+        return Err(ContractError::StateError(
+            "temporal contract has completed all phases".into(),
+        ));
     }
 
     // Check if the method is allowed in the current phase
     let current = &ts.phases[ts.current_phase];
-    if !current.allowed_methods.is_empty() && !current.allowed_methods.contains(&method.to_string()) {
+    if !current.allowed_methods.is_empty() && !current.allowed_methods.contains(&method.to_string())
+    {
         return Err(ContractError::PermissionDenied(format!(
             "method '{}' not allowed in phase '{}'",
             method, current.name
@@ -1869,7 +1908,11 @@ fn exec_temporal(
         // Get a key from the data store
         "get_data" => {
             let key = get_str(args, "key")?;
-            let value = ts.data.get(&key).cloned().unwrap_or(serde_json::Value::Null);
+            let value = ts
+                .data
+                .get(&key)
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
             serde_json::json!({ "key": key, "value": value })
         }
 
@@ -2072,6 +2115,7 @@ fn get_u64(v: &serde_json::Value, key: &str) -> Result<u64, ContractError> {
 ///
 /// Accepts inputs with or without a leading `0x` / `0X` prefix. Rejects
 /// anything that isn't a valid 32-byte hex address.
+#[allow(dead_code)]
 fn canonicalize_address_hex(s: &str) -> Result<String, ContractError> {
     let trimmed = s.trim();
     let no_prefix = trimmed
@@ -2122,8 +2166,14 @@ mod tests {
 
         assert_eq!(canonicalize_address_hex(canonical).unwrap(), canonical);
         assert_eq!(canonicalize_address_hex(&upper).unwrap(), canonical);
-        assert_eq!(canonicalize_address_hex(&prefixed_lower).unwrap(), canonical);
-        assert_eq!(canonicalize_address_hex(&prefixed_upper_x).unwrap(), canonical);
+        assert_eq!(
+            canonicalize_address_hex(&prefixed_lower).unwrap(),
+            canonical
+        );
+        assert_eq!(
+            canonicalize_address_hex(&prefixed_upper_x).unwrap(),
+            canonical
+        );
         assert_eq!(canonicalize_address_hex(mixed).unwrap(), canonical);
 
         // Whitespace tolerated via trim
@@ -2335,14 +2385,32 @@ mod tests {
         let id = deploy_token(&mut eng);
 
         let r = eng
-            .call(id, "balance_of", &serde_json::json!({"addr": "alice"}), &addr(1), 0)
+            .call(
+                id,
+                "balance_of",
+                &serde_json::json!({"addr": "alice"}),
+                &addr(1),
+                0,
+            )
             .unwrap();
         assert_eq!(r.return_value["balance"], 10000);
 
-        eng.call(id, "mint", &serde_json::json!({"to": "bob", "amount": 500}), &addr(1), 0)
-            .unwrap();
+        eng.call(
+            id,
+            "mint",
+            &serde_json::json!({"to": "bob", "amount": 500}),
+            &addr(1),
+            0,
+        )
+        .unwrap();
         let r = eng
-            .call(id, "balance_of", &serde_json::json!({"addr": "bob"}), &addr(1), 0)
+            .call(
+                id,
+                "balance_of",
+                &serde_json::json!({"addr": "bob"}),
+                &addr(1),
+                0,
+            )
             .unwrap();
         assert_eq!(r.return_value["balance"], 500);
     }
@@ -2362,12 +2430,24 @@ mod tests {
         .unwrap();
 
         let r = eng
-            .call(id, "balance_of", &serde_json::json!({"addr": "alice"}), &addr(1), 0)
+            .call(
+                id,
+                "balance_of",
+                &serde_json::json!({"addr": "alice"}),
+                &addr(1),
+                0,
+            )
             .unwrap();
         assert_eq!(r.return_value["balance"], 7000);
 
         let r = eng
-            .call(id, "balance_of", &serde_json::json!({"addr": "bob"}), &addr(1), 0)
+            .call(
+                id,
+                "balance_of",
+                &serde_json::json!({"addr": "bob"}),
+                &addr(1),
+                0,
+            )
             .unwrap();
         assert_eq!(r.return_value["balance"], 3000);
     }
@@ -2381,7 +2461,13 @@ mod tests {
         eng.tick(10);
 
         let r = eng
-            .call(id, "balance_of", &serde_json::json!({"addr": "alice"}), &addr(1), 10)
+            .call(
+                id,
+                "balance_of",
+                &serde_json::json!({"addr": "alice"}),
+                &addr(1),
+                10,
+            )
             .unwrap();
         let bal = r.return_value["balance"].as_u64().unwrap();
         assert_eq!(bal, 5000, "After one half-life, balance should halve");
@@ -2399,10 +2485,20 @@ mod tests {
         }
 
         let r = eng
-            .call(id, "balance_of", &serde_json::json!({"addr": "alice"}), &addr(1), 200)
+            .call(
+                id,
+                "balance_of",
+                &serde_json::json!({"addr": "alice"}),
+                &addr(1),
+                200,
+            )
             .unwrap();
         let bal = r.return_value["balance"].as_u64().unwrap();
-        assert!(bal < 20, "After 20 half-lives, balance should be negligible, got {}", bal);
+        assert!(
+            bal < 20,
+            "After 20 half-lives, balance should be negligible, got {}",
+            bal
+        );
     }
 
     #[test]
@@ -2420,7 +2516,13 @@ mod tests {
         .unwrap();
 
         let r = eng
-            .call(id, "balance_of", &serde_json::json!({"addr": "alice"}), &addr(1), 0)
+            .call(
+                id,
+                "balance_of",
+                &serde_json::json!({"addr": "alice"}),
+                &addr(1),
+                0,
+            )
             .unwrap();
         assert_eq!(r.return_value["balance"], 8000);
     }
@@ -2499,7 +2601,10 @@ mod tests {
             )
             .unwrap_err();
         let msg = format!("{err:?}");
-        assert!(msg.contains("renewal balance"), "expected fee gate, got: {msg}");
+        assert!(
+            msg.contains("renewal balance"),
+            "expected fee gate, got: {msg}"
+        );
     }
 
     #[test]
@@ -2613,7 +2718,13 @@ mod tests {
         assert_eq!(token_id, 1);
 
         let r = eng
-            .call(id, "owner_of", &serde_json::json!({"token_id": 1}), &addr(1), 0)
+            .call(
+                id,
+                "owner_of",
+                &serde_json::json!({"token_id": 1}),
+                &addr(1),
+                0,
+            )
             .unwrap();
         assert_eq!(r.return_value["owner"], "alice");
     }
@@ -2641,7 +2752,13 @@ mod tests {
         .unwrap();
 
         let r = eng
-            .call(id, "owner_of", &serde_json::json!({"token_id": 1}), &addr(1), 0)
+            .call(
+                id,
+                "owner_of",
+                &serde_json::json!({"token_id": 1}),
+                &addr(1),
+                0,
+            )
             .unwrap();
         assert_eq!(r.return_value["owner"], "bob");
     }
@@ -2663,7 +2780,13 @@ mod tests {
         eng.tick(3);
 
         // NFT should be dead now.
-        let r = eng.call(id, "owner_of", &serde_json::json!({"token_id": 1}), &addr(1), 3);
+        let r = eng.call(
+            id,
+            "owner_of",
+            &serde_json::json!({"token_id": 1}),
+            &addr(1),
+            3,
+        );
         assert!(r.is_err());
     }
 
@@ -2693,7 +2816,9 @@ mod tests {
         let mut eng = engine();
         let id = deploy_escrow(&mut eng);
 
-        let r = eng.call(id, "claim", &serde_json::json!({}), &addr(2), 10).unwrap();
+        let r = eng
+            .call(id, "claim", &serde_json::json!({}), &addr(2), 10)
+            .unwrap();
         assert_eq!(r.return_value["claimed"], 5000);
     }
 
@@ -2712,7 +2837,9 @@ mod tests {
         let id = deploy_escrow(&mut eng);
 
         // Refund available after release_epoch + decay_after_epochs = 15
-        let r = eng.call(id, "refund", &serde_json::json!({}), &addr(1), 15).unwrap();
+        let r = eng
+            .call(id, "refund", &serde_json::json!({}), &addr(1), 15)
+            .unwrap();
         assert_eq!(r.return_value["refunded"], 5000);
     }
 
@@ -2724,7 +2851,9 @@ mod tests {
         // Tick past decay period.
         eng.tick(16);
 
-        let r = eng.call(id, "status", &serde_json::json!({}), &addr(1), 16).unwrap();
+        let r = eng
+            .call(id, "status", &serde_json::json!({}), &addr(1), 16)
+            .unwrap();
         assert_eq!(r.return_value["status"], "decayed");
         let state = eng.get_state(id).unwrap();
         let es: EscrowState = serde_json::from_value(state.clone()).unwrap();
@@ -2759,12 +2888,26 @@ mod tests {
 
         let bidder2 = hex::encode(addr(2));
         let bidder3 = hex::encode(addr(3));
-        eng.call(id, "bid", &serde_json::json!({"bidder": bidder2, "amount": 200}), &addr(2), 1)
-            .unwrap();
-        eng.call(id, "bid", &serde_json::json!({"bidder": bidder3, "amount": 600}), &addr(3), 2)
-            .unwrap();
+        eng.call(
+            id,
+            "bid",
+            &serde_json::json!({"bidder": bidder2, "amount": 200}),
+            &addr(2),
+            1,
+        )
+        .unwrap();
+        eng.call(
+            id,
+            "bid",
+            &serde_json::json!({"bidder": bidder3, "amount": 600}),
+            &addr(3),
+            2,
+        )
+        .unwrap();
 
-        let r = eng.call(id, "highest_bid", &serde_json::json!({}), &addr(1), 2).unwrap();
+        let r = eng
+            .call(id, "highest_bid", &serde_json::json!({}), &addr(1), 2)
+            .unwrap();
         assert_eq!(r.return_value["highest"]["amount"], 600);
     }
 
@@ -2774,8 +2917,14 @@ mod tests {
         let id = deploy_auction(&mut eng);
 
         let bidder = hex::encode(addr(2));
-        eng.call(id, "bid", &serde_json::json!({"bidder": bidder, "amount": 700}), &addr(2), 1)
-            .unwrap();
+        eng.call(
+            id,
+            "bid",
+            &serde_json::json!({"bidder": bidder, "amount": 700}),
+            &addr(2),
+            1,
+        )
+        .unwrap();
 
         // Tick past duration.
         let result = eng.tick(11);
@@ -2790,7 +2939,7 @@ mod tests {
     #[test]
     fn test_auction_no_bids_evaporates() {
         let mut eng = engine();
-        let id = deploy_auction(&mut eng);
+        let _id = deploy_auction(&mut eng);
 
         let result = eng.tick(11);
         assert!(result.events.iter().any(|e| e.contains("no bids")));
@@ -2989,7 +3138,9 @@ mod tests {
         )
         .unwrap();
 
-        let r = eng.call(id, "results", &serde_json::json!({}), &addr(1), 3).unwrap();
+        let r = eng
+            .call(id, "results", &serde_json::json!({}), &addr(1), 3)
+            .unwrap();
         let results = r.return_value["results"].as_array().unwrap();
         assert_eq!(results[0]["votes"], 100); // Yes
         assert_eq!(results[1]["votes"], 50); // No
@@ -3021,7 +3172,7 @@ mod tests {
     #[test]
     fn test_dao_evaporation() {
         let mut eng = engine();
-        let id = deploy_dao(&mut eng);
+        let _id = deploy_dao(&mut eng);
 
         // Tick past 2x voting period (20 epochs).
         let result = eng.tick(21);
@@ -3186,8 +3337,8 @@ mod tests {
                 }),
                 vec![],
                 addr(1),
-                4,    // Very low energy
-                1,    // Very fast decay (hl=1)
+                4, // Very low energy
+                1, // Very fast decay (hl=1)
                 0,
             )
             .unwrap();
@@ -3278,8 +3429,8 @@ mod tests {
                 }),
                 vec![],
                 addr(1),
-                8,  // Low energy
-                2,  // Fast decay
+                8, // Low energy
+                2, // Fast decay
                 0,
             )
             .unwrap();
@@ -3296,7 +3447,13 @@ mod tests {
 
         // Verify it works.
         let r = eng
-            .call(id, "balance_of", &serde_json::json!({"addr": "bob"}), &addr(1), 0)
+            .call(
+                id,
+                "balance_of",
+                &serde_json::json!({"addr": "bob"}),
+                &addr(1),
+                0,
+            )
             .unwrap();
         assert_eq!(r.return_value["balance"], 1000);
 
@@ -3308,7 +3465,13 @@ mod tests {
         );
 
         // Can't use anymore.
-        let r = eng.call(id, "balance_of", &serde_json::json!({"addr": "bob"}), &addr(1), 10);
+        let r = eng.call(
+            id,
+            "balance_of",
+            &serde_json::json!({"addr": "bob"}),
+            &addr(1),
+            10,
+        );
         assert!(r.is_err());
     }
 
@@ -3336,7 +3499,10 @@ mod tests {
         // Refresh at epoch 5.
         eng.refresh_contract(id, 500, 5).unwrap();
         let c = eng.get(id).unwrap();
-        assert!(c.energy_at(5) > 100, "Energy should have increased after refresh");
+        assert!(
+            c.energy_at(5) > 100,
+            "Energy should have increased after refresh"
+        );
     }
 
     #[test]
@@ -3568,13 +3734,7 @@ mod tests {
         .unwrap();
 
         // addr(3) is neither the NFT owner (addr(5)) nor the creator (addr(1)).
-        let r = eng.call(
-            id,
-            "burn",
-            &serde_json::json!({"token_id": 1}),
-            &addr(3),
-            0,
-        );
+        let r = eng.call(id, "burn", &serde_json::json!({"token_id": 1}), &addr(3), 0);
         assert!(matches!(r, Err(ContractError::PermissionDenied(_))));
     }
 
@@ -3594,13 +3754,7 @@ mod tests {
         .unwrap();
 
         // addr(5) owns the NFT, so burn succeeds.
-        let r = eng.call(
-            id,
-            "burn",
-            &serde_json::json!({"token_id": 1}),
-            &addr(5),
-            0,
-        );
+        let r = eng.call(id, "burn", &serde_json::json!({"token_id": 1}), &addr(5), 0);
         assert!(r.is_ok());
     }
 
@@ -3620,13 +3774,7 @@ mod tests {
         .unwrap();
 
         // addr(1) is the creator, so burn succeeds even though they don't own the NFT.
-        let r = eng.call(
-            id,
-            "burn",
-            &serde_json::json!({"token_id": 1}),
-            &addr(1),
-            0,
-        );
+        let r = eng.call(id, "burn", &serde_json::json!({"token_id": 1}), &addr(1), 0);
         assert!(r.is_ok());
     }
 
@@ -3706,13 +3854,7 @@ mod tests {
             .unwrap();
 
         // addr(3) is neither the owner (hex of addr(1)) nor the creator (addr(1)).
-        let r = eng.call(
-            id,
-            "advance_phase",
-            &serde_json::json!({}),
-            &addr(3),
-            5,
-        );
+        let r = eng.call(id, "advance_phase", &serde_json::json!({}), &addr(3), 5);
         assert!(matches!(r, Err(ContractError::PermissionDenied(_))));
     }
 

@@ -7,10 +7,10 @@
 //!
 //! Start: evaporchain-mcp [--node-url http://37.27.1.1:8080]
 
-mod protocol;
-mod tools;
-mod resources;
 mod prompts;
+mod protocol;
+mod resources;
+mod tools;
 
 use std::env;
 use tokio::io::{self, AsyncBufReadExt, BufReader};

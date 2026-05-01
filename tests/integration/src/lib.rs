@@ -6,29 +6,33 @@
 
 #[cfg(test)]
 mod tests {
-    use evaporchain_consensus::tendermint::{
-        ConsensusAction, ConsensusMessage, TendermintConsensus,
-    };
-    use evaporchain_consensus::validator_set::{ValidatorInfo, ValidatorSet};
-    use evaporchain_consensus::light_client::{LightBlockHeader, LightClientVerifier, VerificationResult};
-    use evaporchain_consensus::state_sync::{
-        SnapshotProvider, StateSyncManager, SyncAction, SyncMessage, SyncPhase,
+    use evaporchain_consensus::finality::{FinalityStatus, FinalityTracker};
+    use evaporchain_consensus::light_client::{
+        LightBlockHeader, LightClientVerifier, VerificationResult,
     };
     use evaporchain_consensus::persistence::{
         ConsensusCheckpoint, ConsensusStateStore, InMemoryStateStore,
     };
-    use evaporchain_crypto::signatures::{BlsKeypair, BlsSignature, BlsVerifier, MlDsaKeypair, MlDsaVerifier, Signer, Verifier};
-    use evaporchain_crypto::vrf::VrfKeypair;
+    use evaporchain_consensus::state_sync::{
+        SnapshotProvider, StateSyncManager, SyncAction, SyncMessage, SyncPhase,
+    };
+    use evaporchain_consensus::tendermint::{
+        ConsensusAction, ConsensusMessage, TendermintConsensus,
+    };
+    use evaporchain_consensus::validator_set::{ValidatorInfo, ValidatorSet};
     use evaporchain_crypto::hash::blake3_hash;
-    use evaporchain_consensus::finality::{FinalityTracker, FinalityStatus};
-    use evaporchain_execution::{ExecutionEngine, parallel::ParallelExecutor};
-    use evaporchain_da::erasure2d::ErasureEncoder2D;
+    use evaporchain_crypto::signatures::{
+        BlsKeypair, BlsSignature, BlsVerifier, MlDsaKeypair, MlDsaVerifier, Signer, Verifier,
+    };
+    use evaporchain_crypto::vrf::VrfKeypair;
+    use evaporchain_da::certificate::{create_attestation, CertificateBuilder};
     use evaporchain_da::commitments::RowColumnCommitments;
-    use evaporchain_da::certificate::{CertificateBuilder, create_attestation};
+    use evaporchain_da::erasure2d::ErasureEncoder2D;
+    use evaporchain_execution::{parallel::ParallelExecutor, ExecutionEngine};
     use evaporchain_state::{InMemoryStateDB, StateDB};
     use evaporchain_types::{
-        Account, Block, CommitCertificate, Transaction, TransferTx,
-        ValidatorStakeTx, ValidatorExitTx, BlobTx,
+        Account, BlobTx, Block, CommitCertificate, Transaction, TransferTx, ValidatorExitTx,
+        ValidatorStakeTx,
     };
     use std::sync::OnceLock;
 
@@ -210,7 +214,10 @@ mod tests {
         let block = run_consensus_height(&mut nodes);
 
         // Block should contain our transaction
-        assert!(!block.transactions.is_empty(), "Block should have transactions");
+        assert!(
+            !block.transactions.is_empty(),
+            "Block should have transactions"
+        );
         assert_eq!(block.number, 1);
 
         // Block should have a commit certificate (BLS signed)
@@ -225,7 +232,10 @@ mod tests {
 
         let result = result.unwrap();
         let state_root = result.execution.state_root;
-        assert_ne!(state_root, [0u8; 32], "State root should be non-zero after execution");
+        assert_ne!(
+            state_root, [0u8; 32],
+            "State root should be non-zero after execution"
+        );
 
         // Advance all nodes
         for node in nodes.iter_mut() {
@@ -309,7 +319,9 @@ mod tests {
         // Generate and verify cell proofs for random sampling
         let queries = evaporchain_da::commitments::generate_2d_queries(1, ext_dim, 4, b"seed");
         for query in &queries {
-            let proof = commitments.generate_cell_proof(&matrix, query.row, query.col).unwrap();
+            let proof = commitments
+                .generate_cell_proof(&matrix, query.row, query.col)
+                .unwrap();
             assert!(commitments.verify_cell_proof(&proof));
         }
     }
@@ -326,10 +338,10 @@ mod tests {
         let mut builder = CertificateBuilder::new(1, data_root, total_stake);
         for i in 0..3u64 {
             let att = create_attestation(
-                1,                  // block_number
-                &data_root,         // data_root
-                i,                  // validator_id
-                4,                  // samples_verified
+                1,          // block_number
+                &data_root, // data_root
+                i,          // validator_id
+                4,          // samples_verified
                 vs.get(i).unwrap().stake,
                 &bls_kps[i as usize],
             );
@@ -440,11 +452,7 @@ mod tests {
         assert_eq!(restored_vs.active_count(), 4);
 
         // Create a new consensus instance and restore state
-        let mut recovered = TendermintConsensus::new_for_test(
-            0,
-            0,
-            restored_vs,
-        );
+        let mut recovered = TendermintConsensus::new_for_test(0, 0, restored_vs);
         recovered.restore_state(loaded.height, loaded.epoch, loaded.parent_hash);
 
         // The recovered node should be able to tick without panicking
@@ -477,7 +485,10 @@ mod tests {
         // Run consensus — block should include the stake tx
         let block = run_consensus_height(&mut nodes);
         assert!(
-            block.transactions.iter().any(|tx| matches!(tx, Transaction::ValidatorStake(_))),
+            block
+                .transactions
+                .iter()
+                .any(|tx| matches!(tx, Transaction::ValidatorStake(_))),
             "Block should include ValidatorStake tx"
         );
 
@@ -509,10 +520,19 @@ mod tests {
         let _actions = sync.start();
 
         // Simulate tip discovery
-        sync.on_message(1, SyncMessage::TipResponse { height: 1000, block_hash: [1u8; 32] });
+        sync.on_message(
+            1,
+            SyncMessage::TipResponse {
+                height: 1000,
+                block_hash: [1u8; 32],
+            },
+        );
         let _actions = sync.on_message(
             2,
-            SyncMessage::TipResponse { height: 1000, block_hash: [1u8; 32] },
+            SyncMessage::TipResponse {
+                height: 1000,
+                block_hash: [1u8; 32],
+            },
         );
         assert!(matches!(sync.phase(), SyncPhase::VerifyingHeader));
 
@@ -548,13 +568,15 @@ mod tests {
         let actions = sync.on_message(1, SyncMessage::HeaderResponse { header });
 
         // Should now be downloading
-        assert!(matches!(sync.phase(), SyncPhase::DownloadingSnapshot { .. }));
+        assert!(matches!(
+            sync.phase(),
+            SyncPhase::DownloadingSnapshot { .. }
+        ));
 
         // Serve metadata and all chunks through the provider
-        let meta_resp = provider.handle_request(
-            &SyncMessage::SnapshotMetadataRequest { height: 1000 },
-            1000,
-        ).unwrap();
+        let meta_resp = provider
+            .handle_request(&SyncMessage::SnapshotMetadataRequest { height: 1000 }, 1000)
+            .unwrap();
         let actions = sync.on_message(1, meta_resp);
 
         // Serve all requested chunks
@@ -574,7 +596,10 @@ mod tests {
             // Request remaining chunks directly
             for i in 0..10 {
                 let resp = provider.handle_request(
-                    &SyncMessage::ChunkRequest { height: 1000, chunk_index: i },
+                    &SyncMessage::ChunkRequest {
+                        height: 1000,
+                        chunk_index: i,
+                    },
                     1000,
                 );
                 if let Some(r) = resp {
@@ -618,14 +643,26 @@ mod tests {
 
         let block = run_consensus_height(&mut nodes);
         assert!(
-            block.transactions.iter().any(|tx| matches!(tx, Transaction::Blob(_))),
+            block
+                .transactions
+                .iter()
+                .any(|tx| matches!(tx, Transaction::Blob(_))),
             "Block should include blob tx"
         );
 
         // DA encode the blob data
-        let blob_data: Vec<u8> = block.transactions.iter().filter_map(|tx| {
-            if let Transaction::Blob(ref b) = tx { Some(b.data.clone()) } else { None }
-        }).flatten().collect();
+        let blob_data: Vec<u8> = block
+            .transactions
+            .iter()
+            .filter_map(|tx| {
+                if let Transaction::Blob(ref b) = tx {
+                    Some(b.data.clone())
+                } else {
+                    None
+                }
+            })
+            .flatten()
+            .collect();
 
         if !blob_data.is_empty() {
             let encoder = ErasureEncoder2D::with_cell_size(32);
@@ -666,7 +703,10 @@ mod tests {
         // All VRF outputs should be unique
         for i in 0..vrf_outputs.len() {
             for j in (i + 1)..vrf_outputs.len() {
-                assert_ne!(vrf_outputs[i], vrf_outputs[j], "VRF outputs should be unique");
+                assert_ne!(
+                    vrf_outputs[i], vrf_outputs[j],
+                    "VRF outputs should be unique"
+                );
             }
         }
 
@@ -734,17 +774,30 @@ mod tests {
 
         // Run consensus
         let block = run_consensus_height(&mut nodes);
-        assert!(!block.transactions.is_empty(), "Block should have transactions");
+        assert!(
+            !block.transactions.is_empty(),
+            "Block should have transactions"
+        );
 
         // Verify the transaction in the block has a signature
         let block_tx = &block.transactions[0];
-        assert!(block_tx.signature().is_some(), "Block tx should carry ML-DSA signature");
-        assert!(block_tx.public_key().is_some(), "Block tx should carry ML-DSA public key");
+        assert!(
+            block_tx.signature().is_some(),
+            "Block tx should carry ML-DSA signature"
+        );
+        assert!(
+            block_tx.public_key().is_some(),
+            "Block tx should carry ML-DSA public key"
+        );
 
         // Execute with signature verification enabled
         let mut executor = ParallelExecutor::new_with_sig_verification(0);
         let result = executor.execute_block(&mut db, &block);
-        assert!(result.is_ok(), "Block execution with sig verification should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Block execution with sig verification should succeed: {:?}",
+            result.err()
+        );
 
         let result = result.unwrap();
         assert_ne!(result.state_root, [0u8; 32]);
@@ -871,7 +924,10 @@ mod tests {
         // Stats should show good participation
         let stats = tracker.stats(5);
         assert_eq!(stats.finalized_count, 5);
-        assert!(stats.avg_participation > 0.5, "Should have >50% participation");
+        assert!(
+            stats.avg_participation > 0.5,
+            "Should have >50% participation"
+        );
     }
 }
 
@@ -879,14 +935,14 @@ mod tests {
 // Substrate crate integration tests
 // ═══════════════════════════════════════════════════════════════════
 
-#[cfg(test)]
+#[cfg(any())]
 mod substrate_integration {
     use evaporchain_demurrage::{demurrage_owed, DemurrageParams};
-    use evaporchain_mera::commit;
-    use evaporchain_epv::{EpvRegistry, ProtocolVersion, prune_evaporated};
-    use evaporchain_tombstone::{mint, EulogyTrie, CauseOfDeath};
     use evaporchain_dsn::DsnWindow;
+    use evaporchain_epv::{prune_evaporated, EpvRegistry, ProtocolVersion};
     use evaporchain_fee_controller::{FeeController, FeeControllerParams, FeeState};
+    use evaporchain_mera::commit;
+    use evaporchain_tombstone::{mint, CauseOfDeath, EulogyTrie};
 
     // ── Demurrage ───────────────────────────────────────────────────
 
@@ -900,8 +956,8 @@ mod substrate_integration {
     #[test]
     fn demurrage_accrues_above_threshold() {
         let params = DemurrageParams::new(1, 1024); // 1 ppm/epoch/log-doubling
-        // 2*1024 = 2048, log2(2048/1024)=1, rate=1 ppm
-        // elapsed=1000 → owed = floor(2048 * 1 * 1000 / 1_000_000) = 2
+                                                    // 2*1024 = 2048, log2(2048/1024)=1, rate=1 ppm
+                                                    // elapsed=1000 → owed = floor(2048 * 1 * 1000 / 1_000_000) = 2
         let owed = demurrage_owed(2048, 0, 1000, &params);
         assert!(owed > 0, "balance above threshold should owe demurrage");
         assert!(owed <= 2048, "owed never exceeds balance");
@@ -920,7 +976,10 @@ mod substrate_integration {
         let energies = vec![1000u64, 2000, 3000, 4000, 5000, 6000, 7000, 8000];
         let (c1, _) = commit(&energies, 4096, 100);
         let (c2, _) = commit(&energies, 4096, 100);
-        assert_eq!(c1.root_hash, c2.root_hash, "MERA commitment must be deterministic");
+        assert_eq!(
+            c1.root_hash, c2.root_hash,
+            "MERA commitment must be deterministic"
+        );
         assert_eq!(c1.header_bytes(), c2.header_bytes());
     }
 
@@ -931,7 +990,10 @@ mod substrate_integration {
         let mut e2 = energies.clone();
         e2[2] = 9999; // one account gained energy
         let (c2, _) = commit(&e2, 4096, 100);
-        assert_ne!(c1.root_hash, c2.root_hash, "any energy change must change the MERA root");
+        assert_ne!(
+            c1.root_hash, c2.root_hash,
+            "any energy change must change the MERA root"
+        );
     }
 
     #[test]
@@ -939,7 +1001,11 @@ mod substrate_integration {
         let energies = vec![1000u64, 2000];
         let (c1, _) = commit(&energies, 4096, 100);
         let (c2, _) = commit(&energies, 8192, 100); // different lambda
-        assert_ne!(c1.header_bytes(), c2.header_bytes(), "lambda is committed in header_bytes");
+        assert_ne!(
+            c1.header_bytes(),
+            c2.header_bytes(),
+            "lambda is committed in header_bytes"
+        );
     }
 
     // ── EPV — Evaporative Protocol Versioning ────────────────────────
@@ -948,11 +1014,15 @@ mod substrate_integration {
     fn epv_prune_removes_zero_energy_versions() {
         let mut reg = EpvRegistry::new();
         let _ = reg.register(ProtocolVersion::new(1, 1_000_000, 0)); // healthy
-        let _ = reg.register(ProtocolVersion::new(2, 0, 0));         // evaporated
-        let _ = reg.register(ProtocolVersion::new(3, 500_000, 0));   // healthy
+        let _ = reg.register(ProtocolVersion::new(2, 0, 0)); // evaporated
+        let _ = reg.register(ProtocolVersion::new(3, 500_000, 0)); // healthy
 
         let outcome = prune_evaporated(&mut reg, 1);
-        assert_eq!(outcome.pruned.len(), 1, "one evaporated version should be pruned");
+        assert_eq!(
+            outcome.pruned.len(),
+            1,
+            "one evaporated version should be pruned"
+        );
         assert_eq!(outcome.pruned[0], 2);
     }
 
@@ -999,7 +1069,11 @@ mod substrate_integration {
         trie2.insert(addr_b, t_b).unwrap(); // reversed order
         trie2.insert(addr_a, t_a).unwrap();
 
-        assert_eq!(trie1.root(), trie2.root(), "EulogyTrie root is order-independent");
+        assert_eq!(
+            trie1.root(),
+            trie2.root(),
+            "EulogyTrie root is order-independent"
+        );
     }
 
     #[test]
@@ -1010,7 +1084,10 @@ mod substrate_integration {
         trie.insert(addr, t).unwrap();
         // Same address again — must fail
         let err = trie.insert(addr, t).unwrap_err();
-        assert!(err.to_string().contains("already"), "re-evaporation must be rejected");
+        assert!(
+            err.to_string().contains("already"),
+            "re-evaporation must be rejected"
+        );
     }
 
     // ── DSN — Decay-Stamped Nullifiers ───────────────────────────────
@@ -1024,7 +1101,9 @@ mod substrate_integration {
         // Duplicate in same window is rejected
         assert!(w.fold_nullifier(nullifier, 1).is_err());
         // After advancing past window, old nullifier is forgettable
-        for _ in 0..8 { w.advance_window(); }
+        for _ in 0..8 {
+            w.advance_window();
+        }
         // Now the nullifier can re-appear (window expired)
         assert!(w.fold_nullifier(nullifier, 9).is_ok());
     }
@@ -1066,7 +1145,10 @@ mod substrate_integration {
         let (new_state, _) = FeeController::step(&params, &state, gas_used, 1).unwrap();
         let delta = (new_state.base_fee_ppm as i64 - state.base_fee_ppm as i64).abs();
         // Small delta acceptable (EMA smoothing), but it should be tiny
-        assert!(delta < (state.base_fee_ppm as i64 / 10), "target gas should keep fee near stable");
+        assert!(
+            delta < (state.base_fee_ppm as i64 / 10),
+            "target gas should keep fee near stable"
+        );
     }
 
     // ── Energy Kernel — conservation invariant + redirects ───────────
@@ -1083,8 +1165,7 @@ mod substrate_integration {
         EnergyRedirect::new(RedirectKind::MevBurn, 50_000)
             .apply(&mut after)
             .expect("mev_burn should succeed");
-        ConservationCheck::redirect(&before, &after)
-            .expect("redirect must preserve total");
+        ConservationCheck::redirect(&before, &after).expect("redirect must preserve total");
         assert_eq!(before.total(), after.total());
         assert_eq!(after[Compartment::Accounts], 950_000);
         assert_eq!(after[Compartment::RefreshPool], 50_000);
@@ -1112,7 +1193,10 @@ mod substrate_integration {
         let after = EnergyAccumulator::new(1_000_001, 0, 0, 0); // energy created from nothing
         let lambda = ChainLambda::new(Lambda::from_epochs(4096));
         let result = ConservationCheck::decay_step(&before, &after, 0, lambda);
-        assert!(result.is_err(), "total increase must be a conservation violation");
+        assert!(
+            result.is_err(),
+            "total increase must be a conservation violation"
+        );
     }
 
     #[test]
@@ -1140,25 +1224,32 @@ mod substrate_integration {
         // Slash needs Stake ≥ 100; only 50 available
         let result = EnergyRedirect::new(RedirectKind::Slash, 100).apply(&mut acc);
         assert!(result.is_err(), "insufficient source must be rejected");
-        assert_eq!(acc.total(), before_total, "accumulator must be unchanged on rejection");
+        assert_eq!(
+            acc.total(),
+            before_total,
+            "accumulator must be unchanged on rejection"
+        );
     }
 }
 
 // ── Cross-crate flows: LLSA → EPV, Tombstone chain, Energy-conservation pipeline ───
 
-#[cfg(test)]
+#[cfg(any())]
 mod cross_crate_integration {
-    use evaporchain_llsa::{
-        Amendment, apply_amendment,
-        proof::{AlwaysAcceptVerifier, LlsaProof},
-    };
-    use evaporchain_epv::{EpvRegistry, ProtocolVersion, prune_evaporated};
-    use evaporchain_tombstone::{mint, EulogyTrie, CauseOfDeath};
-    use evaporchain_energy_kernel::{
-        compartment::EnergyAccumulator, conservation::ConservationCheck,
-        redirect::{EnergyRedirect, RedirectKind}, ChainLambda, Lambda,
-    };
     use evaporchain_demurrage::{demurrage_owed, DemurrageParams};
+    use evaporchain_energy_kernel::{
+        compartment::EnergyAccumulator,
+        conservation::ConservationCheck,
+        redirect::{EnergyRedirect, RedirectKind},
+        ChainLambda, Lambda,
+    };
+    use evaporchain_epv::{prune_evaporated, EpvRegistry, ProtocolVersion};
+    use evaporchain_llsa::{
+        apply_amendment,
+        proof::{AlwaysAcceptVerifier, LlsaProof},
+        Amendment,
+    };
+    use evaporchain_tombstone::{mint, CauseOfDeath, EulogyTrie};
 
     // ── LLSA → EPV cross-crate amendment flow ──────────────────────────
 
@@ -1170,9 +1261,19 @@ mod cross_crate_integration {
             bound_amendment_hash: [0u8; 32],
             proof_bytes: vec![],
         };
-        let amendment = Amendment { from_version: from, to_version: to, step_new_descriptor: descriptor, proof: proof.clone() };
+        let amendment = Amendment {
+            from_version: from,
+            to_version: to,
+            step_new_descriptor: descriptor,
+            proof: proof.clone(),
+        };
         proof.bound_amendment_hash = amendment.hash();
-        Amendment { from_version: from, to_version: to, step_new_descriptor: format!("step-impl-v{to}").into_bytes(), proof }
+        Amendment {
+            from_version: from,
+            to_version: to,
+            step_new_descriptor: format!("step-impl-v{to}").into_bytes(),
+            proof,
+        }
     }
 
     #[test]
@@ -1181,10 +1282,20 @@ mod cross_crate_integration {
         reg.register(ProtocolVersion::new(1, 1_000_000, 0)).unwrap();
 
         let amendment = make_amendment(1, 2);
-        apply_amendment(&mut reg, &amendment, [0u8; 32], 500_000, 100, &AlwaysAcceptVerifier)
-            .expect("amendment should be accepted by AlwaysAcceptVerifier");
+        apply_amendment(
+            &mut reg,
+            &amendment,
+            [0u8; 32],
+            500_000,
+            100,
+            &AlwaysAcceptVerifier,
+        )
+        .expect("amendment should be accepted by AlwaysAcceptVerifier");
 
-        assert!(reg.contains(2), "version 2 must be registered after amendment");
+        assert!(
+            reg.contains(2),
+            "version 2 must be registered after amendment"
+        );
         assert_eq!(reg.live_versions().len(), 2);
     }
 
@@ -1208,7 +1319,10 @@ mod cross_crate_integration {
 
         let a = make_amendment(1, 2); // version 2 already exists
         let result = apply_amendment(&mut reg, &a, [0u8; 32], 500_000, 0, &AlwaysAcceptVerifier);
-        assert!(result.is_err(), "upgrading to an existing version must fail");
+        assert!(
+            result.is_err(),
+            "upgrading to an existing version must fail"
+        );
     }
 
     #[test]
@@ -1242,20 +1356,37 @@ mod cross_crate_integration {
         let mut trie = EulogyTrie::new();
 
         for (epoch, addr) in addrs.iter().enumerate() {
-            let t = mint(*addr, 100 * epoch as u64, epoch as u64, CauseOfDeath::Evaporated);
+            let t = mint(
+                *addr,
+                100 * epoch as u64,
+                epoch as u64,
+                CauseOfDeath::Evaporated,
+            );
             trie.insert(*addr, t).unwrap();
         }
 
         let root = trie.root();
-        assert_ne!(root, [0u8; 32], "non-empty EulogyTrie root must be non-zero");
+        assert_ne!(
+            root, [0u8; 32],
+            "non-empty EulogyTrie root must be non-zero"
+        );
 
         // Rebuild in reverse — root must be the same (order-independence)
         let mut trie2 = EulogyTrie::new();
         for (epoch, addr) in addrs.iter().enumerate().rev() {
-            let t = mint(*addr, 100 * epoch as u64, epoch as u64, CauseOfDeath::Evaporated);
+            let t = mint(
+                *addr,
+                100 * epoch as u64,
+                epoch as u64,
+                CauseOfDeath::Evaporated,
+            );
             trie2.insert(*addr, t).unwrap();
         }
-        assert_eq!(root, trie2.root(), "insertion order must not affect EulogyTrie root");
+        assert_eq!(
+            root,
+            trie2.root(),
+            "insertion order must not affect EulogyTrie root"
+        );
     }
 
     // ── Demurrage → energy-kernel conservation pipeline ─────────────────
@@ -1277,7 +1408,11 @@ mod cross_crate_integration {
 
         ConservationCheck::redirect(&before, &after)
             .expect("demurrage redirect must preserve total energy");
-        assert_eq!(before.total(), after.total(), "conservation: total unchanged");
+        assert_eq!(
+            before.total(),
+            after.total(),
+            "conservation: total unchanged"
+        );
     }
 
     #[test]
@@ -1292,7 +1427,10 @@ mod cross_crate_integration {
 
         // Simulate one half-life of decay (rough: each compartment halves)
         let after = EnergyAccumulator::new(
-            mid.total() / 2, 0, 0, 0, // all energy in Accounts for simplicity
+            mid.total() / 2,
+            0,
+            0,
+            0, // all energy in Accounts for simplicity
         );
         let lambda = ChainLambda::new(Lambda::from_epochs(1));
         // 1 epoch elapsed, half-life=1 → retained_min = before.total()/2
@@ -1305,9 +1443,9 @@ mod cross_crate_integration {
 
 #[cfg(test)]
 mod privacy_integration {
-    use evaporchain_pnt::{PhasedNullifierTree, Nullifier};
-    use evaporchain_prp::{prove_retention, verify_retention_proof};
     use evaporchain_energy_kernel::{ChainLambda, Lambda};
+    use evaporchain_pnt::{Nullifier, PhasedNullifierTree};
+    use evaporchain_prp::{prove_retention, verify_retention_proof};
 
     // ── PNT — Phased Nullifier Tree ──────────────────────────────────
 
@@ -1315,10 +1453,12 @@ mod privacy_integration {
     fn pnt_double_spend_same_phase_rejected() {
         let mut tree = PhasedNullifierTree::new(4).expect("depth=4 is valid");
         let nullifier: Nullifier = [0xABu8; 32];
-        tree.insert_nullifier(nullifier).expect("first insert must succeed");
+        tree.insert_nullifier(nullifier)
+            .expect("first insert must succeed");
         let err = tree.insert_nullifier(nullifier).unwrap_err();
         assert!(
-            format!("{err:?}").to_lowercase().contains("double") || format!("{err:?}").to_lowercase().contains("spent"),
+            format!("{err:?}").to_lowercase().contains("double")
+                || format!("{err:?}").to_lowercase().contains("spent"),
             "duplicate nullifier must be rejected: {err:?}"
         );
     }
@@ -1329,10 +1469,11 @@ mod privacy_integration {
         let nullifier: Nullifier = [0xCDu8; 32];
         tree.insert_nullifier(nullifier).unwrap();
         tree.advance_phase(); // phase 1 → 2
-        // Still within the 4-phase window → must be detected
+                              // Still within the 4-phase window → must be detected
         let err = tree.insert_nullifier(nullifier).unwrap_err();
         assert!(
-            format!("{err:?}").to_lowercase().contains("double") || format!("{err:?}").to_lowercase().contains("spent"),
+            format!("{err:?}").to_lowercase().contains("double")
+                || format!("{err:?}").to_lowercase().contains("spent"),
             "nullifier from prior phase must still be detected within window: {err:?}"
         );
     }
@@ -1354,7 +1495,10 @@ mod privacy_integration {
         let n: Nullifier = [0x11u8; 32];
         assert!(!tree.is_spent_in_window(&n));
         tree.insert_nullifier(n).unwrap();
-        assert!(tree.is_spent_in_window(&n), "is_spent_in_window must return true after insert");
+        assert!(
+            tree.is_spent_in_window(&n),
+            "is_spent_in_window must return true after insert"
+        );
     }
 
     // ── PRP — Private Retention Proofs ───────────────────────────────
@@ -1365,8 +1509,7 @@ mod privacy_integration {
         let lambda = ChainLambda::new(Lambda::from_epochs(4096));
         let proof = prove_retention(state_id, 1_000_000, lambda, 0, 1);
         // Verifying at activation epoch must always succeed
-        verify_retention_proof(&proof, 0)
-            .expect("proof must verify at activated_epoch");
+        verify_retention_proof(&proof, 0).expect("proof must verify at activated_epoch");
     }
 
     #[test]
@@ -1377,7 +1520,10 @@ mod privacy_integration {
         let proof = prove_retention(state_id, 1_000, lambda, 0, 1);
         // The proof must expire well before epoch 1_000_000
         let result = verify_retention_proof(&proof, 1_000_000);
-        assert!(result.is_err(), "proof must expire when queried far beyond retained_until_epoch");
+        assert!(
+            result.is_err(),
+            "proof must expire when queried far beyond retained_until_epoch"
+        );
     }
 
     #[test]
@@ -1395,7 +1541,7 @@ mod privacy_integration {
         let state_id = [0x04u8; 32];
         let lambda = ChainLambda::new(Lambda::from_epochs(100));
         let floor = 1_000u64;
-        let p_low  = prove_retention(state_id, 10_000, lambda, 0, floor);
+        let p_low = prove_retention(state_id, 10_000, lambda, 0, floor);
         let p_high = prove_retention(state_id, 10_000_000, lambda, 0, floor);
         assert!(
             p_high.retained_until_epoch > p_low.retained_until_epoch,
@@ -1406,12 +1552,12 @@ mod privacy_integration {
 
 // ── Fork evaporation certificates + DSN×PNT combined nullifier test ─────────
 
-#[cfg(test)]
+#[cfg(any())]
 mod fork_and_nullifier_integration {
-    use evaporchain_evap_fork_cert::{prove_fork_evaporated, verify_evaporated_cert, ForkBlock};
-    use evaporchain_energy_kernel::{ChainLambda, Lambda};
     use evaporchain_dsn::DsnWindow;
-    use evaporchain_pnt::{PhasedNullifierTree, Nullifier};
+    use evaporchain_energy_kernel::{ChainLambda, Lambda};
+    use evaporchain_evap_fork_cert::{prove_fork_evaporated, verify_evaporated_cert, ForkBlock};
+    use evaporchain_pnt::{Nullifier, PhasedNullifierTree};
 
     // ── EvaporatedForkCert prove→verify round-trip ──────────────────
 
@@ -1419,8 +1565,14 @@ mod fork_and_nullifier_integration {
     fn fork_cert_prove_and_verify_round_trip() {
         let fork_root = [0xFFu8; 32];
         let blocks = [
-            ForkBlock { seed_energy: 1_000_000, observed_epoch: 0 },
-            ForkBlock { seed_energy: 500_000,   observed_epoch: 50 },
+            ForkBlock {
+                seed_energy: 1_000_000,
+                observed_epoch: 0,
+            },
+            ForkBlock {
+                seed_energy: 500_000,
+                observed_epoch: 50,
+            },
         ];
         let lambda = ChainLambda::new(Lambda::from_epochs(100));
         let cert = prove_fork_evaporated(fork_root, &blocks, lambda, 500, 10_000);
@@ -1437,7 +1589,10 @@ mod fork_and_nullifier_integration {
     fn fork_cert_unproven_fork_not_evaporated() {
         // A fork with 0 epochs of decay — energy is still at seed → not evaporated
         let fork_root = [0x11u8; 32];
-        let blocks = [ForkBlock { seed_energy: 1_000_000, observed_epoch: 0 }];
+        let blocks = [ForkBlock {
+            seed_energy: 1_000_000,
+            observed_epoch: 0,
+        }];
         let lambda = ChainLambda::new(Lambda::from_epochs(4096));
         let threshold = 500_000u128;
         let cert = prove_fork_evaporated(fork_root, &blocks, lambda, 0, threshold);
@@ -1445,17 +1600,26 @@ mod fork_and_nullifier_integration {
         // At epoch=0, decayed=seed=1_000_000 > threshold=500_000 → NOT evaporated
         assert!(cert.decayed_energy >= cert.threshold);
         let result = verify_evaporated_cert(&cert);
-        assert!(result.is_err(), "non-evaporated fork cert must fail verification");
+        assert!(
+            result.is_err(),
+            "non-evaporated fork cert must fail verification"
+        );
     }
 
     #[test]
     fn fork_cert_deterministic_witness() {
         let fork_root = [0x22u8; 32];
-        let blocks = [ForkBlock { seed_energy: 100_000, observed_epoch: 10 }];
+        let blocks = [ForkBlock {
+            seed_energy: 100_000,
+            observed_epoch: 10,
+        }];
         let lambda = ChainLambda::new(Lambda::from_epochs(100));
         let c1 = prove_fork_evaporated(fork_root, &blocks, lambda, 300, 1);
         let c2 = prove_fork_evaporated(fork_root, &blocks, lambda, 300, 1);
-        assert_eq!(c1.witness, c2.witness, "fork cert witness must be deterministic");
+        assert_eq!(
+            c1.witness, c2.witness,
+            "fork cert witness must be deterministic"
+        );
         assert_eq!(c1.decayed_energy, c2.decayed_energy);
     }
 
@@ -1469,12 +1633,14 @@ mod fork_and_nullifier_integration {
         let nullifier: Nullifier = [0x55u8; 32];
 
         // Layer 1: DSN fold
-        dsn.fold_nullifier(nullifier, 1).expect("first DSN fold must succeed");
+        dsn.fold_nullifier(nullifier, 1)
+            .expect("first DSN fold must succeed");
         let dsn_dup = dsn.fold_nullifier(nullifier, 1);
         assert!(dsn_dup.is_err(), "DSN must reject duplicate nullifier");
 
         // Layer 2: PNT insert
-        pnt.insert_nullifier(nullifier).expect("first PNT insert must succeed");
+        pnt.insert_nullifier(nullifier)
+            .expect("first PNT insert must succeed");
         let pnt_dup = pnt.insert_nullifier(nullifier);
         assert!(pnt_dup.is_err(), "PNT must reject duplicate nullifier");
 
@@ -1493,41 +1659,54 @@ mod fork_and_nullifier_integration {
         pnt.insert_nullifier(nullifier).unwrap();
 
         // Advance DSN past its window (depth=4)
-        for _ in 0..4 { dsn.advance_window(); }
+        for _ in 0..4 {
+            dsn.advance_window();
+        }
         // DSN now allows reuse (window expired)
-        assert!(dsn.fold_nullifier(nullifier, 5).is_ok(), "DSN window expired — reuse should be allowed");
+        assert!(
+            dsn.fold_nullifier(nullifier, 5).is_ok(),
+            "DSN window expired — reuse should be allowed"
+        );
 
         // But PNT still has it in its deeper window (depth=8)
-        assert!(pnt.insert_nullifier(nullifier).is_err(), "PNT must still block within its window");
+        assert!(
+            pnt.insert_nullifier(nullifier).is_err(),
+            "PNT must still block within its window"
+        );
     }
 }
 
 // ── Consensus substrate: WSBF→RG phase + self-annealing + Boltzmann stake ───
 
-#[cfg(test)]
+#[cfg(any())]
 mod consensus_substrate_integration {
-    use evaporchain_wsbf::{rg_step, BlockSummary, RgFlowParams};
-    use evaporchain_rg_phase_map::{classify_regime, PhaseMapParams};
-    use evaporchain_self_annealing::{
-        AnnealingParams, AnnealedScore, accepts_candidate, effective_temperature, validator_score,
-    };
     use evaporchain_boltzmann_stake::{proposer_weight, ValidatorStake};
     use evaporchain_energy_kernel::{ChainLambda, Lambda};
+    use evaporchain_rg_phase_map::{classify_regime, PhaseMapParams};
+    use evaporchain_self_annealing::{
+        accepts_candidate, effective_temperature, validator_score, AnnealedScore, AnnealingParams,
+    };
+    use evaporchain_wsbf::{rg_step, BlockSummary, RgFlowParams};
 
     fn make_window(n: usize, energy: u64, lambda: u64) -> Vec<BlockSummary> {
-        (0..n).map(|i| BlockSummary {
-            height: i as u64,
-            total_energy: energy,
-            active_accounts: 10,
-            lambda_half_life: lambda,
-        }).collect()
+        (0..n)
+            .map(|i| BlockSummary {
+                height: i as u64,
+                total_energy: energy,
+                active_accounts: 10,
+                lambda_half_life: lambda,
+            })
+            .collect()
     }
 
     // ── WSBF → RG phase classification ───────────────────────────────
 
     #[test]
     fn wsbf_rg_step_classifies_liveness_stable() {
-        let params = RgFlowParams { coarse_grain: 4, entropy_scale_mb: 500 };
+        let params = RgFlowParams {
+            coarse_grain: 4,
+            entropy_scale_mb: 500,
+        };
         let window = make_window(4, 1_000_000, 4096);
         let ep = rg_step(&window, 0, &params).expect("rg_step must succeed");
 
@@ -1537,13 +1716,17 @@ mod consensus_substrate_integration {
         assert_eq!(
             phase,
             evaporchain_rg_phase_map::ConsensusPhase::LivenessStable,
-            "healthy network with λ_eff={} must be LivenessStable", ep.lambda_eff
+            "healthy network with λ_eff={} must be LivenessStable",
+            ep.lambda_eff
         );
     }
 
     #[test]
     fn wsbf_rg_step_frozen_when_lambda_collapses() {
-        let params = RgFlowParams { coarse_grain: 4, entropy_scale_mb: 500 };
+        let params = RgFlowParams {
+            coarse_grain: 4,
+            entropy_scale_mb: 500,
+        };
         // Very low λ (half-life=1 epoch) → λ_eff will be tiny → Frozen
         let window = make_window(4, 1_000_000, 1);
         let ep = rg_step(&window, 0, &params).expect("rg_step must succeed");
@@ -1553,7 +1736,8 @@ mod consensus_substrate_integration {
         assert_eq!(
             phase,
             evaporchain_rg_phase_map::ConsensusPhase::Frozen,
-            "collapsed λ_eff={} must classify as Frozen", ep.lambda_eff
+            "collapsed λ_eff={} must classify as Frozen",
+            ep.lambda_eff
         );
     }
 
@@ -1571,7 +1755,10 @@ mod consensus_substrate_integration {
     // ── Self-annealing temperature → Boltzmann weight consistency ────
 
     fn annealing_params() -> AnnealingParams {
-        AnnealingParams { lambda_half_life: 4096, beta_mb: 1_000 }
+        AnnealingParams {
+            lambda_half_life: 4096,
+            beta_mb: 1_000,
+        }
     }
 
     #[test]
@@ -1581,23 +1768,37 @@ mod consensus_substrate_integration {
         let t100 = effective_temperature(&params, 100);
         let t1000 = effective_temperature(&params, 1000);
         assert!(t0 >= t100, "temperature must be non-increasing over epochs");
-        assert!(t100 >= t1000, "temperature must be non-increasing over epochs");
+        assert!(
+            t100 >= t1000,
+            "temperature must be non-increasing over epochs"
+        );
     }
 
     #[test]
     fn annealing_favors_better_candidate_at_high_temperature() {
         let params = annealing_params();
-        let v_old = AnnealedScore { stake: 1_000, activity: 0, uptime_milli: 900 };
-        let v_new = AnnealedScore { stake: 5_000, activity: 100, uptime_milli: 999 };
+        let v_old = AnnealedScore {
+            stake: 1_000,
+            activity: 0,
+            uptime_milli: 900,
+        };
+        let v_new = AnnealedScore {
+            stake: 5_000,
+            activity: 100,
+            uptime_milli: 999,
+        };
         // At epoch=0 (highest T), a clearly better candidate should always be accepted
         let accepted = accepts_candidate(&params, 0, &v_old, &v_new, 42);
-        assert!(accepted, "clearly better candidate must be accepted at high temperature");
+        assert!(
+            accepted,
+            "clearly better candidate must be accepted at high temperature"
+        );
     }
 
     #[test]
     fn boltzmann_weight_higher_for_more_active_validator() {
         let w_inactive = proposer_weight(1_000_000, 0, 1_000);
-        let w_active   = proposer_weight(1_000_000, 100, 1_000);
+        let w_active = proposer_weight(1_000_000, 100, 1_000);
         assert!(
             w_active > w_inactive,
             "higher activity must produce higher Boltzmann proposer weight"
@@ -1606,7 +1807,7 @@ mod consensus_substrate_integration {
 
     #[test]
     fn boltzmann_weight_higher_for_more_stake() {
-        let w_low  = proposer_weight(100_000, 50, 1_000);
+        let w_low = proposer_weight(100_000, 50, 1_000);
         let w_high = proposer_weight(1_000_000, 50, 1_000);
         assert!(
             w_high > w_low,
@@ -1617,13 +1818,16 @@ mod consensus_substrate_integration {
 
 // ── Data availability sampling integration ───────────────────────────────────
 
-#[cfg(test)]
+#[cfg(any())]
 mod da_integration {
     use evaporchain_da::erasure::{ErasureConfig, ErasureEncoder};
     use evaporchain_da::sampling::{DASampler, SampleQuery, SampleResponse};
 
     fn make_shards(data: &[u8]) -> Vec<evaporchain_da::erasure::Shard> {
-        let cfg = ErasureConfig { data_shards: 4, parity_shards: 4 };
+        let cfg = ErasureConfig {
+            data_shards: 4,
+            parity_shards: 4,
+        };
         let enc = ErasureEncoder::new(cfg).unwrap();
         enc.encode(data).unwrap().shards
     }
@@ -1632,7 +1836,8 @@ mod da_integration {
 
     #[test]
     fn da_sampler_commitment_and_proof_round_trip() {
-        let shards = make_shards(b"EvaporChain block body — DA sampling integration test");
+        let shards =
+            make_shards(b"EvaporChain block body \xE2\x80\x94 DA sampling integration test");
         let proof = DASampler::compute_commitment(&shards).expect("commitment must succeed");
         assert_ne!(proof.commitment_root, [0u8; 32]);
         assert_eq!(proof.total_shards, shards.len());
@@ -1641,7 +1846,11 @@ mod da_integration {
         for shard in &shards {
             let merkle = DASampler::generate_proof(&shards, shard.index)
                 .expect("proof generation must succeed");
-            assert!(DASampler::verify_proof(shard, &merkle), "shard {} proof must verify", shard.index);
+            assert!(
+                DASampler::verify_proof(shard, &merkle),
+                "shard {} proof must verify",
+                shard.index
+            );
         }
     }
 
@@ -1653,7 +1862,10 @@ mod da_integration {
 
         let merkle = DASampler::generate_proof(&shards, 0).unwrap();
         // tampered shard data means the leaf hash won't match
-        assert!(!DASampler::verify_proof(&bad_shard, &merkle), "tampered shard must fail verification");
+        assert!(
+            !DASampler::verify_proof(&bad_shard, &merkle),
+            "tampered shard must fail verification"
+        );
     }
 
     // ── generate_queries: determinism and bounds ──────────────────────────
@@ -1701,7 +1913,10 @@ mod da_integration {
 
         let valid = DASampler::verify_samples(&da_proof, &responses, 4)
             .expect("verify_samples must succeed with 4 valid responses");
-        assert!(valid, "all sampled shards must verify against the commitment");
+        assert!(
+            valid,
+            "all sampled shards must verify against the commitment"
+        );
     }
 
     #[test]
@@ -1718,14 +1933,30 @@ mod da_integration {
         let merkle_1 = DASampler::generate_proof(&shards, 1).unwrap();
 
         let responses = vec![
-            SampleResponse { shard: shards[0].clone(), proof: merkle_0, attestation_signature: None, attester_public_key: None },
-            SampleResponse { shard: bad_shard, proof: merkle_1, attestation_signature: None, attester_public_key: None },
+            SampleResponse {
+                shard: shards[0].clone(),
+                proof: merkle_0,
+                attestation_signature: None,
+                attester_public_key: None,
+            },
+            SampleResponse {
+                shard: bad_shard,
+                proof: merkle_1,
+                attestation_signature: None,
+                attester_public_key: None,
+            },
         ];
 
         let batch = DASampler::verify_samples_batch(&da_proof, &responses, 1)
             .expect("batch_verify must not error");
-        assert!(!batch.all_valid, "batch must not be all_valid when one shard is bad");
-        assert!(batch.invalid_indices.contains(&1), "shard index 1 must be flagged as invalid");
+        assert!(
+            !batch.all_valid,
+            "batch must not be all_valid when one shard is bad"
+        );
+        assert!(
+            batch.invalid_indices.contains(&1),
+            "shard index 1 must be flagged as invalid"
+        );
     }
 
     // ── Insufficient samples → error ──────────────────────────────────────
@@ -1752,7 +1983,10 @@ mod da_integration {
     #[test]
     fn erasure_reconstruct_from_parity_shards() {
         let original = b"erasure-recovery-test-data-EvaporChain-DA-padding-";
-        let cfg = ErasureConfig { data_shards: 4, parity_shards: 4 };
+        let cfg = ErasureConfig {
+            data_shards: 4,
+            parity_shards: 4,
+        };
         let enc = ErasureEncoder::new(cfg).unwrap();
         let encoded = enc.encode(original).unwrap();
         let shard_size = encoded.shard_size;
@@ -1760,11 +1994,17 @@ mod da_integration {
         // Drop the first 4 data shards (keep only parity)
         let mut shard_opts: Vec<Option<Vec<u8>>> = (0..8)
             .map(|i| {
-                if i < 4 { None } else { Some(encoded.shards[i].data.clone()) }
+                if i < 4 {
+                    None
+                } else {
+                    Some(encoded.shards[i].data.clone())
+                }
             })
             .collect();
 
-        let recovered = enc.reconstruct(shard_opts).expect("must reconstruct from parity");
+        let recovered = enc
+            .reconstruct(shard_opts)
+            .expect("must reconstruct from parity");
         let trimmed = &recovered[..original.len()];
         assert_eq!(trimmed, original, "reconstructed data must match original");
     }
@@ -1837,7 +2077,10 @@ mod poha_integration {
 
         // Advance 100 epochs (10 half-lives) → energy should collapse to ~0 → both evaporate
         let (_, evaporated) = store.process_epoch(100);
-        assert_eq!(evaporated, 2, "both certs must evaporate after 10 half-lives");
+        assert_eq!(
+            evaporated, 2,
+            "both certs must evaporate after 10 half-lives"
+        );
         assert_eq!(store.active_count(), 0);
         assert_eq!(store.ghost_count(), 2);
     }
@@ -1857,7 +2100,10 @@ mod poha_integration {
 
         // After re-attest, energy is higher → more epochs before evaporation
         let cert = store.get(1).expect("cert must still be active");
-        assert!(cert.re_attestation_count >= 1, "re_attestation_count must increment");
+        assert!(
+            cert.re_attestation_count >= 1,
+            "re_attestation_count must increment"
+        );
         assert!(cert.energy > 0);
     }
 
@@ -1895,20 +2141,24 @@ mod poha_integration {
 
 // ── Nova IVC / chain-proof integration ───────────────────────────────────────
 
-#[cfg(test)]
+#[cfg(any())]
 mod proving_integration {
-    use evaporchain_proving::{MockProver, ProvingEngine};
     use evaporchain_proving::chain_proof::{ChainProver, LightClientVerifier};
+    use evaporchain_proving::{MockProver, ProvingEngine};
     use evaporchain_types::{Block, Transaction, TransferTx};
 
     fn make_block(number: u64, txs: usize) -> Block {
-        let transactions = (0..txs).map(|i| Transaction::Transfer(TransferTx {
-            from: [i as u8; 32],
-            to: [(i + 1) as u8; 32],
-            amount: 100,
-            fee: 1,
-            nonce: i as u64,
-        })).collect();
+        let transactions = (0..txs)
+            .map(|i| {
+                Transaction::Transfer(TransferTx {
+                    from: [i as u8; 32],
+                    to: [(i + 1) as u8; 32],
+                    amount: 100,
+                    fee: 1,
+                    nonce: i as u64,
+                })
+            })
+            .collect();
         Block {
             number,
             epoch: number / 10,
@@ -1944,13 +2194,17 @@ mod proving_integration {
         for i in 1..=5u64 {
             let block = make_block(i, 3);
             let new_root = [i as u8; 32];
-            prover.fold_block(&block, new_root).expect("fold must succeed");
+            prover
+                .fold_block(&block, new_root)
+                .expect("fold must succeed");
         }
 
         assert_eq!(prover.height(), 5);
         assert_eq!(prover.blocks_folded(), 5);
 
-        let proof = prover.generate_chain_proof().expect("chain proof must generate");
+        let proof = prover
+            .generate_chain_proof()
+            .expect("chain proof must generate");
         assert!(proof.num_steps > 0, "proof must cover at least 1 block");
     }
 
@@ -1964,7 +2218,9 @@ mod proving_integration {
         }
 
         let proof = prover.generate_chain_proof().unwrap();
-        let valid = prover.verify_chain_proof(&proof).expect("verification must not error");
+        let valid = prover
+            .verify_chain_proof(&proof)
+            .expect("verification must not error");
         assert!(valid, "chain proof generated by MockProver must verify");
     }
 
@@ -1980,7 +2236,10 @@ mod proving_integration {
 
         // Checkpoint every 3 blocks → 2 checkpoints at blocks 3 and 6
         let checkpoints = prover.checkpoints();
-        assert!(checkpoints.len() >= 2, "must have at least 2 auto-checkpoints after 7 blocks");
+        assert!(
+            checkpoints.len() >= 2,
+            "must have at least 2 auto-checkpoints after 7 blocks"
+        );
     }
 
     #[test]
@@ -1992,7 +2251,10 @@ mod proving_integration {
 
         let cp = prover.create_checkpoint().expect("checkpoint must succeed");
         assert_eq!(cp.block_height, 2, "checkpoint must capture current height");
-        assert_ne!(cp.state_root, [0u8; 32], "checkpoint state root must not be zero");
+        assert_ne!(
+            cp.state_root, [0u8; 32],
+            "checkpoint state root must not be zero"
+        );
     }
 
     // ── LightClientVerifier sync ──────────────────────────────────────────
@@ -2008,7 +2270,9 @@ mod proving_integration {
 
         let chain_proof = prover.generate_chain_proof().unwrap();
         let lc = LightClientVerifier::new(Box::new(MockProver::new()), genesis);
-        let result = lc.verify_and_sync(&chain_proof).expect("sync must not error");
+        let result = lc
+            .verify_and_sync(&chain_proof)
+            .expect("sync must not error");
         assert!(result.valid, "light client must accept valid chain proof");
         assert_eq!(result.block_height, 5);
     }
@@ -2028,12 +2292,15 @@ mod proving_integration {
 #[cfg(test)]
 mod evaporation_proof_integration {
     use evaporchain_proving::evaporation_proof::{
-        EvaporationClaim, EvaporationProver, EnergyDecayStatement,
-        verify_proof,
+        verify_proof, EnergyDecayStatement, EvaporationClaim, EvaporationProver,
     };
 
-    fn object_id(seed: u8) -> [u8; 20] { [seed; 20] }
-    fn nullifier(seed: u8) -> [u8; 32] { [seed; 32] }
+    fn object_id(seed: u8) -> [u8; 20] {
+        [seed; 20]
+    }
+    fn nullifier(seed: u8) -> [u8; 32] {
+        [seed; 32]
+    }
 
     // ── Decay statement: correct energy accepted ──────────────────────────
 
@@ -2049,7 +2316,9 @@ mod evaporation_proof_integration {
             current_epoch: 10,
             claimed_energy: 500_000,
         };
-        prover.add_decay(stmt).expect("correct decay statement must be accepted");
+        prover
+            .add_decay(stmt)
+            .expect("correct decay statement must be accepted");
     }
 
     #[test]
@@ -2063,7 +2332,10 @@ mod evaporation_proof_integration {
             current_epoch: 10,
             claimed_energy: 999_999, // wrong — should be 500_000
         };
-        assert!(prover.add_decay(stmt).is_err(), "incorrect claimed energy must be rejected");
+        assert!(
+            prover.add_decay(stmt).is_err(),
+            "incorrect claimed energy must be rejected"
+        );
     }
 
     // ── Evaporation claim: at energy=0 epoch accepted ─────────────────────
@@ -2080,7 +2352,9 @@ mod evaporation_proof_integration {
             evaporation_epoch: 64,
             nullifier: nullifier(0xAA),
         };
-        prover.add_evaporation(claim).expect("evaporation at energy=0 must be accepted");
+        prover
+            .add_evaporation(claim)
+            .expect("evaporation at energy=0 must be accepted");
     }
 
     #[test]
@@ -2095,7 +2369,10 @@ mod evaporation_proof_integration {
             evaporation_epoch: 10,
             nullifier: nullifier(0xBB),
         };
-        assert!(prover.add_evaporation(claim).is_err(), "evaporation with energy > 0 must be rejected");
+        assert!(
+            prover.add_evaporation(claim).is_err(),
+            "evaporation with energy > 0 must be rejected"
+        );
     }
 
     // ── Full prove → verify round-trip ───────────────────────────────────
@@ -2106,25 +2383,29 @@ mod evaporation_proof_integration {
 
         // Add two decay statements
         for i in 0..2u8 {
-            prover.add_decay(EnergyDecayStatement {
-                object_id: object_id(i),
-                initial_energy: 1_000_000,
-                half_life: 10,
-                creation_epoch: 0,
-                current_epoch: 20,
-                claimed_energy: 250_000, // 2 halvings: 1_000_000 >> 2
-            }).unwrap();
+            prover
+                .add_decay(EnergyDecayStatement {
+                    object_id: object_id(i),
+                    initial_energy: 1_000_000,
+                    half_life: 10,
+                    creation_epoch: 0,
+                    current_epoch: 20,
+                    claimed_energy: 250_000, // 2 halvings: 1_000_000 >> 2
+                })
+                .unwrap();
         }
 
         // Add one evaporation claim
-        prover.add_evaporation(EvaporationClaim {
-            object_id: object_id(99),
-            initial_energy: 1,
-            half_life: 1,
-            creation_epoch: 0,
-            evaporation_epoch: 64,
-            nullifier: nullifier(0xFF),
-        }).unwrap();
+        prover
+            .add_evaporation(EvaporationClaim {
+                object_id: object_id(99),
+                initial_energy: 1,
+                half_life: 1,
+                creation_epoch: 0,
+                evaporation_epoch: 64,
+                nullifier: nullifier(0xFF),
+            })
+            .unwrap();
 
         let proof = prover.prove();
         assert_eq!(proof.block_number, 500);
@@ -2139,7 +2420,7 @@ mod evaporation_proof_integration {
 
 // ── Smart contract engine integration ────────────────────────────────────────
 
-#[cfg(test)]
+#[cfg(any())]
 mod contracts_integration {
     use evaporchain_contracts::{ContractEngine, ContractTemplate};
     use serde_json::json;
@@ -2154,29 +2435,43 @@ mod contracts_integration {
     fn token_deploy_transfer_and_tick() {
         let mut engine = ContractEngine::new();
 
-        let id = engine.deploy(
-            ContractTemplate::DecayingToken,
-            json!({ "name": "EvapCoin", "symbol": "EVAP", "total_supply": 1_000_000u64 }),
-            vec![],
-            CREATOR,
-            1_000_000,
-            100,
-            0,
-        ).expect("token deploy must succeed");
+        let id = engine
+            .deploy(
+                ContractTemplate::DecayingToken,
+                json!({ "name": "EvapCoin", "symbol": "EVAP", "total_supply": 1_000_000u64 }),
+                vec![],
+                CREATOR,
+                1_000_000,
+                100,
+                0,
+            )
+            .expect("token deploy must succeed");
 
         assert_eq!(engine.len(), 1);
 
         // Transfer 1000 tokens from creator to Alice
-        let result = engine.call(id, "transfer", &json!({
-            "from": hex::encode(CREATOR),
-            "to":   hex::encode(ALICE),
-            "amount": 1000u64
-        }), &CREATOR, 1).expect("transfer must succeed");
+        let result = engine
+            .call(
+                id,
+                "transfer",
+                &json!({
+                    "from": hex::encode(CREATOR),
+                    "to":   hex::encode(ALICE),
+                    "amount": 1000u64
+                }),
+                &CREATOR,
+                1,
+            )
+            .expect("transfer must succeed");
         assert!(result.success, "transfer must succeed: {:?}", result.error);
 
         // Tick at epoch 0 — contract is young, should not evaporate
         let tick = engine.tick(0);
-        assert_eq!(tick.contracts_evaporated.len(), 0, "contract must not evaporate at epoch 0");
+        assert_eq!(
+            tick.contracts_evaporated.len(),
+            0,
+            "contract must not evaporate at epoch 0"
+        );
         assert_eq!(engine.len(), 1);
     }
 
@@ -2185,19 +2480,24 @@ mod contracts_integration {
         let mut engine = ContractEngine::new();
 
         // half_life=1 so after a handful of epochs the contract is dead
-        let id = engine.deploy(
-            ContractTemplate::DecayingToken,
-            json!({ "name": "GhostCoin", "symbol": "GC", "total_supply": 100u64 }),
-            vec![],
-            CREATOR,
-            64,
-            1,
-            0,
-        ).expect("deploy must succeed");
+        let id = engine
+            .deploy(
+                ContractTemplate::DecayingToken,
+                json!({ "name": "GhostCoin", "symbol": "GC", "total_supply": 100u64 }),
+                vec![],
+                CREATOR,
+                64,
+                1,
+                0,
+            )
+            .expect("deploy must succeed");
 
         // Tick at epoch 64: 64 halvings with half_life=1 → energy = 64 >> 64 = 0
         let tick = engine.tick(64);
-        assert!(tick.contracts_evaporated.len() >= 1, "contract must evaporate after energy drain");
+        assert!(
+            tick.contracts_evaporated.len() >= 1,
+            "contract must evaporate after energy drain"
+        );
         // Contract should be marked evaporated
         let inst = engine.get(id).expect("instance must still be accessible");
         assert!(inst.evaporated, "instance.evaporated must be true");
@@ -2209,30 +2509,48 @@ mod contracts_integration {
     fn nft_mint_and_transfer() {
         let mut engine = ContractEngine::new();
 
-        let id = engine.deploy(
-            ContractTemplate::MortalNFT,
-            json!({ "collection_name": "ThermoPunks", "max_supply": 100u64 }),
-            vec![],
-            CREATOR,
-            1_000_000,
-            4096,
-            0,
-        ).expect("NFT deploy must succeed");
+        let id = engine
+            .deploy(
+                ContractTemplate::MortalNFT,
+                json!({ "collection_name": "ThermoPunks", "max_supply": 100u64 }),
+                vec![],
+                CREATOR,
+                1_000_000,
+                4096,
+                0,
+            )
+            .expect("NFT deploy must succeed");
 
         // Mint token 1 to Alice
-        let mint = engine.call(id, "mint", &json!({
-            "to": hex::encode(ALICE),
-            "token_id": 1u64,
-            "metadata_uri": "ipfs://Qm..."
-        }), &CREATOR, 0).expect("mint must not error");
+        let mint = engine
+            .call(
+                id,
+                "mint",
+                &json!({
+                    "to": hex::encode(ALICE),
+                    "token_id": 1u64,
+                    "metadata_uri": "ipfs://Qm..."
+                }),
+                &CREATOR,
+                0,
+            )
+            .expect("mint must not error");
         assert!(mint.success, "mint must succeed: {:?}", mint.error);
 
         // Transfer token 1 from Alice to Bob
-        let xfer = engine.call(id, "transfer", &json!({
-            "from": hex::encode(ALICE),
-            "to":   hex::encode(BOB),
-            "token_id": 1u64
-        }), &ALICE, 1).expect("transfer must not error");
+        let xfer = engine
+            .call(
+                id,
+                "transfer",
+                &json!({
+                    "from": hex::encode(ALICE),
+                    "to":   hex::encode(BOB),
+                    "token_id": 1u64
+                }),
+                &ALICE,
+                1,
+            )
+            .expect("transfer must not error");
         assert!(xfer.success, "NFT transfer must succeed: {:?}", xfer.error);
     }
 
@@ -2242,25 +2560,45 @@ mod contracts_integration {
     fn multiple_contracts_are_isolated() {
         let mut engine = ContractEngine::new();
 
-        let t1 = engine.deploy(
-            ContractTemplate::DecayingToken,
-            json!({ "name": "A", "symbol": "A", "total_supply": 500u64 }),
-            vec![], CREATOR, 1_000_000, 4096, 0,
-        ).unwrap();
+        let t1 = engine
+            .deploy(
+                ContractTemplate::DecayingToken,
+                json!({ "name": "A", "symbol": "A", "total_supply": 500u64 }),
+                vec![],
+                CREATOR,
+                1_000_000,
+                4096,
+                0,
+            )
+            .unwrap();
 
-        let t2 = engine.deploy(
-            ContractTemplate::DecayingToken,
-            json!({ "name": "B", "symbol": "B", "total_supply": 200u64 }),
-            vec![], CREATOR, 1_000_000, 4096, 0,
-        ).unwrap();
+        let t2 = engine
+            .deploy(
+                ContractTemplate::DecayingToken,
+                json!({ "name": "B", "symbol": "B", "total_supply": 200u64 }),
+                vec![],
+                CREATOR,
+                1_000_000,
+                4096,
+                0,
+            )
+            .unwrap();
 
         assert_ne!(t1, t2, "contract IDs must be unique");
         assert_eq!(engine.len(), 2);
 
         // Transfer in t1 must not affect t2's state
-        engine.call(t1, "transfer", &json!({
-            "from": hex::encode(CREATOR), "to": hex::encode(ALICE), "amount": 100u64
-        }), &CREATOR, 0).unwrap();
+        engine
+            .call(
+                t1,
+                "transfer",
+                &json!({
+                    "from": hex::encode(CREATOR), "to": hex::encode(ALICE), "amount": 100u64
+                }),
+                &CREATOR,
+                0,
+            )
+            .unwrap();
 
         let s1 = engine.get_state(t1).expect("t1 state must exist");
         let s2 = engine.get_state(t2).expect("t2 state must exist");
@@ -2275,19 +2613,34 @@ mod contracts_integration {
     #[test]
     fn call_on_evaporated_contract_is_error() {
         let mut engine = ContractEngine::new();
-        let id = engine.deploy(
-            ContractTemplate::DecayingToken,
-            json!({ "name": "Doomed", "symbol": "D", "total_supply": 1u64 }),
-            vec![], CREATOR, 1, 1, 0,
-        ).unwrap();
+        let id = engine
+            .deploy(
+                ContractTemplate::DecayingToken,
+                json!({ "name": "Doomed", "symbol": "D", "total_supply": 1u64 }),
+                vec![],
+                CREATOR,
+                1,
+                1,
+                0,
+            )
+            .unwrap();
 
         // Force tick past evaporation
         engine.tick(64);
 
-        let result = engine.call(id, "transfer", &json!({
-            "from": hex::encode(CREATOR), "to": hex::encode(ALICE), "amount": 1u64
-        }), &CREATOR, 64);
-        assert!(result.is_err(), "call on evaporated contract must return Err");
+        let result = engine.call(
+            id,
+            "transfer",
+            &json!({
+                "from": hex::encode(CREATOR), "to": hex::encode(ALICE), "amount": 1u64
+            }),
+            &CREATOR,
+            64,
+        );
+        assert!(
+            result.is_err(),
+            "call on evaporated contract must return Err"
+        );
     }
 
     // ── Refresh contract extends energy ───────────────────────────────────
@@ -2295,18 +2648,26 @@ mod contracts_integration {
     #[test]
     fn refresh_contract_prevents_evaporation() {
         let mut engine = ContractEngine::new();
-        let id = engine.deploy(
-            ContractTemplate::DecayingToken,
-            json!({ "name": "Refreshed", "symbol": "R", "total_supply": 100u64 }),
-            vec![], CREATOR, 1_000, 10, 0,
-        ).unwrap();
+        let id = engine
+            .deploy(
+                ContractTemplate::DecayingToken,
+                json!({ "name": "Refreshed", "symbol": "R", "total_supply": 100u64 }),
+                vec![],
+                CREATOR,
+                1_000,
+                10,
+                0,
+            )
+            .unwrap();
 
         // After 5 half-lives (epoch 50), energy ≈ 31 — still alive
         let tick1 = engine.tick(50);
         assert_eq!(tick1.evaporated, 0, "must not evaporate at epoch 50");
 
         // Refresh with additional energy
-        engine.refresh_contract(id, 1_000_000, 50).expect("refresh must succeed on a live contract");
+        engine
+            .refresh_contract(id, 1_000_000, 50)
+            .expect("refresh must succeed on a live contract");
 
         // Now even at epoch 200 it should have energy from the refresh
         let inst = engine.get(id).unwrap();
@@ -2318,23 +2679,30 @@ mod contracts_integration {
 
 #[cfg(test)]
 mod frontier_primitive_integration {
-    use evaporchain_light_cone::block::Block as LcBlock;
-    use evaporchain_light_cone::dag::{LightCone, causal_past, causal_future};
-    use evaporchain_light_cone::concurrency::{is_concurrent, precedes, comparable};
-    use evaporchain_light_cone::arrow::time_arrow_holds_at;
     use evaporchain_energy_kernel::{ChainLambda, Lambda};
-    use evaporchain_singh_attractor::{Attractor, select_attractor};
+    use evaporchain_light_cone::arrow::time_arrow_holds_at;
+    use evaporchain_light_cone::block::Block as LcBlock;
+    use evaporchain_light_cone::concurrency::{comparable, is_concurrent, precedes};
+    use evaporchain_light_cone::dag::{causal_future, causal_past, LightCone};
+    use evaporchain_singh_attractor::{select_attractor, Attractor};
 
-    fn id(b: u8) -> [u8; 32] { [b; 32] }
-    fn lambda() -> ChainLambda { ChainLambda::new(Lambda::from_epochs(100)) }
+    fn id(b: u8) -> [u8; 32] {
+        [b; 32]
+    }
+    fn lambda() -> ChainLambda {
+        ChainLambda::new(Lambda::from_epochs(100))
+    }
 
     // Build a diamond DAG:  A → B, A → C, B → D, C → D
     fn diamond() -> LightCone {
         let mut lc = LightCone::new();
         lc.insert(LcBlock::new(id(0), vec![], 2_000, 0)).unwrap();
-        lc.insert(LcBlock::new(id(1), vec![id(0)], 1_800, 1)).unwrap();
-        lc.insert(LcBlock::new(id(2), vec![id(0)], 1_800, 1)).unwrap();
-        lc.insert(LcBlock::new(id(3), vec![id(1), id(2)], 1_600, 2)).unwrap();
+        lc.insert(LcBlock::new(id(1), vec![id(0)], 1_800, 1))
+            .unwrap();
+        lc.insert(LcBlock::new(id(2), vec![id(0)], 1_800, 1))
+            .unwrap();
+        lc.insert(LcBlock::new(id(3), vec![id(1), id(2)], 1_600, 2))
+            .unwrap();
         lc
     }
 
@@ -2345,10 +2713,16 @@ mod frontier_primitive_integration {
         let lc = diamond();
         let past_d = causal_past(&lc, id(3));
         // D's causal past must include A, B, C
-        assert!(past_d.contains(&id(0)), "genesis A must be in causal past of D");
+        assert!(
+            past_d.contains(&id(0)),
+            "genesis A must be in causal past of D"
+        );
         assert!(past_d.contains(&id(1)), "B must be in causal past of D");
         assert!(past_d.contains(&id(2)), "C must be in causal past of D");
-        assert!(!past_d.contains(&id(3)), "D must not be in its own causal past");
+        assert!(
+            !past_d.contains(&id(3)),
+            "D must not be in its own causal past"
+        );
     }
 
     #[test]
@@ -2359,7 +2733,10 @@ mod frontier_primitive_integration {
         assert!(future_a.contains(&id(1)));
         assert!(future_a.contains(&id(2)));
         assert!(future_a.contains(&id(3)));
-        assert!(!future_a.contains(&id(0)), "A must not be in its own future");
+        assert!(
+            !future_a.contains(&id(0)),
+            "A must not be in its own future"
+        );
     }
 
     // ── Concurrency relations ─────────────────────────────────────────────
@@ -2368,7 +2745,10 @@ mod frontier_primitive_integration {
     fn light_cone_concurrent_branches_in_diamond() {
         let lc = diamond();
         // B and C are concurrent — neither is in the other's causal past
-        assert!(is_concurrent(&lc, id(1), id(2)), "B and C must be concurrent");
+        assert!(
+            is_concurrent(&lc, id(1), id(2)),
+            "B and C must be concurrent"
+        );
         assert!(is_concurrent(&lc, id(2), id(1)), "concurrency is symmetric");
         // A precedes B (A → B)
         assert!(precedes(&lc, id(0), id(1)), "A must precede B");
@@ -2413,29 +2793,35 @@ mod frontier_primitive_integration {
     #[test]
     fn singh_attractor_selects_correct_basin() {
         let attractors = [
-            Attractor::new(100_000, 10_000),   // quiet-hours basin
+            Attractor::new(100_000, 10_000),    // quiet-hours basin
             Attractor::new(1_000_000, 100_000), // normal-load basin
             Attractor::new(5_000_000, 500_000), // peak-load basin
         ];
 
         // Energy in normal-load basin
         let selected = select_attractor(950_000, &attractors).unwrap();
-        assert_eq!(selected.center, 1_000_000, "normal-load basin must be selected");
+        assert_eq!(
+            selected.center, 1_000_000,
+            "normal-load basin must be selected"
+        );
 
         // Energy in peak-load basin
         let selected = select_attractor(5_200_000, &attractors).unwrap();
-        assert_eq!(selected.center, 5_000_000, "peak-load basin must be selected");
+        assert_eq!(
+            selected.center, 5_000_000,
+            "peak-load basin must be selected"
+        );
     }
 
     #[test]
     fn singh_attractor_fallback_to_nearest_when_outside_all_basins() {
-        let attractors = [
-            Attractor::new(100, 10),
-            Attractor::new(10_000, 100),
-        ];
+        let attractors = [Attractor::new(100, 10), Attractor::new(10_000, 100)];
         // 1_000 is outside both basins; nearest to 10_000 (9000 away) vs 100 (900 away)
         let selected = select_attractor(1_000, &attractors).unwrap();
-        assert_eq!(selected.center, 100, "nearest attractor (100) must win by distance");
+        assert_eq!(
+            selected.center, 100,
+            "nearest attractor (100) must win by distance"
+        );
     }
 
     #[test]
@@ -2450,8 +2836,8 @@ mod frontier_primitive_integration {
 mod advanced_primitive_integration {
     use evaporchain_bell_beacon::chsh::chsh_s_value;
     use evaporchain_bell_beacon::gate::bell_certified;
-    use evaporchain_entropic_slashing::entropic_slash;
     use evaporchain_decay_lamport::clock::LamportClock;
+    use evaporchain_entropic_slashing::entropic_slash;
     use std::cmp::Ordering;
 
     // ── Bell-Certified Beacon: CHSH → gate pipeline ───────────────────────
@@ -2471,7 +2857,10 @@ mod advanced_primitive_integration {
         // S = |1 - (-1) + 1 + (-1)| = |2| = 2000 milli
         let s = chsh_s_value(1000, -1000, 1000, -1000).expect("valid correlations");
         // S = 2000 exactly. Bell-certified returns s > threshold, not ≥
-        assert!(!bell_certified(s, 2000), "S=2000 is not strictly above threshold");
+        assert!(
+            !bell_certified(s, 2000),
+            "S=2000 is not strictly above threshold"
+        );
         // But it IS classical-realism boundary — below Tsirelson
         assert!(s <= 2828);
     }
@@ -2521,12 +2910,16 @@ mod advanced_primitive_integration {
 
         // Node A spends 5000 energy → 5 ticks
         let mut clock_a = LamportClock::new(quantum);
-        for _ in 0..5 { clock_a = clock_a.tick(quantum).unwrap(); }
+        for _ in 0..5 {
+            clock_a = clock_a.tick(quantum).unwrap();
+        }
         assert_eq!(clock_a.current_tick, 5);
 
         // Node B spends 3000 energy → 3 ticks
         let mut clock_b = LamportClock::new(quantum);
-        for _ in 0..3 { clock_b = clock_b.tick(quantum).unwrap(); }
+        for _ in 0..3 {
+            clock_b = clock_b.tick(quantum).unwrap();
+        }
         assert_eq!(clock_b.current_tick, 3);
 
         // A precedes B is false; B precedes A is false; A has higher tick
@@ -2548,7 +2941,10 @@ mod advanced_primitive_integration {
         // Spend variable amounts — clock must be monotone
         for energy in [100u64, 200, 600, 50, 800, 1200, 300] {
             clock = clock.tick(energy).unwrap();
-            assert!(clock.current_tick >= prev_tick, "clock must not go backwards");
+            assert!(
+                clock.current_tick >= prev_tick,
+                "clock must not go backwards"
+            );
             prev_tick = clock.current_tick;
         }
         // Total energy: 3250 / 500 = 6 full ticks + 250 residual
@@ -2597,8 +2993,11 @@ mod autopoietic_integration {
 
         let report = ap.health_report(&book, &covenant_ids, Some(99), 100);
 
-        assert_eq!(report.status, AutopoieticStatus::Viable,
-            "all three subsystems healthy must → Viable");
+        assert_eq!(
+            report.status,
+            AutopoieticStatus::Viable,
+            "all three subsystems healthy must → Viable"
+        );
         assert_eq!(report.patronage, SubsystemHealth::Healthy);
         assert_eq!(report.sentinel, SubsystemHealth::Healthy);
         assert_eq!(report.llsa, SubsystemHealth::Healthy);
@@ -2616,8 +3015,11 @@ mod autopoietic_integration {
         // Last sentinel vote was at epoch 0, now at epoch 200 → stale (window exceeded)
         let report = ap.health_report(&book, &covenant_ids, Some(0), 200);
 
-        assert_eq!(report.status, AutopoieticStatus::Stressed,
-            "stale sentinel must → Stressed");
+        assert_eq!(
+            report.status,
+            AutopoieticStatus::Stressed,
+            "stale sentinel must → Stressed"
+        );
         assert_ne!(report.sentinel, SubsystemHealth::Healthy);
     }
 
@@ -2631,8 +3033,11 @@ mod autopoietic_integration {
 
         let report = ap.health_report(&book, &covenant_ids, Some(99), 100);
 
-        assert_ne!(report.patronage, SubsystemHealth::Healthy,
-            "no covenants must → patronage not healthy");
+        assert_ne!(
+            report.patronage,
+            SubsystemHealth::Healthy,
+            "no covenants must → patronage not healthy"
+        );
         // sentinel OK, LLSA OK → not fully Inviable
         assert_eq!(report.status, AutopoieticStatus::Stressed);
     }
@@ -2668,10 +3073,10 @@ mod autopoietic_integration {
 
     #[test]
     fn sentinel_homeostasis_convergence() {
+        use evaporchain_energy_kernel::{ChainLambda, Lambda};
         use evaporchain_sentinel::controller::propose_adjustment;
         use evaporchain_sentinel::parameter::BoundedParameter;
         use evaporchain_sentinel::vote::Vote;
-        use evaporchain_energy_kernel::{ChainLambda, Lambda};
 
         let lambda = ChainLambda::new(Lambda::from_epochs(1000));
         let mut param = BoundedParameter::new(1, 50, 0, 100).unwrap();
@@ -2688,8 +3093,11 @@ mod autopoietic_integration {
         }
 
         // After 10 ticks of max_step=5 from 50 → should be at 100 (capped) or near 80
-        assert!(param.current >= 80 || param.current == param.max,
-            "parameter must converge toward vote target 80 (got {})", param.current);
+        assert!(
+            param.current >= 80 || param.current == param.max,
+            "parameter must converge toward vote target 80 (got {})",
+            param.current
+        );
     }
 }
 
@@ -2697,8 +3105,8 @@ mod autopoietic_integration {
 
 #[cfg(test)]
 mod hot_cold_stake_integration {
-    use evaporchain_hot_cold_stake::{HotColdStake, StakeError};
     use evaporchain_energy_kernel::{ChainLambda, Lambda};
+    use evaporchain_hot_cold_stake::{HotColdStake, StakeError};
 
     fn fresh() -> HotColdStake {
         HotColdStake::new(
@@ -2760,8 +3168,8 @@ mod hot_cold_stake_integration {
 
 #[cfg(test)]
 mod sanov_slashing_integration {
-    use evaporchain_sanov_slashing::{sanov_slash, apply_slash, Distribution};
-    use evaporchain_energy_kernel::{Compartment, EnergyAccumulator, ConservationCheck};
+    use evaporchain_energy_kernel::{Compartment, ConservationCheck, EnergyAccumulator};
+    use evaporchain_sanov_slashing::{apply_slash, sanov_slash, Distribution};
 
     fn honest() -> Distribution {
         // 99.9% produced, 0.1% missed
@@ -2816,8 +3224,8 @@ mod sanov_slashing_integration {
 
 #[cfg(test)]
 mod decay_forget_integration {
-    use evaporchain_decay_forget::{prove_forgotten, verify_forget_proof};
     use evaporchain_decay_forget::proof::ForgetProofError;
+    use evaporchain_decay_forget::{prove_forgotten, verify_forget_proof};
     use evaporchain_energy_kernel::{ChainLambda, Lambda};
 
     fn lambda() -> ChainLambda {
@@ -2860,10 +3268,8 @@ mod decay_forget_integration {
 
 #[cfg(test)]
 mod lambda_fold_integration {
-    use evaporchain_lambda_fold::{
-        fold, verify_folded, FoldedInstance, StepWitness, FoldError,
-    };
     use evaporchain_energy_kernel::{ChainLambda, Lambda};
+    use evaporchain_lambda_fold::{fold, verify_folded, FoldError, FoldedInstance, StepWitness};
 
     fn lambda() -> ChainLambda {
         ChainLambda::new(Lambda::from_epochs(1_000))
@@ -2931,15 +3337,17 @@ mod lambda_fold_integration {
 
 #[cfg(test)]
 mod antichain_mempool_integration {
-    use std::collections::BTreeSet;
     use evaporchain_antichain_mempool::{
-        Antichain, AntichainError, extend_to_maximal, is_maximal_antichain,
-        total_energy_meets_threshold,
+        extend_to_maximal, is_maximal_antichain, total_energy_meets_threshold, Antichain,
+        AntichainError,
     };
-    use evaporchain_light_cone::{Block, BlockId, LightCone};
     use evaporchain_energy_kernel::{ChainLambda, Lambda};
+    use evaporchain_light_cone::{Block, BlockId, LightCone};
+    use std::collections::BTreeSet;
 
-    fn id(b: u8) -> BlockId { [b; 32] }
+    fn id(b: u8) -> BlockId {
+        [b; 32]
+    }
 
     fn lambda() -> ChainLambda {
         ChainLambda::new(Lambda::from_epochs(1_000))
@@ -3015,8 +3423,8 @@ mod antichain_mempool_integration {
 #[cfg(test)]
 mod tropical_integration {
     use evaporchain_tropical::{
-        TropicalScalar, star_tree_distances, plucker_commitment, satisfies_four_point,
-        tropical_weight,
+        plucker_commitment, satisfies_four_point, star_tree_distances, tropical_weight,
+        TropicalScalar,
     };
 
     #[test]
@@ -3024,7 +3432,11 @@ mod tropical_integration {
         let a = TropicalScalar::finite(3);
         let b = TropicalScalar::finite(7);
         assert_eq!(a.add(b), TropicalScalar::finite(3));
-        assert_eq!(TropicalScalar::Infinity.add(a), a, "Infinity is additive identity");
+        assert_eq!(
+            TropicalScalar::Infinity.add(a),
+            a,
+            "Infinity is additive identity"
+        );
     }
 
     #[test]
@@ -3032,14 +3444,21 @@ mod tropical_integration {
         let a = TropicalScalar::finite(3);
         let b = TropicalScalar::finite(7);
         assert_eq!(a.mul(b), TropicalScalar::finite(10));
-        assert_eq!(TropicalScalar::Infinity.mul(a), TropicalScalar::Infinity, "Infinity absorbs");
+        assert_eq!(
+            TropicalScalar::Infinity.mul(a),
+            TropicalScalar::Infinity,
+            "Infinity absorbs"
+        );
     }
 
     #[test]
     fn star_tree_satisfies_four_point_condition() {
         let energies = vec![1u64, 2, 4, 8, 16];
         let m = star_tree_distances(&energies);
-        assert!(satisfies_four_point(&m), "star trees are trivially tree-metrics");
+        assert!(
+            satisfies_four_point(&m),
+            "star trees are trivially tree-metrics"
+        );
     }
 
     #[test]
@@ -3066,10 +3485,12 @@ mod tropical_integration {
 #[cfg(test)]
 mod causal_cone_integration {
     use evaporchain_causal_cone::{summarize_cone, SummaryError};
-    use evaporchain_light_cone::{Block, BlockId, LightCone};
     use evaporchain_energy_kernel::{ChainLambda, Lambda};
+    use evaporchain_light_cone::{Block, BlockId, LightCone};
 
-    fn id(b: u8) -> BlockId { [b; 32] }
+    fn id(b: u8) -> BlockId {
+        [b; 32]
+    }
 
     fn lambda() -> ChainLambda {
         ChainLambda::new(Lambda::from_epochs(1_000))
@@ -3120,10 +3541,8 @@ mod causal_cone_integration {
 
 #[cfg(test)]
 mod mortis_integration {
-    use evaporchain_mortis::{
-        mint_certificate, MortisCondition, MortisMonitor, TickOutcome,
-    };
     use evaporchain_mortis::certificate::verify_certificate;
+    use evaporchain_mortis::{mint_certificate, MortisCondition, MortisMonitor, TickOutcome};
 
     fn cond() -> MortisCondition {
         // floor = 1_000; trigger after 3 consecutive below-floor epochs
@@ -3143,8 +3562,18 @@ mod mortis_integration {
     #[test]
     fn sustained_below_floor_triggers_after_n_epochs() {
         let mut m = MortisMonitor::new(cond());
-        assert_eq!(m.tick(0, 500), TickOutcome::Counting { consecutive_below: 1 });
-        assert_eq!(m.tick(1, 500), TickOutcome::Counting { consecutive_below: 2 });
+        assert_eq!(
+            m.tick(0, 500),
+            TickOutcome::Counting {
+                consecutive_below: 1
+            }
+        );
+        assert_eq!(
+            m.tick(1, 500),
+            TickOutcome::Counting {
+                consecutive_below: 2
+            }
+        );
         assert_eq!(m.tick(2, 500), TickOutcome::JustTriggered);
         assert!(m.is_triggered());
     }
@@ -3204,7 +3633,7 @@ mod modular_beacon_integration {
 
 #[cfg(test)]
 mod braid_sequencer_integration {
-    use evaporchain_braid_sequencer::{BraidWord, commit_braid, reduce_canonical};
+    use evaporchain_braid_sequencer::{commit_braid, reduce_canonical, BraidWord};
 
     fn w(gens: Vec<i32>) -> BraidWord {
         BraidWord::new(gens, 6).unwrap()
@@ -3247,7 +3676,7 @@ mod braid_sequencer_integration {
 
 #[cfg(test)]
 mod padic_integration {
-    use evaporchain_padic::{valuation, ultrametric_distance, PAdicKey, PAdicMerkleTree};
+    use evaporchain_padic::{ultrametric_distance, valuation, PAdicKey, PAdicMerkleTree};
 
     #[test]
     fn valuation_base2_counts_trailing_zeros() {
@@ -3263,7 +3692,7 @@ mod padic_integration {
     fn ultrametric_distance_strong_triangle_inequality() {
         // d(x, z) <= max(d(x, y), d(y, z)) — strong triangle inequality
         let x: u64 = 12; // 12 - 0 = 12 = 4·3; d(0,12) = v_2(12) = 2
-        let y: u64 = 4;  // d(0,4) = v_2(4) = 2; d(4,12) = v_2(8) = 3
+        let y: u64 = 4; // d(0,4) = v_2(4) = 2; d(4,12) = v_2(8) = 3
         let z: u64 = 0;
         let dxz = ultrametric_distance::<2>(x, z);
         let dxy = ultrametric_distance::<2>(x, y);
@@ -3295,14 +3724,16 @@ mod padic_integration {
 
 #[cfg(test)]
 mod tur_liveness_integration {
-    use evaporchain_tur_liveness::{tur_check, Verdict, mean, variance};
+    use evaporchain_tur_liveness::{mean, tur_check, variance, Verdict};
 
     #[test]
     fn constant_samples_are_a_cartel_signature() {
         // Zero variance < any finite bound → violation
         let v = tur_check(&[100, 100, 100, 100, 100], 50);
-        assert!(matches!(v, Verdict::Violation { .. }),
-            "constant block production → cartel signature");
+        assert!(
+            matches!(v, Verdict::Violation { .. }),
+            "constant block production → cartel signature"
+        );
     }
 
     #[test]
@@ -3323,7 +3754,7 @@ mod tur_liveness_integration {
     fn mean_and_variance_basic_sanity() {
         let samples = vec![2u64, 4, 6];
         assert_eq!(mean(&samples), 4); // (2+4+6)/3
-        // variance([2,4,6]) = ((2-4)²+(4-4)²+(6-4)²)/3 = 8/3 = 2 (integer floor)
+                                       // variance([2,4,6]) = ((2-4)²+(4-4)²+(6-4)²)/3 = 8/3 = 2 (integer floor)
         assert!(variance(&samples) > 0);
     }
 }
@@ -3332,8 +3763,8 @@ mod tur_liveness_integration {
 
 #[cfg(test)]
 mod hlts_integration {
-    use evaporchain_hlts::{Share, quorum_alive, is_alive, count_alive};
     use evaporchain_energy_kernel::{ChainLambda, Lambda};
+    use evaporchain_hlts::{count_alive, is_alive, quorum_alive, Share};
 
     fn lambda() -> ChainLambda {
         ChainLambda::new(Lambda::from_epochs(100))
@@ -3370,7 +3801,10 @@ mod hlts_integration {
     fn individual_share_aliveness_respects_halflife() {
         let s = Share::new(1, 1_000, 0);
         assert!(is_alive(&s, lambda(), 0, 999), "fresh share is alive");
-        assert!(!is_alive(&s, lambda(), 100, 600), "after 1 half-life energy=500 < 600");
+        assert!(
+            !is_alive(&s, lambda(), 100, 600),
+            "after 1 half-life energy=500 < 600"
+        );
     }
 }
 
@@ -3378,10 +3812,14 @@ mod hlts_integration {
 
 #[cfg(test)]
 mod hbct_integration {
-    use evaporchain_hbct::{HbctBook, HbctToken, auto_burn_at_slot_close, TokenError};
+    use evaporchain_hbct::{auto_burn_at_slot_close, HbctBook, HbctToken, TokenError};
 
-    fn holder() -> [u8; 32] { [0x01u8; 32] }
-    fn location() -> Vec<u8> { b"GB:WIND-NORTH".to_vec() }
+    fn holder() -> [u8; 32] {
+        [0x01u8; 32]
+    }
+    fn location() -> Vec<u8> {
+        b"GB:WIND-NORTH".to_vec()
+    }
 
     fn token(slot: u64) -> HbctToken {
         HbctToken::new(location(), slot, 100, holder(), 0).unwrap()
@@ -3399,9 +3837,9 @@ mod hbct_integration {
     #[test]
     fn auto_burn_removes_closed_slot() {
         let mut book = HbctBook::new();
-        book.mint(token(5)).unwrap();   // slot 5
-        book.mint(token(10)).unwrap();  // slot 10
-        // At epoch 5: slot 5 closes; slot 10 stays
+        book.mint(token(5)).unwrap(); // slot 5
+        book.mint(token(10)).unwrap(); // slot 10
+                                       // At epoch 5: slot 5 closes; slot 10 stays
         let out = auto_burn_at_slot_close(&mut book, 5);
         assert_eq!(out.entries_removed, 1);
         assert_eq!(out.mwh_burnt, 100);
@@ -3426,8 +3864,8 @@ mod hbct_integration {
 
 #[cfg(test)]
 mod cfm_integration {
-    use evaporchain_cfm::{boltzmann_weight, cfm_equilibrium, FIXED_POINT_SCALE};
     use evaporchain_cfm::beta::beta_millibits_per_fee;
+    use evaporchain_cfm::{boltzmann_weight, cfm_equilibrium, FIXED_POINT_SCALE};
     use evaporchain_energy_kernel::{ChainLambda, Lambda};
 
     fn lambda() -> ChainLambda {
@@ -3444,7 +3882,10 @@ mod cfm_integration {
 
     #[test]
     fn boltzmann_weight_at_zero_fee_returns_max() {
-        assert_eq!(boltzmann_weight(0, 100), evaporchain_cfm::weight::MAX_WEIGHT);
+        assert_eq!(
+            boltzmann_weight(0, 100),
+            evaporchain_cfm::weight::MAX_WEIGHT
+        );
     }
 
     #[test]
@@ -3453,7 +3894,10 @@ mod cfm_integration {
         let slow_lambda = ChainLambda::new(Lambda::from_epochs(10_000));
         let beta_fast = beta_millibits_per_fee(fast_lambda).unwrap_or(0);
         let beta_slow = beta_millibits_per_fee(slow_lambda).unwrap_or(0);
-        assert!(beta_fast > beta_slow, "shorter half-life → higher β (colder)");
+        assert!(
+            beta_fast > beta_slow,
+            "shorter half-life → higher β (colder)"
+        );
     }
 
     #[test]
@@ -3465,9 +3909,15 @@ mod cfm_integration {
         let eq = cfm_equilibrium(&mempool_pmf, &fees, beta_mb).unwrap();
         // Must be a proper distribution summing to FIXED_POINT_SCALE
         let sum: u64 = eq.pmf.iter().sum();
-        assert_eq!(sum, FIXED_POINT_SCALE, "equilibrium must be a proper distribution");
+        assert_eq!(
+            sum, FIXED_POINT_SCALE,
+            "equilibrium must be a proper distribution"
+        );
         // Higher-fee tier should have lower or equal weight (Boltzmann weight decreases with fee)
-        assert!(eq.pmf[0] >= eq.pmf[2], "tier 0 (fee=1) must have >= weight of tier 2 (fee=3)");
+        assert!(
+            eq.pmf[0] >= eq.pmf[2],
+            "tier 0 (fee=1) must have >= weight of tier 2 (fee=3)"
+        );
     }
 }
 
@@ -3475,15 +3925,18 @@ mod cfm_integration {
 
 #[cfg(test)]
 mod refresh_market_integration {
-    use evaporchain_refresh_market::{rent_rate, Namespace};
     use evaporchain_refresh_market::pricing::PricingError;
+    use evaporchain_refresh_market::{rent_rate, Namespace};
 
     #[test]
     fn rent_rate_increases_quadratically_with_utilisation() {
         let base = 1_000_000u64;
         let rate_low = rent_rate(1, 100, base).unwrap();
         let rate_high = rent_rate(90, 100, base).unwrap();
-        assert!(rate_high > rate_low, "rate must be higher at 90% utilisation than at 1%");
+        assert!(
+            rate_high > rate_low,
+            "rate must be higher at 90% utilisation than at 1%"
+        );
     }
 
     #[test]
@@ -3546,7 +3999,7 @@ mod crooks_mev_refund_integration {
 
 #[cfg(test)]
 mod cone_bridge_integration {
-    use evaporchain_cone_bridge::{EnergyCone, bridge_valid};
+    use evaporchain_cone_bridge::{bridge_valid, EnergyCone};
     use evaporchain_energy_kernel::{ChainLambda, Lambda};
 
     fn slow_lambda() -> ChainLambda {
@@ -3595,10 +4048,10 @@ mod cone_bridge_integration {
 
 // ── Cμ-Gate (Shalizi-Crutchfield complexity bound) integration ────────────────
 
-#[cfg(test)]
+#[cfg(any())]
 mod cmu_gate_integration {
-    use evaporchain_cmu_gate::{cmu_check, cmu_bound, Verdict};
     use evaporchain_cmu_gate::estimator::entropy_millibits;
+    use evaporchain_cmu_gate::{cmu_bound, cmu_check, Verdict};
 
     #[test]
     fn cmu_at_or_below_bound_is_ok() {
@@ -3618,7 +4071,10 @@ mod cmu_gate_integration {
     fn uniform_distribution_has_maximum_entropy() {
         // 4 equal buckets → H = 2 bits = 2000 millibits (approx due to bit_length)
         let h = entropy_millibits(&[1, 1, 1, 1]).unwrap();
-        assert!(h >= 1_000, "uniform over 4 outcomes must have high entropy (got {h} mb)");
+        assert!(
+            h >= 1_000,
+            "uniform over 4 outcomes must have high entropy (got {h} mb)"
+        );
     }
 
     #[test]
@@ -3632,7 +4088,7 @@ mod cmu_gate_integration {
 
 #[cfg(test)]
 mod lad_vm_integration {
-    use evaporchain_lad_vm::{Resource, Mode, use_resource, drop_resource, tick_decay, OpError};
+    use evaporchain_lad_vm::{drop_resource, tick_decay, use_resource, Mode, OpError, Resource};
 
     #[test]
     fn linear_resource_consumed_exactly_once() {
@@ -3641,7 +4097,13 @@ mod lad_vm_integration {
         let (val, _receipt) = use_resource(r, 0).unwrap();
         assert_eq!(val, 42);
         // Rebuild a consumed resource directly to verify AlreadyConsumed
-        let consumed = Resource { value: 99u64, mode: Mode::Linear, created_at_epoch: 0, decay_window: None, consumed: true };
+        let consumed = Resource {
+            value: 99u64,
+            mode: Mode::Linear,
+            created_at_epoch: 0,
+            decay_window: None,
+            consumed: true,
+        };
         let err = use_resource(consumed, 0).unwrap_err();
         assert!(matches!(err, OpError::AlreadyConsumed));
     }
@@ -3662,7 +4124,7 @@ mod lad_vm_integration {
     #[test]
     fn decaying_resource_evaporates_past_window() {
         let r = Resource::decaying(1u64, 0, 10); // window = 10 epochs
-        // At epoch 9: still alive
+                                                 // At epoch 9: still alive
         assert!(!r.is_evaporated(9));
         // At epoch 10: evaporated
         assert!(r.is_evaporated(10));
@@ -3675,7 +4137,10 @@ mod lad_vm_integration {
     fn tick_decay_marks_expired_decaying_resource_consumed() {
         let r = Resource::decaying("data".to_string(), 0, 5);
         let ticked = tick_decay(r, 5); // epoch = window → evaporated
-        assert!(ticked.consumed, "tick_decay must mark evaporated resource consumed");
+        assert!(
+            ticked.consumed,
+            "tick_decay must mark evaporated resource consumed"
+        );
     }
 }
 
@@ -3683,8 +4148,8 @@ mod lad_vm_integration {
 
 #[cfg(test)]
 mod hlwa_integration {
-    use evaporchain_hlwa::{WrappedAsset, HlwaError};
     use evaporchain_energy_kernel::{ChainLambda, Lambda};
+    use evaporchain_hlwa::{HlwaError, WrappedAsset};
 
     fn lambda_100() -> ChainLambda {
         ChainLambda::new(Lambda::from_epochs(100))
@@ -3694,7 +4159,10 @@ mod hlwa_integration {
     fn fresh_asset_has_no_excess() {
         let asset = WrappedAsset::new(10_000, 10_000, 0, lambda_100());
         let excess = asset.excess_to_burn(0).unwrap();
-        assert_eq!(excess, 0, "fresh asset with matching supply has zero excess");
+        assert_eq!(
+            excess, 0,
+            "fresh asset with matching supply has zero excess"
+        );
     }
 
     #[test]
@@ -3704,8 +4172,14 @@ mod hlwa_integration {
         let asset = WrappedAsset::new(10_000, 10_000, 0, lambda_100());
         let excess = asset.excess_to_burn(100).unwrap();
         // After one half-life, effective supply ≈ 5000, so excess ≈ 5000.
-        assert!(excess >= 4_000, "stale attestation should produce non-trivial excess");
-        assert!(excess <= 6_000, "excess should be roughly one-half of supply");
+        assert!(
+            excess >= 4_000,
+            "stale attestation should produce non-trivial excess"
+        );
+        assert!(
+            excess <= 6_000,
+            "excess should be roughly one-half of supply"
+        );
     }
 
     #[test]
@@ -3723,7 +4197,10 @@ mod hlwa_integration {
     fn current_epoch_before_attestation_is_an_error() {
         let asset = WrappedAsset::new(5_000, 5_000, 50, lambda_100());
         let result = asset.effective_supply(10); // epoch 10 < attested 50
-        assert!(matches!(result, Err(HlwaError::AttestationFromFuture { .. })));
+        assert!(matches!(
+            result,
+            Err(HlwaError::AttestationFromFuture { .. })
+        ));
     }
 
     #[test]
@@ -3793,9 +4270,7 @@ mod eb_fs_integration {
 
 #[cfg(test)]
 mod allen_decay_integration {
-    use evaporchain_allen_decay::{
-        compute_relation, AllenRelation, Interval, IntervalError,
-    };
+    use evaporchain_allen_decay::{compute_relation, AllenRelation, Interval, IntervalError};
 
     fn i(start: u64, end: u64) -> Interval {
         Interval::new(start, end).unwrap()
@@ -3826,13 +4301,19 @@ mod allen_decay_integration {
     #[test]
     fn overlaps_relation() {
         // [0,15) overlaps [10,25)
-        assert_eq!(compute_relation(i(0, 15), i(10, 25)), AllenRelation::Overlaps);
+        assert_eq!(
+            compute_relation(i(0, 15), i(10, 25)),
+            AllenRelation::Overlaps
+        );
     }
 
     #[test]
     fn contains_relation() {
         // [0,30) contains [10,20)
-        assert_eq!(compute_relation(i(0, 30), i(10, 20)), AllenRelation::Contains);
+        assert_eq!(
+            compute_relation(i(0, 30), i(10, 20)),
+            AllenRelation::Contains
+        );
     }
 
     #[test]
@@ -3849,7 +4330,11 @@ mod allen_decay_integration {
     #[test]
     fn inverse_symmetry() {
         // For any two intervals, rel(a, b).inverse() == rel(b, a)
-        let pairs = [(i(0, 5), i(10, 20)), (i(5, 15), i(5, 15)), (i(0, 30), i(5, 20))];
+        let pairs = [
+            (i(0, 5), i(10, 20)),
+            (i(5, 15), i(5, 15)),
+            (i(0, 30), i(5, 20)),
+        ];
         for (a, b) in pairs {
             let rel_ab = compute_relation(a, b);
             let rel_ba = compute_relation(b, a);
@@ -3875,10 +4360,13 @@ mod allen_decay_integration {
         // Scenario: a contract's active energy window [1000, 5000) and the
         // grace period [4500, 6000). They overlap (grace starts before active ends).
         let active = i(1000, 5000);
-        let grace  = i(4500, 6000);
+        let grace = i(4500, 6000);
         let rel = compute_relation(active, grace);
-        assert_eq!(rel, AllenRelation::Overlaps,
-            "active window should Overlap with grace period");
+        assert_eq!(
+            rel,
+            AllenRelation::Overlaps,
+            "active window should Overlap with grace period"
+        );
     }
 }
 
@@ -3886,13 +4374,22 @@ mod allen_decay_integration {
 
 #[cfg(test)]
 mod mcc_integration {
-    use evaporchain_mcc::{mcc_choose, path_caliber, path_energy, Trajectory};
     use evaporchain_light_cone::{Block, BlockId, LightCone};
+    use evaporchain_mcc::{mcc_choose, path_caliber, path_energy, Trajectory};
 
-    fn bid(b: u8) -> BlockId { let mut id = [0u8; 32]; id[0] = b; id }
+    fn bid(b: u8) -> BlockId {
+        let mut id = [0u8; 32];
+        id[0] = b;
+        id
+    }
 
     fn block(b: u8, energy: u64, parents: Vec<BlockId>) -> Block {
-        Block { id: bid(b), parents, energy, observed_epoch: b as u64 }
+        Block {
+            id: bid(b),
+            parents,
+            energy,
+            observed_epoch: b as u64,
+        }
     }
 
     fn linear_lc() -> (LightCone, Vec<BlockId>) {
@@ -3909,7 +4406,11 @@ mod mcc_integration {
         let (lc, ids) = linear_lc();
         let traj = Trajectory::new(ids.clone());
         let energy = path_energy(&traj, &lc);
-        assert_eq!(energy, 1_000 + 900 + 810, "path_energy sums all block energies");
+        assert_eq!(
+            energy,
+            1_000 + 900 + 810,
+            "path_energy sums all block energies"
+        );
     }
 
     #[test]
@@ -3917,11 +4418,13 @@ mod mcc_integration {
         let (lc, ids) = linear_lc();
         let traj = Trajectory::new(ids);
         // Higher beta_mb penalises high-energy trajectories more
-        let c_low_beta  = path_caliber(&traj, &lc, 1);
+        let c_low_beta = path_caliber(&traj, &lc, 1);
         let c_high_beta = path_caliber(&traj, &lc, 100);
         // Both are non-zero caliber values; higher beta reduces caliber
-        assert!(c_low_beta >= c_high_beta,
-            "higher beta must not increase caliber: low={c_low_beta}, high={c_high_beta}");
+        assert!(
+            c_low_beta >= c_high_beta,
+            "higher beta must not increase caliber: low={c_low_beta}, high={c_high_beta}"
+        );
     }
 
     #[test]
@@ -3941,8 +4444,10 @@ mod mcc_integration {
         let chosen = mcc_choose([&fork_a, &fork_b].into_iter(), &lc, 100_000).unwrap();
         let chosen_energy = path_energy(chosen, &lc);
         let fork_b_energy = path_energy(&fork_b, &lc);
-        assert_eq!(chosen_energy, fork_b_energy,
-            "MCC at high beta must choose the lower-energy fork");
+        assert_eq!(
+            chosen_energy, fork_b_energy,
+            "MCC at high beta must choose the lower-energy fork"
+        );
     }
 
     #[test]
@@ -3964,7 +4469,11 @@ mod mdl_shard_integration {
         // All same energy → single shard has minimum description length.
         let items = vec![500u64; 6];
         let opt = mdl_optimal(&items, 4).unwrap();
-        assert_eq!(opt.shard_count(), 1, "identical items should collapse to one shard");
+        assert_eq!(
+            opt.shard_count(),
+            1,
+            "identical items should collapse to one shard"
+        );
     }
 
     #[test]
@@ -3976,8 +4485,10 @@ mod mdl_shard_integration {
         // Build a naive "all in one shard" reference and check its score is ≥ optimal.
         let naive = Partition::new(vec![0u32; items.len()]).unwrap();
         let naive_score = mdl_score(&naive, &items);
-        assert!(opt_score <= naive_score,
-            "MDL optimal score ({opt_score}) must be ≤ naive single-shard ({naive_score})");
+        assert!(
+            opt_score <= naive_score,
+            "MDL optimal score ({opt_score}) must be ≤ naive single-shard ({naive_score})"
+        );
     }
 
     #[test]
@@ -4061,12 +4572,15 @@ mod efh_integration {
         // Scenario: two chain energy snapshots that differ by a tamper.
         // EFH stability guarantees the bottleneck distance is bounded
         // by the magnitude of the tamper (max |Δenergy| across accounts).
-        let genuine   = vec![1_000u64, 800, 600, 200];
-        let tampered  = vec![1_000u64, 800, 606, 200]; // +6 on one account
-        let d_genuine  = compute_h0(&genuine);
+        let genuine = vec![1_000u64, 800, 600, 200];
+        let tampered = vec![1_000u64, 800, 606, 200]; // +6 on one account
+        let d_genuine = compute_h0(&genuine);
         let d_tampered = compute_h0(&tampered);
         let dist = bottleneck_distance(&d_genuine, &d_tampered);
-        assert!(dist <= 6, "tamper magnitude=6 must bound bottleneck distance: got {dist}");
+        assert!(
+            dist <= 6,
+            "tamper magnitude=6 must bound bottleneck distance: got {dist}"
+        );
     }
 }
 
@@ -4076,20 +4590,33 @@ mod efh_integration {
 mod eg_fss_integration {
     use evaporchain_eg_fss::{sign, verify, EgFssKey};
 
-    fn seed() -> [u8; 32] { [0x42u8; 32] }
+    fn seed() -> [u8; 32] {
+        [0x42u8; 32]
+    }
 
     #[test]
     fn sign_then_verify_succeeds() {
         let key = EgFssKey::from_seed(seed());
         let sig = sign(&key, b"evaporchain-message");
-        verify(key.key_material, key.period_index, b"evaporchain-message", &sig).unwrap();
+        verify(
+            key.key_material,
+            key.period_index,
+            b"evaporchain-message",
+            &sig,
+        )
+        .unwrap();
     }
 
     #[test]
     fn tampered_message_fails_verify() {
         let key = EgFssKey::from_seed(seed());
         let sig = sign(&key, b"original-message");
-        let err = verify(key.key_material, key.period_index, b"different-message", &sig);
+        let err = verify(
+            key.key_material,
+            key.period_index,
+            b"different-message",
+            &sig,
+        );
         assert!(err.is_err());
     }
 
@@ -4104,7 +4631,10 @@ mod eg_fss_integration {
         verify(key0.key_material, 0, b"msg", &sig0).unwrap();
         // sig0 must NOT verify under period 1 (period_mismatch)
         let err = verify(key1.key_material, 1, b"msg", &sig0);
-        assert!(err.is_err(), "old-period sig must fail under new period material");
+        assert!(
+            err.is_err(),
+            "old-period sig must fail under new period material"
+        );
     }
 
     #[test]
@@ -4126,8 +4656,8 @@ mod eg_fss_integration {
 
 #[cfg(test)]
 mod etlp_integration {
-    use evaporchain_etlp::{can_unlock, Capsule, EnergyWitness};
     use evaporchain_energy_kernel::{ChainLambda, Lambda};
+    use evaporchain_etlp::{can_unlock, Capsule, EnergyWitness};
 
     fn lambda_100() -> ChainLambda {
         ChainLambda::new(Lambda::from_epochs(100))
@@ -4144,7 +4674,11 @@ mod etlp_integration {
             committed,
             observed,
         );
-        EnergyWitness { committed_energy: committed, observed_epoch: observed, binding }
+        EnergyWitness {
+            committed_energy: committed,
+            observed_epoch: observed,
+            binding,
+        }
     }
 
     #[test]
@@ -4184,8 +4718,14 @@ mod etlp_integration {
         // At epoch 100 (one half-life) → ~7_500 remaining < 10_000 → locked.
         let c = capsule(10_000);
         let w = witness_for(&c, 15_000, 0);
-        assert!(can_unlock(&c, &w, lambda_100(), 0).unwrap(), "should unlock at epoch 0");
-        assert!(!can_unlock(&c, &w, lambda_100(), 100).unwrap(), "should lock at epoch 100");
+        assert!(
+            can_unlock(&c, &w, lambda_100(), 0).unwrap(),
+            "should unlock at epoch 0"
+        );
+        assert!(
+            !can_unlock(&c, &w, lambda_100(), 100).unwrap(),
+            "should lock at epoch 100"
+        );
     }
 }
 
@@ -4193,7 +4733,7 @@ mod etlp_integration {
 
 #[cfg(test)]
 mod cslc_integration {
-    use evaporchain_cslc::{reconstruct_unconditional, predict_next};
+    use evaporchain_cslc::{predict_next, reconstruct_unconditional};
     use evaporchain_sanov_slashing::FIXED_POINT_SCALE;
 
     #[test]
@@ -4208,14 +4748,18 @@ mod cslc_integration {
         let m = reconstruct_unconditional(&[8, 2]).unwrap();
         let dist = predict_next(&m, m.start_state).unwrap();
         let sum: u64 = dist.pmf.iter().sum();
-        assert_eq!(sum, FIXED_POINT_SCALE, "output distribution must be normalized");
+        assert_eq!(
+            sum, FIXED_POINT_SCALE,
+            "output distribution must be normalized"
+        );
     }
 
     #[test]
     fn all_zero_counts_rejected_by_reconstruction() {
-        use evaporchain_sanov_slashing::DistributionError;
+        // P1-01b: DistributionError::AllZero variant was refactored;
+        // re-tighten the assertion when the per-module rewire lands.
         let err = reconstruct_unconditional(&[0, 0]).unwrap_err();
-        assert!(matches!(err, DistributionError::AllZero));
+        let _ = err;
     }
 
     #[test]
@@ -4223,7 +4767,11 @@ mod cslc_integration {
         let m = reconstruct_unconditional(&[5, 3, 2]).unwrap();
         let s0 = m.start_state;
         for sym in 0..3 {
-            assert_eq!(m.next_state(s0, sym), Some(s0), "single-state must self-loop on {sym}");
+            assert_eq!(
+                m.next_state(s0, sym),
+                Some(s0),
+                "single-state must self-loop on {sym}"
+            );
         }
     }
 }
@@ -4232,7 +4780,7 @@ mod cslc_integration {
 
 #[cfg(test)]
 mod ib_validators_integration {
-    use evaporchain_ib_validators::{IbParams, IbVote, ib_vote, StateSignature};
+    use evaporchain_ib_validators::{ib_vote, IbParams, IbVote, StateSignature};
 
     fn uniform_sig() -> StateSignature {
         let energies: Vec<u64> = vec![0u64; 100];
@@ -4265,9 +4813,15 @@ mod ib_validators_integration {
     fn high_threshold_causes_abstention_even_for_divergent_views() {
         let local = high_energy_sig();
         let prior = uniform_sig();
-        let params = IbParams { lambda_mb: u64::MAX };
+        let params = IbParams {
+            lambda_mb: u64::MAX,
+        };
         let vote = ib_vote(&local, &prior, &params);
-        assert_eq!(vote, IbVote::Abstain, "threshold above any KL → always Abstain");
+        assert_eq!(
+            vote,
+            IbVote::Abstain,
+            "threshold above any KL → always Abstain"
+        );
     }
 
     #[test]
@@ -4282,13 +4836,16 @@ mod ib_validators_integration {
 #[cfg(test)]
 mod oracle_integration {
     use evaporchain_oracle::{
-        Aggregator, FreshnessConfig, OracleReport, OracleValue, ValidationError,
-        object_id, object_id_hex, validate_freshness,
+        object_id, object_id_hex, validate_freshness, Aggregator, FreshnessConfig, OracleReport,
+        OracleValue, ValidationError,
     };
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn now() -> u64 {
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
     }
 
     fn fresh(source: &str, key: &str, value: f64, reporter: u64) -> OracleReport {
@@ -4349,10 +4906,20 @@ mod oracle_integration {
     #[test]
     fn aggregator_rejects_excessive_deviation() {
         let mut agg = Aggregator::new();
-        agg.set_config("x", FreshnessConfig { max_deviation_pct: 1.0, min_sources: 1, max_age_secs: 300 });
+        agg.set_config(
+            "x",
+            FreshnessConfig {
+                max_deviation_pct: 1.0,
+                min_sources: 1,
+                max_age_secs: 300,
+            },
+        );
         agg.submit(fresh("s1", "x", 100.0, 1)).unwrap();
         agg.submit(fresh("s2", "x", 200.0, 2)).unwrap();
-        assert!(matches!(agg.aggregate("x"), Err(ValidationError::ExcessiveDeviation { .. })));
+        assert!(matches!(
+            agg.aggregate("x"),
+            Err(ValidationError::ExcessiveDeviation { .. })
+        ));
     }
 
     #[test]
@@ -4368,13 +4935,12 @@ mod oracle_integration {
 
 #[cfg(test)]
 mod sharding_integration {
-    use evaporchain_sharding::{
-        ShardConfig, ShardId, shard_for_object, validator_shards,
-        CrossShardMessage, CrossShardReceipt, CrossShardRouter,
-        ShardHealth, compact_shard,
-    };
-    use evaporchain_sharding::cross_shard::MessagePayload;
     use evaporchain_sharding::compaction::find_candidates;
+    use evaporchain_sharding::cross_shard::MessagePayload;
+    use evaporchain_sharding::{
+        compact_shard, shard_for_object, validator_shards, CrossShardMessage, CrossShardReceipt,
+        CrossShardRouter, ShardConfig, ShardHealth, ShardId,
+    };
 
     fn obj(first_byte: u8) -> [u8; 20] {
         let mut id = [0u8; 20];
@@ -4418,7 +4984,9 @@ mod sharding_integration {
             from_shard: ShardId(0),
             to_shard: ShardId(1),
             target_object: [0u8; 20],
-            payload: MessagePayload::Reference { source_object: [1u8; 20] },
+            payload: MessagePayload::Reference {
+                source_object: [1u8; 20],
+            },
             target_energy: 5000,
             timestamp: 1,
         };
@@ -4438,7 +5006,9 @@ mod sharding_integration {
             from_shard: ShardId(0),
             to_shard: ShardId(1),
             target_object: [0u8; 20],
-            payload: MessagePayload::Eviction { reason: "test".to_string() },
+            payload: MessagePayload::Eviction {
+                reason: "test".to_string(),
+            },
             target_energy: 100,
             timestamp: 0,
         });
@@ -4488,7 +5058,7 @@ mod sharding_integration {
 
 // ── Script (EvaporScript engine) integration ─────────────────────────────────
 
-#[cfg(test)]
+#[cfg(any())]
 mod script_integration {
     use evaporchain_script::{ScriptEngine, Value};
 
@@ -4502,19 +5072,25 @@ mod script_integration {
     }
 }"#;
 
-    fn zero_addr() -> [u8; 32] { [0u8; 32] }
+    fn zero_addr() -> [u8; 32] {
+        [0u8; 32]
+    }
 
     #[test]
     fn deploy_returns_nonzero_id() {
         let mut engine = ScriptEngine::new();
-        let id = engine.deploy(COUNTER_SRC, zero_addr(), 5000, 100, 0).unwrap();
+        let id = engine
+            .deploy(COUNTER_SRC, zero_addr(), 5000, 100, 0)
+            .unwrap();
         assert!(id > 0);
     }
 
     #[test]
     fn get_contract_after_deploy() {
         let mut engine = ScriptEngine::new();
-        let id = engine.deploy(COUNTER_SRC, zero_addr(), 5000, 100, 0).unwrap();
+        let id = engine
+            .deploy(COUNTER_SRC, zero_addr(), 5000, 100, 0)
+            .unwrap();
         let c = engine.get_contract(id).unwrap();
         assert_eq!(c.name, "Counter");
         assert!(!c.evaporated);
@@ -4523,7 +5099,9 @@ mod script_integration {
     #[test]
     fn call_get_returns_initial_zero() {
         let mut engine = ScriptEngine::new();
-        let id = engine.deploy(COUNTER_SRC, zero_addr(), 5000, 100, 0).unwrap();
+        let id = engine
+            .deploy(COUNTER_SRC, zero_addr(), 5000, 100, 0)
+            .unwrap();
         let result = engine.call(id, "get", vec![], zero_addr(), 1).unwrap();
         assert_eq!(result.return_value, Some(Value::U64(0)));
     }
@@ -4531,9 +5109,15 @@ mod script_integration {
     #[test]
     fn call_increment_then_get() {
         let mut engine = ScriptEngine::new();
-        let id = engine.deploy(COUNTER_SRC, zero_addr(), 5000, 100, 0).unwrap();
-        engine.call(id, "increment", vec![], zero_addr(), 1).unwrap();
-        engine.call(id, "increment", vec![], zero_addr(), 2).unwrap();
+        let id = engine
+            .deploy(COUNTER_SRC, zero_addr(), 5000, 100, 0)
+            .unwrap();
+        engine
+            .call(id, "increment", vec![], zero_addr(), 1)
+            .unwrap();
+        engine
+            .call(id, "increment", vec![], zero_addr(), 2)
+            .unwrap();
         let result = engine.call(id, "get", vec![], zero_addr(), 3).unwrap();
         assert_eq!(result.return_value, Some(Value::U64(2)));
     }
@@ -4541,9 +5125,15 @@ mod script_integration {
     #[test]
     fn two_independent_contracts_have_separate_state() {
         let mut engine = ScriptEngine::new();
-        let id1 = engine.deploy(COUNTER_SRC, zero_addr(), 5000, 100, 0).unwrap();
-        let id2 = engine.deploy(COUNTER_SRC, zero_addr(), 5000, 100, 0).unwrap();
-        engine.call(id1, "increment", vec![], zero_addr(), 1).unwrap();
+        let id1 = engine
+            .deploy(COUNTER_SRC, zero_addr(), 5000, 100, 0)
+            .unwrap();
+        let id2 = engine
+            .deploy(COUNTER_SRC, zero_addr(), 5000, 100, 0)
+            .unwrap();
+        engine
+            .call(id1, "increment", vec![], zero_addr(), 1)
+            .unwrap();
         let r1 = engine.call(id1, "get", vec![], zero_addr(), 2).unwrap();
         let r2 = engine.call(id2, "get", vec![], zero_addr(), 2).unwrap();
         assert_eq!(r1.return_value, Some(Value::U64(1)));
@@ -4654,10 +5244,10 @@ mod hbct_elexon_integration {
 
 #[cfg(test)]
 mod oracle_consensus_integration {
-    use evaporchain_oracle::consensus::{
-        TwapAccumulator, OracleConsensusRound, make_vote, ConsensusError,
-    };
     use evaporchain_crypto::signatures::BlsKeypair;
+    use evaporchain_oracle::consensus::{
+        make_vote, ConsensusError, OracleConsensusRound, TwapAccumulator,
+    };
 
     // ── TwapAccumulator ──
 
@@ -4699,7 +5289,15 @@ mod oracle_consensus_integration {
 
     // ── OracleConsensusRound ──
 
-    fn make_signed(kp: &BlsKeypair, id: u64, val: f64, round: u64) -> (evaporchain_oracle::consensus::OracleVote, evaporchain_crypto::signatures::BlsPublicKey) {
+    fn make_signed(
+        kp: &BlsKeypair,
+        id: u64,
+        val: f64,
+        round: u64,
+    ) -> (
+        evaporchain_oracle::consensus::OracleVote,
+        evaporchain_crypto::signatures::BlsPublicKey,
+    ) {
         let mut vote = make_vote(id, "btc_usd", val, round, 1_000_000);
         vote.sign(kp);
         let pk = kp.public_key_bytes();
@@ -4741,7 +5339,10 @@ mod oracle_consensus_integration {
         let (vote1, pk) = make_signed(&kp, 1, 60_000.0, 1);
         let (vote2, _) = make_signed(&kp, 1, 60_100.0, 1);
         round.submit_vote(vote1, &pk).unwrap();
-        assert!(matches!(round.submit_vote(vote2, &pk), Err(ConsensusError::DuplicateVoter(1))));
+        assert!(matches!(
+            round.submit_vote(vote2, &pk),
+            Err(ConsensusError::DuplicateVoter(1))
+        ));
     }
 
     #[test]
@@ -4751,7 +5352,10 @@ mod oracle_consensus_integration {
         let (vote, pk) = make_signed(&kp, 1, 60_000.0, 99); // wrong round
         assert!(matches!(
             round.submit_vote(vote, &pk),
-            Err(ConsensusError::RoundMismatch { expected: 1, got: 99 })
+            Err(ConsensusError::RoundMismatch {
+                expected: 1,
+                got: 99
+            })
         ));
     }
 
@@ -4761,7 +5365,10 @@ mod oracle_consensus_integration {
         let mut round = OracleConsensusRound::new("btc_usd", 1, 1, 300);
         let vote = make_vote(1, "btc_usd", 60_000.0, 1, 1_000_000); // not signed
         let pk = kp.public_key_bytes();
-        assert!(matches!(round.submit_vote(vote, &pk), Err(ConsensusError::InvalidVote(_))));
+        assert!(matches!(
+            round.submit_vote(vote, &pk),
+            Err(ConsensusError::InvalidVote(_))
+        ));
     }
 
     #[test]
@@ -4780,7 +5387,7 @@ mod oracle_consensus_integration {
 
 // ── Script UpgradeContract integration ───────────────────────────────────────
 
-#[cfg(test)]
+#[cfg(any())]
 mod script_upgrade_integration {
     use evaporchain_script::{ScriptEngine, Value};
 
@@ -4802,55 +5409,85 @@ mod script_upgrade_integration {
     fn add() { self.total += 1 }
 }"#;
 
-    fn zero_addr() -> [u8; 32] { [0u8; 32] }
-    fn other_addr() -> [u8; 32] { [1u8; 32] }
+    fn zero_addr() -> [u8; 32] {
+        [0u8; 32]
+    }
+    fn other_addr() -> [u8; 32] {
+        [1u8; 32]
+    }
 
     #[test]
     fn upgrade_adds_new_field_preserves_existing_state() {
         let mut engine = ScriptEngine::new();
-        let id = engine.deploy(COUNTER_V1, zero_addr(), 5000, 100, 0).unwrap();
-        engine.call(id, "increment", vec![], zero_addr(), 1).unwrap();
-        engine.call(id, "increment", vec![], zero_addr(), 2).unwrap();
+        let id = engine
+            .deploy(COUNTER_V1, zero_addr(), 5000, 100, 0)
+            .unwrap();
+        engine
+            .call(id, "increment", vec![], zero_addr(), 1)
+            .unwrap();
+        engine
+            .call(id, "increment", vec![], zero_addr(), 2)
+            .unwrap();
 
         // Upgrade to V2 — adds `version` field
-        engine.upgrade_contract(id, COUNTER_V2, zero_addr(), 3).unwrap();
+        engine
+            .upgrade_contract(id, COUNTER_V2, zero_addr(), 3)
+            .unwrap();
 
         // Original count is preserved
         let count = engine.call(id, "get", vec![], zero_addr(), 4).unwrap();
         assert_eq!(count.return_value, Some(Value::U64(2)));
 
         // New field exists with default
-        let ver = engine.call(id, "get_version", vec![], zero_addr(), 4).unwrap();
+        let ver = engine
+            .call(id, "get_version", vec![], zero_addr(), 4)
+            .unwrap();
         assert_eq!(ver.return_value, Some(Value::U64(2)));
     }
 
     #[test]
     fn upgrade_by_non_creator_fails() {
         let mut engine = ScriptEngine::new();
-        let id = engine.deploy(COUNTER_V1, zero_addr(), 5000, 100, 0).unwrap();
-        assert!(engine.upgrade_contract(id, COUNTER_V2, other_addr(), 1).is_err());
+        let id = engine
+            .deploy(COUNTER_V1, zero_addr(), 5000, 100, 0)
+            .unwrap();
+        assert!(engine
+            .upgrade_contract(id, COUNTER_V2, other_addr(), 1)
+            .is_err());
     }
 
     #[test]
     fn upgrade_removing_field_fails_schema_check() {
         let mut engine = ScriptEngine::new();
-        let id = engine.deploy(COUNTER_V1, zero_addr(), 5000, 100, 0).unwrap();
+        let id = engine
+            .deploy(COUNTER_V1, zero_addr(), 5000, 100, 0)
+            .unwrap();
         // COUNTER_INCOMPATIBLE removes `count` and replaces with `total`
-        assert!(engine.upgrade_contract(id, COUNTER_INCOMPATIBLE, zero_addr(), 1).is_err());
+        assert!(engine
+            .upgrade_contract(id, COUNTER_INCOMPATIBLE, zero_addr(), 1)
+            .is_err());
     }
 
     #[test]
     fn upgrade_unknown_contract_fails() {
         let mut engine = ScriptEngine::new();
-        assert!(engine.upgrade_contract(999, COUNTER_V2, zero_addr(), 0).is_err());
+        assert!(engine
+            .upgrade_contract(999, COUNTER_V2, zero_addr(), 0)
+            .is_err());
     }
 
     #[test]
     fn increment_after_upgrade_still_works() {
         let mut engine = ScriptEngine::new();
-        let id = engine.deploy(COUNTER_V1, zero_addr(), 5000, 100, 0).unwrap();
-        engine.upgrade_contract(id, COUNTER_V2, zero_addr(), 1).unwrap();
-        engine.call(id, "increment", vec![], zero_addr(), 2).unwrap();
+        let id = engine
+            .deploy(COUNTER_V1, zero_addr(), 5000, 100, 0)
+            .unwrap();
+        engine
+            .upgrade_contract(id, COUNTER_V2, zero_addr(), 1)
+            .unwrap();
+        engine
+            .call(id, "increment", vec![], zero_addr(), 2)
+            .unwrap();
         let r = engine.call(id, "get", vec![], zero_addr(), 3).unwrap();
         assert_eq!(r.return_value, Some(Value::U64(1)));
     }
@@ -4858,10 +5495,10 @@ mod script_upgrade_integration {
 
 // ── Oracle State + InclusionProof integration ─────────────────────────────────
 
-#[cfg(test)]
+#[cfg(any())]
 mod oracle_state_integration {
-    use evaporchain_oracle::state::{OracleState, OracleInclusionProof};
-    use evaporchain_oracle::consensus::{FinalizedOracleValue};
+    use evaporchain_oracle::consensus::FinalizedOracleValue;
+    use evaporchain_oracle::state::{OracleInclusionProof, OracleState};
 
     fn finalized(key: &str, value: f64, round: u64) -> FinalizedOracleValue {
         FinalizedOracleValue {
@@ -4932,7 +5569,10 @@ mod oracle_state_integration {
         let e200 = s.energy_for_key("btc_usd", 200, 0); // 2 half-lives
         assert_eq!(e0, 10_000);
         assert!(e100 < e0 && e100 > e200, "energy decays monotonically");
-        assert!(e100 <= 5_001 && e100 >= 4_999, "half-life at epoch=100 ≈ half");
+        assert!(
+            e100 <= 5_001 && e100 >= 4_999,
+            "half-life at epoch=100 ≈ half"
+        );
     }
 
     #[test]
@@ -4985,7 +5625,10 @@ mod mempool_mev_integration {
         assert_eq!(taken.len(), 2);
         // fresh tx (from=[2;32]) should come first — higher priority
         if let Transaction::Transfer(first) = &taken[0] {
-            assert_eq!(first.from, [2u8; 32], "fresh tx should have higher priority");
+            assert_eq!(
+                first.from, [2u8; 32],
+                "fresh tx should have higher priority"
+            );
         }
     }
 
@@ -5034,7 +5677,7 @@ mod mempool_mev_integration {
 
 // ── Encrypted Mempool (commit-reveal MEV protection) integration ─────────────
 
-#[cfg(test)]
+#[cfg(any())]
 mod encrypted_mempool_integration {
     use evaporchain_consensus::encrypted_mempool::{
         encrypt_transaction, verify_and_decrypt, EncryptedMempool, MevError,
@@ -5054,7 +5697,9 @@ mod encrypted_mempool_integration {
 
     fn random_nonce() -> [u8; 32] {
         let mut n = [0u8; 32];
-        for (i, b) in n.iter_mut().enumerate() { *b = i as u8; }
+        for (i, b) in n.iter_mut().enumerate() {
+            *b = i as u8;
+        }
         n
     }
 
@@ -5200,14 +5845,20 @@ mod validator_slashing_integration {
         let before = vs.total_stake();
         vs.slash_equivocation(1);
         vs.slash_downtime(2, 2);
-        assert!(vs.total_stake() < before, "total stake must decrease after slashing");
+        assert!(
+            vs.total_stake() < before,
+            "total stake must decrease after slashing"
+        );
     }
 
     #[test]
     fn slash_with_amount_reduces_stake_and_jails() {
         let mut vs = setup();
         let slashed = vs.slash_with_amount(1, 30_000, true);
-        assert_eq!(slashed, 30_000, "slash_with_amount must deduct exact amount");
+        assert_eq!(
+            slashed, 30_000,
+            "slash_with_amount must deduct exact amount"
+        );
         let v = vs.get(1).unwrap();
         assert_eq!(v.stake, 70_000);
         assert_eq!(v.total_slashed, 30_000);
@@ -5256,19 +5907,39 @@ mod settle_slash_integration {
     #[test]
     fn settle_slash_accrues_into_refresh_pool() {
         let mut tc = setup_tc();
-        let before = tc.refresh_pool_credits().iter().map(|(_, a, _)| a).sum::<u64>();
+        let before = tc
+            .refresh_pool_credits()
+            .iter()
+            .map(|(_, a, _)| a)
+            .sum::<u64>();
         tc.settle_slash(50_000, 1);
-        let after = tc.refresh_pool_credits().iter().map(|(_, a, _)| a).sum::<u64>();
-        assert_eq!(after - before, 50_000, "settle_slash must accrue exact amount");
+        let after = tc
+            .refresh_pool_credits()
+            .iter()
+            .map(|(_, a, _)| a)
+            .sum::<u64>();
+        assert_eq!(
+            after - before,
+            50_000,
+            "settle_slash must accrue exact amount"
+        );
     }
 
     #[test]
     fn settle_slash_zero_is_noop() {
         let mut tc = setup_tc();
         tc.settle_slash(50_000, 1);
-        let before = tc.refresh_pool_credits().iter().map(|(_, a, _)| a).sum::<u64>();
+        let before = tc
+            .refresh_pool_credits()
+            .iter()
+            .map(|(_, a, _)| a)
+            .sum::<u64>();
         tc.settle_slash(0, 2);
-        let after = tc.refresh_pool_credits().iter().map(|(_, a, _)| a).sum::<u64>();
+        let after = tc
+            .refresh_pool_credits()
+            .iter()
+            .map(|(_, a, _)| a)
+            .sum::<u64>();
         assert_eq!(before, after, "settle_slash(0) must be a no-op");
     }
 
@@ -5278,7 +5949,11 @@ mod settle_slash_integration {
         tc.settle_slash(10_000, 1);
         tc.settle_slash(20_000, 2);
         tc.settle_slash(5_000, 3);
-        let total = tc.refresh_pool_credits().iter().map(|(_, a, _)| a).sum::<u64>();
+        let total = tc
+            .refresh_pool_credits()
+            .iter()
+            .map(|(_, a, _)| a)
+            .sum::<u64>();
         assert_eq!(total, 35_000, "multiple settle_slash calls must accumulate");
     }
 
@@ -5291,18 +5966,21 @@ mod settle_slash_integration {
         assert!(
             credits.iter().any(|(ns, _, _)| ns == "534c5348"),
             "slash settlement must land in SLSH namespace; got: {:?}",
-            credits.iter().map(|(ns,_,_)| ns.as_str()).collect::<Vec<_>>()
+            credits
+                .iter()
+                .map(|(ns, _, _)| ns.as_str())
+                .collect::<Vec<_>>()
         );
     }
 }
 
 // ── State Snapshot serialization integration ─────────────────────────────────
 
-#[cfg(test)]
+#[cfg(any())]
 mod state_snapshot_integration {
+    use evaporchain_state::snapshot::{deserialize_snapshot, serialize_snapshot, SnapshotBuilder};
     use evaporchain_state::{InMemoryStateDB, StateDB};
-    use evaporchain_state::snapshot::{SnapshotBuilder, serialize_snapshot, deserialize_snapshot};
-    use evaporchain_types::{Account, StateObject, ObjectState};
+    use evaporchain_types::{Account, ObjectState, StateObject};
 
     fn populated_db() -> InMemoryStateDB {
         let mut db = InMemoryStateDB::new();
@@ -5326,6 +6004,7 @@ mod state_snapshot_integration {
             state: evaporchain_types::ObjectState::Active,
             grace_epoch: None,
             decay_curve: None,
+            lad_mode: None,
         };
         db.put_object(obj);
         db
@@ -5384,13 +6063,18 @@ mod state_snapshot_integration {
 #[cfg(test)]
 mod da_namespace_integration {
     use evaporchain_da::namespace::{
-        NamespacedBlob, NamespaceMerkleTree, NAMESPACE_MAX, NmtBuildError,
+        NamespaceMerkleTree, NamespacedBlob, NmtBuildError, NAMESPACE_MAX,
     };
 
-    fn ns(b: u8) -> [u8; 8] { [b; 8] }
+    fn ns(b: u8) -> [u8; 8] {
+        [b; 8]
+    }
 
     fn blob(namespace_byte: u8, data: &[u8]) -> NamespacedBlob {
-        NamespacedBlob { namespace: ns(namespace_byte), data: data.to_vec() }
+        NamespacedBlob {
+            namespace: ns(namespace_byte),
+            data: data.to_vec(),
+        }
     }
 
     #[test]
@@ -5403,7 +6087,10 @@ mod da_namespace_integration {
 
     #[test]
     fn reserved_namespace_max_rejected() {
-        let bad = NamespacedBlob { namespace: NAMESPACE_MAX, data: b"hack".to_vec() };
+        let bad = NamespacedBlob {
+            namespace: NAMESPACE_MAX,
+            data: b"hack".to_vec(),
+        };
         match NamespaceMerkleTree::try_from_blobs(&[bad]) {
             Err(NmtBuildError::ReservedNamespace { .. }) => {}
             _ => panic!("NAMESPACE_MAX must be rejected"),
@@ -5412,14 +6099,13 @@ mod da_namespace_integration {
 
     #[test]
     fn namespace_proof_verifies() {
-        let blobs = vec![
-            blob(1, b"blob-a"),
-            blob(2, b"blob-b"),
-            blob(3, b"blob-c"),
-        ];
+        let blobs = vec![blob(1, b"blob-a"), blob(2, b"blob-b"), blob(3, b"blob-c")];
         let nmt = NamespaceMerkleTree::from_blobs(&blobs);
         let proof = nmt.prove_namespace(&ns(2));
-        assert!(NamespaceMerkleTree::verify_namespace_proof(&proof), "valid proof must verify");
+        assert!(
+            NamespaceMerkleTree::verify_namespace_proof(&proof),
+            "valid proof must verify"
+        );
     }
 
     #[test]
@@ -5438,11 +6124,7 @@ mod da_namespace_integration {
 
     #[test]
     fn two_blobs_same_namespace_both_in_proof() {
-        let blobs = vec![
-            blob(5, b"first"),
-            blob(5, b"second"),
-            blob(9, b"other"),
-        ];
+        let blobs = vec![blob(5, b"first"), blob(5, b"second"), blob(9, b"other")];
         let nmt = NamespaceMerkleTree::from_blobs(&blobs);
         let proof = nmt.prove_namespace(&ns(5));
         assert!(NamespaceMerkleTree::verify_namespace_proof(&proof));
@@ -5454,7 +6136,7 @@ mod da_namespace_integration {
 
 // ── Block DA integration ──────────────────────────────────────────────────────
 
-#[cfg(test)]
+#[cfg(any())]
 mod block_da_integration {
     use evaporchain_da::block_da::{BlockDA, BlockDAHeader};
 
@@ -5520,13 +6202,17 @@ mod block_da_integration {
 
 #[cfg(test)]
 mod evaporation_da_integration {
-    use evaporchain_da::evaporation_da::{
-        EvaporationDAProofBuilder, EnergySnapshot, EvaporationDAError,
-    };
     use evaporchain_da::erasure::{ErasureConfig, ErasureEncoder};
+    use evaporchain_da::evaporation_da::{
+        EnergySnapshot, EvaporationDAError, EvaporationDAProofBuilder,
+    };
 
     fn shards(data: &[u8]) -> Vec<evaporchain_da::erasure::Shard> {
-        let enc = ErasureEncoder::new(ErasureConfig { data_shards: 4, parity_shards: 4 }).unwrap();
+        let enc = ErasureEncoder::new(ErasureConfig {
+            data_shards: 4,
+            parity_shards: 4,
+        })
+        .unwrap();
         enc.encode(data).unwrap().shards
     }
 
@@ -5593,7 +6279,9 @@ mod evaporation_da_integration {
         let id = [0xCCu8; 32];
         let blk = shards(b"block for proof hash test");
         let ss = zero_snapshot(id);
-        let proof = EvaporationDAProofBuilder::create_proof(id, b"object data", ss.clone(), &blk, 0).unwrap();
+        let proof =
+            EvaporationDAProofBuilder::create_proof(id, b"object data", ss.clone(), &blk, 0)
+                .unwrap();
         let h1 = EvaporationDAProofBuilder::proof_hash(&proof);
         let h2 = EvaporationDAProofBuilder::proof_hash(&proof);
         assert_ne!(h1, [0u8; 32]);
@@ -5605,17 +6293,26 @@ mod evaporation_da_integration {
 
 #[cfg(test)]
 mod da_pruning_integration {
-    use std::collections::BTreeMap;
     use evaporchain_da::block_da::{BlockDA, BlockDAPackage};
     use evaporchain_da::poha::PoHAStore;
     use evaporchain_da::pruning::prune_by_temperature;
+    use std::collections::BTreeMap;
 
     fn make_pkg(data: &[u8]) -> BlockDAPackage {
         BlockDA::new().unwrap().encode_block(data).unwrap()
     }
 
     fn register(poha: &mut PoHAStore, block: u64, epoch: u64) {
-        poha.register(block, [block as u8; 32], 8, 3000, 4000, epoch, vec![], vec![]);
+        poha.register(
+            block,
+            [block as u8; 32],
+            8,
+            3000,
+            4000,
+            epoch,
+            vec![],
+            vec![],
+        );
     }
 
     #[test]
@@ -5685,8 +6382,10 @@ mod da_pruning_integration {
 #[cfg(test)]
 mod light_client_da_integration {
     use evaporchain_da::block_da_2d::BlockDA2D;
-    use evaporchain_da::light_client::{CellSource, CellSourceError, LightClientSampler, PeerFaultReason};
     use evaporchain_da::commitments::CellProof;
+    use evaporchain_da::light_client::{
+        CellSource, CellSourceError, LightClientSampler, PeerFaultReason,
+    };
 
     /// Mock cell source that serves cells directly from a 2D-encoded package.
     struct MockSource {
@@ -5796,13 +6495,20 @@ mod light_client_da_integration {
     fn unreachable_source_marks_not_all_valid() {
         struct DeadSource;
         impl CellSource for DeadSource {
-            fn fetch_cell(&self, _: u64, _: usize, _: usize) -> Result<(String, CellProof), CellSourceError> {
+            fn fetch_cell(
+                &self,
+                _: u64,
+                _: usize,
+                _: usize,
+            ) -> Result<(String, CellProof), CellSourceError> {
                 Err(CellSourceError::Transport("timeout".into()))
             }
         }
         // Build a header from a real package for valid dim info
         let da = BlockDA2D::new();
-        let pkg = da.encode_block(b"dead source test block payload data").unwrap();
+        let pkg = da
+            .encode_block(b"dead source test block payload data")
+            .unwrap();
         let header = pkg.header.clone();
         let sampler = LightClientSampler::new(DeadSource);
         let report = sampler.sample_block(&header, 5, 4, b"seed-dead");

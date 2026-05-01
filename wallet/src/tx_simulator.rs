@@ -219,10 +219,7 @@ impl TxSimulator {
         }
     }
 
-    pub fn store_result(
-        &mut self,
-        result: SimulationResult2,
-    ) -> Result<(), TxSimulatorError> {
+    pub fn store_result(&mut self, result: SimulationResult2) -> Result<(), TxSimulatorError> {
         if self.simulations.contains_key(&result.id) {
             return Err(TxSimulatorError::DuplicateSimulation(result.id.clone()));
         }
@@ -296,10 +293,7 @@ impl TxSimulator {
 
     // -- Analysis -----------------------------------------------------------
 
-    pub fn revert_analysis(
-        &self,
-        id: &str,
-    ) -> Result<Option<&RevertReason>, TxSimulatorError> {
+    pub fn revert_analysis(&self, id: &str) -> Result<Option<&RevertReason>, TxSimulatorError> {
         let result = self
             .simulations
             .get(id)
@@ -405,9 +399,7 @@ mod tests {
     #[test]
     fn test_create_fork() {
         let mut sim = TxSimulator::new();
-        assert!(sim
-            .create_fork("f1", ForkSource::LatestBlock, 100)
-            .is_ok());
+        assert!(sim.create_fork("f1", ForkSource::LatestBlock, 100).is_ok());
         assert!(sim.forks.contains_key("f1"));
     }
 

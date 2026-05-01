@@ -45,7 +45,12 @@ impl MeraLayer {
         let seed = Self::seed(lambda_half_life, index);
         let disentangler = build_disentangler(&seed, index);
         let isometry = build_isometry(&disentangler);
-        Self { index, half_life, disentangler, isometry }
+        Self {
+            index,
+            half_life,
+            disentangler,
+            isometry,
+        }
     }
 
     /// Apply (disentangler ∘ isometry) to a pair of CHI-vectors,
@@ -54,7 +59,7 @@ impl MeraLayer {
     /// Optionally zeroes the input if either account's energy is below
     /// the layer energy threshold (energy filtration).
     pub fn apply(&self, left: &[f64], right: &[f64], filter_threshold: Option<f64>) -> Vec<f64> {
-        let mut kv = kron_vec(left, right); // CHI² vector
+        let kv = kron_vec(left, right); // CHI² vector
 
         // Energy filtration: if both halves are near-zero post-threshold, zero the input.
         if let Some(thresh) = filter_threshold {
@@ -103,8 +108,10 @@ impl MeraLayer {
 /// by construction without any QR decomposition.
 fn build_disentangler(seed: &[u8; 32], layer_index: usize) -> Vec<f64> {
     let n = CHI * CHI; // 16
-    // Start from identity.
-    let mut m: Vec<f64> = (0..n * n).map(|k| if k % (n + 1) == 0 { 1.0 } else { 0.0 }).collect();
+                       // Start from identity.
+    let mut m: Vec<f64> = (0..n * n)
+        .map(|k| if k % (n + 1) == 0 { 1.0 } else { 0.0 })
+        .collect();
 
     let mut byte_idx = 0usize;
     for i in 0..n {
@@ -121,11 +128,11 @@ fn build_disentangler(seed: &[u8; 32], layer_index: usize) -> Vec<f64> {
 }
 
 /// Apply Givens rotation G(i,j,θ) in-place to matrix m (n×n).
-fn givens_inplace(m: &mut Vec<f64>, n: usize, i: usize, j: usize, s: f64, c: f64) {
+fn givens_inplace(m: &mut [f64], n: usize, i: usize, j: usize, s: f64, c: f64) {
     for k in 0..n {
         let ri = m[k * n + i];
         let rj = m[k * n + j];
-        m[k * n + i] =  c * ri + s * rj;
+        m[k * n + i] = c * ri + s * rj;
         m[k * n + j] = -s * ri + c * rj;
     }
 }
@@ -133,7 +140,7 @@ fn givens_inplace(m: &mut Vec<f64>, n: usize, i: usize, j: usize, s: f64, c: f64
 /// Isometry = first CHI rows of the disentangler (CHI × CHI² matrix).
 fn build_isometry(disentangler: &[f64]) -> Vec<f64> {
     let n = CHI * CHI; // 16
-    // disentangler is (n×n); isometry = first CHI rows = CHI×n.
+                       // disentangler is (n×n); isometry = first CHI rows = CHI×n.
     disentangler[..CHI * n].to_vec()
 }
 
@@ -198,9 +205,9 @@ mod tests {
     #[test]
     fn half_life_doubles_per_layer() {
         let base = 100u64;
-        for ℓ in 0..4usize {
-            let l = MeraLayer::new(4096, base, ℓ);
-            assert_eq!(l.half_life, base * (1u64 << ℓ));
+        for layer_idx in 0..4usize {
+            let l = MeraLayer::new(4096, base, layer_idx);
+            assert_eq!(l.half_life, base * (1u64 << layer_idx));
         }
     }
 }

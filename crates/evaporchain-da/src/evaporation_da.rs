@@ -190,14 +190,9 @@ mod tests {
     fn test_create_evaporation_proof() {
         let (object_id, object_data, snapshot, shards) = setup_test_data();
 
-        let proof = EvaporationDAProofBuilder::create_proof(
-            object_id,
-            &object_data,
-            snapshot,
-            &shards,
-            0,
-        )
-        .unwrap();
+        let proof =
+            EvaporationDAProofBuilder::create_proof(object_id, &object_data, snapshot, &shards, 0)
+                .unwrap();
 
         assert_eq!(proof.object_id, object_id);
         assert_eq!(proof.shard_index, 0);
@@ -209,14 +204,9 @@ mod tests {
     fn test_verify_evaporation_proof() {
         let (object_id, object_data, snapshot, shards) = setup_test_data();
 
-        let proof = EvaporationDAProofBuilder::create_proof(
-            object_id,
-            &object_data,
-            snapshot,
-            &shards,
-            2,
-        )
-        .unwrap();
+        let proof =
+            EvaporationDAProofBuilder::create_proof(object_id, &object_data, snapshot, &shards, 2)
+                .unwrap();
 
         let valid = EvaporationDAProofBuilder::verify_proof(&proof, &shards[2].data).unwrap();
         assert!(valid);
@@ -227,13 +217,8 @@ mod tests {
         let (object_id, object_data, mut snapshot, shards) = setup_test_data();
         snapshot.energy_at_evaporation = 100; // not zero!
 
-        let result = EvaporationDAProofBuilder::create_proof(
-            object_id,
-            &object_data,
-            snapshot,
-            &shards,
-            0,
-        );
+        let result =
+            EvaporationDAProofBuilder::create_proof(object_id, &object_data, snapshot, &shards, 0);
         assert!(result.is_err());
     }
 
@@ -241,14 +226,9 @@ mod tests {
     fn test_wrong_shard_data_fails() {
         let (object_id, object_data, snapshot, shards) = setup_test_data();
 
-        let proof = EvaporationDAProofBuilder::create_proof(
-            object_id,
-            &object_data,
-            snapshot,
-            &shards,
-            0,
-        )
-        .unwrap();
+        let proof =
+            EvaporationDAProofBuilder::create_proof(object_id, &object_data, snapshot, &shards, 0)
+                .unwrap();
 
         // Verify with wrong shard data
         let wrong_data = vec![0xFF; shards[0].data.len()];
@@ -260,14 +240,9 @@ mod tests {
     fn test_proof_hash_deterministic() {
         let (object_id, object_data, snapshot, shards) = setup_test_data();
 
-        let proof = EvaporationDAProofBuilder::create_proof(
-            object_id,
-            &object_data,
-            snapshot,
-            &shards,
-            0,
-        )
-        .unwrap();
+        let proof =
+            EvaporationDAProofBuilder::create_proof(object_id, &object_data, snapshot, &shards, 0)
+                .unwrap();
 
         let h1 = EvaporationDAProofBuilder::proof_hash(&proof);
         let h2 = EvaporationDAProofBuilder::proof_hash(&proof);
@@ -319,8 +294,7 @@ mod tests {
             )
             .unwrap();
 
-            let valid =
-                EvaporationDAProofBuilder::verify_proof(&proof, &shards[i].data).unwrap();
+            let valid = EvaporationDAProofBuilder::verify_proof(&proof, &shards[i].data).unwrap();
             assert!(valid, "Failed for shard index {i}");
         }
     }

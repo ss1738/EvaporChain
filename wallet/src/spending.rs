@@ -24,11 +24,7 @@ pub enum SpendingError {
     PerTxLimitExceeded { amount: u64, limit: u64 },
 
     #[error("daily spending limit exceeded: spent {spent} + {amount} > {limit} EVAP")]
-    DailyLimitExceeded {
-        spent: u64,
-        amount: u64,
-        limit: u64,
-    },
+    DailyLimitExceeded { spent: u64, amount: u64, limit: u64 },
 
     #[error("address not on allowlist: {0}")]
     NotOnAllowlist(String),
@@ -150,11 +146,7 @@ impl SpendingPolicy {
 
     /// Check if a transfer is allowed under this policy.
     /// Returns Ok(warnings) if allowed, Err if blocked.
-    pub fn check_transfer(
-        &mut self,
-        to: &str,
-        amount: u64,
-    ) -> Result<Vec<String>, SpendingError> {
+    pub fn check_transfer(&mut self, to: &str, amount: u64) -> Result<Vec<String>, SpendingError> {
         if self.mode == EnforcementMode::Disabled {
             return Ok(Vec::new());
         }

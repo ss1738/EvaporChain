@@ -158,11 +158,7 @@ impl FeatureFlagManager {
         Ok(())
     }
 
-    pub fn is_enabled(
-        &mut self,
-        flag_id: &str,
-        user_id: &str,
-    ) -> Result<bool, FeatureFlagError> {
+    pub fn is_enabled(&mut self, flag_id: &str, user_id: &str) -> Result<bool, FeatureFlagError> {
         let flag = self
             .flags
             .get(flag_id)
@@ -240,10 +236,7 @@ impl FeatureFlagManager {
     }
 
     pub fn flags_by_category(&self, cat: &FlagCategory) -> Vec<&FeatureFlag> {
-        self.flags
-            .values()
-            .filter(|f| f.category == *cat)
-            .collect()
+        self.flags.values().filter(|f| f.category == *cat).collect()
     }
 
     pub fn enabled_flags(&self) -> Vec<&FeatureFlag> {
@@ -448,8 +441,12 @@ mod tests {
     #[test]
     fn test_is_enabled_rollout() {
         let mut mgr = FeatureFlagManager::new();
-        mgr.register_flag(make_flag("iro", FlagStatus2::Rollout(50), FlagCategory::Beta))
-            .unwrap();
+        mgr.register_flag(make_flag(
+            "iro",
+            FlagStatus2::Rollout(50),
+            FlagCategory::Beta,
+        ))
+        .unwrap();
         // Deterministic: we know the hash for "user_a"
         let hash_val = rollout_hash("user_a");
         let expected = hash_val < 50;
@@ -572,8 +569,12 @@ mod tests {
             .unwrap();
         mgr.register_flag(make_flag("s2", FlagStatus2::Disabled, FlagCategory::Beta))
             .unwrap();
-        mgr.register_flag(make_flag("s3", FlagStatus2::Rollout(30), FlagCategory::Experimental))
-            .unwrap();
+        mgr.register_flag(make_flag(
+            "s3",
+            FlagStatus2::Rollout(30),
+            FlagCategory::Experimental,
+        ))
+        .unwrap();
         mgr.add_override("s1", "u1", false).unwrap();
         mgr.kill_switch("s2").unwrap();
         mgr.is_enabled("s1", "u1").unwrap();

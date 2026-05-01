@@ -18,7 +18,10 @@ mod tests {
     #[test]
     fn classical_max_not_certified() {
         // S = 2 exactly → not strictly greater → not certified.
-        assert!(!bell_certified(LOCAL_REALISM_S_MILLI, LOCAL_REALISM_S_MILLI));
+        assert!(!bell_certified(
+            LOCAL_REALISM_S_MILLI,
+            LOCAL_REALISM_S_MILLI
+        ));
     }
 
     #[test]

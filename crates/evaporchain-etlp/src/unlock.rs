@@ -51,7 +51,11 @@ mod tests {
             committed,
             observed,
         );
-        EnergyWitness { committed_energy: committed, observed_epoch: observed, binding }
+        EnergyWitness {
+            committed_energy: committed,
+            observed_epoch: observed,
+            binding,
+        }
     }
 
     #[test]

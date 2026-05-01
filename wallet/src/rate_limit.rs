@@ -135,7 +135,7 @@ mod tests {
     #[tokio::test]
     async fn test_tokens_refill_over_time() {
         let limiter = RateLimiter::new(100.0, 5); // 100/s = 1 token per 10ms
-        // Drain the bucket
+                                                  // Drain the bucket
         for _ in 0..5 {
             limiter.try_acquire().await;
         }

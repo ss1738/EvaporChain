@@ -179,9 +179,7 @@ pub struct SocialRecovery {
 impl SocialRecovery {
     pub fn new(threshold: usize, delay_hours: u32) -> Result<Self, RecoveryError> {
         if threshold == 0 {
-            return Err(RecoveryError::InvalidConfig(
-                "threshold must be > 0".into(),
-            ));
+            return Err(RecoveryError::InvalidConfig("threshold must be > 0".into()));
         }
         Ok(Self {
             guardians: HashMap::new(),
@@ -232,8 +230,7 @@ impl SocialRecovery {
         }
 
         let now = chrono::Utc::now();
-        let expires =
-            now + chrono::Duration::hours(self.recovery_delay_hours as i64 + 168); // delay + 7 days
+        let expires = now + chrono::Duration::hours(self.recovery_delay_hours as i64 + 168); // delay + 7 days
 
         let id = format!("rec-{}", self.requests.len() + 1);
         self.requests.push(RecoveryRequest {
@@ -364,9 +361,10 @@ impl SocialRecovery {
 
     /// Approvals needed for a given request
     pub fn approvals_needed(&self, request_id: &str) -> Option<usize> {
-        self.requests.iter().find(|r| r.id == request_id).map(|r| {
-            self.threshold.saturating_sub(r.approvals.len())
-        })
+        self.requests
+            .iter()
+            .find(|r| r.id == request_id)
+            .map(|r| self.threshold.saturating_sub(r.approvals.len()))
     }
 }
 
@@ -390,8 +388,7 @@ impl RecoveryStore {
     }
 
     pub fn load(path: &Path) -> Result<Self, RecoveryError> {
-        let data =
-            std::fs::read_to_string(path).map_err(|e| RecoveryError::Io(e.to_string()))?;
+        let data = std::fs::read_to_string(path).map_err(|e| RecoveryError::Io(e.to_string()))?;
         serde_json::from_str(&data).map_err(|e| RecoveryError::Json(e.to_string()))
     }
 
@@ -597,9 +594,7 @@ mod tests {
 
     #[test]
     fn test_recovery_store_save_load() {
-        let path = std::env::temp_dir().join(format!(
-            "evap_recovery_{}.json", std::process::id()
-        ));
+        let path = std::env::temp_dir().join(format!("evap_recovery_{}.json", std::process::id()));
         let mut store = RecoveryStore::new();
         store.dead_man_switch = Some(DeadManSwitch::new("evap1x", 30).unwrap());
         store.save(&path).unwrap();

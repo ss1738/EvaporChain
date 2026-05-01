@@ -100,10 +100,7 @@ impl ErasureEncoder {
         padded.resize(padded_len, 0u8);
 
         // Split into data shards
-        let mut shard_vecs: Vec<Vec<u8>> = padded
-            .chunks(shard_size)
-            .map(|c| c.to_vec())
-            .collect();
+        let mut shard_vecs: Vec<Vec<u8>> = padded.chunks(shard_size).map(|c| c.to_vec()).collect();
 
         // Add empty parity shards
         for _ in 0..self.config.parity_shards {
@@ -121,7 +118,11 @@ impl ErasureEncoder {
             .enumerate()
             .map(|(i, data)| {
                 let hash = blake3::hash(&data).into();
-                Shard { index: i, data, hash }
+                Shard {
+                    index: i,
+                    data,
+                    hash,
+                }
             })
             .collect();
 
@@ -208,8 +209,8 @@ mod tests {
             .iter()
             .map(|s| Some(s.data.clone()))
             .collect();
-        for i in 4..8 {
-            partial[i] = None;
+        for slot in partial.iter_mut().take(8).skip(4) {
+            *slot = None;
         }
 
         let recovered = encoder.reconstruct(partial).unwrap();
@@ -247,8 +248,8 @@ mod tests {
             .iter()
             .map(|s| Some(s.data.clone()))
             .collect();
-        for i in 0..5 {
-            partial[i] = None;
+        for slot in partial.iter_mut().take(5) {
+            *slot = None;
         }
 
         let result = encoder.reconstruct(partial);

@@ -132,10 +132,7 @@ impl GasProfile {
     }
 
     pub fn total_cost(&self) -> u64 {
-        self.samples
-            .iter()
-            .map(|s| s.gas_used * s.gas_price)
-            .sum()
+        self.samples.iter().map(|s| s.gas_used * s.gas_price).sum()
     }
 }
 
@@ -346,10 +343,7 @@ impl GasProfiler {
     }
 
     pub fn all_samples(&self) -> Vec<&GasSample> {
-        self.profiles
-            .values()
-            .flat_map(|p| &p.samples)
-            .collect()
+        self.profiles.values().flat_map(|p| &p.samples).collect()
     }
 
     pub fn recent_samples(&self, n: usize) -> Vec<&GasSample> {
@@ -665,10 +659,8 @@ mod tests {
     // 21
     #[test]
     fn test_load_or_default_missing_file() {
-        let path = std::env::temp_dir().join(format!(
-            "gas_profiler_missing_{}.json",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("gas_profiler_missing_{}.json", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let gp = GasProfiler::load_or_default(&path);
         assert!(gp.profiles.is_empty());

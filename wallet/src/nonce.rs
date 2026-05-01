@@ -41,11 +41,7 @@ impl NonceManager {
     }
 
     /// Get the cached nonce for an address, or fetch it if not cached.
-    pub async fn get(
-        &mut self,
-        rpc: &RpcClient,
-        address: &str,
-    ) -> Result<u64, NonceError> {
+    pub async fn get(&mut self, rpc: &RpcClient, address: &str) -> Result<u64, NonceError> {
         if let Some(&nonce) = self.cache.get(address) {
             Ok(nonce)
         } else {
@@ -76,11 +72,7 @@ impl NonceManager {
 
     /// Re-sync from node and return the fresh nonce.
     /// Call this after a nonce-related submission failure.
-    pub async fn resync(
-        &mut self,
-        rpc: &RpcClient,
-        address: &str,
-    ) -> Result<u64, NonceError> {
+    pub async fn resync(&mut self, rpc: &RpcClient, address: &str) -> Result<u64, NonceError> {
         self.sync(rpc, address).await
     }
 
@@ -170,8 +162,12 @@ mod tests {
     #[test]
     fn test_is_nonce_error() {
         assert!(NonceManager::is_nonce_error("nonce too low"));
-        assert!(NonceManager::is_nonce_error("Transaction nonce already used"));
-        assert!(NonceManager::is_nonce_error("Stale nonce: expected 5, got 3"));
+        assert!(NonceManager::is_nonce_error(
+            "Transaction nonce already used"
+        ));
+        assert!(NonceManager::is_nonce_error(
+            "Stale nonce: expected 5, got 3"
+        ));
         assert!(!NonceManager::is_nonce_error("insufficient balance"));
         assert!(!NonceManager::is_nonce_error("object not found"));
     }

@@ -429,7 +429,13 @@ impl TxDecoder {
 
     // ── Internal helpers ──────────────────────────────────────────
 
-    fn generate_summary(&self, method_name: &str, value: u64, from: &str, to: Option<&str>) -> String {
+    fn generate_summary(
+        &self,
+        method_name: &str,
+        value: u64,
+        from: &str,
+        to: Option<&str>,
+    ) -> String {
         let from_short = if from.len() > 8 {
             format!("{}...", &from[..8])
         } else {
@@ -486,10 +492,7 @@ mod tests {
     fn test_register_contract() {
         let mut dec = TxDecoder::new();
         dec.register_contract("evap1abc", "MyToken");
-        assert_eq!(
-            dec.known_contracts.get("evap1abc").unwrap(),
-            "MyToken"
-        );
+        assert_eq!(dec.known_contracts.get("evap1abc").unwrap(), "MyToken");
     }
 
     #[test]
@@ -507,7 +510,15 @@ mod tests {
             MethodSignature::new("0xaa", "transfer", TxCategory::Transfer)
                 .add_param("to", ParamType::Address),
         );
-        let tx = dec.decode("hash1", "0xaa", "evap1from", Some("evap1to"), 100, 5, &[("to", "evap1to")]);
+        let tx = dec.decode(
+            "hash1",
+            "0xaa",
+            "evap1from",
+            Some("evap1to"),
+            100,
+            5,
+            &[("to", "evap1to")],
+        );
         assert_eq!(tx.category, TxCategory::Transfer);
         assert_eq!(tx.method_name, "transfer");
         assert_eq!(tx.params.len(), 1);
@@ -532,7 +543,12 @@ mod tests {
                 .add_param("amount", ParamType::Uint),
         );
         let tx = dec.decode(
-            "hash3", "0xbb", "evap1from", None, 500, 2,
+            "hash3",
+            "0xbb",
+            "evap1from",
+            None,
+            500,
+            2,
             &[("validator", "evap1val"), ("amount", "500")],
         );
         assert_eq!(tx.params.len(), 2);
@@ -597,8 +613,13 @@ mod tests {
         let mut dec = TxDecoder::new();
         dec.register_defaults();
         let tx = dec.decode(
-            "txhash_transfer", "0xa9059cbb", "evap1sender", Some("evap1receiver"),
-            1000, 10, &[("to", "evap1receiver"), ("amount", "1000")],
+            "txhash_transfer",
+            "0xa9059cbb",
+            "evap1sender",
+            Some("evap1receiver"),
+            1000,
+            10,
+            &[("to", "evap1receiver"), ("amount", "1000")],
         );
         assert_eq!(tx.category, TxCategory::Transfer);
         assert_eq!(tx.method_name, "transfer");
@@ -612,8 +633,13 @@ mod tests {
         let mut dec = TxDecoder::new();
         dec.register_defaults();
         let tx = dec.decode(
-            "txhash_obj", "0x01000001", "evap1creator", None,
-            0, 5, &[("object_type", "document"), ("data", "0xabcdef")],
+            "txhash_obj",
+            "0x01000001",
+            "evap1creator",
+            None,
+            0,
+            5,
+            &[("object_type", "document"), ("data", "0xabcdef")],
         );
         assert_eq!(tx.category, TxCategory::ObjectCreation);
         assert_eq!(tx.method_name, "create_object");
@@ -625,8 +651,13 @@ mod tests {
         let mut dec = TxDecoder::new();
         dec.register_defaults();
         let tx = dec.decode(
-            "txhash_nft", "0x03000001", "evap1artist", None,
-            0, 3, &[("collection", "evap1col"), ("metadata", "ipfs://abc")],
+            "txhash_nft",
+            "0x03000001",
+            "evap1artist",
+            None,
+            0,
+            3,
+            &[("collection", "evap1col"), ("metadata", "ipfs://abc")],
         );
         assert_eq!(tx.category, TxCategory::NftMint);
         assert_eq!(tx.method_name, "mint_nft");
@@ -636,7 +667,12 @@ mod tests {
     fn test_decode_summary() {
         let mut dec = TxDecoder::new();
         dec.register_defaults();
-        let summary = dec.decode_summary("0xa9059cbb", 500, "evap1sender_long", Some("evap1recv_long"));
+        let summary = dec.decode_summary(
+            "0xa9059cbb",
+            500,
+            "evap1sender_long",
+            Some("evap1recv_long"),
+        );
         assert!(summary.contains("transfer"));
         assert!(summary.contains("500"));
         assert!(summary.contains("evap1sen..."));
@@ -668,8 +704,7 @@ mod tests {
         assert_eq!(tx.from_address, "from_addr");
         assert_eq!(tx.to_address, Some("to_addr".to_string()));
 
-        let tx2 = DecodedTx::new("h2", TxCategory::Unknown, "x")
-            .with_addresses("from_addr", None);
+        let tx2 = DecodedTx::new("h2", TxCategory::Unknown, "x").with_addresses("from_addr", None);
         assert!(tx2.to_address.is_none());
     }
 
@@ -751,12 +786,23 @@ mod tests {
         let mut dec = TxDecoder::new();
         dec.register_defaults();
         dec.register_contract("evap1contract", "TestContract");
-        dec.decode("h_persist", "0xa9059cbb", "evap1from", Some("evap1to"), 42, 1, &[("to", "evap1to"), ("amount", "42")]);
+        dec.decode(
+            "h_persist",
+            "0xa9059cbb",
+            "evap1from",
+            Some("evap1to"),
+            42,
+            1,
+            &[("to", "evap1to"), ("amount", "42")],
+        );
 
         dec.save(&path).expect("save failed");
         let loaded = TxDecoder::load(&path).expect("load failed");
         assert_eq!(loaded.signatures.len(), 12);
-        assert_eq!(loaded.known_contracts.get("evap1contract").unwrap(), "TestContract");
+        assert_eq!(
+            loaded.known_contracts.get("evap1contract").unwrap(),
+            "TestContract"
+        );
         assert!(loaded.decoded_cache.contains_key("h_persist"));
         assert_eq!(loaded.decoded_cache["h_persist"].value, 42);
 

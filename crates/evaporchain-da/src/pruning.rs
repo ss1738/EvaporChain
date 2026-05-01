@@ -37,27 +37,27 @@ pub fn prune_by_temperature(
 
     for (&block_number, package) in da_store.iter() {
         match poha.get(block_number) {
-            Some(cert) => {
-                match cert.temperature() {
-                    CertTemperature::Hot => {
+            Some(cert) => match cert.temperature() {
+                CertTemperature::Hot => {
+                    result.blocks_retained += 1;
+                }
+                CertTemperature::Warm => {
+                    let parity_count = package
+                        .shards
+                        .len()
+                        .saturating_sub(package.header.erasure_config.data_shards);
+                    if parity_count > 0 {
+                        to_prune_parity.push(block_number);
+                        result.shards_pruned += parity_count;
+                    } else {
                         result.blocks_retained += 1;
                     }
-                    CertTemperature::Warm => {
-                        let parity_count = package.shards.len()
-                            .saturating_sub(package.header.erasure_config.data_shards);
-                        if parity_count > 0 {
-                            to_prune_parity.push(block_number);
-                            result.shards_pruned += parity_count;
-                        } else {
-                            result.blocks_retained += 1;
-                        }
-                    }
-                    CertTemperature::Cold | CertTemperature::Evaporated => {
-                        result.shards_pruned += package.shards.len();
-                        to_remove.push(block_number);
-                    }
                 }
-            }
+                CertTemperature::Cold | CertTemperature::Evaporated => {
+                    result.shards_pruned += package.shards.len();
+                    to_remove.push(block_number);
+                }
+            },
             None => {
                 // No PoHA certificate — block predates PoHA or cert already evaporated
                 // Check ghost record
@@ -101,7 +101,16 @@ mod tests {
     }
 
     fn register_cert(store: &mut PoHAStore, block: u64, epoch: u64) {
-        store.register(block, [block as u8; 32], 8, 3000, 4000, epoch, vec![], vec![]);
+        store.register(
+            block,
+            [block as u8; 32],
+            8,
+            3000,
+            4000,
+            epoch,
+            vec![],
+            vec![],
+        );
     }
 
     #[test]

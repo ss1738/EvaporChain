@@ -113,16 +113,7 @@ mod tests {
         let pre_total = acc.total();
         // Aggressive params so we get a non-zero owed amount.
         let p = DemurrageParams::new(10_000, 1024);
-        let outcome = apply_demurrage(
-            8_000,
-            0,
-            1,
-            &p,
-            &mut acc,
-            &mut pool,
-            b"alice",
-        )
-        .unwrap();
+        let outcome = apply_demurrage(8_000, 0, 1, &p, &mut acc, &mut pool, b"alice").unwrap();
         assert!(outcome.demurrage > 0);
         // Conservation: total preserved.
         assert_eq!(acc.total(), pre_total);

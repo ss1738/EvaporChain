@@ -46,7 +46,12 @@ pub fn default_rg_params() -> RgFlowParams {
 /// Convert a committed block's on-chain data into a `BlockSummary` for the
 /// WSBF window.  `tx_count` stands in for `total_energy` (same proxy the
 /// LightCone and TUR integrations use at this substrate stage).
-pub fn block_to_summary(height: u64, tx_count: u64, active_accounts: u64, epoch: u64) -> BlockSummary {
+pub fn block_to_summary(
+    height: u64,
+    tx_count: u64,
+    active_accounts: u64,
+    epoch: u64,
+) -> BlockSummary {
     let _ = epoch; // reserved for future per-block lambda governance
     BlockSummary {
         height,
@@ -78,9 +83,9 @@ pub fn push_and_step(
         Ok(ep) => {
             debug!(
                 height_start = ep.height_start,
-                height_end   = ep.height_end,
-                lambda_eff   = ep.lambda_eff,
-                entropy_mb   = ep.entropy_mb,
+                height_end = ep.height_end,
+                lambda_eff = ep.lambda_eff,
+                entropy_mb = ep.entropy_mb,
                 "WSBF RG step complete"
             );
             Some(ep)
@@ -125,7 +130,12 @@ mod tests {
         for i in 0..n {
             last = push_and_step(
                 &mut window,
-                BlockSummary { height: i as u64, total_energy: 50, active_accounts: 10, lambda_half_life: 4096 },
+                BlockSummary {
+                    height: i as u64,
+                    total_energy: 50,
+                    active_accounts: 10,
+                    lambda_half_life: 4096,
+                },
                 &params,
             );
         }
@@ -161,13 +171,21 @@ mod tests {
 
     #[test]
     fn zero_energy_window_no_entropy_correction() {
-        let params = RgFlowParams { coarse_grain: 4, entropy_scale_mb: 1_000 };
+        let params = RgFlowParams {
+            coarse_grain: 4,
+            entropy_scale_mb: 1_000,
+        };
         let mut window = VecDeque::new();
         let mut last = None;
         for i in 0..4 {
             last = push_and_step(
                 &mut window,
-                BlockSummary { height: i, total_energy: 0, active_accounts: 0, lambda_half_life: 100 },
+                BlockSummary {
+                    height: i,
+                    total_energy: 0,
+                    active_accounts: 0,
+                    lambda_half_life: 100,
+                },
                 &params,
             );
         }

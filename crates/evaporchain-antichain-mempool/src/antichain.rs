@@ -32,10 +32,7 @@ impl Antichain {
 
     /// Validate `members` against `lc` and wrap. Every member must be
     /// present on the DAG; every pair must be concurrent.
-    pub fn from_set(
-        members: BTreeSet<BlockId>,
-        lc: &LightCone,
-    ) -> Result<Self, AntichainError> {
+    pub fn from_set(members: BTreeSet<BlockId>, lc: &LightCone) -> Result<Self, AntichainError> {
         for m in &members {
             if !lc.contains(m) {
                 return Err(AntichainError::Absent(*m));
@@ -83,7 +80,8 @@ mod tests {
         lc.insert(Block::new(id(0), vec![], 1000, 0)).unwrap();
         lc.insert(Block::new(id(1), vec![id(0)], 900, 1)).unwrap();
         lc.insert(Block::new(id(2), vec![id(0)], 900, 1)).unwrap();
-        lc.insert(Block::new(id(3), vec![id(1), id(2)], 800, 2)).unwrap();
+        lc.insert(Block::new(id(3), vec![id(1), id(2)], 800, 2))
+            .unwrap();
         lc
     }
 
@@ -104,8 +102,7 @@ mod tests {
     #[test]
     fn concurrent_pair_is_valid_antichain() {
         let lc = diamond();
-        let a =
-            Antichain::from_set([id(1), id(2)].into_iter().collect(), &lc).unwrap();
+        let a = Antichain::from_set([id(1), id(2)].into_iter().collect(), &lc).unwrap();
         assert_eq!(a.len(), 2);
     }
 
@@ -119,8 +116,7 @@ mod tests {
     #[test]
     fn absent_member_rejected() {
         let lc = diamond();
-        let err =
-            Antichain::from_set([id(99)].into_iter().collect(), &lc).unwrap_err();
+        let err = Antichain::from_set([id(99)].into_iter().collect(), &lc).unwrap_err();
         assert!(matches!(err, AntichainError::Absent(_)));
     }
 }

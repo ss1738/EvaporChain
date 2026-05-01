@@ -354,9 +354,7 @@ impl ThemeEngine {
             } else {
                 custom += 1;
             }
-            *schemes_used
-                .entry(theme.scheme.to_string())
-                .or_insert(0) += 1;
+            *schemes_used.entry(theme.scheme.to_string()).or_insert(0) += 1;
         }
 
         ThemeStats {
@@ -551,9 +549,7 @@ mod tests {
     #[test]
     fn test_duplicate_nonexistent_fails() {
         let mut engine = ThemeEngine::new();
-        let err = engine
-            .duplicate_theme("nope", "x", "X")
-            .unwrap_err();
+        let err = engine.duplicate_theme("nope", "x", "X").unwrap_err();
         assert!(matches!(err, ThemeEngineError::ThemeNotFound(_)));
     }
 
@@ -571,9 +567,7 @@ mod tests {
     #[test]
     fn test_custom_var_nonexistent_theme() {
         let mut engine = ThemeEngine::new();
-        let err = engine
-            .set_custom_var("nope", "k", "v")
-            .unwrap_err();
+        let err = engine.set_custom_var("nope", "k", "v").unwrap_err();
         assert!(matches!(err, ThemeEngineError::ThemeNotFound(_)));
     }
 
@@ -599,7 +593,9 @@ mod tests {
     fn test_stats() {
         let mut engine = ThemeEngine::new();
         engine.register_defaults();
-        engine.add_theme(make_custom_theme("extra", "Extra")).unwrap();
+        engine
+            .add_theme(make_custom_theme("extra", "Extra"))
+            .unwrap();
         engine.set_active("default_light").unwrap();
 
         let stats = engine.stats();

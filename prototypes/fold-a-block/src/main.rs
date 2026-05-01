@@ -48,12 +48,8 @@ fn main() {
     let dummy_circuit = C::new_batched(dummy_witnesses);
     println!("Setting up Nova public parameters (HyperKZG)...");
     let setup_start = Instant::now();
-    let pp = PublicParams::<E1, E2, C>::setup(
-        &dummy_circuit,
-        &*S1::ck_floor(),
-        &*S2::ck_floor(),
-    )
-    .expect("Failed to set up public parameters");
+    let pp = PublicParams::<E1, E2, C>::setup(&dummy_circuit, &*S1::ck_floor(), &*S2::ck_floor())
+        .expect("Failed to set up public parameters");
     let setup_time = setup_start.elapsed();
     println!("Setup time: {:.2?}", setup_time);
 
@@ -108,16 +104,19 @@ fn main() {
     ];
 
     let first_circuit = C::new_batched(batches[0].clone());
-    let mut recursive_snark =
-        RecursiveSNARK::<E1, E2, C>::new(&pp, &first_circuit, &z0)
-            .expect("Failed to create RecursiveSNARK");
+    let mut recursive_snark = RecursiveSNARK::<E1, E2, C>::new(&pp, &first_circuit, &z0)
+        .expect("Failed to create RecursiveSNARK");
 
     let start = Instant::now();
     recursive_snark
         .prove_step(&pp, &first_circuit)
         .expect("Failed to prove first step");
     let first_fold = start.elapsed();
-    println!("Fold 0 (blocks 0-{}): {:?}", BLOCKS_PER_FOLD - 1, first_fold);
+    println!(
+        "Fold 0 (blocks 0-{}): {:?}",
+        BLOCKS_PER_FOLD - 1,
+        first_fold
+    );
 
     // 5. Fold remaining batches
     let mut fold_times = vec![first_fold];
@@ -136,7 +135,10 @@ fn main() {
         if i % 50 == 0 || i == num_folds - 1 {
             let block_start = i * BLOCKS_PER_FOLD;
             let block_end = (block_start + BLOCKS_PER_FOLD).min(NUM_BLOCKS) - 1;
-            println!("Fold {} (blocks {}-{}): {:?}", i, block_start, block_end, elapsed);
+            println!(
+                "Fold {} (blocks {}-{}): {:?}",
+                i, block_start, block_end, elapsed
+            );
         }
     }
 
@@ -148,7 +150,10 @@ fn main() {
 
     match &verify_result {
         Ok(z_final) => {
-            println!("Recursive verification: {:?} -- VALID", recursive_verify_time);
+            println!(
+                "Recursive verification: {:?} -- VALID",
+                recursive_verify_time
+            );
             println!("Final state: epoch={:?}", z_final[1]);
         }
         Err(e) => {
@@ -186,7 +191,10 @@ fn main() {
     // Compute amortized per-block times from fold times
     let total_fold_time: f64 = fold_times.iter().map(|d| d.as_secs_f64()).sum();
     let amortized_per_block_ms = (total_fold_time / NUM_BLOCKS as f64) * 1000.0;
-    println!("\nAmortized per-block fold time: {:.3}ms", amortized_per_block_ms);
+    println!(
+        "\nAmortized per-block fold time: {:.3}ms",
+        amortized_per_block_ms
+    );
 
     let report = BenchmarkReport::from_fold_times(
         &fold_times,

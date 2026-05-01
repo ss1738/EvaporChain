@@ -616,11 +616,7 @@ impl EnergyVerkleTrie {
             EnergyNode::Leaf(_) => 1,
             EnergyNode::Compressed(_) => 0, // compressed leaves are not "active"
             EnergyNode::Internal(internal) => {
-                internal
-                    .children
-                    .values()
-                    .map(Self::count_leaves)
-                    .sum()
+                internal.children.values().map(Self::count_leaves).sum()
             }
         }
     }
@@ -635,11 +631,7 @@ impl EnergyVerkleTrie {
             EnergyNode::Empty | EnergyNode::Leaf(_) => 0,
             EnergyNode::Compressed(c) => c.leaf_count,
             EnergyNode::Internal(internal) => {
-                internal
-                    .children
-                    .values()
-                    .map(Self::count_compressed)
-                    .sum()
+                internal.children.values().map(Self::count_compressed).sum()
             }
         }
     }
@@ -1018,8 +1010,16 @@ impl EnergyVerkleTrie {
                             }
                             path.push(byte);
                             Self::collect_mp(
-                                child, keys, gi, depth + 1, path, values, depths,
-                                compressed, siblings, energy_data,
+                                child,
+                                keys,
+                                gi,
+                                depth + 1,
+                                path,
+                                values,
+                                depths,
+                                compressed,
+                                siblings,
+                                energy_data,
                             );
                             path.pop();
                         }
@@ -1171,7 +1171,13 @@ mod tests {
     fn test_insert_multiple() {
         let mut trie = EnergyVerkleTrie::new();
         for i in 0..10u8 {
-            trie.insert(make_key(i), make_value(i * 10), 1000 - i as u64 * 100, 50, 0);
+            trie.insert(
+                make_key(i),
+                make_value(i * 10),
+                1000 - i as u64 * 100,
+                50,
+                0,
+            );
         }
         for i in 0..10u8 {
             assert_eq!(trie.get(&make_key(i)), Some(make_value(i * 10)));
@@ -1264,7 +1270,7 @@ mod tests {
         for i in 0..8u8 {
             trie.insert(make_key_full(i), make_value(i), 100, 10, 0);
         }
-        let nodes_before = trie.node_count();
+        let _nodes_before = trie.node_count();
         assert_eq!(trie.len(), 8);
 
         // Kill all energy
@@ -1496,7 +1502,7 @@ mod tests {
 
         // Compress
         let root_before = trie.root();
-        let compressed = trie.compress_cold();
+        let _compressed = trie.compress_cold();
         let root_after = trie.root();
 
         assert_eq!(root_before, root_after, "compression must preserve root");
@@ -1530,15 +1536,22 @@ mod tests {
     fn test_serialize_deserialize_roundtrip() {
         let mut trie = EnergyVerkleTrie::new();
         for i in 0u8..50 {
-            trie.insert(make_key_full(i), make_value(i), (i as u64) * 100, 10 + i as u64, i as u64);
+            trie.insert(
+                make_key_full(i),
+                make_value(i),
+                (i as u64) * 100,
+                10 + i as u64,
+                i as u64,
+            );
         }
         let root_before = trie.root();
         let health_before = trie.health();
 
         let bytes = trie.to_bytes();
-        assert!(bytes.len() > 0);
+        assert!(!bytes.is_empty());
 
-        let restored = EnergyVerkleTrie::from_bytes(&bytes).expect("deserialization should succeed");
+        let restored =
+            EnergyVerkleTrie::from_bytes(&bytes).expect("deserialization should succeed");
         assert_eq!(restored.root(), root_before);
         let health_after = restored.health();
         assert_eq!(health_after.active_leaves, health_before.active_leaves);
@@ -1557,16 +1570,21 @@ mod tests {
         let root_before = trie.root();
 
         let bytes = trie.to_bytes();
-        let restored = EnergyVerkleTrie::from_bytes(&bytes).expect("deserialization should succeed");
+        let restored =
+            EnergyVerkleTrie::from_bytes(&bytes).expect("deserialization should succeed");
         assert_eq!(restored.root(), root_before);
-        assert_eq!(restored.compressed_leaf_count(), trie.compressed_leaf_count());
+        assert_eq!(
+            restored.compressed_leaf_count(),
+            trie.compressed_leaf_count()
+        );
     }
 
     #[test]
     fn test_serialize_empty_trie() {
         let trie = EnergyVerkleTrie::new();
         let bytes = trie.to_bytes();
-        let restored = EnergyVerkleTrie::from_bytes(&bytes).expect("deserialization should succeed");
+        let restored =
+            EnergyVerkleTrie::from_bytes(&bytes).expect("deserialization should succeed");
         assert_eq!(restored.root(), [0u8; 32]);
         assert!(restored.is_empty());
     }
@@ -1675,7 +1693,13 @@ mod tests {
         let mp = trie.prove_multi(&keys);
         let total_individual: usize = keys
             .iter()
-            .map(|k| trie.prove(k).siblings.iter().map(|s| s.len()).sum::<usize>())
+            .map(|k| {
+                trie.prove(k)
+                    .siblings
+                    .iter()
+                    .map(|s| s.len())
+                    .sum::<usize>()
+            })
             .sum();
         assert!(
             mp.sibling_count() <= total_individual,
@@ -1797,9 +1821,7 @@ mod tests {
         for i in 0..5u8 {
             trie.insert(make_key_full(i), make_value(i), 1000, 100, 0);
         }
-        let updates: Vec<_> = (0..5u8)
-            .map(|i| (make_key_full(i), 0u64, 50u64))
-            .collect();
+        let updates: Vec<_> = (0..5u8).map(|i| (make_key_full(i), 0u64, 50u64)).collect();
         let count = trie.update_energy_batch(&updates);
         assert_eq!(count, 5);
         assert_eq!(trie.root_meta().max_energy, 0);
@@ -1919,8 +1941,6 @@ mod proptests {
             )
         ) {
             let mut trie = EnergyVerkleTrie::new();
-            let mut expected_max = 0u64;
-            let mut expected_min_hl = u64::MAX;
             let mut keys_seen = std::collections::BTreeSet::new();
 
             for (k, v, e, h) in &entries {
@@ -1938,8 +1958,8 @@ mod proptests {
             for (k, _, e, h) in &entries {
                 last.insert(*k, (*e, *h));
             }
-            expected_max = last.values().map(|(e, _)| *e).max().unwrap_or(0);
-            expected_min_hl = last.values().map(|(_, h)| *h).min().unwrap_or(u64::MAX);
+            let expected_max = last.values().map(|(e, _)| *e).max().unwrap_or(0);
+            let expected_min_hl = last.values().map(|(_, h)| *h).min().unwrap_or(u64::MAX);
 
             prop_assert_eq!(trie.root_meta().max_energy, expected_max);
             prop_assert_eq!(trie.root_meta().min_half_life, expected_min_hl);

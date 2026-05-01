@@ -15,7 +15,9 @@ pub enum ValidationError {
     #[error("invalid amount: {reason}\n  Hint: amount must be a positive integer (no decimals, no negatives)")]
     InvalidAmount { reason: String },
 
-    #[error("invalid object ID: {reason}\n  Hint: object IDs are 64 hex characters with 0x prefix")]
+    #[error(
+        "invalid object ID: {reason}\n  Hint: object IDs are 64 hex characters with 0x prefix"
+    )]
     InvalidObjectId { reason: String },
 
     #[error("invalid energy: {reason}")]
@@ -27,7 +29,9 @@ pub enum ValidationError {
     #[error("invalid nonce: {reason}")]
     InvalidNonce { reason: String },
 
-    #[error("invalid threshold: {reason}\n  Hint: threshold must be between 0 and 100 (percentage)")]
+    #[error(
+        "invalid threshold: {reason}\n  Hint: threshold must be between 0 and 100 (percentage)"
+    )]
     InvalidThreshold { reason: String },
 
     #[error("invalid name: {reason}")]
@@ -46,14 +50,21 @@ pub fn validate_address(input: &str) -> Result<String, ValidationError> {
         });
     }
 
-    let hex_str = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")).unwrap_or(trimmed);
+    let hex_str = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .unwrap_or(trimmed);
 
     if hex_str.len() != 64 {
         return Err(ValidationError::InvalidAddress {
             reason: format!(
                 "expected 64 hex characters, got {} ({})",
                 hex_str.len(),
-                if hex_str.len() < 64 { "too short" } else { "too long" }
+                if hex_str.len() < 64 {
+                    "too short"
+                } else {
+                    "too long"
+                }
             ),
         });
     }
@@ -61,7 +72,10 @@ pub fn validate_address(input: &str) -> Result<String, ValidationError> {
     if !hex_str.chars().all(|c| c.is_ascii_hexdigit()) {
         let bad_char = hex_str.chars().find(|c| !c.is_ascii_hexdigit()).unwrap();
         return Err(ValidationError::InvalidAddress {
-            reason: format!("invalid character '{}' — only 0-9, a-f, A-F allowed", bad_char),
+            reason: format!(
+                "invalid character '{}' — only 0-9, a-f, A-F allowed",
+                bad_char
+            ),
         });
     }
 
@@ -80,7 +94,10 @@ pub fn validate_recipient(input: &str) -> Result<String, ValidationError> {
     }
 
     // If it starts with 0x or is all hex, validate as address
-    if trimmed.starts_with("0x") || trimmed.starts_with("0X") || (trimmed.len() == 64 && trimmed.chars().all(|c| c.is_ascii_hexdigit())) {
+    if trimmed.starts_with("0x")
+        || trimmed.starts_with("0X")
+        || (trimmed.len() == 64 && trimmed.chars().all(|c| c.is_ascii_hexdigit()))
+    {
         return validate_address(trimmed);
     }
 
@@ -122,9 +139,11 @@ pub fn parse_amount(input: &str) -> Result<u64, ValidationError> {
         });
     }
 
-    let value: u64 = trimmed.parse().map_err(|_| ValidationError::InvalidAmount {
-        reason: format!("'{}' is not a valid integer", trimmed),
-    })?;
+    let value: u64 = trimmed
+        .parse()
+        .map_err(|_| ValidationError::InvalidAmount {
+            reason: format!("'{}' is not a valid integer", trimmed),
+        })?;
 
     validate_amount(value)
 }
@@ -150,12 +169,16 @@ pub fn validate_energy(energy: u64) -> Result<u64, ValidationError> {
 pub fn validate_half_life(half_life: u64) -> Result<u64, ValidationError> {
     if half_life == 0 {
         return Err(ValidationError::InvalidHalfLife {
-            reason: "half-life must be greater than zero (objects would evaporate instantly)".into(),
+            reason: "half-life must be greater than zero (objects would evaporate instantly)"
+                .into(),
         });
     }
     if half_life > 1_000_000 {
         return Err(ValidationError::InvalidHalfLife {
-            reason: format!("half-life {} is unreasonably large (max 1,000,000 epochs)", half_life),
+            reason: format!(
+                "half-life {} is unreasonably large (max 1,000,000 epochs)",
+                half_life
+            ),
         });
     }
     Ok(half_life)
@@ -193,7 +216,10 @@ pub fn validate_name(name: &str) -> Result<&str, ValidationError> {
             reason: format!("name too long ({} chars, max 32)", trimmed.len()),
         });
     }
-    if !trimmed.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+    if !trimmed
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+    {
         return Err(ValidationError::InvalidName {
             reason: "name can only contain letters, numbers, underscores, and hyphens".into(),
         });

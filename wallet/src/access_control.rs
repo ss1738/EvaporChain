@@ -293,10 +293,7 @@ impl AccessController {
     }
 
     pub fn users_by_role(&self, role: &Role) -> Vec<&WalletUser> {
-        self.users
-            .values()
-            .filter(|u| &u.role == role)
-            .collect()
+        self.users.values().filter(|u| &u.role == role).collect()
     }
 
     pub fn set_role_permissions(&mut self, perms: RolePermissions) {
@@ -460,10 +457,7 @@ mod tests {
     use super::*;
 
     fn test_path(name: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
-            "access_ctrl_test_{}_{name}",
-            std::process::id()
-        ))
+        std::env::temp_dir().join(format!("access_ctrl_test_{}_{name}", std::process::id()))
     }
 
     fn make_controller_with_user() -> (AccessController, String) {
@@ -510,7 +504,10 @@ mod tests {
         let perms = RolePermissions::default_owner();
         assert_eq!(perms.can_perform(&Action::Transfer), AccessDecision::Allow);
         assert_eq!(perms.can_perform(&Action::Export), AccessDecision::Allow);
-        assert_eq!(perms.can_perform(&Action::ConfigureWallet), AccessDecision::Allow);
+        assert_eq!(
+            perms.can_perform(&Action::ConfigureWallet),
+            AccessDecision::Allow
+        );
     }
 
     #[test]
@@ -532,8 +529,14 @@ mod tests {
     #[test]
     fn test_default_viewer_permissions() {
         let perms = RolePermissions::default_viewer();
-        assert_eq!(perms.can_perform(&Action::ViewBalance), AccessDecision::Allow);
-        assert_eq!(perms.can_perform(&Action::ViewHistory), AccessDecision::Allow);
+        assert_eq!(
+            perms.can_perform(&Action::ViewBalance),
+            AccessDecision::Allow
+        );
+        assert_eq!(
+            perms.can_perform(&Action::ViewHistory),
+            AccessDecision::Allow
+        );
         assert_eq!(perms.can_perform(&Action::Transfer), AccessDecision::Deny);
     }
 
@@ -615,9 +618,12 @@ mod tests {
     #[test]
     fn test_users_by_role() {
         let mut ctrl = AccessController::new();
-        ctrl.add_user(WalletUser::new("a1", "Alice", Role::Admin)).unwrap();
-        ctrl.add_user(WalletUser::new("a2", "Bob", Role::Admin)).unwrap();
-        ctrl.add_user(WalletUser::new("v1", "Carol", Role::Viewer)).unwrap();
+        ctrl.add_user(WalletUser::new("a1", "Alice", Role::Admin))
+            .unwrap();
+        ctrl.add_user(WalletUser::new("a2", "Bob", Role::Admin))
+            .unwrap();
+        ctrl.add_user(WalletUser::new("v1", "Carol", Role::Viewer))
+            .unwrap();
         let admins = ctrl.users_by_role(&Role::Admin);
         assert_eq!(admins.len(), 2);
     }
@@ -633,8 +639,10 @@ mod tests {
     #[test]
     fn test_access_log_for_user() {
         let mut ctrl = AccessController::new();
-        ctrl.add_user(WalletUser::new("u1", "Alice", Role::Owner)).unwrap();
-        ctrl.add_user(WalletUser::new("u2", "Bob", Role::Viewer)).unwrap();
+        ctrl.add_user(WalletUser::new("u1", "Alice", Role::Owner))
+            .unwrap();
+        ctrl.add_user(WalletUser::new("u2", "Bob", Role::Viewer))
+            .unwrap();
         ctrl.check_access("u1", &Action::Transfer).unwrap();
         ctrl.check_access("u2", &Action::ViewBalance).unwrap();
         ctrl.check_access("u1", &Action::Export).unwrap();
@@ -647,7 +655,8 @@ mod tests {
     #[test]
     fn test_recent_denials() {
         let mut ctrl = AccessController::new();
-        ctrl.add_user(WalletUser::new("v1", "Viewer", Role::Viewer)).unwrap();
+        ctrl.add_user(WalletUser::new("v1", "Viewer", Role::Viewer))
+            .unwrap();
         ctrl.check_access("v1", &Action::ViewBalance).unwrap();
         ctrl.check_access("v1", &Action::Transfer).unwrap();
         ctrl.check_access("v1", &Action::Export).unwrap();
@@ -674,7 +683,8 @@ mod tests {
     #[test]
     fn test_deactivate_activate() {
         let mut ctrl = AccessController::new();
-        ctrl.add_user(WalletUser::new("u1", "Alice", Role::Owner)).unwrap();
+        ctrl.add_user(WalletUser::new("u1", "Alice", Role::Owner))
+            .unwrap();
         ctrl.get_user_mut("u1").unwrap().deactivate();
         assert!(!ctrl.get_user("u1").unwrap().is_active());
         ctrl.get_user_mut("u1").unwrap().activate();
@@ -684,8 +694,10 @@ mod tests {
     #[test]
     fn test_stats() {
         let mut ctrl = AccessController::new();
-        ctrl.add_user(WalletUser::new("u1", "Alice", Role::Owner)).unwrap();
-        ctrl.add_user(WalletUser::new("u2", "Bob", Role::Viewer)).unwrap();
+        ctrl.add_user(WalletUser::new("u1", "Alice", Role::Owner))
+            .unwrap();
+        ctrl.add_user(WalletUser::new("u2", "Bob", Role::Viewer))
+            .unwrap();
         let mut inactive = WalletUser::new("u3", "Carol", Role::Admin);
         inactive.deactivate();
         ctrl.add_user(inactive).unwrap();
@@ -705,8 +717,10 @@ mod tests {
     fn test_persistence_roundtrip() {
         let path = test_path("roundtrip.json");
         let mut ctrl = AccessController::new();
-        ctrl.add_user(WalletUser::new("u1", "Alice", Role::Owner)).unwrap();
-        ctrl.add_user(WalletUser::new("u2", "Bob", Role::Viewer)).unwrap();
+        ctrl.add_user(WalletUser::new("u1", "Alice", Role::Owner))
+            .unwrap();
+        ctrl.add_user(WalletUser::new("u2", "Bob", Role::Viewer))
+            .unwrap();
         ctrl.check_access("u1", &Action::Transfer).unwrap();
 
         ctrl.save(&path).unwrap();

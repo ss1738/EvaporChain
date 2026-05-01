@@ -89,10 +89,7 @@ pub fn is_transient(error: &str) -> bool {
 /// Execute an async function with retry logic.
 ///
 /// Only retries when `should_retry` returns true for the error.
-pub async fn with_retry<F, Fut, T, E>(
-    config: &RetryConfig,
-    mut f: F,
-) -> Result<T, E>
+pub async fn with_retry<F, Fut, T, E>(config: &RetryConfig, mut f: F) -> Result<T, E>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<T, E>>,

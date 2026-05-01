@@ -53,9 +53,7 @@ impl OracleFeed for MockOracleFeed {
     ) -> Option<OracleAttestation> {
         self.attestations
             .iter()
-            .find(|a| {
-                &a.delivery_location == location && a.hour_slot == slot && a.holder == holder
-            })
+            .find(|a| &a.delivery_location == location && a.hour_slot == slot && a.holder == holder)
             .cloned()
     }
 }

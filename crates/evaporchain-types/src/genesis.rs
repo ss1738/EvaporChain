@@ -47,7 +47,7 @@ impl Default for ChainParams {
             block_interval_ms: 2000,
             grace_period: 5,
             block_gas_limit: 500_000,
-            max_tx_size: 1_048_576,   // 1 MB
+            max_tx_size: 1_048_576, // 1 MB
             max_txs_per_block: 10_000,
             min_validator_stake: 100_000,
             unbonding_period: 100,
@@ -280,7 +280,10 @@ impl GenesisConfig {
         let mut seen_addrs = std::collections::HashSet::new();
         for a in &self.accounts {
             if !seen_addrs.insert(a.address) {
-                errors.push(format!("duplicate account address: {}", hex::encode(a.address)));
+                errors.push(format!(
+                    "duplicate account address: {}",
+                    hex::encode(a.address)
+                ));
             }
         }
 
@@ -410,7 +413,10 @@ mod tests {
         // After one reward_half_life, half reward
         assert_eq!(t.reward_at_epoch(t.reward_half_life), 50);
         // Zero reward config
-        let t0 = Tokenomics { block_reward: 0, ..Default::default() };
+        let t0 = Tokenomics {
+            block_reward: 0,
+            ..Default::default()
+        };
         assert_eq!(t0.reward_at_epoch(100), 0);
     }
 

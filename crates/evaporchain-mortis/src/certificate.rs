@@ -27,9 +27,7 @@ pub struct MortisCertificate {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum CertificateError {
-    #[error(
-        "witness mismatch: re-derived {derived:?}, certificate carries {claimed:?}"
-    )]
+    #[error("witness mismatch: re-derived {derived:?}, certificate carries {claimed:?}")]
     WitnessMismatch {
         derived: [u8; 32],
         claimed: [u8; 32],

@@ -196,10 +196,7 @@ impl Changelog {
     }
 
     /// Return all entries belonging to a specific version tag.
-    pub fn entries_for_version(
-        &self,
-        version: &str,
-    ) -> Result<Vec<&ChangeEntry>, ChangelogError> {
+    pub fn entries_for_version(&self, version: &str) -> Result<Vec<&ChangeEntry>, ChangelogError> {
         let tag = self
             .versions
             .iter()
@@ -250,8 +247,7 @@ impl Changelog {
         self.entries
             .values()
             .filter(|e| {
-                e.description.to_lowercase().contains(&q)
-                    || e.author.to_lowercase().contains(&q)
+                e.description.to_lowercase().contains(&q) || e.author.to_lowercase().contains(&q)
             })
             .collect()
     }
@@ -279,7 +275,11 @@ impl Changelog {
                     let breaking_marker = if entry.breaking { " **BREAKING**" } else { "" };
                     md.push_str(&format!(
                         "- [{}][{}] {}{} (by {})\n",
-                        entry.change_type, entry.scope, entry.description, breaking_marker, entry.author
+                        entry.change_type,
+                        entry.scope,
+                        entry.description,
+                        breaking_marker,
+                        entry.author
                     ));
                 }
             }
@@ -294,7 +294,11 @@ impl Changelog {
                 let breaking_marker = if entry.breaking { " **BREAKING**" } else { "" };
                 md.push_str(&format!(
                     "- [{}][{}] {}{} (by {})\n",
-                    entry.change_type, entry.scope, entry.description, breaking_marker, entry.author
+                    entry.change_type,
+                    entry.scope,
+                    entry.description,
+                    breaking_marker,
+                    entry.author
                 ));
             }
             md.push('\n');
@@ -310,9 +314,7 @@ impl Changelog {
         let mut breaking_changes = 0;
 
         for entry in self.entries.values() {
-            *by_type
-                .entry(entry.change_type.to_string())
-                .or_insert(0) += 1;
+            *by_type.entry(entry.change_type.to_string()).or_insert(0) += 1;
             *by_scope.entry(entry.scope.to_string()).or_insert(0) += 1;
             if entry.breaking {
                 breaking_changes += 1;
@@ -391,8 +393,13 @@ mod tests {
     #[test]
     fn test_remove_entry() {
         let mut cl = Changelog::new();
-        cl.add_entry(make_entry("e1", ChangeType::Fixed, ChangeScope::Transaction, false))
-            .unwrap();
+        cl.add_entry(make_entry(
+            "e1",
+            ChangeType::Fixed,
+            ChangeScope::Transaction,
+            false,
+        ))
+        .unwrap();
         let removed = cl.remove_entry("e1").unwrap();
         assert_eq!(removed.id, "e1");
         assert!(cl.entries.is_empty());
@@ -411,10 +418,20 @@ mod tests {
     #[test]
     fn test_tag_version() {
         let mut cl = Changelog::new();
-        cl.add_entry(make_entry("e1", ChangeType::Added, ChangeScope::Wallet, false))
-            .unwrap();
-        cl.add_entry(make_entry("e2", ChangeType::Fixed, ChangeScope::Energy, false))
-            .unwrap();
+        cl.add_entry(make_entry(
+            "e1",
+            ChangeType::Added,
+            ChangeScope::Wallet,
+            false,
+        ))
+        .unwrap();
+        cl.add_entry(make_entry(
+            "e2",
+            ChangeType::Fixed,
+            ChangeScope::Energy,
+            false,
+        ))
+        .unwrap();
         cl.tag_version(
             "1.0.0",
             "Initial Release",
@@ -444,8 +461,13 @@ mod tests {
     #[test]
     fn test_entries_for_version() {
         let mut cl = Changelog::new();
-        cl.add_entry(make_entry("e1", ChangeType::Added, ChangeScope::Wallet, false))
-            .unwrap();
+        cl.add_entry(make_entry(
+            "e1",
+            ChangeType::Added,
+            ChangeScope::Wallet,
+            false,
+        ))
+        .unwrap();
         cl.tag_version("1.0.0", "v1", vec!["e1".into()], None)
             .unwrap();
 
@@ -467,10 +489,20 @@ mod tests {
     #[test]
     fn test_unversioned_entries() {
         let mut cl = Changelog::new();
-        cl.add_entry(make_entry("e1", ChangeType::Added, ChangeScope::Wallet, false))
-            .unwrap();
-        cl.add_entry(make_entry("e2", ChangeType::Changed, ChangeScope::UI, false))
-            .unwrap();
+        cl.add_entry(make_entry(
+            "e1",
+            ChangeType::Added,
+            ChangeScope::Wallet,
+            false,
+        ))
+        .unwrap();
+        cl.add_entry(make_entry(
+            "e2",
+            ChangeType::Changed,
+            ChangeScope::UI,
+            false,
+        ))
+        .unwrap();
         cl.tag_version("1.0.0", "v1", vec!["e1".into()], None)
             .unwrap();
 
@@ -482,10 +514,20 @@ mod tests {
     #[test]
     fn test_entries_by_type() {
         let mut cl = Changelog::new();
-        cl.add_entry(make_entry("e1", ChangeType::Added, ChangeScope::Wallet, false))
-            .unwrap();
-        cl.add_entry(make_entry("e2", ChangeType::Fixed, ChangeScope::Energy, false))
-            .unwrap();
+        cl.add_entry(make_entry(
+            "e1",
+            ChangeType::Added,
+            ChangeScope::Wallet,
+            false,
+        ))
+        .unwrap();
+        cl.add_entry(make_entry(
+            "e2",
+            ChangeType::Fixed,
+            ChangeScope::Energy,
+            false,
+        ))
+        .unwrap();
         cl.add_entry(make_entry("e3", ChangeType::Added, ChangeScope::UI, false))
             .unwrap();
 
@@ -496,12 +538,27 @@ mod tests {
     #[test]
     fn test_entries_by_scope() {
         let mut cl = Changelog::new();
-        cl.add_entry(make_entry("e1", ChangeType::Added, ChangeScope::Wallet, false))
-            .unwrap();
-        cl.add_entry(make_entry("e2", ChangeType::Fixed, ChangeScope::Wallet, false))
-            .unwrap();
-        cl.add_entry(make_entry("e3", ChangeType::Changed, ChangeScope::Energy, false))
-            .unwrap();
+        cl.add_entry(make_entry(
+            "e1",
+            ChangeType::Added,
+            ChangeScope::Wallet,
+            false,
+        ))
+        .unwrap();
+        cl.add_entry(make_entry(
+            "e2",
+            ChangeType::Fixed,
+            ChangeScope::Wallet,
+            false,
+        ))
+        .unwrap();
+        cl.add_entry(make_entry(
+            "e3",
+            ChangeType::Changed,
+            ChangeScope::Energy,
+            false,
+        ))
+        .unwrap();
 
         let wallet = cl.entries_by_scope(&ChangeScope::Wallet);
         assert_eq!(wallet.len(), 2);
@@ -510,12 +567,22 @@ mod tests {
     #[test]
     fn test_breaking_changes() {
         let mut cl = Changelog::new();
-        cl.add_entry(make_entry("e1", ChangeType::Changed, ChangeScope::Wallet, true))
-            .unwrap();
+        cl.add_entry(make_entry(
+            "e1",
+            ChangeType::Changed,
+            ChangeScope::Wallet,
+            true,
+        ))
+        .unwrap();
         cl.add_entry(make_entry("e2", ChangeType::Added, ChangeScope::UI, false))
             .unwrap();
-        cl.add_entry(make_entry("e3", ChangeType::Removed, ChangeScope::DeFi, true))
-            .unwrap();
+        cl.add_entry(make_entry(
+            "e3",
+            ChangeType::Removed,
+            ChangeScope::DeFi,
+            true,
+        ))
+        .unwrap();
 
         let breaking = cl.breaking_changes();
         assert_eq!(breaking.len(), 2);
@@ -577,10 +644,20 @@ mod tests {
     #[test]
     fn test_generate_markdown() {
         let mut cl = Changelog::new();
-        cl.add_entry(make_entry("e1", ChangeType::Added, ChangeScope::Wallet, false))
-            .unwrap();
-        cl.add_entry(make_entry("e2", ChangeType::Fixed, ChangeScope::Energy, true))
-            .unwrap();
+        cl.add_entry(make_entry(
+            "e1",
+            ChangeType::Added,
+            ChangeScope::Wallet,
+            false,
+        ))
+        .unwrap();
+        cl.add_entry(make_entry(
+            "e2",
+            ChangeType::Fixed,
+            ChangeScope::Energy,
+            true,
+        ))
+        .unwrap();
         cl.tag_version("1.0.0", "First Release", vec!["e1".into()], None)
             .unwrap();
 
@@ -595,12 +672,27 @@ mod tests {
     #[test]
     fn test_stats() {
         let mut cl = Changelog::new();
-        cl.add_entry(make_entry("e1", ChangeType::Added, ChangeScope::Wallet, true))
-            .unwrap();
-        cl.add_entry(make_entry("e2", ChangeType::Added, ChangeScope::Energy, false))
-            .unwrap();
-        cl.add_entry(make_entry("e3", ChangeType::Fixed, ChangeScope::Wallet, false))
-            .unwrap();
+        cl.add_entry(make_entry(
+            "e1",
+            ChangeType::Added,
+            ChangeScope::Wallet,
+            true,
+        ))
+        .unwrap();
+        cl.add_entry(make_entry(
+            "e2",
+            ChangeType::Added,
+            ChangeScope::Energy,
+            false,
+        ))
+        .unwrap();
+        cl.add_entry(make_entry(
+            "e3",
+            ChangeType::Fixed,
+            ChangeScope::Wallet,
+            false,
+        ))
+        .unwrap();
         cl.tag_version("1.0.0", "v1", vec!["e1".into()], None)
             .unwrap();
 
@@ -618,8 +710,13 @@ mod tests {
     fn test_save_and_load() {
         let path = test_file_path("save_load");
         let mut cl = Changelog::new();
-        cl.add_entry(make_entry("e1", ChangeType::Added, ChangeScope::Wallet, false))
-            .unwrap();
+        cl.add_entry(make_entry(
+            "e1",
+            ChangeType::Added,
+            ChangeScope::Wallet,
+            false,
+        ))
+        .unwrap();
         cl.tag_version("1.0.0", "v1", vec!["e1".into()], Some("notes".into()))
             .unwrap();
 
@@ -645,8 +742,13 @@ mod tests {
     fn test_load_or_default_existing() {
         let path = test_file_path("existing_file");
         let mut cl = Changelog::new();
-        cl.add_entry(make_entry("e1", ChangeType::Security, ChangeScope::Security, false))
-            .unwrap();
+        cl.add_entry(make_entry(
+            "e1",
+            ChangeType::Security,
+            ChangeScope::Security,
+            false,
+        ))
+        .unwrap();
         cl.save(&path).unwrap();
 
         let loaded = Changelog::load_or_default(&path);
@@ -670,8 +772,13 @@ mod tests {
     #[test]
     fn test_tag_version_sets_version_field() {
         let mut cl = Changelog::new();
-        cl.add_entry(make_entry("e1", ChangeType::Added, ChangeScope::Staking, false))
-            .unwrap();
+        cl.add_entry(make_entry(
+            "e1",
+            ChangeType::Added,
+            ChangeScope::Staking,
+            false,
+        ))
+        .unwrap();
         assert!(cl.get_entry("e1").unwrap().version.is_none());
 
         cl.tag_version("2.0.0", "v2", vec!["e1".into()], None)

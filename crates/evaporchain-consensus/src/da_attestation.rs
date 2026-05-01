@@ -11,7 +11,7 @@
 
 use evaporchain_crypto::signatures::{BlsKeypair, BlsPublicKey, BlsVerifier};
 use evaporchain_da::certificate::{
-    CertificateBuilder, DAAttestation, DACertificate, create_attestation,
+    create_attestation, CertificateBuilder, DAAttestation, DACertificate,
 };
 use std::collections::{HashMap, HashSet};
 use tracing::{debug, info};
@@ -66,12 +66,7 @@ impl DAAttestationManager {
     /// Start a new attestation round for a block height with the given data root.
     ///
     /// Resets all state from the previous round.
-    pub fn start_round(
-        &mut self,
-        height: u64,
-        data_root: [u8; 32],
-        total_stake: u64,
-    ) {
+    pub fn start_round(&mut self, height: u64, data_root: [u8; 32], total_stake: u64) {
         self.current_height = height;
         self.current_data_root = Some(data_root);
         self.builder = Some(CertificateBuilder::new(height, data_root, total_stake));
@@ -113,12 +108,11 @@ impl DAAttestationManager {
     /// - `Ok(true)` if the attestation was accepted and supermajority is now reached
     /// - `Ok(false)` if accepted but no supermajority yet
     /// - `Err(reason)` if the attestation was rejected
-    pub fn add_attestation(
-        &mut self,
-        attestation: DAAttestation,
-    ) -> Result<bool, &'static str> {
+    pub fn add_attestation(&mut self, attestation: DAAttestation) -> Result<bool, &'static str> {
         // Check round is active
-        let data_root = self.current_data_root.ok_or("no active attestation round")?;
+        let data_root = self
+            .current_data_root
+            .ok_or("no active attestation round")?;
 
         // Already have a certificate
         if self.certificate.is_some() {
@@ -141,7 +135,10 @@ impl DAAttestationManager {
         }
 
         // Prevent duplicate attestations from the same validator
-        if self.attested_validators.contains_key(&attestation.validator_id) {
+        if self
+            .attested_validators
+            .contains_key(&attestation.validator_id)
+        {
             return Err("duplicate attestation from validator");
         }
 
@@ -291,10 +288,14 @@ impl Default for DAAttestationManager {
     }
 }
 
-/// Verify the BLS signature on a DA attestation.
+/// Verify the BLS signature on a DA attestation. MUST mirror
+/// `evaporchain_da::certificate::create_attestation` byte-for-byte,
+/// including the `DA_ATTESTATION_DST` prefix.
 fn verify_attestation_signature(att: &DAAttestation) -> bool {
+    use evaporchain_da::certificate::DA_ATTESTATION_DST;
     // Reconstruct the signed message
-    let mut msg = Vec::with_capacity(8 + 32 + 8 + 4);
+    let mut msg = Vec::with_capacity(DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4);
+    msg.extend_from_slice(DA_ATTESTATION_DST);
     msg.extend_from_slice(&att.block_number.to_le_bytes());
     msg.extend_from_slice(&att.data_root);
     msg.extend_from_slice(&att.validator_id.to_le_bytes());
@@ -356,12 +357,14 @@ mod tests {
 
         // Add 3 attestations (3000/4000 = 75% >= 66.7%)
         for (i, kp) in keypairs.iter().enumerate().take(3) {
-            let att = create_attestation(
-                1, &data_root, (i + 1) as u64, 8, 1000, kp,
-            );
+            let att = create_attestation(1, &data_root, (i + 1) as u64, 8, 1000, kp);
             let result = mgr.add_attestation(att).unwrap();
             if i < 2 {
-                assert!(!result, "shouldn't have supermajority with {} attestations", i + 1);
+                assert!(
+                    !result,
+                    "shouldn't have supermajority with {} attestations",
+                    i + 1
+                );
             } else {
                 assert!(result, "should have supermajority with 3 attestations");
             }
@@ -479,19 +482,21 @@ mod tests {
         mgr.start_round(5, data_root, 3000);
 
         for (i, kp) in keypairs.iter().enumerate() {
-            let att = create_attestation(
-                5, &data_root, (i + 1) as u64, 8, 1000, kp,
-            );
+            let att = create_attestation(5, &data_root, (i + 1) as u64, 8, 1000, kp);
             mgr.add_attestation(att).unwrap();
         }
 
         let cert = mgr.try_build_certificate().unwrap();
 
         // Valid verification
-        assert!(DAAttestationManager::verify_certificate(&cert, 5, &data_root));
+        assert!(DAAttestationManager::verify_certificate(
+            &cert, 5, &data_root
+        ));
 
         // Wrong height
-        assert!(!DAAttestationManager::verify_certificate(&cert, 99, &data_root));
+        assert!(!DAAttestationManager::verify_certificate(
+            &cert, 99, &data_root
+        ));
 
         // Wrong data_root
         let wrong = [0x99; 32];
@@ -506,9 +511,7 @@ mod tests {
         mgr.start_round(1, data_root, 3000);
 
         for (i, kp) in keypairs.iter().enumerate() {
-            let att = create_attestation(
-                1, &data_root, (i + 1) as u64, 8, 1000, kp,
-            );
+            let att = create_attestation(1, &data_root, (i + 1) as u64, 8, 1000, kp);
             mgr.add_attestation(att).unwrap();
         }
 

@@ -80,7 +80,10 @@ mod tests {
 
     #[test]
     fn zero_depth_rejected() {
-        assert_eq!(PhasedNullifierTree::new(0).unwrap_err(), PntError::ZeroDepth);
+        assert_eq!(
+            PhasedNullifierTree::new(0).unwrap_err(),
+            PntError::ZeroDepth
+        );
     }
 
     #[test]
@@ -112,9 +115,9 @@ mod tests {
     fn nullifier_drops_when_window_rotates_past_it() {
         let mut t = PhasedNullifierTree::new(2).unwrap();
         t.insert_nullifier(n(1)).unwrap(); // phase 0
-        t.advance_phase();                  // window = [phase 0, phase 1]
+        t.advance_phase(); // window = [phase 0, phase 1]
         assert!(t.is_spent_in_window(&n(1)));
-        t.advance_phase();                  // window = [phase 1, phase 2]; phase 0 dropped
+        t.advance_phase(); // window = [phase 1, phase 2]; phase 0 dropped
         assert!(!t.is_spent_in_window(&n(1)));
         // It can be re-inserted now (the chain "forgot" it).
         t.insert_nullifier(n(1)).unwrap();

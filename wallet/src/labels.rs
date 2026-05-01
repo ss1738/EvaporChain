@@ -48,8 +48,15 @@ impl AddressCategory {
     /// All categories.
     pub fn all() -> &'static [AddressCategory] {
         &[
-            Self::Personal, Self::Exchange, Self::Defi, Self::Contract,
-            Self::Dao, Self::Staking, Self::Nft, Self::Faucet, Self::Unknown,
+            Self::Personal,
+            Self::Exchange,
+            Self::Defi,
+            Self::Contract,
+            Self::Dao,
+            Self::Staking,
+            Self::Nft,
+            Self::Faucet,
+            Self::Unknown,
         ]
     }
 
@@ -256,7 +263,8 @@ impl LabelStore {
         if !self.addr_index.contains_key(&addr) {
             return Err(LabelError::NotFound(address.to_string()));
         }
-        self.address_labels.retain(|l| l.address.to_lowercase() != addr);
+        self.address_labels
+            .retain(|l| l.address.to_lowercase() != addr);
         self.rebuild_indexes();
         Ok(())
     }
@@ -537,7 +545,12 @@ mod tests {
     fn test_annotate_tx() {
         let mut store = LabelStore::new();
         store
-            .annotate_tx("0xhash1", Some("Salary payment"), vec!["salary".into()], Some("income"))
+            .annotate_tx(
+                "0xhash1",
+                Some("Salary payment"),
+                vec!["salary".into()],
+                Some("income"),
+            )
             .unwrap();
         let ann = store.get_tx_annotation("0xhash1").unwrap();
         assert_eq!(ann.note.as_deref(), Some("Salary payment"));
@@ -552,7 +565,12 @@ mod tests {
             .annotate_tx("0xhash1", Some("First note"), vec!["tag1".into()], None)
             .unwrap();
         store
-            .annotate_tx("0xhash1", Some("Updated note"), vec!["tag2".into()], Some("expense"))
+            .annotate_tx(
+                "0xhash1",
+                Some("Updated note"),
+                vec!["tag2".into()],
+                Some("expense"),
+            )
             .unwrap();
 
         // Should update, not duplicate
@@ -565,7 +583,9 @@ mod tests {
     #[test]
     fn test_remove_tx_annotation() {
         let mut store = LabelStore::new();
-        store.annotate_tx("0xhash1", Some("test"), vec![], None).unwrap();
+        store
+            .annotate_tx("0xhash1", Some("test"), vec![], None)
+            .unwrap();
         store.remove_tx_annotation("0xhash1").unwrap();
         assert_eq!(store.annotation_count(), 0);
     }
@@ -580,9 +600,15 @@ mod tests {
     #[test]
     fn test_filter_tx_by_tag() {
         let mut store = LabelStore::new();
-        store.annotate_tx("0x1", None, vec!["swap".into()], None).unwrap();
-        store.annotate_tx("0x2", None, vec!["salary".into()], None).unwrap();
-        store.annotate_tx("0x3", None, vec!["swap".into(), "defi".into()], None).unwrap();
+        store
+            .annotate_tx("0x1", None, vec!["swap".into()], None)
+            .unwrap();
+        store
+            .annotate_tx("0x2", None, vec!["salary".into()], None)
+            .unwrap();
+        store
+            .annotate_tx("0x3", None, vec!["swap".into(), "defi".into()], None)
+            .unwrap();
 
         let swaps = store.filter_tx_by_tag("swap");
         assert_eq!(swaps.len(), 2);
@@ -591,9 +617,15 @@ mod tests {
     #[test]
     fn test_filter_tx_by_category() {
         let mut store = LabelStore::new();
-        store.annotate_tx("0x1", None, vec![], Some("income")).unwrap();
-        store.annotate_tx("0x2", None, vec![], Some("expense")).unwrap();
-        store.annotate_tx("0x3", None, vec![], Some("income")).unwrap();
+        store
+            .annotate_tx("0x1", None, vec![], Some("income"))
+            .unwrap();
+        store
+            .annotate_tx("0x2", None, vec![], Some("expense"))
+            .unwrap();
+        store
+            .annotate_tx("0x3", None, vec![], Some("income"))
+            .unwrap();
 
         let income = store.filter_tx_by_category("income");
         assert_eq!(income.len(), 2);
@@ -606,8 +638,14 @@ mod tests {
 
     #[test]
     fn test_address_category_from_str() {
-        assert_eq!(AddressCategory::from_str("exchange"), Some(AddressCategory::Exchange));
-        assert_eq!(AddressCategory::from_str("DEFI"), Some(AddressCategory::Defi));
+        assert_eq!(
+            AddressCategory::from_str("exchange"),
+            Some(AddressCategory::Exchange)
+        );
+        assert_eq!(
+            AddressCategory::from_str("DEFI"),
+            Some(AddressCategory::Defi)
+        );
         assert_eq!(AddressCategory::from_str("invalid"), None);
     }
 
@@ -620,7 +658,9 @@ mod tests {
     #[test]
     fn test_json_roundtrip() {
         let mut store = make_store();
-        store.annotate_tx("0xhash1", Some("test"), vec!["tag".into()], None).unwrap();
+        store
+            .annotate_tx("0xhash1", Some("test"), vec!["tag".into()], None)
+            .unwrap();
 
         let json = serde_json::to_string_pretty(&store).unwrap();
         let mut loaded: LabelStore = serde_json::from_str(&json).unwrap();

@@ -11,8 +11,8 @@
 //!
 //! Based on Tendermint light client spec (ICS-007 / CometBFT).
 
-use evaporchain_crypto::signatures::{BlsPublicKey, BlsSignature, BlsVerifier};
 use evaporchain_crypto::hash::blake3_hash;
+use evaporchain_crypto::signatures::{BlsPublicKey, BlsSignature, BlsVerifier};
 use evaporchain_da::sampling::{DASampler, SampleQuery, SampleResponse};
 use evaporchain_types::CommitCertificate;
 use std::collections::BTreeMap;
@@ -241,7 +241,8 @@ impl LightClientVerifier {
         }
 
         // Reject duplicate signer IDs (prevents double-counted stake)
-        let unique_signers: std::collections::HashSet<u64> = cert.signer_ids.iter().copied().collect();
+        let unique_signers: std::collections::HashSet<u64> =
+            cert.signer_ids.iter().copied().collect();
         if unique_signers.len() != cert.signer_ids.len() {
             return Err("Duplicate signer IDs in commit certificate".into());
         }
@@ -299,8 +300,8 @@ impl LightClientVerifier {
         untrusted: &LightBlockHeader,
     ) -> Result<(), String> {
         let trusted_total_stake = trusted.validator_set.total_stake();
-        let threshold = trusted_total_stake * TRUST_THRESHOLD_NUMERATOR
-            / TRUST_THRESHOLD_DENOMINATOR;
+        let threshold =
+            trusted_total_stake * TRUST_THRESHOLD_NUMERATOR / TRUST_THRESHOLD_DENOMINATOR;
 
         // Sum stake of validators that:
         // 1. Were in the trusted set
@@ -462,7 +463,7 @@ impl DASVerifier {
 
 // ─────────────────────── Epoch-Parameterized State Proofs ──────────────
 
-use crate::anchor::{DecayRules, ObjectSnapshot, ObjectLifecycleState, LazyStateEvaluator};
+use crate::anchor::{DecayRules, LazyStateEvaluator, ObjectLifecycleState, ObjectSnapshot};
 
 /// A self-contained proof that "object X has energy Y and state S at epoch E."
 ///
@@ -557,16 +558,10 @@ impl EpochStateProofVerifier {
             return Err(EpochProofError::MerkleProofInvalid);
         }
 
-        let energy = LazyStateEvaluator::energy_at(
-            &proof.snapshot,
-            &proof.decay_rules,
-            proof.query_epoch,
-        );
-        let state = LazyStateEvaluator::state_at(
-            &proof.snapshot,
-            &proof.decay_rules,
-            proof.query_epoch,
-        );
+        let energy =
+            LazyStateEvaluator::energy_at(&proof.snapshot, &proof.decay_rules, proof.query_epoch);
+        let state =
+            LazyStateEvaluator::state_at(&proof.snapshot, &proof.decay_rules, proof.query_epoch);
 
         Ok(EpochProofResult {
             object_id: proof.object_id,
@@ -678,7 +673,11 @@ impl EpochStateProofVerifier {
         let mut idx = target_index;
 
         while level.len() > 1 {
-            let sibling_idx = if idx.is_multiple_of(2) { idx + 1 } else { idx - 1 };
+            let sibling_idx = if idx.is_multiple_of(2) {
+                idx + 1
+            } else {
+                idx - 1
+            };
             if sibling_idx < level.len() {
                 proof.push(level[sibling_idx]);
             } else {
@@ -977,7 +976,12 @@ mod tests {
             let cert = make_commit_certificate(h, 0, hash, &kps, &[0, 1, 2, 3]);
             let header = make_light_header(h, 0, vs.clone(), cert);
             let result = lc.verify(&header, 100 + h * 10);
-            assert_eq!(result, VerificationResult::Valid, "Height {} should verify", h);
+            assert_eq!(
+                result,
+                VerificationResult::Valid,
+                "Height {} should verify",
+                h
+            );
         }
         assert_eq!(lc.latest_trusted_height(), Some(11));
     }
@@ -1027,7 +1031,9 @@ mod tests {
         let result = DASVerifier::verify_samples(&data_root, &responses);
         assert_eq!(
             result,
-            DAVerificationResult::Available { samples_verified: 6 }
+            DAVerificationResult::Available {
+                samples_verified: 6
+            }
         );
     }
 
@@ -1048,7 +1054,10 @@ mod tests {
         let result = DASVerifier::verify_samples(&data_root, &responses);
         assert_eq!(
             result,
-            DAVerificationResult::Unavailable { valid: 2, required: 4 }
+            DAVerificationResult::Unavailable {
+                valid: 2,
+                required: 4
+            }
         );
     }
 
@@ -1073,7 +1082,9 @@ mod tests {
         // One tampered sample fails, but 4 valid ones still pass
         assert_eq!(
             result,
-            DAVerificationResult::Available { samples_verified: 4 }
+            DAVerificationResult::Available {
+                samples_verified: 4
+            }
         );
     }
 
@@ -1093,7 +1104,10 @@ mod tests {
         let result = DASVerifier::verify_samples(&wrong_root, &responses);
         assert_eq!(
             result,
-            DAVerificationResult::Unavailable { valid: 0, required: 4 }
+            DAVerificationResult::Unavailable {
+                valid: 0,
+                required: 4
+            }
         );
     }
 
@@ -1125,12 +1139,8 @@ mod tests {
         let data_root = package.header.commitment_root;
 
         // 2. Light client generates random queries
-        let queries = DASVerifier::generate_queries(
-            100,
-            package.header.total_shards,
-            6,
-            b"lc-sampling-seed",
-        );
+        let queries =
+            DASVerifier::generate_queries(100, package.header.total_shards, 6, b"lc-sampling-seed");
 
         // 3. Full node responds with shard proofs
         let responses: Vec<SampleResponse> = queries
@@ -1142,13 +1152,20 @@ mod tests {
         let result = DASVerifier::verify_block_da(Some(&data_root), &responses);
         assert_eq!(
             result,
-            DAVerificationResult::Available { samples_verified: 6 }
+            DAVerificationResult::Available {
+                samples_verified: 6
+            }
         );
     }
 
     // ── Epoch-Parameterized State Proof Tests ──
 
-    fn make_test_snapshot(id_byte: u8, energy: u64, half_life: u64, anchor_epoch: u64) -> ObjectSnapshot {
+    fn make_test_snapshot(
+        id_byte: u8,
+        energy: u64,
+        half_life: u64,
+        anchor_epoch: u64,
+    ) -> ObjectSnapshot {
         ObjectSnapshot {
             object_id: [id_byte; 32],
             energy_at_anchor: energy,

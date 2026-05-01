@@ -11,6 +11,10 @@ pub struct Vote {
 
 impl Vote {
     pub const fn new(validator_id: u64, target: u64, observed_epoch: u64) -> Self {
-        Self { validator_id, target, observed_epoch }
+        Self {
+            validator_id,
+            target,
+            observed_epoch,
+        }
     }
 }

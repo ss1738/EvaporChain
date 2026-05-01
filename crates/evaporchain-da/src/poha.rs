@@ -122,7 +122,10 @@ impl PoHACertificate {
         // First decay to current epoch
         self.decay_to(epoch);
         // Then boost
-        self.energy = self.energy.saturating_add(energy_boost).min(self.initial_energy);
+        self.energy = self
+            .energy
+            .saturating_add(energy_boost)
+            .min(self.initial_energy);
         self.last_attested_epoch = epoch;
         self.re_attestation_count += 1;
     }
@@ -173,7 +176,12 @@ pub struct ReAttestation {
 
 impl ReAttestation {
     /// Build the message bytes that should be signed.
-    pub fn sign_message(cert_hash: &[u8; 32], epoch: u64, validator_id: u64, shards_held: u32) -> Vec<u8> {
+    pub fn sign_message(
+        cert_hash: &[u8; 32],
+        epoch: u64,
+        validator_id: u64,
+        shards_held: u32,
+    ) -> Vec<u8> {
         let mut msg = Vec::with_capacity(52);
         msg.extend_from_slice(cert_hash);
         msg.extend_from_slice(&epoch.to_le_bytes());
@@ -466,8 +474,8 @@ impl PoHASampler {
             hasher.update(&(i as u64).to_le_bytes());
             let hash = hasher.finalize();
             let bytes = hash.as_bytes();
-            let idx =
-                (u64::from_le_bytes(bytes[0..8].try_into().unwrap()) as usize) % active_block_numbers.len();
+            let idx = (u64::from_le_bytes(bytes[0..8].try_into().unwrap()) as usize)
+                % active_block_numbers.len();
             let block_number = active_block_numbers[idx];
             if !selected.contains(&block_number) {
                 selected.push(block_number);
@@ -552,7 +560,7 @@ mod tests {
         assert_eq!(evaporated, 0);
 
         // At epoch 1000: all should be dead (energy = 0)
-        let (decayed, evaporated) = store.process_epoch(1000);
+        let (_decayed, evaporated) = store.process_epoch(1000);
         assert_eq!(decayed, 0);
         assert_eq!(evaporated, 3);
         assert_eq!(store.active_count(), 0);
@@ -617,7 +625,10 @@ mod tests {
         // Now at epoch 1000: 800 epochs since last attestation
         // energy = 500 >> (800/100) = 500 >> 8 = 1
         assert_eq!(store.get(1).unwrap().energy_at(1000), 1);
-        assert!(store.get(1).unwrap().energy_at(1000) > 0, "re-attestation extended life");
+        assert!(
+            store.get(1).unwrap().energy_at(1000) > 0,
+            "re-attestation extended life"
+        );
 
         // Dead at epoch 1200: 1000 epochs since last attestation
         assert_eq!(store.get(1).unwrap().energy_at(1200), 0);
@@ -667,7 +678,7 @@ mod tests {
         let blocks: Vec<u64> = (100..200).collect();
         let selected = PoHASampler::select_certificates(0, 50, &blocks, 10);
         for &bn in &selected {
-            assert!(bn >= 100 && bn < 200);
+            assert!((100..200).contains(&bn));
         }
     }
 
@@ -797,7 +808,7 @@ mod tests {
         }
 
         // Fast-forward to epoch 1000
-        let (decayed, evaporated) = store.process_epoch(1000);
+        let (_decayed, evaporated) = store.process_epoch(1000);
         // Most old certs should be dead. Re-attested ones might survive.
         assert!(evaporated > 0, "some should have evaporated");
         assert!(store.ghost_count() > 0, "ghosts should exist");
@@ -825,14 +836,41 @@ mod tests {
 
     #[test]
     fn test_temperature_boundaries() {
-        assert_eq!(CertTemperature::from_energy(1000, 1000), CertTemperature::Hot);
-        assert_eq!(CertTemperature::from_energy(500, 1000), CertTemperature::Hot);
-        assert_eq!(CertTemperature::from_energy(499, 1000), CertTemperature::Warm);
-        assert_eq!(CertTemperature::from_energy(150, 1000), CertTemperature::Warm);
-        assert_eq!(CertTemperature::from_energy(149, 1000), CertTemperature::Cold);
-        assert_eq!(CertTemperature::from_energy(10, 1000), CertTemperature::Cold);
-        assert_eq!(CertTemperature::from_energy(9, 1000), CertTemperature::Evaporated);
-        assert_eq!(CertTemperature::from_energy(0, 1000), CertTemperature::Evaporated);
-        assert_eq!(CertTemperature::from_energy(0, 0), CertTemperature::Evaporated);
+        assert_eq!(
+            CertTemperature::from_energy(1000, 1000),
+            CertTemperature::Hot
+        );
+        assert_eq!(
+            CertTemperature::from_energy(500, 1000),
+            CertTemperature::Hot
+        );
+        assert_eq!(
+            CertTemperature::from_energy(499, 1000),
+            CertTemperature::Warm
+        );
+        assert_eq!(
+            CertTemperature::from_energy(150, 1000),
+            CertTemperature::Warm
+        );
+        assert_eq!(
+            CertTemperature::from_energy(149, 1000),
+            CertTemperature::Cold
+        );
+        assert_eq!(
+            CertTemperature::from_energy(10, 1000),
+            CertTemperature::Cold
+        );
+        assert_eq!(
+            CertTemperature::from_energy(9, 1000),
+            CertTemperature::Evaporated
+        );
+        assert_eq!(
+            CertTemperature::from_energy(0, 1000),
+            CertTemperature::Evaporated
+        );
+        assert_eq!(
+            CertTemperature::from_energy(0, 0),
+            CertTemperature::Evaporated
+        );
     }
 }

@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use thiserror::Error;
 
-
 use evaporchain_crypto::signatures::Signer;
 
 use crate::keystore::{KeyStore, KeyStoreError};
@@ -75,8 +74,8 @@ impl BackupManager {
         rand::thread_rng().fill_bytes(&mut nonce_bytes);
 
         let key = derive_key(password, &salt);
-        let cipher = Aes256Gcm::new_from_slice(&key)
-            .map_err(|e| BackupError::Encryption(e.to_string()))?;
+        let cipher =
+            Aes256Gcm::new_from_slice(&key).map_err(|e| BackupError::Encryption(e.to_string()))?;
 
         let ciphertext = cipher
             .encrypt(Nonce::from_slice(&nonce_bytes), plaintext.as_bytes())
@@ -98,16 +97,15 @@ impl BackupManager {
         backup: &EncryptedBackup,
         password: &str,
     ) -> Result<KeyStore, BackupError> {
-        let salt =
-            hex::decode(&backup.salt).map_err(|e| BackupError::Encryption(e.to_string()))?;
+        let salt = hex::decode(&backup.salt).map_err(|e| BackupError::Encryption(e.to_string()))?;
         let nonce_bytes =
             hex::decode(&backup.nonce).map_err(|e| BackupError::Encryption(e.to_string()))?;
         let ciphertext = hex::decode(&backup.encrypted_data)
             .map_err(|e| BackupError::Encryption(e.to_string()))?;
 
         let key = derive_key(password, &salt);
-        let cipher = Aes256Gcm::new_from_slice(&key)
-            .map_err(|e| BackupError::Encryption(e.to_string()))?;
+        let cipher =
+            Aes256Gcm::new_from_slice(&key).map_err(|e| BackupError::Encryption(e.to_string()))?;
 
         let plaintext = cipher
             .decrypt(Nonce::from_slice(&nonce_bytes), ciphertext.as_ref())
@@ -277,7 +275,8 @@ mod tests {
         let ks = make_keystore();
         let mut backup = BackupManager::export_encrypted(&ks, "pass").unwrap();
         // Corrupt the checksum
-        backup.checksum = "0000000000000000000000000000000000000000000000000000000000000000".to_string();
+        backup.checksum =
+            "0000000000000000000000000000000000000000000000000000000000000000".to_string();
         let result = BackupManager::import_encrypted(&backup, "pass");
         assert!(matches!(result, Err(BackupError::ChecksumMismatch)));
     }

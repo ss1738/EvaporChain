@@ -363,9 +363,7 @@ impl GovernanceDashboard {
         let proposals_with_votes: Vec<&GovernanceProposal> = self
             .proposals
             .values()
-            .filter(|p| {
-                p.state != ProposalState::Discussion && p.total_voting_power > 0
-            })
+            .filter(|p| p.state != ProposalState::Discussion && p.total_voting_power > 0)
             .collect();
         let avg_turnout_pct = if proposals_with_votes.is_empty() {
             0.0
@@ -520,8 +518,10 @@ mod tests {
         let mut d = GovernanceDashboard::new();
         d.add_proposal(make_proposal("p1")).unwrap();
         d.start_voting("p1", "2026-12-31T00:00:00Z").unwrap();
-        d.cast_vote(make_vote("p1", "bob", VoteChoice::For, 80)).unwrap();
-        d.cast_vote(make_vote("p1", "carol", VoteChoice::Against, 30)).unwrap();
+        d.cast_vote(make_vote("p1", "bob", VoteChoice::For, 80))
+            .unwrap();
+        d.cast_vote(make_vote("p1", "carol", VoteChoice::Against, 30))
+            .unwrap();
         assert!(d.finalize_proposal("p1").is_ok());
         assert_eq!(d.get_proposal("p1").unwrap().state, ProposalState::Passed);
     }
@@ -531,8 +531,10 @@ mod tests {
         let mut d = GovernanceDashboard::new();
         d.add_proposal(make_proposal("p1")).unwrap();
         d.start_voting("p1", "2026-12-31T00:00:00Z").unwrap();
-        d.cast_vote(make_vote("p1", "bob", VoteChoice::For, 30)).unwrap();
-        d.cast_vote(make_vote("p1", "carol", VoteChoice::Against, 80)).unwrap();
+        d.cast_vote(make_vote("p1", "bob", VoteChoice::For, 30))
+            .unwrap();
+        d.cast_vote(make_vote("p1", "carol", VoteChoice::Against, 80))
+            .unwrap();
         assert!(d.finalize_proposal("p1").is_ok());
         assert_eq!(d.get_proposal("p1").unwrap().state, ProposalState::Rejected);
     }
@@ -542,7 +544,8 @@ mod tests {
         let mut d = GovernanceDashboard::new();
         d.add_proposal(make_proposal("p1")).unwrap();
         d.start_voting("p1", "2026-12-31T00:00:00Z").unwrap();
-        d.cast_vote(make_vote("p1", "bob", VoteChoice::For, 10)).unwrap();
+        d.cast_vote(make_vote("p1", "bob", VoteChoice::For, 10))
+            .unwrap();
         assert!(d.finalize_proposal("p1").is_err());
     }
 
@@ -551,7 +554,8 @@ mod tests {
         let mut d = GovernanceDashboard::new();
         d.add_proposal(make_proposal("p1")).unwrap();
         d.start_voting("p1", "2026-12-31T00:00:00Z").unwrap();
-        d.cast_vote(make_vote("p1", "bob", VoteChoice::For, 200)).unwrap();
+        d.cast_vote(make_vote("p1", "bob", VoteChoice::For, 200))
+            .unwrap();
         d.finalize_proposal("p1").unwrap();
         assert!(d.execute_proposal("p1").is_ok());
         assert_eq!(d.get_proposal("p1").unwrap().state, ProposalState::Executed);
@@ -570,7 +574,10 @@ mod tests {
         let mut d = GovernanceDashboard::new();
         d.add_proposal(make_proposal("p1")).unwrap();
         assert!(d.cancel_proposal("p1").is_ok());
-        assert_eq!(d.get_proposal("p1").unwrap().state, ProposalState::Cancelled);
+        assert_eq!(
+            d.get_proposal("p1").unwrap().state,
+            ProposalState::Cancelled
+        );
     }
 
     #[test]
@@ -616,8 +623,10 @@ mod tests {
         let mut d = GovernanceDashboard::new();
         d.add_proposal(make_proposal("p1")).unwrap();
         d.start_voting("p1", "2026-12-31T00:00:00Z").unwrap();
-        d.cast_vote(make_vote("p1", "bob", VoteChoice::For, 50)).unwrap();
-        d.cast_vote(make_vote("p1", "carol", VoteChoice::Against, 30)).unwrap();
+        d.cast_vote(make_vote("p1", "bob", VoteChoice::For, 50))
+            .unwrap();
+        d.cast_vote(make_vote("p1", "carol", VoteChoice::Against, 30))
+            .unwrap();
         assert_eq!(d.proposal_votes("p1").len(), 2);
     }
 
@@ -628,8 +637,10 @@ mod tests {
         d.add_proposal(make_proposal("p2")).unwrap();
         d.start_voting("p1", "end").unwrap();
         d.start_voting("p2", "end").unwrap();
-        d.cast_vote(make_vote("p1", "bob", VoteChoice::For, 10)).unwrap();
-        d.cast_vote(make_vote("p2", "bob", VoteChoice::Against, 20)).unwrap();
+        d.cast_vote(make_vote("p1", "bob", VoteChoice::For, 10))
+            .unwrap();
+        d.cast_vote(make_vote("p2", "bob", VoteChoice::Against, 20))
+            .unwrap();
         assert_eq!(d.voter_history("bob").len(), 2);
     }
 
@@ -638,7 +649,8 @@ mod tests {
         let mut d = GovernanceDashboard::new();
         d.add_proposal(make_proposal("p1")).unwrap();
         d.start_voting("p1", "end").unwrap();
-        d.cast_vote(make_vote("p1", "bob", VoteChoice::For, 500)).unwrap();
+        d.cast_vote(make_vote("p1", "bob", VoteChoice::For, 500))
+            .unwrap();
         let rate = d.participation_rate("p1").unwrap();
         assert!((rate - 0.5).abs() < 1e-9);
     }
@@ -660,7 +672,8 @@ mod tests {
         d.add_proposal(make_proposal("p1")).unwrap();
         d.add_proposal(make_proposal("p2")).unwrap();
         d.start_voting("p1", "end").unwrap();
-        d.cast_vote(make_vote("p1", "bob", VoteChoice::For, 200)).unwrap();
+        d.cast_vote(make_vote("p1", "bob", VoteChoice::For, 200))
+            .unwrap();
         d.finalize_proposal("p1").unwrap();
         d.delegate("a", "b", 100);
         let s = d.stats();

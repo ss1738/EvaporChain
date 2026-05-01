@@ -38,8 +38,8 @@ pub struct PhaseMapParams {
 impl Default for PhaseMapParams {
     fn default() -> Self {
         Self {
-            lambda_freeze: 10,           // < 10 epochs half-life → frozen
-            lambda_liveness: 100,        // < 100 epochs → liveness marginal
+            lambda_freeze: 10,    // < 10 epochs half-life → frozen
+            lambda_liveness: 100, // < 100 epochs → liveness marginal
             min_quorum_validators: 4,
             liveness_threshold_per_mille: 100, // 10%
         }
@@ -95,7 +95,14 @@ pub fn phase_trajectory(
 ) -> Vec<ConsensusPhase> {
     steps
         .iter()
-        .map(|ep| classify_regime(ep.lambda_eff, n_validators, adversary_fraction_per_mille, params))
+        .map(|ep| {
+            classify_regime(
+                ep.lambda_eff,
+                n_validators,
+                adversary_fraction_per_mille,
+                params,
+            )
+        })
         .collect()
 }
 
@@ -105,12 +112,7 @@ pub fn find_fixed_point(trajectory: &[ConsensusPhase]) -> Option<usize> {
     if trajectory.len() < 2 {
         return None;
     }
-    for i in 1..trajectory.len() {
-        if trajectory[i] == trajectory[i - 1] {
-            return Some(i);
-        }
-    }
-    None
+    (1..trajectory.len()).find(|&i| trajectory[i] == trajectory[i - 1])
 }
 
 #[cfg(test)]

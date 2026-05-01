@@ -40,8 +40,8 @@ pub struct Gauge {
 pub struct Histogram {
     pub name: String,
     pub help: String,
-    pub buckets: Vec<f64>,          // upper bounds
-    pub counts: Vec<u64>,           // per-bucket counts
+    pub buckets: Vec<f64>, // upper bounds
+    pub counts: Vec<u64>,  // per-bucket counts
     pub sum: f64,
     pub count: u64,
     pub labels: BTreeMap<String, String>,
@@ -88,12 +88,7 @@ impl MetricsRegistry {
 
     // ── Counter ops ───────────────────────────────────────────
 
-    pub fn register_counter(
-        &mut self,
-        name: &str,
-        help: &str,
-        labels: BTreeMap<String, String>,
-    ) {
+    pub fn register_counter(&mut self, name: &str, help: &str, labels: BTreeMap<String, String>) {
         self.metrics.insert(
             name.to_string(),
             Metric::Counter(Counter {
@@ -138,12 +133,7 @@ impl MetricsRegistry {
 
     // ── Gauge ops ─────────────────────────────────────────────
 
-    pub fn register_gauge(
-        &mut self,
-        name: &str,
-        help: &str,
-        labels: BTreeMap<String, String>,
-    ) {
+    pub fn register_gauge(&mut self, name: &str, help: &str, labels: BTreeMap<String, String>) {
         self.metrics.insert(
             name.to_string(),
             Metric::Gauge(Gauge {
@@ -215,7 +205,9 @@ impl MetricsRegistry {
         labels: BTreeMap<String, String>,
     ) -> Result<(), MetricsError> {
         if buckets.is_empty() {
-            return Err(MetricsError::InvalidBucket("buckets cannot be empty".into()));
+            return Err(MetricsError::InvalidBucket(
+                "buckets cannot be empty".into(),
+            ));
         }
         for w in buckets.windows(2) {
             if w[0] >= w[1] {
@@ -350,12 +342,7 @@ impl MetricsRegistry {
                             h.counts[i]
                         ));
                     }
-                    out.push_str(&format!(
-                        "{}_sum{} {}\n",
-                        h.name,
-                        lbl,
-                        format_value(h.sum)
-                    ));
+                    out.push_str(&format!("{}_sum{} {}\n", h.name, lbl, format_value(h.sum)));
                     out.push_str(&format!("{}_count{} {}\n", h.name, lbl, h.count));
                 }
             }
@@ -386,11 +373,7 @@ impl MetricsRegistry {
             "Total energy refreshes",
             BTreeMap::new(),
         );
-        self.register_gauge(
-            "wallet_balance",
-            "Current wallet balance",
-            BTreeMap::new(),
-        );
+        self.register_gauge("wallet_balance", "Current wallet balance", BTreeMap::new());
         self.register_gauge(
             "wallet_energy_lowest",
             "Lowest energy level among objects",
@@ -446,14 +429,20 @@ fn format_value(v: f64) -> String {
 // ── Default bucket sets ───────────────────────────────────────
 
 pub fn default_latency_buckets() -> Vec<f64> {
-    vec![10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0, 10000.0]
+    vec![
+        10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0, 10000.0,
+    ]
 }
 
 pub fn default_size_buckets() -> Vec<f64> {
     vec![64.0, 256.0, 1024.0, 4096.0, 16384.0, 65536.0]
 }
 
-pub fn exponential_buckets(start: f64, factor: f64, count: usize) -> Result<Vec<f64>, MetricsError> {
+pub fn exponential_buckets(
+    start: f64,
+    factor: f64,
+    count: usize,
+) -> Result<Vec<f64>, MetricsError> {
     if start <= 0.0 {
         return Err(MetricsError::InvalidBucket("start must be positive".into()));
     }

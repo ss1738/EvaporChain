@@ -287,11 +287,7 @@ impl MultisigStore {
     }
 
     /// Approve a proposal.
-    pub fn approve(
-        &mut self,
-        proposal_id: &str,
-        signer: &str,
-    ) -> Result<&Proposal, MultisigError> {
+    pub fn approve(&mut self, proposal_id: &str, signer: &str) -> Result<&Proposal, MultisigError> {
         let idx = *self
             .proposal_index
             .get(proposal_id)
@@ -764,11 +760,7 @@ mod tests {
     fn test_1_of_n_auto_approved() {
         let mut store = MultisigStore::new();
         store
-            .create_group(
-                "quick",
-                vec!["0xalice".into(), "0xbob".into()],
-                1,
-            )
+            .create_group("quick", vec!["0xalice".into(), "0xbob".into()], 1)
             .unwrap();
 
         let proposal = store

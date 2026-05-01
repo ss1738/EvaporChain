@@ -11,7 +11,9 @@
 //!   - PrivateTransfer: verify ZK proof → spend nullifiers → create output notes
 //!   - State is synced back to StateDB (note tree root, nullifiers, pool balance)
 
-use evaporchain_proving::privacy::{Commitment, Nullifier, PrivacyEngine, verify_balance_binding, verify_merkle_proof, MerkleProof};
+use evaporchain_proving::privacy::{
+    verify_balance_binding, verify_merkle_proof, Commitment, MerkleProof, Nullifier, PrivacyEngine,
+};
 use evaporchain_state::db::StateDB;
 use evaporchain_types::{MerkleProofData, PrivateTransferTx, ShieldTx, UnshieldTx};
 use thiserror::Error;
@@ -202,11 +204,13 @@ impl PrivacyExecutor {
 
     /// Get a Merkle proof for a note at the given tree index.
     pub fn get_merkle_proof(&self, leaf_index: usize) -> Option<MerkleProofData> {
-        self.engine.get_merkle_proof(leaf_index).map(|p| MerkleProofData {
-            siblings: p.siblings,
-            leaf_index: p.leaf_index,
-            root: p.root,
-        })
+        self.engine
+            .get_merkle_proof(leaf_index)
+            .map(|p| MerkleProofData {
+                siblings: p.siblings,
+                leaf_index: p.leaf_index,
+                root: p.root,
+            })
     }
 
     // ─── Shield ───────────────────────────────────────────────────────────
@@ -306,27 +310,42 @@ impl PrivacyExecutor {
         // 1. Validate witness field counts
         if tx.input_amounts.len() != n_inputs {
             return Err(PrivacyExecError::MissingWitnessData {
-                field: format!("input_amounts: expected {n_inputs}, got {}", tx.input_amounts.len()),
+                field: format!(
+                    "input_amounts: expected {n_inputs}, got {}",
+                    tx.input_amounts.len()
+                ),
             });
         }
         if tx.input_blindings.len() != n_inputs {
             return Err(PrivacyExecError::MissingWitnessData {
-                field: format!("input_blindings: expected {n_inputs}, got {}", tx.input_blindings.len()),
+                field: format!(
+                    "input_blindings: expected {n_inputs}, got {}",
+                    tx.input_blindings.len()
+                ),
             });
         }
         if tx.input_value_commitments.len() != n_inputs {
             return Err(PrivacyExecError::MissingWitnessData {
-                field: format!("input_value_commitments: expected {n_inputs}, got {}", tx.input_value_commitments.len()),
+                field: format!(
+                    "input_value_commitments: expected {n_inputs}, got {}",
+                    tx.input_value_commitments.len()
+                ),
             });
         }
         if tx.input_note_commitments.len() != n_inputs {
             return Err(PrivacyExecError::MissingWitnessData {
-                field: format!("input_note_commitments: expected {n_inputs}, got {}", tx.input_note_commitments.len()),
+                field: format!(
+                    "input_note_commitments: expected {n_inputs}, got {}",
+                    tx.input_note_commitments.len()
+                ),
             });
         }
         if tx.input_merkle_proofs.len() != n_inputs {
             return Err(PrivacyExecError::MissingWitnessData {
-                field: format!("input_merkle_proofs: expected {n_inputs}, got {}", tx.input_merkle_proofs.len()),
+                field: format!(
+                    "input_merkle_proofs: expected {n_inputs}, got {}",
+                    tx.input_merkle_proofs.len()
+                ),
             });
         }
         if tx.output_blindings.len() != tx.change_commitments.len() {
@@ -466,37 +485,58 @@ impl PrivacyExecutor {
         // 1. Validate all witness field counts
         if tx.input_amounts.len() != n_inputs {
             return Err(PrivacyExecError::MissingWitnessData {
-                field: format!("input_amounts: expected {n_inputs}, got {}", tx.input_amounts.len()),
+                field: format!(
+                    "input_amounts: expected {n_inputs}, got {}",
+                    tx.input_amounts.len()
+                ),
             });
         }
         if tx.input_blindings.len() != n_inputs {
             return Err(PrivacyExecError::MissingWitnessData {
-                field: format!("input_blindings: expected {n_inputs}, got {}", tx.input_blindings.len()),
+                field: format!(
+                    "input_blindings: expected {n_inputs}, got {}",
+                    tx.input_blindings.len()
+                ),
             });
         }
         if tx.input_value_commitments.len() != n_inputs {
             return Err(PrivacyExecError::MissingWitnessData {
-                field: format!("input_value_commitments: expected {n_inputs}, got {}", tx.input_value_commitments.len()),
+                field: format!(
+                    "input_value_commitments: expected {n_inputs}, got {}",
+                    tx.input_value_commitments.len()
+                ),
             });
         }
         if tx.input_note_commitments.len() != n_inputs {
             return Err(PrivacyExecError::MissingWitnessData {
-                field: format!("input_note_commitments: expected {n_inputs}, got {}", tx.input_note_commitments.len()),
+                field: format!(
+                    "input_note_commitments: expected {n_inputs}, got {}",
+                    tx.input_note_commitments.len()
+                ),
             });
         }
         if tx.input_merkle_proofs.len() != n_inputs {
             return Err(PrivacyExecError::MissingWitnessData {
-                field: format!("input_merkle_proofs: expected {n_inputs}, got {}", tx.input_merkle_proofs.len()),
+                field: format!(
+                    "input_merkle_proofs: expected {n_inputs}, got {}",
+                    tx.input_merkle_proofs.len()
+                ),
             });
         }
         if tx.output_amounts.len() != n_outputs {
             return Err(PrivacyExecError::MissingWitnessData {
-                field: format!("output_amounts: expected {n_outputs}, got {}", tx.output_amounts.len()),
+                field: format!(
+                    "output_amounts: expected {n_outputs}, got {}",
+                    tx.output_amounts.len()
+                ),
             });
         }
         if tx.output_blindings.len() != n_outputs {
             return Err(PrivacyExecError::MissingWitnessData {
-                field: format!("output_blindings: expected {n_outputs}, got {}", tx.output_blindings.len()),
+                field: format!(
+                    "output_blindings: expected {n_outputs}, got {}",
+                    tx.output_blindings.len()
+                ),
             });
         }
 
@@ -569,7 +609,11 @@ impl PrivacyExecutor {
         ) {
             return Err(PrivacyExecError::InvalidBalanceBinding);
         }
-        if sum_in != sum_out.checked_add(tx.fee).ok_or(PrivacyExecError::BalanceOverflow)? {
+        if sum_in
+            != sum_out
+                .checked_add(tx.fee)
+                .ok_or(PrivacyExecError::BalanceOverflow)?
+        {
             return Err(PrivacyExecError::UnshieldBalanceMismatch);
         }
 
@@ -639,9 +683,7 @@ impl Default for PrivacyExecutor {
 mod tests {
     use super::*;
     use evaporchain_proving::privacy::compute_balance_binding;
-    use evaporchain_proving::privacy::{
-        Commitment, Nullifier,
-    };
+    use evaporchain_proving::privacy::{Commitment, Nullifier};
     use evaporchain_state::InMemoryStateDB;
     use evaporchain_types::{Account, AccountAddress};
 
@@ -683,6 +725,7 @@ mod tests {
     }
 
     /// Helper: shield real funds and return all the data needed to build a real unshield/transfer.
+    #[allow(clippy::too_many_arguments)]
     fn do_shield(
         executor: &mut PrivacyExecutor,
         db: &mut InMemoryStateDB,
@@ -726,10 +769,8 @@ mod tests {
     ) -> UnshieldTx {
         let merkle_proof = executor.get_merkle_proof(note.tree_index).unwrap();
         let nullifier = Nullifier::derive(&note.spending_secret, &Commitment(note.note_commitment));
-        let binding = compute_balance_binding(
-            note.amount, 0, unshield_amount,
-            &[note.blinding], &[],
-        );
+        let binding =
+            compute_balance_binding(note.amount, 0, unshield_amount, &[note.blinding], &[]);
         UnshieldTx {
             to,
             amount: unshield_amount,
@@ -756,7 +797,10 @@ mod tests {
         fee: u64,
     ) -> PrivateTransferTx {
         let merkle_proof = executor.get_merkle_proof(input_note.tree_index).unwrap();
-        let nullifier = Nullifier::derive(&input_note.spending_secret, &Commitment(input_note.note_commitment));
+        let nullifier = Nullifier::derive(
+            &input_note.spending_secret,
+            &Commitment(input_note.note_commitment),
+        );
 
         let output_commitments: Vec<[u8; 32]> = output_amounts
             .iter()
@@ -766,8 +810,11 @@ mod tests {
 
         let sum_out: u64 = output_amounts.iter().sum();
         let binding = compute_balance_binding(
-            input_note.amount, sum_out, fee,
-            &[input_note.blinding], output_blindings,
+            input_note.amount,
+            sum_out,
+            fee,
+            &[input_note.blinding],
+            output_blindings,
         );
 
         PrivateTransferTx {
@@ -797,8 +844,14 @@ mod tests {
         executor.set_epoch(1);
 
         let note = do_shield(
-            &mut executor, &mut db, &addr, 5_000, 0,
-            test_blinding(10), test_blinding(20), test_blinding(99),
+            &mut executor,
+            &mut db,
+            &addr,
+            5_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
         );
 
         // Transparent balance decreased
@@ -837,7 +890,10 @@ mod tests {
         };
 
         let err = executor.execute_shield(&mut db, &tx).unwrap_err();
-        assert!(matches!(err, PrivacyExecError::InsufficientBalanceForShield { .. }));
+        assert!(matches!(
+            err,
+            PrivacyExecError::InsufficientBalanceForShield { .. }
+        ));
     }
 
     #[test]
@@ -847,12 +903,21 @@ mod tests {
         let mut executor = PrivacyExecutor::with_depth(8);
 
         let tx = ShieldTx {
-            from: addr, amount: 0, nonce: 0,
-            note_owner_hash: test_blinding(10), value_blinding: test_blinding(20),
-            energy: None, energy_blinding: None, half_life: 0,
-            signature: None, public_key: None,
+            from: addr,
+            amount: 0,
+            nonce: 0,
+            note_owner_hash: test_blinding(10),
+            value_blinding: test_blinding(20),
+            energy: None,
+            energy_blinding: None,
+            half_life: 0,
+            signature: None,
+            public_key: None,
         };
-        assert!(matches!(executor.execute_shield(&mut db, &tx), Err(PrivacyExecError::ZeroShieldAmount)));
+        assert!(matches!(
+            executor.execute_shield(&mut db, &tx),
+            Err(PrivacyExecError::ZeroShieldAmount)
+        ));
     }
 
     #[test]
@@ -862,12 +927,21 @@ mod tests {
         let mut executor = PrivacyExecutor::with_depth(8);
 
         let tx = ShieldTx {
-            from: addr, amount: 1_000, nonce: 5, // wrong nonce
-            note_owner_hash: test_blinding(10), value_blinding: test_blinding(20),
-            energy: None, energy_blinding: None, half_life: 0,
-            signature: None, public_key: None,
+            from: addr,
+            amount: 1_000,
+            nonce: 5, // wrong nonce
+            note_owner_hash: test_blinding(10),
+            value_blinding: test_blinding(20),
+            energy: None,
+            energy_blinding: None,
+            half_life: 0,
+            signature: None,
+            public_key: None,
         };
-        assert!(matches!(executor.execute_shield(&mut db, &tx), Err(PrivacyExecError::EngineError(_))));
+        assert!(matches!(
+            executor.execute_shield(&mut db, &tx),
+            Err(PrivacyExecError::EngineError(_))
+        ));
     }
 
     #[test]
@@ -879,8 +953,14 @@ mod tests {
 
         for i in 0..5u8 {
             do_shield(
-                &mut executor, &mut db, &addr, 1_000, i as u64,
-                test_blinding(10 + i), test_blinding(20 + i), test_blinding(90 + i),
+                &mut executor,
+                &mut db,
+                &addr,
+                1_000,
+                i as u64,
+                test_blinding(10 + i),
+                test_blinding(20 + i),
+                test_blinding(90 + i),
             );
         }
 
@@ -900,8 +980,14 @@ mod tests {
         executor.set_epoch(1);
 
         let note = do_shield(
-            &mut executor, &mut db, &sender, 5_000, 0,
-            test_blinding(10), test_blinding(20), test_blinding(99),
+            &mut executor,
+            &mut db,
+            &sender,
+            5_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
         );
 
         let tx = build_real_unshield(&executor, &note, receiver, 5_000);
@@ -923,8 +1009,14 @@ mod tests {
         executor.set_epoch(1);
 
         let note = do_shield(
-            &mut executor, &mut db, &sender, 5_000, 0,
-            test_blinding(10), test_blinding(20), test_blinding(99),
+            &mut executor,
+            &mut db,
+            &sender,
+            5_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
         );
 
         // First unshield succeeds
@@ -934,8 +1026,14 @@ mod tests {
         // Second unshield with same note — double spend
         // Note: anchor changed, so we'd get StaleAnchor first. Shield another note to reset.
         let note2 = do_shield(
-            &mut executor, &mut db, &sender, 3_000, 1,
-            test_blinding(11), test_blinding(21), test_blinding(98),
+            &mut executor,
+            &mut db,
+            &sender,
+            3_000,
+            1,
+            test_blinding(11),
+            test_blinding(21),
+            test_blinding(98),
         );
         // Try using the original (already spent) nullifier with new anchor
         let mut tx2 = build_real_unshield(&executor, &note2, receiver, 3_000);
@@ -954,8 +1052,14 @@ mod tests {
         executor.set_epoch(1);
 
         let note = do_shield(
-            &mut executor, &mut db, &sender, 5_000, 0,
-            test_blinding(10), test_blinding(20), test_blinding(99),
+            &mut executor,
+            &mut db,
+            &sender,
+            5_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
         );
 
         // Build tx with current anchor
@@ -963,8 +1067,14 @@ mod tests {
 
         // Shield again to change the Merkle root
         do_shield(
-            &mut executor, &mut db, &sender, 2_000, 1,
-            test_blinding(11), test_blinding(21), test_blinding(98),
+            &mut executor,
+            &mut db,
+            &sender,
+            2_000,
+            1,
+            test_blinding(11),
+            test_blinding(21),
+            test_blinding(98),
         );
 
         // Now the tx has a stale anchor
@@ -983,8 +1093,14 @@ mod tests {
         executor.set_epoch(1);
 
         let note = do_shield(
-            &mut executor, &mut db, &sender, 5_000, 0,
-            test_blinding(10), test_blinding(20), test_blinding(99),
+            &mut executor,
+            &mut db,
+            &sender,
+            5_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
         );
 
         let mut tx = build_real_unshield(&executor, &note, receiver, 5_000);
@@ -1003,8 +1119,14 @@ mod tests {
         executor.set_epoch(1);
 
         let note = do_shield(
-            &mut executor, &mut db, &sender, 5_000, 0,
-            test_blinding(10), test_blinding(20), test_blinding(99),
+            &mut executor,
+            &mut db,
+            &sender,
+            5_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
         );
 
         let mut tx = build_real_unshield(&executor, &note, receiver, 5_000);
@@ -1012,7 +1134,10 @@ mod tests {
         tx.input_value_commitments[0] = [0xCC; 32];
 
         let err = executor.execute_unshield(&mut db, &tx).unwrap_err();
-        assert!(matches!(err, PrivacyExecError::InvalidCommitmentOpening { index: 0 }));
+        assert!(matches!(
+            err,
+            PrivacyExecError::InvalidCommitmentOpening { index: 0 }
+        ));
     }
 
     #[test]
@@ -1024,8 +1149,14 @@ mod tests {
         executor.set_epoch(1);
 
         let note = do_shield(
-            &mut executor, &mut db, &sender, 5_000, 0,
-            test_blinding(10), test_blinding(20), test_blinding(99),
+            &mut executor,
+            &mut db,
+            &sender,
+            5_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
         );
 
         let mut tx = build_real_unshield(&executor, &note, receiver, 5_000);
@@ -1033,7 +1164,10 @@ mod tests {
         tx.input_note_commitments[0] = [0xDD; 32];
 
         let err = executor.execute_unshield(&mut db, &tx).unwrap_err();
-        assert!(matches!(err, PrivacyExecError::InvalidMerkleProof { index: 0 }));
+        assert!(matches!(
+            err,
+            PrivacyExecError::InvalidMerkleProof { index: 0 }
+        ));
     }
 
     // ── Private Transfer Tests (100% real) ──
@@ -1046,8 +1180,14 @@ mod tests {
         executor.set_epoch(1);
 
         let note = do_shield(
-            &mut executor, &mut db, &addr, 5_000, 0,
-            test_blinding(10), test_blinding(20), test_blinding(99),
+            &mut executor,
+            &mut db,
+            &addr,
+            5_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
         );
 
         let out_blinds = [test_blinding(30), test_blinding(31)];
@@ -1070,8 +1210,14 @@ mod tests {
         executor.set_epoch(1);
 
         let note = do_shield(
-            &mut executor, &mut db, &addr, 5_000, 0,
-            test_blinding(10), test_blinding(20), test_blinding(99),
+            &mut executor,
+            &mut db,
+            &addr,
+            5_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
         );
 
         let tx1 = build_real_transfer(&executor, &note, &[4_900], &[test_blinding(30)], 100);
@@ -1079,12 +1225,20 @@ mod tests {
 
         // Try to spend the same note again
         let note2 = do_shield(
-            &mut executor, &mut db, &addr, 3_000, 1,
-            test_blinding(11), test_blinding(21), test_blinding(98),
+            &mut executor,
+            &mut db,
+            &addr,
+            3_000,
+            1,
+            test_blinding(11),
+            test_blinding(21),
+            test_blinding(98),
         );
         let mut tx2 = build_real_transfer(&executor, &note2, &[2_900], &[test_blinding(40)], 100);
         tx2.input_nullifiers = tx1.input_nullifiers.clone();
-        let err = executor.execute_private_transfer(&mut db, &tx2).unwrap_err();
+        let err = executor
+            .execute_private_transfer(&mut db, &tx2)
+            .unwrap_err();
         assert!(matches!(err, PrivacyExecError::DoubleSpend(_)));
     }
 
@@ -1096,8 +1250,14 @@ mod tests {
         executor.set_epoch(1);
 
         let note = do_shield(
-            &mut executor, &mut db, &addr, 5_000, 0,
-            test_blinding(10), test_blinding(20), test_blinding(99),
+            &mut executor,
+            &mut db,
+            &addr,
+            5_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
         );
 
         let mut tx = build_real_transfer(&executor, &note, &[4_900], &[test_blinding(30)], 100);
@@ -1106,9 +1266,11 @@ mod tests {
         // Also duplicate witness fields to match
         tx.input_amounts.push(tx.input_amounts[0]);
         tx.input_blindings.push(tx.input_blindings[0]);
-        tx.input_value_commitments.push(tx.input_value_commitments[0]);
+        tx.input_value_commitments
+            .push(tx.input_value_commitments[0]);
         tx.input_note_commitments.push(tx.input_note_commitments[0]);
-        tx.input_merkle_proofs.push(tx.input_merkle_proofs[0].clone());
+        tx.input_merkle_proofs
+            .push(tx.input_merkle_proofs[0].clone());
 
         let err = executor.execute_private_transfer(&mut db, &tx).unwrap_err();
         assert!(matches!(err, PrivacyExecError::DoubleSpend(_)));
@@ -1148,8 +1310,14 @@ mod tests {
         executor.set_epoch(1);
 
         let note = do_shield(
-            &mut executor, &mut db, &addr, 5_000, 0,
-            test_blinding(10), test_blinding(20), test_blinding(99),
+            &mut executor,
+            &mut db,
+            &addr,
+            5_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
         );
 
         let mut tx = build_real_transfer(&executor, &note, &[4_900], &[test_blinding(30)], 100);
@@ -1169,8 +1337,14 @@ mod tests {
         executor.set_epoch(1);
 
         let note = do_shield(
-            &mut executor, &mut db, &addr, 5_000, 0,
-            test_blinding(10), test_blinding(20), test_blinding(99),
+            &mut executor,
+            &mut db,
+            &addr,
+            5_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
         );
 
         let mut tx = build_real_transfer(&executor, &note, &[4_900], &[test_blinding(30)], 100);
@@ -1188,15 +1362,24 @@ mod tests {
         executor.set_epoch(1);
 
         let note = do_shield(
-            &mut executor, &mut db, &addr, 5_000, 0,
-            test_blinding(10), test_blinding(20), test_blinding(99),
+            &mut executor,
+            &mut db,
+            &addr,
+            5_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
         );
 
         let mut tx = build_real_transfer(&executor, &note, &[4_900], &[test_blinding(30)], 100);
         tx.output_commitments[0] = [0xDD; 32]; // doesn't match amount/blinding
 
         let err = executor.execute_private_transfer(&mut db, &tx).unwrap_err();
-        assert!(matches!(err, PrivacyExecError::InvalidOutputCommitment { index: 0 }));
+        assert!(matches!(
+            err,
+            PrivacyExecError::InvalidOutputCommitment { index: 0 }
+        ));
     }
 
     #[test]
@@ -1207,15 +1390,24 @@ mod tests {
         executor.set_epoch(1);
 
         let note = do_shield(
-            &mut executor, &mut db, &addr, 5_000, 0,
-            test_blinding(10), test_blinding(20), test_blinding(99),
+            &mut executor,
+            &mut db,
+            &addr,
+            5_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
         );
 
         let mut tx = build_real_transfer(&executor, &note, &[4_900], &[test_blinding(30)], 100);
         tx.input_note_commitments[0] = [0xDD; 32]; // wrong tree leaf
 
         let err = executor.execute_private_transfer(&mut db, &tx).unwrap_err();
-        assert!(matches!(err, PrivacyExecError::InvalidMerkleProof { index: 0 }));
+        assert!(matches!(
+            err,
+            PrivacyExecError::InvalidMerkleProof { index: 0 }
+        ));
     }
 
     #[test]
@@ -1226,20 +1418,24 @@ mod tests {
         executor.set_epoch(1);
 
         let note = do_shield(
-            &mut executor, &mut db, &addr, 5_000, 0,
-            test_blinding(10), test_blinding(20), test_blinding(99),
+            &mut executor,
+            &mut db,
+            &addr,
+            5_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
         );
 
         // Build valid tx, then inflate output_amounts to break conservation
         let mut tx = build_real_transfer(&executor, &note, &[4_900], &[test_blinding(30)], 100);
         tx.output_amounts[0] = 6_000; // inflated — sum_in(5000) != sum_out(6000) + fee(100)
-        // Recompute output commitment for the inflated amount so it passes commitment check
+                                      // Recompute output commitment for the inflated amount so it passes commitment check
         tx.output_commitments[0] = Commitment::commit(6_000, &test_blinding(30)).0;
         // Recompute balance binding for the inflated values
-        tx.balance_binding = compute_balance_binding(
-            5_000, 6_000, 100,
-            &[note.blinding], &[test_blinding(30)],
-        );
+        tx.balance_binding =
+            compute_balance_binding(5_000, 6_000, 100, &[note.blinding], &[test_blinding(30)]);
 
         let err = executor.execute_private_transfer(&mut db, &tx).unwrap_err();
         assert!(matches!(err, PrivacyExecError::UnshieldBalanceMismatch));
@@ -1258,8 +1454,14 @@ mod tests {
 
         // 1. Alice shields 50,000
         let alice_note = do_shield(
-            &mut executor, &mut db, &alice, 50_000, 0,
-            test_blinding(10), test_blinding(20), test_blinding(99),
+            &mut executor,
+            &mut db,
+            &alice,
+            50_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
         );
         assert_eq!(db.get_account(&alice).unwrap().balance, 50_000);
         assert_eq!(db.get_shielded_pool_balance(), 50_000);
@@ -1268,8 +1470,10 @@ mod tests {
         let bob_blind = test_blinding(30);
         let alice_change_blind = test_blinding(31);
         let tx = build_real_transfer(
-            &executor, &alice_note,
-            &[30_000, 19_500], &[bob_blind, alice_change_blind],
+            &executor,
+            &alice_note,
+            &[30_000, 19_500],
+            &[bob_blind, alice_change_blind],
             500,
         );
         executor.execute_private_transfer(&mut db, &tx).unwrap();
@@ -1285,7 +1489,8 @@ mod tests {
         let bob_merkle_proof = executor.get_merkle_proof(bob_tree_index).unwrap();
 
         let bob_spending_secret = test_blinding(88);
-        let bob_nullifier = Nullifier::derive(&bob_spending_secret, &Commitment(bob_note_commitment));
+        let bob_nullifier =
+            Nullifier::derive(&bob_spending_secret, &Commitment(bob_note_commitment));
         let bob_binding = compute_balance_binding(30_000, 0, 30_000, &[bob_blind], &[]);
 
         let unshield_tx = UnshieldTx {
@@ -1334,7 +1539,9 @@ mod tests {
         let gas = PrivacyExecutor::estimate_private_transfer_gas(&tx);
         assert_eq!(
             gas,
-            GAS_PRIVATE_TRANSFER_BASE + 2 * GAS_PRIVATE_TRANSFER_PER_INPUT + 3 * GAS_PRIVATE_TRANSFER_PER_OUTPUT
+            GAS_PRIVATE_TRANSFER_BASE
+                + 2 * GAS_PRIVATE_TRANSFER_PER_INPUT
+                + 3 * GAS_PRIVATE_TRANSFER_PER_OUTPUT
         );
     }
 
@@ -1344,7 +1551,9 @@ mod tests {
     fn test_restore_from_db_empty_state_returns_zero() {
         let mut exec = PrivacyExecutor::with_depth(4);
         let db = InMemoryStateDB::new();
-        let n = exec.restore_from_db(&db).expect("empty restore should succeed");
+        let n = exec
+            .restore_from_db(&db)
+            .expect("empty restore should succeed");
         assert_eq!(n, 0);
     }
 
@@ -1356,8 +1565,13 @@ mod tests {
         let bad_commitment = [0xABu8; 32];
         db.append_note_commitment(0, bad_commitment);
         db.put_note_tree_root([0xCDu8; 32]); // not the real rebuilt root
-        let err = exec.restore_from_db(&db).expect_err("root mismatch must error");
+        let err = exec
+            .restore_from_db(&db)
+            .expect_err("root mismatch must error");
         let msg = format!("{err}");
-        assert!(msg.contains("rebuilt root"), "expected mismatch error, got: {msg}");
+        assert!(
+            msg.contains("rebuilt root"),
+            "expected mismatch error, got: {msg}"
+        );
     }
 }

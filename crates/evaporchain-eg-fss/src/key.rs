@@ -42,9 +42,7 @@ impl EgFssKey {
         if threshold_per_period == 0 {
             return Err(KeyError::ZeroThreshold);
         }
-        let total = self
-            .energy_residual
-            .saturating_add(energy);
+        let total = self.energy_residual.saturating_add(energy);
         let advances = total / threshold_per_period;
         let residual = total % threshold_per_period;
         let mut key_material = self.key_material;

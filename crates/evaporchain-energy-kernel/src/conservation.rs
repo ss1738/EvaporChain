@@ -60,11 +60,17 @@ pub struct ConservationCheck;
 impl ConservationCheck {
     /// Audit a redirect-only step. The total must be preserved exactly.
     /// `before` and `after` are the accumulator totals on either side.
-    pub fn redirect(before: &EnergyAccumulator, after: &EnergyAccumulator) -> Result<(), ConservationViolation> {
+    pub fn redirect(
+        before: &EnergyAccumulator,
+        after: &EnergyAccumulator,
+    ) -> Result<(), ConservationViolation> {
         let b = before.total();
         let a = after.total();
         if a != b {
-            return Err(ConservationViolation::RedirectChangedTotal { before: b, after: a });
+            return Err(ConservationViolation::RedirectChangedTotal {
+                before: b,
+                after: a,
+            });
         }
         Ok(())
     }
@@ -81,7 +87,10 @@ impl ConservationCheck {
         let b = before.total();
         let a = after.total();
         if a > b {
-            return Err(ConservationViolation::DecayIncreasedTotal { before: b, after: a });
+            return Err(ConservationViolation::DecayIncreasedTotal {
+                before: b,
+                after: a,
+            });
         }
         // The maximum allowed *retained* total after λ-decay over the
         // elapsed epochs. We assert `after >= retained_min`, which is
@@ -176,7 +185,10 @@ mod tests {
         let before = EnergyAccumulator::new(1_000, 0, 0, 0);
         let after = EnergyAccumulator::new(1_001, 0, 0, 0);
         let err = ConservationCheck::decay_step(&before, &after, 0, lambda(100)).unwrap_err();
-        assert!(matches!(err, ConservationViolation::DecayIncreasedTotal { .. }));
+        assert!(matches!(
+            err,
+            ConservationViolation::DecayIncreasedTotal { .. }
+        ));
     }
 
     #[test]
@@ -189,7 +201,11 @@ mod tests {
             ConservationCheck::decay_step(&before, &after_too_low, 100, lambda(100)).unwrap_err();
         match err {
             ConservationViolation::DecayExceededLambda {
-                before, after, epochs, half_life, ..
+                before,
+                after,
+                epochs,
+                half_life,
+                ..
             } => {
                 assert_eq!(before, 1000);
                 assert_eq!(after, 400);

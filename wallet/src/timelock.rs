@@ -332,8 +332,7 @@ impl TimelockStore {
     }
 
     pub fn load(path: &Path) -> Result<Self, TimelockError> {
-        let data =
-            std::fs::read_to_string(path).map_err(|e| TimelockError::Io(e.to_string()))?;
+        let data = std::fs::read_to_string(path).map_err(|e| TimelockError::Io(e.to_string()))?;
         serde_json::from_str(&data).map_err(|e| TimelockError::Json(e.to_string()))
     }
 
@@ -405,19 +404,22 @@ mod tests {
 
     #[test]
     fn test_timelock_with_note() {
-        let lock = Timelock::new("t1", "a", "b", 100, "2099-01-01T00:00:00Z", false)
-            .with_note("salary");
+        let lock =
+            Timelock::new("t1", "a", "b", 100, "2099-01-01T00:00:00Z", false).with_note("salary");
         assert_eq!(lock.note, "salary");
     }
 
     #[test]
     fn test_vesting_new() {
         let v = VestingSchedule::new(
-            "v1", "alice", 10000,
+            "v1",
+            "alice",
+            10000,
             "2024-01-01T00:00:00Z",
             "2024-07-01T00:00:00Z",
             "2025-01-01T00:00:00Z",
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(v.total_amount, 10000);
         assert_eq!(v.claimed_amount, 0);
     }
@@ -425,7 +427,9 @@ mod tests {
     #[test]
     fn test_vesting_invalid_cliff_before_start() {
         let res = VestingSchedule::new(
-            "v1", "alice", 10000,
+            "v1",
+            "alice",
+            10000,
             "2025-01-01T00:00:00Z",
             "2024-01-01T00:00:00Z",
             "2026-01-01T00:00:00Z",
@@ -436,7 +440,9 @@ mod tests {
     #[test]
     fn test_vesting_invalid_end_before_cliff() {
         let res = VestingSchedule::new(
-            "v1", "alice", 10000,
+            "v1",
+            "alice",
+            10000,
             "2024-01-01T00:00:00Z",
             "2025-01-01T00:00:00Z",
             "2024-06-01T00:00:00Z",
@@ -447,41 +453,53 @@ mod tests {
     #[test]
     fn test_vesting_before_cliff() {
         let v = VestingSchedule::new(
-            "v1", "alice", 10000,
+            "v1",
+            "alice",
+            10000,
             "2024-01-01T00:00:00Z",
             "2024-07-01T00:00:00Z",
             "2025-01-01T00:00:00Z",
-        ).unwrap();
+        )
+        .unwrap();
         // Before cliff: 0 vested
         let epoch = chrono::DateTime::parse_from_rfc3339("2024-03-01T00:00:00Z")
-            .unwrap().timestamp();
+            .unwrap()
+            .timestamp();
         assert_eq!(v.vested_at(epoch), 0);
     }
 
     #[test]
     fn test_vesting_after_end() {
         let v = VestingSchedule::new(
-            "v1", "alice", 10000,
+            "v1",
+            "alice",
+            10000,
             "2024-01-01T00:00:00Z",
             "2024-07-01T00:00:00Z",
             "2025-01-01T00:00:00Z",
-        ).unwrap();
+        )
+        .unwrap();
         let epoch = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
-            .unwrap().timestamp();
+            .unwrap()
+            .timestamp();
         assert_eq!(v.vested_at(epoch), 10000);
     }
 
     #[test]
     fn test_vesting_midway() {
         let v = VestingSchedule::new(
-            "v1", "alice", 10000,
+            "v1",
+            "alice",
+            10000,
             "2024-01-01T00:00:00Z",
             "2024-01-01T00:00:00Z", // No cliff
             "2025-01-01T00:00:00Z",
-        ).unwrap();
+        )
+        .unwrap();
         // Midpoint: ~50%
         let epoch = chrono::DateTime::parse_from_rfc3339("2024-07-01T00:00:00Z")
-            .unwrap().timestamp();
+            .unwrap()
+            .timestamp();
         let vested = v.vested_at(epoch);
         // Should be roughly 4959-5000 depending on exact days
         assert!(vested > 4800 && vested < 5100);
@@ -490,13 +508,17 @@ mod tests {
     #[test]
     fn test_vesting_claim() {
         let mut v = VestingSchedule::new(
-            "v1", "alice", 10000,
+            "v1",
+            "alice",
+            10000,
             "2024-01-01T00:00:00Z",
             "2024-01-01T00:00:00Z",
             "2025-01-01T00:00:00Z",
-        ).unwrap();
+        )
+        .unwrap();
         let epoch = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
-            .unwrap().timestamp();
+            .unwrap()
+            .timestamp();
         let claimed = v.claim(epoch).unwrap();
         assert_eq!(claimed, 10000);
         assert_eq!(v.status, LockStatus::FullyClaimed);
@@ -505,20 +527,25 @@ mod tests {
     #[test]
     fn test_vesting_partial_claim() {
         let mut v = VestingSchedule::new(
-            "v1", "alice", 10000,
+            "v1",
+            "alice",
+            10000,
             "2024-01-01T00:00:00Z",
             "2024-01-01T00:00:00Z",
             "2025-01-01T00:00:00Z",
-        ).unwrap();
+        )
+        .unwrap();
         let mid = chrono::DateTime::parse_from_rfc3339("2024-07-01T00:00:00Z")
-            .unwrap().timestamp();
+            .unwrap()
+            .timestamp();
         let claimed = v.claim(mid).unwrap();
         assert!(claimed > 0 && claimed < 10000);
         assert_eq!(v.status, LockStatus::PartiallyClaimed);
 
         // Claim rest
         let end = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
-            .unwrap().timestamp();
+            .unwrap()
+            .timestamp();
         let rest = v.claim(end).unwrap();
         assert_eq!(claimed + rest, 10000);
         assert_eq!(v.status, LockStatus::FullyClaimed);
@@ -527,13 +554,17 @@ mod tests {
     #[test]
     fn test_vesting_percent() {
         let v = VestingSchedule::new(
-            "v1", "alice", 10000,
+            "v1",
+            "alice",
+            10000,
             "2024-01-01T00:00:00Z",
             "2024-01-01T00:00:00Z",
             "2025-01-01T00:00:00Z",
-        ).unwrap();
+        )
+        .unwrap();
         let end = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
-            .unwrap().timestamp();
+            .unwrap()
+            .timestamp();
         assert_eq!(v.percent_vested(end), 100.0);
     }
 
@@ -557,9 +588,14 @@ mod tests {
     fn test_store_add_vesting() {
         let mut store = TimelockStore::new();
         let v = VestingSchedule::new(
-            "v1", "alice", 10000,
-            "2024-01-01T00:00:00Z", "2024-07-01T00:00:00Z", "2025-01-01T00:00:00Z",
-        ).unwrap();
+            "v1",
+            "alice",
+            10000,
+            "2024-01-01T00:00:00Z",
+            "2024-07-01T00:00:00Z",
+            "2025-01-01T00:00:00Z",
+        )
+        .unwrap();
         store.add_vesting(v).unwrap();
         assert_eq!(store.list_vestings().len(), 1);
     }
@@ -567,9 +603,36 @@ mod tests {
     #[test]
     fn test_store_locks_for() {
         let mut store = TimelockStore::new();
-        store.add_timelock(Timelock::new("t1", "a", "bob", 100, "2099-01-01T00:00:00Z", false)).unwrap();
-        store.add_timelock(Timelock::new("t2", "a", "bob", 200, "2099-01-01T00:00:00Z", false)).unwrap();
-        store.add_timelock(Timelock::new("t3", "a", "carol", 300, "2099-01-01T00:00:00Z", false)).unwrap();
+        store
+            .add_timelock(Timelock::new(
+                "t1",
+                "a",
+                "bob",
+                100,
+                "2099-01-01T00:00:00Z",
+                false,
+            ))
+            .unwrap();
+        store
+            .add_timelock(Timelock::new(
+                "t2",
+                "a",
+                "bob",
+                200,
+                "2099-01-01T00:00:00Z",
+                false,
+            ))
+            .unwrap();
+        store
+            .add_timelock(Timelock::new(
+                "t3",
+                "a",
+                "carol",
+                300,
+                "2099-01-01T00:00:00Z",
+                false,
+            ))
+            .unwrap();
         assert_eq!(store.locks_for("bob").len(), 2);
         assert_eq!(store.locks_for("carol").len(), 1);
     }
@@ -577,18 +640,43 @@ mod tests {
     #[test]
     fn test_store_total_locked() {
         let mut store = TimelockStore::new();
-        store.add_timelock(Timelock::new("t1", "a", "b", 100, "2099-01-01T00:00:00Z", false)).unwrap();
-        store.add_timelock(Timelock::new("t2", "a", "b", 200, "2099-01-01T00:00:00Z", false)).unwrap();
+        store
+            .add_timelock(Timelock::new(
+                "t1",
+                "a",
+                "b",
+                100,
+                "2099-01-01T00:00:00Z",
+                false,
+            ))
+            .unwrap();
+        store
+            .add_timelock(Timelock::new(
+                "t2",
+                "a",
+                "b",
+                200,
+                "2099-01-01T00:00:00Z",
+                false,
+            ))
+            .unwrap();
         assert_eq!(store.total_locked(), 300);
     }
 
     #[test]
     fn test_store_save_load() {
-        let path = std::env::temp_dir().join(format!(
-            "evap_timelock_{}.json", std::process::id()
-        ));
+        let path = std::env::temp_dir().join(format!("evap_timelock_{}.json", std::process::id()));
         let mut store = TimelockStore::new();
-        store.add_timelock(Timelock::new("t1", "a", "b", 100, "2099-01-01T00:00:00Z", true)).unwrap();
+        store
+            .add_timelock(Timelock::new(
+                "t1",
+                "a",
+                "b",
+                100,
+                "2099-01-01T00:00:00Z",
+                true,
+            ))
+            .unwrap();
         store.save(&path).unwrap();
         let loaded = TimelockStore::load(&path).unwrap();
         assert_eq!(loaded.list_timelocks().len(), 1);

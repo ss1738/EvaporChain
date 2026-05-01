@@ -121,10 +121,7 @@ pub(crate) fn node_hash<const P: usize>(level: u32, children: &[Hash; 64]) -> Ha
 /// verifier numbering (0 = just above leaves, depth − 1 = root) is
 /// `depth_remaining − 1`, so a level-k node partitions by base-`P`
 /// digit at *position* k of the key (low-order first).
-pub(crate) fn subtree_root<const P: usize>(
-    leaves: &[(u64, Hash)],
-    depth_remaining: u32,
-) -> Hash {
+pub(crate) fn subtree_root<const P: usize>(leaves: &[(u64, Hash)], depth_remaining: u32) -> Hash {
     if leaves.is_empty() {
         return EMPTY_HASH;
     }
@@ -221,7 +218,10 @@ mod tests {
 
     #[test]
     fn depth_zero_rejected() {
-        assert_eq!(PAdicMerkleTree::<2>::new(0).unwrap_err(), TreeError::DepthZero);
+        assert_eq!(
+            PAdicMerkleTree::<2>::new(0).unwrap_err(),
+            TreeError::DepthZero
+        );
     }
 
     #[test]

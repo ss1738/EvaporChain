@@ -384,11 +384,7 @@ mod tests {
     fn test_opt_out() {
         let mut mgr = TelemetryManager::new();
         mgr.opt_in(TelemetryLevel::Full);
-        let _ = mgr.record_event(
-            EventCategory2::Command,
-            "test",
-            HashMap::new(),
-        );
+        let _ = mgr.record_event(EventCategory2::Command, "test", HashMap::new());
         assert!(!mgr.events.is_empty());
         mgr.opt_out();
         assert!(!mgr.is_enabled());

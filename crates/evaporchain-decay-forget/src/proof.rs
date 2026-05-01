@@ -31,9 +31,7 @@ pub enum ForgetProofError {
         "decayed commitment {decayed} is not at-or-below forget threshold {threshold} — record not yet forgotten"
     )]
     NotForgotten { decayed: Energy, threshold: Energy },
-    #[error(
-        "witness mismatch: re-derived {derived:?}, proof carries {claimed:?}"
-    )]
+    #[error("witness mismatch: re-derived {derived:?}, proof carries {claimed:?}")]
     WitnessMismatch {
         derived: [u8; 32],
         claimed: [u8; 32],

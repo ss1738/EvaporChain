@@ -1,5 +1,8 @@
 use crate::compiler::{EvaporBytecode, Op};
-use crate::{ContractEvent, ExecutionContext, ExternalCaller, ScriptCallResult, ScriptError, Value, MAX_CALL_DEPTH};
+use crate::{
+    ContractEvent, ExecutionContext, ExternalCaller, ScriptCallResult, ScriptError, Value,
+    MAX_CALL_DEPTH,
+};
 use std::collections::HashMap;
 
 // ─── Gas Costs ──────────────────────────────────────────────────────────────
@@ -173,11 +176,7 @@ impl EvaporVM {
 
                 Op::Load(name) => {
                     self.charge_gas(GAS_LOAD)?;
-                    let val = self
-                        .locals
-                        .get(name)
-                        .cloned()
-                        .unwrap_or(Value::Null);
+                    let val = self.locals.get(name).cloned().unwrap_or(Value::Null);
                     self.push(val)?;
                 }
 
@@ -189,11 +188,7 @@ impl EvaporVM {
 
                 Op::StateLoad(field) => {
                     self.charge_gas(GAS_STATE_LOAD)?;
-                    let val = self
-                        .state
-                        .get(field)
-                        .cloned()
-                        .unwrap_or(Value::Null);
+                    let val = self.state.get(field).cloned().unwrap_or(Value::Null);
                     self.push(val)?;
                 }
 
@@ -215,11 +210,11 @@ impl EvaporVM {
                     let b = self.pop()?;
                     let a = self.pop()?;
                     let result = match (&a, &b) {
-                        (Value::U64(x), Value::U64(y)) => Value::U64(
-                            x.checked_add(*y).ok_or_else(|| {
+                        (Value::U64(x), Value::U64(y)) => {
+                            Value::U64(x.checked_add(*y).ok_or_else(|| {
                                 ScriptError::Runtime("arithmetic overflow: addition".into())
-                            })?,
-                        ),
+                            })?)
+                        }
                         (Value::Str(x), Value::Str(y)) => {
                             let concat_len = x.len() + y.len();
                             self.charge_gas(3 + (concat_len as u64) / 32)?;
@@ -233,9 +228,7 @@ impl EvaporVM {
                             Value::Str(format!("{x}{y}"))
                         }
                         _ => {
-                            return Err(ScriptError::Runtime(format!(
-                                "cannot add {a:?} and {b:?}"
-                            )))
+                            return Err(ScriptError::Runtime(format!("cannot add {a:?} and {b:?}")))
                         }
                     };
                     self.push(result)?;
@@ -375,7 +368,8 @@ impl EvaporVM {
                     if *target >= bytecode.opcodes.len() {
                         return Err(ScriptError::Runtime(format!(
                             "jump target {} out of bounds (bytecode len {})",
-                            target, bytecode.opcodes.len()
+                            target,
+                            bytecode.opcodes.len()
                         )));
                     }
                     if *target <= ip {
@@ -395,7 +389,8 @@ impl EvaporVM {
                     if *target >= bytecode.opcodes.len() {
                         return Err(ScriptError::Runtime(format!(
                             "jump target {} out of bounds (bytecode len {})",
-                            target, bytecode.opcodes.len()
+                            target,
+                            bytecode.opcodes.len()
                         )));
                     }
                     let cond = self.pop()?.as_bool()?;
@@ -418,7 +413,8 @@ impl EvaporVM {
                     if *target >= bytecode.opcodes.len() {
                         return Err(ScriptError::Runtime(format!(
                             "jump target {} out of bounds (bytecode len {})",
-                            target, bytecode.opcodes.len()
+                            target,
+                            bytecode.opcodes.len()
                         )));
                     }
                     let cond = self.pop()?.as_bool()?;
@@ -634,7 +630,6 @@ impl EvaporVM {
                 }
 
                 // ── Temporal Opcodes ──
-
                 Op::EpochNow => {
                     self.charge_gas(GAS_PUSH)?;
                     self.push(Value::U64(ctx.epoch))?;
@@ -670,18 +665,18 @@ impl EvaporVM {
                     let half_life = self.pop()?.as_u64()?;
                     let initial_energy = self.pop()?.as_u64()?;
                     let epochs_elapsed = self.pop()?.as_u64()?;
-                    let decayed =
-                        evaporchain_types::energy_at_epoch(initial_energy, half_life, epochs_elapsed);
+                    let decayed = evaporchain_types::energy_at_epoch(
+                        initial_energy,
+                        half_life,
+                        epochs_elapsed,
+                    );
                     self.push(Value::U64(decayed))?;
                 }
 
                 // ── VRF / Randomness Opcodes ──
-
                 Op::VrfRandomness => {
                     self.charge_gas(GAS_PUSH)?;
-                    let value = u64::from_le_bytes(
-                        ctx.vrf_randomness[..8].try_into().unwrap(),
-                    );
+                    let value = u64::from_le_bytes(ctx.vrf_randomness[..8].try_into().unwrap());
                     self.push(Value::U64(value))?;
                 }
 
@@ -693,9 +688,7 @@ impl EvaporVM {
                     hasher.update(&ctx.vrf_randomness);
                     hasher.update(domain.as_bytes());
                     let derived = hasher.finalize();
-                    let value = u64::from_le_bytes(
-                        derived.as_bytes()[..8].try_into().unwrap(),
-                    );
+                    let value = u64::from_le_bytes(derived.as_bytes()[..8].try_into().unwrap());
                     self.push(Value::U64(value))?;
                 }
 
@@ -703,13 +696,9 @@ impl EvaporVM {
                     self.charge_gas(GAS_STATE_LOAD)?;
                     let max = self.pop()?.as_u64()?;
                     if max == 0 {
-                        return Err(ScriptError::Runtime(
-                            "random_range: max must be > 0".into(),
-                        ));
+                        return Err(ScriptError::Runtime("random_range: max must be > 0".into()));
                     }
-                    let raw = u64::from_le_bytes(
-                        ctx.vrf_randomness[..8].try_into().unwrap(),
-                    );
+                    let raw = u64::from_le_bytes(ctx.vrf_randomness[..8].try_into().unwrap());
                     self.push(Value::U64(raw % max))?;
                 }
 
@@ -717,7 +706,8 @@ impl EvaporVM {
                     self.charge_gas(GAS_CALL_EXTERNAL)?;
                     if ctx.call_depth >= MAX_CALL_DEPTH {
                         return Err(ScriptError::Runtime(format!(
-                            "cross-contract call depth exceeded (max {})", MAX_CALL_DEPTH
+                            "cross-contract call depth exceeded (max {})",
+                            MAX_CALL_DEPTH
                         )));
                     }
                     let ac = *arg_count;
@@ -775,9 +765,7 @@ impl EvaporVM {
             // One-arg built-ins
             "balance" => {
                 if arg_count != 1 {
-                    return Err(ScriptError::Runtime(
-                        "balance() takes 1 argument".into(),
-                    ));
+                    return Err(ScriptError::Runtime("balance() takes 1 argument".into()));
                 }
                 let _addr = self.pop()?.as_address()?;
                 // In a real implementation, this would look up the on-chain balance.
@@ -787,9 +775,7 @@ impl EvaporVM {
 
             "transfer" => {
                 if arg_count != 2 {
-                    return Err(ScriptError::Runtime(
-                        "transfer() takes 2 arguments".into(),
-                    ));
+                    return Err(ScriptError::Runtime("transfer() takes 2 arguments".into()));
                 }
                 let _amount = self.pop()?.as_u64()?;
                 let _to = self.pop()?.as_address()?;
@@ -803,9 +789,7 @@ impl EvaporVM {
             // emit and require are handled as opcodes, but can also be called as functions
             "emit" => {
                 if arg_count != 1 {
-                    return Err(ScriptError::Runtime(
-                        "emit() takes 1 argument".into(),
-                    ));
+                    return Err(ScriptError::Runtime("emit() takes 1 argument".into()));
                 }
                 let val = self.pop()?;
                 let msg = match val {
@@ -840,9 +824,7 @@ impl EvaporVM {
 
             "require" => {
                 if arg_count != 2 {
-                    return Err(ScriptError::Runtime(
-                        "require() takes 2 arguments".into(),
-                    ));
+                    return Err(ScriptError::Runtime("require() takes 2 arguments".into()));
                 }
                 let msg = self.pop()?;
                 let cond = self.pop()?.as_bool()?;
@@ -920,9 +902,7 @@ impl EvaporVM {
 
             "to_string" => {
                 if arg_count != 1 {
-                    return Err(ScriptError::Runtime(
-                        "to_string() takes 1 argument".into(),
-                    ));
+                    return Err(ScriptError::Runtime("to_string() takes 1 argument".into()));
                 }
                 let val = self.pop()?;
                 let s = match val {
@@ -1113,13 +1093,8 @@ contract Auth {
 "#;
         let bytecode = compile_src(src);
         let ctx = test_ctx();
-        let result = EvaporVM::execute(
-            &bytecode,
-            "check",
-            vec![Value::U64(0)],
-            empty_state(),
-            &ctx,
-        );
+        let result =
+            EvaporVM::execute(&bytecode, "check", vec![Value::U64(0)], empty_state(), &ctx);
 
         match result {
             Err(ScriptError::RequireFailed(msg)) => {
@@ -1274,8 +1249,7 @@ contract Events {
 "#;
         let bytecode = compile_src(src);
         let ctx = test_ctx();
-        let result =
-            EvaporVM::execute(&bytecode, "fire", vec![], empty_state(), &ctx).unwrap();
+        let result = EvaporVM::execute(&bytecode, "fire", vec![], empty_state(), &ctx).unwrap();
 
         assert_eq!(result.events.len(), 2);
         assert_eq!(result.events[0], "hello world");
@@ -1302,18 +1276,11 @@ contract Counter {
         state.insert("count".into(), Value::U64(0));
 
         // Increment
-        let r1 = EvaporVM::execute(
-            &bytecode,
-            "increment",
-            vec![Value::U64(5)],
-            state,
-            &ctx,
-        )
-        .unwrap();
+        let r1 =
+            EvaporVM::execute(&bytecode, "increment", vec![Value::U64(5)], state, &ctx).unwrap();
 
         // Get — use state from previous execution
-        let r2 =
-            EvaporVM::execute(&bytecode, "get", vec![], r1.state_changes, &ctx).unwrap();
+        let r2 = EvaporVM::execute(&bytecode, "get", vec![], r1.state_changes, &ctx).unwrap();
         assert_eq!(r2.return_value, Value::U64(5));
     }
 
@@ -1338,8 +1305,7 @@ contract Context {
             vrf_randomness: [0u8; 32],
             call_depth: 0,
         };
-        let r1 =
-            EvaporVM::execute(&bytecode, "is_owner", vec![], empty_state(), &ctx1).unwrap();
+        let r1 = EvaporVM::execute(&bytecode, "is_owner", vec![], empty_state(), &ctx1).unwrap();
         assert_eq!(r1.return_value, Value::Bool(false));
 
         // caller == owner
@@ -1351,8 +1317,7 @@ contract Context {
             vrf_randomness: [0u8; 32],
             call_depth: 0,
         };
-        let r2 =
-            EvaporVM::execute(&bytecode, "is_owner", vec![], empty_state(), &ctx2).unwrap();
+        let r2 = EvaporVM::execute(&bytecode, "is_owner", vec![], empty_state(), &ctx2).unwrap();
         assert_eq!(r2.return_value, Value::Bool(true));
     }
 
@@ -1479,10 +1444,7 @@ contract LoyaltyPoints {
         assert_eq!(r2.return_value, Value::U64(100));
 
         // Check total_issued
-        assert_eq!(
-            r1.state_changes.get("total_issued"),
-            Some(&Value::U64(100))
-        );
+        assert_eq!(r1.state_changes.get("total_issued"), Some(&Value::U64(100)));
     }
 
     #[test]
@@ -1579,14 +1541,8 @@ contract Expiring {
 "#;
         let bytecode = compile_src(src);
         let ctx = test_ctx();
-        let result = EvaporVM::execute(
-            &bytecode,
-            "on_evaporate",
-            vec![],
-            empty_state(),
-            &ctx,
-        )
-        .unwrap();
+        let result =
+            EvaporVM::execute(&bytecode, "on_evaporate", vec![], empty_state(), &ctx).unwrap();
 
         assert_eq!(result.events, vec!["contract expired"]);
     }
@@ -1603,9 +1559,7 @@ contract GraceAware {
 "#;
         let bytecode = compile_src(src);
         let ctx = test_ctx();
-        let result =
-            EvaporVM::execute(&bytecode, "on_grace", vec![], empty_state(), &ctx)
-                .unwrap();
+        let result = EvaporVM::execute(&bytecode, "on_grace", vec![], empty_state(), &ctx).unwrap();
 
         assert_eq!(result.events, vec!["entering grace period"]);
     }
@@ -1711,8 +1665,7 @@ contract GraceAware {
             Op::Return,
         ];
         let bytecode2 = make_bytecode("run", ops2);
-        let r2 =
-            EvaporVM::execute(&bytecode2, "run", vec![], empty_state(), &test_ctx()).unwrap();
+        let r2 = EvaporVM::execute(&bytecode2, "run", vec![], empty_state(), &test_ctx()).unwrap();
         assert_eq!(r2.return_value, Value::U64(20));
     }
 
@@ -1758,9 +1711,7 @@ contract GraceAware {
     #[test]
     fn test_vm_stack_overflow() {
         // Push 1025 values to exceed MAX_STACK_DEPTH
-        let mut ops: Vec<Op> = (0..1025)
-            .map(|_| Op::Push(Value::U64(1)))
-            .collect();
+        let mut ops: Vec<Op> = (0..1025).map(|_| Op::Push(Value::U64(1))).collect();
         ops.push(Op::Return);
         let bytecode = make_bytecode("run", ops);
         let result = EvaporVM::execute(&bytecode, "run", vec![], empty_state(), &test_ctx());
@@ -1795,14 +1746,8 @@ contract Counter {
         let mut state = HashMap::new();
         state.insert("total".into(), Value::U64(0));
 
-        let result = EvaporVM::execute(
-            &bytecode,
-            "sum_to",
-            vec![Value::U64(10)],
-            state,
-            &ctx,
-        )
-        .unwrap();
+        let result =
+            EvaporVM::execute(&bytecode, "sum_to", vec![Value::U64(10)], state, &ctx).unwrap();
         // sum 1..=10 = 55
         assert_eq!(result.return_value, Value::U64(55));
         assert_eq!(result.state_changes.get("total"), Some(&Value::U64(55)));
@@ -1827,14 +1772,8 @@ contract Looper {
         let state = HashMap::new();
 
         // With a tight gas limit, the loop should run out of gas
-        let result = EvaporVM::execute_with_gas_limit(
-            &bytecode,
-            "loop_forever",
-            vec![],
-            state,
-            &ctx,
-            500,
-        );
+        let result =
+            EvaporVM::execute_with_gas_limit(&bytecode, "loop_forever", vec![], state, &ctx, 500);
         assert!(result.is_err());
     }
 
@@ -1899,19 +1838,10 @@ contract Vault {
             &ctx,
         )
         .unwrap();
-        assert_eq!(
-            r1.state_changes.get("balance"),
-            Some(&Value::U64(50))
-        );
+        assert_eq!(r1.state_changes.get("balance"), Some(&Value::U64(50)));
 
         // Withdraw 200 from 100 — should fail with underflow
-        let r2 = EvaporVM::execute(
-            &bytecode,
-            "withdraw",
-            vec![Value::U64(200)],
-            state,
-            &ctx,
-        );
+        let r2 = EvaporVM::execute(&bytecode, "withdraw", vec![Value::U64(200)], state, &ctx);
         assert!(r2.is_err(), "should fail: 100 - 200 underflows");
     }
 
@@ -1951,8 +1881,7 @@ contract Arrays {
 "#;
         let bytecode = compile_src(src);
         let ctx = test_ctx();
-        let result =
-            EvaporVM::execute(&bytecode, "modify", vec![], empty_state(), &ctx).unwrap();
+        let result = EvaporVM::execute(&bytecode, "modify", vec![], empty_state(), &ctx).unwrap();
         assert_eq!(result.return_value, Value::U64(99));
     }
 
@@ -1970,9 +1899,8 @@ contract Arrays {
 "#;
         let bytecode = compile_src(src);
         let ctx = test_ctx();
-        let result = EvaporVM::execute(
-            &bytecode, "add_to_element", vec![], empty_state(), &ctx,
-        ).unwrap();
+        let result =
+            EvaporVM::execute(&bytecode, "add_to_element", vec![], empty_state(), &ctx).unwrap();
         assert_eq!(result.return_value, Value::U64(25));
     }
 
@@ -1989,8 +1917,7 @@ contract Arrays {
 "#;
         let bytecode = compile_src(src);
         let ctx = test_ctx();
-        let result =
-            EvaporVM::execute(&bytecode, "count", vec![], empty_state(), &ctx).unwrap();
+        let result = EvaporVM::execute(&bytecode, "count", vec![], empty_state(), &ctx).unwrap();
         assert_eq!(result.return_value, Value::U64(5));
     }
 
@@ -2050,18 +1977,29 @@ contract WithStateArray {
         let ctx = test_ctx();
 
         let mut state = HashMap::new();
-        state.insert("items".into(), Value::Array(vec![
-            Value::U64(100), Value::U64(200), Value::U64(300),
-        ]));
+        state.insert(
+            "items".into(),
+            Value::Array(vec![Value::U64(100), Value::U64(200), Value::U64(300)]),
+        );
 
         let r1 = EvaporVM::execute(
-            &bytecode, "get_item", vec![Value::U64(1)], state.clone(), &ctx,
-        ).unwrap();
+            &bytecode,
+            "get_item",
+            vec![Value::U64(1)],
+            state.clone(),
+            &ctx,
+        )
+        .unwrap();
         assert_eq!(r1.return_value, Value::U64(200));
 
         let r2 = EvaporVM::execute(
-            &bytecode, "set_item", vec![Value::U64(0), Value::U64(999)], state, &ctx,
-        ).unwrap();
+            &bytecode,
+            "set_item",
+            vec![Value::U64(0), Value::U64(999)],
+            state,
+            &ctx,
+        )
+        .unwrap();
         let updated_items = r2.state_changes.get("items").unwrap();
         match updated_items {
             Value::Array(arr) => assert_eq!(arr[0], Value::U64(999)),

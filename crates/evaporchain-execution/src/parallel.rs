@@ -30,10 +30,10 @@ use rayon::prelude::*;
 use tracing::{debug, info};
 
 use crate::{
-    fees, BlockExecutionResult, ExecutionEngine, ExecutionError,
-    GAS_CALL_CONTRACT, GAS_CALL_SCRIPT, GAS_CREATE_OBJECT_BASE, GAS_CREATE_OBJECT_PER_BYTE,
-    GAS_DEPLOY_CONTRACT, GAS_DEPLOY_SCRIPT, GAS_GOVERNANCE, GAS_REFRESH, GAS_TRANSFER,
-    GAS_VALIDATOR_CLAIM_STAKE, GAS_VALIDATOR_EXIT, GAS_VALIDATOR_STAKE,
+    fees, BlockExecutionResult, ExecutionEngine, ExecutionError, GAS_CALL_CONTRACT,
+    GAS_CALL_SCRIPT, GAS_CREATE_OBJECT_BASE, GAS_CREATE_OBJECT_PER_BYTE, GAS_DEPLOY_CONTRACT,
+    GAS_DEPLOY_SCRIPT, GAS_GOVERNANCE, GAS_REFRESH, GAS_TRANSFER, GAS_VALIDATOR_CLAIM_STAKE,
+    GAS_VALIDATOR_EXIT, GAS_VALIDATOR_STAKE,
 };
 
 // ─── Access Key & Conflict Detection ───────────────────────────────────────
@@ -62,7 +62,10 @@ fn extract_access_keys(tx: &Transaction) -> Vec<AccessKey> {
             vec![AccessKey::Account(t.from), AccessKey::Account(t.to)]
         }
         Transaction::CreateObject(t) => {
-            vec![AccessKey::Account(t.creator), AccessKey::Object(t.object_id)]
+            vec![
+                AccessKey::Account(t.creator),
+                AccessKey::Object(t.object_id),
+            ]
         }
         Transaction::Refresh(t) => {
             vec![AccessKey::Object(t.object_id)]
@@ -266,7 +269,10 @@ impl OverlayStateDB {
                         self.ghosts.insert(*id, ghost.clone());
                     }
                 }
-                AccessKey::ContractEngine | AccessKey::ScriptEngine | AccessKey::PrivacyEngine | AccessKey::TemporalEngine => {
+                AccessKey::ContractEngine
+                | AccessKey::ScriptEngine
+                | AccessKey::PrivacyEngine
+                | AccessKey::TemporalEngine => {
                     // These are handled by the executor, not the state DB.
                 }
             }
@@ -276,9 +282,13 @@ impl OverlayStateDB {
 
 fn empty_verkle_proof() -> evaporchain_crypto::EnergyVerkleProof {
     evaporchain_crypto::EnergyVerkleProof {
-        key: [0u8; 32], value: None, depth: 0,
-        commitments: vec![], path_indices: vec![],
-        siblings: vec![], energy_path: vec![],
+        key: [0u8; 32],
+        value: None,
+        depth: 0,
+        commitments: vec![],
+        path_indices: vec![],
+        siblings: vec![],
+        energy_path: vec![],
         hit_compressed: false,
     }
 }
@@ -369,14 +379,23 @@ impl StateDB for OverlayStateDB {
         [0u8; 32]
     }
 
-    fn prune_before_height(&mut self, _height: u64) -> u64 { 0 }
+    fn prune_before_height(&mut self, _height: u64) -> u64 {
+        0
+    }
 
-    fn compress_cold_subtrees(&mut self) -> u32 { 0 }
+    fn compress_cold_subtrees(&mut self) -> u32 {
+        0
+    }
     fn trie_health(&mut self) -> evaporchain_crypto::TrieHealth {
         evaporchain_crypto::TrieHealth {
-            active_leaves: 0, compressed_leaves: 0, total_nodes: 0,
-            max_energy: 0, min_half_life: u64::MAX, last_activity_epoch: 0,
-            compressions: 0, decompressions: 0,
+            active_leaves: 0,
+            compressed_leaves: 0,
+            total_nodes: 0,
+            max_energy: 0,
+            min_half_life: u64::MAX,
+            last_activity_epoch: 0,
+            compressions: 0,
+            decompressions: 0,
         }
     }
     fn prove_account(&mut self, _addr: &AccountAddress) -> evaporchain_crypto::EnergyVerkleProof {
@@ -385,45 +404,117 @@ impl StateDB for OverlayStateDB {
     fn prove_object(&mut self, _id: &ObjectId) -> evaporchain_crypto::EnergyVerkleProof {
         empty_verkle_proof()
     }
-    fn trie_snapshot(&mut self) -> Vec<u8> { Vec::new() }
-    fn load_trie_snapshot(&mut self, _bytes: &[u8]) -> Result<(), String> { Ok(()) }
+    fn trie_snapshot(&mut self) -> Vec<u8> {
+        Vec::new()
+    }
+    fn load_trie_snapshot(&mut self, _bytes: &[u8]) -> Result<(), String> {
+        Ok(())
+    }
 
     // Privacy methods — overlay doesn't handle privacy state (it's in the serial phase).
     fn put_note_tree_root(&mut self, _root: [u8; 32]) {}
-    fn get_note_tree_root(&self) -> [u8; 32] { [0u8; 32] }
-    fn spend_nullifier(&mut self, _nullifier: &[u8; 32]) -> bool { false }
-    fn is_nullifier_spent(&self, _nullifier: &[u8; 32]) -> bool { false }
-    fn nullifier_count(&self) -> usize { 0 }
-    fn all_nullifiers(&self) -> Vec<[u8; 32]> { Vec::new() }
+    fn get_note_tree_root(&self) -> [u8; 32] {
+        [0u8; 32]
+    }
+    fn spend_nullifier(&mut self, _nullifier: &[u8; 32]) -> bool {
+        false
+    }
+    fn is_nullifier_spent(&self, _nullifier: &[u8; 32]) -> bool {
+        false
+    }
+    fn nullifier_count(&self) -> usize {
+        0
+    }
+    fn all_nullifiers(&self) -> Vec<[u8; 32]> {
+        Vec::new()
+    }
     fn put_shielded_pool_balance(&mut self, _balance: u64) {}
-    fn get_shielded_pool_balance(&self) -> u64 { 0 }
+    fn get_shielded_pool_balance(&self) -> u64 {
+        0
+    }
     fn put_note_count(&mut self, _count: u64) {}
-    fn get_note_count(&self) -> u64 { 0 }
+    fn get_note_count(&self) -> u64 {
+        0
+    }
     // Sister-session-added trait methods, stubbed here to satisfy the trait.
     // Real implementation lives in InMemoryStateDB / RocksDB; OverlayStateDB
     // never serves the privacy-pool note commitment trie.
     fn append_note_commitment(&mut self, _index: u64, _commitment: [u8; 32]) {}
-    fn get_all_note_commitments(&self) -> Vec<[u8; 32]> { Vec::new() }
-    fn get_stake(&self, _validator_id: u64) -> Option<&evaporchain_types::StakeRecord> { None }
+    fn get_all_note_commitments(&self) -> Vec<[u8; 32]> {
+        Vec::new()
+    }
+    fn get_stake(&self, _validator_id: u64) -> Option<&evaporchain_types::StakeRecord> {
+        None
+    }
     fn put_stake(&mut self, _record: evaporchain_types::StakeRecord) {}
-    fn remove_stake(&mut self, _validator_id: u64) -> Option<evaporchain_types::StakeRecord> { None }
-    fn all_stakes(&self) -> Vec<&evaporchain_types::StakeRecord> { Vec::new() }
-    fn get_delegation(&self, _delegator: &evaporchain_types::AccountAddress, _validator_id: u64) -> Option<&evaporchain_types::DelegationRecord> { None }
+    fn remove_stake(&mut self, _validator_id: u64) -> Option<evaporchain_types::StakeRecord> {
+        None
+    }
+    fn all_stakes(&self) -> Vec<&evaporchain_types::StakeRecord> {
+        Vec::new()
+    }
+    fn get_delegation(
+        &self,
+        _delegator: &evaporchain_types::AccountAddress,
+        _validator_id: u64,
+    ) -> Option<&evaporchain_types::DelegationRecord> {
+        None
+    }
     fn put_delegation(&mut self, _record: evaporchain_types::DelegationRecord) {}
-    fn remove_delegation(&mut self, _delegator: &evaporchain_types::AccountAddress, _validator_id: u64) -> Option<evaporchain_types::DelegationRecord> { None }
-    fn delegations_for_validator(&self, _validator_id: u64) -> Vec<&evaporchain_types::DelegationRecord> { Vec::new() }
-    fn delegations_for_delegator(&self, _delegator: &evaporchain_types::AccountAddress) -> Vec<&evaporchain_types::DelegationRecord> { Vec::new() }
-    fn all_delegations(&self) -> Vec<&evaporchain_types::DelegationRecord> { Vec::new() }
-    fn get_proposal(&self, _proposal_id: u64) -> Option<&evaporchain_types::GovernanceProposal> { None }
+    fn remove_delegation(
+        &mut self,
+        _delegator: &evaporchain_types::AccountAddress,
+        _validator_id: u64,
+    ) -> Option<evaporchain_types::DelegationRecord> {
+        None
+    }
+    fn delegations_for_validator(
+        &self,
+        _validator_id: u64,
+    ) -> Vec<&evaporchain_types::DelegationRecord> {
+        Vec::new()
+    }
+    fn delegations_for_delegator(
+        &self,
+        _delegator: &evaporchain_types::AccountAddress,
+    ) -> Vec<&evaporchain_types::DelegationRecord> {
+        Vec::new()
+    }
+    fn all_delegations(&self) -> Vec<&evaporchain_types::DelegationRecord> {
+        Vec::new()
+    }
+    fn get_proposal(&self, _proposal_id: u64) -> Option<&evaporchain_types::GovernanceProposal> {
+        None
+    }
     fn put_proposal(&mut self, _proposal: evaporchain_types::GovernanceProposal) {}
-    fn all_proposals(&self) -> Vec<&evaporchain_types::GovernanceProposal> { Vec::new() }
-    fn get_governance_param(&self, _key: &str) -> Option<&str> { None }
+    fn all_proposals(&self) -> Vec<&evaporchain_types::GovernanceProposal> {
+        Vec::new()
+    }
+    fn get_governance_param(&self, _key: &str) -> Option<&str> {
+        None
+    }
     fn put_governance_param(&mut self, _key: String, _value: String) {}
     fn commit_state_snapshot(&mut self, _height: u64) {}
-    fn get_account_at_height(&self, _address: &evaporchain_types::AccountAddress, _height: u64) -> Option<evaporchain_types::Account> { None }
-    fn get_object_at_height(&self, _id: &evaporchain_types::ObjectId, _height: u64) -> Option<evaporchain_types::StateObject> { None }
-    fn earliest_snapshot_height(&self) -> Option<u64> { None }
-    fn latest_snapshot_height(&self) -> Option<u64> { None }
+    fn get_account_at_height(
+        &self,
+        _address: &evaporchain_types::AccountAddress,
+        _height: u64,
+    ) -> Option<evaporchain_types::Account> {
+        None
+    }
+    fn get_object_at_height(
+        &self,
+        _id: &evaporchain_types::ObjectId,
+        _height: u64,
+    ) -> Option<evaporchain_types::StateObject> {
+        None
+    }
+    fn earliest_snapshot_height(&self) -> Option<u64> {
+        None
+    }
+    fn latest_snapshot_height(&self) -> Option<u64> {
+        None
+    }
     fn prune_snapshots_before(&mut self, _height: u64) {}
 }
 
@@ -678,12 +769,17 @@ impl ParallelExecutor {
                     + crate::temporal::GAS_PER_GUARD * dtx.guards.len() as u64
             }
             Transaction::Blob(tx) => {
-                crate::GAS_CREATE_OBJECT_BASE + crate::GAS_CREATE_OBJECT_PER_BYTE * tx.data.len() as u64
+                crate::GAS_CREATE_OBJECT_BASE
+                    + crate::GAS_CREATE_OBJECT_PER_BYTE * tx.data.len() as u64
             }
             Transaction::Governance(_) => GAS_GOVERNANCE,
             Transaction::MultiSig(_) => crate::GAS_MULTISIG,
-            Transaction::UserOp(tx) => crate::GAS_USER_OP.saturating_add(tx.call_data.len() as u64 * 16),
-            Transaction::UpgradeContract(tx) => crate::GAS_UPGRADE_CONTRACT.saturating_add(tx.new_bytecode.len() as u64 * 200),
+            Transaction::UserOp(tx) => {
+                crate::GAS_USER_OP.saturating_add(tx.call_data.len() as u64 * 16)
+            }
+            Transaction::UpgradeContract(tx) => {
+                crate::GAS_UPGRADE_CONTRACT.saturating_add(tx.new_bytecode.len() as u64 * 200)
+            }
             Transaction::Delegate(_) => crate::GAS_DELEGATE,
             Transaction::Undelegate(_) => crate::GAS_UNDELEGATE,
             Transaction::RotateValidatorKey(_) => crate::GAS_ROTATE_VALIDATOR_KEY,
@@ -691,11 +787,18 @@ impl ParallelExecutor {
         }
     }
 
-    pub fn verify_tx_signature(verify: bool, tx: &Transaction, chain_id: &str) -> Result<(), ExecutionError> {
+    pub fn verify_tx_signature(
+        verify: bool,
+        tx: &Transaction,
+        chain_id: &str,
+    ) -> Result<(), ExecutionError> {
         if !verify {
             return Ok(());
         }
-        if matches!(tx, Transaction::Unshield(_) | Transaction::PrivateTransfer(_)) {
+        if matches!(
+            tx,
+            Transaction::Unshield(_) | Transaction::PrivateTransfer(_)
+        ) {
             return Ok(());
         }
         let sig = tx.signature().ok_or(ExecutionError::MissingSignature)?;
@@ -751,9 +854,7 @@ impl ParallelExecutor {
                     Transaction::CreateObject(create) => {
                         fc.compute_creation_deposit(create.data.len())
                     }
-                    Transaction::Refresh(refresh) => {
-                        fc.compute_refresh_fee(refresh.energy_deposit)
-                    }
+                    Transaction::Refresh(refresh) => fc.compute_refresh_fee(refresh.energy_deposit),
                     _ => 0,
                 };
                 let total_tx_fee = gas_fee + extra_fee;
@@ -787,11 +888,9 @@ impl ParallelExecutor {
                 Transaction::Refresh(t) => Self::exec_refresh(overlay, t, epoch),
                 Transaction::ValidatorStake(t) => Self::exec_validator_stake(overlay, t, epoch),
                 Transaction::ValidatorExit(t) => Self::exec_validator_exit(overlay, t, epoch),
-                Transaction::ValidatorClaimStake(_) => {
-                    Err(ExecutionError::ContractError(
-                        "validator claim stake executes in serial phase".into(),
-                    ))
-                }
+                Transaction::ValidatorClaimStake(_) => Err(ExecutionError::ContractError(
+                    "validator claim stake executes in serial phase".into(),
+                )),
                 // Contract/script txs should not appear in parallelizable partitions
                 // (they all share the ContractEngine/ScriptEngine key and form one partition).
                 // But if they do end up here, we mark them failed — they'll be handled
@@ -803,64 +902,52 @@ impl ParallelExecutor {
                 | Transaction::Shield(_)
                 | Transaction::Unshield(_)
                 | Transaction::PrivateTransfer(_)
-                | Transaction::Deferred(_) => {
-                    Err(ExecutionError::ContractError(
-                        "contract/script/privacy/deferred txs execute in serial phase".into(),
-                    ))
-                }
+                | Transaction::Deferred(_) => Err(ExecutionError::ContractError(
+                    "contract/script/privacy/deferred txs execute in serial phase".into(),
+                )),
                 Transaction::Blob(blob) => {
                     if blob.data.is_empty() {
-                        Err(ExecutionError::ContractError("blob data cannot be empty".into()))
+                        Err(ExecutionError::ContractError(
+                            "blob data cannot be empty".into(),
+                        ))
                     } else if blob.data.len() > crate::MAX_BLOB_SIZE {
                         Err(ExecutionError::ContractError(format!(
-                            "blob size {} exceeds limit {}", blob.data.len(), crate::MAX_BLOB_SIZE
+                            "blob size {} exceeds limit {}",
+                            blob.data.len(),
+                            crate::MAX_BLOB_SIZE
                         )))
                     } else if blob.namespace_id == 0 {
-                        Err(ExecutionError::ContractError("reserved namespace_id 0".into()))
+                        Err(ExecutionError::ContractError(
+                            "reserved namespace_id 0".into(),
+                        ))
                     } else {
                         Ok(())
                     }
                 }
-                Transaction::Governance(_) => {
-                    Err(ExecutionError::ContractError(
-                        "governance txs execute in serial phase".into(),
-                    ))
-                }
-                Transaction::MultiSig(_) => {
-                    Err(ExecutionError::ContractError(
-                        "multi-sig txs execute in serial phase".into(),
-                    ))
-                }
-                Transaction::UserOp(_) => {
-                    Err(ExecutionError::ContractError(
-                        "user-op txs execute in serial phase".into(),
-                    ))
-                }
-                Transaction::UpgradeContract(_) => {
-                    Err(ExecutionError::ContractError(
-                        "upgrade txs execute in serial phase".into(),
-                    ))
-                }
-                Transaction::Delegate(_) => {
-                    Err(ExecutionError::ContractError(
-                        "delegation txs execute in serial phase".into(),
-                    ))
-                }
-                Transaction::Undelegate(_) => {
-                    Err(ExecutionError::ContractError(
-                        "delegation txs execute in serial phase".into(),
-                    ))
-                }
-                Transaction::RotateValidatorKey(_) => {
-                    Err(ExecutionError::ContractError(
-                        "validator key rotation executes in serial phase".into(),
-                    ))
-                }
-                Transaction::ClaimDelegation(_) => {
-                    Err(ExecutionError::ContractError(
-                        "delegation txs execute in serial phase".into(),
-                    ))
-                }
+                Transaction::Governance(_) => Err(ExecutionError::ContractError(
+                    "governance txs execute in serial phase".into(),
+                )),
+                Transaction::MultiSig(_) => Err(ExecutionError::ContractError(
+                    "multi-sig txs execute in serial phase".into(),
+                )),
+                Transaction::UserOp(_) => Err(ExecutionError::ContractError(
+                    "user-op txs execute in serial phase".into(),
+                )),
+                Transaction::UpgradeContract(_) => Err(ExecutionError::ContractError(
+                    "upgrade txs execute in serial phase".into(),
+                )),
+                Transaction::Delegate(_) => Err(ExecutionError::ContractError(
+                    "delegation txs execute in serial phase".into(),
+                )),
+                Transaction::Undelegate(_) => Err(ExecutionError::ContractError(
+                    "delegation txs execute in serial phase".into(),
+                )),
+                Transaction::RotateValidatorKey(_) => Err(ExecutionError::ContractError(
+                    "validator key rotation executes in serial phase".into(),
+                )),
+                Transaction::ClaimDelegation(_) => Err(ExecutionError::ContractError(
+                    "delegation txs execute in serial phase".into(),
+                )),
             };
 
             match result {
@@ -982,7 +1069,9 @@ impl ParallelExecutor {
         epoch: Epoch,
     ) -> Result<(), ExecutionError> {
         if db.get_object(&tx.object_id).is_some() {
-            return Err(ExecutionError::ObjectAlreadyExists(hex::encode(tx.object_id)));
+            return Err(ExecutionError::ObjectAlreadyExists(hex::encode(
+                tx.object_id,
+            )));
         }
         // Storage rent enforcement: collect MIN_STORAGE_DEPOSIT from creator.
         let object_bytes = {
@@ -999,7 +1088,8 @@ impl ParallelExecutor {
                 });
             }
             creator.balance -= evaporchain_types::MIN_STORAGE_DEPOSIT;
-            creator.storage_deposit = creator.storage_deposit
+            creator.storage_deposit = creator
+                .storage_deposit
                 .saturating_add(evaporchain_types::MIN_STORAGE_DEPOSIT);
             creator.storage_bytes = creator.storage_bytes.saturating_add(object_bytes);
             // Storage-deposit lock-up debits balance — stamp the demurrage anchor.
@@ -1016,6 +1106,7 @@ impl ParallelExecutor {
             grace_epoch: None,
             data: tx.data.clone(),
             decay_curve: tx.decay_curve.clone(),
+            lad_mode: tx.lad_mode,
         });
         Ok(())
     }
@@ -1084,9 +1175,10 @@ impl ParallelExecutor {
         sender.last_touched_epoch = current_epoch;
 
         let mut stake = db.get_stake(tx.validator_id).cloned().ok_or_else(|| {
-            ExecutionError::ObjectNotFound(
-                format!("no stake record for validator {}", tx.validator_id),
-            )
+            ExecutionError::ObjectNotFound(format!(
+                "no stake record for validator {}",
+                tx.validator_id
+            ))
         })?;
 
         if stake.validator_address != tx.validator_address {
@@ -1315,9 +1407,7 @@ impl ExecutionEngine for ParallelExecutor {
                                             block.epoch,
                                         )
                                         .map(|_| ())
-                                        .map_err(|e| {
-                                            ExecutionError::ContractError(e.to_string())
-                                        })
+                                        .map_err(|e| ExecutionError::ContractError(e.to_string()))
                                 }
                                 Err(e) => Err(ExecutionError::ContractError(format!(
                                     "invalid init_args: {e}"
@@ -1339,9 +1429,9 @@ impl ExecutionEngine for ParallelExecutor {
                                 .call(call.contract_id, &call.method, &a, &call.caller, call.epoch)
                                 .map(|_| ())
                                 .map_err(|e| ExecutionError::ContractError(e.to_string())),
-                            Err(e) => Err(ExecutionError::ContractError(format!(
-                                "invalid args: {e}"
-                            ))),
+                            Err(e) => {
+                                Err(ExecutionError::ContractError(format!("invalid args: {e}")))
+                            }
                         };
                         serial_call_depth = serial_call_depth.saturating_sub(1);
                         r
@@ -1369,8 +1459,15 @@ impl ExecutionEngine for ParallelExecutor {
                             } else {
                                 serde_json::from_str(&call.args).unwrap_or_default()
                             };
-                        let r = self.script_engine
-                            .call(call.contract_id, &call.method, args, call.caller, call.epoch)
+                        let r = self
+                            .script_engine
+                            .call(
+                                call.contract_id,
+                                &call.method,
+                                args,
+                                call.caller,
+                                call.epoch,
+                            )
                             .map(|_| ())
                             .map_err(|e| ExecutionError::ScriptError(e.to_string()));
                         serial_call_depth = serial_call_depth.saturating_sub(1);
@@ -1398,12 +1495,11 @@ impl ExecutionEngine for ParallelExecutor {
                         .map(|_| ())
                         .map_err(|e| ExecutionError::ContractError(e.to_string()))
                 }
-                Transaction::Deferred(dtx) => {
-                    self.deferred_queue
-                        .submit(dtx.clone())
-                        .map(|_| ())
-                        .map_err(|e| ExecutionError::ContractError(e.to_string()))
-                }
+                Transaction::Deferred(dtx) => self
+                    .deferred_queue
+                    .submit(dtx.clone())
+                    .map(|_| ())
+                    .map_err(|e| ExecutionError::ContractError(e.to_string())),
                 Transaction::ValidatorExit(exit) => {
                     let sender = db.get_or_create_account(&exit.validator_address);
                     if sender.nonce != exit.nonce {
@@ -1423,9 +1519,12 @@ impl ExecutionEngine for ParallelExecutor {
                             return Err(ExecutionError::InvalidSignature);
                         }
                         if stake.unbonding_epoch.is_some() {
-                            Err(ExecutionError::ContractError("validator already exiting".to_string()))
+                            Err(ExecutionError::ContractError(
+                                "validator already exiting".to_string(),
+                            ))
                         } else {
-                            stake.unbonding_epoch = Some(block.epoch + crate::UNBONDING_PERIOD_EPOCHS);
+                            stake.unbonding_epoch =
+                                Some(block.epoch + crate::UNBONDING_PERIOD_EPOCHS);
                             db.put_stake(stake);
                             Ok(())
                         }
@@ -1433,9 +1532,10 @@ impl ExecutionEngine for ParallelExecutor {
                 }
                 Transaction::ValidatorClaimStake(claim) => {
                     let stake = db.get_stake(claim.validator_id).cloned().ok_or_else(|| {
-                        ExecutionError::ObjectNotFound(
-                            format!("no stake record for validator {}", claim.validator_id),
-                        )
+                        ExecutionError::ObjectNotFound(format!(
+                            "no stake record for validator {}",
+                            claim.validator_id
+                        ))
                     })?;
                     if stake.validator_address != claim.validator_address {
                         return Err(ExecutionError::InvalidSignature);
@@ -1479,9 +1579,8 @@ impl ExecutionEngine for ParallelExecutor {
                             rot.new_bls_public_key.len()
                         )))
                     } else {
-                        let stake_addr = db
-                            .get_stake(rot.validator_id)
-                            .map(|s| s.validator_address);
+                        let stake_addr =
+                            db.get_stake(rot.validator_id).map(|s| s.validator_address);
                         match stake_addr {
                             None => Err(ExecutionError::ContractError(format!(
                                 "RotateValidatorKey: validator_id {} has no stake record",
@@ -1503,13 +1602,16 @@ impl ExecutionEngine for ParallelExecutor {
                                         expected_nonce, rot.nonce
                                     )))
                                 } else if !{
-                                    use evaporchain_crypto::signatures::{BlsPublicKey, BlsSignature, BlsVerifier};
+                                    use evaporchain_crypto::signatures::{
+                                        BlsPublicKey, BlsSignature, BlsVerifier,
+                                    };
                                     let pk = BlsPublicKey(rot.new_bls_public_key.clone());
                                     let pop = BlsSignature(rot.bls_pop_new.clone());
                                     BlsVerifier::verify_proof_of_possession(&pk, &pop)
                                 } {
                                     Err(ExecutionError::ContractError(
-                                        "RotateValidatorKey: bls_pop_new failed verification".into(),
+                                        "RotateValidatorKey: bls_pop_new failed verification"
+                                            .into(),
                                     ))
                                 } else {
                                     if let Some(acct) = db.get_account_mut(&rot.validator_address) {
@@ -1522,7 +1624,8 @@ impl ExecutionEngine for ParallelExecutor {
                                         new_bls_public_key: rot.new_bls_public_key.clone(),
                                         bls_pop_old: rot.bls_pop_old.clone(),
                                         new_bls_pop: rot.bls_pop_new.clone(),
-                                        prev_key_expiry_epoch: rot.effective_epoch
+                                        prev_key_expiry_epoch: rot
+                                            .effective_epoch
                                             .saturating_add(crate::KEY_ROTATION_GRACE_EPOCHS),
                                     });
                                     Ok(())
@@ -1552,7 +1655,9 @@ impl ExecutionEngine for ParallelExecutor {
 
         // ── Phase 7: Evaporation + contract/script ticks ──
 
-        let evap_result = self.evaporation_engine.process_epoch_with_mmr(db, block.epoch, &mut self.mmr);
+        let evap_result =
+            self.evaporation_engine
+                .process_epoch_with_mmr(db, block.epoch, &mut self.mmr);
         self.contract_engine.tick(block.epoch);
         self.script_engine.tick(block.epoch);
 
@@ -1571,9 +1676,9 @@ impl ExecutionEngine for ParallelExecutor {
                     if acct.storage_bytes == 0 {
                         continue;
                     }
-                    let rent = acct.storage_bytes.saturating_mul(
-                        evaporchain_types::STORAGE_RENT_PER_BYTE_PER_EPOCH,
-                    );
+                    let rent = acct
+                        .storage_bytes
+                        .saturating_mul(evaporchain_types::STORAGE_RENT_PER_BYTE_PER_EPOCH);
                     (rent, acct.balance)
                 };
                 let acct = db.get_or_create_account(&addr);
@@ -1668,7 +1773,11 @@ impl ExecutionEngine for ParallelExecutor {
         ));
 
         let mera_root = crate::mera_integration::compute_mera_commitment(db);
-        let mera_commitment = if mera_root == [0u8; 32] { None } else { Some(mera_root) };
+        let mera_commitment = if mera_root == [0u8; 32] {
+            None
+        } else {
+            Some(mera_root)
+        };
 
         Ok(BlockExecutionResult {
             state_root,
@@ -1800,7 +1909,11 @@ mod tests {
         ];
 
         let partitions = partition_transactions(&txs);
-        assert_eq!(partitions.len(), 2, "independent transfers should be in separate partitions");
+        assert_eq!(
+            partitions.len(),
+            2,
+            "independent transfers should be in separate partitions"
+        );
     }
 
     #[test]
@@ -2019,6 +2132,7 @@ mod tests {
                 half_life: 10,
                 data: vec![1, 2, 3],
                 decay_curve: None,
+                lad_mode: None,
                 signature: None,
                 public_key: None,
             }),
@@ -2050,6 +2164,7 @@ mod tests {
             grace_epoch: None,
             data: vec![],
             decay_curve: None,
+            lad_mode: None,
         });
         let mut seq_executor = crate::SimpleExecutor::new_for_test(100);
         let seq_result = seq_executor.execute_block(&mut db_seq, &block).unwrap();
@@ -2071,6 +2186,7 @@ mod tests {
             grace_epoch: None,
             data: vec![],
             decay_curve: None,
+            lad_mode: None,
         });
         let mut par_executor = ParallelExecutor::new_for_test(100);
         let par_result = par_executor.execute_block(&mut db_par, &block).unwrap();
@@ -2093,7 +2209,10 @@ mod tests {
         }
 
         // Compare object states
-        assert!(db_par.get_object(&obj_id(1)).is_some(), "object 1 should exist");
+        assert!(
+            db_par.get_object(&obj_id(1)).is_some(),
+            "object 1 should exist"
+        );
         assert_eq!(
             db_seq.get_object(&obj_id(1)).unwrap().energy,
             db_par.get_object(&obj_id(1)).unwrap().energy,
@@ -2185,6 +2304,7 @@ mod tests {
             grace_epoch: None,
             data: vec![],
             decay_curve: None,
+            lad_mode: None,
         });
 
         let block = make_block(
@@ -2224,6 +2344,7 @@ mod tests {
                     half_life: 5,
                     data: vec![0xDE, 0xAD],
                     decay_curve: None,
+                    lad_mode: None,
                     signature: None,
                     public_key: None,
                 }),

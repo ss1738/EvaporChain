@@ -111,7 +111,11 @@ impl BenchConfig {
 }
 
 /// Run a single benchmark: execute `f` for warmup, then measure `iterations` runs.
-pub fn run_bench<F>(name: &str, config: &BenchConfig, mut f: F) -> Result<BenchResult, BenchmarkError>
+pub fn run_bench<F>(
+    name: &str,
+    config: &BenchConfig,
+    mut f: F,
+) -> Result<BenchResult, BenchmarkError>
 where
     F: FnMut(),
 {
@@ -240,8 +244,8 @@ pub struct BenchComparison {
     pub name: String,
     pub baseline: BenchResult,
     pub current: BenchResult,
-    pub speedup: f64,       // >1 means current is faster
-    pub regression: bool,   // true if current is slower by > threshold
+    pub speedup: f64,     // >1 means current is faster
+    pub regression: bool, // true if current is slower by > threshold
 }
 
 pub fn compare(
@@ -370,16 +374,19 @@ impl BenchHistory {
         let baseline = &self.runs[0];
         let latest = self.runs.last().unwrap();
 
-        let baseline_map: BTreeMap<&str, &BenchResult> =
-            baseline.results.iter().map(|r| (r.name.as_str(), r)).collect();
+        let baseline_map: BTreeMap<&str, &BenchResult> = baseline
+            .results
+            .iter()
+            .map(|r| (r.name.as_str(), r))
+            .collect();
 
         latest
             .results
             .iter()
             .filter_map(|current| {
-                baseline_map.get(current.name.as_str()).map(|base| {
-                    compare(base, current, threshold)
-                })
+                baseline_map
+                    .get(current.name.as_str())
+                    .map(|base| compare(base, current, threshold))
             })
             .filter(|c| c.regression)
             .collect()
@@ -471,9 +478,11 @@ mod tests {
         let config = BenchConfig::quick();
         let mut suite = BenchSuite::new("test suite", config);
         suite.run("bench_a", || {}).unwrap();
-        suite.run("bench_b", || {
-            let _ = 1 + 1;
-        }).unwrap();
+        suite
+            .run("bench_b", || {
+                let _ = 1 + 1;
+            })
+            .unwrap();
         assert_eq!(suite.results.len(), 2);
         assert!(suite.fastest().is_some());
         assert!(suite.slowest().is_some());
@@ -590,10 +599,8 @@ mod tests {
 
     #[test]
     fn test_bench_history_save_load() {
-        let path = std::env::temp_dir().join(format!(
-            "evap_bench_hist_{}.json",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("evap_bench_hist_{}.json", std::process::id()));
         let mut history = BenchHistory::new();
         let config = BenchConfig::quick();
         let mut suite = BenchSuite::new("saved", config);

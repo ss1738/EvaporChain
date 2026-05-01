@@ -10,9 +10,9 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::commitments::{CellProof, RowColumnCommitments, generate_2d_queries, CellQuery};
+use crate::commitments::{generate_2d_queries, CellProof, CellQuery, RowColumnCommitments};
 use crate::erasure2d::{ErasureEncoder2D, Matrix2D};
-use crate::namespace::{NamespaceMerkleTree, NamespacedBlob, NamespaceId, NmtNode};
+use crate::namespace::{NamespaceId, NamespaceMerkleTree, NamespacedBlob, NmtNode};
 
 /// Errors from 2D block DA operations.
 #[derive(Debug, thiserror::Error)]
@@ -251,12 +251,7 @@ impl BlockDA2D {
         num_samples: usize,
         seed: &[u8],
     ) -> (Vec<CellSampleResult>, bool) {
-        let queries = Self::generate_cell_queries(
-            block_number,
-            &package.header,
-            num_samples,
-            seed,
-        );
+        let queries = Self::generate_cell_queries(block_number, &package.header, num_samples, seed);
 
         let mut results = Vec::with_capacity(queries.len());
         let mut all_valid = true;
@@ -360,7 +355,8 @@ mod tests {
                 assert!(
                     BlockDA2D::verify_cell_proof(&package.header, &proof),
                     "Cell proof failed at ({}, {})",
-                    r, c
+                    r,
+                    c
                 );
             }
         }
@@ -472,9 +468,16 @@ mod tests {
         assert_eq!(metrics.valid_samples, 16);
         assert_eq!(metrics.extended_dim, 8);
         // confidence = 1 - 2^(-16) ≈ 0.999985
-        assert!(metrics.confidence > 0.9999, "confidence should be very high: {}", metrics.confidence);
+        assert!(
+            metrics.confidence > 0.9999,
+            "confidence should be very high: {}",
+            metrics.confidence
+        );
         // 16 samples mod 8 rows => hits all 8 rows, k=4, so recovery_possible
-        assert!(metrics.recovery_possible, "recovery should be possible with all rows hit");
+        assert!(
+            metrics.recovery_possible,
+            "recovery should be possible with all rows hit"
+        );
     }
 
     #[test]
@@ -509,7 +512,11 @@ mod tests {
         assert_eq!(metrics.total_samples, 16);
         assert_eq!(metrics.valid_samples, 10);
         // confidence = 1 - 2^(-10) ≈ 0.999
-        assert!(metrics.confidence > 0.999, "confidence based on valid count: {}", metrics.confidence);
+        assert!(
+            metrics.confidence > 0.999,
+            "confidence based on valid count: {}",
+            metrics.confidence
+        );
         assert!(metrics.confidence < 1.0);
         // Invalid samples don't count toward unique rows/cols
         // valid rows: 0..10 mod 8 => {0,1,2,3,4,5,6,7} = 8, invalid not counted
@@ -523,16 +530,47 @@ mod tests {
 
         // 4 valid samples hitting rows {0, 1, 2} — that's >= k=3
         let samples = vec![
-            CellSampleResult { row: 0, col: 0, cell_hash: "h0".into(), row_root: "r0".into(), col_root: "c0".into(), valid: true },
-            CellSampleResult { row: 1, col: 0, cell_hash: "h1".into(), row_root: "r1".into(), col_root: "c0".into(), valid: true },
-            CellSampleResult { row: 2, col: 1, cell_hash: "h2".into(), row_root: "r2".into(), col_root: "c1".into(), valid: true },
-            CellSampleResult { row: 2, col: 2, cell_hash: "h3".into(), row_root: "r2".into(), col_root: "c2".into(), valid: true },
+            CellSampleResult {
+                row: 0,
+                col: 0,
+                cell_hash: "h0".into(),
+                row_root: "r0".into(),
+                col_root: "c0".into(),
+                valid: true,
+            },
+            CellSampleResult {
+                row: 1,
+                col: 0,
+                cell_hash: "h1".into(),
+                row_root: "r1".into(),
+                col_root: "c0".into(),
+                valid: true,
+            },
+            CellSampleResult {
+                row: 2,
+                col: 1,
+                cell_hash: "h2".into(),
+                row_root: "r2".into(),
+                col_root: "c1".into(),
+                valid: true,
+            },
+            CellSampleResult {
+                row: 2,
+                col: 2,
+                cell_hash: "h3".into(),
+                row_root: "r2".into(),
+                col_root: "c2".into(),
+                valid: true,
+            },
         ];
 
         let metrics = AvailabilityMetrics::from_samples(&samples, extended_dim);
         assert_eq!(metrics.unique_rows_hit, 3); // rows 0, 1, 2
         assert_eq!(metrics.unique_cols_hit, 3); // cols 0, 1, 2
-        assert!(metrics.recovery_possible, "3 unique rows >= k=3, recovery should be possible");
+        assert!(
+            metrics.recovery_possible,
+            "3 unique rows >= k=3, recovery should be possible"
+        );
         assert_eq!(metrics.valid_samples, 4);
         // confidence = 1 - 2^(-4) = 0.9375
         let expected = 1.0 - 2.0_f64.powi(-4);
@@ -545,9 +583,30 @@ mod tests {
         let extended_dim = 8;
 
         let samples = vec![
-            CellSampleResult { row: 0, col: 0, cell_hash: "h0".into(), row_root: "r0".into(), col_root: "c0".into(), valid: true },
-            CellSampleResult { row: 1, col: 1, cell_hash: "h1".into(), row_root: "r1".into(), col_root: "c1".into(), valid: true },
-            CellSampleResult { row: 5, col: 5, cell_hash: String::new(), row_root: String::new(), col_root: String::new(), valid: false },
+            CellSampleResult {
+                row: 0,
+                col: 0,
+                cell_hash: "h0".into(),
+                row_root: "r0".into(),
+                col_root: "c0".into(),
+                valid: true,
+            },
+            CellSampleResult {
+                row: 1,
+                col: 1,
+                cell_hash: "h1".into(),
+                row_root: "r1".into(),
+                col_root: "c1".into(),
+                valid: true,
+            },
+            CellSampleResult {
+                row: 5,
+                col: 5,
+                cell_hash: String::new(),
+                row_root: String::new(),
+                col_root: String::new(),
+                valid: false,
+            },
         ];
 
         let metrics = BlockDA2D::availability_score(&samples, extended_dim);
@@ -555,7 +614,10 @@ mod tests {
         assert_eq!(metrics.valid_samples, 2);
         assert_eq!(metrics.unique_rows_hit, 2);
         assert_eq!(metrics.unique_cols_hit, 2);
-        assert!(!metrics.recovery_possible, "2 rows/cols < k=4, recovery should NOT be possible");
+        assert!(
+            !metrics.recovery_possible,
+            "2 rows/cols < k=4, recovery should NOT be possible"
+        );
         // confidence = 1 - 2^(-2) = 0.75
         let expected = 1.0 - 2.0_f64.powi(-2);
         assert!((metrics.confidence - expected).abs() < 1e-12);

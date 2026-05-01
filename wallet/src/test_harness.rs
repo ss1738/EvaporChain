@@ -197,9 +197,7 @@ impl TestHarness {
 
         let result = match &mock.behavior {
             MockBehavior::ReturnValue(v) => Ok(v.clone()),
-            MockBehavior::ReturnError(e) => {
-                Err(TestHarnessError::AssertionFailed(e.clone()))
-            }
+            MockBehavior::ReturnError(e) => Err(TestHarnessError::AssertionFailed(e.clone())),
             MockBehavior::Delay(ms) => Ok(format!("delayed:{}", ms)),
             MockBehavior::Sequence(seq) => {
                 let idx = (mock.call_count as usize) % seq.len();
@@ -296,11 +294,7 @@ impl TestHarness {
 
     // -- assertions ---------------------------------------------------------
 
-    pub fn assert_eq_check(
-        &self,
-        expected: &str,
-        actual: &str,
-    ) -> Result<(), TestHarnessError> {
+    pub fn assert_eq_check(&self, expected: &str, actual: &str) -> Result<(), TestHarnessError> {
         if expected == actual {
             Ok(())
         } else {
@@ -329,11 +323,7 @@ impl TestHarness {
 
     pub fn stats(&self) -> HarnessStats {
         let total_cases = self.cases.len();
-        let executed: Vec<&TestCase> = self
-            .cases
-            .values()
-            .filter(|c| c.result.is_some())
-            .collect();
+        let executed: Vec<&TestCase> = self.cases.values().filter(|c| c.result.is_some()).collect();
         let passed = executed
             .iter()
             .filter(|c| c.result == Some(TestResult2::Pass))
@@ -410,11 +400,7 @@ mod tests {
         }
     }
 
-    fn sample_case(
-        id_str: &str,
-        fixture_ids: Vec<&str>,
-        mock_ids: Vec<&str>,
-    ) -> TestCase {
+    fn sample_case(id_str: &str, fixture_ids: Vec<&str>, mock_ids: Vec<&str>) -> TestCase {
         TestCase {
             id: id_str.to_string(),
             name: format!("case_{}", id_str),
@@ -451,7 +437,8 @@ mod tests {
     #[test]
     fn test_remove_fixture() {
         let mut h = TestHarness::new();
-        h.add_fixture(sample_fixture("f1", FixtureType::Account, vec![])).unwrap();
+        h.add_fixture(sample_fixture("f1", FixtureType::Account, vec![]))
+            .unwrap();
         let removed = h.remove_fixture("f1").unwrap();
         assert_eq!(removed.id, "f1");
         assert!(h.get_fixture("f1").is_none());
@@ -460,7 +447,8 @@ mod tests {
     #[test]
     fn test_duplicate_fixture() {
         let mut h = TestHarness::new();
-        h.add_fixture(sample_fixture("f1", FixtureType::Account, vec![])).unwrap();
+        h.add_fixture(sample_fixture("f1", FixtureType::Account, vec![]))
+            .unwrap();
         let res = h.add_fixture(sample_fixture("f1", FixtureType::Token, vec![]));
         assert!(res.is_err());
     }
@@ -474,9 +462,12 @@ mod tests {
     #[test]
     fn test_fixtures_by_type() {
         let mut h = TestHarness::new();
-        h.add_fixture(sample_fixture("f1", FixtureType::Account, vec![])).unwrap();
-        h.add_fixture(sample_fixture("f2", FixtureType::Token, vec![])).unwrap();
-        h.add_fixture(sample_fixture("f3", FixtureType::Account, vec![])).unwrap();
+        h.add_fixture(sample_fixture("f1", FixtureType::Account, vec![]))
+            .unwrap();
+        h.add_fixture(sample_fixture("f2", FixtureType::Token, vec![]))
+            .unwrap();
+        h.add_fixture(sample_fixture("f3", FixtureType::Account, vec![]))
+            .unwrap();
         let accounts = h.fixtures_by_type(&FixtureType::Account);
         assert_eq!(accounts.len(), 2);
     }
@@ -484,9 +475,16 @@ mod tests {
     #[test]
     fn test_fixtures_by_tag() {
         let mut h = TestHarness::new();
-        h.add_fixture(sample_fixture("f1", FixtureType::Account, vec!["defi", "v2"])).unwrap();
-        h.add_fixture(sample_fixture("f2", FixtureType::Token, vec!["defi"])).unwrap();
-        h.add_fixture(sample_fixture("f3", FixtureType::Block, vec!["v2"])).unwrap();
+        h.add_fixture(sample_fixture(
+            "f1",
+            FixtureType::Account,
+            vec!["defi", "v2"],
+        ))
+        .unwrap();
+        h.add_fixture(sample_fixture("f2", FixtureType::Token, vec!["defi"]))
+            .unwrap();
+        h.add_fixture(sample_fixture("f3", FixtureType::Block, vec!["v2"]))
+            .unwrap();
         let defi = h.fixtures_by_tag("defi");
         assert_eq!(defi.len(), 2);
     }
@@ -501,7 +499,8 @@ mod tests {
     #[test]
     fn test_remove_mock() {
         let mut h = TestHarness::new();
-        h.create_mock(sample_mock("m1", MockBehavior::ReturnValue("ok".into()))).unwrap();
+        h.create_mock(sample_mock("m1", MockBehavior::ReturnValue("ok".into())))
+            .unwrap();
         let removed = h.remove_mock("m1").unwrap();
         assert_eq!(removed.id, "m1");
     }
@@ -509,7 +508,8 @@ mod tests {
     #[test]
     fn test_invoke_mock_return_value() {
         let mut h = TestHarness::new();
-        h.create_mock(sample_mock("m1", MockBehavior::ReturnValue("hello".into()))).unwrap();
+        h.create_mock(sample_mock("m1", MockBehavior::ReturnValue("hello".into())))
+            .unwrap();
         let val = h.invoke_mock("m1").unwrap();
         assert_eq!(val, "hello");
     }
@@ -517,7 +517,8 @@ mod tests {
     #[test]
     fn test_invoke_mock_return_error() {
         let mut h = TestHarness::new();
-        h.create_mock(sample_mock("m1", MockBehavior::ReturnError("boom".into()))).unwrap();
+        h.create_mock(sample_mock("m1", MockBehavior::ReturnError("boom".into())))
+            .unwrap();
         let res = h.invoke_mock("m1");
         assert!(res.is_err());
     }
@@ -525,7 +526,8 @@ mod tests {
     #[test]
     fn test_invoke_mock_delay() {
         let mut h = TestHarness::new();
-        h.create_mock(sample_mock("m1", MockBehavior::Delay(500))).unwrap();
+        h.create_mock(sample_mock("m1", MockBehavior::Delay(500)))
+            .unwrap();
         let val = h.invoke_mock("m1").unwrap();
         assert_eq!(val, "delayed:500");
     }
@@ -564,9 +566,12 @@ mod tests {
     #[test]
     fn test_add_and_run_case() {
         let mut h = TestHarness::new();
-        h.add_fixture(sample_fixture("f1", FixtureType::Account, vec![])).unwrap();
-        h.create_mock(sample_mock("m1", MockBehavior::ReturnValue("ok".into()))).unwrap();
-        h.add_case(sample_case("c1", vec!["f1"], vec!["m1"])).unwrap();
+        h.add_fixture(sample_fixture("f1", FixtureType::Account, vec![]))
+            .unwrap();
+        h.create_mock(sample_mock("m1", MockBehavior::ReturnValue("ok".into())))
+            .unwrap();
+        h.add_case(sample_case("c1", vec!["f1"], vec!["m1"]))
+            .unwrap();
         let result = h.run_case("c1").unwrap();
         assert_eq!(result, TestResult2::Pass);
         let case = h.cases.get("c1").unwrap();
@@ -577,21 +582,24 @@ mod tests {
     #[test]
     fn test_run_case_missing_fixture() {
         let mut h = TestHarness::new();
-        h.add_case(sample_case("c1", vec!["missing"], vec![])).unwrap();
+        h.add_case(sample_case("c1", vec!["missing"], vec![]))
+            .unwrap();
         assert!(h.run_case("c1").is_err());
     }
 
     #[test]
     fn test_run_case_missing_mock() {
         let mut h = TestHarness::new();
-        h.add_case(sample_case("c1", vec![], vec!["missing"])).unwrap();
+        h.add_case(sample_case("c1", vec![], vec!["missing"]))
+            .unwrap();
         assert!(h.run_case("c1").is_err());
     }
 
     #[test]
     fn test_add_and_run_suite() {
         let mut h = TestHarness::new();
-        h.add_fixture(sample_fixture("f1", FixtureType::Account, vec![])).unwrap();
+        h.add_fixture(sample_fixture("f1", FixtureType::Account, vec![]))
+            .unwrap();
         h.add_case(sample_case("c1", vec!["f1"], vec![])).unwrap();
         h.add_case(sample_case("c2", vec!["f1"], vec![])).unwrap();
         h.add_suite(sample_suite("s1", vec!["c1", "c2"])).unwrap();
@@ -617,8 +625,10 @@ mod tests {
     #[test]
     fn test_search_fixtures() {
         let mut h = TestHarness::new();
-        h.add_fixture(sample_fixture("alpha", FixtureType::Account, vec!["swap"])).unwrap();
-        h.add_fixture(sample_fixture("beta", FixtureType::Token, vec!["bridge"])).unwrap();
+        h.add_fixture(sample_fixture("alpha", FixtureType::Account, vec!["swap"]))
+            .unwrap();
+        h.add_fixture(sample_fixture("beta", FixtureType::Token, vec!["bridge"]))
+            .unwrap();
         let results = h.search_fixtures("alpha");
         assert_eq!(results.len(), 1);
         let results = h.search_fixtures("bridge");
@@ -628,9 +638,12 @@ mod tests {
     #[test]
     fn test_stats() {
         let mut h = TestHarness::new();
-        h.add_fixture(sample_fixture("f1", FixtureType::Account, vec![])).unwrap();
-        h.create_mock(sample_mock("m1", MockBehavior::ReturnValue("ok".into()))).unwrap();
-        h.add_case(sample_case("c1", vec!["f1"], vec!["m1"])).unwrap();
+        h.add_fixture(sample_fixture("f1", FixtureType::Account, vec![]))
+            .unwrap();
+        h.create_mock(sample_mock("m1", MockBehavior::ReturnValue("ok".into())))
+            .unwrap();
+        h.add_case(sample_case("c1", vec!["f1"], vec!["m1"]))
+            .unwrap();
         h.add_suite(sample_suite("s1", vec!["c1"])).unwrap();
         h.run_case("c1").unwrap();
 
@@ -646,8 +659,10 @@ mod tests {
     #[test]
     fn test_save_and_load() {
         let mut h = TestHarness::new();
-        h.add_fixture(sample_fixture("f1", FixtureType::Account, vec!["tag1"])).unwrap();
-        h.create_mock(sample_mock("m1", MockBehavior::ReturnValue("v".into()))).unwrap();
+        h.add_fixture(sample_fixture("f1", FixtureType::Account, vec!["tag1"]))
+            .unwrap();
+        h.create_mock(sample_mock("m1", MockBehavior::ReturnValue("v".into())))
+            .unwrap();
 
         let path = tmp_path("harness.json");
         h.save(&path).unwrap();

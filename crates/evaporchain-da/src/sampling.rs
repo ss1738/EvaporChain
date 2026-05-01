@@ -88,7 +88,10 @@ pub struct BatchVerifyResult {
 /// within each group: once a failure is found the remaining proofs in that
 /// group are skipped, but other groups are still checked so the caller gets
 /// a complete picture of which indices failed.
-pub fn batch_verify_proofs(proofs: &[&MerkleProof], shard_hashes: &[[u8; 32]]) -> BatchVerifyResult {
+pub fn batch_verify_proofs(
+    proofs: &[&MerkleProof],
+    shard_hashes: &[[u8; 32]],
+) -> BatchVerifyResult {
     if proofs.len() != shard_hashes.len() {
         return BatchVerifyResult {
             all_valid: false,
@@ -349,10 +352,7 @@ impl DASampler {
 
     /// Verify attestation signatures on sample responses.
     /// Returns indices of responses with invalid or missing attestations.
-    pub fn verify_attestations(
-        proof: &DAProof,
-        responses: &[SampleResponse],
-    ) -> Vec<usize> {
+    pub fn verify_attestations(proof: &DAProof, responses: &[SampleResponse]) -> Vec<usize> {
         let mut invalid = Vec::new();
         for (i, resp) in responses.iter().enumerate() {
             match (&resp.attestation_signature, &resp.attester_public_key) {
@@ -513,8 +513,7 @@ mod tests {
     #[test]
     fn test_full_sampling_flow() {
         let shards = make_test_shards();
-        let da_proof =
-            DASampler::compute_commitment_with_config(&shards, 4).unwrap();
+        let da_proof = DASampler::compute_commitment_with_config(&shards, 4).unwrap();
 
         // Generate sample queries
         let queries = DASampler::generate_queries(1, 8, 4, b"light-client-seed");
@@ -525,7 +524,12 @@ mod tests {
             .map(|q| {
                 let shard = shards[q.shard_index].clone();
                 let proof = DASampler::generate_proof(&shards, q.shard_index).unwrap();
-                SampleResponse { shard, proof, attestation_signature: None, attester_public_key: None }
+                SampleResponse {
+                    shard,
+                    proof,
+                    attestation_signature: None,
+                    attester_public_key: None,
+                }
             })
             .collect();
 
@@ -601,8 +605,7 @@ mod tests {
             })
             .collect();
 
-        let batch_result =
-            DASampler::verify_samples_batch(&da_proof, &responses, 1).unwrap();
+        let batch_result = DASampler::verify_samples_batch(&da_proof, &responses, 1).unwrap();
         assert!(batch_result.all_valid);
         assert_eq!(batch_result.verified_count, shards.len());
         assert!(batch_result.invalid_indices.is_empty());
@@ -640,8 +643,7 @@ mod tests {
         // Tamper the data of response[3] so hash check fails.
         responses[3].shard.data[0] ^= 0xFF;
 
-        let batch_result =
-            DASampler::verify_samples_batch(&da_proof, &responses, 1).unwrap();
+        let batch_result = DASampler::verify_samples_batch(&da_proof, &responses, 1).unwrap();
         assert!(!batch_result.all_valid);
         assert!(batch_result.invalid_indices.contains(&3));
     }
@@ -656,7 +658,10 @@ mod tests {
                 parity_shards: 4,
             })
             .unwrap();
-            encoder.encode(b"Different data for second tree").unwrap().shards
+            encoder
+                .encode(b"Different data for second tree")
+                .unwrap()
+                .shards
         };
 
         let proof_a0 = DASampler::generate_proof(&shards_a, 0).unwrap();
@@ -695,8 +700,7 @@ mod tests {
                 attester_public_key: None,
             },
         ];
-        let batch_result =
-            DASampler::verify_samples_batch(&da_proof_a, &responses, 1).unwrap();
+        let batch_result = DASampler::verify_samples_batch(&da_proof_a, &responses, 1).unwrap();
         assert!(!batch_result.all_valid);
         // Index 1 should be invalid (wrong root).
         assert!(batch_result.invalid_indices.contains(&1));
@@ -718,11 +722,15 @@ mod tests {
             seed
         };
 
-        let queries_v0 = DASampler::generate_queries(block_number, total_shards, num_samples, &make_seed(0));
-        let queries_v1 = DASampler::generate_queries(block_number, total_shards, num_samples, &make_seed(1));
-        let queries_v2 = DASampler::generate_queries(block_number, total_shards, num_samples, &make_seed(2));
+        let queries_v0 =
+            DASampler::generate_queries(block_number, total_shards, num_samples, &make_seed(0));
+        let queries_v1 =
+            DASampler::generate_queries(block_number, total_shards, num_samples, &make_seed(1));
+        let queries_v2 =
+            DASampler::generate_queries(block_number, total_shards, num_samples, &make_seed(2));
 
-        let indices = |qs: &[SampleQuery]| -> Vec<usize> { qs.iter().map(|q| q.shard_index).collect() };
+        let indices =
+            |qs: &[SampleQuery]| -> Vec<usize> { qs.iter().map(|q| q.shard_index).collect() };
 
         assert_ne!(indices(&queries_v0), indices(&queries_v1));
         assert_ne!(indices(&queries_v1), indices(&queries_v2));
@@ -740,7 +748,8 @@ mod tests {
         };
         let q1 = DASampler::generate_queries(100, 32, 4, &seed);
         let q2 = DASampler::generate_queries(100, 32, 4, &seed);
-        let indices = |qs: &[SampleQuery]| -> Vec<usize> { qs.iter().map(|q| q.shard_index).collect() };
+        let indices =
+            |qs: &[SampleQuery]| -> Vec<usize> { qs.iter().map(|q| q.shard_index).collect() };
         assert_eq!(indices(&q1), indices(&q2));
     }
 }

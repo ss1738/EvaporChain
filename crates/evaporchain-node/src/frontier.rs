@@ -13,9 +13,9 @@ use evaporchain_consensus::anchor::{
     ObjectSnapshot,
 };
 use evaporchain_crypto::energy_verkle::{EnergyVerkleTrie, TrieHealth};
-use evaporchain_da::poha::PoHAStore;
 #[cfg(test)]
 use evaporchain_da::poha::CertTemperature;
+use evaporchain_da::poha::PoHAStore;
 use evaporchain_state::db::StateDB;
 
 /// Configuration for frontier primitives.
@@ -106,7 +106,9 @@ impl FrontierState {
                     let obj = db.get_object(id)?;
                     let lifecycle_state = match obj.state {
                         evaporchain_types::ObjectState::Active
-                        | evaporchain_types::ObjectState::Resurrected => ObjectLifecycleState::Active,
+                        | evaporchain_types::ObjectState::Resurrected => {
+                            ObjectLifecycleState::Active
+                        }
                         evaporchain_types::ObjectState::Grace => ObjectLifecycleState::Grace,
                         evaporchain_types::ObjectState::Ghost => ObjectLifecycleState::Ghost,
                     };
@@ -283,6 +285,7 @@ mod tests {
             grace_epoch: None,
             data: vec![id_byte],
             decay_curve: None,
+            lad_mode: None,
         }
     }
 
@@ -327,9 +330,7 @@ mod tests {
             signer_ids: vec![0, 1, 2],
         };
 
-        let update = fs.on_block_committed(
-            1, 1, [1u8; 32], 10, 0, [0u8; 32], Some(&da_info), &db,
-        );
+        let update = fs.on_block_committed(1, 1, [1u8; 32], 10, 0, [0u8; 32], Some(&da_info), &db);
         assert!(update.poha_registered);
         assert_eq!(fs.poha.active_count(), 1);
 
@@ -347,9 +348,7 @@ mod tests {
         db.put_object(make_object(2, 500, 50));
         db.put_object(make_object(3, 200, 25));
 
-        let update = fs.on_block_committed(
-            1, 1, [1u8; 32], 3, 0, [0u8; 32], None, &db,
-        );
+        let update = fs.on_block_committed(1, 1, [1u8; 32], 3, 0, [0u8; 32], None, &db);
         assert_eq!(update.trie_updates, 3);
         assert_eq!(fs.energy_trie.len(), 3);
 
@@ -398,7 +397,11 @@ mod tests {
 
             // Anchors at 5, 10, 15, 20
             if block % 5 == 0 {
-                assert!(update.anchor_created.is_some(), "anchor expected at block {}", block);
+                assert!(
+                    update.anchor_created.is_some(),
+                    "anchor expected at block {}",
+                    block
+                );
             }
         }
 

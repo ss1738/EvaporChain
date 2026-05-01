@@ -63,11 +63,22 @@ impl ChainStore {
 
     // ─── Consensus metadata ───
 
-    pub fn save_consensus_meta(&self, block_number: u64, epoch: u64, parent_hash: [u8; 32]) -> Result<(), String> {
+    pub fn save_consensus_meta(
+        &self,
+        block_number: u64,
+        epoch: u64,
+        parent_hash: [u8; 32],
+    ) -> Result<(), String> {
         let cf = self.db.cf_handle(CF_META).unwrap();
-        self.db.put_cf(cf, b"block_number", block_number.to_le_bytes()).map_err(|e| e.to_string())?;
-        self.db.put_cf(cf, b"epoch", epoch.to_le_bytes()).map_err(|e| e.to_string())?;
-        self.db.put_cf(cf, b"parent_hash", parent_hash).map_err(|e| e.to_string())?;
+        self.db
+            .put_cf(cf, b"block_number", block_number.to_le_bytes())
+            .map_err(|e| e.to_string())?;
+        self.db
+            .put_cf(cf, b"epoch", epoch.to_le_bytes())
+            .map_err(|e| e.to_string())?;
+        self.db
+            .put_cf(cf, b"parent_hash", parent_hash)
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -172,7 +183,9 @@ impl ChainStore {
     pub fn save_chain_stats(&self, stats: &ChainStats) -> Result<(), String> {
         let cf = self.db.cf_handle(CF_META).unwrap();
         let value = serde_json::to_vec(stats).map_err(|e| e.to_string())?;
-        self.db.put_cf(cf, b"chain_stats", value).map_err(|e| e.to_string())
+        self.db
+            .put_cf(cf, b"chain_stats", value)
+            .map_err(|e| e.to_string())
     }
 
     pub fn load_chain_stats(&self) -> Option<ChainStats> {
@@ -186,7 +199,9 @@ impl ChainStore {
     pub fn save_nft_store(&self, store: &NftStore) -> Result<(), String> {
         let cf = self.db.cf_handle(CF_STORES).unwrap();
         let value = serde_json::to_vec(store).map_err(|e| e.to_string())?;
-        self.db.put_cf(cf, b"nft_store", value).map_err(|e| e.to_string())
+        self.db
+            .put_cf(cf, b"nft_store", value)
+            .map_err(|e| e.to_string())
     }
 
     pub fn load_nft_store(&self) -> Option<NftStore> {
@@ -198,7 +213,9 @@ impl ChainStore {
     pub fn save_token_store(&self, store: &TokenStore) -> Result<(), String> {
         let cf = self.db.cf_handle(CF_STORES).unwrap();
         let value = serde_json::to_vec(store).map_err(|e| e.to_string())?;
-        self.db.put_cf(cf, b"token_store", value).map_err(|e| e.to_string())
+        self.db
+            .put_cf(cf, b"token_store", value)
+            .map_err(|e| e.to_string())
     }
 
     pub fn load_token_store(&self) -> Option<TokenStore> {
@@ -210,7 +227,9 @@ impl ChainStore {
     pub fn save_staking_store(&self, store: &StakingStore) -> Result<(), String> {
         let cf = self.db.cf_handle(CF_STORES).unwrap();
         let value = serde_json::to_vec(store).map_err(|e| e.to_string())?;
-        self.db.put_cf(cf, b"staking_store", value).map_err(|e| e.to_string())
+        self.db
+            .put_cf(cf, b"staking_store", value)
+            .map_err(|e| e.to_string())
     }
 
     pub fn load_staking_store(&self) -> Option<StakingStore> {
@@ -222,7 +241,9 @@ impl ChainStore {
     pub fn save_dao_store(&self, store: &DAOStore) -> Result<(), String> {
         let cf = self.db.cf_handle(CF_STORES).unwrap();
         let value = serde_json::to_vec(store).map_err(|e| e.to_string())?;
-        self.db.put_cf(cf, b"dao_store", value).map_err(|e| e.to_string())
+        self.db
+            .put_cf(cf, b"dao_store", value)
+            .map_err(|e| e.to_string())
     }
 
     pub fn load_dao_store(&self) -> Option<DAOStore> {
@@ -233,12 +254,23 @@ impl ChainStore {
 
     // ─── State snapshots ───
 
-    pub fn save_snapshot(&self, height: u64, data: &[u8], state_root: [u8; 32]) -> Result<(), String> {
+    pub fn save_snapshot(
+        &self,
+        height: u64,
+        data: &[u8],
+        state_root: [u8; 32],
+    ) -> Result<(), String> {
         let cf = self.db.cf_handle(CF_META).unwrap();
         let key = format!("snapshot:{}", height);
-        self.db.put_cf(cf, key.as_bytes(), data).map_err(|e| e.to_string())?;
-        self.db.put_cf(cf, b"snapshot_latest_height", height.to_le_bytes()).map_err(|e| e.to_string())?;
-        self.db.put_cf(cf, b"snapshot_latest_root", state_root).map_err(|e| e.to_string())
+        self.db
+            .put_cf(cf, key.as_bytes(), data)
+            .map_err(|e| e.to_string())?;
+        self.db
+            .put_cf(cf, b"snapshot_latest_height", height.to_le_bytes())
+            .map_err(|e| e.to_string())?;
+        self.db
+            .put_cf(cf, b"snapshot_latest_root", state_root)
+            .map_err(|e| e.to_string())
     }
 
     pub fn load_latest_snapshot(&self) -> Option<(u64, [u8; 32], Vec<u8>)> {
@@ -261,12 +293,16 @@ impl ChainStore {
     pub fn save_mempool(&self, txs: &[evaporchain_types::Transaction]) -> Result<(), String> {
         let cf = self.db.cf_handle(CF_META).unwrap();
         let value = serde_json::to_vec(txs).map_err(|e| e.to_string())?;
-        self.db.put_cf(cf, b"mempool", value).map_err(|e| e.to_string())
+        self.db
+            .put_cf(cf, b"mempool", value)
+            .map_err(|e| e.to_string())
     }
 
     pub fn load_mempool(&self) -> Vec<evaporchain_types::Transaction> {
         let cf = self.db.cf_handle(CF_META).unwrap();
-        self.db.get_cf(cf, b"mempool").ok()
+        self.db
+            .get_cf(cf, b"mempool")
+            .ok()
             .flatten()
             .and_then(|data| serde_json::from_slice(&data).ok())
             .unwrap_or_default()
@@ -277,12 +313,16 @@ impl ChainStore {
     pub fn save_events(&self, events: &VecDeque<EventRecord>) -> Result<(), String> {
         let cf = self.db.cf_handle(CF_META).unwrap();
         let value = serde_json::to_vec(events).map_err(|e| e.to_string())?;
-        self.db.put_cf(cf, b"events", value).map_err(|e| e.to_string())
+        self.db
+            .put_cf(cf, b"events", value)
+            .map_err(|e| e.to_string())
     }
 
     pub fn load_events(&self) -> VecDeque<EventRecord> {
         let cf = self.db.cf_handle(CF_META).unwrap();
-        self.db.get_cf(cf, b"events").ok()
+        self.db
+            .get_cf(cf, b"events")
+            .ok()
             .flatten()
             .and_then(|data| serde_json::from_slice(&data).ok())
             .unwrap_or_default()
@@ -353,7 +393,11 @@ impl ChainStore {
 
     // ─── DA shard persistence ───
 
-    pub fn save_da_package(&self, block_number: u64, package: &BlockDAPackage) -> Result<(), String> {
+    pub fn save_da_package(
+        &self,
+        block_number: u64,
+        package: &BlockDAPackage,
+    ) -> Result<(), String> {
         let cf = self.db.cf_handle(CF_DA_SHARDS).unwrap();
         let key = block_number.to_be_bytes();
         let value = serde_json::to_vec(package).map_err(|e| e.to_string())?;
@@ -414,19 +458,22 @@ impl ChainStore {
         let mut loaded = 0usize;
         let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
         for (key, value) in iter.flatten() {
-                if key.starts_with(b"G") && key.len() >= 9 {
-                    // Ghost record
-                    if let Ok(ghost) = serde_json::from_slice::<evaporchain_da::poha::CertGhost>(&value) {
-                        store.insert_ghost(ghost);
-                        loaded += 1;
-                    }
-                } else if key.len() >= 8 {
-                    // Active certificate
-                    if let Ok(cert) = serde_json::from_slice::<evaporchain_da::poha::PoHACertificate>(&value) {
-                        store.insert_certificate(cert);
-                        loaded += 1;
-                    }
+            if key.starts_with(b"G") && key.len() >= 9 {
+                // Ghost record
+                if let Ok(ghost) = serde_json::from_slice::<evaporchain_da::poha::CertGhost>(&value)
+                {
+                    store.insert_ghost(ghost);
+                    loaded += 1;
                 }
+            } else if key.len() >= 8 {
+                // Active certificate
+                if let Ok(cert) =
+                    serde_json::from_slice::<evaporchain_da::poha::PoHACertificate>(&value)
+                {
+                    store.insert_certificate(cert);
+                    loaded += 1;
+                }
+            }
         }
         loaded
     }
@@ -462,18 +509,24 @@ impl ChainStore {
                 log_count: 0,
             };
             let value = serde_json::to_vec(&receipt).map_err(|e| e.to_string())?;
-            self.db.put_cf(tx_cf, tx_hash, &value).map_err(|e| e.to_string())?;
+            self.db
+                .put_cf(tx_cf, tx_hash, &value)
+                .map_err(|e| e.to_string())?;
 
             // Index by sender address
             if let Some(ref addr) = receipt.from {
                 let addr_key = format!("{}:{:016x}:{:04x}", addr, block.number, tx_idx);
-                self.db.put_cf(addr_cf, addr_key.as_bytes(), tx_hash).map_err(|e| e.to_string())?;
+                self.db
+                    .put_cf(addr_cf, addr_key.as_bytes(), tx_hash)
+                    .map_err(|e| e.to_string())?;
             }
             // Index by receiver address
             if let Some(ref addr) = receipt.to {
                 if receipt.from.as_deref() != Some(addr) {
                     let addr_key = format!("{}:{:016x}:{:04x}", addr, block.number, tx_idx);
-                    self.db.put_cf(addr_cf, addr_key.as_bytes(), tx_hash).map_err(|e| e.to_string())?;
+                    self.db
+                        .put_cf(addr_cf, addr_key.as_bytes(), tx_hash)
+                        .map_err(|e| e.to_string())?;
                 }
             }
 
@@ -485,7 +538,9 @@ impl ChainStore {
     /// Look up a transaction receipt by its blake3 hash (hex string or raw bytes).
     pub fn get_tx_receipt(&self, hash_hex: &str) -> Option<TxReceipt> {
         let hash_bytes = hex::decode(hash_hex).ok()?;
-        if hash_bytes.len() != 32 { return None; }
+        if hash_bytes.len() != 32 {
+            return None;
+        }
         let cf = self.db.cf_handle(CF_TX_INDEX).unwrap();
         let data = self.db.get_cf(cf, &hash_bytes).ok()??;
         serde_json::from_slice(&data).ok()
@@ -503,7 +558,9 @@ impl ChainStore {
         let mut iter = self.db.prefix_iterator_cf(addr_cf, prefix.as_bytes());
         let mut all_entries: Vec<Vec<u8>> = Vec::new();
         while let Some(Ok((key, value))) = iter.next() {
-            if !key.starts_with(prefix.as_bytes()) { break; }
+            if !key.starts_with(prefix.as_bytes()) {
+                break;
+            }
             all_entries.push(value.to_vec());
         }
 
@@ -558,7 +615,9 @@ impl ChainStore {
             key.extend_from_slice(&block_number.to_be_bytes());
             key.extend_from_slice(&(log_idx as u32).to_be_bytes());
             let value = serde_json::to_vec(&log).map_err(|e| e.to_string())?;
-            self.db.put_cf(cf, &key, &value).map_err(|e| e.to_string())?;
+            self.db
+                .put_cf(cf, &key, &value)
+                .map_err(|e| e.to_string())?;
             indexed += 1;
         }
         Ok(indexed)
@@ -639,7 +698,9 @@ impl ChainStore {
     /// Count total indexed contract events.
     pub fn contract_event_count(&self) -> usize {
         let cf = self.db.cf_handle(CF_CONTRACT_EVENTS).unwrap();
-        self.db.iterator_cf(cf, rocksdb::IteratorMode::Start).count()
+        self.db
+            .iterator_cf(cf, rocksdb::IteratorMode::Start)
+            .count()
     }
 
     pub fn prune_da_packages(&self, current_height: u64, retain: u64) -> usize {
@@ -669,11 +730,16 @@ impl ChainStore {
 
     // ─── Script contract persistence ───
 
-    pub fn save_script_contracts(&self, contracts: &[&evaporchain_script::ScriptContract]) -> Result<(), String> {
+    pub fn save_script_contracts(
+        &self,
+        contracts: &[&evaporchain_script::ScriptContract],
+    ) -> Result<(), String> {
         let cf = self.db.cf_handle(CF_SCRIPT_CONTRACTS).ok_or("missing CF")?;
         for c in contracts {
             let data = serde_json::to_vec(c).map_err(|e| e.to_string())?;
-            self.db.put_cf(cf, c.id.to_le_bytes(), data).map_err(|e| e.to_string())?;
+            self.db
+                .put_cf(cf, c.id.to_le_bytes(), data)
+                .map_err(|e| e.to_string())?;
         }
         Ok(())
     }
@@ -686,20 +752,28 @@ impl ChainStore {
         let mut contracts = vec![];
         let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
         for (_key, value) in iter.flatten() {
-                if let Ok(c) = serde_json::from_slice(&value) {
-                    contracts.push(c);
-                }
+            if let Ok(c) = serde_json::from_slice(&value) {
+                contracts.push(c);
+            }
         }
         contracts
     }
 
     // ─── Template contract persistence ───
 
-    pub fn save_template_contracts(&self, contracts: &[&evaporchain_contracts::ContractInstance]) -> Result<(), String> {
-        let cf = self.db.cf_handle(CF_TEMPLATE_CONTRACTS).ok_or("missing CF")?;
+    pub fn save_template_contracts(
+        &self,
+        contracts: &[&evaporchain_contracts::ContractInstance],
+    ) -> Result<(), String> {
+        let cf = self
+            .db
+            .cf_handle(CF_TEMPLATE_CONTRACTS)
+            .ok_or("missing CF")?;
         for c in contracts {
             let data = serde_json::to_vec(c).map_err(|e| e.to_string())?;
-            self.db.put_cf(cf, c.id.to_le_bytes(), data).map_err(|e| e.to_string())?;
+            self.db
+                .put_cf(cf, c.id.to_le_bytes(), data)
+                .map_err(|e| e.to_string())?;
         }
         Ok(())
     }
@@ -712,9 +786,9 @@ impl ChainStore {
         let mut contracts = vec![];
         let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
         for (_key, value) in iter.flatten() {
-                if let Ok(c) = serde_json::from_slice(&value) {
-                    contracts.push(c);
-                }
+            if let Ok(c) = serde_json::from_slice(&value) {
+                contracts.push(c);
+            }
         }
         contracts
     }
@@ -795,7 +869,11 @@ pub struct TxMerkleSibling {
 }
 
 /// Generate a Merkle inclusion proof for a tx at `tx_index` in the block's txs.
-pub fn prove_tx_inclusion(txs: &[Transaction], tx_index: usize, block_number: u64) -> Option<TxInclusionProof> {
+pub fn prove_tx_inclusion(
+    txs: &[Transaction],
+    tx_index: usize,
+    block_number: u64,
+) -> Option<TxInclusionProof> {
     if tx_index >= txs.len() {
         return None;
     }
@@ -806,11 +884,19 @@ pub fn prove_tx_inclusion(txs: &[Transaction], tx_index: usize, block_number: u6
     let mut idx = tx_index;
 
     while layer.len() > 1 {
-        let sibling_idx = if idx.is_multiple_of(2) { idx + 1 } else { idx - 1 };
+        let sibling_idx = if idx.is_multiple_of(2) {
+            idx + 1
+        } else {
+            idx - 1
+        };
         if sibling_idx < layer.len() {
             siblings.push(TxMerkleSibling {
                 hash: hex::encode(layer[sibling_idx]),
-                position: if idx.is_multiple_of(2) { "right".into() } else { "left".into() },
+                position: if idx.is_multiple_of(2) {
+                    "right".into()
+                } else {
+                    "left".into()
+                },
             });
         }
         let mut next = Vec::with_capacity(layer.len().div_ceil(2));
@@ -915,9 +1001,15 @@ fn tx_sender_hex(tx: &Transaction) -> Option<String> {
         Transaction::ValidatorStake(t) => Some(addr_hex(&t.validator_address)),
         Transaction::ValidatorExit(t) => Some(addr_hex(&t.validator_address)),
         Transaction::ValidatorClaimStake(t) => Some(addr_hex(&t.validator_address)),
-        Transaction::Shield(_) | Transaction::Unshield(_) | Transaction::PrivateTransfer(_)
-        | Transaction::Deferred(_) | Transaction::Blob(_) | Transaction::Governance(_)
-        | Transaction::MultiSig(_) | Transaction::UserOp(_) | Transaction::UpgradeContract(_) => None,
+        Transaction::Shield(_)
+        | Transaction::Unshield(_)
+        | Transaction::PrivateTransfer(_)
+        | Transaction::Deferred(_)
+        | Transaction::Blob(_)
+        | Transaction::Governance(_)
+        | Transaction::MultiSig(_)
+        | Transaction::UserOp(_)
+        | Transaction::UpgradeContract(_) => None,
         Transaction::Delegate(t) => Some(addr_hex(&t.delegator)),
         Transaction::Undelegate(t) => Some(addr_hex(&t.delegator)),
         Transaction::RotateValidatorKey(t) => Some(addr_hex(&t.validator_address)),
@@ -935,7 +1027,7 @@ fn tx_receiver_hex(tx: &Transaction) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use evaporchain_types::{TransferTx, RefreshTx};
+    use evaporchain_types::{RefreshTx, TransferTx};
 
     fn make_transfer(from: [u8; 32], to: [u8; 32], amount: u64) -> Transaction {
         Transaction::Transfer(TransferTx {
@@ -1038,7 +1130,10 @@ mod tests {
     fn test_compute_tx_hash_different_for_different_txs() {
         let tx1 = make_transfer([1; 32], [2; 32], 100);
         let tx2 = make_transfer([1; 32], [2; 32], 200);
-        assert_ne!(ChainStore::compute_tx_hash(&tx1), ChainStore::compute_tx_hash(&tx2));
+        assert_ne!(
+            ChainStore::compute_tx_hash(&tx1),
+            ChainStore::compute_tx_hash(&tx2)
+        );
     }
 
     // ── compute_tx_merkle_root ──

@@ -23,10 +23,14 @@ pub enum ExportError {
 }
 
 impl From<std::io::Error> for ExportError {
-    fn from(e: std::io::Error) -> Self { ExportError::Io(e.to_string()) }
+    fn from(e: std::io::Error) -> Self {
+        ExportError::Io(e.to_string())
+    }
 }
 impl From<serde_json::Error> for ExportError {
-    fn from(e: serde_json::Error) -> Self { ExportError::Json(e.to_string()) }
+    fn from(e: serde_json::Error) -> Self {
+        ExportError::Json(e.to_string())
+    }
 }
 
 /// Export format.
@@ -102,8 +106,13 @@ impl Receipt {
     pub fn to_csv_row(&self) -> String {
         format!(
             "{},{},{},{},{},{},{},{},{}\n",
-            self.tx_hash, self.tx_type, self.from, self.to,
-            self.amount, self.fee, &self.timestamp[..19],
+            self.tx_hash,
+            self.tx_type,
+            self.from,
+            self.to,
+            self.amount,
+            self.fee,
+            &self.timestamp[..19],
             self.block_height.map_or("".into(), |h| h.to_string()),
             self.status
         )
@@ -138,7 +147,10 @@ impl AccountSummary {
         s.push_str(&format!("  Balance:    {} EVAP\n", self.balance));
         s.push_str(&format!("  Total Sent: {} EVAP\n", self.total_sent));
         s.push_str(&format!("  Total Recv: {} EVAP\n", self.total_received));
-        s.push_str(&format!("  Energy:     {} EVAP spent\n", self.total_energy_spent));
+        s.push_str(&format!(
+            "  Energy:     {} EVAP spent\n",
+            self.total_energy_spent
+        ));
         s.push_str(&format!("  Gas Fees:   {} EVAP\n", self.total_gas_spent));
         s.push_str(&format!("  Objects:    {}\n", self.object_count));
         s.push_str(&format!("  NFTs:       {}\n", self.nft_count));
@@ -182,7 +194,8 @@ impl Exporter {
         let content = match format {
             ExportFormat::Json => serde_json::to_string_pretty(receipts)?,
             ExportFormat::Csv => {
-                let mut csv = String::from("tx_hash,type,from,to,amount,fee,timestamp,block,status\n");
+                let mut csv =
+                    String::from("tx_hash,type,from,to,amount,fee,timestamp,block,status\n");
                 for r in receipts {
                     csv.push_str(&r.to_csv_row());
                 }
@@ -221,8 +234,14 @@ impl Exporter {
                 for r in rows {
                     csv.push_str(&format!(
                         "{},{},{},{},{},{},{},{}\n",
-                        r.timestamp, r.tx_type, r.from, r.to,
-                        r.amount, r.fee, r.status, r.reference
+                        r.timestamp,
+                        r.tx_type,
+                        r.from,
+                        r.to,
+                        r.amount,
+                        r.fee,
+                        r.status,
+                        r.reference
                     ));
                 }
                 csv
@@ -232,8 +251,12 @@ impl Exporter {
                 for r in rows {
                     text.push_str(&format!(
                         "{} | {:12} | {} -> {} | {} EVAP | {}\n",
-                        &r.timestamp[..19], r.tx_type, &r.from[..10.min(r.from.len())],
-                        &r.to[..10.min(r.to.len())], r.amount, r.status
+                        &r.timestamp[..19],
+                        r.tx_type,
+                        &r.from[..10.min(r.from.len())],
+                        &r.to[..10.min(r.to.len())],
+                        r.amount,
+                        r.status
                     ));
                 }
                 text
@@ -563,7 +586,7 @@ mod tests {
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("multi.txt");
 
-        let mut r1 = make_receipt();
+        let r1 = make_receipt();
         let mut r2 = make_receipt();
         r2.tx_hash = "0xdef456".into();
         r2.amount = 2000;

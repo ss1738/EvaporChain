@@ -4,7 +4,7 @@
 //! root tensor remains.  Stores all intermediate tensors for proof generation.
 
 use crate::layer::{hash_site, MeraLayer};
-use crate::tensor::{encode_energy, Tensor, CHI};
+use crate::tensor::{encode_energy, Tensor};
 
 /// The full MERA tree for a set of account energies.
 ///
@@ -35,10 +35,7 @@ impl MeraTree {
         let depth = padded_n.trailing_zeros() as usize + 1; // +1 for physical layer
 
         // Physical layer: encode each energy as a CHI-vector.
-        let mut physical: Vec<Tensor> = energies
-            .iter()
-            .map(|&e| encode_energy(e))
-            .collect();
+        let mut physical: Vec<Tensor> = energies.iter().map(|&e| encode_energy(e)).collect();
         // Pad with zero-energy phantoms.
         while physical.len() < padded_n {
             physical.push(encode_energy(0));
@@ -47,18 +44,22 @@ impl MeraTree {
         let mut layers: Vec<Vec<Tensor>> = vec![physical];
         let mut mera_layers: Vec<MeraLayer> = Vec::new();
 
-        for ℓ in 0..(depth - 1) {
-            let layer = MeraLayer::new(lambda_half_life, base_half_life, ℓ);
+        for layer_idx in 0..(depth - 1) {
+            let layer = MeraLayer::new(lambda_half_life, base_half_life, layer_idx);
             let current = layers.last().unwrap();
             let mut next: Vec<Tensor> = Vec::with_capacity(current.len() / 2);
 
-            // Energy threshold for filtration: accounts below E·(1/2)^ℓ are masked.
+            // Energy threshold for filtration: accounts below E·(1/2)^layer_idx are masked.
             // We use a small threshold (0.01 of unit norm) to avoid masking real accounts.
             let filter_threshold = Some(0.01f64);
 
             for pair in current.chunks(2) {
-                let left  = &pair[0].data;
-                let right = if pair.len() > 1 { &pair[1].data } else { &pair[0].data };
+                let left = &pair[0].data;
+                let right = if pair.len() > 1 {
+                    &pair[1].data
+                } else {
+                    &pair[0].data
+                };
                 let out = layer.apply(left, right, filter_threshold);
                 next.push(Tensor::from_vec(out));
             }
@@ -67,7 +68,13 @@ impl MeraTree {
             layers.push(next);
         }
 
-        Self { layers, mera_layers, n_accounts, lambda_half_life, base_half_life }
+        Self {
+            layers,
+            mera_layers,
+            n_accounts,
+            lambda_half_life,
+            base_half_life,
+        }
     }
 
     /// Root tensor (single CHI-vector at the top layer).
@@ -94,6 +101,7 @@ impl MeraTree {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tensor::CHI;
 
     fn default_tree(energies: &[u64]) -> MeraTree {
         MeraTree::build(energies, 4096, 100)
@@ -133,8 +141,11 @@ mod tests {
     fn different_energies_different_root() {
         let t1 = default_tree(&[1_000, 2_000, 3_000, 4_000]);
         let t2 = default_tree(&[4_000, 3_000, 2_000, 1_000]);
-        assert_ne!(t1.root_hash(), t2.root_hash(),
-            "different orderings must produce different commitments");
+        assert_ne!(
+            t1.root_hash(),
+            t2.root_hash(),
+            "different orderings must produce different commitments"
+        );
     }
 
     #[test]
@@ -142,7 +153,11 @@ mod tests {
         let e = vec![1_000_000u64, 2_000_000, 3_000_000, 4_000_000];
         let t1 = MeraTree::build(&e, 4096, 100);
         let t2 = MeraTree::build(&e, 4096, 100);
-        assert_eq!(t1.root_hash(), t2.root_hash(), "commitment must be deterministic");
+        assert_eq!(
+            t1.root_hash(),
+            t2.root_hash(),
+            "commitment must be deterministic"
+        );
     }
 
     #[test]

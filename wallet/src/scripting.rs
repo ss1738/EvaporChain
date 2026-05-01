@@ -32,10 +32,14 @@ pub enum ScriptError {
 }
 
 impl From<std::io::Error> for ScriptError {
-    fn from(e: std::io::Error) -> Self { ScriptError::Io(e.to_string()) }
+    fn from(e: std::io::Error) -> Self {
+        ScriptError::Io(e.to_string())
+    }
 }
 impl From<serde_json::Error> for ScriptError {
-    fn from(e: serde_json::Error) -> Self { ScriptError::Json(e.to_string()) }
+    fn from(e: serde_json::Error) -> Self {
+        ScriptError::Json(e.to_string())
+    }
 }
 
 /// An operation in a script step.
@@ -66,8 +70,12 @@ impl Operation {
     pub fn label(&self) -> String {
         match self {
             Operation::Transfer { to, amount } => format!("transfer {} to {}", amount, to),
-            Operation::Refresh { object_id, energy } => format!("refresh {} with {}", object_id, energy),
-            Operation::CheckBalance { address, store_as } => format!("check_balance {} -> ${}", address, store_as),
+            Operation::Refresh { object_id, energy } => {
+                format!("refresh {} with {}", object_id, energy)
+            }
+            Operation::CheckBalance { address, store_as } => {
+                format!("check_balance {} -> ${}", address, store_as)
+            }
             Operation::SetVar { name, value } => format!("set ${} = {}", name, value),
             Operation::Log { message } => format!("log: {}", message),
             Operation::Wait { seconds } => format!("wait {}s", seconds),
@@ -100,19 +108,15 @@ impl Condition {
     pub fn evaluate(&self, vars: &HashMap<String, String>) -> bool {
         match self {
             Condition::Always => true,
-            Condition::Equals { var, value } => {
-                vars.get(var).is_some_and(|v| v == value)
-            }
-            Condition::LessThan { var, value } => {
-                vars.get(var)
-                    .and_then(|v| v.parse::<u64>().ok())
-                    .is_some_and(|v| v < *value)
-            }
-            Condition::GreaterThan { var, value } => {
-                vars.get(var)
-                    .and_then(|v| v.parse::<u64>().ok())
-                    .is_some_and(|v| v > *value)
-            }
+            Condition::Equals { var, value } => vars.get(var).is_some_and(|v| v == value),
+            Condition::LessThan { var, value } => vars
+                .get(var)
+                .and_then(|v| v.parse::<u64>().ok())
+                .is_some_and(|v| v < *value),
+            Condition::GreaterThan { var, value } => vars
+                .get(var)
+                .and_then(|v| v.parse::<u64>().ok())
+                .is_some_and(|v| v > *value),
             Condition::Exists { var } => vars.contains_key(var),
             Condition::Not(inner) => !inner.evaluate(vars),
         }
@@ -157,8 +161,12 @@ pub struct Step {
     pub on_error: OnError,
 }
 
-fn default_condition() -> Condition { Condition::Always }
-fn default_on_error() -> OnError { OnError::Abort }
+fn default_condition() -> Condition {
+    Condition::Always
+}
+fn default_on_error() -> OnError {
+    OnError::Abort
+}
 
 /// A complete script definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -181,7 +189,9 @@ pub struct Script {
     pub max_steps: usize,
 }
 
-fn default_max_steps() -> usize { 100 }
+fn default_max_steps() -> usize {
+    100
+}
 
 impl Script {
     /// Load script from a JSON file.
@@ -361,14 +371,20 @@ impl ScriptExecutor {
                 if self.live {
                     format!("Refreshed {} with {} energy", object_id, energy)
                 } else {
-                    format!("[DRY-RUN] Would refresh {} with {} energy", object_id, energy)
+                    format!(
+                        "[DRY-RUN] Would refresh {} with {} energy",
+                        object_id, energy
+                    )
                 }
             }
             Operation::CheckBalance { address, store_as } => {
                 // In dry-run, simulate a balance
                 let balance = if self.live { "0" } else { "50000" };
                 self.variables.insert(store_as.clone(), balance.to_string());
-                format!("Balance of {} = {} (stored as ${})", address, balance, store_as)
+                format!(
+                    "Balance of {} = {} (stored as ${})",
+                    address, balance, store_as
+                )
             }
             Operation::SetVar { name, value } => {
                 // Interpolate variables in value
@@ -448,20 +464,33 @@ mod tests {
                 },
                 Step {
                     name: "log-balance".into(),
-                    operation: Operation::Log { message: "Balance is ${bal}".into() },
+                    operation: Operation::Log {
+                        message: "Balance is ${bal}".into(),
+                    },
                     condition: Condition::Always,
                     on_error: OnError::Abort,
                 },
                 Step {
                     name: "send-if-rich".into(),
-                    operation: Operation::Transfer { to: "0xbob".into(), amount: 1000 },
-                    condition: Condition::GreaterThan { var: "bal".into(), value: 10000 },
+                    operation: Operation::Transfer {
+                        to: "0xbob".into(),
+                        amount: 1000,
+                    },
+                    condition: Condition::GreaterThan {
+                        var: "bal".into(),
+                        value: 10000,
+                    },
                     on_error: OnError::Skip,
                 },
                 Step {
                     name: "faucet-if-poor".into(),
-                    operation: Operation::Faucet { address: "0xme".into() },
-                    condition: Condition::LessThan { var: "bal".into(), value: 1000 },
+                    operation: Operation::Faucet {
+                        address: "0xme".into(),
+                    },
+                    condition: Condition::LessThan {
+                        var: "bal".into(),
+                        value: 1000,
+                    },
                     on_error: OnError::Abort,
                 },
             ],
@@ -516,24 +545,48 @@ mod tests {
     fn test_condition_equals() {
         let mut vars = HashMap::new();
         vars.insert("status".into(), "ok".into());
-        assert!(Condition::Equals { var: "status".into(), value: "ok".into() }.evaluate(&vars));
-        assert!(!Condition::Equals { var: "status".into(), value: "fail".into() }.evaluate(&vars));
+        assert!(Condition::Equals {
+            var: "status".into(),
+            value: "ok".into()
+        }
+        .evaluate(&vars));
+        assert!(!Condition::Equals {
+            var: "status".into(),
+            value: "fail".into()
+        }
+        .evaluate(&vars));
     }
 
     #[test]
     fn test_condition_less_than() {
         let mut vars = HashMap::new();
         vars.insert("bal".into(), "500".into());
-        assert!(Condition::LessThan { var: "bal".into(), value: 1000 }.evaluate(&vars));
-        assert!(!Condition::LessThan { var: "bal".into(), value: 100 }.evaluate(&vars));
+        assert!(Condition::LessThan {
+            var: "bal".into(),
+            value: 1000
+        }
+        .evaluate(&vars));
+        assert!(!Condition::LessThan {
+            var: "bal".into(),
+            value: 100
+        }
+        .evaluate(&vars));
     }
 
     #[test]
     fn test_condition_greater_than() {
         let mut vars = HashMap::new();
         vars.insert("bal".into(), "50000".into());
-        assert!(Condition::GreaterThan { var: "bal".into(), value: 10000 }.evaluate(&vars));
-        assert!(!Condition::GreaterThan { var: "bal".into(), value: 100000 }.evaluate(&vars));
+        assert!(Condition::GreaterThan {
+            var: "bal".into(),
+            value: 10000
+        }
+        .evaluate(&vars));
+        assert!(!Condition::GreaterThan {
+            var: "bal".into(),
+            value: 100000
+        }
+        .evaluate(&vars));
     }
 
     #[test]
@@ -548,7 +601,10 @@ mod tests {
     fn test_condition_not() {
         let mut vars = HashMap::new();
         vars.insert("bal".into(), "100".into());
-        let cond = Condition::Not(Box::new(Condition::GreaterThan { var: "bal".into(), value: 1000 }));
+        let cond = Condition::Not(Box::new(Condition::GreaterThan {
+            var: "bal".into(),
+            value: 1000,
+        }));
         assert!(cond.evaluate(&vars)); // 100 > 1000 is false, NOT(false) = true
     }
 
@@ -560,7 +616,11 @@ mod tests {
         // check-balance sets bal=50000 (dry-run)
         // send-if-rich: 50000 > 10000 → executes
         // faucet-if-poor: 50000 < 1000 → skipped
-        let faucet_result = result.step_results.iter().find(|r| r.step_name == "faucet-if-poor").unwrap();
+        let faucet_result = result
+            .step_results
+            .iter()
+            .find(|r| r.step_name == "faucet-if-poor")
+            .unwrap();
         assert!(faucet_result.skipped);
     }
 
@@ -569,7 +629,11 @@ mod tests {
         let script = make_script();
         let mut executor = ScriptExecutor::new(false);
         let result = executor.execute(&script).unwrap();
-        let log_result = result.step_results.iter().find(|r| r.step_name == "log-balance").unwrap();
+        let log_result = result
+            .step_results
+            .iter()
+            .find(|r| r.step_name == "log-balance")
+            .unwrap();
         assert!(log_result.output.contains("50000"));
     }
 
@@ -580,14 +644,15 @@ mod tests {
             description: "test".into(),
             version: "1".into(),
             author: "t".into(),
-            steps: vec![
-                Step {
-                    name: "set".into(),
-                    operation: Operation::SetVar { name: "greeting".into(), value: "hello".into() },
-                    condition: Condition::Always,
-                    on_error: OnError::Abort,
+            steps: vec![Step {
+                name: "set".into(),
+                operation: Operation::SetVar {
+                    name: "greeting".into(),
+                    value: "hello".into(),
                 },
-            ],
+                condition: Condition::Always,
+                on_error: OnError::Abort,
+            }],
             variables: HashMap::new(),
             max_steps: 10,
         };
@@ -605,14 +670,14 @@ mod tests {
             description: "test".into(),
             version: "1".into(),
             author: "t".into(),
-            steps: vec![
-                Step {
-                    name: "log".into(),
-                    operation: Operation::Log { message: "Address: ${addr}".into() },
-                    condition: Condition::Always,
-                    on_error: OnError::Abort,
+            steps: vec![Step {
+                name: "log".into(),
+                operation: Operation::Log {
+                    message: "Address: ${addr}".into(),
                 },
-            ],
+                condition: Condition::Always,
+                on_error: OnError::Abort,
+            }],
             variables: vars,
             max_steps: 10,
         };
@@ -654,17 +719,38 @@ mod tests {
 
     #[test]
     fn test_operation_labels() {
-        assert!(Operation::Transfer { to: "0x1".into(), amount: 100 }.label().contains("100"));
-        assert!(Operation::Refresh { object_id: "obj".into(), energy: 50 }.label().contains("obj"));
-        assert!(Operation::Log { message: "hi".into() }.label().contains("hi"));
+        assert!(Operation::Transfer {
+            to: "0x1".into(),
+            amount: 100
+        }
+        .label()
+        .contains("100"));
+        assert!(Operation::Refresh {
+            object_id: "obj".into(),
+            energy: 50
+        }
+        .label()
+        .contains("obj"));
+        assert!(Operation::Log {
+            message: "hi".into()
+        }
+        .label()
+        .contains("hi"));
         assert_eq!(Operation::Noop.label(), "noop");
     }
 
     #[test]
     fn test_condition_labels() {
         assert_eq!(Condition::Always.label(), "always");
-        assert!(Condition::LessThan { var: "x".into(), value: 10 }.label().contains("< 10"));
-        assert!(Condition::Not(Box::new(Condition::Always)).label().contains("NOT"));
+        assert!(Condition::LessThan {
+            var: "x".into(),
+            value: 10
+        }
+        .label()
+        .contains("< 10"));
+        assert!(Condition::Not(Box::new(Condition::Always))
+            .label()
+            .contains("NOT"));
     }
 
     #[test]
@@ -721,7 +807,10 @@ mod tests {
             author: "t".into(),
             steps: vec![Step {
                 name: "send".into(),
-                operation: Operation::Transfer { to: "0x1".into(), amount: 100 },
+                operation: Operation::Transfer {
+                    to: "0x1".into(),
+                    amount: 100,
+                },
                 condition: Condition::Always,
                 on_error: OnError::Abort,
             }],
@@ -741,8 +830,20 @@ mod tests {
     #[test]
     fn test_condition_missing_var() {
         let vars = HashMap::new();
-        assert!(!Condition::Equals { var: "x".into(), value: "1".into() }.evaluate(&vars));
-        assert!(!Condition::LessThan { var: "x".into(), value: 10 }.evaluate(&vars));
-        assert!(!Condition::GreaterThan { var: "x".into(), value: 10 }.evaluate(&vars));
+        assert!(!Condition::Equals {
+            var: "x".into(),
+            value: "1".into()
+        }
+        .evaluate(&vars));
+        assert!(!Condition::LessThan {
+            var: "x".into(),
+            value: 10
+        }
+        .evaluate(&vars));
+        assert!(!Condition::GreaterThan {
+            var: "x".into(),
+            value: 10
+        }
+        .evaluate(&vars));
     }
 }

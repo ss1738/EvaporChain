@@ -59,11 +59,8 @@ impl FeeController {
         // 1. Decay (E - E*) → preserves sign, magnitude shrinks per λ.
         let diff_before = signed_diff(state.energy, params.target_energy);
         let abs_diff = diff_before.unsigned_abs() as u64;
-        let decayed_abs = energy_at_epoch(
-            abs_diff,
-            params.chain_lambda.half_life(),
-            epochs_elapsed,
-        );
+        let decayed_abs =
+            energy_at_epoch(abs_diff, params.chain_lambda.half_life(), epochs_elapsed);
         let decayed_diff: i128 = if diff_before >= 0 {
             decayed_abs as i128
         } else {
@@ -201,11 +198,11 @@ mod proptests {
 
     fn arb_params() -> impl Strategy<Value = FeeControllerParams> {
         (
-            1u64..1_000_000,        // target_energy
-            1u64..100_000_000,      // target_gas
-            10u64..10_000,          // half_life
-            1u64..1_000_000,        // fee_response_ppm
-            1u64..1_000_000,        // base_fee_floor
+            1u64..1_000_000,   // target_energy
+            1u64..100_000_000, // target_gas
+            10u64..10_000,     // half_life
+            1u64..1_000_000,   // fee_response_ppm
+            1u64..1_000_000,   // base_fee_floor
         )
             .prop_map(|(te, tg, hl, gain, floor)| {
                 FeeControllerParams::new(

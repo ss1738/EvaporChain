@@ -311,11 +311,7 @@ impl ContractDeployer {
             .filter(|c| c.status == DeployStatus::Failed)
             .count();
         let upgrades = self.upgrades.len();
-        let total_gas = self
-            .contracts
-            .values()
-            .filter_map(|c| c.gas_used)
-            .sum();
+        let total_gas = self.contracts.values().filter_map(|c| c.gas_used).sum();
 
         DeployerStats {
             total_contracts,
@@ -370,7 +366,11 @@ mod tests {
     }
 
     fn temp_path(name: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("contract_deployer_test_{}_{}", std::process::id(), name))
+        std::env::temp_dir().join(format!(
+            "contract_deployer_test_{}_{}",
+            std::process::id(),
+            name
+        ))
     }
 
     #[test]
@@ -489,7 +489,9 @@ mod tests {
         deployer.create_contract(make_deployment("c1")).unwrap();
         deployer.compile("c1", b"bytecode_v1").unwrap();
         deployer.deploy("c1", "0xABC", "tx1", 21000).unwrap();
-        deployer.upgrade("c1", b"bytecode_v2", "2.0.0", "Bug fix").unwrap();
+        deployer
+            .upgrade("c1", b"bytecode_v2", "2.0.0", "Bug fix")
+            .unwrap();
         let c = deployer.get_contract("c1").unwrap();
         assert_eq!(c.status, DeployStatus::Upgraded);
         assert_eq!(c.version, "2.0.0");
@@ -545,7 +547,9 @@ mod tests {
         deployer.create_contract(make_deployment("c1")).unwrap();
         deployer.compile("c1", b"v1").unwrap();
         deployer.deploy("c1", "0xA", "tx1", 100).unwrap();
-        deployer.upgrade("c1", b"v2", "2.0.0", "First upgrade").unwrap();
+        deployer
+            .upgrade("c1", b"v2", "2.0.0", "First upgrade")
+            .unwrap();
         let history = deployer.version_history("c1");
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].migration_notes, "First upgrade");
@@ -604,7 +608,10 @@ mod tests {
 
         let loaded = ContractDeployer::load(&path).unwrap();
         assert!(loaded.get_contract("c1").is_some());
-        assert_eq!(loaded.get_contract("c1").unwrap().status, DeployStatus::Compiled);
+        assert_eq!(
+            loaded.get_contract("c1").unwrap().status,
+            DeployStatus::Compiled
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -641,8 +648,17 @@ mod tests {
         deployer.create_contract(proxy).unwrap();
         deployer.create_contract(lib).unwrap();
         deployer.create_contract(factory).unwrap();
-        assert_eq!(deployer.get_contract("proxy1").unwrap().contract_type, ContractType::Proxy);
-        assert_eq!(deployer.get_contract("lib1").unwrap().contract_type, ContractType::Library);
-        assert_eq!(deployer.get_contract("factory1").unwrap().contract_type, ContractType::Factory);
+        assert_eq!(
+            deployer.get_contract("proxy1").unwrap().contract_type,
+            ContractType::Proxy
+        );
+        assert_eq!(
+            deployer.get_contract("lib1").unwrap().contract_type,
+            ContractType::Library
+        );
+        assert_eq!(
+            deployer.get_contract("factory1").unwrap().contract_type,
+            ContractType::Factory
+        );
     }
 }

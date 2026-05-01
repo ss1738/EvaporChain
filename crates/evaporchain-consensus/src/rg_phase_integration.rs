@@ -30,7 +30,12 @@ pub fn classify_from_effective_params(
     adversary_fraction_per_mille: u64,
     params: &PhaseMapParams,
 ) -> ConsensusPhase {
-    classify_regime(ep.lambda_eff, n_validators, adversary_fraction_per_mille, params)
+    classify_regime(
+        ep.lambda_eff,
+        n_validators,
+        adversary_fraction_per_mille,
+        params,
+    )
 }
 
 /// Log a phase transition at INFO/WARN level.  Called when `current_phase`
@@ -65,7 +70,10 @@ pub fn log_phase_transition(prev: ConsensusPhase, next: ConsensusPhase, height: 
 /// in a fully-integrated deployment.  At the substrate integration stage this
 /// is advisory — the proposer is not hard-gated yet.
 pub fn is_producing(phase: ConsensusPhase) -> bool {
-    matches!(phase, ConsensusPhase::LivenessStable | ConsensusPhase::SafetyStable)
+    matches!(
+        phase,
+        ConsensusPhase::LivenessStable | ConsensusPhase::SafetyStable
+    )
 }
 
 #[cfg(test)]

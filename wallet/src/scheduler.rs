@@ -62,9 +62,9 @@ impl Schedule {
             )));
         }
         let (num_str, unit) = s.split_at(s.len() - 1);
-        let num: u64 = num_str
-            .parse()
-            .map_err(|_| SchedulerError::InvalidSchedule(format!("invalid number: '{}'", num_str)))?;
+        let num: u64 = num_str.parse().map_err(|_| {
+            SchedulerError::InvalidSchedule(format!("invalid number: '{}'", num_str))
+        })?;
         if num == 0 {
             return Err(SchedulerError::InvalidSchedule(
                 "interval must be > 0".into(),
@@ -335,11 +335,7 @@ impl Scheduler {
         let total = self.jobs.len();
         let enabled = self.jobs.values().filter(|j| j.enabled).count();
         let disabled = total - enabled;
-        let auto_disabled = self
-            .jobs
-            .values()
-            .filter(|j| j.is_auto_disabled())
-            .count();
+        let auto_disabled = self.jobs.values().filter(|j| j.is_auto_disabled()).count();
         let total_runs: u64 = self.jobs.values().map(|j| j.run_count).sum();
         let total_failures: u64 = self.jobs.values().map(|j| j.fail_count).sum();
 
@@ -361,8 +357,7 @@ impl Scheduler {
     }
 
     pub fn load(path: &Path) -> Result<Self, SchedulerError> {
-        let data =
-            std::fs::read_to_string(path).map_err(|e| SchedulerError::Io(e.to_string()))?;
+        let data = std::fs::read_to_string(path).map_err(|e| SchedulerError::Io(e.to_string()))?;
         serde_json::from_str(&data).map_err(|e| SchedulerError::Json(e.to_string()))
     }
 
@@ -595,10 +590,7 @@ mod tests {
 
     #[test]
     fn test_scheduler_save_load() {
-        let path = std::env::temp_dir().join(format!(
-            "evap_scheduler_{}.json",
-            std::process::id()
-        ));
+        let path = std::env::temp_dir().join(format!("evap_scheduler_{}.json", std::process::id()));
         let mut sched = Scheduler::new();
         sched.add(make_job("j1")).unwrap();
         sched.save(&path).unwrap();

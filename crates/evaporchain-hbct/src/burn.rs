@@ -59,7 +59,8 @@ mod tests {
     #[test]
     fn no_closed_slots_no_burn() {
         let mut b = HbctBook::new();
-        b.mint(HbctToken::new(b"BMU-1".to_vec(), 100, 50, addr(1), 0).unwrap()).unwrap();
+        b.mint(HbctToken::new(b"BMU-1".to_vec(), 100, 50, addr(1), 0).unwrap())
+            .unwrap();
         let out = auto_burn_at_slot_close(&mut b, 50);
         assert_eq!(out.entries_removed, 0);
         assert_eq!(out.mwh_burnt, 0);
@@ -69,7 +70,8 @@ mod tests {
     #[test]
     fn closed_slot_burnt_at_close_epoch() {
         let mut b = HbctBook::new();
-        b.mint(HbctToken::new(b"BMU-1".to_vec(), 100, 50, addr(1), 0).unwrap()).unwrap();
+        b.mint(HbctToken::new(b"BMU-1".to_vec(), 100, 50, addr(1), 0).unwrap())
+            .unwrap();
         let out = auto_burn_at_slot_close(&mut b, 100);
         assert_eq!(out.entries_removed, 1);
         assert_eq!(out.mwh_burnt, 50);
@@ -79,8 +81,10 @@ mod tests {
     #[test]
     fn future_slots_survive_partial_burn() {
         let mut b = HbctBook::new();
-        b.mint(HbctToken::new(b"BMU-1".to_vec(), 100, 50, addr(1), 0).unwrap()).unwrap();
-        b.mint(HbctToken::new(b"BMU-1".to_vec(), 200, 30, addr(2), 0).unwrap()).unwrap();
+        b.mint(HbctToken::new(b"BMU-1".to_vec(), 100, 50, addr(1), 0).unwrap())
+            .unwrap();
+        b.mint(HbctToken::new(b"BMU-1".to_vec(), 200, 30, addr(2), 0).unwrap())
+            .unwrap();
         let out = auto_burn_at_slot_close(&mut b, 150);
         assert_eq!(out.entries_removed, 1);
         assert_eq!(out.mwh_burnt, 50);
@@ -91,9 +95,12 @@ mod tests {
     #[test]
     fn many_entries_at_one_slot_all_burnt_together() {
         let mut b = HbctBook::new();
-        b.mint(HbctToken::new(b"BMU-1".to_vec(), 100, 50, addr(1), 0).unwrap()).unwrap();
-        b.mint(HbctToken::new(b"BMU-2".to_vec(), 100, 30, addr(2), 0).unwrap()).unwrap();
-        b.mint(HbctToken::new(b"BMU-3".to_vec(), 100, 20, addr(3), 0).unwrap()).unwrap();
+        b.mint(HbctToken::new(b"BMU-1".to_vec(), 100, 50, addr(1), 0).unwrap())
+            .unwrap();
+        b.mint(HbctToken::new(b"BMU-2".to_vec(), 100, 30, addr(2), 0).unwrap())
+            .unwrap();
+        b.mint(HbctToken::new(b"BMU-3".to_vec(), 100, 20, addr(3), 0).unwrap())
+            .unwrap();
         let out = auto_burn_at_slot_close(&mut b, 100);
         assert_eq!(out.entries_removed, 3);
         assert_eq!(out.mwh_burnt, 100);

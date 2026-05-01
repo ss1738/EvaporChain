@@ -248,8 +248,7 @@ mod tests {
     #[test]
     fn test_reward_forecast_basic() {
         // 10000 staked in pool with 100k total, reward rate 100/epoch, decay hl 1000
-        let forecast =
-            StakingManager::reward_forecast(10000, 100, 1000, 100000, 100);
+        let forecast = StakingManager::reward_forecast(10000, 100, 1000, 100000, 100);
 
         assert_eq!(forecast.epochs_forward, 100);
         // share = 10%, gross per epoch = 10, gross over 100 epochs = 1000
@@ -287,8 +286,7 @@ mod tests {
     #[test]
     fn test_reward_forecast_long_duration() {
         // Over many half-lives, decay should eat most rewards
-        let forecast =
-            StakingManager::reward_forecast(50000, 200, 100, 100000, 1000);
+        let forecast = StakingManager::reward_forecast(50000, 200, 100, 100000, 1000);
 
         assert!(forecast.decay_loss > forecast.net_rewards);
     }

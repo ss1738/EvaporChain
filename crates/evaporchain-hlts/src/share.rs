@@ -15,6 +15,10 @@ pub struct Share {
 
 impl Share {
     pub const fn new(idx: u32, energy: Energy, observed_epoch: u64) -> Self {
-        Self { idx, energy, observed_epoch }
+        Self {
+            idx,
+            energy,
+            observed_epoch,
+        }
     }
 }

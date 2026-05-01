@@ -29,9 +29,7 @@ pub struct EpsilonMachine {
 pub enum MachineError {
     #[error("state {0} has no output distribution")]
     UnknownState(StateId),
-    #[error(
-        "transition (state={state}, symbol={symbol}) not in machine"
-    )]
+    #[error("transition (state={state}, symbol={symbol}) not in machine")]
     UnknownTransition { state: StateId, symbol: u32 },
     #[error("symbol {0} is outside the machine's alphabet")]
     OutOfAlphabet(u32),

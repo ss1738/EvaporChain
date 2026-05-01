@@ -59,8 +59,8 @@ pub fn kl_millibits(q: &Distribution, p: &Distribution) -> Result<u64, KlError> 
         // Term: Q_i · log_2(Q_i / P_i) — convert Q_i from fixed-point
         // (Q_i / SCALE = real probability) and aggregate in millibits
         // weighted by the probability mass.
-        let term_millibits: i128 = (*qi as i128) * (log2_ratio_millibits as i128)
-            / (FIXED_POINT_SCALE as i128);
+        let term_millibits: i128 =
+            (*qi as i128) * (log2_ratio_millibits as i128) / (FIXED_POINT_SCALE as i128);
         // Saturate to non-negative. Individual terms can dip negative
         // when Q_i < P_i (log < 0), and that's mathematically correct;
         // we sum signed and clamp the final total.
@@ -144,8 +144,9 @@ mod proptests {
             let p = Distribution::new(p_pmf).unwrap();
             let kl = kl_millibits(&q, &p).unwrap();
             // KL is always >= 0 (we saturate to 0 on the unsigned side).
-            // Just assert no panic and the result fits.
-            prop_assert!(kl <= u64::MAX);
+            // Just assert no panic — the u64 always fits by construction.
+            #[allow(clippy::absurd_extreme_comparisons)]
+            { prop_assert!(kl <= u64::MAX); }
         }
 
         /// KL of a distribution to itself is exactly 0.

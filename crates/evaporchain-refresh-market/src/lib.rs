@@ -35,8 +35,6 @@ pub mod market;
 pub mod namespace;
 pub mod pricing;
 
-pub use market::{
-    pay_rent, reserve_slot, MarketError, RefreshMarket, ReservationOutcome,
-};
+pub use market::{pay_rent, reserve_slot, MarketError, RefreshMarket, ReservationOutcome};
 pub use namespace::{Namespace, NamespaceId};
 pub use pricing::rent_rate;

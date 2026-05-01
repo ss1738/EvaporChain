@@ -4,13 +4,16 @@
 //! multi-account management, import/export, and security edge cases.
 
 use evaporchain_crypto::signatures::{MlDsaKeypair, MlDsaVerifier, Signer, Verifier};
-use evaporchain_wallet::keystore::{KeyStore, KeyStoreError};
 use evaporchain_wallet::address::{derive_address, format_address, parse_address};
+use evaporchain_wallet::keystore::{KeyStore, KeyStoreError};
 use std::path::PathBuf;
 
 fn temp_keystore_path(name: &str) -> PathBuf {
-    std::env::temp_dir()
-        .join(format!("evaporchain_behavior_{}_{}", std::process::id(), name))
+    std::env::temp_dir().join(format!(
+        "evaporchain_behavior_{}_{}",
+        std::process::id(),
+        name
+    ))
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -22,7 +25,9 @@ fn full_wallet_lifecycle() {
     let mut store = KeyStore::new();
 
     // Step 1: Generate a new key
-    let addr = store.generate_key("primary", "strong-password-123").unwrap();
+    let addr = store
+        .generate_key("primary", "strong-password-123")
+        .unwrap();
     assert_ne!(addr, [0u8; 32]);
     assert_eq!(store.len(), 1);
 
@@ -89,11 +94,11 @@ fn multi_account_management() {
     }
 
     // Each account unlocks with its own password only
-    for i in 0..5 {
+    for (i, expected_addr) in addresses.iter().enumerate().take(5) {
         let name = format!("account-{}", i);
         let pass = format!("pass-{}", i);
         let kp = store.unlock_key(&name, &pass).unwrap();
-        assert_eq!(derive_address(&kp.public_key_bytes()), addresses[i]);
+        assert_eq!(&derive_address(&kp.public_key_bytes()), expected_addr);
 
         // Wrong password fails
         let wrong = store.unlock_key(&name, "wrong");
@@ -124,7 +129,9 @@ fn import_export_roundtrip() {
 
     // Import into keystore
     let mut store = KeyStore::new();
-    let addr = store.import_key("imported", "import-pass", &pk, sk).unwrap();
+    let addr = store
+        .import_key("imported", "import-pass", &pk, sk)
+        .unwrap();
     assert_eq!(addr, expected_addr);
 
     // Unlock and verify public key matches
@@ -172,7 +179,9 @@ fn address_derivation_consistency() {
 #[test]
 fn wrong_password_always_fails() {
     let mut store = KeyStore::new();
-    store.generate_key("secure", "correct-horse-battery-staple").unwrap();
+    store
+        .generate_key("secure", "correct-horse-battery-staple")
+        .unwrap();
 
     // Various wrong passwords
     let wrong_passwords = [
@@ -191,7 +200,9 @@ fn wrong_password_always_fails() {
     }
 
     // Correct password still works
-    assert!(store.unlock_key("secure", "correct-horse-battery-staple").is_ok());
+    assert!(store
+        .unlock_key("secure", "correct-horse-battery-staple")
+        .is_ok());
 }
 
 #[test]

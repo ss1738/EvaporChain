@@ -4,9 +4,14 @@
 //! every mutation to RocksDB. On startup, all data is loaded from disk
 //! into the cache, so the node resumes exactly where it left off.
 
-use crate::db::{build_energy_trie, trie_key_for_account, trie_key_for_object, trie_value_for_account, trie_value_for_object, StateDB};
+use crate::db::{
+    build_energy_trie, trie_key_for_account, trie_key_for_object, trie_value_for_account,
+    trie_value_for_object, StateDB,
+};
 use evaporchain_crypto::{EnergyVerkleTrie, TrieHealth};
-use evaporchain_types::{Account, AccountAddress, DelegationRecord, GhostRecord, ObjectId, StakeRecord, StateObject};
+use evaporchain_types::{
+    Account, AccountAddress, DelegationRecord, GhostRecord, ObjectId, StakeRecord, StateObject,
+};
 use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, Options, WriteBatch, DB};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
@@ -147,7 +152,8 @@ impl RocksDBStateDB {
         let mut accounts = HashMap::new();
 
         // Load objects
-        let cf_obj = db.cf_handle(CF_OBJECTS)
+        let cf_obj = db
+            .cf_handle(CF_OBJECTS)
             .ok_or_else(|| format!("missing column family: {CF_OBJECTS}"))?;
         let iter = db.iterator_cf(cf_obj, rocksdb::IteratorMode::Start);
         for item in iter {
@@ -167,7 +173,8 @@ impl RocksDBStateDB {
         }
 
         // Load ghosts (with fallback for legacy records without mmr_position)
-        let cf_ghost = db.cf_handle(CF_GHOSTS)
+        let cf_ghost = db
+            .cf_handle(CF_GHOSTS)
             .ok_or_else(|| format!("missing column family: {CF_GHOSTS}"))?;
         let mut ghost_migrated = 0u32;
         let iter = db.iterator_cf(cf_ghost, rocksdb::IteratorMode::Start);
@@ -185,13 +192,17 @@ impl RocksDBStateDB {
                     ghosts.insert(id, ghost);
                     ghost_migrated += 1;
                 } else {
-                    eprintln!("  Warning: skipping unrecoverable ghost record {}", hex::encode(&id[..4]));
+                    eprintln!(
+                        "  Warning: skipping unrecoverable ghost record {}",
+                        hex::encode(&id[..4])
+                    );
                 }
             }
         }
         // Re-persist migrated ghosts in the current format and compact
         if ghost_migrated > 0 {
-            let cf_g = db.cf_handle(CF_GHOSTS)
+            let cf_g = db
+                .cf_handle(CF_GHOSTS)
                 .ok_or_else(|| format!("missing column family: {CF_GHOSTS}"))?;
             for ghost in ghosts.values() {
                 let val = match bincode::serialize(ghost) {
@@ -208,7 +219,8 @@ impl RocksDBStateDB {
         }
 
         // Load accounts
-        let cf_acct = db.cf_handle(CF_ACCOUNTS)
+        let cf_acct = db
+            .cf_handle(CF_ACCOUNTS)
             .ok_or_else(|| format!("missing column family: {CF_ACCOUNTS}"))?;
         let iter = db.iterator_cf(cf_acct, rocksdb::IteratorMode::Start);
         for item in iter {
@@ -239,7 +251,8 @@ impl RocksDBStateDB {
 
         // Load nullifiers
         let mut spent_nullifiers = std::collections::HashSet::new();
-        let cf_null = db.cf_handle(CF_NULLIFIERS)
+        let cf_null = db
+            .cf_handle(CF_NULLIFIERS)
             .ok_or_else(|| format!("missing column family: {CF_NULLIFIERS}"))?;
         let iter = db.iterator_cf(cf_null, rocksdb::IteratorMode::Start);
         for item in iter {
@@ -252,7 +265,8 @@ impl RocksDBStateDB {
         }
 
         // Load privacy metadata from trie CF
-        let cf_trie_meta = db.cf_handle(CF_TRIE)
+        let cf_trie_meta = db
+            .cf_handle(CF_TRIE)
             .ok_or_else(|| format!("missing column family: {CF_TRIE}"))?;
         let note_tree_root = match db.get_cf(cf_trie_meta, PRIVACY_NOTE_ROOT_KEY) {
             Ok(Some(bytes)) if bytes.len() == 32 => {
@@ -263,24 +277,36 @@ impl RocksDBStateDB {
             _ => [0u8; 32],
         };
         let shielded_pool_balance = match db.get_cf(cf_trie_meta, PRIVACY_POOL_BALANCE_KEY) {
-            Ok(Some(bytes)) if bytes.len() == 8 => u64::from_le_bytes(bytes[..8].try_into().unwrap()),
+            Ok(Some(bytes)) if bytes.len() == 8 => {
+                u64::from_le_bytes(bytes[..8].try_into().unwrap())
+            }
             _ => 0,
         };
         let note_count = match db.get_cf(cf_trie_meta, PRIVACY_NOTE_COUNT_KEY) {
-            Ok(Some(bytes)) if bytes.len() == 8 => u64::from_le_bytes(bytes[..8].try_into().unwrap()),
+            Ok(Some(bytes)) if bytes.len() == 8 => {
+                u64::from_le_bytes(bytes[..8].try_into().unwrap())
+            }
             _ => 0,
         };
         let last_rent_epoch = match db.get_cf(cf_trie_meta, LAST_RENT_EPOCH_KEY) {
-            Ok(Some(bytes)) if bytes.len() == 8 => u64::from_le_bytes(bytes[..8].try_into().unwrap()),
+            Ok(Some(bytes)) if bytes.len() == 8 => {
+                u64::from_le_bytes(bytes[..8].try_into().unwrap())
+            }
             _ => 0,
         };
         if !spent_nullifiers.is_empty() {
-            println!("  RocksDB: loaded {} nullifiers, pool_balance={}, note_count={}", spent_nullifiers.len(), shielded_pool_balance, note_count);
+            println!(
+                "  RocksDB: loaded {} nullifiers, pool_balance={}, note_count={}",
+                spent_nullifiers.len(),
+                shielded_pool_balance,
+                note_count
+            );
         }
 
         // Load persisted note commitments (leaf-index ordered).
         let mut note_commitments: BTreeMap<u64, [u8; 32]> = BTreeMap::new();
-        let cf_commits = db.cf_handle(CF_NOTE_COMMITMENTS)
+        let cf_commits = db
+            .cf_handle(CF_NOTE_COMMITMENTS)
             .ok_or_else(|| format!("missing column family: {CF_NOTE_COMMITMENTS}"))?;
         let iter = db.iterator_cf(cf_commits, rocksdb::IteratorMode::Start);
         for item in iter {
@@ -293,26 +319,31 @@ impl RocksDBStateDB {
             }
         }
         if !note_commitments.is_empty() {
-            println!("  RocksDB: loaded {} note commitments", note_commitments.len());
+            println!(
+                "  RocksDB: loaded {} note commitments",
+                note_commitments.len()
+            );
         }
 
         // Load persisted trie or rebuild from scratch
         let trie = {
-            let cf_trie = db.cf_handle(CF_TRIE)
+            let cf_trie = db
+                .cf_handle(CF_TRIE)
                 .ok_or_else(|| format!("missing column family: {CF_TRIE}"))?;
             match db.get_cf(cf_trie, TRIE_SNAPSHOT_KEY) {
-                Ok(Some(bytes)) => {
-                    match EnergyVerkleTrie::from_bytes(&bytes) {
-                        Ok(t) => {
-                            println!("  RocksDB: loaded energy-verkle trie from disk ({} bytes)", bytes.len());
-                            t
-                        }
-                        Err(e) => {
-                            eprintln!("  Warning: trie snapshot corrupt ({}), rebuilding", e);
-                            build_energy_trie(&objects, &accounts)
-                        }
+                Ok(Some(bytes)) => match EnergyVerkleTrie::from_bytes(&bytes) {
+                    Ok(t) => {
+                        println!(
+                            "  RocksDB: loaded energy-verkle trie from disk ({} bytes)",
+                            bytes.len()
+                        );
+                        t
                     }
-                }
+                    Err(e) => {
+                        eprintln!("  Warning: trie snapshot corrupt ({}), rebuilding", e);
+                        build_energy_trie(&objects, &accounts)
+                    }
+                },
                 _ => {
                     if !objects.is_empty() || !accounts.is_empty() {
                         println!("  RocksDB: no trie snapshot found, rebuilding from state");
@@ -327,19 +358,23 @@ impl RocksDBStateDB {
         // Load Sentinel parameters and votes.
         let mut sentinel_params: BTreeMap<u32, evaporchain_sentinel::BoundedParameter> =
             BTreeMap::new();
-        let cf_sp = db.cf_handle(CF_SENTINEL_PARAMS)
+        let cf_sp = db
+            .cf_handle(CF_SENTINEL_PARAMS)
             .ok_or_else(|| format!("missing column family: {CF_SENTINEL_PARAMS}"))?;
         let iter = db.iterator_cf(cf_sp, rocksdb::IteratorMode::Start);
         for item in iter {
             let (key, value) = item.map_err(|e| format!("RocksDB iterator error: {}", e))?;
             if key.len() == 4 {
-                if let Ok(p) = bincode::deserialize::<evaporchain_sentinel::BoundedParameter>(&value) {
+                if let Ok(p) =
+                    bincode::deserialize::<evaporchain_sentinel::BoundedParameter>(&value)
+                {
                     sentinel_params.insert(p.id, p);
                 }
             }
         }
         let mut sentinel_votes: BTreeMap<u32, Vec<evaporchain_sentinel::Vote>> = BTreeMap::new();
-        let cf_sv = db.cf_handle(CF_SENTINEL_VOTES)
+        let cf_sv = db
+            .cf_handle(CF_SENTINEL_VOTES)
             .ok_or_else(|| format!("missing column family: {CF_SENTINEL_VOTES}"))?;
         let iter = db.iterator_cf(cf_sv, rocksdb::IteratorMode::Start);
         for item in iter {
@@ -361,7 +396,8 @@ impl RocksDBStateDB {
 
         // Load validator stake records.
         let mut stakes: HashMap<u64, StakeRecord> = HashMap::new();
-        let cf_stk = db.cf_handle(CF_STAKES)
+        let cf_stk = db
+            .cf_handle(CF_STAKES)
             .ok_or_else(|| format!("missing column family: {CF_STAKES}"))?;
         let iter = db.iterator_cf(cf_stk, rocksdb::IteratorMode::Start);
         for item in iter {
@@ -376,7 +412,8 @@ impl RocksDBStateDB {
 
         // Load delegation records (key = delegator[32] ++ validator_id_be[8]).
         let mut delegations: HashMap<[u8; 40], DelegationRecord> = HashMap::new();
-        let cf_del = db.cf_handle(CF_DELEGATIONS)
+        let cf_del = db
+            .cf_handle(CF_DELEGATIONS)
             .ok_or_else(|| format!("missing column family: {CF_DELEGATIONS}"))?;
         let iter = db.iterator_cf(cf_del, rocksdb::IteratorMode::Start);
         for item in iter {
@@ -442,8 +479,15 @@ impl RocksDBStateDB {
     /// Atomically write all buffered mutations to disk.
     pub fn commit_batch(&mut self) -> Result<(), String> {
         self.batch_undo = None;
-        let batch = self.pending_batch.lock().unwrap().take().ok_or("no active batch")?;
-        self.db.write(batch).map_err(|e| format!("WriteBatch commit failed: {e}"))
+        let batch = self
+            .pending_batch
+            .lock()
+            .unwrap()
+            .take()
+            .ok_or("no active batch")?;
+        self.db
+            .write(batch)
+            .map_err(|e| format!("WriteBatch commit failed: {e}"))
     }
 
     /// Discard any buffered writes and revert in-memory state.
@@ -452,20 +496,32 @@ impl RocksDBStateDB {
         if let Some(undo) = self.batch_undo.take() {
             for (id, old_val) in undo.objects.into_iter().rev() {
                 match old_val {
-                    Some(obj) => { self.objects.insert(id, obj); }
-                    None => { self.objects.remove(&id); }
+                    Some(obj) => {
+                        self.objects.insert(id, obj);
+                    }
+                    None => {
+                        self.objects.remove(&id);
+                    }
                 }
             }
             for (addr, old_val) in undo.accounts.into_iter().rev() {
                 match old_val {
-                    Some(acc) => { self.accounts.insert(addr, acc); }
-                    None => { self.accounts.remove(&addr); }
+                    Some(acc) => {
+                        self.accounts.insert(addr, acc);
+                    }
+                    None => {
+                        self.accounts.remove(&addr);
+                    }
                 }
             }
             for (id, old_val) in undo.ghosts.into_iter().rev() {
                 match old_val {
-                    Some(ghost) => { self.ghosts.insert(id, ghost); }
-                    None => { self.ghosts.remove(&id); }
+                    Some(ghost) => {
+                        self.ghosts.insert(id, ghost);
+                    }
+                    None => {
+                        self.ghosts.remove(&id);
+                    }
                 }
             }
             self.dirty_objects = undo.dirty_objects;
@@ -588,7 +644,13 @@ impl RocksDBStateDB {
         for id in dirty_objs {
             let key = trie_key_for_object(&id);
             if let Some(obj) = self.objects.get(&id) {
-                self.trie.insert(key, trie_value_for_object(obj), obj.energy, obj.half_life, obj.last_refreshed);
+                self.trie.insert(
+                    key,
+                    trie_value_for_object(obj),
+                    obj.energy,
+                    obj.half_life,
+                    obj.last_refreshed,
+                );
             } else {
                 self.trie.delete(&key);
             }
@@ -598,7 +660,8 @@ impl RocksDBStateDB {
         for addr in dirty_accts {
             let key = trie_key_for_account(&addr);
             if let Some(acc) = self.accounts.get(&addr) {
-                self.trie.insert(key, trie_value_for_account(acc), u64::MAX, u64::MAX, 0);
+                self.trie
+                    .insert(key, trie_value_for_account(acc), u64::MAX, u64::MAX, 0);
             }
         }
     }
@@ -642,13 +705,17 @@ impl RocksDBStateDB {
 
     fn persist_privacy_metadata(&self) {
         let cf = self.cf(CF_TRIE);
-        if let Err(e) = self.db.put_cf(cf, PRIVACY_NOTE_ROOT_KEY, self.note_tree_root) {
-            fatal_persistence_error("write_privacy_note_tree_root", e);
-        }
         if let Err(e) = self
             .db
-            .put_cf(cf, PRIVACY_POOL_BALANCE_KEY, self.shielded_pool_balance.to_le_bytes())
+            .put_cf(cf, PRIVACY_NOTE_ROOT_KEY, self.note_tree_root)
         {
+            fatal_persistence_error("write_privacy_note_tree_root", e);
+        }
+        if let Err(e) = self.db.put_cf(
+            cf,
+            PRIVACY_POOL_BALANCE_KEY,
+            self.shielded_pool_balance.to_le_bytes(),
+        ) {
             fatal_persistence_error("write_privacy_pool_balance", e);
         }
         if let Err(e) = self
@@ -737,7 +804,10 @@ fn delegation_key(delegator: &AccountAddress, validator_id: u64) -> [u8; 40] {
 }
 
 /// Attempt to deserialize a ghost record from legacy format (no mmr_position field).
-fn deserialize_legacy_ghost(data: &[u8], id: &ObjectId) -> Result<GhostRecord, Box<bincode::ErrorKind>> {
+fn deserialize_legacy_ghost(
+    data: &[u8],
+    id: &ObjectId,
+) -> Result<GhostRecord, Box<bincode::ErrorKind>> {
     // Legacy bincode layout (no mmr_position):
     // object_id: [u8; 32], owner: [u8; 32], evaporated_at: u64, data_hash: [u8; 32], original_data: Vec<u8>
     // Minimum size: 32 + 32 + 8 + 32 + 8 (vec length prefix) = 112
@@ -756,11 +826,11 @@ fn deserialize_legacy_ghost(data: &[u8], id: &ObjectId) -> Result<GhostRecord, B
     owner.copy_from_slice(&data[offset..offset + 32]);
     offset += 32;
 
-    let evaporated_at = u64::from_le_bytes(
-        data[offset..offset + 8]
-            .try_into()
-            .map_err(|_| Box::new(bincode::ErrorKind::Custom("invalid evaporated_at bytes".into())))?,
-    );
+    let evaporated_at = u64::from_le_bytes(data[offset..offset + 8].try_into().map_err(|_| {
+        Box::new(bincode::ErrorKind::Custom(
+            "invalid evaporated_at bytes".into(),
+        ))
+    })?);
     offset += 8;
 
     let mut data_hash = [0u8; 32];
@@ -811,12 +881,14 @@ impl StateDB for RocksDBStateDB {
 
     fn put_object(&mut self, obj: StateObject) {
         if let Some(ref mut undo) = self.batch_undo {
-            undo.objects.push((obj.id, self.objects.get(&obj.id).cloned()));
+            undo.objects
+                .push((obj.id, self.objects.get(&obj.id).cloned()));
         }
         self.persist_object(&obj);
         let key = trie_key_for_object(&obj.id);
         let value = trie_value_for_object(&obj);
-        self.trie.insert(key, value, obj.energy, obj.half_life, obj.last_refreshed);
+        self.trie
+            .insert(key, value, obj.energy, obj.half_life, obj.last_refreshed);
         self.dirty_objects.remove(&obj.id);
         self.objects.insert(obj.id, obj);
     }
@@ -834,7 +906,10 @@ impl StateDB for RocksDBStateDB {
 
     fn put_ghost(&mut self, record: GhostRecord) {
         if let Some(ref mut undo) = self.batch_undo {
-            undo.ghosts.push((record.object_id, self.ghosts.get(&record.object_id).cloned()));
+            undo.ghosts.push((
+                record.object_id,
+                self.ghosts.get(&record.object_id).cloned(),
+            ));
         }
         self.persist_ghost(&record);
         self.ghosts.insert(record.object_id, record);
@@ -875,7 +950,8 @@ impl StateDB for RocksDBStateDB {
     fn get_account_mut(&mut self, addr: &AccountAddress) -> Option<&mut Account> {
         if self.accounts.contains_key(addr) {
             if let Some(ref mut undo) = self.batch_undo {
-                undo.accounts.push((*addr, Some(self.accounts[addr].clone())));
+                undo.accounts
+                    .push((*addr, Some(self.accounts[addr].clone())));
             }
             self.dirty_accounts.insert(*addr);
         }
@@ -884,7 +960,10 @@ impl StateDB for RocksDBStateDB {
 
     fn put_account(&mut self, account: Account) {
         if let Some(ref mut undo) = self.batch_undo {
-            undo.accounts.push((account.address, self.accounts.get(&account.address).cloned()));
+            undo.accounts.push((
+                account.address,
+                self.accounts.get(&account.address).cloned(),
+            ));
         }
         self.persist_account(&account);
         let key = trie_key_for_account(&account.address);
@@ -896,7 +975,8 @@ impl StateDB for RocksDBStateDB {
 
     fn delete_account(&mut self, addr: &AccountAddress) -> Option<Account> {
         if let Some(ref mut undo) = self.batch_undo {
-            undo.accounts.push((*addr, self.accounts.get(addr).cloned()));
+            undo.accounts
+                .push((*addr, self.accounts.get(addr).cloned()));
         }
         let key = trie_key_for_account(addr);
         self.trie.delete(&key);
@@ -925,7 +1005,8 @@ impl StateDB for RocksDBStateDB {
             self.trie.insert(key, value, u64::MAX, u64::MAX, 0);
             self.accounts.insert(*addr, account);
         } else if let Some(ref mut undo) = self.batch_undo {
-            undo.accounts.push((*addr, Some(self.accounts[addr].clone())));
+            undo.accounts
+                .push((*addr, Some(self.accounts[addr].clone())));
         }
         self.dirty_accounts.insert(*addr);
         self.accounts
@@ -1045,7 +1126,8 @@ impl StateDB for RocksDBStateDB {
         delegator: &AccountAddress,
         validator_id: u64,
     ) -> Option<&DelegationRecord> {
-        self.delegations.get(&delegation_key(delegator, validator_id))
+        self.delegations
+            .get(&delegation_key(delegator, validator_id))
     }
 
     fn put_delegation(&mut self, record: DelegationRecord) {
@@ -1060,7 +1142,8 @@ impl StateDB for RocksDBStateDB {
         validator_id: u64,
     ) -> Option<DelegationRecord> {
         self.delete_delegation_disk(delegator, validator_id);
-        self.delegations.remove(&delegation_key(delegator, validator_id))
+        self.delegations
+            .remove(&delegation_key(delegator, validator_id))
     }
 
     fn delegations_for_validator(&self, validator_id: u64) -> Vec<&DelegationRecord> {
@@ -1072,10 +1155,7 @@ impl StateDB for RocksDBStateDB {
             .collect()
     }
 
-    fn delegations_for_delegator(
-        &self,
-        delegator: &AccountAddress,
-    ) -> Vec<&DelegationRecord> {
+    fn delegations_for_delegator(&self, delegator: &AccountAddress) -> Vec<&DelegationRecord> {
         self.delegations
             .iter()
             .filter(|(k, _)| &k[..32] == delegator.as_slice())
@@ -1143,25 +1223,44 @@ impl StateDB for RocksDBStateDB {
         count
     }
 
-    fn get_proposal(&self, _proposal_id: u64) -> Option<&evaporchain_types::GovernanceProposal> { None }
+    fn get_proposal(&self, _proposal_id: u64) -> Option<&evaporchain_types::GovernanceProposal> {
+        None
+    }
     fn put_proposal(&mut self, _proposal: evaporchain_types::GovernanceProposal) {}
-    fn all_proposals(&self) -> Vec<&evaporchain_types::GovernanceProposal> { Vec::new() }
-    fn get_governance_param(&self, _key: &str) -> Option<&str> { None }
+    fn all_proposals(&self) -> Vec<&evaporchain_types::GovernanceProposal> {
+        Vec::new()
+    }
+    fn get_governance_param(&self, _key: &str) -> Option<&str> {
+        None
+    }
     fn put_governance_param(&mut self, _key: String, _value: String) {}
 
     fn commit_state_snapshot(&mut self, _height: u64) {}
-    fn get_account_at_height(&self, _address: &evaporchain_types::AccountAddress, _height: u64) -> Option<evaporchain_types::Account> { None }
-    fn get_object_at_height(&self, _id: &evaporchain_types::ObjectId, _height: u64) -> Option<evaporchain_types::StateObject> { None }
-    fn earliest_snapshot_height(&self) -> Option<u64> { None }
-    fn latest_snapshot_height(&self) -> Option<u64> { None }
+    fn get_account_at_height(
+        &self,
+        _address: &evaporchain_types::AccountAddress,
+        _height: u64,
+    ) -> Option<evaporchain_types::Account> {
+        None
+    }
+    fn get_object_at_height(
+        &self,
+        _id: &evaporchain_types::ObjectId,
+        _height: u64,
+    ) -> Option<evaporchain_types::StateObject> {
+        None
+    }
+    fn earliest_snapshot_height(&self) -> Option<u64> {
+        None
+    }
+    fn latest_snapshot_height(&self) -> Option<u64> {
+        None
+    }
     fn prune_snapshots_before(&mut self, _height: u64) {}
 
     // ─── Sentinel autonomic governance (write-through to RocksDB) ───────
 
-    fn get_sentinel_param(
-        &self,
-        id: u32,
-    ) -> Option<evaporchain_sentinel::BoundedParameter> {
+    fn get_sentinel_param(&self, id: u32) -> Option<evaporchain_sentinel::BoundedParameter> {
         self.sentinel_params.get(&id).copied()
     }
 
@@ -1187,11 +1286,7 @@ impl StateDB for RocksDBStateDB {
         self.sentinel_votes.get(&id).cloned().unwrap_or_default()
     }
 
-    fn put_sentinel_votes(
-        &mut self,
-        parameter_id: u32,
-        votes: Vec<evaporchain_sentinel::Vote>,
-    ) {
+    fn put_sentinel_votes(&mut self, parameter_id: u32, votes: Vec<evaporchain_sentinel::Vote>) {
         let key = parameter_id.to_be_bytes();
         let val = match bincode::serialize(&votes) {
             Ok(v) => v,
@@ -1264,6 +1359,7 @@ mod tests {
             grace_epoch: None,
             data: vec![b],
             decay_curve: None,
+            lad_mode: None,
         }
     }
 
@@ -1322,7 +1418,10 @@ mod tests {
 
         assert_eq!(db.object_count(), 2);
         assert_eq!(db.get_object(&make_obj(1, 0).id).unwrap().energy, 100);
-        assert_eq!(db.get_account(&make_account(1, 0).address).unwrap().balance, 500);
+        assert_eq!(
+            db.get_account(&make_account(1, 0).address).unwrap().balance,
+            500
+        );
     }
 
     #[test]
@@ -1340,7 +1439,10 @@ mod tests {
         // Rollback must revert in-memory state to pre-batch values
         assert_eq!(db.object_count(), 1);
         assert!(db.get_object(&make_obj(2, 0).id).is_none());
-        assert_eq!(db.get_account(&make_account(1, 0).address).unwrap().balance, 500);
+        assert_eq!(
+            db.get_account(&make_account(1, 0).address).unwrap().balance,
+            500
+        );
         assert!(db.get_account(&make_account(2, 0).address).is_none());
     }
 
@@ -1355,7 +1457,10 @@ mod tests {
         {
             let db = RocksDBStateDB::open(dir.path()).unwrap();
             assert_eq!(db.get_object(&make_obj(1, 0).id).unwrap().energy, 999);
-            assert_eq!(db.get_account(&make_account(1, 0).address).unwrap().balance, 777);
+            assert_eq!(
+                db.get_account(&make_account(1, 0).address).unwrap().balance,
+                777
+            );
         }
     }
 

@@ -165,11 +165,8 @@ impl Plugin {
     }
 
     pub fn record_error(&mut self, msg: &str) {
-        self.errors.push(format!(
-            "[{}] {}",
-            chrono::Utc::now().to_rfc3339(),
-            msg
-        ));
+        self.errors
+            .push(format!("[{}] {}", chrono::Utc::now().to_rfc3339(), msg));
         // Cap error log at 100
         if self.errors.len() > 100 {
             self.errors.drain(0..self.errors.len() - 100);
@@ -275,11 +272,7 @@ impl PluginRegistry {
     }
 
     /// Check if any plugin would block a permission-gated action
-    pub fn check_permission(
-        &self,
-        name: &str,
-        perm: Permission,
-    ) -> Result<(), PluginError> {
+    pub fn check_permission(&self, name: &str, perm: Permission) -> Result<(), PluginError> {
         let plugin = self
             .plugins
             .get(name)
@@ -298,12 +291,7 @@ impl PluginRegistry {
     }
 
     /// Update plugin config
-    pub fn set_config(
-        &mut self,
-        name: &str,
-        key: &str,
-        value: &str,
-    ) -> Result<(), PluginError> {
+    pub fn set_config(&mut self, name: &str, key: &str, value: &str) -> Result<(), PluginError> {
         let plugin = self
             .plugins
             .get_mut(name)
@@ -586,10 +574,7 @@ mod tests {
 
     #[test]
     fn test_save_load() {
-        let path = std::env::temp_dir().join(format!(
-            "evap_plugins_{}.json",
-            std::process::id()
-        ));
+        let path = std::env::temp_dir().join(format!("evap_plugins_{}.json", std::process::id()));
         let mut reg = PluginRegistry::new();
         reg.install(test_manifest()).unwrap();
         reg.save(&path).unwrap();

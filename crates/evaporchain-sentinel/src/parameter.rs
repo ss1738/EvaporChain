@@ -27,13 +27,14 @@ impl BoundedParameter {
             return Err(ParameterError::BoundsInverted { min, max });
         }
         if current < min || current > max {
-            return Err(ParameterError::CurrentOutOfBounds {
-                current,
-                min,
-                max,
-            });
+            return Err(ParameterError::CurrentOutOfBounds { current, min, max });
         }
-        Ok(Self { id, current, min, max })
+        Ok(Self {
+            id,
+            current,
+            min,
+            max,
+        })
     }
 
     /// Clamp a proposed value into the parameter's bounds.

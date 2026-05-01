@@ -362,7 +362,8 @@ impl ValidatorSet {
 
     /// Compute total effective weight across all active (non-jailed) validators.
     pub fn total_weight(&self) -> u64 {
-        self.validators.iter()
+        self.validators
+            .iter()
             .filter(|v| !v.jailed)
             .map(|v| v.effective_weight())
             .sum()
@@ -380,7 +381,10 @@ impl ValidatorSet {
             return None;
         }
 
-        let total: u64 = active.iter().map(|v| v.effective_weight()).fold(0u64, |a, w| a.saturating_add(w));
+        let total: u64 = active
+            .iter()
+            .map(|v| v.effective_weight())
+            .fold(0u64, |a, w| a.saturating_add(w));
         if total == 0 {
             let idx = epoch as usize % active.len();
             return Some(active[idx]);
@@ -554,11 +558,7 @@ impl ValidatorSet {
 
     /// Check if a validator's VRF output qualifies them as leader.
     /// Uses stake-weighted threshold: probability proportional to stake.
-    pub fn vrf_leader_qualifies(
-        &self,
-        validator_id: u64,
-        vrf_output: &[u8; 32],
-    ) -> bool {
+    pub fn vrf_leader_qualifies(&self, validator_id: u64, vrf_output: &[u8; 32]) -> bool {
         let validator = match self.get(validator_id) {
             Some(v) if !v.jailed => v,
             _ => return false,
@@ -596,7 +596,8 @@ impl ValidatorSet {
     /// Includes both self-stake and cached delegated stake (P0 #4 Phase 6).
     /// Quorum checks compare signing voting power against this total.
     pub fn total_stake(&self) -> u64 {
-        self.validators.iter()
+        self.validators
+            .iter()
             .filter(|v| !v.jailed)
             .map(|v| v.effective_stake())
             .fold(0u64, |acc, s| acc.saturating_add(s))
@@ -605,7 +606,8 @@ impl ValidatorSet {
     /// Total *self-stake only* across active validators. Useful when
     /// reporting protocol-fundamentals separately from delegations.
     pub fn total_self_stake(&self) -> u64 {
-        self.validators.iter()
+        self.validators
+            .iter()
             .filter(|v| !v.jailed)
             .map(|v| v.stake)
             .fold(0u64, |acc, s| acc.saturating_add(s))
@@ -618,12 +620,13 @@ impl ValidatorSet {
     /// take effect on the next block.
     pub fn refresh_delegated_stakes(&mut self, db: &dyn evaporchain_state::db::StateDB) {
         // Build a per-validator total from the delegation set in one pass.
-        let mut totals: std::collections::HashMap<u64, u64> =
-            std::collections::HashMap::new();
+        let mut totals: std::collections::HashMap<u64, u64> = std::collections::HashMap::new();
         for d in db.all_delegations() {
-            *totals.entry(d.validator_id).or_insert(0) =
-                totals.get(&d.validator_id).copied().unwrap_or(0)
-                    .saturating_add(d.amount);
+            *totals.entry(d.validator_id).or_insert(0) = totals
+                .get(&d.validator_id)
+                .copied()
+                .unwrap_or(0)
+                .saturating_add(d.amount);
         }
         for v in self.validators.iter_mut() {
             v.delegated_stake = totals.get(&v.id).copied().unwrap_or(0);
@@ -654,7 +657,10 @@ impl ValidatorSet {
         if active.is_empty() {
             return None;
         }
-        let total: u64 = active.iter().map(|v| v.effective_weight()).fold(0u64, |a, w| a.saturating_add(w));
+        let total: u64 = active
+            .iter()
+            .map(|v| v.effective_weight())
+            .fold(0u64, |a, w| a.saturating_add(w));
         if total == 0 {
             let idx = epoch as usize % active.len();
             return Some(active[idx]);
@@ -858,7 +864,8 @@ impl EpochTransitionManager {
         self.current_epoch = epoch;
         let mut result = EpochTransitionResult::default();
 
-        let max_churn = ((validator_set.active_count() as f64) * MAX_CHURN_FRACTION).ceil() as usize;
+        let max_churn =
+            ((validator_set.active_count() as f64) * MAX_CHURN_FRACTION).ceil() as usize;
         let max_churn = max_churn.max(1); // at least 1 change allowed
         let mut changes_this_epoch = 0usize;
 
@@ -914,7 +921,11 @@ impl EpochTransitionManager {
                 ));
                 continue;
             }
-            if validator_set.validators().iter().any(|v| v.id == pj.info.id) {
+            if validator_set
+                .validators()
+                .iter()
+                .any(|v| v.id == pj.info.id)
+            {
                 result.rejected.push(format!(
                     "Join for validator {} rejected: already exists",
                     pj.info.id
@@ -964,7 +975,9 @@ impl EpochTransitionManager {
             }
             if validator_set.remove_validator(pl.validator_id) {
                 changes_this_epoch += 1;
-                result.applied.push(format!("Validator {} left", pl.validator_id));
+                result
+                    .applied
+                    .push(format!("Validator {} left", pl.validator_id));
             } else {
                 result.rejected.push(format!(
                     "Leave for validator {} rejected: not found",
@@ -1087,10 +1100,8 @@ mod tests {
     fn test_health_score_does_not_affect_leader_selection() {
         // Leader selection uses base stake, not health-weighted effective_weight,
         // to prevent inter-node divergence when health scores lag.
-        let mut vs = ValidatorSet::with_validators(vec![
-            make_validator(1, 1000),
-            make_validator(2, 1000),
-        ]);
+        let mut vs =
+            ValidatorSet::with_validators(vec![make_validator(1, 1000), make_validator(2, 1000)]);
 
         let mut base_counts = [0u64; 2];
         for epoch in 1..=5000 {
@@ -1307,7 +1318,11 @@ mod tests {
         // Over 100 epochs, validator 1 should never be leader
         for epoch in 1..=100 {
             let leader = vs.leader_for_epoch(epoch).unwrap();
-            assert_ne!(leader.id, 1, "Jailed validator 1 should not be leader at epoch {}", epoch);
+            assert_ne!(
+                leader.id, 1,
+                "Jailed validator 1 should not be leader at epoch {}",
+                epoch
+            );
         }
     }
 
@@ -1322,7 +1337,10 @@ mod tests {
 
         // Now validator 1 can be leader again
         let can_lead = (1..=100).any(|e| vs.leader_for_epoch(e).unwrap().id == 1);
-        assert!(can_lead, "Unjailed validator should participate in rotation");
+        assert!(
+            can_lead,
+            "Unjailed validator should participate in rotation"
+        );
     }
 
     #[test]
@@ -1341,7 +1359,10 @@ mod tests {
         let total_before = vs.total_weight();
         vs.slash_equivocation(1);
         let total_after = vs.total_weight();
-        assert!(total_after < total_before, "Jailed validator weight should be excluded");
+        assert!(
+            total_after < total_before,
+            "Jailed validator weight should be excluded"
+        );
     }
 
     // ─── Epoch Transition Manager Tests ─────────────────────────────
@@ -1361,10 +1382,7 @@ mod tests {
         let mut mgr = EpochTransitionManager::new();
 
         // Queue join at epoch 5
-        mgr.queue_change(
-            ValidatorSetChange::Join(make_validator(5, 1000)),
-            5,
-        );
+        mgr.queue_change(ValidatorSetChange::Join(make_validator(5, 1000)), 5);
         assert_eq!(mgr.pending_count(), 1);
 
         // Epoch 6: bonding not elapsed (needs epoch 7)
@@ -1454,16 +1472,16 @@ mod tests {
 
         // Queue 3 joins at epoch 0 — max churn for 4 validators is ceil(4*0.33)=2
         for id in 5..=7 {
-            mgr.queue_change(
-                ValidatorSetChange::Join(make_validator(id, 1000)),
-                0,
-            );
+            mgr.queue_change(ValidatorSetChange::Join(make_validator(id, 1000)), 0);
         }
 
         let result = mgr.apply_epoch_transition(&mut vs, 2);
         // Should apply at most 2 joins, defer the rest
         assert!(vs.len() <= 6, "Max churn should limit joins");
-        assert!(!result.deferred.is_empty(), "Excess joins should be deferred");
+        assert!(
+            !result.deferred.is_empty(),
+            "Excess joins should be deferred"
+        );
     }
 
     #[test]
@@ -1472,10 +1490,7 @@ mod tests {
         let mut mgr = EpochTransitionManager::new();
 
         // Try to join with id=1 which already exists
-        mgr.queue_change(
-            ValidatorSetChange::Join(make_validator(1, 2000)),
-            0,
-        );
+        mgr.queue_change(ValidatorSetChange::Join(make_validator(1, 2000)), 0);
 
         let result = mgr.apply_epoch_transition(&mut vs, 2);
         assert_eq!(vs.len(), 4);
@@ -1505,7 +1520,11 @@ mod tests {
         // Stake update should apply
         assert_eq!(vs.get(1).unwrap().stake, 3000);
         // Join and leave depend on churn limits, but both should be processable
-        assert!(result.applied.len() >= 2, "Stake update + at least one more: {:?}", result);
+        assert!(
+            result.applied.len() >= 2,
+            "Stake update + at least one more: {:?}",
+            result
+        );
     }
 
     // ─── P0 #4 Phase 5 + 6: Delegation slashing & voting-power roll-up ──
@@ -1575,8 +1594,14 @@ mod tests {
         // + 100 (unbonding 12) = 900
         assert_eq!(total, 900);
 
-        assert_eq!(db.get_delegation(&delegator_addr(10), 7).map(|r| r.amount), Some(500));
-        assert_eq!(db.get_delegation(&delegator_addr(11), 7).map(|r| r.amount), Some(50));
+        assert_eq!(
+            db.get_delegation(&delegator_addr(10), 7).map(|r| r.amount),
+            Some(500)
+        );
+        assert_eq!(
+            db.get_delegation(&delegator_addr(11), 7).map(|r| r.amount),
+            Some(50)
+        );
         let r12 = db.get_delegation(&delegator_addr(12), 7).unwrap();
         assert_eq!(r12.amount, 250);
         assert_eq!(r12.unbonding_amount, 100);
@@ -1589,7 +1614,10 @@ mod tests {
         // 100% slash zeroes amount AND unbonding -> record removed.
         let total = slash_delegations_for_validator(&mut db, 9, 1.0);
         assert_eq!(total, 1000);
-        assert!(db.get_delegation(&delegator_addr(10), 9).is_none(), "fully-slashed record removed");
+        assert!(
+            db.get_delegation(&delegator_addr(10), 9).is_none(),
+            "fully-slashed record removed"
+        );
     }
 
     #[test]
@@ -1599,7 +1627,10 @@ mod tests {
         assert_eq!(slash_delegations_for_validator(&mut db, 9, 0.0), 0);
         assert_eq!(slash_delegations_for_validator(&mut db, 9, -0.1), 0);
         assert_eq!(slash_delegations_for_validator(&mut db, 9, 1.5), 0);
-        assert_eq!(db.get_delegation(&delegator_addr(10), 9).unwrap().amount, 1000);
+        assert_eq!(
+            db.get_delegation(&delegator_addr(10), 9).unwrap().amount,
+            1000
+        );
     }
 
     #[test]
@@ -1608,7 +1639,10 @@ mod tests {
         db.put_delegation(delegation(10, 7, 1000));
         let total = slash_delegations_for_validator(&mut db, 99, 0.5);
         assert_eq!(total, 0);
-        assert_eq!(db.get_delegation(&delegator_addr(10), 7).unwrap().amount, 1000);
+        assert_eq!(
+            db.get_delegation(&delegator_addr(10), 7).unwrap().amount,
+            1000
+        );
     }
 
     // ── Validator key rotation (punch-list 4b/4d) ──────────────────────

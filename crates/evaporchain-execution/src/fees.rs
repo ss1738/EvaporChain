@@ -186,8 +186,7 @@ impl PidFeeController {
             creation_rate_per_byte: CREATION_DEPOSIT_PER_BYTE,
             refresh_rate_per_byte: (CREATION_DEPOSIT_PER_BYTE as f64 * REFRESH_FEE_RATIO).round()
                 as u64,
-            resurrection_rate_per_byte: (CREATION_DEPOSIT_PER_BYTE as f64
-                * RESURRECTION_FEE_RATIO)
+            resurrection_rate_per_byte: (CREATION_DEPOSIT_PER_BYTE as f64 * RESURRECTION_FEE_RATIO)
                 .round() as u64,
             target_utilization: self.target_utilization,
         }
@@ -287,7 +286,11 @@ mod tests {
     fn variance(values: &[u64]) -> f64 {
         let n = values.len() as f64;
         let mean = values.iter().sum::<u64>() as f64 / n;
-        values.iter().map(|&v| (v as f64 - mean).powi(2)).sum::<f64>() / n
+        values
+            .iter()
+            .map(|&v| (v as f64 - mean).powi(2))
+            .sum::<f64>()
+            / n
     }
 
     #[test]
@@ -460,7 +463,11 @@ mod tests {
         }
 
         // Fee should have risen during high demand
-        assert!(fee_after_high > 1_000, "Fee should rise: got {}", fee_after_high);
+        assert!(
+            fee_after_high > 1_000,
+            "Fee should rise: got {}",
+            fee_after_high
+        );
 
         // Fee should converge back toward baseline after demand normalizes
         let _final_fee = *fees.last().unwrap();

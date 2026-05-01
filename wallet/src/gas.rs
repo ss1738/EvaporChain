@@ -106,25 +106,16 @@ impl GasEstimator {
             Transaction::Shield(_) => 60_000,
             Transaction::Unshield(_) => 80_000,
             Transaction::PrivateTransfer(ptx) => {
-                100_000 + 20_000 * ptx.input_nullifiers.len() as u64
+                100_000
+                    + 20_000 * ptx.input_nullifiers.len() as u64
                     + 15_000 * ptx.output_commitments.len() as u64
             }
-            Transaction::Deferred(dtx) => {
-                75_000 + 5_000 * dtx.guards.len() as u64
-            }
-            Transaction::Blob(tx) => {
-                50_000 + 10 * tx.data.len() as u64
-            }
+            Transaction::Deferred(dtx) => 75_000 + 5_000 * dtx.guards.len() as u64,
+            Transaction::Blob(tx) => 50_000 + 10 * tx.data.len() as u64,
             Transaction::Governance(_) => 25_000,
-            Transaction::MultiSig(tx) => {
-                50_000 + 10_000 * tx.signatures.len() as u64
-            }
-            Transaction::UserOp(tx) => {
-                30_000 + 16 * tx.call_data.len() as u64
-            }
-            Transaction::UpgradeContract(tx) => {
-                100_000 + 200 * tx.new_bytecode.len() as u64
-            }
+            Transaction::MultiSig(tx) => 50_000 + 10_000 * tx.signatures.len() as u64,
+            Transaction::UserOp(tx) => 30_000 + 16 * tx.call_data.len() as u64,
+            Transaction::UpgradeContract(tx) => 100_000 + 200 * tx.new_bytecode.len() as u64,
             Transaction::Delegate(_) => 40_000,
             Transaction::Undelegate(_) => 40_000,
             Transaction::RotateValidatorKey(_) => 60_000,
@@ -157,11 +148,17 @@ impl GasEstimator {
         let (extra_fee, extra_desc) = match tx {
             Transaction::CreateObject(tx) => {
                 let deposit = self.creation_deposit(tx.data.len());
-                (deposit, format!("creation deposit ({} bytes)", tx.data.len()))
+                (
+                    deposit,
+                    format!("creation deposit ({} bytes)", tx.data.len()),
+                )
             }
             Transaction::Refresh(tx) => {
                 let fee = self.refresh_fee(tx.energy_deposit);
-                (fee, format!("refresh fee ({}E deposited)", tx.energy_deposit))
+                (
+                    fee,
+                    format!("refresh fee ({}E deposited)", tx.energy_deposit),
+                )
             }
             _ => (0, String::new()),
         };
@@ -319,6 +316,7 @@ mod tests {
             half_life: 10,
             data: vec![0u8; 50],
             decay_curve: None,
+            lad_mode: None,
             signature: None,
             public_key: None,
         });

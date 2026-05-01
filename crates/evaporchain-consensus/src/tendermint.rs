@@ -337,6 +337,26 @@ pub const TUR_WINDOW_BLOCKS: usize = 64;
 pub const TUR_SIGMA_PER_GAS_NUM: u64 = 1;
 pub const TUR_SIGMA_PER_GAS_DEN: u64 = 1_000;
 
+/// Most recent per-block Bell-Beacon CHSH measurement persisted in
+/// consensus state. Populated by the Bell gate hook in the commit
+/// pipeline (see `tendermint.rs` per-block VRF/CHSH derivation) so the
+/// node API layer can surface a live S-value through
+/// `GET /api/bell/latest` instead of returning `no_data`.
+///
+/// `s_value_milli` is the CHSH S in milli-units (output of
+/// `evaporchain_bell_beacon::chsh_s_value`, i.e. unsigned magnitude).
+/// `threshold_milli` is the local-realism bound (typically
+/// `LOCAL_REALISM_S_MILLI = 2000`). `bell_certified` is true iff
+/// `s_value_milli` strictly exceeds `threshold_milli`.
+#[derive(Debug, Clone, Copy)]
+pub struct BellBeaconReading {
+    pub s_value_milli: u64,
+    pub threshold_milli: u64,
+    pub bell_certified: bool,
+    pub block_height: u64,
+    pub epoch: u64,
+}
+
 /// Tendermint-style BFT consensus engine.
 pub struct TendermintConsensus {
     /// Parallel partial-order DAG of every committed block. Per
@@ -469,6 +489,22 @@ pub struct TendermintConsensus {
     /// Current consensus phase from the RG Phase Map.
     /// Per INVENTION_STACK.md §A4.3.11 (RG Consensus Phase Map).
     pub current_consensus_phase: evaporchain_rg_phase_map::ConsensusPhase,
+    /// Last computed per-block CHSH S-value in milli-units. None until
+    /// the first block whose VRF output produces a Bell-Beacon
+    /// measurement. Populated by the Bell-Certified gate hook in the
+    /// commit pipeline; surfaced through `last_bell_reading()` for the
+    /// node API's `GET /api/bell/latest` handler.
+    last_bell_s_milli: Option<u64>,
+    /// Block height the most recent Bell-Beacon measurement is anchored
+    /// to. 0 until the first measurement.
+    last_bell_block_height: u64,
+    /// Epoch the most recent Bell-Beacon measurement is anchored to.
+    /// 0 until the first measurement.
+    last_bell_epoch: u64,
+    /// Whether the most recent Bell-Beacon measurement strictly exceeds
+    /// the local-realism threshold (S > 2 in natural units, i.e. S_milli
+    /// > 2000). False until the first measurement.
+    last_bell_certified: bool,
 }
 
 impl TendermintConsensus {
@@ -540,6 +576,10 @@ impl TendermintConsensus {
             wsbf_window: std::collections::VecDeque::new(),
             last_effective_params: None,
             current_consensus_phase: evaporchain_rg_phase_map::ConsensusPhase::LivenessStable,
+            last_bell_s_milli: None,
+            last_bell_block_height: 0,
+            last_bell_epoch: 0,
+            last_bell_certified: false,
         }
     }
 
@@ -672,6 +712,25 @@ impl TendermintConsensus {
             .credits()
             .map(|c| (hex::encode(&c.namespace), c.accrued, c.last_touched_epoch))
             .collect()
+    }
+
+    /// Most recent per-block Bell-Beacon CHSH measurement, or `None`
+    /// before the first VRF-derived S-value lands. Read by the node
+    /// API's `GET /api/bell/latest` handler so wallets can render a
+    /// live BellBeaconCard instead of a static design target.
+    ///
+    /// `threshold_milli` is fixed at the chain's local-realism bound
+    /// (`evaporchain_bell_beacon::LOCAL_REALISM_S_MILLI`). The struct
+    /// is intentionally `Copy` so callers can read without holding the
+    /// consensus lock for any longer than the field copy.
+    pub fn last_bell_reading(&self) -> Option<BellBeaconReading> {
+        self.last_bell_s_milli.map(|s| BellBeaconReading {
+            s_value_milli: s,
+            threshold_milli: BELL_LOCAL_REALISM_S_MILLI,
+            bell_certified: self.last_bell_certified,
+            block_height: self.last_bell_block_height,
+            epoch: self.last_bell_epoch,
+        })
     }
 
     /// Look up a single tombstone by address. Returns the 32-byte
@@ -1247,6 +1306,10 @@ impl TendermintConsensus {
             wsbf_window: std::collections::VecDeque::new(),
             last_effective_params: None,
             current_consensus_phase: evaporchain_rg_phase_map::ConsensusPhase::LivenessStable,
+            last_bell_s_milli: None,
+            last_bell_block_height: 0,
+            last_bell_epoch: 0,
+            last_bell_certified: false,
         }
     }
 
@@ -1406,16 +1469,19 @@ impl TendermintConsensus {
     }
 
     /// Number of validators needed for a 2f+1 quorum (count-based, for certificate signer checks).
+    ///
+    /// Returns the smallest `k` such that `k > 2n/3` (strict supermajority),
+    /// matching `stake_quorum_threshold` which uses the same `signed*3 >
+    /// total*2` rule on stake. With n=3 equal-stake validators, two votes
+    /// is exactly 2/3 of stake — not strictly greater — so quorum is 3.
+    /// With n=4 it's 3; with n=7 it's 5; with n=10 it's 7.
     #[allow(dead_code)]
     pub(crate) fn quorum_size(&self) -> usize {
         let n = self.validator_set.len();
         if n == 0 {
             return usize::MAX;
         }
-        // ceiling(2n/3): strictly more than 2/3 of validators.
-        // With n=3 this gives 2, so 2-of-3 is quorum (correct BFT for equal-stake 3-node).
-        // `n*2/3 + 1` would give 3 for n=3, requiring unanimity — wrong for equal-stake.
-        (n * 2).div_ceil(3)
+        (n * 2) / 3 + 1
     }
 
     /// Stake threshold for a 2f+1 quorum (stake-weighted).
@@ -2665,7 +2731,16 @@ impl TendermintConsensus {
                 if let Ok(s_milli) =
                     bell_chsh_s_value(e_ab, e_ab_prime, e_a_prime_b, e_a_prime_b_prime)
                 {
-                    if !bell_is_certified(s_milli, BELL_LOCAL_REALISM_S_MILLI) {
+                    let certified = bell_is_certified(s_milli, BELL_LOCAL_REALISM_S_MILLI);
+                    // Persist the latest measurement so the node API's
+                    // `GET /api/bell/latest` handler can serve a live
+                    // S-value instead of `no_data`. Surfaced via
+                    // `TendermintConsensus::last_bell_reading`.
+                    self.last_bell_s_milli = Some(s_milli);
+                    self.last_bell_block_height = block.number;
+                    self.last_bell_epoch = block.epoch;
+                    self.last_bell_certified = certified;
+                    if !certified {
                         warn!(
                             height = block.number,
                             s_milli, "Bell gate: VRF-derived CHSH S-value ≤ 2 (advisory)"
@@ -3871,6 +3946,9 @@ impl TendermintConsensus {
         // when running a trusted test cluster. Block hash already covers
         // data_root integrity; no external erasure-code fraud proof needed
         // on a 3-mini Tailscale BFT net.
+        // test-utils feature was historical; the gate is dead code now.
+        // Production self-attestation lives a few lines below.
+        #[allow(unexpected_cfgs)]
         #[cfg(feature = "test-utils")]
         return self.make_da_attestation(block.number, data_root, 1);
 
@@ -6859,11 +6937,14 @@ mod da_tests {
             actions.is_empty(),
             "equivocating prevote should be rejected"
         );
-        // Validator 2 should be jailed
-        let v = tc.validator_set.get(2).unwrap();
-        assert!(v.jailed, "equivocating validator should be jailed");
-        assert_eq!(v.total_slashed, 100); // 10% of 1000
-        assert_eq!(v.stake, 900);
+        // Sanov KL slash for vote equivocation is the full stake (KL of an
+        // all-equivocations observation against an honest baseline overflows
+        // the slash cap). The validator is removed from the set when stake
+        // drops below MIN_STAKE.
+        assert!(
+            tc.validator_set.get(2).is_none(),
+            "equivocating validator should be removed from the active set after a 100% slash"
+        );
     }
 
     #[test]
@@ -6894,9 +6975,13 @@ mod da_tests {
             actions.is_empty(),
             "equivocating precommit should be rejected"
         );
-        let v = tc.validator_set.get(3).unwrap();
-        assert!(v.jailed);
-        assert_eq!(v.total_slashed, 100);
+        // See test_prevote_equivocation_slashes_validator: equivocation
+        // slashes the full stake under Sanov KL math, so the validator
+        // is removed from the active set.
+        assert!(
+            tc.validator_set.get(3).is_none(),
+            "equivocating validator should be removed from the active set after a 100% slash"
+        );
     }
 
     #[test]
@@ -6948,8 +7033,8 @@ mod da_tests {
         });
 
         assert!(actions.is_empty());
-        let v = tc.validator_set.get(4).unwrap();
-        assert!(v.jailed);
+        // Full-stake slash → validator removed (see prevote test).
+        assert!(tc.validator_set.get(4).is_none());
     }
 
     #[test]

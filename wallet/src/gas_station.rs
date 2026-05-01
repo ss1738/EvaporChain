@@ -94,8 +94,7 @@ impl Relay {
         self.last_seen = Some(chrono::Utc::now().to_rfc3339());
         // Rolling average
         let total = self.success_count + self.failure_count;
-        self.avg_latency_ms =
-            (self.avg_latency_ms * (total - 1) + latency_ms) / total;
+        self.avg_latency_ms = (self.avg_latency_ms * (total - 1) + latency_ms) / total;
     }
 
     pub fn record_failure(&mut self) {
@@ -152,8 +151,8 @@ impl GasSponsor {
             name: name.to_string(),
             budget,
             spent: 0,
-            per_tx_limit: budget / 10, // Default 10% per tx
-            allowed_senders: Vec::new(), // Empty = all allowed
+            per_tx_limit: budget / 10,    // Default 10% per tx
+            allowed_senders: Vec::new(),  // Empty = all allowed
             allowed_tx_types: Vec::new(), // Empty = all allowed
             active: true,
             created_at: chrono::Utc::now().to_rfc3339(),
@@ -279,9 +278,11 @@ impl GasStation {
 
     /// Select best relay by score
     pub fn best_relay(&self) -> Option<&Relay> {
-        self.available_relays()
-            .into_iter()
-            .max_by(|a, b| a.score().partial_cmp(&b.score()).unwrap_or(std::cmp::Ordering::Equal))
+        self.available_relays().into_iter().max_by(|a, b| {
+            a.score()
+                .partial_cmp(&b.score())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
     }
 
     // ── Sponsor management ────────────────────────────────────
@@ -329,14 +330,13 @@ impl GasStation {
     // ── Persistence ───────────────────────────────────────────
 
     pub fn save(&self, path: &Path) -> Result<(), GasStationError> {
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| GasStationError::Json(e.to_string()))?;
+        let json =
+            serde_json::to_string_pretty(self).map_err(|e| GasStationError::Json(e.to_string()))?;
         std::fs::write(path, json).map_err(|e| GasStationError::Io(e.to_string()))
     }
 
     pub fn load(path: &Path) -> Result<Self, GasStationError> {
-        let data =
-            std::fs::read_to_string(path).map_err(|e| GasStationError::Io(e.to_string()))?;
+        let data = std::fs::read_to_string(path).map_err(|e| GasStationError::Io(e.to_string()))?;
         serde_json::from_str(&data).map_err(|e| GasStationError::Json(e.to_string()))
     }
 
@@ -557,9 +557,8 @@ mod tests {
 
     #[test]
     fn test_gas_station_save_load() {
-        let path = std::env::temp_dir().join(format!(
-            "evap_gasstation_{}.json", std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("evap_gasstation_{}.json", std::process::id()));
         let mut gs = GasStation::new();
         gs.add_relay(make_relay("http://r1")).unwrap();
         gs.add_sponsor(GasSponsor::new("evap1s", "S", 5000));

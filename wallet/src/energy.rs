@@ -238,11 +238,7 @@ impl Default for EnergyMonitor {
 ///
 /// This answers: "If I deposit X energy now, the object will last at least
 /// `target_epochs` more epochs before reaching zero."
-pub fn energy_to_extend(
-    current_energy: u64,
-    half_life: u64,
-    target_epochs: u64,
-) -> u64 {
+pub fn energy_to_extend(current_energy: u64, half_life: u64, target_epochs: u64) -> u64 {
     if half_life == 0 {
         return 0;
     }

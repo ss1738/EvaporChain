@@ -186,11 +186,7 @@ impl ObjectManager {
         Ok(())
     }
 
-    pub fn transfer_object(
-        &mut self,
-        id: &str,
-        new_owner: &str,
-    ) -> Result<(), ObjectManagerError> {
+    pub fn transfer_object(&mut self, id: &str, new_owner: &str) -> Result<(), ObjectManagerError> {
         let obj = self
             .objects
             .get_mut(id)
@@ -292,10 +288,7 @@ impl ObjectManager {
         Ok(())
     }
 
-    pub fn plan_resurrection(
-        &self,
-        id: &str,
-    ) -> Result<ResurrectionPlan, ObjectManagerError> {
+    pub fn plan_resurrection(&self, id: &str) -> Result<ResurrectionPlan, ObjectManagerError> {
         let obj = self
             .objects
             .get(id)
@@ -322,10 +315,7 @@ impl ObjectManager {
     // -- Query helpers ------------------------------------------------------
 
     pub fn objects_by_owner(&self, owner: &str) -> Vec<&ManagedObject> {
-        self.objects
-            .values()
-            .filter(|o| o.owner == owner)
-            .collect()
+        self.objects.values().filter(|o| o.owner == owner).collect()
     }
 
     pub fn objects_by_type(&self, obj_type: &ObjType) -> Vec<&ManagedObject> {
@@ -352,9 +342,7 @@ impl ObjectManager {
     pub fn low_energy_objects(&self, threshold_pct: f64) -> Vec<&ManagedObject> {
         self.objects
             .values()
-            .filter(|o| {
-                o.max_energy > 0 && (o.energy as f64 / o.max_energy as f64) < threshold_pct
-            })
+            .filter(|o| o.max_energy > 0 && (o.energy as f64 / o.max_energy as f64) < threshold_pct)
             .collect()
     }
 
@@ -671,10 +659,7 @@ mod tests {
 
         assert_eq!(mgr.objects_by_owner("alice").len(), 1);
         assert_eq!(mgr.objects_by_type(&ObjType::NFT).len(), 1);
-        assert_eq!(
-            mgr.objects_by_lifecycle(&ObjLifecycle::Active).len(),
-            2
-        );
+        assert_eq!(mgr.objects_by_lifecycle(&ObjLifecycle::Active).len(), 2);
         assert_eq!(mgr.search_by_tag("important").len(), 1);
     }
 

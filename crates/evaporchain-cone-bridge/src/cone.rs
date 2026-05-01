@@ -50,12 +50,7 @@ mod tests {
     use evaporchain_energy_kernel::Lambda;
 
     fn cone() -> EnergyCone {
-        EnergyCone::new(
-            ChainLambda::new(Lambda::from_epochs(100)),
-            500,
-            1000,
-            0,
-        )
+        EnergyCone::new(ChainLambda::new(Lambda::from_epochs(100)), 500, 1000, 0)
     }
 
     #[test]
@@ -71,12 +66,7 @@ mod tests {
 
     #[test]
     fn before_observation_uses_committed() {
-        let c = EnergyCone::new(
-            ChainLambda::new(Lambda::from_epochs(100)),
-            500,
-            1000,
-            10,
-        );
+        let c = EnergyCone::new(ChainLambda::new(Lambda::from_epochs(100)), 500, 1000, 10);
         assert!(c.is_inside(0));
     }
 }

@@ -103,7 +103,12 @@ pub struct TrackedTx {
 
 impl TrackedTx {
     /// Create a new tracked transaction in Pending state.
-    pub fn new(tx_hash: impl Into<String>, sender: impl Into<String>, nonce: u64, fee: u64) -> Self {
+    pub fn new(
+        tx_hash: impl Into<String>,
+        sender: impl Into<String>,
+        nonce: u64,
+        fee: u64,
+    ) -> Self {
         let now = chrono::Utc::now().to_rfc3339();
         Self {
             tx_hash: tx_hash.into(),
@@ -129,8 +134,10 @@ impl TrackedTx {
 
     /// Seconds elapsed since the transaction was submitted.
     pub fn time_pending_secs(&self) -> u64 {
-        let submitted = chrono::DateTime::parse_from_rfc3339(&self.submitted_at)
-            .unwrap_or_else(|_| chrono::DateTime::parse_from_rfc3339("1970-01-01T00:00:00+00:00").unwrap());
+        let submitted =
+            chrono::DateTime::parse_from_rfc3339(&self.submitted_at).unwrap_or_else(|_| {
+                chrono::DateTime::parse_from_rfc3339("1970-01-01T00:00:00+00:00").unwrap()
+            });
         let now = chrono::Utc::now();
         let diff = now.signed_duration_since(submitted);
         diff.num_seconds().max(0) as u64
@@ -419,7 +426,8 @@ impl FeeBumper {
     /// Remove confirmed transactions. Returns count removed.
     pub fn cleanup_confirmed(&mut self) -> usize {
         let before = self.tracked.len();
-        self.tracked.retain(|_, tx| !matches!(tx.state, TxState::Confirmed));
+        self.tracked
+            .retain(|_, tx| !matches!(tx.state, TxState::Confirmed));
         before - self.tracked.len()
     }
 
@@ -441,7 +449,10 @@ impl FeeBumper {
             .values()
             .filter(|tx| {
                 tx.sender == sender
-                    && matches!(tx.state, TxState::Pending | TxState::Stuck | TxState::Bumped)
+                    && matches!(
+                        tx.state,
+                        TxState::Pending | TxState::Stuck | TxState::Bumped
+                    )
             })
             .map(|tx| tx.nonce)
             .collect();
@@ -525,7 +536,10 @@ mod tests {
         bumper.track(make_tx("0xaaa", "alice", 0, 1000)).unwrap();
         let result = bumper.track(make_tx("0xaaa", "alice", 0, 2000));
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), FeeBumperError::AlreadyTracked(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            FeeBumperError::AlreadyTracked(_)
+        ));
     }
 
     #[test]
@@ -616,7 +630,10 @@ mod tests {
 
         let result = tx.bump_fee(&BumpStrategy::Linear(100));
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), FeeBumperError::MaxBumpsReached(2)));
+        assert!(matches!(
+            result.unwrap_err(),
+            FeeBumperError::MaxBumpsReached(2)
+        ));
     }
 
     #[test]
@@ -625,7 +642,10 @@ mod tests {
         tx.mark_confirmed();
         let result = tx.bump_fee(&BumpStrategy::Linear(100));
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), FeeBumperError::InvalidState(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            FeeBumperError::InvalidState(_)
+        ));
     }
 
     // ── FeeBumper methods ──
@@ -634,7 +654,9 @@ mod tests {
     fn test_detect_stuck() {
         let mut bumper = FeeBumper::new().with_timeout(60);
 
-        bumper.track(make_old_tx("0xold", "alice", 0, 1000)).unwrap();
+        bumper
+            .track(make_old_tx("0xold", "alice", 0, 1000))
+            .unwrap();
         bumper.track(make_tx("0xnew", "alice", 1, 2000)).unwrap();
 
         let stuck = bumper.detect_stuck();

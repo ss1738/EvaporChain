@@ -236,8 +236,7 @@ impl NameService {
                 address, name
             )));
         }
-        self.reverse
-            .insert(address.to_string(), name.to_string());
+        self.reverse.insert(address.to_string(), name.to_string());
         Ok(())
     }
 
@@ -264,11 +263,7 @@ impl NameService {
         Ok(())
     }
 
-    pub fn set_record(
-        &mut self,
-        name: &str,
-        record: NameRecord,
-    ) -> Result<(), NameServiceError> {
+    pub fn set_record(&mut self, name: &str, record: NameRecord) -> Result<(), NameServiceError> {
         let entry = self
             .names
             .get_mut(name)
@@ -305,10 +300,7 @@ impl NameService {
     }
 
     pub fn names_by_owner(&self, owner: &str) -> Vec<&RegisteredName> {
-        self.names
-            .values()
-            .filter(|n| n.owner == owner)
-            .collect()
+        self.names.values().filter(|n| n.owner == owner).collect()
     }
 
     /// Names expiring within the given number of days (and not already expired).
@@ -495,8 +487,14 @@ mod tests {
     #[test]
     fn test_get_record() {
         let mut name = alice();
-        name.add_record(NameRecord::new(RecordType::Avatar, "https://img.png".to_string()));
-        assert_eq!(name.get_record(&RecordType::Avatar), Some("https://img.png"));
+        name.add_record(NameRecord::new(
+            RecordType::Avatar,
+            "https://img.png".to_string(),
+        ));
+        assert_eq!(
+            name.get_record(&RecordType::Avatar),
+            Some("https://img.png")
+        );
         assert_eq!(name.get_record(&RecordType::Email), None);
     }
 
@@ -587,8 +585,11 @@ mod tests {
         let old = RegisteredName::new("old.evap", "0xOld", PAST);
         ns.register(old).unwrap();
         ns.reserve_name("vip.evap");
-        ns.set_record("alice.evap", NameRecord::new(RecordType::Email, "a@b.c".to_string()))
-            .unwrap();
+        ns.set_record(
+            "alice.evap",
+            NameRecord::new(RecordType::Email, "a@b.c".to_string()),
+        )
+        .unwrap();
 
         let s = ns.stats();
         assert_eq!(s.total_names, 2);

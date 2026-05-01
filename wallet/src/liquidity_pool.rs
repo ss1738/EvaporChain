@@ -290,10 +290,7 @@ impl LiquidityPoolManager {
     }
 
     pub fn total_value_locked(&self) -> u64 {
-        self.pools
-            .values()
-            .map(|p| p.reserve_a + p.reserve_b)
-            .sum()
+        self.pools.values().map(|p| p.reserve_a + p.reserve_b).sum()
     }
 
     pub fn stats(&self) -> PoolStats {
@@ -323,8 +320,8 @@ impl LiquidityPoolManager {
     // ── Persistence ──────────────────────────────────────────
 
     pub fn save(&self, path: &Path) -> Result<(), LiquidityPoolError> {
-        let json =
-            serde_json::to_string_pretty(self).map_err(|e| LiquidityPoolError::Json(e.to_string()))?;
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| LiquidityPoolError::Json(e.to_string()))?;
         std::fs::write(path, json).map_err(|e| LiquidityPoolError::Io(e.to_string()))
     }
 
@@ -344,9 +341,14 @@ impl LiquidityPoolManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
-    fn make_pool(id: &str, reserve_a: u64, reserve_b: u64, fee_bps: u32, apy: f64) -> LiquidityPool {
+    fn make_pool(
+        id: &str,
+        reserve_a: u64,
+        reserve_b: u64,
+        fee_bps: u32,
+        apy: f64,
+    ) -> LiquidityPool {
         LiquidityPool {
             id: id.to_string(),
             token_a: "EVAP".to_string(),
@@ -615,8 +617,10 @@ mod tests {
     fn test_pools_by_apy() {
         let mut mgr = LiquidityPoolManager::new();
         mgr.add_pool(make_pool("low", 1000, 1000, 30, 5.0)).unwrap();
-        mgr.add_pool(make_pool("high", 1000, 1000, 30, 25.0)).unwrap();
-        mgr.add_pool(make_pool("mid", 1000, 1000, 30, 12.0)).unwrap();
+        mgr.add_pool(make_pool("high", 1000, 1000, 30, 25.0))
+            .unwrap();
+        mgr.add_pool(make_pool("mid", 1000, 1000, 30, 12.0))
+            .unwrap();
 
         let sorted = mgr.pools_by_apy();
         assert_eq!(sorted[0].id, "high");

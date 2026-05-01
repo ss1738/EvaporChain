@@ -470,7 +470,9 @@ mod tests {
     fn test_duplicate_breakpoint() {
         let mut console = DebugConsole::new();
         console.add_breakpoint(make_breakpoint("bp_dup")).unwrap();
-        let err = console.add_breakpoint(make_breakpoint("bp_dup")).unwrap_err();
+        let err = console
+            .add_breakpoint(make_breakpoint("bp_dup"))
+            .unwrap_err();
         assert!(matches!(err, DebugConsoleError::SessionAlreadyExists(_)));
     }
 

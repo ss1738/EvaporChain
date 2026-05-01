@@ -1,8 +1,6 @@
 use k256::ecdsa::{
-    signature::Signer as K256Signer,
-    signature::Verifier as K256Verifier,
-    Signature as K256Signature,
-    SigningKey, VerifyingKey,
+    signature::Signer as K256Signer, signature::Verifier as K256Verifier,
+    Signature as K256Signature, SigningKey, VerifyingKey,
 };
 use pqc_dilithium::Keypair;
 use zeroize::Zeroize;
@@ -52,7 +50,9 @@ impl Drop for MlDsaKeypair {
 impl MlDsaKeypair {
     /// Generate a new random keypair.
     pub fn generate() -> Self {
-        Self { inner: Keypair::generate() }
+        Self {
+            inner: Keypair::generate(),
+        }
     }
 
     /// Reconstruct a keypair from raw bytes.
@@ -195,8 +195,8 @@ impl EcdsaKeypair {
     }
 
     pub fn from_bytes(sk_bytes: &[u8]) -> Result<Self, EcdsaError> {
-        let signing_key = SigningKey::from_bytes(sk_bytes.into())
-            .map_err(|_| EcdsaError::InvalidSecretKey)?;
+        let signing_key =
+            SigningKey::from_bytes(sk_bytes.into()).map_err(|_| EcdsaError::InvalidSecretKey)?;
         Ok(Self { signing_key })
     }
 
@@ -353,7 +353,10 @@ impl Verifier for HybridVerifier {
 
 // ──────────────────── BLS12-381 (Consensus Attestations) ────────────────
 
-use blst::min_pk::{AggregateSignature, PublicKey as BlstPublicKey, SecretKey as BlstSecretKey, Signature as BlstSignature};
+use blst::min_pk::{
+    AggregateSignature, PublicKey as BlstPublicKey, SecretKey as BlstSecretKey,
+    Signature as BlstSignature,
+};
 
 const BLS_DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
 /// Domain separation tag for proof-of-possession (prevents rogue-key attacks).
@@ -417,8 +420,7 @@ impl BlsKeypair {
 
     /// Reconstruct from raw secret key bytes (32 bytes).
     pub fn from_secret_bytes(sk_bytes: &[u8]) -> Result<Self, BlsError> {
-        let sk = BlstSecretKey::from_bytes(sk_bytes)
-            .map_err(|_| BlsError::InvalidSecretKey)?;
+        let sk = BlstSecretKey::from_bytes(sk_bytes).map_err(|_| BlsError::InvalidSecretKey)?;
         let pk = sk.sk_to_pk();
         Ok(Self { sk, pk })
     }
@@ -487,7 +489,8 @@ impl BlsVerifier {
         if sigs.is_empty() {
             return None;
         }
-        let parsed: Vec<BlstSignature> = sigs.iter()
+        let parsed: Vec<BlstSignature> = sigs
+            .iter()
             .filter_map(|s| BlstSignature::from_bytes(&s.0).ok())
             .collect();
         if parsed.len() != sigs.len() {
@@ -511,7 +514,8 @@ impl BlsVerifier {
             Ok(sig) => sig,
             Err(_) => return false,
         };
-        sig.verify(true, &pk.0, BLS_POP_DST, &[], &pk_parsed, true) == blst::BLST_ERROR::BLST_SUCCESS
+        sig.verify(true, &pk.0, BLS_POP_DST, &[], &pk_parsed, true)
+            == blst::BLST_ERROR::BLST_SUCCESS
     }
 
     /// Verify a rotation continuity proof: that `sig` was produced by the
@@ -548,7 +552,8 @@ impl BlsVerifier {
             Ok(sig) => sig,
             Err(_) => return false,
         };
-        let parsed_pks: Vec<BlstPublicKey> = pks.iter()
+        let parsed_pks: Vec<BlstPublicKey> = pks
+            .iter()
             .filter_map(|pk| BlstPublicKey::from_bytes(&pk.0).ok())
             .collect();
         if parsed_pks.len() != pks.len() {
@@ -611,7 +616,11 @@ mod tests {
         let msg = b"hello";
         let garbage_sig = vec![0xFFu8; 100]; // wrong length
 
-        assert!(!MlDsaVerifier::verify(msg, &garbage_sig, &kp.public_key_bytes()));
+        assert!(!MlDsaVerifier::verify(
+            msg,
+            &garbage_sig,
+            &kp.public_key_bytes()
+        ));
     }
 
     #[test]
@@ -751,7 +760,11 @@ mod tests {
         let sig3 = kp3.sign(msg);
 
         let agg = BlsVerifier::aggregate_signatures(&[sig1, sig2, sig3]).unwrap();
-        let pks = vec![kp1.public_key_bytes(), kp2.public_key_bytes(), kp3.public_key_bytes()];
+        let pks = vec![
+            kp1.public_key_bytes(),
+            kp2.public_key_bytes(),
+            kp3.public_key_bytes(),
+        ];
         assert!(BlsVerifier::aggregate_verify(msg, &agg, &pks));
     }
 
@@ -781,7 +794,11 @@ mod tests {
         let sig2 = kp2.sign(msg);
         let agg = BlsVerifier::aggregate_signatures(&[sig1, sig2]).unwrap();
 
-        let pks = vec![kp1.public_key_bytes(), kp2.public_key_bytes(), kp3.public_key_bytes()];
+        let pks = vec![
+            kp1.public_key_bytes(),
+            kp2.public_key_bytes(),
+            kp3.public_key_bytes(),
+        ];
         assert!(!BlsVerifier::aggregate_verify(msg, &agg, &pks));
     }
 
@@ -799,7 +816,11 @@ mod tests {
     #[test]
     fn test_bls_invalid_bytes() {
         let garbage = vec![0xFFu8; 10];
-        assert!(!BlsVerifier::verify(b"msg", &BlsSignature(garbage.clone()), &BlsPublicKey(garbage)));
+        assert!(!BlsVerifier::verify(
+            b"msg",
+            &BlsSignature(garbage.clone()),
+            &BlsPublicKey(garbage)
+        ));
     }
 
     // ─── ML-DSA Trait Object Tests ────────────────────────────────────
@@ -867,7 +888,11 @@ mod tests {
     fn test_key_sizes_match_wasm_expectations() {
         let kp = MlDsaKeypair::generate();
         assert_eq!(kp.public_key().len(), 1952, "PK must be 1952 bytes");
-        assert_eq!(kp.secret_key().len(), pqc_dilithium::SECRETKEYBYTES, "SK size must match");
+        assert_eq!(
+            kp.secret_key().len(),
+            pqc_dilithium::SECRETKEYBYTES,
+            "SK size must match"
+        );
         let sig = kp.sign(b"test");
         assert_eq!(sig.len(), 3293, "Signature must be 3293 bytes");
     }
@@ -929,7 +954,11 @@ mod tests {
         let old_pk = old_kp.public_key_bytes();
         let new_pk_bytes = new_kp.public_key_bytes().0.clone();
         let sig = old_kp.sign_rotation_continuity(&new_pk_bytes);
-        assert!(BlsVerifier::verify_rotation_continuity(&old_pk, &new_pk_bytes, &sig));
+        assert!(BlsVerifier::verify_rotation_continuity(
+            &old_pk,
+            &new_pk_bytes,
+            &sig
+        ));
     }
 
     #[test]
@@ -941,7 +970,11 @@ mod tests {
         let old_pk = old_kp.public_key_bytes();
         let new_pk_bytes = new_kp.public_key_bytes().0.clone();
         let pop = old_kp.proof_of_possession();
-        assert!(!BlsVerifier::verify_rotation_continuity(&old_pk, &new_pk_bytes, &pop));
+        assert!(!BlsVerifier::verify_rotation_continuity(
+            &old_pk,
+            &new_pk_bytes,
+            &pop
+        ));
     }
 
     #[test]
@@ -954,7 +987,11 @@ mod tests {
         let other_pk_bytes = other_kp.public_key_bytes().0.clone();
         let sig = old_kp.sign_rotation_continuity(&new_pk_bytes);
         // Signature was over new_pk_bytes; verifying against other_pk_bytes fails.
-        assert!(!BlsVerifier::verify_rotation_continuity(&old_pk, &other_pk_bytes, &sig));
+        assert!(!BlsVerifier::verify_rotation_continuity(
+            &old_pk,
+            &other_pk_bytes,
+            &sig
+        ));
     }
 
     #[test]
@@ -966,7 +1003,11 @@ mod tests {
         let new_pk_bytes = new_kp.public_key_bytes().0.clone();
         // Old key signs the rotation; verifying against attacker's pk fails.
         let sig = old_kp.sign_rotation_continuity(&new_pk_bytes);
-        assert!(!BlsVerifier::verify_rotation_continuity(&attacker_pk, &new_pk_bytes, &sig));
+        assert!(!BlsVerifier::verify_rotation_continuity(
+            &attacker_pk,
+            &new_pk_bytes,
+            &sig
+        ));
     }
 
     // ─── ECDSA secp256k1 Tests ─────────────────────────────────────────
@@ -993,7 +1034,11 @@ mod tests {
         let kp1 = EcdsaKeypair::generate();
         let kp2 = EcdsaKeypair::generate();
         let sig = kp1.sign(b"hello");
-        assert!(!EcdsaVerifier::verify(b"hello", &sig, &kp2.public_key_compressed()));
+        assert!(!EcdsaVerifier::verify(
+            b"hello",
+            &sig,
+            &kp2.public_key_compressed()
+        ));
     }
 
     #[test]
@@ -1003,7 +1048,11 @@ mod tests {
         let kp2 = EcdsaKeypair::from_bytes(&sk).unwrap();
         let msg = b"roundtrip";
         let sig = kp2.sign(msg);
-        assert!(EcdsaVerifier::verify(msg, &sig, &kp.public_key_compressed()));
+        assert!(EcdsaVerifier::verify(
+            msg,
+            &sig,
+            &kp.public_key_compressed()
+        ));
     }
 
     #[test]
@@ -1063,7 +1112,11 @@ mod tests {
         let kp1 = HybridKeypair::generate();
         let kp2 = HybridKeypair::generate();
         let sig = kp1.sign(b"hello");
-        assert!(!HybridVerifier::verify(b"hello", &sig, &kp2.public_key_bytes()));
+        assert!(!HybridVerifier::verify(
+            b"hello",
+            &sig,
+            &kp2.public_key_bytes()
+        ));
     }
 
     #[test]

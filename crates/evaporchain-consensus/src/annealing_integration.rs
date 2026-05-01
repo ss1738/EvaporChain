@@ -53,7 +53,11 @@ pub fn default_annealing_params() -> AnnealingParams {
 /// `uptime_milli` is in parts-per-thousand (1_000 = fully online).
 /// Higher score = better candidate.
 pub fn sa_validator_score(stake: u64, activity: u64, uptime_milli: u64, beta_mb: u64) -> u128 {
-    let v = AnnealedScore { stake, activity, uptime_milli };
+    let v = AnnealedScore {
+        stake,
+        activity,
+        uptime_milli,
+    };
     validator_score(&v, beta_mb)
 }
 
@@ -69,8 +73,16 @@ pub fn accepts_validator_swap(
     score_new: u128,
     slot_nonce: u64,
 ) -> bool {
-    let v_old = AnnealedScore { stake: score_old as u64, activity: 0, uptime_milli: 1_000 };
-    let v_new = AnnealedScore { stake: score_new as u64, activity: 0, uptime_milli: 1_000 };
+    let v_old = AnnealedScore {
+        stake: score_old as u64,
+        activity: 0,
+        uptime_milli: 1_000,
+    };
+    let v_new = AnnealedScore {
+        stake: score_new as u64,
+        activity: 0,
+        uptime_milli: 1_000,
+    };
     let accept = accepts_candidate(params, epoch, &v_old, &v_new, slot_nonce);
     debug!(
         epoch,
@@ -92,7 +104,9 @@ pub fn rank_validators(
 ) -> Vec<(u64, u128)> {
     let mut scored: Vec<(u64, u128)> = validators
         .iter()
-        .map(|&(id, stake, activity, uptime)| (id, sa_validator_score(stake, activity, uptime, beta_mb)))
+        .map(|&(id, stake, activity, uptime)| {
+            (id, sa_validator_score(stake, activity, uptime, beta_mb))
+        })
         .collect();
     scored.sort_unstable_by(|a, b| b.1.cmp(&a.1));
     scored
@@ -130,7 +144,10 @@ mod tests {
 
     #[test]
     fn degrading_swap_at_zero_temp_always_rejected() {
-        let params = AnnealingParams { lambda_half_life: 1, beta_mb: 1_000 };
+        let params = AnnealingParams {
+            lambda_half_life: 1,
+            beta_mb: 1_000,
+        };
         // At epoch >> half_life temperature collapses to 0 → no uphill moves.
         assert!(!accepts_validator_swap(&params, 1_000_000, 200, 100, 42));
     }

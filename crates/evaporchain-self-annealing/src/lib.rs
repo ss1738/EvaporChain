@@ -40,5 +40,5 @@
 pub mod annealing;
 pub mod score;
 
-pub use annealing::{AnnealingParams, accepts_candidate, effective_temperature};
-pub use score::{AnnealedScore, validator_score};
+pub use annealing::{accepts_candidate, effective_temperature, AnnealingParams};
+pub use score::{validator_score, AnnealedScore};

@@ -160,12 +160,12 @@ pub fn init(params: &Value, current_epoch: Epoch) -> Result<Value, ContractError
         ));
     }
 
-    let bounds_v = params.get("param_bounds").ok_or_else(|| {
-        ContractError::InvalidParams("missing param_bounds".into())
-    })?;
-    let bounds_obj = bounds_v.as_object().ok_or_else(|| {
-        ContractError::InvalidParams("param_bounds must be an object".into())
-    })?;
+    let bounds_v = params
+        .get("param_bounds")
+        .ok_or_else(|| ContractError::InvalidParams("missing param_bounds".into()))?;
+    let bounds_obj = bounds_v
+        .as_object()
+        .ok_or_else(|| ContractError::InvalidParams("param_bounds must be an object".into()))?;
     if bounds_obj.is_empty() {
         return Err(ContractError::InvalidParams(
             "param_bounds must contain at least one entry".into(),
@@ -175,28 +175,24 @@ pub fn init(params: &Value, current_epoch: Epoch) -> Result<Value, ContractError
     let mut param_bounds: HashMap<String, (u64, u64)> = HashMap::new();
     for (key, val) in bounds_obj {
         let pair = val.as_array().ok_or_else(|| {
-            ContractError::InvalidParams(format!(
-                "param_bounds.{} must be [min, max]", key
-            ))
+            ContractError::InvalidParams(format!("param_bounds.{} must be [min, max]", key))
         })?;
         if pair.len() != 2 {
             return Err(ContractError::InvalidParams(format!(
-                "param_bounds.{} must be [min, max] (length 2)", key
+                "param_bounds.{} must be [min, max] (length 2)",
+                key
             )));
         }
         let min = pair[0].as_u64().ok_or_else(|| {
-            ContractError::InvalidParams(format!(
-                "param_bounds.{}: min must be u64", key
-            ))
+            ContractError::InvalidParams(format!("param_bounds.{}: min must be u64", key))
         })?;
         let max = pair[1].as_u64().ok_or_else(|| {
-            ContractError::InvalidParams(format!(
-                "param_bounds.{}: max must be u64", key
-            ))
+            ContractError::InvalidParams(format!("param_bounds.{}: max must be u64", key))
         })?;
         if min > max {
             return Err(ContractError::InvalidParams(format!(
-                "param_bounds.{}: min ({}) > max ({})", key, min, max
+                "param_bounds.{}: min ({}) > max ({})",
+                key, min, max
             )));
         }
         param_bounds.insert(key.clone(), (min, max));
@@ -252,14 +248,12 @@ pub fn exec(
             let param_key = get_str(args, "param_key")?;
             let param_value = get_u64(args, "param_value_u64")?;
 
-            let bounds = ds
-                .param_bounds
-                .get(&param_key)
-                .ok_or_else(|| {
-                    ContractError::InvalidParams(format!(
-                        "param_key '{}' is not bounded by this DAO", param_key
-                    ))
-                })?;
+            let bounds = ds.param_bounds.get(&param_key).ok_or_else(|| {
+                ContractError::InvalidParams(format!(
+                    "param_key '{}' is not bounded by this DAO",
+                    param_key
+                ))
+            })?;
             if param_value < bounds.0 || param_value > bounds.1 {
                 return Err(ContractError::InvalidParams(format!(
                     "param_value {} for '{}' outside bounds [{}, {}]",
@@ -350,16 +344,14 @@ pub fn exec(
             // total_stake.saturating_mul(quorum_pct) won't overflow for
             // realistic stakes (u64 max / 100 ~= 1.8e17), but we use
             // saturating just in case.
-            let quorum_threshold =
-                total_stake.saturating_mul(quorum_pct) / 100;
+            let quorum_threshold = total_stake.saturating_mul(quorum_pct) / 100;
             let quorum_met = total_weighted >= quorum_threshold;
 
             // Supermajority: votes_for > 2 * votes_against.
             // Equivalent to votes_for / total_weighted > 2/3.
             // saturating_mul guards against absurd input; in practice
             // votes_against <= total_stake, so 2 * votes_against fits u64.
-            let supermajority =
-                p.votes_for > p.votes_against.saturating_mul(2);
+            let supermajority = p.votes_for > p.votes_against.saturating_mul(2);
 
             if quorum_met && supermajority {
                 p.status = DaoProposalStatus::Passed;
@@ -455,8 +447,7 @@ pub fn exec(
         }
 
         "param_bounds" => {
-            serde_json::to_value(&ds.param_bounds)
-                .expect("param_bounds serializable")
+            serde_json::to_value(&ds.param_bounds).expect("param_bounds serializable")
         }
 
         other => return Err(ContractError::UnknownMethod(other.into())),
@@ -482,8 +473,7 @@ pub fn tick(state: &mut Value, current_epoch: Epoch) -> Vec<String> {
 
     for p in ds.proposals.iter_mut() {
         if p.status == DaoProposalStatus::Active
-            && current_epoch
-                >= p.end_epoch.saturating_add(FINALIZE_GRACE_EPOCHS)
+            && current_epoch >= p.end_epoch.saturating_add(FINALIZE_GRACE_EPOCHS)
         {
             p.status = DaoProposalStatus::Rejected;
             events.push(format!(
@@ -769,8 +759,10 @@ mod tests {
 
         // Quorum met but not 2/3 supermajority:
         // 300_000 yes + 300_000 no (50/50). votes_for > votes_against * 2 is false.
-        let mut a1 = [0u8; 32]; a1[0] = 0x20;
-        let mut a2 = [0u8; 32]; a2[0] = 0x21;
+        let mut a1 = [0u8; 32];
+        a1[0] = 0x20;
+        let mut a2 = [0u8; 32];
+        a2[0] = 0x21;
         exec(
             &mut s,
             "vote",
@@ -780,7 +772,8 @@ mod tests {
             }),
             &a1,
             10,
-        ).unwrap();
+        )
+        .unwrap();
         exec(
             &mut s,
             "vote",
@@ -790,7 +783,8 @@ mod tests {
             }),
             &a2,
             11,
-        ).unwrap();
+        )
+        .unwrap();
 
         let r = exec(
             &mut s,
@@ -798,7 +792,8 @@ mod tests {
             &serde_json::json!({ "proposal_id": 0u64 }),
             &[1u8; 32],
             110,
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(r["status"], "Rejected");
         assert_eq!(r["supermajority"], false);
     }
@@ -959,13 +954,7 @@ mod tests {
     #[test]
     fn unknown_method_rejected() {
         let mut s = fresh_state();
-        let r = exec(
-            &mut s,
-            "frobnicate",
-            &serde_json::json!({}),
-            &[1u8; 32],
-            10,
-        );
+        let r = exec(&mut s, "frobnicate", &serde_json::json!({}), &[1u8; 32], 10);
         match r {
             Err(ContractError::UnknownMethod(m)) => assert_eq!(m, "frobnicate"),
             _ => panic!("expected UnknownMethod"),

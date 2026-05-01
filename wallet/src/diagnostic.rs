@@ -230,11 +230,7 @@ impl DiagnosticEngine {
         let mut checks = Vec::new();
 
         // Collect definitions to avoid borrow conflict
-        let defs: Vec<CheckDefinition> = self
-            .registered_checks
-            .values()
-            .cloned()
-            .collect();
+        let defs: Vec<CheckDefinition> = self.registered_checks.values().cloned().collect();
 
         for def in &defs {
             if def.enabled {
@@ -253,10 +249,22 @@ impl DiagnosticEngine {
             }
         }
 
-        let pass_count = checks.iter().filter(|c| c.status == CheckStatus::Pass).count();
-        let warn_count = checks.iter().filter(|c| c.status == CheckStatus::Warn).count();
-        let fail_count = checks.iter().filter(|c| c.status == CheckStatus::Fail).count();
-        let skip_count = checks.iter().filter(|c| c.status == CheckStatus::Skip).count();
+        let pass_count = checks
+            .iter()
+            .filter(|c| c.status == CheckStatus::Pass)
+            .count();
+        let warn_count = checks
+            .iter()
+            .filter(|c| c.status == CheckStatus::Warn)
+            .count();
+        let fail_count = checks
+            .iter()
+            .filter(|c| c.status == CheckStatus::Fail)
+            .count();
+        let skip_count = checks
+            .iter()
+            .filter(|c| c.status == CheckStatus::Skip)
+            .count();
         let total_duration_ms: u64 = checks.iter().map(|c| c.duration_ms).sum();
 
         let overall_status = if fail_count > 0 {

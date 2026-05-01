@@ -25,10 +25,14 @@ pub enum TaxError {
 }
 
 impl From<std::io::Error> for TaxError {
-    fn from(e: std::io::Error) -> Self { TaxError::Io(e.to_string()) }
+    fn from(e: std::io::Error) -> Self {
+        TaxError::Io(e.to_string())
+    }
 }
 impl From<serde_json::Error> for TaxError {
-    fn from(e: serde_json::Error) -> Self { TaxError::Json(e.to_string()) }
+    fn from(e: serde_json::Error) -> Self {
+        TaxError::Json(e.to_string())
+    }
 }
 
 /// Cost basis method.
@@ -182,13 +186,7 @@ impl TaxTracker {
     }
 
     /// Record an acquisition (buy, receive, mine, faucet, etc.).
-    pub fn acquire(
-        &mut self,
-        amount: u64,
-        cost_per_unit: f64,
-        source: &str,
-        reference: &str,
-    ) {
+    pub fn acquire(&mut self, amount: u64, cost_per_unit: f64, source: &str, reference: &str) {
         let lot = Lot {
             acquired_at: chrono::Utc::now().to_rfc3339(),
             amount,
@@ -244,9 +242,13 @@ impl TaxTracker {
         let mut earliest_acquired = String::new();
 
         for &idx in &lot_order {
-            if remaining == 0 { break; }
+            if remaining == 0 {
+                break;
+            }
             let lot = &mut self.lots[idx];
-            if lot.amount == 0 { continue; }
+            if lot.amount == 0 {
+                continue;
+            }
 
             let take = remaining.min(lot.amount);
             total_cost_basis += take as f64 * lot.cost_per_unit;
@@ -266,7 +268,8 @@ impl TaxTracker {
 
         // Determine if long-term (> 365 days since earliest lot used)
         let long_term = if let Ok(acq) = chrono::DateTime::parse_from_rfc3339(&earliest_acquired) {
-            let duration = chrono::Utc::now().signed_duration_since(acq.with_timezone(&chrono::Utc));
+            let duration =
+                chrono::Utc::now().signed_duration_since(acq.with_timezone(&chrono::Utc));
             duration.num_days() > 365
         } else {
             false
@@ -313,11 +316,15 @@ impl TaxTracker {
         let year_start = format!("{}-01-01", year);
         let year_end = format!("{}-01-01", year + 1);
 
-        let year_disposals: Vec<&Disposal> = self.disposals.iter()
+        let year_disposals: Vec<&Disposal> = self
+            .disposals
+            .iter()
             .filter(|d| d.timestamp >= year_start && d.timestamp < year_end)
             .collect();
 
-        let year_lots: Vec<&Lot> = self.lots.iter()
+        let year_lots: Vec<&Lot> = self
+            .lots
+            .iter()
             .filter(|l| l.acquired_at >= year_start && l.acquired_at < year_end)
             .collect();
 
@@ -326,14 +333,26 @@ impl TaxTracker {
         let total_proceeds: f64 = year_disposals.iter().map(|d| d.total_proceeds).sum();
         let total_cost_basis: f64 = year_disposals.iter().map(|d| d.cost_basis).sum();
         let total_gain_loss: f64 = year_disposals.iter().map(|d| d.gain_loss).sum();
-        let short_term: f64 = year_disposals.iter().filter(|d| !d.long_term).map(|d| d.gain_loss).sum();
-        let long_term: f64 = year_disposals.iter().filter(|d| d.long_term).map(|d| d.gain_loss).sum();
+        let short_term: f64 = year_disposals
+            .iter()
+            .filter(|d| !d.long_term)
+            .map(|d| d.gain_loss)
+            .sum();
+        let long_term: f64 = year_disposals
+            .iter()
+            .filter(|d| d.long_term)
+            .map(|d| d.gain_loss)
+            .sum();
 
-        let energy_costs: f64 = self.energy_costs.iter()
+        let energy_costs: f64 = self
+            .energy_costs
+            .iter()
             .filter(|c| c.timestamp >= year_start && c.timestamp < year_end)
             .map(|c| c.amount)
             .sum();
-        let gas_costs: f64 = self.gas_costs.iter()
+        let gas_costs: f64 = self
+            .gas_costs
+            .iter()
             .filter(|c| c.timestamp >= year_start && c.timestamp < year_end)
             .map(|c| c.amount)
             .sum();
@@ -360,9 +379,16 @@ impl TaxTracker {
         for d in &self.disposals {
             csv.push_str(&format!(
                 "{},{},{:.4},{:.2},{:.2},{:.2},{},{},{},{}\n",
-                &d.timestamp[..10], d.amount, d.proceeds_per_unit,
-                d.total_proceeds, d.cost_basis, d.gain_loss,
-                d.long_term, d.disposal_type, d.method.label(), d.reference
+                &d.timestamp[..10],
+                d.amount,
+                d.proceeds_per_unit,
+                d.total_proceeds,
+                d.cost_basis,
+                d.gain_loss,
+                d.long_term,
+                d.disposal_type,
+                d.method.label(),
+                d.reference
             ));
         }
         csv
@@ -370,12 +396,18 @@ impl TaxTracker {
 
     /// Export open lots as CSV.
     pub fn lots_csv(&self) -> String {
-        let mut csv = String::from("acquired,remaining,original,cost_per_unit,total_cost,source,reference\n");
+        let mut csv =
+            String::from("acquired,remaining,original,cost_per_unit,total_cost,source,reference\n");
         for l in &self.lots {
             csv.push_str(&format!(
                 "{},{},{},{:.4},{:.2},{},{}\n",
-                &l.acquired_at[..10], l.amount, l.original_amount,
-                l.cost_per_unit, l.total_cost(), l.source, l.reference
+                &l.acquired_at[..10],
+                l.amount,
+                l.original_amount,
+                l.cost_per_unit,
+                l.total_cost(),
+                l.source,
+                l.reference
             ));
         }
         csv
@@ -408,7 +440,8 @@ impl TaxTracker {
             }
             CostBasisMethod::Hifo => {
                 indices.sort_by(|&a, &b| {
-                    self.lots[b].cost_per_unit
+                    self.lots[b]
+                        .cost_per_unit
                         .partial_cmp(&self.lots[a].cost_per_unit)
                         .unwrap_or(std::cmp::Ordering::Equal)
                 });
@@ -419,7 +452,9 @@ impl TaxTracker {
 }
 
 impl Default for TaxTracker {
-    fn default() -> Self { Self::new(CostBasisMethod::Fifo) }
+    fn default() -> Self {
+        Self::new(CostBasisMethod::Fifo)
+    }
 }
 
 /// Default path.
@@ -464,7 +499,7 @@ mod tests {
         assert_eq!(d.cost_basis, 1400.0);
         assert_eq!(d.total_proceeds, 6000.0); // 1200 * 5.00
         assert_eq!(d.gain_loss, 4600.0); // 6000 - 1400
-        // Remaining: 300 @ 2.00 + 300 @ 3.00 = 600 tokens
+                                         // Remaining: 300 @ 2.00 + 300 @ 3.00 = 600 tokens
         assert_eq!(t.total_holdings(), 600);
     }
 
@@ -562,9 +597,18 @@ mod tests {
 
     #[test]
     fn test_cost_basis_method_from_str() {
-        assert_eq!(CostBasisMethod::from_str("fifo"), Some(CostBasisMethod::Fifo));
-        assert_eq!(CostBasisMethod::from_str("LIFO"), Some(CostBasisMethod::Lifo));
-        assert_eq!(CostBasisMethod::from_str("hifo"), Some(CostBasisMethod::Hifo));
+        assert_eq!(
+            CostBasisMethod::from_str("fifo"),
+            Some(CostBasisMethod::Fifo)
+        );
+        assert_eq!(
+            CostBasisMethod::from_str("LIFO"),
+            Some(CostBasisMethod::Lifo)
+        );
+        assert_eq!(
+            CostBasisMethod::from_str("hifo"),
+            Some(CostBasisMethod::Hifo)
+        );
         assert_eq!(CostBasisMethod::from_str("average"), None);
     }
 
@@ -585,7 +629,11 @@ mod tests {
     #[test]
     fn test_annual_summary() {
         let mut t = TaxTracker::new(CostBasisMethod::Fifo);
-        let year = chrono::Utc::now().format("%Y").to_string().parse::<u32>().unwrap();
+        let year = chrono::Utc::now()
+            .format("%Y")
+            .to_string()
+            .parse::<u32>()
+            .unwrap();
         t.acquire(1000, 1.0, "faucet", "f1");
         t.dispose(500, 2.0, "sell", "s1").unwrap();
         t.record_energy_cost(50.0, "refresh", "r1");

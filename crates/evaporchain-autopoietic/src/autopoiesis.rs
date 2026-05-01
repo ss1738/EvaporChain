@@ -59,11 +59,15 @@ impl AutopoieticHealth {
         s: SubsystemHealth,
         l: SubsystemHealth,
     ) -> AutopoieticStatus {
-        let failed = [p, s, l]
+        // A subsystem is "at-risk" if it is either Failed or Degraded.
+        // Stale-sentinel + healthy-others is Stressed (not Viable),
+        // and all-three-at-risk is Inviable even if one is Degraded
+        // rather than fully Failed.
+        let at_risk = [p, s, l]
             .iter()
-            .filter(|&&h| h == SubsystemHealth::Failed)
+            .filter(|&&h| h != SubsystemHealth::Healthy)
             .count();
-        match failed {
+        match at_risk {
             0 => AutopoieticStatus::Viable,
             3 => AutopoieticStatus::Inviable,
             _ => AutopoieticStatus::Stressed,

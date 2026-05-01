@@ -261,7 +261,11 @@ impl NotificationCenter {
             Priority::Low,
             EventCategory::TxConfirmed,
             &format!("{} confirmed", tx_type),
-            &format!("Transaction {} ({}) has been confirmed on-chain.", truncate(tx_hash), tx_type),
+            &format!(
+                "Transaction {} ({}) has been confirmed on-chain.",
+                truncate(tx_hash),
+                tx_type
+            ),
             Some(tx_hash),
         )
     }
@@ -283,20 +287,17 @@ impl NotificationCenter {
             Priority::Medium,
             EventCategory::FeeAlert,
             &format!("Fee alert: {}", alert_name),
-            &format!("Gas fee dropped to {} — alert '{}' triggered.", current_fee, alert_name),
+            &format!(
+                "Gas fee dropped to {} — alert '{}' triggered.",
+                current_fee, alert_name
+            ),
             None,
         )
     }
 
     /// Security event.
     pub fn security_event(&mut self, title: &str, detail: &str) -> &Notification {
-        self.notify(
-            Priority::High,
-            EventCategory::Security,
-            title,
-            detail,
-            None,
-        )
+        self.notify(Priority::High, EventCategory::Security, title, detail, None)
     }
 
     /// Session expiry warning.
@@ -305,7 +306,10 @@ impl NotificationCenter {
             Priority::Medium,
             EventCategory::SessionExpiry,
             &format!("dApp session expiring: {}", app_name),
-            &format!("Session {} for {} is about to expire.", session_id, app_name),
+            &format!(
+                "Session {} for {} is about to expire.",
+                session_id, app_name
+            ),
             Some(session_id),
         )
     }
@@ -338,7 +342,10 @@ impl NotificationCenter {
 
     /// Filter by category.
     pub fn filter_by_category(&self, category: EventCategory) -> Vec<&Notification> {
-        self.history.iter().filter(|n| n.category == category).collect()
+        self.history
+            .iter()
+            .filter(|n| n.category == category)
+            .collect()
     }
 
     /// Filter by priority (minimum).
@@ -423,7 +430,13 @@ mod tests {
     #[test]
     fn test_notify_basic() {
         let mut center = make_center();
-        center.notify(Priority::Medium, EventCategory::System, "Test", "Hello", None);
+        center.notify(
+            Priority::Medium,
+            EventCategory::System,
+            "Test",
+            "Hello",
+            None,
+        );
         assert_eq!(center.len(), 1);
         assert_eq!(center.unread_count(), 1);
     }
@@ -518,7 +531,13 @@ mod tests {
     fn test_mark_all_read() {
         let mut center = make_center();
         for i in 0..5 {
-            center.notify(Priority::Low, EventCategory::System, &format!("T{}", i), "m", None);
+            center.notify(
+                Priority::Low,
+                EventCategory::System,
+                &format!("T{}", i),
+                "m",
+                None,
+            );
         }
         assert_eq!(center.unread_count(), 5);
         center.mark_all_read();
@@ -532,7 +551,10 @@ mod tests {
         center.tx_failed("0x2", "error");
         center.fee_alert("test", 100);
 
-        assert_eq!(center.filter_by_category(EventCategory::TxConfirmed).len(), 1);
+        assert_eq!(
+            center.filter_by_category(EventCategory::TxConfirmed).len(),
+            1
+        );
         assert_eq!(center.filter_by_category(EventCategory::TxFailed).len(), 1);
         assert_eq!(center.filter_by_category(EventCategory::FeeAlert).len(), 1);
     }
@@ -552,7 +574,13 @@ mod tests {
     fn test_recent() {
         let mut center = make_center();
         for i in 0..10 {
-            center.notify(Priority::Low, EventCategory::System, &format!("N{}", i), "m", None);
+            center.notify(
+                Priority::Low,
+                EventCategory::System,
+                &format!("N{}", i),
+                "m",
+                None,
+            );
         }
         let recent = center.recent(3);
         assert_eq!(recent.len(), 3);
@@ -566,7 +594,13 @@ mod tests {
             ..Default::default()
         });
         for i in 0..10 {
-            center.notify(Priority::Low, EventCategory::System, &format!("N{}", i), "m", None);
+            center.notify(
+                Priority::Low,
+                EventCategory::System,
+                &format!("N{}", i),
+                "m",
+                None,
+            );
         }
         assert_eq!(center.len(), 5);
     }
@@ -612,7 +646,13 @@ mod tests {
     #[test]
     fn test_notification_serializable() {
         let mut center = make_center();
-        center.notify(Priority::High, EventCategory::Security, "Alert", "detail", Some("ref123"));
+        center.notify(
+            Priority::High,
+            EventCategory::Security,
+            "Alert",
+            "detail",
+            Some("ref123"),
+        );
         let json = serde_json::to_string(&center.history[0]).unwrap();
         assert!(json.contains("\"priority\":\"high\""));
         assert!(json.contains("\"reference\":\"ref123\""));
@@ -654,7 +694,9 @@ mod tests {
             .to_string();
 
         let mut center = NotificationCenter::with_config(NotificationConfig {
-            channels: vec![NotificationChannel::LogFile { path: log_path.clone() }],
+            channels: vec![NotificationChannel::LogFile {
+                path: log_path.clone(),
+            }],
             ..Default::default()
         });
         center.notify(Priority::High, EventCategory::Security, "Test", "msg", None);

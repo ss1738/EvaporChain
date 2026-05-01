@@ -262,13 +262,16 @@ impl Mnemonic {
             .map_err(|e| MnemonicError::DerivationFailed(e.to_string()))?;
         let mut plaintext = cipher
             .decrypt(Nonce::from_slice(&nonce_bytes), ciphertext.as_ref())
-            .map_err(|_| MnemonicError::DerivationFailed("wrong mnemonic or corrupted backup".into()))?;
+            .map_err(|_| {
+                MnemonicError::DerivationFailed("wrong mnemonic or corrupted backup".into())
+            })?;
 
         // Deserialize: pk_len (4 bytes LE) || pk || sk
         if plaintext.len() < 4 {
             return Err(MnemonicError::DerivationFailed("backup too short".into()));
         }
-        let pk_len = u32::from_le_bytes([plaintext[0], plaintext[1], plaintext[2], plaintext[3]]) as usize;
+        let pk_len =
+            u32::from_le_bytes([plaintext[0], plaintext[1], plaintext[2], plaintext[3]]) as usize;
         if plaintext.len() < 4 + pk_len {
             return Err(MnemonicError::DerivationFailed("backup truncated".into()));
         }
@@ -321,8 +324,7 @@ impl MnemonicBackup {
 
     /// Deserialize a backup from JSON.
     pub fn from_json(json: &str) -> Result<Self, MnemonicError> {
-        serde_json::from_str(json)
-            .map_err(|e| MnemonicError::DerivationFailed(e.to_string()))
+        serde_json::from_str(json).map_err(|e| MnemonicError::DerivationFailed(e.to_string()))
     }
 }
 
@@ -475,7 +477,10 @@ mod tests {
     #[test]
     fn test_invalid_word_count() {
         let result = Mnemonic::from_phrase("hello world");
-        assert!(matches!(result, Err(MnemonicError::InvalidWordCount { .. })));
+        assert!(matches!(
+            result,
+            Err(MnemonicError::InvalidWordCount { .. })
+        ));
     }
 
     #[test]

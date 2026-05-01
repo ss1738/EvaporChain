@@ -198,10 +198,9 @@ impl PermissionManager {
     }
 
     pub fn check_spend(&self, dapp_id: &str, amount: u64) -> Result<(), PermissionManagerError> {
-        let limit = self
-            .spend_limits
-            .get(dapp_id)
-            .ok_or_else(|| PermissionManagerError::PermissionNotFound(format!("spend limit for {dapp_id}")))?;
+        let limit = self.spend_limits.get(dapp_id).ok_or_else(|| {
+            PermissionManagerError::PermissionNotFound(format!("spend limit for {dapp_id}"))
+        })?;
 
         if amount > limit.max_per_tx {
             return Err(PermissionManagerError::SpendLimitExceeded(format!(
@@ -220,21 +219,23 @@ impl PermissionManager {
         Ok(())
     }
 
-    pub fn record_spend(&mut self, dapp_id: &str, amount: u64) -> Result<(), PermissionManagerError> {
+    pub fn record_spend(
+        &mut self,
+        dapp_id: &str,
+        amount: u64,
+    ) -> Result<(), PermissionManagerError> {
         self.check_spend(dapp_id, amount)?;
-        let limit = self
-            .spend_limits
-            .get_mut(dapp_id)
-            .ok_or_else(|| PermissionManagerError::PermissionNotFound(format!("spend limit for {dapp_id}")))?;
+        let limit = self.spend_limits.get_mut(dapp_id).ok_or_else(|| {
+            PermissionManagerError::PermissionNotFound(format!("spend limit for {dapp_id}"))
+        })?;
         limit.spent_today += amount;
         Ok(())
     }
 
     pub fn reset_daily_spend(&mut self, dapp_id: &str) -> Result<(), PermissionManagerError> {
-        let limit = self
-            .spend_limits
-            .get_mut(dapp_id)
-            .ok_or_else(|| PermissionManagerError::PermissionNotFound(format!("spend limit for {dapp_id}")))?;
+        let limit = self.spend_limits.get_mut(dapp_id).ok_or_else(|| {
+            PermissionManagerError::PermissionNotFound(format!("spend limit for {dapp_id}"))
+        })?;
         limit.spent_today = 0;
         limit.last_reset = Utc::now().to_rfc3339();
         Ok(())
@@ -246,7 +247,11 @@ impl PermissionManager {
         self.approvals.push(req);
     }
 
-    pub fn approve_request(&mut self, id: &str, resolver: &str) -> Result<(), PermissionManagerError> {
+    pub fn approve_request(
+        &mut self,
+        id: &str,
+        resolver: &str,
+    ) -> Result<(), PermissionManagerError> {
         let req = self
             .approvals
             .iter_mut()
@@ -258,7 +263,11 @@ impl PermissionManager {
         Ok(())
     }
 
-    pub fn reject_request(&mut self, id: &str, resolver: &str) -> Result<(), PermissionManagerError> {
+    pub fn reject_request(
+        &mut self,
+        id: &str,
+        resolver: &str,
+    ) -> Result<(), PermissionManagerError> {
         let req = self
             .approvals
             .iter_mut()
@@ -308,7 +317,11 @@ impl PermissionManager {
         }
         s.total_spend_limits = self.spend_limits.len();
         s.total_approvals = self.approvals.len();
-        s.pending_approvals = self.approvals.iter().filter(|r| r.status == ApprovalStatus::Pending).count();
+        s.pending_approvals = self
+            .approvals
+            .iter()
+            .filter(|r| r.status == ApprovalStatus::Pending)
+            .count();
         s
     }
 
@@ -360,7 +373,11 @@ mod tests {
     use std::process;
 
     fn test_path(name: &str) -> std::path::PathBuf {
-        temp_dir().join(format!("evaporchain_perm_test_{}_{}.json", process::id(), name))
+        temp_dir().join(format!(
+            "evaporchain_perm_test_{}_{}.json",
+            process::id(),
+            name
+        ))
     }
 
     fn make_permission(id: &str, dapp: &str, ptype: PermissionType) -> Permission {
@@ -417,25 +434,34 @@ mod tests {
     #[test]
     fn test_revoke_permission() {
         let mut mgr = PermissionManager::new();
-        mgr.grant_permission(make_permission("p1", "dapp1", PermissionType::ReadBalance)).unwrap();
+        mgr.grant_permission(make_permission("p1", "dapp1", PermissionType::ReadBalance))
+            .unwrap();
         mgr.revoke_permission("p1").unwrap();
-        assert_eq!(mgr.permissions.get("p1").unwrap().status, PermissionStatus3::Revoked);
+        assert_eq!(
+            mgr.permissions.get("p1").unwrap().status,
+            PermissionStatus3::Revoked
+        );
     }
 
     // 3
     #[test]
     fn test_deny_permission() {
         let mut mgr = PermissionManager::new();
-        mgr.grant_permission(make_permission("p1", "dapp1", PermissionType::ReadBalance)).unwrap();
+        mgr.grant_permission(make_permission("p1", "dapp1", PermissionType::ReadBalance))
+            .unwrap();
         mgr.deny_permission("p1").unwrap();
-        assert_eq!(mgr.permissions.get("p1").unwrap().status, PermissionStatus3::Denied);
+        assert_eq!(
+            mgr.permissions.get("p1").unwrap().status,
+            PermissionStatus3::Denied
+        );
     }
 
     // 4
     #[test]
     fn test_duplicate_permission() {
         let mut mgr = PermissionManager::new();
-        mgr.grant_permission(make_permission("p1", "dapp1", PermissionType::ReadBalance)).unwrap();
+        mgr.grant_permission(make_permission("p1", "dapp1", PermissionType::ReadBalance))
+            .unwrap();
         let res = mgr.grant_permission(make_permission("p1", "dapp1", PermissionType::ReadBalance));
         assert!(res.is_err());
     }
@@ -444,7 +470,12 @@ mod tests {
     #[test]
     fn test_check_permission_granted() {
         let mut mgr = PermissionManager::new();
-        mgr.grant_permission(make_permission("p1", "dapp1", PermissionType::SignTransaction)).unwrap();
+        mgr.grant_permission(make_permission(
+            "p1",
+            "dapp1",
+            PermissionType::SignTransaction,
+        ))
+        .unwrap();
         assert!(mgr.check_permission("dapp1", &PermissionType::SignTransaction));
     }
 
@@ -452,7 +483,12 @@ mod tests {
     #[test]
     fn test_check_permission_denied() {
         let mut mgr = PermissionManager::new();
-        mgr.grant_permission(make_permission("p1", "dapp1", PermissionType::SignTransaction)).unwrap();
+        mgr.grant_permission(make_permission(
+            "p1",
+            "dapp1",
+            PermissionType::SignTransaction,
+        ))
+        .unwrap();
         mgr.deny_permission("p1").unwrap();
         assert!(!mgr.check_permission("dapp1", &PermissionType::SignTransaction));
     }
@@ -482,7 +518,8 @@ mod tests {
     #[test]
     fn test_use_permission_unlimited() {
         let mut mgr = PermissionManager::new();
-        mgr.grant_permission(make_permission("p1", "dapp1", PermissionType::SendTokens)).unwrap();
+        mgr.grant_permission(make_permission("p1", "dapp1", PermissionType::SendTokens))
+            .unwrap();
         for _ in 0..100 {
             mgr.use_permission("p1").unwrap();
         }
@@ -579,9 +616,12 @@ mod tests {
     #[test]
     fn test_permissions_for_dapp() {
         let mut mgr = PermissionManager::new();
-        mgr.grant_permission(make_permission("p1", "dapp1", PermissionType::ReadBalance)).unwrap();
-        mgr.grant_permission(make_permission("p2", "dapp1", PermissionType::SendTokens)).unwrap();
-        mgr.grant_permission(make_permission("p3", "dapp2", PermissionType::ReadBalance)).unwrap();
+        mgr.grant_permission(make_permission("p1", "dapp1", PermissionType::ReadBalance))
+            .unwrap();
+        mgr.grant_permission(make_permission("p2", "dapp1", PermissionType::SendTokens))
+            .unwrap();
+        mgr.grant_permission(make_permission("p3", "dapp2", PermissionType::ReadBalance))
+            .unwrap();
         assert_eq!(mgr.permissions_for_dapp("dapp1").len(), 2);
         assert_eq!(mgr.permissions_for_dapp("dapp2").len(), 1);
     }
@@ -595,8 +635,10 @@ mod tests {
         mgr.approve_request("a1", "admin").unwrap();
         assert_eq!(mgr.pending_approvals().len(), 1);
 
-        mgr.grant_permission(make_permission("p1", "dapp1", PermissionType::ReadBalance)).unwrap();
-        mgr.grant_permission(make_permission("p2", "dapp1", PermissionType::SendTokens)).unwrap();
+        mgr.grant_permission(make_permission("p1", "dapp1", PermissionType::ReadBalance))
+            .unwrap();
+        mgr.grant_permission(make_permission("p2", "dapp1", PermissionType::SendTokens))
+            .unwrap();
         mgr.revoke_permission("p2").unwrap();
         assert_eq!(mgr.granted_permissions().len(), 1);
     }
@@ -605,8 +647,10 @@ mod tests {
     #[test]
     fn test_stats() {
         let mut mgr = PermissionManager::new();
-        mgr.grant_permission(make_permission("p1", "dapp1", PermissionType::ReadBalance)).unwrap();
-        mgr.grant_permission(make_permission("p2", "dapp1", PermissionType::SendTokens)).unwrap();
+        mgr.grant_permission(make_permission("p1", "dapp1", PermissionType::ReadBalance))
+            .unwrap();
+        mgr.grant_permission(make_permission("p2", "dapp1", PermissionType::SendTokens))
+            .unwrap();
         mgr.deny_permission("p2").unwrap();
         mgr.set_spend_limit(make_spend_limit("dapp1", 100, 1000));
         mgr.request_approval(make_approval("a1", "dapp1"));
@@ -625,7 +669,8 @@ mod tests {
     fn test_persistence_roundtrip() {
         let path = test_path("roundtrip");
         let mut mgr = PermissionManager::new();
-        mgr.grant_permission(make_permission("p1", "dapp1", PermissionType::ReadBalance)).unwrap();
+        mgr.grant_permission(make_permission("p1", "dapp1", PermissionType::ReadBalance))
+            .unwrap();
         mgr.set_spend_limit(make_spend_limit("dapp1", 100, 1000));
         mgr.request_approval(make_approval("a1", "dapp1"));
 

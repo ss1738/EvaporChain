@@ -343,10 +343,16 @@ pub fn verify_energy_decay_proof(
     new_blinding: &[u8; 32],
 ) -> bool {
     // 1. Verify commitments open correctly
-    if !proof.old_energy_commitment.verify_opening(old_energy, old_blinding) {
+    if !proof
+        .old_energy_commitment
+        .verify_opening(old_energy, old_blinding)
+    {
         return false;
     }
-    if !proof.new_energy_commitment.verify_opening(new_energy, new_blinding) {
+    if !proof
+        .new_energy_commitment
+        .verify_opening(new_energy, new_blinding)
+    {
         return false;
     }
 
@@ -447,7 +453,11 @@ impl PrivateTransferWitness {
                 return Err(PrivacyError::InvalidMerkleProof);
             }
             // Verify commitment opens correctly
-            if !input.note.value_commitment.verify_opening(input.amount, &input.blinding) {
+            if !input
+                .note
+                .value_commitment
+                .verify_opening(input.amount, &input.blinding)
+            {
                 return Err(PrivacyError::InvalidCommitment);
             }
             // All inputs must reference the same Merkle root
@@ -522,7 +532,8 @@ pub fn compute_balance_binding(
     input_blindings: &[[u8; 32]],
     output_blindings: &[[u8; 32]],
 ) -> [u8; 32] {
-    let mut preimage = Vec::with_capacity(24 + 32 * (input_blindings.len() + output_blindings.len()));
+    let mut preimage =
+        Vec::with_capacity(24 + 32 * (input_blindings.len() + output_blindings.len()));
     preimage.extend_from_slice(&sum_in.to_le_bytes());
     preimage.extend_from_slice(&sum_out.to_le_bytes());
     preimage.extend_from_slice(&fee.to_le_bytes());
@@ -817,6 +828,7 @@ pub enum PrivacyError {
 mod tests {
     use super::*;
 
+    #[allow(dead_code)]
     fn random_blinding() -> [u8; 32] {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
@@ -868,7 +880,10 @@ mod tests {
     fn test_commitment_different_blindings() {
         let c1 = Commitment::commit(1000, &test_blinding(1));
         let c2 = Commitment::commit(1000, &test_blinding(2));
-        assert_ne!(c1, c2, "same value with different blindings must produce different commitments");
+        assert_ne!(
+            c1, c2,
+            "same value with different blindings must produce different commitments"
+        );
     }
 
     #[test]
@@ -905,7 +920,10 @@ mod tests {
         let commitment = Commitment::commit(1000, &test_blinding(1));
         let n1 = Nullifier::derive(&test_blinding(1), &commitment);
         let n2 = Nullifier::derive(&test_blinding(2), &commitment);
-        assert_ne!(n1, n2, "different secrets must produce different nullifiers");
+        assert_ne!(
+            n1, n2,
+            "different secrets must produce different nullifiers"
+        );
     }
 
     #[test]
@@ -940,13 +958,17 @@ mod tests {
             }
 
             assert_eq!(
-                tree.root(), nodes[1],
-                "fast empty-tree init at depth={} must match per-node loop", depth
+                tree.root(),
+                nodes[1],
+                "fast empty-tree init at depth={} must match per-node loop",
+                depth
             );
+            #[allow(clippy::needless_range_loop)]
             for i in 1..capacity {
                 assert_eq!(
                     tree.nodes[i], nodes[i],
-                    "internal node {} at depth={} must match", i, depth
+                    "internal node {} at depth={} must match",
+                    i, depth
                 );
             }
         }
@@ -982,7 +1004,11 @@ mod tests {
         for i in 0..8 {
             let c = Commitment::commit(i * 100, &test_blinding(i as u8));
             let proof = tree.prove(i as usize).unwrap();
-            assert!(verify_merkle_proof(&c.0, &proof), "proof failed for leaf {}", i);
+            assert!(
+                verify_merkle_proof(&c.0, &proof),
+                "proof failed for leaf {}",
+                i
+            );
         }
     }
 
@@ -1243,9 +1269,9 @@ mod tests {
                 500,
                 test_owner(1),
                 blind,
-                Some(1000),      // energy
+                Some(1000), // energy
                 Some(energy_blind),
-                10,              // half_life
+                10, // half_life
             )
             .unwrap();
 
@@ -1254,12 +1280,12 @@ mod tests {
         // Prove energy decay from epoch 10 to epoch 15
         let decay_proof = engine
             .prove_energy_decay(
-                1000,           // old energy
-                energy_blind,   // old blinding
+                1000,             // old energy
+                energy_blind,     // old blinding
                 test_blinding(3), // new blinding
-                10,             // half_life
-                10,             // epoch_start
-                15,             // epoch_end
+                10,               // half_life
+                10,               // epoch_start
+                15,               // epoch_end
             )
             .unwrap();
 
@@ -1268,7 +1294,9 @@ mod tests {
         // The new energy should be correctly computed
         let expected_new_energy = energy_at_epoch(1000, 10, 5);
         let new_blind = test_blinding(3);
-        assert!(decay_proof.new_energy_commitment.verify_opening(expected_new_energy, &new_blind));
+        assert!(decay_proof
+            .new_energy_commitment
+            .verify_opening(expected_new_energy, &new_blind));
     }
 
     #[test]
@@ -1298,7 +1326,7 @@ mod tests {
 
         // Get proof with current root
         let merkle_proof = engine.get_merkle_proof(shield.tree_index).unwrap();
-        let old_root = engine.merkle_root();
+        let _old_root = engine.merkle_root();
 
         // Shield another note (changes the root)
         engine
@@ -1444,10 +1472,24 @@ mod tests {
         let binding = compute_balance_binding(1000, 900, 100, &ib, &ob);
         // Tampered input blinding
         let tampered_ib = [test_blinding(99)];
-        assert!(!verify_balance_binding(&binding, 1000, 900, 100, &tampered_ib, &ob));
+        assert!(!verify_balance_binding(
+            &binding,
+            1000,
+            900,
+            100,
+            &tampered_ib,
+            &ob
+        ));
         // Tampered output blinding
         let tampered_ob = [test_blinding(99)];
-        assert!(!verify_balance_binding(&binding, 1000, 900, 100, &ib, &tampered_ob));
+        assert!(!verify_balance_binding(
+            &binding,
+            1000,
+            900,
+            100,
+            &ib,
+            &tampered_ob
+        ));
     }
 
     #[test]

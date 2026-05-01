@@ -24,9 +24,9 @@
 //!
 //! Best-effort: if the state is empty, returns the all-zeros hash.
 
+use evaporchain_energy_kernel::DEFAULT_LAMBDA;
 use evaporchain_mera::commit;
 use evaporchain_state::db::StateDB;
-use evaporchain_energy_kernel::DEFAULT_LAMBDA;
 use tracing::debug;
 
 /// Layer-0 half-life (τ₀) for the MERA tree.  Per the MERA gate result

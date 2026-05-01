@@ -78,7 +78,7 @@ mod tests {
     fn first_half_hour_boundary_is_period_2() {
         // 1800 seconds into day → second SP.
         let genesis = 1_704_067_200u64; // 2024-01-01T00:00:00Z
-        // epoch 150 = 1800 s → start of SP 2
+                                        // epoch 150 = 1800 s → start of SP 2
         let s = epoch_to_elexon_slot(genesis, 12, 150);
         assert_eq!(s.period, 2);
     }

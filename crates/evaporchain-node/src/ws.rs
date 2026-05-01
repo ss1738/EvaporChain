@@ -236,8 +236,12 @@ mod tests {
     fn filter_all_matches_everything() {
         let f = SubscriptionFilter::all();
         assert!(f.matches(&WsEvent::NewBlock {
-            number: 1, epoch: 1, tx_count: 0, timestamp: 0,
-            state_root: String::new(), producer: None,
+            number: 1,
+            epoch: 1,
+            tx_count: 0,
+            timestamp: 0,
+            state_root: String::new(),
+            producer: None,
         }));
         assert!(f.matches(&WsEvent::PeerUpdate { connected: 3 }));
     }
@@ -246,16 +250,25 @@ mod tests {
     fn filter_specific_topics() {
         let f = SubscriptionFilter::from_param(&Some("blocks,peers".to_string()));
         assert!(f.matches(&WsEvent::NewBlock {
-            number: 1, epoch: 1, tx_count: 0, timestamp: 0,
-            state_root: String::new(), producer: None,
+            number: 1,
+            epoch: 1,
+            tx_count: 0,
+            timestamp: 0,
+            state_root: String::new(),
+            producer: None,
         }));
         assert!(f.matches(&WsEvent::PeerUpdate { connected: 3 }));
         assert!(!f.matches(&WsEvent::NewTransaction {
-            hash: String::new(), tx_type: String::new(),
-            from: String::new(), to: None, amount: None,
+            hash: String::new(),
+            tx_type: String::new(),
+            from: String::new(),
+            to: None,
+            amount: None,
         }));
         assert!(!f.matches(&WsEvent::Evaporation {
-            object_id: String::new(), energy: 0.0, block_number: 0,
+            object_id: String::new(),
+            energy: 0.0,
+            block_number: 0,
         }));
     }
 

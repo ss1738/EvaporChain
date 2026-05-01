@@ -34,11 +34,7 @@ pub const DEFAULT_ANTICHAIN_THRESHOLD: Energy = 0;
 pub fn dag_tips(lc: &LightCone) -> Vec<BlockId> {
     let is_parent: std::collections::BTreeSet<BlockId> = lc
         .ids()
-        .flat_map(|id| {
-            lc.get(&id)
-                .map(|b| b.parents.clone())
-                .unwrap_or_default()
-        })
+        .flat_map(|id| lc.get(&id).map(|b| b.parents.clone()).unwrap_or_default())
         .collect();
     lc.ids().filter(|id| !is_parent.contains(id)).collect()
 }
@@ -56,8 +52,7 @@ pub fn build_proposal_antichain(lc: &LightCone) -> Antichain {
         let eb = lc.get(b).map(|blk| blk.energy).unwrap_or(0);
         eb.cmp(&ea)
     });
-    extend_to_maximal(&Antichain::empty(), lc, tips)
-        .unwrap_or_else(|_| Antichain::empty())
+    extend_to_maximal(&Antichain::empty(), lc, tips).unwrap_or_else(|_| Antichain::empty())
 }
 
 /// True iff `antichain`'s total λ-decayed energy at `epoch` clears `threshold`.
@@ -80,10 +75,21 @@ pub fn antichain_energy_gate(
 
 /// Log the proposal antichain's state. Called by `create_proposal` before
 /// broadcasting — purely observational; does not gate block production.
-pub fn log_proposal_antichain(lc: &LightCone, epoch: u64, chain_lambda_half_life: u64, energy_threshold: Energy) {
+pub fn log_proposal_antichain(
+    lc: &LightCone,
+    epoch: u64,
+    chain_lambda_half_life: u64,
+    energy_threshold: Energy,
+) {
     let antichain = build_proposal_antichain(lc);
     let maximal = is_maximal_antichain(&antichain, lc);
-    let gate = antichain_energy_gate(&antichain, lc, chain_lambda_half_life, epoch, energy_threshold);
+    let gate = antichain_energy_gate(
+        &antichain,
+        lc,
+        chain_lambda_half_life,
+        epoch,
+        energy_threshold,
+    );
     debug!(
         epoch,
         antichain_size = antichain.len(),

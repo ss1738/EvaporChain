@@ -278,11 +278,7 @@ impl KeyStore {
     }
 
     /// Decrypt and return the ML-DSA keypair for the given name.
-    pub fn unlock_key(
-        &self,
-        name: &str,
-        password: &str,
-    ) -> Result<MlDsaKeypair, KeyStoreError> {
+    pub fn unlock_key(&self, name: &str, password: &str) -> Result<MlDsaKeypair, KeyStoreError> {
         let entry = self
             .entries
             .iter()
@@ -560,7 +556,7 @@ mod tests {
         let expected_addr = derive_address(&pk);
 
         let mut store = KeyStore::new();
-        let addr = store.import_key("imported", "pass", &pk, &sk).unwrap();
+        let addr = store.import_key("imported", "pass", &pk, sk).unwrap();
         assert_eq!(addr, expected_addr);
 
         // Unlock and verify round-trip
@@ -620,6 +616,9 @@ mod tests {
 
         let mldsa = store.unlock_key("mldsa_key", "pass1").unwrap();
         let hybrid = store.unlock_hybrid_key("hybrid_key", "pass2").unwrap();
-        assert_ne!(mldsa.public_key_bytes().len(), hybrid.public_key_bytes().len());
+        assert_ne!(
+            mldsa.public_key_bytes().len(),
+            hybrid.public_key_bytes().len()
+        );
     }
 }

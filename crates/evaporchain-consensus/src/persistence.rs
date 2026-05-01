@@ -214,7 +214,8 @@ impl FileStateStore {
             for entry in entries.flatten() {
                 if let Some(name) = entry.file_name().to_str() {
                     // Format: <height>_<seq>.json
-                    if let Some(seq_str) = name.strip_suffix(".json").and_then(|n| n.split('_').nth(1))
+                    if let Some(seq_str) =
+                        name.strip_suffix(".json").and_then(|n| n.split('_').nth(1))
                     {
                         if let Ok(seq) = seq_str.parse::<u64>() {
                             max = max.max(seq);
@@ -239,15 +240,13 @@ impl FileStateStore {
     }
 
     fn next_seq(&self) -> u64 {
-        self.seq
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        self.seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     }
 }
 
 impl ConsensusStateStore for FileStateStore {
     fn save_checkpoint(&self, checkpoint: &ConsensusCheckpoint) -> io::Result<()> {
-        let data = serde_json::to_vec_pretty(checkpoint)
-            .map_err(io::Error::other)?;
+        let data = serde_json::to_vec_pretty(checkpoint).map_err(io::Error::other)?;
         Self::atomic_write(&self.checkpoint_path(), &data)
     }
 
@@ -266,8 +265,7 @@ impl ConsensusStateStore for FileStateStore {
         let seq = self.next_seq();
         let filename = format!("{}_{}.json", entry.height, seq);
         let path = self.wal_dir.join(filename);
-        let data = serde_json::to_vec(entry)
-            .map_err(io::Error::other)?;
+        let data = serde_json::to_vec(entry).map_err(io::Error::other)?;
         // fsync WAL entries so they survive power loss.
         let f = fs::File::create(&path)?;
         io::Write::write_all(&mut &f, &data)?;
@@ -358,10 +356,7 @@ impl ConsensusStateStore for InMemoryStateStore {
     }
 
     fn clear_wal(&self, up_to_height: u64) -> io::Result<()> {
-        self.wal
-            .lock()
-            .unwrap()
-            .retain(|e| e.height > up_to_height);
+        self.wal.lock().unwrap().retain(|e| e.height > up_to_height);
         Ok(())
     }
 }
@@ -429,9 +424,7 @@ mod tests {
         let e3 = WalEntry {
             height: 11,
             round: 0,
-            action: WalAction::SentPrevote {
-                block_hash: None,
-            },
+            action: WalAction::SentPrevote { block_hash: None },
             seq: 3,
         };
 

@@ -64,10 +64,13 @@ impl MeraCommitment {
         layer_index: usize,
         claimed_hash: &[u8; 32],
     ) -> Result<(), MeraCommitmentError> {
-        let stored = self
-            .layer_hashes
-            .get(layer_index)
-            .ok_or(MeraCommitmentError::LayerOutOfRange(layer_index, self.depth))?;
+        let stored =
+            self.layer_hashes
+                .get(layer_index)
+                .ok_or(MeraCommitmentError::LayerOutOfRange(
+                    layer_index,
+                    self.depth,
+                ))?;
         if stored != claimed_hash {
             return Err(MeraCommitmentError::LayerHashMismatch(layer_index));
         }

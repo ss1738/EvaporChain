@@ -50,8 +50,8 @@ pub fn is_evkv(bytes: &[u8]) -> bool {
 /// Same parameters as `bls_key_store::kdf` so an operator who's tuned
 /// one envelope's cost has tuned both.
 fn kdf(passphrase: &[u8], salt: &[u8]) -> Result<[u8; 32], String> {
-    let params = Params::new(64 * 1024, 3, 1, Some(32))
-        .map_err(|e| format!("argon2 params: {e}"))?;
+    let params =
+        Params::new(64 * 1024, 3, 1, Some(32)).map_err(|e| format!("argon2 params: {e}"))?;
     let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut out = [0u8; 32];
     argon

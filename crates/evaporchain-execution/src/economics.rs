@@ -207,8 +207,8 @@ pub struct ValidatorEconConfig {
     pub total_validators: u64,
     pub stake_per_validator: u64,
     pub blocks_per_year: u64,
-    pub fee_burn_pct: u64,    // percentage of fees burned
-    pub fee_producer_pct: u64, // percentage to block producer
+    pub fee_burn_pct: u64,          // percentage of fees burned
+    pub fee_producer_pct: u64,      // percentage to block producer
     pub slash_double_vote_pct: u64, // percentage of stake slashed
 }
 
@@ -300,7 +300,7 @@ pub fn analyze_attack_costs(
     let dust_cost = txs_per_block * base_fee * min_tx_gas;
 
     // How many blocks of rewards to recoup the BFT attack cost
-    #[allow(clippy::manual_checked_ops)]
+    #[allow(unknown_lints, clippy::manual_checked_ops)]
     let recoup_blocks = if block_reward > 0 {
         bft_cost / block_reward
     } else {
@@ -467,7 +467,11 @@ mod tests {
     #[test]
     fn test_energy_decay_interpolation() {
         let e5 = compute_energy(1000, 10, 5);
-        assert!(e5 > 500 && e5 < 1000, "Midpoint energy should be between halves: {}", e5);
+        assert!(
+            e5 > 500 && e5 < 1000,
+            "Midpoint energy should be between halves: {}",
+            e5
+        );
     }
 
     #[test]
@@ -525,7 +529,10 @@ mod tests {
         let config = GasPriceConfig::default();
         let prices = simulate_gas_price(&config, 200, 50); // 2x target load
         let last = *prices.last().unwrap();
-        assert!(last > config.initial_base_fee, "Gas price should increase above target");
+        assert!(
+            last > config.initial_base_fee,
+            "Gas price should increase above target"
+        );
     }
 
     #[test]
@@ -533,7 +540,10 @@ mod tests {
         let config = GasPriceConfig::default();
         let prices = simulate_gas_price(&config, 10, 50); // 10% load
         let last = *prices.last().unwrap();
-        assert!(last < config.initial_base_fee, "Gas price should decrease below target");
+        assert!(
+            last < config.initial_base_fee,
+            "Gas price should decrease below target"
+        );
     }
 
     #[test]
@@ -544,7 +554,10 @@ mod tests {
         };
         let prices = simulate_gas_price(&config, 0, 100); // zero load
         let last = *prices.last().unwrap();
-        assert!(last >= config.min_base_fee, "Gas price should not go below floor");
+        assert!(
+            last >= config.min_base_fee,
+            "Gas price should not go below floor"
+        );
     }
 
     #[test]
@@ -632,13 +645,7 @@ mod tests {
 
     #[test]
     fn test_attack_cost_exceeds_reward() {
-        let result = analyze_attack_costs(
-            100_000_000,
-            100,
-            10_000_000,
-            50_000,
-            1000,
-        );
+        let result = analyze_attack_costs(100_000_000, 100, 10_000_000, 50_000, 1000);
         // Attack cost should take many blocks to recoup
         assert!(
             result.blocks_reward_to_recoup_attack > 1000,

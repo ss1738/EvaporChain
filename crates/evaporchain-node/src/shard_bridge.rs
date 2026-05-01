@@ -4,11 +4,9 @@
 //! compaction candidates, and routes cross-shard messages.
 
 use evaporchain_sharding::{
-    ShardConfig, ShardId, ShardHealth,
-    CompactionCandidate, ShardCompactionProof,
-    CrossShardMessage, CrossShardReceipt, CrossShardRouter,
-    compact_shard, shard_for_object,
-    compaction::find_candidates,
+    compact_shard, compaction::find_candidates, shard_for_object, CompactionCandidate,
+    CrossShardMessage, CrossShardReceipt, CrossShardRouter, ShardCompactionProof, ShardConfig,
+    ShardHealth, ShardId,
 };
 use std::collections::HashMap;
 
@@ -39,7 +37,7 @@ impl ShardHealthTracker {
     }
 
     fn to_health(&self, shard_id: ShardId) -> ShardHealth {
-        #[allow(clippy::manual_checked_ops)]
+        #[allow(unknown_lints, clippy::manual_checked_ops)]
         let avg_half_life = if self.objects_for_avg > 0 {
             self.energy_sum_for_avg / self.objects_for_avg
         } else {
@@ -70,9 +68,18 @@ impl ShardBridge {
         shard_for_object(object_id, &self.config)
     }
 
-    pub fn record_object(&mut self, object_id: &[u8; 20], energy: u64, half_life: u64, alive: bool) {
+    pub fn record_object(
+        &mut self,
+        object_id: &[u8; 20],
+        energy: u64,
+        half_life: u64,
+        alive: bool,
+    ) {
         let shard = self.shard_for(object_id);
-        let tracker = self.shard_metrics.entry(shard.0).or_insert_with(ShardHealthTracker::new);
+        let tracker = self
+            .shard_metrics
+            .entry(shard.0)
+            .or_insert_with(ShardHealthTracker::new);
         tracker.total_objects += 1;
         if alive {
             tracker.live_objects += 1;
@@ -99,7 +106,9 @@ impl ShardBridge {
     }
 
     pub fn compact(&self, candidate: &CompactionCandidate) -> ShardCompactionProof {
-        let health = self.shard_metrics.get(&candidate.shard.0)
+        let health = self
+            .shard_metrics
+            .get(&candidate.shard.0)
             .map(|t| t.to_health(candidate.shard))
             .unwrap_or(ShardHealth {
                 shard_id: candidate.shard,
@@ -187,7 +196,10 @@ mod tests {
             from_shard: ShardId(0),
             to_shard: ShardId(1),
             target_object: [0u8; 20],
-            payload: MessagePayload::Transfer { from: [1u8; 20], amount: 100 },
+            payload: MessagePayload::Transfer {
+                from: [1u8; 20],
+                amount: 100,
+            },
             target_energy: 5000,
             timestamp: 1000,
         };

@@ -117,8 +117,8 @@ pub fn verify_and_decrypt(
 
     // Derive AES key and decrypt
     let aes_key = derive_aes_key(nonce);
-    let cipher =
-        Aes256Gcm::new_from_slice(&aes_key).map_err(|e| MevError::DecryptionFailed(e.to_string()))?;
+    let cipher = Aes256Gcm::new_from_slice(&aes_key)
+        .map_err(|e| MevError::DecryptionFailed(e.to_string()))?;
     let gcm_nonce = Nonce::from_slice(&encrypted.nonce_hash[..12]);
 
     let plaintext_bytes = cipher
@@ -457,7 +457,10 @@ mod tests {
         // Try reveal at epoch 11 (need epoch 12) — should fail
         let result = pool.reveal(&encrypted, &nonce, 11);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), MevError::RevealTooEarly { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            MevError::RevealTooEarly { .. }
+        ));
 
         // Try reveal at submitted epoch — should fail
         let result = pool.reveal(&encrypted, &nonce, 10);
@@ -510,8 +513,7 @@ mod tests {
         assert_eq!(ordering.len(), 1);
 
         // 4. Reveal (after delay)
-        let revealed_txs =
-            pool.process_reveals(7, &[(commitment, nonce)]);
+        let revealed_txs = pool.process_reveals(7, &[(commitment, nonce)]);
         assert_eq!(revealed_txs.len(), 1);
 
         // 5. Verify decrypted tx matches original

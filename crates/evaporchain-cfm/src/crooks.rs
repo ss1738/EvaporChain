@@ -28,10 +28,7 @@ pub enum CrooksError {
 /// `log_2(p_forward / p_reverse)` in millibits, given fixed-point pmf
 /// values (FIXED_POINT_SCALE units). Sign is preserved (negative when
 /// reverse > forward, positive otherwise).
-pub fn crooks_log_ratio_millibits(
-    p_forward: u64,
-    p_reverse: u64,
-) -> Result<i64, CrooksError> {
+pub fn crooks_log_ratio_millibits(p_forward: u64, p_reverse: u64) -> Result<i64, CrooksError> {
     if p_forward == 0 {
         return Err(CrooksError::ForwardZero);
     }
@@ -68,7 +65,10 @@ mod tests {
 
     #[test]
     fn reverse_double_forward_negative_one_bit() {
-        assert_eq!(crooks_log_ratio_millibits(400_000, 800_000).unwrap(), -1_000);
+        assert_eq!(
+            crooks_log_ratio_millibits(400_000, 800_000).unwrap(),
+            -1_000
+        );
     }
 
     #[test]

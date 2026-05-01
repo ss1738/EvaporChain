@@ -369,10 +369,7 @@ impl WalletConnectManager {
     /// - The session has the required permission for the request type.
     ///
     /// Records activity on the session and prunes requests if > 500.
-    pub fn submit_request(
-        &mut self,
-        request: SigningRequest,
-    ) -> Result<(), WalletConnectError> {
+    pub fn submit_request(&mut self, request: SigningRequest) -> Result<(), WalletConnectError> {
         let session = self
             .sessions
             .get_mut(&request.session_id)
@@ -405,11 +402,7 @@ impl WalletConnectManager {
     }
 
     /// Approve a pending request by ID.
-    pub fn approve_request(
-        &mut self,
-        id: &str,
-        result: &str,
-    ) -> Result<(), WalletConnectError> {
+    pub fn approve_request(&mut self, id: &str, result: &str) -> Result<(), WalletConnectError> {
         let req = self
             .requests
             .iter_mut()
@@ -420,11 +413,7 @@ impl WalletConnectManager {
     }
 
     /// Reject a pending request by ID.
-    pub fn reject_request(
-        &mut self,
-        id: &str,
-        reason: &str,
-    ) -> Result<(), WalletConnectError> {
+    pub fn reject_request(&mut self, id: &str, reason: &str) -> Result<(), WalletConnectError> {
         let req = self
             .requests
             .iter_mut()
@@ -630,7 +619,10 @@ mod tests {
         // Adding again is a no-op.
         s.add_permission(Permission::ManageTokens);
         assert_eq!(
-            s.permissions.iter().filter(|p| **p == Permission::ManageTokens).count(),
+            s.permissions
+                .iter()
+                .filter(|p| **p == Permission::ManageTokens)
+                .count(),
             1
         );
         assert!(s.remove_permission(&Permission::ManageTokens));
@@ -755,15 +747,27 @@ mod tests {
         mgr.create_session(active_session("s1")).unwrap();
         mgr.create_session(active_session("s2")).unwrap();
         mgr.submit_request(SigningRequest::new(
-            "r1", "s1", RequestType::SignTransaction, "{}", "a",
+            "r1",
+            "s1",
+            RequestType::SignTransaction,
+            "{}",
+            "a",
         ))
         .unwrap();
         mgr.submit_request(SigningRequest::new(
-            "r2", "s2", RequestType::SignTransaction, "{}", "a",
+            "r2",
+            "s2",
+            RequestType::SignTransaction,
+            "{}",
+            "a",
         ))
         .unwrap();
         mgr.submit_request(SigningRequest::new(
-            "r3", "s1", RequestType::SignTransaction, "{}", "a",
+            "r3",
+            "s1",
+            RequestType::SignTransaction,
+            "{}",
+            "a",
         ))
         .unwrap();
         assert_eq!(mgr.requests_for_session("s1").len(), 2);
@@ -822,7 +826,9 @@ mod tests {
         mgr.set_auto_approve(Permission::ReadBalance);
         mgr.set_auto_approve(Permission::ReadBalance); // duplicate is no-op
         assert_eq!(mgr.auto_approve_permissions.len(), 1);
-        assert!(mgr.auto_approve_permissions.contains(&Permission::ReadBalance));
+        assert!(mgr
+            .auto_approve_permissions
+            .contains(&Permission::ReadBalance));
         assert!(mgr.remove_auto_approve(&Permission::ReadBalance));
         assert!(!mgr.remove_auto_approve(&Permission::ReadBalance));
         assert!(mgr.auto_approve_permissions.is_empty());
@@ -851,11 +857,19 @@ mod tests {
         mgr.disconnect_session("s2").unwrap();
 
         mgr.submit_request(SigningRequest::new(
-            "r1", "s1", RequestType::SignTransaction, "{}", "a",
+            "r1",
+            "s1",
+            RequestType::SignTransaction,
+            "{}",
+            "a",
         ))
         .unwrap();
         mgr.submit_request(SigningRequest::new(
-            "r2", "s1", RequestType::SignTransaction, "{}", "a",
+            "r2",
+            "s1",
+            RequestType::SignTransaction,
+            "{}",
+            "a",
         ))
         .unwrap();
         mgr.approve_request("r1", "sig").unwrap();
@@ -875,7 +889,11 @@ mod tests {
         let mut mgr = WalletConnectManager::new();
         mgr.create_session(active_session("s1")).unwrap();
         mgr.submit_request(SigningRequest::new(
-            "r1", "s1", RequestType::SignTransaction, "{}", "evap1abc",
+            "r1",
+            "s1",
+            RequestType::SignTransaction,
+            "{}",
+            "evap1abc",
         ))
         .unwrap();
         mgr.set_auto_approve(Permission::ReadBalance);

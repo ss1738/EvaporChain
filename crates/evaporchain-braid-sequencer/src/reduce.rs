@@ -38,9 +38,7 @@ fn cancel_inverses(g: &mut Vec<i32>) {
             g.remove(i);
             g.remove(i);
             // Step back one to re-check the new neighbour pair.
-            if i > 0 {
-                i -= 1;
-            }
+            i = i.saturating_sub(1);
         } else {
             i += 1;
         }

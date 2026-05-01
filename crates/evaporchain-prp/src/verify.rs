@@ -4,7 +4,10 @@
 use crate::proof::{RetentionProof, RetentionProofError};
 use crate::prove::compute_witness;
 
-pub fn verify_retention_proof(proof: &RetentionProof, query_epoch: u64) -> Result<(), RetentionProofError> {
+pub fn verify_retention_proof(
+    proof: &RetentionProof,
+    query_epoch: u64,
+) -> Result<(), RetentionProofError> {
     // Re-derive witness binding.
     let derived = compute_witness(
         proof.state_id,
@@ -55,7 +58,10 @@ mod tests {
     fn query_after_window_rejected() {
         let p = prove_retention([7u8; 32], 1000, lambda(), 0, 100);
         let err = verify_retention_proof(&p, p.retained_until_epoch + 1).unwrap_err();
-        assert!(matches!(err, RetentionProofError::QueryAfterRetention { .. }));
+        assert!(matches!(
+            err,
+            RetentionProofError::QueryAfterRetention { .. }
+        ));
     }
 
     #[test]

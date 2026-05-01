@@ -66,9 +66,13 @@ export function ObjectsScreen() {
                     {obj.is_lad_typed === true && (
                       <span
                         className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-evap-purple/15 text-evap-purple border border-evap-purple/40"
-                        title="LAD-VM substructural-resource type"
+                        title={
+                          obj.lad_mode
+                            ? `LAD-VM substructural mode: ${obj.lad_mode}`
+                            : "LAD-VM substructural-resource type"
+                        }
                       >
-                        LAD
+                        {obj.lad_mode ? `LAD · ${obj.lad_mode}` : "LAD"}
                       </span>
                     )}
                     <span className={`text-[10px] px-2 py-0.5 rounded-full ${

@@ -217,7 +217,7 @@ mod tests {
             result_hash: [0u8; 32],
             processed_at: 100,
         };
-        let root = CrossShardRouter::receipts_root(&[r.clone()]);
+        let root = CrossShardRouter::receipts_root(std::slice::from_ref(&r));
         let h = r.receipt_hash();
         assert_eq!(root, h);
     }
@@ -234,9 +234,9 @@ mod tests {
     #[test]
     fn test_energy_prioritization() {
         let mut router = CrossShardRouter::new();
-        router.send(make_msg(0, 1, 10));   // low energy — deprioritized
+        router.send(make_msg(0, 1, 10)); // low energy — deprioritized
         router.send(make_msg(0, 1, 9999)); // high energy — first
-        router.send(make_msg(0, 1, 500));  // medium
+        router.send(make_msg(0, 1, 500)); // medium
         let msgs = router.drain_for_shard(ShardId(1));
         assert_eq!(msgs[0].target_energy, 9999);
         assert_eq!(msgs[1].target_energy, 500);

@@ -224,16 +224,16 @@ impl YieldFarmManager {
 
     pub fn best_farms(&self, n: usize) -> Vec<&YieldFarm> {
         let mut active: Vec<&YieldFarm> = self.active_farms();
-        active.sort_by(|a, b| b.apy.partial_cmp(&a.apy).unwrap_or(std::cmp::Ordering::Equal));
+        active.sort_by(|a, b| {
+            b.apy
+                .partial_cmp(&a.apy)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         active.truncate(n);
         active
     }
 
-    pub fn estimate_rewards(
-        &self,
-        position_id: &str,
-        days: u32,
-    ) -> Result<u64, YieldFarmingError> {
+    pub fn estimate_rewards(&self, position_id: &str, days: u32) -> Result<u64, YieldFarmingError> {
         let pos = self
             .positions
             .get(position_id)
@@ -355,7 +355,8 @@ mod tests {
     #[test]
     fn test_add_farm_duplicate_error() {
         let mut mgr = YieldFarmManager::new();
-        mgr.add_farm(sample_farm("f1", FarmStatus::Active, 12.0)).unwrap();
+        mgr.add_farm(sample_farm("f1", FarmStatus::Active, 12.0))
+            .unwrap();
         let result = mgr.add_farm(sample_farm("f1", FarmStatus::Active, 15.0));
         assert!(result.is_err());
     }
@@ -363,7 +364,8 @@ mod tests {
     #[test]
     fn test_remove_farm() {
         let mut mgr = YieldFarmManager::new();
-        mgr.add_farm(sample_farm("f1", FarmStatus::Active, 12.0)).unwrap();
+        mgr.add_farm(sample_farm("f1", FarmStatus::Active, 12.0))
+            .unwrap();
         let removed = mgr.remove_farm("f1").unwrap();
         assert_eq!(removed.id, "f1");
         assert!(mgr.get_farm("f1").is_none());
@@ -378,24 +380,30 @@ mod tests {
     #[test]
     fn test_list_farms() {
         let mut mgr = YieldFarmManager::new();
-        mgr.add_farm(sample_farm("f1", FarmStatus::Active, 10.0)).unwrap();
-        mgr.add_farm(sample_farm("f2", FarmStatus::Paused, 20.0)).unwrap();
+        mgr.add_farm(sample_farm("f1", FarmStatus::Active, 10.0))
+            .unwrap();
+        mgr.add_farm(sample_farm("f2", FarmStatus::Paused, 20.0))
+            .unwrap();
         assert_eq!(mgr.list_farms().len(), 2);
     }
 
     #[test]
     fn test_active_farms_filter() {
         let mut mgr = YieldFarmManager::new();
-        mgr.add_farm(sample_farm("f1", FarmStatus::Active, 10.0)).unwrap();
-        mgr.add_farm(sample_farm("f2", FarmStatus::Paused, 20.0)).unwrap();
-        mgr.add_farm(sample_farm("f3", FarmStatus::Active, 30.0)).unwrap();
+        mgr.add_farm(sample_farm("f1", FarmStatus::Active, 10.0))
+            .unwrap();
+        mgr.add_farm(sample_farm("f2", FarmStatus::Paused, 20.0))
+            .unwrap();
+        mgr.add_farm(sample_farm("f3", FarmStatus::Active, 30.0))
+            .unwrap();
         assert_eq!(mgr.active_farms().len(), 2);
     }
 
     #[test]
     fn test_stake() {
         let mut mgr = YieldFarmManager::new();
-        mgr.add_farm(sample_farm("f1", FarmStatus::Active, 12.0)).unwrap();
+        mgr.add_farm(sample_farm("f1", FarmStatus::Active, 12.0))
+            .unwrap();
         let pos = sample_position("p1", "f1");
         assert!(mgr.stake(pos).is_ok());
     }
@@ -403,7 +411,8 @@ mod tests {
     #[test]
     fn test_stake_duplicate_error() {
         let mut mgr = YieldFarmManager::new();
-        mgr.add_farm(sample_farm("f1", FarmStatus::Active, 12.0)).unwrap();
+        mgr.add_farm(sample_farm("f1", FarmStatus::Active, 12.0))
+            .unwrap();
         mgr.stake(sample_position("p1", "f1")).unwrap();
         let result = mgr.stake(sample_position("p1", "f1"));
         assert!(result.is_err());
@@ -419,7 +428,8 @@ mod tests {
     #[test]
     fn test_unstake() {
         let mut mgr = YieldFarmManager::new();
-        mgr.add_farm(sample_farm("f1", FarmStatus::Active, 12.0)).unwrap();
+        mgr.add_farm(sample_farm("f1", FarmStatus::Active, 12.0))
+            .unwrap();
         mgr.stake(sample_position("p1", "f1")).unwrap();
         let pos = mgr.unstake("p1").unwrap();
         assert_eq!(pos.id, "p1");
@@ -429,7 +439,8 @@ mod tests {
     #[test]
     fn test_harvest() {
         let mut mgr = YieldFarmManager::new();
-        mgr.add_farm(sample_farm("f1", FarmStatus::Active, 12.0)).unwrap();
+        mgr.add_farm(sample_farm("f1", FarmStatus::Active, 12.0))
+            .unwrap();
         mgr.stake(sample_position("p1", "f1")).unwrap();
         let harvested = mgr.harvest("p1").unwrap();
         assert_eq!(harvested, 500);
@@ -448,7 +459,8 @@ mod tests {
     #[test]
     fn test_auto_compound() {
         let mut mgr = YieldFarmManager::new();
-        mgr.add_farm(sample_farm("f1", FarmStatus::Active, 12.0)).unwrap();
+        mgr.add_farm(sample_farm("f1", FarmStatus::Active, 12.0))
+            .unwrap();
         mgr.stake(sample_position("p1", "f1")).unwrap();
         let compounded = mgr.auto_compound("p1").unwrap();
         assert_eq!(compounded, 500);
@@ -484,10 +496,14 @@ mod tests {
     #[test]
     fn test_best_farms_sorted() {
         let mut mgr = YieldFarmManager::new();
-        mgr.add_farm(sample_farm("f1", FarmStatus::Active, 10.0)).unwrap();
-        mgr.add_farm(sample_farm("f2", FarmStatus::Active, 30.0)).unwrap();
-        mgr.add_farm(sample_farm("f3", FarmStatus::Active, 20.0)).unwrap();
-        mgr.add_farm(sample_farm("f4", FarmStatus::Paused, 50.0)).unwrap();
+        mgr.add_farm(sample_farm("f1", FarmStatus::Active, 10.0))
+            .unwrap();
+        mgr.add_farm(sample_farm("f2", FarmStatus::Active, 30.0))
+            .unwrap();
+        mgr.add_farm(sample_farm("f3", FarmStatus::Active, 20.0))
+            .unwrap();
+        mgr.add_farm(sample_farm("f4", FarmStatus::Paused, 50.0))
+            .unwrap();
         let best = mgr.best_farms(2);
         assert_eq!(best.len(), 2);
         assert_eq!(best[0].id, "f2");
@@ -497,7 +513,8 @@ mod tests {
     #[test]
     fn test_estimate_rewards() {
         let mut mgr = YieldFarmManager::new();
-        mgr.add_farm(sample_farm("f1", FarmStatus::Active, 36.5)).unwrap();
+        mgr.add_farm(sample_farm("f1", FarmStatus::Active, 36.5))
+            .unwrap();
         mgr.stake(sample_position("p1", "f1")).unwrap();
         let est = mgr.estimate_rewards("p1", 365).unwrap();
         // 36.5% APY on 10_000 staked with daily compounding ~ 4,395
@@ -513,8 +530,10 @@ mod tests {
     #[test]
     fn test_stats() {
         let mut mgr = YieldFarmManager::new();
-        mgr.add_farm(sample_farm("f1", FarmStatus::Active, 10.0)).unwrap();
-        mgr.add_farm(sample_farm("f2", FarmStatus::Paused, 20.0)).unwrap();
+        mgr.add_farm(sample_farm("f1", FarmStatus::Active, 10.0))
+            .unwrap();
+        mgr.add_farm(sample_farm("f2", FarmStatus::Paused, 20.0))
+            .unwrap();
         mgr.stake(sample_position("p1", "f1")).unwrap();
         let stats = mgr.stats();
         assert_eq!(stats.total_farms, 2);
@@ -528,7 +547,8 @@ mod tests {
     #[test]
     fn test_persistence_roundtrip() {
         let mut mgr = YieldFarmManager::new();
-        mgr.add_farm(sample_farm("f1", FarmStatus::Active, 12.0)).unwrap();
+        mgr.add_farm(sample_farm("f1", FarmStatus::Active, 12.0))
+            .unwrap();
         mgr.stake(sample_position("p1", "f1")).unwrap();
         mgr.record_apy("f1", 12.0, 1_000_000);
 

@@ -156,11 +156,7 @@ pub struct MaliciousContract {
 }
 
 impl MaliciousContract {
-    pub fn new(
-        address: impl Into<String>,
-        reason: impl Into<String>,
-        level: ThreatLevel,
-    ) -> Self {
+    pub fn new(address: impl Into<String>, reason: impl Into<String>, level: ThreatLevel) -> Self {
         Self {
             address: address.into(),
             reason: reason.into(),
@@ -243,12 +239,7 @@ impl ThreatMonitor {
     }
 
     /// Report a malicious contract.
-    pub fn report_malicious_contract(
-        &mut self,
-        address: &str,
-        reason: &str,
-        level: ThreatLevel,
-    ) {
+    pub fn report_malicious_contract(&mut self, address: &str, reason: &str, level: ThreatLevel) {
         let entry = MaliciousContract::new(address, reason, level);
         self.malicious_contracts.insert(address.to_string(), entry);
     }
@@ -346,10 +337,7 @@ impl ThreatMonitor {
 
     /// Filter threats by level.
     pub fn threats_by_level(&self, level: &ThreatLevel) -> Vec<&Threat> {
-        self.threats
-            .iter()
-            .filter(|t| &t.level == level)
-            .collect()
+        self.threats.iter().filter(|t| &t.level == level).collect()
     }
 
     /// Resolve a threat by id.
@@ -443,10 +431,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn test_path(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "threat_mon_test_{}_{name}",
-            std::process::id()
-        ))
+        std::env::temp_dir().join(format!("threat_mon_test_{}_{name}", std::process::id()))
     }
 
     fn sample_threat(id: &str, tt: ThreatType, level: ThreatLevel) -> Threat {
@@ -467,7 +452,11 @@ mod tests {
     #[test]
     fn test_resolve_threat() {
         let mut m = ThreatMonitor::new();
-        m.report_threat(sample_threat("t1", ThreatType::PhishingUrl, ThreatLevel::High));
+        m.report_threat(sample_threat(
+            "t1",
+            ThreatType::PhishingUrl,
+            ThreatLevel::High,
+        ));
         assert!(m.threats[0].is_active());
         m.resolve_threat("t1").unwrap();
         assert!(!m.threats[0].is_active());
@@ -477,7 +466,11 @@ mod tests {
     #[test]
     fn test_false_positive() {
         let mut m = ThreatMonitor::new();
-        m.report_threat(sample_threat("t1", ThreatType::DustAttack, ThreatLevel::Medium));
+        m.report_threat(sample_threat(
+            "t1",
+            ThreatType::DustAttack,
+            ThreatLevel::Medium,
+        ));
         m.false_positive("t1").unwrap();
         assert!(m.threats[0].false_positive);
         assert!(m.threats[0].resolved);
@@ -486,8 +479,16 @@ mod tests {
     #[test]
     fn test_active_threats() {
         let mut m = ThreatMonitor::new();
-        m.report_threat(sample_threat("t1", ThreatType::PhishingUrl, ThreatLevel::High));
-        m.report_threat(sample_threat("t2", ThreatType::DustAttack, ThreatLevel::Low));
+        m.report_threat(sample_threat(
+            "t1",
+            ThreatType::PhishingUrl,
+            ThreatLevel::High,
+        ));
+        m.report_threat(sample_threat(
+            "t2",
+            ThreatType::DustAttack,
+            ThreatLevel::Low,
+        ));
         m.resolve_threat("t1").unwrap();
         let active = m.active_threats();
         assert_eq!(active.len(), 1);
@@ -497,9 +498,21 @@ mod tests {
     #[test]
     fn test_threats_by_type() {
         let mut m = ThreatMonitor::new();
-        m.report_threat(sample_threat("t1", ThreatType::PhishingUrl, ThreatLevel::High));
-        m.report_threat(sample_threat("t2", ThreatType::DustAttack, ThreatLevel::Medium));
-        m.report_threat(sample_threat("t3", ThreatType::PhishingUrl, ThreatLevel::Low));
+        m.report_threat(sample_threat(
+            "t1",
+            ThreatType::PhishingUrl,
+            ThreatLevel::High,
+        ));
+        m.report_threat(sample_threat(
+            "t2",
+            ThreatType::DustAttack,
+            ThreatLevel::Medium,
+        ));
+        m.report_threat(sample_threat(
+            "t3",
+            ThreatType::PhishingUrl,
+            ThreatLevel::Low,
+        ));
         let phishing = m.threats_by_type(&ThreatType::PhishingUrl);
         assert_eq!(phishing.len(), 2);
     }
@@ -507,8 +520,16 @@ mod tests {
     #[test]
     fn test_threats_by_level() {
         let mut m = ThreatMonitor::new();
-        m.report_threat(sample_threat("t1", ThreatType::PhishingUrl, ThreatLevel::High));
-        m.report_threat(sample_threat("t2", ThreatType::DustAttack, ThreatLevel::High));
+        m.report_threat(sample_threat(
+            "t1",
+            ThreatType::PhishingUrl,
+            ThreatLevel::High,
+        ));
+        m.report_threat(sample_threat(
+            "t2",
+            ThreatType::DustAttack,
+            ThreatLevel::High,
+        ));
         m.report_threat(sample_threat("t3", ThreatType::FakeToken, ThreatLevel::Low));
         let high = m.threats_by_level(&ThreatLevel::High);
         assert_eq!(high.len(), 2);
@@ -596,7 +617,10 @@ mod tests {
     fn test_check_transaction_malicious() {
         let mut m = ThreatMonitor::new();
         m.report_malicious_contract("0xbad", "scam", ThreatLevel::High);
-        assert_eq!(m.check_transaction("0xbad", 1000, 50), ThreatLevel::Critical);
+        assert_eq!(
+            m.check_transaction("0xbad", 1000, 50),
+            ThreatLevel::Critical
+        );
     }
 
     #[test]
@@ -629,9 +653,21 @@ mod tests {
     #[test]
     fn test_threat_summary() {
         let mut m = ThreatMonitor::new();
-        m.report_threat(sample_threat("t1", ThreatType::PhishingUrl, ThreatLevel::High));
-        m.report_threat(sample_threat("t2", ThreatType::PhishingUrl, ThreatLevel::Low));
-        m.report_threat(sample_threat("t3", ThreatType::DustAttack, ThreatLevel::Medium));
+        m.report_threat(sample_threat(
+            "t1",
+            ThreatType::PhishingUrl,
+            ThreatLevel::High,
+        ));
+        m.report_threat(sample_threat(
+            "t2",
+            ThreatType::PhishingUrl,
+            ThreatLevel::Low,
+        ));
+        m.report_threat(sample_threat(
+            "t3",
+            ThreatType::DustAttack,
+            ThreatLevel::Medium,
+        ));
         let summary = m.threat_summary();
         assert_eq!(summary["PhishingUrl"], 2);
         assert_eq!(summary["DustAttack"], 1);
@@ -640,8 +676,16 @@ mod tests {
     #[test]
     fn test_stats() {
         let mut m = ThreatMonitor::new();
-        m.report_threat(sample_threat("t1", ThreatType::PhishingUrl, ThreatLevel::High));
-        m.report_threat(sample_threat("t2", ThreatType::DustAttack, ThreatLevel::Medium));
+        m.report_threat(sample_threat(
+            "t1",
+            ThreatType::PhishingUrl,
+            ThreatLevel::High,
+        ));
+        m.report_threat(sample_threat(
+            "t2",
+            ThreatType::DustAttack,
+            ThreatLevel::Medium,
+        ));
         m.resolve_threat("t1").unwrap();
         m.report_phishing("https://evil.com", "bob");
         m.report_malicious_contract("0xbad", "scam", ThreatLevel::Critical);
@@ -665,7 +709,11 @@ mod tests {
         let path = test_path("roundtrip.json");
 
         let mut m = ThreatMonitor::new();
-        m.report_threat(sample_threat("t1", ThreatType::PhishingUrl, ThreatLevel::High));
+        m.report_threat(sample_threat(
+            "t1",
+            ThreatType::PhishingUrl,
+            ThreatLevel::High,
+        ));
         m.report_phishing("https://evil.com", "alice");
         m.report_malicious_contract("0xdead", "rug", ThreatLevel::Critical);
         m.add_safe_url("https://safe.io");

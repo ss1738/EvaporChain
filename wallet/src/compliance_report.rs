@@ -28,10 +28,14 @@ pub enum ComplianceError {
 }
 
 impl From<std::io::Error> for ComplianceError {
-    fn from(e: std::io::Error) -> Self { ComplianceError::Io(e.to_string()) }
+    fn from(e: std::io::Error) -> Self {
+        ComplianceError::Io(e.to_string())
+    }
 }
 impl From<serde_json::Error> for ComplianceError {
-    fn from(e: serde_json::Error) -> Self { ComplianceError::Json(e.to_string()) }
+    fn from(e: serde_json::Error) -> Self {
+        ComplianceError::Json(e.to_string())
+    }
 }
 
 /// Category of a transaction for compliance purposes.
@@ -199,8 +203,14 @@ impl ComplianceManager {
     }
 
     /// Update the category of a transaction by hash.
-    pub fn categorize(&mut self, tx_hash: &str, category: TxCategory) -> Result<(), ComplianceError> {
-        let tx = self.transactions.iter_mut()
+    pub fn categorize(
+        &mut self,
+        tx_hash: &str,
+        category: TxCategory,
+    ) -> Result<(), ComplianceError> {
+        let tx = self
+            .transactions
+            .iter_mut()
             .find(|t| t.tx_hash == tx_hash)
             .ok_or_else(|| ComplianceError::TxNotFound(tx_hash.to_string()))?;
         tx.category = category;
@@ -209,7 +219,9 @@ impl ComplianceManager {
 
     /// Flag a transaction for review.
     pub fn flag_transaction(&mut self, tx_hash: &str) -> Result<(), ComplianceError> {
-        let tx = self.transactions.iter_mut()
+        let tx = self
+            .transactions
+            .iter_mut()
             .find(|t| t.tx_hash == tx_hash)
             .ok_or_else(|| ComplianceError::TxNotFound(tx_hash.to_string()))?;
         tx.flagged = true;
@@ -218,7 +230,9 @@ impl ComplianceManager {
 
     /// Remove flag from a transaction.
     pub fn unflag_transaction(&mut self, tx_hash: &str) -> Result<(), ComplianceError> {
-        let tx = self.transactions.iter_mut()
+        let tx = self
+            .transactions
+            .iter_mut()
             .find(|t| t.tx_hash == tx_hash)
             .ok_or_else(|| ComplianceError::TxNotFound(tx_hash.to_string()))?;
         tx.flagged = false;
@@ -241,7 +255,10 @@ impl ComplianceManager {
         match report_type {
             ReportType::Annual => {
                 let year = now.format("%Y").to_string();
-                (format!("{}-01-01T00:00:00Z", year), format!("{}-12-31T23:59:59Z", year))
+                (
+                    format!("{}-01-01T00:00:00Z", year),
+                    format!("{}-12-31T23:59:59Z", year),
+                )
             }
             ReportType::Quarterly => {
                 let month = now.format("%m").to_string().parse::<u32>().unwrap_or(1);
@@ -265,7 +282,10 @@ impl ComplianceManager {
             }
             ReportType::Monthly => {
                 let ym = now.format("%Y-%m").to_string();
-                (format!("{}-01T00:00:00Z", ym), format!("{}-31T23:59:59Z", ym))
+                (
+                    format!("{}-01T00:00:00Z", ym),
+                    format!("{}-31T23:59:59Z", ym),
+                )
             }
             ReportType::Custom { start, end } => (start.clone(), end.clone()),
         }
@@ -288,7 +308,10 @@ impl ComplianceManager {
 
         for tx in &txs {
             match tx.category {
-                TxCategory::Income | TxCategory::Staking | TxCategory::Mining | TxCategory::Airdrop => {
+                TxCategory::Income
+                | TxCategory::Staking
+                | TxCategory::Mining
+                | TxCategory::Airdrop => {
                     total_income += tx.value_usd;
                 }
                 TxCategory::Trade => {
@@ -338,12 +361,15 @@ impl ComplianceManager {
 
     /// Transition a report to Reviewed status.
     pub fn mark_reviewed(&mut self, report_id: &str) -> Result<(), ComplianceError> {
-        let report = self.reports.get_mut(report_id)
+        let report = self
+            .reports
+            .get_mut(report_id)
             .ok_or_else(|| ComplianceError::ReportNotFound(report_id.to_string()))?;
         if report.status != ReportStatus::Generated {
-            return Err(ComplianceError::InvalidState(
-                format!("report must be Generated to review, currently {:?}", report.status),
-            ));
+            return Err(ComplianceError::InvalidState(format!(
+                "report must be Generated to review, currently {:?}",
+                report.status
+            )));
         }
         report.status = ReportStatus::Reviewed;
         Ok(())
@@ -351,12 +377,15 @@ impl ComplianceManager {
 
     /// Transition a report to Submitted status.
     pub fn mark_submitted(&mut self, report_id: &str) -> Result<(), ComplianceError> {
-        let report = self.reports.get_mut(report_id)
+        let report = self
+            .reports
+            .get_mut(report_id)
             .ok_or_else(|| ComplianceError::ReportNotFound(report_id.to_string()))?;
         if report.status != ReportStatus::Reviewed {
-            return Err(ComplianceError::InvalidState(
-                format!("report must be Reviewed to submit, currently {:?}", report.status),
-            ));
+            return Err(ComplianceError::InvalidState(format!(
+                "report must be Reviewed to submit, currently {:?}",
+                report.status
+            )));
         }
         report.status = ReportStatus::Submitted;
         Ok(())
@@ -366,7 +395,8 @@ impl ComplianceManager {
 
     /// Return transactions whose timestamp falls within [start, end] (string comparison).
     pub fn transactions_in_period<'a>(&'a self, start: &str, end: &str) -> Vec<&'a CategorizedTx> {
-        self.transactions.iter()
+        self.transactions
+            .iter()
             .filter(|tx| tx.timestamp.as_str() >= start && tx.timestamp.as_str() <= end)
             .collect()
     }
@@ -378,16 +408,23 @@ impl ComplianceManager {
 
     /// Return transactions matching a given category.
     pub fn transactions_by_category(&self, cat: &TxCategory) -> Vec<&CategorizedTx> {
-        self.transactions.iter().filter(|tx| tx.category == *cat).collect()
+        self.transactions
+            .iter()
+            .filter(|tx| tx.category == *cat)
+            .collect()
     }
 
     /// Estimate tax for a report using jurisdiction rules.
     /// Computes: (total_gains - total_losses) * applicable short-term rate.
     pub fn estimate_tax(&self, report_id: &str) -> Result<f64, ComplianceError> {
-        let report = self.reports.get(report_id)
+        let report = self
+            .reports
+            .get(report_id)
             .ok_or_else(|| ComplianceError::ReportNotFound(report_id.to_string()))?;
         let jkey = report.jurisdiction.key();
-        let rule = self.rules.get(&jkey)
+        let rule = self
+            .rules
+            .get(&jkey)
             .ok_or(ComplianceError::NoJurisdictionRule(jkey))?;
 
         let net_gains = report.total_gains - report.total_losses;
@@ -401,7 +438,9 @@ impl ComplianceManager {
     /// Compute aggregate statistics.
     pub fn stats(&self) -> ComplianceStats {
         let total_transactions = self.transactions.len();
-        let uncategorized = self.transactions.iter()
+        let uncategorized = self
+            .transactions
+            .iter()
             .filter(|tx| tx.category == TxCategory::Unknown)
             .count();
         let categorized = total_transactions - uncategorized;
@@ -440,7 +479,12 @@ mod tests {
         }
     }
 
-    fn make_tx_at(hash: &str, timestamp: &str, category: TxCategory, value_usd: f64) -> CategorizedTx {
+    fn make_tx_at(
+        hash: &str,
+        timestamp: &str,
+        category: TxCategory,
+        value_usd: f64,
+    ) -> CategorizedTx {
         CategorizedTx {
             tx_hash: hash.to_string(),
             timestamp: timestamp.to_string(),
@@ -477,8 +521,11 @@ mod tests {
     }
 
     fn temp_path(name: &str) -> std::path::PathBuf {
-        std::env::temp_dir()
-            .join(format!("evap_compliance_test_{}_{}", std::process::id(), name))
+        std::env::temp_dir().join(format!(
+            "evap_compliance_test_{}_{}",
+            std::process::id(),
+            name
+        ))
     }
 
     // ── Basic CRUD ──────────────────────────────────────────────────────
@@ -568,9 +615,24 @@ mod tests {
     #[test]
     fn test_transactions_in_period() {
         let mut mgr = ComplianceManager::new();
-        mgr.add_transaction(make_tx_at("tx1", "2026-01-15T00:00:00Z", TxCategory::Trade, 100.0));
-        mgr.add_transaction(make_tx_at("tx2", "2026-06-15T00:00:00Z", TxCategory::Income, 200.0));
-        mgr.add_transaction(make_tx_at("tx3", "2025-12-31T23:59:59Z", TxCategory::Fee, 10.0));
+        mgr.add_transaction(make_tx_at(
+            "tx1",
+            "2026-01-15T00:00:00Z",
+            TxCategory::Trade,
+            100.0,
+        ));
+        mgr.add_transaction(make_tx_at(
+            "tx2",
+            "2026-06-15T00:00:00Z",
+            TxCategory::Income,
+            200.0,
+        ));
+        mgr.add_transaction(make_tx_at(
+            "tx3",
+            "2025-12-31T23:59:59Z",
+            TxCategory::Fee,
+            10.0,
+        ));
 
         let in_range = mgr.transactions_in_period("2026-01-01T00:00:00Z", "2026-12-31T23:59:59Z");
         assert_eq!(in_range.len(), 2);
@@ -608,9 +670,24 @@ mod tests {
     fn test_generate_custom_report() {
         let mut mgr = ComplianceManager::new();
         mgr.add_rule(us_rule());
-        mgr.add_transaction(make_tx_at("tx1", "2026-03-01T00:00:00Z", TxCategory::Income, 500.0));
-        mgr.add_transaction(make_tx_at("tx2", "2026-03-15T00:00:00Z", TxCategory::Trade, 300.0));
-        mgr.add_transaction(make_tx_at("tx3", "2026-03-20T00:00:00Z", TxCategory::Fee, 25.0));
+        mgr.add_transaction(make_tx_at(
+            "tx1",
+            "2026-03-01T00:00:00Z",
+            TxCategory::Income,
+            500.0,
+        ));
+        mgr.add_transaction(make_tx_at(
+            "tx2",
+            "2026-03-15T00:00:00Z",
+            TxCategory::Trade,
+            300.0,
+        ));
+        mgr.add_transaction(make_tx_at(
+            "tx3",
+            "2026-03-20T00:00:00Z",
+            TxCategory::Fee,
+            25.0,
+        ));
 
         let report_type = ReportType::Custom {
             start: "2026-03-01T00:00:00Z".to_string(),
@@ -630,7 +707,12 @@ mod tests {
     fn test_report_lifecycle() {
         let mut mgr = ComplianceManager::new();
         mgr.add_rule(us_rule());
-        mgr.add_transaction(make_tx_at("tx1", "2026-06-01T00:00:00Z", TxCategory::Trade, 100.0));
+        mgr.add_transaction(make_tx_at(
+            "tx1",
+            "2026-06-01T00:00:00Z",
+            TxCategory::Trade,
+            100.0,
+        ));
 
         let rt = ReportType::Custom {
             start: "2026-01-01T00:00:00Z".to_string(),
@@ -693,8 +775,18 @@ mod tests {
     fn test_estimate_tax() {
         let mut mgr = ComplianceManager::new();
         mgr.add_rule(us_rule());
-        mgr.add_transaction(make_tx_at("tx1", "2026-05-01T00:00:00Z", TxCategory::Trade, 1000.0));
-        mgr.add_transaction(make_tx_at("tx2", "2026-05-10T00:00:00Z", TxCategory::Fee, 50.0));
+        mgr.add_transaction(make_tx_at(
+            "tx1",
+            "2026-05-01T00:00:00Z",
+            TxCategory::Trade,
+            1000.0,
+        ));
+        mgr.add_transaction(make_tx_at(
+            "tx2",
+            "2026-05-10T00:00:00Z",
+            TxCategory::Fee,
+            50.0,
+        ));
 
         let rt = ReportType::Custom {
             start: "2026-01-01T00:00:00Z".to_string(),
@@ -710,7 +802,12 @@ mod tests {
     fn test_estimate_tax_no_rule() {
         let mut mgr = ComplianceManager::new();
         // No rules added
-        mgr.add_transaction(make_tx_at("tx1", "2026-05-01T00:00:00Z", TxCategory::Trade, 100.0));
+        mgr.add_transaction(make_tx_at(
+            "tx1",
+            "2026-05-01T00:00:00Z",
+            TxCategory::Trade,
+            100.0,
+        ));
         let rt = ReportType::Custom {
             start: "2026-01-01T00:00:00Z".to_string(),
             end: "2026-12-31T23:59:59Z".to_string(),

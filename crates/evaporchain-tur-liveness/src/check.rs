@@ -21,14 +21,8 @@ use crate::stats::relative_variance_fixed;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Verdict {
-    Ok {
-        observed: u128,
-        bound: u128,
-    },
-    Violation {
-        observed: u128,
-        bound: u128,
-    },
+    Ok { observed: u128, bound: u128 },
+    Violation { observed: u128, bound: u128 },
 }
 
 pub fn tur_check(samples: &[u64], sigma: u64) -> Verdict {

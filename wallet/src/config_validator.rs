@@ -259,7 +259,10 @@ impl ConfigValidator {
                 if value != "true" && value != "false" {
                     errors.push(ValidationIssue {
                         field: field.name.clone(),
-                        message: format!("'{}' is not a valid boolean (expected true/false)", value),
+                        message: format!(
+                            "'{}' is not a valid boolean (expected true/false)",
+                            value
+                        ),
                         severity: ValidationSeverity::Error,
                     });
                 }
@@ -442,11 +445,7 @@ impl ConfigValidator {
     }
 
     pub fn stats(&self) -> ValidatorStats {
-        let failed_validations = self
-            .validation_history
-            .iter()
-            .filter(|r| !r.valid)
-            .count();
+        let failed_validations = self.validation_history.iter().filter(|r| !r.valid).count();
 
         ValidatorStats {
             total_schemas: self.schemas.len(),
@@ -544,7 +543,10 @@ mod tests {
 
     fn valid_config() -> HashMap<String, String> {
         let mut config = HashMap::new();
-        config.insert("rpc_url".to_string(), "https://rpc.evaporchain.io".to_string());
+        config.insert(
+            "rpc_url".to_string(),
+            "https://rpc.evaporchain.io".to_string(),
+        );
         config.insert("max_retries".to_string(), "5".to_string());
         config.insert("gas_multiplier".to_string(), "2.0".to_string());
         config.insert("debug_mode".to_string(), "true".to_string());
@@ -725,10 +727,7 @@ mod tests {
         let result = v.validate("wallet_config", &config).unwrap();
         assert!(result.valid); // still valid since field is optional
         assert!(!result.warnings.is_empty());
-        assert!(result
-            .warnings
-            .iter()
-            .any(|w| w.field == "gas_multiplier"));
+        assert!(result.warnings.iter().any(|w| w.field == "gas_multiplier"));
     }
 
     // 13

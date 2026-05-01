@@ -86,8 +86,7 @@ fn write_pem_secret(path: &Path, pem: &str, label: &str) -> Result<(), String> {
 
 /// Inner reader — caller supplies the passphrase explicitly. Used by tests.
 fn read_pem_secret_inner(path: &Path, passphrase: Option<&[u8]>) -> Result<String, String> {
-    let bytes = std::fs::read(path)
-        .map_err(|e| format!("read {}: {e}", path.display()))?;
+    let bytes = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
     if secret_file_store::is_evkv(&bytes) {
         let pass = passphrase.ok_or_else(|| {
             format!(
@@ -119,9 +118,10 @@ pub fn read_pem_secret(path: &Path) -> Result<String, String> {
 pub fn is_pem_encrypted(path: &Path) -> Result<bool, String> {
     let mut buf = [0u8; 4];
     use std::io::Read;
-    let mut f = std::fs::File::open(path)
-        .map_err(|e| format!("open {}: {e}", path.display()))?;
-    let n = f.read(&mut buf).map_err(|e| format!("read {}: {e}", path.display()))?;
+    let mut f = std::fs::File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
+    let n = f
+        .read(&mut buf)
+        .map_err(|e| format!("read {}: {e}", path.display()))?;
     Ok(n == 4 && secret_file_store::is_evkv(&buf))
 }
 
@@ -141,8 +141,7 @@ pub struct TlsConfig {
 ///
 /// In permissioned mode (validator networks), only peers in the allowlist
 /// can establish connections. In permissionless mode, all peers are accepted.
-#[derive(Clone)]
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PeerAuthority {
     allowlist: Arc<RwLock<HashSet<PeerId>>>,
     enforcing: bool,
@@ -157,7 +156,10 @@ impl PeerAuthority {
     }
 
     pub fn with_allowlist(peers: Vec<PeerId>) -> Self {
-        info!("Peer authority enforcing allowlist with {} peers", peers.len());
+        info!(
+            "Peer authority enforcing allowlist with {} peers",
+            peers.len()
+        );
         Self {
             allowlist: Arc::new(RwLock::new(peers.into_iter().collect())),
             enforcing: true,
@@ -247,8 +249,7 @@ pub fn generate_validator_cert(
         .map_err(|e| format!("reconstruct CA: {e}"))?;
 
     let san = format!("{validator_name}.evaporchain.local");
-    let params =
-        CertificateParams::new(vec![san]).map_err(|e| format!("validator params: {e}"))?;
+    let params = CertificateParams::new(vec![san]).map_err(|e| format!("validator params: {e}"))?;
     let validator_key = KeyPair::generate().map_err(|e| format!("validator keygen: {e}"))?;
 
     let validator_cert = params
@@ -324,8 +325,7 @@ mod tests {
         let ca_cert = std::fs::read_to_string(dir.join("ca-cert.pem")).unwrap();
         // Cert files are public — read_to_string is fine. Private keys
         // must go through `read_pem_secret_inner` to handle the EVKV path.
-        let ca_key = read_pem_secret_inner(&dir.join("ca-key.pem"), None)
-            .expect("read CA key");
+        let ca_key = read_pem_secret_inner(&dir.join("ca-key.pem"), None).expect("read CA key");
 
         generate_validator_cert("validator0", &ca_cert, &ca_key, &dir)
             .expect("validator cert generation");
@@ -349,8 +349,7 @@ mod tests {
                    -----END PRIVATE KEY-----\n";
         let pass: &[u8] = b"strict-mainnet-passphrase";
 
-        write_pem_secret_inner(&path, pem, "test-key", Some(pass))
-            .expect("write encrypted");
+        write_pem_secret_inner(&path, pem, "test-key", Some(pass)).expect("write encrypted");
 
         // File on disk must NOT start with the PEM marker — i.e. it's encrypted.
         let raw = std::fs::read(&path).unwrap();

@@ -50,13 +50,19 @@ impl WalletSigner {
     /// Create a signer from a raw ML-DSA keypair (legacy).
     pub fn from_keypair(keypair: MlDsaKeypair) -> Self {
         let address = derive_address(&keypair.public_key_bytes());
-        Self { inner: SignerInner::MlDsa(keypair), address }
+        Self {
+            inner: SignerInner::MlDsa(keypair),
+            address,
+        }
     }
 
     /// Create a signer from a Hybrid ECDSA+ML-DSA keypair.
     pub fn from_hybrid(keypair: HybridKeypair) -> Self {
         let address = derive_address(&keypair.public_key_bytes());
-        Self { inner: SignerInner::Hybrid(keypair), address }
+        Self {
+            inner: SignerInner::Hybrid(keypair),
+            address,
+        }
     }
 
     /// Unlock a key from the keystore by name and create a signer.

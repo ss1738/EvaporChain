@@ -318,7 +318,13 @@ impl OracleConsensusRound {
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
-pub fn make_vote(validator_id: u64, key: &str, value: f64, round: u64, timestamp: u64) -> OracleVote {
+pub fn make_vote(
+    validator_id: u64,
+    key: &str,
+    value: f64,
+    round: u64,
+    timestamp: u64,
+) -> OracleVote {
     OracleVote {
         validator_id,
         key: key.to_string(),
@@ -379,7 +385,11 @@ mod tests {
     #[test]
     fn test_finalize_success() {
         let mut round = OracleConsensusRound::new("btc_usd", 1, 2, 3600);
-        for (id, value, ts) in [(0u64, 60000.0, 1000u64), (1, 60100.0, 1001), (2, 60050.0, 1002)] {
+        for (id, value, ts) in [
+            (0u64, 60000.0, 1000u64),
+            (1, 60100.0, 1001),
+            (2, 60050.0, 1002),
+        ] {
             let kp = BlsKeypair::generate();
             let (v, pk) = signed(&kp, id, "btc_usd", value, 1, ts);
             round.submit_vote(v, &pk).unwrap();
@@ -424,7 +434,10 @@ mod tests {
         let kp = BlsKeypair::generate();
         let (v, pk) = signed(&kp, 0, "btc_usd", 60000.0, 2, 1000);
         match round.submit_vote(v, &pk) {
-            Err(ConsensusError::RoundMismatch { expected: 1, got: 2 }) => {}
+            Err(ConsensusError::RoundMismatch {
+                expected: 1,
+                got: 2,
+            }) => {}
             other => panic!("expected RoundMismatch, got {:?}", other),
         }
     }
@@ -456,9 +469,12 @@ mod tests {
 
     #[test]
     fn test_excessive_spread_rejected() {
-        let mut round = OracleConsensusRound::new("btc_usd", 1, 2, 3600)
-            .with_spread_tolerance(1.0);
-        for (id, value, ts) in [(0u64, 60000.0, 1000u64), (1, 65000.0, 1001), (2, 62000.0, 1002)] {
+        let mut round = OracleConsensusRound::new("btc_usd", 1, 2, 3600).with_spread_tolerance(1.0);
+        for (id, value, ts) in [
+            (0u64, 60000.0, 1000u64),
+            (1, 65000.0, 1001),
+            (2, 62000.0, 1002),
+        ] {
             let kp = BlsKeypair::generate();
             let (v, pk) = signed(&kp, id, "btc_usd", value, 1, ts);
             round.submit_vote(v, &pk).unwrap();

@@ -217,7 +217,11 @@ impl DappConnector {
         duration_hours: u64,
     ) -> Result<&DappSession, DappError> {
         // Check for existing active session from same origin
-        if self.sessions.iter().any(|s| s.origin == origin && s.status == SessionStatus::Active) {
+        if self
+            .sessions
+            .iter()
+            .any(|s| s.origin == origin && s.status == SessionStatus::Active)
+        {
             return Err(DappError::DuplicateSession(origin.to_string()));
         }
 
@@ -276,7 +280,11 @@ impl DappConnector {
     }
 
     /// Check if a session has a specific permission.
-    pub fn has_permission(&self, session_id: &str, permission: Permission) -> Result<bool, DappError> {
+    pub fn has_permission(
+        &self,
+        session_id: &str,
+        permission: Permission,
+    ) -> Result<bool, DappError> {
         let session = self
             .get_session(session_id)
             .ok_or_else(|| DappError::SessionNotFound(session_id.to_string()))?;
@@ -451,7 +459,10 @@ mod tests {
         let id = get_session_id(&conn);
         conn.revoke_session(&id).unwrap();
         assert_eq!(conn.active_count(), 0);
-        assert_eq!(conn.get_session(&id).unwrap().status, SessionStatus::Revoked);
+        assert_eq!(
+            conn.get_session(&id).unwrap().status,
+            SessionStatus::Revoked
+        );
     }
 
     #[test]
@@ -475,7 +486,9 @@ mod tests {
         let mut conn = make_connector();
         let id = get_session_id(&conn);
         conn.revoke_session(&id).unwrap();
-        let err = conn.has_permission(&id, Permission::ViewAccount).unwrap_err();
+        let err = conn
+            .has_permission(&id, Permission::ViewAccount)
+            .unwrap_err();
         assert!(matches!(err, DappError::SessionRevoked(_)));
     }
 
@@ -542,8 +555,14 @@ mod tests {
 
     #[test]
     fn test_permission_from_str() {
-        assert_eq!(Permission::from_str("view_account"), Some(Permission::ViewAccount));
-        assert_eq!(Permission::from_str("request_sign"), Some(Permission::RequestSign));
+        assert_eq!(
+            Permission::from_str("view_account"),
+            Some(Permission::ViewAccount)
+        );
+        assert_eq!(
+            Permission::from_str("request_sign"),
+            Some(Permission::RequestSign)
+        );
         assert_eq!(Permission::from_str("invalid"), None);
     }
 

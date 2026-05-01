@@ -218,7 +218,11 @@ impl AnomalyDetector {
         profile.avg_gas = (old_gas_total + sample.gas as f64) / profile.tx_count as f64;
 
         // Track unique recipients by counting distinct `to` in samples from this address
-        if !self.samples.iter().any(|s| s.from == address && s.to == sample.to) {
+        if !self
+            .samples
+            .iter()
+            .any(|s| s.from == address && s.to == sample.to)
+        {
             profile.unique_recipients += 1;
         }
 
@@ -248,8 +252,7 @@ impl AnomalyDetector {
             let maybe_alert = match &rule.anomaly_type {
                 AnomalyType::UnusualAmount => {
                     if let Some(ref p) = profile {
-                        if p.tx_count > 0
-                            && (sample.amount as f64) > p.avg_amount * rule.threshold
+                        if p.tx_count > 0 && (sample.amount as f64) > p.avg_amount * rule.threshold
                         {
                             Some(self.make_alert(
                                 &rule,
@@ -273,9 +276,7 @@ impl AnomalyDetector {
                     let count_last_hour = self
                         .samples
                         .iter()
-                        .filter(|s| {
-                            s.from == sample.from && s.hour_of_day == sample.hour_of_day
-                        })
+                        .filter(|s| s.from == sample.from && s.hour_of_day == sample.hour_of_day)
                         .count();
                     if count_last_hour as f64 > rule.threshold {
                         Some(self.make_alert(
@@ -303,7 +304,10 @@ impl AnomalyDetector {
                                     &rule,
                                     sample,
                                     RiskLevel::Low,
-                                    format!("New recipient {} for sender {}", sample.to, sample.from),
+                                    format!(
+                                        "New recipient {} for sender {}",
+                                        sample.to, sample.from
+                                    ),
                                 ))
                             } else {
                                 None
@@ -378,7 +382,10 @@ impl AnomalyDetector {
                             &rule,
                             sample,
                             RiskLevel::Critical,
-                            format!("Possible dust attack: amount {} below {}", sample.amount, rule.threshold),
+                            format!(
+                                "Possible dust attack: amount {} below {}",
+                                sample.amount, rule.threshold
+                            ),
                         ))
                     } else {
                         None
@@ -443,7 +450,10 @@ impl AnomalyDetector {
     }
 
     pub fn alerts_by_risk(&self, risk: &RiskLevel) -> Vec<&AnomalyAlert> {
-        self.alerts.iter().filter(|a| &a.risk_level == risk).collect()
+        self.alerts
+            .iter()
+            .filter(|a| &a.risk_level == risk)
+            .collect()
     }
 
     pub fn alerts_for_address(&self, address: &str) -> Vec<&AnomalyAlert> {
@@ -461,7 +471,9 @@ impl AnomalyDetector {
         let addr_alerts: Vec<&AnomalyAlert> = self
             .alerts
             .iter()
-            .filter(|a| !a.acknowledged && (a.tx_hash.contains(address) || a.details.contains(address)))
+            .filter(|a| {
+                !a.acknowledged && (a.tx_hash.contains(address) || a.details.contains(address))
+            })
             .collect();
 
         let mut score: f64 = 0.0;
@@ -668,7 +680,9 @@ mod tests {
 
         let new_recip = make_sample("alice", "eve", 100, 20, 10);
         let alerts = det.analyze_sample(&new_recip);
-        assert!(alerts.iter().any(|a| a.anomaly_type == AnomalyType::NewRecipient));
+        assert!(alerts
+            .iter()
+            .any(|a| a.anomaly_type == AnomalyType::NewRecipient));
     }
 
     #[test]
@@ -700,7 +714,9 @@ mod tests {
 
         let high_gas = make_sample("alice", "bob", 100, 100, 10);
         let alerts = det.analyze_sample(&high_gas);
-        assert!(alerts.iter().any(|a| a.anomaly_type == AnomalyType::LargeGas));
+        assert!(alerts
+            .iter()
+            .any(|a| a.anomaly_type == AnomalyType::LargeGas));
     }
 
     #[test]

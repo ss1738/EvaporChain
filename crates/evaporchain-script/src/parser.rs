@@ -474,7 +474,11 @@ struct Parser {
 
 impl Parser {
     fn new(tokens: Vec<(Token, usize)>) -> Self {
-        Self { tokens, pos: 0, expr_depth: 0 }
+        Self {
+            tokens,
+            pos: 0,
+            expr_depth: 0,
+        }
     }
 
     fn peek(&self) -> &Token {
@@ -537,7 +541,8 @@ impl Parser {
                 Token::State => {
                     if !state_fields.is_empty() {
                         return Err(ScriptError::Compile(
-                            "duplicate state block — merge all fields into a single state {} block".into(),
+                            "duplicate state block — merge all fields into a single state {} block"
+                                .into(),
                         ));
                     }
                     state_fields = self.parse_state_block()?;
@@ -569,9 +574,7 @@ impl Parser {
                 tok => {
                     return Err(ScriptError::Parse {
                         line: self.line(),
-                        message: format!(
-                            "expected state, fn, or lifecycle hook, got {tok:?}"
-                        ),
+                        message: format!("expected state, fn, or lifecycle hook, got {tok:?}"),
                     });
                 }
             }
@@ -748,7 +751,8 @@ impl Parser {
                 }
                 _ => {
                     return Ok(Stmt::ExprStmt(Expr::ArrayAccess(
-                        Box::new(Expr::Variable(name)), Box::new(index),
+                        Box::new(Expr::Variable(name)),
+                        Box::new(index),
                     )));
                 }
             }
@@ -1174,7 +1178,10 @@ impl Parser {
                     self.advance();
                     let index = self.parse_expr()?;
                     self.expect(&Token::RBracket)?;
-                    Ok(Expr::ArrayAccess(Box::new(Expr::Variable(name)), Box::new(index)))
+                    Ok(Expr::ArrayAccess(
+                        Box::new(Expr::Variable(name)),
+                        Box::new(index),
+                    ))
                 } else {
                     Ok(Expr::Variable(name))
                 }
@@ -1493,9 +1500,7 @@ contract Math {
 "#;
         let contract = parse(src).unwrap();
         match &contract.functions[0].body[0] {
-            Stmt::Return(Some(Expr::BinaryOp {
-                op: BinOp::Mul, ..
-            })) => {}
+            Stmt::Return(Some(Expr::BinaryOp { op: BinOp::Mul, .. })) => {}
             other => panic!("expected multiply, got {other:?}"),
         }
     }
@@ -1512,9 +1517,7 @@ contract Logic {
 "#;
         let contract = parse(src).unwrap();
         match &contract.functions[0].body[0] {
-            Stmt::Return(Some(Expr::BinaryOp {
-                op: BinOp::Or, ..
-            })) => {}
+            Stmt::Return(Some(Expr::BinaryOp { op: BinOp::Or, .. })) => {}
             other => panic!("expected or expression, got {other:?}"),
         }
     }
@@ -1571,7 +1574,10 @@ contract Test {
 "#;
         let contract = parse(src).unwrap();
         match &contract.functions[0].body[0] {
-            Stmt::Let { name, value: Expr::ArrayLiteral(elems) } => {
+            Stmt::Let {
+                name,
+                value: Expr::ArrayLiteral(elems),
+            } => {
                 assert_eq!(name, "arr");
                 assert_eq!(elems.len(), 3);
             }
@@ -1608,7 +1614,10 @@ contract Test {
 "#;
         let contract = parse(src).unwrap();
         match &contract.functions[0].body[0] {
-            Stmt::Assign { target: AssignTarget::ArrayElement(name, _), .. } => {
+            Stmt::Assign {
+                target: AssignTarget::ArrayElement(name, _),
+                ..
+            } => {
                 assert_eq!(name, "arr");
             }
             other => panic!("expected array element assign, got {other:?}"),
@@ -1641,7 +1650,10 @@ contract Test {
 "#;
         let contract = parse(src).unwrap();
         match &contract.functions[0].body[0] {
-            Stmt::Let { value: Expr::ArrayLiteral(elems), .. } => {
+            Stmt::Let {
+                value: Expr::ArrayLiteral(elems),
+                ..
+            } => {
                 assert_eq!(elems.len(), 0);
             }
             other => panic!("expected empty array literal, got {other:?}"),
@@ -1664,7 +1676,10 @@ contract Test {
 }
 "#;
         let result = parse(src);
-        assert!(result.is_err(), "parsing overflowing integer must fail, not silently become 0");
+        assert!(
+            result.is_err(),
+            "parsing overflowing integer must fail, not silently become 0"
+        );
         let err = format!("{}", result.unwrap_err());
         assert!(
             err.contains("overflow"),
@@ -1709,7 +1724,10 @@ contract Test {
             r#"contract Test {{ state {{ x: u64 = 0 }} fn f() -> u64 {{ return {open}0{close} }} }}"#,
         );
         let result = parse(&src);
-        assert!(result.is_err(), "deeply nested expression (100 levels) must be rejected");
+        assert!(
+            result.is_err(),
+            "deeply nested expression (100 levels) must be rejected"
+        );
         let err = format!("{}", result.unwrap_err());
         assert!(
             err.contains("depth") || err.contains("nesting"),
@@ -1739,6 +1757,9 @@ contract Test {
             r#"contract Test {{ state {{ x: u64 = 0 }} fn f() -> u64 {{ return {open}42{close} }} }}"#,
         );
         let result = parse(&src);
-        assert!(result.is_ok(), "moderate nesting (10 levels) should succeed");
+        assert!(
+            result.is_ok(),
+            "moderate nesting (10 levels) should succeed"
+        );
     }
 }

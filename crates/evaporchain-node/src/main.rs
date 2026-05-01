@@ -4,33 +4,41 @@ mod autopoietic_integration;
 mod bench;
 mod elexon_integration;
 mod frontier;
+mod jsonrpc;
 mod oracle_bridge;
 mod persistence;
 mod shard_bridge;
 #[allow(dead_code)]
 mod sync;
 mod user_db;
-mod jsonrpc;
 mod ws;
 
 use anyhow::Result;
-use api::{ApiState, BlockRecord, ChainStats, EpochSnapshot, EventRecord, NftStore, NftToken, TokenStore, DeployedToken, StakingStore, StakingPool, Staker, DAOStore, DAOProposal, DAOVote, ThroughputTracker};
-use evaporchain_consensus::MockConsensus;
+use api::{
+    ApiState, BlockRecord, ChainStats, DAOProposal, DAOStore, DAOVote, DeployedToken,
+    EpochSnapshot, EventRecord, NftStore, NftToken, Staker, StakingPool, StakingStore,
+    ThroughputTracker, TokenStore,
+};
 use evaporchain_consensus::encrypted_mempool::EncryptedMempool;
 use evaporchain_consensus::finality::FinalityTracker;
 use evaporchain_consensus::light_client::{LightBlockHeader, LightClientVerifier};
-use evaporchain_consensus::tendermint::{TendermintConsensus, ConsensusMessage, ConsensusAction, ProofVerifier, AnchorHashProvider};
 use evaporchain_consensus::state_sync::{StateSyncManager, SyncAction, SyncMessage};
-use evaporchain_consensus::validator_set::{ValidatorInfo, ValidatorSet, slash_delegations_for_validator};
-use evaporchain_network::service::{cache_block, NetworkConfig, P2pNetworkService};
-use evaporchain_proving::ProvingEngine;
-#[cfg(any(test, feature = "test-utils", debug_assertions))]
-use evaporchain_proving::MockProver;
-use evaporchain_proving::chain_proof::ChainProver;
-use evaporchain_state::db::StateDB;
-use evaporchain_state::RocksDBStateDB;
+use evaporchain_consensus::tendermint::{
+    AnchorHashProvider, ConsensusAction, ConsensusMessage, ProofVerifier, TendermintConsensus,
+};
+use evaporchain_consensus::validator_set::{
+    slash_delegations_for_validator, ValidatorInfo, ValidatorSet,
+};
+use evaporchain_consensus::MockConsensus;
 use evaporchain_crypto::signatures::{MlDsaKeypair, Signer};
 use evaporchain_da::block_da::{BlockDA, BlockDAPackage};
+use evaporchain_network::service::{cache_block, NetworkConfig, P2pNetworkService};
+use evaporchain_proving::chain_proof::ChainProver;
+#[cfg(any(test, feature = "test-utils", debug_assertions))]
+use evaporchain_proving::MockProver;
+use evaporchain_proving::ProvingEngine;
+use evaporchain_state::db::StateDB;
+use evaporchain_state::RocksDBStateDB;
 use evaporchain_types::{
     Account, CreateObjectTx, ObjectState, RefreshTx, StateObject, Transaction, TransferTx,
 };
@@ -100,10 +108,7 @@ fn fatal_persist_err(op: &str, r: Result<(), String>) {
             error = %e,
             "FATAL: consensus-critical persistence failed — node halting to prevent state divergence",
         );
-        eprintln!(
-            "\x1b[1;31mFATAL persistence failure ({}): {}\x1b[0m",
-            op, e
-        );
+        eprintln!("\x1b[1;31mFATAL persistence failure ({}): {}\x1b[0m", op, e);
         eprintln!("\x1b[1;31m  Halting to prevent on-restart divergence between in-memory and on-disk state.\x1b[0m");
         // Give tracing + stderr a moment to flush before exit.
         std::thread::sleep(std::time::Duration::from_millis(100));
@@ -235,8 +240,14 @@ fn persist_contracts(
         let tc = safe_lock(tc_ref);
         let scripts: Vec<_> = tc.script_engine().all_contracts().into_iter().collect();
         let templates: Vec<_> = tc.contract_engine().all_contracts().into_iter().collect();
-        fatal_persist_err("script_contracts", chain_store.save_script_contracts(&scripts));
-        fatal_persist_err("template_contracts", chain_store.save_template_contracts(&templates));
+        fatal_persist_err(
+            "script_contracts",
+            chain_store.save_script_contracts(&scripts),
+        );
+        fatal_persist_err(
+            "template_contracts",
+            chain_store.save_template_contracts(&templates),
+        );
     }
 }
 
@@ -316,15 +327,18 @@ fn obj_id(b: u8) -> [u8; 32] {
 }
 
 fn seed_demo_accounts(db: &mut RocksDBStateDB, node_tag: &str) {
-    use api::{GENESIS_FOUNDATION, GENESIS_CORE_DEV, GENESIS_VALIDATOR1, GENESIS_VALIDATOR2, GENESIS_ECOSYSTEM, GENESIS_COMMUNITY, parse_hex_address};
+    use api::{
+        parse_hex_address, GENESIS_COMMUNITY, GENESIS_CORE_DEV, GENESIS_ECOSYSTEM,
+        GENESIS_FOUNDATION, GENESIS_VALIDATOR1, GENESIS_VALIDATOR2,
+    };
     use evaporchain_state::db::StateDB;
     let accounts: [(&str, u64); 6] = [
         (GENESIS_FOUNDATION, 487_293),
-        (GENESIS_CORE_DEV,   234_851),
-        (GENESIS_VALIDATOR1,  128_472),
-        (GENESIS_VALIDATOR2,   91_337),
-        (GENESIS_ECOSYSTEM,    52_184),
-        (GENESIS_COMMUNITY,    38_916),
+        (GENESIS_CORE_DEV, 234_851),
+        (GENESIS_VALIDATOR1, 128_472),
+        (GENESIS_VALIDATOR2, 91_337),
+        (GENESIS_ECOSYSTEM, 52_184),
+        (GENESIS_COMMUNITY, 38_916),
     ];
     for (hex, balance) in &accounts {
         let address = parse_hex_address(hex).expect("invalid demo address");
@@ -332,17 +346,47 @@ fn seed_demo_accounts(db: &mut RocksDBStateDB, node_tag: &str) {
             db.put_account(Account { address, balance: *balance, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
         }
     }
-    println!("{} \x1b[36mDemo accounts seeded (6 accounts for demo tx generation)\x1b[0m", node_tag);
+    println!(
+        "{} \x1b[36mDemo accounts seeded (6 accounts for demo tx generation)\x1b[0m",
+        node_tag
+    );
 }
 
 fn seed_demo_objects(db: &mut RocksDBStateDB, node_tag: &str) {
-    use api::{GENESIS_FOUNDATION, GENESIS_CORE_DEV, GENESIS_VALIDATOR1, GENESIS_VALIDATOR2, GENESIS_ECOSYSTEM, GENESIS_COMMUNITY, parse_hex_address};
+    use api::{
+        parse_hex_address, GENESIS_COMMUNITY, GENESIS_CORE_DEV, GENESIS_ECOSYSTEM,
+        GENESIS_FOUNDATION, GENESIS_VALIDATOR1, GENESIS_VALIDATOR2,
+    };
     use evaporchain_state::db::StateDB;
     let objects: Vec<(u8, &str, u64, u64, &str)> = vec![
-        (0x10, GENESIS_FOUNDATION, 50_000, 50_000, "token:evap-governance"),
-        (0x11, GENESIS_CORE_DEV, 30_000, 50_000, "stake:validator-pool-1"),
-        (0x12, GENESIS_ECOSYSTEM, 5_000, 10_000, "nft:event-ticket-0x3f"),
-        (0x13, GENESIS_ECOSYSTEM, 8_000, 10_000, "escrow:freelance-0x8b"),
+        (
+            0x10,
+            GENESIS_FOUNDATION,
+            50_000,
+            50_000,
+            "token:evap-governance",
+        ),
+        (
+            0x11,
+            GENESIS_CORE_DEV,
+            30_000,
+            50_000,
+            "stake:validator-pool-1",
+        ),
+        (
+            0x12,
+            GENESIS_ECOSYSTEM,
+            5_000,
+            10_000,
+            "nft:event-ticket-0x3f",
+        ),
+        (
+            0x13,
+            GENESIS_ECOSYSTEM,
+            8_000,
+            10_000,
+            "escrow:freelance-0x8b",
+        ),
         (0x14, GENESIS_VALIDATOR2, 2_000, 5_000, "dao:proposal-0x5e"),
         (0x15, GENESIS_COMMUNITY, 800, 100, "session:auth-0x1a"),
         (0x16, GENESIS_VALIDATOR1, 400, 50, "cache:price-feed-0x9c"),
@@ -365,32 +409,43 @@ fn seed_demo_objects(db: &mut RocksDBStateDB, node_tag: &str) {
             grace_epoch: None,
             data: label.as_bytes().to_vec(),
             decay_curve: None,
+            lad_mode: None,
         });
     }
-    println!("{} \x1b[36mDemo objects seeded (8 objects for demo tx generation)\x1b[0m", node_tag);
+    println!(
+        "{} \x1b[36mDemo objects seeded (8 objects for demo tx generation)\x1b[0m",
+        node_tag
+    );
 }
 
 /// Produce 2D erasure encoding with NMT blob commitments for a block.
 /// Populates `block.da_row_roots`, `block.da_col_roots`, and `block.blob_commitments`.
 /// Returns the full 2D package (for storage) and the data_root.
-fn encode_block_2d(block: &mut evaporchain_types::Block, block_bytes: &[u8]) -> Option<(evaporchain_da::block_da_2d::BlockDA2DPackage, [u8; 32])> {
-    use evaporchain_da::block_da_2d::{BlockDA2D, namespace_for_tx_type};
+fn encode_block_2d(
+    block: &mut evaporchain_types::Block,
+    block_bytes: &[u8],
+) -> Option<(evaporchain_da::block_da_2d::BlockDA2DPackage, [u8; 32])> {
+    use evaporchain_da::block_da_2d::{namespace_for_tx_type, BlockDA2D};
     use evaporchain_da::namespace::NamespacedBlob;
 
     let da2d = BlockDA2D::new();
 
-    let blobs: Vec<NamespacedBlob> = block.transactions.iter().filter_map(|tx| {
-        let (ns_type, data) = match tx {
-            Transaction::Transfer(t) => ("transfer", serde_json::to_vec(t).ok()?),
-            Transaction::CreateObject(t) => ("create_object", serde_json::to_vec(t).ok()?),
-            Transaction::Refresh(t) => ("refresh", serde_json::to_vec(t).ok()?),
-            _ => return None,
-        };
-        Some(NamespacedBlob {
-            namespace: namespace_for_tx_type(ns_type),
-            data,
+    let blobs: Vec<NamespacedBlob> = block
+        .transactions
+        .iter()
+        .filter_map(|tx| {
+            let (ns_type, data) = match tx {
+                Transaction::Transfer(t) => ("transfer", serde_json::to_vec(t).ok()?),
+                Transaction::CreateObject(t) => ("create_object", serde_json::to_vec(t).ok()?),
+                Transaction::Refresh(t) => ("refresh", serde_json::to_vec(t).ok()?),
+                _ => return None,
+            };
+            Some(NamespacedBlob {
+                namespace: namespace_for_tx_type(ns_type),
+                data,
+            })
         })
-    }).collect();
+        .collect();
 
     match da2d.encode_block_with_blobs(block_bytes, &blobs) {
         Ok(package) => {
@@ -405,7 +460,10 @@ fn encode_block_2d(block: &mut evaporchain_types::Block, block_bytes: &[u8]) -> 
 }
 
 fn initialize_genesis(db: &mut RocksDBStateDB, node_tag: &str) {
-    use api::{GENESIS_FOUNDATION, GENESIS_CORE_DEV, GENESIS_VALIDATOR1, GENESIS_VALIDATOR2, GENESIS_ECOSYSTEM, GENESIS_COMMUNITY, parse_hex_address};
+    use api::{
+        parse_hex_address, GENESIS_COMMUNITY, GENESIS_CORE_DEV, GENESIS_ECOSYSTEM,
+        GENESIS_FOUNDATION, GENESIS_VALIDATOR1, GENESIS_VALIDATOR2,
+    };
 
     // Faucet address (all-zeros) pre-seeded with large supply
     let faucet_addr = [0u8; 32];
@@ -417,15 +475,18 @@ fn initialize_genesis(db: &mut RocksDBStateDB, node_tag: &str) {
     storage_bytes: 0,
     last_touched_epoch: 0,
     });
-    println!("{} \x1b[36mFaucet (0x0000...)\x1b[0m  balance=MAX/2", node_tag);
+    println!(
+        "{} \x1b[36mFaucet (0x0000...)\x1b[0m  balance=MAX/2",
+        node_tag
+    );
 
     let accounts: Vec<(&str, u64)> = vec![
         (GENESIS_FOUNDATION, 487_293),
-        (GENESIS_CORE_DEV,   234_851),
-        (GENESIS_VALIDATOR1,  128_472),
-        (GENESIS_VALIDATOR2,   91_337),
-        (GENESIS_ECOSYSTEM,    52_184),
-        (GENESIS_COMMUNITY,    38_916),
+        (GENESIS_CORE_DEV, 234_851),
+        (GENESIS_VALIDATOR1, 128_472),
+        (GENESIS_VALIDATOR2, 91_337),
+        (GENESIS_ECOSYSTEM, 52_184),
+        (GENESIS_COMMUNITY, 38_916),
     ];
     for (hex, balance) in &accounts {
         let address = parse_hex_address(hex).expect("invalid genesis address");
@@ -437,22 +498,43 @@ fn initialize_genesis(db: &mut RocksDBStateDB, node_tag: &str) {
         storage_bytes: 0,
         last_touched_epoch: 0,
         });
-        println!(
-            "{} \x1b[36m0x{}\x1b[0m  balance={}",
-            node_tag, hex, balance
-        );
+        println!("{} \x1b[36m0x{}\x1b[0m  balance={}", node_tag, hex, balance);
     }
 
     // Realistic objects with diverse use-case names and parameters
     let objects: Vec<(u8, &str, u64, u64, &str)> = vec![
-        (0x10, GENESIS_FOUNDATION, 50_000, 50_000, "token:evap-governance"),
-        (0x11, GENESIS_CORE_DEV, 30_000, 50_000, "stake:validator-pool-1"),
-        (0x12, GENESIS_ECOSYSTEM, 5_000, 10_000, "nft:event-ticket-0x3f"),
-        (0x13, GENESIS_ECOSYSTEM, 8_000, 10_000, "escrow:freelance-0x8b"),
+        (
+            0x10,
+            GENESIS_FOUNDATION,
+            50_000,
+            50_000,
+            "token:evap-governance",
+        ),
+        (
+            0x11,
+            GENESIS_CORE_DEV,
+            30_000,
+            50_000,
+            "stake:validator-pool-1",
+        ),
+        (
+            0x12,
+            GENESIS_ECOSYSTEM,
+            5_000,
+            10_000,
+            "nft:event-ticket-0x3f",
+        ),
+        (
+            0x13,
+            GENESIS_ECOSYSTEM,
+            8_000,
+            10_000,
+            "escrow:freelance-0x8b",
+        ),
         (0x14, GENESIS_VALIDATOR2, 2_000, 5_000, "dao:proposal-0x5e"),
-        (0x15, GENESIS_COMMUNITY, 800, 100, "session:auth-0x1a"),       // decays visibly
-        (0x16, GENESIS_VALIDATOR1, 400, 50, "cache:price-feed-0x9c"),   // dies in hours
-        (0x17, GENESIS_COMMUNITY, 150, 20, "msg:ephemeral-0xd7"),       // dies fast — demo
+        (0x15, GENESIS_COMMUNITY, 800, 100, "session:auth-0x1a"), // decays visibly
+        (0x16, GENESIS_VALIDATOR1, 400, 50, "cache:price-feed-0x9c"), // dies in hours
+        (0x17, GENESIS_COMMUNITY, 150, 20, "msg:ephemeral-0xd7"), // dies fast — demo
     ];
 
     for (oid, owner_hex, energy, half_life, label) in &objects {
@@ -468,6 +550,7 @@ fn initialize_genesis(db: &mut RocksDBStateDB, node_tag: &str) {
             grace_epoch: None,
             data: label.as_bytes().to_vec(),
             decay_curve: None,
+            lad_mode: None,
         });
         println!(
             "{} \x1b[33m{}\x1b[0m  id=0x{:02x}..  energy={:<6} half_life={}",
@@ -480,18 +563,10 @@ fn initialize_genesis(db: &mut RocksDBStateDB, node_tag: &str) {
 
 fn print_banner(node_tag: &str) {
     println!();
-    println!(
-        "\x1b[1;35m╔══════════════════════════════════════════════════════════════╗\x1b[0m"
-    );
-    println!(
-        "\x1b[1;35m║           EvaporChain — Multi-Node Devnet v0.2              ║\x1b[0m"
-    );
-    println!(
-        "\x1b[1;35m║       Thermodynamic State Decay in Real Time                ║\x1b[0m"
-    );
-    println!(
-        "\x1b[1;35m╚══════════════════════════════════════════════════════════════╝\x1b[0m"
-    );
+    println!("\x1b[1;35m╔══════════════════════════════════════════════════════════════╗\x1b[0m");
+    println!("\x1b[1;35m║           EvaporChain — Multi-Node Devnet v0.2              ║\x1b[0m");
+    println!("\x1b[1;35m║       Thermodynamic State Decay in Real Time                ║\x1b[0m");
+    println!("\x1b[1;35m╚══════════════════════════════════════════════════════════════╝\x1b[0m");
     println!("{} Node starting...", node_tag);
     println!();
 }
@@ -565,10 +640,7 @@ enum StdinCommand {
         half_life: u64,
     },
     #[serde(rename = "refresh")]
-    Refresh {
-        object_id: u8,
-        energy_deposit: u64,
-    },
+    Refresh { object_id: u8, energy_deposit: u64 },
 }
 
 fn parse_stdin_command(line: &str, signer: &MlDsaKeypair, chain_id: &str) -> Option<Transaction> {
@@ -604,6 +676,7 @@ fn parse_stdin_command(line: &str, signer: &MlDsaKeypair, chain_id: &str) -> Opt
                 half_life,
                 data: format!("UserObj-{}", object_id).into_bytes(),
                 decay_curve: None,
+                lad_mode: None,
                 signature: None,
                 public_key: None,
             }),
@@ -621,9 +694,18 @@ fn parse_stdin_command(line: &str, signer: &MlDsaKeypair, chain_id: &str) -> Opt
         let sig = signer.sign(&msg);
         let pk = signer.public_key_bytes();
         match &mut tx {
-            Transaction::Transfer(t) => { t.signature = Some(sig); t.public_key = Some(pk); }
-            Transaction::CreateObject(t) => { t.signature = Some(sig); t.public_key = Some(pk); }
-            Transaction::Refresh(t) => { t.signature = Some(sig); t.public_key = Some(pk); }
+            Transaction::Transfer(t) => {
+                t.signature = Some(sig);
+                t.public_key = Some(pk);
+            }
+            Transaction::CreateObject(t) => {
+                t.signature = Some(sig);
+                t.public_key = Some(pk);
+            }
+            Transaction::Refresh(t) => {
+                t.signature = Some(sig);
+                t.public_key = Some(pk);
+            }
             _ => {}
         }
         return Some(tx);
@@ -646,7 +728,10 @@ fn generate_demo_tx(
     db: &Arc<Mutex<evaporchain_state::RocksDBStateDB>>,
     chain_id: &str,
 ) -> Option<Transaction> {
-    use api::{GENESIS_FOUNDATION, GENESIS_CORE_DEV, GENESIS_VALIDATOR1, GENESIS_VALIDATOR2, GENESIS_ECOSYSTEM, GENESIS_COMMUNITY, parse_hex_address};
+    use api::{
+        parse_hex_address, GENESIS_COMMUNITY, GENESIS_CORE_DEV, GENESIS_ECOSYSTEM,
+        GENESIS_FOUNDATION, GENESIS_VALIDATOR1, GENESIS_VALIDATOR2,
+    };
     use evaporchain_state::db::StateDB;
 
     let roll: f64 = rng.gen();
@@ -655,8 +740,12 @@ fn generate_demo_tx(
     }
 
     let all_hexes: [&str; 6] = [
-        GENESIS_FOUNDATION, GENESIS_CORE_DEV, GENESIS_VALIDATOR1,
-        GENESIS_VALIDATOR2, GENESIS_ECOSYSTEM, GENESIS_COMMUNITY,
+        GENESIS_FOUNDATION,
+        GENESIS_CORE_DEV,
+        GENESIS_VALIDATOR1,
+        GENESIS_VALIDATOR2,
+        GENESIS_ECOSYSTEM,
+        GENESIS_COMMUNITY,
     ];
 
     // Partition accounts by validator_id to prevent nonce/duplicate collisions.
@@ -679,7 +768,9 @@ fn generate_demo_tx(
     }
 
     let obj_ids: [u8; 8] = [0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17];
-    let prefixes = ["swap:", "lock:", "vote:", "proof:", "cert:", "stream:", "relay:", "index:"];
+    let prefixes = [
+        "swap:", "lock:", "vote:", "proof:", "cert:", "stream:", "relay:", "index:",
+    ];
 
     let action = rng.gen_range(0u8..10);
 
@@ -688,13 +779,16 @@ fn generate_demo_tx(
             let fi = rng.gen_range(0..my_accts.len());
             let mut ti = rng.gen_range(0..all_hexes.len());
             let from_global = start + fi;
-            while ti == from_global { ti = rng.gen_range(0..all_hexes.len()); }
+            while ti == from_global {
+                ti = rng.gen_range(0..all_hexes.len());
+            }
             let from = parse_hex_address(my_accts[fi]).unwrap();
             let to = parse_hex_address(all_hexes[ti]).unwrap();
             // Read on-chain balance and nonce
             let (balance, nonce) = {
                 let db_guard = safe_lock(db);
-                db_guard.get_account(&from)
+                db_guard
+                    .get_account(&from)
                     .map(|a| (a.balance, a.nonce))
                     .unwrap_or((0, 0))
             };
@@ -729,10 +823,21 @@ fn generate_demo_tx(
             let ci = rng.gen_range(0..my_accts.len());
             let creator = parse_hex_address(my_accts[ci]).unwrap();
             let prefix = prefixes[rng.gen_range(0..prefixes.len())];
-            let name = format!("{}v{}:0x{:02x}{:02x}", prefix, validator_id, oid, (epoch % 256) as u8);
+            let name = format!(
+                "{}v{}:0x{:02x}{:02x}",
+                prefix,
+                validator_id,
+                oid,
+                (epoch % 256) as u8
+            );
             let curve = match rng.gen_range(0u8..5) {
-                0 => Some(evaporchain_types::DecayCurve::Linear { rate_per_epoch: rng.gen_range(1..10) }),
-                1 => Some(evaporchain_types::DecayCurve::Asymptotic { floor: rng.gen_range(5..20), half_life }),
+                0 => Some(evaporchain_types::DecayCurve::Linear {
+                    rate_per_epoch: rng.gen_range(1..10),
+                }),
+                1 => Some(evaporchain_types::DecayCurve::Asymptotic {
+                    floor: rng.gen_range(5..20),
+                    half_life,
+                }),
                 _ => None, // default exponential
             };
             let mut tx = Transaction::CreateObject(CreateObjectTx {
@@ -742,6 +847,7 @@ fn generate_demo_tx(
                 half_life,
                 data: name.into_bytes(),
                 decay_curve: curve,
+                lad_mode: None,
                 signature: None,
                 public_key: None,
             });
@@ -954,7 +1060,9 @@ fn parse_args() -> NodeArgs {
 
     let no_da_enforcement = args.iter().any(|a| a == "--no-da-enforcement");
     let light_mode = args.iter().any(|a| a == "--light");
-    let chain_id = args.iter().position(|a| a == "--chain-id")
+    let chain_id = args
+        .iter()
+        .position(|a| a == "--chain-id")
         .and_then(|i| args.get(i + 1))
         .cloned()
         .unwrap_or_else(|| "evaporchain-testnet-1".to_string());
@@ -963,7 +1071,12 @@ fn parse_args() -> NodeArgs {
         .iter()
         .position(|a| a == "--allowed-peers")
         .and_then(|i| args.get(i + 1))
-        .map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+        .map(|v| {
+            v.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
         .unwrap_or_default();
 
     let mut bootstrap_peers = Vec::new();
@@ -1032,10 +1145,15 @@ fn validate_mainnet_strict(args: &NodeArgs) -> Result<(), String> {
         issues.push("--demo generates synthetic txs and is incompatible with --mainnet".into());
     }
     if args.no_da_enforcement {
-        issues.push("--no-da-enforcement bypasses DA attestation and is incompatible with --mainnet".into());
+        issues.push(
+            "--no-da-enforcement bypasses DA attestation and is incompatible with --mainnet".into(),
+        );
     }
     if args.devnet_no_rate_limit {
-        issues.push("--devnet-no-rate-limit disables faucet cooldowns and is incompatible with --mainnet".into());
+        issues.push(
+            "--devnet-no-rate-limit disables faucet cooldowns and is incompatible with --mainnet"
+                .into(),
+        );
     }
     // K-07/K-08: a multi-validator launch without a shared genesis-config
     // produces split-brain (each node generates its own ML-DSA + BLS keys
@@ -1051,7 +1169,8 @@ fn validate_mainnet_strict(args: &NodeArgs) -> Result<(), String> {
     match std::env::var("EVAPORCHAIN_KEY_MASTER") {
         Err(_) => issues.push("EVAPORCHAIN_KEY_MASTER must be set in --mainnet mode".into()),
         Ok(v) if v == DEV_MASTER_KEY => issues.push(
-            "EVAPORCHAIN_KEY_MASTER is set to the dev default; pick a real high-entropy value".into(),
+            "EVAPORCHAIN_KEY_MASTER is set to the dev default; pick a real high-entropy value"
+                .into(),
         ),
         Ok(v) if v.len() < 16 => issues.push(format!(
             "EVAPORCHAIN_KEY_MASTER must be at least 16 chars in --mainnet mode (got {})",
@@ -1114,11 +1233,11 @@ fn validate_mainnet_strict(args: &NodeArgs) -> Result<(), String> {
 /// Return a color escape code based on node_id for visual distinction.
 fn node_color(node_id: &str) -> &'static str {
     match node_id {
-        "node-1" => "\x1b[1;36m",  // cyan
-        "node-2" => "\x1b[1;33m",  // yellow
-        "node-3" => "\x1b[1;35m",  // magenta
-        "node-4" => "\x1b[1;32m",  // green
-        _ => "\x1b[1;37m",         // white
+        "node-1" => "\x1b[1;36m", // cyan
+        "node-2" => "\x1b[1;33m", // yellow
+        "node-3" => "\x1b[1;35m", // magenta
+        "node-4" => "\x1b[1;32m", // green
+        _ => "\x1b[1;37m",        // white
     }
 }
 
@@ -1165,13 +1284,12 @@ fn compute_delegation_slash_pct(
             if stake_total == 0 {
                 return 0.0;
             }
-            let sanov_amount =
-                evaporchain_execution::sanov_slash_helpers::downtime_slash(
-                    stake_total,
-                    SLOTS_PER_DOWNTIME_OBSERVATION,
-                    *missed_blocks,
-                )
-                .unwrap_or(0);
+            let sanov_amount = evaporchain_execution::sanov_slash_helpers::downtime_slash(
+                stake_total,
+                SLOTS_PER_DOWNTIME_OBSERVATION,
+                *missed_blocks,
+            )
+            .unwrap_or(0);
             (sanov_amount as f64 / stake_total as f64).clamp(0.0, 1.0)
         }
     }
@@ -1190,10 +1308,7 @@ const SENTINEL_DEFAULT_STEP_CAP: u64 = 1;
 /// to per-tick step + bounds, writes the new parameter back. Pure no-op
 /// for any parameter with no recorded votes — preserves the doctrine
 /// guarantee that without input the chain holds steady.
-fn autonomic_sentinel_tick(
-    db: &Arc<Mutex<evaporchain_state::RocksDBStateDB>>,
-    current_epoch: u64,
-) {
+fn autonomic_sentinel_tick(db: &Arc<Mutex<evaporchain_state::RocksDBStateDB>>, current_epoch: u64) {
     let lambda = evaporchain_energy_kernel::ChainLambda::new(
         evaporchain_energy_kernel::Lambda::from_epochs(SENTINEL_DEFAULT_HALF_LIFE_EPOCHS),
     );
@@ -1237,7 +1352,12 @@ fn record_block(
     // Record throughput metrics
     {
         let mut t = safe_lock(throughput);
-        t.record_block(block.timestamp, block.transactions.len(), exec_time_us, execution.gas_used);
+        t.record_block(
+            block.timestamp,
+            block.transactions.len(),
+            exec_time_us,
+            execution.gas_used,
+        );
     }
     // Compute total energy from block txs for stats
     let mut tx_creates = 0u64;
@@ -1271,8 +1391,14 @@ fn record_block(
         da_square_size: block.da_row_roots.len(),
         blob_count: block.blob_commitments.len(),
         has_state_commitment: block.state_function_commitment.is_some(),
-        is_anchor: block.state_function_commitment.as_ref().is_some_and(|c| c.is_anchor),
-        anchor_epoch: block.state_function_commitment.as_ref().map_or(0, |c| c.anchor_epoch),
+        is_anchor: block
+            .state_function_commitment
+            .as_ref()
+            .is_some_and(|c| c.is_anchor),
+        anchor_epoch: block
+            .state_function_commitment
+            .as_ref()
+            .map_or(0, |c| c.anchor_epoch),
     };
 
     // Push to block history
@@ -1324,10 +1450,7 @@ fn record_block(
             events,
             block.epoch,
             "evaporated",
-            format!(
-                "{} object(s) EVAPORATED",
-                execution.objects_evaporated
-            ),
+            format!("{} object(s) EVAPORATED", execution.objects_evaporated),
         );
     }
     if tx_creates > 0 {
@@ -1377,12 +1500,9 @@ fn record_block(
                     Some(hex::encode(t.to)),
                     Some(t.amount),
                 ),
-                Transaction::CreateObject(t) => (
-                    "create_object",
-                    hex::encode(t.creator),
-                    None,
-                    None,
-                ),
+                Transaction::CreateObject(t) => {
+                    ("create_object", hex::encode(t.creator), None, None)
+                }
                 Transaction::Refresh(t) => (
                     "refresh",
                     hex::encode(t.object_id),
@@ -1391,7 +1511,8 @@ fn record_block(
                 ),
                 _ => continue,
             };
-            let hash = hex::encode(blake3::hash(&serde_json::to_vec(tx).unwrap_or_default()).as_bytes());
+            let hash =
+                hex::encode(blake3::hash(&serde_json::to_vec(tx).unwrap_or_default()).as_bytes());
             broadcaster.publish(ws::WsEvent::NewTransaction {
                 hash,
                 tx_type: tx_type.to_string(),
@@ -1413,7 +1534,10 @@ fn record_block(
         if execution.objects_entered_grace > 0 {
             broadcaster.publish(ws::WsEvent::ChainEvent {
                 event_type: "grace".to_string(),
-                message: format!("{} object(s) entered grace period", execution.objects_entered_grace),
+                message: format!(
+                    "{} object(s) entered grace period",
+                    execution.objects_entered_grace
+                ),
                 epoch: block.epoch,
                 timestamp_ms: block.timestamp,
             });
@@ -1439,17 +1563,20 @@ fn index_contract_events_from_exec(
     }
     for (contract_id, events) in &grouped {
         let tx_hash = format!("block_{}", block.number);
-        let owned: Vec<evaporchain_script::ContractEvent> = events.iter().map(|e| (*e).clone()).collect();
+        let owned: Vec<evaporchain_script::ContractEvent> =
+            events.iter().map(|e| (*e).clone()).collect();
         log_persist_err(
             "contract_events",
-            chain_store.index_contract_events(
-                block.number,
-                block.epoch,
-                block.timestamp,
-                *contract_id,
-                &tx_hash,
-                &owned,
-            ).map(|_| ()),
+            chain_store
+                .index_contract_events(
+                    block.number,
+                    block.epoch,
+                    block.timestamp,
+                    *contract_id,
+                    &tx_hash,
+                    &owned,
+                )
+                .map(|_| ()),
         );
     }
 }
@@ -1474,7 +1601,10 @@ fn broadcast_contract_events(
 // ──────────────────────────── Genesis NFTs ───────────────────────────────
 
 fn initialize_nft_store() -> NftStore {
-    use api::{GENESIS_FOUNDATION, GENESIS_CORE_DEV, GENESIS_VALIDATOR1, GENESIS_VALIDATOR2, GENESIS_ECOSYSTEM, GENESIS_COMMUNITY};
+    use api::{
+        GENESIS_COMMUNITY, GENESIS_CORE_DEV, GENESIS_ECOSYSTEM, GENESIS_FOUNDATION,
+        GENESIS_VALIDATOR1, GENESIS_VALIDATOR2,
+    };
 
     fn mkhash(seed: &str) -> String {
         blake3::hash(seed.as_bytes()).to_hex().to_string()
@@ -1489,7 +1619,7 @@ fn initialize_nft_store() -> NftStore {
             metadata_hash: mkhash("genesis:001:eternal-flame"),
             energy: 100_000,
             max_energy: 100_000,
-            half_life: 50_000,   // stays alive for weeks
+            half_life: 50_000, // stays alive for weeks
             minted_epoch: 0,
             last_refreshed: 0,
             state: "Active".to_string(),
@@ -1505,7 +1635,7 @@ fn initialize_nft_store() -> NftStore {
             metadata_hash: mkhash("genesis:002:shooting-star"),
             energy: 80_000,
             max_energy: 80_000,
-            half_life: 20_000,   // stays alive for days
+            half_life: 20_000, // stays alive for days
             minted_epoch: 0,
             last_refreshed: 0,
             state: "Active".to_string(),
@@ -1521,7 +1651,7 @@ fn initialize_nft_store() -> NftStore {
             metadata_hash: mkhash("genesis:003:sunset-canvas"),
             energy: 50_000,
             max_energy: 50_000,
-            half_life: 10_000,   // stays alive for days
+            half_life: 10_000, // stays alive for days
             minted_epoch: 0,
             last_refreshed: 0,
             state: "Active".to_string(),
@@ -1537,7 +1667,7 @@ fn initialize_nft_store() -> NftStore {
             metadata_hash: mkhash("genesis:004:quantum-bloom"),
             energy: 20_000,
             max_energy: 20_000,
-            half_life: 1_000,    // visible decay over hours
+            half_life: 1_000, // visible decay over hours
             minted_epoch: 0,
             last_refreshed: 0,
             state: "Active".to_string(),
@@ -1553,7 +1683,7 @@ fn initialize_nft_store() -> NftStore {
             metadata_hash: mkhash("genesis:005:first-light"),
             energy: 5_000,
             max_energy: 5_000,
-            half_life: 100,      // decays visibly — shows the concept
+            half_life: 100, // decays visibly — shows the concept
             minted_epoch: 0,
             last_refreshed: 0,
             state: "Active".to_string(),
@@ -1569,7 +1699,7 @@ fn initialize_nft_store() -> NftStore {
             metadata_hash: mkhash("genesis:006:binary-requiem"),
             energy: 500,
             max_energy: 500,
-            half_life: 20,       // dies fast — demonstrates evaporation
+            half_life: 20, // dies fast — demonstrates evaporation
             minted_epoch: 0,
             last_refreshed: 0,
             state: "Active".to_string(),
@@ -1587,7 +1717,10 @@ fn initialize_nft_store() -> NftStore {
 // ──────────────────────────── Genesis Tokens ─────────────────────────────
 
 fn initialize_token_store() -> TokenStore {
-    use api::{GENESIS_FOUNDATION, GENESIS_CORE_DEV, GENESIS_VALIDATOR1, GENESIS_VALIDATOR2, GENESIS_ECOSYSTEM, GENESIS_COMMUNITY};
+    use api::{
+        GENESIS_COMMUNITY, GENESIS_CORE_DEV, GENESIS_ECOSYSTEM, GENESIS_FOUNDATION,
+        GENESIS_VALIDATOR1, GENESIS_VALIDATOR2,
+    };
 
     let f = |h: &str| format!("0x{}", h);
 
@@ -1610,22 +1743,37 @@ fn initialize_token_store() -> TokenStore {
     TokenStore {
         tokens: vec![
             DeployedToken {
-                id: 1, name: "EvaporChain".into(), symbol: "EVAP".into(),
-                total_supply: 962_716, decay_half_life: 100_000,  // barely decays
-                deployed_epoch: 0, deployer: f(GENESIS_FOUNDATION),
-                balances: evap_balances, last_decay_epoch: 0,
+                id: 1,
+                name: "EvaporChain".into(),
+                symbol: "EVAP".into(),
+                total_supply: 962_716,
+                decay_half_life: 100_000, // barely decays
+                deployed_epoch: 0,
+                deployer: f(GENESIS_FOUNDATION),
+                balances: evap_balances,
+                last_decay_epoch: 0,
             },
             DeployedToken {
-                id: 2, name: "Flux Token".into(), symbol: "FLUX".into(),
-                total_supply: 183_272, decay_half_life: 5_000,  // slow decay over hours
-                deployed_epoch: 0, deployer: f(GENESIS_FOUNDATION),
-                balances: flux_balances, last_decay_epoch: 0,
+                id: 2,
+                name: "Flux Token".into(),
+                symbol: "FLUX".into(),
+                total_supply: 183_272,
+                decay_half_life: 5_000, // slow decay over hours
+                deployed_epoch: 0,
+                deployer: f(GENESIS_FOUNDATION),
+                balances: flux_balances,
+                last_decay_epoch: 0,
             },
             DeployedToken {
-                id: 3, name: "Thermal Credits".into(), symbol: "HEAT".into(),
-                total_supply: 14_258, decay_half_life: 100,  // decays fast — demo token
-                deployed_epoch: 0, deployer: f(GENESIS_COMMUNITY),
-                balances: heat_balances, last_decay_epoch: 0,
+                id: 3,
+                name: "Thermal Credits".into(),
+                symbol: "HEAT".into(),
+                total_supply: 14_258,
+                decay_half_life: 100, // decays fast — demo token
+                deployed_epoch: 0,
+                deployer: f(GENESIS_COMMUNITY),
+                balances: heat_balances,
+                last_decay_epoch: 0,
             },
         ],
         next_id: 4,
@@ -1639,21 +1787,43 @@ fn initialize_staking_store() -> StakingStore {
     let f = |h: &str| format!("0x{}", h);
 
     StakingStore {
-        pools: vec![
-            StakingPool {
-                id: 1,
-                name: "Genesis Validator Pool".into(),
-                reward_rate: 100,
-                reward_decay_hl: 10_000,  // rewards last long enough to claim
-                total_staked: 93_714,
-                created_epoch: 0,
-                stakers: vec![
-                    Staker { address: f(GENESIS_VALIDATOR1), amount: 48_237, staked_epoch: 0, pending_rewards: 0, last_claim_epoch: 0, total_claimed: 0, total_decayed: 0 },
-                    Staker { address: f(GENESIS_VALIDATOR2), amount: 31_492, staked_epoch: 0, pending_rewards: 0, last_claim_epoch: 0, total_claimed: 0, total_decayed: 0 },
-                    Staker { address: f(GENESIS_FOUNDATION), amount: 13_985, staked_epoch: 0, pending_rewards: 0, last_claim_epoch: 0, total_claimed: 0, total_decayed: 0 },
-                ],
-            },
-        ],
+        pools: vec![StakingPool {
+            id: 1,
+            name: "Genesis Validator Pool".into(),
+            reward_rate: 100,
+            reward_decay_hl: 10_000, // rewards last long enough to claim
+            total_staked: 93_714,
+            created_epoch: 0,
+            stakers: vec![
+                Staker {
+                    address: f(GENESIS_VALIDATOR1),
+                    amount: 48_237,
+                    staked_epoch: 0,
+                    pending_rewards: 0,
+                    last_claim_epoch: 0,
+                    total_claimed: 0,
+                    total_decayed: 0,
+                },
+                Staker {
+                    address: f(GENESIS_VALIDATOR2),
+                    amount: 31_492,
+                    staked_epoch: 0,
+                    pending_rewards: 0,
+                    last_claim_epoch: 0,
+                    total_claimed: 0,
+                    total_decayed: 0,
+                },
+                Staker {
+                    address: f(GENESIS_FOUNDATION),
+                    amount: 13_985,
+                    staked_epoch: 0,
+                    pending_rewards: 0,
+                    last_claim_epoch: 0,
+                    total_claimed: 0,
+                    total_decayed: 0,
+                },
+            ],
+        }],
         next_id: 2,
     }
 }
@@ -1661,7 +1831,10 @@ fn initialize_staking_store() -> StakingStore {
 // ──────────────────────────── Genesis DAO ────────────────────────────────
 
 fn initialize_dao_store() -> DAOStore {
-    use api::{GENESIS_FOUNDATION, GENESIS_CORE_DEV, GENESIS_VALIDATOR1, GENESIS_VALIDATOR2, GENESIS_ECOSYSTEM, GENESIS_COMMUNITY};
+    use api::{
+        GENESIS_COMMUNITY, GENESIS_CORE_DEV, GENESIS_ECOSYSTEM, GENESIS_FOUNDATION,
+        GENESIS_VALIDATOR1, GENESIS_VALIDATOR2,
+    };
     let f = |h: &str| format!("0x{}", h);
 
     DAOStore {
@@ -1777,12 +1950,14 @@ async fn main() -> Result<()> {
     // ── Persistent storage ──
     let state_path = format!("{}/state", args.data_dir);
     let chain_path = format!("{}/chain", args.data_dir);
-    println!("{} \x1b[1mData directory:\x1b[0m {}", node_tag, args.data_dir);
+    println!(
+        "{} \x1b[1mData directory:\x1b[0m {}",
+        node_tag, args.data_dir
+    );
 
-    let state_db = RocksDBStateDB::open(&state_path)
-        .expect("Failed to open RocksDB state database");
-    let chain_store = Arc::new(ChainStore::open(&chain_path)
-        .expect("Failed to open ChainStore"));
+    let state_db =
+        RocksDBStateDB::open(&state_path).expect("Failed to open RocksDB state database");
+    let chain_store = Arc::new(ChainStore::open(&chain_path).expect("Failed to open ChainStore"));
     let is_fresh = !state_db.has_data();
 
     let db = Arc::new(Mutex::new(state_db));
@@ -1793,17 +1968,22 @@ async fn main() -> Result<()> {
     // Closes the K-07/K-08 split-brain by having every node start from the
     // same genesis-supplied BLS pubkeys rather than its own freshly-generated
     // ones.
-    let mut genesis_config_loaded:
-        Option<evaporchain_types::genesis::GenesisConfig> = None;
+    let mut genesis_config_loaded: Option<evaporchain_types::genesis::GenesisConfig> = None;
     if is_fresh {
         let mut db = safe_lock(&db);
         // Try restoring from a local snapshot first (e.g., from a previous sync)
-        if let Some((height, _epoch, _root)) = sync::try_restore_from_snapshot(&mut *db, &chain_store, &node_tag) {
+        if let Some((height, _epoch, _root)) =
+            sync::try_restore_from_snapshot(&mut *db, &chain_store, &node_tag)
+        {
             restored_height = Some(height);
         } else if let Some(ref genesis_path) = args.genesis_config {
-            println!("{} \x1b[1mFresh start — loading genesis from config: {}\x1b[0m", node_tag, genesis_path);
-            let json = std::fs::read_to_string(genesis_path)
-                .unwrap_or_else(|e| panic!("Failed to read genesis config {}: {}", genesis_path, e));
+            println!(
+                "{} \x1b[1mFresh start — loading genesis from config: {}\x1b[0m",
+                node_tag, genesis_path
+            );
+            let json = std::fs::read_to_string(genesis_path).unwrap_or_else(|e| {
+                panic!("Failed to read genesis config {}: {}", genesis_path, e)
+            });
             let config = evaporchain_execution::genesis::load_genesis_config(&json)
                 .unwrap_or_else(|e| panic!("Invalid genesis config: {}", e));
             let result = evaporchain_execution::genesis::initialize_genesis(&mut *db, &config)
@@ -1817,11 +1997,17 @@ async fn main() -> Result<()> {
                 seed_demo_objects(&mut db, &node_tag);
             }
         } else {
-            println!("{} \x1b[1mFresh start — loading genesis state:\x1b[0m", node_tag);
+            println!(
+                "{} \x1b[1mFresh start — loading genesis state:\x1b[0m",
+                node_tag
+            );
             initialize_genesis(&mut db, &node_tag);
         }
     } else {
-        println!("{} \x1b[1;32mResuming from persistent state\x1b[0m", node_tag);
+        println!(
+            "{} \x1b[1;32mResuming from persistent state\x1b[0m",
+            node_tag
+        );
         let db = safe_lock(&db);
         println!(
             "{}   {} accounts, {} objects, {} ghosts loaded from disk",
@@ -1838,9 +2024,7 @@ async fn main() -> Result<()> {
     if genesis_config_loaded.is_none() {
         if let Some(ref genesis_path) = args.genesis_config {
             if let Ok(json) = std::fs::read_to_string(genesis_path) {
-                if let Ok(config) =
-                    evaporchain_execution::genesis::load_genesis_config(&json)
-                {
+                if let Ok(config) = evaporchain_execution::genesis::load_genesis_config(&json) {
                     genesis_config_loaded = Some(config);
                 }
             }
@@ -1914,9 +2098,7 @@ async fn main() -> Result<()> {
         } else {
             #[cfg(not(any(test, feature = "test-utils", debug_assertions)))]
             {
-                eprintln!(
-                    "\x1b[31mFATAL: Cannot start without --prove in release mode.\x1b[0m"
-                );
+                eprintln!("\x1b[31mFATAL: Cannot start without --prove in release mode.\x1b[0m");
                 eprintln!(
                     "\x1b[31m  Use --prove for production, or --mock-prove for testnet.\x1b[0m"
                 );
@@ -1977,15 +2159,10 @@ async fn main() -> Result<()> {
             },
             args.bootstrap_peers.len()
         );
-        let (channels, _handle, peer_id) =
-            P2pNetworkService::start(net_config).await.map_err(|e| {
-                anyhow::anyhow!("Failed to start network: {}", e)
-            })?;
-        println!(
-            "{} \x1b[36mPeer ID: {}\x1b[0m",
-            node_tag,
-            peer_id
-        );
+        let (channels, _handle, peer_id) = P2pNetworkService::start(net_config)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to start network: {}", e))?;
+        println!("{} \x1b[36mPeer ID: {}\x1b[0m", node_tag, peer_id);
         // Use the network's live peer count
         peer_count = channels.peer_count.clone();
         Some(channels)
@@ -2057,7 +2234,10 @@ async fn main() -> Result<()> {
     }
 
     // ── Shared consensus ──
-    let consensus = Arc::new(Mutex::new(MockConsensus::new_with_gas_limit(GRACE_PERIOD, args.block_gas_limit)));
+    let consensus = Arc::new(Mutex::new(MockConsensus::new_with_gas_limit(
+        GRACE_PERIOD,
+        args.block_gas_limit,
+    )));
 
     // Build Tendermint consensus if enabled
     let tendermint = if args.tendermint_mode {
@@ -2120,7 +2300,12 @@ async fn main() -> Result<()> {
             }
         }
         let vs = ValidatorSet::with_validators(validators);
-        let mut tc = TendermintConsensus::new_with_gas_limit(args.validator_id, GRACE_PERIOD, vs, args.block_gas_limit);
+        let mut tc = TendermintConsensus::new_with_gas_limit(
+            args.validator_id,
+            GRACE_PERIOD,
+            vs,
+            args.block_gas_limit,
+        );
         // Inject Nova proof verifier into consensus
         tc.set_proof_verifier(
             Box::new(ChainProofVerifier {
@@ -2148,33 +2333,31 @@ async fn main() -> Result<()> {
         let bls_key_path = pick_active_bls_key_path(&args.data_dir, &node_tag)
             .unwrap_or_else(|| format!("{}/bls_key.bin", args.data_dir));
         let validator_passphrase = evaporchain_crypto::bls_key_store::passphrase_from_env();
-        let write_bls_secret = |path: &str, sk: &[u8]| {
-            match validator_passphrase.as_deref() {
-                Some(pass) => match evaporchain_crypto::bls_key_store::encrypt_bls_secret(sk, pass) {
-                    Ok(blob) => {
-                        write_secret_file(path, &blob);
-                        println!(
+        let write_bls_secret = |path: &str, sk: &[u8]| match validator_passphrase.as_deref() {
+            Some(pass) => match evaporchain_crypto::bls_key_store::encrypt_bls_secret(sk, pass) {
+                Ok(blob) => {
+                    write_secret_file(path, &blob);
+                    println!(
                             "{} \x1b[1;36mBLS validator key encrypted at rest\x1b[0m (Argon2id+XChaCha20-Poly1305)",
                             node_tag
                         );
-                    }
-                    Err(e) => {
-                        eprintln!(
+                }
+                Err(e) => {
+                    eprintln!(
                             "{} \x1b[31mFailed to encrypt BLS key ({}); falling back to plaintext\x1b[0m",
                             node_tag, e
                         );
-                        write_secret_file(path, sk);
-                    }
-                },
-                None => {
                     write_secret_file(path, sk);
-                    eprintln!(
-                        "{} \x1b[33mWARNING: BLS validator key written in plaintext.\x1b[0m \
-                         Set {} to enable encrypted-at-rest storage.",
-                        node_tag,
-                        evaporchain_crypto::bls_key_store::ENV_PASSPHRASE
-                    );
                 }
+            },
+            None => {
+                write_secret_file(path, sk);
+                eprintln!(
+                    "{} \x1b[33mWARNING: BLS validator key written in plaintext.\x1b[0m \
+                         Set {} to enable encrypted-at-rest storage.",
+                    node_tag,
+                    evaporchain_crypto::bls_key_store::ENV_PASSPHRASE
+                );
             }
         };
         let bls_kp = if let Ok(file_bytes) = std::fs::read(&bls_key_path) {
@@ -2190,29 +2373,34 @@ async fn main() -> Result<()> {
                     }
                     Some(file_bytes)
                 }
-                evaporchain_crypto::bls_key_store::ENCRYPTED_LEN => match validator_passphrase.as_deref() {
-                    Some(pass) => match evaporchain_crypto::bls_key_store::decrypt_bls_secret(&file_bytes, pass) {
-                        Ok(plain) => Some(plain.to_vec()),
-                        Err(e) => {
-                            eprintln!(
+                evaporchain_crypto::bls_key_store::ENCRYPTED_LEN => {
+                    match validator_passphrase.as_deref() {
+                        Some(pass) => match evaporchain_crypto::bls_key_store::decrypt_bls_secret(
+                            &file_bytes,
+                            pass,
+                        ) {
+                            Ok(plain) => Some(plain.to_vec()),
+                            Err(e) => {
+                                eprintln!(
                                 "{} \x1b[31mBLS key decryption failed ({}); refusing to overwrite — set the correct {} or remove {}\x1b[0m",
                                 node_tag,
                                 e,
                                 evaporchain_crypto::bls_key_store::ENV_PASSPHRASE,
                                 bls_key_path
                             );
-                            std::process::exit(1);
-                        }
-                    },
-                    None => {
-                        eprintln!(
+                                std::process::exit(1);
+                            }
+                        },
+                        None => {
+                            eprintln!(
                             "{} \x1b[31mBLS key file is encrypted but {} is not set; refusing to overwrite\x1b[0m",
                             node_tag,
                             evaporchain_crypto::bls_key_store::ENV_PASSPHRASE
                         );
-                        std::process::exit(1);
+                            std::process::exit(1);
+                        }
                     }
-                },
+                }
                 other => {
                     eprintln!(
                         "{} BLS key file wrong size ({}B), regenerating",
@@ -2221,9 +2409,9 @@ async fn main() -> Result<()> {
                     None
                 }
             };
-            match secret_bytes_opt
-                .and_then(|sb| evaporchain_crypto::signatures::BlsKeypair::from_secret_bytes(&sb).ok())
-            {
+            match secret_bytes_opt.and_then(|sb| {
+                evaporchain_crypto::signatures::BlsKeypair::from_secret_bytes(&sb).ok()
+            }) {
                 Some(kp) => {
                     println!(
                         "{} \x1b[1;36mBLS12-381 keypair loaded from disk\x1b[0m (pk={}B)",
@@ -2262,14 +2450,8 @@ async fn main() -> Result<()> {
                             "{} \x1b[1;31mFATAL: BLS key mismatch for validator-id={}\x1b[0m",
                             node_tag, args.validator_id
                         );
-                        eprintln!(
-                            "  expected (genesis): {}",
-                            expected
-                        );
-                        eprintln!(
-                            "  actual (on-disk):   {}",
-                            actual
-                        );
+                        eprintln!("  expected (genesis): {}", expected);
+                        eprintln!("  actual (on-disk):   {}", actual);
                         eprintln!(
                             "  Either restore the correct bls_key.bin for this validator-id, \
                              or update genesis with the new pubkey and redistribute."
@@ -2307,9 +2489,19 @@ async fn main() -> Result<()> {
                     eprintln!("{} \x1b[31m--checkpoint-state-root required with --checkpoint-height\x1b[0m", node_tag);
                     std::process::exit(1);
                 });
-            let cp_hash = args.checkpoint_block_hash.as_deref()
+            let cp_hash = args
+                .checkpoint_block_hash
+                .as_deref()
                 .and_then(|h| hex::decode(h.trim_start_matches("0x")).ok())
-                .and_then(|b| if b.len() == 32 { let mut a = [0u8; 32]; a.copy_from_slice(&b); Some(a) } else { None })
+                .and_then(|b| {
+                    if b.len() == 32 {
+                        let mut a = [0u8; 32];
+                        a.copy_from_slice(&b);
+                        Some(a)
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or([0u8; 32]);
             tc.set_trusted_checkpoint(cp_height, cp_root, cp_hash);
             println!(
@@ -2319,14 +2511,32 @@ async fn main() -> Result<()> {
         } else if let Some(ref genesis_path) = args.genesis_config {
             // Try loading checkpoint from genesis config file
             if let Ok(json) = std::fs::read_to_string(genesis_path) {
-                if let Ok(config) = serde_json::from_str::<evaporchain_types::genesis::GenesisConfig>(&json) {
+                if let Ok(config) =
+                    serde_json::from_str::<evaporchain_types::genesis::GenesisConfig>(&json)
+                {
                     if let Some(ref cp) = config.trusted_checkpoint {
                         let cp_root = hex::decode(cp.state_root.trim_start_matches("0x"))
                             .ok()
-                            .and_then(|b| if b.len() == 32 { let mut a = [0u8; 32]; a.copy_from_slice(&b); Some(a) } else { None });
+                            .and_then(|b| {
+                                if b.len() == 32 {
+                                    let mut a = [0u8; 32];
+                                    a.copy_from_slice(&b);
+                                    Some(a)
+                                } else {
+                                    None
+                                }
+                            });
                         let cp_hash = hex::decode(cp.block_hash.trim_start_matches("0x"))
                             .ok()
-                            .and_then(|b| if b.len() == 32 { let mut a = [0u8; 32]; a.copy_from_slice(&b); Some(a) } else { None })
+                            .and_then(|b| {
+                                if b.len() == 32 {
+                                    let mut a = [0u8; 32];
+                                    a.copy_from_slice(&b);
+                                    Some(a)
+                                } else {
+                                    None
+                                }
+                            })
                             .unwrap_or([0u8; 32]);
                         if let Some(root) = cp_root {
                             tc.set_trusted_checkpoint(cp.height, root, cp_hash);
@@ -2357,14 +2567,20 @@ async fn main() -> Result<()> {
                 c.restore_state(block_number, epoch, parent_hash);
                 println!(
                     "{} \x1b[1;32mTendermint restored:\x1b[0m block={}, epoch={}, parent_hash={}…",
-                    node_tag, block_number, epoch, &hex::encode(parent_hash)[..16]
+                    node_tag,
+                    block_number,
+                    epoch,
+                    &hex::encode(parent_hash)[..16]
                 );
             } else {
                 let mut c = safe_lock(&consensus);
                 c.restore_state(block_number, epoch, parent_hash);
                 println!(
                     "{} \x1b[1;32mConsensus restored:\x1b[0m block={}, epoch={}, parent_hash={}…",
-                    node_tag, block_number, epoch, &hex::encode(parent_hash)[..16]
+                    node_tag,
+                    block_number,
+                    epoch,
+                    &hex::encode(parent_hash)[..16]
                 );
             }
             // Punch-list 4c: now that current_epoch is known, purge any
@@ -2429,35 +2645,39 @@ async fn main() -> Result<()> {
                     c.mempool.submit(tx.clone());
                 }
             }
-            println!("{} \x1b[32mRestored {} transactions from mempool\x1b[0m", node_tag, saved_txs.len());
+            println!(
+                "{} \x1b[32mRestored {} transactions from mempool\x1b[0m",
+                node_tag,
+                saved_txs.len()
+            );
         }
     }
 
     // ── API shared state ──
-    let block_history: Arc<Mutex<VecDeque<BlockRecord>>> = Arc::new(Mutex::new(
-        if is_fresh {
-            VecDeque::with_capacity(500)
-        } else {
-            let history = chain_store.load_block_history(500);
-            println!("{} \x1b[32mRestored {} blocks from disk\x1b[0m", node_tag, history.len());
-            history
-        }
-    ));
-    let chain_stats: Arc<Mutex<ChainStats>> = Arc::new(Mutex::new(
-        if is_fresh {
-            ChainStats::new()
-        } else {
-            chain_store.load_chain_stats().unwrap_or_else(ChainStats::new)
-        }
-    ));
+    let block_history: Arc<Mutex<VecDeque<BlockRecord>>> = Arc::new(Mutex::new(if is_fresh {
+        VecDeque::with_capacity(500)
+    } else {
+        let history = chain_store.load_block_history(500);
+        println!(
+            "{} \x1b[32mRestored {} blocks from disk\x1b[0m",
+            node_tag,
+            history.len()
+        );
+        history
+    }));
+    let chain_stats: Arc<Mutex<ChainStats>> = Arc::new(Mutex::new(if is_fresh {
+        ChainStats::new()
+    } else {
+        chain_store
+            .load_chain_stats()
+            .unwrap_or_else(ChainStats::new)
+    }));
     let throughput: Arc<Mutex<ThroughputTracker>> = Arc::new(Mutex::new(ThroughputTracker::new()));
-    let events: Arc<Mutex<VecDeque<EventRecord>>> = Arc::new(Mutex::new(
-        if is_fresh {
-            VecDeque::with_capacity(200)
-        } else {
-            chain_store.load_events()
-        }
-    ));
+    let events: Arc<Mutex<VecDeque<EventRecord>>> = Arc::new(Mutex::new(if is_fresh {
+        VecDeque::with_capacity(200)
+    } else {
+        chain_store.load_events()
+    }));
     let start_time = Instant::now();
     let ws_broadcaster = Arc::new(ws::WsBroadcaster::new(1024));
 
@@ -2468,7 +2688,10 @@ async fn main() -> Result<()> {
     let da_2d_store: Arc<Mutex<BTreeMap<u64, evaporchain_da::block_da_2d::BlockDA2DPackage>>> =
         Arc::new(Mutex::new(BTreeMap::new()));
     if da_restored_count > 0 {
-        println!("{} \x1b[36mDA: restored {} shard packages from disk\x1b[0m", node_tag, da_restored_count);
+        println!(
+            "{} \x1b[36mDA: restored {} shard packages from disk\x1b[0m",
+            node_tag, da_restored_count
+        );
     }
 
     // ── Oracle + Sharding Bridges ──
@@ -2487,9 +2710,8 @@ async fn main() -> Result<()> {
         ob.start_round(elexon_integration::HBCT_FEED_KEY);
     }
     let elexon_feed = elexon_integration::production_feed(0, 12);
-    let shard_bridge: Arc<Mutex<shard_bridge::ShardBridge>> = Arc::new(Mutex::new(
-        shard_bridge::ShardBridge::new(16),
-    ));
+    let shard_bridge: Arc<Mutex<shard_bridge::ShardBridge>> =
+        Arc::new(Mutex::new(shard_bridge::ShardBridge::new(16)));
 
     // ── Frontier Primitives ──
     // Energy-Annotated Verkle Trie + PoHA + Anchor-based consensus
@@ -2500,7 +2722,10 @@ async fn main() -> Result<()> {
         let mut fs = safe_lock(&frontier_state);
         let poha_loaded = chain_store.load_poha_state(&mut fs.poha);
         if poha_loaded > 0 {
-            println!("{} \x1b[35mPoHA: restored {} certs/ghosts from disk\x1b[0m", node_tag, poha_loaded);
+            println!(
+                "{} \x1b[35mPoHA: restored {} certs/ghosts from disk\x1b[0m",
+                node_tag, poha_loaded
+            );
         }
     }
     println!(
@@ -2531,7 +2756,9 @@ async fn main() -> Result<()> {
             if !scripts.is_empty() || !templates.is_empty() {
                 println!(
                     "{} \x1b[32mContracts restored: {} scripts, {} templates\x1b[0m",
-                    node_tag, scripts.len(), templates.len()
+                    node_tag,
+                    scripts.len(),
+                    templates.len()
                 );
             }
         }
@@ -2601,8 +2828,7 @@ async fn main() -> Result<()> {
     if args.api_mode {
         // Initialize user database for wallet/auth system
         let user_db = Arc::new(
-            user_db::UserDb::open("evaporchain_users.db")
-                .expect("Failed to open user database"),
+            user_db::UserDb::open("evaporchain_users.db").expect("Failed to open user database"),
         );
         let auth_state = Arc::new(auth::AuthState {
             user_db,
@@ -2613,7 +2839,10 @@ async fn main() -> Result<()> {
 
         // Initialize or restore DeFi stores
         let (nft_store, token_store, staking_store, dao_store) = if is_fresh {
-            println!("{} \x1b[35mDeFi modules: 6 NFTs, 3 tokens, 1 staking pool, 4 DAO proposals\x1b[0m", node_tag);
+            println!(
+                "{} \x1b[35mDeFi modules: 6 NFTs, 3 tokens, 1 staking pool, 4 DAO proposals\x1b[0m",
+                node_tag
+            );
             let ns = initialize_nft_store();
             let ts = initialize_token_store();
             let ss = initialize_staking_store();
@@ -2623,21 +2852,42 @@ async fn main() -> Result<()> {
             log_persist_err("token_store", chain_store.save_token_store(&ts));
             log_persist_err("staking_store", chain_store.save_staking_store(&ss));
             log_persist_err("dao_store", chain_store.save_dao_store(&ds));
-            (Arc::new(Mutex::new(ns)), Arc::new(Mutex::new(ts)), Arc::new(Mutex::new(ss)), Arc::new(Mutex::new(ds)))
+            (
+                Arc::new(Mutex::new(ns)),
+                Arc::new(Mutex::new(ts)),
+                Arc::new(Mutex::new(ss)),
+                Arc::new(Mutex::new(ds)),
+            )
         } else {
-            let ns = chain_store.load_nft_store().unwrap_or_else(initialize_nft_store);
-            let ts = chain_store.load_token_store().unwrap_or_else(initialize_token_store);
-            let ss = chain_store.load_staking_store().unwrap_or_else(initialize_staking_store);
-            let ds = chain_store.load_dao_store().unwrap_or_else(initialize_dao_store);
+            let ns = chain_store
+                .load_nft_store()
+                .unwrap_or_else(initialize_nft_store);
+            let ts = chain_store
+                .load_token_store()
+                .unwrap_or_else(initialize_token_store);
+            let ss = chain_store
+                .load_staking_store()
+                .unwrap_or_else(initialize_staking_store);
+            let ds = chain_store
+                .load_dao_store()
+                .unwrap_or_else(initialize_dao_store);
             println!("{} \x1b[32mDeFi stores restored: {} NFTs, {} tokens, {} staking pools, {} proposals\x1b[0m",
                 node_tag, ns.tokens.len(), ts.tokens.len(), ss.pools.len(), ds.proposals.len());
-            (Arc::new(Mutex::new(ns)), Arc::new(Mutex::new(ts)), Arc::new(Mutex::new(ss)), Arc::new(Mutex::new(ds)))
+            (
+                Arc::new(Mutex::new(ns)),
+                Arc::new(Mutex::new(ts)),
+                Arc::new(Mutex::new(ss)),
+                Arc::new(Mutex::new(ds)),
+            )
         };
 
         // Generate node-level ML-DSA keypair for signing API-submitted transactions
         let node_keypair = Arc::new(evaporchain_crypto::signatures::MlDsaKeypair::generate());
-        println!("{} \x1b[1;36mNode signing keypair generated\x1b[0m (ML-DSA Dilithium3, pk={}B)",
-            node_tag, node_keypair.public_key().len());
+        println!(
+            "{} \x1b[1;36mNode signing keypair generated\x1b[0m (ML-DSA Dilithium3, pk={}B)",
+            node_tag,
+            node_keypair.public_key().len()
+        );
 
         let api_state = Arc::new(ApiState {
             db: Arc::clone(&db),
@@ -2676,12 +2926,14 @@ async fn main() -> Result<()> {
             chain_id: args.chain_id.clone(),
             four_act_snapshot: Arc::new(Mutex::new(api::FourActSnapshot::default())),
             hbct_book: Arc::new(Mutex::new(evaporchain_hbct::HbctBook::new())),
-            hbct_oracle: Arc::new(Mutex::new(evaporchain_hbct::oracle::MockOracleFeed::default())),
+            hbct_oracle: Arc::new(Mutex::new(
+                evaporchain_hbct::oracle::MockOracleFeed::default(),
+            )),
             // 1_000_000-energy quantum: per doctrine §4.1 #3 the tick
             // rate is governance-set; this is a launch placeholder.
-            lamport_clock: Arc::new(Mutex::new(
-                evaporchain_decay_lamport::LamportClock::new(1_000_000),
-            )),
+            lamport_clock: Arc::new(Mutex::new(evaporchain_decay_lamport::LamportClock::new(
+                1_000_000,
+            ))),
             // Patronage Covenants §4.1 #13. Patronage namespace = [0xFF; 4].
             // Pool pre-seeded with 1B energy for demo pledges.
             patronage_book: {
@@ -2708,16 +2960,14 @@ async fn main() -> Result<()> {
                 Arc::new(Mutex::new(reg))
             },
             dsn_window: {
-                let window = evaporchain_dsn::DsnWindow::new(32)
-                    .expect("window_depth=32 is valid");
+                let window = evaporchain_dsn::DsnWindow::new(32).expect("window_depth=32 is valid");
                 Arc::new(Mutex::new(window))
             },
             fee_state: Arc::new(Mutex::new(
                 evaporchain_fee_controller::FeeState::at_equilibrium(1_000_000),
             )),
             pnt: Arc::new(Mutex::new(
-                evaporchain_pnt::PhasedNullifierTree::new(16)
-                    .expect("window_depth=16 is valid"),
+                evaporchain_pnt::PhasedNullifierTree::new(16).expect("window_depth=16 is valid"),
             )),
         });
         // Keep one Arc<ApiState> for the block-applying loop so it can
@@ -2746,7 +2996,9 @@ async fn main() -> Result<()> {
             for line in stdin.lock().lines() {
                 match line {
                     Ok(line) => {
-                        if let Some(tx) = parse_stdin_command(&line, &stdin_keypair, &stdin_chain_id) {
+                        if let Some(tx) =
+                            parse_stdin_command(&line, &stdin_keypair, &stdin_chain_id)
+                        {
                             let mut c = safe_lock(&consensus_tx);
                             c.mempool.submit(tx);
                             println!(
@@ -2794,7 +3046,9 @@ async fn main() -> Result<()> {
             Some(ch.shard_cache),
         )
     } else {
-        (None, None, None, None, None, None, None, None, None, None, None, None, None)
+        (
+            None, None, None, None, None, None, None, None, None, None, None, None, None,
+        )
     };
 
     // Broadcast our BLS KeyAnnounce to peers once network is ready
@@ -2804,7 +3058,10 @@ async fn main() -> Result<()> {
             if let Some(ref sender) = consensus_net_sender {
                 if let Ok(data) = serde_json::to_vec(&key_msg) {
                     let _ = sender.try_send(data);
-                    println!("{} \x1b[1;36mBLS KeyAnnounce broadcast to peers\x1b[0m", node_tag);
+                    println!(
+                        "{} \x1b[1;36mBLS KeyAnnounce broadcast to peers\x1b[0m",
+                        node_tag
+                    );
                 }
             }
         }
@@ -2836,7 +3093,10 @@ async fn main() -> Result<()> {
 
     // ── Generate demo signing keypairs (ML-DSA / Dilithium3) ──
     let demo_keypairs: [MlDsaKeypair; 6] = if args.demo_mode {
-        println!("{} \x1b[36mGenerating 6 ML-DSA keypairs for demo signatures...\x1b[0m", node_tag);
+        println!(
+            "{} \x1b[36mGenerating 6 ML-DSA keypairs for demo signatures...\x1b[0m",
+            node_tag
+        );
         let kps = [
             MlDsaKeypair::generate(),
             MlDsaKeypair::generate(),
@@ -2884,7 +3144,8 @@ async fn main() -> Result<()> {
             if let Some(ref tc_ref) = tendermint {
                 let tc = safe_lock(tc_ref);
                 let has_all_keys = cert.signer_ids.iter().all(|&vid| {
-                    tc.validator_set().get(vid)
+                    tc.validator_set()
+                        .get(vid)
                         .is_some_and(|v| v.bls_public_key.is_some())
                 });
                 if has_all_keys && !tc.verify_commit_certificate(cert) {
@@ -2933,17 +3194,33 @@ async fn main() -> Result<()> {
 
                 let exec_elapsed_us = exec_start.elapsed().as_micros() as u64;
                 record_block(
-                    block_history, chain_stats, events, throughput,
+                    block_history,
+                    chain_stats,
+                    events,
+                    throughput,
                     Some(ws_broadcaster),
-                    &result.block, &result.execution,
-                    obj_count, ghost_count_val, exec_elapsed_us,
+                    &result.block,
+                    &result.execution,
+                    obj_count,
+                    ghost_count_val,
+                    exec_elapsed_us,
                 );
 
-                fatal_persist_err("consensus_meta", chain_store.save_consensus_meta(
-                    result.block.number, result.block.epoch, result.block.parent_hash,
-                ));
+                fatal_persist_err(
+                    "consensus_meta",
+                    chain_store.save_consensus_meta(
+                        result.block.number,
+                        result.block.epoch,
+                        result.block.parent_hash,
+                    ),
+                );
                 fatal_persist_err("full_block", chain_store.save_full_block(&result.block));
-                log_persist_err("tx_index", chain_store.index_block_transactions(&result.block).map(|_| ()));
+                log_persist_err(
+                    "tx_index",
+                    chain_store
+                        .index_block_transactions(&result.block)
+                        .map(|_| ()),
+                );
                 index_contract_events_from_exec(chain_store, &result.block, &result.execution);
                 {
                     let history = safe_lock(block_history);
@@ -2961,13 +3238,14 @@ async fn main() -> Result<()> {
                 }
                 // Persist mempool
                 {
-                    let pending: Vec<evaporchain_types::Transaction> = if let Some(ref tc_ref) = tendermint {
-                        let c = safe_lock(tc_ref);
-                        c.mempool.pending().iter().cloned().collect()
-                    } else {
-                        let c = safe_lock(consensus);
-                        c.mempool.pending().iter().cloned().collect()
-                    };
+                    let pending: Vec<evaporchain_types::Transaction> =
+                        if let Some(ref tc_ref) = tendermint {
+                            let c = safe_lock(tc_ref);
+                            c.mempool.pending().iter().cloned().collect()
+                        } else {
+                            let c = safe_lock(consensus);
+                            c.mempool.pending().iter().cloned().collect()
+                        };
                     log_persist_err("mempool", chain_store.save_mempool(&pending));
                 }
                 persist_contracts(chain_store, tendermint);
@@ -2989,7 +3267,11 @@ async fn main() -> Result<()> {
 
                 print_block_result(
                     node_tag,
-                    if roots_match { "SYNCED ✓" } else { "SYNCED ✗" },
+                    if roots_match {
+                        "SYNCED ✓"
+                    } else {
+                        "SYNCED ✗"
+                    },
                     result.block.number,
                     result.block.epoch,
                     result.execution.txs_executed,
@@ -3062,11 +3344,16 @@ async fn main() -> Result<()> {
                 }
                 let tc = safe_lock(tc_ref);
                 if tc.validator_set().has_bls_keys() {
-                    println!("{} \x1b[1;32mAll BLS keys registered — consensus ready\x1b[0m", node_tag);
+                    println!(
+                        "{} \x1b[1;32mAll BLS keys registered — consensus ready\x1b[0m",
+                        node_tag
+                    );
                     break;
                 }
                 // Re-broadcast KeyAnnounce every 5s (gossipsub mesh may not be ready on first send)
-                if tokio::time::Instant::now().duration_since(last_rebroadcast) >= Duration::from_secs(5) {
+                if tokio::time::Instant::now().duration_since(last_rebroadcast)
+                    >= Duration::from_secs(5)
+                {
                     if let Some(key_msg) = tc.make_key_announce() {
                         if let Some(ref sender) = consensus_net_sender {
                             if let Ok(data) = serde_json::to_vec(&key_msg) {
@@ -3562,24 +3849,53 @@ async fn main() -> Result<()> {
                                 }
 
                                 // ── HBCT-Elexon oracle vote ──
-                                // Submit this validator's Elexon MWh attestation for the
-                                // HBCT feed once per block (best-effort; no-op if unreachable).
+                                // F-01: sign with the validator's BLS key and submit
+                                // via the validator-set lookup path so other nodes
+                                // can verify and admit. Previously this passed an
+                                // empty pubkey + unsigned vote, which was silently
+                                // rejected by the consensus round's empty-signature
+                                // check — safe but functionally dead.
                                 {
-                                    if let Some(vote) = elexon_integration::attest_and_vote(
+                                    let bmu_id = "T_RATS-1"; // governance-configurable placeholder
+                                    let key = elexon_integration::HBCT_FEED_KEY;
+                                    if let Some(mut vote) = elexon_integration::attest_and_vote(
                                         &elexon_feed,
                                         args.validator_id,
-                                        "T_RATS-1", // governance-configurable BMU id placeholder
+                                        bmu_id,
                                         block.epoch,
                                         [0u8; 32],
                                     ) {
-                                        let mut ob = safe_lock(&oracle_bridge);
-                                        let _ = ob.submit_vote(
-                                            elexon_integration::HBCT_FEED_KEY,
-                                            vote,
-                                            &evaporchain_crypto::signatures::BlsPublicKey(vec![]),
-                                        );
+                                        // Bind round to the active oracle round for this key.
+                                        {
+                                            let mut ob = safe_lock(&oracle_bridge);
+                                            vote.round = ob.start_round(key);
+                                        }
+                                        let signed = if let Some(ref tc_ref) = tendermint {
+                                            let tc = safe_lock(tc_ref);
+                                            tc.sign_with_bls(&vote.signable_bytes())
+                                        } else {
+                                            None
+                                        };
+                                        if let Some((sig, pk)) = signed {
+                                            vote.signature = sig.0;
+                                            let mut ob = safe_lock(&oracle_bridge);
+                                            let _ = ob.submit_vote(key, vote.clone(), &pk);
+                                            // Gossip so peers admit via
+                                            // submit_vote_via_validator_set.
+                                            if let Ok(payload) = serde_json::to_vec(&vote) {
+                                                let cm = ConsensusMessage::OracleVote { payload };
+                                                if let Ok(data) = serde_json::to_vec(&cm) {
+                                                    if let Some(ref s) = consensus_net_sender {
+                                                        let _ = s.try_send(data);
+                                                    }
+                                                }
+                                            }
+                                        } else {
+                                            // No BLS keypair on this node — log and skip.
+                                            elexon_integration::warn_feed_miss(bmu_id, block.epoch);
+                                        }
                                     } else {
-                                        elexon_integration::warn_feed_miss("T_RATS-1", block.epoch);
+                                        elexon_integration::warn_feed_miss(bmu_id, block.epoch);
                                     }
                                 }
 

@@ -44,8 +44,8 @@ pub fn passphrase_from_env() -> Option<Vec<u8>> {
 /// Derive a 32-byte symmetric key from a passphrase using Argon2id.
 fn kdf(passphrase: &[u8], salt: &[u8]) -> Result<[u8; 32], String> {
     // m=64 MiB, t=3, p=1 — OWASP-recommended baseline for 2024+.
-    let params = Params::new(64 * 1024, 3, 1, Some(32))
-        .map_err(|e| format!("argon2 params: {e}"))?;
+    let params =
+        Params::new(64 * 1024, 3, 1, Some(32)).map_err(|e| format!("argon2 params: {e}"))?;
     let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut out = [0u8; 32];
     argon

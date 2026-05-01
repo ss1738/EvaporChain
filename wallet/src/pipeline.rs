@@ -422,9 +422,7 @@ impl TxPipeline {
         for _ in 0..max_attempts {
             match self.rpc.get_tx(tx_hash).await {
                 Ok(tx) => match tx.state {
-                    rpc::TxState::Included
-                    | rpc::TxState::Finalised
-                    | rpc::TxState::Rejected => {
+                    rpc::TxState::Included | rpc::TxState::Finalised | rpc::TxState::Rejected => {
                         return Ok(Some(tx));
                     }
                     rpc::TxState::Pending | rpc::TxState::Mempool => {

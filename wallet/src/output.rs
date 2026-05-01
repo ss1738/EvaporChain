@@ -42,7 +42,10 @@ pub fn print_json<T: Serialize>(value: &T) {
 
 /// Print a JSON error object.
 pub fn print_json_error(error: &str) {
-    println!("{{\"error\": {}}}", serde_json::to_string(error).unwrap_or_else(|_| format!("\"{}\"", error)));
+    println!(
+        "{{\"error\": {}}}",
+        serde_json::to_string(error).unwrap_or_else(|_| format!("\"{}\"", error))
+    );
 }
 
 // ──────────────────────────── Common Output Types ────────────────────────

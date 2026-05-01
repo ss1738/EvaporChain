@@ -25,10 +25,14 @@ pub enum PolicyError {
 }
 
 impl From<std::io::Error> for PolicyError {
-    fn from(e: std::io::Error) -> Self { PolicyError::Io(e.to_string()) }
+    fn from(e: std::io::Error) -> Self {
+        PolicyError::Io(e.to_string())
+    }
 }
 impl From<serde_json::Error> for PolicyError {
-    fn from(e: serde_json::Error) -> Self { PolicyError::Json(e.to_string()) }
+    fn from(e: serde_json::Error) -> Self {
+        PolicyError::Json(e.to_string())
+    }
 }
 
 /// A single rule condition.
@@ -66,12 +70,18 @@ impl Rule {
             Rule::MinAmount(n) => format!("min_amount >= {}", n),
             Rule::AllowedRecipients(list) => format!("allowed_recipients({})", list.len()),
             Rule::BlockedRecipients(list) => format!("blocked_recipients({})", list.len()),
-            Rule::TimeRestriction { deny_after, deny_before } => format!("time_lock({}h-{}h blocked)", deny_after, deny_before),
+            Rule::TimeRestriction {
+                deny_after,
+                deny_before,
+            } => format!("time_lock({}h-{}h blocked)", deny_after, deny_before),
             Rule::MaxRiskScore(s) => format!("max_risk_score <= {}", s),
             Rule::MinTrustLevel(l) => format!("min_trust >= {}", l),
             Rule::RequireApprovals(n) => format!("require_approvals({})", n),
             Rule::BlockTxTypes(types) => format!("block_types({:?})", types),
-            Rule::RateLimit { max_count, window_secs } => format!("rate_limit({}/{}s)", max_count, window_secs),
+            Rule::RateLimit {
+                max_count,
+                window_secs,
+            } => format!("rate_limit({}/{}s)", max_count, window_secs),
             Rule::Custom(desc) => format!("custom({})", desc),
         }
     }
@@ -136,7 +146,11 @@ pub struct TxContext {
 
 impl TxContext {
     pub fn new(tx_type: &str, recipient: &str, amount: u64, sender: &str) -> Self {
-        let hour = chrono::Utc::now().format("%H").to_string().parse().unwrap_or(12);
+        let hour = chrono::Utc::now()
+            .format("%H")
+            .to_string()
+            .parse()
+            .unwrap_or(12);
         Self {
             tx_type: tx_type.to_string(),
             recipient: recipient.to_string(),
@@ -171,7 +185,9 @@ pub struct PolicyEngine {
 
 impl PolicyEngine {
     pub fn new() -> Self {
-        Self { policies: Vec::new() }
+        Self {
+            policies: Vec::new(),
+        }
     }
 
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, PolicyError> {
@@ -202,7 +218,10 @@ impl PolicyEngine {
 
     /// Remove a policy.
     pub fn remove_policy(&mut self, name: &str) -> Result<(), PolicyError> {
-        let idx = self.policies.iter().position(|p| p.name == name)
+        let idx = self
+            .policies
+            .iter()
+            .position(|p| p.name == name)
             .ok_or_else(|| PolicyError::NotFound(name.to_string()))?;
         self.policies.remove(idx);
         Ok(())
@@ -210,7 +229,10 @@ impl PolicyEngine {
 
     /// Enable a policy.
     pub fn enable(&mut self, name: &str) -> Result<(), PolicyError> {
-        let p = self.policies.iter_mut().find(|p| p.name == name)
+        let p = self
+            .policies
+            .iter_mut()
+            .find(|p| p.name == name)
             .ok_or_else(|| PolicyError::NotFound(name.to_string()))?;
         p.enabled = true;
         Ok(())
@@ -218,7 +240,10 @@ impl PolicyEngine {
 
     /// Disable a policy.
     pub fn disable(&mut self, name: &str) -> Result<(), PolicyError> {
-        let p = self.policies.iter_mut().find(|p| p.name == name)
+        let p = self
+            .policies
+            .iter_mut()
+            .find(|p| p.name == name)
             .ok_or_else(|| PolicyError::NotFound(name.to_string()))?;
         p.enabled = false;
         Ok(())
@@ -236,7 +261,8 @@ impl PolicyEngine {
 
     /// Evaluate a transaction against all active policies.
     pub fn evaluate(&self, ctx: &TxContext) -> Vec<PolicyResult> {
-        self.policies.iter()
+        self.policies
+            .iter()
             .filter(|p| p.enabled)
             .map(|p| self.evaluate_policy(p, ctx))
             .collect()
@@ -244,13 +270,15 @@ impl PolicyEngine {
 
     /// Check if a transaction is blocked by any policy.
     pub fn is_blocked(&self, ctx: &TxContext) -> Option<PolicyResult> {
-        self.evaluate(ctx).into_iter()
+        self.evaluate(ctx)
+            .into_iter()
             .find(|r| !r.passed && r.enforcement == Enforcement::Block)
     }
 
     /// Get all warnings (non-blocking violations).
     pub fn get_warnings(&self, ctx: &TxContext) -> Vec<PolicyResult> {
-        self.evaluate(ctx).into_iter()
+        self.evaluate(ctx)
+            .into_iter()
             .filter(|r| !r.passed && r.enforcement == Enforcement::Warn)
             .collect()
     }
@@ -326,7 +354,10 @@ impl PolicyEngine {
                     None
                 }
             }
-            Rule::TimeRestriction { deny_after, deny_before } => {
+            Rule::TimeRestriction {
+                deny_after,
+                deny_before,
+            } => {
                 let h = ctx.hour;
                 let blocked = if deny_after < deny_before {
                     // e.g. deny 9..17 (9am to 5pm)
@@ -336,7 +367,10 @@ impl PolicyEngine {
                     h >= *deny_after || h < *deny_before
                 };
                 if blocked {
-                    Some(format!("Transaction blocked during hours {}h-{}h (current: {}h)", deny_after, deny_before, h))
+                    Some(format!(
+                        "Transaction blocked during hours {}h-{}h (current: {}h)",
+                        deny_after, deny_before, h
+                    ))
                 } else {
                     None
                 }
@@ -344,7 +378,10 @@ impl PolicyEngine {
             Rule::MaxRiskScore(max) => {
                 if let Some(score) = ctx.risk_score {
                     if score > *max {
-                        Some(format!("Recipient risk score {} exceeds max {}", score, max))
+                        Some(format!(
+                            "Recipient risk score {} exceeds max {}",
+                            score, max
+                        ))
                     } else {
                         None
                     }
@@ -356,11 +393,27 @@ impl PolicyEngine {
                 if let Some(ref trust) = ctx.trust_level {
                     let min_lower = min_level.to_lowercase();
                     let trust_lower = trust.to_lowercase();
-                    let trust_order = ["dangerous", "suspicious", "unknown", "neutral", "trusted", "verified"];
-                    let min_idx = trust_order.iter().position(|&l| l == min_lower).unwrap_or(0);
-                    let actual_idx = trust_order.iter().position(|&l| l == trust_lower).unwrap_or(0);
+                    let trust_order = [
+                        "dangerous",
+                        "suspicious",
+                        "unknown",
+                        "neutral",
+                        "trusted",
+                        "verified",
+                    ];
+                    let min_idx = trust_order
+                        .iter()
+                        .position(|&l| l == min_lower)
+                        .unwrap_or(0);
+                    let actual_idx = trust_order
+                        .iter()
+                        .position(|&l| l == trust_lower)
+                        .unwrap_or(0);
                     if actual_idx < min_idx {
-                        Some(format!("Trust level '{}' below minimum '{}'", trust, min_level))
+                        Some(format!(
+                            "Trust level '{}' below minimum '{}'",
+                            trust, min_level
+                        ))
                     } else {
                         None
                     }
@@ -376,7 +429,10 @@ impl PolicyEngine {
                 }
             }
             Rule::BlockTxTypes(types) => {
-                if types.iter().any(|t| t.to_lowercase() == ctx.tx_type.to_lowercase()) {
+                if types
+                    .iter()
+                    .any(|t| t.to_lowercase() == ctx.tx_type.to_lowercase())
+                {
                     Some(format!("Transaction type '{}' is blocked", ctx.tx_type))
                 } else {
                     None
@@ -384,7 +440,10 @@ impl PolicyEngine {
             }
             Rule::RateLimit { max_count, .. } => {
                 if ctx.recent_tx_count >= *max_count {
-                    Some(format!("Rate limit exceeded: {} transactions (max {})", ctx.recent_tx_count, max_count))
+                    Some(format!(
+                        "Rate limit exceeded: {} transactions (max {})",
+                        ctx.recent_tx_count, max_count
+                    ))
                 } else {
                     None
                 }
@@ -398,7 +457,9 @@ impl PolicyEngine {
 }
 
 impl Default for PolicyEngine {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Default path.
@@ -434,27 +495,33 @@ mod tests {
 
     fn make_engine() -> PolicyEngine {
         let mut engine = PolicyEngine::new();
-        engine.add_policy(make_policy(
-            "max-transfer",
-            "Block transfers over 10000",
-            vec![Rule::MaxAmount(10000)],
-            Enforcement::Block,
-            1,
-        )).unwrap();
-        engine.add_policy(make_policy(
-            "no-scammers",
-            "Block transfers to scam addresses",
-            vec![Rule::BlockedRecipients(vec!["0xscammer".into()])],
-            Enforcement::Block,
-            2,
-        )).unwrap();
-        engine.add_policy(make_policy(
-            "warn-large",
-            "Warn on transfers over 5000",
-            vec![Rule::MaxAmount(5000)],
-            Enforcement::Warn,
-            3,
-        )).unwrap();
+        engine
+            .add_policy(make_policy(
+                "max-transfer",
+                "Block transfers over 10000",
+                vec![Rule::MaxAmount(10000)],
+                Enforcement::Block,
+                1,
+            ))
+            .unwrap();
+        engine
+            .add_policy(make_policy(
+                "no-scammers",
+                "Block transfers to scam addresses",
+                vec![Rule::BlockedRecipients(vec!["0xscammer".into()])],
+                Enforcement::Block,
+                2,
+            ))
+            .unwrap();
+        engine
+            .add_policy(make_policy(
+                "warn-large",
+                "Warn on transfers over 5000",
+                vec![Rule::MaxAmount(5000)],
+                Enforcement::Warn,
+                3,
+            ))
+            .unwrap();
         engine
     }
 
@@ -471,7 +538,13 @@ mod tests {
     #[test]
     fn test_duplicate_rejected() {
         let mut engine = make_engine();
-        let err = engine.add_policy(make_policy("max-transfer", "dup", vec![], Enforcement::Block, 1));
+        let err = engine.add_policy(make_policy(
+            "max-transfer",
+            "dup",
+            vec![],
+            Enforcement::Block,
+            1,
+        ));
         assert!(err.is_err());
     }
 
@@ -546,13 +619,15 @@ mod tests {
     #[test]
     fn test_min_amount() {
         let mut engine = PolicyEngine::new();
-        engine.add_policy(make_policy(
-            "anti-dust",
-            "Block tiny transfers",
-            vec![Rule::MinAmount(10)],
-            Enforcement::Block,
-            1,
-        )).unwrap();
+        engine
+            .add_policy(make_policy(
+                "anti-dust",
+                "Block tiny transfers",
+                vec![Rule::MinAmount(10)],
+                Enforcement::Block,
+                1,
+            ))
+            .unwrap();
         let ctx = make_ctx(5, "0xfoo");
         assert!(engine.is_blocked(&ctx).is_some());
         let ctx2 = make_ctx(100, "0xfoo");
@@ -562,13 +637,18 @@ mod tests {
     #[test]
     fn test_allowed_recipients() {
         let mut engine = PolicyEngine::new();
-        engine.add_policy(make_policy(
-            "whitelist",
-            "Only send to known addresses",
-            vec![Rule::AllowedRecipients(vec!["0xalice".into(), "0xbob".into()])],
-            Enforcement::Block,
-            1,
-        )).unwrap();
+        engine
+            .add_policy(make_policy(
+                "whitelist",
+                "Only send to known addresses",
+                vec![Rule::AllowedRecipients(vec![
+                    "0xalice".into(),
+                    "0xbob".into(),
+                ])],
+                Enforcement::Block,
+                1,
+            ))
+            .unwrap();
         let ctx = make_ctx(100, "0xalice");
         assert!(engine.is_blocked(&ctx).is_none());
         let ctx2 = make_ctx(100, "0xcharlie");
@@ -579,13 +659,18 @@ mod tests {
     fn test_time_restriction() {
         let mut engine = PolicyEngine::new();
         // Block after 22h, before 6h
-        engine.add_policy(make_policy(
-            "nighttime",
-            "Block nighttime transfers",
-            vec![Rule::TimeRestriction { deny_after: 22, deny_before: 6 }],
-            Enforcement::Block,
-            1,
-        )).unwrap();
+        engine
+            .add_policy(make_policy(
+                "nighttime",
+                "Block nighttime transfers",
+                vec![Rule::TimeRestriction {
+                    deny_after: 22,
+                    deny_before: 6,
+                }],
+                Enforcement::Block,
+                1,
+            ))
+            .unwrap();
         let mut ctx = make_ctx(100, "0xfoo");
         ctx.hour = 3; // 3am — should be blocked
         assert!(engine.is_blocked(&ctx).is_some());
@@ -596,13 +681,15 @@ mod tests {
     #[test]
     fn test_risk_score_check() {
         let mut engine = PolicyEngine::new();
-        engine.add_policy(make_policy(
-            "no-risky",
-            "Block risky recipients",
-            vec![Rule::MaxRiskScore(50)],
-            Enforcement::Block,
-            1,
-        )).unwrap();
+        engine
+            .add_policy(make_policy(
+                "no-risky",
+                "Block risky recipients",
+                vec![Rule::MaxRiskScore(50)],
+                Enforcement::Block,
+                1,
+            ))
+            .unwrap();
         let mut ctx = make_ctx(100, "0xfoo");
         ctx.risk_score = Some(80);
         assert!(engine.is_blocked(&ctx).is_some());
@@ -613,13 +700,15 @@ mod tests {
     #[test]
     fn test_require_approvals() {
         let mut engine = PolicyEngine::new();
-        engine.add_policy(make_policy(
-            "multisig",
-            "Require 2 approvals",
-            vec![Rule::RequireApprovals(2)],
-            Enforcement::Block,
-            1,
-        )).unwrap();
+        engine
+            .add_policy(make_policy(
+                "multisig",
+                "Require 2 approvals",
+                vec![Rule::RequireApprovals(2)],
+                Enforcement::Block,
+                1,
+            ))
+            .unwrap();
         let mut ctx = make_ctx(100, "0xfoo");
         ctx.approvals = 1;
         assert!(engine.is_blocked(&ctx).is_some());
@@ -630,13 +719,15 @@ mod tests {
     #[test]
     fn test_block_tx_types() {
         let mut engine = PolicyEngine::new();
-        engine.add_policy(make_policy(
-            "no-stakes",
-            "Block staking",
-            vec![Rule::BlockTxTypes(vec!["stake".into(), "unstake".into()])],
-            Enforcement::Block,
-            1,
-        )).unwrap();
+        engine
+            .add_policy(make_policy(
+                "no-stakes",
+                "Block staking",
+                vec![Rule::BlockTxTypes(vec!["stake".into(), "unstake".into()])],
+                Enforcement::Block,
+                1,
+            ))
+            .unwrap();
         let mut ctx = make_ctx(100, "0xfoo");
         ctx.tx_type = "stake".to_string();
         assert!(engine.is_blocked(&ctx).is_some());
@@ -647,13 +738,18 @@ mod tests {
     #[test]
     fn test_rate_limit() {
         let mut engine = PolicyEngine::new();
-        engine.add_policy(make_policy(
-            "rate-limit",
-            "Max 10 txns per window",
-            vec![Rule::RateLimit { max_count: 10, window_secs: 3600 }],
-            Enforcement::Block,
-            1,
-        )).unwrap();
+        engine
+            .add_policy(make_policy(
+                "rate-limit",
+                "Max 10 txns per window",
+                vec![Rule::RateLimit {
+                    max_count: 10,
+                    window_secs: 3600,
+                }],
+                Enforcement::Block,
+                1,
+            ))
+            .unwrap();
         let mut ctx = make_ctx(100, "0xfoo");
         ctx.recent_tx_count = 15;
         assert!(engine.is_blocked(&ctx).is_some());
@@ -664,16 +760,18 @@ mod tests {
     #[test]
     fn test_multiple_rules_in_policy() {
         let mut engine = PolicyEngine::new();
-        engine.add_policy(make_policy(
-            "combo",
-            "Max 10k and no scammers",
-            vec![
-                Rule::MaxAmount(10000),
-                Rule::BlockedRecipients(vec!["0xbad".into()]),
-            ],
-            Enforcement::Block,
-            1,
-        )).unwrap();
+        engine
+            .add_policy(make_policy(
+                "combo",
+                "Max 10k and no scammers",
+                vec![
+                    Rule::MaxAmount(10000),
+                    Rule::BlockedRecipients(vec!["0xbad".into()]),
+                ],
+                Enforcement::Block,
+                1,
+            ))
+            .unwrap();
         // Passes both
         let ctx = make_ctx(5000, "0xgood");
         assert!(engine.is_blocked(&ctx).is_none());
@@ -731,13 +829,15 @@ mod tests {
     #[test]
     fn test_trust_level_check() {
         let mut engine = PolicyEngine::new();
-        engine.add_policy(make_policy(
-            "trust-check",
-            "Min trust neutral",
-            vec![Rule::MinTrustLevel("neutral".into())],
-            Enforcement::Block,
-            1,
-        )).unwrap();
+        engine
+            .add_policy(make_policy(
+                "trust-check",
+                "Min trust neutral",
+                vec![Rule::MinTrustLevel("neutral".into())],
+                Enforcement::Block,
+                1,
+            ))
+            .unwrap();
         let mut ctx = make_ctx(100, "0xfoo");
         ctx.trust_level = Some("suspicious".into());
         assert!(engine.is_blocked(&ctx).is_some());

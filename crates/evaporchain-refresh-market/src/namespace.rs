@@ -17,7 +17,11 @@ pub struct Namespace {
 
 impl Namespace {
     pub fn new(id: NamespaceId, capacity: u64) -> Self {
-        Self { id, capacity, used: 0 }
+        Self {
+            id,
+            capacity,
+            used: 0,
+        }
     }
 
     pub fn is_full(&self) -> bool {

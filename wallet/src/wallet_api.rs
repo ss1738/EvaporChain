@@ -215,10 +215,7 @@ impl WalletApi {
         }
     }
 
-    pub fn handle_request(
-        &mut self,
-        request: ApiRequest,
-    ) -> Result<ApiResponse, WalletApiError> {
+    pub fn handle_request(&mut self, request: ApiRequest) -> Result<ApiResponse, WalletApiError> {
         let endpoint = self
             .endpoints
             .get(&request.endpoint_id)
@@ -240,9 +237,7 @@ impl WalletApi {
                     }
                 }
                 None => {
-                    return Err(WalletApiError::Unauthorized(
-                        "API key required".to_string(),
-                    ));
+                    return Err(WalletApiError::Unauthorized("API key required".to_string()));
                 }
             }
         }
@@ -289,8 +284,7 @@ impl WalletApi {
         self.endpoints
             .values()
             .filter(|e| {
-                e.path.to_lowercase().contains(&q)
-                    || e.description.to_lowercase().contains(&q)
+                e.path.to_lowercase().contains(&q) || e.description.to_lowercase().contains(&q)
             })
             .collect()
     }
@@ -301,9 +295,7 @@ impl WalletApi {
         let mut total_ms: u64 = 0;
 
         for resp in &self.request_log {
-            *by_status
-                .entry(resp.status_code.to_string())
-                .or_insert(0) += 1;
+            *by_status.entry(resp.status_code.to_string()).or_insert(0) += 1;
             total_ms += resp.duration_ms;
         }
 
@@ -360,7 +352,12 @@ mod tests {
         dir.join(format!("wallet_api_test_{}.json", std::process::id()))
     }
 
-    fn make_endpoint(id: &str, method: HttpMethod, version: ApiVersion, auth: AuthType) -> ApiEndpoint {
+    fn make_endpoint(
+        id: &str,
+        method: HttpMethod,
+        version: ApiVersion,
+        auth: AuthType,
+    ) -> ApiEndpoint {
         ApiEndpoint {
             id: id.to_string(),
             path: format!("/api/{}", id),
@@ -503,7 +500,12 @@ mod tests {
     #[test]
     fn test_handle_request_success_with_auth() {
         let mut api = WalletApi::new();
-        let ep = make_endpoint("transfer", HttpMethod::Post, ApiVersion::V1, AuthType::ApiKey);
+        let ep = make_endpoint(
+            "transfer",
+            HttpMethod::Post,
+            ApiVersion::V1,
+            AuthType::ApiKey,
+        );
         api.register_endpoint(ep).unwrap();
         api.create_api_key("key1", "A", vec![], None).unwrap();
 
@@ -516,7 +518,12 @@ mod tests {
     #[test]
     fn test_handle_request_unauthorized_no_key() {
         let mut api = WalletApi::new();
-        let ep = make_endpoint("transfer", HttpMethod::Post, ApiVersion::V1, AuthType::ApiKey);
+        let ep = make_endpoint(
+            "transfer",
+            HttpMethod::Post,
+            ApiVersion::V1,
+            AuthType::ApiKey,
+        );
         api.register_endpoint(ep).unwrap();
 
         let req = make_request("r1", "transfer", None);
@@ -526,7 +533,12 @@ mod tests {
     #[test]
     fn test_handle_request_unauthorized_invalid_key() {
         let mut api = WalletApi::new();
-        let ep = make_endpoint("transfer", HttpMethod::Post, ApiVersion::V1, AuthType::Bearer);
+        let ep = make_endpoint(
+            "transfer",
+            HttpMethod::Post,
+            ApiVersion::V1,
+            AuthType::Bearer,
+        );
         api.register_endpoint(ep).unwrap();
 
         let req = make_request("r1", "transfer", Some("bad_key"));
@@ -543,9 +555,27 @@ mod tests {
     #[test]
     fn test_endpoints_by_version() {
         let mut api = WalletApi::new();
-        api.register_endpoint(make_endpoint("a", HttpMethod::Get, ApiVersion::V1, AuthType::None)).unwrap();
-        api.register_endpoint(make_endpoint("b", HttpMethod::Post, ApiVersion::V2, AuthType::None)).unwrap();
-        api.register_endpoint(make_endpoint("c", HttpMethod::Get, ApiVersion::V1, AuthType::None)).unwrap();
+        api.register_endpoint(make_endpoint(
+            "a",
+            HttpMethod::Get,
+            ApiVersion::V1,
+            AuthType::None,
+        ))
+        .unwrap();
+        api.register_endpoint(make_endpoint(
+            "b",
+            HttpMethod::Post,
+            ApiVersion::V2,
+            AuthType::None,
+        ))
+        .unwrap();
+        api.register_endpoint(make_endpoint(
+            "c",
+            HttpMethod::Get,
+            ApiVersion::V1,
+            AuthType::None,
+        ))
+        .unwrap();
 
         assert_eq!(api.endpoints_by_version(&ApiVersion::V1).len(), 2);
         assert_eq!(api.endpoints_by_version(&ApiVersion::V2).len(), 1);
@@ -554,8 +584,20 @@ mod tests {
     #[test]
     fn test_endpoints_by_method() {
         let mut api = WalletApi::new();
-        api.register_endpoint(make_endpoint("a", HttpMethod::Get, ApiVersion::V1, AuthType::None)).unwrap();
-        api.register_endpoint(make_endpoint("b", HttpMethod::Post, ApiVersion::V1, AuthType::None)).unwrap();
+        api.register_endpoint(make_endpoint(
+            "a",
+            HttpMethod::Get,
+            ApiVersion::V1,
+            AuthType::None,
+        ))
+        .unwrap();
+        api.register_endpoint(make_endpoint(
+            "b",
+            HttpMethod::Post,
+            ApiVersion::V1,
+            AuthType::None,
+        ))
+        .unwrap();
 
         assert_eq!(api.endpoints_by_method(&HttpMethod::Get).len(), 1);
         assert_eq!(api.endpoints_by_method(&HttpMethod::Delete).len(), 0);
@@ -574,7 +616,13 @@ mod tests {
     #[test]
     fn test_recent_responses() {
         let mut api = WalletApi::new();
-        api.register_endpoint(make_endpoint("ep", HttpMethod::Get, ApiVersion::V1, AuthType::None)).unwrap();
+        api.register_endpoint(make_endpoint(
+            "ep",
+            HttpMethod::Get,
+            ApiVersion::V1,
+            AuthType::None,
+        ))
+        .unwrap();
 
         for i in 0..5 {
             let req = make_request(&format!("r{}", i), "ep", None);
@@ -607,8 +655,20 @@ mod tests {
     #[test]
     fn test_stats() {
         let mut api = WalletApi::new();
-        api.register_endpoint(make_endpoint("a", HttpMethod::Get, ApiVersion::V1, AuthType::None)).unwrap();
-        api.register_endpoint(make_endpoint("b", HttpMethod::Post, ApiVersion::V1, AuthType::None)).unwrap();
+        api.register_endpoint(make_endpoint(
+            "a",
+            HttpMethod::Get,
+            ApiVersion::V1,
+            AuthType::None,
+        ))
+        .unwrap();
+        api.register_endpoint(make_endpoint(
+            "b",
+            HttpMethod::Post,
+            ApiVersion::V1,
+            AuthType::None,
+        ))
+        .unwrap();
         api.create_api_key("k1", "A", vec![], None).unwrap();
 
         let req = make_request("r1", "a", None);
@@ -626,8 +686,15 @@ mod tests {
     fn test_save_and_load() {
         let path = test_path();
         let mut api = WalletApi::new();
-        api.register_endpoint(make_endpoint("ep1", HttpMethod::Get, ApiVersion::V1, AuthType::None)).unwrap();
-        api.create_api_key("k1", "Key1", vec!["read".into()], None).unwrap();
+        api.register_endpoint(make_endpoint(
+            "ep1",
+            HttpMethod::Get,
+            ApiVersion::V1,
+            AuthType::None,
+        ))
+        .unwrap();
+        api.create_api_key("k1", "Key1", vec!["read".into()], None)
+            .unwrap();
         api.save(&path).unwrap();
 
         let loaded = WalletApi::load(&path).unwrap();

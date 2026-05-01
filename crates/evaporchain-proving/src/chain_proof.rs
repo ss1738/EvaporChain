@@ -168,10 +168,7 @@ impl ProofChain {
 
     /// Total proof size across all segments.
     pub fn total_size(&self) -> usize {
-        self.segments
-            .iter()
-            .map(|s| s.proof.size())
-            .sum()
+        self.segments.iter().map(|s| s.proof.size()).sum()
     }
 
     /// Number of segments.
@@ -265,8 +262,7 @@ impl ChainProver {
         let mut checkpointed = false;
 
         // Auto-checkpoint
-        if self.checkpoint_interval > 0
-            && self.blocks_since_checkpoint >= self.checkpoint_interval
+        if self.checkpoint_interval > 0 && self.blocks_since_checkpoint >= self.checkpoint_interval
         {
             self.create_checkpoint()?;
             checkpointed = true;
@@ -594,11 +590,9 @@ impl LightClientVerifier {
                 segment.start_state_root
             };
 
-            let valid = self.engine.verify_proof(
-                &segment.proof,
-                segment.num_steps,
-                genesis_for_segment,
-            )?;
+            let valid =
+                self.engine
+                    .verify_proof(&segment.proof, segment.num_steps, genesis_for_segment)?;
 
             segment_results.push(valid);
 

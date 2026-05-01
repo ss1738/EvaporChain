@@ -120,10 +120,7 @@ impl BlockDA {
     }
 
     /// Verify a shard sample against the block DA header.
-    pub fn verify_shard_sample(
-        header: &BlockDAHeader,
-        response: &SampleResponse,
-    ) -> bool {
+    pub fn verify_shard_sample(header: &BlockDAHeader, response: &SampleResponse) -> bool {
         // Verify shard hash
         let computed_hash: [u8; 32] = blake3::hash(&response.shard.data).into();
         if computed_hash != response.shard.hash {
@@ -241,8 +238,8 @@ mod tests {
             .map(|s| Some(s.data.clone()))
             .collect();
         // Remove all parity
-        for i in 4..8 {
-            shards2[i] = None;
+        for slot in shards2.iter_mut().take(8).skip(4) {
+            *slot = None;
         }
         // Tamper data shard 0
         if let Some(ref mut s) = shards2[0] {

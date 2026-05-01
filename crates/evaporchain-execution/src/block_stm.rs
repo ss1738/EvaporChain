@@ -34,10 +34,10 @@ use rayon::prelude::*;
 use tracing::{debug, info};
 
 use crate::{
-    fees, BlockExecutionResult, ExecutionEngine, ExecutionError,
-    GAS_CALL_CONTRACT, GAS_CALL_SCRIPT, GAS_CREATE_OBJECT_BASE, GAS_CREATE_OBJECT_PER_BYTE,
-    GAS_DEPLOY_CONTRACT, GAS_DEPLOY_SCRIPT, GAS_REFRESH, GAS_TRANSFER, GAS_VALIDATOR_CLAIM_STAKE,
-    GAS_VALIDATOR_EXIT, GAS_VALIDATOR_STAKE,
+    fees, BlockExecutionResult, ExecutionEngine, ExecutionError, GAS_CALL_CONTRACT,
+    GAS_CALL_SCRIPT, GAS_CREATE_OBJECT_BASE, GAS_CREATE_OBJECT_PER_BYTE, GAS_DEPLOY_CONTRACT,
+    GAS_DEPLOY_SCRIPT, GAS_REFRESH, GAS_TRANSFER, GAS_VALIDATOR_CLAIM_STAKE, GAS_VALIDATOR_EXIT,
+    GAS_VALIDATOR_STAKE,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -159,15 +159,13 @@ impl MVMemory {
     ///   Ok(Some((version, payload))) — found a committed write
     ///   Ok(None) — no prior transaction wrote to this location
     ///   Err(blocking_tx) — found an Estimate (abort marker), caller should wait
-    fn read(
-        &self,
-        loc: &Location,
-        tx_index: u32,
-    ) -> Result<Option<(Version, ValuePayload)>, u32> {
+    fn read(&self, loc: &Location, tx_index: u32) -> Result<Option<(Version, ValuePayload)>, u32> {
         let shard = Self::shard_index(loc);
         let map = self.shards[shard].read().unwrap();
         if let Some(versions) = map.get(loc) {
-            if let Some((&writer_tx, (incarnation, mv_val))) = versions.range(..tx_index).next_back() {
+            if let Some((&writer_tx, (incarnation, mv_val))) =
+                versions.range(..tx_index).next_back()
+            {
                 match mv_val {
                     MVValue::Value(payload) => {
                         return Ok(Some(((writer_tx, *incarnation), payload.clone())));
@@ -460,12 +458,21 @@ impl<'a> TxView<'a> {
         let loc = Location::AccountStorageDeposit(*addr);
         match self.mv_memory.read(&loc, self.tx_index)? {
             Some((version, ValuePayload::StorageDeposit(d))) => {
-                self.read_set.push(ReadEntry { location: loc, version: Some(version) });
+                self.read_set.push(ReadEntry {
+                    location: loc,
+                    version: Some(version),
+                });
                 Ok(d)
             }
             _ => {
-                self.read_set.push(ReadEntry { location: loc, version: None });
-                Ok(self.base_db.get_account(addr).map_or(0, |a| a.storage_deposit))
+                self.read_set.push(ReadEntry {
+                    location: loc,
+                    version: None,
+                });
+                Ok(self
+                    .base_db
+                    .get_account(addr)
+                    .map_or(0, |a| a.storage_deposit))
             }
         }
     }
@@ -478,12 +485,21 @@ impl<'a> TxView<'a> {
         let loc = Location::AccountStorageBytes(*addr);
         match self.mv_memory.read(&loc, self.tx_index)? {
             Some((version, ValuePayload::StorageBytes(b))) => {
-                self.read_set.push(ReadEntry { location: loc, version: Some(version) });
+                self.read_set.push(ReadEntry {
+                    location: loc,
+                    version: Some(version),
+                });
                 Ok(b)
             }
             _ => {
-                self.read_set.push(ReadEntry { location: loc, version: None });
-                Ok(self.base_db.get_account(addr).map_or(0, |a| a.storage_bytes))
+                self.read_set.push(ReadEntry {
+                    location: loc,
+                    version: None,
+                });
+                Ok(self
+                    .base_db
+                    .get_account(addr)
+                    .map_or(0, |a| a.storage_bytes))
             }
         }
     }
@@ -657,57 +673,49 @@ fn execute_tx(
         }
         Transaction::Blob(blob) => {
             if blob.data.is_empty() {
-                Err(TxViewError::ExecutionError(ExecutionError::ContractError("blob data cannot be empty".into())))
+                Err(TxViewError::ExecutionError(ExecutionError::ContractError(
+                    "blob data cannot be empty".into(),
+                )))
             } else if blob.data.len() > crate::MAX_BLOB_SIZE {
-                Err(TxViewError::ExecutionError(ExecutionError::ContractError(format!(
-                    "blob size {} exceeds limit {}", blob.data.len(), crate::MAX_BLOB_SIZE
-                ))))
+                Err(TxViewError::ExecutionError(ExecutionError::ContractError(
+                    format!(
+                        "blob size {} exceeds limit {}",
+                        blob.data.len(),
+                        crate::MAX_BLOB_SIZE
+                    ),
+                )))
             } else if blob.namespace_id == 0 {
-                Err(TxViewError::ExecutionError(ExecutionError::ContractError("reserved namespace_id 0".into())))
+                Err(TxViewError::ExecutionError(ExecutionError::ContractError(
+                    "reserved namespace_id 0".into(),
+                )))
             } else {
                 Ok(())
             }
         }
-        Transaction::Governance(_) => {
-            Err(TxViewError::ExecutionError(ExecutionError::ContractError(
-                "governance txs execute in serial phase".into(),
-            )))
-        }
-        Transaction::MultiSig(_) => {
-            Err(TxViewError::ExecutionError(ExecutionError::ContractError(
-                "multi-sig txs execute in serial phase".into(),
-            )))
-        }
-        Transaction::UserOp(_) => {
-            Err(TxViewError::ExecutionError(ExecutionError::ContractError(
-                "user-op txs execute in serial phase".into(),
-            )))
-        }
-        Transaction::UpgradeContract(_) => {
-            Err(TxViewError::ExecutionError(ExecutionError::ContractError(
-                "upgrade txs execute in serial phase".into(),
-            )))
-        }
-        Transaction::Delegate(_) => {
-            Err(TxViewError::ExecutionError(ExecutionError::ContractError(
-                "delegation txs execute in serial phase".into(),
-            )))
-        }
-        Transaction::Undelegate(_) => {
-            Err(TxViewError::ExecutionError(ExecutionError::ContractError(
-                "delegation txs execute in serial phase".into(),
-            )))
-        }
-        Transaction::RotateValidatorKey(_) => {
-            Err(TxViewError::ExecutionError(ExecutionError::ContractError(
-                "validator key rotation executes in serial phase".into(),
-            )))
-        }
-        Transaction::ClaimDelegation(_) => {
-            Err(TxViewError::ExecutionError(ExecutionError::ContractError(
-                "delegation txs execute in serial phase".into(),
-            )))
-        }
+        Transaction::Governance(_) => Err(TxViewError::ExecutionError(
+            ExecutionError::ContractError("governance txs execute in serial phase".into()),
+        )),
+        Transaction::MultiSig(_) => Err(TxViewError::ExecutionError(
+            ExecutionError::ContractError("multi-sig txs execute in serial phase".into()),
+        )),
+        Transaction::UserOp(_) => Err(TxViewError::ExecutionError(ExecutionError::ContractError(
+            "user-op txs execute in serial phase".into(),
+        ))),
+        Transaction::UpgradeContract(_) => Err(TxViewError::ExecutionError(
+            ExecutionError::ContractError("upgrade txs execute in serial phase".into()),
+        )),
+        Transaction::Delegate(_) => Err(TxViewError::ExecutionError(
+            ExecutionError::ContractError("delegation txs execute in serial phase".into()),
+        )),
+        Transaction::Undelegate(_) => Err(TxViewError::ExecutionError(
+            ExecutionError::ContractError("delegation txs execute in serial phase".into()),
+        )),
+        Transaction::RotateValidatorKey(_) => Err(TxViewError::ExecutionError(
+            ExecutionError::ContractError("validator key rotation executes in serial phase".into()),
+        )),
+        Transaction::ClaimDelegation(_) => Err(TxViewError::ExecutionError(
+            ExecutionError::ContractError("delegation txs execute in serial phase".into()),
+        )),
     };
 
     match result {
@@ -740,9 +748,8 @@ impl From<ExecutionError> for TxViewError {
 fn estimate_gas(tx: &Transaction) -> u64 {
     match tx {
         Transaction::Transfer(_) => GAS_TRANSFER,
-        Transaction::CreateObject(create) => {
-            GAS_CREATE_OBJECT_BASE.saturating_add(GAS_CREATE_OBJECT_PER_BYTE.saturating_mul(create.data.len() as u64))
-        }
+        Transaction::CreateObject(create) => GAS_CREATE_OBJECT_BASE
+            .saturating_add(GAS_CREATE_OBJECT_PER_BYTE.saturating_mul(create.data.len() as u64)),
         Transaction::Refresh(_) => GAS_REFRESH,
         Transaction::DeployContract(_) => GAS_DEPLOY_CONTRACT,
         Transaction::CallContract(_) => GAS_CALL_CONTRACT,
@@ -756,17 +763,18 @@ fn estimate_gas(tx: &Transaction) -> u64 {
         Transaction::PrivateTransfer(ptx) => {
             crate::privacy_exec::PrivacyExecutor::estimate_private_transfer_gas(ptx)
         }
-        Transaction::Deferred(dtx) => {
-            crate::temporal::GAS_DEFERRED_SUBMIT
-                .saturating_add(crate::temporal::GAS_PER_GUARD.saturating_mul(dtx.guards.len() as u64))
-        }
-        Transaction::Blob(tx) => {
-            crate::GAS_CREATE_OBJECT_BASE.saturating_add(crate::GAS_CREATE_OBJECT_PER_BYTE.saturating_mul(tx.data.len() as u64))
-        }
+        Transaction::Deferred(dtx) => crate::temporal::GAS_DEFERRED_SUBMIT
+            .saturating_add(crate::temporal::GAS_PER_GUARD.saturating_mul(dtx.guards.len() as u64)),
+        Transaction::Blob(tx) => crate::GAS_CREATE_OBJECT_BASE
+            .saturating_add(crate::GAS_CREATE_OBJECT_PER_BYTE.saturating_mul(tx.data.len() as u64)),
         Transaction::Governance(_) => GAS_VALIDATOR_CLAIM_STAKE,
         Transaction::MultiSig(_) => GAS_VALIDATOR_CLAIM_STAKE,
-        Transaction::UserOp(tx) => crate::GAS_USER_OP.saturating_add(tx.call_data.len() as u64 * 16),
-        Transaction::UpgradeContract(tx) => crate::GAS_UPGRADE_CONTRACT.saturating_add(tx.new_bytecode.len() as u64 * 200),
+        Transaction::UserOp(tx) => {
+            crate::GAS_USER_OP.saturating_add(tx.call_data.len() as u64 * 16)
+        }
+        Transaction::UpgradeContract(tx) => {
+            crate::GAS_UPGRADE_CONTRACT.saturating_add(tx.new_bytecode.len() as u64 * 200)
+        }
         Transaction::Delegate(_) => crate::GAS_DELEGATE,
         Transaction::Undelegate(_) => crate::GAS_UNDELEGATE,
         Transaction::RotateValidatorKey(_) => crate::GAS_ROTATE_VALIDATOR_KEY,
@@ -816,9 +824,7 @@ fn exec_transfer(view: &mut TxView, tx: &TransferTx, epoch: Epoch) -> Result<(),
         sender_nonce
     } else {
         sender_nonce.checked_add(1).ok_or_else(|| {
-            TxViewError::ExecutionError(ExecutionError::ContractError(
-                "nonce overflow".into(),
-            ))
+            TxViewError::ExecutionError(ExecutionError::ContractError("nonce overflow".into()))
         })?
     };
     view.write_account(tx.from, new_sender_balance, new_sender_nonce, epoch);
@@ -842,7 +848,9 @@ fn exec_create_object(
     tx: &CreateObjectTx,
     epoch: Epoch,
 ) -> Result<(), TxViewError> {
-    let existing = view.read_object(&tx.object_id).map_err(TxViewError::Blocked)?;
+    let existing = view
+        .read_object(&tx.object_id)
+        .map_err(TxViewError::Blocked)?;
     if existing.is_some() {
         return Err(ExecutionError::ObjectAlreadyExists(hex::encode(tx.object_id)).into());
     }
@@ -852,19 +860,26 @@ fn exec_create_object(
         const BASE_OBJECT_BYTES: u64 = 97;
         BASE_OBJECT_BYTES.saturating_add(tx.data.len() as u64)
     };
-    let bal = view.read_balance(&tx.creator).map_err(TxViewError::Blocked)?;
+    let bal = view
+        .read_balance(&tx.creator)
+        .map_err(TxViewError::Blocked)?;
     if bal < evaporchain_types::MIN_STORAGE_DEPOSIT {
         return Err(ExecutionError::InsufficientBalance {
             account: hex::encode(tx.creator),
             available: bal,
             required: evaporchain_types::MIN_STORAGE_DEPOSIT,
-        }.into());
+        }
+        .into());
     }
     let nonce = view.read_nonce(&tx.creator).map_err(TxViewError::Blocked)?;
     view.write_account(tx.creator, bal - evaporchain_types::MIN_STORAGE_DEPOSIT, nonce, epoch);
 
-    let cur_deposit = view.read_storage_deposit(&tx.creator).map_err(TxViewError::Blocked)?;
-    let cur_bytes = view.read_storage_bytes(&tx.creator).map_err(TxViewError::Blocked)?;
+    let cur_deposit = view
+        .read_storage_deposit(&tx.creator)
+        .map_err(TxViewError::Blocked)?;
+    let cur_bytes = view
+        .read_storage_bytes(&tx.creator)
+        .map_err(TxViewError::Blocked)?;
     view.write_storage_fields(
         tx.creator,
         cur_deposit.saturating_add(evaporchain_types::MIN_STORAGE_DEPOSIT),
@@ -882,6 +897,7 @@ fn exec_create_object(
         grace_epoch: None,
         data: tx.data.clone(),
         decay_curve: tx.decay_curve.clone(),
+        lad_mode: tx.lad_mode,
     });
 
     Ok(())
@@ -889,7 +905,9 @@ fn exec_create_object(
 
 fn exec_refresh(view: &mut TxView, tx: &RefreshTx, epoch: Epoch) -> Result<(), TxViewError> {
     // Try refresh on active/grace object
-    let obj = view.read_object(&tx.object_id).map_err(TxViewError::Blocked)?;
+    let obj = view
+        .read_object(&tx.object_id)
+        .map_err(TxViewError::Blocked)?;
     if let Some(mut obj) = obj {
         // Inline refresh logic (can't use RefreshEngine directly with TxView)
         obj.energy = obj.energy.saturating_add(tx.energy_deposit);
@@ -903,7 +921,9 @@ fn exec_refresh(view: &mut TxView, tx: &RefreshTx, epoch: Epoch) -> Result<(), T
     }
 
     // Try resurrection from ghost
-    let ghost = view.read_ghost(&tx.object_id).map_err(TxViewError::Blocked)?;
+    let ghost = view
+        .read_ghost(&tx.object_id)
+        .map_err(TxViewError::Blocked)?;
     if let Some(ghost) = ghost {
         // Resurrect: create new object from ghost data.
         // Matches RefreshEngine::resurrect — preserves evaporated_at as created_at.
@@ -919,6 +939,7 @@ fn exec_refresh(view: &mut TxView, tx: &RefreshTx, epoch: Epoch) -> Result<(), T
             grace_epoch: None,
             data,
             decay_curve: None,
+            lad_mode: None,
         };
         view.write_object(obj);
         view.remove_ghost(tx.object_id);
@@ -964,9 +985,7 @@ fn exec_validator_stake(view: &mut TxView, tx: &ValidatorStakeTx, epoch: Epoch) 
         })
     })?;
     let new_nonce = nonce.checked_add(1).ok_or_else(|| {
-        TxViewError::ExecutionError(ExecutionError::ContractError(
-            "nonce overflow".into(),
-        ))
+        TxViewError::ExecutionError(ExecutionError::ContractError("nonce overflow".into()))
     })?;
     view.write_account(tx.validator_address, new_balance, new_nonce, epoch);
     Ok(())
@@ -989,9 +1008,7 @@ fn exec_validator_exit(view: &mut TxView, tx: &ValidatorExitTx, epoch: Epoch) ->
     }
 
     let new_nonce = nonce.checked_add(1).ok_or_else(|| {
-        TxViewError::ExecutionError(ExecutionError::ContractError(
-            "nonce overflow".into(),
-        ))
+        TxViewError::ExecutionError(ExecutionError::ContractError("nonce overflow".into()))
     })?;
     view.write_account(tx.validator_address, balance, new_nonce, epoch);
     Ok(())
@@ -1149,16 +1166,23 @@ impl BlockStmExecutor {
         let mut results: Vec<Option<TxExecResult>> = (0..num_txs).map(|_| None).collect();
 
         // ── Wave 1: Execute ALL transactions in parallel ──
-        let wave1: Vec<(usize, Vec<ReadEntry>, Vec<Location>, TxExecResult)> = (0..num_txs as usize)
+        let wave1: Vec<(usize, Vec<ReadEntry>, Vec<Location>, TxExecResult)> = (0..num_txs
+            as usize)
             .into_par_iter()
             .map(|tx_idx| {
                 let tx = parallel_txs[tx_idx];
 
                 // Signature check
                 if verify_sigs
-                    && crate::parallel::ParallelExecutor::verify_tx_signature(true, tx, chain_id).is_err()
+                    && crate::parallel::ParallelExecutor::verify_tx_signature(true, tx, chain_id)
+                        .is_err()
                 {
-                    return (tx_idx, Vec::new(), Vec::new(), TxExecResult::Failed { fee: 0 });
+                    return (
+                        tx_idx,
+                        Vec::new(),
+                        Vec::new(),
+                        TxExecResult::Failed { fee: 0 },
+                    );
                 }
 
                 let mut view = TxView::new(tx_idx as u32, 0, &mv_memory, db);
@@ -1167,7 +1191,12 @@ impl BlockStmExecutor {
                 match result {
                     TxExecResult::Blocked(_) => {
                         // Can't block on wave 1 (no prior writes) — treat as failed
-                        (tx_idx, Vec::new(), Vec::new(), TxExecResult::Failed { fee: 0 })
+                        (
+                            tx_idx,
+                            Vec::new(),
+                            Vec::new(),
+                            TxExecResult::Failed { fee: 0 },
+                        )
                     }
                     _ => {
                         let (rs, wl) = view.flush_writes();
@@ -1289,19 +1318,29 @@ impl BlockStmExecutor {
                         let tx = parallel_txs[tx_idx as usize];
 
                         if verify_sigs
-                            && crate::parallel::ParallelExecutor::verify_tx_signature(true, tx, chain_id)
-                                .is_err()
+                            && crate::parallel::ParallelExecutor::verify_tx_signature(
+                                true, tx, chain_id,
+                            )
+                            .is_err()
                         {
-                            return (tx_idx, Vec::new(), Vec::new(), TxExecResult::Failed { fee: 0 });
+                            return (
+                                tx_idx,
+                                Vec::new(),
+                                Vec::new(),
+                                TxExecResult::Failed { fee: 0 },
+                            );
                         }
 
                         let mut view = TxView::new(tx_idx, inc, &mv_memory, db);
                         let result = execute_tx(&mut view, tx, epoch, fee_ctrl);
 
                         match result {
-                            TxExecResult::Blocked(_) => {
-                                (tx_idx, Vec::new(), Vec::new(), TxExecResult::Failed { fee: 0 })
-                            }
+                            TxExecResult::Blocked(_) => (
+                                tx_idx,
+                                Vec::new(),
+                                Vec::new(),
+                                TxExecResult::Failed { fee: 0 },
+                            ),
                             _ => {
                                 let (rs, wl) = view.flush_writes();
                                 (tx_idx, rs, wl, result)
@@ -1380,8 +1419,7 @@ impl BlockStmExecutor {
 
         mv_memory.for_each_location(|loc, versions| {
             // Find the highest tx_index with a committed value
-            if let Some((&_tx_idx, (_inc, MVValue::Value(payload)))) = versions.iter().next_back()
-            {
+            if let Some((&_tx_idx, (_inc, MVValue::Value(payload)))) = versions.iter().next_back() {
                 match (loc, payload) {
                     (Location::AccountBalance(addr), ValuePayload::Balance(bal)) => {
                         // Seed from base DB so we don't clobber nonce with 0
@@ -1621,8 +1659,13 @@ impl ExecutionEngine for BlockStmExecutor {
                                     };
                                     self.contract_engine
                                         .deploy(
-                                            tmpl, args, rules, deploy.deployer,
-                                            deploy.energy, deploy.half_life, block.epoch,
+                                            tmpl,
+                                            args,
+                                            rules,
+                                            deploy.deployer,
+                                            deploy.energy,
+                                            deploy.half_life,
+                                            block.epoch,
                                         )
                                         .map(|_| ())
                                         .map_err(|e| ExecutionError::ContractError(e.to_string()))
@@ -1647,7 +1690,9 @@ impl ExecutionEngine for BlockStmExecutor {
                                 .call(call.contract_id, &call.method, &a, &call.caller, call.epoch)
                                 .map(|_| ())
                                 .map_err(|e| ExecutionError::ContractError(e.to_string())),
-                            Err(e) => Err(ExecutionError::ContractError(format!("invalid args: {e}"))),
+                            Err(e) => {
+                                Err(ExecutionError::ContractError(format!("invalid args: {e}")))
+                            }
                         };
                         serial_call_depth = serial_call_depth.saturating_sub(1);
                         r
@@ -1656,8 +1701,11 @@ impl ExecutionEngine for BlockStmExecutor {
                 Transaction::DeployScript(deploy) => self
                     .script_engine
                     .deploy(
-                        &deploy.source_code, deploy.deployer, deploy.energy,
-                        deploy.half_life, block.epoch,
+                        &deploy.source_code,
+                        deploy.deployer,
+                        deploy.energy,
+                        deploy.half_life,
+                        block.epoch,
                     )
                     .map(|_| ())
                     .map_err(|e| ExecutionError::ScriptError(e.to_string())),
@@ -1672,8 +1720,15 @@ impl ExecutionEngine for BlockStmExecutor {
                             } else {
                                 serde_json::from_str(&call.args).unwrap_or_default()
                             };
-                        let r = self.script_engine
-                            .call(call.contract_id, &call.method, args, call.caller, call.epoch)
+                        let r = self
+                            .script_engine
+                            .call(
+                                call.contract_id,
+                                &call.method,
+                                args,
+                                call.caller,
+                                call.epoch,
+                            )
                             .map(|_| ())
                             .map_err(|e| ExecutionError::ScriptError(e.to_string()));
                         serial_call_depth = serial_call_depth.saturating_sub(1);
@@ -1701,12 +1756,11 @@ impl ExecutionEngine for BlockStmExecutor {
                         .map(|_| ())
                         .map_err(|e| ExecutionError::ContractError(e.to_string()))
                 }
-                Transaction::Deferred(dtx) => {
-                    self.deferred_queue
-                        .submit(dtx.clone())
-                        .map(|_| ())
-                        .map_err(|e| ExecutionError::ContractError(e.to_string()))
-                }
+                Transaction::Deferred(dtx) => self
+                    .deferred_queue
+                    .submit(dtx.clone())
+                    .map(|_| ())
+                    .map_err(|e| ExecutionError::ContractError(e.to_string())),
                 Transaction::ValidatorExit(exit) => {
                     let sender = db.get_or_create_account(&exit.validator_address);
                     if sender.nonce != exit.nonce {
@@ -1716,18 +1770,23 @@ impl ExecutionEngine for BlockStmExecutor {
                         })
                     } else {
                         sender.nonce += 1;
-                        let mut stake = db.get_stake(exit.validator_id).cloned().ok_or_else(|| {
-                            ExecutionError::ObjectNotFound(
-                                format!("no stake record for validator {}", exit.validator_id),
-                            )
-                        })?;
+                        let mut stake =
+                            db.get_stake(exit.validator_id).cloned().ok_or_else(|| {
+                                ExecutionError::ObjectNotFound(format!(
+                                    "no stake record for validator {}",
+                                    exit.validator_id
+                                ))
+                            })?;
                         if stake.validator_address != exit.validator_address {
                             return Err(ExecutionError::InvalidSignature);
                         }
                         if stake.unbonding_epoch.is_some() {
-                            Err(ExecutionError::ContractError("validator already exiting".to_string()))
+                            Err(ExecutionError::ContractError(
+                                "validator already exiting".to_string(),
+                            ))
                         } else {
-                            stake.unbonding_epoch = Some(block.epoch + crate::UNBONDING_PERIOD_EPOCHS);
+                            stake.unbonding_epoch =
+                                Some(block.epoch + crate::UNBONDING_PERIOD_EPOCHS);
                             db.put_stake(stake);
                             Ok(())
                         }
@@ -1735,9 +1794,10 @@ impl ExecutionEngine for BlockStmExecutor {
                 }
                 Transaction::ValidatorClaimStake(claim) => {
                     let stake = db.get_stake(claim.validator_id).cloned().ok_or_else(|| {
-                        ExecutionError::ObjectNotFound(
-                            format!("no stake record for validator {}", claim.validator_id),
-                        )
+                        ExecutionError::ObjectNotFound(format!(
+                            "no stake record for validator {}",
+                            claim.validator_id
+                        ))
                     })?;
                     if stake.validator_address != claim.validator_address {
                         return Err(ExecutionError::InvalidSignature);
@@ -1787,7 +1847,9 @@ impl ExecutionEngine for BlockStmExecutor {
         }
 
         // ── Phase 4: Evaporation + contract/script ticks ──
-        let evap_result = self.evaporation_engine.process_epoch_with_mmr(db, block.epoch, &mut self.mmr);
+        let evap_result =
+            self.evaporation_engine
+                .process_epoch_with_mmr(db, block.epoch, &mut self.mmr);
         self.contract_engine.tick(block.epoch);
         self.script_engine.tick(block.epoch);
 
@@ -1805,9 +1867,9 @@ impl ExecutionEngine for BlockStmExecutor {
                     if acct.storage_bytes == 0 {
                         continue;
                     }
-                    let rent = acct.storage_bytes.saturating_mul(
-                        evaporchain_types::STORAGE_RENT_PER_BYTE_PER_EPOCH,
-                    );
+                    let rent = acct
+                        .storage_bytes
+                        .saturating_mul(evaporchain_types::STORAGE_RENT_PER_BYTE_PER_EPOCH);
                     (rent, acct.balance)
                 };
                 let acct = db.get_or_create_account(&addr);
@@ -1836,7 +1898,11 @@ impl ExecutionEngine for BlockStmExecutor {
         );
 
         let mera_root = crate::mera_integration::compute_mera_commitment(db);
-        let mera_commitment = if mera_root == [0u8; 32] { None } else { Some(mera_root) };
+        let mera_commitment = if mera_root == [0u8; 32] {
+            None
+        } else {
+            Some(mera_root)
+        };
 
         Ok(BlockExecutionResult {
             state_root,
@@ -1885,21 +1951,20 @@ impl BlockStmExecutor {
         let mut total_fees = 0u64;
 
         // Helper closures to read from local overlay → base DB
-        let get_balance = |addr: &AccountAddress,
-                           accounts: &HashMap<AccountAddress, Account>|
-         -> u64 {
-            accounts
-                .get(addr)
-                .map_or_else(|| db.get_account(addr).map_or(0, |a| a.balance), |a| a.balance)
-        };
+        let get_balance =
+            |addr: &AccountAddress, accounts: &HashMap<AccountAddress, Account>| -> u64 {
+                accounts.get(addr).map_or_else(
+                    || db.get_account(addr).map_or(0, |a| a.balance),
+                    |a| a.balance,
+                )
+            };
 
-        let get_nonce = |addr: &AccountAddress,
-                         accounts: &HashMap<AccountAddress, Account>|
-         -> u64 {
-            accounts
-                .get(addr)
-                .map_or_else(|| db.get_account(addr).map_or(0, |a| a.nonce), |a| a.nonce)
-        };
+        let get_nonce =
+            |addr: &AccountAddress, accounts: &HashMap<AccountAddress, Account>| -> u64 {
+                accounts
+                    .get(addr)
+                    .map_or_else(|| db.get_account(addr).map_or(0, |a| a.nonce), |a| a.nonce)
+            };
 
         for tx in txs {
             let tx_gas = estimate_gas(tx);
@@ -2028,6 +2093,7 @@ impl BlockStmExecutor {
                                 grace_epoch: None,
                                 data: t.data.clone(),
                                 decay_curve: t.decay_curve.clone(),
+                                lad_mode: t.lad_mode,
                             }),
                         );
                         true
@@ -2361,6 +2427,7 @@ mod tests {
                 half_life: 100,
                 data: vec![1, 2, 3],
                 decay_curve: None,
+                lad_mode: None,
                 signature: None,
                 public_key: None,
             }),
@@ -2371,6 +2438,7 @@ mod tests {
                 half_life: 200,
                 data: vec![4, 5, 6],
                 decay_curve: None,
+                lad_mode: None,
                 signature: None,
                 public_key: None,
             }),
@@ -2513,6 +2581,7 @@ mod tests {
                 half_life: 100,
                 data: vec![0xDE, 0xAD],
                 decay_curve: None,
+                lad_mode: None,
                 signature: None,
                 public_key: None,
             }),
@@ -2620,6 +2689,7 @@ mod tests {
                 half_life: 50,
                 data: vec![1, 2, 3, 4],
                 decay_curve: None,
+                lad_mode: None,
                 signature: None,
                 public_key: None,
             }),
@@ -2669,16 +2739,28 @@ mod tests {
         // Set gas limit to allow only 2 (42000)
         let txs = vec![
             Transaction::Transfer(TransferTx {
-                from: addr(1), to: addr(10), amount: 100, nonce: 0,
-                signature: None, public_key: None,
+                from: addr(1),
+                to: addr(10),
+                amount: 100,
+                nonce: 0,
+                signature: None,
+                public_key: None,
             }),
             Transaction::Transfer(TransferTx {
-                from: addr(2), to: addr(20), amount: 200, nonce: 0,
-                signature: None, public_key: None,
+                from: addr(2),
+                to: addr(20),
+                amount: 200,
+                nonce: 0,
+                signature: None,
+                public_key: None,
             }),
             Transaction::Transfer(TransferTx {
-                from: addr(3), to: addr(30), amount: 300, nonce: 0,
-                signature: None, public_key: None,
+                from: addr(3),
+                to: addr(30),
+                amount: 300,
+                nonce: 0,
+                signature: None,
+                public_key: None,
             }),
         ];
 
@@ -2699,14 +2781,14 @@ mod tests {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 500); // Just enough for fee but not for transfer
 
-        let txs = vec![
-            Transaction::Transfer(TransferTx {
-                from: addr(1), to: addr(2),
-                amount: 1_000_000, // Way more than balance — will fail
-                nonce: 0,
-                signature: None, public_key: None,
-            }),
-        ];
+        let txs = vec![Transaction::Transfer(TransferTx {
+            from: addr(1),
+            to: addr(2),
+            amount: 1_000_000, // Way more than balance — will fail
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        })];
 
         let block = make_block(1, 1, txs);
         let mut executor = BlockStmExecutor::new_for_test(7);
@@ -2720,8 +2802,7 @@ mod tests {
         assert_eq!(db.get_account(&addr(1)).unwrap().nonce, 0);
         // Receiver should NOT exist (tx reverted)
         assert!(
-            db.get_account(&addr(2)).is_none()
-                || db.get_account(&addr(2)).unwrap().balance == 0
+            db.get_account(&addr(2)).is_none() || db.get_account(&addr(2)).unwrap().balance == 0
         );
     }
 
@@ -2838,7 +2919,10 @@ mod tests {
         executor.parallel_threshold = 100; // Force sequential path
         let result = executor.execute_block(&mut db, &block).unwrap();
 
-        assert_eq!(result.txs_failed, 1, "overflow transfer must fail in sequential");
+        assert_eq!(
+            result.txs_failed, 1,
+            "overflow transfer must fail in sequential"
+        );
         assert_eq!(result.txs_executed, 0);
         assert_eq!(
             db.get_account(&addr(2)).unwrap().balance,
@@ -2846,7 +2930,10 @@ mod tests {
             "receiver balance must not wrap on overflow (sequential)"
         );
         let sender_bal = db.get_account(&addr(1)).unwrap().balance;
-        assert!(sender_bal >= 999 && sender_bal <= 1000, "sender balance {sender_bal} after failed tx");
+        assert!(
+            (999..=1000).contains(&sender_bal),
+            "sender balance {sender_bal} after failed tx"
+        );
     }
 
     #[test]

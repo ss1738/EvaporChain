@@ -108,7 +108,8 @@ mod proptests {
                 .prop_filter("at least one positive", |v| v.iter().any(|c| *c > 0)),
         ) {
             let h = entropy_millibits(&counts).unwrap();
-            prop_assert!(h <= u64::MAX);
+            #[allow(clippy::absurd_extreme_comparisons)]
+            { prop_assert!(h <= u64::MAX); }
         }
 
         /// Entropy of a single-bucket histogram is always 0.

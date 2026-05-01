@@ -11,9 +11,7 @@
 //! was closed by commit 1fc67c0 (K-04); this module is the missing
 //! light-client half of `da_flow.mmd` (nodes L → R).
 
-use crate::block_da_2d::{
-    AvailabilityMetrics, BlockDA2D, BlockDA2DHeader, CellSampleResult,
-};
+use crate::block_da_2d::{AvailabilityMetrics, BlockDA2D, BlockDA2DHeader, CellSampleResult};
 use crate::commitments::CellProof;
 
 /// Why a peer was marked faulty during sampling.
@@ -90,9 +88,7 @@ impl SamplingReport {
     /// Default threshold per Celestia DAS analysis: 1 - 2^-15 ≈ 0.99997 with
     /// 15 honest samples. Caller picks the bound; this is just a convenience.
     pub fn passes(&self, threshold: f64) -> bool {
-        self.all_valid
-            && self.faulty_peers.is_empty()
-            && self.metrics.confidence >= threshold
+        self.all_valid && self.faulty_peers.is_empty() && self.metrics.confidence >= threshold
     }
 }
 
@@ -104,7 +100,10 @@ pub struct LightClientSampler<S: CellSource> {
 
 impl<S: CellSource> LightClientSampler<S> {
     pub fn new(source: S) -> Self {
-        Self { source, da: BlockDA2D::new() }
+        Self {
+            source,
+            da: BlockDA2D::new(),
+        }
     }
 
     /// Underlying cell source. Useful for tests that want to inspect mock
@@ -150,7 +149,8 @@ impl<S: CellSource> LightClientSampler<S> {
                     // the peer claims it is.
                     if proof.row != q.row || proof.col != q.col {
                         record_fault(&mut faulty_peers, &peer_id, PeerFaultReason::OutOfRange);
-                        self.source.report_faulty(&peer_id, PeerFaultReason::OutOfRange);
+                        self.source
+                            .report_faulty(&peer_id, PeerFaultReason::OutOfRange);
                         all_valid = false;
                         results.push(failed_result(q.row, q.col));
                         continue;
@@ -162,7 +162,8 @@ impl<S: CellSource> LightClientSampler<S> {
                     let computed: [u8; 32] = blake3::hash(&proof.cell_data).into();
                     if computed != proof.cell_hash {
                         record_fault(&mut faulty_peers, &peer_id, PeerFaultReason::HashMismatch);
-                        self.source.report_faulty(&peer_id, PeerFaultReason::HashMismatch);
+                        self.source
+                            .report_faulty(&peer_id, PeerFaultReason::HashMismatch);
                         all_valid = false;
                         results.push(failed_result(q.row, q.col));
                         continue;
@@ -173,7 +174,8 @@ impl<S: CellSource> LightClientSampler<S> {
                     let valid = BlockDA2D::verify_cell_proof(header, &proof);
                     if !valid {
                         record_fault(&mut faulty_peers, &peer_id, PeerFaultReason::InvalidProof);
-                        self.source.report_faulty(&peer_id, PeerFaultReason::InvalidProof);
+                        self.source
+                            .report_faulty(&peer_id, PeerFaultReason::InvalidProof);
                         all_valid = false;
                         results.push(failed_result(q.row, q.col));
                         continue;
@@ -201,7 +203,12 @@ impl<S: CellSource> LightClientSampler<S> {
         }
 
         let metrics = AvailabilityMetrics::from_samples(&results, header.extended_dim);
-        SamplingReport { results, metrics, faulty_peers, all_valid }
+        SamplingReport {
+            results,
+            metrics,
+            faulty_peers,
+            all_valid,
+        }
     }
 
     /// Convenience accessor for the inner encoder, mainly for tests that
@@ -321,10 +328,20 @@ mod tests {
 
         let report = sampler.sample_block(&header, 1, 16, b"test-seed-honest");
 
-        assert!(report.all_valid, "honest peers should produce all-valid samples");
-        assert!(report.faulty_peers.is_empty(), "no peer should be marked faulty");
+        assert!(
+            report.all_valid,
+            "honest peers should produce all-valid samples"
+        );
+        assert!(
+            report.faulty_peers.is_empty(),
+            "no peer should be marked faulty"
+        );
         // 16 valid samples → 1 - 2^-16 ≈ 0.99998 confidence
-        assert!(report.metrics.confidence > 0.999, "confidence too low: {}", report.metrics.confidence);
+        assert!(
+            report.metrics.confidence > 0.999,
+            "confidence too low: {}",
+            report.metrics.confidence
+        );
         assert_eq!(report.metrics.valid_samples, 16);
         assert!(report.passes(0.99), "sampling should pass 99% threshold");
     }
@@ -345,13 +362,20 @@ mod tests {
         let report = sampler.sample_block(&header, 1, 8, b"test-seed-corrupt");
 
         assert!(!report.all_valid);
-        assert_eq!(report.faulty_peers.len(), 1, "corrupt peer should be in faulty list once");
+        assert_eq!(
+            report.faulty_peers.len(),
+            1,
+            "corrupt peer should be in faulty list once"
+        );
         assert_eq!(report.faulty_peers[0].0, "peer-evil");
         assert_eq!(report.faulty_peers[0].1, PeerFaultReason::InvalidProof);
         // report_faulty hook should have been called for every bad cell
         let logged = sampler.source().faulty_log.borrow().len();
         assert_eq!(logged, 8, "report_faulty should fire on every bad sample");
-        assert!(!report.passes(0.99), "report with faulty peer must not pass");
+        assert!(
+            !report.passes(0.99),
+            "report with faulty peer must not pass"
+        );
     }
 
     #[test]
@@ -407,7 +431,9 @@ mod tests {
         }
 
         fn report_faulty(&self, peer_id: &str, reason: PeerFaultReason) {
-            self.faulty_log.borrow_mut().push((peer_id.to_string(), reason));
+            self.faulty_log
+                .borrow_mut()
+                .push((peer_id.to_string(), reason));
         }
     }
 
@@ -447,7 +473,10 @@ mod tests {
             "confidence should not be saturated when half the cells are withheld",
         );
         // Block must not pass the high-confidence threshold.
-        assert!(!report.passes(0.999), "withheld block must fail HP threshold");
+        assert!(
+            !report.passes(0.999),
+            "withheld block must fail HP threshold"
+        );
     }
 
     #[test]

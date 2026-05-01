@@ -28,7 +28,7 @@
 //!   monotonically with `missed/slots`; `sanov_slash` returns the
 //!   cost as a fraction of stake.
 
-use evaporchain_sanov_slashing::{sanov_slash, Distribution, FIXED_POINT_SCALE, SlashError};
+use evaporchain_sanov_slashing::{sanov_slash, Distribution, SlashError, FIXED_POINT_SCALE};
 use evaporchain_types::Energy;
 
 /// Compute the Sanov slash for an *equivocation* observation.
@@ -60,11 +60,9 @@ pub fn downtime_slash(stake: Energy, slots: u64, missed: u64) -> Result<Energy, 
         .expect("honest downtime pmf is well-formed by construction");
     // Observed pmf from raw counts: produced = slots - missed, missed = missed.
     let produced = slots.saturating_sub(missed);
-    let observed = Distribution::from_counts(&[produced, missed])
-        .map_err(|_| SlashError::Kl(evaporchain_sanov_slashing::KlError::AlphabetMismatch {
-            q_len: 2,
-            p_len: 2,
-        }))?;
+    let observed = Distribution::from_counts(&[produced, missed]).map_err(|_| {
+        SlashError::Kl(evaporchain_sanov_slashing::KlError::AlphabetMismatch { q_len: 2, p_len: 2 })
+    })?;
     sanov_slash(stake, &observed, &honest)
 }
 
@@ -114,6 +112,9 @@ mod tests {
         let stake = 1_000_000;
         let s = downtime_slash(stake, 1_000_000, 1_000).unwrap();
         // Zero or close to it (KL of identical distributions is zero).
-        assert!(s < 100, "expected near-zero slash for honest-rate downtime, got {s}");
+        assert!(
+            s < 100,
+            "expected near-zero slash for honest-rate downtime, got {s}"
+        );
     }
 }

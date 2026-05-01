@@ -276,9 +276,7 @@ pub fn parse_payment_uri(uri: &str) -> Result<PaymentUri, QrError> {
             if let Some((key, value)) = param.split_once('=') {
                 match key {
                     "amount" => {
-                        payment.amount = value
-                            .parse::<u64>()
-                            .ok();
+                        payment.amount = value.parse::<u64>().ok();
                     }
                     "label" => payment.label = Some(value.to_string()),
                     "message" => payment.message = Some(value.to_string()),
@@ -424,9 +422,7 @@ mod tests {
 
     #[test]
     fn test_payment_uri_with_amount() {
-        let uri = PaymentUri::new("evap1abc")
-            .with_amount(1000)
-            .to_uri();
+        let uri = PaymentUri::new("evap1abc").with_amount(1000).to_uri();
         assert_eq!(uri, "evaporchain:evap1abc?amount=1000");
     }
 
@@ -510,6 +506,9 @@ mod tests {
         let bits2 = bytes_to_bits(&[0x00]);
         assert_eq!(bits2, vec![false; 8]);
         let bits3 = bytes_to_bits(&[0xA5]); // 10100101
-        assert_eq!(bits3, vec![true, false, true, false, false, true, false, true]);
+        assert_eq!(
+            bits3,
+            vec![true, false, true, false, false, true, false, true]
+        );
     }
 }

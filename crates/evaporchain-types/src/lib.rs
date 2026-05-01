@@ -20,6 +20,27 @@ pub type DecayRate = u64;
 /// Half-life in epochs.
 pub type HalfLife = u64;
 
+/// LAD-VM substructural-resource mode.
+///
+/// Mirrors `evaporchain_lad_vm::Mode` so that `evaporchain-types` does
+/// not need to depend on `evaporchain-lad-vm` (which would create a
+/// circular dep — lad-vm already depends on types). The lad-vm crate
+/// owns the runtime-side `From` conversions both ways so the two
+/// representations stay in lockstep.
+///
+/// Wire format is lowercase: `"linear"` | `"affine"` | `"decaying"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LadMode {
+    /// Must be consumed exactly once. `drop` is forbidden.
+    Linear,
+    /// May be consumed at most once. `drop` is allowed.
+    Affine,
+    /// Affine + decays automatically after a window. The window is
+    /// stored on the LAD-VM `Resource`, not on `StateObject`.
+    Decaying,
+}
+
 /// A state object stored on-chain.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StateObject {
@@ -34,6 +55,14 @@ pub struct StateObject {
     pub data: Vec<u8>,
     #[serde(default)]
     pub decay_curve: Option<DecayCurve>,
+    /// Optional LAD-VM substructural-resource type. Some objects are
+    /// governed by the linear/affine/decaying type system; `None` means
+    /// it's an ordinary state object.
+    ///
+    /// `#[serde(default)]` is critical — old persisted state must
+    /// deserialise into `lad_mode: None` without breaking.
+    #[serde(default)]
+    pub lad_mode: Option<LadMode>,
 }
 
 impl StateObject {
@@ -493,7 +522,12 @@ impl Transaction {
                 buf.extend_from_slice(&tx.sender);
                 buf.extend_from_slice(&tx.nonce.to_le_bytes());
                 match &tx.action {
-                    GovernanceAction::CreateProposal { title, param_key, param_value, voting_epochs } => {
+                    GovernanceAction::CreateProposal {
+                        title,
+                        param_key,
+                        param_value,
+                        voting_epochs,
+                    } => {
                         buf.push(0x01);
                         buf.extend_from_slice(title.as_bytes());
                         buf.extend_from_slice(param_key.as_bytes());
@@ -763,6 +797,12 @@ pub struct CreateObjectTx {
     pub data: Vec<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decay_curve: Option<DecayCurve>,
+    /// Optional LAD-VM substructural-resource type stamped onto the
+    /// resulting `StateObject`. `None` (default) produces an ordinary
+    /// non-substructural object. The future `evaporchain-script-lad`
+    /// frontend will set this when lowering an annotated declaration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lad_mode: Option<LadMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<Vec<u8>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -897,12 +937,10 @@ pub struct ValidatorClaimStakeTx {
 ///
 /// Closes punch-list item #4. Why proof-of-possession on BOTH keys:
 ///   - `bls_pop_old`  — proves the rotator currently controls the old key
-///                       (prevents external attacker from swapping a
-///                       compromised key out of an unwitting validator's
-///                       slot).
+///     (prevents external attacker from swapping a compromised key out of
+///     an unwitting validator's slot).
 ///   - `bls_pop_new`  — proves the rotator controls the new key (rogue-key
-///                       defence; same logic as the original PoP at
-///                       validator registration).
+///     defence; same logic as the original PoP at validator registration).
 ///
 /// `effective_epoch` must be in the future relative to the block in which
 /// this tx is admitted, giving operators a deterministic switchover point.
@@ -1045,8 +1083,16 @@ pub struct GovernanceVote {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GovernanceAction {
-    CreateProposal { title: String, param_key: String, param_value: String, voting_epochs: u64 },
-    CastVote { proposal_id: u64, vote: bool },
+    CreateProposal {
+        title: String,
+        param_key: String,
+        param_value: String,
+        voting_epochs: u64,
+    },
+    CastVote {
+        proposal_id: u64,
+        vote: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1164,6 +1210,13 @@ pub struct UpgradeContractTx {
     pub contract_id: u64,
     pub new_bytecode: Vec<u8>,
     pub nonce: u64,
+    /// **Advisory only.** The real authorization gate is in
+    /// `ExecutionEngine::execute_upgrade_contract`: it requires a Passed
+    /// governance proposal whose `param_key = upgrade_contract:{contract_id}`
+    /// and `param_value = hex(blake3(new_bytecode))`. This boolean is
+    /// retained because it's part of the signing-canonical bytes; flipping
+    /// it has no security effect either way. Wallets populate it for
+    /// human-readable diagnostics. Closes K-10 / THREAT_MODEL §4.9.
     #[serde(default)]
     pub governance_approved: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1432,15 +1485,26 @@ pub struct DualCommitment {
 /// decreases over time. Stored on-chain per object when non-default.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum DecayCurve {
-    Exponential { half_life: u64 },
-    Linear { rate_per_epoch: u64 },
-    Stepped { thresholds: Vec<(u64, u64)> },
+    Exponential {
+        half_life: u64,
+    },
+    Linear {
+        rate_per_epoch: u64,
+    },
+    Stepped {
+        thresholds: Vec<(u64, u64)>,
+    },
     Conditional {
         base: Box<DecayCurve>,
         grace_epochs: u64,
     },
-    Asymptotic { floor: u64, half_life: u64 },
-    Custom { bytecode: Vec<u8> },
+    Asymptotic {
+        floor: u64,
+        half_life: u64,
+    },
+    Custom {
+        bytecode: Vec<u8>,
+    },
 }
 
 impl Default for DecayCurve {
@@ -1529,6 +1593,7 @@ mod tests {
             grace_epoch: None,
             data: vec![],
             decay_curve: None,
+            lad_mode: None,
         };
         // At epoch 15, 10 epochs since refresh -> one half-life -> 500
         assert_eq!(obj.energy_at(15), 500);
@@ -1656,6 +1721,7 @@ mod tests {
             grace_epoch: None,
             data: vec![],
             decay_curve: None,
+            lad_mode: None,
         };
         assert!(matches!(obj.state, ObjectState::Active));
     }
@@ -1673,6 +1739,7 @@ mod tests {
             grace_epoch: Some(100),
             data: vec![1, 2, 3],
             decay_curve: None,
+            lad_mode: None,
         };
         let json = serde_json::to_vec(&obj).unwrap();
         let back: StateObject = serde_json::from_slice(&json).unwrap();

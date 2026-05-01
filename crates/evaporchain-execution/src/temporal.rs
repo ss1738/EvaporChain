@@ -11,8 +11,8 @@
 //!
 //! Both integrate with the block execution pipeline and the thermodynamic model.
 
-use std::collections::BinaryHeap;
 use std::cmp::Ordering;
+use std::collections::BinaryHeap;
 
 use evaporchain_contracts::ContractEngine;
 use evaporchain_state::db::StateDB;
@@ -250,8 +250,11 @@ impl DeferredQueue {
                 }
                 TemporalGuard::EnergyBelow(obj_id, threshold) => {
                     if let Some(obj) = db.get_object(obj_id) {
-                        let current =
-                            evaporchain_types::energy_at_epoch(obj.energy, obj.half_life, epoch.saturating_sub(obj.last_refreshed));
+                        let current = evaporchain_types::energy_at_epoch(
+                            obj.energy,
+                            obj.half_life,
+                            epoch.saturating_sub(obj.last_refreshed),
+                        );
                         if current >= *threshold {
                             return false;
                         }
@@ -261,8 +264,11 @@ impl DeferredQueue {
                 }
                 TemporalGuard::EnergyAbove(obj_id, threshold) => {
                     if let Some(obj) = db.get_object(obj_id) {
-                        let current =
-                            evaporchain_types::energy_at_epoch(obj.energy, obj.half_life, epoch.saturating_sub(obj.last_refreshed));
+                        let current = evaporchain_types::energy_at_epoch(
+                            obj.energy,
+                            obj.half_life,
+                            epoch.saturating_sub(obj.last_refreshed),
+                        );
                         if current <= *threshold {
                             return false;
                         }
@@ -281,14 +287,14 @@ impl DeferredQueue {
                 TemporalGuard::ContractInPhase(contract_id, expected_phase) => {
                     if let Some(contract) = contract_engine.get(*contract_id) {
                         // Try to extract temporal state and check phase name.
-                        if let Ok(ts) = serde_json::from_value::<serde_json::Value>(
-                            contract.state.clone(),
-                        ) {
+                        if let Ok(ts) =
+                            serde_json::from_value::<serde_json::Value>(contract.state.clone())
+                        {
                             if let Some(phases) = ts.get("phases").and_then(|p| p.as_array()) {
-                                let idx = ts
-                                    .get("current_phase")
-                                    .and_then(|v| v.as_u64())
-                                    .unwrap_or(0) as usize;
+                                let idx =
+                                    ts.get("current_phase")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0) as usize;
                                 if let Some(phase) = phases.get(idx) {
                                     let name =
                                         phase.get("name").and_then(|n| n.as_str()).unwrap_or("");
@@ -509,6 +515,7 @@ mod tests {
             grace_epoch: None,
             data: vec![],
             decay_curve: None,
+            lad_mode: None,
         }
     }
 
@@ -626,11 +633,7 @@ mod tests {
     #[test]
     fn test_deferred_reject_low_deposit() {
         let mut queue = DeferredQueue::new();
-        let mut tx = make_deferred_tx(
-            addr(1),
-            vec![TemporalGuard::AfterEpoch(5)],
-            vec![0x01],
-        );
+        let mut tx = make_deferred_tx(addr(1), vec![TemporalGuard::AfterEpoch(5)], vec![0x01]);
         tx.deposit = 100; // Below MIN_DEFERRED_DEPOSIT.
         assert!(matches!(
             queue.submit(tx),

@@ -195,22 +195,23 @@ impl ScoringRule {
         match &self.condition {
             RuleCondition::TxCountAbove(threshold) => profile.tx_count > *threshold,
             RuleCondition::VolumeAbove(threshold) => profile.total_volume > *threshold,
-            RuleCondition::NoActivityDays(days) => {
-                match &profile.last_activity {
-                    None => true,
-                    Some(ts) => {
-                        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts) {
-                            let delta = chrono::Utc::now().signed_duration_since(dt);
-                            delta.num_days() > *days as i64
-                        } else {
-                            true
-                        }
+            RuleCondition::NoActivityDays(days) => match &profile.last_activity {
+                None => true,
+                Some(ts) => {
+                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts) {
+                        let delta = chrono::Utc::now().signed_duration_since(dt);
+                        delta.num_days() > *days as i64
+                    } else {
+                        true
                     }
                 }
-            }
+            },
             RuleCondition::LabelContains(label) => {
                 let lower = label.to_lowercase();
-                profile.labels.iter().any(|l| l.to_lowercase().contains(&lower))
+                profile
+                    .labels
+                    .iter()
+                    .any(|l| l.to_lowercase().contains(&lower))
             }
             RuleCondition::Always => true,
         }
@@ -401,10 +402,7 @@ mod tests {
     use super::*;
 
     fn test_path(name: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
-            "addr_score_test_{}_{name}",
-            std::process::id()
-        ))
+        std::env::temp_dir().join(format!("addr_score_test_{}_{name}", std::process::id()))
     }
 
     #[test]
@@ -470,7 +468,7 @@ mod tests {
         p.add_factor(RiskFactor::KnownScam); // 90
         p.add_factor(RiskFactor::SanctionedEntity); // 85
         p.add_factor(RiskFactor::PhishingRelated); // 70
-        // Raw = 245, capped to 100.
+                                                   // Raw = 245, capped to 100.
         assert_eq!(p.risk_score, 100);
         assert_eq!(p.risk_level, RiskLevel::Critical);
     }
@@ -614,7 +612,7 @@ mod tests {
     fn test_risky_and_safe_addresses() {
         let mut scorer = AddressScorer::new();
 
-        let mut safe = AddressProfile::new("evap1safe");
+        let safe = AddressProfile::new("evap1safe");
         let mut risky = AddressProfile::new("evap1risky");
         risky.add_factor(RiskFactor::KnownScam);
 
@@ -654,7 +652,7 @@ mod tests {
         p2.notes = "suspicious exchange activity".to_string();
         scorer.add_profile(p2);
 
-        let mut p3 = AddressProfile::new("evap1charlie");
+        let p3 = AddressProfile::new("evap1charlie");
         scorer.add_profile(p3);
 
         // Search by address.

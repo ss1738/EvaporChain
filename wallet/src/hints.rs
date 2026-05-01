@@ -17,18 +17,25 @@ pub fn hint_for_error(error: &str) -> Option<&'static str> {
         return Some("The node is not responding. It may be syncing or overloaded.\n  Try again in a few seconds, or check node health: wallet status");
     }
     if lower.contains("dns") || lower.contains("resolve") {
-        return Some("Could not resolve the node hostname.\n  Check your node URL: wallet config show");
+        return Some(
+            "Could not resolve the node hostname.\n  Check your node URL: wallet config show",
+        );
     }
 
     // Auth / account errors
-    if lower.contains("wrong password") || lower.contains("decryption failed") || lower.contains("mac mismatch") {
+    if lower.contains("wrong password")
+        || lower.contains("decryption failed")
+        || lower.contains("mac mismatch")
+    {
         return Some("Wrong password. Double-check your password and try again.\n  If forgotten, recover using: wallet seed recover <backup-file> <name>");
     }
     if lower.contains("no active account") || lower.contains("account not found") {
         return Some("No active account set. Create or switch:\n  wallet account create <name>\n  wallet account switch <name>");
     }
     if lower.contains("key not found") || lower.contains("account '") {
-        return Some("That account doesn't exist in your keystore.\n  List accounts: wallet account list");
+        return Some(
+            "That account doesn't exist in your keystore.\n  List accounts: wallet account list",
+        );
     }
 
     // Balance errors
@@ -69,7 +76,10 @@ pub fn hint_for_error(error: &str) -> Option<&'static str> {
     }
 
     // File errors
-    if lower.contains("no such file") || lower.contains("file not found") || lower.contains("notfound") {
+    if lower.contains("no such file")
+        || lower.contains("file not found")
+        || lower.contains("notfound")
+    {
         return Some("File not found. Check the file path and try again.");
     }
     if lower.contains("permission denied") {

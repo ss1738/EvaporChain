@@ -197,8 +197,7 @@ impl AutoRefresher {
                 }
             } else {
                 // Object refresh via signed tx
-                let obj_id = crate::address::parse_address(&action.asset_id)
-                    .unwrap_or([0u8; 32]);
+                let obj_id = crate::address::parse_address(&action.asset_id).unwrap_or([0u8; 32]);
                 match pipeline
                     .refresh_object(signer, &obj_id, action.energy_to_deposit)
                     .await

@@ -22,7 +22,7 @@
 
 use evaporchain_ib_validators::{
     ib::{ib_vote, IbParams, IbVote},
-    signature::{StateSignature, N_BINS},
+    signature::StateSignature,
 };
 use tracing::debug;
 
@@ -44,11 +44,7 @@ pub fn build_validator_signature(stakes: &[u64]) -> StateSignature {
 ///
 /// Returns `IbVote::Commit` or `IbVote::Abstain`.  With `DEFAULT_LAMBDA_MB
 /// = 0` this always returns Commit (no information threshold required).
-pub fn compute_ib_vote(
-    local: &StateSignature,
-    prior: &StateSignature,
-    lambda_mb: u64,
-) -> IbVote {
+pub fn compute_ib_vote(local: &StateSignature, prior: &StateSignature, lambda_mb: u64) -> IbVote {
     let params = IbParams { lambda_mb };
     let vote = ib_vote(local, prior, &params);
     debug!(
@@ -62,11 +58,7 @@ pub fn compute_ib_vote(
 
 /// Build local + prior signatures from two stake distributions and return
 /// the IB vote.  Convenience wrapper for the consensus tick.
-pub fn ib_vote_from_stakes(
-    local_stakes: &[u64],
-    prior_stakes: &[u64],
-    lambda_mb: u64,
-) -> IbVote {
+pub fn ib_vote_from_stakes(local_stakes: &[u64], prior_stakes: &[u64], lambda_mb: u64) -> IbVote {
     let local = build_validator_signature(local_stakes);
     let prior = build_validator_signature(prior_stakes);
     compute_ib_vote(&local, &prior, lambda_mb)
@@ -75,6 +67,7 @@ pub fn ib_vote_from_stakes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use evaporchain_ib_validators::signature::N_BINS;
 
     fn uniform_stakes(n: usize, val: u64) -> Vec<u64> {
         vec![val; n]
@@ -98,9 +91,12 @@ mod tests {
 
     #[test]
     fn divergent_distributions_commit_at_moderate_lambda() {
-        // Very different distributions should produce non-trivial KL.
-        let local = vec![1000, 1, 1, 1, 1, 1, 1, 1];
-        let prior = vec![1, 1, 1, 1, 1, 1, 1, 1000];
+        // Truly divergent distributions: every value lives in a different
+        // bin. The earlier version of this test used [1000, 1, 1, 1, ..]
+        // vs [1, 1, 1, .., 1000] — those bin identically (7 ones at bin 0
+        // + one entry at bin 15) because StateSignature is order-agnostic.
+        let local = vec![100, 100, 100, 100, 100, 100, 100, 100];
+        let prior = vec![900, 900, 900, 900, 900, 900, 900, 900];
         // lambda_mb = 1 — tiny threshold should still commit.
         let vote = ib_vote_from_stakes(&local, &prior, 1);
         assert_eq!(vote, IbVote::Commit);

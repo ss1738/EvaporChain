@@ -6,9 +6,7 @@
 
 use crate::annotation::LadAnnotation;
 use crate::error::LadScriptError;
-use evaporchain_lad_vm::{
-    drop_resource, tick_decay, use_resource, Mode, OpError, Resource,
-};
+use evaporchain_lad_vm::{drop_resource, tick_decay, use_resource, Mode, OpError, Resource};
 use std::collections::BTreeMap;
 
 /// Verdict for a single LAD resource after one call.
@@ -48,6 +46,7 @@ enum Slot {
 }
 
 impl Slot {
+    #[allow(dead_code)]
     fn verdict(&self) -> ResourceVerdict {
         match self {
             Self::Live(r) => ResourceVerdict::Live { value: r.value },
@@ -65,10 +64,7 @@ pub struct LadResourceTracker {
 
 impl LadResourceTracker {
     /// Initialise from annotation declarations at `created_epoch`.
-    pub fn from_annotations(
-        annotations: &[LadAnnotation],
-        created_epoch: u64,
-    ) -> Self {
+    pub fn from_annotations(annotations: &[LadAnnotation], created_epoch: u64) -> Self {
         let mut slots = BTreeMap::new();
         for ann in annotations {
             let resource: Resource<u64> = match ann.mode {
@@ -85,7 +81,11 @@ impl LadResourceTracker {
     }
 
     /// Attempt to consume (use) a named resource at `current_epoch`.
-    pub fn use_resource(&mut self, name: &str, current_epoch: u64) -> Result<ResourceVerdict, LadScriptError> {
+    pub fn use_resource(
+        &mut self,
+        name: &str,
+        current_epoch: u64,
+    ) -> Result<ResourceVerdict, LadScriptError> {
         let slot = self
             .slots
             .get_mut(name)
@@ -303,7 +303,10 @@ mod tests {
         let anns = vec![ann("voucher", Mode::Decaying, 100, Some(50))];
         let tracker = LadResourceTracker::from_annotations(&anns, 0);
         let snap = tracker.snapshot(10); // epoch 10 < window 50
-        assert!(matches!(snap["voucher"], ResourceVerdict::Live { value: 100 }));
+        assert!(matches!(
+            snap["voucher"],
+            ResourceVerdict::Live { value: 100 }
+        ));
     }
 
     #[test]

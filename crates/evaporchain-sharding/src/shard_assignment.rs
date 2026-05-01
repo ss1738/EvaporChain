@@ -25,10 +25,15 @@ pub struct ShardConfig {
 
 impl ShardConfig {
     pub fn new(num_shards: u16) -> Self {
-        assert!(num_shards > 0 && num_shards.is_power_of_two(),
-            "num_shards must be a power of 2");
+        assert!(
+            num_shards > 0 && num_shards.is_power_of_two(),
+            "num_shards must be a power of 2"
+        );
         let shard_bits = num_shards.trailing_zeros() as u8;
-        Self { num_shards, shard_bits }
+        Self {
+            num_shards,
+            shard_bits,
+        }
     }
 }
 
@@ -99,7 +104,9 @@ mod tests {
     #[test]
     fn test_shard_assignment_deterministic() {
         let config = ShardConfig::new(16);
-        let id = [0xAB, 0xCD, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let id = [
+            0xAB, 0xCD, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
         let s1 = shard_for_object(&id, &config);
         let s2 = shard_for_object(&id, &config);
         assert_eq!(s1, s2);
@@ -108,15 +115,24 @@ mod tests {
     #[test]
     fn test_shard_assignment_different_ids() {
         let config = ShardConfig::new(256);
-        let id1 = [0x00, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-        let id2 = [0x00, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-        assert_ne!(shard_for_object(&id1, &config), shard_for_object(&id2, &config));
+        let id1 = [
+            0x00, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        let id2 = [
+            0x00, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        assert_ne!(
+            shard_for_object(&id1, &config),
+            shard_for_object(&id2, &config)
+        );
     }
 
     #[test]
     fn test_shard_assignment_single_shard() {
         let config = ShardConfig::new(1);
-        let id = [0xFF, 0xFF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let id = [
+            0xFF, 0xFF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
         assert_eq!(shard_for_object(&id, &config), ShardId(0));
     }
 
@@ -124,7 +140,9 @@ mod tests {
     fn test_shard_assignment_within_bounds() {
         let config = ShardConfig::new(64);
         for byte in 0..=255u8 {
-            let id = [byte, byte, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+            let id = [
+                byte, byte, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ];
             let shard = shard_for_object(&id, &config);
             assert!(shard.0 < 64, "shard {} out of bounds", shard.0);
         }
@@ -151,7 +169,10 @@ mod tests {
 
     #[test]
     fn test_shard_range_contains() {
-        let range = ShardRange { start: ShardId(2), end: ShardId(5) };
+        let range = ShardRange {
+            start: ShardId(2),
+            end: ShardId(5),
+        };
         assert!(!range.contains(ShardId(1)));
         assert!(range.contains(ShardId(2)));
         assert!(range.contains(ShardId(4)));
@@ -161,7 +182,10 @@ mod tests {
 
     #[test]
     fn test_shard_range_len() {
-        let range = ShardRange { start: ShardId(0), end: ShardId(7) };
+        let range = ShardRange {
+            start: ShardId(0),
+            end: ShardId(7),
+        };
         assert_eq!(range.len(), 8);
     }
 }

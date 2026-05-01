@@ -44,16 +44,43 @@ pub enum AlertStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum AlertCondition {
-    PriceAbove { token: String, threshold: f64 },
-    PriceBelow { token: String, threshold: f64 },
-    VolumeSpike { token: String, multiplier: f64 },
-    WhaleMovement { min_amount: u64 },
-    GasAbove { threshold: u64 },
-    GasBelow { threshold: u64 },
-    BalanceBelow { token: String, threshold: u64 },
-    BalanceAbove { token: String, threshold: u64 },
-    ContractEvent { contract: String, event_name: String },
-    Custom { name: String, expression: String },
+    PriceAbove {
+        token: String,
+        threshold: f64,
+    },
+    PriceBelow {
+        token: String,
+        threshold: f64,
+    },
+    VolumeSpike {
+        token: String,
+        multiplier: f64,
+    },
+    WhaleMovement {
+        min_amount: u64,
+    },
+    GasAbove {
+        threshold: u64,
+    },
+    GasBelow {
+        threshold: u64,
+    },
+    BalanceBelow {
+        token: String,
+        threshold: u64,
+    },
+    BalanceAbove {
+        token: String,
+        threshold: u64,
+    },
+    ContractEvent {
+        contract: String,
+        event_name: String,
+    },
+    Custom {
+        name: String,
+        expression: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -460,7 +487,10 @@ mod tests {
         let mut engine = SmartAlertEngine::new();
         engine.create_alert(make_alert("a1", "Test")).unwrap();
         engine.acknowledge("a1").unwrap();
-        assert_eq!(engine.get_alert("a1").unwrap().status, AlertStatus::Acknowledged);
+        assert_eq!(
+            engine.get_alert("a1").unwrap().status,
+            AlertStatus::Acknowledged
+        );
     }
 
     #[test]
@@ -468,7 +498,10 @@ mod tests {
         let mut engine = SmartAlertEngine::new();
         engine.create_alert(make_alert("a1", "Test")).unwrap();
         engine.dismiss("a1").unwrap();
-        assert_eq!(engine.get_alert("a1").unwrap().status, AlertStatus::Dismissed);
+        assert_eq!(
+            engine.get_alert("a1").unwrap().status,
+            AlertStatus::Dismissed
+        );
     }
 
     #[test]
@@ -514,7 +547,9 @@ mod tests {
     fn test_evaluate_gas_above() {
         let mut engine = SmartAlertEngine::new();
         let mut alert = make_alert("a1", "Gas");
-        alert.conditions.push(AlertCondition::GasAbove { threshold: 100 });
+        alert
+            .conditions
+            .push(AlertCondition::GasAbove { threshold: 100 });
         engine.create_alert(alert).unwrap();
 
         let mut ctx = make_context();
@@ -529,7 +564,9 @@ mod tests {
     fn test_evaluate_gas_below() {
         let mut engine = SmartAlertEngine::new();
         let mut alert = make_alert("a1", "Gas Low");
-        alert.conditions.push(AlertCondition::GasBelow { threshold: 100 });
+        alert
+            .conditions
+            .push(AlertCondition::GasBelow { threshold: 100 });
         engine.create_alert(alert).unwrap();
 
         let mut ctx = make_context();
@@ -541,14 +578,13 @@ mod tests {
     fn test_evaluate_whale_movement() {
         let mut engine = SmartAlertEngine::new();
         let mut alert = make_alert("a1", "Whale");
-        alert
-            .conditions
-            .push(AlertCondition::WhaleMovement { min_amount: 1_000_000 });
+        alert.conditions.push(AlertCondition::WhaleMovement {
+            min_amount: 1_000_000,
+        });
         engine.create_alert(alert).unwrap();
 
         let mut ctx = make_context();
-        ctx.recent_transfers
-            .push(("0xabc".to_string(), 2_000_000));
+        ctx.recent_transfers.push(("0xabc".to_string(), 2_000_000));
         assert!(engine.evaluate_conditions("a1", &ctx).unwrap());
     }
 
@@ -587,7 +623,9 @@ mod tests {
     fn test_evaluate_and_logic() {
         let mut engine = SmartAlertEngine::new();
         let mut alert = make_alert("a1", "Multi");
-        alert.conditions.push(AlertCondition::GasAbove { threshold: 50 });
+        alert
+            .conditions
+            .push(AlertCondition::GasAbove { threshold: 50 });
         alert.conditions.push(AlertCondition::PriceAbove {
             token: "ETH".to_string(),
             threshold: 1000.0,
@@ -683,7 +721,10 @@ mod tests {
 
         assert_eq!(engine.alerts_by_severity(&AlertSeverity::Critical).len(), 1);
         assert_eq!(engine.alerts_by_severity(&AlertSeverity::Info).len(), 1);
-        assert_eq!(engine.alerts_by_severity(&AlertSeverity::Emergency).len(), 0);
+        assert_eq!(
+            engine.alerts_by_severity(&AlertSeverity::Emergency).len(),
+            0
+        );
     }
 
     #[test]
@@ -710,10 +751,7 @@ mod tests {
 
         let expired = engine.expire_alerts();
         assert_eq!(expired.len(), 1);
-        assert_eq!(
-            engine.get_alert("a1").unwrap().status,
-            AlertStatus::Expired
-        );
+        assert_eq!(engine.get_alert("a1").unwrap().status, AlertStatus::Expired);
     }
 
     #[test]

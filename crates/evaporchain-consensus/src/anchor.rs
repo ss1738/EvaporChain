@@ -580,15 +580,9 @@ impl LazyStateCache {
 
     /// Capture a snapshot of all active objects at an anchor point.
     /// Called by the node after creating a state anchor.
-    pub fn capture_anchor(
-        &mut self,
-        anchor_epoch: u64,
-        objects: Vec<ObjectSnapshot>,
-    ) {
-        let map: std::collections::HashMap<[u8; 32], ObjectSnapshot> = objects
-            .into_iter()
-            .map(|s| (s.object_id, s))
-            .collect();
+    pub fn capture_anchor(&mut self, anchor_epoch: u64, objects: Vec<ObjectSnapshot>) {
+        let map: std::collections::HashMap<[u8; 32], ObjectSnapshot> =
+            objects.into_iter().map(|s| (s.object_id, s)).collect();
         self.snapshots.insert(anchor_epoch, map);
 
         while self.snapshots.len() > self.max_anchors {
@@ -600,15 +594,9 @@ impl LazyStateCache {
 
     /// Query an object's state at any epoch using lazy evaluation.
     /// Finds the most recent anchor <= query_epoch and applies decay.
-    pub fn query(
-        &self,
-        object_id: &[u8; 32],
-        query_epoch: u64,
-    ) -> Option<LazyQueryResult> {
+    pub fn query(&self, object_id: &[u8; 32], query_epoch: u64) -> Option<LazyQueryResult> {
         // Find the most recent anchor at or before the query epoch
-        let (&anchor_epoch, anchor_map) = self.snapshots
-            .range(..=query_epoch)
-            .next_back()?;
+        let (&anchor_epoch, anchor_map) = self.snapshots.range(..=query_epoch).next_back()?;
 
         let snapshot = anchor_map.get(object_id)?;
 
@@ -628,26 +616,27 @@ impl LazyStateCache {
 
     /// Batch query: evaluate all objects at a given epoch.
     pub fn query_all(&self, query_epoch: u64) -> Vec<LazyQueryResult> {
-        let Some((&anchor_epoch, anchor_map)) = self.snapshots
-            .range(..=query_epoch)
-            .next_back()
+        let Some((&anchor_epoch, anchor_map)) = self.snapshots.range(..=query_epoch).next_back()
         else {
             return Vec::new();
         };
 
-        anchor_map.values().map(|snapshot| {
-            let energy = LazyStateEvaluator::energy_at(snapshot, &self.rules, query_epoch);
-            let state = LazyStateEvaluator::state_at(snapshot, &self.rules, query_epoch);
-            LazyQueryResult {
-                object_id: snapshot.object_id,
-                query_epoch,
-                anchor_epoch,
-                energy,
-                state,
-                energy_at_anchor: snapshot.energy_at_anchor,
-                half_life: snapshot.half_life,
-            }
-        }).collect()
+        anchor_map
+            .values()
+            .map(|snapshot| {
+                let energy = LazyStateEvaluator::energy_at(snapshot, &self.rules, query_epoch);
+                let state = LazyStateEvaluator::state_at(snapshot, &self.rules, query_epoch);
+                LazyQueryResult {
+                    object_id: snapshot.object_id,
+                    query_epoch,
+                    anchor_epoch,
+                    energy,
+                    state,
+                    energy_at_anchor: snapshot.energy_at_anchor,
+                    half_life: snapshot.half_life,
+                }
+            })
+            .collect()
     }
 
     /// Number of anchor snapshots stored.
@@ -1177,14 +1166,17 @@ mod tests {
         cache.capture_anchor(100, vec![make_snapshot(10000, 50, 100)]);
 
         // Anchor at 200: energy = 8000 (object was refreshed)
-        cache.capture_anchor(200, vec![ObjectSnapshot {
-            object_id: [1u8; 32],
-            energy_at_anchor: 8000,
-            half_life: 50,
-            anchor_epoch: 200,
-            state: ObjectLifecycleState::Active,
-            grace_epoch: None,
-        }]);
+        cache.capture_anchor(
+            200,
+            vec![ObjectSnapshot {
+                object_id: [1u8; 32],
+                energy_at_anchor: 8000,
+                half_life: 50,
+                anchor_epoch: 200,
+                state: ObjectLifecycleState::Active,
+                grace_epoch: None,
+            }],
+        );
 
         // Query at 250: should use anchor 200, not 100
         let result = cache.query(&[1u8; 32], 250).unwrap();

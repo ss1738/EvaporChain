@@ -77,7 +77,9 @@ fn mortis_fires_when_pool_stays_below_floor_for_sustained_epochs() {
     let s_root = [0xFEu8; 32];
     assert!(exec.tick_mortis(1, s_root).is_none());
     assert!(exec.tick_mortis(2, s_root).is_none());
-    let cert = exec.tick_mortis(3, s_root).expect("Mortis must fire on 3rd consecutive tick").clone();
+    let cert = *exec
+        .tick_mortis(3, s_root)
+        .expect("Mortis must fire on 3rd consecutive tick");
     assert_eq!(cert.epoch_of_death, 3);
     assert_eq!(cert.final_refresh_pool, 0);
     assert_eq!(cert.final_state_root, s_root);
@@ -133,7 +135,10 @@ fn cmu_observation_above_bound_records_violation() {
 fn tur_observation_constants_record_violation() {
     let mut exec = SimpleExecutor::new(0);
     let v = exec.record_tur_observation(&[10, 10, 10, 10, 10], 100);
-    assert!(matches!(v, evaporchain_tur_liveness::Verdict::Violation { .. }));
+    assert!(matches!(
+        v,
+        evaporchain_tur_liveness::Verdict::Violation { .. }
+    ));
     assert!(exec.last_tur_verdict.is_some());
 }
 
@@ -165,5 +170,8 @@ fn full_death_flow_zero_account_then_mortis_fires() {
     assert!(exec.tick_mortis(2, s_root).is_none());
     assert!(exec.tick_mortis(3, s_root).is_none());
     let cert = exec.tick_mortis(4, s_root);
-    assert!(cert.is_some(), "after 3 sustained ticks below floor, Mortis fires");
+    assert!(
+        cert.is_some(),
+        "after 3 sustained ticks below floor, Mortis fires"
+    );
 }

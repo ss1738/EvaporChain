@@ -7,10 +7,10 @@ use crate::machine::{EpsilonMachine, MachineError, StateId};
 
 /// Predicted next-symbol distribution at `state`. Forwards
 /// [`MachineError::UnknownState`] if `state` is not in the machine.
-pub fn predict_next<'a>(
-    machine: &'a EpsilonMachine,
+pub fn predict_next(
+    machine: &EpsilonMachine,
     state: StateId,
-) -> Result<&'a Distribution, MachineError> {
+) -> Result<&Distribution, MachineError> {
     machine.output_for(state)
 }
 

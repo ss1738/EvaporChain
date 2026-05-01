@@ -44,7 +44,10 @@ pub enum EntropicSlashError {
 /// Compute the Shannon-entropy-weighted slash magnitude in `Energy`.
 /// `slash = stake × entropy_millibits(observed_counts) / 1000`,
 /// capped at `stake`.
-pub fn entropic_slash(stake: Energy, observed_counts: &[u64]) -> Result<Energy, EntropicSlashError> {
+pub fn entropic_slash(
+    stake: Energy,
+    observed_counts: &[u64],
+) -> Result<Energy, EntropicSlashError> {
     let h_milli = entropy_millibits(observed_counts)?;
     if h_milli == 0 {
         return Ok(0);

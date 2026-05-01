@@ -166,10 +166,7 @@ impl PnlTracker {
             .map(|l| l.id.clone())
             .collect();
 
-        let available: u64 = open_lot_ids
-            .iter()
-            .map(|id| self.lots[id].remaining)
-            .sum();
+        let available: u64 = open_lot_ids.iter().map(|id| self.lots[id].remaining).sum();
 
         if available < amount {
             return Err(PnlError::InsufficientBalance {
@@ -185,14 +182,12 @@ impl PnlTracker {
         // Sort lots according to method
         match method {
             CostBasisMethod::Fifo => {
-                open_lot_ids.sort_by(|a, b| {
-                    self.lots[a].acquired_at.cmp(&self.lots[b].acquired_at)
-                });
+                open_lot_ids
+                    .sort_by(|a, b| self.lots[a].acquired_at.cmp(&self.lots[b].acquired_at));
             }
             CostBasisMethod::Lifo => {
-                open_lot_ids.sort_by(|a, b| {
-                    self.lots[b].acquired_at.cmp(&self.lots[a].acquired_at)
-                });
+                open_lot_ids
+                    .sort_by(|a, b| self.lots[b].acquired_at.cmp(&self.lots[a].acquired_at));
             }
             CostBasisMethod::Hifo => {
                 open_lot_ids.sort_by(|a, b| {
@@ -214,10 +209,7 @@ impl PnlTracker {
 
         if method == CostBasisMethod::AvgCost {
             // Weighted average cost
-            let total_remaining: u64 = open_lot_ids
-                .iter()
-                .map(|id| self.lots[id].remaining)
-                .sum();
+            let total_remaining: u64 = open_lot_ids.iter().map(|id| self.lots[id].remaining).sum();
             let total_cost: f64 = open_lot_ids
                 .iter()
                 .map(|id| {

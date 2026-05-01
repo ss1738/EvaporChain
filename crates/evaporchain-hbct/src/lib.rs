@@ -41,7 +41,7 @@ pub mod burn;
 pub mod oracle;
 pub mod token;
 
-pub use book::{HbctBook, BookError};
+pub use book::{BookError, HbctBook};
 pub use burn::{auto_burn_at_slot_close, BurnOutcome};
 pub use oracle::{OracleAttestation, OracleFeed};
 pub use token::{DeliveryLocation, HbctToken, HourSlot, TokenError};

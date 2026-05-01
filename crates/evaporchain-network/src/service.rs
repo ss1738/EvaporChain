@@ -7,10 +7,10 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use libp2p::{
     gossipsub::{self, IdentTopic, MessageAuthenticity},
-    identify, mdns, noise, tls,
+    identify, mdns, noise,
     request_response::{self, ProtocolSupport},
     swarm::{NetworkBehaviour, SwarmEvent},
-    tcp, yamux, Multiaddr, PeerId, StreamProtocol, SwarmBuilder,
+    tcp, tls, yamux, Multiaddr, PeerId, StreamProtocol, SwarmBuilder,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -18,7 +18,7 @@ use tracing::{debug, info, warn};
 
 use crate::{NetworkError, NetworkService};
 use evaporchain_da::block_da::BlockDAPackage;
-use evaporchain_da::sampling::{SampleQuery, SampleResponse, DASampler};
+use evaporchain_da::sampling::{DASampler, SampleQuery, SampleResponse};
 use evaporchain_types::{Block, Transaction};
 
 // ─────────────────────────── Topics ──────────────────────────────────────
@@ -142,7 +142,10 @@ struct PeerBanList {
 
 impl PeerBanList {
     fn new() -> Self {
-        Self { violations: HashMap::new(), banned: HashMap::new() }
+        Self {
+            violations: HashMap::new(),
+            banned: HashMap::new(),
+        }
     }
 
     fn is_banned(&mut self, peer: &PeerId) -> bool {
@@ -161,7 +164,10 @@ impl PeerBanList {
         *count += 1;
         if *count >= BAN_THRESHOLD {
             self.banned.insert(peer, Instant::now() + BAN_DURATION);
-            warn!("Banned peer {peer} for {}s after {count} violations", BAN_DURATION.as_secs());
+            warn!(
+                "Banned peer {peer} for {}s after {count} violations",
+                BAN_DURATION.as_secs()
+            );
             true
         } else {
             false
@@ -179,7 +185,10 @@ struct PerIpConnectionTracker {
 
 impl PerIpConnectionTracker {
     fn new(per_ip_max: usize) -> Self {
-        Self { counts: std::collections::HashMap::new(), per_ip_max }
+        Self {
+            counts: std::collections::HashMap::new(),
+            per_ip_max,
+        }
     }
 
     /// Returns true if a new connection from this IP is permitted.
@@ -213,8 +222,8 @@ impl PerIpConnectionTracker {
 /// Extract the remote IPv4/IPv6 address from a libp2p ConnectedPoint.
 /// Returns None for transports without an IP component (rare).
 fn endpoint_remote_ip(endpoint: &libp2p::core::ConnectedPoint) -> Option<std::net::IpAddr> {
-    use libp2p::core::ConnectedPoint;
     use libp2p::core::multiaddr::Protocol;
+    use libp2p::core::ConnectedPoint;
     let addr = match endpoint {
         ConnectedPoint::Dialer { address, .. } => address,
         ConnectedPoint::Listener { send_back_addr, .. } => send_back_addr,
@@ -241,7 +250,10 @@ mod per_ip_tracker_tests {
         assert!(t.try_admit(ip));
         assert!(t.try_admit(ip));
         assert!(t.try_admit(ip));
-        assert!(!t.try_admit(ip), "fourth connection from same IP should be rejected");
+        assert!(
+            !t.try_admit(ip),
+            "fourth connection from same IP should be rejected"
+        );
         assert_eq!(t.count_for(&ip), 3);
     }
 
@@ -272,7 +284,10 @@ mod per_ip_tracker_tests {
         let b = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5));
         assert!(t.try_admit(a));
         assert!(!t.try_admit(a));
-        assert!(t.try_admit(b), "different IP should not be blocked by another IP's cap");
+        assert!(
+            t.try_admit(b),
+            "different IP should not be blocked by another IP's cap"
+        );
     }
 }
 
@@ -510,16 +525,17 @@ impl P2pNetworkService {
         // port (every cluster member uses 9000). Reproduced on the
         // 3-Mini Tailscale cluster: bootstrap dial from apsarth/ironman
         // to satyawan:9000 always failed until this flag was set.
+        // libp2p 0.54 deprecated port_reuse — the option has no effect now,
+        // port-reuse is decided per-connection by the behaviour. Keep the
+        // call so the explicit intent is preserved in source while we wait
+        // for the actual deprecation to be enforced.
+        #[allow(deprecated)]
         let tcp_cfg = || tcp::Config::default().port_reuse(true);
         let mut swarm = if use_tls {
             info!("Using TLS 1.3 transport (libp2p-tls)");
             SwarmBuilder::with_new_identity()
                 .with_tokio()
-                .with_tcp(
-                    tcp_cfg(),
-                    tls::Config::new,
-                    yamux::Config::default,
-                )
+                .with_tcp(tcp_cfg(), tls::Config::new, yamux::Config::default)
                 .map_err(|e| NetworkError::ConnectionError(format!("tls transport: {e}")))?
                 .with_behaviour(|key| build_behaviour!(key))
                 .map_err(|e| NetworkError::ConnectionError(format!("behaviour: {e}")))?
@@ -528,11 +544,7 @@ impl P2pNetworkService {
         } else {
             SwarmBuilder::with_new_identity()
                 .with_tokio()
-                .with_tcp(
-                    tcp_cfg(),
-                    noise::Config::new,
-                    yamux::Config::default,
-                )
+                .with_tcp(tcp_cfg(), noise::Config::new, yamux::Config::default)
                 .map_err(|e| NetworkError::ConnectionError(format!("tcp transport: {e}")))?
                 .with_behaviour(|key| build_behaviour!(key))
                 .map_err(|e| NetworkError::ConnectionError(format!("behaviour: {e}")))?
@@ -626,7 +638,9 @@ impl P2pNetworkService {
         };
 
         // Clone bootstrap addrs for periodic re-dial inside the event loop
-        let bootstrap_addrs: Vec<Multiaddr> = config.bootstrap_peers.iter()
+        let bootstrap_addrs: Vec<Multiaddr> = config
+            .bootstrap_peers
+            .iter()
             .filter_map(|s| s.parse::<Multiaddr>().ok())
             .collect();
 
@@ -642,8 +656,7 @@ impl P2pNetworkService {
 
             let mut rate_limiter = PeerRateLimiter::new();
             let mut ban_list = PeerBanList::new();
-            let mut per_ip_tracker =
-                PerIpConnectionTracker::new(MAX_CONNECTIONS_PER_IP);
+            let mut per_ip_tracker = PerIpConnectionTracker::new(MAX_CONNECTIONS_PER_IP);
             let mut gc_counter: u64 = 0;
 
             loop {
@@ -1113,7 +1126,12 @@ mod tests {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         let mut found = false;
         while tokio::time::Instant::now() < deadline {
-            match timeout(deadline - tokio::time::Instant::now(), ch2.tx_receiver.recv()).await {
+            match timeout(
+                deadline - tokio::time::Instant::now(),
+                ch2.tx_receiver.recv(),
+            )
+            .await
+            {
                 Ok(Some(Transaction::Transfer(t))) if t.amount == 42 => {
                     found = true;
                     break;
@@ -1221,7 +1239,10 @@ mod tests {
         wait_for_discovery(Duration::from_secs(3)).await;
 
         // Node 2 requests blocks 1..5 from peers
-        ch2.sync_request_sender.send((1, 5)).await.expect("send sync request");
+        ch2.sync_request_sender
+            .send((1, 5))
+            .await
+            .expect("send sync request");
 
         // Node 2 should receive synced blocks
         let result = timeout(Duration::from_secs(5), ch2.sync_blocks_receiver.recv()).await;
@@ -1316,7 +1337,10 @@ mod tests {
 
     #[test]
     fn test_block_sync_request_serialization() {
-        let req = BlockSyncRequest { from_height: 100, to_height: 200 };
+        let req = BlockSyncRequest {
+            from_height: 100,
+            to_height: 200,
+        };
         let bytes = serde_json::to_vec(&req).expect("serialize");
         let decoded: BlockSyncRequest = serde_json::from_slice(&bytes).expect("deserialize");
         assert_eq!(decoded.from_height, 100);
@@ -1343,8 +1367,14 @@ mod tests {
 
         let req = ShardSampleRequest {
             queries: vec![
-                SampleQuery { block_number: 10, shard_index: 0 },
-                SampleQuery { block_number: 10, shard_index: 3 },
+                SampleQuery {
+                    block_number: 10,
+                    shard_index: 0,
+                },
+                SampleQuery {
+                    block_number: 10,
+                    shard_index: 3,
+                },
             ],
         };
         let bytes = serde_json::to_vec(&req).expect("serialize");
@@ -1471,10 +1501,19 @@ mod tests {
 
         // Node 2 requests shard samples for block 42
         let queries = vec![
-            SampleQuery { block_number: 42, shard_index: 0 },
-            SampleQuery { block_number: 42, shard_index: 1 },
+            SampleQuery {
+                block_number: 42,
+                shard_index: 0,
+            },
+            SampleQuery {
+                block_number: 42,
+                shard_index: 1,
+            },
         ];
-        ch2.sample_request_sender.send(queries).await.expect("send sample request");
+        ch2.sample_request_sender
+            .send(queries)
+            .await
+            .expect("send sample request");
 
         // Node 2 should receive shard samples
         let result = timeout(Duration::from_secs(5), ch2.sample_response_receiver.recv()).await;

@@ -67,14 +67,27 @@ pub enum EventType {
 
 impl EventType {
     pub fn is_outflow(&self) -> bool {
-        matches!(self, EventType::TransferOut | EventType::EnergySpend |
-            EventType::StakeDeposit | EventType::GasFee |
-            EventType::NftMint | EventType::TokenDeploy | EventType::BridgeOut)
+        matches!(
+            self,
+            EventType::TransferOut
+                | EventType::EnergySpend
+                | EventType::StakeDeposit
+                | EventType::GasFee
+                | EventType::NftMint
+                | EventType::TokenDeploy
+                | EventType::BridgeOut
+        )
     }
 
     pub fn is_inflow(&self) -> bool {
-        matches!(self, EventType::TransferIn | EventType::StakeWithdraw |
-            EventType::StakeReward | EventType::FaucetReceive | EventType::BridgeIn)
+        matches!(
+            self,
+            EventType::TransferIn
+                | EventType::StakeWithdraw
+                | EventType::StakeReward
+                | EventType::FaucetReceive
+                | EventType::BridgeIn
+        )
     }
 
     pub fn label(&self) -> &'static str {
@@ -215,13 +228,7 @@ impl AnalyticsTracker {
     }
 
     /// Record a new event.
-    pub fn record(
-        &mut self,
-        event: EventType,
-        amount: u64,
-        balance_after: u64,
-        reference: &str,
-    ) {
+    pub fn record(&mut self, event: EventType, amount: u64, balance_after: u64, reference: &str) {
         let dp = DataPoint {
             timestamp: chrono::Utc::now().to_rfc3339(),
             event,
@@ -262,7 +269,8 @@ impl AnalyticsTracker {
     /// Get data points within a period.
     pub fn in_period(&self, period: Period) -> Vec<&DataPoint> {
         let cutoff = period.cutoff_timestamp();
-        self.data_points.iter()
+        self.data_points
+            .iter()
             .filter(|dp| dp.timestamp >= cutoff)
             .collect()
     }
@@ -319,14 +327,16 @@ impl AnalyticsTracker {
             return vec![];
         }
 
-        let mut counts: std::collections::HashMap<String, (usize, u64)> = std::collections::HashMap::new();
+        let mut counts: std::collections::HashMap<String, (usize, u64)> =
+            std::collections::HashMap::new();
         for dp in &points {
             let entry = counts.entry(dp.event.label().to_string()).or_insert((0, 0));
             entry.0 += 1;
             entry.1 += dp.amount;
         }
 
-        let mut result: Vec<CategoryBreakdown> = counts.into_iter()
+        let mut result: Vec<CategoryBreakdown> = counts
+            .into_iter()
             .map(|(cat, (count, amt))| CategoryBreakdown {
                 category: cat,
                 count,
@@ -355,7 +365,9 @@ impl AnalyticsTracker {
         let prev_start_str = prev_start.to_rfc3339();
         let prev_end_str = prev_end.to_rfc3339();
 
-        let prev_points: Vec<&DataPoint> = self.data_points.iter()
+        let prev_points: Vec<&DataPoint> = self
+            .data_points
+            .iter()
             .filter(|dp| dp.timestamp >= prev_start_str && dp.timestamp < prev_end_str)
             .collect();
 
@@ -367,13 +379,23 @@ impl AnalyticsTracker {
         let mut prev_largest: u64 = 0;
 
         for dp in &prev_points {
-            if dp.event.is_inflow() { prev_inflow += dp.amount; }
-            if dp.event.is_outflow() { prev_outflow += dp.amount; }
-            if dp.event == EventType::EnergySpend { prev_energy += dp.amount; }
-            if dp.event == EventType::GasFee { prev_gas += dp.amount; }
+            if dp.event.is_inflow() {
+                prev_inflow += dp.amount;
+            }
+            if dp.event.is_outflow() {
+                prev_outflow += dp.amount;
+            }
+            if dp.event == EventType::EnergySpend {
+                prev_energy += dp.amount;
+            }
+            if dp.event == EventType::GasFee {
+                prev_gas += dp.amount;
+            }
             if dp.event == EventType::TransferOut || dp.event == EventType::TransferIn {
                 prev_transfers += 1;
-                if dp.amount > prev_largest { prev_largest = dp.amount; }
+                if dp.amount > prev_largest {
+                    prev_largest = dp.amount;
+                }
             }
         }
 
@@ -391,7 +413,11 @@ impl AnalyticsTracker {
 
         let pct_change = |curr: u64, prev: u64| -> f64 {
             if prev == 0 {
-                if curr > 0 { 100.0 } else { 0.0 }
+                if curr > 0 {
+                    100.0
+                } else {
+                    0.0
+                }
             } else {
                 ((curr as f64 - prev as f64) / prev as f64) * 100.0
             }
@@ -550,7 +576,12 @@ mod tests {
     fn test_capacity_eviction() {
         let mut t = AnalyticsTracker::with_capacity(5);
         for i in 0..10 {
-            t.record(EventType::TransferOut, 100, 1000 - i * 100, &format!("tx_{}", i));
+            t.record(
+                EventType::TransferOut,
+                100,
+                1000 - i * 100,
+                &format!("tx_{}", i),
+            );
         }
         assert_eq!(t.len(), 5);
         // Oldest should have been evicted
@@ -583,7 +614,13 @@ mod tests {
     #[test]
     fn test_record_at_custom_timestamp() {
         let mut t = AnalyticsTracker::new();
-        t.record_at("2025-01-01T00:00:00Z", EventType::TransferIn, 50000, 50000, "old_tx");
+        t.record_at(
+            "2025-01-01T00:00:00Z",
+            EventType::TransferIn,
+            50000,
+            50000,
+            "old_tx",
+        );
         t.record(EventType::TransferOut, 1000, 49000, "new_tx");
         assert_eq!(t.len(), 2);
         // Only the recent one should appear in Day period

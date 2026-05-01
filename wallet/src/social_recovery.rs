@@ -319,10 +319,7 @@ impl SocialRecoveryManager {
         Ok(())
     }
 
-    pub fn complete_recovery(
-        &mut self,
-        request_id: &str,
-    ) -> Result<(), SocialRecoveryError> {
+    pub fn complete_recovery(&mut self, request_id: &str) -> Result<(), SocialRecoveryError> {
         let request = self
             .requests
             .get_mut(request_id)
@@ -337,10 +334,7 @@ impl SocialRecoveryManager {
         Ok(())
     }
 
-    pub fn cancel_recovery(
-        &mut self,
-        request_id: &str,
-    ) -> Result<(), SocialRecoveryError> {
+    pub fn cancel_recovery(&mut self, request_id: &str) -> Result<(), SocialRecoveryError> {
         let request = self
             .requests
             .get_mut(request_id)
@@ -354,10 +348,7 @@ impl SocialRecoveryManager {
         Ok(())
     }
 
-    pub fn check_timelock(
-        &self,
-        request_id: &str,
-    ) -> Result<bool, SocialRecoveryError> {
+    pub fn check_timelock(&self, request_id: &str) -> Result<bool, SocialRecoveryError> {
         let request = self
             .requests
             .get(request_id)
@@ -705,10 +696,8 @@ mod tests {
 
     #[test]
     fn test_save_and_load() {
-        let path = std::env::temp_dir().join(format!(
-            "evap_social_recovery_{}.json",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("evap_social_recovery_{}.json", std::process::id()));
         let mut mgr = seeded_manager();
         mgr.initiate_recovery("user1", "pk1").unwrap();
         mgr.save(&path).unwrap();

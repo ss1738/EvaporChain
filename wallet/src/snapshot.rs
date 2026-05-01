@@ -231,11 +231,7 @@ impl SnapshotStore {
     ///
     /// Auto-generates an id as `snap_{timestamp_millis}`, auto-prunes the oldest
     /// snapshots if the store exceeds its limit, and returns the new snapshot id.
-    pub fn capture(
-        &mut self,
-        label: &str,
-        entries: Vec<(String, String, String)>,
-    ) -> String {
+    pub fn capture(&mut self, label: &str, entries: Vec<(String, String, String)>) -> String {
         let now = chrono::Utc::now();
         let seq = SNAP_COUNTER.fetch_add(1, Ordering::Relaxed);
         let id = format!("snap_{}_{}", now.timestamp_millis(), seq);
@@ -489,10 +485,13 @@ mod tests {
     fn test_diff_with_additions() {
         let mut store = SnapshotStore::new();
         let id1 = store.capture("v1", vec![("a".into(), "1".into(), "b".into())]);
-        let id2 = store.capture("v2", vec![
-            ("a".into(), "1".into(), "b".into()),
-            ("b".into(), "2".into(), "b".into()),
-        ]);
+        let id2 = store.capture(
+            "v2",
+            vec![
+                ("a".into(), "1".into(), "b".into()),
+                ("b".into(), "2".into(), "b".into()),
+            ],
+        );
         let diff = store.diff(&id1, &id2).unwrap();
         assert_eq!(diff.added.len(), 1);
         assert_eq!(diff.added[0], "b");
@@ -502,10 +501,13 @@ mod tests {
     #[test]
     fn test_diff_with_removals() {
         let mut store = SnapshotStore::new();
-        let id1 = store.capture("v1", vec![
-            ("a".into(), "1".into(), "b".into()),
-            ("b".into(), "2".into(), "b".into()),
-        ]);
+        let id1 = store.capture(
+            "v1",
+            vec![
+                ("a".into(), "1".into(), "b".into()),
+                ("b".into(), "2".into(), "b".into()),
+            ],
+        );
         let id2 = store.capture("v2", vec![("a".into(), "1".into(), "b".into())]);
         let diff = store.diff(&id1, &id2).unwrap();
         assert_eq!(diff.removed.len(), 1);
@@ -525,16 +527,22 @@ mod tests {
     #[test]
     fn test_diff_mixed() {
         let mut store = SnapshotStore::new();
-        let id1 = store.capture("v1", vec![
-            ("keep".into(), "same".into(), "c".into()),
-            ("change".into(), "old".into(), "c".into()),
-            ("remove".into(), "gone".into(), "c".into()),
-        ]);
-        let id2 = store.capture("v2", vec![
-            ("keep".into(), "same".into(), "c".into()),
-            ("change".into(), "new".into(), "c".into()),
-            ("added".into(), "fresh".into(), "c".into()),
-        ]);
+        let id1 = store.capture(
+            "v1",
+            vec![
+                ("keep".into(), "same".into(), "c".into()),
+                ("change".into(), "old".into(), "c".into()),
+                ("remove".into(), "gone".into(), "c".into()),
+            ],
+        );
+        let id2 = store.capture(
+            "v2",
+            vec![
+                ("keep".into(), "same".into(), "c".into()),
+                ("change".into(), "new".into(), "c".into()),
+                ("added".into(), "fresh".into(), "c".into()),
+            ],
+        );
         let diff = store.diff(&id1, &id2).unwrap();
         assert_eq!(diff.added, vec!["added"]);
         assert_eq!(diff.removed, vec!["remove"]);

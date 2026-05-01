@@ -30,7 +30,10 @@ mod tests {
     fn tur_bound_inverse_in_sigma() {
         let a = tur_bound_fixed(2);
         let b = tur_bound_fixed(4);
-        assert!(a > b, "bound shrinks as Σ grows (more entropy = tighter bound)");
+        assert!(
+            a > b,
+            "bound shrinks as Σ grows (more entropy = tighter bound)"
+        );
         // Numeric: 2/2 vs 2/4.
         assert_eq!(a, FIXED_POINT_SCALE);
         assert_eq!(b, FIXED_POINT_SCALE / 2);

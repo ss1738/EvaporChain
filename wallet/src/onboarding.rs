@@ -130,34 +130,144 @@ impl OnboardingManager {
 
         let step_defs: Vec<(StepType, &str, &str, Option<String>)> = match &flow_type {
             FlowType::NewUser => vec![
-                (StepType::CreateWallet, "Create Wallet", "Create your new EvaporChain wallet", None),
-                (StepType::BackupMnemonic, "Backup Mnemonic", "Securely back up your recovery phrase", Some("create_wallet".into())),
-                (StepType::SetPassword, "Set Password", "Set a strong password for your wallet", Some("backup_mnemonic".into())),
-                (StepType::FundWallet, "Fund Wallet", "Add funds to your wallet", Some("set_password".into())),
-                (StepType::SendFirstTx, "Send First Transaction", "Send your first transaction on EvaporChain", Some("fund_wallet".into())),
-                (StepType::ExploreEnergy, "Explore Energy", "Learn about EvaporChain energy mechanics", None),
-                (StepType::SetupSecurity, "Setup Security", "Configure advanced security settings", None),
-                (StepType::ConnectDapp, "Connect Dapp", "Connect to a decentralized application", None),
+                (
+                    StepType::CreateWallet,
+                    "Create Wallet",
+                    "Create your new EvaporChain wallet",
+                    None,
+                ),
+                (
+                    StepType::BackupMnemonic,
+                    "Backup Mnemonic",
+                    "Securely back up your recovery phrase",
+                    Some("create_wallet".into()),
+                ),
+                (
+                    StepType::SetPassword,
+                    "Set Password",
+                    "Set a strong password for your wallet",
+                    Some("backup_mnemonic".into()),
+                ),
+                (
+                    StepType::FundWallet,
+                    "Fund Wallet",
+                    "Add funds to your wallet",
+                    Some("set_password".into()),
+                ),
+                (
+                    StepType::SendFirstTx,
+                    "Send First Transaction",
+                    "Send your first transaction on EvaporChain",
+                    Some("fund_wallet".into()),
+                ),
+                (
+                    StepType::ExploreEnergy,
+                    "Explore Energy",
+                    "Learn about EvaporChain energy mechanics",
+                    None,
+                ),
+                (
+                    StepType::SetupSecurity,
+                    "Setup Security",
+                    "Configure advanced security settings",
+                    None,
+                ),
+                (
+                    StepType::ConnectDapp,
+                    "Connect Dapp",
+                    "Connect to a decentralized application",
+                    None,
+                ),
             ],
             FlowType::ImportUser => vec![
-                (StepType::CreateWallet, "Import Wallet", "Import your existing wallet", None),
-                (StepType::SetPassword, "Set Password", "Set a password for your imported wallet", Some("import_wallet".into())),
-                (StepType::FundWallet, "Fund Wallet", "Add funds to your wallet", Some("set_password".into())),
-                (StepType::SetupSecurity, "Setup Security", "Configure security settings", None),
-                (StepType::ConnectDapp, "Connect Dapp", "Connect to a dapp", None),
+                (
+                    StepType::CreateWallet,
+                    "Import Wallet",
+                    "Import your existing wallet",
+                    None,
+                ),
+                (
+                    StepType::SetPassword,
+                    "Set Password",
+                    "Set a password for your imported wallet",
+                    Some("import_wallet".into()),
+                ),
+                (
+                    StepType::FundWallet,
+                    "Fund Wallet",
+                    "Add funds to your wallet",
+                    Some("set_password".into()),
+                ),
+                (
+                    StepType::SetupSecurity,
+                    "Setup Security",
+                    "Configure security settings",
+                    None,
+                ),
+                (
+                    StepType::ConnectDapp,
+                    "Connect Dapp",
+                    "Connect to a dapp",
+                    None,
+                ),
             ],
             FlowType::DeveloperSetup => vec![
-                (StepType::CreateWallet, "Create Dev Wallet", "Create a development wallet", None),
-                (StepType::SetPassword, "Set Password", "Set a dev password", Some("create_dev_wallet".into())),
-                (StepType::FundWallet, "Get Testnet Funds", "Get testnet tokens", Some("set_password".into())),
-                (StepType::SendFirstTx, "Deploy Contract", "Deploy your first smart contract", Some("get_testnet_funds".into())),
-                (StepType::ExploreEnergy, "Explore Energy", "Understand energy costs", None),
-                (StepType::ConnectDapp, "Connect Dapp", "Connect your dapp", None),
+                (
+                    StepType::CreateWallet,
+                    "Create Dev Wallet",
+                    "Create a development wallet",
+                    None,
+                ),
+                (
+                    StepType::SetPassword,
+                    "Set Password",
+                    "Set a dev password",
+                    Some("create_dev_wallet".into()),
+                ),
+                (
+                    StepType::FundWallet,
+                    "Get Testnet Funds",
+                    "Get testnet tokens",
+                    Some("set_password".into()),
+                ),
+                (
+                    StepType::SendFirstTx,
+                    "Deploy Contract",
+                    "Deploy your first smart contract",
+                    Some("get_testnet_funds".into()),
+                ),
+                (
+                    StepType::ExploreEnergy,
+                    "Explore Energy",
+                    "Understand energy costs",
+                    None,
+                ),
+                (
+                    StepType::ConnectDapp,
+                    "Connect Dapp",
+                    "Connect your dapp",
+                    None,
+                ),
             ],
             FlowType::QuickStart => vec![
-                (StepType::CreateWallet, "Create Wallet", "Quick wallet creation", None),
-                (StepType::SetPassword, "Set Password", "Set a password", Some("create_wallet".into())),
-                (StepType::FundWallet, "Fund Wallet", "Fund your wallet", Some("set_password".into())),
+                (
+                    StepType::CreateWallet,
+                    "Create Wallet",
+                    "Quick wallet creation",
+                    None,
+                ),
+                (
+                    StepType::SetPassword,
+                    "Set Password",
+                    "Set a password",
+                    Some("create_wallet".into()),
+                ),
+                (
+                    StepType::FundWallet,
+                    "Fund Wallet",
+                    "Fund your wallet",
+                    Some("set_password".into()),
+                ),
             ],
         };
 
@@ -355,9 +465,7 @@ impl OnboardingManager {
     // -- query --------------------------------------------------------------
 
     pub fn active_flow(&self) -> Option<&OnboardingFlow> {
-        self.active_flow
-            .as_ref()
-            .and_then(|id| self.flows.get(id))
+        self.active_flow.as_ref().and_then(|id| self.flows.get(id))
     }
 
     pub fn stats(&self) -> OnboardingStats {
@@ -534,7 +642,10 @@ mod tests {
         let flow = mgr.flows.get(&fid).unwrap();
         let step_id = flow.steps[0].clone();
         mgr.complete_step(&step_id).unwrap();
-        assert_eq!(mgr.steps.get(&step_id).unwrap().status, StepStatus2::Completed);
+        assert_eq!(
+            mgr.steps.get(&step_id).unwrap().status,
+            StepStatus2::Completed
+        );
         assert!(mgr.steps.get(&step_id).unwrap().completed_at.is_some());
     }
 
@@ -550,7 +661,10 @@ mod tests {
         mgr.complete_step(&first).unwrap();
         // Second step has prerequisite on first
         mgr.complete_step(&second).unwrap();
-        assert_eq!(mgr.steps.get(&second).unwrap().status, StepStatus2::Completed);
+        assert_eq!(
+            mgr.steps.get(&second).unwrap().status,
+            StepStatus2::Completed
+        );
     }
 
     // 9. complete step prerequisite not met
@@ -563,7 +677,10 @@ mod tests {
         let second = flow.steps[1].clone();
         // Try to complete second without completing first
         let result = mgr.complete_step(&second);
-        assert!(matches!(result, Err(OnboardingError::PrerequisiteNotMet(_))));
+        assert!(matches!(
+            result,
+            Err(OnboardingError::PrerequisiteNotMet(_))
+        ));
     }
 
     // 10. step not found
@@ -595,7 +712,10 @@ mod tests {
         let flow = mgr.flows.get(&fid).unwrap();
         let step_id = flow.steps[0].clone();
         mgr.skip_step(&step_id).unwrap();
-        assert_eq!(mgr.steps.get(&step_id).unwrap().status, StepStatus2::Skipped);
+        assert_eq!(
+            mgr.steps.get(&step_id).unwrap().status,
+            StepStatus2::Skipped
+        );
     }
 
     // 13. get current step

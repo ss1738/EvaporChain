@@ -30,14 +30,8 @@ pub struct BatchFile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum BatchOperation {
-    Transfer {
-        to: String,
-        amount: u64,
-    },
-    Refresh {
-        object_id: String,
-        energy: u64,
-    },
+    Transfer { to: String, amount: u64 },
+    Refresh { object_id: String, energy: u64 },
 }
 
 /// Result of executing a single operation.
@@ -66,8 +60,8 @@ impl BatchFile {
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, String> {
         let data = std::fs::read_to_string(path.as_ref())
             .map_err(|e| format!("Cannot read batch file: {}", e))?;
-        let batch: BatchFile = serde_json::from_str(&data)
-            .map_err(|e| format!("Invalid batch JSON: {}", e))?;
+        let batch: BatchFile =
+            serde_json::from_str(&data).map_err(|e| format!("Invalid batch JSON: {}", e))?;
 
         if batch.operations.is_empty() {
             return Err("Batch file has no operations".to_string());
@@ -106,21 +100,51 @@ impl BatchFile {
 
     /// Get a human-readable summary of what will be executed.
     pub fn summary(&self) -> String {
-        let transfers = self.operations.iter().filter(|op| matches!(op, BatchOperation::Transfer { .. })).count();
-        let refreshes = self.operations.iter().filter(|op| matches!(op, BatchOperation::Refresh { .. })).count();
-        let total_amount: u64 = self.operations.iter().filter_map(|op| {
-            if let BatchOperation::Transfer { amount, .. } = op { Some(*amount) } else { None }
-        }).sum();
-        let total_energy: u64 = self.operations.iter().filter_map(|op| {
-            if let BatchOperation::Refresh { energy, .. } = op { Some(*energy) } else { None }
-        }).sum();
+        let transfers = self
+            .operations
+            .iter()
+            .filter(|op| matches!(op, BatchOperation::Transfer { .. }))
+            .count();
+        let refreshes = self
+            .operations
+            .iter()
+            .filter(|op| matches!(op, BatchOperation::Refresh { .. }))
+            .count();
+        let total_amount: u64 = self
+            .operations
+            .iter()
+            .filter_map(|op| {
+                if let BatchOperation::Transfer { amount, .. } = op {
+                    Some(*amount)
+                } else {
+                    None
+                }
+            })
+            .sum();
+        let total_energy: u64 = self
+            .operations
+            .iter()
+            .filter_map(|op| {
+                if let BatchOperation::Refresh { energy, .. } = op {
+                    Some(*energy)
+                } else {
+                    None
+                }
+            })
+            .sum();
 
         let mut parts = Vec::new();
         if transfers > 0 {
-            parts.push(format!("{} transfers (total {} EVAP)", transfers, total_amount));
+            parts.push(format!(
+                "{} transfers (total {} EVAP)",
+                transfers, total_amount
+            ));
         }
         if refreshes > 0 {
-            parts.push(format!("{} refreshes (total {} energy)", refreshes, total_energy));
+            parts.push(format!(
+                "{} refreshes (total {} energy)",
+                refreshes, total_energy
+            ));
         }
         format!("{} operations: {}", self.operations.len(), parts.join(", "))
     }
@@ -216,12 +240,10 @@ mod tests {
     #[test]
     fn test_summary_transfers_only() {
         let batch = BatchFile {
-            operations: vec![
-                BatchOperation::Transfer {
-                    to: format!("0x{}", "ab".repeat(32)),
-                    amount: 100,
-                },
-            ],
+            operations: vec![BatchOperation::Transfer {
+                to: format!("0x{}", "ab".repeat(32)),
+                amount: 100,
+            }],
         };
         let summary = batch.summary();
         assert!(summary.contains("1 operations"));

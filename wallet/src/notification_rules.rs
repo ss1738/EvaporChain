@@ -155,9 +155,7 @@ impl NotificationRule {
         match &self.last_triggered {
             Some(ts) => {
                 if let Ok(last) = chrono::DateTime::parse_from_rfc3339(ts) {
-                    let elapsed = chrono::Utc::now()
-                        .signed_duration_since(last)
-                        .num_seconds();
+                    let elapsed = chrono::Utc::now().signed_duration_since(last).num_seconds();
                     elapsed < self.cooldown_secs as i64
                 } else {
                     false
@@ -174,9 +172,7 @@ impl NotificationRule {
 
     /// Evaluate all conditions against the given context (AND logic).
     pub fn evaluate(&self, context: &RuleContext) -> bool {
-        self.conditions
-            .iter()
-            .all(|c| context.matches_condition(c))
+        self.conditions.iter().all(|c| context.matches_condition(c))
     }
 
     /// Record a trigger event.
@@ -264,28 +260,16 @@ impl RuleContext {
     /// Evaluate a single condition against this context.
     pub fn matches_condition(&self, condition: &RuleCondition) -> bool {
         match condition {
-            RuleCondition::BalanceAbove(threshold) => {
-                self.balance.is_some_and(|b| b > *threshold)
-            }
-            RuleCondition::BalanceBelow(threshold) => {
-                self.balance.is_some_and(|b| b < *threshold)
-            }
+            RuleCondition::BalanceAbove(threshold) => self.balance.is_some_and(|b| b > *threshold),
+            RuleCondition::BalanceBelow(threshold) => self.balance.is_some_and(|b| b < *threshold),
             RuleCondition::TxAmountAbove(threshold) => {
                 self.tx_amount.is_some_and(|a| a > *threshold)
             }
-            RuleCondition::EnergyBelow(threshold) => {
-                self.energy.is_some_and(|e| e < *threshold)
-            }
-            RuleCondition::PriceAbove(threshold) => {
-                self.price.is_some_and(|p| p > *threshold)
-            }
-            RuleCondition::PriceBelow(threshold) => {
-                self.price.is_some_and(|p| p < *threshold)
-            }
+            RuleCondition::EnergyBelow(threshold) => self.energy.is_some_and(|e| e < *threshold),
+            RuleCondition::PriceAbove(threshold) => self.price.is_some_and(|p| p > *threshold),
+            RuleCondition::PriceBelow(threshold) => self.price.is_some_and(|p| p < *threshold),
             RuleCondition::NewIncoming => self.has_incoming,
-            RuleCondition::GasAbove(threshold) => {
-                self.gas.is_some_and(|g| g > *threshold)
-            }
+            RuleCondition::GasAbove(threshold) => self.gas.is_some_and(|g| g > *threshold),
             RuleCondition::Custom(key) => self.custom.contains_key(key),
         }
     }
@@ -484,10 +468,7 @@ mod tests {
     use super::*;
 
     fn test_path(name: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
-            "notif_rules_test_{}_{name}",
-            std::process::id()
-        ))
+        std::env::temp_dir().join(format!("notif_rules_test_{}_{name}", std::process::id()))
     }
 
     #[test]
@@ -703,7 +684,11 @@ mod tests {
             .add_rule(NotificationRule::new("t1", "Tagged1").with_tag("defi"))
             .unwrap();
         engine
-            .add_rule(NotificationRule::new("t2", "Tagged2").with_tag("defi").with_tag("staking"))
+            .add_rule(
+                NotificationRule::new("t2", "Tagged2")
+                    .with_tag("defi")
+                    .with_tag("staking"),
+            )
             .unwrap();
         engine
             .add_rule(NotificationRule::new("t3", "Tagged3").with_tag("nft"))

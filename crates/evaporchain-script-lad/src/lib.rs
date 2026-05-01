@@ -80,7 +80,10 @@ impl LadCheckResult {
 /// Resources are initialised at epoch 0 (`created_epoch = 0`). Pass
 /// `check_epoch = 0` to get the initial state; pass the actual block epoch
 /// to see which resources have evaporated.
-pub fn check_lad_resources(source: &str, check_epoch: u64) -> Result<LadCheckResult, LadScriptError> {
+pub fn check_lad_resources(
+    source: &str,
+    check_epoch: u64,
+) -> Result<LadCheckResult, LadScriptError> {
     let annotations = parse_annotations(source)?;
     let tracker = LadResourceTracker::from_annotations(&annotations, 0);
     let verdicts = tracker.snapshot(check_epoch);

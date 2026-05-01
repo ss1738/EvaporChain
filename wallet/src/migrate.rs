@@ -83,9 +83,7 @@ pub fn detect_format(input: &str) -> Option<SourceFormat> {
 
     // 0x-prefixed hex
     if let Some(hex) = trimmed.strip_prefix("0x") {
-        if (hex.len() == 64 || hex.len() == 128)
-            && hex.chars().all(|c| c.is_ascii_hexdigit())
-        {
+        if (hex.len() == 64 || hex.len() == 128) && hex.chars().all(|c| c.is_ascii_hexdigit()) {
             return Some(SourceFormat::RawKey);
         }
     }
@@ -302,8 +300,7 @@ impl Migrator {
 
     /// Plan a migration from a file path
     pub fn plan_from_file(&self, path: &Path) -> Result<MigrationPlan, MigrateError> {
-        let content =
-            std::fs::read_to_string(path).map_err(|e| MigrateError::Io(e.to_string()))?;
+        let content = std::fs::read_to_string(path).map_err(|e| MigrateError::Io(e.to_string()))?;
         let mut plan = self.plan_from_input(&content)?;
         plan.source = path.display().to_string();
         Ok(plan)
@@ -434,7 +431,8 @@ impl Migrator {
 
     /// JSON persistence
     pub fn save(&self, path: &Path) -> Result<(), MigrateError> {
-        let json = serde_json::to_string_pretty(self).map_err(|e| MigrateError::Json(e.to_string()))?;
+        let json =
+            serde_json::to_string_pretty(self).map_err(|e| MigrateError::Json(e.to_string()))?;
         std::fs::write(path, json).map_err(|e| MigrateError::Io(e.to_string()))
     }
 
@@ -452,7 +450,8 @@ mod tests {
 
     #[test]
     fn test_detect_mnemonic_12() {
-        let input = "abandon ability able about above absent absorb abstract absurd abuse access accident";
+        let input =
+            "abandon ability able about above absent absorb abstract absurd abuse access accident";
         assert_eq!(detect_format(input), Some(SourceFormat::Mnemonic));
     }
 
@@ -508,7 +507,8 @@ mod tests {
     #[test]
     fn test_plan_mnemonic() {
         let m = Migrator::new();
-        let input = "abandon ability able about above absent absorb abstract absurd abuse access accident";
+        let input =
+            "abandon ability able about above absent absorb abstract absurd abuse access accident";
         let plan = m.plan_from_input(input).unwrap();
         assert_eq!(plan.format, "BIP-39 Mnemonic");
         assert_eq!(plan.accounts_found, 1);
@@ -530,7 +530,10 @@ mod tests {
         let json = r#"{"version":3,"crypto":{"cipher":"aes-128-ctr"},"address":"deadbeef"}"#;
         let plan = m.plan_from_input(json).unwrap();
         assert_eq!(plan.format, "MetaMask V3 Keystore");
-        assert_eq!(plan.accounts[0].original_address, Some("0xdeadbeef".to_string()));
+        assert_eq!(
+            plan.accounts[0].original_address,
+            Some("0xdeadbeef".to_string())
+        );
     }
 
     #[test]
@@ -585,7 +588,8 @@ mod tests {
 
     #[test]
     fn test_validate_mnemonic_12_words() {
-        let phrase = "abandon ability able about above absent absorb abstract absurd abuse access accident";
+        let phrase =
+            "abandon ability able about above absent absorb abstract absurd abuse access accident";
         assert_eq!(Migrator::validate_mnemonic(phrase).unwrap(), 12);
     }
 
@@ -596,7 +600,8 @@ mod tests {
 
     #[test]
     fn test_validate_mnemonic_non_alpha() {
-        let phrase = "abandon ability able about above absent absorb abstract absurd abuse access 123abc";
+        let phrase =
+            "abandon ability able about above absent absorb abstract absurd abuse access 123abc";
         assert!(Migrator::validate_mnemonic(phrase).is_err());
     }
 
@@ -634,7 +639,8 @@ mod tests {
 
     #[test]
     fn test_save_load() {
-        let path = std::env::temp_dir().join(format!("evap_test_migrator_{}.json", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("evap_test_migrator_{}.json", std::process::id()));
         let mut m = Migrator::new();
         let plan = MigrationPlan::new("test", SourceFormat::Mnemonic);
         m.record_migration(&plan, MigrationStatus::Completed, vec!["note".into()]);

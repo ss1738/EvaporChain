@@ -6,7 +6,7 @@ pub mod service;
 pub mod tls;
 
 pub use libp2p::PeerId;
-pub use service::{NetworkConfig, P2pNetworkService, ShardCache, cache_da_package};
+pub use service::{cache_da_package, NetworkConfig, P2pNetworkService, ShardCache};
 pub use tls::{PeerAuthority, TlsConfig};
 
 /// Errors that can occur in the network layer.

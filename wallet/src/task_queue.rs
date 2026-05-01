@@ -241,7 +241,10 @@ impl TaskQueue {
     }
 
     pub fn tasks_by_status(&self, status: &TaskStatus3) -> Vec<&QueueTask> {
-        self.tasks.values().filter(|t| t.status == *status).collect()
+        self.tasks
+            .values()
+            .filter(|t| t.status == *status)
+            .collect()
     }
 
     pub fn tasks_by_priority(&self, priority: &TaskPriority2) -> Vec<&QueueTask> {
@@ -378,8 +381,12 @@ mod tests {
             .unwrap();
         q.enqueue(make_task("normal", TaskPriority2::Normal, TaskType2::Sync))
             .unwrap();
-        q.enqueue(make_task("critical", TaskPriority2::Critical, TaskType2::TxSubmit))
-            .unwrap();
+        q.enqueue(make_task(
+            "critical",
+            TaskPriority2::Critical,
+            TaskType2::TxSubmit,
+        ))
+        .unwrap();
         let first = q.dequeue().unwrap();
         assert_eq!(first.id, "critical");
         let second = q.dequeue().unwrap();
@@ -569,8 +576,12 @@ mod tests {
     fn test_persistence_save_load() {
         let path = test_path("persist");
         let mut q = TaskQueue::new();
-        q.enqueue(make_task("t1", TaskPriority2::Critical, TaskType2::TxSubmit))
-            .unwrap();
+        q.enqueue(make_task(
+            "t1",
+            TaskPriority2::Critical,
+            TaskType2::TxSubmit,
+        ))
+        .unwrap();
         q.save(&path).unwrap();
 
         let loaded = TaskQueue::load(&path).unwrap();
@@ -597,7 +608,11 @@ mod tests {
     #[test]
     fn test_custom_task_type() {
         let mut q = TaskQueue::new();
-        let task = make_task("c1", TaskPriority2::Normal, TaskType2::Custom("audit".into()));
+        let task = make_task(
+            "c1",
+            TaskPriority2::Normal,
+            TaskType2::Custom("audit".into()),
+        );
         q.enqueue(task).unwrap();
         let t = q.get_task("c1").unwrap();
         assert_eq!(t.task_type, TaskType2::Custom("audit".into()));

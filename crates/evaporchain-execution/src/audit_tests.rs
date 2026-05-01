@@ -7,9 +7,7 @@ mod invariant_tests {
     use crate::ExecutionEngine;
     use evaporchain_state::db::InMemoryStateDB;
     use evaporchain_state::db::StateDB;
-    use evaporchain_types::{
-        Account, Block, CreateObjectTx, Transaction, TransferTx,
-    };
+    use evaporchain_types::{Account, Block, CreateObjectTx, Transaction, TransferTx};
 
     fn addr(byte: u8) -> [u8; 32] {
         let mut a = [0u8; 32];
@@ -67,7 +65,9 @@ mod invariant_tests {
             fund_account(&mut db, i, initial_balance);
         }
 
-        let total_before: u64 = (0..5u8).map(|i| db.get_account(&addr(i)).unwrap().balance).sum();
+        let total_before: u64 = (0..5u8)
+            .map(|i| db.get_account(&addr(i)).unwrap().balance)
+            .sum();
 
         let txs: Vec<Transaction> = (0..100)
             .map(|i| {
@@ -83,16 +83,22 @@ mod invariant_tests {
             .collect();
 
         let mut executor = ParallelExecutor::new_for_test(5);
-        let result = executor.execute_block(&mut db, &make_block(1, 1, txs)).unwrap();
+        let result = executor
+            .execute_block(&mut db, &make_block(1, 1, txs))
+            .unwrap();
 
-        let total_after: u64 = (0..5u8).map(|i| db.get_account(&addr(i)).unwrap().balance).sum();
+        let total_after: u64 = (0..5u8)
+            .map(|i| db.get_account(&addr(i)).unwrap().balance)
+            .sum();
 
         // Total supply = balances + fees collected
         assert_eq!(
             total_before,
             total_after + result.total_fees,
             "INVARIANT VIOLATION: total supply not conserved. before={}, after={}, fees={}",
-            total_before, total_after, result.total_fees
+            total_before,
+            total_after,
+            result.total_fees
         );
     }
 
@@ -113,7 +119,9 @@ mod invariant_tests {
         })];
 
         let mut executor = ParallelExecutor::new_for_test(5);
-        let result = executor.execute_block(&mut db, &make_block(1, 1, txs)).unwrap();
+        let result = executor
+            .execute_block(&mut db, &make_block(1, 1, txs))
+            .unwrap();
         let balance_after = db.get_account(&addr(1)).unwrap().balance;
 
         // Balance should decrease only by fees
@@ -146,12 +154,19 @@ mod invariant_tests {
 
         // First execution succeeds
         let mut executor = ParallelExecutor::new_for_test(5);
-        let result1 = executor.execute_block(&mut db, &make_block(1, 1, vec![tx.clone()])).unwrap();
+        let result1 = executor
+            .execute_block(&mut db, &make_block(1, 1, vec![tx.clone()]))
+            .unwrap();
         assert_eq!(result1.txs_executed, 1);
 
         // Replay same transaction (nonce 0 again) — should fail
-        let result2 = executor.execute_block(&mut db, &make_block(2, 2, vec![tx])).unwrap();
-        assert_eq!(result2.txs_failed, 1, "replayed transaction must be rejected");
+        let result2 = executor
+            .execute_block(&mut db, &make_block(2, 2, vec![tx]))
+            .unwrap();
+        assert_eq!(
+            result2.txs_failed, 1,
+            "replayed transaction must be rejected"
+        );
     }
 
     /// Nonce gap: nonce 2 submitted without nonce 1 should fail.
@@ -170,7 +185,9 @@ mod invariant_tests {
         });
 
         let mut executor = ParallelExecutor::new_for_test(5);
-        let result = executor.execute_block(&mut db, &make_block(1, 1, vec![tx])).unwrap();
+        let result = executor
+            .execute_block(&mut db, &make_block(1, 1, vec![tx]))
+            .unwrap();
         assert_eq!(result.txs_failed, 1, "nonce gap must cause rejection");
     }
 
@@ -194,12 +211,17 @@ mod invariant_tests {
         });
 
         let mut executor = ParallelExecutor::new_for_test(5);
-        let result = executor.execute_block(&mut db, &make_block(1, 1, vec![tx])).unwrap();
+        let result = executor
+            .execute_block(&mut db, &make_block(1, 1, vec![tx]))
+            .unwrap();
         assert_eq!(result.txs_failed, 1, "overdraft must be rejected");
 
         // Sender balance must not go negative
         let sender = db.get_account(&addr(1)).unwrap();
-        assert!(sender.balance <= 100, "balance must not exceed initial after failed tx");
+        assert!(
+            sender.balance <= 100,
+            "balance must not exceed initial after failed tx"
+        );
     }
 
     /// Transfer of exactly the full balance should succeed (minus fees).
@@ -219,7 +241,9 @@ mod invariant_tests {
         });
 
         let mut executor = ParallelExecutor::new_for_test(5);
-        let result = executor.execute_block(&mut db, &make_block(1, 1, vec![tx])).unwrap();
+        let result = executor
+            .execute_block(&mut db, &make_block(1, 1, vec![tx]))
+            .unwrap();
         assert_eq!(result.txs_executed, 1);
     }
 
@@ -258,13 +282,21 @@ mod invariant_tests {
         // Use a tight gas limit
         let mut executor = ParallelExecutor::new_for_test(5);
         executor.block_gas_limit = 100_000;
-        let result = executor.execute_block(&mut db, &make_block(1, 1, txs)).unwrap();
+        let result = executor
+            .execute_block(&mut db, &make_block(1, 1, txs))
+            .unwrap();
 
         // Gas used must not exceed limit
-        assert!(result.gas_used <= 100_000,
-            "gas used ({}) must not exceed limit (100000)", result.gas_used);
+        assert!(
+            result.gas_used <= 100_000,
+            "gas used ({}) must not exceed limit (100000)",
+            result.gas_used
+        );
         // Some txs should have been dropped due to gas limit
-        assert!(result.txs_executed < 500, "gas limit should cap transactions executed");
+        assert!(
+            result.txs_executed < 500,
+            "gas limit should cap transactions executed"
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -291,22 +323,31 @@ mod invariant_tests {
             half_life: 10,
             data: vec![0u8; 16],
             decay_curve: None,
+            lad_mode: None,
             signature: None,
             public_key: None,
         });
 
         let mut executor = ParallelExecutor::new_for_test(5);
-        let _ = executor.execute_block(&mut db, &make_block(1, 1, vec![create_tx])).unwrap();
+        let _ = executor
+            .execute_block(&mut db, &make_block(1, 1, vec![create_tx]))
+            .unwrap();
 
         // Execute empty blocks at increasing epochs and verify energy never increases
         let mut prev_energy = 10_000u64;
         for epoch in 2..=20 {
-            let _ = executor.execute_block(&mut db, &make_block(epoch, epoch, vec![])).unwrap();
+            let _ = executor
+                .execute_block(&mut db, &make_block(epoch, epoch, vec![]))
+                .unwrap();
             if let Some(obj) = db.get_object(&obj_id) {
                 let energy = obj.energy_at(epoch);
-                assert!(energy <= prev_energy,
+                assert!(
+                    energy <= prev_energy,
                     "INVARIANT VIOLATION: energy increased from {} to {} at epoch {}",
-                    prev_energy, energy, epoch);
+                    prev_energy,
+                    energy,
+                    epoch
+                );
                 prev_energy = energy;
             }
         }
@@ -331,16 +372,21 @@ mod invariant_tests {
             half_life: 1, // decays very fast
             data: vec![],
             decay_curve: None,
+            lad_mode: None,
             signature: None,
             public_key: None,
         });
 
         let mut executor = ParallelExecutor::new_for_test(5);
-        let _ = executor.execute_block(&mut db, &make_block(1, 1, vec![create_tx])).unwrap();
+        let _ = executor
+            .execute_block(&mut db, &make_block(1, 1, vec![create_tx]))
+            .unwrap();
 
         // Advance many epochs to ensure evaporation
         for epoch in 2..=200 {
-            let result = executor.execute_block(&mut db, &make_block(epoch, epoch, vec![])).unwrap();
+            let result = executor
+                .execute_block(&mut db, &make_block(epoch, epoch, vec![]))
+                .unwrap();
             if result.objects_evaporated > 0 {
                 // Object should have been evaporated
                 break;
@@ -350,8 +396,10 @@ mod invariant_tests {
         // After enough epochs, object should be gone
         // (it may have been evaporated and converted to ghost)
         let ghost_count = db.ghost_count();
-        assert!(ghost_count > 0 || db.get_object(&obj_id).is_none(),
-            "evaporated object should become ghost or be removed");
+        assert!(
+            ghost_count > 0 || db.get_object(&obj_id).is_none(),
+            "evaporated object should become ghost or be removed"
+        );
     }
 }
 

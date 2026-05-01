@@ -219,7 +219,8 @@ impl Simulator {
         let energy_change = match self.rpc.get_object(object_id).await {
             Ok(obj) => {
                 if obj.state == "evaporated" || obj.state == "ghost" {
-                    warnings.push("Object has evaporated — use resurrect instead of refresh".into());
+                    warnings
+                        .push("Object has evaporated — use resurrect instead of refresh".into());
                 }
                 if obj.current_energy + energy_deposit > obj.max_energy {
                     warnings.push(format!(

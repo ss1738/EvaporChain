@@ -41,4 +41,4 @@
 pub mod client;
 pub mod mapping;
 
-pub use client::{ElexonOracleFeed, ElexonConfig};
+pub use client::{ElexonConfig, ElexonOracleFeed};

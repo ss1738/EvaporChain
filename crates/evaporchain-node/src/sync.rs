@@ -31,9 +31,14 @@ impl SyncServer {
     /// Bootstrap the provider from the most recent persisted snapshot.
     pub fn load_from_store(&mut self, chain_store: &ChainStore) {
         if let Some((height, state_root, data)) = chain_store.load_latest_snapshot() {
-            self.provider.create_snapshot(height, height / 10, state_root, &data);
+            self.provider
+                .create_snapshot(height, height / 10, state_root, &data);
             self.local_height = height;
-            tracing::info!(height, size = data.len(), "Sync server loaded snapshot from disk");
+            tracing::info!(
+                height,
+                size = data.len(),
+                "Sync server loaded snapshot from disk"
+            );
         }
     }
 
@@ -184,8 +189,7 @@ pub fn apply_sync_snapshot(
         ));
     }
 
-    let result =
-        SnapshotApplier::apply(db, &snapshot).map_err(|e| format!("apply: {}", e))?;
+    let result = SnapshotApplier::apply(db, &snapshot).map_err(|e| format!("apply: {}", e))?;
 
     tracing::info!(
         height = snapshot.header.block_height,
@@ -219,9 +223,7 @@ mod tests {
             assert_eq!(height, 100);
         }
 
-        let meta = server.handle_request(&SyncMessage::SnapshotMetadataRequest {
-            height: 100,
-        });
+        let meta = server.handle_request(&SyncMessage::SnapshotMetadataRequest { height: 100 });
         assert!(meta.is_some());
     }
 

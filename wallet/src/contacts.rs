@@ -236,7 +236,10 @@ impl AddressBook {
     }
 
     /// Import contacts from a CSV file.
-    pub fn import_csv_file<P: AsRef<std::path::Path>>(&mut self, path: P) -> Result<usize, ContactError> {
+    pub fn import_csv_file<P: AsRef<std::path::Path>>(
+        &mut self,
+        path: P,
+    ) -> Result<usize, ContactError> {
         let data = std::fs::read_to_string(path)?;
         self.import_csv(&data)
     }
@@ -451,7 +454,10 @@ mod tests {
         let mut book2 = AddressBook::new();
         let count = book2.import_csv_file(&path).unwrap();
         assert_eq!(count, 1);
-        assert_eq!(book2.get_by_name("alice").unwrap().note.as_deref(), Some("test"));
+        assert_eq!(
+            book2.get_by_name("alice").unwrap().note.as_deref(),
+            Some("test")
+        );
 
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir(&dir);

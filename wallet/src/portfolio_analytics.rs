@@ -200,12 +200,17 @@ impl PortfolioAnalytics {
             return 0.0;
         }
         let avg = Self::mean(values);
-        let variance = values.iter().map(|v| (v - avg).powi(2)).sum::<f64>() / (values.len() - 1) as f64;
+        let variance =
+            values.iter().map(|v| (v - avg).powi(2)).sum::<f64>() / (values.len() - 1) as f64;
         variance.sqrt()
     }
 
     /// Sharpe ratio = (mean_return - risk_free_rate) / std_dev.
-    pub fn sharpe_ratio(&self, token: &str, risk_free_rate: f64) -> Result<f64, PortfolioAnalyticsError> {
+    pub fn sharpe_ratio(
+        &self,
+        token: &str,
+        risk_free_rate: f64,
+    ) -> Result<f64, PortfolioAnalyticsError> {
         let returns = self.get_returns(token)?;
         let avg = Self::mean(&returns);
         let sd = Self::std_dev(&returns);
@@ -216,15 +221,26 @@ impl PortfolioAnalytics {
     }
 
     /// Sortino ratio — uses only downside deviation.
-    pub fn sortino_ratio(&self, token: &str, risk_free_rate: f64) -> Result<f64, PortfolioAnalyticsError> {
+    pub fn sortino_ratio(
+        &self,
+        token: &str,
+        risk_free_rate: f64,
+    ) -> Result<f64, PortfolioAnalyticsError> {
         let returns = self.get_returns(token)?;
         let avg = Self::mean(&returns);
-        let downside: Vec<f64> = returns.iter().filter(|&&r| r < risk_free_rate).cloned().collect();
+        let downside: Vec<f64> = returns
+            .iter()
+            .filter(|&&r| r < risk_free_rate)
+            .cloned()
+            .collect();
         if downside.is_empty() {
             return Ok(0.0);
         }
-        let downside_var =
-            downside.iter().map(|r| (r - risk_free_rate).powi(2)).sum::<f64>() / downside.len() as f64;
+        let downside_var = downside
+            .iter()
+            .map(|r| (r - risk_free_rate).powi(2))
+            .sum::<f64>()
+            / downside.len() as f64;
         let downside_dev = downside_var.sqrt();
         if downside_dev == 0.0 {
             return Ok(0.0);
@@ -267,15 +283,16 @@ impl PortfolioAnalytics {
     }
 
     /// Pearson correlation between two tokens' returns.
-    pub fn correlation(&self, token_a: &str, token_b: &str) -> Result<f64, PortfolioAnalyticsError> {
+    pub fn correlation(
+        &self,
+        token_a: &str,
+        token_b: &str,
+    ) -> Result<f64, PortfolioAnalyticsError> {
         let returns_a = self.get_returns(token_a)?;
         let returns_b = self.get_returns(token_b)?;
         let n = returns_a.len().min(returns_b.len());
         if n < 2 {
-            return Err(PortfolioAnalyticsError::InsufficientData {
-                needed: 2,
-                have: n,
-            });
+            return Err(PortfolioAnalyticsError::InsufficientData { needed: 2, have: n });
         }
         let a = &returns_a[..n];
         let b = &returns_b[..n];
@@ -299,7 +316,10 @@ impl PortfolioAnalytics {
     }
 
     /// Correlation matrix for a set of tokens.
-    pub fn correlation_matrix(&self, tokens: &[&str]) -> Result<Vec<CorrelationEntry>, PortfolioAnalyticsError> {
+    pub fn correlation_matrix(
+        &self,
+        tokens: &[&str],
+    ) -> Result<Vec<CorrelationEntry>, PortfolioAnalyticsError> {
         let mut entries = Vec::new();
         for i in 0..tokens.len() {
             for j in (i + 1)..tokens.len() {
@@ -328,7 +348,11 @@ impl PortfolioAnalytics {
 
         // Beta = cov(token, benchmark) / var(benchmark)
         let beta = if self.benchmark_returns.len() >= 2 {
-            let bench_returns: Vec<f64> = self.benchmark_returns.iter().map(|e| e.return_pct).collect();
+            let bench_returns: Vec<f64> = self
+                .benchmark_returns
+                .iter()
+                .map(|e| e.return_pct)
+                .collect();
             let n = returns.len().min(bench_returns.len());
             if n >= 2 {
                 let a = &returns[..n];
@@ -382,7 +406,10 @@ impl PortfolioAnalytics {
                 concentration_risk: "High".to_string(),
             };
         }
-        let weights: Vec<f64> = holdings.values().map(|&v| v as f64 / total as f64).collect();
+        let weights: Vec<f64> = holdings
+            .values()
+            .map(|&v| v as f64 / total as f64)
+            .collect();
         let hhi: f64 = weights.iter().map(|w| (w * 100.0).powi(2)).sum();
         let effective_assets = if hhi > 0.0 { 10000.0 / hhi } else { 0.0 };
         // Score: 100 means perfectly diversified (HHI -> min), 0 means fully concentrated
@@ -432,9 +459,7 @@ impl PortfolioAnalytics {
     pub fn best_performer(&self) -> Option<(String, f64)> {
         self.daily_values
             .keys()
-            .filter_map(|token| {
-                self.total_return(token).map(|r| (token.clone(), r))
-            })
+            .filter_map(|token| self.total_return(token).map(|r| (token.clone(), r)))
             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
     }
 
@@ -442,9 +467,7 @@ impl PortfolioAnalytics {
     pub fn worst_performer(&self) -> Option<(String, f64)> {
         self.daily_values
             .keys()
-            .filter_map(|token| {
-                self.total_return(token).map(|r| (token.clone(), r))
-            })
+            .filter_map(|token| self.total_return(token).map(|r| (token.clone(), r)))
             .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
     }
 

@@ -154,7 +154,14 @@ impl FeeTracker {
     }
 
     /// Record from block data.
-    pub fn record_block(&mut self, block_number: u64, epoch: u64, base_fee: u64, gas_used: u64, tx_count: u64) {
+    pub fn record_block(
+        &mut self,
+        block_number: u64,
+        epoch: u64,
+        base_fee: u64,
+        gas_used: u64,
+        tx_count: u64,
+    ) {
         self.record(FeeSample {
             block_number,
             epoch,
@@ -256,11 +263,7 @@ impl FeeTracker {
         let stats = self.stats()?;
 
         let (level, advice, savings) = if stats.current <= stats.p25 {
-            (
-                "low",
-                "Fees are low — great time to transact!",
-                0.0,
-            )
+            ("low", "Fees are low — great time to transact!", 0.0)
         } else if stats.current <= stats.median {
             (
                 "medium",
@@ -347,8 +350,8 @@ impl FeeTracker {
 
         let window = n.min(10);
         let recent = &self.samples[n - window..];
-        let first_half_avg: u64 = recent[..window / 2].iter().map(|s| s.base_fee).sum::<u64>()
-            / (window / 2) as u64;
+        let first_half_avg: u64 =
+            recent[..window / 2].iter().map(|s| s.base_fee).sum::<u64>() / (window / 2) as u64;
         let second_half_avg: u64 = recent[window / 2..].iter().map(|s| s.base_fee).sum::<u64>()
             / (window - window / 2) as u64;
 

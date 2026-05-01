@@ -1,12 +1,9 @@
 //! `sanov_slash(stake, observed, honest)` — compute and apply the
 //! Sanov slash through the energy-kernel's `RedirectKind::Slash`.
 
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use evaporchain_energy_kernel::{
-    Compartment, EnergyAccumulator, EnergyRedirect, RedirectKind,
-};
+use evaporchain_energy_kernel::{Compartment, EnergyAccumulator, EnergyRedirect, RedirectKind};
 use evaporchain_types::Energy;
 
 use crate::distribution::Distribution;
@@ -111,10 +108,7 @@ mod tests {
         // P_2 = 0 but Q_2 > 0 → KL = +∞ → slash = stake.
         let honest = Distribution::new(vec![FIXED_POINT_SCALE, 0]).unwrap();
         let observed = Distribution::new(vec![900_000, 100_000]).unwrap();
-        assert_eq!(
-            sanov_slash(500_000, &observed, &honest).unwrap(),
-            500_000
-        );
+        assert_eq!(sanov_slash(500_000, &observed, &honest).unwrap(), 500_000);
     }
 
     #[test]

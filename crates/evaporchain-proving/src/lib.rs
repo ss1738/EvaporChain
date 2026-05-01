@@ -209,7 +209,9 @@ mod tests {
     #[test]
     fn test_mock_get_proof() {
         let mut prover = MockProver::new();
-        prover.fold_block(&dummy_block(1, 1), [0; 32], [1; 32]).unwrap();
+        prover
+            .fold_block(&dummy_block(1, 1), [0; 32], [1; 32])
+            .unwrap();
 
         let proof = prover.get_proof().unwrap();
         assert_eq!(proof.num_steps, 1);
@@ -226,7 +228,9 @@ mod tests {
     fn test_mock_verify_correct_count() {
         let mut prover = MockProver::new();
         for i in 1..=3 {
-            prover.fold_block(&dummy_block(i, i), [0; 32], [1; 32]).unwrap();
+            prover
+                .fold_block(&dummy_block(i, i), [0; 32], [1; 32])
+                .unwrap();
         }
         let proof = prover.get_proof().unwrap();
 
@@ -237,7 +241,9 @@ mod tests {
     #[test]
     fn test_mock_as_trait_object() {
         let mut prover: Box<dyn ProvingEngine> = Box::new(MockProver::new());
-        prover.fold_block(&dummy_block(1, 1), [0; 32], [1; 32]).unwrap();
+        prover
+            .fold_block(&dummy_block(1, 1), [0; 32], [1; 32])
+            .unwrap();
         assert_eq!(prover.num_blocks_folded(), 1);
     }
 
@@ -257,7 +263,9 @@ mod tests {
 
         // MockProver should accept proofs in test context (it's a test helper).
         let mut prover = MockProver::new();
-        prover.fold_block(&dummy_block(1, 1), [0; 32], [1; 32]).unwrap();
+        prover
+            .fold_block(&dummy_block(1, 1), [0; 32], [1; 32])
+            .unwrap();
         let proof = prover.get_proof().unwrap();
         assert!(
             prover.verify_proof(&proof, 1, [0; 32]).unwrap(),

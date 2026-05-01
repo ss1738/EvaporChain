@@ -47,7 +47,10 @@ impl BoltzmannStakeRegistry {
     /// Look up `validator_id`'s last-touched epoch, seeding from
     /// `default_epoch` if not yet present.
     pub fn get_or_seed(&mut self, validator_id: u64, default_epoch: u64) -> u64 {
-        *self.last_touched.entry(validator_id).or_insert(default_epoch)
+        *self
+            .last_touched
+            .entry(validator_id)
+            .or_insert(default_epoch)
     }
 
     pub fn touch(&mut self, validator_id: u64, epoch: u64) {
@@ -73,9 +76,7 @@ pub fn decayed_voting_power(
         .unwrap_or(stake.staked_at_epoch);
     let live = stake.staked_amount.saturating_sub(stake.slashed_amount);
     let v = ValidatorStake::new(live, last_touched);
-    Some(
-        evaporchain_boltzmann_stake::decay_validator_stake(v, chain_lambda, current_epoch).active,
-    )
+    Some(evaporchain_boltzmann_stake::decay_validator_stake(v, chain_lambda, current_epoch).active)
 }
 
 /// Opt-in mutator: apply Boltzmann decay to every registered validator
@@ -92,7 +93,14 @@ pub fn apply_decay_to_all(
     let stake_records: Vec<(u64, u64, u64, u64)> = db
         .all_stakes()
         .iter()
-        .map(|s| (s.validator_id, s.staked_amount, s.slashed_amount, s.staked_at_epoch))
+        .map(|s| {
+            (
+                s.validator_id,
+                s.staked_amount,
+                s.slashed_amount,
+                s.staked_at_epoch,
+            )
+        })
         .collect();
     for (validator_id, staked_amount, slashed_amount, staked_at_epoch) in stake_records {
         let last_touched = registry
@@ -105,11 +113,8 @@ pub fn apply_decay_to_all(
         }
         let live = staked_amount.saturating_sub(slashed_amount);
         let v = ValidatorStake::new(live, last_touched);
-        let decayed = evaporchain_boltzmann_stake::decay_validator_stake(
-            v,
-            chain_lambda,
-            current_epoch,
-        );
+        let decayed =
+            evaporchain_boltzmann_stake::decay_validator_stake(v, chain_lambda, current_epoch);
         // Write decayed amount back into the StakeRecord.
         if let Some(mut s) = db.get_stake(validator_id).cloned() {
             // Decayed.active is the new live stake; preserve the

@@ -29,9 +29,7 @@ pub enum RetentionProofError {
          no longer provably retained"
     )]
     QueryAfterRetention { query: u64, retained_until: u64 },
-    #[error(
-        "witness mismatch: re-derived {derived:?}, proof carries {claimed:?}"
-    )]
+    #[error("witness mismatch: re-derived {derived:?}, proof carries {claimed:?}")]
     WitnessMismatch {
         derived: [u8; 32],
         claimed: [u8; 32],

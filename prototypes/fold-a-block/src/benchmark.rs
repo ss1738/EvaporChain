@@ -42,7 +42,10 @@ impl BenchmarkReport {
         blocks_per_fold: usize,
         total_blocks: usize,
     ) -> Self {
-        let mut sorted: Vec<f64> = fold_times.iter().map(|d| d.as_secs_f64() * 1000.0).collect();
+        let mut sorted: Vec<f64> = fold_times
+            .iter()
+            .map(|d| d.as_secs_f64() * 1000.0)
+            .collect();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
         let n = sorted.len();
@@ -112,7 +115,10 @@ impl BenchmarkReport {
         println!("  Public params:    {:.2}s", self.setup_time_s);
         println!();
 
-        println!("Folding ({} blocks in {} fold steps):", self.blocks_folded, self.num_fold_steps);
+        println!(
+            "Folding ({} blocks in {} fold steps):",
+            self.blocks_folded, self.num_fold_steps
+        );
         println!("  Avg per fold:     {:.3}ms", self.avg_fold_ms);
         println!("  Median per fold:  {:.3}ms", self.median_fold_ms);
         println!("  Min per fold:     {:.3}ms", self.min_fold_ms);
@@ -133,7 +139,11 @@ impl BenchmarkReport {
 
         println!("Compression:");
         println!("  Time:             {:.2}s", self.compression_time_s);
-        println!("  Proof size:       {} bytes ({:.1} KB)", self.proof_size_bytes, self.proof_size_bytes as f64 / 1024.0);
+        println!(
+            "  Proof size:       {} bytes ({:.1} KB)",
+            self.proof_size_bytes,
+            self.proof_size_bytes as f64 / 1024.0
+        );
         println!();
 
         println!("State Decay:");
@@ -146,13 +156,19 @@ impl BenchmarkReport {
         let ms = self.amortized_per_block_ms;
         match self.verdict.as_str() {
             "PASS" => {
-                println!("VERDICT: PASS -- Amortized {:.1}ms/block < 10ms. EvaporChain is feasible.", ms);
+                println!(
+                    "VERDICT: PASS -- Amortized {:.1}ms/block < 10ms. EvaporChain is feasible.",
+                    ms
+                );
             }
             "MARGINAL" => {
                 println!("VERDICT: MARGINAL -- Amortized {:.1}ms/block. Feasible with further optimization.", ms);
             }
             _ => {
-                println!("VERDICT: FAIL -- Amortized {:.1}ms/block exceeds 50ms threshold.", ms);
+                println!(
+                    "VERDICT: FAIL -- Amortized {:.1}ms/block exceeds 50ms threshold.",
+                    ms
+                );
             }
         }
     }

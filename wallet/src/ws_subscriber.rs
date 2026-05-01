@@ -224,30 +224,26 @@ impl WsSubscriber {
             match f.op {
                 FilterOp::Eq => val == &f.value,
                 FilterOp::Contains => val.contains(&f.value),
-                FilterOp::Gt => {
-                    val.parse::<f64>()
-                        .ok()
-                        .zip(f.value.parse::<f64>().ok())
-                        .is_some_and(|(v, t)| v > t)
-                }
-                FilterOp::Lt => {
-                    val.parse::<f64>()
-                        .ok()
-                        .zip(f.value.parse::<f64>().ok())
-                        .is_some_and(|(v, t)| v < t)
-                }
-                FilterOp::Gte => {
-                    val.parse::<f64>()
-                        .ok()
-                        .zip(f.value.parse::<f64>().ok())
-                        .is_some_and(|(v, t)| v >= t)
-                }
-                FilterOp::Lte => {
-                    val.parse::<f64>()
-                        .ok()
-                        .zip(f.value.parse::<f64>().ok())
-                        .is_some_and(|(v, t)| v <= t)
-                }
+                FilterOp::Gt => val
+                    .parse::<f64>()
+                    .ok()
+                    .zip(f.value.parse::<f64>().ok())
+                    .is_some_and(|(v, t)| v > t),
+                FilterOp::Lt => val
+                    .parse::<f64>()
+                    .ok()
+                    .zip(f.value.parse::<f64>().ok())
+                    .is_some_and(|(v, t)| v < t),
+                FilterOp::Gte => val
+                    .parse::<f64>()
+                    .ok()
+                    .zip(f.value.parse::<f64>().ok())
+                    .is_some_and(|(v, t)| v >= t),
+                FilterOp::Lte => val
+                    .parse::<f64>()
+                    .ok()
+                    .zip(f.value.parse::<f64>().ok())
+                    .is_some_and(|(v, t)| v <= t),
             }
         })
     }
@@ -401,7 +397,11 @@ mod tests {
     use super::*;
 
     fn temp_path(name: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("ws_subscriber_test_{}_{}", name, std::process::id()))
+        std::env::temp_dir().join(format!(
+            "ws_subscriber_test_{}_{}",
+            name,
+            std::process::id()
+        ))
     }
 
     #[test]
@@ -538,7 +538,9 @@ mod tests {
     #[test]
     fn test_matches_filters_eq() {
         let mut event = make_event("s1", EventType::TokenTransfer);
-        event.payload.insert("token".to_string(), "EVAP".to_string());
+        event
+            .payload
+            .insert("token".to_string(), "EVAP".to_string());
         let filters = vec![EventFilter {
             field: "token".to_string(),
             op: FilterOp::Eq,
@@ -591,9 +593,12 @@ mod tests {
             .unwrap();
         ws.subscribe(make_sub("s2", EventType::PendingTx, "ws://localhost:8081"))
             .unwrap();
-        ws.record_event(make_event("s1", EventType::NewBlock)).unwrap();
-        ws.record_event(make_event("s2", EventType::PendingTx)).unwrap();
-        ws.record_event(make_event("s1", EventType::NewBlock)).unwrap();
+        ws.record_event(make_event("s1", EventType::NewBlock))
+            .unwrap();
+        ws.record_event(make_event("s2", EventType::PendingTx))
+            .unwrap();
+        ws.record_event(make_event("s1", EventType::NewBlock))
+            .unwrap();
         let s1_events = ws.events_for_subscription("s1");
         assert_eq!(s1_events.len(), 2);
     }
@@ -604,7 +609,8 @@ mod tests {
         ws.subscribe(make_sub("s1", EventType::NewBlock, "ws://localhost:8080"))
             .unwrap();
         for _ in 0..5 {
-            ws.record_event(make_event("s1", EventType::NewBlock)).unwrap();
+            ws.record_event(make_event("s1", EventType::NewBlock))
+                .unwrap();
         }
         let recent = ws.recent_events(3);
         assert_eq!(recent.len(), 3);
@@ -656,7 +662,8 @@ mod tests {
         ws.subscribe(make_sub("s2", EventType::PendingTx, "ws://localhost:8081"))
             .unwrap();
         ws.pause("s2").unwrap();
-        ws.record_event(make_event("s1", EventType::NewBlock)).unwrap();
+        ws.record_event(make_event("s1", EventType::NewBlock))
+            .unwrap();
         ws.record_error("s1", "minor").unwrap();
         let stats = ws.stats();
         assert_eq!(stats.total_subscriptions, 2);
@@ -672,7 +679,8 @@ mod tests {
         let mut ws = WsSubscriber::new();
         ws.subscribe(make_sub("s1", EventType::NewBlock, "ws://localhost:8080"))
             .unwrap();
-        ws.record_event(make_event("s1", EventType::NewBlock)).unwrap();
+        ws.record_event(make_event("s1", EventType::NewBlock))
+            .unwrap();
         ws.save(&path).unwrap();
 
         let loaded = WsSubscriber::load(&path).unwrap();

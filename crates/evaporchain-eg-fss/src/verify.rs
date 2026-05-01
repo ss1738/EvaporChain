@@ -16,9 +16,7 @@ const SIGN_TAG: &[u8] = b"evaporchain-eg-fss-sign";
 pub enum VerifyError {
     #[error("signature MAC mismatch")]
     MacMismatch,
-    #[error(
-        "signature claims period {claimed} but chain remembers {expected} for that index"
-    )]
+    #[error("signature claims period {claimed} but chain remembers {expected} for that index")]
     PeriodMismatch { claimed: u64, expected: u64 },
 }
 

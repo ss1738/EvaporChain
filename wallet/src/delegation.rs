@@ -304,14 +304,13 @@ impl DelegationStore {
     }
 
     pub fn save(&self, path: &Path) -> Result<(), DelegationError> {
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| DelegationError::Json(e.to_string()))?;
+        let json =
+            serde_json::to_string_pretty(self).map_err(|e| DelegationError::Json(e.to_string()))?;
         std::fs::write(path, json).map_err(|e| DelegationError::Io(e.to_string()))
     }
 
     pub fn load(path: &Path) -> Result<Self, DelegationError> {
-        let data =
-            std::fs::read_to_string(path).map_err(|e| DelegationError::Io(e.to_string()))?;
+        let data = std::fs::read_to_string(path).map_err(|e| DelegationError::Io(e.to_string()))?;
         serde_json::from_str(&data).map_err(|e| DelegationError::Json(e.to_string()))
     }
 
@@ -440,8 +439,14 @@ mod tests {
 
     #[test]
     fn test_delegation_type_from_str() {
-        assert_eq!(DelegationType::from_str("transfer"), Some(DelegationType::Transfer));
-        assert_eq!(DelegationType::from_str("staking"), Some(DelegationType::Staking));
+        assert_eq!(
+            DelegationType::from_str("transfer"),
+            Some(DelegationType::Transfer)
+        );
+        assert_eq!(
+            DelegationType::from_str("staking"),
+            Some(DelegationType::Staking)
+        );
         assert_eq!(DelegationType::from_str("any"), Some(DelegationType::Any));
         assert_eq!(DelegationType::from_str("nope"), None);
     }
@@ -473,7 +478,15 @@ mod tests {
     fn test_store_by_owner() {
         let mut store = DelegationStore::new();
         store.add(make_delegation("d1")).unwrap();
-        store.add(Delegation::new("d2", "carol", "bob", DelegationType::Any, 500)).unwrap();
+        store
+            .add(Delegation::new(
+                "d2",
+                "carol",
+                "bob",
+                DelegationType::Any,
+                500,
+            ))
+            .unwrap();
         assert_eq!(store.by_owner("alice").len(), 1);
     }
 
@@ -489,7 +502,15 @@ mod tests {
     fn test_store_total_delegated() {
         let mut store = DelegationStore::new();
         store.add(make_delegation("d1")).unwrap();
-        store.add(Delegation::new("d2", "alice", "carol", DelegationType::Transfer, 500)).unwrap();
+        store
+            .add(Delegation::new(
+                "d2",
+                "alice",
+                "carol",
+                DelegationType::Transfer,
+                500,
+            ))
+            .unwrap();
         assert_eq!(store.total_delegated("alice"), 1500);
     }
 
@@ -497,7 +518,15 @@ mod tests {
     fn test_store_revoke_all() {
         let mut store = DelegationStore::new();
         store.add(make_delegation("d1")).unwrap();
-        store.add(Delegation::new("d2", "alice", "carol", DelegationType::Any, 500)).unwrap();
+        store
+            .add(Delegation::new(
+                "d2",
+                "alice",
+                "carol",
+                DelegationType::Any,
+                500,
+            ))
+            .unwrap();
         let count = store.revoke_all("alice");
         assert_eq!(count, 2);
         assert_eq!(store.active().len(), 0);
@@ -515,9 +544,7 @@ mod tests {
 
     #[test]
     fn test_store_save_load() {
-        let path = std::env::temp_dir().join(format!(
-            "evap_deleg_{}.json", std::process::id()
-        ));
+        let path = std::env::temp_dir().join(format!("evap_deleg_{}.json", std::process::id()));
         let mut store = DelegationStore::new();
         store.add(make_delegation("d1")).unwrap();
         store.save(&path).unwrap();

@@ -147,9 +147,8 @@ impl CacheManager {
 
         let now = Utc::now().to_rfc3339();
         let effective_ttl = ttl_seconds.or(default_ttl);
-        let expires_at = effective_ttl.map(|secs| {
-            (Utc::now() + chrono::Duration::seconds(secs as i64)).to_rfc3339()
-        });
+        let expires_at = effective_ttl
+            .map(|secs| (Utc::now() + chrono::Duration::seconds(secs as i64)).to_rfc3339());
 
         let entry = CacheEntry {
             key: key.to_string(),
@@ -167,11 +166,7 @@ impl CacheManager {
         Ok(())
     }
 
-    pub fn get(
-        &mut self,
-        cache_id: &str,
-        key: &str,
-    ) -> Result<Option<String>, CacheManagerError> {
+    pub fn get(&mut self, cache_id: &str, key: &str) -> Result<Option<String>, CacheManagerError> {
         if !self.caches.contains_key(cache_id) {
             return Err(CacheManagerError::CacheNotFound(cache_id.to_string()));
         }
@@ -244,10 +239,7 @@ impl CacheManager {
         }
     }
 
-    pub fn entries_in_cache(
-        &self,
-        cache_id: &str,
-    ) -> Result<Vec<&CacheEntry>, CacheManagerError> {
+    pub fn entries_in_cache(&self, cache_id: &str) -> Result<Vec<&CacheEntry>, CacheManagerError> {
         let cache = self
             .entries
             .get(cache_id)
@@ -320,10 +312,7 @@ impl CacheManager {
     // Private helpers
     // -----------------------------------------------------------------------
 
-    fn do_evict(
-        cache: &mut HashMap<String, CacheEntry>,
-        policy: &EvictionPolicy,
-    ) {
+    fn do_evict(cache: &mut HashMap<String, CacheEntry>, policy: &EvictionPolicy) {
         if cache.is_empty() {
             return;
         }
@@ -340,18 +329,14 @@ impl CacheManager {
                     })
                     .map(|(k, _)| k.clone())
             }
-            EvictionPolicy::Lfu => {
-                cache
-                    .iter()
-                    .min_by_key(|(_, e)| e.access_count)
-                    .map(|(k, _)| k.clone())
-            }
-            EvictionPolicy::Fifo => {
-                cache
-                    .iter()
-                    .min_by(|a, b| a.1.created_at.cmp(&b.1.created_at))
-                    .map(|(k, _)| k.clone())
-            }
+            EvictionPolicy::Lfu => cache
+                .iter()
+                .min_by_key(|(_, e)| e.access_count)
+                .map(|(k, _)| k.clone()),
+            EvictionPolicy::Fifo => cache
+                .iter()
+                .min_by(|a, b| a.1.created_at.cmp(&b.1.created_at))
+                .map(|(k, _)| k.clone()),
             EvictionPolicy::Ttl => {
                 let now = Utc::now().to_rfc3339();
                 // First try to find an expired entry

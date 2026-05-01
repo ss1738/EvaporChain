@@ -124,12 +124,7 @@ impl TxHistory {
     }
 
     /// Record a failed transaction.
-    pub fn record_failure(
-        &mut self,
-        tx_type: &str,
-        from: &str,
-        error: &str,
-    ) {
+    pub fn record_failure(&mut self, tx_type: &str, from: &str, error: &str) {
         self.entries.push(HistoryEntry {
             tx_hash: None,
             tx_type: tx_type.to_string(),

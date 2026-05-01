@@ -94,6 +94,7 @@ impl EnergyAccumulator {
     /// Subtract `amount` from a compartment. Returns `Err(())` if the
     /// compartment doesn't have enough — the caller must handle (no
     /// silent wrap-around, no negative energy).
+    #[allow(clippy::result_unit_err)]
     pub fn debit(&mut self, c: Compartment, amount: Energy) -> Result<Energy, ()> {
         let slot = &mut self[c];
         if *slot < amount {

@@ -120,9 +120,7 @@ impl ErasureEncoder2D {
 
         #[allow(clippy::needless_range_loop)]
         for c in 0..ext {
-            let col_data: Vec<u8> = (0..k)
-                .flat_map(|r| grid[r][c].iter().copied())
-                .collect();
+            let col_data: Vec<u8> = (0..k).flat_map(|r| grid[r][c].iter().copied()).collect();
             let encoded = col_rs.encode(&col_data)?;
             for p in 0..k {
                 let shard = &encoded.shards[k + p];
@@ -190,12 +188,14 @@ pub fn reconstruct_row(
     // Each cell is one shard of size cell_size.
     let shards: Vec<Option<Vec<u8>>> = known_cells
         .iter()
-        .map(|opt| opt.as_ref().map(|data| {
-            let mut shard = vec![0u8; cell_size];
-            let copy_len = cell_size.min(data.len());
-            shard[..copy_len].copy_from_slice(&data[..copy_len]);
-            shard
-        }))
+        .map(|opt| {
+            opt.as_ref().map(|data| {
+                let mut shard = vec![0u8; cell_size];
+                let copy_len = cell_size.min(data.len());
+                shard[..copy_len].copy_from_slice(&data[..copy_len]);
+                shard
+            })
+        })
         .collect();
 
     // Reconstruct data shards (first k cells)
@@ -259,12 +259,14 @@ pub fn reconstruct_column(
     // Build the shard vector for reconstruction.
     let shards: Vec<Option<Vec<u8>>> = known_cells
         .iter()
-        .map(|opt| opt.as_ref().map(|data| {
-            let mut shard = vec![0u8; cell_size];
-            let copy_len = cell_size.min(data.len());
-            shard[..copy_len].copy_from_slice(&data[..copy_len]);
-            shard
-        }))
+        .map(|opt| {
+            opt.as_ref().map(|data| {
+                let mut shard = vec![0u8; cell_size];
+                let copy_len = cell_size.min(data.len());
+                shard[..copy_len].copy_from_slice(&data[..copy_len]);
+                shard
+            })
+        })
         .collect();
 
     // Reconstruct data shards (first k cells)
@@ -363,12 +365,14 @@ pub fn reconstruct_from_samples(
             // Build shards for this row
             let shards: Vec<Option<Vec<u8>>> = grid[r]
                 .iter()
-                .map(|opt| opt.as_ref().map(|data| {
-                    let mut shard = vec![0u8; cell_size];
-                    let copy_len = cell_size.min(data.len());
-                    shard[..copy_len].copy_from_slice(&data[..copy_len]);
-                    shard
-                }))
+                .map(|opt| {
+                    opt.as_ref().map(|data| {
+                        let mut shard = vec![0u8; cell_size];
+                        let copy_len = cell_size.min(data.len());
+                        shard[..copy_len].copy_from_slice(&data[..copy_len]);
+                        shard
+                    })
+                })
                 .collect();
 
             let data_bytes = match rs.reconstruct(shards) {
@@ -403,12 +407,14 @@ pub fn reconstruct_from_samples(
             }
 
             let shards: Vec<Option<Vec<u8>>> = (0..ext)
-                .map(|r| grid[r][c].as_ref().map(|data| {
-                    let mut shard = vec![0u8; cell_size];
-                    let copy_len = cell_size.min(data.len());
-                    shard[..copy_len].copy_from_slice(&data[..copy_len]);
-                    shard
-                }))
+                .map(|r| {
+                    grid[r][c].as_ref().map(|data| {
+                        let mut shard = vec![0u8; cell_size];
+                        let copy_len = cell_size.min(data.len());
+                        shard[..copy_len].copy_from_slice(&data[..copy_len]);
+                        shard
+                    })
+                })
                 .collect();
 
             let data_bytes = match rs.reconstruct(shards) {
@@ -462,6 +468,7 @@ pub fn reconstruct_from_samples(
 }
 
 #[cfg(test)]
+#[allow(clippy::needless_range_loop)]
 mod tests {
     use super::*;
 
@@ -471,7 +478,10 @@ mod tests {
         let data = vec![0xABu8; 256];
         let matrix = encoder.encode_2d(&data).unwrap();
         assert!(matrix.extended_dim() >= 4);
-        assert_eq!(matrix.cells.len(), matrix.extended_dim * matrix.extended_dim);
+        assert_eq!(
+            matrix.cells.len(),
+            matrix.extended_dim * matrix.extended_dim
+        );
     }
 
     #[test]
@@ -591,10 +601,7 @@ mod tests {
         let mut samples: HashMap<(usize, usize), Vec<u8>> = HashMap::new();
         for r in 0..ext {
             for c in 0..k {
-                samples.insert(
-                    (r, c),
-                    matrix.get_cell(r, c).unwrap().to_vec(),
-                );
+                samples.insert((r, c), matrix.get_cell(r, c).unwrap().to_vec());
             }
         }
 
@@ -621,10 +628,7 @@ mod tests {
         let mut col_samples: HashMap<(usize, usize), Vec<u8>> = HashMap::new();
         for c in 0..ext {
             for r in 0..k {
-                col_samples.insert(
-                    (r, c),
-                    matrix.get_cell(r, c).unwrap().to_vec(),
-                );
+                col_samples.insert((r, c), matrix.get_cell(r, c).unwrap().to_vec());
             }
         }
         let recovered2 = reconstruct_from_samples(k, cell_size, &col_samples).unwrap();

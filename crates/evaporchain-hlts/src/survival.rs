@@ -7,7 +7,12 @@ use crate::share::Share;
 
 /// True iff `share`'s λ-decayed remaining energy at `query_epoch`
 /// is strictly above `threshold`.
-pub fn is_alive(share: &Share, chain_lambda: ChainLambda, query_epoch: u64, threshold: Energy) -> bool {
+pub fn is_alive(
+    share: &Share,
+    chain_lambda: ChainLambda,
+    query_epoch: u64,
+    threshold: Energy,
+) -> bool {
     if query_epoch < share.observed_epoch {
         return true; // pre-observation = trivially alive (full seed).
     }
@@ -47,8 +52,8 @@ mod tests {
     #[test]
     fn share_decays_below_threshold() {
         let s = Share::new(1, 1000, 0);
-        assert!(is_alive(&s, lambda(), 100, 100));   // remaining=500 > 100 ✓
-        assert!(!is_alive(&s, lambda(), 100, 500));  // remaining=500 = threshold → not strictly above
+        assert!(is_alive(&s, lambda(), 100, 100)); // remaining=500 > 100 ✓
+        assert!(!is_alive(&s, lambda(), 100, 500)); // remaining=500 = threshold → not strictly above
     }
 
     #[test]

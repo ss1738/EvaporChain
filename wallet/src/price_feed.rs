@@ -473,7 +473,11 @@ impl PriceFeed {
         FeedStats {
             total_tokens: self.prices.len(),
             total_alerts: self.alerts.len(),
-            active_alerts: self.alerts.iter().filter(|a| a.status == AlertStatus::Active).count(),
+            active_alerts: self
+                .alerts
+                .iter()
+                .filter(|a| a.status == AlertStatus::Active)
+                .count(),
             triggered_alerts: self
                 .alerts
                 .iter()
@@ -649,8 +653,16 @@ mod tests {
         token.update_price(20.0, 100.0);
         feed.register_token(token);
 
-        feed.add_alert(PriceAlert::new("a1", "evap", PriceAlertCondition::Above(15.0)));
-        feed.add_alert(PriceAlert::new("a2", "evap", PriceAlertCondition::Above(25.0)));
+        feed.add_alert(PriceAlert::new(
+            "a1",
+            "evap",
+            PriceAlertCondition::Above(15.0),
+        ));
+        feed.add_alert(PriceAlert::new(
+            "a2",
+            "evap",
+            PriceAlertCondition::Above(25.0),
+        ));
 
         let triggered = feed.check_alerts();
         assert_eq!(triggered.len(), 1);
@@ -664,8 +676,16 @@ mod tests {
         token.update_price(20.0, 100.0);
         feed.register_token(token);
 
-        feed.add_alert(PriceAlert::new("a1", "evap", PriceAlertCondition::Above(15.0)));
-        feed.add_alert(PriceAlert::new("a2", "evap", PriceAlertCondition::Above(25.0)));
+        feed.add_alert(PriceAlert::new(
+            "a1",
+            "evap",
+            PriceAlertCondition::Above(15.0),
+        ));
+        feed.add_alert(PriceAlert::new(
+            "a2",
+            "evap",
+            PriceAlertCondition::Above(25.0),
+        ));
         feed.check_alerts();
 
         assert_eq!(feed.active_alerts().len(), 1);
@@ -675,7 +695,11 @@ mod tests {
     #[test]
     fn test_remove_alert() {
         let mut feed = PriceFeed::new();
-        feed.add_alert(PriceAlert::new("a1", "evap", PriceAlertCondition::Above(10.0)));
+        feed.add_alert(PriceAlert::new(
+            "a1",
+            "evap",
+            PriceAlertCondition::Above(10.0),
+        ));
         assert!(feed.remove_alert("a1"));
         assert!(!feed.remove_alert("a1"));
         assert!(feed.alerts.is_empty());
@@ -718,8 +742,16 @@ mod tests {
     #[test]
     fn test_stats() {
         let mut feed = make_feed_with_tokens();
-        feed.add_alert(PriceAlert::new("a1", "evap", PriceAlertCondition::Above(15.0)));
-        feed.add_alert(PriceAlert::new("a2", "evap", PriceAlertCondition::Above(5.0)));
+        feed.add_alert(PriceAlert::new(
+            "a1",
+            "evap",
+            PriceAlertCondition::Above(15.0),
+        ));
+        feed.add_alert(PriceAlert::new(
+            "a2",
+            "evap",
+            PriceAlertCondition::Above(5.0),
+        ));
         feed.check_alerts();
 
         let stats = feed.stats();
@@ -747,7 +779,11 @@ mod tests {
     fn test_persistence_roundtrip() {
         let path = test_path();
         let mut feed = make_feed_with_tokens();
-        feed.add_alert(PriceAlert::new("a1", "evap", PriceAlertCondition::Above(15.0)));
+        feed.add_alert(PriceAlert::new(
+            "a1",
+            "evap",
+            PriceAlertCondition::Above(15.0),
+        ));
         feed.save(&path).unwrap();
 
         let loaded = PriceFeed::load(&path).unwrap();

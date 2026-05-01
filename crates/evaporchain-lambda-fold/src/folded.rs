@@ -2,8 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use evaporchain_types::Energy;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FoldedInstance {
     /// Domain-separated blake3 accumulator over all folded

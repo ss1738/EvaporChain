@@ -1,8 +1,8 @@
+#[cfg(test)]
+mod audit_tests;
 pub mod compiler;
 pub mod parser;
 pub mod vm;
-#[cfg(test)]
-mod audit_tests;
 
 use evaporchain_types::{energy_at_epoch, AccountAddress, Energy, Epoch, HalfLife};
 use serde::{Deserialize, Serialize};
@@ -34,7 +34,9 @@ impl Value {
     pub fn as_bool(&self) -> Result<bool, ScriptError> {
         match self {
             Value::Bool(b) => Ok(*b),
-            other => Err(ScriptError::Runtime(format!("expected bool, got {other:?}"))),
+            other => Err(ScriptError::Runtime(format!(
+                "expected bool, got {other:?}"
+            ))),
         }
     }
 
@@ -289,7 +291,19 @@ pub struct ScriptTickResult {
 /// Avoids `&mut` aliasing issues by cloning the registry for the call stack.
 struct ContractCallRouter {
     #[allow(clippy::type_complexity)]
-    contracts: HashMap<u64, (compiler::EvaporBytecode, HashMap<String, Value>, AccountAddress, Epoch, Energy, HalfLife, Epoch, bool)>,
+    contracts: HashMap<
+        u64,
+        (
+            compiler::EvaporBytecode,
+            HashMap<String, Value>,
+            AccountAddress,
+            Epoch,
+            Energy,
+            HalfLife,
+            Epoch,
+            bool,
+        ),
+    >,
     vrf_randomness: [u8; 32],
     state_patches: Vec<(u64, HashMap<String, Value>)>,
     collected_events: Vec<ContractEvent>,
@@ -300,16 +314,19 @@ impl ContractCallRouter {
     fn from_engine(engine: &ScriptEngine) -> Self {
         let mut contracts = HashMap::new();
         for (id, c) in &engine.contracts {
-            contracts.insert(*id, (
-                c.bytecode.clone(),
-                c.state.clone(),
-                c.creator,
-                c.created_epoch,
-                c.energy,
-                c.half_life,
-                c.last_refreshed,
-                c.evaporated,
-            ));
+            contracts.insert(
+                *id,
+                (
+                    c.bytecode.clone(),
+                    c.state.clone(),
+                    c.creator,
+                    c.created_epoch,
+                    c.energy,
+                    c.half_life,
+                    c.last_refreshed,
+                    c.evaporated,
+                ),
+            );
         }
         Self {
             contracts,
@@ -334,28 +351,36 @@ impl ExternalCaller for ContractCallRouter {
     ) -> Result<(Value, Vec<ContractEvent>, u64), ScriptError> {
         if call_depth >= MAX_CALL_DEPTH {
             return Err(ScriptError::Runtime(format!(
-                "cross-contract call depth exceeded (max {})", MAX_CALL_DEPTH
+                "cross-contract call depth exceeded (max {})",
+                MAX_CALL_DEPTH
             )));
         }
 
         if self.active_calls.contains(&contract_id) {
             return Err(ScriptError::Runtime(format!(
-                "reentrancy detected: contract {} is already in the call stack", contract_id
+                "reentrancy detected: contract {} is already in the call stack",
+                contract_id
             )));
         }
 
         let (bytecode, state, creator, _created, energy, half_life, last_refreshed, evaporated) =
-            self.contracts.get(&contract_id)
+            self.contracts
+                .get(&contract_id)
                 .ok_or_else(|| ScriptError::Runtime(format!("contract {contract_id} not found")))?
                 .clone();
 
         if evaporated {
-            return Err(ScriptError::Runtime(format!("contract {contract_id} has evaporated")));
+            return Err(ScriptError::Runtime(format!(
+                "contract {contract_id} has evaporated"
+            )));
         }
 
-        let current_energy = energy_at_epoch(energy, half_life, epoch.saturating_sub(last_refreshed));
+        let current_energy =
+            energy_at_epoch(energy, half_life, epoch.saturating_sub(last_refreshed));
         if current_energy == 0 {
-            return Err(ScriptError::Runtime(format!("contract {contract_id} has no energy")));
+            return Err(ScriptError::Runtime(format!(
+                "contract {contract_id} has no energy"
+            )));
         }
 
         let ctx = ExecutionContext {
@@ -369,15 +394,26 @@ impl ExternalCaller for ContractCallRouter {
 
         self.active_calls.insert(contract_id);
         let result = vm::EvaporVM::execute_full(
-            &bytecode, method, args, state, &ctx, gas_remaining, Some(self),
+            &bytecode,
+            method,
+            args,
+            state,
+            &ctx,
+            gas_remaining,
+            Some(self),
         );
         self.active_calls.remove(&contract_id);
         let result = result?;
 
         self.state_patches.push((contract_id, result.state_changes));
-        self.collected_events.extend(result.structured_events.clone());
+        self.collected_events
+            .extend(result.structured_events.clone());
 
-        Ok((result.return_value, result.structured_events, result.gas_used))
+        Ok((
+            result.return_value,
+            result.structured_events,
+            result.gas_used,
+        ))
     }
 }
 
@@ -473,12 +509,9 @@ impl ScriptEngine {
         caller: AccountAddress,
         _current_epoch: Epoch,
     ) -> Result<(), ScriptError> {
-        let contract = self
-            .contracts
-            .get(&contract_id)
-            .ok_or_else(|| {
-                ScriptError::Runtime(format!("upgrade: contract {contract_id} not found"))
-            })?;
+        let contract = self.contracts.get(&contract_id).ok_or_else(|| {
+            ScriptError::Runtime(format!("upgrade: contract {contract_id} not found"))
+        })?;
         if contract.evaporated {
             return Err(ScriptError::Runtime(format!(
                 "upgrade: contract {contract_id} has evaporated"
@@ -508,15 +541,15 @@ impl ScriptEngine {
                          (would orphan live state)"
                     ))
                 })?;
-            let compatible = match (current_value, &new_field.ty) {
-                (Value::U64(_), ScriptType::U64) => true,
-                (Value::Bool(_), ScriptType::Bool) => true,
-                (Value::Str(_), ScriptType::String) => true,
-                (Value::Address(_), ScriptType::Address) => true,
-                (Value::Map(_), ScriptType::Map(_, _)) => true,
-                (Value::Array(_), ScriptType::Array(_)) => true,
-                _ => false,
-            };
+            let compatible = matches!(
+                (current_value, &new_field.ty),
+                (Value::U64(_), ScriptType::U64)
+                    | (Value::Bool(_), ScriptType::Bool)
+                    | (Value::Str(_), ScriptType::String)
+                    | (Value::Address(_), ScriptType::Address)
+                    | (Value::Map(_), ScriptType::Map(_, _))
+                    | (Value::Array(_), ScriptType::Array(_))
+            );
             if !compatible {
                 return Err(ScriptError::Runtime(format!(
                     "upgrade: field '{field_name}' type mismatch \
@@ -588,7 +621,13 @@ impl ScriptEngine {
         let mut router = ContractCallRouter::from_engine(self);
         router.active_calls.insert(contract_id);
         let result = vm::EvaporVM::execute_full(
-            &bytecode, method, args, state, &ctx, 10_000_000, Some(&mut router),
+            &bytecode,
+            method,
+            args,
+            state,
+            &ctx,
+            10_000_000,
+            Some(&mut router),
         );
         router.active_calls.remove(&contract_id);
         let result = result?;
@@ -744,7 +783,9 @@ impl ScriptEngine {
     }
 
     pub fn get_abi(&self, contract_id: u64) -> Result<&ContractAbi, ScriptError> {
-        let contract = self.contracts.get(&contract_id)
+        let contract = self
+            .contracts
+            .get(&contract_id)
             .ok_or_else(|| ScriptError::Runtime(format!("contract {contract_id} not found")))?;
         Ok(&contract.abi)
     }
@@ -808,15 +849,21 @@ contract Caller {
         let adder_id = engine.deploy(adder_src, creator, 10_000, 100, 1).unwrap();
         let caller_id = engine.deploy(caller_src, creator, 10_000, 100, 1).unwrap();
 
-        let result = engine.call(
-            caller_id, "call_add",
-            vec![Value::U64(adder_id), Value::U64(42)],
-            creator, 10,
-        ).unwrap();
+        let result = engine
+            .call(
+                caller_id,
+                "call_add",
+                vec![Value::U64(adder_id), Value::U64(42)],
+                creator,
+                10,
+            )
+            .unwrap();
 
         assert_eq!(result.return_value, Value::U64(42));
 
-        let adder_total = engine.call(adder_id, "get_total", vec![], creator, 10).unwrap();
+        let adder_total = engine
+            .call(adder_id, "get_total", vec![], creator, 10)
+            .unwrap();
         assert_eq!(adder_total.return_value, Value::U64(42));
     }
 
@@ -881,8 +928,12 @@ contract Storage {
         let s1 = engine.deploy(storage_src, creator, 10_000, 100, 1).unwrap();
         let s2 = engine.deploy(storage_src, creator, 10_000, 100, 1).unwrap();
 
-        engine.call(s1, "set", vec![Value::U64(100)], creator, 10).unwrap();
-        engine.call(s2, "set", vec![Value::U64(200)], creator, 10).unwrap();
+        engine
+            .call(s1, "set", vec![Value::U64(100)], creator, 10)
+            .unwrap();
+        engine
+            .call(s2, "set", vec![Value::U64(200)], creator, 10)
+            .unwrap();
 
         let v1 = engine.call(s1, "get", vec![], creator, 10).unwrap();
         let v2 = engine.call(s2, "get", vec![], creator, 10).unwrap();
@@ -922,9 +973,9 @@ contract Boss {
         let worker = engine.deploy(work_src, creator, 10_000, 100, 1).unwrap();
         let boss = engine.deploy(caller_src, creator, 10_000, 100, 1).unwrap();
 
-        let result = engine.call(
-            boss, "delegate", vec![Value::U64(worker)], creator, 10,
-        ).unwrap();
+        let result = engine
+            .call(boss, "delegate", vec![Value::U64(worker)], creator, 10)
+            .unwrap();
         assert_eq!(result.return_value, Value::U64(50));
         assert!(result.gas_used > 0);
     }
@@ -952,7 +1003,7 @@ mod map_key_collision_tests {
     /// C-05: All variant prefixes must be distinct.
     #[test]
     fn test_c05_all_type_prefixes_distinct() {
-        let keys = vec![
+        let keys = [
             Value::U64(0).to_map_key(),
             Value::Bool(false).to_map_key(),
             Value::Str("0".to_string()).to_map_key(),
@@ -1017,25 +1068,13 @@ contract MapTest {
 
         // Verify "hello" is still 100 (not overwritten)
         let result = engine
-            .call(
-                id,
-                "get_str",
-                vec![Value::Str("hello".into())],
-                creator,
-                10,
-            )
+            .call(id, "get_str", vec![Value::Str("hello".into())], creator, 10)
             .unwrap();
         assert_eq!(result.return_value, Value::U64(100));
 
         // Verify "world" is 200
         let result = engine
-            .call(
-                id,
-                "get_str",
-                vec![Value::Str("world".into())],
-                creator,
-                10,
-            )
+            .call(id, "get_str", vec![Value::Str("world".into())], creator, 10)
             .unwrap();
         assert_eq!(result.return_value, Value::U64(200));
     }

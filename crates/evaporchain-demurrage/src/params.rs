@@ -79,6 +79,9 @@ mod tests {
 
     #[test]
     fn default_matches_default_genesis() {
-        assert_eq!(DemurrageParams::default(), DemurrageParams::default_genesis());
+        assert_eq!(
+            DemurrageParams::default(),
+            DemurrageParams::default_genesis()
+        );
     }
 }

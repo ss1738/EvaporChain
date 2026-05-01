@@ -44,27 +44,51 @@ mod tests {
 
     #[test]
     fn zero_stake_zero_score() {
-        let s = AnnealedScore { stake: 0, activity: 100, uptime_milli: 1_000 };
+        let s = AnnealedScore {
+            stake: 0,
+            activity: 100,
+            uptime_milli: 1_000,
+        };
         assert_eq!(validator_score(&s, 1_000), 0);
     }
 
     #[test]
     fn full_uptime_better_than_half() {
-        let full = AnnealedScore { stake: 1_000, activity: 10, uptime_milli: 1_000 };
-        let half = AnnealedScore { stake: 1_000, activity: 10, uptime_milli: 500 };
+        let full = AnnealedScore {
+            stake: 1_000,
+            activity: 10,
+            uptime_milli: 1_000,
+        };
+        let half = AnnealedScore {
+            stake: 1_000,
+            activity: 10,
+            uptime_milli: 500,
+        };
         assert!(validator_score(&full, 1_000) > validator_score(&half, 1_000));
     }
 
     #[test]
     fn zero_uptime_gives_zero_score() {
-        let s = AnnealedScore { stake: 1_000, activity: 10, uptime_milli: 0 };
+        let s = AnnealedScore {
+            stake: 1_000,
+            activity: 10,
+            uptime_milli: 0,
+        };
         assert_eq!(validator_score(&s, 1_000), 0);
     }
 
     #[test]
     fn higher_stake_higher_score_at_fixed_activity_uptime() {
-        let lo = AnnealedScore { stake: 100, activity: 5, uptime_milli: 800 };
-        let hi = AnnealedScore { stake: 1_000, activity: 5, uptime_milli: 800 };
+        let lo = AnnealedScore {
+            stake: 100,
+            activity: 5,
+            uptime_milli: 800,
+        };
+        let hi = AnnealedScore {
+            stake: 1_000,
+            activity: 5,
+            uptime_milli: 800,
+        };
         assert!(validator_score(&hi, 1_000) > validator_score(&lo, 1_000));
     }
 }

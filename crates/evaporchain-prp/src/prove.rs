@@ -33,7 +33,7 @@ pub fn prove_retention(
     let mut lo: u64 = 0;
     let mut hi: u64 = max_search_epochs;
     while lo < hi {
-        let mid = lo + (hi - lo + 1) / 2;
+        let mid = lo + (hi - lo).div_ceil(2);
         let remaining = energy_at_epoch(committed_energy, half_life, mid);
         if remaining > floor {
             lo = mid;
@@ -43,7 +43,12 @@ pub fn prove_retention(
     }
     let retained_until_epoch = activated_epoch.saturating_add(lo);
 
-    let witness = compute_witness(state_id, activated_epoch, committed_energy, retained_until_epoch);
+    let witness = compute_witness(
+        state_id,
+        activated_epoch,
+        committed_energy,
+        retained_until_epoch,
+    );
 
     RetentionProof {
         state_id,

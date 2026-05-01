@@ -80,6 +80,7 @@ pub async fn get_prompt(ctx: &Context, params: &Value) -> Result<Value, String> 
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
 
@@ -167,14 +168,8 @@ async fn get_explore_chain(ctx: &Context) -> Result<Value, String> {
 }
 
 async fn get_create_and_watch(ctx: &Context, args: &Value) -> Result<Value, String> {
-    let energy = args
-        .get("energy")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(100);
-    let half_life = args
-        .get("half_life")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(5);
+    let energy = args.get("energy").and_then(|v| v.as_u64()).unwrap_or(100);
+    let half_life = args.get("half_life").and_then(|v| v.as_u64()).unwrap_or(5);
 
     let status = ctx.get_json("/api/status").await?;
     let current_epoch = status.get("epoch").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -211,11 +206,26 @@ async fn get_create_and_watch(ctx: &Context, args: &Value) -> Result<Value, Stri
 }
 
 async fn get_viability_audit(ctx: &Context) -> Result<Value, String> {
-    let autopoietic = ctx.get_json("/api/autopoietic/health").await.unwrap_or(json!({"error": "unavailable"}));
-    let consensus_phase = ctx.get_json("/api/consensus/phase").await.unwrap_or(json!({"error": "unavailable"}));
-    let fee_status = ctx.get_json("/api/fee_controller/status").await.unwrap_or(json!({"error": "unavailable"}));
-    let epv_status = ctx.get_json("/api/epv/status").await.unwrap_or(json!({"error": "unavailable"}));
-    let sentinel = ctx.get_json("/api/sentinel/status").await.unwrap_or(json!({"error": "unavailable"}));
+    let autopoietic = ctx
+        .get_json("/api/autopoietic/health")
+        .await
+        .unwrap_or(json!({"error": "unavailable"}));
+    let consensus_phase = ctx
+        .get_json("/api/consensus/phase")
+        .await
+        .unwrap_or(json!({"error": "unavailable"}));
+    let fee_status = ctx
+        .get_json("/api/fee_controller/status")
+        .await
+        .unwrap_or(json!({"error": "unavailable"}));
+    let epv_status = ctx
+        .get_json("/api/epv/status")
+        .await
+        .unwrap_or(json!({"error": "unavailable"}));
+    let sentinel = ctx
+        .get_json("/api/sentinel/status")
+        .await
+        .unwrap_or(json!({"error": "unavailable"}));
 
     let ap_str = serde_json::to_string_pretty(&autopoietic).unwrap_or_default();
     let cp_str = serde_json::to_string_pretty(&consensus_phase).unwrap_or_default();
@@ -260,7 +270,10 @@ async fn get_oracle_data_analysis(ctx: &Context, args: &Value) -> Result<Value, 
         .and_then(|v| v.as_u64())
         .unwrap_or(300);
 
-    let oracle_status = ctx.get_json("/api/oracle/status").await.unwrap_or(json!({"error": "unavailable"}));
+    let oracle_status = ctx
+        .get_json("/api/oracle/status")
+        .await
+        .unwrap_or(json!({"error": "unavailable"}));
     let status = ctx.get_json("/api/status").await.unwrap_or(json!({}));
 
     let oracle_str = serde_json::to_string_pretty(&oracle_status).unwrap_or_default();
@@ -294,9 +307,18 @@ async fn get_oracle_data_analysis(ctx: &Context, args: &Value) -> Result<Value, 
 }
 
 async fn get_consensus_phase_investigation(ctx: &Context) -> Result<Value, String> {
-    let consensus_phase = ctx.get_json("/api/consensus/phase").await.unwrap_or(json!({"error": "unavailable"}));
-    let autopoietic = ctx.get_json("/api/autopoietic/health").await.unwrap_or(json!({"error": "unavailable"}));
-    let validators = ctx.get_json("/api/validators").await.unwrap_or(json!({"error": "unavailable"}));
+    let consensus_phase = ctx
+        .get_json("/api/consensus/phase")
+        .await
+        .unwrap_or(json!({"error": "unavailable"}));
+    let autopoietic = ctx
+        .get_json("/api/autopoietic/health")
+        .await
+        .unwrap_or(json!({"error": "unavailable"}));
+    let validators = ctx
+        .get_json("/api/validators")
+        .await
+        .unwrap_or(json!({"error": "unavailable"}));
     let status = ctx.get_json("/api/status").await.unwrap_or(json!({}));
 
     let cp_str = serde_json::to_string_pretty(&consensus_phase).unwrap_or_default();

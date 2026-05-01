@@ -24,9 +24,7 @@ pub enum BookError {
     Token(#[from] TokenError),
     #[error("holder {0:?} has no entry at this (location, slot)")]
     NoEntry(AccountAddress),
-    #[error(
-        "holder {holder:?} has only {available} mwh; cannot transfer/burn {amount}"
-    )]
+    #[error("holder {holder:?} has only {available} mwh; cannot transfer/burn {amount}")]
     Insufficient {
         holder: AccountAddress,
         available: u64,
@@ -58,9 +56,16 @@ impl HbctBook {
         amount: u64,
     ) -> Result<(), BookError> {
         let from_key = (location.clone(), slot, from);
-        let avail = *self.entries.get(&from_key).ok_or(BookError::NoEntry(from))?;
+        let avail = *self
+            .entries
+            .get(&from_key)
+            .ok_or(BookError::NoEntry(from))?;
         if avail < amount {
-            return Err(BookError::Insufficient { holder: from, available: avail, amount });
+            return Err(BookError::Insufficient {
+                holder: from,
+                available: avail,
+                amount,
+            });
         }
         if avail == amount {
             self.entries.remove(&from_key);
@@ -84,7 +89,11 @@ impl HbctBook {
         let key = (location.clone(), slot, holder);
         let avail = *self.entries.get(&key).ok_or(BookError::NoEntry(holder))?;
         if avail < amount {
-            return Err(BookError::Insufficient { holder, available: avail, amount });
+            return Err(BookError::Insufficient {
+                holder,
+                available: avail,
+                amount,
+            });
         }
         if avail == amount {
             self.entries.remove(&key);
@@ -101,7 +110,10 @@ impl HbctBook {
         slot: HourSlot,
         holder: AccountAddress,
     ) -> u64 {
-        *self.entries.get(&(location.clone(), slot, holder)).unwrap_or(&0)
+        *self
+            .entries
+            .get(&(location.clone(), slot, holder))
+            .unwrap_or(&0)
     }
 
     pub fn len(&self) -> usize {
@@ -136,7 +148,8 @@ mod tests {
     fn transfer_moves_capacity() {
         let mut b = HbctBook::new();
         b.mint(token(1, 100, 50)).unwrap();
-        b.transfer(&b"BMU-1".to_vec(), 100, addr(1), addr(2), 30).unwrap();
+        b.transfer(&b"BMU-1".to_vec(), 100, addr(1), addr(2), 30)
+            .unwrap();
         assert_eq!(b.balance(&b"BMU-1".to_vec(), 100, addr(1)), 20);
         assert_eq!(b.balance(&b"BMU-1".to_vec(), 100, addr(2)), 30);
     }
@@ -145,7 +158,8 @@ mod tests {
     fn full_transfer_removes_entry() {
         let mut b = HbctBook::new();
         b.mint(token(1, 100, 50)).unwrap();
-        b.transfer(&b"BMU-1".to_vec(), 100, addr(1), addr(2), 50).unwrap();
+        b.transfer(&b"BMU-1".to_vec(), 100, addr(1), addr(2), 50)
+            .unwrap();
         assert_eq!(b.balance(&b"BMU-1".to_vec(), 100, addr(1)), 0);
     }
 
@@ -178,9 +192,7 @@ mod tests {
     #[test]
     fn no_entry_rejected() {
         let mut b = HbctBook::new();
-        let err = b
-            .burn(&b"BMU-1".to_vec(), 100, addr(99), 1)
-            .unwrap_err();
+        let err = b.burn(&b"BMU-1".to_vec(), 100, addr(99), 1).unwrap_err();
         assert!(matches!(err, BookError::NoEntry(_)));
     }
 

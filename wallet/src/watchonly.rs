@@ -344,7 +344,10 @@ impl WatchStore {
     }
 
     pub fn alerts_for(&self, address: &str) -> Vec<&Alert> {
-        self.alerts.iter().filter(|a| a.address == address).collect()
+        self.alerts
+            .iter()
+            .filter(|a| a.address == address)
+            .collect()
     }
 
     pub fn mark_all_read(&mut self) {
@@ -397,14 +400,13 @@ impl WatchStore {
     // ── Persistence ──────────────────────────────────────────
 
     pub fn save(&self, path: &Path) -> Result<(), WatchOnlyError> {
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| WatchOnlyError::Parse(e.to_string()))?;
+        let json =
+            serde_json::to_string_pretty(self).map_err(|e| WatchOnlyError::Parse(e.to_string()))?;
         std::fs::write(path, json).map_err(|e| WatchOnlyError::Io(e.to_string()))
     }
 
     pub fn load(path: &Path) -> Result<Self, WatchOnlyError> {
-        let data =
-            std::fs::read_to_string(path).map_err(|e| WatchOnlyError::Io(e.to_string()))?;
+        let data = std::fs::read_to_string(path).map_err(|e| WatchOnlyError::Io(e.to_string()))?;
         serde_json::from_str(&data).map_err(|e| WatchOnlyError::Parse(e.to_string()))
     }
 
@@ -588,9 +590,7 @@ mod tests {
         store
             .watch(make_account("evap1aaa", "Cold Wallet").with_notes("main cold storage"))
             .unwrap();
-        store
-            .watch(make_account("evap1bbb", "Hot Wallet"))
-            .unwrap();
+        store.watch(make_account("evap1bbb", "Hot Wallet")).unwrap();
 
         let results = store.search("cold");
         assert_eq!(results.len(), 1);
@@ -660,7 +660,9 @@ mod tests {
     #[test]
     fn test_stats() {
         let mut store = WatchStore::new();
-        store.watch(make_account("evap1aaa", "A").with_threshold(10)).unwrap();
+        store
+            .watch(make_account("evap1aaa", "A").with_threshold(10))
+            .unwrap();
         store.watch(make_account("evap1bbb", "B")).unwrap();
         store.get_mut("evap1bbb").unwrap().disable();
         store.update_balance("evap1aaa", 500).unwrap();

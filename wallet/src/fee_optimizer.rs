@@ -211,8 +211,7 @@ impl FeeOptimizer {
         let mid = prices.len() / 2;
         let trend = if mid > 0 {
             let first_avg = prices[..mid].iter().sum::<u64>() as f64 / mid as f64;
-            let second_avg = prices[mid..].iter().sum::<u64>() as f64
-                / (prices.len() - mid) as f64;
+            let second_avg = prices[mid..].iter().sum::<u64>() as f64 / (prices.len() - mid) as f64;
             second_avg - first_avg
         } else {
             0.0
@@ -319,7 +318,11 @@ impl FeeOptimizer {
                     count += 1;
                 }
             }
-            let window_avg = if count > 0 { total / count as f64 } else { overall_avg };
+            let window_avg = if count > 0 {
+                total / count as f64
+            } else {
+                overall_avg
+            };
             let savings_pct = if overall_avg > 0.0 {
                 ((overall_avg - window_avg) / overall_avg) * 100.0
             } else {
@@ -407,8 +410,7 @@ impl FeeOptimizer {
         }
         let prices: Vec<f64> = self.history.iter().map(|e| e.gas_price as f64).collect();
         let mean = prices.iter().sum::<f64>() / prices.len() as f64;
-        let variance =
-            prices.iter().map(|p| (p - mean).powi(2)).sum::<f64>() / prices.len() as f64;
+        let variance = prices.iter().map(|p| (p - mean).powi(2)).sum::<f64>() / prices.len() as f64;
         variance.sqrt()
     }
 

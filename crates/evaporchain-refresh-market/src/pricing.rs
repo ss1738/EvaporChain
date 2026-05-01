@@ -45,7 +45,10 @@ mod tests {
 
     #[test]
     fn zero_capacity_rejected() {
-        assert_eq!(rent_rate(0, 0, 1_000).unwrap_err(), PricingError::ZeroCapacity);
+        assert_eq!(
+            rent_rate(0, 0, 1_000).unwrap_err(),
+            PricingError::ZeroCapacity
+        );
     }
 
     #[test]

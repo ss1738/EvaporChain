@@ -38,18 +38,17 @@ pub struct EvaporationEngine {
 
 impl EvaporationEngine {
     pub fn new(grace_period: u64) -> Self {
-        Self { grace_period, max_scan_per_epoch: DEFAULT_MAX_EVAP_SCAN }
+        Self {
+            grace_period,
+            max_scan_per_epoch: DEFAULT_MAX_EVAP_SCAN,
+        }
     }
 
     /// Process all objects for the given epoch (without MMR).
     ///
     /// This is the core state decay function — called once per epoch.
     /// Objects follow the lifecycle: Active → Grace → Ghost
-    pub fn process_epoch(
-        &self,
-        db: &mut dyn StateDB,
-        current_epoch: Epoch,
-    ) -> EvaporationResult {
+    pub fn process_epoch(&self, db: &mut dyn StateDB, current_epoch: Epoch) -> EvaporationResult {
         self.process_epoch_inner(db, current_epoch, None)
     }
 
@@ -256,6 +255,7 @@ mod tests {
             grace_epoch: None,
             data: vec![id_byte, id_byte],
             decay_curve: None,
+            lad_mode: None,
         }
     }
 
@@ -276,11 +276,13 @@ mod tests {
         let r = engine.process_epoch(&mut db, 200);
         assert_eq!(r.entered_grace.len(), 1);
 
-        let obj = db.get_object(&{
-            let mut id = [0u8; 32];
-            id[0] = 1;
-            id
-        }).unwrap();
+        let obj = db
+            .get_object(&{
+                let mut id = [0u8; 32];
+                id[0] = 1;
+                id
+            })
+            .unwrap();
         assert_eq!(obj.state, ObjectState::Grace);
         assert_eq!(obj.grace_epoch, Some(200));
     }
@@ -308,11 +310,13 @@ mod tests {
         assert_eq!(db.ghost_count(), 1);
 
         // Verify ghost record
-        let ghost = db.get_ghost(&{
-            let mut id = [0u8; 32];
-            id[0] = 1;
-            id
-        }).unwrap();
+        let ghost = db
+            .get_ghost(&{
+                let mut id = [0u8; 32];
+                id[0] = 1;
+                id
+            })
+            .unwrap();
         assert_eq!(ghost.evaporated_at, 107);
         assert_eq!(ghost.original_data, Some(vec![1, 1]));
     }
@@ -347,8 +351,8 @@ mod tests {
     #[test]
     fn test_multiple_objects_different_half_lives() {
         let mut db = InMemoryStateDB::new();
-        db.put_object(make_object(1, 100, 5));   // dies fast
-        db.put_object(make_object(2, 100, 50));  // dies slow
+        db.put_object(make_object(1, 100, 5)); // dies fast
+        db.put_object(make_object(2, 100, 50)); // dies slow
         db.put_object(make_object(3, 100, 500)); // practically immortal
 
         let engine = EvaporationEngine::new(7);
@@ -377,7 +381,7 @@ mod tests {
     fn test_epochs_until_zero() {
         // Energy 1000, half_life 10 → log2(1000) ≈ 9 → ~100 epochs
         let n = epochs_until_zero(1000, 10);
-        assert!(n >= 90 && n <= 110, "got {n}");
+        assert!((90..=110).contains(&n), "got {n}");
 
         assert_eq!(epochs_until_zero(0, 10), 0);
         assert_eq!(epochs_until_zero(100, 0), 0);
@@ -424,11 +428,13 @@ mod tests {
         assert_eq!(mmr.size(), 1);
 
         // Ghost record should have MMR position
-        let ghost = db.get_ghost(&{
-            let mut id = [0u8; 32];
-            id[0] = 1;
-            id
-        }).unwrap();
+        let ghost = db
+            .get_ghost(&{
+                let mut id = [0u8; 32];
+                id[0] = 1;
+                id
+            })
+            .unwrap();
         assert_eq!(ghost.mmr_position, Some(0));
 
         // Verify the nullifier proof
@@ -443,7 +449,11 @@ mod tests {
             energy_at_death: 0,
             owner: ghost.owner,
         };
-        assert!(MerkleMountainRange::verify(&proof, &nullifier.to_bytes(), &root));
+        assert!(MerkleMountainRange::verify(
+            &proof,
+            &nullifier.to_bytes(),
+            &root
+        ));
     }
 
     #[test]
@@ -483,11 +493,11 @@ mod tests {
         assert_eq!(sorted.len(), 3);
 
         // All proofs should verify
-        let root = mmr.root();
+        let _root = mmr.root();
         for &pos in &positions {
             let proof = mmr.prove(pos).unwrap();
-            let mut id = [0u8; 32];
-            id[0] = (pos + 1) as u8; // approximate — just verify proof exists
+            let mut _id = [0u8; 32];
+            _id[0] = (pos + 1) as u8; // approximate — just verify proof exists
             assert!(proof.leaf_index == pos);
             // Can't easily reconstruct nullifier without knowing exact order,
             // but proof generation succeeds
@@ -542,11 +552,13 @@ mod tests {
         assert_eq!(r.evaporated.len(), 1);
 
         // Ghost should have mmr_position = None
-        let ghost = db.get_ghost(&{
-            let mut id = [0u8; 32];
-            id[0] = 1;
-            id
-        }).unwrap();
+        let ghost = db
+            .get_ghost(&{
+                let mut id = [0u8; 32];
+                id[0] = 1;
+                id
+            })
+            .unwrap();
         assert_eq!(ghost.mmr_position, None);
     }
 
@@ -564,8 +576,8 @@ mod tests {
         let r = engine.process_epoch(&mut db, 105);
         assert_eq!(r.evaporated.len(), 1);
         // compressed_subtrees is set when evaporation occurs
-        // (value depends on trie topology — just verify it ran)
-        assert!(r.compressed_subtrees >= 0);
+        // (value depends on trie topology — just verify the field is reachable)
+        let _ = r.compressed_subtrees;
     }
 
     #[test]
@@ -582,11 +594,13 @@ mod tests {
 
         // Evaporate one object
         {
-            let obj = db.get_object_mut(&{
-                let mut id = [0u8; 32];
-                id[0] = 3;
-                id
-            }).unwrap();
+            let obj = db
+                .get_object_mut(&{
+                    let mut id = [0u8; 32];
+                    id[0] = 3;
+                    id
+                })
+                .unwrap();
             obj.state = ObjectState::Grace;
             obj.grace_epoch = Some(0);
             obj.energy = 0;
@@ -627,7 +641,11 @@ mod tests {
         assert_eq!(db.ghost_count(), 1);
 
         // Resurrect
-        let id = { let mut id = [0u8; 32]; id[0] = 1; id };
+        let id = {
+            let mut id = [0u8; 32];
+            id[0] = 1;
+            id
+        };
         RefreshEngine::resurrect(&mut db, &id, 2000, 10).unwrap();
         let h = db.trie_health();
         assert_eq!(h.active_leaves, 1);
@@ -665,7 +683,10 @@ mod tests {
 
         let mut db = InMemoryStateDB::new();
         let mut obj = make_object(99, 1000, 999);
-        obj.decay_curve = Some(DecayCurve::Asymptotic { floor: 100, half_life: 5 });
+        obj.decay_curve = Some(DecayCurve::Asymptotic {
+            floor: 100,
+            half_life: 5,
+        });
         db.put_object(obj);
 
         let engine = EvaporationEngine::new(3);
@@ -745,6 +766,9 @@ mod tests {
 
         // Storage_bytes must saturate to 0, not underflow.
         let acct = db.get_account(&owner).unwrap();
-        assert_eq!(acct.storage_bytes, 0, "saturating_sub must prevent underflow");
+        assert_eq!(
+            acct.storage_bytes, 0,
+            "saturating_sub must prevent underflow"
+        );
     }
 }

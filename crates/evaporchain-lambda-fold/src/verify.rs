@@ -19,13 +19,8 @@ use crate::folded::FoldedInstance;
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum VerifyError {
     #[error("acc_hash {got:?} does not match expected {expected:?}")]
-    AccHashMismatch {
-        got: [u8; 32],
-        expected: [u8; 32],
-    },
-    #[error(
-        "total_energy_remaining {got} below the chain-supplied minimum {min}"
-    )]
+    AccHashMismatch { got: [u8; 32], expected: [u8; 32] },
+    #[error("total_energy_remaining {got} below the chain-supplied minimum {min}")]
     EnergyBelowMinimum { got: u128, min: u128 },
 }
 

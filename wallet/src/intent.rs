@@ -378,7 +378,11 @@ impl IntentEngine {
         self.solutions
             .values()
             .filter(|s| s.intent_id == intent_id)
-            .max_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal))
+            .max_by(|a, b| {
+                a.score
+                    .partial_cmp(&b.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
     }
 
     /// Get all solutions for an intent
@@ -392,9 +396,21 @@ impl IntentEngine {
     /// Stats
     pub fn stats(&self) -> IntentStats {
         let total = self.intents.len();
-        let open = self.intents.values().filter(|i| i.status == IntentStatus::Open).count();
-        let completed = self.intents.values().filter(|i| i.status == IntentStatus::Completed).count();
-        let failed = self.intents.values().filter(|i| i.status == IntentStatus::Failed).count();
+        let open = self
+            .intents
+            .values()
+            .filter(|i| i.status == IntentStatus::Open)
+            .count();
+        let completed = self
+            .intents
+            .values()
+            .filter(|i| i.status == IntentStatus::Completed)
+            .count();
+        let failed = self
+            .intents
+            .values()
+            .filter(|i| i.status == IntentStatus::Failed)
+            .count();
         IntentStats {
             total_intents: total,
             open,
@@ -412,8 +428,7 @@ impl IntentEngine {
     }
 
     pub fn load(path: &Path) -> Result<Self, IntentError> {
-        let data =
-            std::fs::read_to_string(path).map_err(|e| IntentError::Io(e.to_string()))?;
+        let data = std::fs::read_to_string(path).map_err(|e| IntentError::Io(e.to_string()))?;
         serde_json::from_str(&data).map_err(|e| IntentError::Json(e.to_string()))
     }
 
@@ -453,8 +468,8 @@ mod tests {
 
     #[test]
     fn test_intent_with_constraint() {
-        let i = make_intent("i1")
-            .with_constraint(Constraint::new("gas", ConstraintOp::Lte, "50000"));
+        let i =
+            make_intent("i1").with_constraint(Constraint::new("gas", ConstraintOp::Lte, "50000"));
         assert_eq!(i.constraints.len(), 1);
     }
 
@@ -548,7 +563,11 @@ mod tests {
 
     #[test]
     fn test_solver_new() {
-        let s = Solver::new("s1", "Fast Solver", vec![IntentType::Transfer, IntentType::Swap]);
+        let s = Solver::new(
+            "s1",
+            "Fast Solver",
+            vec![IntentType::Transfer, IntentType::Swap],
+        );
         assert!(s.supports(&IntentType::Transfer));
         assert!(!s.supports(&IntentType::Bridge));
     }
@@ -632,9 +651,7 @@ mod tests {
 
     #[test]
     fn test_engine_save_load() {
-        let path = std::env::temp_dir().join(format!(
-            "evap_intent_{}.json", std::process::id()
-        ));
+        let path = std::env::temp_dir().join(format!("evap_intent_{}.json", std::process::id()));
         let mut e = IntentEngine::new();
         e.submit_intent(make_intent("i1")).unwrap();
         e.save(&path).unwrap();

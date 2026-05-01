@@ -387,8 +387,11 @@ mod tests {
     use std::path::PathBuf;
 
     fn tmp_path(name: &str) -> PathBuf {
-        std::env::temp_dir()
-            .join(format!("evaporchain_dca_test_{}_{}", std::process::id(), name))
+        std::env::temp_dir().join(format!(
+            "evaporchain_dca_test_{}_{}",
+            std::process::id(),
+            name
+        ))
     }
 
     fn sample_plan(id: &str) -> DcaPlan {
@@ -511,7 +514,9 @@ mod tests {
     fn test_execute_buy() {
         let mut engine = DcaEngine::new();
         engine.create_plan(sample_plan("p1")).unwrap();
-        let exec = engine.execute_buy("p1", 0.5, 200, Some("tx123".to_string())).unwrap();
+        let exec = engine
+            .execute_buy("p1", 0.5, 200, Some("tx123".to_string()))
+            .unwrap();
         assert_eq!(exec.plan_id, "p1");
         assert_eq!(exec.amount_spent, 100);
         assert_eq!(exec.amount_received, 200);
@@ -537,7 +542,9 @@ mod tests {
     #[test]
     fn test_execute_buy_price_below_min() {
         let mut engine = DcaEngine::new();
-        engine.create_plan(sample_plan_with_bounds("p1", 1.0, 10.0)).unwrap();
+        engine
+            .create_plan(sample_plan_with_bounds("p1", 1.0, 10.0))
+            .unwrap();
         let result = engine.execute_buy("p1", 0.5, 200, None);
         assert!(result.is_err());
     }
@@ -545,7 +552,9 @@ mod tests {
     #[test]
     fn test_execute_buy_price_above_max() {
         let mut engine = DcaEngine::new();
-        engine.create_plan(sample_plan_with_bounds("p1", 1.0, 10.0)).unwrap();
+        engine
+            .create_plan(sample_plan_with_bounds("p1", 1.0, 10.0))
+            .unwrap();
         let result = engine.execute_buy("p1", 15.0, 200, None);
         assert!(result.is_err());
     }

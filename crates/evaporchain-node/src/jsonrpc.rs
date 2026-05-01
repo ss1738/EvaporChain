@@ -48,14 +48,23 @@ pub struct JsonRpcError {
 
 impl JsonRpcResponse {
     fn ok(id: Value, result: Value) -> Self {
-        Self { jsonrpc: "2.0", result: Some(result), error: None, id }
+        Self {
+            jsonrpc: "2.0",
+            result: Some(result),
+            error: None,
+            id,
+        }
     }
 
     fn err(id: Value, code: i64, message: impl Into<String>) -> Self {
         Self {
             jsonrpc: "2.0",
             result: None,
-            error: Some(JsonRpcError { code, message: message.into(), data: None }),
+            error: Some(JsonRpcError {
+                code,
+                message: message.into(),
+                data: None,
+            }),
             id,
         }
     }
@@ -81,11 +90,7 @@ pub async fn handle_jsonrpc(
             if let Ok(r) = serde_json::from_value::<JsonRpcRequest>(item.clone()) {
                 results.push(dispatch(&state, r));
             } else {
-                results.push(JsonRpcResponse::err(
-                    Value::Null,
-                    -32600,
-                    "Invalid Request",
-                ));
+                results.push(JsonRpcResponse::err(Value::Null, -32600, "Invalid Request"));
             }
         }
         Json(serde_json::to_value(results).unwrap_or(Value::Null))
@@ -93,11 +98,10 @@ pub async fn handle_jsonrpc(
         let resp = dispatch(&state, r);
         Json(serde_json::to_value(resp).unwrap_or(Value::Null))
     } else {
-        Json(serde_json::to_value(JsonRpcResponse::err(
-            Value::Null,
-            -32700,
-            "Parse error",
-        )).unwrap_or(Value::Null))
+        Json(
+            serde_json::to_value(JsonRpcResponse::err(Value::Null, -32700, "Parse error"))
+                .unwrap_or(Value::Null),
+        )
     }
 }
 
@@ -236,7 +240,11 @@ fn rpc_get_block_by_number(state: &ApiState, params: &Value, id: Value) -> JsonR
 }
 
 fn rpc_get_tx_receipt(state: &ApiState, params: &Value, id: Value) -> JsonRpcResponse {
-    let hash_hex = match params.as_array().and_then(|a| a.first()).and_then(|v| v.as_str()) {
+    let hash_hex = match params
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(|v| v.as_str())
+    {
         Some(h) => h.strip_prefix("0x").unwrap_or(h),
         None => return JsonRpcResponse::invalid_params(id, "missing tx hash"),
     };
@@ -295,7 +303,11 @@ fn rpc_estimate_gas(state: &ApiState, params: &Value, id: Value) -> JsonRpcRespo
 }
 
 fn rpc_get_object(state: &ApiState, params: &Value, id: Value) -> JsonRpcResponse {
-    let obj_hex = match params.as_array().and_then(|a| a.first()).and_then(|v| v.as_str()) {
+    let obj_hex = match params
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(|v| v.as_str())
+    {
         Some(h) => h.strip_prefix("0x").unwrap_or(h),
         None => return JsonRpcResponse::invalid_params(id, "missing object ID"),
     };
@@ -345,7 +357,11 @@ fn rpc_peer_count(state: &ApiState, id: Value) -> JsonRpcResponse {
 }
 
 fn rpc_get_finality_status(state: &ApiState, params: &Value, id: Value) -> JsonRpcResponse {
-    let height = match params.as_array().and_then(|a| a.first()).and_then(parse_hex_u64) {
+    let height = match params
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(parse_hex_u64)
+    {
         Some(h) => h,
         None => return JsonRpcResponse::invalid_params(id, "missing block height"),
     };
@@ -406,11 +422,16 @@ fn rpc_get_logs(state: &ApiState, params: &Value, id: Value) -> JsonRpcResponse 
 }
 
 fn rpc_get_block_logs(state: &ApiState, params: &Value, id: Value) -> JsonRpcResponse {
-    let block_num = match params.as_array().and_then(|a| a.first()).and_then(parse_hex_u64) {
+    let block_num = match params
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(parse_hex_u64)
+    {
         Some(n) => n,
         None => return JsonRpcResponse::invalid_params(id, "missing block number"),
     };
-    let limit = params.as_array()
+    let limit = params
+        .as_array()
         .and_then(|a| a.get(1))
         .and_then(|v| v.as_u64())
         .unwrap_or(500) as usize;
@@ -451,14 +472,18 @@ fn parse_hex_u64(v: &Value) -> Option<u64> {
     u64::from_str_radix(s, 16).ok()
 }
 
-fn parse_address_param(params: &Value, idx: usize) -> Result<[u8; 32], fn(Value) -> JsonRpcResponse> {
+fn parse_address_param(
+    params: &Value,
+    idx: usize,
+) -> Result<[u8; 32], fn(Value) -> JsonRpcResponse> {
     let arr = params.as_array();
     let hex_str = arr
         .and_then(|a| a.get(idx))
         .and_then(|v| v.as_str())
         .ok_or(invalid_params_fn as fn(Value) -> JsonRpcResponse)?;
     let hex_str = hex_str.strip_prefix("0x").unwrap_or(hex_str);
-    let bytes = hex::decode(hex_str).map_err(|_| invalid_params_fn as fn(Value) -> JsonRpcResponse)?;
+    let bytes =
+        hex::decode(hex_str).map_err(|_| invalid_params_fn as fn(Value) -> JsonRpcResponse)?;
     if bytes.len() != 32 {
         return Err(invalid_params_fn);
     }
@@ -480,10 +505,14 @@ fn block_to_json(block: &evaporchain_types::Block, full_txs: bool) -> Value {
     let tx_list = if full_txs {
         serde_json::to_value(&block.transactions).unwrap_or(Value::Array(vec![]))
     } else {
-        let hashes: Vec<String> = block.transactions.iter().map(|tx| {
-            let h = blake3::hash(&serde_json::to_vec(tx).unwrap_or_default());
-            format!("0x{}", hex::encode(h.as_bytes()))
-        }).collect();
+        let hashes: Vec<String> = block
+            .transactions
+            .iter()
+            .map(|tx| {
+                let h = blake3::hash(&serde_json::to_vec(tx).unwrap_or_default());
+                format!("0x{}", hex::encode(h.as_bytes()))
+            })
+            .collect();
         serde_json::to_value(hashes).unwrap_or(Value::Array(vec![]))
     };
     serde_json::json!({

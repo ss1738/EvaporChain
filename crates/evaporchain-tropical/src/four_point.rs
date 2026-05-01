@@ -105,7 +105,14 @@ mod tests {
         // all distinct → four-point condition fails.
         let mut m = TropicalMatrix::new(4);
         // d_01=1, d_02=2, d_03=3, d_12=4, d_13=5, d_23=6
-        let dists = [(0, 1, 1), (0, 2, 2), (0, 3, 3), (1, 2, 4), (1, 3, 5), (2, 3, 6)];
+        let dists = [
+            (0, 1, 1),
+            (0, 2, 2),
+            (0, 3, 3),
+            (1, 2, 4),
+            (1, 3, 5),
+            (2, 3, 6),
+        ];
         for (i, j, v) in dists {
             m.set(i, j, TropicalScalar::finite(v));
             m.set(j, i, TropicalScalar::finite(v));

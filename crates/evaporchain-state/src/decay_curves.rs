@@ -4,8 +4,8 @@
 //! extends the original fixed exponential decay with configurable curves:
 //! linear, stepped, conditional, asymptotic, and custom bytecode.
 
-pub use evaporchain_types::DecayCurve;
 use evaporchain_types::energy_at_epoch;
+pub use evaporchain_types::DecayCurve;
 
 /// Compute the current energy for an object given its decay curve.
 ///
@@ -53,10 +53,7 @@ pub fn compute_energy(
             energy
         }
 
-        DecayCurve::Conditional {
-            base,
-            grace_epochs,
-        } => {
+        DecayCurve::Conditional { base, grace_epochs } => {
             let effective_elapsed = match last_access_epoch {
                 Some(last_access) => {
                     let idle = elapsed_epochs.saturating_sub(last_access);
@@ -115,7 +112,7 @@ const OP_MAX: u8 = 0x0A;
 const MAX_STEPS: usize = 256;
 const MAX_STACK: usize = 32;
 
-#[allow(clippy::manual_checked_ops)]
+#[allow(unknown_lints, clippy::manual_checked_ops)]
 fn evaluate_custom(bytecode: &[u8], initial_energy: u64, elapsed_epochs: u64) -> Option<u64> {
     let mut stack: Vec<u64> = vec![initial_energy, elapsed_epochs];
     let mut pc = 0;
@@ -135,9 +132,7 @@ fn evaluate_custom(bytecode: &[u8], initial_energy: u64, elapsed_epochs: u64) ->
                 if pc + 8 >= bytecode.len() {
                     return None;
                 }
-                let val = u64::from_le_bytes(
-                    bytecode[pc + 1..pc + 9].try_into().ok()?,
-                );
+                let val = u64::from_le_bytes(bytecode[pc + 1..pc + 9].try_into().ok()?);
                 stack.push(val);
                 pc += 9;
             }
@@ -254,7 +249,11 @@ mod tests {
         for elapsed in [0, 1, 50, 99, 100, 200, 500, 6400] {
             let curve_result = compute_energy(&curve, 10000, elapsed, None);
             let legacy_result = energy_at_epoch(10000, 100, elapsed);
-            assert_eq!(curve_result, legacy_result, "mismatch at elapsed={}", elapsed);
+            assert_eq!(
+                curve_result, legacy_result,
+                "mismatch at elapsed={}",
+                elapsed
+            );
         }
     }
 
@@ -291,9 +290,7 @@ mod tests {
 
     #[test]
     fn test_stepped_empty_thresholds() {
-        let curve = DecayCurve::Stepped {
-            thresholds: vec![],
-        };
+        let curve = DecayCurve::Stepped { thresholds: vec![] };
         assert_eq!(compute_energy(&curve, 1000, 100, None), 1000);
     }
 
@@ -308,8 +305,12 @@ mod tests {
         let with_access = compute_energy(&curve, 1000, 100, Some(90));
         // Without access
         let without_access = compute_energy(&curve, 1000, 100, None);
-        assert!(with_access >= without_access,
-            "recent access should slow decay: with={} without={}", with_access, without_access);
+        assert!(
+            with_access >= without_access,
+            "recent access should slow decay: with={} without={}",
+            with_access,
+            without_access
+        );
     }
 
     #[test]
@@ -392,10 +393,7 @@ mod tests {
     #[test]
     fn test_custom_bytecode_max_steps_exceeded() {
         // Create a long bytecode that exceeds MAX_STEPS
-        let mut bytecode = Vec::new();
-        for _ in 0..300 {
-            bytecode.push(OP_DUP);
-        }
+        let bytecode = vec![OP_DUP; 300];
         assert!(validate_custom_bytecode(&bytecode).is_err());
     }
 
@@ -421,7 +419,10 @@ mod tests {
         for curve in [
             DecayCurve::Exponential { half_life: 100 },
             DecayCurve::Linear { rate_per_epoch: 10 },
-            DecayCurve::Asymptotic { floor: 50, half_life: 10 },
+            DecayCurve::Asymptotic {
+                floor: 50,
+                half_life: 10,
+            },
         ] {
             assert_eq!(compute_energy(&curve, 0, 100, None), 0);
         }
@@ -432,7 +433,10 @@ mod tests {
         for curve in [
             DecayCurve::Exponential { half_life: 100 },
             DecayCurve::Linear { rate_per_epoch: 10 },
-            DecayCurve::Asymptotic { floor: 50, half_life: 10 },
+            DecayCurve::Asymptotic {
+                floor: 50,
+                half_life: 10,
+            },
         ] {
             assert_eq!(compute_energy(&curve, 1000, 0, None), 1000);
         }
@@ -473,12 +477,19 @@ mod tests {
 
     #[test]
     fn test_linear_vs_exponential_linear_faster_early() {
-        let linear = DecayCurve::Linear { rate_per_epoch: 100 };
+        let linear = DecayCurve::Linear {
+            rate_per_epoch: 100,
+        };
         let exp = DecayCurve::Exponential { half_life: 10 };
         // At epoch 1, linear drops 100 (900 remaining), exponential drops ~50 (950 remaining)
         let lin_1 = compute_energy(&linear, 1000, 1, None);
         let exp_1 = compute_energy(&exp, 1000, 1, None);
-        assert!(lin_1 < exp_1, "linear should decay faster at epoch 1: lin={} exp={}", lin_1, exp_1);
+        assert!(
+            lin_1 < exp_1,
+            "linear should decay faster at epoch 1: lin={} exp={}",
+            lin_1,
+            exp_1
+        );
     }
 
     #[test]

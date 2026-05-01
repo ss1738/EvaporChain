@@ -213,7 +213,11 @@ impl SocialRecovery {
     }
 
     /// Start a recovery proposal.
-    pub fn propose_recovery(&mut self, proposer: &str, new_address: &str) -> Result<&RecoveryProposal, AbstractionError> {
+    pub fn propose_recovery(
+        &mut self,
+        proposer: &str,
+        new_address: &str,
+    ) -> Result<&RecoveryProposal, AbstractionError> {
         if !self.guardians.iter().any(|g| g.address == proposer) {
             return Err(AbstractionError::GuardianNotFound(proposer.to_string()));
         }
@@ -240,12 +244,18 @@ impl SocialRecovery {
     }
 
     /// Approve a recovery proposal.
-    pub fn approve_recovery(&mut self, proposal_id: &str, guardian: &str) -> Result<&RecoveryProposal, AbstractionError> {
+    pub fn approve_recovery(
+        &mut self,
+        proposal_id: &str,
+        guardian: &str,
+    ) -> Result<&RecoveryProposal, AbstractionError> {
         if !self.guardians.iter().any(|g| g.address == guardian) {
             return Err(AbstractionError::GuardianNotFound(guardian.to_string()));
         }
 
-        let proposal = self.proposals.iter_mut()
+        let proposal = self
+            .proposals
+            .iter_mut()
             .find(|p| p.id == proposal_id)
             .ok_or_else(|| AbstractionError::RecoveryNotFound(proposal_id.to_string()))?;
 
@@ -263,7 +273,8 @@ impl SocialRecovery {
 
     /// Check if recovery is ready to execute.
     pub fn is_recovery_ready(&self, proposal_id: &str) -> bool {
-        self.proposals.iter()
+        self.proposals
+            .iter()
             .find(|p| p.id == proposal_id)
             .map(|p| p.status == RecoveryStatus::Approved)
             .unwrap_or(false)
@@ -427,7 +438,9 @@ impl AbstractionStore {
 
     /// Revoke a session key.
     pub fn revoke_session_key(&mut self, id: &str) -> Result<(), AbstractionError> {
-        let key = self.session_keys.iter_mut()
+        let key = self
+            .session_keys
+            .iter_mut()
             .find(|k| k.id == id)
             .ok_or_else(|| AbstractionError::SessionKeyNotFound(id.to_string()))?;
         key.active = false;
@@ -440,9 +453,16 @@ impl AbstractionStore {
     }
 
     /// Setup social recovery.
-    pub fn setup_recovery(&mut self, account: &str, threshold: usize, delay_hours: u64) -> Result<(), AbstractionError> {
+    pub fn setup_recovery(
+        &mut self,
+        account: &str,
+        threshold: usize,
+        delay_hours: u64,
+    ) -> Result<(), AbstractionError> {
         if threshold == 0 {
-            return Err(AbstractionError::InvalidThreshold("threshold must be > 0".into()));
+            return Err(AbstractionError::InvalidThreshold(
+                "threshold must be > 0".into(),
+            ));
         }
         self.recovery = Some(SocialRecovery::new(account, threshold, delay_hours));
         Ok(())
@@ -450,7 +470,11 @@ impl AbstractionStore {
 
     /// Setup gas sponsorship.
     pub fn setup_sponsor(&mut self, sponsor_address: &str, max_gas_per_tx: u64, daily_budget: u64) {
-        self.gas_sponsor = Some(GasSponsor::new(sponsor_address, max_gas_per_tx, daily_budget));
+        self.gas_sponsor = Some(GasSponsor::new(
+            sponsor_address,
+            max_gas_per_tx,
+            daily_budget,
+        ));
     }
 }
 
@@ -473,7 +497,14 @@ mod tests {
 
     fn make_store() -> AbstractionStore {
         let mut store = AbstractionStore::new();
-        store.create_session_key("dapp-key", "0xmyaccount", 1000, 10000, vec!["transfer".into()], 24);
+        store.create_session_key(
+            "dapp-key",
+            "0xmyaccount",
+            1000,
+            10000,
+            vec!["transfer".into()],
+            24,
+        );
         store
     }
 
@@ -506,7 +537,9 @@ mod tests {
     fn test_session_key_total_limit() {
         let mut store = make_store();
         store.session_keys[0].total_spent = 9500;
-        let err = store.session_keys[0].can_execute("transfer", 600).unwrap_err();
+        let err = store.session_keys[0]
+            .can_execute("transfer", 600)
+            .unwrap_err();
         assert!(matches!(err, AbstractionError::SpendingLimitExceeded));
     }
 
@@ -608,7 +641,9 @@ mod tests {
         recovery.add_guardian("0xalice", "Alice").unwrap();
         recovery.add_guardian("0xbob", "Bob").unwrap();
 
-        let proposal = recovery.propose_recovery("0xalice", "0xnew_address").unwrap();
+        let proposal = recovery
+            .propose_recovery("0xalice", "0xnew_address")
+            .unwrap();
         assert_eq!(proposal.status, RecoveryStatus::Pending);
         assert_eq!(proposal.approvals.len(), 1);
     }

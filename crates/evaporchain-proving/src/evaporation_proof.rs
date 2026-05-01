@@ -453,14 +453,16 @@ mod tests {
     fn test_proof_deterministic() {
         let make = || {
             let mut prover = EvaporationProver::new(42);
-            prover.add_decay(EnergyDecayStatement {
-                object_id: make_object_id(1),
-                initial_energy: 5000,
-                half_life: 25,
-                creation_epoch: 10,
-                current_epoch: 35,
-                claimed_energy: energy_at_epoch(5000, 25, 25),
-            }).unwrap();
+            prover
+                .add_decay(EnergyDecayStatement {
+                    object_id: make_object_id(1),
+                    initial_energy: 5000,
+                    half_life: 25,
+                    creation_epoch: 10,
+                    current_epoch: 35,
+                    claimed_energy: energy_at_epoch(5000, 25, 25),
+                })
+                .unwrap();
             prover.prove()
         };
         let p1 = make();
@@ -511,14 +513,16 @@ mod tests {
     #[test]
     fn test_serialization_roundtrip() {
         let mut prover = EvaporationProver::new(99);
-        prover.add_decay(EnergyDecayStatement {
-            object_id: make_object_id(5),
-            initial_energy: 8000,
-            half_life: 40,
-            creation_epoch: 10,
-            current_epoch: 50,
-            claimed_energy: energy_at_epoch(8000, 40, 40),
-        }).unwrap();
+        prover
+            .add_decay(EnergyDecayStatement {
+                object_id: make_object_id(5),
+                initial_energy: 8000,
+                half_life: 40,
+                creation_epoch: 10,
+                current_epoch: 50,
+                claimed_energy: energy_at_epoch(8000, 40, 40),
+            })
+            .unwrap();
         let proof = prover.prove();
         let json = serde_json::to_string(&proof).unwrap();
         let decoded: EvaporationProof = serde_json::from_str(&json).unwrap();
@@ -530,24 +534,28 @@ mod tests {
     fn test_large_batch() {
         let mut prover = EvaporationProver::new(500);
         for i in 0..50u8 {
-            prover.add_decay(EnergyDecayStatement {
-                object_id: make_object_id(i),
-                initial_energy: 10000,
-                half_life: 100,
-                creation_epoch: 0,
-                current_epoch: 200,
-                claimed_energy: energy_at_epoch(10000, 100, 200),
-            }).unwrap();
+            prover
+                .add_decay(EnergyDecayStatement {
+                    object_id: make_object_id(i),
+                    initial_energy: 10000,
+                    half_life: 100,
+                    creation_epoch: 0,
+                    current_epoch: 200,
+                    claimed_energy: energy_at_epoch(10000, 100, 200),
+                })
+                .unwrap();
         }
         for i in 100..120u8 {
-            prover.add_evaporation(EvaporationClaim {
-                object_id: make_object_id(i),
-                initial_energy: 50,
-                half_life: 10,
-                creation_epoch: 0,
-                evaporation_epoch: 640,
-                nullifier: make_nullifier(i),
-            }).unwrap();
+            prover
+                .add_evaporation(EvaporationClaim {
+                    object_id: make_object_id(i),
+                    initial_energy: 50,
+                    half_life: 10,
+                    creation_epoch: 0,
+                    evaporation_epoch: 640,
+                    nullifier: make_nullifier(i),
+                })
+                .unwrap();
         }
         let proof = prover.prove();
         assert_eq!(proof.size(), 70);

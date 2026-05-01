@@ -112,8 +112,9 @@ impl PendingTx {
 
     /// Seconds since this transaction was first seen.
     pub fn age_secs(&self) -> u64 {
-        let seen = chrono::DateTime::parse_from_rfc3339(&self.first_seen)
-            .unwrap_or_else(|_| chrono::DateTime::parse_from_rfc3339("1970-01-01T00:00:00+00:00").unwrap());
+        let seen = chrono::DateTime::parse_from_rfc3339(&self.first_seen).unwrap_or_else(|_| {
+            chrono::DateTime::parse_from_rfc3339("1970-01-01T00:00:00+00:00").unwrap()
+        });
         let now = chrono::Utc::now();
         let diff = now.signed_duration_since(seen);
         diff.num_seconds().max(0) as u64
@@ -433,7 +434,11 @@ impl MempoolMonitor {
         buckets
             .iter()
             .map(|&threshold| {
-                let count = self.pending.values().filter(|tx| tx.fee <= threshold).count();
+                let count = self
+                    .pending
+                    .values()
+                    .filter(|tx| tx.fee <= threshold)
+                    .count();
                 (threshold, count)
             })
             .collect()
@@ -536,9 +541,15 @@ mod tests {
     #[test]
     fn test_pending_by_sender() {
         let mut monitor = MempoolMonitor::new();
-        monitor.add_tx(make_tx("h1", "alice", "bob", 500, "transfer")).unwrap();
-        monitor.add_tx(make_tx("h2", "alice", "carol", 600, "transfer")).unwrap();
-        monitor.add_tx(make_tx("h3", "bob", "carol", 700, "transfer")).unwrap();
+        monitor
+            .add_tx(make_tx("h1", "alice", "bob", 500, "transfer"))
+            .unwrap();
+        monitor
+            .add_tx(make_tx("h2", "alice", "carol", 600, "transfer"))
+            .unwrap();
+        monitor
+            .add_tx(make_tx("h3", "bob", "carol", 700, "transfer"))
+            .unwrap();
 
         let alice_txs = monitor.pending_by_sender("alice");
         assert_eq!(alice_txs.len(), 2);
@@ -548,9 +559,9 @@ mod tests {
     #[test]
     fn test_pending_by_priority() {
         let mut monitor = MempoolMonitor::new();
-        monitor.add_tx(make_tx("h1", "a", "b", 500, "t")).unwrap();   // Low
-        monitor.add_tx(make_tx("h2", "a", "b", 1000, "t")).unwrap();  // Medium
-        monitor.add_tx(make_tx("h3", "a", "b", 5000, "t")).unwrap();  // High
+        monitor.add_tx(make_tx("h1", "a", "b", 500, "t")).unwrap(); // Low
+        monitor.add_tx(make_tx("h2", "a", "b", 1000, "t")).unwrap(); // Medium
+        monitor.add_tx(make_tx("h3", "a", "b", 5000, "t")).unwrap(); // High
         monitor.add_tx(make_tx("h4", "a", "b", 10000, "t")).unwrap(); // Urgent
 
         let low = monitor.pending_by_priority(&TxPriority::Low);
@@ -580,25 +591,33 @@ mod tests {
 
         // Add 5 => Low
         for i in 0..5 {
-            monitor.add_tx(make_tx(&format!("h{}", i), "a", "b", 100, "t")).unwrap();
+            monitor
+                .add_tx(make_tx(&format!("h{}", i), "a", "b", 100, "t"))
+                .unwrap();
         }
         assert_eq!(monitor.congestion(), CongestionLevel::Low);
 
         // Add to 15 => Normal
         for i in 5..15 {
-            monitor.add_tx(make_tx(&format!("h{}", i), "a", "b", 100, "t")).unwrap();
+            monitor
+                .add_tx(make_tx(&format!("h{}", i), "a", "b", 100, "t"))
+                .unwrap();
         }
         assert_eq!(monitor.congestion(), CongestionLevel::Normal);
 
         // Add to 100 => High
         for i in 15..100 {
-            monitor.add_tx(make_tx(&format!("h{}", i), "a", "b", 100, "t")).unwrap();
+            monitor
+                .add_tx(make_tx(&format!("h{}", i), "a", "b", 100, "t"))
+                .unwrap();
         }
         assert_eq!(monitor.congestion(), CongestionLevel::High);
 
         // Add to 200 => Critical
         for i in 100..200 {
-            monitor.add_tx(make_tx(&format!("h{}", i), "a", "b", 100, "t")).unwrap();
+            monitor
+                .add_tx(make_tx(&format!("h{}", i), "a", "b", 100, "t"))
+                .unwrap();
         }
         assert_eq!(monitor.congestion(), CongestionLevel::Critical);
     }
@@ -606,8 +625,12 @@ mod tests {
     #[test]
     fn test_detect_front_run_high() {
         let mut monitor = MempoolMonitor::new();
-        monitor.add_tx(make_tx("victim", "alice", "contract1", 1000, "swap")).unwrap();
-        monitor.add_tx(make_tx("attacker", "eve", "contract1", 5000, "swap")).unwrap();
+        monitor
+            .add_tx(make_tx("victim", "alice", "contract1", 1000, "swap"))
+            .unwrap();
+        monitor
+            .add_tx(make_tx("attacker", "eve", "contract1", 5000, "swap"))
+            .unwrap();
 
         let risk = monitor.detect_front_run("victim", "attacker").unwrap();
         assert_eq!(risk, FrontRunRisk::High);
@@ -618,8 +641,12 @@ mod tests {
     #[test]
     fn test_detect_front_run_medium() {
         let mut monitor = MempoolMonitor::new();
-        monitor.add_tx(make_tx("victim", "alice", "contract1", 1000, "swap")).unwrap();
-        monitor.add_tx(make_tx("attacker", "eve", "contract2", 5000, "swap")).unwrap();
+        monitor
+            .add_tx(make_tx("victim", "alice", "contract1", 1000, "swap"))
+            .unwrap();
+        monitor
+            .add_tx(make_tx("attacker", "eve", "contract2", 5000, "swap"))
+            .unwrap();
 
         let risk = monitor.detect_front_run("victim", "attacker").unwrap();
         assert_eq!(risk, FrontRunRisk::Medium);
@@ -628,8 +655,12 @@ mod tests {
     #[test]
     fn test_detect_front_run_low() {
         let mut monitor = MempoolMonitor::new();
-        monitor.add_tx(make_tx("victim", "alice", "contract1", 1000, "swap")).unwrap();
-        monitor.add_tx(make_tx("attacker", "eve", "contract2", 5000, "transfer")).unwrap();
+        monitor
+            .add_tx(make_tx("victim", "alice", "contract1", 1000, "swap"))
+            .unwrap();
+        monitor
+            .add_tx(make_tx("attacker", "eve", "contract2", 5000, "transfer"))
+            .unwrap();
 
         let risk = monitor.detect_front_run("victim", "attacker").unwrap();
         assert_eq!(risk, FrontRunRisk::Low);
@@ -638,7 +669,9 @@ mod tests {
     #[test]
     fn test_detect_front_run_not_found() {
         let mut monitor = MempoolMonitor::new();
-        monitor.add_tx(make_tx("victim", "alice", "bob", 1000, "t")).unwrap();
+        monitor
+            .add_tx(make_tx("victim", "alice", "bob", 1000, "t"))
+            .unwrap();
 
         let result = monitor.detect_front_run("victim", "nonexistent");
         assert!(result.is_err());
@@ -672,7 +705,7 @@ mod tests {
         }
 
         let p50 = oracle.percentile(50.0);
-        assert!(p50 >= 49 && p50 <= 51);
+        assert!((49..=51).contains(&p50));
 
         let p0 = oracle.percentile(0.0);
         assert_eq!(p0, 1);
@@ -760,8 +793,12 @@ mod tests {
         let path = test_path("roundtrip");
 
         let mut monitor = MempoolMonitor::new();
-        monitor.add_tx(make_tx("h1", "alice", "bob", 5000, "transfer")).unwrap();
-        monitor.add_tx(make_tx("h2", "carol", "dave", 1000, "swap")).unwrap();
+        monitor
+            .add_tx(make_tx("h1", "alice", "bob", 5000, "transfer"))
+            .unwrap();
+        monitor
+            .add_tx(make_tx("h2", "carol", "dave", 1000, "swap"))
+            .unwrap();
         monitor.record_inclusion(800);
         monitor.remove_tx("h1").unwrap();
 

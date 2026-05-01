@@ -44,8 +44,7 @@ pub fn demurrage_owed(
     let scaled = (balance as u128)
         .saturating_mul(rate as u128)
         .saturating_mul(elapsed as u128);
-    let owed = (scaled / 1_000_000u128).min(balance as u128) as u64;
-    owed
+    (scaled / 1_000_000u128).min(balance as u128) as u64
 }
 
 #[cfg(test)]

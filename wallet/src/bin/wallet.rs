@@ -1,7 +1,7 @@
 //! EvaporChain Wallet CLI binary entry point.
 
 use clap::Parser;
-use evaporchain_wallet::cli::{Cli, run};
+use evaporchain_wallet::cli::{run, Cli};
 use evaporchain_wallet::hints::format_error_with_hint;
 
 #[tokio::main]

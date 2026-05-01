@@ -217,7 +217,10 @@ impl LimitOrderManager {
         let now = chrono::Utc::now().to_rfc3339();
         let mut expired = Vec::new();
         for order in self.orders.values_mut() {
-            if matches!(order.status, OrderStatus::Open | OrderStatus::PartiallyFilled) {
+            if matches!(
+                order.status,
+                OrderStatus::Open | OrderStatus::PartiallyFilled
+            ) {
                 if let Some(ref expires_at) = order.expires_at {
                     if *expires_at <= now {
                         order.status = OrderStatus::Expired;
@@ -374,8 +377,7 @@ impl LimitOrderManager {
     }
 
     pub fn load(path: &Path) -> Result<Self, LimitOrderError> {
-        let data =
-            std::fs::read_to_string(path).map_err(|e| LimitOrderError::Io(e.to_string()))?;
+        let data = std::fs::read_to_string(path).map_err(|e| LimitOrderError::Io(e.to_string()))?;
         serde_json::from_str(&data).map_err(|e| LimitOrderError::Json(e.to_string()))
     }
 

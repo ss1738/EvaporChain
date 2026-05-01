@@ -55,7 +55,10 @@ impl HbctToken {
             return Err(TokenError::ZeroMwh);
         }
         if hour_slot <= issued_at_epoch {
-            return Err(TokenError::SlotInPast { hour_slot, issued_at_epoch });
+            return Err(TokenError::SlotInPast {
+                hour_slot,
+                issued_at_epoch,
+            });
         }
         Ok(Self {
             delivery_location,

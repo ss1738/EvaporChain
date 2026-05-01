@@ -131,10 +131,7 @@ impl StateSyncManager {
 
     /// Validate and apply a batch of blocks received from a peer.
     /// Returns the blocks that passed validation (in order), or an error.
-    pub fn on_block_response(
-        &mut self,
-        response: BlockResponse,
-    ) -> Result<Vec<Block>, SyncError> {
+    pub fn on_block_response(&mut self, response: BlockResponse) -> Result<Vec<Block>, SyncError> {
         self.pending_request = None;
 
         if response.blocks.is_empty() {
@@ -198,11 +195,7 @@ impl StateSyncManager {
 
     /// Handle a block request from another node.
     /// The caller provides a closure to fetch blocks from local storage.
-    pub fn handle_request<F>(
-        &self,
-        request: &BlockRequest,
-        get_block: F,
-    ) -> BlockResponse
+    pub fn handle_request<F>(&self, request: &BlockRequest, get_block: F) -> BlockResponse
     where
         F: Fn(u64) -> Option<Block>,
     {

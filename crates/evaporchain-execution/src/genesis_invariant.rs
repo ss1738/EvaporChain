@@ -49,9 +49,7 @@ fn genesis_amendment_hash(genesis_version_id: u32, genesis_descriptor: &[u8]) ->
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum GenesisError {
-    #[error(
-        "constitution proof rejected: {0}"
-    )]
+    #[error("constitution proof rejected: {0}")]
     ProofRejected(String),
     #[error("genesis registry already contains protocol version {0}")]
     AlreadyRegistered(u32),

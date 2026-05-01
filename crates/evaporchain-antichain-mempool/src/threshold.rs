@@ -70,8 +70,7 @@ mod tests {
     fn pair_clears_threshold_at_t_zero() {
         let lc = lc_with_two_blocks();
         let cl = ChainLambda::new(Lambda::from_epochs(100));
-        let a =
-            Antichain::from_set([id(0), id(1)].into_iter().collect(), &lc).unwrap();
+        let a = Antichain::from_set([id(0), id(1)].into_iter().collect(), &lc).unwrap();
         // Total at t=0: 1000 + 800 = 1800.
         assert!(total_energy_meets_threshold(&a, &lc, cl, 0, 1800));
         assert!(!total_energy_meets_threshold(&a, &lc, cl, 0, 1801));
@@ -81,8 +80,7 @@ mod tests {
     fn decay_lowers_total_over_time() {
         let lc = lc_with_two_blocks();
         let cl = ChainLambda::new(Lambda::from_epochs(100));
-        let a =
-            Antichain::from_set([id(0), id(1)].into_iter().collect(), &lc).unwrap();
+        let a = Antichain::from_set([id(0), id(1)].into_iter().collect(), &lc).unwrap();
         // After one half-life the pair is ~half its seed total ≈ 900.
         assert!(!total_energy_meets_threshold(&a, &lc, cl, 100, 1500));
         assert!(total_energy_meets_threshold(&a, &lc, cl, 100, 800));

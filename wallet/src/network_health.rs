@@ -293,9 +293,10 @@ impl NetworkHealthMonitor {
         };
 
         // Degrade if reorgs occurred in last 10 blocks
-        let recent_reorg = self.reorgs.iter().any(|r| {
-            r.from_height + 10 >= self.current_height
-        });
+        let recent_reorg = self
+            .reorgs
+            .iter()
+            .any(|r| r.from_height + 10 >= self.current_height);
         if recent_reorg {
             grade = Self::degrade(grade);
         }
@@ -406,7 +407,8 @@ mod tests {
     use super::*;
 
     fn test_path(name: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("net_health_test_{}", std::process::id()))
+        std::env::temp_dir()
+            .join(format!("net_health_test_{}", std::process::id()))
             .join(format!("{}.json", name))
     }
 

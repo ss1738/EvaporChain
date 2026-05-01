@@ -193,7 +193,10 @@ impl TxPreview {
 
     /// Filter state changes to only balance changes.
     pub fn balance_changes(&self) -> Vec<&StateChange> {
-        self.state_changes.iter().filter(|c| c.is_balance_change()).collect()
+        self.state_changes
+            .iter()
+            .filter(|c| c.is_balance_change())
+            .collect()
     }
 
     /// Total cost including value and gas.
@@ -233,9 +236,10 @@ impl TxPreview {
 
     fn recalculate_status(&mut self) {
         let count = self.warnings.len();
-        let has_severe = self.warnings.iter().any(|w| {
-            matches!(w, RiskWarning::HighValue | RiskWarning::SuspiciousPattern)
-        });
+        let has_severe = self
+            .warnings
+            .iter()
+            .any(|w| matches!(w, RiskWarning::HighValue | RiskWarning::SuspiciousPattern));
 
         self.status = match count {
             0 => PreviewStatus::Safe,
@@ -324,7 +328,8 @@ impl TxPreviewer {
 
     /// Register a known address with a label.
     pub fn add_known_address(&mut self, address: &str, label: &str) {
-        self.known_addresses.insert(address.to_string(), label.to_string());
+        self.known_addresses
+            .insert(address.to_string(), label.to_string());
     }
 
     /// Check whether an address is registered.
@@ -408,7 +413,10 @@ impl TxPreviewer {
 
     /// Return only previews that have warnings.
     pub fn previews_with_warnings(&self) -> Vec<&TxPreview> {
-        self.history.iter().filter(|p| !p.warnings.is_empty()).collect()
+        self.history
+            .iter()
+            .filter(|p| !p.warnings.is_empty())
+            .collect()
     }
 
     /// Compute summary statistics.
@@ -513,7 +521,14 @@ mod tests {
     #[test]
     fn test_preview_high_value_warning() {
         let mut previewer = TxPreviewer::new();
-        let preview = previewer.preview("alice", Some("bob"), 200_000, "transfer", default_gas(), 500_000);
+        let preview = previewer.preview(
+            "alice",
+            Some("bob"),
+            200_000,
+            "transfer",
+            default_gas(),
+            500_000,
+        );
         assert!(preview.warnings.contains(&RiskWarning::HighValue));
         assert!(preview.status >= PreviewStatus::Warning);
     }
@@ -521,7 +536,14 @@ mod tests {
     #[test]
     fn test_preview_unknown_recipient() {
         let mut previewer = TxPreviewer::new();
-        let preview = previewer.preview("alice", Some("stranger"), 100, "transfer", default_gas(), 500_000);
+        let preview = previewer.preview(
+            "alice",
+            Some("stranger"),
+            100,
+            "transfer",
+            default_gas(),
+            500_000,
+        );
         assert!(preview.warnings.contains(&RiskWarning::UnknownRecipient));
     }
 
@@ -543,7 +565,14 @@ mod tests {
     #[test]
     fn test_preview_contract_interaction() {
         let mut previewer = TxPreviewer::new();
-        let preview = previewer.preview("alice", Some("0xcontract"), 100, "contract_call", default_gas(), 500_000);
+        let preview = previewer.preview(
+            "alice",
+            Some("0xcontract"),
+            100,
+            "contract_call",
+            default_gas(),
+            500_000,
+        );
         assert!(preview.warnings.contains(&RiskWarning::ContractInteraction));
     }
 
@@ -552,7 +581,14 @@ mod tests {
         let mut previewer = TxPreviewer::new();
         // high value + unknown + contract + large gas + low balance = 5 warnings → Danger
         let gas = GasEstimate::new(40_000, 20_000, 80_000);
-        let preview = previewer.preview("alice", Some("stranger"), 200_000, "contract_call", gas, 100);
+        let preview = previewer.preview(
+            "alice",
+            Some("stranger"),
+            200_000,
+            "contract_call",
+            gas,
+            100,
+        );
         assert!(preview.warnings.len() >= 5);
         assert_eq!(preview.status, PreviewStatus::Danger);
     }
@@ -576,7 +612,14 @@ mod tests {
     fn test_preview_known_recipient_no_warning() {
         let mut previewer = TxPreviewer::new();
         previewer.add_known_address("bob", "Bob's Wallet");
-        let preview = previewer.preview("alice", Some("bob"), 100, "transfer", default_gas(), 500_000);
+        let preview = previewer.preview(
+            "alice",
+            Some("bob"),
+            100,
+            "transfer",
+            default_gas(),
+            500_000,
+        );
         assert!(!preview.warnings.contains(&RiskWarning::UnknownRecipient));
     }
 

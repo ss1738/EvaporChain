@@ -108,35 +108,19 @@ pub enum SyncMessage {
     /// Request: "What's your latest committed height?"
     TipRequest,
     /// Response: peer's chain tip.
-    TipResponse {
-        height: u64,
-        block_hash: [u8; 32],
-    },
+    TipResponse { height: u64, block_hash: [u8; 32] },
     /// Request: "Send me the light block header at height H."
-    HeaderRequest {
-        height: u64,
-    },
+    HeaderRequest { height: u64 },
     /// Response: light block header with commit certificate.
-    HeaderResponse {
-        header: LightBlockHeader,
-    },
+    HeaderResponse { header: LightBlockHeader },
     /// Request: "Send me snapshot metadata for height H."
-    SnapshotMetadataRequest {
-        height: u64,
-    },
+    SnapshotMetadataRequest { height: u64 },
     /// Response: snapshot metadata.
-    SnapshotMetadataResponse {
-        metadata: SnapshotMetadata,
-    },
+    SnapshotMetadataResponse { metadata: SnapshotMetadata },
     /// Request: "Send me chunk N of the snapshot at height H."
-    ChunkRequest {
-        height: u64,
-        chunk_index: usize,
-    },
+    ChunkRequest { height: u64, chunk_index: usize },
     /// Response: a snapshot chunk.
-    ChunkResponse {
-        chunk: SnapshotChunk,
-    },
+    ChunkResponse { chunk: SnapshotChunk },
 }
 
 /// Actions the sync manager wants the node to perform.
@@ -290,16 +274,11 @@ impl StateSyncManager {
                     .map(|(pid, _)| pid)
                     .unwrap();
 
-                debug!(
-                    tip_height,
-                    agreement, "Tip discovered, requesting header"
-                );
+                debug!(tip_height, agreement, "Tip discovered, requesting header");
 
                 return vec![SyncAction::SendToPeer {
                     peer_id: peer,
-                    message: SyncMessage::HeaderRequest {
-                        height: tip_height,
-                    },
+                    message: SyncMessage::HeaderRequest { height: tip_height },
                 }];
             }
         }
@@ -368,18 +347,19 @@ impl StateSyncManager {
                     self.phase = SyncPhase::Failed("Header below genesis checkpoint".into());
                     return vec![];
                 }
-                if header.height == checkpoint.height
-                    && header.state_root != checkpoint.state_root
+                if header.height == checkpoint.height && header.state_root != checkpoint.state_root
                 {
                     warn!(
                         "Bootstrap header state root does not match genesis checkpoint — rejecting"
                     );
-                    self.phase = SyncPhase::Failed("State root mismatch with genesis checkpoint".into());
+                    self.phase =
+                        SyncPhase::Failed("State root mismatch with genesis checkpoint".into());
                     return vec![];
                 }
                 if header.commit_certificate.signer_ids.is_empty() {
                     warn!("Bootstrap header has empty commit certificate — rejecting");
-                    self.phase = SyncPhase::Failed("Empty commit certificate on bootstrap header".into());
+                    self.phase =
+                        SyncPhase::Failed("Empty commit certificate on bootstrap header".into());
                     return vec![];
                 }
                 let n = header.validator_set.active_count();
@@ -392,13 +372,13 @@ impl StateSyncManager {
                     );
                     self.phase = SyncPhase::Failed(format!(
                         "Commit certificate has {} signers, need {} for quorum",
-                        header.commit_certificate.signer_ids.len(), quorum
+                        header.commit_certificate.signer_ids.len(),
+                        quorum
                     ));
                     return vec![];
                 }
             }
-            self.light_client =
-                Some(LightClientVerifier::new(header.clone(), current_time));
+            self.light_client = Some(LightClientVerifier::new(header.clone(), current_time));
             info!(
                 height = target,
                 has_checkpoint = self.genesis_checkpoint.is_some(),
@@ -488,7 +468,11 @@ impl StateSyncManager {
 
         // Verify chunk index is valid
         if chunk.index >= meta.total_chunks {
-            warn!(index = chunk.index, total = meta.total_chunks, "Invalid chunk index");
+            warn!(
+                index = chunk.index,
+                total = meta.total_chunks,
+                "Invalid chunk index"
+            );
             return vec![];
         }
 
@@ -695,12 +679,13 @@ impl SnapshotProvider {
                 height: local_height,
                 block_hash: [0u8; 32], // Simplified; real impl uses actual hash
             }),
-            SyncMessage::SnapshotMetadataRequest { height } => self
-                .snapshots
-                .get(height)
-                .map(|meta| SyncMessage::SnapshotMetadataResponse {
-                    metadata: meta.clone(),
-                }),
+            SyncMessage::SnapshotMetadataRequest { height } => {
+                self.snapshots
+                    .get(height)
+                    .map(|meta| SyncMessage::SnapshotMetadataResponse {
+                        metadata: meta.clone(),
+                    })
+            }
             SyncMessage::ChunkRequest {
                 height,
                 chunk_index,
@@ -803,9 +788,19 @@ mod tests {
         make_header_with_state_root(height, vs, kps, blake3_hash(&vec![height as u8; 64]))
     }
 
-    fn make_header_with_state_root(height: u64, vs: &ValidatorSet, kps: &[BlsKeypair], state_root: [u8; 32]) -> LightBlockHeader {
+    fn make_header_with_state_root(
+        height: u64,
+        vs: &ValidatorSet,
+        kps: &[BlsKeypair],
+        state_root: [u8; 32],
+    ) -> LightBlockHeader {
         let hash = [height as u8; 32];
-        let cert = make_cert(height, hash, kps, &(0..vs.active_count() as u64).collect::<Vec<_>>());
+        let cert = make_cert(
+            height,
+            hash,
+            kps,
+            &(0..vs.active_count() as u64).collect::<Vec<_>>(),
+        );
         LightBlockHeader {
             height,
             epoch: height / 100,
@@ -833,13 +828,23 @@ mod tests {
         assert_eq!(actions.len(), 1); // Broadcast TipRequest
 
         // One peer responds — not enough agreement
-        let actions =
-            sync.on_message(1, SyncMessage::TipResponse { height: 1000, block_hash: [1u8; 32] });
+        let actions = sync.on_message(
+            1,
+            SyncMessage::TipResponse {
+                height: 1000,
+                block_hash: [1u8; 32],
+            },
+        );
         assert!(actions.is_empty());
 
         // Second peer agrees
-        let actions =
-            sync.on_message(2, SyncMessage::TipResponse { height: 1000, block_hash: [1u8; 32] });
+        let actions = sync.on_message(
+            2,
+            SyncMessage::TipResponse {
+                height: 1000,
+                block_hash: [1u8; 32],
+            },
+        );
         assert!(!actions.is_empty()); // Should request header
         assert_eq!(*sync.phase(), SyncPhase::VerifyingHeader);
     }
@@ -858,10 +863,8 @@ mod tests {
         assert_eq!(provider.snapshot_count(), 1);
 
         // Serve metadata request
-        let resp = provider.handle_request(
-            &SyncMessage::SnapshotMetadataRequest { height: 100 },
-            100,
-        );
+        let resp =
+            provider.handle_request(&SyncMessage::SnapshotMetadataRequest { height: 100 }, 100);
         assert!(resp.is_some());
 
         // Serve chunk requests
@@ -983,7 +986,9 @@ mod tests {
         assert!(sync.is_complete());
 
         // Should have an ApplySnapshot action
-        assert!(actions.iter().any(|a| matches!(a, SyncAction::ApplySnapshot { .. })));
+        assert!(actions
+            .iter()
+            .any(|a| matches!(a, SyncAction::ApplySnapshot { .. })));
     }
 
     #[test]
@@ -1001,10 +1006,19 @@ mod tests {
         let actions = sync.start();
 
         // Simulate tip responses from 2 peers
-        sync.on_message(1, SyncMessage::TipResponse { height: 100, block_hash: [100u8; 32] });
+        sync.on_message(
+            1,
+            SyncMessage::TipResponse {
+                height: 100,
+                block_hash: [100u8; 32],
+            },
+        );
         let actions = sync.on_message(
             2,
-            SyncMessage::TipResponse { height: 100, block_hash: [100u8; 32] },
+            SyncMessage::TipResponse {
+                height: 100,
+                block_hash: [100u8; 32],
+            },
         );
         assert_eq!(*sync.phase(), SyncPhase::VerifyingHeader);
 
@@ -1013,7 +1027,10 @@ mod tests {
         let actions = sync.on_message(1, SyncMessage::HeaderResponse { header });
 
         // Should now request snapshot metadata
-        assert!(matches!(sync.phase(), SyncPhase::DownloadingSnapshot { .. }));
+        assert!(matches!(
+            sync.phase(),
+            SyncPhase::DownloadingSnapshot { .. }
+        ));
 
         // Serve metadata
         let meta_resp = provider
@@ -1105,8 +1122,20 @@ mod tests {
         let mut sync = StateSyncManager::new(0);
         sync.start();
 
-        sync.on_message(1, SyncMessage::TipResponse { height: 100, block_hash: [100u8; 32] });
-        sync.on_message(2, SyncMessage::TipResponse { height: 100, block_hash: [100u8; 32] });
+        sync.on_message(
+            1,
+            SyncMessage::TipResponse {
+                height: 100,
+                block_hash: [100u8; 32],
+            },
+        );
+        sync.on_message(
+            2,
+            SyncMessage::TipResponse {
+                height: 100,
+                block_hash: [100u8; 32],
+            },
+        );
 
         // Header has state_root = blake3([100; 64])
         let header = make_header(100, &vs, &kps);
@@ -1123,7 +1152,10 @@ mod tests {
             total_size: 1024,
         };
         assert_ne!([0xFF; 32], header_state_root);
-        let actions = sync.on_message(1, SyncMessage::SnapshotMetadataResponse { metadata: bad_meta });
+        let actions = sync.on_message(
+            1,
+            SyncMessage::SnapshotMetadataResponse { metadata: bad_meta },
+        );
         assert!(actions.is_empty(), "mismatched state_root must be rejected");
     }
 }

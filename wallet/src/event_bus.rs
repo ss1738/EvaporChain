@@ -196,7 +196,9 @@ impl EventBus {
         let handler_ids: Vec<String> = self
             .handlers
             .values()
-            .filter(|h| h.status == HandlerStatus::Active && Self::matches_topic(&h.topic_filter, &topic))
+            .filter(|h| {
+                h.status == HandlerStatus::Active && Self::matches_topic(&h.topic_filter, &topic)
+            })
             .map(|h| h.id.clone())
             .collect();
 
@@ -256,7 +258,10 @@ impl EventBus {
 
     /// Return all log entries for a specific handler.
     pub fn handler_logs(&self, handler_id: &str) -> Vec<&EventLog> {
-        self.logs.iter().filter(|l| l.handler_id == handler_id).collect()
+        self.logs
+            .iter()
+            .filter(|l| l.handler_id == handler_id)
+            .collect()
     }
 
     /// Return the last `n` log entries (most recent last).
@@ -269,7 +274,9 @@ impl EventBus {
     pub fn handlers_for_topic(&self, topic: &str) -> Vec<&EventHandler> {
         self.handlers
             .values()
-            .filter(|h| h.status == HandlerStatus::Active && Self::matches_topic(&h.topic_filter, topic))
+            .filter(|h| {
+                h.status == HandlerStatus::Active && Self::matches_topic(&h.topic_filter, topic)
+            })
             .collect()
     }
 

@@ -54,9 +54,13 @@ pub enum WatchTarget {
 impl WatchTarget {
     pub fn label(&self) -> String {
         match self {
-            WatchTarget::Balance { address } => format!("Balance({})", &address[..10.min(address.len())]),
+            WatchTarget::Balance { address } => {
+                format!("Balance({})", &address[..10.min(address.len())])
+            }
             WatchTarget::Energy { object_id } => format!("Energy({})", object_id),
-            WatchTarget::BridgeTransfer { transfer_id } => format!("Bridge({})", &transfer_id[..10.min(transfer_id.len())]),
+            WatchTarget::BridgeTransfer { transfer_id } => {
+                format!("Bridge({})", &transfer_id[..10.min(transfer_id.len())])
+            }
             WatchTarget::StakingReward { pool_id } => format!("Staking({})", pool_id),
             WatchTarget::ChainHealth => "ChainHealth".to_string(),
         }
@@ -117,7 +121,9 @@ impl Condition {
     /// Check status-based condition.
     pub fn check_status(&self, current_status: &str) -> bool {
         match self {
-            Condition::StatusEquals(expected) => current_status.to_lowercase() == expected.to_lowercase(),
+            Condition::StatusEquals(expected) => {
+                current_status.to_lowercase() == expected.to_lowercase()
+            }
             _ => false,
         }
     }
@@ -142,7 +148,9 @@ impl WatchAction {
         match self {
             WatchAction::Notify => "Notify".to_string(),
             WatchAction::Log { path } => format!("Log({})", path),
-            WatchAction::Shell { command } => format!("Shell({})", &command[..20.min(command.len())]),
+            WatchAction::Shell { command } => {
+                format!("Shell({})", &command[..20.min(command.len())])
+            }
             WatchAction::AutoRefresh { energy } => format!("AutoRefresh({})", energy),
         }
     }
@@ -188,7 +196,8 @@ impl Watch {
         match &self.last_checked {
             Some(ts) => {
                 if let Ok(last) = chrono::DateTime::parse_from_rfc3339(ts) {
-                    let elapsed = chrono::Utc::now().signed_duration_since(last.with_timezone(&chrono::Utc));
+                    let elapsed =
+                        chrono::Utc::now().signed_duration_since(last.with_timezone(&chrono::Utc));
                     elapsed.num_seconds() >= self.interval_secs as i64
                 } else {
                     true
@@ -310,7 +319,10 @@ impl Watchtower {
 
     /// Remove a watch by name.
     pub fn remove_watch(&mut self, name: &str) -> Result<(), WatchtowerError> {
-        let idx = self.watches.iter().position(|w| w.name == name)
+        let idx = self
+            .watches
+            .iter()
+            .position(|w| w.name == name)
             .ok_or_else(|| WatchtowerError::NotFound(name.to_string()))?;
         self.watches.remove(idx);
         Ok(())
@@ -318,7 +330,10 @@ impl Watchtower {
 
     /// Enable a watch.
     pub fn enable(&mut self, name: &str) -> Result<(), WatchtowerError> {
-        let w = self.watches.iter_mut().find(|w| w.name == name)
+        let w = self
+            .watches
+            .iter_mut()
+            .find(|w| w.name == name)
             .ok_or_else(|| WatchtowerError::NotFound(name.to_string()))?;
         w.enabled = true;
         Ok(())
@@ -326,7 +341,10 @@ impl Watchtower {
 
     /// Disable a watch.
     pub fn disable(&mut self, name: &str) -> Result<(), WatchtowerError> {
-        let w = self.watches.iter_mut().find(|w| w.name == name)
+        let w = self
+            .watches
+            .iter_mut()
+            .find(|w| w.name == name)
             .ok_or_else(|| WatchtowerError::NotFound(name.to_string()))?;
         w.enabled = false;
         Ok(())
@@ -449,25 +467,34 @@ mod tests {
         let mut wt = Watchtower::new();
         wt.add_watch(
             "low-balance",
-            WatchTarget::Balance { address: "0xmyaddr".into() },
+            WatchTarget::Balance {
+                address: "0xmyaddr".into(),
+            },
             Condition::Below(1000.0),
             WatchAction::Notify,
             60,
-        ).unwrap();
+        )
+        .unwrap();
         wt.add_watch(
             "energy-critical",
-            WatchTarget::Energy { object_id: "obj_42".into() },
+            WatchTarget::Energy {
+                object_id: "obj_42".into(),
+            },
             Condition::Below(10.0),
             WatchAction::AutoRefresh { energy: 5000 },
             120,
-        ).unwrap();
+        )
+        .unwrap();
         wt.add_watch(
             "bridge-done",
-            WatchTarget::BridgeTransfer { transfer_id: "bt_001".into() },
+            WatchTarget::BridgeTransfer {
+                transfer_id: "bt_001".into(),
+            },
             Condition::StatusEquals("completed".into()),
             WatchAction::Notify,
             30,
-        ).unwrap();
+        )
+        .unwrap();
         wt
     }
 
@@ -480,7 +507,13 @@ mod tests {
     #[test]
     fn test_duplicate_rejected() {
         let mut wt = make_wt();
-        let err = wt.add_watch("low-balance", WatchTarget::ChainHealth, Condition::AnyChange, WatchAction::Notify, 60);
+        let err = wt.add_watch(
+            "low-balance",
+            WatchTarget::ChainHealth,
+            Condition::AnyChange,
+            WatchAction::Notify,
+            60,
+        );
         assert!(err.is_err());
     }
 
@@ -641,14 +674,18 @@ mod tests {
     #[test]
     fn test_watch_target_labels() {
         assert_eq!(WatchTarget::ChainHealth.label(), "ChainHealth");
-        let bt = WatchTarget::Balance { address: "0xabcdef1234".into() };
+        let bt = WatchTarget::Balance {
+            address: "0xabcdef1234".into(),
+        };
         assert!(bt.label().contains("Balance"));
     }
 
     #[test]
     fn test_watch_action_labels() {
         assert_eq!(WatchAction::Notify.label(), "Notify");
-        assert!(WatchAction::AutoRefresh { energy: 5000 }.label().contains("5000"));
+        assert!(WatchAction::AutoRefresh { energy: 5000 }
+            .label()
+            .contains("5000"));
     }
 
     #[test]
@@ -672,7 +709,14 @@ mod tests {
     fn test_alert_history_cap() {
         let mut wt = Watchtower::new();
         wt.max_alerts = 3;
-        wt.add_watch("test", WatchTarget::ChainHealth, Condition::AnyChange, WatchAction::Notify, 1).unwrap();
+        wt.add_watch(
+            "test",
+            WatchTarget::ChainHealth,
+            Condition::AnyChange,
+            WatchAction::Notify,
+            1,
+        )
+        .unwrap();
         for i in 0..5 {
             wt.check_value("test", i as f64);
         }

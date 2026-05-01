@@ -121,8 +121,12 @@ impl<G: Group> StepCircuit<G::Scalar> for BlockStepCircuit<G> {
 
         // Compute: tx_count * (old_state_hash + 1) = intermediate
         let intermediate = AllocatedNum::alloc(cs.namespace(|| "tx_state_product"), || {
-            let tc = tx_count.get_value().ok_or(SynthesisError::AssignmentMissing)?;
-            let os = old_state_hash.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+            let tc = tx_count
+                .get_value()
+                .ok_or(SynthesisError::AssignmentMissing)?;
+            let os = old_state_hash
+                .get_value()
+                .ok_or(SynthesisError::AssignmentMissing)?;
             Ok(tc * (os + G::Scalar::from(1u64)))
         })?;
         cs.enforce(
@@ -137,7 +141,11 @@ impl<G: Group> StepCircuit<G::Scalar> for BlockStepCircuit<G> {
             || "state_transition",
             |lc| lc + new_state_hash.get_variable(),
             |lc| lc + CS::one(),
-            |lc| lc + old_state_hash.get_variable() + intermediate.get_variable() + evap_count.get_variable(),
+            |lc| {
+                lc + old_state_hash.get_variable()
+                    + intermediate.get_variable()
+                    + evap_count.get_variable()
+            },
         );
 
         Ok(vec![new_state_hash, new_epoch])
@@ -216,30 +224,28 @@ impl ProvingEngine for NovaProver {
         let tx_count = block.transactions.len() as u64;
         let evap_count = 0u64;
         let intermediate = tx_count.wrapping_mul(old_state_hash.wrapping_add(1));
-        let new_state_hash = old_state_hash.wrapping_add(intermediate).wrapping_add(evap_count);
+        let new_state_hash = old_state_hash
+            .wrapping_add(intermediate)
+            .wrapping_add(evap_count);
 
-        let circuit = BlockStepCircuit::<G1>::new(
-            new_state_hash,
-            tx_count,
-            evap_count,
-        );
+        let circuit = BlockStepCircuit::<G1>::new(new_state_hash, tx_count, evap_count);
 
         let start = Instant::now();
 
         if let Some(snark) = &mut self.recursive_snark {
-            snark.prove_step(&self.pp, &circuit).map_err(|e| {
-                ProvingError::FoldingFailed(format!("prove_step: {:?}", e))
-            })?;
+            snark
+                .prove_step(&self.pp, &circuit)
+                .map_err(|e| ProvingError::FoldingFailed(format!("prove_step: {:?}", e)))?;
         } else {
             // First fold: create the RecursiveSNARK
             let mut snark =
                 RecursiveSNARK::<E1, E2, BlockStepCircuit<G1>>::new(&self.pp, &circuit, &self.z0)
                     .map_err(|e| {
-                        ProvingError::FoldingFailed(format!("RecursiveSNARK::new: {:?}", e))
-                    })?;
-            snark.prove_step(&self.pp, &circuit).map_err(|e| {
-                ProvingError::FoldingFailed(format!("prove_step (first): {:?}", e))
-            })?;
+                    ProvingError::FoldingFailed(format!("RecursiveSNARK::new: {:?}", e))
+                })?;
+            snark
+                .prove_step(&self.pp, &circuit)
+                .map_err(|e| ProvingError::FoldingFailed(format!("prove_step (first): {:?}", e)))?;
             self.recursive_snark = Some(snark);
         }
 
@@ -673,20 +679,27 @@ impl RealBlockWitness {
         }
 
         // Privacy state witness.
-        let (new_note_tree_root, old_pool_balance, new_pool_balance, shield_total, unshield_total, notes_created, nullifiers_spent) =
-            if let Some(pw) = privacy {
-                (
-                    state_root_to_u64(&pw.new_note_tree_root),
-                    pw.pool_balance_before,
-                    pw.pool_balance_after,
-                    pw.shield_total,
-                    pw.unshield_total,
-                    pw.notes_created,
-                    pw.nullifiers_spent,
-                )
-            } else {
-                (0, 0, 0, 0, 0, 0, 0)
-            };
+        let (
+            new_note_tree_root,
+            old_pool_balance,
+            new_pool_balance,
+            shield_total,
+            unshield_total,
+            notes_created,
+            nullifiers_spent,
+        ) = if let Some(pw) = privacy {
+            (
+                state_root_to_u64(&pw.new_note_tree_root),
+                pw.pool_balance_before,
+                pw.pool_balance_after,
+                pw.shield_total,
+                pw.unshield_total,
+                pw.notes_created,
+                pw.nullifiers_spent,
+            )
+        } else {
+            (0, 0, 0, 0, 0, 0, 0)
+        };
 
         Self {
             new_state_hash,
@@ -957,25 +970,22 @@ impl<G: Group> StepCircuit<G::Scalar> for RealBlockCircuit<G> {
                 AllocatedNum::alloc(cs.namespace(|| format!("{ns}_shift_rem")), || {
                     Ok(G::Scalar::from(obj.shift_remainder))
                 })?;
-            let rem_epochs =
-                AllocatedNum::alloc(cs.namespace(|| format!("{ns}_rem_ep")), || {
-                    Ok(G::Scalar::from(obj.remainder_epochs))
-                })?;
+            let rem_epochs = AllocatedNum::alloc(cs.namespace(|| format!("{ns}_rem_ep")), || {
+                Ok(G::Scalar::from(obj.remainder_epochs))
+            })?;
             let two_hl = AllocatedNum::alloc(cs.namespace(|| format!("{ns}_2hl")), || {
                 Ok(G::Scalar::from(obj.two_half_life))
             })?;
-            let product_ar =
-                AllocatedNum::alloc(cs.namespace(|| format!("{ns}_prod_ar")), || {
-                    Ok(G::Scalar::from(obj.product_ar))
-                })?;
+            let product_ar = AllocatedNum::alloc(cs.namespace(|| format!("{ns}_prod_ar")), || {
+                Ok(G::Scalar::from(obj.product_ar))
+            })?;
             let frac_decay =
                 AllocatedNum::alloc(cs.namespace(|| format!("{ns}_frac_dec")), || {
                     Ok(G::Scalar::from(obj.frac_decay))
                 })?;
-            let frac_rem =
-                AllocatedNum::alloc(cs.namespace(|| format!("{ns}_frac_rem")), || {
-                    Ok(G::Scalar::from(obj.frac_remainder))
-                })?;
+            let frac_rem = AllocatedNum::alloc(cs.namespace(|| format!("{ns}_frac_rem")), || {
+                Ok(G::Scalar::from(obj.frac_remainder))
+            })?;
             let is_evap = AllocatedNum::alloc(cs.namespace(|| format!("{ns}_evap")), || {
                 Ok(G::Scalar::from(obj.is_evaporated))
             })?;
@@ -1072,14 +1082,12 @@ impl<G: Group> StepCircuit<G::Scalar> for RealBlockCircuit<G> {
             );
 
             // (b) Balance conservation: sender_before - amount = sender_after
-            let bal_before =
-                AllocatedNum::alloc(cs.namespace(|| format!("tx{i}_bal_b")), || {
-                    Ok(G::Scalar::from(t.sender_balance_before))
-                })?;
-            let bal_after =
-                AllocatedNum::alloc(cs.namespace(|| format!("tx{i}_bal_a")), || {
-                    Ok(G::Scalar::from(t.sender_balance_after))
-                })?;
+            let bal_before = AllocatedNum::alloc(cs.namespace(|| format!("tx{i}_bal_b")), || {
+                Ok(G::Scalar::from(t.sender_balance_before))
+            })?;
+            let bal_after = AllocatedNum::alloc(cs.namespace(|| format!("tx{i}_bal_a")), || {
+                Ok(G::Scalar::from(t.sender_balance_after))
+            })?;
             cs.enforce(
                 || format!("tx{i}_bal"),
                 |lc| lc + bal_before.get_variable() - amount.get_variable(),
@@ -1097,14 +1105,12 @@ impl<G: Group> StepCircuit<G::Scalar> for RealBlockCircuit<G> {
             )?;
 
             // (d) Nonce increment: new_nonce = old_nonce + 1
-            let old_nonce =
-                AllocatedNum::alloc(cs.namespace(|| format!("tx{i}_on")), || {
-                    Ok(G::Scalar::from(t.old_nonce))
-                })?;
-            let new_nonce =
-                AllocatedNum::alloc(cs.namespace(|| format!("tx{i}_nn")), || {
-                    Ok(G::Scalar::from(t.new_nonce))
-                })?;
+            let old_nonce = AllocatedNum::alloc(cs.namespace(|| format!("tx{i}_on")), || {
+                Ok(G::Scalar::from(t.old_nonce))
+            })?;
+            let new_nonce = AllocatedNum::alloc(cs.namespace(|| format!("tx{i}_nn")), || {
+                Ok(G::Scalar::from(t.new_nonce))
+            })?;
             cs.enforce(
                 || format!("tx{i}_nonce"),
                 |lc| lc + new_nonce.get_variable(),
@@ -1116,23 +1122,21 @@ impl<G: Group> StepCircuit<G::Scalar> for RealBlockCircuit<G> {
         // ═══ 9. Evaporation nullifier binding (per slot) ═══
         for i in 0..MAX_EVAPORATIONS {
             let e = &self.witness.evaporations[i];
-            let nullifier =
-                AllocatedNum::alloc(cs.namespace(|| format!("null{i}_hash")), || {
-                    Ok(G::Scalar::from(e.nullifier_hash))
-                })?;
+            let nullifier = AllocatedNum::alloc(cs.namespace(|| format!("null{i}_hash")), || {
+                Ok(G::Scalar::from(e.nullifier_hash))
+            })?;
             let active = AllocatedNum::alloc(cs.namespace(|| format!("null{i}_active")), || {
                 Ok(G::Scalar::from(e.is_active))
             })?;
-            let bound =
-                AllocatedNum::alloc(cs.namespace(|| format!("null{i}_bound")), || {
-                    let a = active
-                        .get_value()
-                        .ok_or(SynthesisError::AssignmentMissing)?;
-                    let n = nullifier
-                        .get_value()
-                        .ok_or(SynthesisError::AssignmentMissing)?;
-                    Ok(a * n)
-                })?;
+            let bound = AllocatedNum::alloc(cs.namespace(|| format!("null{i}_bound")), || {
+                let a = active
+                    .get_value()
+                    .ok_or(SynthesisError::AssignmentMissing)?;
+                let n = nullifier
+                    .get_value()
+                    .ok_or(SynthesisError::AssignmentMissing)?;
+                Ok(a * n)
+            })?;
             cs.enforce(
                 || format!("null{i}_bind"),
                 |lc| lc + active.get_variable(),
@@ -1161,33 +1165,26 @@ impl<G: Group> StepCircuit<G::Scalar> for RealBlockCircuit<G> {
             |lc| lc + new_note_tree_root.get_variable(),
         );
 
-        let new_pool_balance =
-            AllocatedNum::alloc(cs.namespace(|| "new_pool_bal"), || {
-                Ok(G::Scalar::from(self.witness.new_pool_balance))
-            })?;
+        let new_pool_balance = AllocatedNum::alloc(cs.namespace(|| "new_pool_bal"), || {
+            Ok(G::Scalar::from(self.witness.new_pool_balance))
+        })?;
 
-        let shield_total =
-            AllocatedNum::alloc(cs.namespace(|| "shield_total"), || {
-                Ok(G::Scalar::from(self.witness.shield_total))
-            })?;
+        let shield_total = AllocatedNum::alloc(cs.namespace(|| "shield_total"), || {
+            Ok(G::Scalar::from(self.witness.shield_total))
+        })?;
 
-        let unshield_total =
-            AllocatedNum::alloc(cs.namespace(|| "unshield_total"), || {
-                Ok(G::Scalar::from(self.witness.unshield_total))
-            })?;
+        let unshield_total = AllocatedNum::alloc(cs.namespace(|| "unshield_total"), || {
+            Ok(G::Scalar::from(self.witness.unshield_total))
+        })?;
 
         // Pool balance conservation:
         // new_pool = old_pool + shield_total - unshield_total
         // Rearranged: new_pool + unshield_total = old_pool + shield_total
         cs.enforce(
             || "pool_conservation",
-            |lc| {
-                lc + new_pool_balance.get_variable() + unshield_total.get_variable()
-            },
+            |lc| lc + new_pool_balance.get_variable() + unshield_total.get_variable(),
             |lc| lc + CS::one(),
-            |lc| {
-                lc + old_pool_balance.get_variable() + shield_total.get_variable()
-            },
+            |lc| lc + old_pool_balance.get_variable() + shield_total.get_variable(),
         );
 
         // Range check: new_pool_balance fits in 64 bits (non-negative).
@@ -1216,10 +1213,9 @@ impl<G: Group> StepCircuit<G::Scalar> for RealBlockCircuit<G> {
         )?;
 
         // Notes created binding (binds note count to the proof).
-        let notes_created =
-            AllocatedNum::alloc(cs.namespace(|| "notes_created"), || {
-                Ok(G::Scalar::from(self.witness.notes_created))
-            })?;
+        let notes_created = AllocatedNum::alloc(cs.namespace(|| "notes_created"), || {
+            Ok(G::Scalar::from(self.witness.notes_created))
+        })?;
         cs.enforce(
             || "notes_bind",
             |lc| lc + notes_created.get_variable(),
@@ -1228,10 +1224,9 @@ impl<G: Group> StepCircuit<G::Scalar> for RealBlockCircuit<G> {
         );
 
         // Nullifiers spent binding.
-        let nullifiers_spent =
-            AllocatedNum::alloc(cs.namespace(|| "nullifiers_spent"), || {
-                Ok(G::Scalar::from(self.witness.nullifiers_spent))
-            })?;
+        let nullifiers_spent = AllocatedNum::alloc(cs.namespace(|| "nullifiers_spent"), || {
+            Ok(G::Scalar::from(self.witness.nullifiers_spent))
+        })?;
         cs.enforce(
             || "nullifiers_bind",
             |lc| lc + nullifiers_spent.get_variable(),
@@ -1255,18 +1250,11 @@ impl<G: Group> StepCircuit<G::Scalar> for RealBlockCircuit<G> {
             let limbs = &self.witness.state_root_limbs;
             let mut limb_vars = Vec::with_capacity(4);
             for j in 0..4 {
-                let limb = AllocatedNum::alloc(
-                    cs.namespace(|| format!("sr_limb{j}")),
-                    || Ok(G::Scalar::from(limbs[j])),
-                )?;
+                let limb = AllocatedNum::alloc(cs.namespace(|| format!("sr_limb{j}")), || {
+                    Ok(G::Scalar::from(limbs[j]))
+                })?;
                 // Range check each limb fits in 64 bits.
-                range_check_bits::<G, CS>(
-                    cs,
-                    &format!("sr_l{j}"),
-                    &limb,
-                    limbs[j],
-                    64,
-                )?;
+                range_check_bits::<G, CS>(cs, &format!("sr_l{j}"), &limb, limbs[j], 64)?;
                 limb_vars.push(limb);
             }
 
@@ -1281,17 +1269,16 @@ impl<G: Group> StepCircuit<G::Scalar> for RealBlockCircuit<G> {
             // Recomposition constraint for full 32-byte root:
             // limb[0] + limb[1]·2^64 + limb[2]·2^128 + limb[3]·2^192
             // This is committed as a single field element (fits in BN256 scalar field ~2^254).
-            let full_root =
-                AllocatedNum::alloc(cs.namespace(|| "sr_full"), || {
-                    let l0 = G::Scalar::from(limbs[0]);
-                    let l1 = G::Scalar::from(limbs[1]);
-                    let l2 = G::Scalar::from(limbs[2]);
-                    let l3 = G::Scalar::from(limbs[3]);
-                    let shift64 = G::Scalar::from(1u64 << 32) * G::Scalar::from(1u64 << 32);
-                    let shift128 = shift64 * shift64;
-                    let shift192 = shift128 * shift64;
-                    Ok(l0 + l1 * shift64 + l2 * shift128 + l3 * shift192)
-                })?;
+            let full_root = AllocatedNum::alloc(cs.namespace(|| "sr_full"), || {
+                let l0 = G::Scalar::from(limbs[0]);
+                let l1 = G::Scalar::from(limbs[1]);
+                let l2 = G::Scalar::from(limbs[2]);
+                let l3 = G::Scalar::from(limbs[3]);
+                let shift64 = G::Scalar::from(1u64 << 32) * G::Scalar::from(1u64 << 32);
+                let shift128 = shift64 * shift64;
+                let shift192 = shift128 * shift64;
+                Ok(l0 + l1 * shift64 + l2 * shift128 + l3 * shift192)
+            })?;
             cs.enforce(
                 || "sr_recomp",
                 |lc| lc + full_root.get_variable(),
@@ -1314,17 +1301,10 @@ impl<G: Group> StepCircuit<G::Scalar> for RealBlockCircuit<G> {
             let limbs = &self.witness.mmr_root_limbs;
             let mut limb_vars = Vec::with_capacity(4);
             for j in 0..4 {
-                let limb = AllocatedNum::alloc(
-                    cs.namespace(|| format!("mr_limb{j}")),
-                    || Ok(G::Scalar::from(limbs[j])),
-                )?;
-                range_check_bits::<G, CS>(
-                    cs,
-                    &format!("mr_l{j}"),
-                    &limb,
-                    limbs[j],
-                    64,
-                )?;
+                let limb = AllocatedNum::alloc(cs.namespace(|| format!("mr_limb{j}")), || {
+                    Ok(G::Scalar::from(limbs[j]))
+                })?;
+                range_check_bits::<G, CS>(cs, &format!("mr_l{j}"), &limb, limbs[j], 64)?;
                 limb_vars.push(limb);
             }
 
@@ -1335,17 +1315,16 @@ impl<G: Group> StepCircuit<G::Scalar> for RealBlockCircuit<G> {
                 |lc| lc + new_mmr_root.get_variable(),
             );
 
-            let full_mmr =
-                AllocatedNum::alloc(cs.namespace(|| "mr_full"), || {
-                    let l0 = G::Scalar::from(limbs[0]);
-                    let l1 = G::Scalar::from(limbs[1]);
-                    let l2 = G::Scalar::from(limbs[2]);
-                    let l3 = G::Scalar::from(limbs[3]);
-                    let shift64 = G::Scalar::from(1u64 << 32) * G::Scalar::from(1u64 << 32);
-                    let shift128 = shift64 * shift64;
-                    let shift192 = shift128 * shift64;
-                    Ok(l0 + l1 * shift64 + l2 * shift128 + l3 * shift192)
-                })?;
+            let full_mmr = AllocatedNum::alloc(cs.namespace(|| "mr_full"), || {
+                let l0 = G::Scalar::from(limbs[0]);
+                let l1 = G::Scalar::from(limbs[1]);
+                let l2 = G::Scalar::from(limbs[2]);
+                let l3 = G::Scalar::from(limbs[3]);
+                let shift64 = G::Scalar::from(1u64 << 32) * G::Scalar::from(1u64 << 32);
+                let shift128 = shift64 * shift64;
+                let shift192 = shift128 * shift64;
+                Ok(l0 + l1 * shift64 + l2 * shift128 + l3 * shift192)
+            })?;
             cs.enforce(
                 || "mr_recomp",
                 |lc| lc + full_mmr.get_variable(),
@@ -1465,18 +1444,18 @@ impl RealBlockProver {
         let start = Instant::now();
 
         if let Some(snark) = &mut self.recursive_snark {
-            snark.prove_step(&self.pp, &circuit).map_err(|e| {
-                ProvingError::FoldingFailed(format!("prove_step: {:?}", e))
-            })?;
+            snark
+                .prove_step(&self.pp, &circuit)
+                .map_err(|e| ProvingError::FoldingFailed(format!("prove_step: {:?}", e)))?;
         } else {
             let mut snark =
                 RecursiveSNARK::<E1, E2, RealBlockCircuit<G1>>::new(&self.pp, &circuit, &self.z0)
                     .map_err(|e| {
-                        ProvingError::FoldingFailed(format!("RecursiveSNARK::new: {:?}", e))
-                    })?;
-            snark.prove_step(&self.pp, &circuit).map_err(|e| {
-                ProvingError::FoldingFailed(format!("prove_step (first): {:?}", e))
-            })?;
+                    ProvingError::FoldingFailed(format!("RecursiveSNARK::new: {:?}", e))
+                })?;
+            snark
+                .prove_step(&self.pp, &circuit)
+                .map_err(|e| ProvingError::FoldingFailed(format!("prove_step (first): {:?}", e)))?;
             self.recursive_snark = Some(snark);
         }
 
@@ -1667,7 +1646,11 @@ mod tests {
         for i in 1..=3u64 {
             let block = dummy_block(i, i);
             prover
-                .fold_block(&block, make_state_root((i - 1) as u8), make_state_root(i as u8))
+                .fold_block(
+                    &block,
+                    make_state_root((i - 1) as u8),
+                    make_state_root(i as u8),
+                )
                 .expect("fold failed");
         }
 
@@ -1690,7 +1673,11 @@ mod tests {
         for i in 1..=2u64 {
             let block = dummy_block(i, i);
             prover
-                .fold_block(&block, make_state_root((i - 1) as u8), make_state_root(i as u8))
+                .fold_block(
+                    &block,
+                    make_state_root((i - 1) as u8),
+                    make_state_root(i as u8),
+                )
                 .expect("fold failed");
         }
 
@@ -1765,9 +1752,7 @@ mod tests {
 
         let (primary, secondary) = prover.num_constraints();
         assert!(primary > 500, "Expected >500 constraints, got {primary}");
-        println!(
-            "RealBlockCircuit: {primary} primary, {secondary} secondary constraints"
-        );
+        println!("RealBlockCircuit: {primary} primary, {secondary} secondary constraints");
 
         let block = make_block_with_txs(1, 1, 2);
         let new_state = make_dual_commitment(1, 1);
@@ -1844,7 +1829,11 @@ mod tests {
             let block = make_block_with_txs(i, i, 1);
             let new_state = make_dual_commitment(i as u8, i);
             prover
-                .fold_real_block(&block, &make_dual_commitment((i - 1) as u8, i - 1), &new_state)
+                .fold_real_block(
+                    &block,
+                    &make_dual_commitment((i - 1) as u8, i - 1),
+                    &new_state,
+                )
                 .expect("fold failed");
         }
 
@@ -1857,9 +1846,7 @@ mod tests {
         assert!(!proof.proof_bytes.is_empty());
 
         // Verify compressed proof
-        let valid = prover
-            .verify_proof(&proof, 5)
-            .expect("verify_proof failed");
+        let valid = prover.verify_proof(&proof, 5).expect("verify_proof failed");
         assert!(valid);
     }
 
@@ -1873,7 +1860,11 @@ mod tests {
             let block = make_block_with_txs(i, i, 1);
             let new_state = make_dual_commitment(i as u8, i);
             prover
-                .fold_real_block(&block, &make_dual_commitment((i - 1) as u8, i - 1), &new_state)
+                .fold_real_block(
+                    &block,
+                    &make_dual_commitment((i - 1) as u8, i - 1),
+                    &new_state,
+                )
                 .expect("fold failed");
         }
 
@@ -2325,10 +2316,7 @@ mod tests {
         let new_state = make_dual_commitment(1, 1);
 
         let thermo = ThermodynamicWitness {
-            object_energies: vec![
-                (1000, 975, 10),
-                (500, 487, 20),
-            ],
+            object_energies: vec![(1000, 975, 10), (500, 487, 20)],
             evaporation_nullifiers: vec![],
         };
 
@@ -2456,7 +2444,9 @@ mod tests {
         assert_eq!(chain_prover.blocks_folded(), 3);
 
         // Generate chain proof.
-        let chain_proof = chain_prover.generate_chain_proof().expect("chain proof failed");
+        let chain_proof = chain_prover
+            .generate_chain_proof()
+            .expect("chain proof failed");
         assert_eq!(chain_proof.block_height, 3);
         assert_eq!(chain_proof.num_steps, 3);
         assert!(chain_proof.proof_size_bytes > 0);

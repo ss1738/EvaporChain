@@ -131,8 +131,8 @@ fn master_encryption_key() -> [u8; 32] {
 /// Returns hex(nonce || ciphertext).
 fn encrypt_secret_key(sk_hex: &str) -> Result<String, String> {
     let key = master_encryption_key();
-    let cipher = XChaCha20Poly1305::new_from_slice(&key)
-        .map_err(|e| format!("invalid key: {e}"))?;
+    let cipher =
+        XChaCha20Poly1305::new_from_slice(&key).map_err(|e| format!("invalid key: {e}"))?;
     let mut nonce_bytes = [0u8; 24];
     rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce_bytes);
     let nonce = XNonce::from_slice(&nonce_bytes);
@@ -154,8 +154,7 @@ fn decrypt_secret_key(encrypted_hex: &str) -> Result<String, String> {
     }
     let (nonce_bytes, ciphertext) = data.split_at(24);
     let key = master_encryption_key();
-    let cipher = XChaCha20Poly1305::new_from_slice(&key)
-        .map_err(|_| "invalid key".to_string())?;
+    let cipher = XChaCha20Poly1305::new_from_slice(&key).map_err(|_| "invalid key".to_string())?;
     let nonce = XNonce::from_slice(nonce_bytes);
     let plaintext = cipher
         .decrypt(nonce, ciphertext)
@@ -170,8 +169,7 @@ fn generate_keypair() -> (String, String, String) {
     let pk_hex = hex::encode(kp.public_key());
     let sk_hex = hex::encode(kp.secret_key());
     let address = generate_address_from_pubkey(kp.public_key());
-    let encrypted_sk = encrypt_secret_key(&sk_hex)
-        .expect("wallet key encryption must not fail");
+    let encrypted_sk = encrypt_secret_key(&sk_hex).expect("wallet key encryption must not fail");
     (address, pk_hex, encrypted_sk)
 }
 
@@ -184,9 +182,7 @@ pub fn authenticate(headers: &HeaderMap, sessions: &Sessions) -> Result<i64, Str
         .ok_or("Missing authorization token")?;
 
     let sessions = sessions.lock().unwrap();
-    let (user_id, created) = sessions
-        .get(token)
-        .ok_or("Invalid or expired token")?;
+    let (user_id, created) = sessions.get(token).ok_or("Invalid or expired token")?;
 
     if created.elapsed().as_secs() > SESSION_TTL_SECS {
         return Err("Token expired".into());
@@ -209,36 +205,76 @@ pub async fn register(
         }
         limit.0 += 1;
         if limit.0 > 20 {
-            return Json(RegisterResp { success: false, message: "Registration rate limit reached. Try again later.".into(), user_id: None, verification_code: None });
+            return Json(RegisterResp {
+                success: false,
+                message: "Registration rate limit reached. Try again later.".into(),
+                user_id: None,
+                verification_code: None,
+            });
         }
     }
     // Validate
     let email = req.email.trim().to_lowercase();
     if email.len() > 254 {
-        return Json(RegisterResp { success: false, message: "Email too long".into(), user_id: None, verification_code: None });
+        return Json(RegisterResp {
+            success: false,
+            message: "Email too long".into(),
+            user_id: None,
+            verification_code: None,
+        });
     }
     if email.is_empty() || !crate::api::is_valid_email(&email) {
-        return Json(RegisterResp { success: false, message: "Invalid email format".into(), user_id: None, verification_code: None });
+        return Json(RegisterResp {
+            success: false,
+            message: "Invalid email format".into(),
+            user_id: None,
+            verification_code: None,
+        });
     }
     if req.password.len() < 8 {
-        return Json(RegisterResp { success: false, message: "Password must be at least 8 characters".into(), user_id: None, verification_code: None });
+        return Json(RegisterResp {
+            success: false,
+            message: "Password must be at least 8 characters".into(),
+            user_id: None,
+            verification_code: None,
+        });
     }
     if req.password.len() > 128 {
-        return Json(RegisterResp { success: false, message: "Password too long (max 128 characters)".into(), user_id: None, verification_code: None });
+        return Json(RegisterResp {
+            success: false,
+            message: "Password too long (max 128 characters)".into(),
+            user_id: None,
+            verification_code: None,
+        });
     }
     let display_name = req.display_name.trim().to_string();
     if display_name.is_empty() {
-        return Json(RegisterResp { success: false, message: "Display name required".into(), user_id: None, verification_code: None });
+        return Json(RegisterResp {
+            success: false,
+            message: "Display name required".into(),
+            user_id: None,
+            verification_code: None,
+        });
     }
     if display_name.len() > 100 {
-        return Json(RegisterResp { success: false, message: "Display name too long (max 100 characters)".into(), user_id: None, verification_code: None });
+        return Json(RegisterResp {
+            success: false,
+            message: "Display name too long (max 100 characters)".into(),
+            user_id: None,
+            verification_code: None,
+        });
     }
     // Strip HTML from display name to prevent stored XSS
     let display_name: String = {
         let mut result = String::new();
         let mut in_tag = false;
         for c in display_name.chars() {
-            match c { '<' => in_tag = true, '>' => in_tag = false, _ if !in_tag => result.push(c), _ => {} }
+            match c {
+                '<' => in_tag = true,
+                '>' => in_tag = false,
+                _ if !in_tag => result.push(c),
+                _ => {}
+            }
         }
         result
     };
@@ -246,11 +282,21 @@ pub async fn register(
     // Hash password (cost=10 for production, using 4 would be faster for testnet)
     let hash = match bcrypt::hash(&req.password, 10) {
         Ok(h) => h,
-        Err(_e) => return Json(RegisterResp { success: false, message: "Registration error. Please try again.".into(), user_id: None, verification_code: None }),
+        Err(_e) => {
+            return Json(RegisterResp {
+                success: false,
+                message: "Registration error. Please try again.".into(),
+                user_id: None,
+                verification_code: None,
+            })
+        }
     };
 
     let code = generate_verification_code();
-    match state.user_db.create_user(&email, &hash, &display_name, &code) {
+    match state
+        .user_db
+        .create_user(&email, &hash, &display_name, &code)
+    {
         Ok(user_id) => {
             // Auto-verify on testnet (no email server)
             let _ = state.user_db.verify_email(&email, &code);
@@ -260,8 +306,13 @@ pub async fn register(
                 user_id: Some(user_id),
                 verification_code: None,
             })
-        },
-        Err(e) => Json(RegisterResp { success: false, message: e, user_id: None, verification_code: None }),
+        }
+        Err(e) => Json(RegisterResp {
+            success: false,
+            message: e,
+            user_id: None,
+            verification_code: None,
+        }),
     }
 }
 
@@ -280,7 +331,12 @@ pub async fn login(
         }
         entry.0 += 1;
         if entry.0 > 10 {
-            return Json(LoginResp { success: false, message: "Too many login attempts. Try again in 15 minutes.".into(), token: None, user: None });
+            return Json(LoginResp {
+                success: false,
+                message: "Too many login attempts. Try again in 15 minutes.".into(),
+                token: None,
+                user: None,
+            });
         }
         // Evict old entries
         if limits.len() > 10_000 {
@@ -290,15 +346,36 @@ pub async fn login(
 
     let user = match state.user_db.get_user_by_email(&email) {
         Ok(Some(u)) => u,
-        Ok(None) => return Json(LoginResp { success: false, message: "Invalid email or password".into(), token: None, user: None }),
-        Err(e) => return Json(LoginResp { success: false, message: format!("Error: {e}"), token: None, user: None }),
+        Ok(None) => {
+            return Json(LoginResp {
+                success: false,
+                message: "Invalid email or password".into(),
+                token: None,
+                user: None,
+            })
+        }
+        Err(e) => {
+            return Json(LoginResp {
+                success: false,
+                message: format!("Error: {e}"),
+                token: None,
+                user: None,
+            })
+        }
     };
 
     let (user_id, password_hash, display_name, verified, _code) = user;
 
     match bcrypt::verify(&req.password, &password_hash) {
-        Ok(true) => {},
-        _ => return Json(LoginResp { success: false, message: "Invalid email or password".into(), token: None, user: None }),
+        Ok(true) => {}
+        _ => {
+            return Json(LoginResp {
+                success: false,
+                message: "Invalid email or password".into(),
+                token: None,
+                user: None,
+            })
+        }
     }
 
     let token = generate_token();
@@ -330,10 +407,22 @@ pub async fn verify_email(
     State(state): State<Arc<AuthState>>,
     Json(req): Json<VerifyEmailReq>,
 ) -> Json<GenericResp> {
-    match state.user_db.verify_email(&req.email.trim().to_lowercase(), &req.code) {
-        Ok(true) => Json(GenericResp { success: true, message: "Email verified!".into() }),
-        Ok(false) => Json(GenericResp { success: false, message: "Invalid verification code".into() }),
-        Err(e) => Json(GenericResp { success: false, message: format!("Error: {e}") }),
+    match state
+        .user_db
+        .verify_email(&req.email.trim().to_lowercase(), &req.code)
+    {
+        Ok(true) => Json(GenericResp {
+            success: true,
+            message: "Email verified!".into(),
+        }),
+        Ok(false) => Json(GenericResp {
+            success: false,
+            message: "Invalid verification code".into(),
+        }),
+        Err(e) => Json(GenericResp {
+            success: false,
+            message: format!("Error: {e}"),
+        }),
     }
 }
 
@@ -353,16 +442,16 @@ pub async fn get_me(
     }
 }
 
-pub async fn logout(
-    State(state): State<Arc<AuthState>>,
-    headers: HeaderMap,
-) -> Json<GenericResp> {
+pub async fn logout(State(state): State<Arc<AuthState>>, headers: HeaderMap) -> Json<GenericResp> {
     if let Some(token) = headers.get("authorization").and_then(|v| v.to_str().ok()) {
         let token = token.strip_prefix("Bearer ").unwrap_or(token);
         let mut sessions = state.sessions.lock().unwrap();
         sessions.remove(token);
     }
-    Json(GenericResp { success: true, message: "Logged out".into() })
+    Json(GenericResp {
+        success: true,
+        message: "Logged out".into(),
+    })
 }
 
 pub async fn create_wallet(
@@ -372,15 +461,33 @@ pub async fn create_wallet(
 ) -> Json<WalletResp> {
     let user_id = match authenticate(&headers, &state.sessions) {
         Ok(id) => id,
-        Err(e) => return Json(WalletResp { success: false, message: e, address: None, public_key: None }),
+        Err(e) => {
+            return Json(WalletResp {
+                success: false,
+                message: e,
+                address: None,
+                public_key: None,
+            })
+        }
     };
 
     let name = req.name.unwrap_or_else(|| "Main Wallet".into());
     let (address, public_key, encrypted_private_key) = generate_keypair();
 
-    match state.user_db.create_wallet(user_id, &name, &address, &public_key, &encrypted_private_key) {
+    match state.user_db.create_wallet(
+        user_id,
+        &name,
+        &address,
+        &public_key,
+        &encrypted_private_key,
+    ) {
         Ok(_) => {
-            let _ = state.user_db.log_activity(user_id, &address, "wallet_created", &format!("Created wallet: {name}"));
+            let _ = state.user_db.log_activity(
+                user_id,
+                &address,
+                "wallet_created",
+                &format!("Created wallet: {name}"),
+            );
             Json(WalletResp {
                 success: true,
                 message: "Wallet created".into(),
@@ -388,7 +495,12 @@ pub async fn create_wallet(
                 public_key: Some(public_key),
             })
         }
-        Err(e) => Json(WalletResp { success: false, message: e, address: None, public_key: None }),
+        Err(e) => Json(WalletResp {
+            success: false,
+            message: e,
+            address: None,
+            public_key: None,
+        }),
     }
 }
 
@@ -450,7 +562,7 @@ mod tests {
         // Verify roundtrip: decrypt should recover a valid SK hex
         let sk_hex = decrypt_secret_key(&encrypted_sk).unwrap();
         assert_eq!(sk_hex.len(), 4000 * 2); // 4000 bytes hex-encoded
-        // Verify address derivation
+                                            // Verify address derivation
         let pk_bytes = hex::decode(&pk_hex).unwrap();
         assert_eq!(address, generate_address_from_pubkey(&pk_bytes));
     }

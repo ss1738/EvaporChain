@@ -1,6 +1,4 @@
-use crate::parser::{
-    AssignTarget, BinOp, Contract, Expr, LifecycleHook, Stmt, UnaryOp,
-};
+use crate::parser::{AssignTarget, BinOp, Contract, Expr, LifecycleHook, Stmt, UnaryOp};
 use crate::{ScriptError, StateFieldSchema, StateSchema, Value};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -70,14 +68,16 @@ pub enum Op {
     /// Pop string, emit event.
     Emit,
     /// Emit a structured event: pop `topic_count` topics + 1 data value.
-    EmitEvent { name: String, topic_count: usize },
+    EmitEvent {
+        name: String,
+        topic_count: usize,
+    },
     /// Return top of stack.
     Return,
     /// Halt execution.
     Halt,
 
     // ── Temporal Opcodes ──
-
     /// Push the current epoch onto the stack.
     EpochNow,
     /// Push the current block number onto the stack.
@@ -90,7 +90,6 @@ pub enum Op {
     ComputeDecay,
 
     // ── VRF / Randomness Opcodes ──
-
     /// Push the current block's VRF randomness beacon value (truncated to u64).
     VrfRandomness,
     /// Pop a domain string, push domain-separated randomness from the beacon.
@@ -99,10 +98,11 @@ pub enum Op {
     RandomRange,
 
     // ── Cross-Contract Call ──
-
     /// Pop contract_id (u64), method name (string), then `arg_count` args.
     /// Calls the target contract and pushes the return value.
-    CallExternal { arg_count: usize },
+    CallExternal {
+        arg_count: usize,
+    },
 }
 
 // ─── Bytecode ───────────────────────────────────────────────────────────────
@@ -407,7 +407,9 @@ impl Compiler {
                     self.compile_expr(arg)?;
                 }
                 if name == "call_contract" {
-                    self.emit(Op::CallExternal { arg_count: args.len() });
+                    self.emit(Op::CallExternal {
+                        arg_count: args.len(),
+                    });
                 } else {
                     self.emit(Op::Call(name.clone(), args.len()));
                 }
@@ -645,30 +647,46 @@ pub fn compile(contract: &Contract) -> Result<EvaporBytecode, ScriptError> {
 pub fn generate_abi(contract: &Contract) -> crate::ContractAbi {
     use crate::{AbiMethod, AbiParam, AbiStateField, ContractAbi};
 
-    let methods = contract.functions.iter().map(|f| {
-        let mutates = fn_mutates_state(&f.body);
-        AbiMethod {
+    let methods = contract
+        .functions
+        .iter()
+        .map(|f| {
+            let mutates = fn_mutates_state(&f.body);
+            AbiMethod {
+                name: f.name.clone(),
+                params: f
+                    .params
+                    .iter()
+                    .map(|(name, ty)| AbiParam {
+                        name: name.clone(),
+                        ty: ty.clone(),
+                    })
+                    .collect(),
+                return_type: f.return_type.clone(),
+                mutates_state: mutates,
+            }
+        })
+        .collect();
+
+    let state = contract
+        .state_fields
+        .iter()
+        .map(|f| AbiStateField {
             name: f.name.clone(),
-            params: f.params.iter().map(|(name, ty)| AbiParam {
-                name: name.clone(),
-                ty: ty.clone(),
-            }).collect(),
-            return_type: f.return_type.clone(),
-            mutates_state: mutates,
-        }
-    }).collect();
+            ty: f.ty.clone(),
+            has_default: f.default.is_some(),
+        })
+        .collect();
 
-    let state = contract.state_fields.iter().map(|f| AbiStateField {
-        name: f.name.clone(),
-        ty: f.ty.clone(),
-        has_default: f.default.is_some(),
-    }).collect();
-
-    let lifecycle_hooks = contract.lifecycle_hooks.iter().map(|h| match h {
-        LifecycleHook::OnEvaporate(_) => "on_evaporate".to_string(),
-        LifecycleHook::OnGrace(_) => "on_grace".to_string(),
-        LifecycleHook::OnRefresh(_) => "on_refresh".to_string(),
-    }).collect();
+    let lifecycle_hooks = contract
+        .lifecycle_hooks
+        .iter()
+        .map(|h| match h {
+            LifecycleHook::OnEvaporate(_) => "on_evaporate".to_string(),
+            LifecycleHook::OnGrace(_) => "on_grace".to_string(),
+            LifecycleHook::OnRefresh(_) => "on_refresh".to_string(),
+        })
+        .collect();
 
     ContractAbi {
         name: contract.name.clone(),
@@ -682,14 +700,34 @@ fn fn_mutates_state(stmts: &[Stmt]) -> bool {
     use crate::parser::AssignTarget;
     for stmt in stmts {
         match stmt {
-            Stmt::Assign { target: AssignTarget::StateField(_), .. }
-            | Stmt::CompoundAssign { target: AssignTarget::StateField(_), .. }
-            | Stmt::Assign { target: AssignTarget::MapEntry(_, _), .. }
-            | Stmt::CompoundAssign { target: AssignTarget::MapEntry(_, _), .. } => return true,
-            Stmt::If { then_body, else_body, .. } => {
-                if fn_mutates_state(then_body) { return true; }
+            Stmt::Assign {
+                target: AssignTarget::StateField(_),
+                ..
+            }
+            | Stmt::CompoundAssign {
+                target: AssignTarget::StateField(_),
+                ..
+            }
+            | Stmt::Assign {
+                target: AssignTarget::MapEntry(_, _),
+                ..
+            }
+            | Stmt::CompoundAssign {
+                target: AssignTarget::MapEntry(_, _),
+                ..
+            } => return true,
+            Stmt::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                if fn_mutates_state(then_body) {
+                    return true;
+                }
                 if let Some(eb) = else_body {
-                    if fn_mutates_state(eb) { return true; }
+                    if fn_mutates_state(eb) {
+                        return true;
+                    }
                 }
             }
             Stmt::While { body, .. } if fn_mutates_state(body) => return true,
@@ -770,10 +808,7 @@ contract Branch {
             .opcodes
             .iter()
             .any(|op| matches!(op, Op::JumpIfFalse(_)));
-        let has_jump = bytecode
-            .opcodes
-            .iter()
-            .any(|op| matches!(op, Op::Jump(_)));
+        let has_jump = bytecode.opcodes.iter().any(|op| matches!(op, Op::Jump(_)));
         assert!(has_jump_if_false, "missing JumpIfFalse");
         assert!(has_jump, "missing Jump");
     }
@@ -850,10 +885,7 @@ contract Defaults {
 
         let schema = &bytecode.state_schema;
         assert_eq!(schema.fields.len(), 4);
-        assert_eq!(
-            schema.fields[0].default,
-            Some(Value::Str("hello".into()))
-        );
+        assert_eq!(schema.fields[0].default, Some(Value::Str("hello".into())));
         assert_eq!(schema.fields[1].default, Some(Value::U64(42)));
         assert_eq!(schema.fields[2].default, Some(Value::Bool(true)));
         assert_eq!(schema.fields[3].default, None); // map has no const default
@@ -980,11 +1012,7 @@ contract Simple {
 
     #[test]
     fn test_constant_fold_arithmetic() {
-        let mut ops = vec![
-            Op::Push(Value::U64(10)),
-            Op::Push(Value::U64(20)),
-            Op::Add,
-        ];
+        let mut ops = vec![Op::Push(Value::U64(10)), Op::Push(Value::U64(20)), Op::Add];
         let changed = constant_fold(&mut ops);
         assert!(changed);
         assert_eq!(ops, vec![Op::Push(Value::U64(30))]);
@@ -992,11 +1020,7 @@ contract Simple {
 
     #[test]
     fn test_constant_fold_comparison() {
-        let mut ops = vec![
-            Op::Push(Value::U64(5)),
-            Op::Push(Value::U64(3)),
-            Op::Gt,
-        ];
+        let mut ops = vec![Op::Push(Value::U64(5)), Op::Push(Value::U64(3)), Op::Gt];
         constant_fold(&mut ops);
         assert_eq!(ops, vec![Op::Push(Value::Bool(true))]);
     }
@@ -1032,11 +1056,7 @@ contract Simple {
 
     #[test]
     fn test_constant_fold_no_div_by_zero() {
-        let mut ops = vec![
-            Op::Push(Value::U64(10)),
-            Op::Push(Value::U64(0)),
-            Op::Div,
-        ];
+        let mut ops = vec![Op::Push(Value::U64(10)), Op::Push(Value::U64(0)), Op::Div];
         let changed = constant_fold(&mut ops);
         assert!(!changed);
         assert_eq!(ops.len(), 3);
@@ -1135,7 +1155,9 @@ contract Branching {
 "#;
         let ast = parser::parse(src).unwrap();
         let bytecode = compile(&ast).unwrap();
-        let state_stores: Vec<_> = bytecode.opcodes.iter()
+        let state_stores: Vec<_> = bytecode
+            .opcodes
+            .iter()
             .filter(|op| matches!(op, Op::StateStore(_)))
             .collect();
         assert_eq!(state_stores.len(), 2, "both branches should be reachable");

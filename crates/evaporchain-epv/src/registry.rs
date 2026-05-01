@@ -101,7 +101,13 @@ impl EpvRegistry {
     /// **The consensus gate.** True iff version `v` is still runnable
     /// at chain time `t` — i.e. registered AND has remaining energy
     /// strictly above `e_min`.
-    pub fn is_runnable(&self, v: VersionId, chain_lambda: ChainLambda, t: u64, e_min: Energy) -> bool {
+    pub fn is_runnable(
+        &self,
+        v: VersionId,
+        chain_lambda: ChainLambda,
+        t: u64,
+        e_min: Energy,
+    ) -> bool {
         match self.versions.get(&v) {
             Some(version) => version.remaining_at(chain_lambda, t) > e_min,
             None => false,

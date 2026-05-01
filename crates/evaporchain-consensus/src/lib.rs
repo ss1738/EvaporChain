@@ -1,28 +1,28 @@
 pub mod anchor;
 pub mod annealing_integration;
 pub mod antichain_integration;
+#[cfg(test)]
+mod audit_tests;
 pub mod bridge;
 pub mod causal_cone_integration;
-pub mod ib_integration;
-pub mod rg_phase_integration;
-pub mod wsbf_integration;
 pub mod da_attestation;
 pub mod encrypted_mempool;
 pub mod finality;
+pub mod ib_integration;
 pub mod light_client;
 pub mod mempool;
-pub mod state_sync;
 pub mod persistence;
+pub mod rg_phase_integration;
+pub mod state_sync;
 pub mod tendermint;
 pub mod validator_set;
-#[cfg(test)]
-mod audit_tests;
+pub mod wsbf_integration;
 
 use encrypted_mempool::EncryptedMempool;
 use evaporchain_crypto::hash::blake3_hash;
 use evaporchain_da::{BlockDA2D, NamespacedBlob};
-use evaporchain_execution::{fees::PidFeeController, BlockExecutionResult, ExecutionEngine};
 use evaporchain_execution::parallel::ParallelExecutor;
+use evaporchain_execution::{fees::PidFeeController, BlockExecutionResult, ExecutionEngine};
 use evaporchain_state::db::StateDB;
 use evaporchain_types::{Block, Epoch, Transaction};
 use mempool::Mempool;
@@ -116,10 +116,7 @@ pub enum ConsensusError {
         leader_id: u64,
     },
     #[error("invalid producer: block produced by validator {producer_id}, expected {expected_id}")]
-    InvalidProducer {
-        producer_id: u64,
-        expected_id: u64,
-    },
+    InvalidProducer { producer_id: u64, expected_id: u64 },
 }
 
 /// Result of producing one block.
@@ -215,17 +212,21 @@ impl MockConsensus {
 
     fn validate_block_header(&self, block: &Block) -> Result<(), ConsensusError> {
         if block.number == 0 {
-            return Err(ConsensusError::ProposalFailed("block number cannot be 0".into()));
+            return Err(ConsensusError::ProposalFailed(
+                "block number cannot be 0".into(),
+            ));
         }
         if block.number <= self.block_number {
-            return Err(ConsensusError::ProposalFailed(
-                format!("block height {} not greater than local {}", block.number, self.block_number),
-            ));
+            return Err(ConsensusError::ProposalFailed(format!(
+                "block height {} not greater than local {}",
+                block.number, self.block_number
+            )));
         }
         if block.epoch < self.epoch {
-            return Err(ConsensusError::ProposalFailed(
-                format!("block epoch {} less than local {}", block.epoch, self.epoch),
-            ));
+            return Err(ConsensusError::ProposalFailed(format!(
+                "block epoch {} less than local {}",
+                block.epoch, self.epoch
+            )));
         }
         if block.parent_hash != self.parent_hash && self.block_number > 0 {
             return Err(ConsensusError::ProposalFailed(
@@ -254,10 +255,11 @@ impl MockConsensus {
     ) -> Result<BlockProductionResult, ConsensusError> {
         self.validate_block_header(block)?;
 
-        let execution = self
-            .executor
-            .execute_block(db, block)
-            .map_err(|e: evaporchain_execution::ExecutionError| ConsensusError::ExecutionFailed(e.to_string()))?;
+        let execution = self.executor.execute_block(db, block).map_err(
+            |e: evaporchain_execution::ExecutionError| {
+                ConsensusError::ExecutionFailed(e.to_string())
+            },
+        )?;
 
         // Advance local tracking to stay in sync
         self.block_number = block.number;
@@ -327,10 +329,11 @@ impl MockConsensus {
             shard_count: None,
         };
 
-        let execution = self
-            .executor
-            .execute_block(db, &block)
-            .map_err(|e: evaporchain_execution::ExecutionError| ConsensusError::ExecutionFailed(e.to_string()))?;
+        let execution = self.executor.execute_block(db, &block).map_err(
+            |e: evaporchain_execution::ExecutionError| {
+                ConsensusError::ExecutionFailed(e.to_string())
+            },
+        )?;
 
         block.state_root = execution.state_root;
 
@@ -406,10 +409,11 @@ impl MockConsensus {
             shard_count: None,
         };
 
-        let execution = self
-            .executor
-            .execute_block(db, &block)
-            .map_err(|e: evaporchain_execution::ExecutionError| ConsensusError::ExecutionFailed(e.to_string()))?;
+        let execution = self.executor.execute_block(db, &block).map_err(
+            |e: evaporchain_execution::ExecutionError| {
+                ConsensusError::ExecutionFailed(e.to_string())
+            },
+        )?;
 
         block.state_root = execution.state_root;
 
@@ -576,10 +580,11 @@ impl RotatingConsensus {
             shard_count: None,
         };
 
-        let execution = self
-            .executor
-            .execute_block(db, &block)
-            .map_err(|e: evaporchain_execution::ExecutionError| ConsensusError::ExecutionFailed(e.to_string()))?;
+        let execution = self.executor.execute_block(db, &block).map_err(
+            |e: evaporchain_execution::ExecutionError| {
+                ConsensusError::ExecutionFailed(e.to_string())
+            },
+        )?;
 
         block.state_root = execution.state_root;
 
@@ -614,20 +619,26 @@ impl RotatingConsensus {
     pub fn validate_received_block(&self, block: &Block) -> Result<(), ConsensusError> {
         // Structural header validation
         if block.number == 0 {
-            return Err(ConsensusError::ProposalFailed("block number cannot be 0".into()));
+            return Err(ConsensusError::ProposalFailed(
+                "block number cannot be 0".into(),
+            ));
         }
         if block.number <= self.block_number {
-            return Err(ConsensusError::ProposalFailed(
-                format!("block height {} not greater than local {}", block.number, self.block_number),
-            ));
+            return Err(ConsensusError::ProposalFailed(format!(
+                "block height {} not greater than local {}",
+                block.number, self.block_number
+            )));
         }
         if block.epoch < self.epoch {
-            return Err(ConsensusError::ProposalFailed(
-                format!("block epoch {} less than local {}", block.epoch, self.epoch),
-            ));
+            return Err(ConsensusError::ProposalFailed(format!(
+                "block epoch {} less than local {}",
+                block.epoch, self.epoch
+            )));
         }
         if block.parent_hash != self.parent_hash && self.block_number > 0 {
-            return Err(ConsensusError::ProposalFailed("parent hash mismatch".into()));
+            return Err(ConsensusError::ProposalFailed(
+                "parent hash mismatch".into(),
+            ));
         }
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -644,12 +655,9 @@ impl RotatingConsensus {
             "block missing producer_id".to_string(),
         ))?;
 
-        let expected_leader = self
-            .validator_set
-            .leader_for_epoch(block.epoch)
-            .ok_or(ConsensusError::ProposalFailed(
-                "no validators in set".to_string(),
-            ))?;
+        let expected_leader = self.validator_set.leader_for_epoch(block.epoch).ok_or(
+            ConsensusError::ProposalFailed("no validators in set".to_string()),
+        )?;
 
         if producer_id != expected_leader.id {
             return Err(ConsensusError::InvalidProducer {
@@ -670,10 +678,11 @@ impl RotatingConsensus {
         // Validate producer legitimacy first
         self.validate_received_block(block)?;
 
-        let execution = self
-            .executor
-            .execute_block(db, block)
-            .map_err(|e: evaporchain_execution::ExecutionError| ConsensusError::ExecutionFailed(e.to_string()))?;
+        let execution = self.executor.execute_block(db, block).map_err(
+            |e: evaporchain_execution::ExecutionError| {
+                ConsensusError::ExecutionFailed(e.to_string())
+            },
+        )?;
 
         // Update health score for the block producer
         if let Some(producer_id) = block.producer_id {
@@ -913,6 +922,7 @@ mod tests {
             grace_epoch: None,
             data: vec![0xAB],
             decay_curve: None,
+            lad_mode: None,
         });
 
         let mut consensus = MockConsensus::new_for_test(2); // 2-epoch grace
@@ -957,6 +967,7 @@ mod tests {
             half_life: 100,
             data: vec![1, 2, 3],
             decay_curve: None,
+            lad_mode: None,
             signature: None,
             public_key: None,
         });
@@ -1009,7 +1020,9 @@ mod tests {
         last_touched_epoch: 0,
         });
         let mut follower = MockConsensus::new_for_test(5);
-        let applied = follower.apply_block(&mut follower_db, &produced.block).unwrap();
+        let applied = follower
+            .apply_block(&mut follower_db, &produced.block)
+            .unwrap();
 
         // State roots must match
         assert_eq!(applied.execution.state_root, produced.execution.state_root);
@@ -1051,6 +1064,7 @@ mod tests {
             grace_epoch: None,
             data: vec![0xAA],
             decay_curve: None,
+            lad_mode: None,
         });
 
         let kp1 = MlDsaKeypair::generate();
@@ -1079,6 +1093,7 @@ mod tests {
             half_life: 10,
             data: vec![0xBB],
             decay_curve: None,
+            lad_mode: None,
             signature: None,
             public_key: None,
         });
@@ -1110,6 +1125,7 @@ mod tests {
             grace_epoch: None,
             data: vec![0xAA],
             decay_curve: None,
+            lad_mode: None,
         });
         let mut follower = MockConsensus::new_for_test(3);
 
@@ -1159,7 +1175,10 @@ mod tests {
                 rc.epoch += 1;
             }
         }
-        assert!(produced, "Validator 1 should be leader at least once in 100 epochs");
+        assert!(
+            produced,
+            "Validator 1 should be leader at least once in 100 epochs"
+        );
     }
 
     #[test]
@@ -1177,7 +1196,10 @@ mod tests {
             }
             rc.epoch += 1;
         }
-        assert!(skipped, "Validator 1 should NOT be leader for at least one epoch");
+        assert!(
+            skipped,
+            "Validator 1 should NOT be leader for at least one epoch"
+        );
     }
 
     #[test]
@@ -1236,7 +1258,10 @@ mod tests {
         let result = rc.validate_received_block(&block);
         assert!(result.is_err());
         match result.unwrap_err() {
-            ConsensusError::InvalidProducer { producer_id, expected_id } => {
+            ConsensusError::InvalidProducer {
+                producer_id,
+                expected_id,
+            } => {
                 assert_eq!(producer_id, wrong_id);
                 assert_eq!(expected_id, leader);
             }
@@ -1380,6 +1405,7 @@ mod tests {
             grace_epoch: None,
             data: vec![0xAB],
             decay_curve: None,
+            lad_mode: None,
         });
 
         let mut rc = make_rotating(1, &[1, 2]);
@@ -1397,8 +1423,10 @@ mod tests {
         }
         // Health score changed (either increased from evaporation or decayed)
         // The point is the system tracks it
-        assert!(rc.validator_set.get(1).unwrap().blocks_produced > 0
-            || rc.validator_set.get(1).unwrap().health_score != initial_health);
+        assert!(
+            rc.validator_set.get(1).unwrap().blocks_produced > 0
+                || rc.validator_set.get(1).unwrap().health_score != initial_health
+        );
     }
 
     #[test]
@@ -1452,8 +1480,16 @@ mod tests {
             }
         }
         // With 4 equal-stake validators, should get roughly 25% of turns
-        assert!(my_turns > 10, "Expected at least 10 turns, got {}", my_turns);
-        assert!(not_my_turns > 50, "Expected mostly not-my-turns, got {}", not_my_turns);
+        assert!(
+            my_turns > 10,
+            "Expected at least 10 turns, got {}",
+            my_turns
+        );
+        assert!(
+            not_my_turns > 50,
+            "Expected mostly not-my-turns, got {}",
+            not_my_turns
+        );
     }
 
     #[test]

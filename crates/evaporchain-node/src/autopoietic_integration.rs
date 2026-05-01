@@ -56,7 +56,11 @@ pub struct NodeAutopoiesis {
 impl NodeAutopoiesis {
     pub fn new() -> Self {
         Self {
-            inner: ChainAutopoiesis::new(NullVerifier, MIN_PATRONAGE_ENERGY, SENTINEL_HEARTBEAT_WINDOW),
+            inner: ChainAutopoiesis::new(
+                NullVerifier,
+                MIN_PATRONAGE_ENERGY,
+                SENTINEL_HEARTBEAT_WINDOW,
+            ),
         }
     }
 
@@ -68,7 +72,9 @@ impl NodeAutopoiesis {
         last_sentinel_vote_epoch: Option<u64>,
         epoch: u64,
     ) -> AutopoieticHealth {
-        let report = self.inner.health_report(book, covenant_ids, last_sentinel_vote_epoch, epoch);
+        let report = self
+            .inner
+            .health_report(book, covenant_ids, last_sentinel_vote_epoch, epoch);
         log_health_report(&report);
         report
     }
@@ -105,10 +111,7 @@ pub fn log_health_report(report: &AutopoieticHealth) {
         ),
         AutopoieticStatus::Inviable => warn!(
             epoch = report.epoch,
-            patronage,
-            sentinel,
-            llsa,
-            "autopoietic health: Inviable — all subsystems failed"
+            patronage, sentinel, llsa, "autopoietic health: Inviable — all subsystems failed"
         ),
     }
 }

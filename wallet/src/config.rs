@@ -113,9 +113,11 @@ mod tests {
 
     #[test]
     fn test_json_roundtrip() {
-        let mut config = WalletConfig::default();
-        config.active_account = Some("alice".to_string());
-        config.node_url = "http://mainnet:3000".to_string();
+        let config = WalletConfig {
+            active_account: Some("alice".to_string()),
+            node_url: "http://mainnet:3000".to_string(),
+            ..WalletConfig::default()
+        };
 
         let json = serde_json::to_string_pretty(&config).unwrap();
         let loaded: WalletConfig = serde_json::from_str(&json).unwrap();
@@ -130,8 +132,10 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.json");
 
-        let mut config = WalletConfig::default();
-        config.node_url = "http://custom:8080".to_string();
+        let config = WalletConfig {
+            node_url: "http://custom:8080".to_string(),
+            ..WalletConfig::default()
+        };
         config.save(&path).unwrap();
 
         let loaded = WalletConfig::load_or_default(&path).unwrap();

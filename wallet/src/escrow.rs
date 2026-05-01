@@ -302,9 +302,7 @@ impl EscrowManager {
             .find(|m| m.id == milestone_id)
             .ok_or_else(|| EscrowError::MilestoneNotFound(milestone_id.to_string()))?;
         if !milestone.completed {
-            return Err(EscrowError::MilestoneNotCompleted(
-                milestone_id.to_string(),
-            ));
+            return Err(EscrowError::MilestoneNotCompleted(milestone_id.to_string()));
         }
         if milestone.released {
             return Err(EscrowError::MilestoneAlreadyReleased(
@@ -349,10 +347,7 @@ impl EscrowManager {
     }
 
     pub fn escrows_by_buyer(&self, buyer: &str) -> Vec<&Escrow> {
-        self.escrows
-            .values()
-            .filter(|e| e.buyer == buyer)
-            .collect()
+        self.escrows.values().filter(|e| e.buyer == buyer).collect()
     }
 
     pub fn escrows_by_seller(&self, seller: &str) -> Vec<&Escrow> {
@@ -532,10 +527,7 @@ mod tests {
         mgr.create_escrow(make_escrow("e1")).unwrap();
         mgr.fund_escrow("e1").unwrap();
         mgr.refund_escrow("e1").unwrap();
-        assert_eq!(
-            mgr.get_escrow("e1").unwrap().status,
-            EscrowStatus::Refunded
-        );
+        assert_eq!(mgr.get_escrow("e1").unwrap().status, EscrowStatus::Refunded);
     }
 
     #[test]
@@ -551,10 +543,7 @@ mod tests {
         mgr.create_escrow(make_escrow("e1")).unwrap();
         mgr.fund_escrow("e1").unwrap();
         mgr.dispute_escrow("e1", "Item not delivered").unwrap();
-        assert_eq!(
-            mgr.get_escrow("e1").unwrap().status,
-            EscrowStatus::Disputed
-        );
+        assert_eq!(mgr.get_escrow("e1").unwrap().status, EscrowStatus::Disputed);
         assert_eq!(
             mgr.get_escrow("e1").unwrap().dispute_reason.as_deref(),
             Some("Item not delivered")
@@ -576,10 +565,7 @@ mod tests {
         mgr.dispute_escrow("e1", "Bad quality").unwrap();
         mgr.resolve_dispute("e1", DisputeResolution::ReleaseToSeller)
             .unwrap();
-        assert_eq!(
-            mgr.get_escrow("e1").unwrap().status,
-            EscrowStatus::Resolved
-        );
+        assert_eq!(mgr.get_escrow("e1").unwrap().status, EscrowStatus::Resolved);
     }
 
     #[test]
@@ -590,10 +576,7 @@ mod tests {
         mgr.dispute_escrow("e1", "Partial delivery").unwrap();
         mgr.resolve_dispute("e1", DisputeResolution::Split(4000, 6000))
             .unwrap();
-        assert_eq!(
-            mgr.get_escrow("e1").unwrap().status,
-            EscrowStatus::Resolved
-        );
+        assert_eq!(mgr.get_escrow("e1").unwrap().status, EscrowStatus::Resolved);
     }
 
     #[test]

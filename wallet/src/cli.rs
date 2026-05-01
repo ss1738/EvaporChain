@@ -6598,7 +6598,9 @@ async fn await_confirmation(pipeline: &TxPipeline, tx_hash: &str) {
             println!(
                 "  {} Confirmed in block #{}",
                 "CONFIRMED".green().bold(),
-                tx.block_number
+                tx.block_height
+                    .map(|h| h.to_string())
+                    .unwrap_or_else(|| "?".to_string())
             );
             return;
         }

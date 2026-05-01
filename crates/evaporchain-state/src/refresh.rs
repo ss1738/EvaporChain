@@ -95,9 +95,9 @@ impl RefreshEngine {
             .ok_or_else(|| RefreshError::ObjectNotFound(hex::encode(object_id)))?;
 
         // Recover original data from ghost or fail if compact ghost
-        let data = ghost.original_data.ok_or_else(|| {
-            RefreshError::DataNotAvailable(hex::encode(object_id))
-        })?;
+        let data = ghost
+            .original_data
+            .ok_or_else(|| RefreshError::DataNotAvailable(hex::encode(object_id)))?;
 
         // Reconstruct the object with fresh energy
         let resurrected = StateObject {
@@ -111,6 +111,7 @@ impl RefreshEngine {
             grace_epoch: None,
             data,
             decay_curve: None,
+            lad_mode: None,
         };
 
         db.put_object(resurrected);
@@ -148,6 +149,7 @@ mod tests {
             grace_epoch: None,
             data: vec![id_byte],
             decay_curve: None,
+            lad_mode: None,
         }
     }
 

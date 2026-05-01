@@ -129,9 +129,7 @@ impl SnapshotBuilder {
         epoch: u64,
         chain_tip: u64,
     ) -> Result<StateSnapshot, SnapshotError> {
-        if chain_tip > block_height
-            && chain_tip - block_height < SNAPSHOT_MIN_FINALITY_DEPTH
-        {
+        if chain_tip > block_height && chain_tip - block_height < SNAPSHOT_MIN_FINALITY_DEPTH {
             return Err(SnapshotError::BelowFinalityDepth {
                 height: block_height,
                 required: chain_tip.saturating_sub(SNAPSHOT_MIN_FINALITY_DEPTH - 1),
@@ -444,7 +442,9 @@ impl SnapshotDiff {
         let mut accounts_changed = Vec::new();
         for (addr, acc) in &target_accounts {
             match base_accounts.get(addr) {
-                Some(base_acc) if acc.balance != base_acc.balance || acc.nonce != base_acc.nonce => {
+                Some(base_acc)
+                    if acc.balance != base_acc.balance || acc.nonce != base_acc.nonce =>
+                {
                     accounts_changed.push((*acc).clone());
                 }
                 None => accounts_changed.push((*acc).clone()),
@@ -532,14 +532,12 @@ impl SnapshotDiff {
 
 /// Serialize a snapshot to bytes (bincode for compactness).
 pub fn serialize_snapshot(snapshot: &StateSnapshot) -> Result<Vec<u8>, SnapshotError> {
-    bincode::serialize(snapshot)
-        .map_err(|e| SnapshotError::SerializationError(e.to_string()))
+    bincode::serialize(snapshot).map_err(|e| SnapshotError::SerializationError(e.to_string()))
 }
 
 /// Deserialize a snapshot from bytes.
 pub fn deserialize_snapshot(bytes: &[u8]) -> Result<StateSnapshot, SnapshotError> {
-    bincode::deserialize(bytes)
-        .map_err(|e| SnapshotError::DeserializationError(e.to_string()))
+    bincode::deserialize(bytes).map_err(|e| SnapshotError::DeserializationError(e.to_string()))
 }
 
 // ─────────────────────── Tests ──────────────────────────────────────────
@@ -585,6 +583,7 @@ mod tests {
             grace_epoch: None,
             data: format!("object-{}", b).into_bytes(),
             decay_curve: None,
+            lad_mode: None,
         }
     }
 
@@ -744,7 +743,7 @@ mod tests {
         let mut db2 = InMemoryStateDB::new();
         db2.put_account(make_account(1, 1500)); // changed balance
         db2.put_account(make_account(3, 3000)); // new account
-        // account 2 removed
+                                                // account 2 removed
         db2.put_object(make_object(1, 100)); // unchanged
         db2.put_object(make_object(2, 200)); // new object
         let snap2 = SnapshotBuilder::create(&mut db2, 2, 0).unwrap();
@@ -755,7 +754,7 @@ mod tests {
         assert_eq!(diff.target_height, 2);
         assert_eq!(diff.accounts_changed.len(), 2); // account 1 (changed) + account 3 (new)
         assert_eq!(diff.accounts_removed.len(), 1); // account 2
-        assert_eq!(diff.objects_changed.len(), 1);  // object 2 (new)
+        assert_eq!(diff.objects_changed.len(), 1); // object 2 (new)
         assert_eq!(diff.objects_removed.len(), 0);
         assert!(!diff.is_empty());
     }
@@ -786,7 +785,7 @@ mod tests {
 
         let diff = SnapshotDiff::compute(&snap1, &snap2);
         assert_eq!(diff.objects_removed.len(), 1); // object 1 gone from active
-        assert_eq!(diff.ghosts_added.len(), 1);     // ghost 1 added
+        assert_eq!(diff.ghosts_added.len(), 1); // ghost 1 added
     }
 
     #[test]
@@ -899,8 +898,17 @@ mod tests {
 
         SnapshotApplier::apply(&mut target_db, &snapshot).unwrap();
 
-        assert!(target_db.get_object(&obj_id(99)).is_none(), "stale object must be cleared");
-        assert!(target_db.get_ghost(&obj_id(99)).is_none(), "stale ghost must be cleared");
-        assert!(target_db.get_account(&addr(99)).is_none(), "stale account must be deleted");
+        assert!(
+            target_db.get_object(&obj_id(99)).is_none(),
+            "stale object must be cleared"
+        );
+        assert!(
+            target_db.get_ghost(&obj_id(99)).is_none(),
+            "stale ghost must be cleared"
+        );
+        assert!(
+            target_db.get_account(&addr(99)).is_none(),
+            "stale account must be deleted"
+        );
     }
 }

@@ -26,7 +26,7 @@
 //! to the "paid rent" sink (which evaporates into chain maintenance).
 
 use evaporchain_energy_kernel::{EnergyAccumulator, RefreshPool};
-use evaporchain_refresh_market::{reserve_slot, pay_rent, RefreshMarket, NamespaceId};
+use evaporchain_refresh_market::{pay_rent, reserve_slot, NamespaceId, RefreshMarket};
 use tracing::warn;
 
 /// Default namespace capacity per namespace.

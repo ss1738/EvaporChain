@@ -115,8 +115,7 @@ pub async fn read_resource(ctx: &Context, params: &Value) -> Result<Value, Strin
     };
 
     let data = ctx.get_json(api_path).await?;
-    let text = serde_json::to_string_pretty(&data)
-        .unwrap_or_else(|_| data.to_string());
+    let text = serde_json::to_string_pretty(&data).unwrap_or_else(|_| data.to_string());
 
     Ok(json!({
         "contents": [{

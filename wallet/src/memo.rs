@@ -51,7 +51,12 @@ pub struct Memo {
 }
 
 impl Memo {
-    pub fn public(id: &str, sender: &str, recipient: &str, content: &str) -> Result<Self, MemoError> {
+    pub fn public(
+        id: &str,
+        sender: &str,
+        recipient: &str,
+        content: &str,
+    ) -> Result<Self, MemoError> {
         if content.len() > MAX_MEMO_BYTES {
             return Err(MemoError::TooLong(content.len(), MAX_MEMO_BYTES));
         }
@@ -68,7 +73,12 @@ impl Memo {
         })
     }
 
-    pub fn private(id: &str, sender: &str, recipient: &str, content: &str) -> Result<Self, MemoError> {
+    pub fn private(
+        id: &str,
+        sender: &str,
+        recipient: &str,
+        content: &str,
+    ) -> Result<Self, MemoError> {
         if content.len() > MAX_MEMO_BYTES {
             return Err(MemoError::TooLong(content.len(), MAX_MEMO_BYTES));
         }
@@ -150,7 +160,7 @@ impl Memo {
 fn encrypt_memo(plaintext: &str, key: &[u8; 32]) -> Result<String, MemoError> {
     use aes_gcm::{
         aead::{Aead, KeyInit, OsRng},
-        Aes256Gcm, AeadCore,
+        AeadCore, Aes256Gcm,
     };
     let cipher = Aes256Gcm::new(key.into());
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
@@ -159,7 +169,11 @@ fn encrypt_memo(plaintext: &str, key: &[u8; 32]) -> Result<String, MemoError> {
         .map_err(|e| MemoError::EncryptionFailed(e.to_string()))?;
 
     // Encode as nonce_hex:ciphertext_hex
-    Ok(format!("{}:{}", hex::encode(nonce), hex::encode(&ciphertext)))
+    Ok(format!(
+        "{}:{}",
+        hex::encode(nonce),
+        hex::encode(&ciphertext)
+    ))
 }
 
 fn decrypt_memo(encrypted: &str, key: &[u8; 32]) -> Result<String, MemoError> {
@@ -222,10 +236,7 @@ impl MemoStore {
 
     /// Get all memos for a sender
     pub fn by_sender(&self, sender: &str) -> Vec<&Memo> {
-        self.memos
-            .values()
-            .filter(|m| m.sender == sender)
-            .collect()
+        self.memos.values().filter(|m| m.sender == sender).collect()
     }
 
     /// Get all memos for a recipient
@@ -255,9 +266,21 @@ impl MemoStore {
 
     /// Count by visibility
     pub fn count_by_visibility(&self) -> (usize, usize, usize) {
-        let public = self.memos.values().filter(|m| m.visibility == MemoVisibility::Public).count();
-        let encrypted = self.memos.values().filter(|m| m.visibility == MemoVisibility::Encrypted).count();
-        let private = self.memos.values().filter(|m| m.visibility == MemoVisibility::Private).count();
+        let public = self
+            .memos
+            .values()
+            .filter(|m| m.visibility == MemoVisibility::Public)
+            .count();
+        let encrypted = self
+            .memos
+            .values()
+            .filter(|m| m.visibility == MemoVisibility::Encrypted)
+            .count();
+        let private = self
+            .memos
+            .values()
+            .filter(|m| m.visibility == MemoVisibility::Private)
+            .count();
         (public, encrypted, private)
     }
 
@@ -338,14 +361,16 @@ mod tests {
 
     #[test]
     fn test_memo_with_tx_hash() {
-        let m = Memo::public("m1", "a", "b", "test").unwrap()
+        let m = Memo::public("m1", "a", "b", "test")
+            .unwrap()
             .with_tx_hash("0xabc123");
         assert_eq!(m.tx_hash, Some("0xabc123".to_string()));
     }
 
     #[test]
     fn test_memo_with_tags() {
-        let m = Memo::public("m1", "a", "b", "test").unwrap()
+        let m = Memo::public("m1", "a", "b", "test")
+            .unwrap()
             .with_tags(vec!["payment".into(), "lunch".into()]);
         assert_eq!(m.tags.len(), 2);
     }
@@ -377,7 +402,11 @@ mod tests {
     #[test]
     fn test_store_by_tx_hash() {
         let mut store = MemoStore::new();
-        store.add(Memo::public("m1", "a", "b", "x").unwrap().with_tx_hash("0xabc"));
+        store.add(
+            Memo::public("m1", "a", "b", "x")
+                .unwrap()
+                .with_tx_hash("0xabc"),
+        );
         assert!(store.by_tx_hash("0xabc").is_some());
         assert!(store.by_tx_hash("0xdef").is_none());
     }
@@ -412,8 +441,11 @@ mod tests {
     #[test]
     fn test_store_by_tag() {
         let mut store = MemoStore::new();
-        store.add(Memo::public("m1", "a", "b", "x").unwrap()
-            .with_tags(vec!["rent".into()]));
+        store.add(
+            Memo::public("m1", "a", "b", "x")
+                .unwrap()
+                .with_tags(vec!["rent".into()]),
+        );
         store.add(Memo::public("m2", "a", "b", "y").unwrap());
         assert_eq!(store.by_tag("rent").len(), 1);
     }
@@ -433,9 +465,7 @@ mod tests {
 
     #[test]
     fn test_store_save_load() {
-        let path = std::env::temp_dir().join(format!(
-            "evap_memo_{}.json", std::process::id()
-        ));
+        let path = std::env::temp_dir().join(format!("evap_memo_{}.json", std::process::id()));
         let mut store = MemoStore::new();
         store.add(Memo::public("m1", "a", "b", "test").unwrap());
         store.save(&path).unwrap();

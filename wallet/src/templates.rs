@@ -105,13 +105,25 @@ impl Frequency {
             Frequency::Once => "once".to_string(),
             Frequency::Hourly(n) => format!("every {}h", n),
             Frequency::Daily(n) => {
-                if *n == 1 { "daily".to_string() } else { format!("every {}d", n) }
+                if *n == 1 {
+                    "daily".to_string()
+                } else {
+                    format!("every {}d", n)
+                }
             }
             Frequency::Weekly(n) => {
-                if *n == 1 { "weekly".to_string() } else { format!("every {}w", n) }
+                if *n == 1 {
+                    "weekly".to_string()
+                } else {
+                    format!("every {}w", n)
+                }
             }
             Frequency::Monthly(n) => {
-                if *n == 1 { "monthly".to_string() } else { format!("every {}mo", n) }
+                if *n == 1 {
+                    "monthly".to_string()
+                } else {
+                    format!("every {}mo", n)
+                }
             }
         }
     }
@@ -125,22 +137,30 @@ impl Frequency {
             "once" => Ok(Frequency::Once),
             "hourly" => {
                 let n = parts.get(1).and_then(|v| v.parse().ok()).unwrap_or(1);
-                if n == 0 { return Err(TemplateError::InvalidFrequency(s.to_string())); }
+                if n == 0 {
+                    return Err(TemplateError::InvalidFrequency(s.to_string()));
+                }
                 Ok(Frequency::Hourly(n))
             }
             "daily" => {
                 let n = parts.get(1).and_then(|v| v.parse().ok()).unwrap_or(1);
-                if n == 0 { return Err(TemplateError::InvalidFrequency(s.to_string())); }
+                if n == 0 {
+                    return Err(TemplateError::InvalidFrequency(s.to_string()));
+                }
                 Ok(Frequency::Daily(n))
             }
             "weekly" => {
                 let n = parts.get(1).and_then(|v| v.parse().ok()).unwrap_or(1);
-                if n == 0 { return Err(TemplateError::InvalidFrequency(s.to_string())); }
+                if n == 0 {
+                    return Err(TemplateError::InvalidFrequency(s.to_string()));
+                }
                 Ok(Frequency::Weekly(n))
             }
             "monthly" => {
                 let n = parts.get(1).and_then(|v| v.parse().ok()).unwrap_or(1);
-                if n == 0 { return Err(TemplateError::InvalidFrequency(s.to_string())); }
+                if n == 0 {
+                    return Err(TemplateError::InvalidFrequency(s.to_string()));
+                }
                 Ok(Frequency::Monthly(n))
             }
             _ => Err(TemplateError::InvalidFrequency(s.to_string())),
@@ -236,7 +256,9 @@ pub struct TemplateStore {
 
 impl TemplateStore {
     pub fn new() -> Self {
-        Self { templates: Vec::new() }
+        Self {
+            templates: Vec::new(),
+        }
     }
 
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, TemplateError> {
@@ -309,7 +331,14 @@ impl TemplateStore {
         let mut params = HashMap::new();
         params.insert("to".to_string(), to.to_string());
         params.insert("amount".to_string(), amount.to_string());
-        self.create(name, &format!("Send {} EVAP to {}", amount, to), TemplateType::Transfer, params, frequency, vec![])
+        self.create(
+            name,
+            &format!("Send {} EVAP to {}", amount, to),
+            TemplateType::Transfer,
+            params,
+            frequency,
+            vec![],
+        )
     }
 
     /// Create a refresh template (convenience).
@@ -323,7 +352,14 @@ impl TemplateStore {
         let mut params = HashMap::new();
         params.insert("object_id".to_string(), object_id.to_string());
         params.insert("energy".to_string(), energy.to_string());
-        self.create(name, &format!("Refresh {} with {} energy", object_id, energy), TemplateType::Refresh, params, frequency, vec![])
+        self.create(
+            name,
+            &format!("Refresh {} with {} energy", object_id, energy),
+            TemplateType::Refresh,
+            params,
+            frequency,
+            vec![],
+        )
     }
 
     /// Get a template by name.
@@ -338,7 +374,10 @@ impl TemplateStore {
 
     /// Remove a template by name.
     pub fn remove(&mut self, name: &str) -> Result<(), TemplateError> {
-        let idx = self.templates.iter().position(|t| t.name == name)
+        let idx = self
+            .templates
+            .iter()
+            .position(|t| t.name == name)
             .ok_or_else(|| TemplateError::NotFound(name.to_string()))?;
         self.templates.remove(idx);
         Ok(())
@@ -346,14 +385,18 @@ impl TemplateStore {
 
     /// Enable a template.
     pub fn enable(&mut self, name: &str) -> Result<(), TemplateError> {
-        let t = self.get_mut(name).ok_or_else(|| TemplateError::NotFound(name.to_string()))?;
+        let t = self
+            .get_mut(name)
+            .ok_or_else(|| TemplateError::NotFound(name.to_string()))?;
         t.enabled = true;
         Ok(())
     }
 
     /// Disable a template.
     pub fn disable(&mut self, name: &str) -> Result<(), TemplateError> {
-        let t = self.get_mut(name).ok_or_else(|| TemplateError::NotFound(name.to_string()))?;
+        let t = self
+            .get_mut(name)
+            .ok_or_else(|| TemplateError::NotFound(name.to_string()))?;
         t.enabled = false;
         Ok(())
     }
@@ -365,7 +408,8 @@ impl TemplateStore {
 
     /// List enabled recurring templates.
     pub fn recurring(&self) -> Vec<&Template> {
-        self.templates.iter()
+        self.templates
+            .iter()
             .filter(|t| t.enabled && t.frequency != Frequency::Once)
             .collect()
     }
@@ -377,7 +421,9 @@ impl TemplateStore {
 
     /// Record execution of a template by name.
     pub fn record_execution(&mut self, name: &str) -> Result<(), TemplateError> {
-        let t = self.get_mut(name).ok_or_else(|| TemplateError::NotFound(name.to_string()))?;
+        let t = self
+            .get_mut(name)
+            .ok_or_else(|| TemplateError::NotFound(name.to_string()))?;
         if !t.enabled {
             return Err(TemplateError::Disabled(name.to_string()));
         }
@@ -388,16 +434,24 @@ impl TemplateStore {
     /// Search templates by tag.
     pub fn by_tag(&self, tag: &str) -> Vec<&Template> {
         let tag_lower = tag.to_lowercase();
-        self.templates.iter()
-            .filter(|t| t.tags.iter().any(|tg| tg.to_lowercase().contains(&tag_lower)))
+        self.templates
+            .iter()
+            .filter(|t| {
+                t.tags
+                    .iter()
+                    .any(|tg| tg.to_lowercase().contains(&tag_lower))
+            })
             .collect()
     }
 
     /// Search templates by name substring.
     pub fn search(&self, query: &str) -> Vec<&Template> {
         let q = query.to_lowercase();
-        self.templates.iter()
-            .filter(|t| t.name.to_lowercase().contains(&q) || t.description.to_lowercase().contains(&q))
+        self.templates
+            .iter()
+            .filter(|t| {
+                t.name.to_lowercase().contains(&q) || t.description.to_lowercase().contains(&q)
+            })
             .collect()
     }
 
@@ -431,8 +485,12 @@ mod tests {
 
     fn make_store() -> TemplateStore {
         let mut store = TemplateStore::new();
-        store.create_transfer("rent", "0xlandlord", 5000, Frequency::Monthly(1)).unwrap();
-        store.create_refresh("keep-nft-alive", "obj_42", 1000, Frequency::Weekly(1)).unwrap();
+        store
+            .create_transfer("rent", "0xlandlord", 5000, Frequency::Monthly(1))
+            .unwrap();
+        store
+            .create_refresh("keep-nft-alive", "obj_42", 1000, Frequency::Weekly(1))
+            .unwrap();
         store
     }
 
@@ -517,7 +575,9 @@ mod tests {
     #[test]
     fn test_recurring_filter() {
         let mut store = make_store();
-        store.create_transfer("one-time", "0xfoo", 100, Frequency::Once).unwrap();
+        store
+            .create_transfer("one-time", "0xfoo", 100, Frequency::Once)
+            .unwrap();
         let recurring = store.recurring();
         assert_eq!(recurring.len(), 2); // rent + keep-nft-alive
     }
@@ -552,7 +612,16 @@ mod tests {
         let mut params = HashMap::new();
         params.insert("to".into(), "0x1".into());
         params.insert("amount".into(), "100".into());
-        store.create("tagged", "test", TemplateType::Transfer, params, Frequency::Once, vec!["bills".into(), "monthly".into()]).unwrap();
+        store
+            .create(
+                "tagged",
+                "test",
+                TemplateType::Transfer,
+                params,
+                Frequency::Once,
+                vec!["bills".into(), "monthly".into()],
+            )
+            .unwrap();
         let results = store.by_tag("bills");
         assert_eq!(results.len(), 1);
     }
@@ -563,8 +632,14 @@ mod tests {
         assert_eq!(Frequency::from_str("daily").unwrap(), Frequency::Daily(1));
         assert_eq!(Frequency::from_str("daily:3").unwrap(), Frequency::Daily(3));
         assert_eq!(Frequency::from_str("weekly").unwrap(), Frequency::Weekly(1));
-        assert_eq!(Frequency::from_str("monthly:2").unwrap(), Frequency::Monthly(2));
-        assert_eq!(Frequency::from_str("hourly:6").unwrap(), Frequency::Hourly(6));
+        assert_eq!(
+            Frequency::from_str("monthly:2").unwrap(),
+            Frequency::Monthly(2)
+        );
+        assert_eq!(
+            Frequency::from_str("hourly:6").unwrap(),
+            Frequency::Hourly(6)
+        );
     }
 
     #[test]
@@ -593,9 +668,15 @@ mod tests {
 
     #[test]
     fn test_template_type_from_str() {
-        assert_eq!(TemplateType::from_str("transfer"), Some(TemplateType::Transfer));
+        assert_eq!(
+            TemplateType::from_str("transfer"),
+            Some(TemplateType::Transfer)
+        );
         assert_eq!(TemplateType::from_str("send"), Some(TemplateType::Transfer));
-        assert_eq!(TemplateType::from_str("refresh"), Some(TemplateType::Refresh));
+        assert_eq!(
+            TemplateType::from_str("refresh"),
+            Some(TemplateType::Refresh)
+        );
         assert_eq!(TemplateType::from_str("stake"), Some(TemplateType::Stake));
         assert_eq!(TemplateType::from_str("unknown"), None);
     }
@@ -610,7 +691,9 @@ mod tests {
     #[test]
     fn test_once_template_not_recurring() {
         let mut store = TemplateStore::new();
-        store.create_transfer("one-off", "0xbar", 50, Frequency::Once).unwrap();
+        store
+            .create_transfer("one-off", "0xbar", 50, Frequency::Once)
+            .unwrap();
         assert!(store.recurring().is_empty());
     }
 
@@ -621,7 +704,16 @@ mod tests {
         params.insert("contract".into(), "0xdefi".into());
         params.insert("method".into(), "swap".into());
         params.insert("args".into(), "100,EVAP,USDC".into());
-        store.create("swap-evap", "Swap EVAP for USDC", TemplateType::ContractCall, params, Frequency::Once, vec!["defi".into()]).unwrap();
+        store
+            .create(
+                "swap-evap",
+                "Swap EVAP for USDC",
+                TemplateType::ContractCall,
+                params,
+                Frequency::Once,
+                vec!["defi".into()],
+            )
+            .unwrap();
         let t = store.get("swap-evap").unwrap();
         assert_eq!(t.tx_type, TemplateType::ContractCall);
         assert_eq!(t.param("method").unwrap(), "swap");

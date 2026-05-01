@@ -14,9 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use thiserror::Error;
 
-use evaporchain_energy_kernel::{
-    refresh_pool::RefreshPoolError, EnergyAccumulator, RefreshPool,
-};
+use evaporchain_energy_kernel::{refresh_pool::RefreshPoolError, EnergyAccumulator, RefreshPool};
 use evaporchain_types::Energy;
 
 use crate::namespace::{Namespace, NamespaceId};
@@ -117,7 +115,10 @@ pub fn pay_rent(
         .get(namespace_id)
         .ok_or_else(|| MarketError::UnknownNamespace(namespace_id.clone()))?;
     if epochs == 0 {
-        return Ok(ReservationOutcome { epochs_funded: 0, paid: 0 });
+        return Ok(ReservationOutcome {
+            epochs_funded: 0,
+            paid: 0,
+        });
     }
     let rate = rent_rate(ns.used, ns.capacity, market.base)?;
     let total = rate.saturating_mul(epochs);
@@ -187,7 +188,7 @@ mod tests {
     fn reserve_with_insufficient_pool_credit_rejected() {
         let mut m = RefreshMarket::new(1_000_000);
         m.register(ns_id(1), 10); // base/cap² ≈ 10_000 per epoch (used=0 → 10_000/100=100? recompute)
-        // base=1_000_000, cap=10, used=0 → rate = 1_000_000 × 1 / 100 = 10_000.
+                                  // base=1_000_000, cap=10, used=0 → rate = 1_000_000 × 1 / 100 = 10_000.
         let mut pool = fresh_pool_with(ns_id(1), 5_000); // < rate
         let mut acc = EnergyAccumulator::default();
         let err = reserve_slot(&mut m, &mut pool, &mut acc, &ns_id(1), 1).unwrap_err();

@@ -239,14 +239,12 @@ impl SyncableAddressBook {
                         match resolution {
                             ConflictResolution::KeepLocal => {} // Do nothing
                             ConflictResolution::KeepRemote => {
-                                self.contacts
-                                    .insert(addr.clone(), remote_contact.clone());
+                                self.contacts.insert(addr.clone(), remote_contact.clone());
                                 result.updated += 1;
                             }
                             ConflictResolution::KeepNewer => {
                                 if remote_contact.updated_at > local_contact.updated_at {
-                                    self.contacts
-                                        .insert(addr.clone(), remote_contact.clone());
+                                    self.contacts.insert(addr.clone(), remote_contact.clone());
                                     result.updated += 1;
                                 }
                             }
@@ -506,9 +504,7 @@ mod tests {
 
     #[test]
     fn test_save_load() {
-        let path = std::env::temp_dir().join(format!(
-            "evap_sync_{}.json", std::process::id()
-        ));
+        let path = std::env::temp_dir().join(format!("evap_sync_{}.json", std::process::id()));
         let mut book = SyncableAddressBook::new("dev1");
         book.add("evap1a", "Alice").unwrap();
         book.save(&path).unwrap();

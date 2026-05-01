@@ -123,11 +123,7 @@ impl CommandPalette {
             .ok_or_else(|| CommandPaletteError::CommandNotFound(id.to_string()))
     }
 
-    pub fn add_alias(
-        &mut self,
-        alias: &str,
-        command_id: &str,
-    ) -> Result<(), CommandPaletteError> {
+    pub fn add_alias(&mut self, alias: &str, command_id: &str) -> Result<(), CommandPaletteError> {
         if !self.commands.contains_key(command_id) {
             return Err(CommandPaletteError::CommandNotFound(command_id.to_string()));
         }
@@ -204,7 +200,11 @@ impl CommandPalette {
             }
         }
 
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results
     }
 
@@ -292,7 +292,13 @@ impl CommandPalette {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-fn make_command(id: &str, name: &str, desc: &str, cat: CommandCategory, tags: &[&str]) -> PaletteCommand {
+fn make_command(
+    id: &str,
+    name: &str,
+    desc: &str,
+    cat: CommandCategory,
+    tags: &[&str],
+) -> PaletteCommand {
     PaletteCommand {
         id: id.to_string(),
         name: name.to_string(),
@@ -437,7 +443,13 @@ mod tests {
     #[test]
     fn test_fuzzy_search_exact_name() {
         let mut p = CommandPalette::new();
-        let cmd = make_command("send", "send", "Send tokens", CommandCategory::Transaction, &["transfer"]);
+        let cmd = make_command(
+            "send",
+            "send",
+            "Send tokens",
+            CommandCategory::Transaction,
+            &["transfer"],
+        );
         p.register_command(cmd).unwrap();
         let results = p.fuzzy_search("send");
         assert_eq!(results.len(), 1);
@@ -447,7 +459,13 @@ mod tests {
     #[test]
     fn test_fuzzy_search_partial_name() {
         let mut p = CommandPalette::new();
-        let cmd = make_command("send_tokens", "send_tokens", "Broadcast", CommandCategory::Transaction, &[]);
+        let cmd = make_command(
+            "send_tokens",
+            "send_tokens",
+            "Broadcast",
+            CommandCategory::Transaction,
+            &[],
+        );
         p.register_command(cmd).unwrap();
         let results = p.fuzzy_search("send");
         assert_eq!(results.len(), 1);
@@ -457,7 +475,13 @@ mod tests {
     #[test]
     fn test_fuzzy_search_tag_match() {
         let mut p = CommandPalette::new();
-        let cmd = make_command("x", "unrelated_name", "Unrelated desc", CommandCategory::Utility, &["wallet"]);
+        let cmd = make_command(
+            "x",
+            "unrelated_name",
+            "Unrelated desc",
+            CommandCategory::Utility,
+            &["wallet"],
+        );
         p.register_command(cmd).unwrap();
         let results = p.fuzzy_search("wallet");
         assert_eq!(results.len(), 1);
@@ -467,7 +491,13 @@ mod tests {
     #[test]
     fn test_fuzzy_search_description_match() {
         let mut p = CommandPalette::new();
-        let cmd = make_command("y", "xyz", "Manage your energy credits", CommandCategory::Energy, &[]);
+        let cmd = make_command(
+            "y",
+            "xyz",
+            "Manage your energy credits",
+            CommandCategory::Energy,
+            &[],
+        );
         p.register_command(cmd).unwrap();
         let results = p.fuzzy_search("energy");
         assert_eq!(results.len(), 1);
@@ -485,8 +515,10 @@ mod tests {
     #[test]
     fn test_commands_by_category() {
         let mut p = CommandPalette::new();
-        p.register_command(make_command("a", "a", "a", CommandCategory::Staking, &[])).unwrap();
-        p.register_command(make_command("b", "b", "b", CommandCategory::Utility, &[])).unwrap();
+        p.register_command(make_command("a", "a", "a", CommandCategory::Staking, &[]))
+            .unwrap();
+        p.register_command(make_command("b", "b", "b", CommandCategory::Utility, &[]))
+            .unwrap();
         let staking = p.commands_by_category(&CommandCategory::Staking);
         assert_eq!(staking.len(), 1);
         assert_eq!(staking[0].id, "a");
@@ -531,8 +563,10 @@ mod tests {
     #[test]
     fn test_stats() {
         let mut p = CommandPalette::new();
-        p.register_command(make_command("s1", "s1", "d", CommandCategory::Account, &[])).unwrap();
-        p.register_command(make_command("s2", "s2", "d", CommandCategory::Account, &[])).unwrap();
+        p.register_command(make_command("s1", "s1", "d", CommandCategory::Account, &[]))
+            .unwrap();
+        p.register_command(make_command("s2", "s2", "d", CommandCategory::Account, &[]))
+            .unwrap();
         p.add_alias("a1", "s1").unwrap();
         p.record_use("s1").unwrap();
         p.record_use("s1").unwrap();

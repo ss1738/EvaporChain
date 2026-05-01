@@ -29,12 +29,7 @@ pub struct Block {
 }
 
 impl Block {
-    pub fn new(
-        id: BlockId,
-        parents: Vec<BlockId>,
-        energy: Energy,
-        observed_epoch: u64,
-    ) -> Self {
+    pub fn new(id: BlockId, parents: Vec<BlockId>, energy: Energy, observed_epoch: u64) -> Self {
         Self {
             id,
             parents,

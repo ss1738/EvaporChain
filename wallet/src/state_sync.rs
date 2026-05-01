@@ -168,11 +168,7 @@ impl StateSyncManager {
     }
 
     /// Update the remote block height for an account, recomputing sync gap and status.
-    pub fn update_remote_block(
-        &mut self,
-        account: &str,
-        block: u64,
-    ) -> Result<(), StateSyncError> {
+    pub fn update_remote_block(&mut self, account: &str, block: u64) -> Result<(), StateSyncError> {
         let state = self
             .accounts
             .get_mut(account)
@@ -577,7 +573,7 @@ mod tests {
         mgr.track_account("a3", SyncMode::Full).unwrap();
         mgr.update_remote_block("a1", 100).unwrap(); // Behind
         mgr.mark_error("a2", "timeout").unwrap(); // Error
-        // a3 stays Synced
+                                                  // a3 stays Synced
         let need = mgr.needs_sync();
         assert_eq!(need.len(), 2);
     }
@@ -601,7 +597,8 @@ mod tests {
             resolution: None,
         };
         mgr.record_conflict(conflict);
-        mgr.resolve_conflict("c1", ConflictResolution::Latest).unwrap();
+        mgr.resolve_conflict("c1", ConflictResolution::Latest)
+            .unwrap();
         mgr.create_checkpoint(50, "0x1", "0x2", 2);
 
         let s = mgr.stats();

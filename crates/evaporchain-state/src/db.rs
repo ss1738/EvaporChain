@@ -1,8 +1,11 @@
 use evaporchain_crypto::hash::blake3_hash;
 use evaporchain_crypto::{EnergyVerkleTrie, TrieHealth};
 
+use evaporchain_types::{
+    Account, AccountAddress, DelegationRecord, GhostRecord, GovernanceProposal, ObjectId,
+    StakeRecord, StateObject,
+};
 use std::collections::BTreeMap;
-use evaporchain_types::{Account, AccountAddress, DelegationRecord, GhostRecord, GovernanceProposal, ObjectId, StakeRecord, StateObject};
 use std::collections::HashMap;
 
 // ─── Trie key/value derivation (shared by all StateDB backends) ─────────
@@ -232,10 +235,7 @@ pub trait StateDB: Send + Sync {
 
     /// All delegations from a given delegator (used by wallets and
     /// account dashboards).
-    fn delegations_for_delegator(
-        &self,
-        delegator: &AccountAddress,
-    ) -> Vec<&DelegationRecord>;
+    fn delegations_for_delegator(&self, delegator: &AccountAddress) -> Vec<&DelegationRecord>;
 
     /// Return every delegation record. Used for state snapshots and
     /// effective-stake roll-up across the full validator set.
@@ -273,7 +273,9 @@ pub trait StateDB: Send + Sync {
     /// Last epoch at which storage rent was charged. Used by executors to
     /// gate `collect_storage_rent` so it fires exactly once per epoch
     /// (closes punch-list #6).
-    fn get_last_rent_epoch(&self) -> u64 { 0 }
+    fn get_last_rent_epoch(&self) -> u64 {
+        0
+    }
 
     /// Persist the most recent epoch at which storage rent was charged.
     /// Default no-op so back-end implementations that don't carry the
@@ -300,10 +302,7 @@ pub trait StateDB: Send + Sync {
     // votes. Per INVENTION_STACK.md Amendment 2 §A2.5. Default no-ops so
     // back-ends that haven't migrated still compile.
 
-    fn get_sentinel_param(
-        &self,
-        _id: u32,
-    ) -> Option<evaporchain_sentinel::BoundedParameter> {
+    fn get_sentinel_param(&self, _id: u32) -> Option<evaporchain_sentinel::BoundedParameter> {
         None
     }
     fn put_sentinel_param(&mut self, _param: evaporchain_sentinel::BoundedParameter) {}
@@ -315,12 +314,7 @@ pub trait StateDB: Send + Sync {
     }
     /// Replace the entire vote slate for `parameter_id`. Caller is
     /// responsible for one-vote-per-validator semantics.
-    fn put_sentinel_votes(
-        &mut self,
-        _parameter_id: u32,
-        _votes: Vec<evaporchain_sentinel::Vote>,
-    ) {
-    }
+    fn put_sentinel_votes(&mut self, _parameter_id: u32, _votes: Vec<evaporchain_sentinel::Vote>) {}
 }
 
 /// In-memory state database for development and testing.
@@ -422,7 +416,8 @@ impl InMemoryStateDB {
         for addr in dirty_accts {
             let key = trie_key_for_account(&addr);
             if let Some(acc) = self.accounts.get(&addr) {
-                self.trie.insert(key, trie_value_for_account(acc), u64::MAX, u64::MAX, 0);
+                self.trie
+                    .insert(key, trie_value_for_account(acc), u64::MAX, u64::MAX, 0);
             }
         }
     }
@@ -449,7 +444,8 @@ impl StateDB for InMemoryStateDB {
     fn put_object(&mut self, obj: StateObject) {
         let key = trie_key_for_object(&obj.id);
         let value = trie_value_for_object(&obj);
-        self.trie.insert(key, value, obj.energy, obj.half_life, obj.last_refreshed);
+        self.trie
+            .insert(key, value, obj.energy, obj.half_life, obj.last_refreshed);
         self.objects.insert(obj.id, obj);
     }
 
@@ -629,10 +625,7 @@ impl StateDB for InMemoryStateDB {
             .collect()
     }
 
-    fn delegations_for_delegator(
-        &self,
-        delegator: &AccountAddress,
-    ) -> Vec<&DelegationRecord> {
+    fn delegations_for_delegator(&self, delegator: &AccountAddress) -> Vec<&DelegationRecord> {
         self.delegations
             .values()
             .filter(|d| &d.delegator == delegator)
@@ -762,11 +755,15 @@ impl StateDB for InMemoryStateDB {
     }
 
     fn get_account_at_height(&self, address: &AccountAddress, height: u64) -> Option<Account> {
-        self.snapshots.get(&height).and_then(|s| s.accounts.get(address).cloned())
+        self.snapshots
+            .get(&height)
+            .and_then(|s| s.accounts.get(address).cloned())
     }
 
     fn get_object_at_height(&self, id: &ObjectId, height: u64) -> Option<StateObject> {
-        self.snapshots.get(&height).and_then(|s| s.objects.get(id).cloned())
+        self.snapshots
+            .get(&height)
+            .and_then(|s| s.objects.get(id).cloned())
     }
 
     fn earliest_snapshot_height(&self) -> Option<u64> {
@@ -783,10 +780,7 @@ impl StateDB for InMemoryStateDB {
 
     // ─── Sentinel autonomic governance ──────────────────────────────────
 
-    fn get_sentinel_param(
-        &self,
-        id: u32,
-    ) -> Option<evaporchain_sentinel::BoundedParameter> {
+    fn get_sentinel_param(&self, id: u32) -> Option<evaporchain_sentinel::BoundedParameter> {
         self.sentinel_params.get(&id).copied()
     }
 
@@ -803,11 +797,7 @@ impl StateDB for InMemoryStateDB {
         self.sentinel_votes.get(&id).cloned().unwrap_or_default()
     }
 
-    fn put_sentinel_votes(
-        &mut self,
-        parameter_id: u32,
-        votes: Vec<evaporchain_sentinel::Vote>,
-    ) {
+    fn put_sentinel_votes(&mut self, parameter_id: u32, votes: Vec<evaporchain_sentinel::Vote>) {
         self.sentinel_votes.insert(parameter_id, votes);
     }
 }
@@ -842,6 +832,7 @@ mod tests {
             grace_epoch: None,
             data: vec![],
             decay_curve: None,
+            lad_mode: None,
         }
     }
 
@@ -954,8 +945,7 @@ mod tests {
         db.put_object(obj);
         db.put_object(make_object(2, 1000));
 
-        let compressed = db.compress_cold_subtrees();
-        assert!(compressed >= 0);
+        let _compressed = db.compress_cold_subtrees();
     }
 
     #[test]

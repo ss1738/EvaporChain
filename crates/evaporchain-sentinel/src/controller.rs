@@ -124,8 +124,8 @@ mod tests {
     #[test]
     fn recent_vote_outweighs_old_one() {
         let votes = vec![
-            Vote::new(1, 100, 0),     // ancient — weight near 0
-            Vote::new(2, 0,   1000),  // recent — full weight
+            Vote::new(1, 100, 0),  // ancient — weight near 0
+            Vote::new(2, 0, 1000), // recent — full weight
         ];
         // Recent vote dominates → average ≈ 0; current=50, max_step=5
         // → param moves down to 45.

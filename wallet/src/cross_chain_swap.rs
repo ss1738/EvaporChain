@@ -182,12 +182,18 @@ impl CrossChainManager {
 
         // Generate hashlock from random-ish data using blake3.
         let now = chrono::Utc::now();
-        let preimage = format!("{}-{}-{}-{}", route_id, source_amount, now.timestamp_nanos_opt().unwrap_or(0), expected_output);
+        let preimage = format!(
+            "{}-{}-{}-{}",
+            route_id,
+            source_amount,
+            now.timestamp_nanos_opt().unwrap_or(0),
+            expected_output
+        );
         let hashlock = blake3::hash(preimage.as_bytes()).to_hex().to_string();
 
         let swap_id = format!("swap-{}", &hashlock[..16]);
-        let timelock_expiry = (now + chrono::Duration::seconds(route.estimated_time_secs as i64 * 3))
-            .to_rfc3339();
+        let timelock_expiry =
+            (now + chrono::Duration::seconds(route.estimated_time_secs as i64 * 3)).to_rfc3339();
 
         let swap = CrossChainSwap {
             id: swap_id.clone(),
@@ -240,7 +246,10 @@ impl CrossChainManager {
         swap.actual_output = Some(actual_output);
         swap.dest_tx = Some(dest_tx.to_string());
         swap.completed_at = Some(chrono::Utc::now().to_rfc3339());
-        swap.slippage_bps = Some(Self::calculate_slippage(swap.expected_output, actual_output));
+        swap.slippage_bps = Some(Self::calculate_slippage(
+            swap.expected_output,
+            actual_output,
+        ));
         Ok(())
     }
 
@@ -430,7 +439,10 @@ mod tests {
         mgr.add_route(sample_route("r1", 30)).unwrap();
         let err = mgr.add_route(sample_route("r1", 50));
         assert!(err.is_err());
-        assert!(matches!(err.unwrap_err(), CrossChainError::DuplicateRoute(_)));
+        assert!(matches!(
+            err.unwrap_err(),
+            CrossChainError::DuplicateRoute(_)
+        ));
     }
 
     #[test]
@@ -452,7 +464,8 @@ mod tests {
     fn test_find_routes() {
         let mut mgr = CrossChainManager::new();
         mgr.add_route(sample_route("r1", 30)).unwrap();
-        mgr.add_route(sample_route_chains("r2", ChainId::Solana, ChainId::Bitcoin)).unwrap();
+        mgr.add_route(sample_route_chains("r2", ChainId::Solana, ChainId::Bitcoin))
+            .unwrap();
         mgr.add_route(sample_route("r3", 50)).unwrap();
 
         let found = mgr.find_routes(&ChainId::EvaporChain, &ChainId::Ethereum);
@@ -472,14 +485,18 @@ mod tests {
         mgr.add_route(sample_route("r_cheap", 10)).unwrap();
         mgr.add_route(sample_route("r_mid", 50)).unwrap();
 
-        let best = mgr.best_route(&ChainId::EvaporChain, &ChainId::Ethereum).unwrap();
+        let best = mgr
+            .best_route(&ChainId::EvaporChain, &ChainId::Ethereum)
+            .unwrap();
         assert_eq!(best.id, "r_cheap");
     }
 
     #[test]
     fn test_best_route_no_match() {
         let mgr = CrossChainManager::new();
-        assert!(mgr.best_route(&ChainId::Bitcoin, &ChainId::Solana).is_none());
+        assert!(mgr
+            .best_route(&ChainId::Bitcoin, &ChainId::Solana)
+            .is_none());
     }
 
     #[test]
@@ -657,7 +674,10 @@ mod tests {
         assert_eq!(loaded.routes.len(), 1);
         assert_eq!(loaded.swaps.len(), 1);
         assert!(loaded.get_route("r1").is_some());
-        assert_eq!(loaded.get_swap(&swap_id).unwrap().status, SwapStatus::Locked);
+        assert_eq!(
+            loaded.get_swap(&swap_id).unwrap().status,
+            SwapStatus::Locked
+        );
 
         let _ = std::fs::remove_file(&path);
     }

@@ -89,7 +89,12 @@ mod tests {
     fn pool_above_floor_resets_count() {
         let mut m = MortisMonitor::new(cond(1000, 10));
         let o = m.tick(1, 500);
-        assert_eq!(o, TickOutcome::Counting { consecutive_below: 1 });
+        assert_eq!(
+            o,
+            TickOutcome::Counting {
+                consecutive_below: 1
+            }
+        );
         let o = m.tick(2, 2000);
         assert_eq!(o, TickOutcome::Healthy);
         assert_eq!(m.consecutive_below, 0);
@@ -128,7 +133,7 @@ mod tests {
         let mut m = MortisMonitor::new(cond(1000, 2));
         m.tick(10, 500);
         let o = m.tick(5, 500); // earlier — ignored
-        // consecutive_below stays at 1, not 2
+                                // consecutive_below stays at 1, not 2
         assert_eq!(m.consecutive_below, 1);
         assert_eq!(o, TickOutcome::Healthy);
     }

@@ -33,7 +33,11 @@ pub enum ProofError {
     #[error("proof level count {got} does not match expected depth {expected}")]
     WrongDepth { got: u32, expected: u32 },
     #[error("proof level {level} sibling count {got} != P-1 ({expected})")]
-    WrongSiblingCount { level: u32, got: usize, expected: usize },
+    WrongSiblingCount {
+        level: u32,
+        got: usize,
+        expected: usize,
+    },
     #[error("digit at level {level} ({got}) does not match key's digit ({expected})")]
     DigitMismatch { level: u32, got: u8, expected: u8 },
     #[error("recomputed root {got:?} != expected root {expected:?}")]
@@ -128,6 +132,7 @@ pub fn verify_inclusion<const P: usize>(
         // digit and the siblings (in digit order) elsewhere.
         let mut children = [[0u8; 32]; 64];
         let mut sib_iter = lvl.siblings.iter();
+        #[allow(clippy::needless_range_loop)]
         for d in 0..P {
             if d == lvl.digit as usize {
                 children[d] = acc;

@@ -8,6 +8,7 @@
 //! At each layer ℓ, account i's site tensor is recomputed from:
 //!   - its leaf encoding `encode_energy(e)`, and
 //!   - its sibling tensor at layer 0 (the paired account).
+//!
 //! The proof stores the sibling tensors at each layer, the layer tensors
 //! (needed to recompute the disentangler output), and the root hash to
 //! check against the commitment.
@@ -17,7 +18,7 @@
 
 use crate::commitment::MeraCommitment;
 use crate::layer::MeraLayer;
-use crate::tensor::{encode_energy, Tensor, CHI};
+use crate::tensor::encode_energy;
 use crate::tree::MeraTree;
 use thiserror::Error;
 
@@ -66,16 +67,16 @@ impl MeraProof {
         let mut path = Vec::with_capacity(depth - 1);
 
         let mut pos = account_index;
-        for ℓ in 0..(depth - 1) {
-            let layer_sites = &tree.layers[ℓ];
-            let is_left = pos % 2 == 0;
+        for layer_idx in 0..(depth - 1) {
+            let layer_sites = &tree.layers[layer_idx];
+            let is_left = pos.is_multiple_of(2);
             let sibling_pos = if is_left { pos + 1 } else { pos - 1 };
             let sibling = layer_sites
                 .get(sibling_pos)
                 .cloned()
                 .unwrap_or_else(|| layer_sites[pos].clone()); // out-of-bounds: self as sibling
             path.push(ProofNode {
-                layer: ℓ,
+                layer: layer_idx,
                 position: pos,
                 sibling: sibling.data,
                 is_left,
@@ -132,7 +133,10 @@ impl MeraProof {
 
         // `current` is now the recomputed root tensor.
         let recomputed_root = *blake3::hash(
-            &current.iter().flat_map(|f| f.to_le_bytes()).collect::<Vec<u8>>(),
+            &current
+                .iter()
+                .flat_map(|f| f.to_le_bytes())
+                .collect::<Vec<u8>>(),
         )
         .as_bytes();
 
@@ -206,9 +210,7 @@ mod tests {
     fn proof_lambda_mismatch_fails() {
         let energies = vec![1_000u64, 2_000, 3_000, 4_000];
         let tree = MeraTree::build(&energies, 4096, 100);
-        let c_different_lambda = MeraCommitment::from_tree(
-            &MeraTree::build(&energies, 2048, 100)
-        );
+        let c_different_lambda = MeraCommitment::from_tree(&MeraTree::build(&energies, 2048, 100));
         let proof = MeraProof::generate(&tree, 0);
         assert!(
             proof.verify(0, 1_000, &c_different_lambda).is_err(),
@@ -218,13 +220,16 @@ mod tests {
 
     #[test]
     fn proof_path_length_proportional_to_depth() {
-        let e8  = vec![1u64; 8];
+        let e8 = vec![1u64; 8];
         let e16 = vec![1u64; 16];
-        let (t8,  _) = setup(&e8);
+        let (t8, _) = setup(&e8);
         let (t16, _) = setup(&e16);
-        let p8  = MeraProof::generate(&t8,  0);
+        let p8 = MeraProof::generate(&t8, 0);
         let p16 = MeraProof::generate(&t16, 0);
-        assert_eq!(p16.path.len(), p8.path.len() + 1,
-            "each doubling of accounts adds one proof layer");
+        assert_eq!(
+            p16.path.len(),
+            p8.path.len() + 1,
+            "each doubling of accounts adds one proof layer"
+        );
     }
 }

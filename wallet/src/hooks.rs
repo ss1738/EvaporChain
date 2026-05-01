@@ -78,7 +78,10 @@ pub enum HookAction {
     /// Execute a shell command. Environment variables are set with tx details.
     Shell { command: String },
     /// Append a line to a log file.
-    Log { file: String, format: Option<String> },
+    Log {
+        file: String,
+        format: Option<String>,
+    },
     /// POST a JSON payload to a URL.
     Webhook { url: String },
 }
@@ -290,18 +293,14 @@ impl HookRegistry {
                                     hook.name, e
                                 )));
                             }
-                            log_messages
-                                .push(format!("[{}] ERROR: {}", hook.name, e));
+                            log_messages.push(format!("[{}] ERROR: {}", hook.name, e));
                         }
                     }
                 }
                 HookAction::Log { file, format } => {
                     let line = format_log_line(ctx, format.as_deref());
                     if let Err(e) = append_to_log(file, &line) {
-                        log_messages.push(format!(
-                            "[{}] log error: {}",
-                            hook.name, e
-                        ));
+                        log_messages.push(format!("[{}] log error: {}", hook.name, e));
                     } else {
                         log_messages.push(format!("[{}] logged to {}", hook.name, file));
                     }
@@ -309,10 +308,7 @@ impl HookRegistry {
                 HookAction::Webhook { url } => {
                     // Webhook execution is deferred (would need async)
                     // For now, just record intent
-                    log_messages.push(format!(
-                        "[{}] webhook queued: {}",
-                        hook.name, url
-                    ));
+                    log_messages.push(format!("[{}] webhook queued: {}", hook.name, url));
                 }
             }
         }
@@ -368,7 +364,9 @@ fn execute_shell(command: &str, ctx: &HookContext) -> Result<String, String> {
         cmd.env("EVAP_ERROR", err);
     }
 
-    let output = cmd.output().map_err(|e| format!("failed to execute: {}", e))?;
+    let output = cmd
+        .output()
+        .map_err(|e| format!("failed to execute: {}", e))?;
 
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -383,21 +381,18 @@ fn execute_shell(command: &str, ctx: &HookContext) -> Result<String, String> {
 
 fn format_log_line(ctx: &HookContext, format: Option<&str>) -> String {
     match format {
-        Some(fmt) => {
-            fmt.replace("{event}", &ctx.event)
-                .replace("{tx_type}", &ctx.tx_type)
-                .replace("{from}", ctx.from.as_deref().unwrap_or("-"))
-                .replace("{to}", ctx.to.as_deref().unwrap_or("-"))
-                .replace(
-                    "{amount}",
-                    &ctx.amount.map(|a| a.to_string()).unwrap_or_default(),
-                )
-                .replace("{tx_hash}", ctx.tx_hash.as_deref().unwrap_or("-"))
-                .replace("{timestamp}", &ctx.timestamp)
-        }
-        None => {
-            serde_json::to_string(ctx).unwrap_or_else(|_| "{}".to_string())
-        }
+        Some(fmt) => fmt
+            .replace("{event}", &ctx.event)
+            .replace("{tx_type}", &ctx.tx_type)
+            .replace("{from}", ctx.from.as_deref().unwrap_or("-"))
+            .replace("{to}", ctx.to.as_deref().unwrap_or("-"))
+            .replace(
+                "{amount}",
+                &ctx.amount.map(|a| a.to_string()).unwrap_or_default(),
+            )
+            .replace("{tx_hash}", ctx.tx_hash.as_deref().unwrap_or("-"))
+            .replace("{timestamp}", &ctx.timestamp),
+        None => serde_json::to_string(ctx).unwrap_or_else(|_| "{}".to_string()),
     }
 }
 
@@ -535,8 +530,8 @@ mod tests {
 
     #[test]
     fn test_hook_context_with_tx_hash() {
-        let ctx = HookContext::transfer(HookEvent::PostSend, "0xa", "0xb", 100)
-            .with_tx_hash("0xhash123");
+        let ctx =
+            HookContext::transfer(HookEvent::PostSend, "0xa", "0xb", 100).with_tx_hash("0xhash123");
         assert_eq!(ctx.tx_hash, Some("0xhash123".to_string()));
     }
 

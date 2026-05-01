@@ -185,7 +185,7 @@ fn nonce_tracking() {
 
     // Manually seed cache (simulates refresh_balance)
     let addr = mgr.active_address().unwrap();
-    let addr_hex = format_address(&addr);
+    let _addr_hex = format_address(&addr);
     // We can't call refresh_balance without a running node, but we can test increment
     // by directly inserting into cache via the keystore
 }
@@ -215,7 +215,9 @@ fn import_account() {
     let pk = kp.public_key_bytes();
     let sk = kp.secret_key();
 
-    let addr = mgr.import_account("imported", "import-pass", &pk, sk).unwrap();
+    let addr = mgr
+        .import_account("imported", "import-pass", &pk, sk)
+        .unwrap();
     assert_eq!(mgr.account_count(), 1);
     assert_eq!(mgr.active_name(), Some("imported")); // auto-active
 
@@ -262,5 +264,9 @@ fn end_to_end_account_workflow() {
     // Alice still works
     let signer = mgr.get_active_signer("pass-a").unwrap();
     let sig = signer.sign_bytes(b"final check");
-    assert!(MlDsaVerifier::verify(b"final check", &sig, &signer.public_key_bytes()));
+    assert!(MlDsaVerifier::verify(
+        b"final check",
+        &sig,
+        &signer.public_key_bytes()
+    ));
 }

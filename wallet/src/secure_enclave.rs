@@ -255,11 +255,7 @@ impl SecureEnclave {
 
     // -- tamper detection ---------------------------------------------------
 
-    pub fn report_tamper(
-        &mut self,
-        description: &str,
-        key_id: Option<&str>,
-    ) -> TamperEvent {
+    pub fn report_tamper(&mut self, description: &str, key_id: Option<&str>) -> TamperEvent {
         let mut auto_wiped = false;
 
         if let Some(kid) = key_id {
@@ -389,7 +385,11 @@ mod tests {
     use std::process;
 
     fn test_path(name: &str) -> std::path::PathBuf {
-        temp_dir().join(format!("secure_enclave_test_{}_{}.json", process::id(), name))
+        temp_dir().join(format!(
+            "secure_enclave_test_{}_{}.json",
+            process::id(),
+            name
+        ))
     }
 
     #[test]
@@ -559,7 +559,8 @@ mod tests {
     fn test_keys_by_purpose() {
         let mut enc = SecureEnclave::new();
         enc.store_key("k1", "a", KeyPurpose::Signing, None).unwrap();
-        enc.store_key("k2", "b", KeyPurpose::Encryption, None).unwrap();
+        enc.store_key("k2", "b", KeyPurpose::Encryption, None)
+            .unwrap();
         enc.store_key("k3", "c", KeyPurpose::Signing, None).unwrap();
         let signing = enc.keys_by_purpose(&KeyPurpose::Signing);
         assert_eq!(signing.len(), 2);
@@ -569,7 +570,8 @@ mod tests {
     fn test_active_keys() {
         let mut enc = SecureEnclave::new();
         enc.store_key("k1", "a", KeyPurpose::Signing, None).unwrap();
-        enc.store_key("k2", "b", KeyPurpose::Encryption, None).unwrap();
+        enc.store_key("k2", "b", KeyPurpose::Encryption, None)
+            .unwrap();
         enc.lock_key("k2").unwrap();
         assert_eq!(enc.active_keys().len(), 1);
     }
@@ -578,7 +580,8 @@ mod tests {
     fn test_expired_keys_query() {
         let mut enc = SecureEnclave::new();
         enc.store_key("k1", "a", KeyPurpose::Signing, None).unwrap();
-        enc.store_key("k2", "b", KeyPurpose::Encryption, None).unwrap();
+        enc.store_key("k2", "b", KeyPurpose::Encryption, None)
+            .unwrap();
         enc.expire_key("k1").unwrap();
         let expired = enc.expired_keys();
         assert_eq!(expired.len(), 1);
@@ -589,8 +592,10 @@ mod tests {
     fn test_stats() {
         let mut enc = SecureEnclave::new();
         enc.store_key("k1", "a", KeyPurpose::Signing, None).unwrap();
-        enc.store_key("k2", "b", KeyPurpose::Encryption, None).unwrap();
-        enc.store_key("k3", "c", KeyPurpose::Authentication, None).unwrap();
+        enc.store_key("k2", "b", KeyPurpose::Encryption, None)
+            .unwrap();
+        enc.store_key("k3", "c", KeyPurpose::Authentication, None)
+            .unwrap();
         enc.lock_key("k2").unwrap();
         enc.expire_key("k3").unwrap();
         enc.access_key("k1").unwrap();

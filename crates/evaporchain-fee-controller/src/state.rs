@@ -25,7 +25,9 @@ impl FeeState {
 
     /// "At equilibrium" initial state — energy at target.
     pub const fn at_equilibrium(target_energy: Energy) -> Self {
-        Self { energy: target_energy }
+        Self {
+            energy: target_energy,
+        }
     }
 }
 

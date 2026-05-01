@@ -19,7 +19,11 @@ pub fn format_address(addr: &AccountAddress) -> String {
 
 /// Format an address as a short hex string (first 8 bytes).
 pub fn short_address(addr: &AccountAddress) -> String {
-    format!("0x{}..{}", hex::encode(&addr[..4]), hex::encode(&addr[28..]))
+    format!(
+        "0x{}..{}",
+        hex::encode(&addr[..4]),
+        hex::encode(&addr[28..])
+    )
 }
 
 /// Parse a hex address string (with or without 0x prefix) into 32 bytes.
