@@ -252,3 +252,92 @@ LATER      → Step 4.1-4.6: Scale features
 ```
 
 **Rule: Do not start Tier N+1 until Tier N is shipped and tested.**
+
+---
+
+## Wallet Audit & Substrate Visibility (April–May 2026)
+
+> The Tier 1–4 boxes above were ticked when the surfaces were *scaffolded*.
+> Several were stubs at that point. This section records the audit and the
+> commits that turned them into real implementations, plus the substrate
+> surfaces that were added to make the underlying chain primitives
+> visible in-wallet.
+
+### From theatre to real
+
+- **Mobile real ML-DSA-65, full BIP-39, AES-GCM backup** — the mobile
+  wallet's signing path was a placeholder; replaced with the same
+  ML-DSA-65 stack the extension uses, full 24-word BIP-39, and an
+  AES-GCM-encrypted keystore. `53b8336`
+- **Real WalletConnect v2** — earlier WC integration was a session-shape
+  shim; full WC v2 protocol (pair, session, request) wired alongside the
+  extension's P0 hardening pass and 5 substrate surfaces. `3fd5252`
+- **Real `MnemonicBackup` mnemonic-import path** — the import flow was
+  scaffolded but did not actually rebuild ML-DSA accounts from seed; now
+  end-to-end. (Mobile path: `53b8336`. Extension consolidation/
+  substrate-marker housekeeping: `859d15f`.)
+- **Real `chrome.alarms` auto-lock** — auto-lock previously relied on a
+  popup-lifetime timer that died with the popup; service-worker
+  `chrome.alarms` now drives lock state across the WC v2 / tx-tracking
+  hardening pass. `3fd5252`
+- **Live Bell-Beacon + LAD-VM substrate marker carry-through** — the
+  Bell-Beacon card shifted from worked-example-only to live
+  per-block S via `/api/bell/latest`, and the LAD-VM substructural
+  marker now flows through to the extension via `is_lad_typed` /
+  `lad_mode`. `859d15f`, `9fb2f36`
+- **Real persistent Bell reading across restarts** — consensus now
+  persists `last_bell_reading` through `ConsensusCheckpoint` so the
+  beacon survives node restart, and the wallet's "no live measurement"
+  fallback is no longer a permanent state. `35429f3`, `a6ef7a9`
+- **LAD-VM target-object wiring on SendScreen** — Send screen now
+  resolves the recipient's `is_lad_typed` / `lad_mode` and renders
+  `LadVmPreview` inline; Ledger entry points hidden until the BOLOS
+  app ships. `4c2c083`
+
+### Real consumer surfaces shipped
+
+- **8 substrate-visibility screens on the extension AND the mobile
+  wallet** — DSN privacy badge, LAD-VM preview, Bell-Beacon card,
+  HLWA, fee-controller widget, demurrage badge, patronage, refresh
+  pool. Initial five on extension `3fd5252`; mobile parity hub +
+  remaining three `c9e46a7`; extension follow-ups `9fb2f36`,
+  `de06709`.
+- **Cross-shard awareness on extension** — shard assignment for
+  the active address, `ShardsHealth` per-shard liveness, queue
+  depth, compaction candidates. Computed client-side mirroring
+  `evaporchain_sharding::shard_for_object` (no `/api/address/:addr/
+  shard` endpoint). `4735763`
+- **Tx-status 4-state tracking + toasts** — `pending → mempool →
+  included → finalised | rejected` consumed directly from the
+  node's `TxStatus` shape (`TxRecord` shim retired). `de06709`,
+  `d571cc4`, `7c72fc5`, `d0394b1`
+
+### Build & test infrastructure
+
+- **Reproducible WASM build pipeline** — pinned rust 1.83.0 +
+  wasm-pack 0.13.1 + binaryen 121, with a prebuild verify hook that
+  refuses to ship if pkg hashes drift. `fe338e7`
+- **Playwright e2e harness scaffold** — 3 specs covering popup
+  load, send flow, and substrate-card render. (Folded into the
+  Tier 1.3 entry above; remains scaffolded — see Still Open.)
+
+### Substrate primitive parity across wallets / SDKs
+
+- **Rust CLI wallet + both TS SDKs** now expose every substrate
+  primitive — ~1,739 LOC across `crates/evaporchain-wallet`'s
+  `rpc.rs` / `tx_builder.rs` and the `sdk/` and `wallet-sdk/`
+  TypeScript packages. Every endpoint that has a wallet surface
+  in the extension also has a typed RPC + tx-builder helper for
+  third-party dApp integrators. `83cab7a`
+
+### Still Open
+
+- **Real Ledger BOLOS app** — multi-week build, needs Nano X dev
+  kit; current transport returns deterministic placeholder
+  addresses and zero-byte signatures. Production entry points
+  gated behind `import.meta.env.DEV` until the BOLOS app ships.
+- **WASM build hashes** — `bash extension/scripts/build-wasm.sh`
+  needs a single run on a Mini to mint and check in the
+  reproducible-build hashes; the verify hook is otherwise dormant.
+- **Apsarth SSH key** — physical visit; blocks Mini-3 deploys for
+  multi-node binary distribution.
