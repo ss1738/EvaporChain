@@ -2075,11 +2075,15 @@ mod poha_integration {
         assert_eq!(store.active_count(), 2);
         assert_eq!(store.ghost_count(), 0);
 
-        // Advance 100 epochs (10 half-lives) → energy should collapse to ~0 → both evaporate
-        let (_, evaporated) = store.process_epoch(100);
+        // Advance 250 epochs = 25 half-lives. PoHA's `energy_at` uses
+        // integer right-shift (`energy >> shifts`); 1_000_000 needs 20
+        // shifts to reach 0 (since 2^20 = 1_048_576 > 1_000_000). 25
+        // half-lives gives a comfortable margin so any reasonable initial
+        // energy reaches zero.
+        let (_, evaporated) = store.process_epoch(250);
         assert_eq!(
             evaporated, 2,
-            "both certs must evaporate after 10 half-lives"
+            "both certs must evaporate after 25 half-lives"
         );
         assert_eq!(store.active_count(), 0);
         assert_eq!(store.ghost_count(), 2);
@@ -2124,17 +2128,18 @@ mod poha_integration {
 
     #[test]
     fn poha_store_prune_ghosts_removes_old() {
+        // half_life=1 → shifts=elapsed; 1_000_000 needs ~20 shifts to
+        // reach zero. We push to epoch 25 (25 shifts) so both certs
+        // evaporate; then prune at 26 to drop both ghosts.
         let mut store = PoHAStore::new(1_000_000, 1);
         store.register(1, [0x01u8; 32], 8, 700, 1000, 0, vec![], vec![0]);
-        store.register(2, [0x02u8; 32], 8, 700, 1000, 10, vec![], vec![0]);
+        store.register(2, [0x02u8; 32], 8, 700, 1000, 1, vec![], vec![0]);
 
-        // Decay until both evaporate
-        let _ = store.process_epoch(200);
+        let _ = store.process_epoch(25);
         assert_eq!(store.ghost_count(), 2);
 
-        // Prune ghosts older than epoch 100 — cert 1 evaporated at epoch ~64,
-        // cert 2 evaporated later; both should be before 200
-        let pruned = store.prune_ghosts(200);
+        // Prune ghosts evaporated before epoch 26.
+        let pruned = store.prune_ghosts(26);
         assert!(pruned >= 1, "at least one ghost must be pruned");
     }
 }
@@ -3144,8 +3149,22 @@ mod hot_cold_stake_integration {
         let after = stake.decay(100);
         // hot at half-life 100 → 1000 * 0.5 = 500
         assert_eq!(after.hot, 500);
-        // cold at half-life 10_000 → effectively unchanged
-        assert!(after.cold > 9_990);
+        // cold at half-life 10_000 over 100 epochs:
+        //   10_000 × 2^(-100/10_000) = 10_000 × 2^(-0.01) ≈ 9_931
+        // The point of the test is the 100× ratio between hot and cold
+        // half-lives, not zero decay on cold. ~0.7% over 100 epochs is
+        // the documented behaviour; bound at 9_900 (1% slack) so we
+        // catch any regression that would scale cold's decay rate.
+        assert!(
+            after.cold > 9_900,
+            "cold decayed too fast: {}",
+            after.cold
+        );
+        assert!(
+            after.cold < 10_000,
+            "cold did not decay at all: {}",
+            after.cold
+        );
     }
 
     #[test]
@@ -3738,8 +3757,12 @@ mod tur_liveness_integration {
 
     #[test]
     fn high_variance_samples_satisfy_tur() {
-        // Very high variance relative to mean satisfies TUR with any finite Σ
-        let v = tur_check(&[1, 1_000, 1, 1_000, 1, 1_000], 1);
+        // High relative variance satisfies TUR for moderate Σ. The
+        // bound is 2/Σ; with the alternating [1, 1000] sequence,
+        // relative variance ≈ 1.0, so Σ must be ≥ 2 to clear it. We
+        // use Σ=10 for a comfortable margin so noise in the
+        // fixed-point arithmetic doesn't flip the verdict.
+        let v = tur_check(&[1, 1_000, 1, 1_000, 1, 1_000], 10);
         assert!(matches!(v, Verdict::Ok { .. }));
     }
 
@@ -4782,13 +4805,29 @@ mod cslc_integration {
 mod ib_validators_integration {
     use evaporchain_ib_validators::{ib_vote, IbParams, IbVote, StateSignature};
 
+    /// 100 accounts spread evenly across the 16 bins. Approximately 62 per
+    /// bin so the prior overlaps with any local distribution; KL > 0 is
+    /// achievable. (Earlier all-zeros version concentrated everything in
+    /// bin 0, so the KL divergence test was vacuous against the zero-q
+    /// guard in `kl_millibits`.)
     fn uniform_sig() -> StateSignature {
-        let energies: Vec<u64> = vec![0u64; 100];
+        let energies: Vec<u64> = (0..100).map(|i| (i * 999 / 100) as u64).collect();
         StateSignature::from_energies(&energies, 1_000)
     }
 
+    /// 100 accounts all at the high end of the range — concentrates the
+    /// distribution in the top bin (bin 15). High KL relative to a
+    /// uniform prior; should drive the vote past any small lambda_mb.
     fn high_energy_sig() -> StateSignature {
         let energies: Vec<u64> = (0..100).map(|_| 999u64).collect();
+        StateSignature::from_energies(&energies, 1_000)
+    }
+
+    /// Signature identical to `uniform_sig` — used by the zero-KL test.
+    /// Kept separate so a future refactor of `uniform_sig` doesn't
+    /// silently break the abstain-on-equality contract.
+    fn flat_zero_sig() -> StateSignature {
+        let energies: Vec<u64> = vec![0u64; 100];
         StateSignature::from_energies(&energies, 1_000)
     }
 

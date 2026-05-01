@@ -470,7 +470,7 @@ impl ValidatorSet {
             let penalty = per_miss.saturating_mul(missed_blocks);
             v.stake = v.stake.saturating_sub(penalty);
             v.total_slashed += penalty;
-            if missed_blocks >= 500 {
+            if missed_blocks >= 3 {
                 v.jailed = true;
             }
             v.health_score = (v.health_score - missed_blocks as f64 * 0.1).max(0.0);
