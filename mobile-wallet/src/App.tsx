@@ -2,6 +2,9 @@
  * EvaporChain Mobile Wallet — Main App Entry
  *
  * Handles push notification registration and auto-lock enforcement.
+ * Mounts the TxStoreProvider so any screen can call trackTx() after a
+ * broadcast, and the TxToastContainer at the root so finalisation
+ * toasts are visible across all screens.
  */
 
 // MUST be the very first import — installs a native crypto.getRandomValues
@@ -16,7 +19,10 @@ import AppNavigator from './navigation/AppNavigator';
 import type { RootStackParamList } from './navigation/AppNavigator';
 import { notifications } from './utils/notifications';
 import { autoLockManager } from './utils/autolock';
+import { txTracker } from './utils/txTracker';
 import { NetworkBanner } from './components/NetworkBanner';
+import { TxToastContainer } from './components/TxToast';
+import { TxStoreProvider } from './state/txStore';
 
 const App: React.FC = () => {
   const navigationRef = useRef<NavigationContainerRef<RootStackParamList>>(null);
@@ -34,14 +40,25 @@ const App: React.FC = () => {
       }
     });
 
-    return () => autoLockManager.stop();
+    // Tx-status polling. The tracker is idle while pendingTxs is empty
+    // and pauses entirely while the app is backgrounded — see
+    // utils/txTracker.ts for the AppState wiring.
+    txTracker.start();
+
+    return () => {
+      autoLockManager.stop();
+      txTracker.stop();
+    };
   }, []);
 
   return (
     <SafeAreaProvider>
-      <StatusBar style="dark" />
-      <NetworkBanner />
-      <AppNavigator navigationRef={navigationRef} />
+      <TxStoreProvider>
+        <StatusBar style="dark" />
+        <NetworkBanner />
+        <AppNavigator navigationRef={navigationRef} />
+        <TxToastContainer />
+      </TxStoreProvider>
     </SafeAreaProvider>
   );
 };

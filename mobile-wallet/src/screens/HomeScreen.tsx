@@ -18,9 +18,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/AppNavigator';
 import { api } from '../utils/api';
-import type { Balance, ChainStatus, Transaction, ChainObject, NFT } from '../utils/api';
+import type { Balance, ChainStatus, Transaction, ChainObject, NFT, ShardsHealth } from '../utils/api';
 import { keystore } from '../utils/keystore';
 import { DecayAlert } from '../components/DecayAlert';
+import { usePendingTxs } from '../state/txStore';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'Home'>;
@@ -42,18 +43,25 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
   const [objects, setObjects] = useState<ChainObject[]>([]);
   const [nfts, setNfts] = useState<NFT[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [shardsHealth, setShardsHealth] = useState<ShardsHealth | null>(null);
+  const [addressShard, setAddressShard] = useState<number | null>(null);
+  const pendingTxs = usePendingTxs();
+  const inflight = pendingTxs.filter(
+    (t) => t.status !== 'finalised' && t.status !== 'rejected',
+  ).length;
 
   const loadData = useCallback(async () => {
     try {
       const address = await keystore.getAddress();
       if (!address) return;
 
-      const [bal, status, txns, objs, nftList] = await Promise.allSettled([
+      const [bal, status, txns, objs, nftList, shards] = await Promise.allSettled([
         api.getBalance(address),
         api.getChainStatus(),
         api.getTransactions(address, 5),
         api.getObjects(address),
         api.getNFTs(address),
+        api.getShardsHealth(),
       ]);
 
       if (bal.status === 'fulfilled') setBalance(bal.value);
@@ -61,6 +69,15 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
       if (txns.status === 'fulfilled') setTransactions(txns.value);
       if (objs.status === 'fulfilled') setObjects(objs.value);
       if (nftList.status === 'fulfilled') setNfts(nftList.value);
+      if (shards.status === 'fulfilled') {
+        setShardsHealth(shards.value);
+        if (shards.value.active) {
+          const a = api.computeShardForAddress(address, shards.value.total_shards);
+          setAddressShard(a?.shard_id ?? null);
+        } else {
+          setAddressShard(null);
+        }
+      }
     } catch {
       // Silently handle — user sees stale data
     }
@@ -111,6 +128,38 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
           <Text style={styles.balanceUsd}>
             {balance ? `~ $${(balance.balance * 0.042).toFixed(2)} USD` : ''}
           </Text>
+          {/* Status pills: pending-tx counter + shard pill. Hidden when
+              there's nothing to show (no inflight + single-shard chain). */}
+          {(inflight > 0 ||
+            (shardsHealth?.active &&
+              shardsHealth.total_shards > 1 &&
+              addressShard != null)) && (
+            <View style={styles.statusRow}>
+              {inflight > 0 && (
+                <TouchableOpacity
+                  style={styles.pendingPill}
+                  onPress={() => navigation.navigate('History')}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.pendingDot} />
+                  <Text style={styles.pendingText}>
+                    {inflight} pending
+                  </Text>
+                </TouchableOpacity>
+              )}
+              {shardsHealth?.active &&
+                shardsHealth.total_shards > 1 &&
+                addressShard != null && (
+                  <TouchableOpacity
+                    style={styles.shardPill}
+                    onPress={() => navigation.navigate('Shards')}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.shardPillText}>Shard {addressShard}</Text>
+                  </TouchableOpacity>
+                )}
+            </View>
+          )}
         </View>
 
         {/* Decay Alert */}
@@ -389,6 +438,48 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#06b6d4',
     fontWeight: '600',
+  },
+  statusRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 12,
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+  },
+  pendingPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: '#ecfeff',
+    borderWidth: 1,
+    borderColor: '#67e8f9',
+  },
+  pendingDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#06b6d4',
+  },
+  pendingText: {
+    fontSize: 11,
+    color: '#0891b2',
+    fontWeight: '600',
+  },
+  shardPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: '#ecfeff',
+    borderWidth: 1,
+    borderColor: '#67e8f9',
+  },
+  shardPillText: {
+    fontSize: 11,
+    color: '#0891b2',
+    fontWeight: '700',
   },
 });
 

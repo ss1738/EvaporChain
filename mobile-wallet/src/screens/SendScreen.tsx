@@ -5,7 +5,7 @@
  * transaction simulation preview, biometric/PIN confirmation.
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -24,7 +24,9 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { RootStackParamList } from '../navigation/AppNavigator';
 import { api } from '../utils/api';
+import type { ShardsHealth } from '../utils/api';
 import { keystore } from '../utils/keystore';
+import { useTxStore } from '../state/txStore';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'Send'>;
@@ -39,6 +41,40 @@ const SendScreen: React.FC<Props> = ({ navigation, route }) => {
   const [sending, setSending] = useState(false);
   const [scannerVisible, setScannerVisible] = useState(false);
   const [permission, requestPermission] = useCameraPermissions();
+  const { trackTx } = useTxStore();
+
+  // Cross-shard awareness — pulled once on mount + after each blur of
+  // the recipient field so the banner reflects the current pair without
+  // burning extra requests.
+  const [shardsHealth, setShardsHealth] = useState<ShardsHealth | null>(null);
+  const [senderShard, setSenderShard] = useState<number | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const snap = await api.getShardsHealth();
+        setShardsHealth(snap);
+        const addr = await keystore.getAddress();
+        if (snap.active && addr) {
+          const a = api.computeShardForAddress(addr, snap.total_shards);
+          setSenderShard(a?.shard_id ?? null);
+        }
+      } catch {
+        // Sharding endpoints unavailable — banner stays hidden.
+      }
+    })();
+  }, []);
+
+  const crossShardInfo = useMemo<{ sender: number; recipient: number } | null>(() => {
+    if (!shardsHealth?.active) return null;
+    if (shardsHealth.total_shards <= 1) return null;
+    if (senderShard == null) return null;
+    if (!recipient.trim()) return null;
+    const r = api.computeShardForAddress(recipient.trim(), shardsHealth.total_shards);
+    if (r == null) return null;
+    if (r.shard_id === senderShard) return null;
+    return { sender: senderShard, recipient: r.shard_id };
+  }, [shardsHealth, senderShard, recipient]);
 
   const handleScanQR = async () => {
     if (!permission?.granted) {
@@ -119,8 +155,21 @@ const SendScreen: React.FC<Props> = ({ navigation, route }) => {
       // Send transfer via REST API — node signs with its keypair for mobile
       // Future: bundle Dilithium3 JS lib for client-side ML-DSA signing
       const result = await api.transfer(address, recipient.trim(), parsedAmount, balance.nonce);
+      // The node returns the tx hash as either `hash` (extension parity)
+      // or `tx_hash` (legacy). Both spellings survive the camelCase
+      // transformer — `tx_hash` becomes `txHash`. Probe all three.
+      const r = result as unknown as Record<string, unknown>;
+      const txHash =
+        (typeof r.hash === 'string' && r.hash) ||
+        (typeof r.txHash === 'string' && (r.txHash as string)) ||
+        (typeof r.tx_hash === 'string' && (r.tx_hash as string)) ||
+        '';
       if (result.success) {
-        Alert.alert('Sent!', `${parsedAmount} EVAP sent. ${result.tx_hash ? `Hash: ${result.tx_hash.slice(0, 16)}...` : ''}`, [
+        if (txHash) {
+          const summary = `Sent ${parsedAmount} EVAP to ${recipient.trim().slice(0, 10)}…`;
+          trackTx(txHash, 'transfer', summary);
+        }
+        Alert.alert('Sent!', `${parsedAmount} EVAP sent. ${txHash ? `Hash: ${txHash.slice(0, 16)}...` : ''}`, [
           { text: 'OK', onPress: () => navigation.goBack() },
         ]);
       } else {
@@ -154,6 +203,19 @@ const SendScreen: React.FC<Props> = ({ navigation, route }) => {
             </TouchableOpacity>
           </View>
         </View>
+
+        {/* Cross-shard banner — verbatim from extension SendScreen. Only
+            renders when both addresses resolve to different shards on a
+            multi-shard chain. Single-shard chains and "sharding disabled"
+            responses keep this hidden. */}
+        {crossShardInfo && (
+          <View style={styles.crossShardBanner}>
+            <Text style={styles.crossShardText}>
+              Cross-shard transfer: shard {crossShardInfo.sender} → shard{' '}
+              {crossShardInfo.recipient}. May take longer to finalise.
+            </Text>
+          </View>
+        )}
 
         {/* Amount */}
         <View style={styles.field}>
@@ -444,6 +506,20 @@ const styles = StyleSheet.create({
     marginTop: 20,
     textAlign: 'center',
     opacity: 0.8,
+  },
+  crossShardBanner: {
+    backgroundColor: '#ecfeff',
+    borderWidth: 1,
+    borderColor: '#a5f3fc',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 16,
+  },
+  crossShardText: {
+    color: '#0e7490',
+    fontSize: 12,
+    lineHeight: 16,
   },
 });
 

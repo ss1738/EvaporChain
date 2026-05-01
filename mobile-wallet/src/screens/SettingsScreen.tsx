@@ -358,17 +358,25 @@ const SettingsScreen: React.FC = () => {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Advanced</Text>
 
-          <TouchableOpacity
-            style={styles.settingRow}
-            onPress={() => navigation.navigate('HardwareWallet')}
-            activeOpacity={0.7}
-          >
-            <View style={styles.settingLeft}>
-              <Text style={styles.settingLabel}>Hardware Wallet</Text>
-              <Text style={styles.settingSubtext}>Connect Ledger via Bluetooth</Text>
-            </View>
-            <Text style={styles.settingArrow}>{'>'}</Text>
-          </TouchableOpacity>
+          {/* Hardware-wallet entry is gated behind __DEV__ until the
+              EvaporChain Ledger BOLOS app ships. The screen itself is a
+              stub returning a 64-byte zero signature — surfacing it in
+              prod would be misleading. The route stays registered in
+              AppNavigator so dev iteration still works.
+              TODO: enable when EvaporChain Ledger BOLOS app ships */}
+          {__DEV__ && (
+            <TouchableOpacity
+              style={styles.settingRow}
+              onPress={() => navigation.navigate('HardwareWallet')}
+              activeOpacity={0.7}
+            >
+              <View style={styles.settingLeft}>
+                <Text style={styles.settingLabel}>Hardware Wallet (dev)</Text>
+                <Text style={styles.settingSubtext}>Connect Ledger via Bluetooth</Text>
+              </View>
+              <Text style={styles.settingArrow}>{'>'}</Text>
+            </TouchableOpacity>
+          )}
 
           <TouchableOpacity
             style={styles.settingRow}

@@ -20,7 +20,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/AppNavigator';
 import { api } from '../utils/api';
-import type { ChainObject } from '../utils/api';
+import type { ChainObject, ShardsHealth } from '../utils/api';
 import { keystore } from '../utils/keystore';
 import { EnergyBar } from '../components/EnergyBar';
 
@@ -38,19 +38,26 @@ const ObjectsScreen: React.FC<Props> = ({ navigation }) => {
   const [objects, setObjects] = useState<ChainObject[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
+  const [shardsHealth, setShardsHealth] = useState<ShardsHealth | null>(null);
 
   const loadObjects = useCallback(async () => {
     try {
       const address = await keystore.getAddress();
       if (!address) return;
-      const result = await api.getObjects(address);
+      const [result, snap] = await Promise.allSettled([
+        api.getObjects(address),
+        api.getShardsHealth(),
+      ]);
+      if (snap.status === 'fulfilled') setShardsHealth(snap.value);
+      if (result.status !== 'fulfilled') return;
+      const list = result.value;
       // Sort by energy percentage ascending (most urgent first)
-      result.sort((a, b) => {
+      list.sort((a, b) => {
         const pctA = a.maxEnergy > 0 ? a.energy / a.maxEnergy : 0;
         const pctB = b.maxEnergy > 0 ? b.energy / b.maxEnergy : 0;
         return pctA - pctB;
       });
-      setObjects(result);
+      setObjects(list);
     } catch {
       // Keep existing data
     } finally {
@@ -91,6 +98,13 @@ const ObjectsScreen: React.FC<Props> = ({ navigation }) => {
 
   const renderObject = ({ item }: { item: ChainObject }) => {
     const isRefreshing = refreshingId === item.id;
+    // Per-object shard chip — derived from the owner address. Hidden on
+    // single-shard chains so the row stays uncluttered.
+    const showShardChip =
+      shardsHealth?.active === true && shardsHealth.total_shards > 1;
+    const ownerShard = showShardChip
+      ? api.computeShardForAddress(item.owner, shardsHealth!.total_shards)?.shard_id
+      : null;
 
     return (
       <TouchableOpacity
@@ -101,13 +115,20 @@ const ObjectsScreen: React.FC<Props> = ({ navigation }) => {
         <View style={styles.cardHeader}>
           <View style={styles.cardTitleRow}>
             <Text style={styles.cardName}>{item.name}</Text>
-            <View
-              style={[
-                styles.stateBadge,
-                { backgroundColor: STATE_COLORS[item.state] || '#9ca3af' },
-              ]}
-            >
-              <Text style={styles.stateBadgeText}>{item.state}</Text>
+            <View style={styles.cardBadges}>
+              {ownerShard != null && (
+                <View style={styles.shardChip}>
+                  <Text style={styles.shardChipText}>S{ownerShard}</Text>
+                </View>
+              )}
+              <View
+                style={[
+                  styles.stateBadge,
+                  { backgroundColor: STATE_COLORS[item.state] || '#9ca3af' },
+                ]}
+              >
+                <Text style={styles.stateBadgeText}>{item.state}</Text>
+              </View>
             </View>
           </View>
           <Text style={styles.cardId}>{item.id.slice(0, 16)}...</Text>
@@ -217,11 +238,29 @@ const styles = StyleSheet.create({
     color: '#111827',
     flex: 1,
   },
+  cardBadges: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginLeft: 8,
+  },
+  shardChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: '#ecfeff',
+    borderWidth: 1,
+    borderColor: '#67e8f9',
+  },
+  shardChipText: {
+    fontSize: 10,
+    color: '#0891b2',
+    fontWeight: '700',
+  },
   stateBadge: {
     paddingHorizontal: 10,
     paddingVertical: 3,
     borderRadius: 10,
-    marginLeft: 8,
   },
   stateBadgeText: {
     fontSize: 11,

@@ -36,9 +36,31 @@ export interface TxResult {
   success: boolean;
   message: string;
   tx_hash?: string;
+  /** Some `/api/tx/*` endpoints return the canonical hash as `hash`; the
+   * camelCase transformer leaves single-word keys untouched, so we
+   * surface both spellings for callers that broadcast via different
+   * routes. The tx-tracker prefers `hash`, falling back to `tx_hash`. */
+  hash?: string;
+}
+
+// ── Tx status tracking (api.rs §TxStatusResponse, GET /api/tx/:hash) ──
+//
+// The node returns one of five states: pending → mempool → included →
+// finalised | rejected. Always 200 except invalid hex (400). Mirrors
+// the extension's `TxStatus` interface byte-for-byte so the polling
+// layer can be lifted across surfaces without translation.
+export interface TxStatus {
+  hash: string;
+  state: 'pending' | 'mempool' | 'included' | 'finalised' | 'rejected';
+  block_height?: number;
+  epoch?: number;
+  error?: string;
 }
 
 export type ObjectState = 'Active' | 'Grace' | 'Ghost' | 'Risen';
+
+export type LadMode = 'linear' | 'affine' | 'decaying';
+export type LadAction = 'use' | 'drop' | 'tick';
 
 export interface ChainObject {
   id: string;
@@ -51,6 +73,81 @@ export interface ChainObject {
   currentEnergy: number;
   decayPercentage: number;
   estimatedGhostTime: number;
+  /**
+   * Whether this object is governed by the LAD-VM substructural-resource
+   * type system (linear/affine/decaying). Wire field is `is_lad_typed`
+   * which the camelCase transformer rewrites to `isLadTyped`.
+   * api.rs §ObjectResponse.is_lad_typed.
+   */
+  isLadTyped?: boolean;
+  /**
+   * The actual LAD-VM substructural mode when `isLadTyped === true`.
+   * Wire field is `lad_mode` → `ladMode`. Absent (or null) for
+   * ordinary objects.
+   * api.rs §ObjectResponse.lad_mode.
+   */
+  ladMode?: LadMode;
+}
+
+// ── LAD-VM (api.rs §LadSimQuery / §LadSimResp, POST /api/lad_vm/simulate) ──
+//
+// Pure compute, no signature. Mirrors the extension's LadSimReq / LadSimResp
+// byte-for-byte so the simulate screen can re-use the wire shape.
+export interface LadSimReq {
+  mode: LadMode;
+  value: number;
+  created_at_epoch: number;
+  /** Required iff mode === "decaying". */
+  decay_window?: number;
+  current_epoch: number;
+  action: LadAction;
+}
+
+export interface LadSimResp {
+  status: string;
+  action: string;
+  mode: string;
+  outcome: string;
+  returned_value: number | null;
+  is_evaporated_at_query: boolean;
+  created_at_epoch: number;
+  current_epoch: number;
+  decay_window: number | null;
+  detail: string;
+}
+
+// ── Sharding (api.rs §get_shard_status + §get_shard_health) ──
+//
+// /api/shards reports active / num_shards / pending_cross_shard_messages.
+// /api/shards/health reports per-shard health rows + compaction_candidates.
+// We merge them into a single `ShardsHealth` snapshot so callers don't
+// have to issue two requests + reassemble. Single-shard chains return
+// `{ active: false }` from /api/shards; we surface that as a degraded-but-
+// valid response with no per-shard rows.
+
+export interface ShardInfo {
+  /** 0..num_shards-1. Wire field: `shard_id`. */
+  shard_id: number;
+  total_objects: number;
+  live_objects: number;
+  total_energy: number;
+  liveness_ratio: number;
+  is_dead: boolean;
+}
+
+export interface ShardsHealth {
+  active: boolean;
+  total_shards: number;
+  healthy: number;
+  unhealthy: number;
+  pending_cross_shard_messages: number;
+  compaction_candidates: number;
+  shards: ShardInfo[];
+}
+
+export interface ShardAssignment {
+  address: string;
+  shard_id: number;
 }
 
 export interface NFT {
@@ -551,6 +648,107 @@ class EvaporChainAPI {
   // Bell-Beacon (api.rs §get_bell_latest)
   async getBellBeaconLatest(): Promise<BellBeaconLatestResp> {
     return this.getRaw('/api/bell/latest');
+  }
+
+  // ── Tx status (api.rs §TxStatusResponse, GET /api/tx/:hash) ──
+  //
+  // Network errors degrade to "pending" with the error attached so the
+  // tx-tracker poller keeps retrying instead of dropping the tx.
+  async getTxStatus(hash: string): Promise<TxStatus> {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/tx/${hash}`);
+      if (!res.ok) {
+        return { hash, state: 'pending', error: `HTTP ${res.status}` };
+      }
+      return (await res.json()) as TxStatus;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { hash, state: 'pending', error: msg };
+    }
+  }
+
+  // ── LAD-VM (api.rs §post_lad_vm_simulate) ──
+  async simulateLadVm(req: LadSimReq): Promise<LadSimResp> {
+    return this.postRaw('/api/lad_vm/simulate', req);
+  }
+
+  // ── Sharding (api.rs §get_shard_status + §get_shard_health) ──
+  async getShards(): Promise<ShardInfo[]> {
+    const merged = await this.getShardsHealth();
+    return merged.shards;
+  }
+
+  async getShardsHealth(): Promise<ShardsHealth> {
+    const [statusRaw, healthRaw] = await Promise.all([
+      this.getRaw<Record<string, unknown>>('/api/shards').catch(
+        () => ({ active: false } as Record<string, unknown>),
+      ),
+      this.getRaw<Record<string, unknown>>('/api/shards/health').catch(
+        () => ({ active: false } as Record<string, unknown>),
+      ),
+    ]);
+
+    const active = statusRaw['active'] === true;
+    const numShards = typeof statusRaw['num_shards'] === 'number'
+      ? (statusRaw['num_shards'] as number)
+      : (active ? 0 : 1);
+    const pending = typeof statusRaw['pending_cross_shard_messages'] === 'number'
+      ? (statusRaw['pending_cross_shard_messages'] as number)
+      : 0;
+
+    const rawShards = Array.isArray(healthRaw['shards'])
+      ? (healthRaw['shards'] as Record<string, unknown>[])
+      : [];
+    const shards: ShardInfo[] = rawShards.map((s) => ({
+      shard_id: Number(s['shard_id'] ?? 0),
+      total_objects: Number(s['total_objects'] ?? 0),
+      live_objects: Number(s['live_objects'] ?? 0),
+      total_energy: Number(s['total_energy'] ?? 0),
+      liveness_ratio: Number(s['liveness_ratio'] ?? 0),
+      is_dead: Boolean(s['is_dead'] ?? false),
+    }));
+
+    const compactionCandidates = typeof healthRaw['compaction_candidates'] === 'number'
+      ? (healthRaw['compaction_candidates'] as number)
+      : 0;
+
+    const healthy = shards.filter((s) => !s.is_dead).length;
+    const unhealthy = shards.filter((s) => s.is_dead).length;
+
+    return {
+      active,
+      total_shards: numShards,
+      healthy,
+      unhealthy,
+      pending_cross_shard_messages: pending,
+      compaction_candidates: compactionCandidates,
+      shards,
+    };
+  }
+
+  /**
+   * Compute the shard for a 20-byte hex address. Mirrors
+   * `evaporchain_sharding::shard_for_object`:
+   *
+   *     shard = u16_be(id[0..2]) & (num_shards - 1)   when num_shards > 1
+   *     shard = 0                                     otherwise
+   *
+   * Returns null when sharding is disabled (numShards === 0) or the
+   * address is malformed.
+   */
+  computeShardForAddress(address: string, numShards: number): ShardAssignment | null {
+    if (numShards <= 0) return null;
+    if (numShards === 1) return { address, shard_id: 0 };
+    const hex = address.startsWith('0x') || address.startsWith('0X')
+      ? address.slice(2)
+      : address;
+    if (hex.length < 4) return null;
+    const b0 = parseInt(hex.slice(0, 2), 16);
+    const b1 = parseInt(hex.slice(2, 4), 16);
+    if (Number.isNaN(b0) || Number.isNaN(b1)) return null;
+    const raw = (b0 << 8) | b1;
+    const mask = (numShards - 1) & 0xffff;
+    return { address, shard_id: raw & mask };
   }
 }
 

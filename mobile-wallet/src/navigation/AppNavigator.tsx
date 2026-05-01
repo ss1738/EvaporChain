@@ -39,17 +39,14 @@ import OfflineModeScreen from '../screens/OfflineModeScreen';
 
 // ── Substrate-visibility surfaces ────────────────────────────────────
 //
-// Eight screens mirroring the browser extension's substrate-visibility
+// Nine screens mirroring the browser extension's substrate-visibility
 // surfaces. Reachable from the Substrate hub (Settings → Substrate, and
-// Home → Substrate quick-action). All eight share the same stylistic
-// language as the existing screens (light/clean palette, emerald + zinc
-// + cyan). Field shapes match crates/evaporchain-node/src/api.rs
-// byte-for-byte.
+// Home → Substrate quick-action). All share the same stylistic language
+// as the existing screens (light/clean palette, emerald + zinc + cyan).
+// Field shapes match crates/evaporchain-node/src/api.rs byte-for-byte.
 //
-// TODO: LAD-VM preview is intentionally deferred — the SendScreen LAD
-// wiring on extension uses a target-object selector that doesn't map
-// cleanly to mobile's flow yet. Re-evaluate once mobile has a per-object
-// transfer flow that mirrors the extension's TxSimulation pane.
+// LAD-VM is mobile's 9th surface — fold of the extension's LadVmPreview
+// component plus the SendScreen target-object selector into one screen.
 import SubstrateHubScreen from '../screens/SubstrateHubScreen';
 import PatronageScreen from '../screens/PatronageScreen';
 import RefreshPoolScreen from '../screens/RefreshPoolScreen';
@@ -59,6 +56,11 @@ import GovernanceScreen from '../screens/GovernanceScreen';
 import HlwaScreen from '../screens/HlwaScreen';
 import DsnScreen from '../screens/DsnScreen';
 import BellBeaconScreen from '../screens/BellBeaconScreen';
+import LadVmScreen from '../screens/LadVmScreen';
+
+// Cross-shard awareness — extension parity (extension/src/components/
+// ShardScreen.tsx). Reachable from Home → "Shard N" pill.
+import ShardScreen from '../screens/ShardScreen';
 
 // ── Types ──
 
@@ -90,6 +92,9 @@ export type RootStackParamList = {
   Hlwa: undefined;
   Dsn: undefined;
   BellBeacon: undefined;
+  LadVm: undefined;
+  // Cross-shard awareness
+  Shards: undefined;
 };
 
 export type TabParamList = {
@@ -255,6 +260,12 @@ export const AppNavigator: React.FC<AppNavigatorProps> = ({ navigationRef }) => 
         <Stack.Screen name="History" component={HistoryScreen} options={{ title: 'Transaction History' }} />
         <Stack.Screen name="Faucet" component={FaucetScreen} options={{ title: 'Testnet Faucet' }} />
         <Stack.Screen name="Staking" component={StakingScreen} options={{ title: 'Staking' }} />
+        {/* Hardware-wallet route stays registered so dev iteration still
+            works (HardwareWalletScreen is a stub returning a 64-byte zero
+            signature — the EvaporChain Ledger BOLOS app doesn't exist
+            yet). The Settings entry point is gated behind `__DEV__` —
+            see SettingsScreen.tsx.
+            TODO: enable when EvaporChain Ledger BOLOS app ships */}
         <Stack.Screen name="HardwareWallet" component={HardwareWalletScreen} options={{ title: 'Hardware Wallet' }} />
         <Stack.Screen name="WalletConnect" component={WalletConnectScreen} options={{ title: 'WalletConnect' }} />
         <Stack.Screen name="OfflineMode" component={OfflineModeScreen} options={{ title: 'Offline Queue' }} />
@@ -269,6 +280,10 @@ export const AppNavigator: React.FC<AppNavigatorProps> = ({ navigationRef }) => 
         <Stack.Screen name="Hlwa" component={HlwaScreen} options={{ title: 'HLWA' }} />
         <Stack.Screen name="Dsn" component={DsnScreen} options={{ title: 'DSN Privacy' }} />
         <Stack.Screen name="BellBeacon" component={BellBeaconScreen} options={{ title: 'Bell-Beacon' }} />
+        <Stack.Screen name="LadVm" component={LadVmScreen} options={{ title: 'LAD-VM' }} />
+
+        {/* Cross-shard awareness */}
+        <Stack.Screen name="Shards" component={ShardScreen} options={{ title: 'Shards' }} />
       </Stack.Navigator>
     </NavigationContainer>
   );

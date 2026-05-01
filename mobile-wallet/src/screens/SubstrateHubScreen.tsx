@@ -1,13 +1,11 @@
 /**
  * SubstrateHubScreen — Index of substrate-visibility surfaces.
  *
- * Single entry point that lists the eight substrate primitives
+ * Single entry point that lists the nine substrate primitives
  * (Patronage, Refresh-pool, Fee-controller, Demurrage, Governance,
- * HLWA, DSN, Bell-Beacon) — each pushes the corresponding detail
- * screen onto the stack. Mirrors the browser extension's substrate
- * surfaces but adapted to mobile's screen-driven navigation.
- *
- * LAD-VM is intentionally deferred — see AppNavigator.tsx TODO.
+ * HLWA, DSN, Bell-Beacon, LAD-VM) — each pushes the corresponding
+ * detail screen onto the stack. Mirrors the browser extension's
+ * substrate surfaces but adapted to mobile's screen-driven navigation.
  */
 
 import React from 'react';
@@ -31,7 +29,8 @@ type SubstrateRoute =
   | 'Governance'
   | 'Hlwa'
   | 'Dsn'
-  | 'BellBeacon';
+  | 'BellBeacon'
+  | 'LadVm';
 
 interface Entry {
   title: string;
@@ -115,6 +114,15 @@ const ENTRIES: Entry[] = [
     badgeBg: '#ecfeff',
     badgeBorder: '#a5f3fc',
     screen: 'BellBeacon',
+  },
+  {
+    title: 'LAD-VM',
+    blurb: 'Linear/Affine/Decaying substructural-resource simulator.',
+    badge: 'L',
+    badgeColor: '#7c3aed',
+    badgeBg: '#f5f3ff',
+    badgeBorder: '#c4b5fd',
+    screen: 'LadVm',
   },
 ];
 
