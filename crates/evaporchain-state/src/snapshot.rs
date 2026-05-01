@@ -1410,14 +1410,25 @@ mod tests {
         .unwrap();
         assert_ne!(file_a.integrity_hash, file_b.integrity_hash);
 
-        // And: tampering the chain_id in a serialised blob is caught.
-        let mut bytes = file_a.to_bytes().unwrap();
-        // Easiest tamper that still parses: flip a payload byte to
-        // simulate corruption of the chain_id field. Verified via the
-        // integrity hash recompute. Pick a byte near the start of the
-        // compressed payload (post-header).
-        bytes[10] ^= 0x01;
-        assert!(SnapshotFile::from_bytes(&bytes).is_err());
+        // And: deserialising chain-A's blob and patching the chain_id
+        // post-load is caught by the integrity-hash recompute (the hash
+        // covers chain_id, so tampering invalidates it).
+        let bytes = file_a.to_bytes().unwrap();
+        let mut tampered = SnapshotFile::from_bytes(&bytes).unwrap();
+        tampered.chain_id = "chain-b".to_string();
+        // Re-serialise without recomputing the integrity_hash (mimics an
+        // attacker swapping the field but not regenerating the hash).
+        let blob_after_tamper = bincode::serde::encode_to_vec(
+            &tampered,
+            bincode::config::standard(),
+        )
+        .unwrap();
+        let mut framed = Vec::new();
+        framed.extend_from_slice(SNAPSHOT_MAGIC);
+        framed.push(SNAPSHOT_FILE_VERSION);
+        let compressed = zstd::encode_all(&blob_after_tamper[..], 1).unwrap();
+        framed.extend_from_slice(&compressed);
+        assert!(SnapshotFile::from_bytes(&framed).is_err());
     }
 
     #[test]
