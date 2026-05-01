@@ -205,6 +205,57 @@ pub enum Commands {
         #[command(subcommand)]
         action: SnapshotAction,
     },
+
+    /// Build (and optionally broadcast) an UpgradeContract transaction.
+    ///
+    /// Two authorisation modes — supply exactly one:
+    ///   * `--admin-key path` — sign with the admin's ML-DSA-65 secret
+    ///     key (Path A). Produces `admin_signature` + `admin_public_key`.
+    ///   * `--governance-quorum path` — JSON file `[{"stake":1000}, …]`
+    ///     plus `--required-stake N` for the chain's stake-quorum gate
+    ///     (Path B; mirrors `/api/governance/fork_choice_mode`).
+    ///
+    /// By default prints the signed tx body as JSON. Pass `--broadcast`
+    /// (with `--node URL`) to POST it to `/api/tx/upgrade_contract`.
+    UpgradeContract {
+        /// Sender (owner) address as hex (32-byte hex, with or without 0x).
+        #[arg(long)]
+        owner: String,
+
+        /// Contract id to upgrade.
+        #[arg(long)]
+        contract_id: u64,
+
+        /// New bytecode supplied as hex bytes.
+        #[arg(long, conflicts_with = "new_bytecode_path")]
+        new_bytecode_hex: Option<String>,
+
+        /// Path to a file containing the new bytecode (UTF-8 EvaporScript
+        /// source for the script engine; binary bytes for future VMs).
+        #[arg(long)]
+        new_bytecode_path: Option<String>,
+
+        /// Sender nonce (the chain expects current `account.nonce`).
+        #[arg(long)]
+        nonce: u64,
+
+        /// Path A — path to admin secret-key hex file (ML-DSA-65 SK).
+        #[arg(long, conflicts_with = "governance_quorum")]
+        admin_key: Option<String>,
+
+        /// Path B — JSON file with endorser stakes
+        /// (`[{"stake":1000}, …]`).
+        #[arg(long)]
+        governance_quorum: Option<String>,
+
+        /// Path B — minimum stake total required for the amendment.
+        #[arg(long, default_value = "0")]
+        required_stake: u64,
+
+        /// Broadcast to a running node instead of just printing the body.
+        #[arg(long)]
+        broadcast: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2502,6 +2553,152 @@ fn cmd_snapshot_apply(input: &str, data_dir: &str, json_mode: bool) -> Result<()
             "  state_root        = {}",
             hex::encode(result.state_root).truecolor(140, 150, 170)
         );
+// ──────────────────────── UpgradeContract Helper ─────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct EndorserStakeEntry {
+    stake: u64,
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn cmd_upgrade_contract(
+    base: &str,
+    owner_hex: &str,
+    contract_id: u64,
+    new_bytecode_hex: Option<&str>,
+    new_bytecode_path: Option<&str>,
+    nonce: u64,
+    admin_key_path: Option<&str>,
+    governance_quorum_path: Option<&str>,
+    required_stake: u64,
+    broadcast: bool,
+    json_mode: bool,
+) -> Result<()> {
+    use evaporchain_crypto::signatures::{MlDsaKeypair, Signer};
+
+    if admin_key_path.is_some() && governance_quorum_path.is_some() {
+        anyhow::bail!("--admin-key and --governance-quorum are mutually exclusive");
+    }
+    if admin_key_path.is_none() && governance_quorum_path.is_none() {
+        anyhow::bail!("supply exactly one of --admin-key or --governance-quorum");
+    }
+
+    // Resolve bytecode bytes.
+    let new_bytecode: Vec<u8> = match (new_bytecode_hex, new_bytecode_path) {
+        (Some(h), None) => {
+            let h = h.strip_prefix("0x").unwrap_or(h);
+            hex::decode(h).context("invalid --new-bytecode-hex")?
+        }
+        (None, Some(p)) => {
+            std::fs::read(p).with_context(|| format!("Failed to read {}", p))?
+        }
+        (Some(_), Some(_)) => {
+            anyhow::bail!("supply at most one of --new-bytecode-hex / --new-bytecode-path");
+        }
+        (None, None) => {
+            anyhow::bail!("supply --new-bytecode-hex or --new-bytecode-path");
+        }
+    };
+
+    let new_bytecode_hash = blake3::hash(&new_bytecode);
+    let new_bytecode_hash_bytes: [u8; 32] = *new_bytecode_hash.as_bytes();
+    let new_bytecode_hash_hex = hex::encode(new_bytecode_hash_bytes);
+
+    // Build per-path auth.
+    let (admin_signature_hex, admin_public_key_hex, endorser_stakes) = if let Some(path) =
+        admin_key_path
+    {
+        // Path A — load ML-DSA keypair, sign canonical payload.
+        // Accept either: a JSON keygen bundle (`{"ml_dsa":{public_key,secret_key}}`)
+        // or a file containing ONLY the hex secret key (legacy raw form).
+        let file_text = std::fs::read_to_string(path)
+            .with_context(|| format!("Failed to read --admin-key {}", path))?;
+        let trimmed = file_text.trim();
+        let (pk_hex, sk_hex) = if trimmed.starts_with('{') {
+            let v: serde_json::Value =
+                serde_json::from_str(trimmed).context("--admin-key JSON parse failed")?;
+            let mldsa = v
+                .get("ml_dsa")
+                .ok_or_else(|| anyhow::anyhow!("--admin-key JSON missing `ml_dsa` field"))?;
+            let pk = mldsa
+                .get("public_key")
+                .and_then(|x| x.as_str())
+                .ok_or_else(|| anyhow::anyhow!("--admin-key JSON missing `ml_dsa.public_key`"))?
+                .to_string();
+            let sk = mldsa
+                .get("secret_key")
+                .and_then(|x| x.as_str())
+                .ok_or_else(|| anyhow::anyhow!("--admin-key JSON missing `ml_dsa.secret_key`"))?
+                .to_string();
+            (pk, sk)
+        } else {
+            anyhow::bail!(
+                "--admin-key file must be a keygen JSON bundle (with ml_dsa.public_key + ml_dsa.secret_key); raw-hex SK alone cannot reconstruct the keypair"
+            );
+        };
+
+        let pk_bytes = hex::decode(pk_hex.trim()).context("invalid ml_dsa.public_key hex")?;
+        let sk_bytes = hex::decode(sk_hex.trim()).context("invalid ml_dsa.secret_key hex")?;
+        let kp = MlDsaKeypair::from_bytes(&pk_bytes, &sk_bytes)
+            .map_err(|e| anyhow::anyhow!("MlDsaKeypair::from_bytes: {:?}", e))?;
+
+        let canonical = format!(
+            "{{\"type\":\"upgrade_contract\",\"contract_id\":{},\"new_bytecode_hash_hex\":\"{}\",\"nonce\":{}}}",
+            contract_id, new_bytecode_hash_hex, nonce
+        );
+        let sig = kp.sign(canonical.as_bytes());
+        (Some(hex::encode(&sig)), Some(hex::encode(&pk_bytes)), Vec::<u64>::new())
+    } else {
+        // Path B — load endorser-stakes JSON (`[{"stake": N}, ...]`).
+        let path = governance_quorum_path.expect("checked above");
+        let file_text = std::fs::read_to_string(path)
+            .with_context(|| format!("Failed to read --governance-quorum {}", path))?;
+        let entries: Vec<EndorserStakeEntry> =
+            serde_json::from_str(&file_text).context("--governance-quorum JSON parse failed")?;
+        if entries.is_empty() {
+            anyhow::bail!("--governance-quorum file has no endorser entries");
+        }
+        if required_stake == 0 {
+            anyhow::bail!("--required-stake must be > 0 for the governance path");
+        }
+        let stakes: Vec<u64> = entries.iter().map(|e| e.stake).collect();
+        (None, None, stakes)
+    };
+
+    // Assemble request body for /api/tx/upgrade_contract. Whether we
+    // broadcast or just print, the JSON shape is the same.
+    let mut body = serde_json::json!({
+        "owner": owner_hex,
+        "contract_id": contract_id,
+        "new_bytecode_hex": hex::encode(&new_bytecode),
+        "new_bytecode_hash_hex": new_bytecode_hash_hex,
+        "nonce": nonce,
+        "endorser_stakes": endorser_stakes,
+        "required_stake": required_stake,
+    });
+    if let Some(s) = &admin_signature_hex {
+        body["admin_signature_hex"] = serde_json::Value::String(s.clone());
+    }
+    if let Some(p) = &admin_public_key_hex {
+        body["admin_public_key_hex"] = serde_json::Value::String(p.clone());
+    }
+
+    if broadcast {
+        let result: serde_json::Value =
+            api_post(base, "/api/tx/upgrade_contract", &body).await?;
+        if json_mode {
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        } else {
+            println!(
+                "  {} {}",
+                "\u{2714}".green().bold(),
+                "UpgradeContract submitted".bold()
+            );
+            println!("  {}", serde_json::to_string_pretty(&result)?);
+        }
+    } else {
+        // Print the body — caller curls it themselves.
+        println!("{}", serde_json::to_string_pretty(&body)?);
     }
     Ok(())
 }
@@ -2668,6 +2865,32 @@ async fn main() -> Result<()> {
                 cmd_snapshot_apply(&input, &data_dir, cli.json)
             }
         },
+        Commands::UpgradeContract {
+            owner,
+            contract_id,
+            new_bytecode_hex,
+            new_bytecode_path,
+            nonce,
+            admin_key,
+            governance_quorum,
+            required_stake,
+            broadcast,
+        } => {
+            cmd_upgrade_contract(
+                base,
+                &owner,
+                contract_id,
+                new_bytecode_hex.as_deref(),
+                new_bytecode_path.as_deref(),
+                nonce,
+                admin_key.as_deref(),
+                governance_quorum.as_deref(),
+                required_stake,
+                broadcast,
+                cli.json,
+            )
+            .await
+        }
     };
 
     if let Err(e) = result {

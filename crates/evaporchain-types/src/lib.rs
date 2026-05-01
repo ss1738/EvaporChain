@@ -574,6 +574,15 @@ impl Transaction {
                 buf.extend_from_slice(&tx.nonce.to_le_bytes());
                 buf.push(if tx.governance_approved { 1 } else { 0 });
                 buf.extend_from_slice(&tx.new_bytecode);
+                // New (mainnet) authorization fields. Appending preserves
+                // the byte layout for the legacy prefix; new wallets sign
+                // over the full extended message.
+                buf.extend_from_slice(&tx.new_bytecode_hash);
+                buf.extend_from_slice(&(tx.endorser_stakes.len() as u32).to_le_bytes());
+                for s in &tx.endorser_stakes {
+                    buf.extend_from_slice(&s.to_le_bytes());
+                }
+                buf.extend_from_slice(&tx.required_stake.to_le_bytes());
                 buf
             }
             Transaction::Delegate(tx) => {
@@ -1204,21 +1213,66 @@ pub struct DelegationRecord {
 }
 
 /// Upgrade a deployed contract to a new implementation.
+///
+/// Two authorization paths, disambiguated at apply time:
+///
+/// **Path A — admin upgrade.** Set `admin_signature` and
+/// `admin_public_key` to the contract admin's ML-DSA-65 sig + pk over
+/// the canonical signing payload
+/// `JSON({type:"upgrade_contract",contract_id,new_bytecode_hash_hex,nonce})`.
+/// `endorser_stakes` and `required_stake` are ignored on this path.
+///
+/// **Path B — governance amendment.** Leave `admin_signature` and
+/// `admin_public_key` `None`. The chain enforces by stake quorum:
+/// `endorser_stakes.iter().sum::<u64>() >= required_stake`. No body
+/// signature on this path — mirrors the `/api/governance/fork_choice_mode`
+/// pattern, where the chain (not the body) certifies the amendment.
+///
+/// In every case the chain verifies that
+/// `BLAKE3(new_bytecode) == new_bytecode_hash` before either path is
+/// considered. Closes K-10 / THREAT_MODEL §4.9.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpgradeContractTx {
+    /// Sender of the tx (charged for gas, nonce-checked). On the admin
+    /// path this is normally the admin address; on the governance path
+    /// this is whatever account submits the amendment.
     pub owner: AccountAddress,
     pub contract_id: u64,
+    /// Replacement bytecode (UTF-8 EvaporScript source for the script
+    /// engine; arbitrary bytes for future VM frontends). The hash below
+    /// must match `BLAKE3(new_bytecode)`.
     pub new_bytecode: Vec<u8>,
+    /// `BLAKE3(new_bytecode)`. Verified at apply time. The hash is
+    /// committed-to by both the admin signature payload and the
+    /// canonical signable bytes, so it cannot be quietly mutated
+    /// post-signing.
+    #[serde(default)]
+    pub new_bytecode_hash: [u8; 32],
     pub nonce: u64,
-    /// **Advisory only.** The real authorization gate is in
-    /// `ExecutionEngine::execute_upgrade_contract`: it requires a Passed
-    /// governance proposal whose `param_key = upgrade_contract:{contract_id}`
-    /// and `param_value = hex(blake3(new_bytecode))`. This boolean is
-    /// retained because it's part of the signing-canonical bytes; flipping
-    /// it has no security effect either way. Wallets populate it for
-    /// human-readable diagnostics. Closes K-10 / THREAT_MODEL §4.9.
+    /// Path A — admin's ML-DSA-65 signature over
+    /// `JSON({type:"upgrade_contract",contract_id,new_bytecode_hash_hex,nonce})`.
+    /// `None` ⇒ governance path is taken instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admin_signature: Option<Vec<u8>>,
+    /// Path A — admin's ML-DSA-65 public key. Must equal
+    /// `contract.admin` for the admin path to succeed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admin_public_key: Option<Vec<u8>>,
+    /// Path B — endorser stakes whose sum is checked against
+    /// `required_stake`. Mirrors `ForkChoiceAmendReq`.
+    #[serde(default)]
+    pub endorser_stakes: Vec<u64>,
+    /// Path B — minimum stake total required for the amendment to pass.
+    #[serde(default)]
+    pub required_stake: u64,
+    /// **Legacy / advisory.** Retained because older snapshots and
+    /// signing canonical-bytes carry it. Has no security effect on the
+    /// new dispatch — admin/governance paths are now the sole gates.
     #[serde(default)]
     pub governance_approved: bool,
+    /// Sender's tx-level signature (over `Transaction::signable_bytes`).
+    /// Independent of `admin_signature` (which is over the upgrade-
+    /// payload JSON, not the tx bytes).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<Vec<u8>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

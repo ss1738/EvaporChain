@@ -18,6 +18,7 @@ clap = { version = "4", features = ["derive"] }
 reqwest = { version = "0.12", features = ["json"] }
 colored = "2"
 hex = { workspace = true }
+blake3 = { workspace = true }
 libc = "0.2"
 futures = "0.3"
 evaporchain-types = { path = "../evaporchain-types" }

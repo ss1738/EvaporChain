@@ -8418,6 +8418,175 @@ async fn post_call_script(
     })
 }
 
+// ── UpgradeContract — governance-gated bytecode swap (mainnet P0) ──
+
+#[derive(Debug, Deserialize)]
+pub struct UpgradeContractRequest {
+    /// Sender address (hex, 32 bytes). Charged for gas + nonce-checked.
+    pub owner: String,
+    pub contract_id: u64,
+    /// New EvaporScript source (UTF-8) or future-VM bytecode (hex —
+    /// pass `bytecode_hex` instead).
+    #[serde(default)]
+    pub new_bytecode: Option<String>,
+    /// Hex-encoded raw bytecode bytes (alternative to `new_bytecode`).
+    #[serde(default)]
+    pub new_bytecode_hex: Option<String>,
+    /// `BLAKE3(new_bytecode)` as 64-char hex. The chain re-checks this.
+    pub new_bytecode_hash_hex: String,
+    pub nonce: u64,
+    /// Path A — admin's ML-DSA-65 hex signature over the canonical
+    /// payload `JSON({type:"upgrade_contract",contract_id,
+    /// new_bytecode_hash_hex,nonce})`. Set to `null` for governance path.
+    #[serde(default)]
+    pub admin_signature_hex: Option<String>,
+    /// Path A — admin's ML-DSA-65 hex public key. Must derive (via
+    /// BLAKE3) to the contract's stored admin address.
+    #[serde(default)]
+    pub admin_public_key_hex: Option<String>,
+    /// Path B — endorser stakes summed against `required_stake`.
+    #[serde(default)]
+    pub endorser_stakes: Vec<u64>,
+    /// Path B — minimum stake total for the amendment to pass.
+    #[serde(default)]
+    pub required_stake: u64,
+}
+
+/// POST /api/tx/upgrade_contract — submit an UpgradeContract tx.
+///
+/// Two paths, disambiguated by whether `admin_signature_hex` is present:
+///   - Admin: chain verifies the ML-DSA-65 sig at apply time and that
+///     `BLAKE3(admin_public_key) == contract.admin`.
+///   - Governance: chain enforces `sum(endorser_stakes) >= required_stake`.
+///     No body signature required on this path (mirrors
+///     `/api/governance/fork_choice_mode`).
+async fn post_upgrade_contract(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Json(req): Json<UpgradeContractRequest>,
+) -> Json<TxResultResponse> {
+    if let Err(resp) = require_tx_auth(&headers, &state, false) {
+        return resp;
+    }
+
+    let owner = match parse_hex_address(&req.owner) {
+        Ok(a) => a,
+        Err(e) => {
+            return Json(TxResultResponse {
+                success: false,
+                message: format!("invalid owner address: {e}"),
+                tx_hash: None,
+            });
+        }
+    };
+
+    let new_bytecode: Vec<u8> = match (&req.new_bytecode, &req.new_bytecode_hex) {
+        (Some(s), None) => s.as_bytes().to_vec(),
+        (None, Some(h)) => match hex::decode(h) {
+            Ok(b) => b,
+            Err(e) => {
+                return Json(TxResultResponse {
+                    success: false,
+                    message: format!("invalid new_bytecode_hex: {e}"),
+                    tx_hash: None,
+                });
+            }
+        },
+        (Some(_), Some(_)) => {
+            return Json(TxResultResponse {
+                success: false,
+                message: "supply exactly one of new_bytecode / new_bytecode_hex".into(),
+                tx_hash: None,
+            });
+        }
+        (None, None) => {
+            return Json(TxResultResponse {
+                success: false,
+                message: "missing new_bytecode (or new_bytecode_hex)".into(),
+                tx_hash: None,
+            });
+        }
+    };
+
+    let new_bytecode_hash: [u8; 32] = match hex::decode(&req.new_bytecode_hash_hex) {
+        Ok(b) if b.len() == 32 => {
+            let mut a = [0u8; 32];
+            a.copy_from_slice(&b);
+            a
+        }
+        _ => {
+            return Json(TxResultResponse {
+                success: false,
+                message: "new_bytecode_hash_hex must be 64-char hex (32 bytes)".into(),
+                tx_hash: None,
+            });
+        }
+    };
+
+    let admin_signature: Option<Vec<u8>> = match req.admin_signature_hex.as_deref() {
+        Some(s) => match hex::decode(s) {
+            Ok(b) => Some(b),
+            Err(e) => {
+                return Json(TxResultResponse {
+                    success: false,
+                    message: format!("invalid admin_signature_hex: {e}"),
+                    tx_hash: None,
+                });
+            }
+        },
+        None => None,
+    };
+    let admin_public_key: Option<Vec<u8>> = match req.admin_public_key_hex.as_deref() {
+        Some(s) => match hex::decode(s) {
+            Ok(b) => Some(b),
+            Err(e) => {
+                return Json(TxResultResponse {
+                    success: false,
+                    message: format!("invalid admin_public_key_hex: {e}"),
+                    tx_hash: None,
+                });
+            }
+        },
+        None => None,
+    };
+
+    let mut tx = Transaction::UpgradeContract(evaporchain_types::UpgradeContractTx {
+        owner,
+        contract_id: req.contract_id,
+        new_bytecode,
+        new_bytecode_hash,
+        nonce: req.nonce,
+        admin_signature,
+        admin_public_key,
+        endorser_stakes: req.endorser_stakes,
+        required_stake: req.required_stake,
+        governance_approved: false,
+        signature: None,
+        public_key: None,
+    });
+    sign_transaction(&mut tx, &state, None);
+    let hash = match &tx {
+        Transaction::UpgradeContract(t) => tx_hash(&format!(
+            "upgrade-contract:{}:{}:{}",
+            t.contract_id,
+            hex::encode(t.new_bytecode_hash),
+            t.nonce
+        )),
+        _ => unreachable!(),
+    };
+    state.submit_tx(tx);
+    Json(TxResultResponse {
+        success: true,
+        message: format!(
+            "UpgradeContract queued: contract_id={} hash={} (mempool={})",
+            req.contract_id,
+            hex::encode(new_bytecode_hash),
+            state.mempool_len()
+        ),
+        tx_hash: Some(hash),
+    })
+}
+
 async fn get_scripts(State(state): State<Arc<ApiState>>) -> Json<serde_json::Value> {
     let c = safe_lock(&state.consensus);
     let scripts = c.executor.script_engine.list();
@@ -8462,6 +8631,11 @@ async fn get_script(State(state): State<Arc<ApiState>>, Path(id): Path<u64>) -> 
                 }).collect::<Vec<_>>(),
                 "state": sc.state,
                 "opcode_count": sc.bytecode.opcodes.len(),
+                // UpgradeContract surface (mainnet P0). `admin = null`
+                // means the contract is frozen on the admin path —
+                // only a governance-quorum upgrade can mutate bytecode.
+                "admin": sc.admin.map(|a| format!("0x{}", hex::encode(a))),
+                "upgrade_count": sc.upgrade_count,
             });
             (StatusCode::OK, Json(resp)).into_response()
         }
@@ -13218,6 +13392,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/script/:id/abi", get(get_script_abi))
         .route("/api/tx/deploy-script", post(post_deploy_script))
         .route("/api/tx/call-script", post(post_call_script))
+        .route("/api/tx/upgrade_contract", post(post_upgrade_contract))
         // NFT Marketplace
         .route("/nft", get(nft_html))
         .route("/api/nfts", get(get_nfts))

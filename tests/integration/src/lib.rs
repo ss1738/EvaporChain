@@ -5389,7 +5389,7 @@ mod oracle_consensus_integration {
 
 #[cfg(any())]
 mod script_upgrade_integration {
-    use evaporchain_script::{ScriptEngine, Value};
+    use evaporchain_script::{ScriptEngine, UpgradeAuth, Value};
 
     const COUNTER_V1: &str = r#"contract Counter {
     state { count: u64 = 0 }
@@ -5431,7 +5431,7 @@ mod script_upgrade_integration {
 
         // Upgrade to V2 — adds `version` field
         engine
-            .upgrade_contract(id, COUNTER_V2, zero_addr(), 3)
+            .upgrade_contract(id, COUNTER_V2, UpgradeAuth::Admin(zero_addr()), 3)
             .unwrap();
 
         // Original count is preserved
@@ -5452,7 +5452,7 @@ mod script_upgrade_integration {
             .deploy(COUNTER_V1, zero_addr(), 5000, 100, 0)
             .unwrap();
         assert!(engine
-            .upgrade_contract(id, COUNTER_V2, other_addr(), 1)
+            .upgrade_contract(id, COUNTER_V2, UpgradeAuth::Admin(other_addr()), 1)
             .is_err());
     }
 
@@ -5464,7 +5464,7 @@ mod script_upgrade_integration {
             .unwrap();
         // COUNTER_INCOMPATIBLE removes `count` and replaces with `total`
         assert!(engine
-            .upgrade_contract(id, COUNTER_INCOMPATIBLE, zero_addr(), 1)
+            .upgrade_contract(id, COUNTER_INCOMPATIBLE, UpgradeAuth::Admin(zero_addr()), 1)
             .is_err());
     }
 
@@ -5472,7 +5472,7 @@ mod script_upgrade_integration {
     fn upgrade_unknown_contract_fails() {
         let mut engine = ScriptEngine::new();
         assert!(engine
-            .upgrade_contract(999, COUNTER_V2, zero_addr(), 0)
+            .upgrade_contract(999, COUNTER_V2, UpgradeAuth::Admin(zero_addr()), 0)
             .is_err());
     }
 
@@ -5483,7 +5483,7 @@ mod script_upgrade_integration {
             .deploy(COUNTER_V1, zero_addr(), 5000, 100, 0)
             .unwrap();
         engine
-            .upgrade_contract(id, COUNTER_V2, zero_addr(), 1)
+            .upgrade_contract(id, COUNTER_V2, UpgradeAuth::Admin(zero_addr()), 1)
             .unwrap();
         engine
             .call(id, "increment", vec![], zero_addr(), 2)

@@ -255,6 +255,19 @@ pub struct ScriptContract {
     /// keeps legacy script contracts deserializable.
     #[serde(default)]
     pub storage_bytes_charged: u64,
+    /// Upgrade authority. `Some(addr)` — `addr` may sign an admin-path
+    /// `UpgradeContract` tx. `None` — contract is "frozen" on the admin
+    /// path; only a governance-quorum upgrade is permitted. Defaults to
+    /// `Some(creator)` at deploy. Legacy snapshots that lack the field
+    /// deserialise to `None` (frozen) rather than silently inheriting
+    /// upgrade rights.
+    #[serde(default)]
+    pub admin: Option<AccountAddress>,
+    /// Monotonic counter bumped on every successful bytecode swap.
+    /// Auditability hook: lets explorers and clients see whether a
+    /// contract has ever been mutated. Legacy snapshots default to 0.
+    #[serde(default)]
+    pub upgrade_count: u64,
 }
 
 impl ScriptContract {
@@ -417,6 +430,18 @@ impl ExternalCaller for ContractCallRouter {
     }
 }
 
+/// Upgrade-path authorisation mode for `ScriptEngine::upgrade_contract`.
+///
+/// `Admin(caller)` — caller must equal `contract.admin` (and admin
+///   must not be `None`). Mirrors the deployer-as-admin default.
+/// `Governance` — chain has already verified a stake-quorum amendment;
+///   skip the caller-equals-admin check.
+#[derive(Debug, Clone, Copy)]
+pub enum UpgradeAuth {
+    Admin(AccountAddress),
+    Governance,
+}
+
 /// Engine managing all deployed script contracts.
 pub struct ScriptEngine {
     contracts: HashMap<u64, ScriptContract>,
@@ -485,6 +510,13 @@ impl ScriptEngine {
                 // Exact deploy-time charge. Matches what the execution
                 // layer credits to the deployer's storage_bytes.
                 storage_bytes_charged: source.len() as u64,
+                // New contracts start with the deployer as admin. The
+                // admin can be transferred or set to None ("frozen")
+                // through the contract's own state-machine semantics
+                // — the chain just enforces whatever value lives here
+                // at upgrade time.
+                admin: Some(creator),
+                upgrade_count: 0,
             },
         );
 
@@ -493,20 +525,31 @@ impl ScriptEngine {
 
     /// Upgrade a deployed contract to new bytecode.
     ///
-    /// Authorization: only the original creator may upgrade. Schema
-    /// compatibility: every existing field in the current state must
-    /// be present in the new schema with the same type. New fields
-    /// are allowed and initialized to their declared defaults. Removed
-    /// fields are rejected — silently dropping state on upgrade would
-    /// erase user balances or governance votes that the original
-    /// contract was responsible for. State, energy, half_life,
-    /// last_refreshed, creator, and created_epoch are preserved across
-    /// the upgrade. Closes K-10 (UpgradeContract) deferred item.
+    /// Authorization layers:
+    ///   - Admin path: `auth = UpgradeAuth::Admin(caller)` — caller
+    ///     must equal `contract.admin` (and admin must not be `None`,
+    ///     i.e. the contract must not be frozen).
+    ///   - Governance path: `auth = UpgradeAuth::Governance` — chain
+    ///     has already verified a stake-quorum amendment; skip the
+    ///     caller-equals-admin check. Used when the execution layer
+    ///     enforces the quorum.
+    ///
+    /// Either path bumps `upgrade_count` and replaces the bytecode.
+    /// State, energy, half_life, last_refreshed, creator, admin and
+    /// created_epoch are preserved across the upgrade.
+    ///
+    /// Schema compatibility (both paths): every existing field in the
+    /// current state must be present in the new schema with the same
+    /// type. New fields are allowed and initialised to their declared
+    /// defaults. Removed fields are rejected — silently dropping state
+    /// on upgrade would erase user balances or governance votes that
+    /// the original contract was responsible for. Closes K-10
+    /// (UpgradeContract) deferred item.
     pub fn upgrade_contract(
         &mut self,
         contract_id: u64,
         new_source: &str,
-        caller: AccountAddress,
+        auth: UpgradeAuth,
         _current_epoch: Epoch,
     ) -> Result<(), ScriptError> {
         let contract = self.contracts.get(&contract_id).ok_or_else(|| {
@@ -517,10 +560,28 @@ impl ScriptEngine {
                 "upgrade: contract {contract_id} has evaporated"
             )));
         }
-        if contract.creator != caller {
-            return Err(ScriptError::Runtime(format!(
-                "upgrade: caller is not the original creator of contract {contract_id}"
-            )));
+        match auth {
+            UpgradeAuth::Admin(caller) => match contract.admin {
+                None => {
+                    return Err(ScriptError::Runtime(format!(
+                        "upgrade: contract {contract_id} is frozen \
+                         (admin = None) — admin path is unavailable"
+                    )));
+                }
+                Some(admin_addr) => {
+                    if admin_addr != caller {
+                        return Err(ScriptError::Runtime(format!(
+                            "upgrade: caller is not the admin of contract {contract_id}"
+                        )));
+                    }
+                }
+            },
+            UpgradeAuth::Governance => {
+                // Stake-quorum already verified by the execution layer.
+                // No caller-equals-admin check; this path can upgrade
+                // a frozen contract too — that is the whole point of
+                // having a governance gate.
+            }
         }
 
         let new_ast = parser::parse(new_source)?;
@@ -576,6 +637,9 @@ impl ScriptEngine {
         current.bytecode = new_bytecode;
         current.abi = new_abi;
         current.name = new_ast.name;
+        // Auditability counter — bumped on every successful swap,
+        // independent of which path (admin / governance) was taken.
+        current.upgrade_count = current.upgrade_count.saturating_add(1);
         Ok(())
     }
 
@@ -797,6 +861,14 @@ impl ScriptEngine {
     /// Return references to all deployed contracts (unordered).
     pub fn all_contracts(&self) -> Vec<&ScriptContract> {
         self.contracts.values().collect()
+    }
+
+    /// Mutable access for test fixtures. Production callers should use
+    /// `upgrade_contract` / `refresh_contract` etc. — direct mutation
+    /// bypasses the schema-compatibility and admin-path invariants.
+    #[doc(hidden)]
+    pub fn contract_mut_for_test(&mut self, id: u64) -> Option<&mut ScriptContract> {
+        self.contracts.get_mut(&id)
     }
 
     /// Restore a previously-serialized contract into the engine.
