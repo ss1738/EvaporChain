@@ -37,7 +37,21 @@ import {
 import type { WcSession, WcSessionProposal } from "@/utils/walletconnect";
 import { ledgerManager, type LedgerAccount } from "@/utils/ledger";
 import { type BridgeTransfer } from "@/utils/bridge";
-import { loadPreferences, savePreferences, type UserPreferences } from "@/utils/preferences";
+import {
+  loadPreferences,
+  savePreferences,
+  resolveNodeUrl,
+  MAINNET_URL,
+  TESTNET_URL,
+  type UserPreferences,
+  type NetworkKind,
+} from "@/utils/preferences";
+import {
+  loadContacts,
+  saveContact as persistContact,
+  removeContact as persistRemoveContact,
+  type Contact,
+} from "@/utils/contacts";
 
 export type View =
   | "locked"
@@ -70,7 +84,8 @@ export type View =
   | "refresh-pool"
   | "governance"
   | "dsn-details"
-  | "shards";
+  | "shards"
+  | "contacts";
 
 export type PendingTxKind = "transfer" | "swap" | "resurrect" | "batch_refresh" | "settle_demurrage";
 
@@ -96,6 +111,12 @@ export interface PendingTx {
   error?: string;
   /** Filled when the tx finalises so we can clear it after a 10s grace. */
   finalisedAt?: number;
+  /** Confirmations on top of the inclusion block (head − inclusion). */
+  confirmations?: number;
+  /** FIFO position in the mempool while `status === "mempool"`. */
+  mempoolPosition?: number;
+  /** Total mempool depth at the most recent poll. */
+  mempoolSize?: number;
 }
 
 interface WalletState {
@@ -189,6 +210,20 @@ interface WalletState {
   // Preferences
   preferences: UserPreferences;
 
+  // Address book / contacts (persisted via chrome.storage.local)
+  contacts: Contact[];
+
+  // Multi-account batch view — refreshed by `refreshAllBalances`. Maps
+  // each known account address to its most recent balance/nonce snapshot
+  // plus a wall-clock `lastFetched` ms timestamp so the UI can render a
+  // "stale Xs ago" indicator on non-active accounts.
+  accountBalances: Record<string, {
+    balance: number;
+    nonce: number;
+    last_touched_epoch: number;
+    lastFetched: number;
+  }>;
+
   // Actions
   init: () => Promise<void>;
   unlock: (password: string) => Promise<void>;
@@ -196,6 +231,8 @@ interface WalletState {
   createAccount: (name: string, password: string) => Promise<string>;
   switchAccount: (name: string) => void;
   refreshBalance: () => Promise<void>;
+  /** Batch-refresh balances for every known account in parallel. */
+  refreshAllBalances: () => Promise<void>;
   refreshObjects: () => Promise<void>;
   refreshChainStatus: () => Promise<void>;
   sendTransfer: (to: string, amount: number) => Promise<TxSendResult>;
@@ -221,7 +258,16 @@ interface WalletState {
   setError: (error: string | null) => void;
   setNotification: (msg: string | null) => void;
   setNodeUrl: (url: string) => void;
+  /** Resolves the node URL for the currently selected network. */
+  getActiveNodeUrl: () => string;
+  /** Switch network kind (mainnet/testnet/custom) and re-point the API client. */
+  setNetwork: (network: NetworkKind, customUrl?: string) => Promise<void>;
   updatePreferences: (prefs: Partial<UserPreferences>) => Promise<void>;
+
+  // Contacts / address book
+  refreshContacts: () => Promise<void>;
+  addContact: (contact: Contact) => Promise<void>;
+  removeContact: (address: string) => Promise<void>;
 
   // Tx tracking
   trackTx: (hash: string, kind: PendingTxKind, summary: string) => void;
@@ -310,24 +356,32 @@ export const useWallet = create<WalletState>((set, get) => ({
   loading: false,
   error: null,
   notification: null,
-  nodeUrl: "https://testnet.evaporchain.com",
+  nodeUrl: TESTNET_URL,
   preferences: {
-    nodeUrl: "https://testnet.evaporchain.com",
+    nodeUrl: TESTNET_URL,
+    network: "testnet",
+    customNodeUrl: TESTNET_URL,
     currency: "USD",
     autoLockMinutes: 15,
     defaultSlippage: 0.5,
     hideSmallBalances: false,
     notificationsEnabled: true,
+    lockOnBlur: false,
+    lockOnTabClose: true,
   },
+  contacts: [],
+  accountBalances: {},
 
   init: async () => {
-    const [ks, prefs] = await Promise.all([
+    const [ks, prefs, contacts] = await Promise.all([
       BrowserKeyStore.load(),
       loadPreferences(),
+      loadContacts(),
     ]);
     const accounts = ks.listAccounts();
     const active = ks.getActiveAccount();
-    api.setNode(prefs.nodeUrl);
+    const activeUrl = resolveNodeUrl(prefs);
+    api.setNode(activeUrl);
     // Fresh installs only land on the simulated social-login flow in dev.
     // In prod the OAuth backend isn't wired up yet, so we route to the
     // real `create` flow instead. TODO real OAuth.
@@ -337,9 +391,15 @@ export const useWallet = create<WalletState>((set, get) => ({
       accounts,
       activeAccount: active,
       view: accounts.length === 0 ? freshInstallView : "locked",
-      nodeUrl: prefs.nodeUrl,
+      nodeUrl: activeUrl,
       preferences: prefs,
+      contacts,
     });
+
+    // Batch-refresh balances for every account so the accounts dropdown
+    // can render fresh balances without waiting for the user to switch
+    // accounts. Best-effort — node may be unreachable.
+    get().refreshAllBalances().catch(() => { /* swallow */ });
 
     // Start the tx-status poll once. The tick body short-circuits
     // when pendingTxs is empty so this is idle until a broadcast
@@ -433,16 +493,75 @@ export const useWallet = create<WalletState>((set, get) => ({
     if (!activeAccount) return;
     try {
       const detail = await api.getAddressDetail(activeAccount.address);
-      set({
+      const lastTouched = detail.last_touched_epoch ?? 0;
+      set((state) => ({
         balance: detail.balance,
         nonce: detail.nonce,
         // Cache last_touched_epoch from the same roundtrip — used by
         // refreshDemurrage and DemurrageBadge gating.
-        accountLastTouched: detail.last_touched_epoch ?? 0,
-      });
+        accountLastTouched: lastTouched,
+        // Mirror into the batch view so the accounts dropdown renders
+        // fresh balances without waiting for the next sweep.
+        accountBalances: {
+          ...state.accountBalances,
+          [activeAccount.address]: {
+            balance: detail.balance,
+            nonce: detail.nonce,
+            last_touched_epoch: lastTouched,
+            lastFetched: Date.now(),
+          },
+        },
+      }));
     } catch {
       // Node might be unreachable — keep last known balance
     }
+  },
+
+  refreshAllBalances: async () => {
+    const { accounts } = get();
+    if (accounts.length === 0) return;
+    // Fan out address-detail fetches in parallel, tolerate partials.
+    const results = await Promise.all(
+      accounts.map(async (acc) => {
+        try {
+          const detail = await api.getAddressDetail(acc.address);
+          return {
+            address: acc.address,
+            entry: {
+              balance: detail.balance,
+              nonce: detail.nonce,
+              last_touched_epoch: detail.last_touched_epoch ?? 0,
+              lastFetched: Date.now(),
+            },
+          };
+        } catch {
+          return null;
+        }
+      }),
+    );
+    const next: Record<string, {
+      balance: number;
+      nonce: number;
+      last_touched_epoch: number;
+      lastFetched: number;
+    }> = { ...get().accountBalances };
+    for (const r of results) {
+      if (r) next[r.address] = r.entry;
+    }
+    // If the active account was in the batch, mirror its values into the
+    // top-level balance/nonce slice so home renders fresh data too.
+    const active = get().activeAccount;
+    const activeEntry = active ? next[active.address] : undefined;
+    set({
+      accountBalances: next,
+      ...(activeEntry
+        ? {
+            balance: activeEntry.balance,
+            nonce: activeEntry.nonce,
+            accountLastTouched: activeEntry.last_touched_epoch,
+          }
+        : {}),
+    });
   },
 
   refreshObjects: async () => {
@@ -758,23 +877,92 @@ export const useWallet = create<WalletState>((set, get) => ({
   setError: (error: string | null) => set({ error }),
   setNotification: (msg: string | null) => set({ notification: msg }),
   setNodeUrl: (url: string) => {
+    // Treat raw setNodeUrl calls as switching to a custom URL — the
+    // network kind moves to "custom" and the URL is persisted as
+    // customNodeUrl. Mainnet/testnet selection goes through setNetwork.
     api.setNode(url);
     set((state) => ({
       nodeUrl: url,
-      preferences: { ...state.preferences, nodeUrl: url },
+      preferences: {
+        ...state.preferences,
+        nodeUrl: url,
+        network: "custom",
+        customNodeUrl: url,
+      },
     }));
-    savePreferences({ nodeUrl: url });
+    savePreferences({ nodeUrl: url, network: "custom", customNodeUrl: url });
+  },
+
+  getActiveNodeUrl: () => {
+    return resolveNodeUrl(get().preferences);
+  },
+
+  setNetwork: async (network, customUrl) => {
+    const prev = get().preferences;
+    const nextCustom = customUrl ?? prev.customNodeUrl ?? prev.nodeUrl;
+    const nextPrefs: UserPreferences = {
+      ...prev,
+      network,
+      customNodeUrl: nextCustom,
+    };
+    const url = resolveNodeUrl(nextPrefs);
+    nextPrefs.nodeUrl = url;
+    api.setNode(url);
+    await savePreferences({
+      network,
+      customNodeUrl: nextCustom,
+      nodeUrl: url,
+    });
+    set({ preferences: nextPrefs, nodeUrl: url });
+    // Re-fetch balances against the new endpoint.
+    get().refreshAllBalances().catch(() => { /* swallow */ });
   },
 
   updatePreferences: async (prefs: Partial<UserPreferences>) => {
     await savePreferences(prefs);
-    set((state) => ({
-      preferences: { ...state.preferences, ...prefs },
-      ...(prefs.nodeUrl != null ? { nodeUrl: prefs.nodeUrl } : {}),
-    }));
-    if (prefs.nodeUrl != null) {
-      api.setNode(prefs.nodeUrl);
+    set((state) => {
+      const merged = { ...state.preferences, ...prefs };
+      // If anything network-shaped changed, recompute the active URL
+      // from the merged preferences.
+      const networkChanged =
+        prefs.network !== undefined ||
+        prefs.customNodeUrl !== undefined ||
+        prefs.nodeUrl !== undefined;
+      const url = networkChanged ? resolveNodeUrl(merged) : state.nodeUrl;
+      if (networkChanged) merged.nodeUrl = url;
+      return {
+        preferences: merged,
+        nodeUrl: url,
+      };
+    });
+    const networkChanged =
+      prefs.network !== undefined ||
+      prefs.customNodeUrl !== undefined ||
+      prefs.nodeUrl !== undefined;
+    if (networkChanged) {
+      api.setNode(get().nodeUrl);
     }
+  },
+
+  // ── Contacts / address book ───────────────────────────────────
+
+  refreshContacts: async () => {
+    try {
+      const contacts = await loadContacts();
+      set({ contacts });
+    } catch {
+      // Storage unavailable — keep previous list.
+    }
+  },
+
+  addContact: async (contact) => {
+    const list = await persistContact(contact);
+    set({ contacts: list });
+  },
+
+  removeContact: async (address) => {
+    const list = await persistRemoveContact(address);
+    set({ contacts: list });
   },
 
   // ── Tx tracking ────────────────────────────────────────────────
@@ -813,9 +1001,20 @@ export const useWallet = create<WalletState>((set, get) => ({
       if (tx.status === "finalised" || tx.status === "rejected") return tx;
       try {
         const status = await api.getTxStatus(tx.hash);
-        if (status.state === tx.status) return tx; // no change
+        // Always refresh the live progress fields (confirmations bump as new
+        // blocks land, mempool position drops as txs ahead of us drain) even
+        // when the high-level state hasn't changed yet.
+        const liveUpdates = {
+          confirmations: status.confirmations,
+          mempoolPosition: status.mempool_position,
+          mempoolSize: status.mempool_size,
+        };
+        if (status.state === tx.status) {
+          return { ...tx, ...liveUpdates };
+        }
         const next: PendingTx = {
           ...tx,
+          ...liveUpdates,
           status: status.state,
           blockHeight: status.block_height ?? tx.blockHeight,
           error: status.error,
@@ -846,6 +1045,9 @@ export const useWallet = create<WalletState>((set, get) => ({
     if (anyNewlyFinalised) {
       get().refreshDsnStatus().catch(() => { /* swallow */ });
       get().refreshShards().catch(() => { /* swallow */ });
+      // Refresh every account's balance so the accounts dropdown
+      // reflects post-tx state without waiting for an account switch.
+      get().refreshAllBalances().catch(() => { /* swallow */ });
     }
   },
 

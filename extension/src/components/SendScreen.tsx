@@ -5,6 +5,7 @@ import { Header } from "./Header";
 import { TxSimulation } from "./TxSimulation";
 import { LadVmPreview } from "./LadVmPreview";
 import { api } from "@/utils/api";
+import { findContactSync } from "@/utils/contacts";
 
 type SendStep = "form" | "preview" | "sent";
 type SendMode = "address" | "object";
@@ -21,12 +22,19 @@ export function SendScreen() {
     activeAccount,
     shardsHealth,
     addressShard,
+    contacts,
+    addContact,
   } = useWallet();
   const [mode, setMode] = useState<SendMode>("address");
   const [to, setTo] = useState("");
   const [objectId, setObjectId] = useState("");
   const [amount, setAmount] = useState("");
   const [step, setStep] = useState<SendStep>("form");
+  // Address-book autocomplete + "save as contact" prompt state.
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [saveContactOpen, setSaveContactOpen] = useState(false);
+  const [saveContactLabel, setSaveContactLabel] = useState("");
+  const [saveContactDismissed, setSaveContactDismissed] = useState(false);
 
   // In "object" mode, the user picks one of their own objects; in
   // "address" mode they paste a recipient address. Owned objects are
@@ -42,6 +50,25 @@ export function SendScreen() {
   const parsedAmount = parseInt(amount, 10);
   const recipientReady = mode === "address" ? to.length > 0 : objectId.length > 0;
   const isFormValid = recipientReady && !isNaN(parsedAmount) && parsedAmount > 0;
+
+  // Contact autocomplete: filter the address book by partial match on
+  // either label or address (case-insensitive). Suggestions only show
+  // when the user is typing into the address input and they don't
+  // exactly match an existing contact.
+  const knownContact = mode === "address" ? findContactSync(contacts, to) : null;
+  const suggestions = useMemo(() => {
+    if (mode !== "address") return [];
+    const q = to.trim().toLowerCase();
+    if (!q) return [];
+    if (knownContact) return [];
+    return contacts
+      .filter(
+        (c) =>
+          c.address.toLowerCase().includes(q) ||
+          c.label.toLowerCase().includes(q),
+      )
+      .slice(0, 5);
+  }, [contacts, to, mode, knownContact]);
 
   // Cross-shard awareness. Resolve the recipient address (`to` in
   // address mode, the picked object's owner in object mode) and
@@ -81,9 +108,38 @@ export function SendScreen() {
     if (!resolvedTo || !amount) return;
     const result = await sendTransfer(resolvedTo, parsedAmount);
     if (result.success) {
+      // If the recipient address isn't in the contacts book and the
+      // user hasn't dismissed the prompt, offer to save it. We delay
+      // moving back to home so the inline prompt has time to render.
+      const recipientKnown = !!findContactSync(contacts, resolvedTo);
+      if (!recipientKnown && !saveContactDismissed && mode === "address") {
+        setSaveContactOpen(true);
+        setSaveContactLabel("");
+        setStep("sent");
+        // Don't auto-redirect; let the user save or dismiss.
+        return;
+      }
       setStep("sent");
       setTimeout(() => setView("home"), 2000);
     }
+  };
+
+  const handleSaveContact = async () => {
+    const label = saveContactLabel.trim();
+    if (!label) return;
+    await addContact({
+      address: resolvedTo,
+      label,
+      addedAt: Date.now(),
+    });
+    setSaveContactOpen(false);
+    setTimeout(() => setView("home"), 1000);
+  };
+
+  const handleDismissSaveContact = () => {
+    setSaveContactOpen(false);
+    setSaveContactDismissed(true);
+    setTimeout(() => setView("home"), 800);
   };
 
   const handleCancelPreview = () => {
@@ -101,6 +157,40 @@ export function SendScreen() {
           </div>
           <p className="text-sm font-semibold text-zinc-200">Transaction Sent</p>
           <p className="text-xs text-zinc-500 mt-1">{amount} EVAP sent</p>
+
+          {saveContactOpen && (
+            <div className="mt-6 w-full max-w-sm px-4 py-3 rounded-lg bg-evap-surface border border-evap-cyan/30 space-y-2">
+              <p className="text-[11px] text-zinc-300 font-semibold">
+                Save as contact?
+              </p>
+              <p className="text-[10px] text-zinc-500 font-mono truncate">
+                {resolvedTo}
+              </p>
+              <input
+                type="text"
+                placeholder="Label, e.g. Alice's hot wallet"
+                value={saveContactLabel}
+                onChange={(e) => setSaveContactLabel(e.target.value)}
+                autoFocus
+                className="w-full px-3 py-2 rounded-md bg-evap-bg border border-evap-border text-[11px] text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-evap-cyan transition"
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleSaveContact}
+                  disabled={!saveContactLabel.trim()}
+                  className="flex-1 py-2 rounded-md bg-gradient-to-r from-evap-cyan to-evap-purple text-[11px] font-semibold text-black hover:opacity-90 transition disabled:opacity-50"
+                >
+                  Save contact
+                </button>
+                <button
+                  onClick={handleDismissSaveContact}
+                  className="px-3 py-2 rounded-md bg-evap-surface border border-evap-border text-[11px] text-zinc-300 hover:border-evap-cyan/40 transition"
+                >
+                  Skip
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -213,16 +303,57 @@ export function SendScreen() {
         </div>
 
         {mode === "address" ? (
-          <div>
-            <label className="text-[10px] text-zinc-500 mb-1 block">Recipient Address</label>
+          <div className="relative">
+            <label className="text-[10px] text-zinc-500 mb-1 block">
+              Recipient Address
+              {knownContact && (
+                <span className="ml-2 text-evap-cyan font-semibold">
+                  · {knownContact.label}
+                </span>
+              )}
+            </label>
             <input
               type="text"
-              placeholder="0x..."
+              placeholder="0x... or contact label"
               value={to}
-              onChange={e => setTo(e.target.value)}
+              onChange={e => {
+                setTo(e.target.value);
+                setShowSuggestions(true);
+              }}
+              onFocus={() => setShowSuggestions(true)}
+              onBlur={() => {
+                // Delay so click events on suggestions can register
+                // before the dropdown unmounts.
+                setTimeout(() => setShowSuggestions(false), 150);
+              }}
               className="w-full px-4 py-3 rounded-lg bg-evap-surface border border-evap-border text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-evap-cyan transition font-mono"
               autoFocus
             />
+            {showSuggestions && suggestions.length > 0 && (
+              <div className="absolute z-10 left-0 right-0 mt-1 rounded-lg bg-evap-surface border border-evap-border overflow-hidden divide-y divide-evap-border">
+                {suggestions.map((c) => (
+                  <button
+                    key={c.address}
+                    type="button"
+                    onMouseDown={(e) => {
+                      // mousedown fires before blur, so onClick would
+                      // be cancelled by the input losing focus.
+                      e.preventDefault();
+                      setTo(c.address);
+                      setShowSuggestions(false);
+                    }}
+                    className="w-full text-left px-3 py-2 hover:bg-evap-bg transition"
+                  >
+                    <p className="text-[11px] font-semibold text-zinc-200 truncate">
+                      {c.label}
+                    </p>
+                    <p className="text-[10px] font-mono text-zinc-500 truncate">
+                      {c.address}
+                    </p>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         ) : (
           <div>

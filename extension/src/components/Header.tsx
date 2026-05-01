@@ -2,7 +2,18 @@ import { useWallet } from "@/hooks/useWallet";
 import { shortAddress } from "@/utils/format";
 
 export function Header() {
-  const { activeAccount, chainStatus, lock, pendingTxs, setView, shardsHealth, addressShard } = useWallet();
+  const {
+    activeAccount, chainStatus, lock, pendingTxs, setView,
+    shardsHealth, addressShard, preferences,
+  } = useWallet();
+  const network = preferences.network;
+  // Mainnet = green pill, Testnet = amber pill, Custom = gray pill.
+  const networkPill =
+    network === "mainnet"
+      ? "bg-evap-green/10 text-evap-green border-evap-green/30 hover:border-evap-green/60"
+      : network === "testnet"
+        ? "bg-amber-500/10 text-amber-500 border-amber-500/30 hover:border-amber-500/60"
+        : "bg-zinc-500/10 text-zinc-300 border-zinc-500/30 hover:border-zinc-500/60";
   // Count txs that are still in flight (i.e. not yet finalised/rejected).
   const inflight = pendingTxs.filter(t => t.status !== "finalised" && t.status !== "rejected").length;
   // Show the shard pill only when sharding is active and the chain
@@ -40,6 +51,13 @@ export function Header() {
         </div>
       </div>
       <div className="flex items-center gap-2">
+        <button
+          onClick={() => setView("settings")}
+          className={`text-[9px] px-1.5 py-0.5 rounded-full border capitalize transition ${networkPill}`}
+          title="Network — tap to change in settings"
+        >
+          {network}
+        </button>
         {inflight > 0 && (
           <button
             onClick={() => setView("activity")}

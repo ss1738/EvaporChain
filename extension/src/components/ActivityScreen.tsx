@@ -202,7 +202,13 @@ function PendingTxRow({ tx, onClear }: { tx: PendingTx; onClear: () => void }) {
         <div className="flex items-center justify-between mt-0.5 gap-2">
           <span className="text-[9px] text-zinc-600 font-mono truncate">{shortAddress(tx.hash)}</span>
           <span className="text-[9px] text-zinc-600 shrink-0">
-            {tx.blockHeight != null ? `Block ${tx.blockHeight}` : ""}
+            {tx.status === "mempool" && tx.mempoolPosition != null && tx.mempoolSize != null
+              ? `Queue ${tx.mempoolPosition + 1}/${tx.mempoolSize}`
+              : tx.blockHeight != null
+                ? tx.confirmations != null && tx.confirmations > 0
+                  ? `Block ${tx.blockHeight} · ${tx.confirmations} confs`
+                  : `Block ${tx.blockHeight}`
+                : ""}
           </span>
         </div>
         {tx.error && (

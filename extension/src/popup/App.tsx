@@ -31,6 +31,7 @@ import { RefreshPoolScreen } from "@/components/RefreshPoolScreen";
 import { GovernanceScreen } from "@/components/GovernanceScreen";
 import { DsnDetailsScreen } from "@/components/DsnBadge";
 import { ShardScreen } from "@/components/ShardScreen";
+import { ContactsScreen } from "@/components/ContactsScreen";
 import { TxToastContainer } from "@/components/TxToast";
 
 export function App() {
@@ -39,6 +40,50 @@ export function App() {
   useEffect(() => {
     init();
   }, [init]);
+
+  // Lock-on-blur and lock-on-tab-close. The blur listener fires when
+  // the popup itself loses focus (Chrome closes the popup as soon as
+  // the user clicks outside it, so this is also the popup-close path
+  // for non-tab-close cases). beforeunload covers the user explicitly
+  // closing the popup or the browser tab. Both gate on the relevant
+  // pref so existing users keep their previous behaviour.
+  useEffect(() => {
+    const onBlur = () => {
+      const { preferences, isUnlocked, lock } = useWallet.getState();
+      if (!isUnlocked) return;
+      // `document.hasFocus()` returns false the moment the popup loses
+      // focus — that's the desired trigger. Tab switches inside Chrome
+      // never reach the popup's window because the popup is destroyed
+      // when it loses focus, so this listener only fires for the
+      // popup's own blur events.
+      if (preferences.lockOnBlur && !document.hasFocus()) {
+        lock();
+      }
+    };
+    const onUnload = () => {
+      const { preferences, isUnlocked, lock } = useWallet.getState();
+      if (!isUnlocked) return;
+      if (preferences.lockOnTabClose) {
+        lock();
+        // Best-effort: also flip the persisted lock flag the
+        // background service-worker reads on next wake-up so the
+        // wallet stays locked even before the popup re-mounts.
+        try {
+          if (typeof chrome !== "undefined" && chrome.storage?.local) {
+            chrome.storage.local.set({ wallet_locked: true });
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("beforeunload", onUnload);
+    return () => {
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("beforeunload", onUnload);
+    };
+  }, []);
 
   return (
     <>
@@ -118,6 +163,8 @@ function AppView({ view, completeTutorial }: { view: ViewType; completeTutorial:
       return <DsnDetailsScreen />;
     case "shards":
       return <ShardScreen />;
+    case "contacts":
+      return <ContactsScreen />;
     default:
       return <LockScreen />;
   }

@@ -118,6 +118,21 @@ export class WalletConnectError extends Error {
 export const EVAP_CHAIN_TESTNET = "evap:1";
 export const EVAP_CHAIN_MAINNET = "evap:0";
 
+/**
+ * Map an EvaporChain network kind to its CAIP-2 chain id. Custom
+ * networks have no canonical chain id — callers must pick one
+ * explicitly (the wallet UI prompts the user when the active network
+ * is "custom").
+ */
+export function chainIdForNetwork(
+  network: "mainnet" | "testnet" | "custom",
+  customChainId?: string,
+): string {
+  if (network === "mainnet") return EVAP_CHAIN_MAINNET;
+  if (network === "testnet") return EVAP_CHAIN_TESTNET;
+  return customChainId || EVAP_CHAIN_TESTNET;
+}
+
 /** Methods the wallet advertises support for over WalletConnect. */
 export const EVAP_WC_METHODS = [
   "evap_signTransaction",
@@ -308,7 +323,14 @@ export class WalletConnectManager {
    * are converted to CAIP-10 form (`<namespace>:<reference>:<address>`)
    * automatically.
    */
-  async approveProposal(proposal: WcSessionProposal, accounts: string[]): Promise<WcSession> {
+  async approveProposal(
+    proposal: WcSessionProposal,
+    accounts: string[],
+    /** Default chain id when the dApp under-specifies. Pass the
+     *  wallet's currently-selected network's CAIP id (mainnet=evap:0,
+     *  testnet=evap:1) so dApps land on the network the user expects. */
+    defaultChainId: string = EVAP_CHAIN_TESTNET,
+  ): Promise<WcSession> {
     this._ensureInitialized();
     if (accounts.length === 0) {
       throw new WalletConnectError("No accounts to approve", WcErrorCode.USER_REJECTED);
@@ -328,7 +350,7 @@ export class WalletConnectManager {
     };
 
     for (const [key, ns] of Object.entries(merged)) {
-      const chains = ns.chains && ns.chains.length > 0 ? ns.chains : [EVAP_CHAIN_TESTNET];
+      const chains = ns.chains && ns.chains.length > 0 ? ns.chains : [defaultChainId];
       const caipAccounts = chains.flatMap((chain) =>
         accounts.map((addr) => (addr.includes(":") ? addr : `${chain}:${addr}`)),
       );

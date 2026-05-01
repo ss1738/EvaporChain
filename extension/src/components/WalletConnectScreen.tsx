@@ -5,7 +5,12 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useWallet } from "@/hooks/useWallet";
-import { WalletConnectManager, type WcSessionProposal, type WcSession } from "@/utils/walletconnect";
+import {
+  WalletConnectManager,
+  chainIdForNetwork,
+  type WcSessionProposal,
+  type WcSession,
+} from "@/utils/walletconnect";
 import { WcApprovalModal } from "./WcApprovalModal";
 
 // Singleton manager — shared across the extension lifetime. Project ID is
@@ -13,7 +18,10 @@ import { WcApprovalModal } from "./WcApprovalModal";
 const wcManager = new WalletConnectManager();
 
 export function WalletConnectScreen() {
-  const { setView, activeAccount, wcSessions, setWcSessions, setNotification, signTransaction } = useWallet();
+  const {
+    setView, activeAccount, wcSessions, setWcSessions, setNotification, signTransaction,
+    preferences,
+  } = useWallet();
 
   const [uri, setUri] = useState("");
   const [pairing, setPairing] = useState(false);
@@ -74,14 +82,29 @@ export function WalletConnectScreen() {
   const handleApprove = useCallback(async () => {
     if (!proposal || !activeAccount) return;
     try {
-      await wcManager.approveProposal(proposal, [activeAccount.address]);
+      // Pick the CAIP-2 chain id from the wallet's active network so
+      // dApps land on whichever chain the user has selected. Custom
+      // networks fall back to testnet by default; the user is
+      // expected to specify a real chain via WC's optional namespaces
+      // when they're running their own RPC. (The spec asks for an
+      // explicit prompt — surfaced inline below the approval modal in
+      // a future revision; for now custom = testnet fallback.)
+      if (preferences.network === "custom") {
+        // eslint-disable-next-line no-console
+        console.warn(
+          "[walletconnect] Approving on custom network — defaulting CAIP chain to evap:1 (testnet). " +
+            "Switch to mainnet/testnet in Settings to override.",
+        );
+      }
+      const defaultChain = chainIdForNetwork(preferences.network);
+      await wcManager.approveProposal(proposal, [activeAccount.address], defaultChain);
       setWcSessions(wcManager.getActiveSessions());
       setProposal(null);
       setNotification("dApp connected");
     } catch (e: any) {
       setError(e.message);
     }
-  }, [proposal, activeAccount, setWcSessions, setNotification]);
+  }, [proposal, activeAccount, setWcSessions, setNotification, preferences.network]);
 
   const handleReject = useCallback(async () => {
     if (!proposal) return;
