@@ -393,6 +393,20 @@ const SettingsScreen: React.FC = () => {
             </View>
             <Text style={styles.settingArrow}>{'>'}</Text>
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.settingRow}
+            onPress={() => navigation.navigate('SubstrateHub')}
+            activeOpacity={0.7}
+          >
+            <View style={styles.settingLeft}>
+              <Text style={styles.settingLabel}>Substrate</Text>
+              <Text style={styles.settingSubtext}>
+                Patronage, refresh-pool, fees, demurrage, governance, HLWA, DSN, Bell-Beacon
+              </Text>
+            </View>
+            <Text style={styles.settingArrow}>{'>'}</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Danger Zone */}

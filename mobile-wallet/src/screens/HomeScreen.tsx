@@ -32,6 +32,7 @@ const QUICK_ACTIONS = [
   { label: 'Objects', screen: 'Objects' as const, color: '#f59e0b', icon: 'O' },
   { label: 'NFTs', screen: 'NFTs' as const, color: '#ef4444', icon: 'N' },
   { label: 'Stake', screen: 'Staking' as const, color: '#22c55e', icon: 'V' },
+  { label: 'Substrate', screen: 'SubstrateHub' as const, color: '#0e7490', icon: 'X' },
 ];
 
 const HomeScreen: React.FC<Props> = ({ navigation }) => {

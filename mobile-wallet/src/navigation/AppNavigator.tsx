@@ -37,6 +37,29 @@ import HardwareWalletScreen from '../screens/HardwareWalletScreen';
 import WalletConnectScreen from '../screens/WalletConnectScreen';
 import OfflineModeScreen from '../screens/OfflineModeScreen';
 
+// ── Substrate-visibility surfaces ────────────────────────────────────
+//
+// Eight screens mirroring the browser extension's substrate-visibility
+// surfaces. Reachable from the Substrate hub (Settings → Substrate, and
+// Home → Substrate quick-action). All eight share the same stylistic
+// language as the existing screens (light/clean palette, emerald + zinc
+// + cyan). Field shapes match crates/evaporchain-node/src/api.rs
+// byte-for-byte.
+//
+// TODO: LAD-VM preview is intentionally deferred — the SendScreen LAD
+// wiring on extension uses a target-object selector that doesn't map
+// cleanly to mobile's flow yet. Re-evaluate once mobile has a per-object
+// transfer flow that mirrors the extension's TxSimulation pane.
+import SubstrateHubScreen from '../screens/SubstrateHubScreen';
+import PatronageScreen from '../screens/PatronageScreen';
+import RefreshPoolScreen from '../screens/RefreshPoolScreen';
+import FeeControllerScreen from '../screens/FeeControllerScreen';
+import DemurrageScreen from '../screens/DemurrageScreen';
+import GovernanceScreen from '../screens/GovernanceScreen';
+import HlwaScreen from '../screens/HlwaScreen';
+import DsnScreen from '../screens/DsnScreen';
+import BellBeaconScreen from '../screens/BellBeaconScreen';
+
 // ── Types ──
 
 export type RootStackParamList = {
@@ -57,6 +80,16 @@ export type RootStackParamList = {
   HardwareWallet: undefined;
   WalletConnect: undefined;
   OfflineMode: undefined;
+  // Substrate
+  SubstrateHub: undefined;
+  Patronage: undefined;
+  RefreshPool: undefined;
+  FeeController: undefined;
+  Demurrage: undefined;
+  Governance: undefined;
+  Hlwa: undefined;
+  Dsn: undefined;
+  BellBeacon: undefined;
 };
 
 export type TabParamList = {
@@ -225,6 +258,17 @@ export const AppNavigator: React.FC<AppNavigatorProps> = ({ navigationRef }) => 
         <Stack.Screen name="HardwareWallet" component={HardwareWalletScreen} options={{ title: 'Hardware Wallet' }} />
         <Stack.Screen name="WalletConnect" component={WalletConnectScreen} options={{ title: 'WalletConnect' }} />
         <Stack.Screen name="OfflineMode" component={OfflineModeScreen} options={{ title: 'Offline Queue' }} />
+
+        {/* Substrate-visibility surfaces */}
+        <Stack.Screen name="SubstrateHub" component={SubstrateHubScreen} options={{ title: 'Substrate' }} />
+        <Stack.Screen name="Patronage" component={PatronageScreen} options={{ title: 'Patronage' }} />
+        <Stack.Screen name="RefreshPool" component={RefreshPoolScreen} options={{ title: 'Refresh Pool' }} />
+        <Stack.Screen name="FeeController" component={FeeControllerScreen} options={{ title: 'Fee Controller' }} />
+        <Stack.Screen name="Demurrage" component={DemurrageScreen} options={{ title: 'Demurrage' }} />
+        <Stack.Screen name="Governance" component={GovernanceScreen} options={{ title: 'Governance' }} />
+        <Stack.Screen name="Hlwa" component={HlwaScreen} options={{ title: 'HLWA' }} />
+        <Stack.Screen name="Dsn" component={DsnScreen} options={{ title: 'DSN Privacy' }} />
+        <Stack.Screen name="BellBeacon" component={BellBeaconScreen} options={{ title: 'Bell-Beacon' }} />
       </Stack.Navigator>
     </NavigationContainer>
   );
