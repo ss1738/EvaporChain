@@ -569,6 +569,7 @@ mod tests {
             nonce: 0,
         storage_deposit: 0,
         storage_bytes: 0,
+        last_touched_epoch: 0,
         }
     }
 
@@ -855,6 +856,7 @@ mod tests {
                 nonce: i as u64,
                 storage_deposit: 0,
                 storage_bytes: 0,
+                last_touched_epoch: 0,
             });
         }
         for i in 0..50u8 {

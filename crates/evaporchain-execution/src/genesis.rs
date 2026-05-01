@@ -53,6 +53,7 @@ pub fn initialize_genesis(
             nonce: 0,
         storage_deposit: 0,
         storage_bytes: 0,
+        last_touched_epoch: 0,
         };
         db.put_account(account);
         total_allocated += ga.balance;

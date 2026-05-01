@@ -940,6 +940,7 @@ impl SimpleExecutor {
         &self,
         db: &mut dyn StateDB,
         tx: &TransferTx,
+        epoch: Epoch,
     ) -> Result<(), ExecutionError> {
         if tx.from == tx.to {
             return Err(ExecutionError::SelfTransfer);
@@ -970,10 +971,15 @@ impl SimpleExecutor {
         if !is_faucet {
             sender.nonce += 1;
         }
+        // Stamp the demurrage anchor: balance (and possibly nonce) just
+        // mutated, so per-account demurrage starts accruing from `epoch`.
+        sender.last_touched_epoch = epoch;
 
         // Credit receiver
         let receiver = db.get_or_create_account(&tx.to);
         receiver.balance = receiver.balance.saturating_add(tx.amount);
+        // Receiver's balance changed too — reset their demurrage anchor.
+        receiver.last_touched_epoch = epoch;
 
         debug!(
             from = hex::encode(tx.from),
@@ -1016,6 +1022,8 @@ impl SimpleExecutor {
             creator.balance -= evaporchain_types::MIN_STORAGE_DEPOSIT;
             creator.storage_deposit = creator.storage_deposit
                 .saturating_add(evaporchain_types::MIN_STORAGE_DEPOSIT);
+            // Storage-deposit lock-up debits balance — stamp the demurrage anchor.
+            creator.last_touched_epoch = epoch;
             creator.storage_bytes = creator.storage_bytes.saturating_add(object_bytes);
         }
 
@@ -1207,6 +1215,7 @@ impl SimpleExecutor {
         &self,
         db: &mut dyn StateDB,
         tx: &ValidatorStakeTx,
+        epoch: Epoch,
     ) -> Result<(), ExecutionError> {
         if tx.stake_amount == 0 {
             return Err(ExecutionError::ZeroAmount);
@@ -1230,6 +1239,8 @@ impl SimpleExecutor {
         // Lock stake by deducting from balance
         sender.balance -= tx.stake_amount;
         sender.nonce += 1;
+        // Stake locks balance and bumps nonce — stamp the demurrage anchor.
+        sender.last_touched_epoch = epoch;
 
         let existing_stake = db.get_stake(tx.validator_id).map(|s| s.staked_amount).unwrap_or(0);
         db.put_stake(StakeRecord {
@@ -1290,6 +1301,8 @@ impl SimpleExecutor {
         }
         delegator.balance -= tx.amount;
         delegator.nonce += 1;
+        // Delegate locks balance + bumps nonce — stamp the demurrage anchor.
+        delegator.last_touched_epoch = current_epoch;
 
         // Get-or-create the (delegator, validator_id) record. Adding to
         // an existing delegation refreshes `delegated_at_epoch` so reward
@@ -1342,6 +1355,8 @@ impl SimpleExecutor {
             });
         }
         delegator_acct.nonce += 1;
+        // Nonce mutated — stamp the demurrage anchor.
+        delegator_acct.last_touched_epoch = current_epoch;
 
         let mut record = db
             .get_delegation(&tx.delegator, tx.validator_id)
@@ -1388,6 +1403,9 @@ impl SimpleExecutor {
             });
         }
         delegator_acct.nonce += 1;
+        // Nonce mutated — stamp the demurrage anchor here too; the actual
+        // balance credit happens after we resolve the delegation record.
+        delegator_acct.last_touched_epoch = current_epoch;
 
         let mut record = db
             .get_delegation(&tx.delegator, tx.validator_id)
@@ -1418,6 +1436,8 @@ impl SimpleExecutor {
 
         if let Some(acct) = db.get_account_mut(&tx.delegator) {
             acct.balance = acct.balance.saturating_add(claimed);
+            // Balance just changed — refresh the demurrage anchor.
+            acct.last_touched_epoch = current_epoch;
         }
 
         if record.amount == 0 && record.unbonding_amount == 0 {
@@ -1452,6 +1472,8 @@ impl SimpleExecutor {
             });
         }
         sender.nonce += 1;
+        // Nonce mutated — stamp the demurrage anchor.
+        sender.last_touched_epoch = current_epoch;
 
         let mut stake = db.get_stake(tx.validator_id).cloned().ok_or_else(|| {
             ExecutionError::ObjectNotFound(
@@ -1521,6 +1543,8 @@ impl SimpleExecutor {
         let claimable = stake.staked_amount.saturating_sub(stake.slashed_amount);
         sender.balance += claimable;
         sender.nonce += 1;
+        // Balance + nonce mutated — stamp the demurrage anchor.
+        sender.last_touched_epoch = current_epoch;
 
         db.remove_stake(tx.validator_id);
 
@@ -1548,6 +1572,8 @@ impl SimpleExecutor {
             });
         }
         sender.nonce += 1;
+        // Nonce mutated — stamp the demurrage anchor.
+        sender.last_touched_epoch = current_epoch;
 
         match &tx.action {
             GovernanceAction::CreateProposal { title, param_key, param_value, voting_epochs } => {
@@ -1656,6 +1682,7 @@ impl SimpleExecutor {
         &self,
         db: &mut dyn StateDB,
         tx: &MultiSigTx,
+        epoch: Epoch,
     ) -> Result<(), ExecutionError> {
         if (tx.signatures.len() as u8) < tx.threshold {
             return Err(ExecutionError::ContractError(format!(
@@ -1686,6 +1713,8 @@ impl SimpleExecutor {
             });
         }
         sender.nonce += 1;
+        // Nonce mutated — stamp the demurrage anchor.
+        sender.last_touched_epoch = epoch;
 
         Ok(())
     }
@@ -1694,6 +1723,7 @@ impl SimpleExecutor {
         &self,
         db: &mut dyn StateDB,
         tx: &evaporchain_types::UserOpTx,
+        epoch: Epoch,
     ) -> Result<(), ExecutionError> {
         let sender = db.get_or_create_account(&tx.sender);
         if sender.nonce != tx.nonce {
@@ -1703,6 +1733,8 @@ impl SimpleExecutor {
             });
         }
         sender.nonce += 1;
+        // Nonce mutated — stamp the demurrage anchor.
+        sender.last_touched_epoch = epoch;
 
         if let Some(ref paymaster) = tx.paymaster {
             let pm = db.get_or_create_account(paymaster);
@@ -1715,6 +1747,8 @@ impl SimpleExecutor {
                 });
             }
             pm.balance = pm.balance.saturating_sub(total_gas_cost);
+            // Paymaster's balance just changed — reset its anchor too.
+            pm.last_touched_epoch = epoch;
         }
 
         Ok(())
@@ -1751,6 +1785,8 @@ impl SimpleExecutor {
             });
         }
         sender.nonce = sender.nonce.saturating_add(1);
+        // Nonce mutated — stamp the demurrage anchor.
+        sender.last_touched_epoch = current_epoch;
 
         // Governance gate: find a Passed proposal whose key/value
         // commit to this contract's upgrade with the supplied bytecode.
@@ -1811,6 +1847,8 @@ impl SimpleExecutor {
             if pending > 0 {
                 let acct = db.get_or_create_account(&sched.beneficiary);
                 acct.balance = acct.balance.saturating_add(pending);
+                // Vesting release credits balance — refresh demurrage anchor.
+                acct.last_touched_epoch = current_epoch;
             }
             let mut updated = sched.clone();
             updated.released_amount = updated.released_amount.saturating_add(pending);
@@ -1991,8 +2029,12 @@ impl SimpleExecutor {
                     let from_acct = db.get_or_create_account(&from_addr);
                     if from_acct.balance >= *amount {
                         from_acct.balance -= *amount;
+                        // Cross-shard transfer mutates sender balance.
+                        from_acct.last_touched_epoch = epoch;
                         let to_acct = db.get_or_create_account(&to_addr);
                         to_acct.balance += *amount;
+                        // ...and receiver balance.
+                        to_acct.last_touched_epoch = epoch;
                         let mut h = blake3::Hasher::new();
                         h.update(&from_addr);
                         h.update(&to_addr);
@@ -2117,6 +2159,8 @@ impl ExecutionEngine for SimpleExecutor {
                     }
                     // Deduct fees upfront (burned — deflationary model)
                     sender.balance -= total_tx_fee;
+                    // Fee deduction is a balance mutation — refresh anchor.
+                    sender.last_touched_epoch = block.epoch;
                 }
                 total_tx_fee
             } else {
@@ -2129,7 +2173,9 @@ impl ExecutionEngine for SimpleExecutor {
             });
 
             let result = match tx {
-                Transaction::Transfer(transfer) => self.execute_transfer(db, transfer),
+                Transaction::Transfer(transfer) => {
+                    self.execute_transfer(db, transfer, block.epoch)
+                }
                 Transaction::CreateObject(create) => {
                     self.execute_create_object(db, create, block.epoch)
                 }
@@ -2138,7 +2184,9 @@ impl ExecutionEngine for SimpleExecutor {
                 Transaction::CallContract(call) => self.execute_call_contract(call),
                 Transaction::DeployScript(deploy) => self.execute_deploy_script(deploy, block.epoch),
                 Transaction::CallScript(call) => self.execute_call_script(call),
-                Transaction::ValidatorStake(stake) => self.execute_validator_stake(db, stake),
+                Transaction::ValidatorStake(stake) => {
+                    self.execute_validator_stake(db, stake, block.epoch)
+                }
                 Transaction::ValidatorExit(exit) => self.execute_validator_exit(db, exit, block.epoch),
                 Transaction::ValidatorClaimStake(claim) => self.execute_validator_claim_stake(db, claim, block.epoch),
                 Transaction::Shield(shield) => {
@@ -2182,8 +2230,8 @@ impl ExecutionEngine for SimpleExecutor {
                     }
                 }
                 Transaction::Governance(gov) => self.execute_governance(db, gov, block.epoch),
-                Transaction::MultiSig(msig) => self.execute_multisig(db, msig),
-                Transaction::UserOp(uop) => self.execute_user_op(db, uop),
+                Transaction::MultiSig(msig) => self.execute_multisig(db, msig, block.epoch),
+                Transaction::UserOp(uop) => self.execute_user_op(db, uop, block.epoch),
                 Transaction::UpgradeContract(up) => self.execute_upgrade_contract(db, up, block.epoch),
                 Transaction::Delegate(d) => self.execute_delegate(db, d, block.epoch),
                 Transaction::Undelegate(u) => self.execute_undelegate(db, u, block.epoch),
@@ -2241,6 +2289,8 @@ impl ExecutionEngine for SimpleExecutor {
                                 } else {
                                     if let Some(acct) = db.get_account_mut(&rot.validator_address) {
                                         acct.nonce = acct.nonce.saturating_add(1);
+                                        // Nonce mutated — stamp anchor.
+                                        acct.last_touched_epoch = block.epoch;
                                     }
                                     validator_key_rotations.push(ValidatorKeyRotation {
                                         validator_id: rot.validator_id,
@@ -2350,7 +2400,7 @@ impl ExecutionEngine for SimpleExecutor {
             match serde_json::from_slice::<Transaction>(inner_bytes) {
                 Ok(inner_tx) => {
                     let result = match &inner_tx {
-                        Transaction::Transfer(t) => self.execute_transfer(db, t),
+                        Transaction::Transfer(t) => self.execute_transfer(db, t, block.epoch),
                         Transaction::CreateObject(c) => self.execute_create_object(db, c, block.epoch),
                         Transaction::CallContract(c) => self.execute_call_contract(c),
                         Transaction::CallScript(c) => self.execute_call_script(c),
@@ -2380,6 +2430,8 @@ impl ExecutionEngine for SimpleExecutor {
         for (addr, refund) in &deferred_result.refunds {
             if let Some(acct) = db.get_account_mut(addr) {
                 acct.balance = acct.balance.saturating_add(*refund);
+                // Deferred-tx refund credits balance — refresh anchor.
+                acct.last_touched_epoch = block.epoch;
             }
         }
 
@@ -2406,7 +2458,7 @@ impl ExecutionEngine for SimpleExecutor {
                     .filter(|s| s.unbonding_epoch.is_none())
                     .map(|s| (s.validator_address, s.staked_amount))
                     .collect();
-                let distributed = ra.distribute_staker_rewards(db, &stakers);
+                let distributed = ra.distribute_staker_rewards(db, &stakers, block.epoch);
                 if distributed > 0 {
                     info!(
                         distributed,
@@ -2590,6 +2642,7 @@ mod tests {
             nonce: 0,
         storage_deposit: 0,
         storage_bytes: 0,
+        last_touched_epoch: 0,
         });
     }
 
@@ -4199,7 +4252,7 @@ contract Counter {
         let mut executor = SimpleExecutor::new_for_test(7);
 
         let owner = addr(1);
-        db.put_account(Account { address: owner, balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0 });
+        db.put_account(Account { address: owner, balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
         let obj = evaporchain_types::StateObject {
             id: obj_id(1),
             owner,
@@ -4236,7 +4289,7 @@ contract Counter {
         let mut executor = SimpleExecutor::new_for_test(7);
 
         let owner = addr(1);
-        db.put_account(Account { address: owner, balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0 });
+        db.put_account(Account { address: owner, balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
 
         for i in 1..=3u8 {
             let obj = evaporchain_types::StateObject {

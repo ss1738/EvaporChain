@@ -190,6 +190,7 @@ mod tests {
             nonce: 0,
         storage_deposit: 0,
         storage_bytes: 0,
+        last_touched_epoch: 0,
         });
 
         // Submit transfer to all mempools
@@ -248,6 +249,7 @@ mod tests {
             nonce: 0,
         storage_deposit: 0,
         storage_bytes: 0,
+        last_touched_epoch: 0,
         });
 
         let mut state_roots = Vec::new();
@@ -598,6 +600,7 @@ mod tests {
             nonce: 0,
         storage_deposit: 0,
         storage_bytes: 0,
+        last_touched_epoch: 0,
         });
 
         // Submit blob tx
@@ -695,6 +698,7 @@ mod tests {
             nonce: 0,
         storage_deposit: 0,
         storage_bytes: 0,
+        last_touched_epoch: 0,
         });
 
         // Build and sign the transfer
@@ -767,6 +771,7 @@ mod tests {
             nonce: 0,
         storage_deposit: 0,
         storage_bytes: 0,
+        last_touched_epoch: 0,
         });
 
         // Build tx with WRONG signature (sign different message)
@@ -5308,6 +5313,7 @@ mod state_snapshot_integration {
             nonce: 5,
             storage_deposit: 0,
             storage_bytes: 0,
+            last_touched_epoch: 0,
         });
         let obj = StateObject {
             id: [0x02u8; 32],

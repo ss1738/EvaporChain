@@ -329,7 +329,7 @@ fn seed_demo_accounts(db: &mut RocksDBStateDB, node_tag: &str) {
     for (hex, balance) in &accounts {
         let address = parse_hex_address(hex).expect("invalid demo address");
         if db.get_account(&address).is_none() {
-            db.put_account(Account { address, balance: *balance, nonce: 0, storage_deposit: 0, storage_bytes: 0 });
+            db.put_account(Account { address, balance: *balance, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
         }
     }
     println!("{} \x1b[36mDemo accounts seeded (6 accounts for demo tx generation)\x1b[0m", node_tag);
@@ -415,6 +415,7 @@ fn initialize_genesis(db: &mut RocksDBStateDB, node_tag: &str) {
         nonce: 0,
     storage_deposit: 0,
     storage_bytes: 0,
+    last_touched_epoch: 0,
     });
     println!("{} \x1b[36mFaucet (0x0000...)\x1b[0m  balance=MAX/2", node_tag);
 
@@ -434,6 +435,7 @@ fn initialize_genesis(db: &mut RocksDBStateDB, node_tag: &str) {
             nonce: 0,
         storage_deposit: 0,
         storage_bytes: 0,
+        last_touched_epoch: 0,
         });
         println!(
             "{} \x1b[36m0x{}\x1b[0m  balance={}",

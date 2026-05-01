@@ -201,6 +201,30 @@ pub struct Account {
     pub storage_deposit: u64,
     #[serde(default)]
     pub storage_bytes: u64,
+    /// Epoch at which this account's balance OR nonce was last mutated by
+    /// a transaction.  Anchors per-account demurrage:
+    /// `demurrage_owed(balance, last_touched_epoch, current_epoch, params)`.
+    ///
+    /// `#[serde(default)]` keeps deserialisation of legacy persisted state
+    /// (RocksDB / WAL JSON written before this field existed) safe — old
+    /// accounts come back with `last_touched_epoch == 0`, which makes
+    /// demurrage settle conservatively-from-genesis until the next
+    /// balance/nonce-mutating tx stamps the current epoch.
+    #[serde(default)]
+    pub last_touched_epoch: u64,
+}
+
+impl Default for Account {
+    fn default() -> Self {
+        Self {
+            address: [0u8; 32],
+            balance: 0,
+            nonce: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+        }
+    }
 }
 
 /// Multi-signature transaction executed at the protocol level.

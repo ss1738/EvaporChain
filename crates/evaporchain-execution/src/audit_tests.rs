@@ -50,6 +50,7 @@ mod invariant_tests {
             nonce: 0,
         storage_deposit: 0,
         storage_bytes: 0,
+        last_touched_epoch: 0,
         });
     }
 
@@ -233,7 +234,7 @@ mod invariant_tests {
         for i in 0..200u8 {
             let mut a = [0u8; 32];
             a[0] = i;
-            db.put_account(Account { address: a, balance: 1_000_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0 });
+            db.put_account(Account { address: a, balance: 1_000_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
         }
 
         // Create many transactions that consume gas
@@ -403,8 +404,8 @@ mod proptest_execution {
             balance in 1u64..10_000_000,
         ) {
             let mut db = InMemoryStateDB::new();
-            db.put_account(Account { address: addr(1), balance, nonce: 0, storage_deposit: 0, storage_bytes: 0 });
-            db.put_account(Account { address: addr(2), balance: 0, nonce: 0, storage_deposit: 0, storage_bytes: 0 });
+            db.put_account(Account { address: addr(1), balance, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
+            db.put_account(Account { address: addr(2), balance: 0, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
 
             let tx = Transaction::Transfer(TransferTx {
                 from: addr(1),
@@ -428,7 +429,7 @@ mod proptest_execution {
         ) {
             let mut db = InMemoryStateDB::new();
             for i in 0..10u8 {
-                db.put_account(Account { address: addr(i), balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0 });
+                db.put_account(Account { address: addr(i), balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
             }
 
             let txs: Vec<Transaction> = (0..num_txs)
@@ -461,8 +462,8 @@ mod proptest_execution {
         #[test]
         fn nonces_monotonic(num_txs in 1usize..20) {
             let mut db = InMemoryStateDB::new();
-            db.put_account(Account { address: addr(1), balance: 100_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0 });
-            db.put_account(Account { address: addr(2), balance: 0, nonce: 0, storage_deposit: 0, storage_bytes: 0 });
+            db.put_account(Account { address: addr(1), balance: 100_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
+            db.put_account(Account { address: addr(2), balance: 0, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
 
             let txs: Vec<Transaction> = (0..num_txs)
                 .map(|i| {
@@ -491,8 +492,8 @@ mod proptest_execution {
         #[test]
         fn state_root_deterministic(seed in 0u64..100) {
             let setup = |db: &mut InMemoryStateDB| {
-                db.put_account(Account { address: addr(1), balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0 });
-                db.put_account(Account { address: addr(2), balance: 500_000, nonce: 0, storage_deposit: 0, storage_bytes: 0 });
+                db.put_account(Account { address: addr(1), balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
+                db.put_account(Account { address: addr(2), balance: 500_000, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
             };
 
             let txs = vec![Transaction::Transfer(TransferTx {

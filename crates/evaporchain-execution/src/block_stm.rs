@@ -287,6 +287,7 @@ impl<'a> TxView<'a> {
                         nonce: 0,
                     storage_deposit: 0,
                     storage_bytes: 0,
+                    last_touched_epoch: 0,
                     });
                     acct.balance = *bal;
                 }
@@ -297,6 +298,7 @@ impl<'a> TxView<'a> {
                         nonce: 0,
                     storage_deposit: 0,
                     storage_bytes: 0,
+                    last_touched_epoch: 0,
                     });
                     acct.nonce = *nonce;
                 }
@@ -426,14 +428,18 @@ impl<'a> TxView<'a> {
         }
     }
 
-    /// Write an account (balance + nonce).
-    fn write_account(&mut self, addr: AccountAddress, balance: u64, nonce: u64) {
+    /// Write an account (balance + nonce). Stamps `last_touched_epoch` to
+    /// `epoch` since this writer is only invoked when balance/nonce just
+    /// mutated under a tx — i.e. the per-account demurrage anchor needs
+    /// to slide forward to `epoch`.
+    fn write_account(&mut self, addr: AccountAddress, balance: u64, nonce: u64, epoch: u64) {
         let acct = Account {
             address: addr,
             balance,
             nonce,
             storage_deposit: 0,
             storage_bytes: 0,
+            last_touched_epoch: epoch,
         };
         self.local_accounts.insert(addr, acct);
         self.write_buffer.push(WriteEntry {
@@ -614,7 +620,7 @@ fn execute_tx(
                 Some(v) => v,
                 None => return TxExecResult::Failed { fee: 0 },
             };
-            view.write_account(*sender_addr, new_balance, nonce);
+            view.write_account(*sender_addr, new_balance, nonce, epoch);
         }
         total_tx_fee
     } else {
@@ -626,11 +632,11 @@ fn execute_tx(
 
     // Execute the transaction
     let result = match tx {
-        Transaction::Transfer(t) => exec_transfer(view, t),
+        Transaction::Transfer(t) => exec_transfer(view, t, epoch),
         Transaction::CreateObject(t) => exec_create_object(view, t, epoch),
         Transaction::Refresh(t) => exec_refresh(view, t, epoch),
-        Transaction::ValidatorStake(t) => exec_validator_stake(view, t),
-        Transaction::ValidatorExit(t) => exec_validator_exit(view, t),
+        Transaction::ValidatorStake(t) => exec_validator_stake(view, t, epoch),
+        Transaction::ValidatorExit(t) => exec_validator_exit(view, t, epoch),
         Transaction::ValidatorClaimStake(_) => {
             Err(TxViewError::ExecutionError(ExecutionError::ContractError(
                 "validator claim stake executes in serial phase".into(),
@@ -770,7 +776,7 @@ fn estimate_gas(tx: &Transaction) -> u64 {
 
 // ── Per-transaction execution functions ──
 
-fn exec_transfer(view: &mut TxView, tx: &TransferTx) -> Result<(), TxViewError> {
+fn exec_transfer(view: &mut TxView, tx: &TransferTx, epoch: Epoch) -> Result<(), TxViewError> {
     if tx.from == tx.to {
         return Err(ExecutionError::SelfTransfer.into());
     }
@@ -815,7 +821,7 @@ fn exec_transfer(view: &mut TxView, tx: &TransferTx) -> Result<(), TxViewError> 
             ))
         })?
     };
-    view.write_account(tx.from, new_sender_balance, new_sender_nonce);
+    view.write_account(tx.from, new_sender_balance, new_sender_nonce, epoch);
 
     let recv_balance = view.read_balance(&tx.to).map_err(TxViewError::Blocked)?;
     let recv_nonce = view.read_nonce(&tx.to).map_err(TxViewError::Blocked)?;
@@ -826,7 +832,7 @@ fn exec_transfer(view: &mut TxView, tx: &TransferTx) -> Result<(), TxViewError> 
             required: tx.amount,
         })
     })?;
-    view.write_account(tx.to, new_recv_balance, recv_nonce);
+    view.write_account(tx.to, new_recv_balance, recv_nonce, epoch);
 
     Ok(())
 }
@@ -855,7 +861,7 @@ fn exec_create_object(
         }.into());
     }
     let nonce = view.read_nonce(&tx.creator).map_err(TxViewError::Blocked)?;
-    view.write_account(tx.creator, bal - evaporchain_types::MIN_STORAGE_DEPOSIT, nonce);
+    view.write_account(tx.creator, bal - evaporchain_types::MIN_STORAGE_DEPOSIT, nonce, epoch);
 
     let cur_deposit = view.read_storage_deposit(&tx.creator).map_err(TxViewError::Blocked)?;
     let cur_bytes = view.read_storage_bytes(&tx.creator).map_err(TxViewError::Blocked)?;
@@ -922,7 +928,7 @@ fn exec_refresh(view: &mut TxView, tx: &RefreshTx, epoch: Epoch) -> Result<(), T
     Err(ExecutionError::ObjectNotFound(hex::encode(tx.object_id)).into())
 }
 
-fn exec_validator_stake(view: &mut TxView, tx: &ValidatorStakeTx) -> Result<(), TxViewError> {
+fn exec_validator_stake(view: &mut TxView, tx: &ValidatorStakeTx, epoch: Epoch) -> Result<(), TxViewError> {
     if tx.stake_amount == 0 {
         return Err(ExecutionError::ZeroAmount.into());
     }
@@ -962,11 +968,11 @@ fn exec_validator_stake(view: &mut TxView, tx: &ValidatorStakeTx) -> Result<(), 
             "nonce overflow".into(),
         ))
     })?;
-    view.write_account(tx.validator_address, new_balance, new_nonce);
+    view.write_account(tx.validator_address, new_balance, new_nonce, epoch);
     Ok(())
 }
 
-fn exec_validator_exit(view: &mut TxView, tx: &ValidatorExitTx) -> Result<(), TxViewError> {
+fn exec_validator_exit(view: &mut TxView, tx: &ValidatorExitTx, epoch: Epoch) -> Result<(), TxViewError> {
     let balance = view
         .read_balance(&tx.validator_address)
         .map_err(TxViewError::Blocked)?;
@@ -987,7 +993,7 @@ fn exec_validator_exit(view: &mut TxView, tx: &ValidatorExitTx) -> Result<(), Tx
             "nonce overflow".into(),
         ))
     })?;
-    view.write_account(tx.validator_address, balance, new_nonce);
+    view.write_account(tx.validator_address, balance, new_nonce, epoch);
     Ok(())
 }
 
@@ -1350,7 +1356,7 @@ impl BlockStmExecutor {
             }
         }
 
-        let final_writes = self.materialize_final_state(&mv_memory, db, num_txs);
+        let final_writes = self.materialize_final_state(&mv_memory, db, num_txs, epoch);
 
         ParallelResult {
             txs_executed,
@@ -1368,6 +1374,7 @@ impl BlockStmExecutor {
         mv_memory: &MVMemory,
         base_db: &dyn StateDB,
         _num_txs: u32,
+        epoch: u64,
     ) -> FinalWrites {
         let mut writes = FinalWrites::default();
 
@@ -1380,16 +1387,21 @@ impl BlockStmExecutor {
                         // Seed from base DB so we don't clobber nonce with 0
                         let base = base_db.get_account(addr);
                         let entry = writes.accounts.entry(*addr).or_insert_with(|| {
-                            base.map_or((0, 0), |a| (a.balance, a.nonce))
+                            base.map_or((0, 0, 0), |a| (a.balance, a.nonce, a.last_touched_epoch))
                         });
                         entry.0 = *bal;
+                        // Balance just mutated under a tx — slide demurrage
+                        // anchor forward to this block's epoch.
+                        entry.2 = epoch;
                     }
                     (Location::AccountNonce(addr), ValuePayload::Nonce(nonce)) => {
                         let base = base_db.get_account(addr);
                         let entry = writes.accounts.entry(*addr).or_insert_with(|| {
-                            base.map_or((0, 0), |a| (a.balance, a.nonce))
+                            base.map_or((0, 0, 0), |a| (a.balance, a.nonce, a.last_touched_epoch))
                         });
                         entry.1 = *nonce;
+                        // Nonce mutated — slide anchor forward.
+                        entry.2 = epoch;
                     }
                     (Location::AccountStorageDeposit(addr), ValuePayload::StorageDeposit(d)) => {
                         let base = base_db.get_account(addr);
@@ -1428,10 +1440,11 @@ impl BlockStmExecutor {
     /// Apply finalized writes to the main state DB.
     fn apply_writes(db: &mut dyn StateDB, writes: FinalWrites) {
         // Apply account balance/nonce changes
-        for (addr, (balance, nonce)) in writes.accounts {
+        for (addr, (balance, nonce, last_touched_epoch)) in writes.accounts {
             let acct = db.get_or_create_account(&addr);
             acct.balance = balance;
             acct.nonce = nonce;
+            acct.last_touched_epoch = last_touched_epoch;
         }
         // Apply storage deposit/bytes changes
         for (addr, (deposit, bytes)) in writes.storage {
@@ -1475,8 +1488,11 @@ struct ParallelResult {
 /// Materialized final writes from Block-STM execution.
 #[derive(Debug, Default)]
 struct FinalWrites {
-    /// addr → (balance, nonce)
-    accounts: HashMap<AccountAddress, (u64, u64)>,
+    /// addr → (balance, nonce, last_touched_epoch).  The `last_touched_epoch`
+    /// component is set to the block epoch whenever a per-tx write to either
+    /// balance or nonce is observed during materialisation; it is the
+    /// demurrage anchor and slides forward in lock-step with balance/nonce.
+    accounts: HashMap<AccountAddress, (u64, u64, u64)>,
     /// addr → (storage_deposit, storage_bytes)
     storage: HashMap<AccountAddress, (u64, u64)>,
     /// id → Some(obj) for write/create, None for delete
@@ -1570,6 +1586,8 @@ impl ExecutionEngine for BlockStmExecutor {
                             continue;
                         }
                     };
+                    // Fee deduction is a balance mutation — refresh anchor.
+                    sender.last_touched_epoch = block.epoch;
                 }
                 total_tx_fee
             } else {
@@ -1745,6 +1763,8 @@ impl ExecutionEngine for BlockStmExecutor {
                         let claimable = stake.staked_amount.saturating_sub(stake.slashed_amount);
                         sender.balance += claimable;
                         sender.nonce += 1;
+                        // Balance + nonce mutated — stamp anchor.
+                        sender.last_touched_epoch = block.epoch;
                         db.remove_stake(claim.validator_id);
                         Ok(())
                     }
@@ -1925,6 +1945,10 @@ impl BlockStmExecutor {
                             nonce,
                             storage_deposit: 0,
                             storage_bytes: 0,
+                            // Fee deduction is a balance mutation — stamp the
+                            // demurrage anchor so the next sweep starts from
+                            // the current epoch.
+                            last_touched_epoch: epoch,
                         },
                     );
                 }
@@ -1954,6 +1978,8 @@ impl BlockStmExecutor {
                                             nonce: new_sn,
                             storage_deposit: 0,
                             storage_bytes: 0,
+                                            // Sender balance + nonce mutated.
+                                            last_touched_epoch: epoch,
                                         },
                                     );
                                     let rb = get_balance(&t.to, &accounts);
@@ -1968,6 +1994,8 @@ impl BlockStmExecutor {
                                                     nonce: rn,
                             storage_deposit: 0,
                             storage_bytes: 0,
+                                                    // Receiver balance mutated.
+                                                    last_touched_epoch: epoch,
                                                 },
                                             );
                                             true
@@ -2039,6 +2067,8 @@ impl BlockStmExecutor {
                                         nonce: new_nonce,
                             storage_deposit: 0,
                             storage_bytes: 0,
+                                        // Stake locks balance + bumps nonce.
+                                        last_touched_epoch: epoch,
                                     },
                                 );
                                 true
@@ -2063,6 +2093,8 @@ impl BlockStmExecutor {
                                         nonce: new_nonce,
                             storage_deposit: 0,
                             storage_bytes: 0,
+                                        // Validator-exit bumps nonce.
+                                        last_touched_epoch: epoch,
                                     },
                                 );
                                 true
@@ -2161,6 +2193,7 @@ mod tests {
             nonce: 0,
         storage_deposit: 0,
         storage_bytes: 0,
+        last_touched_epoch: 0,
         });
     }
 
@@ -2747,6 +2780,7 @@ mod tests {
             nonce: 0,
         storage_deposit: 0,
         storage_bytes: 0,
+        last_touched_epoch: 0,
         });
 
         let txs = vec![Transaction::Transfer(TransferTx {
@@ -2787,6 +2821,7 @@ mod tests {
             nonce: 0,
         storage_deposit: 0,
         storage_bytes: 0,
+        last_touched_epoch: 0,
         });
 
         let txs = vec![Transaction::Transfer(TransferTx {
@@ -2825,6 +2860,7 @@ mod tests {
             nonce: 0,
         storage_deposit: 0,
         storage_bytes: 0,
+        last_touched_epoch: 0,
         });
         fund_account(&mut db, 2, 0);
 
@@ -2863,6 +2899,7 @@ mod tests {
             nonce: 0,
         storage_deposit: 0,
         storage_bytes: 0,
+        last_touched_epoch: 0,
         });
 
         // Two independent senders both transferring to addr(2)

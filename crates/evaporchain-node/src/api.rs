@@ -5443,13 +5443,11 @@ pub struct SettleDemurrageResp {
 /// Verifies the ML-DSA signature against the canonical signing
 /// payload `JSON({type:"settle_demurrage",from,current_epoch})`.
 ///
-/// NOTE: `last_touched_epoch` is read as 0 because
-/// `evaporchain-types::Account` does not yet carry the field
-/// (see TODO on `AddressDetailResponse.last_touched_epoch`). The
-/// settled value is therefore conservative-from-genesis — over-charges
-/// accounts that have moved since but is correct for accounts that
-/// haven't. Once the field lands, swap the `0` below for
-/// `acct.last_touched_epoch`.
+/// `last_touched_epoch` is now sourced from `Account.last_touched_epoch`
+/// — the per-account demurrage anchor stamped by the execution layer
+/// every time the balance or nonce mutates under a tx. After settling
+/// we also bump the on-chain anchor forward to `current_epoch` so the
+/// settled-amount cannot be re-extracted on the next epoch tick.
 async fn post_settle_demurrage(
     State(state): State<Arc<ApiState>>,
     Json(req): Json<SettleDemurrageReq>,
@@ -5518,11 +5516,8 @@ async fn post_settle_demurrage(
     }
 
     let mut db = safe_lock(&state.db);
-    // TODO: Account.last_touched_epoch isn't tracked yet; using 0
-    // matches what /api/address/:addr serves.
-    let last_touched_epoch: u64 = 0;
-    let (balance, _nonce) = match db.get_account(&from) {
-        Some(acct) => (acct.balance, acct.nonce),
+    let (balance, _nonce, last_touched_epoch) = match db.get_account(&from) {
+        Some(acct) => (acct.balance, acct.nonce, acct.last_touched_epoch),
         None => {
             return Json(SettleDemurrageResp {
                 status: "error",
@@ -5549,10 +5544,12 @@ async fn post_settle_demurrage(
         });
     }
 
-    // Debit the account.
+    // Debit the account and slide its demurrage anchor forward so the
+    // settled amount can't be re-charged on the next epoch tick.
     let to_debit = owed.min(balance);
     if let Some(acct_mut) = db.get_account_mut(&from) {
         acct_mut.balance = acct_mut.balance.saturating_sub(to_debit);
+        acct_mut.last_touched_epoch = current_epoch;
     }
     let new_balance = db.get_account(&from).map(|a| a.balance).unwrap_or(0);
     drop(db);
@@ -5568,8 +5565,6 @@ async fn post_settle_demurrage(
         status: "settled",
         settled: to_debit,
         new_balance,
-        // TODO: persist this on Account.last_touched_epoch once the
-        // field lands.
         new_last_touched_epoch: current_epoch,
         detail: format!(
             "settled {} EVAP demurrage to refresh pool (DEMU)",
@@ -7652,21 +7647,9 @@ struct AddressDetailResponse {
     address: String,
     balance: u64,
     nonce: u64,
-    /// Epoch the account was last "touched" by an outbound tx (transfer
-    /// or refresh) — used as the demurrage anchor.
-    ///
-    /// TODO: `evaporchain-types::Account` does NOT yet carry a
-    /// `last_touched_epoch` field (see crates/evaporchain-types/src/lib.rs
-    /// L194-204). To populate this with real data we need to:
-    ///   1. Add `pub last_touched_epoch: u64` to `Account` (with serde
-    ///      default = 0 for legacy snapshots).
-    ///   2. Hook it from `evaporchain-execution` `apply_transfer` /
-    ///      `apply_refresh` paths so the sender's account is stamped
-    ///      with the block's epoch on every outbound tx.
-    ///   3. Persist via the existing `put_account` write path.
-    /// Until that lands we serve `0`, which makes
-    /// `/api/demurrage/owed` over-charge from genesis — accurate when the
-    /// account has never moved, conservative otherwise.
+    /// Epoch the account was last "touched" by a balance/nonce-mutating tx
+    /// — anchors the per-account demurrage accrual window.  Sourced from
+    /// `Account.last_touched_epoch`; new accounts default to 0.
     last_touched_epoch: u64,
     objects: Vec<ObjectResponse>,
     nfts: Vec<NftResponse>,
@@ -7684,10 +7667,10 @@ async fn get_address_detail(
     let history = safe_lock(&state.block_history);
     let epoch = history.back().map(|b| b.epoch).unwrap_or(0);
 
-    let (balance, nonce) = if let Some(acct) = db.get_account(&addr_bytes) {
-        (acct.balance, acct.nonce)
+    let (balance, nonce, last_touched_epoch) = if let Some(acct) = db.get_account(&addr_bytes) {
+        (acct.balance, acct.nonce, acct.last_touched_epoch)
     } else {
-        (0, 0)
+        (0, 0, 0)
     };
 
     // Objects owned by this address
@@ -7776,9 +7759,7 @@ async fn get_address_detail(
         address: full_hex,
         balance,
         nonce,
-        // TODO: pulled from a real Account.last_touched_epoch once the
-        // field lands on evaporchain-types::Account. See struct comment.
-        last_touched_epoch: 0,
+        last_touched_epoch,
         objects,
         nfts,
         tokens,

@@ -88,7 +88,7 @@ mod adversarial_tests {
         // Create network but only run 3 of 4 validators (node 4 is silent/crashed)
         let mut nodes: Vec<_> = ids.iter().map(|&id| make_consensus(id, ids)).collect();
         let mut db = InMemoryStateDB::new();
-        db.put_account(Account { address: addr(1), balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0 });
+        db.put_account(Account { address: addr(1), balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
 
         // Remove the 4th node to simulate it being offline
         let _silent = nodes.pop();
@@ -104,7 +104,7 @@ mod adversarial_tests {
         let ids = &[1u64, 2, 3, 4];
         let mut nodes: Vec<_> = ids.iter().map(|&id| make_consensus(id, ids)).collect();
         let mut db = InMemoryStateDB::new();
-        db.put_account(Account { address: addr(1), balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0 });
+        db.put_account(Account { address: addr(1), balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
 
         // Remove 2 nodes — only 2 remain, below quorum of 3
         nodes.pop();
@@ -121,7 +121,7 @@ mod adversarial_tests {
         let ids = &[1u64, 2, 3, 4];
         let mut nodes: Vec<_> = ids.iter().map(|&id| make_consensus(id, ids)).collect();
         let mut db = InMemoryStateDB::new();
-        db.put_account(Account { address: addr(1), balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0 });
+        db.put_account(Account { address: addr(1), balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
 
         // Get a proposal from node 1
         let actions = nodes[0].tick(&mut db);
@@ -210,7 +210,7 @@ mod adversarial_tests {
         let ids = &[1u64, 2, 3, 4];
         let mut nodes: Vec<_> = ids.iter().map(|&id| make_consensus(id, ids)).collect();
         let mut db = InMemoryStateDB::new();
-        db.put_account(Account { address: addr(1), balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0 });
+        db.put_account(Account { address: addr(1), balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
 
         // First, advance to height 2
         let committed = run_consensus_round(&mut nodes, &mut db, 50);
@@ -241,7 +241,7 @@ mod adversarial_tests {
         let ids = &[1u64, 2, 3, 4];
         let mut nodes: Vec<_> = ids.iter().map(|&id| make_consensus(id, ids)).collect();
         let mut db = InMemoryStateDB::new();
-        db.put_account(Account { address: addr(1), balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0 });
+        db.put_account(Account { address: addr(1), balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
 
         // Collect ALL committed blocks across ALL nodes
         let mut all_committed: Vec<Block> = Vec::new();
@@ -299,7 +299,7 @@ mod adversarial_tests {
         let ids = &[1u64, 2, 3, 4];
         let mut nodes: Vec<_> = ids.iter().map(|&id| make_consensus(id, ids)).collect();
         let mut db = InMemoryStateDB::new();
-        db.put_account(Account { address: addr(1), balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0 });
+        db.put_account(Account { address: addr(1), balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
 
         let mut heights_committed = Vec::new();
         for _ in 0..5 {
@@ -450,7 +450,7 @@ mod proptest_consensus {
             let vs = ValidatorSet::with_validators(validators);
             let mut tc = TendermintConsensus::new_for_test(1, 5, vs);
             let mut db = InMemoryStateDB::new();
-            db.put_account(Account { address: addr(1), balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0 });
+            db.put_account(Account { address: addr(1), balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
 
             let mut prev_round = 0u32;
             for _ in 0..ticks {
@@ -470,7 +470,7 @@ mod proptest_consensus {
             let vs = ValidatorSet::with_validators(validators);
             let mut tc = TendermintConsensus::new_for_test(1, 5, vs);
             let mut db = InMemoryStateDB::new();
-            db.put_account(Account { address: addr(1), balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0 });
+            db.put_account(Account { address: addr(1), balance: 1_000_000, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
 
             let mut prev_height = 0u64;
             for _ in 0..ticks {

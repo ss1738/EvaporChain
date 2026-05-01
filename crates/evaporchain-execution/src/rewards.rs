@@ -61,6 +61,9 @@ impl RewardAccumulator {
         if block_reward > 0 {
             let acct = db.get_or_create_account(producer);
             acct.balance = acct.balance.saturating_add(block_reward);
+            // Reward credit refreshes the demurrage anchor — block-producing
+            // validators are visibly active.
+            acct.last_touched_epoch = epoch;
             self.total_minted = self.total_minted.saturating_add(block_reward);
             producer_credit += block_reward;
             debug!(
@@ -80,6 +83,7 @@ impl RewardAccumulator {
             if dist.to_producer > 0 {
                 let acct = db.get_or_create_account(producer);
                 acct.balance = acct.balance.saturating_add(dist.to_producer);
+                acct.last_touched_epoch = epoch;
                 self.total_to_producers = self.total_to_producers.saturating_add(dist.to_producer);
                 producer_credit += dist.to_producer;
             }
@@ -117,10 +121,14 @@ impl RewardAccumulator {
     ///
     /// Each staker receives `pending_staker_rewards * (staker_stake / total_stake)`.
     /// Call this periodically (e.g., every N blocks) or when a staker claims.
+    /// `epoch` is the current block's epoch and is stamped onto every
+    /// credited account's `last_touched_epoch` to refresh its demurrage
+    /// anchor — staker-reward credits are explicit balance changes.
     pub fn distribute_staker_rewards(
         &mut self,
         db: &mut dyn StateDB,
         stakers: &[(AccountAddress, u64)], // (address, stake)
+        epoch: u64,
     ) -> u64 {
         if self.pending_staker_rewards == 0 || stakers.is_empty() {
             return 0;
@@ -139,6 +147,7 @@ impl RewardAccumulator {
             if share > 0 {
                 let acct = db.get_or_create_account(addr);
                 acct.balance = acct.balance.saturating_add(share);
+                acct.last_touched_epoch = epoch;
                 distributed = distributed.saturating_add(share);
             }
         }
@@ -154,6 +163,7 @@ impl RewardAccumulator {
                 }
                 let acct = db.get_or_create_account(addr);
                 acct.balance = acct.balance.saturating_add(1);
+                acct.last_touched_epoch = epoch;
                 distributed = distributed.saturating_add(1);
                 remainder -= 1;
             }
@@ -210,6 +220,7 @@ mod tests {
             nonce: 0,
         storage_deposit: 0,
         storage_bytes: 0,
+        last_touched_epoch: 0,
         });
     }
 
@@ -276,7 +287,7 @@ mod tests {
 
         // Distribute to two stakers with 75/25 split
         let stakers = vec![(addr(10), 750), (addr(20), 250)];
-        let distributed = acc.distribute_staker_rewards(&mut db, &stakers);
+        let distributed = acc.distribute_staker_rewards(&mut db, &stakers, 0);
         assert_eq!(distributed, 500);
         assert_eq!(db.get_account(&addr(10)).unwrap().balance, 375); // 500 * 750/1000
         assert_eq!(db.get_account(&addr(20)).unwrap().balance, 125); // 500 * 250/1000

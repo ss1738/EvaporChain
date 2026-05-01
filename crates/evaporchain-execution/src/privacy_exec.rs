@@ -238,6 +238,8 @@ impl PrivacyExecutor {
         }
         sender.balance -= tx.amount;
         sender.nonce += 1;
+        // Shield debits balance + bumps nonce — stamp the demurrage anchor.
+        sender.last_touched_epoch = self.current_epoch;
 
         // 2. Create the private note via PrivacyEngine
         let energy_blinding_arr = tx.energy_blinding;
@@ -412,6 +414,8 @@ impl PrivacyExecutor {
             .balance
             .checked_add(tx.amount)
             .ok_or(PrivacyExecError::BalanceOverflow)?;
+        // Unshield credits balance — refresh demurrage anchor.
+        receiver.last_touched_epoch = self.current_epoch;
 
         // 10. Update pool balance
         let pool_balance = db.get_shielded_pool_balance();
@@ -662,6 +666,7 @@ mod tests {
             nonce: 0,
         storage_deposit: 0,
         storage_bytes: 0,
+        last_touched_epoch: 0,
         });
         db
     }
@@ -1247,7 +1252,7 @@ mod tests {
         let alice = test_addr(1);
         let bob = test_addr(2);
         let mut db = setup_db_with_balance(&alice, 100_000);
-        db.put_account(Account { address: bob, balance: 0, nonce: 0, storage_deposit: 0, storage_bytes: 0 });
+        db.put_account(Account { address: bob, balance: 0, nonce: 0, storage_deposit: 0, storage_bytes: 0, last_touched_epoch: 0 });
         let mut executor = PrivacyExecutor::with_depth(8);
         executor.set_epoch(1);
 

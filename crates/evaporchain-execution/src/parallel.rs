@@ -357,6 +357,7 @@ impl StateDB for OverlayStateDB {
             nonce: 0,
         storage_deposit: 0,
         storage_bytes: 0,
+        last_touched_epoch: 0,
         })
     }
 
@@ -765,6 +766,8 @@ impl ParallelExecutor {
                         continue;
                     }
                     sender.balance -= total_tx_fee;
+                    // Fee deduction is a balance mutation — refresh anchor.
+                    sender.last_touched_epoch = epoch;
                 }
                 total_tx_fee
             } else {
@@ -779,10 +782,10 @@ impl ParallelExecutor {
             });
 
             let result = match tx {
-                Transaction::Transfer(t) => Self::exec_transfer(overlay, t),
+                Transaction::Transfer(t) => Self::exec_transfer(overlay, t, epoch),
                 Transaction::CreateObject(t) => Self::exec_create_object(overlay, t, epoch),
                 Transaction::Refresh(t) => Self::exec_refresh(overlay, t, epoch),
-                Transaction::ValidatorStake(t) => Self::exec_validator_stake(overlay, t),
+                Transaction::ValidatorStake(t) => Self::exec_validator_stake(overlay, t, epoch),
                 Transaction::ValidatorExit(t) => Self::exec_validator_exit(overlay, t, epoch),
                 Transaction::ValidatorClaimStake(_) => {
                     Err(ExecutionError::ContractError(
@@ -931,6 +934,7 @@ impl ParallelExecutor {
     fn exec_transfer(
         db: &mut OverlayStateDB,
         tx: &TransferTx,
+        epoch: Epoch,
     ) -> Result<(), ExecutionError> {
         if tx.from == tx.to {
             return Err(ExecutionError::SelfTransfer);
@@ -961,9 +965,13 @@ impl ParallelExecutor {
         if !is_faucet {
             sender.nonce += 1;
         }
+        // Stamp the demurrage anchor: balance (and possibly nonce) just mutated.
+        sender.last_touched_epoch = epoch;
 
         let receiver = db.get_or_create_account(&tx.to);
         receiver.balance = receiver.balance.saturating_add(tx.amount);
+        // Receiver balance changed — refresh its anchor too.
+        receiver.last_touched_epoch = epoch;
 
         Ok(())
     }
@@ -994,6 +1002,8 @@ impl ParallelExecutor {
             creator.storage_deposit = creator.storage_deposit
                 .saturating_add(evaporchain_types::MIN_STORAGE_DEPOSIT);
             creator.storage_bytes = creator.storage_bytes.saturating_add(object_bytes);
+            // Storage-deposit lock-up debits balance — stamp the demurrage anchor.
+            creator.last_touched_epoch = epoch;
         }
         db.put_object(StateObject {
             id: tx.object_id,
@@ -1031,6 +1041,7 @@ impl ParallelExecutor {
     fn exec_validator_stake(
         db: &mut OverlayStateDB,
         tx: &ValidatorStakeTx,
+        epoch: Epoch,
     ) -> Result<(), ExecutionError> {
         if tx.stake_amount == 0 {
             return Err(ExecutionError::ZeroAmount);
@@ -1051,6 +1062,8 @@ impl ParallelExecutor {
         }
         sender.balance -= tx.stake_amount;
         sender.nonce += 1;
+        // Stake locks balance + bumps nonce — stamp the demurrage anchor.
+        sender.last_touched_epoch = epoch;
         Ok(())
     }
 
@@ -1067,6 +1080,8 @@ impl ParallelExecutor {
             });
         }
         sender.nonce += 1;
+        // Nonce mutated — stamp the demurrage anchor.
+        sender.last_touched_epoch = current_epoch;
 
         let mut stake = db.get_stake(tx.validator_id).cloned().ok_or_else(|| {
             ExecutionError::ObjectNotFound(
@@ -1256,6 +1271,8 @@ impl ExecutionEngine for ParallelExecutor {
                         continue;
                     }
                     sender.balance -= total_tx_fee;
+                    // Fee deduction is a balance mutation — refresh anchor.
+                    sender.last_touched_epoch = block.epoch;
                 }
                 total_tx_fee
             } else {
@@ -1396,6 +1413,7 @@ impl ExecutionEngine for ParallelExecutor {
                         })
                     } else {
                         sender.nonce += 1;
+                        sender.last_touched_epoch = block.epoch;
                         let mut stake = db.get_stake(exit.validator_id).cloned().ok_or_else(|| {
                             ExecutionError::ObjectNotFound(
                                 format!("no stake record for validator {}", exit.validator_id),
@@ -1443,6 +1461,8 @@ impl ExecutionEngine for ParallelExecutor {
                         let claimable = stake.staked_amount.saturating_sub(stake.slashed_amount);
                         sender.balance += claimable;
                         sender.nonce += 1;
+                        // Balance + nonce mutated — stamp anchor.
+                        sender.last_touched_epoch = block.epoch;
                         db.remove_stake(claim.validator_id);
                         Ok(())
                     }
@@ -1494,6 +1514,8 @@ impl ExecutionEngine for ParallelExecutor {
                                 } else {
                                     if let Some(acct) = db.get_account_mut(&rot.validator_address) {
                                         acct.nonce = acct.nonce.saturating_add(1);
+                                        // Nonce mutated — stamp anchor.
+                                        acct.last_touched_epoch = block.epoch;
                                     }
                                     validator_key_rotations.push(crate::ValidatorKeyRotation {
                                         validator_id: rot.validator_id,
@@ -1749,6 +1771,7 @@ mod tests {
             nonce: 0,
         storage_deposit: 0,
         storage_bytes: 0,
+        last_touched_epoch: 0,
         });
     }
 
