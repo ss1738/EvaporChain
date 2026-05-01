@@ -99,7 +99,8 @@ function AppView({ view, completeTutorial }: { view: ViewType; completeTutorial:
     case "walletconnect":
       return <WalletConnectScreen />;
     case "ledger":
-      return <LedgerConnect />;
+      // TODO: enable when EvaporChain Ledger BOLOS app ships
+      return import.meta.env.DEV ? <LedgerConnect /> : <HomeScreen />;
     case "bridge":
       return <BridgeScreen />;
     case "plugins":

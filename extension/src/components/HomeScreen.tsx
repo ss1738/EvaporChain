@@ -57,7 +57,8 @@ export function HomeScreen() {
       )}
 
       {/* Hardware wallet indicator */}
-      {ledgerConnected && (
+      {/* TODO: enable when EvaporChain Ledger BOLOS app ships */}
+      {import.meta.env.DEV && ledgerConnected && (
         <div className="mx-4 mt-2 px-3 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/30 flex items-center gap-2">
           <div className="w-2 h-2 rounded-full bg-blue-500" />
           <span className="text-[10px] text-blue-400 font-medium">Hardware Wallet Connected</span>
@@ -128,12 +129,15 @@ export function HomeScreen() {
           onClick={() => setView("walletconnect")}
           badge={wcSessions.length > 0 ? wcSessions.length : undefined}
         />
-        <QuickAction
-          label={ledgerConnected ? "Ledger" : "Hardware"}
-          icon="🔐"
-          onClick={() => setView("ledger")}
-          badge={ledgerConnected ? 1 : undefined}
-        />
+        {/* TODO: enable when EvaporChain Ledger BOLOS app ships */}
+        {import.meta.env.DEV && (
+          <QuickAction
+            label={ledgerConnected ? "Ledger" : "Hardware"}
+            icon="🔐"
+            onClick={() => setView("ledger")}
+            badge={ledgerConnected ? 1 : undefined}
+          />
+        )}
         <QuickAction label="Plugins" icon="+" onClick={() => setView("plugins")} />
         <QuickAction label="AI" icon=">" onClick={() => setView("ai-assistant")} />
       </div>

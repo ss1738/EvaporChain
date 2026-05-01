@@ -5,10 +5,9 @@ import { api, type LadAction, type LadMode, type LadSimResp } from "@/utils/api"
 /**
  * LAD-VM resource-lifecycle preview.
  *
- * Manual probe surface for the substructural-resource type system:
- * pick a mode (linear / affine / decaying) + an action (use / drop /
- * tick) and the preview returns the lifecycle outcome at the current
- * epoch.
+ * Probe surface for the substructural-resource type system: pick a mode
+ * (linear / affine / decaying) + an action (use / drop / tick) and the
+ * preview returns the lifecycle outcome at the current epoch.
  *
  * Endpoint: POST /api/lad_vm/simulate (api.rs L1335). Pure compute, no
  * signature required. Request fields per LadSimQuery (L1300-1311):
@@ -17,35 +16,17 @@ import { api, type LadAction, type LadMode, type LadSimResp } from "@/utils/api"
  *   { status, action, mode, outcome, returned_value, is_evaporated_at_query,
  *     created_at_epoch, current_epoch, decay_window, detail }
  *
- * /api/objects (ObjectResponse) now carries a real `is_lad_typed` and
- * `lad_mode` (sourced from `StateObject.lad_mode`), so condition (1) of
- * the original gating reasoning is resolved. The remaining blocker is
- * (2): SendScreen takes a recipient *address*, not an object id, so
- * there is no target-object context to attach this preview to a live
- * transfer flow. Until SendScreen (and the refresh / dApp call paths)
- * carry an object-id-shaped input, auto-rendering this alongside a Send
- * would have nothing to key off of.
- *
- * TODO: remove the dev gate below once SendScreen / refresh / dApp call
- * UX threads a target `objectId` through to this component. At that
- * point flip the gate to render only when `obj.is_lad_typed === true`
- * for the resolved object.
+ * Wiring: SendScreen now exposes a "Send to object" mode that resolves
+ * a target `StateObject`. The component is gated by callers on
+ * `is_lad_typed === true` — the previous `import.meta.env.DEV` gate is
+ * gone. Callers may pass `initialMode` to pre-fill the mode dropdown
+ * from the resolved object's `lad_mode`.
  */
-export function LadVmPreview() {
-  // Dev-only gate.
-  //
-  // TODO(LAD-VM live wiring): the chain side is now real
-  // (StateObject.lad_mode → ObjectResponse.{is_lad_typed,lad_mode}),
-  // but SendScreen still takes a recipient address with no object-id
-  // context, so there is nothing to look up `is_lad_typed` against in
-  // the live tx-simulation flow. Once SendScreen / refresh / dApp call
-  // surfaces accept an `objectId`, drop this gate and instead render
-  // when the resolved StateObject has `is_lad_typed === true`.
-  if (!import.meta.env.DEV) return null;
-  return <LadVmPreviewInner />;
+export function LadVmPreview({ initialMode }: { initialMode?: LadMode } = {}) {
+  return <LadVmPreviewInner initialMode={initialMode} />;
 }
 
-function LadVmPreviewInner() {
+function LadVmPreviewInner({ initialMode }: { initialMode?: LadMode }) {
   const { chainStatus } = useWallet();
 
   const currentEpoch = chainStatus?.epoch ?? 0;
@@ -53,7 +34,7 @@ function LadVmPreviewInner() {
   // resources are usually mid-lifecycle when the user opens the preview.
   const defaultCreatedAt = Math.max(0, currentEpoch - 5);
 
-  const [mode, setMode] = useState<LadMode>("decaying");
+  const [mode, setMode] = useState<LadMode>(initialMode ?? "decaying");
   const [action, setAction] = useState<LadAction>("use");
   const [value, setValue] = useState<string>("42");
   const [createdAtEpoch, setCreatedAtEpoch] = useState<string>(String(defaultCreatedAt));
@@ -122,7 +103,7 @@ function LadVmPreviewInner() {
             Resource preview
           </span>
         </div>
-        <span className="text-[8px] text-zinc-600 uppercase tracking-wider">dev-only</span>
+        <span className="text-[8px] text-zinc-600 uppercase tracking-wider">LAD-typed</span>
       </div>
 
       <p className="text-[10px] text-zinc-500 leading-snug mb-3">

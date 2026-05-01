@@ -6,15 +6,30 @@ import { TxSimulation } from "./TxSimulation";
 import { LadVmPreview } from "./LadVmPreview";
 
 type SendStep = "form" | "preview" | "sent";
+type SendMode = "address" | "object";
 
 export function SendScreen() {
-  const { sendTransfer, balance, setView, loading, error, chainStatus } = useWallet();
+  const { sendTransfer, balance, setView, loading, error, chainStatus, objects, activeAccount } = useWallet();
+  const [mode, setMode] = useState<SendMode>("address");
   const [to, setTo] = useState("");
+  const [objectId, setObjectId] = useState("");
   const [amount, setAmount] = useState("");
   const [step, setStep] = useState<SendStep>("form");
 
+  // In "object" mode, the user picks one of their own objects; in
+  // "address" mode they paste a recipient address. Owned objects are
+  // filtered against the active account so the dropdown only shows
+  // things the user can actually send.
+  const ownedObjects = activeAccount
+    ? objects.filter((o) => o.owner === activeAccount.address)
+    : [];
+  const targetObject = mode === "object"
+    ? objects.find((o) => o.id === objectId) ?? null
+    : null;
+
   const parsedAmount = parseInt(amount, 10);
-  const isFormValid = to.length > 0 && !isNaN(parsedAmount) && parsedAmount > 0;
+  const recipientReady = mode === "address" ? to.length > 0 : objectId.length > 0;
+  const isFormValid = recipientReady && !isNaN(parsedAmount) && parsedAmount > 0;
 
   const handlePreview = (e: React.FormEvent) => {
     e.preventDefault();
@@ -22,9 +37,13 @@ export function SendScreen() {
     setStep("preview");
   };
 
+  // Resolve recipient address: in "address" mode it's the typed value;
+  // in "object" mode it's the picked object's owner.
+  const resolvedTo = mode === "object" ? targetObject?.owner ?? "" : to;
+
   const handleConfirm = async () => {
-    if (!to || !amount) return;
-    const result = await sendTransfer(to, parsedAmount);
+    if (!resolvedTo || !amount) return;
+    const result = await sendTransfer(resolvedTo, parsedAmount);
     if (result.success) {
       setStep("sent");
       setTimeout(() => setView("home"), 2000);
@@ -83,7 +102,7 @@ export function SendScreen() {
 
           <TxSimulation
             from={activeAddress}
-            to={to}
+            to={resolvedTo}
             amount={parsedAmount}
             currentBalance={balance}
             currentEpoch={currentEpoch}
@@ -92,15 +111,13 @@ export function SendScreen() {
             onCancel={handleCancelPreview}
           />
 
-          {/* LAD-VM substructural-resource preview. Self-gates behind
-              import.meta.env.DEV — /api/objects exposes `is_lad_typed`
-              but the chain currently always returns `false` (Account
-              & StateObject don't yet carry the marker), and Send takes
-              a recipient address rather than a target-object id, so
-              there's no signal to drive auto-rendering yet. Manual
-              probe tool until both gaps close. See LadVmPreview.tsx
-              file header. */}
-          <LadVmPreview />
+          {/* LAD-VM substructural-resource preview. Now wired to the
+              target object's `is_lad_typed` marker; only renders in
+              "object" mode for objects that actually carry a LAD mode.
+              See LadVmPreview.tsx file header. */}
+          {targetObject?.is_lad_typed === true && (
+            <LadVmPreview initialMode={targetObject.lad_mode} />
+          )}
 
           {loading && (
             <div className="mt-3 flex items-center justify-center gap-2">
@@ -131,17 +148,69 @@ export function SendScreen() {
       </div>
 
       <form onSubmit={handlePreview} className="px-4 space-y-3 flex-1">
-        <div>
-          <label className="text-[10px] text-zinc-500 mb-1 block">Recipient Address</label>
-          <input
-            type="text"
-            placeholder="0x..."
-            value={to}
-            onChange={e => setTo(e.target.value)}
-            className="w-full px-4 py-3 rounded-lg bg-evap-surface border border-evap-border text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-evap-cyan transition font-mono"
-            autoFocus
-          />
+        {/* Mode toggle: address vs object. Object mode pulls a target
+            from the user's owned-objects list and, when LAD-typed,
+            unlocks the LadVmPreview surface in the preview step. */}
+        <div className="flex items-center gap-3 text-[10px] text-zinc-400">
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input
+              type="radio"
+              name="send-mode"
+              value="address"
+              checked={mode === "address"}
+              onChange={() => setMode("address")}
+              className="accent-evap-cyan"
+            />
+            <span>Address</span>
+          </label>
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input
+              type="radio"
+              name="send-mode"
+              value="object"
+              checked={mode === "object"}
+              onChange={() => setMode("object")}
+              className="accent-evap-cyan"
+            />
+            <span>Object</span>
+          </label>
         </div>
+
+        {mode === "address" ? (
+          <div>
+            <label className="text-[10px] text-zinc-500 mb-1 block">Recipient Address</label>
+            <input
+              type="text"
+              placeholder="0x..."
+              value={to}
+              onChange={e => setTo(e.target.value)}
+              className="w-full px-4 py-3 rounded-lg bg-evap-surface border border-evap-border text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-evap-cyan transition font-mono"
+              autoFocus
+            />
+          </div>
+        ) : (
+          <div>
+            <label className="text-[10px] text-zinc-500 mb-1 block">Target Object</label>
+            <select
+              value={objectId}
+              onChange={e => setObjectId(e.target.value)}
+              className="w-full px-4 py-3 rounded-lg bg-evap-surface border border-evap-border text-sm text-zinc-200 focus:outline-none focus:border-evap-cyan transition"
+              autoFocus
+            >
+              <option value="">{ownedObjects.length === 0 ? "No owned objects" : "Select an object…"}</option>
+              {ownedObjects.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.name} {o.is_lad_typed ? `· LAD/${o.lad_mode}` : ""}
+                </option>
+              ))}
+            </select>
+            {targetObject && (
+              <p className="text-[10px] text-zinc-500 mt-1 font-mono truncate">
+                Owner: {targetObject.owner}
+              </p>
+            )}
+          </div>
+        )}
 
         <div>
           <label className="text-[10px] text-zinc-500 mb-1 block">Amount</label>
