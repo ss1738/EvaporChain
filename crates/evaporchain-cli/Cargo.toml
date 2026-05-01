@@ -9,6 +9,14 @@ repository.workspace = true
 name = "evaporchain"
 path = "src/main.rs"
 
+[[bin]]
+name = "evaporchain-rehearse"
+path = "src/bin/evaporchain-rehearse.rs"
+
+[[bin]]
+name = "evaporchain-faucet"
+path = "src/bin/evaporchain-faucet.rs"
+
 [dependencies]
 tokio = { workspace = true }
 anyhow = { workspace = true }
@@ -21,6 +29,7 @@ hex = { workspace = true }
 blake3 = { workspace = true }
 libc = "0.2"
 futures = "0.3"
+axum = "0.7"
 evaporchain-types = { path = "../evaporchain-types" }
 evaporchain-execution = { path = "../evaporchain-execution" }
 evaporchain-crypto = { path = "../evaporchain-crypto" }
