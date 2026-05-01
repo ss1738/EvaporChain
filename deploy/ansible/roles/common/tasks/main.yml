@@ -1,0 +1,246 @@
+---
+# Base host setup: package install, OS user, ufw, swap, sysctl tuning.
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  tags: [common, apt]
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name:
+      - curl
+      - jq
+      - ufw
+      - rsync
+      - zstd
+      - ca-certificates
+      - gnupg
+      - tar
+      - openssl
+      - prometheus-node-exporter
+      - chrony
+      - logrotate
+    state: present
+  tags: [common, apt]
+
+- name: Ensure chrony is enabled (NTP)
+  ansible.builtin.systemd:
+    name: chrony
+    state: started
+    enabled: true
+  tags: [common, time]
+
+- name: Create evaporchain group
+  ansible.builtin.group:
+    name: "{{ evaporchain_group }}"
+    state: present
+    system: true
+  tags: [common, user]
+
+- name: Create evaporchain user
+  ansible.builtin.user:
+    name: "{{ evaporchain_user }}"
+    group: "{{ evaporchain_group }}"
+    shell: /bin/bash
+    home: "/home/{{ evaporchain_user }}"
+    create_home: true
+    system: true
+    password_lock: true
+    state: present
+  tags: [common, user]
+
+- name: Authorize operator SSH key
+  ansible.posix.authorized_key:
+    user: "{{ evaporchain_user }}"
+    key: "{{ lookup('file', lookup('env', 'HOME') + '/.ssh/id_ed25519.pub') }}"
+    state: present
+  failed_when: false
+  tags: [common, user, ssh]
+
+- name: Grant evaporchain user passwordless sudo for systemctl
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/90-evaporchain
+    content: |
+      {{ evaporchain_user }} ALL=(root) NOPASSWD: /bin/systemctl start evaporchain-node
+      {{ evaporchain_user }} ALL=(root) NOPASSWD: /bin/systemctl stop evaporchain-node
+      {{ evaporchain_user }} ALL=(root) NOPASSWD: /bin/systemctl restart evaporchain-node
+      {{ evaporchain_user }} ALL=(root) NOPASSWD: /bin/systemctl status evaporchain-node
+      {{ evaporchain_user }} ALL=(root) NOPASSWD: /bin/journalctl -u evaporchain-node *
+    owner: root
+    group: root
+    mode: "0440"
+    validate: "/usr/sbin/visudo -cf %s"
+  tags: [common, sudo]
+
+- name: Ensure config dir exists
+  ansible.builtin.file:
+    path: "{{ config_dir }}"
+    state: directory
+    owner: "{{ evaporchain_user }}"
+    group: "{{ evaporchain_group }}"
+    mode: "0750"
+  tags: [common, paths]
+
+- name: Ensure data dir exists
+  ansible.builtin.file:
+    path: "{{ data_dir }}"
+    state: directory
+    owner: "{{ evaporchain_user }}"
+    group: "{{ evaporchain_group }}"
+    mode: "0750"
+  tags: [common, paths]
+
+- name: Ensure log dir exists
+  ansible.builtin.file:
+    path: "{{ log_dir }}"
+    state: directory
+    owner: "{{ evaporchain_user }}"
+    group: "{{ evaporchain_group }}"
+    mode: "0750"
+  tags: [common, paths]
+
+# ---- swap ----
+- name: Check existing swap
+  ansible.builtin.command: swapon --show=NAME --noheadings
+  register: existing_swap
+  changed_when: false
+  tags: [common, swap]
+
+- name: Create swap file
+  ansible.builtin.command: "fallocate -l {{ swap_size_mb }}M /swapfile"
+  args:
+    creates: /swapfile
+  when: existing_swap.stdout | length == 0
+  tags: [common, swap]
+
+- name: Permission swap file
+  ansible.builtin.file:
+    path: /swapfile
+    owner: root
+    group: root
+    mode: "0600"
+  when: existing_swap.stdout | length == 0
+  tags: [common, swap]
+
+- name: Format swap
+  ansible.builtin.command: mkswap /swapfile
+  register: mkswap_result
+  changed_when: "'Setting up swapspace' in mkswap_result.stdout"
+  failed_when: mkswap_result.rc not in [0]
+  when: existing_swap.stdout | length == 0
+  tags: [common, swap]
+
+- name: Enable swap
+  ansible.builtin.command: swapon /swapfile
+  when: existing_swap.stdout | length == 0
+  changed_when: true
+  tags: [common, swap]
+
+- name: Persist swap in fstab
+  ansible.posix.mount:
+    name: none
+    src: /swapfile
+    fstype: swap
+    opts: sw
+    state: present
+  tags: [common, swap]
+
+# ---- sysctl tuning for low-latency P2P ----
+- name: Apply sysctl tuning
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    sysctl_set: true
+    state: present
+    reload: true
+  loop:
+    - { key: "net.core.rmem_max",            value: "67108864" }
+    - { key: "net.core.wmem_max",            value: "67108864" }
+    - { key: "net.core.rmem_default",        value: "16777216" }
+    - { key: "net.core.wmem_default",        value: "16777216" }
+    - { key: "net.core.netdev_max_backlog",  value: "16384" }
+    - { key: "net.core.somaxconn",           value: "8192" }
+    - { key: "net.ipv4.tcp_rmem",            value: "4096 87380 67108864" }
+    - { key: "net.ipv4.tcp_wmem",            value: "4096 65536 67108864" }
+    - { key: "net.ipv4.tcp_congestion_control", value: "bbr" }
+    - { key: "net.ipv4.tcp_fastopen",        value: "3" }
+    - { key: "net.ipv4.tcp_mtu_probing",     value: "1" }
+    - { key: "vm.swappiness",                value: "10" }
+    - { key: "fs.file-max",                  value: "1048576" }
+  loop_control:
+    label: "{{ item.key }}"
+  when: sysctl_tuning_enabled | bool
+  tags: [common, sysctl]
+
+# ---- ufw ----
+- name: Reset ufw to a known-empty state
+  community.general.ufw:
+    state: reset
+  when: ufw_enabled | bool
+  tags: [common, ufw]
+
+- name: Default-deny inbound, allow outbound
+  community.general.ufw:
+    direction: "{{ item.dir }}"
+    policy: "{{ item.policy }}"
+  loop:
+    - { dir: incoming, policy: deny }
+    - { dir: outgoing, policy: allow }
+    - { dir: routed,   policy: deny }
+  loop_control:
+    label: "{{ item.dir }}"
+  when: ufw_enabled | bool
+  tags: [common, ufw]
+
+- name: Allow ssh + chain ports
+  community.general.ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  loop:
+    - "{{ ssh_port }}"
+    - "{{ p2p_port }}"
+    - "{{ api_port }}"
+    - "{{ prometheus_port }}"
+  loop_control:
+    label: "tcp/{{ item }}"
+  when: ufw_enabled | bool
+  tags: [common, ufw]
+
+- name: Enable ufw
+  community.general.ufw:
+    state: enabled
+    logging: low
+  when: ufw_enabled | bool
+  tags: [common, ufw]
+
+# ---- bump nofile globally for the evaporchain user ----
+- name: Set nofile limits for evaporchain user
+  ansible.builtin.copy:
+    dest: /etc/security/limits.d/90-evaporchain.conf
+    content: |
+      {{ evaporchain_user }} soft nofile 65536
+      {{ evaporchain_user }} hard nofile 65536
+    owner: root
+    group: root
+    mode: "0644"
+  tags: [common, limits]
+
+- name: Install logrotate config
+  ansible.builtin.copy:
+    dest: /etc/logrotate.d/evaporchain
+    content: |
+      {{ log_dir }}/*.log {
+          daily
+          rotate 14
+          missingok
+          notifempty
+          compress
+          delaycompress
+          copytruncate
+      }
+    owner: root
+    group: root
+    mode: "0644"
+  tags: [common, logging]

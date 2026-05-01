@@ -1,0 +1,168 @@
+---
+# Pull a release binary from the public GitHub release, install it, wire
+# up systemd, and wait until the node reports a healthy /api/status.
+#
+# Usage:
+#   ansible-playbook playbooks/deploy.yml -e release_tag=v0.2.0 --ask-vault-pass
+- name: Deploy EvaporChain node binary
+  hosts: validators
+  become: true
+  gather_facts: true
+  any_errors_fatal: true
+  vars_files:
+    - ../group_vars/vault.yml
+  vars:
+    release_url: "{{ release_url_template }}"
+    release_sha256_url: "{{ release_sha256_url_template }}"
+    download_dir: "/tmp/evaporchain-release-{{ release_tag }}"
+    tarball_path: "{{ download_dir }}/evaporchain-node-linux-amd64.tar.gz"
+    sha256_path: "{{ download_dir }}/evaporchain-node-linux-amd64.tar.gz.sha256"
+  pre_tasks:
+    - name: Require release_tag to be supplied
+      ansible.builtin.assert:
+        that:
+          - release_tag is defined
+          - release_tag | length > 0
+          - release_tag != "v0.0.0"
+        fail_msg: "Pass -e release_tag=<git-tag>; got '{{ release_tag | default('') }}'"
+      tags: [always]
+
+  tasks:
+    - name: Ensure download dir exists
+      ansible.builtin.file:
+        path: "{{ download_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Download release tarball
+      ansible.builtin.get_url:
+        url: "{{ release_url }}"
+        dest: "{{ tarball_path }}"
+        mode: "0644"
+        timeout: 60
+      register: download_result
+      retries: 3
+      delay: 5
+      until: download_result is succeeded
+
+    - name: Download release sha256
+      ansible.builtin.get_url:
+        url: "{{ release_sha256_url }}"
+        dest: "{{ sha256_path }}"
+        mode: "0644"
+        timeout: 30
+
+    - name: Verify tarball checksum
+      ansible.builtin.shell: |
+        set -euo pipefail
+        cd "{{ download_dir }}"
+        sha256sum -c evaporchain-node-linux-amd64.tar.gz.sha256
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Stop service before binary swap (no-op on first install)
+      ansible.builtin.systemd:
+        name: evaporchain-node
+        state: stopped
+      failed_when: false
+
+    - name: Unpack release into staging dir
+      ansible.builtin.unarchive:
+        src: "{{ tarball_path }}"
+        dest: "{{ download_dir }}"
+        remote_src: true
+        creates: "{{ download_dir }}/evaporchain-node"
+
+    - name: Install node binary
+      ansible.builtin.copy:
+        src: "{{ download_dir }}/evaporchain-node"
+        dest: "{{ binary_path }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0755"
+      notify: restart evaporchain-node
+
+    - name: Install evaporchain CLI (if shipped in tarball)
+      ansible.builtin.copy:
+        src: "{{ download_dir }}/evaporchain"
+        dest: "{{ cli_path }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0755"
+      failed_when: false
+
+    - name: Upload coordinator-signed genesis-config
+      ansible.builtin.copy:
+        src: "{{ genesis_config_local_path }}"
+        dest: "{{ genesis_config_path }}"
+        owner: "{{ evaporchain_user }}"
+        group: "{{ evaporchain_group }}"
+        mode: "0640"
+      notify: restart evaporchain-node
+
+    - name: Upload encrypted validator BLS key
+      ansible.builtin.copy:
+        src: "{{ validator_keys_local_dir }}/validator-{{ validator_id }}-bls-key.bin"
+        dest: "{{ validator_key_path }}"
+        owner: "{{ evaporchain_user }}"
+        group: "{{ evaporchain_group }}"
+        mode: "0600"
+      notify: restart evaporchain-node
+      no_log: true
+
+    - name: Render node.toml
+      ansible.builtin.template:
+        src: ../roles/evaporchain-node/templates/node.toml.j2
+        dest: "{{ node_toml_path }}"
+        owner: "{{ evaporchain_user }}"
+        group: "{{ evaporchain_group }}"
+        mode: "0640"
+      notify: restart evaporchain-node
+
+    - name: Render env file
+      ansible.builtin.template:
+        src: ../roles/evaporchain-node/templates/env.j2
+        dest: "{{ env_file }}"
+        owner: "{{ evaporchain_user }}"
+        group: "{{ evaporchain_group }}"
+        mode: "0600"
+      notify: restart evaporchain-node
+      no_log: true
+
+  post_tasks:
+    - name: Flush handlers (apply restart now)
+      ansible.builtin.meta: flush_handlers
+
+    - name: Ensure service is enabled and started
+      ansible.builtin.systemd:
+        name: evaporchain-node
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Wait for /api/status to return 200
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ api_port }}{{ health_endpoint }}"
+        status_code: 200
+        return_content: false
+      register: health
+      retries: "{{ (health_timeout_seconds / health_poll_interval_seconds) | int }}"
+      delay: "{{ health_poll_interval_seconds }}"
+      until: health.status == 200
+      changed_when: false
+
+    - name: Report deploy summary
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} (validator {{ validator_id }}) is up
+          on release {{ release_tag }}; /api/status responded 200.
+
+  handlers:
+    - name: restart evaporchain-node
+      ansible.builtin.systemd:
+        name: evaporchain-node
+        state: restarted
+        daemon_reload: true

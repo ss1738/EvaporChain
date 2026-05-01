@@ -1,0 +1,155 @@
+---
+# Rolling upgrade with health gates. One host at a time; if any host
+# fails to resync within 5 minutes the run aborts and the cluster is
+# left in a mixed-version state for the operator to inspect.
+#
+# Usage:
+#   ansible-playbook playbooks/upgrade.yml -e release_tag=v0.2.1 --ask-vault-pass
+- name: Rolling upgrade EvaporChain validators
+  hosts: validators
+  become: true
+  gather_facts: true
+  serial: 1
+  any_errors_fatal: true
+  max_fail_percentage: 0
+  vars_files:
+    - ../group_vars/vault.yml
+  vars:
+    release_url: "{{ release_url_template }}"
+    release_sha256_url: "{{ release_sha256_url_template }}"
+    download_dir: "/tmp/evaporchain-release-{{ release_tag }}"
+    tarball_path: "{{ download_dir }}/evaporchain-node-linux-amd64.tar.gz"
+    sha256_path: "{{ download_dir }}/evaporchain-node-linux-amd64.tar.gz.sha256"
+    resync_timeout_seconds: 300
+    resync_poll_interval_seconds: 5
+  pre_tasks:
+    - name: Require release_tag to be supplied
+      ansible.builtin.assert:
+        that:
+          - release_tag is defined
+          - release_tag | length > 0
+        fail_msg: "Pass -e release_tag=<git-tag>"
+
+    - name: Capture pre-upgrade height
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ api_port }}{{ health_endpoint }}"
+        return_content: true
+      register: pre_status
+      changed_when: false
+      failed_when: false
+
+    - name: Stash height
+      ansible.builtin.set_fact:
+        pre_upgrade_height: "{{ (pre_status.json.height | default(0)) | int }}"
+
+  tasks:
+    - name: Ensure download dir exists
+      ansible.builtin.file:
+        path: "{{ download_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Download release tarball
+      ansible.builtin.get_url:
+        url: "{{ release_url }}"
+        dest: "{{ tarball_path }}"
+        mode: "0644"
+        timeout: 60
+      register: download_result
+      retries: 3
+      delay: 5
+      until: download_result is succeeded
+
+    - name: Download release sha256
+      ansible.builtin.get_url:
+        url: "{{ release_sha256_url }}"
+        dest: "{{ sha256_path }}"
+        mode: "0644"
+        timeout: 30
+
+    - name: Verify tarball checksum
+      ansible.builtin.shell: |
+        set -euo pipefail
+        cd "{{ download_dir }}"
+        sha256sum -c evaporchain-node-linux-amd64.tar.gz.sha256
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Unpack release
+      ansible.builtin.unarchive:
+        src: "{{ tarball_path }}"
+        dest: "{{ download_dir }}"
+        remote_src: true
+        creates: "{{ download_dir }}/evaporchain-node"
+
+    - name: Drain peers (signal graceful disconnect)
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ api_port }}/api/admin/drain"
+        method: POST
+        status_code: [200, 202, 404]
+      register: drain_result
+      failed_when: false
+      changed_when: drain_result.status in [200, 202]
+
+    - name: Stop service for upgrade
+      ansible.builtin.systemd:
+        name: evaporchain-node
+        state: stopped
+
+    - name: Install new node binary
+      ansible.builtin.copy:
+        src: "{{ download_dir }}/evaporchain-node"
+        dest: "{{ binary_path }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install new evaporchain CLI (if shipped)
+      ansible.builtin.copy:
+        src: "{{ download_dir }}/evaporchain"
+        dest: "{{ cli_path }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0755"
+      failed_when: false
+
+    - name: Start service on new binary
+      ansible.builtin.systemd:
+        name: evaporchain-node
+        state: started
+        daemon_reload: true
+
+    - name: Wait for /api/status to return 200
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ api_port }}{{ health_endpoint }}"
+        status_code: 200
+        return_content: true
+      register: health
+      retries: "{{ (health_timeout_seconds / health_poll_interval_seconds) | int }}"
+      delay: "{{ health_poll_interval_seconds }}"
+      until: health.status == 200
+      changed_when: false
+
+    - name: Wait for resync (height advances past pre-upgrade height)
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ api_port }}{{ health_endpoint }}"
+        return_content: true
+      register: resync
+      retries: "{{ (resync_timeout_seconds / resync_poll_interval_seconds) | int }}"
+      delay: "{{ resync_poll_interval_seconds }}"
+      until:
+        - resync.status == 200
+        - (resync.json.height | default(0) | int) > (pre_upgrade_height | int)
+      changed_when: false
+      failed_when: resync.status != 200 or (resync.json.height | default(0) | int) <= (pre_upgrade_height | int)
+
+  post_tasks:
+    - name: Report upgrade summary
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} upgraded to {{ release_tag }};
+          height advanced from {{ pre_upgrade_height }} to
+          {{ resync.json.height | default('unknown') }}.

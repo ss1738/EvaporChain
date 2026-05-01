@@ -1,0 +1,33 @@
+---
+# Start the node service across the cluster and run a /api/status smoke test.
+#
+# Usage:
+#   ansible-playbook playbooks/start.yml --ask-vault-pass
+- name: Start EvaporChain validators
+  hosts: validators
+  become: true
+  gather_facts: false
+  any_errors_fatal: false
+  vars_files:
+    - ../group_vars/vault.yml
+  tasks:
+    - name: Start evaporchain-node service
+      ansible.builtin.systemd:
+        name: evaporchain-node
+        state: started
+        enabled: true
+        daemon_reload: true
+
+    - name: Smoke test /api/status
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ api_port }}{{ health_endpoint }}"
+        status_code: 200
+      register: health
+      retries: "{{ (health_timeout_seconds / health_poll_interval_seconds) | int }}"
+      delay: "{{ health_poll_interval_seconds }}"
+      until: health.status == 200
+      changed_when: false
+
+    - name: Print height + peer count
+      ansible.builtin.debug:
+        var: health.json

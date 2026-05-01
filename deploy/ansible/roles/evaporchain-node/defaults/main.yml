@@ -1,0 +1,12 @@
+---
+# Defaults for the evaporchain-node role. Override via group_vars,
+# host_vars, or `-e` on the command line. Most chain identity values
+# (chain_id, ports, paths) live in group_vars/all.yml so they stay in
+# sync across roles.
+
+# Whether to start the unit on bootstrap. Set false during initial
+# rollout so the binary can be deployed before the genesis is broadcast.
+evaporchain_node_enabled_at_bootstrap: false
+
+# Extra CLI flags appended after the templated args. One per line.
+extra_node_args: []

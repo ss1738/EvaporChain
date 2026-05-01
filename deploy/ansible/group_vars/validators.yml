@@ -1,0 +1,47 @@
+---
+# Group-level overrides for validator hosts.
+#
+# `validator_id` and `validator_moniker` are per-host and live in the
+# inventory, not here.
+
+validator_count: 3
+
+# Path on the operator workstation to the coordinator-signed
+# genesis-config.json produced by:
+#   evaporchain onboarding build-genesis \
+#     --validators validators.json \
+#     --coordinator-sk coordinator-sk.hex \
+#     --out genesis-config.json
+# Resolved relative to the playbook's playbook_dir if not absolute.
+genesis_config_local_path: "{{ playbook_dir }}/../files/genesis-config.json"
+
+# Per-host BLS keypair bundles produced by `evaporchain keygen --output`.
+# Convention: one file per validator named validator-<id>-keys.json under
+# the operator's local secrets directory. The deploy role uploads these
+# encrypted via the vault-supplied passphrase before the node binary is
+# permitted to start.
+validator_keys_local_dir: "{{ playbook_dir }}/../files/validator-keys"
+
+# Bind addresses (the node binary listens here; advertised peer endpoint
+# uses p2p_external_host from the inventory).
+p2p_bind_addr: "0.0.0.0"
+api_bind_addr: "127.0.0.1"     # gated behind nginx/caddy reverse proxy in front
+metrics_bind_addr: "127.0.0.1"
+
+# --mainnet strict mode rejects --demo, --mock-consensus, --no-da-enforcement,
+# and --devnet-no-rate-limit at boot. Public testnet runs in mainnet-strict
+# mode so we catch any of those mis-configurations the same way prod will.
+mainnet_strict: true
+
+# Environment variables loaded by the systemd unit. Pass-through values
+# are interpolated by Ansible at template time; secrets come from the
+# vault file referenced via --ask-vault-pass.
+node_env:
+  RUST_LOG: "info,evaporchain_consensus=debug,evaporchain_network=info"
+  EVAPORCHAIN_VALIDATOR_KEY_PASS: "{{ evaporchain_validator_key_pass }}"
+  EVAPORCHAIN_CHAIN_ID: "{{ chain_id }}"
+
+# `evaporchain_validator_key_pass` MUST be defined in group_vars/vault.yml,
+# which is encrypted with `ansible-vault create group_vars/vault.yml`.
+# Sample contents (DO NOT CHECK IN UNENCRYPTED):
+#   evaporchain_validator_key_pass: "<strong-passphrase>"

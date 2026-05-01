@@ -1,0 +1,61 @@
+[Unit]
+Description=EvaporChain validator node ({{ inventory_hostname }} / id={{ validator_id }})
+Documentation=https://github.com/ss1738/EvaporChain
+After=network-online.target chrony.service
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User={{ evaporchain_user }}
+Group={{ evaporchain_group }}
+WorkingDirectory={{ data_dir }}
+EnvironmentFile={{ env_file }}
+ExecStart={{ binary_path }} \
+  {% if mainnet_strict %}--mainnet \
+  {% endif %}--genesis-config {{ genesis_config_path }} \
+  --validator-id {{ validator_id }} \
+  --validator-key {{ validator_key_path }} \
+  --tls \
+  --tls-cert {{ tls_cert_path }} \
+  --tls-key {{ tls_key_path }} \
+  --data-dir {{ data_dir }} \
+  --chain-id {{ chain_id }} \
+  --port {{ p2p_port }} \
+  --api \
+  --api-port {{ api_port }} \
+  --network \
+  --validators {{ validator_count }}{% for arg in extra_node_args %} \
+  {{ arg }}{% endfor %}
+
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+SendSIGKILL=no
+LimitNOFILE=65536
+LimitNPROC=8192
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths={{ data_dir }} {{ log_dir }} {{ config_dir }}
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+SystemCallArchitectures=native
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=evaporchain-node
+
+[Install]
+WantedBy=multi-user.target

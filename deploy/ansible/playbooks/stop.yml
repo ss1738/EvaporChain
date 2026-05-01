@@ -1,0 +1,35 @@
+---
+# Graceful shutdown. systemd unit uses SIGTERM with a 30s timeout; if a
+# host fails to stop in that window the play does NOT escalate to SIGKILL
+# automatically — manual intervention is preferred so we don't risk a
+# corrupted state DB.
+#
+# Usage:
+#   ansible-playbook playbooks/stop.yml --ask-vault-pass
+- name: Stop EvaporChain validators
+  hosts: validators
+  become: true
+  gather_facts: false
+  serial: 1     # one validator at a time, never bring the whole network down at once
+  any_errors_fatal: false
+  vars_files:
+    - ../group_vars/vault.yml
+  tasks:
+    - name: Stop evaporchain-node service
+      ansible.builtin.systemd:
+        name: evaporchain-node
+        state: stopped
+
+    - name: Confirm process is gone
+      ansible.builtin.shell: |
+        set -e
+        if pgrep -f '{{ binary_path }}' >/dev/null; then
+          echo "still-running"
+          exit 2
+        fi
+        echo "stopped"
+      args:
+        executable: /bin/bash
+      register: pgrep_result
+      changed_when: false
+      failed_when: pgrep_result.rc != 0

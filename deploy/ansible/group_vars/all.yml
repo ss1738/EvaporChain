@@ -1,0 +1,56 @@
+---
+# Cluster-wide defaults applied to every host.
+#
+# Override any of these per-group in group_vars/<group>.yml or
+# per-host inline in the inventory.
+
+# ---- Chain identity --------------------------------------------------
+chain_id: evaporchain-testnet-1
+release_tag: v0.2.0
+# Where the GitHub release tarball is published. Substituted by the
+# deploy playbook; must match the asset uploaded by CI.
+release_url_template: "https://github.com/ss1738/EvaporChain/releases/download/{{ release_tag }}/evaporchain-node-linux-amd64.tar.gz"
+release_sha256_url_template: "https://github.com/ss1738/EvaporChain/releases/download/{{ release_tag }}/evaporchain-node-linux-amd64.tar.gz.sha256"
+
+# ---- Network ports ---------------------------------------------------
+p2p_port: 26656
+api_port: 8080
+prometheus_port: 9100
+metrics_port: 9090           # chain /metrics (scraped by node_exporter sidecar)
+ssh_port: 22
+
+# ---- Filesystem layout ----------------------------------------------
+evaporchain_user: evaporchain
+evaporchain_group: evaporchain
+binary_install_dir: /usr/local/bin
+binary_path: "{{ binary_install_dir }}/evaporchain-node"
+cli_path: "{{ binary_install_dir }}/evaporchain"
+config_dir: /etc/evaporchain
+data_dir: /var/lib/evaporchain
+log_dir: /var/log/evaporchain
+snapshot_dir: "{{ data_dir }}/snapshots"
+env_file: "{{ config_dir }}/env"
+genesis_config_path: "{{ config_dir }}/genesis-config.json"
+validator_key_path: "{{ config_dir }}/validator-key.pem"
+tls_cert_path: "{{ config_dir }}/tls-cert.pem"
+tls_key_path: "{{ config_dir }}/tls-key.pem"
+node_toml_path: "{{ config_dir }}/node.toml"
+
+# ---- Health gate ------------------------------------------------------
+health_endpoint: "/api/status"
+health_timeout_seconds: 60
+health_poll_interval_seconds: 2
+
+# ---- Snapshots --------------------------------------------------------
+# Local rsync target for snapshot uploads. Replace before running
+# `playbooks/snapshot.yml`.
+snapshot_backup_host: REPLACE_ME_BACKUP_HOST
+snapshot_backup_user: REPLACE_ME_BACKUP_USER
+snapshot_backup_path: REPLACE_ME_BACKUP_PATH
+snapshot_retain_count: 7
+
+# ---- Tunables --------------------------------------------------------
+swap_size_mb: 4096
+sysctl_tuning_enabled: true
+ufw_enabled: true
+node_exporter_version: "1.8.2"

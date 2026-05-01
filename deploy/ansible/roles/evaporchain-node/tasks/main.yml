@@ -1,0 +1,44 @@
+---
+# Wires the evaporchain-node systemd unit and templates the static
+# config. Does NOT install the binary itself — the deploy/upgrade
+# playbooks handle the binary download.
+- name: Render env file
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ env_file }}"
+    owner: "{{ evaporchain_user }}"
+    group: "{{ evaporchain_group }}"
+    mode: "0600"
+  no_log: true
+  notify: restart evaporchain-node
+
+- name: Render node.toml
+  ansible.builtin.template:
+    src: node.toml.j2
+    dest: "{{ node_toml_path }}"
+    owner: "{{ evaporchain_user }}"
+    group: "{{ evaporchain_group }}"
+    mode: "0640"
+  notify: restart evaporchain-node
+
+- name: Install systemd unit
+  ansible.builtin.template:
+    src: evaporchain-node.service.j2
+    dest: /etc/systemd/system/evaporchain-node.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - reload systemd
+    - restart evaporchain-node
+
+- name: Reload systemd before any conditional start
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Enable service (start gated by var)
+  ansible.builtin.systemd:
+    name: evaporchain-node
+    enabled: true
+    state: "{{ 'started' if evaporchain_node_enabled_at_bootstrap else 'stopped' }}"
+  failed_when: false   # bootstrap may run before binary exists

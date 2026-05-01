@@ -1,0 +1,52 @@
+---
+# Installs prometheus-node-exporter via apt (already pulled in by the
+# common role) and ensures the systemd unit is enabled. We pin the
+# version we want; if apt has it newer, that's fine — the alert rules
+# stay compatible across the 1.x line.
+- name: Ensure prometheus-node-exporter is installed
+  ansible.builtin.apt:
+    name: prometheus-node-exporter
+    state: present
+  tags: [prometheus]
+
+- name: Configure node_exporter listen address
+  ansible.builtin.copy:
+    dest: /etc/default/prometheus-node-exporter
+    content: |
+      ARGS="--web.listen-address=0.0.0.0:{{ prometheus_port }} \
+            --collector.systemd \
+            --collector.processes \
+            --collector.netclass.ignored-devices=^(veth.*|docker.*|lo)$ \
+            --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|run)($|/)"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart node_exporter
+  tags: [prometheus, config]
+
+- name: Ensure node_exporter is enabled and started
+  ansible.builtin.systemd:
+    name: prometheus-node-exporter
+    enabled: true
+    state: started
+    daemon_reload: true
+  tags: [prometheus]
+
+- name: Allow node_exporter port through ufw
+  community.general.ufw:
+    rule: allow
+    port: "{{ prometheus_port }}"
+    proto: tcp
+  when: ufw_enabled | bool
+  tags: [prometheus, ufw]
+
+- name: Smoke test /metrics
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ prometheus_port }}/metrics"
+    status_code: 200
+  register: metrics_check
+  retries: 5
+  delay: 2
+  until: metrics_check.status == 200
+  changed_when: false
+  tags: [prometheus, smoke]

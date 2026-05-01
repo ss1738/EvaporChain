@@ -1,0 +1,40 @@
+# EvaporChain node configuration
+# Rendered by Ansible — DO NOT edit by hand. Source of truth lives in
+# deploy/ansible/group_vars/ and roles/evaporchain-node/templates/.
+# Re-render with `ansible-playbook playbooks/deploy.yml -e release_tag=...`.
+
+[chain]
+chain_id = "{{ chain_id }}"
+moniker  = "{{ validator_moniker }}"
+release_tag = "{{ release_tag }}"
+
+[node]
+validator_id   = {{ validator_id }}
+mainnet_strict = {{ mainnet_strict | string | lower }}
+data_dir       = "{{ data_dir }}"
+log_dir        = "{{ log_dir }}"
+
+[p2p]
+listen_addr  = "{{ p2p_bind_addr }}:{{ p2p_port }}"
+external_addr = "{{ p2p_external_host }}:{{ p2p_port }}"
+allowed_peers = []   # empty = all peers from genesis allowed; populate to enable strict allowlist
+
+[api]
+listen_addr = "{{ api_bind_addr }}:{{ api_port }}"
+tls_cert    = "{{ tls_cert_path }}"
+tls_key     = "{{ tls_key_path }}"
+
+[metrics]
+listen_addr = "{{ metrics_bind_addr }}:{{ metrics_port }}"
+prometheus_node_exporter_port = {{ prometheus_port }}
+
+[keys]
+genesis_config = "{{ genesis_config_path }}"
+validator_key  = "{{ validator_key_path }}"
+
+[logging]
+level = "info"
+format = "json"
+
+[health]
+endpoint = "{{ health_endpoint }}"

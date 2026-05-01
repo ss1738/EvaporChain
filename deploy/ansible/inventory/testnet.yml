@@ -1,0 +1,32 @@
+---
+# EvaporChain public-testnet inventory.
+#
+# Replace every REPLACE_ME_* placeholder with real Hetzner cloud IPv4
+# addresses (or IPv6) once the servers are provisioned.
+#
+# Validator IDs are 0-indexed and MUST match the bls_public_key entries
+# in the coordinator-signed genesis-config.json. Do not renumber after
+# the genesis is signed.
+all:
+  vars:
+    ansible_user: evaporchain
+    ansible_python_interpreter: /usr/bin/python3
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
+  children:
+    validators:
+      hosts:
+        validator-0:
+          ansible_host: REPLACE_ME_VALIDATOR_0_IP
+          validator_id: 0
+          validator_moniker: alpha
+          p2p_external_host: REPLACE_ME_VALIDATOR_0_IP
+        validator-1:
+          ansible_host: REPLACE_ME_VALIDATOR_1_IP
+          validator_id: 1
+          validator_moniker: beta
+          p2p_external_host: REPLACE_ME_VALIDATOR_1_IP
+        validator-2:
+          ansible_host: REPLACE_ME_VALIDATOR_2_IP
+          validator_id: 2
+          validator_moniker: gamma
+          p2p_external_host: REPLACE_ME_VALIDATOR_2_IP

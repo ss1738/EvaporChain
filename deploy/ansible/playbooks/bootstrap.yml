@@ -1,0 +1,40 @@
+---
+# Initial host setup. Run once per freshly-provisioned Hetzner box.
+#
+# Usage:
+#   ansible-playbook playbooks/bootstrap.yml --ask-vault-pass
+#
+# This play assumes you have ssh access (key-based) to each host as either
+# root or a sudo-capable bootstrap user. Override with -u/-K if needed.
+- name: Bootstrap EvaporChain validator hosts
+  hosts: validators
+  become: true
+  gather_facts: true
+  any_errors_fatal: true
+  vars_files:
+    - ../group_vars/vault.yml
+  pre_tasks:
+    - name: Verify Ansible version
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version('2.15', '>=')
+        fail_msg: "Ansible 2.15+ required (found {{ ansible_version.full }})"
+        success_msg: "Ansible {{ ansible_version.full }} OK"
+      tags: [always]
+  roles:
+    - role: common
+      tags: [common, bootstrap]
+    - role: tls
+      tags: [tls, bootstrap]
+    - role: prometheus-exporter
+      tags: [prometheus, bootstrap]
+    - role: evaporchain-node
+      tags: [node, bootstrap]
+  post_tasks:
+    - name: Confirm bootstrap is complete
+      ansible.builtin.debug:
+        msg: >-
+          Host {{ inventory_hostname }} bootstrapped as validator
+          {{ validator_id }} ({{ validator_moniker }}). Run deploy.yml
+          next to install the node binary.
+      tags: [always]

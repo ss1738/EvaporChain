@@ -1,0 +1,117 @@
+---
+# Take a state snapshot on every validator and rsync it back to the
+# operator's backup host.
+#
+# NOTE: as of HEAD 94e0298 the `evaporchain` CLI does NOT expose a
+# `snapshot create` subcommand (verified via crates/evaporchain-cli/src/main.rs).
+# Until that subcommand lands, this playbook falls back to a tar.zst of
+# the live data dir — taken AFTER the node is briefly stopped, to avoid
+# capturing a torn RocksDB-style write batch. The data dir layout is the
+# one created by the node binary at {{ data_dir }}.
+#
+# Once `evaporchain snapshot create --output <path>` exists, replace the
+# `Take filesystem snapshot` block with a CLI invocation against the
+# running node — that path will not require a stop/start.
+#
+# Usage:
+#   ansible-playbook playbooks/snapshot.yml --ask-vault-pass
+- name: Snapshot EvaporChain validator state
+  hosts: validators
+  become: true
+  gather_facts: true
+  serial: 1     # one validator at a time so we never lose quorum
+  any_errors_fatal: false
+  vars_files:
+    - ../group_vars/vault.yml
+  vars:
+    snapshot_filename: "snapshot-{{ inventory_hostname }}-{{ ansible_date_time.epoch }}.tar.zst"
+    snapshot_local_path: "{{ snapshot_dir }}/{{ snapshot_filename }}"
+  tasks:
+    - name: Ensure snapshot dir exists
+      ansible.builtin.file:
+        path: "{{ snapshot_dir }}"
+        state: directory
+        owner: "{{ evaporchain_user }}"
+        group: "{{ evaporchain_group }}"
+        mode: "0750"
+
+    - name: Stop service for consistent snapshot
+      ansible.builtin.systemd:
+        name: evaporchain-node
+        state: stopped
+      register: stop_result
+
+    # TODO(satya): swap to `{{ cli_path }} snapshot create --output {{ snapshot_local_path }}`
+    # once the CLI implements the `Snapshot` subcommand. See main.rs::Commands.
+    - name: Take filesystem snapshot of state dir (fallback)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        tar --use-compress-program='zstd -T0 -10' \
+            -cf '{{ snapshot_local_path }}' \
+            -C '{{ data_dir }}' .
+        chown {{ evaporchain_user }}:{{ evaporchain_group }} '{{ snapshot_local_path }}'
+        chmod 0640 '{{ snapshot_local_path }}'
+      args:
+        executable: /bin/bash
+        creates: "{{ snapshot_local_path }}"
+
+    - name: Restart service after snapshot
+      ansible.builtin.systemd:
+        name: evaporchain-node
+        state: started
+      when: stop_result.changed
+
+    - name: Wait for /api/status to return 200 after restart
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ api_port }}{{ health_endpoint }}"
+        status_code: 200
+      register: health
+      retries: "{{ (health_timeout_seconds / health_poll_interval_seconds) | int }}"
+      delay: "{{ health_poll_interval_seconds }}"
+      until: health.status == 200
+      changed_when: false
+
+    - name: Compute snapshot checksum
+      ansible.builtin.shell: |
+        set -euo pipefail
+        sha256sum '{{ snapshot_local_path }}' > '{{ snapshot_local_path }}.sha256'
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Rsync snapshot to backup host
+      ansible.builtin.shell: |
+        set -euo pipefail
+        rsync -avz \
+          -e 'ssh -o StrictHostKeyChecking=accept-new' \
+          '{{ snapshot_local_path }}' \
+          '{{ snapshot_local_path }}.sha256' \
+          '{{ snapshot_backup_user }}@{{ snapshot_backup_host }}:{{ snapshot_backup_path }}/'
+      args:
+        executable: /bin/bash
+      when:
+        - snapshot_backup_host != "REPLACE_ME_BACKUP_HOST"
+        - snapshot_backup_user != "REPLACE_ME_BACKUP_USER"
+        - snapshot_backup_path != "REPLACE_ME_BACKUP_PATH"
+      changed_when: true
+
+    - name: Warn when backup host is still a placeholder
+      ansible.builtin.debug:
+        msg: >-
+          snapshot_backup_host is still REPLACE_ME — snapshot taken
+          locally at {{ snapshot_local_path }} but not uploaded.
+      when: snapshot_backup_host == "REPLACE_ME_BACKUP_HOST"
+
+    - name: Prune old local snapshots (keep newest {{ snapshot_retain_count }})
+      ansible.builtin.shell: |
+        set -euo pipefail
+        cd '{{ snapshot_dir }}'
+        ls -1t snapshot-*.tar.zst 2>/dev/null \
+          | tail -n +$((1 + {{ snapshot_retain_count }})) \
+          | xargs -r rm -f
+        ls -1t snapshot-*.tar.zst.sha256 2>/dev/null \
+          | tail -n +$((1 + {{ snapshot_retain_count }})) \
+          | xargs -r rm -f
+      args:
+        executable: /bin/bash
+      changed_when: false

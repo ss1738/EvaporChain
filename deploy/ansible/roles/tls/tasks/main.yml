@@ -1,0 +1,62 @@
+---
+# Generate per-host TLS material for the chain HTTP API.
+#
+# Strategy: prefer the chain's own CLI (`evaporchain` keygen flow) when
+# the binary is already on the host; otherwise fall back to OpenSSL
+# self-signed certs. Either way, the resulting key file is encrypted at
+# rest using the operator passphrase from the vault — the systemd unit
+# decrypts in-process at startup via EVAPORCHAIN_VALIDATOR_KEY_PASS.
+#
+# The cert/key paths are fixed by group_vars/all.yml so the deploy and
+# upgrade playbooks can reference them without coupling to per-host
+# state.
+
+- name: Stat existing TLS cert
+  ansible.builtin.stat:
+    path: "{{ tls_cert_path }}"
+  register: tls_cert_stat
+
+- name: Stat existing TLS key
+  ansible.builtin.stat:
+    path: "{{ tls_key_path }}"
+  register: tls_key_stat
+
+- name: Generate self-signed TLS keypair via openssl
+  ansible.builtin.shell: |
+    set -euo pipefail
+    umask 077
+    openssl req -x509 -newkey ed25519 \
+      -keyout '{{ tls_key_path }}.unencrypted' \
+      -out   '{{ tls_cert_path }}' \
+      -days 825 \
+      -nodes \
+      -subj '/CN={{ inventory_hostname }}/O=EvaporChain Validator/OU=validator-{{ validator_id }}'
+    # Encrypt the key at rest with the operator passphrase from vault.
+    openssl pkey \
+      -in  '{{ tls_key_path }}.unencrypted' \
+      -out '{{ tls_key_path }}' \
+      -aes-256-cbc \
+      -passout pass:"$EVAPORCHAIN_VALIDATOR_KEY_PASS"
+    rm -f '{{ tls_key_path }}.unencrypted'
+    chown {{ evaporchain_user }}:{{ evaporchain_group }} '{{ tls_cert_path }}' '{{ tls_key_path }}'
+    chmod 0644 '{{ tls_cert_path }}'
+    chmod 0600 '{{ tls_key_path }}'
+  args:
+    executable: /bin/bash
+    creates: "{{ tls_cert_path }}"
+  environment:
+    EVAPORCHAIN_VALIDATOR_KEY_PASS: "{{ evaporchain_validator_key_pass }}"
+  when: not tls_cert_stat.stat.exists or not tls_key_stat.stat.exists
+  no_log: true
+  tags: [tls]
+
+- name: Verify cert is readable
+  ansible.builtin.command: "openssl x509 -in {{ tls_cert_path }} -noout -subject -dates"
+  register: tls_verify
+  changed_when: false
+  tags: [tls]
+
+- name: Show cert subject + dates
+  ansible.builtin.debug:
+    var: tls_verify.stdout_lines
+  tags: [tls]
