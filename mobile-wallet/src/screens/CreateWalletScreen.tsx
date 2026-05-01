@@ -131,6 +131,7 @@ const CreateWalletScreen: React.FC<Props> = ({ navigation }) => {
               to recover your wallet. Write it down and keep it safe.
             </Text>
             <TouchableOpacity
+              testID="create-show-seed-button"
               style={styles.primaryButton}
               onPress={() => setStep('backup')}
               activeOpacity={0.7}
@@ -146,15 +147,16 @@ const CreateWalletScreen: React.FC<Props> = ({ navigation }) => {
             <Text style={styles.warningText}>
               Write down these 24 words in order. Never share them with anyone.
             </Text>
-            <View style={styles.seedGrid}>
+            <View style={styles.seedGrid} testID="create-seed-grid">
               {seedWords.map((word, i) => (
                 <View key={i} style={styles.seedWord}>
                   <Text style={styles.seedIndex}>{i + 1}</Text>
-                  <Text style={styles.seedText}>{word}</Text>
+                  <Text style={styles.seedText} testID={`create-seed-word-${i}`}>{word}</Text>
                 </View>
               ))}
             </View>
             <TouchableOpacity
+              testID="create-backup-done-button"
               style={styles.primaryButton}
               onPress={handleBackupDone}
               activeOpacity={0.7}
@@ -174,6 +176,7 @@ const CreateWalletScreen: React.FC<Props> = ({ navigation }) => {
               <View key={index} style={styles.confirmField}>
                 <Text style={styles.confirmLabel}>Word #{index + 1}</Text>
                 <TextInput
+                  testID={`create-confirm-word-input-${index}`}
                   style={styles.confirmInput}
                   value={confirmInput[index] || ''}
                   onChangeText={(text) =>
@@ -187,6 +190,7 @@ const CreateWalletScreen: React.FC<Props> = ({ navigation }) => {
               </View>
             ))}
             <TouchableOpacity
+              testID="create-verify-button"
               style={styles.primaryButton}
               onPress={handleConfirmWords}
               activeOpacity={0.7}
@@ -203,6 +207,7 @@ const CreateWalletScreen: React.FC<Props> = ({ navigation }) => {
               Choose a 6-digit PIN to secure your wallet.
             </Text>
             <TextInput
+              testID="create-pin-input"
               style={styles.pinInput}
               value={pin}
               onChangeText={(text) => {
@@ -218,6 +223,7 @@ const CreateWalletScreen: React.FC<Props> = ({ navigation }) => {
             />
             {pinError ? <Text style={styles.errorText}>{pinError}</Text> : null}
             <TouchableOpacity
+              testID="create-pin-continue-button"
               style={[styles.primaryButton, pin.length < 6 && styles.buttonDisabled]}
               onPress={handleSetPin}
               disabled={pin.length < 6}
@@ -235,6 +241,7 @@ const CreateWalletScreen: React.FC<Props> = ({ navigation }) => {
               Enter your PIN again to confirm.
             </Text>
             <TextInput
+              testID="create-pin-confirm-input"
               style={styles.pinInput}
               value={pinConfirm}
               onChangeText={(text) => {
@@ -250,6 +257,7 @@ const CreateWalletScreen: React.FC<Props> = ({ navigation }) => {
             />
             {pinError ? <Text style={styles.errorText}>{pinError}</Text> : null}
             <TouchableOpacity
+              testID="create-finish-button"
               style={[styles.primaryButton, pinConfirm.length < 6 && styles.buttonDisabled]}
               onPress={handleConfirmPin}
               disabled={pinConfirm.length < 6}

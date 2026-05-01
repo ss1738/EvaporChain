@@ -1,0 +1,43 @@
+# 01-create-wallet.yaml — Create wallet, lock, unlock.
+#
+# Pure on-device; does not exercise any node endpoints. Verifies the
+# fundamental flow: a fresh install lands on Welcome, the user can
+# walk the multi-step create flow, the home screen renders, the
+# app can be force-quit + relaunched, and the PIN unlocks back into
+# Home.
+
+appId: com.evaporchain.wallet
+---
+# Fresh start — clear app state so we always begin on Welcome.
+- clearState
+- launchApp:
+    appId: com.evaporchain.wallet
+    clearState: true
+
+# Walk the create flow → ends on Unlock screen.
+- runFlow: _create-wallet.yaml
+
+# First unlock immediately after creation.
+- runFlow: _unlock.yaml
+
+# Home screen is visible — assert balance card + active address rendered.
+- assertVisible:
+    id: "home-balance-card"
+- assertVisible:
+    text: "Total Balance"
+
+# Force-quit and relaunch; expect to land on Unlock (wallet exists).
+- stopApp
+- launchApp:
+    appId: com.evaporchain.wallet
+    clearState: false
+- assertVisible:
+    id: "unlock-pin-pad"
+
+# Unlock again with the same PIN.
+- runFlow: _unlock.yaml
+- assertVisible:
+    id: "home-balance-card"
+
+# Tear down so subsequent specs start fresh.
+- clearState

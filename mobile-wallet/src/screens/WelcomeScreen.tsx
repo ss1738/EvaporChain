@@ -50,6 +50,7 @@ const WelcomeScreen: React.FC<Props> = ({ navigation }) => {
       {/* Actions */}
       <View style={styles.actions}>
         <TouchableOpacity
+          testID="welcome-create-wallet"
           style={styles.createButton}
           onPress={() => navigation.navigate('CreateWallet')}
           activeOpacity={0.7}
@@ -58,6 +59,7 @@ const WelcomeScreen: React.FC<Props> = ({ navigation }) => {
         </TouchableOpacity>
 
         <TouchableOpacity
+          testID="welcome-import-wallet"
           style={styles.importButton}
           onPress={() => navigation.navigate('ImportWallet')}
           activeOpacity={0.7}

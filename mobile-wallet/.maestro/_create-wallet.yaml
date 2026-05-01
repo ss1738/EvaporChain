@@ -1,0 +1,381 @@
+# _create-wallet.yaml — Reusable sub-flow that walks the multi-step create
+# flow end-to-end, ending on the Unlock screen. Other specs `runFlow:` this.
+#
+# Mirrors the extension's CreateAccount flow but adapted to mobile's
+# 5-step UI (generate → backup → confirm 3 random seed words → set PIN →
+# confirm PIN). The browser extension uses a single password instead of a
+# 6-digit PIN; Maestro flows below pin = "123456" everywhere.
+#
+# This flow does NOT launch the app or perform any teardown — callers
+# decide when to clear state (`clearState`) and when to launch.
+
+appId: com.evaporchain.wallet
+---
+# 1. Welcome screen — tap "Create New Wallet"
+- assertVisible:
+    id: "welcome-create-wallet"
+- tapOn:
+    id: "welcome-create-wallet"
+
+# 2. Generate step — tap "Show Seed Phrase"
+- assertVisible:
+    id: "create-show-seed-button"
+- tapOn:
+    id: "create-show-seed-button"
+
+# 3. Backup step — capture all 24 seed words from the on-screen grid into
+#    output.seed1..seed24 then roll up to output.seedWords (JSON array).
+- assertVisible:
+    id: "create-seed-grid"
+- runScript: scripts/capture_seed.js
+- runScript: scripts/serialize_seed.js
+- tapOn:
+    id: "create-backup-done-button"
+
+# 4. Confirm step — three random `create-confirm-word-input-{i}` fields
+#    are rendered (i in 0..23). Maestro YAML can't loop, so we unroll all
+#    24 indices. Each iteration:
+#      a. lookup_confirm_word.js → output.word = seedWords[INDEX]
+#      b. tapOn(input testID) — guarded by `when: visible:` so missing
+#         indices are no-ops
+#      c. inputText(${output.word}) — same guard
+#    Maestro evaluates env-var references at step time, so output.word
+#    correctly reflects the just-completed lookup.
+
+- runScript:
+    file: scripts/lookup_confirm_word.js
+    env:
+      INDEX: "0"
+      SEED_WORDS: ${output.seedWords}
+- tapOn:
+    id: "create-confirm-word-input-0"
+    optional: true
+- inputText: ${output.word}
+  when:
+    visible:
+      id: "create-confirm-word-input-0"
+
+- runScript:
+    file: scripts/lookup_confirm_word.js
+    env:
+      INDEX: "1"
+      SEED_WORDS: ${output.seedWords}
+- tapOn:
+    id: "create-confirm-word-input-1"
+    optional: true
+- inputText: ${output.word}
+  when:
+    visible:
+      id: "create-confirm-word-input-1"
+
+- runScript:
+    file: scripts/lookup_confirm_word.js
+    env:
+      INDEX: "2"
+      SEED_WORDS: ${output.seedWords}
+- tapOn:
+    id: "create-confirm-word-input-2"
+    optional: true
+- inputText: ${output.word}
+  when:
+    visible:
+      id: "create-confirm-word-input-2"
+
+- runScript:
+    file: scripts/lookup_confirm_word.js
+    env:
+      INDEX: "3"
+      SEED_WORDS: ${output.seedWords}
+- tapOn:
+    id: "create-confirm-word-input-3"
+    optional: true
+- inputText: ${output.word}
+  when:
+    visible:
+      id: "create-confirm-word-input-3"
+
+- runScript:
+    file: scripts/lookup_confirm_word.js
+    env:
+      INDEX: "4"
+      SEED_WORDS: ${output.seedWords}
+- tapOn:
+    id: "create-confirm-word-input-4"
+    optional: true
+- inputText: ${output.word}
+  when:
+    visible:
+      id: "create-confirm-word-input-4"
+
+- runScript:
+    file: scripts/lookup_confirm_word.js
+    env:
+      INDEX: "5"
+      SEED_WORDS: ${output.seedWords}
+- tapOn:
+    id: "create-confirm-word-input-5"
+    optional: true
+- inputText: ${output.word}
+  when:
+    visible:
+      id: "create-confirm-word-input-5"
+
+- runScript:
+    file: scripts/lookup_confirm_word.js
+    env:
+      INDEX: "6"
+      SEED_WORDS: ${output.seedWords}
+- tapOn:
+    id: "create-confirm-word-input-6"
+    optional: true
+- inputText: ${output.word}
+  when:
+    visible:
+      id: "create-confirm-word-input-6"
+
+- runScript:
+    file: scripts/lookup_confirm_word.js
+    env:
+      INDEX: "7"
+      SEED_WORDS: ${output.seedWords}
+- tapOn:
+    id: "create-confirm-word-input-7"
+    optional: true
+- inputText: ${output.word}
+  when:
+    visible:
+      id: "create-confirm-word-input-7"
+
+- runScript:
+    file: scripts/lookup_confirm_word.js
+    env:
+      INDEX: "8"
+      SEED_WORDS: ${output.seedWords}
+- tapOn:
+    id: "create-confirm-word-input-8"
+    optional: true
+- inputText: ${output.word}
+  when:
+    visible:
+      id: "create-confirm-word-input-8"
+
+- runScript:
+    file: scripts/lookup_confirm_word.js
+    env:
+      INDEX: "9"
+      SEED_WORDS: ${output.seedWords}
+- tapOn:
+    id: "create-confirm-word-input-9"
+    optional: true
+- inputText: ${output.word}
+  when:
+    visible:
+      id: "create-confirm-word-input-9"
+
+- runScript:
+    file: scripts/lookup_confirm_word.js
+    env:
+      INDEX: "10"
+      SEED_WORDS: ${output.seedWords}
+- tapOn:
+    id: "create-confirm-word-input-10"
+    optional: true
+- inputText: ${output.word}
+  when:
+    visible:
+      id: "create-confirm-word-input-10"
+
+- runScript:
+    file: scripts/lookup_confirm_word.js
+    env:
+      INDEX: "11"
+      SEED_WORDS: ${output.seedWords}
+- tapOn:
+    id: "create-confirm-word-input-11"
+    optional: true
+- inputText: ${output.word}
+  when:
+    visible:
+      id: "create-confirm-word-input-11"
+
+- runScript:
+    file: scripts/lookup_confirm_word.js
+    env:
+      INDEX: "12"
+      SEED_WORDS: ${output.seedWords}
+- tapOn:
+    id: "create-confirm-word-input-12"
+    optional: true
+- inputText: ${output.word}
+  when:
+    visible:
+      id: "create-confirm-word-input-12"
+
+- runScript:
+    file: scripts/lookup_confirm_word.js
+    env:
+      INDEX: "13"
+      SEED_WORDS: ${output.seedWords}
+- tapOn:
+    id: "create-confirm-word-input-13"
+    optional: true
+- inputText: ${output.word}
+  when:
+    visible:
+      id: "create-confirm-word-input-13"
+
+- runScript:
+    file: scripts/lookup_confirm_word.js
+    env:
+      INDEX: "14"
+      SEED_WORDS: ${output.seedWords}
+- tapOn:
+    id: "create-confirm-word-input-14"
+    optional: true
+- inputText: ${output.word}
+  when:
+    visible:
+      id: "create-confirm-word-input-14"
+
+- runScript:
+    file: scripts/lookup_confirm_word.js
+    env:
+      INDEX: "15"
+      SEED_WORDS: ${output.seedWords}
+- tapOn:
+    id: "create-confirm-word-input-15"
+    optional: true
+- inputText: ${output.word}
+  when:
+    visible:
+      id: "create-confirm-word-input-15"
+
+- runScript:
+    file: scripts/lookup_confirm_word.js
+    env:
+      INDEX: "16"
+      SEED_WORDS: ${output.seedWords}
+- tapOn:
+    id: "create-confirm-word-input-16"
+    optional: true
+- inputText: ${output.word}
+  when:
+    visible:
+      id: "create-confirm-word-input-16"
+
+- runScript:
+    file: scripts/lookup_confirm_word.js
+    env:
+      INDEX: "17"
+      SEED_WORDS: ${output.seedWords}
+- tapOn:
+    id: "create-confirm-word-input-17"
+    optional: true
+- inputText: ${output.word}
+  when:
+    visible:
+      id: "create-confirm-word-input-17"
+
+- runScript:
+    file: scripts/lookup_confirm_word.js
+    env:
+      INDEX: "18"
+      SEED_WORDS: ${output.seedWords}
+- tapOn:
+    id: "create-confirm-word-input-18"
+    optional: true
+- inputText: ${output.word}
+  when:
+    visible:
+      id: "create-confirm-word-input-18"
+
+- runScript:
+    file: scripts/lookup_confirm_word.js
+    env:
+      INDEX: "19"
+      SEED_WORDS: ${output.seedWords}
+- tapOn:
+    id: "create-confirm-word-input-19"
+    optional: true
+- inputText: ${output.word}
+  when:
+    visible:
+      id: "create-confirm-word-input-19"
+
+- runScript:
+    file: scripts/lookup_confirm_word.js
+    env:
+      INDEX: "20"
+      SEED_WORDS: ${output.seedWords}
+- tapOn:
+    id: "create-confirm-word-input-20"
+    optional: true
+- inputText: ${output.word}
+  when:
+    visible:
+      id: "create-confirm-word-input-20"
+
+- runScript:
+    file: scripts/lookup_confirm_word.js
+    env:
+      INDEX: "21"
+      SEED_WORDS: ${output.seedWords}
+- tapOn:
+    id: "create-confirm-word-input-21"
+    optional: true
+- inputText: ${output.word}
+  when:
+    visible:
+      id: "create-confirm-word-input-21"
+
+- runScript:
+    file: scripts/lookup_confirm_word.js
+    env:
+      INDEX: "22"
+      SEED_WORDS: ${output.seedWords}
+- tapOn:
+    id: "create-confirm-word-input-22"
+    optional: true
+- inputText: ${output.word}
+  when:
+    visible:
+      id: "create-confirm-word-input-22"
+
+- runScript:
+    file: scripts/lookup_confirm_word.js
+    env:
+      INDEX: "23"
+      SEED_WORDS: ${output.seedWords}
+- tapOn:
+    id: "create-confirm-word-input-23"
+    optional: true
+- inputText: ${output.word}
+  when:
+    visible:
+      id: "create-confirm-word-input-23"
+
+- tapOn:
+    id: "create-verify-button"
+
+# 5. PIN step — type "123456".
+- assertVisible:
+    id: "create-pin-input"
+- tapOn:
+    id: "create-pin-input"
+- inputText: "123456"
+- tapOn:
+    id: "create-pin-continue-button"
+
+# 6. PIN confirm — re-type the same PIN.
+- assertVisible:
+    id: "create-pin-confirm-input"
+- tapOn:
+    id: "create-pin-confirm-input"
+- inputText: "123456"
+- tapOn:
+    id: "create-finish-button"
+
+# 7. After creation we land on the Unlock screen. Caller is responsible
+#    for unlocking + asserting downstream state.
+- assertVisible:
+    id: "unlock-pin-pad"

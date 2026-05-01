@@ -96,7 +96,7 @@ const UnlockScreen: React.FC<Props> = ({ navigation }) => {
       </View>
 
       {/* PIN dots */}
-      <View style={styles.pinDots}>
+      <View style={styles.pinDots} testID="unlock-pin-dots">
         {Array.from({ length: PIN_LENGTH }).map((_, i) => (
           <View
             key={i}
@@ -106,12 +106,19 @@ const UnlockScreen: React.FC<Props> = ({ navigation }) => {
       </View>
 
       {/* PIN pad */}
-      <View style={styles.pinPad}>
+      <View style={styles.pinPad} testID="unlock-pin-pad">
         {PIN_KEYS.map((row, rowIdx) => (
           <View key={rowIdx} style={styles.pinRow}>
             {row.map((key) => (
               <TouchableOpacity
                 key={key || 'empty'}
+                testID={
+                  key === ''
+                    ? `unlock-pin-key-empty-${rowIdx}`
+                    : key === 'DEL'
+                    ? 'unlock-pin-key-del'
+                    : `unlock-pin-key-${key}`
+                }
                 style={[
                   styles.pinKey,
                   key === '' && styles.pinKeyHidden,
@@ -137,6 +144,7 @@ const UnlockScreen: React.FC<Props> = ({ navigation }) => {
       {/* Biometric button */}
       {biometricAvailable && (
         <TouchableOpacity
+          testID="unlock-biometric-button"
           style={styles.biometricButton}
           onPress={handleBiometric}
           activeOpacity={0.7}

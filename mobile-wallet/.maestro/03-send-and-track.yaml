@@ -1,0 +1,91 @@
+# 03-send-and-track.yaml — Send + track.
+#
+# Creates a wallet (alice), faucets her, then sends 100 EVAP to the
+# hard-coded `RECIPIENT_ADDRESS` env var (defaults to the all-zero
+# address — override per run). Asserts the "1 pending" pill appears
+# in Header, then waits up to 60s for the success Alert to fire.
+#
+# Mobile differs from the extension here: there's no in-app toast;
+# `SendScreen.handleConfirmSend` shows a native `Alert.alert("Sent!", …)`
+# on submission, and the pending-pill remains until the tx finalises
+# via the `useTxStore` poll loop (`txStore.ts`). Maestro can match both.
+
+appId: com.evaporchain.wallet
+env:
+  RECIPIENT_ADDRESS: "0x0000000000000000000000000000000000000000000000000000000000000001"
+---
+- clearState
+- launchApp:
+    appId: com.evaporchain.wallet
+    clearState: true
+
+# Create alice + unlock.
+- runFlow: _create-wallet.yaml
+- runFlow: _unlock.yaml
+
+# Faucet alice so she has > 100 EVAP to send.
+- tapOn:
+    id: "home-faucet-link"
+- assertVisible:
+    id: "faucet-claim-button"
+- tapOn:
+    id: "faucet-claim-button"
+- assertVisible:
+    text: "Tokens Received"
+    timeout: 30000
+- tapOn: "OK"
+
+# Back to Home → tap Send quick action.
+- tapOn:
+    text: "EvaporChain"
+    optional: true
+- assertVisible:
+    id: "home-quick-action-send"
+- tapOn:
+    id: "home-quick-action-send"
+
+# Send screen — fill recipient + amount, simulate, confirm.
+- assertVisible:
+    id: "send-recipient-input"
+- tapOn:
+    id: "send-recipient-input"
+- inputText: ${RECIPIENT_ADDRESS}
+- tapOn:
+    id: "send-amount-input"
+- inputText: "100"
+- tapOn:
+    id: "send-simulate-button"
+# Wait for the simulation preview + Confirm button to appear.
+- assertVisible:
+    id: "send-confirm-button"
+    timeout: 10000
+- tapOn:
+    id: "send-confirm-button"
+
+# Local biometric prompt may pop here on a real device — Maestro
+# can't dismiss the system biometric prompt declaratively. On the
+# simulator, run `xcrun simctl ui booted enroll matching` before the
+# test so Face ID succeeds with a biometric match gesture, OR set
+# the device PIN to 123456 and tap PIN. See README.md.
+
+# After submission the SendScreen fires Alert.alert("Sent!", …).
+- assertVisible:
+    text: "Sent!"
+    timeout: 30000
+- tapOn: "OK"
+
+# Back on Home → "1 pending" pill should appear in the balance card.
+- assertVisible:
+    id: "home-pending-pill"
+    timeout: 10000
+- assertVisible:
+    text: ".*pending.*"
+
+# Wait up to 60s for the tx to finalise. The pending pill disappears
+# once `useTxStore` marks the tx as finalised and refreshBalance
+# bumps the inflight count back to 0.
+- assertNotVisible:
+    id: "home-pending-pill"
+    timeout: 60000
+
+- clearState

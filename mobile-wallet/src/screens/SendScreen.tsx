@@ -190,6 +190,7 @@ const SendScreen: React.FC<Props> = ({ navigation, route }) => {
           <Text style={styles.label}>Recipient Address</Text>
           <View style={styles.inputRow}>
             <TextInput
+              testID="send-recipient-input"
               style={styles.input}
               placeholder="evap1..."
               placeholderTextColor="#9ca3af"
@@ -198,7 +199,7 @@ const SendScreen: React.FC<Props> = ({ navigation, route }) => {
               autoCapitalize="none"
               autoCorrect={false}
             />
-            <TouchableOpacity style={styles.qrButton} onPress={handleScanQR} activeOpacity={0.7}>
+            <TouchableOpacity testID="send-qr-button" style={styles.qrButton} onPress={handleScanQR} activeOpacity={0.7}>
               <Text style={styles.qrButtonText}>QR</Text>
             </TouchableOpacity>
           </View>
@@ -222,6 +223,7 @@ const SendScreen: React.FC<Props> = ({ navigation, route }) => {
           <Text style={styles.label}>Amount (EVAP)</Text>
           <View style={styles.inputRow}>
             <TextInput
+              testID="send-amount-input"
               style={styles.input}
               placeholder="0.00"
               placeholderTextColor="#9ca3af"
@@ -229,7 +231,7 @@ const SendScreen: React.FC<Props> = ({ navigation, route }) => {
               onChangeText={setAmount}
               keyboardType="decimal-pad"
             />
-            <TouchableOpacity style={styles.maxButton} onPress={handleMax} activeOpacity={0.7}>
+            <TouchableOpacity testID="send-max-button" style={styles.maxButton} onPress={handleMax} activeOpacity={0.7}>
               <Text style={styles.maxButtonText}>MAX</Text>
             </TouchableOpacity>
           </View>
@@ -237,6 +239,7 @@ const SendScreen: React.FC<Props> = ({ navigation, route }) => {
 
         {/* Simulate button */}
         <TouchableOpacity
+          testID="send-simulate-button"
           style={styles.simulateButton}
           onPress={handleSimulate}
           disabled={simulating}
@@ -282,6 +285,7 @@ const SendScreen: React.FC<Props> = ({ navigation, route }) => {
         {/* Confirm Send */}
         {simulation?.willSucceed && (
           <TouchableOpacity
+            testID="send-confirm-button"
             style={styles.sendButton}
             onPress={handleConfirmSend}
             disabled={sending}

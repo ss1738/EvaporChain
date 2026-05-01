@@ -121,6 +121,7 @@ const FaucetScreen: React.FC = () => {
 
         {/* Claim Button */}
         <TouchableOpacity
+          testID="faucet-claim-button"
           style={[styles.claimButton, !canClaim && styles.claimButtonDisabled]}
           onPress={handleClaim}
           disabled={!canClaim || claiming}

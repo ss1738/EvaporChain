@@ -120,9 +120,9 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
         }
       >
         {/* Balance Card */}
-        <View style={styles.balanceCard}>
+        <View style={styles.balanceCard} testID="home-balance-card">
           <Text style={styles.balanceLabel}>Total Balance</Text>
-          <Text style={styles.balanceAmount}>
+          <Text style={styles.balanceAmount} testID="home-balance-amount">
             {balance ? formatAmount(String(balance.balance)) : '---'} EVAP
           </Text>
           <Text style={styles.balanceUsd}>
@@ -137,6 +137,7 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
             <View style={styles.statusRow}>
               {inflight > 0 && (
                 <TouchableOpacity
+                  testID="home-pending-pill"
                   style={styles.pendingPill}
                   onPress={() => navigation.navigate('History')}
                   activeOpacity={0.7}
@@ -175,6 +176,7 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
           {QUICK_ACTIONS.map((action) => (
             <TouchableOpacity
               key={action.label}
+              testID={`home-quick-action-${action.label.toLowerCase()}`}
               style={styles.quickAction}
               onPress={() => navigation.navigate(action.screen)}
               activeOpacity={0.7}
@@ -254,6 +256,7 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
 
         {/* Faucet link */}
         <TouchableOpacity
+          testID="home-faucet-link"
           style={styles.faucetLink}
           onPress={() => navigation.navigate('Faucet' as any)}
           activeOpacity={0.7}

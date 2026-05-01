@@ -1,0 +1,57 @@
+# 02-faucet-and-balance.yaml — Faucet → balance.
+#
+# Creates a wallet, navigates to the Faucet screen via the Home quick
+# link, taps "Claim 100 EVAP", and waits for the on-screen balance to
+# move from "---" to a numeric amount > 0.
+#
+# Requires a reachable EvaporChain node — `WALLET_NODE_URL` env var must
+# be exported in the calling shell so `api.claimFaucet` succeeds. The
+# mobile app reads its node URL from build-time config; ensure the dev
+# build is pointed at the same host. See README.md.
+
+appId: com.evaporchain.wallet
+---
+- clearState
+- launchApp:
+    appId: com.evaporchain.wallet
+    clearState: true
+
+# Re-use the create + unlock sub-flows to land on Home.
+- runFlow: _create-wallet.yaml
+- runFlow: _unlock.yaml
+
+# Open Faucet via the Home → "Claim Testnet Tokens" link.
+- assertVisible:
+    id: "home-faucet-link"
+- tapOn:
+    id: "home-faucet-link"
+
+# Faucet screen — claim button is visible (cooldown is fresh on a new
+# wallet → AsyncStorage is empty → canClaim = true).
+- assertVisible:
+    id: "faucet-claim-button"
+- tapOn:
+    id: "faucet-claim-button"
+
+# Wait for the success Alert. Mobile uses native `Alert.alert` rather
+# than a toast — Maestro can match the native dialog text directly.
+- assertVisible:
+    text: "Tokens Received"
+    timeout: 30000
+- tapOn: "OK"
+
+# Navigate back to Home and confirm the balance amount is no longer
+# the placeholder "---". Maestro's regex match catches any non-zero
+# numeric form ("100.00 EVAP", "100 EVAP", etc.).
+- tapOn:
+    text: "EvaporChain"
+    optional: true
+- assertVisible:
+    id: "home-balance-amount"
+- assertNotVisible:
+    text: "--- EVAP"
+- assertVisible:
+    text: ".*[1-9].*EVAP"
+    timeout: 10000
+
+- clearState

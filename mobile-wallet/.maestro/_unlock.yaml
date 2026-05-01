@@ -1,0 +1,22 @@
+# _unlock.yaml — Tap "1","2","3","4","5","6" on the PIN pad.
+# Sub-flow assumes the unlock screen is already visible.
+
+appId: com.evaporchain.wallet
+---
+- assertVisible:
+    id: "unlock-pin-pad"
+- tapOn:
+    id: "unlock-pin-key-1"
+- tapOn:
+    id: "unlock-pin-key-2"
+- tapOn:
+    id: "unlock-pin-key-3"
+- tapOn:
+    id: "unlock-pin-key-4"
+- tapOn:
+    id: "unlock-pin-key-5"
+- tapOn:
+    id: "unlock-pin-key-6"
+# After 6 digits the screen replaces itself with MainTabs (HomeScreen).
+- assertVisible:
+    id: "home-balance-card"
