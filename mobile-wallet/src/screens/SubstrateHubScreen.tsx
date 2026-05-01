@@ -30,7 +30,8 @@ type SubstrateRoute =
   | 'Hlwa'
   | 'Dsn'
   | 'BellBeacon'
-  | 'LadVm';
+  | 'LadVm'
+  | 'HotColdStake';
 
 interface Entry {
   title: string;
@@ -123,6 +124,15 @@ const ENTRIES: Entry[] = [
     badgeBg: '#f5f3ff',
     badgeBorder: '#c4b5fd',
     screen: 'LadVm',
+  },
+  {
+    title: 'Hot-Cold Stake',
+    blurb: 'Two-temperature validator stake equilibrium.',
+    badge: 'H',
+    badgeColor: '#f59e0b',
+    badgeBg: '#fffbeb',
+    badgeBorder: '#fde68a',
+    screen: 'HotColdStake',
   },
 ];
 

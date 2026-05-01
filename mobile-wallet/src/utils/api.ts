@@ -390,6 +390,55 @@ export interface BellBeaconLatestResp {
   detail: string;
 }
 
+// ── Hot/Cold Stake (api.rs §HotColdStakeReq L4923-4935) ──
+//
+// Two-temperature validator equilibrium per research/INVENTION_STACK.md
+// §4.2 / crates/evaporchain-hot-cold-stake. Hot stake decays fast
+// (default λ = 100 epochs) and earns refresh credit; cold stake decays
+// slow (default λ = 10 000 epochs) and acts as long-term skin in the
+// game. All three endpoints (decay/promote/demote) are PURE COMPUTE —
+// no signature, no chain mutation. Only promote/demote read `amount`.
+//
+// Endpoints (api.rs L4948-4987, routes L11704-11706):
+//   POST /api/hot_cold_stake/decay
+//   POST /api/hot_cold_stake/promote
+//   POST /api/hot_cold_stake/demote
+
+export interface HotColdStakeReq {
+  hot: number;
+  cold: number;
+  /** Hot half-life in epochs (api.rs default 100). */
+  hot_lambda_epochs: number;
+  /** Cold half-life in epochs (api.rs default 10000). */
+  cold_lambda_epochs: number;
+  last_touched_epoch: number;
+  current_epoch: number;
+  /** For promote/demote: amount to move cold↔hot. */
+  amount?: number;
+}
+
+/** /api/hot_cold_stake/decay → status, hot_after, cold_after, total_after. */
+export interface HotColdStakeDecayResp {
+  status: string;
+  hot_after: number;
+  cold_after: number;
+  total_after: number;
+  epochs_elapsed: number;
+}
+
+/** /api/hot_cold_stake/{promote,demote}. `detail` is set on error. */
+export interface HotColdStakeMoveResp {
+  status: string; // "ok" | "error"
+  hot_after?: number;
+  cold_after?: number;
+  total_after?: number;
+  /** Present on promote responses only; mirrors api.rs L4968. */
+  promoted?: number;
+  /** Present on demote responses only; mirrors api.rs L4983. */
+  demoted?: number;
+  detail?: string;
+}
+
 const DEFAULT_BASE_URL = 'https://testnet.evaporchain.com';
 
 /**
@@ -648,6 +697,25 @@ class EvaporChainAPI {
   // Bell-Beacon (api.rs §get_bell_latest)
   async getBellBeaconLatest(): Promise<BellBeaconLatestResp> {
     return this.getRaw('/api/bell/latest');
+  }
+
+  // ── Hot/Cold Stake (api.rs §"Hot/Cold Stake", L4921-4987) ──
+  //
+  // Two-temperature equilibrium per validator. All three endpoints are
+  // pure compute — no signature, no chain mutation. The wallet treats
+  // them as a what-if simulator over a validator's hot/cold pools.
+  // postRaw preserves api.rs field names byte-for-byte.
+
+  async hotColdStakeDecay(req: HotColdStakeReq): Promise<HotColdStakeDecayResp> {
+    return this.postRaw('/api/hot_cold_stake/decay', req);
+  }
+
+  async hotColdStakePromote(req: HotColdStakeReq): Promise<HotColdStakeMoveResp> {
+    return this.postRaw('/api/hot_cold_stake/promote', req);
+  }
+
+  async hotColdStakeDemote(req: HotColdStakeReq): Promise<HotColdStakeMoveResp> {
+    return this.postRaw('/api/hot_cold_stake/demote', req);
   }
 
   // ── Tx status (api.rs §TxStatusResponse, GET /api/tx/:hash) ──

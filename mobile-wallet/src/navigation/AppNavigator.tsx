@@ -57,6 +57,7 @@ import HlwaScreen from '../screens/HlwaScreen';
 import DsnScreen from '../screens/DsnScreen';
 import BellBeaconScreen from '../screens/BellBeaconScreen';
 import LadVmScreen from '../screens/LadVmScreen';
+import HotColdStakeScreen from '../screens/HotColdStakeScreen';
 
 // Cross-shard awareness — extension parity (extension/src/components/
 // ShardScreen.tsx). Reachable from Home → "Shard N" pill.
@@ -93,6 +94,7 @@ export type RootStackParamList = {
   Dsn: undefined;
   BellBeacon: undefined;
   LadVm: undefined;
+  HotColdStake: undefined;
   // Cross-shard awareness
   Shards: undefined;
 };
@@ -281,6 +283,7 @@ export const AppNavigator: React.FC<AppNavigatorProps> = ({ navigationRef }) => 
         <Stack.Screen name="Dsn" component={DsnScreen} options={{ title: 'DSN Privacy' }} />
         <Stack.Screen name="BellBeacon" component={BellBeaconScreen} options={{ title: 'Bell-Beacon' }} />
         <Stack.Screen name="LadVm" component={LadVmScreen} options={{ title: 'LAD-VM' }} />
+        <Stack.Screen name="HotColdStake" component={HotColdStakeScreen} options={{ title: 'Hot-Cold Stake' }} />
 
         {/* Cross-shard awareness */}
         <Stack.Screen name="Shards" component={ShardScreen} options={{ title: 'Shards' }} />
