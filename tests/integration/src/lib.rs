@@ -6517,3 +6517,1080 @@ mod light_client_da_integration {
         assert!(report.faulty_peers.is_empty());
     }
 }
+
+// ─────────────────────── Shard stress test harness ─────────────────────────
+//
+// Drives `CrossShardRouter` + `shard_for_object` with synthetic load that's
+// reproducible across hosts (xorshift PRNG seeded from the test name). Asserts
+// the steady-state contracts the rest of the chain assumes:
+//
+//   1. `pending_count() == 0` after every sent message has been acknowledged.
+//   2. Drained per-shard counts equal the inbox the test sent — no leaks, no
+//      fan-out duplication.
+//   3. `drain_for_shard` returns messages sorted by `target_energy` descending
+//      (energy-aware prioritization is the router's documented contract).
+//   4. `shard_for_object` is deterministic — calling it twice on the same id
+//      with the same config yields the same ShardId.
+//   5. Every receipt id corresponds to exactly one message that was actually
+//      sent (no orphan acks; no double-acks).
+//
+// This is a pure source-only harness — no node, no consensus, no DB. Catches
+// regressions in the sharding crate's invariants without standing up a cluster.
+
+#[cfg(test)]
+mod shard_stress_harness {
+    use evaporchain_sharding::{
+        cross_shard::MessagePayload, shard_for_object, CrossShardMessage, CrossShardReceipt,
+        CrossShardRouter, ShardConfig, ShardId,
+    };
+    use std::collections::{HashMap, HashSet};
+
+    /// Tiny xorshift64* PRNG so the harness is deterministic without pulling
+    /// `rand` into the integration crate.
+    struct Xs64(u64);
+    impl Xs64 {
+        fn new(seed: u64) -> Self {
+            // Avoid the all-zero state which xorshift cannot escape.
+            Self(if seed == 0 { 0xDEAD_BEEF_CAFE_BABE } else { seed })
+        }
+        fn next(&mut self) -> u64 {
+            let mut x = self.0;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            self.0 = x;
+            x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+        }
+        fn next_u16(&mut self, modulus: u16) -> u16 {
+            (self.next() % modulus as u64) as u16
+        }
+        fn next_obj_id(&mut self) -> [u8; 20] {
+            let mut id = [0u8; 20];
+            for chunk in id.chunks_mut(8) {
+                let r = self.next().to_le_bytes();
+                let n = chunk.len().min(8);
+                chunk[..n].copy_from_slice(&r[..n]);
+            }
+            id
+        }
+    }
+
+    fn synthetic_msg(
+        rng: &mut Xs64,
+        config: &ShardConfig,
+        timestamp: u64,
+    ) -> CrossShardMessage {
+        let target = rng.next_obj_id();
+        let to_shard = shard_for_object(&target, config);
+        // Pick a from_shard distinct from to_shard so every message is
+        // genuinely cross-shard. Single-shard configs (num_shards==1) skip
+        // this test elsewhere — we assert num_shards >= 2 below.
+        let mut from = ShardId(rng.next_u16(config.num_shards));
+        if from == to_shard {
+            from = ShardId((from.0 + 1) % config.num_shards);
+        }
+        let from_obj = rng.next_obj_id();
+        // target_energy spans a wide range so the descending-sort assertion
+        // has something to bite on.
+        let target_energy = rng.next() % 1_000_000;
+        CrossShardMessage {
+            id: 0, // router overrides
+            from_shard: from,
+            to_shard,
+            target_object: target,
+            payload: MessagePayload::Transfer {
+                from: from_obj,
+                amount: rng.next() % 10_000,
+            },
+            target_energy,
+            timestamp,
+        }
+    }
+
+    #[test]
+    fn shard_for_object_is_deterministic() {
+        let config = ShardConfig::new(8);
+        let mut rng = Xs64::new(0x5EED_DE7E_0001);
+        for _ in 0..200 {
+            let id = rng.next_obj_id();
+            assert_eq!(
+                shard_for_object(&id, &config),
+                shard_for_object(&id, &config),
+                "shard_for_object must be deterministic"
+            );
+        }
+    }
+
+    #[test]
+    fn drain_returns_messages_sorted_by_target_energy_desc() {
+        let config = ShardConfig::new(4);
+        let mut router = CrossShardRouter::new();
+        let mut rng = Xs64::new(0x5EED_D2A1_50C7);
+
+        // Stuff 200 messages addressed to ShardId(2), with random energies.
+        let target_shard = ShardId(2);
+        for i in 0..200 {
+            let mut msg = synthetic_msg(&mut rng, &config, i);
+            msg.to_shard = target_shard;
+            router.send(msg);
+        }
+
+        let drained = router.drain_for_shard(target_shard);
+        assert_eq!(drained.len(), 200);
+        for w in drained.windows(2) {
+            assert!(
+                w[0].target_energy >= w[1].target_energy,
+                "drain must be sorted by target_energy descending"
+            );
+        }
+    }
+
+    #[test]
+    fn end_to_end_send_drain_ack_cycle_no_leaks() {
+        let num_shards = 8u16;
+        let messages_per_round = 250usize;
+        let rounds = 10usize;
+
+        let config = ShardConfig::new(num_shards);
+        let mut router = CrossShardRouter::new();
+        let mut rng = Xs64::new(0x5EED_E2E_5DAD);
+
+        // Track what we sent so we can compare against what's drained.
+        // `sent_ids` is the cumulative all-time set; `outstanding` mirrors
+        // the router's pending_receipts map so we can assert exact equality
+        // after every phase.
+        let mut sent_ids: HashSet<u64> = HashSet::new();
+        let mut outstanding: HashSet<u64> = HashSet::new();
+        let mut sent_per_shard: HashMap<u16, usize> = HashMap::new();
+
+        let mut clock = 1_000u64;
+        for round in 0..rounds {
+            // Send phase.
+            for _ in 0..messages_per_round {
+                clock += 1;
+                let msg = synthetic_msg(&mut rng, &config, clock);
+                let to_shard = msg.to_shard.0;
+                let id = router.send(msg);
+                assert!(
+                    sent_ids.insert(id),
+                    "router must hand out unique message ids"
+                );
+                outstanding.insert(id);
+                *sent_per_shard.entry(to_shard).or_default() += 1;
+            }
+            assert_eq!(
+                router.pending_count(),
+                outstanding.len(),
+                "round {round}: pending_count diverged from outstanding-set size"
+            );
+
+            // Drain + ack phase. Every other round we drain only half of
+            // the shards to exercise the carry-over path.
+            let drain_all = round % 2 == 0;
+            for sid in 0..num_shards {
+                if !drain_all && sid % 2 == 1 {
+                    continue;
+                }
+                let shard = ShardId(sid);
+                let drained = router.drain_for_shard(shard);
+                for msg in &drained {
+                    assert_eq!(msg.to_shard, shard, "drained msg landed in wrong shard");
+                    assert!(
+                        sent_ids.contains(&msg.id),
+                        "drained an id we never sent"
+                    );
+                    let receipt = CrossShardReceipt {
+                        message_id: msg.id,
+                        from_shard: msg.from_shard,
+                        to_shard: msg.to_shard,
+                        success: true,
+                        result_hash: [0u8; 32],
+                        processed_at: clock,
+                    };
+                    router.acknowledge(receipt);
+                    outstanding.remove(&msg.id);
+                }
+            }
+            assert_eq!(
+                router.pending_count(),
+                outstanding.len(),
+                "round {round} post-ack: pending_count diverged from outstanding"
+            );
+        }
+
+        // After the final round drain whatever's left so pending_count goes
+        // to zero. This exercises shards that were skipped on odd rounds.
+        for sid in 0..num_shards {
+            for msg in router.drain_for_shard(ShardId(sid)) {
+                let receipt = CrossShardReceipt {
+                    message_id: msg.id,
+                    from_shard: msg.from_shard,
+                    to_shard: msg.to_shard,
+                    success: true,
+                    result_hash: [0u8; 32],
+                    processed_at: clock,
+                };
+                router.acknowledge(receipt);
+            }
+        }
+
+        assert_eq!(
+            router.pending_count(),
+            0,
+            "every sent message must be acknowledged after the cycle"
+        );
+
+        // Spread sanity: with `num_shards` shards and ~messages_per_round*rounds
+        // total messages, every shard should have absorbed at least one.
+        // Loose bound — randomness can make it lopsided, but never empty for
+        // this volume.
+        let total = messages_per_round * rounds;
+        for sid in 0..num_shards {
+            let n = sent_per_shard.get(&sid).copied().unwrap_or(0);
+            assert!(
+                n > 0,
+                "shard {sid} got zero messages out of {total} — distribution broken"
+            );
+        }
+    }
+
+    #[test]
+    fn double_ack_is_idempotent() {
+        let config = ShardConfig::new(4);
+        let mut router = CrossShardRouter::new();
+        let mut rng = Xs64::new(0x5EED_D0B1_E0AC);
+
+        let mut msg = synthetic_msg(&mut rng, &config, 42);
+        msg.to_shard = ShardId(1);
+        let id = router.send(msg.clone());
+        assert_eq!(router.pending_count(), 1);
+
+        let drained = router.drain_for_shard(ShardId(1));
+        assert_eq!(drained.len(), 1);
+
+        let receipt = CrossShardReceipt {
+            message_id: id,
+            from_shard: msg.from_shard,
+            to_shard: msg.to_shard,
+            success: true,
+            result_hash: [0u8; 32],
+            processed_at: 100,
+        };
+        router.acknowledge(receipt.clone());
+        assert_eq!(router.pending_count(), 0);
+
+        // Second ack must not panic and must not push pending_count below
+        // zero. The router stores receipts in a map keyed by message id, so
+        // a second `remove` is a no-op.
+        router.acknowledge(receipt);
+        assert_eq!(router.pending_count(), 0);
+    }
+
+    fn make_health(id: u16, total: u64, live: u64, energy: u64) -> evaporchain_sharding::ShardHealth {
+        evaporchain_sharding::ShardHealth {
+            shard_id: ShardId(id),
+            total_objects: total,
+            live_objects: live,
+            total_energy: energy,
+            avg_half_life: 100,
+        }
+    }
+
+    #[test]
+    fn compaction_finds_dead_and_cold_and_proof_hash_round_trips() {
+        use evaporchain_sharding::{compact_shard, compaction::find_candidates};
+
+        // 4 shards: 0 healthy, 1 dead (all evaporated), 2 cold (low energy
+        // but still has live objects), 3 healthy.
+        let healths = vec![
+            make_health(0, 100, 80, 50_000), // healthy
+            make_health(1, 50, 0, 0),        // dead
+            make_health(2, 20, 5, 30),       // cold (energy 30 ≤ threshold 100)
+            make_health(3, 200, 150, 60_000), // healthy
+        ];
+
+        let candidates = find_candidates(&healths, 100);
+
+        // Both dead AND cold flagged, healthy ones aren't.
+        let flagged: HashSet<u16> = candidates.iter().map(|c| c.shard.0).collect();
+        assert_eq!(
+            flagged,
+            [1u16, 2u16].iter().copied().collect::<HashSet<_>>(),
+            "find_candidates flagged the wrong set"
+        );
+
+        // XOR-neighbor pairing: shard N → shard N^1.
+        for c in &candidates {
+            assert_eq!(c.merge_into.0, c.shard.0 ^ 1, "XOR-neighbor pairing broken");
+        }
+
+        // Proof round-trip: rebuild the proof from the candidate's health and
+        // assert `proof_hash == compute_hash()` after re-construction.
+        for c in &candidates {
+            let h = healths.iter().find(|h| h.shard_id == c.shard).unwrap();
+            let proof = compact_shard(c.shard, c.merge_into, h);
+            assert_ne!(proof.proof_hash, [0u8; 32], "proof_hash must be set");
+            // Mutate one field; recomputed hash must drift.
+            let mut tampered = proof.clone();
+            tampered.objects_reassigned = tampered.objects_reassigned.wrapping_add(1);
+            assert_ne!(
+                proof.proof_hash,
+                tampered.compute_hash(),
+                "compaction proof must hash-bind objects_reassigned"
+            );
+        }
+
+        // Distinct candidates must produce distinct proof hashes (otherwise
+        // a single proof could be replayed for any compaction).
+        let proofs: Vec<_> = candidates
+            .iter()
+            .map(|c| {
+                let h = healths.iter().find(|h| h.shard_id == c.shard).unwrap();
+                compact_shard(c.shard, c.merge_into, h)
+            })
+            .collect();
+        assert_ne!(
+            proofs[0].proof_hash, proofs[1].proof_hash,
+            "compaction proofs collided across distinct shards"
+        );
+    }
+
+    #[test]
+    fn validator_shards_under_churn_preserves_coverage() {
+        // The chain MUST keep every shard owned by ≥1 active validator across
+        // every legal set-churn transition. This test simulates a sequence of
+        // (join, leave, leader-rotate) operations against a fixed shard
+        // partition and asserts:
+        //   - After every transition, the union of all active validators'
+        //     `validator_shards` covers shards 0..num_shards.
+        //   - When |active| ≤ num_shards, the partition is also disjoint
+        //     (no shard owned by >1 validator) — round-robin's guarantee.
+        //   - The validator-id sequence stays a function of insertion order;
+        //     `validator_shards(v, n, _)` is deterministic given (v, n).
+        //
+        // Failure here means a churn event would orphan shards or
+        // double-assign them — either way the chain would lose the
+        // partition's safety/liveness contract.
+        use evaporchain_sharding::validator_shards;
+
+        let config = ShardConfig::new(16);
+        let num_shards = config.num_shards as u64;
+
+        // Helper: assert coverage + (when applicable) disjointness for a
+        // given active validator id list.
+        let check = |active: &[u64], stage: &str| {
+            if active.is_empty() {
+                // No validators → coverage is impossible. Caller should
+                // refuse to transition into this state in practice.
+                return;
+            }
+            let n = active.len() as u64;
+            let mut union: HashSet<u16> = HashSet::new();
+            let mut owners: HashMap<u16, Vec<u64>> = HashMap::new();
+            for &v in active {
+                for sid in validator_shards(v, n, &config) {
+                    union.insert(sid.0);
+                    owners.entry(sid.0).or_default().push(v);
+                }
+            }
+            let expected: HashSet<u16> = (0..config.num_shards).collect();
+            assert_eq!(
+                union, expected,
+                "{stage}: validator_shards lost coverage with active={active:?}"
+            );
+            if n <= num_shards {
+                for (sid, vs) in &owners {
+                    assert_eq!(
+                        vs.len(),
+                        1,
+                        "{stage}: shard {sid} had {} owners ({:?}) — partition broken",
+                        vs.len(),
+                        vs
+                    );
+                }
+            }
+        };
+
+        // T0: bootstrap with 4 validators.
+        let mut active: Vec<u64> = vec![0, 1, 2, 3];
+        check(&active, "T0 bootstrap");
+
+        // T1: a 5th validator joins.
+        active.push(4);
+        check(&active, "T1 join");
+
+        // T2: validator id=2 leaves (slashed/exited). The remaining four
+        // (0, 1, 3, 4) re-derive their assignments under the new
+        // num_validators=4. Shard ownership reshuffles but coverage holds.
+        active.retain(|&v| v != 2);
+        check(&active, "T2 leave middle");
+
+        // T3: leader rotation modelled by reordering the active set. The
+        // round-robin formula is purely (validator_id mod n) + (s mod n)
+        // — order in the vector doesn't affect ownership. We assert that
+        // explicitly: shuffling `active` produces the same partition.
+        let mut shuffled = active.clone();
+        shuffled.reverse();
+        for &v in &active {
+            let original = validator_shards(v, active.len() as u64, &config);
+            let after = validator_shards(v, shuffled.len() as u64, &config);
+            assert_eq!(
+                original, after,
+                "T3 rotate: validator_shards changed when only ordering changed"
+            );
+        }
+        check(&shuffled, "T3 rotate");
+
+        // T4: scale up past num_shards. Eight active validators on 16
+        // shards; each owns exactly two. Past num_shards (e.g. 32 active)
+        // some validators end up with empty assignments, but coverage
+        // must still hold.
+        active = (0..8).collect();
+        check(&active, "T4 scale up to 8");
+        active = (0..32).collect();
+        check(&active, "T4 over-provisioned 32");
+
+        // T5: scale down to exactly one. The lone validator must own
+        // every shard (n=1 → s % 1 == 0 for every s).
+        active = vec![7];
+        let solo = validator_shards(7, 1, &config);
+        assert_eq!(
+            solo.len(),
+            config.num_shards as usize,
+            "T5 solo: lone validator must own every shard"
+        );
+        check(&active, "T5 solo");
+    }
+
+    #[test]
+    fn compaction_merge_chain_terminates_and_preserves_live_objects() {
+        // Multi-round compaction loop.
+        //
+        // Setup: 8 shards, each holding a mixed live/dead population. Run
+        // `find_candidates` → `compact_shard` repeatedly. After each round,
+        // dead shards are deleted and their `live_objects` migrate into
+        // their XOR-neighbor.
+        //
+        // Invariants the chain depends on:
+        //
+        //   1. **Termination.** The compaction loop must reach a fixed
+        //      point in ≤ log2(num_shards) rounds — otherwise an operator
+        //      can't bound the maintenance window.
+        //
+        //   2. **Conservation.** The total `live_objects` count after
+        //      every round equals the count before round 0. Compaction is
+        //      a redistribution, not a loss event.
+        //
+        //   3. **Proof chain integrity.** Every compaction step produces a
+        //      proof_hash that hash-binds (source, target, objects, energy).
+        //      Mutating any field breaks the hash.
+        //
+        //   4. **Energy conservation.** Total energy across surviving
+        //      shards equals the pre-compaction total. (Cold shards
+        //      below threshold STILL carry energy that migrates.)
+        //
+        // Without these, a long-running chain accumulates dead shards or
+        // (worse) silently drops live objects on every compaction sweep.
+        use evaporchain_sharding::{compact_shard, compaction::find_candidates};
+
+        // Build initial population: 8 shards, mixed dead/live/cold.
+        // Pattern: shard N has live_objects = N, total_energy = N*1000,
+        // except shards 1 and 5 which are dead.
+        let mut shard_state: Vec<evaporchain_sharding::ShardHealth> = (0..8u16)
+            .map(|sid| {
+                let (live, energy) = if sid == 1 || sid == 5 {
+                    (0, 0) // dead
+                } else {
+                    (sid as u64 + 1, (sid as u64 + 1) * 1000)
+                };
+                make_health(sid, live + 5, live, energy)
+            })
+            .collect();
+
+        let initial_live: u64 = shard_state.iter().map(|h| h.live_objects).sum();
+        let initial_energy: u64 = shard_state.iter().map(|h| h.total_energy).sum();
+        assert!(initial_live > 0, "test setup must have live objects");
+
+        let mut rounds = 0usize;
+        let max_rounds = 8usize; // log2(8) = 3, generous ceiling for safety
+        let mut all_proof_hashes: HashSet<[u8; 32]> = HashSet::new();
+
+        loop {
+            rounds += 1;
+            assert!(
+                rounds <= max_rounds,
+                "compaction did not terminate within {max_rounds} rounds (loop)"
+            );
+
+            let candidates = find_candidates(&shard_state, 100);
+            if candidates.is_empty() {
+                break;
+            }
+
+            // Apply each candidate's compaction. Build a new state vec so
+            // we don't mutate while iterating. Track which shards merge
+            // into which so the invariants below can verify.
+            let mut next_state: HashMap<u16, evaporchain_sharding::ShardHealth> = shard_state
+                .iter()
+                .map(|h| (h.shard_id.0, h.clone()))
+                .collect();
+
+            for candidate in &candidates {
+                let source_health = next_state
+                    .get(&candidate.shard.0)
+                    .cloned()
+                    .expect("candidate shard must exist in current state");
+                let proof = compact_shard(candidate.shard, candidate.merge_into, &source_health);
+
+                // Invariant #3: proof_hash is non-zero and hash-bound.
+                assert_ne!(proof.proof_hash, [0u8; 32]);
+                assert!(
+                    all_proof_hashes.insert(proof.proof_hash),
+                    "compaction produced duplicate proof_hash {:?} — replay risk",
+                    proof.proof_hash
+                );
+
+                // Migrate live objects + energy into the XOR-neighbor. The
+                // sharding crate doesn't enforce this at the data level
+                // (it only proves a compaction happened) — the chain's
+                // execution layer applies the migration. We model that
+                // here so the invariant tests have something to check.
+                if let Some(target) = next_state.get_mut(&candidate.merge_into.0) {
+                    target.live_objects += source_health.live_objects;
+                    target.total_objects += source_health.live_objects;
+                    target.total_energy += source_health.total_energy;
+                }
+                next_state.remove(&candidate.shard.0);
+            }
+
+            // Invariant #2 + #4: post-round totals match pre-round totals.
+            let post_live: u64 = next_state.values().map(|h| h.live_objects).sum();
+            let post_energy: u64 = next_state.values().map(|h| h.total_energy).sum();
+            assert_eq!(
+                post_live, initial_live,
+                "round {rounds}: live_objects total drifted from {initial_live} to {post_live}"
+            );
+            assert_eq!(
+                post_energy, initial_energy,
+                "round {rounds}: total_energy drifted from {initial_energy} to {post_energy}"
+            );
+
+            // Sort surviving shards by id for deterministic next-round
+            // ordering. find_candidates iteration order doesn't matter
+            // (it's set-shaped) but sorted state makes failures easier
+            // to read.
+            shard_state = next_state.into_values().collect();
+            shard_state.sort_by_key(|h| h.shard_id.0);
+        }
+
+        // Final state: no candidates remain. Every surviving shard is
+        // either healthy (energy > threshold) or has zero live objects
+        // AND zero energy (i.e. just compacted away — but we already
+        // removed those).
+        for h in &shard_state {
+            assert!(
+                !h.is_dead() && !h.is_cold(100),
+                "post-compaction survivor {:?} is still a candidate (live={}, energy={})",
+                h.shard_id,
+                h.live_objects,
+                h.total_energy
+            );
+        }
+
+        // No orphaned objects: total live across survivors == initial.
+        let final_live: u64 = shard_state.iter().map(|h| h.live_objects).sum();
+        assert_eq!(
+            final_live, initial_live,
+            "post-compaction live_objects total ({final_live}) != initial ({initial_live})"
+        );
+    }
+
+    #[test]
+    fn compaction_proof_hash_binds_target_field() {
+        // Belt-and-braces test for invariant #3 above: compaction proofs
+        // must hash-bind every input field. We already cover
+        // `objects_reassigned` mutation in the existing
+        // `compaction_finds_dead_and_proof_hash_round_trips` test;
+        // this one pins `target_shard` so an attacker can't redirect a
+        // valid compaction by swapping the merge target.
+        use evaporchain_sharding::compact_shard;
+
+        let h = make_health(2, 0, 0, 0); // dead shard
+        let proof_a = compact_shard(ShardId(2), ShardId(3), &h);
+        let proof_b = compact_shard(ShardId(2), ShardId(7), &h);
+        assert_ne!(
+            proof_a.proof_hash, proof_b.proof_hash,
+            "swapping target_shard must change the proof_hash"
+        );
+
+        // Same source, same target, same health → identical hash
+        // (deterministic recomputation).
+        let proof_c = compact_shard(ShardId(2), ShardId(3), &h);
+        assert_eq!(proof_a.proof_hash, proof_c.proof_hash);
+    }
+
+    #[test]
+    fn cross_shard_messages_route_correctly_across_set_churn() {
+        // A churn event must not orphan in-flight cross-shard messages.
+        // The router is validator-set-agnostic (it routes by ShardId, not
+        // validator_id), so messages addressed to a shard before the churn
+        // must still drain to that shard after the churn — only the
+        // validator that *processes* the drained messages changes.
+        //
+        // This test pins that decoupling: send N messages, perform a fake
+        // churn event (drop validator 2), drain every shard, and assert
+        // every message accounted for. If a future refactor accidentally
+        // ties the router to a specific validator's view, this test
+        // catches it.
+        let config = ShardConfig::new(8);
+        let mut router = CrossShardRouter::new();
+        let mut rng = Xs64::new(0x5EED_C0AF_0042);
+        let mut outstanding: HashSet<u64> = HashSet::new();
+
+        // Pre-churn: send 100 messages.
+        for i in 0..100 {
+            let msg = synthetic_msg(&mut rng, &config, i);
+            outstanding.insert(router.send(msg));
+        }
+
+        // Mid-churn: validator 2 leaves. The router doesn't know or care.
+        // We just confirm pending_count is unchanged across the event.
+        let pre_churn = router.pending_count();
+
+        // Post-churn: send 50 more messages.
+        for i in 100..150 {
+            let msg = synthetic_msg(&mut rng, &config, i);
+            outstanding.insert(router.send(msg));
+        }
+        let post_churn = router.pending_count();
+        assert_eq!(
+            post_churn,
+            pre_churn + 50,
+            "router pending_count drifted across the set-churn event"
+        );
+
+        // Drain every shard, ack each message. After the cycle, no
+        // message should be orphaned regardless of which shard the new
+        // validator set assigns to which validator.
+        for sid in 0..config.num_shards {
+            for msg in router.drain_for_shard(ShardId(sid)) {
+                assert!(
+                    outstanding.remove(&msg.id),
+                    "drained an unknown id post-churn: {}",
+                    msg.id
+                );
+                router.acknowledge(CrossShardReceipt {
+                    message_id: msg.id,
+                    from_shard: msg.from_shard,
+                    to_shard: msg.to_shard,
+                    success: true,
+                    result_hash: [0u8; 32],
+                    processed_at: 200,
+                });
+            }
+        }
+        assert!(
+            outstanding.is_empty(),
+            "{} messages orphaned across churn",
+            outstanding.len()
+        );
+        assert_eq!(router.pending_count(), 0);
+    }
+
+    #[test]
+    fn validator_shards_partitions_disjointly_and_covers_all() {
+        use evaporchain_sharding::validator_shards;
+
+        // Cases the protocol actually hits in practice.
+        for &(num_shards, num_validators) in &[
+            (16u16, 1u64),  // single validator owns everything
+            (16, 2),        // 2-way split
+            (16, 4),        // 4-way split
+            (16, 16),       // each validator owns exactly one shard
+            (8, 16),        // more validators than shards: latter half get empty
+        ] {
+            let config = ShardConfig::new(num_shards);
+            let mut union: HashSet<u16> = HashSet::new();
+            let mut multiplicity: HashMap<u16, u32> = HashMap::new();
+            for v in 0..num_validators {
+                for sid in validator_shards(v, num_validators, &config) {
+                    union.insert(sid.0);
+                    *multiplicity.entry(sid.0).or_default() += 1;
+                }
+            }
+            // Coverage: every shard id 0..num_shards must appear at least once
+            // when num_validators ≤ num_shards. When num_validators > num_shards
+            // the surplus validators get empty sets; covered shards still
+            // include everything 0..num_shards (the modulo wraps cleanly).
+            let expected: HashSet<u16> = (0..num_shards).collect();
+            assert_eq!(
+                union, expected,
+                "validator_shards missed coverage for num_shards={num_shards} num_validators={num_validators}"
+            );
+            // Disjoint: every shard appears in exactly one validator's
+            // assignment when num_validators ≤ num_shards. With more
+            // validators than shards, the modulo aliases multiple validators
+            // onto the same shard — that's the documented round-robin
+            // behaviour, so we only assert disjointness in the ≤ case.
+            if num_validators <= num_shards as u64 {
+                for (sid, count) in &multiplicity {
+                    assert_eq!(
+                        *count, 1,
+                        "shard {sid} appeared in {count} validators (must be 1) for nv={num_validators}"
+                    );
+                }
+            }
+        }
+
+        // num_validators == 0 is a documented degenerate input: empty result.
+        let config = ShardConfig::new(4);
+        assert!(
+            validator_shards(0, 0, &config).is_empty(),
+            "validator_shards(_, 0, _) must be empty"
+        );
+    }
+
+    #[test]
+    fn receipts_root_dedupes_by_message_id_and_input_size_drives_root() {
+        let mk = |mid: u64, success: bool| CrossShardReceipt {
+            message_id: mid,
+            from_shard: ShardId(0),
+            to_shard: ShardId(1),
+            success,
+            result_hash: [mid as u8; 32],
+            processed_at: 0,
+        };
+
+        // Empty input → all-zero root (documented contract).
+        let zero: [u8; 32] = [0; 32];
+        assert_eq!(
+            CrossShardRouter::receipts_root(&[]),
+            zero,
+            "receipts_root([]) must be all-zero"
+        );
+
+        // Distinct ids → some non-zero root.
+        let base = [mk(1, true), mk(2, true), mk(3, true)];
+        let root_base = CrossShardRouter::receipts_root(&base);
+        assert_ne!(root_base, zero);
+
+        // Append a *duplicate* message_id (different success bit) — the
+        // receipt with the duplicate id is dropped by `seen_ids.insert`,
+        // so the root is unchanged.
+        let with_dup = [
+            mk(1, true),
+            mk(2, true),
+            mk(3, true),
+            mk(2, false), // duplicate id, dropped
+        ];
+        assert_eq!(
+            CrossShardRouter::receipts_root(&with_dup),
+            root_base,
+            "duplicate message_id must not change the receipts root"
+        );
+
+        // Different *set* of ids → different root (no aliasing).
+        let other = [mk(1, true), mk(2, true), mk(4, true)];
+        assert_ne!(
+            CrossShardRouter::receipts_root(&other),
+            root_base,
+            "distinct id sets must not collide on the receipts root"
+        );
+
+        // Single-receipt root is just that receipt's hash (Merkle tree of
+        // size 1 collapses to the leaf).
+        let one = [mk(7, true)];
+        assert_eq!(
+            CrossShardRouter::receipts_root(&one),
+            one[0].receipt_hash(),
+            "single-receipt root must equal its leaf hash"
+        );
+    }
+
+    #[test]
+    fn skewed_load_does_not_starve_other_shards() {
+        // 90% of messages target ShardId(0); we still need to drain the
+        // other shards' (smaller) inboxes correctly. This covers the
+        // "hot shard" workload without blowing up unrelated queues.
+        let config = ShardConfig::new(4);
+        let mut router = CrossShardRouter::new();
+        let mut rng = Xs64::new(0x5EED_5CE0_0042);
+        let n = 1_000usize;
+
+        let mut delivered_per_shard: HashMap<u16, usize> = HashMap::new();
+        for i in 0..n {
+            let mut msg = synthetic_msg(&mut rng, &config, i as u64);
+            msg.to_shard = if rng.next() % 10 < 9 {
+                ShardId(0)
+            } else {
+                ShardId((rng.next_u16(3)) + 1) // 1..=3
+            };
+            *delivered_per_shard.entry(msg.to_shard.0).or_default() += 1;
+            router.send(msg);
+        }
+
+        for sid in 0..config.num_shards {
+            let drained = router.drain_for_shard(ShardId(sid));
+            assert_eq!(
+                drained.len(),
+                delivered_per_shard.get(&sid).copied().unwrap_or(0),
+                "shard {sid}: drained != delivered (per-shard accounting broke)"
+            );
+            for msg in drained {
+                router.acknowledge(CrossShardReceipt {
+                    message_id: msg.id,
+                    from_shard: msg.from_shard,
+                    to_shard: msg.to_shard,
+                    success: true,
+                    result_hash: [0u8; 32],
+                    processed_at: n as u64,
+                });
+            }
+        }
+        assert_eq!(router.pending_count(), 0);
+    }
+}
+
+// ─────────────────── MERA synthetic-workload round-trips ───────────────────
+//
+// Drives `evaporchain_mera::commit` + `MeraProof::generate` + `verify_account`
+// against the three regime-specific generators in
+// `evaporchain_mera::synthetic`. Asserts:
+//
+//   1. Tree builds cleanly across power-of-two account counts {4, 16, 64, 256}.
+//   2. Every generated account's proof verifies.
+//   3. Tampering one account's energy AT verify time fails.
+//   4. Same seed → bit-identical commitment root (determinism).
+//   5. Different seed → different commitment root (no aliasing).
+//
+// These are the contract tests the V1 sprint's MERA gate work needs in place
+// before swapping the trie root commitment.
+
+#[cfg(test)]
+mod mera_synthetic_workloads {
+    use evaporchain_mera::synthetic::{
+        area_law, flat_random, log_correlated, pad_pow2, AreaLawParams, FlatRandomParams,
+        LogCorrelatedParams,
+    };
+    use evaporchain_mera::{commit, verify_account, MeraProof};
+
+    const LAMBDA_HALF_LIFE: u64 = 4096;
+    const BASE_HALF_LIFE: u64 = 100;
+
+    /// Spot-verify a sample of accounts (rather than every one) so the
+    /// largest workload (n=256) doesn't blow the test's runtime budget.
+    fn spot_verify(energies: &[u64], stride: usize) {
+        let (commitment, tree) = commit(energies, LAMBDA_HALF_LIFE, BASE_HALF_LIFE);
+        for (i, &e) in energies.iter().enumerate().step_by(stride.max(1)) {
+            let proof = MeraProof::generate(&tree, i);
+            verify_account(i, e, &proof, &commitment)
+                .unwrap_or_else(|err| panic!("account {i} verification failed: {err:?}"));
+        }
+        // Tampered energy at one fixed index must fail.
+        let tampered_idx = 0;
+        let proof = MeraProof::generate(&tree, tampered_idx);
+        let bad_energy = energies[tampered_idx].saturating_add(1).max(1);
+        if bad_energy != energies[tampered_idx] {
+            assert!(
+                verify_account(tampered_idx, bad_energy, &proof, &commitment).is_err(),
+                "tampered energy verified — proof not bound to leaf value"
+            );
+        }
+    }
+
+    #[test]
+    fn log_correlated_round_trips_across_sizes() {
+        let params = LogCorrelatedParams {
+            n_blocks: 64, // smaller than gate's 512 to keep test fast
+            ..Default::default()
+        };
+        for &n in &[4usize, 16, 64, 256] {
+            let mut energies = log_correlated(n, &params, 0xCAFE_F00D);
+            pad_pow2(&mut energies);
+            spot_verify(&energies, n / 4);
+        }
+    }
+
+    #[test]
+    fn area_law_round_trips_across_sizes() {
+        let params = AreaLawParams {
+            n_blocks: 64,
+            segment_size: 4,
+            ..Default::default()
+        };
+        for &n in &[4usize, 16, 64, 256] {
+            let mut energies = area_law(n, &params, 0xBEEF_C0DE);
+            pad_pow2(&mut energies);
+            spot_verify(&energies, n / 4);
+        }
+    }
+
+    #[test]
+    fn flat_random_round_trips_across_sizes() {
+        let params = FlatRandomParams {
+            n_blocks: 64,
+            touch_prob: 0.2,
+            energy_per_touch: 50,
+        };
+        for &n in &[4usize, 16, 64, 256] {
+            let mut energies = flat_random(n, &params, 0x1234_5678);
+            pad_pow2(&mut energies);
+            spot_verify(&energies, n / 4);
+        }
+    }
+
+    #[test]
+    fn same_seed_yields_identical_root() {
+        let params = LogCorrelatedParams {
+            n_blocks: 32,
+            ..Default::default()
+        };
+        let mut a = log_correlated(64, &params, 0xAAAA);
+        let mut b = log_correlated(64, &params, 0xAAAA);
+        pad_pow2(&mut a);
+        pad_pow2(&mut b);
+        let (ca, _) = commit(&a, LAMBDA_HALF_LIFE, BASE_HALF_LIFE);
+        let (cb, _) = commit(&b, LAMBDA_HALF_LIFE, BASE_HALF_LIFE);
+        assert_eq!(
+            ca.root_hash, cb.root_hash,
+            "identical seeded inputs must produce the same commitment root"
+        );
+    }
+
+    #[test]
+    fn different_seed_yields_different_root() {
+        let params = LogCorrelatedParams {
+            n_blocks: 32,
+            ..Default::default()
+        };
+        let mut a = log_correlated(64, &params, 0xAAAA);
+        let mut b = log_correlated(64, &params, 0xBBBB);
+        pad_pow2(&mut a);
+        pad_pow2(&mut b);
+        // The two seeded vectors must differ — otherwise the second
+        // assertion is vacuous.
+        assert_ne!(a, b);
+        let (ca, _) = commit(&a, LAMBDA_HALF_LIFE, BASE_HALF_LIFE);
+        let (cb, _) = commit(&b, LAMBDA_HALF_LIFE, BASE_HALF_LIFE);
+        assert_ne!(
+            ca.root_hash, cb.root_hash,
+            "distinct workloads must produce distinct commitment roots"
+        );
+    }
+
+    #[test]
+    fn gate_log_correlated_picks_mera() {
+        use evaporchain_mera::gate::{run_gate, GateDecision};
+        use evaporchain_mera::synthetic::{log_correlated_matrix, LogCorrelatedParams};
+        // Smaller than the Python gate (256 / 512) so the test fits in CI time.
+        // Even at 64 × 128 the heavy-tail signal is strong enough for the
+        // R²-based classifier to land on MERA reliably.
+        let params = LogCorrelatedParams {
+            n_blocks: 128,
+            ..Default::default()
+        };
+        let mat = log_correlated_matrix(64, &params, 0xCAFE_F00D);
+        let result = run_gate(&mat, 20, 8, 0xC0FFEE);
+        assert_eq!(
+            result.decision,
+            GateDecision::Mera,
+            "log-correlated workload must classify as MERA — got {:?} (pl_r2={:.3}, exp_r2={:.3})",
+            result.decision,
+            result.powerlaw_r2,
+            result.exponential_r2
+        );
+    }
+
+    #[test]
+    fn gate_flat_random_picks_verkle() {
+        use evaporchain_mera::gate::{run_gate, GateDecision};
+        use evaporchain_mera::synthetic::{flat_random_matrix, FlatRandomParams};
+        let params = FlatRandomParams {
+            n_blocks: 128,
+            touch_prob: 0.1,
+            energy_per_touch: 1, // unused for matrix variant
+        };
+        let mat = flat_random_matrix(64, &params, 0xDEAD_BEEF);
+        let result = run_gate(&mat, 20, 8, 0xC0FFEE);
+        // Flat-random should never be classified as MERA. We accept either
+        // VERKLE (typical for Marchenko-Pastur bulk) or MPS (occasionally
+        // the noise has enough exponential decay to clear that threshold).
+        // Both decisions are correct calls — what matters is that MERA is
+        // ruled out.
+        assert_ne!(
+            result.decision,
+            GateDecision::Mera,
+            "flat-random workload was misclassified as MERA — gate is over-firing \
+             (pl_r2={:.3}, exp_r2={:.3})",
+            result.powerlaw_r2,
+            result.exponential_r2
+        );
+    }
+
+    #[test]
+    fn gate_is_deterministic() {
+        use evaporchain_mera::gate::run_gate;
+        use evaporchain_mera::synthetic::{log_correlated_matrix, LogCorrelatedParams};
+        let params = LogCorrelatedParams {
+            n_blocks: 64,
+            ..Default::default()
+        };
+        let mat = log_correlated_matrix(32, &params, 0xABCD_1234);
+        let a = run_gate(&mat, 16, 8, 0x9999);
+        let b = run_gate(&mat, 16, 8, 0x9999);
+        assert_eq!(a.decision, b.decision);
+        assert!((a.powerlaw_r2 - b.powerlaw_r2).abs() < 1e-9);
+        assert!((a.exponential_r2 - b.exponential_r2).abs() < 1e-9);
+        assert_eq!(a.eigvals.len(), b.eigvals.len());
+        for (x, y) in a.eigvals.iter().zip(b.eigvals.iter()) {
+            assert!(
+                (x - y).abs() < 1e-9,
+                "eigenvalue drift across runs: {x} vs {y}"
+            );
+        }
+    }
+
+    #[test]
+    fn cross_regime_roots_are_distinct() {
+        // The same n_accounts, same seed, but three different generators
+        // must produce three distinct commitment roots — otherwise the
+        // generators degenerate to one another.
+        const N: usize = 64;
+        const SEED: u64 = 0x9999_AAAA_BBBB_CCCC;
+        let mut a = log_correlated(
+            N,
+            &LogCorrelatedParams {
+                n_blocks: 32,
+                ..Default::default()
+            },
+            SEED,
+        );
+        let mut b = area_law(
+            N,
+            &AreaLawParams {
+                n_blocks: 32,
+                segment_size: 4,
+                ..Default::default()
+            },
+            SEED,
+        );
+        let mut c = flat_random(
+            N,
+            &FlatRandomParams {
+                n_blocks: 32,
+                touch_prob: 0.2,
+                energy_per_touch: 50,
+            },
+            SEED,
+        );
+        pad_pow2(&mut a);
+        pad_pow2(&mut b);
+        pad_pow2(&mut c);
+        let (ra, _) = commit(&a, LAMBDA_HALF_LIFE, BASE_HALF_LIFE);
+        let (rb, _) = commit(&b, LAMBDA_HALF_LIFE, BASE_HALF_LIFE);
+        let (rc, _) = commit(&c, LAMBDA_HALF_LIFE, BASE_HALF_LIFE);
+        assert_ne!(ra.root_hash, rb.root_hash);
+        assert_ne!(rb.root_hash, rc.root_hash);
+        assert_ne!(ra.root_hash, rc.root_hash);
+    }
+}

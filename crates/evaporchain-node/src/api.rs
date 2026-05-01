@@ -6429,6 +6429,7 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     ApiDocEntry { method: "GET",  path: "/api/account/:address/transactions", category: "explorer", description: "Paginated address tx history backed by the chain_store address-history index. Newest first. Query: ?limit=N (default 50, cap 500). 503 in light mode (no chain_store).", example: Some("/api/account/0x01…/transactions?limit=20") },
     ApiDocEntry { method: "GET",  path: "/api/block/:number/transactions",    category: "explorer", description: "Full tx list for a specific block. Reads in-memory ring first, falls back to chain_store full-block payload for older blocks.", example: Some("/api/block/100/transactions") },
     ApiDocEntry { method: "GET",  path: "/api/search/:query",                 category: "explorer", description: "Smart explorer search. Decimal → block height. 64-hex → tx hash if indexed, else address. Shorter hex → address. Returns {kind:'block'|'transaction'|'account'|'not_found', ...} on HTTP 200.", example: Some("/api/search/100") },
+    ApiDocEntry { method: "GET",  path: "/api/mera/activations",              category: "explorer", description: "MERA gate telemetry: per-block account-touch activation matrix from the in-memory block_history ring. Default content-type text/csv pipes directly into `evaporchain genesis run-gate --csv`. Query: ?from=H&to=H&format=csv|json&max_accounts=N (default 256, capped to top-N by row sum then sorted by hex).", example: Some("/api/mera/activations?from=100&to=300&max_accounts=128") },
 ];
 
 async fn get_api_docs(State(state): State<Arc<ApiState>>) -> Json<ApiDocsResp> {
@@ -7550,6 +7551,172 @@ async fn explorer_search(
         query: q.clone(),
         hit: SearchHit::NotFound { query: q },
     })
+}
+
+// ── MERA gate telemetry exporter ──
+//
+// Emits the per-block account-touch activation matrix that the MERA gate
+// (see `evaporchain-mera::gate`) consumes. Format matches `genesis run-gate
+// --csv` exactly: rows = accounts (sorted by hex address), cols = blocks
+// (oldest → newest), cells ∈ {0, 1}.
+//
+// Runs against the in-memory `block_history` ring (~500 blocks) — this is a
+// *sample* of recent activity, not the full chain. Anyone needing the full
+// history should run the gate offline against archive data.
+
+#[derive(Debug, Deserialize)]
+pub struct MeraExportQuery {
+    /// Inclusive lower-bound block number. Defaults to oldest in ring.
+    pub from: Option<u64>,
+    /// Inclusive upper-bound block number. Defaults to head.
+    pub to: Option<u64>,
+    /// `csv` (default) or `json`. CSV pipes directly into `genesis run-gate`.
+    pub format: Option<String>,
+    /// Cap the row count to the top-N most active accounts. Default 256.
+    pub max_accounts: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MeraExportJsonResponse {
+    pub from_block: u64,
+    pub to_block: u64,
+    pub n_accounts: usize,
+    pub n_blocks: usize,
+    /// Sorted address list aligned with row 0..n_accounts of `matrix`.
+    pub addresses: Vec<String>,
+    /// Row-major: matrix[i][j] = 1 iff address i was touched in block j.
+    pub matrix: Vec<Vec<u8>>,
+}
+
+/// `GET /api/mera/activations` — account-touch activation matrix for the
+/// MERA gate. Default content type is `text/csv` so `curl … > telemetry.csv`
+/// just works. Pass `?format=json` for the structured payload.
+async fn get_mera_activations(
+    State(state): State<Arc<ApiState>>,
+    Query(params): Query<MeraExportQuery>,
+) -> axum::response::Response {
+    let history = safe_lock(&state.block_history);
+    if history.is_empty() {
+        return (
+            StatusCode::NO_CONTENT,
+            "no blocks in history yet — wait for the chain to produce blocks\n",
+        )
+            .into_response();
+    }
+
+    let oldest = history.front().map(|b| b.number).unwrap_or(0);
+    let newest = history.back().map(|b| b.number).unwrap_or(0);
+    let from = params.from.unwrap_or(oldest).max(oldest);
+    let to = params.to.unwrap_or(newest).min(newest);
+    if from > to {
+        return (
+            StatusCode::BAD_REQUEST,
+            format!("from ({}) > to ({}) — empty range\n", from, to),
+        )
+            .into_response();
+    }
+    let max_accounts = params.max_accounts.unwrap_or(256).max(1);
+
+    // Walk the ring once, recording (account → set-of-block-indices touched).
+    // Block index is dense within [from, to] so the matrix is rectangular.
+    let blocks_in_range: Vec<&BlockRecord> =
+        history.iter().filter(|b| b.number >= from && b.number <= to).collect();
+    let n_blocks = blocks_in_range.len();
+    if n_blocks == 0 {
+        return (
+            StatusCode::NO_CONTENT,
+            format!("no blocks in [{}, {}]\n", from, to),
+        )
+            .into_response();
+    }
+
+    // Collect activations per address. Lower-cased hex without `0x` so a
+    // varying input format doesn't split the same account across rows.
+    let mut activations: HashMap<String, Vec<u8>> = HashMap::new();
+    for (col, block) in blocks_in_range.iter().enumerate() {
+        for tx in &block.transactions {
+            for addr in [&tx.from, &tx.to] {
+                if addr.is_empty() {
+                    continue;
+                }
+                let canonical = addr.trim_start_matches("0x").to_lowercase();
+                if canonical.is_empty() {
+                    continue;
+                }
+                activations
+                    .entry(canonical)
+                    .or_insert_with(|| vec![0u8; n_blocks])[col] = 1;
+            }
+        }
+    }
+
+    if activations.is_empty() {
+        return (
+            StatusCode::NO_CONTENT,
+            format!("no transaction activity in blocks [{}, {}]\n", from, to),
+        )
+            .into_response();
+    }
+
+    // Cap to the top-N most-active addresses (highest row sum). Tie-break by
+    // address hex so the exporter is deterministic across nodes with the
+    // same block_history snapshot.
+    let mut rows: Vec<(String, Vec<u8>)> = activations.into_iter().collect();
+    rows.sort_by(|a, b| {
+        let a_sum: u32 = a.1.iter().map(|&x| x as u32).sum();
+        let b_sum: u32 = b.1.iter().map(|&x| x as u32).sum();
+        b_sum.cmp(&a_sum).then_with(|| a.0.cmp(&b.0))
+    });
+    rows.truncate(max_accounts);
+    // Then re-sort by hex address so the output is stable + grep-friendly.
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let format = params.format.as_deref().unwrap_or("csv").to_lowercase();
+    match format.as_str() {
+        "json" => {
+            let payload = MeraExportJsonResponse {
+                from_block: from,
+                to_block: to,
+                n_accounts: rows.len(),
+                n_blocks,
+                addresses: rows.iter().map(|(a, _)| format!("0x{}", a)).collect(),
+                matrix: rows.into_iter().map(|(_, v)| v).collect(),
+            };
+            Json(payload).into_response()
+        }
+        "csv" | "" => {
+            let mut out = String::new();
+            out.push_str(&format!(
+                "# evaporchain mera activation matrix\n# from_block={} to_block={} n_accounts={} n_blocks={}\n# rows=accounts (sorted hex), cols=blocks (oldest first), cells in {{0,1}}\n",
+                from,
+                to,
+                rows.len(),
+                n_blocks,
+            ));
+            for (_, row) in &rows {
+                let mut line = String::with_capacity(row.len() * 2);
+                for (i, cell) in row.iter().enumerate() {
+                    if i > 0 {
+                        line.push(',');
+                    }
+                    line.push(if *cell == 0 { '0' } else { '1' });
+                }
+                out.push_str(&line);
+                out.push('\n');
+            }
+            (
+                StatusCode::OK,
+                [(axum::http::header::CONTENT_TYPE, "text/csv; charset=utf-8")],
+                out,
+            )
+                .into_response()
+        }
+        other => (
+            StatusCode::BAD_REQUEST,
+            format!("unknown format '{}' — use 'csv' or 'json'\n", other),
+        )
+            .into_response(),
+    }
 }
 
 // ── Transaction submission handlers ──
@@ -13728,6 +13895,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/account/:address", get(get_account_detail))
         .route("/api/account/:address/transactions", get(get_account_transactions))
         .route("/api/search/:query", get(explorer_search))
+        .route("/api/mera/activations", get(get_mera_activations))
         .route("/api/tx/:hash", get(get_tx_by_hash))
         .route("/api/transactions", get(get_transactions))
         .route("/block/:number", get(block_detail_html))

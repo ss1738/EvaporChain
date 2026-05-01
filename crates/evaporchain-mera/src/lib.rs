@@ -39,8 +39,10 @@
 //! the computational budget (validator hardware) is measured.
 
 pub mod commitment;
+pub mod gate;
 pub mod layer;
 pub mod proof;
+pub mod synthetic;
 pub mod tensor;
 pub mod tree;
 

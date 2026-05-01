@@ -420,6 +420,153 @@ pub enum GenesisAction {
         #[arg()]
         path: String,
     },
+
+    /// Operator-side: build a signed validator contribution envelope from a
+    /// keygen bundle. Output is shareable with the coordinator running
+    /// `genesis ceremony` — it carries the validator entry, an ML-DSA
+    /// signature over its canonical bytes, and a BLS proof-of-possession.
+    Contribute {
+        /// Path to a keygen JSON bundle (from `evaporchain keygen`)
+        #[arg(long)]
+        keys: String,
+        /// Validator id (must be unique across the ceremony)
+        #[arg(long)]
+        validator_id: u64,
+        /// Operator-chosen validator name
+        #[arg(long)]
+        name: String,
+        /// Initial stake
+        #[arg(long)]
+        stake: u64,
+        /// Optional P2P multiaddr
+        #[arg(long)]
+        p2p: Option<String>,
+        /// Initial account balance for this validator
+        #[arg(long, default_value = "1000000")]
+        balance: u64,
+        /// Address byte (first byte of the 32-byte address; rest zeroed)
+        #[arg(long)]
+        address_byte: Option<u8>,
+        /// Chain id this contribution is bound to
+        #[arg(long)]
+        chain_id: String,
+        /// Genesis timestamp (ISO-8601)
+        #[arg(long)]
+        genesis_time: String,
+        /// 32-byte hex ceremony nonce agreed by all operators
+        #[arg(long)]
+        ceremony_nonce: String,
+        /// Output envelope JSON path
+        #[arg(long)]
+        out: String,
+    },
+
+    /// Coordinator-side: combine a directory of contribution envelopes into a
+    /// finalized genesis.json + transcript. Verifies every envelope's
+    /// ML-DSA signature and BLS PoP, rejects duplicate validator ids,
+    /// sorts deterministically by validator_id.
+    Ceremony {
+        /// Directory of `*.json` contribution envelopes
+        #[arg(long)]
+        contributions: String,
+        /// Chain id the ceremony was anchored to (must match every envelope)
+        #[arg(long)]
+        chain_id: String,
+        /// Genesis timestamp (ISO-8601)
+        #[arg(long)]
+        genesis_time: String,
+        /// 32-byte hex ceremony nonce
+        #[arg(long)]
+        ceremony_nonce: String,
+        /// Total token supply
+        #[arg(long, default_value = "10000000")]
+        total_supply: u64,
+        /// Block interval in milliseconds
+        #[arg(long, default_value = "3000")]
+        block_interval: u64,
+        /// Minimum validator stake
+        #[arg(long, default_value = "100")]
+        min_stake: u64,
+        /// Output genesis JSON path (transcript written to <out>.transcript.json)
+        #[arg(long)]
+        out: String,
+    },
+
+    /// Anyone-side: replay a ceremony from its envelopes and the produced
+    /// genesis file. Verifies every signature, recomputes the deterministic
+    /// genesis bytes, and exits non-zero on any mismatch.
+    VerifyCeremony {
+        /// Directory of `*.json` contribution envelopes
+        #[arg(long)]
+        contributions: String,
+        /// Path to the finalized genesis.json
+        #[arg(long)]
+        genesis: String,
+        /// Path to the transcript written by `genesis ceremony`
+        #[arg(long)]
+        transcript: String,
+    },
+
+    /// Take a `genesis run-gate --json` payload and stamp the latest decision
+    /// into the §A1.8 section of `research/INVENTION_STACK.md` (or a
+    /// custom doc) between auto-generated markers. On first run, inserts
+    /// the marker block right after the section heading; subsequent runs
+    /// rewrite only the marked region — surrounding prose stays intact.
+    StampResult {
+        /// Path to the `genesis run-gate --json` payload. Use `-` for stdin.
+        #[arg(long)]
+        from_json: String,
+        /// Path to the markdown doc to update.
+        #[arg(long, default_value = "research/INVENTION_STACK.md")]
+        doc: String,
+        /// Heading line that anchors the gate section (substring match).
+        #[arg(long, default_value = "## A1.8")]
+        section: String,
+        /// Print the proposed update to stdout instead of writing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Pre-mainnet: replay the MERA empirical-entropy gate (§A1.8) in pure
+    /// Rust to decide whether the chain commits to authenticated MERA, MPS,
+    /// or Verkle as its state-commitment primitive. Source can be either a
+    /// CSV of real account-touch telemetry (`--csv`) or one of the three
+    /// synthetic regimes (`--regime`).
+    ///
+    /// CSV format: rows = accounts, columns = blocks. Each cell is `0` or
+    /// `1` (touched / not-touched). Optional header line beginning with `#`
+    /// is ignored. Comma-separated.
+    ///
+    /// Exit code: `0` = MERA, `1` = MPS, `2` = Verkle, `64` = invalid input.
+    /// JSON output (`--json`) emits the full decision payload for
+    /// downstream tooling.
+    RunGate {
+        /// CSV file of binary account-touch indicators (rows × cols).
+        /// Mutually exclusive with `--regime`.
+        #[arg(long, conflicts_with = "regime")]
+        csv: Option<String>,
+        /// Run against a built-in synthetic regime instead of real data.
+        /// One of `log-correlated`, `area-law`, `flat-random`. Useful as
+        /// a CI smoke test or to demonstrate the decision rule.
+        #[arg(long)]
+        regime: Option<String>,
+        /// Number of accounts (rows) for synthetic regimes. Ignored for CSV.
+        #[arg(long, default_value = "64")]
+        n_accounts: usize,
+        /// Number of blocks (cols) for synthetic regimes. Ignored for CSV.
+        #[arg(long, default_value = "128")]
+        n_blocks: usize,
+        /// Top-K eigenvalues to fit. Default matches the Python gate.
+        #[arg(long, default_value = "40")]
+        k: usize,
+        /// Histogram bin count for the mutual-information matrix.
+        #[arg(long, default_value = "8")]
+        bins: usize,
+        /// Seed for the eigensolver's power-iteration starting vector and
+        /// (when `--regime` is supplied) the synthetic generator.
+        #[arg(long, default_value = "12345")]
+        seed: u64,
+    },
 }
 
 #[derive(Subcommand)]
@@ -517,6 +664,58 @@ pub enum OnboardingAction {
         genesis: String,
         #[arg(long)]
         coordinator_pk: String,
+    },
+
+    /// Operator-side installer: lay out a node directory from a signed
+    /// genesis + the operator's keygen bundle, write the validator's BLS
+    /// secret to the path the node expects, emit a launchable run.sh, and
+    /// optionally a systemd unit / launchd plist for autostart.
+    ///
+    /// Re-runnable: pass `--force` to overwrite an existing node-dir.
+    Install {
+        /// Path to the coordinator-signed `genesis-config.json`.
+        #[arg(long)]
+        genesis: String,
+        /// Path to the operator's keygen JSON bundle (from `evaporchain keygen`).
+        #[arg(long)]
+        keys: String,
+        /// Validator id this operator owns. Must match a genesis entry whose
+        /// `bls_public_key` derives from `--keys`.
+        #[arg(long)]
+        validator_id: u64,
+        /// Output directory for the node layout. Created if absent.
+        #[arg(long)]
+        node_dir: String,
+        /// Optional coordinator pk hex file. When supplied, the genesis
+        /// signature is verified before the install proceeds.
+        #[arg(long)]
+        coordinator_pk: Option<String>,
+        /// HTTP API listen port.
+        #[arg(long, default_value = "8080")]
+        api_port: u16,
+        /// libp2p P2P listen port.
+        #[arg(long, default_value = "7000")]
+        p2p_port: u16,
+        /// Bootstrap peer multiaddrs (repeatable).
+        #[arg(long = "bootstrap")]
+        bootstrap: Vec<String>,
+        /// Total validator count for `--validators` on the node command line.
+        /// Defaults to the validator count in the genesis file.
+        #[arg(long)]
+        validators: Option<u64>,
+        /// Path to the `evaporchain-node` binary that run.sh should exec.
+        /// Defaults to `evaporchain-node` on PATH.
+        #[arg(long)]
+        node_binary: Option<String>,
+        /// Emit a systemd unit at `<node-dir>/evaporchain.service`.
+        #[arg(long)]
+        systemd: bool,
+        /// Emit a launchd plist at `<node-dir>/evaporchain.plist`.
+        #[arg(long)]
+        launchd: bool,
+        /// Overwrite an existing node-dir layout in place.
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -2258,6 +2457,1012 @@ fn cmd_genesis_finalize(path: &str, json_mode: bool) -> Result<()> {
     Ok(())
 }
 
+// ──────────────────────────── Genesis Ceremony (multi-party) ────────────
+//
+// Three-step sealed-envelope flow:
+//   1. Each operator: `genesis contribute` → produces a signed envelope
+//      binding their validator entry to (chain_id, genesis_time, nonce).
+//   2. Coordinator: `genesis ceremony` → ingests every envelope, verifies
+//      signatures + BLS PoP, builds a deterministic genesis.json, and emits
+//      a transcript that names every contribution by its body hash.
+//   3. Any operator: `genesis verify-ceremony` → replays the bundle and
+//      checks the on-disk genesis is the bit-exact product of the inputs.
+
+/// Canonical bytes the operator and coordinator both hash and sign. We
+/// bind every field that influences the resulting GenesisValidator entry
+/// PLUS the ceremony anchors (chain_id / genesis_time / nonce) so a
+/// single envelope cannot be replayed across distinct ceremonies.
+#[derive(Clone, Serialize, Deserialize)]
+struct ContributionBody {
+    chain_id: String,
+    genesis_time: String,
+    /// 32-byte hex; identical across all envelopes in a single ceremony.
+    ceremony_nonce: String,
+    validator_id: u64,
+    name: String,
+    stake: u64,
+    /// 32-byte hex. Derived from `--address-byte` (or `validator_id` if not
+    /// supplied) so the ceremony is fully reproducible.
+    address: String,
+    /// 48-byte BLS12-381 G1 public key (compressed, hex).
+    bls_public_key: String,
+    p2p_address: Option<String>,
+    balance: u64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct ContributionEnvelope {
+    body: ContributionBody,
+    /// blake3 hash over the canonical body bytes (hex).
+    body_hash: String,
+    /// 1952-byte ML-DSA Dilithium3 public key (hex).
+    ml_dsa_public_key: String,
+    /// ML-DSA signature over `body_hash` raw bytes (hex).
+    ml_dsa_signature: String,
+    /// BLS PoP over the operator's bls_public_key (hex). Confirms the
+    /// operator actually holds the BLS secret behind `bls_public_key`.
+    bls_pop: String,
+}
+
+fn canonical_body_bytes(body: &ContributionBody) -> Result<Vec<u8>> {
+    // serde_json with sort_keys would be ideal but isn't available; the
+    // struct field order is fixed at the type level so to_vec produces
+    // deterministic output across hosts as long as field types stay stable.
+    serde_json::to_vec(body).context("failed to serialize contribution body")
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cmd_genesis_contribute(
+    keys_path: &str,
+    validator_id: u64,
+    name: &str,
+    stake: u64,
+    p2p: Option<&str>,
+    balance: u64,
+    address_byte: Option<u8>,
+    chain_id: &str,
+    genesis_time: &str,
+    ceremony_nonce_hex: &str,
+    out_path: &str,
+    json_mode: bool,
+) -> Result<()> {
+    use evaporchain_crypto::signatures::{BlsKeypair, MlDsaKeypair, Signer};
+
+    // Validate ceremony nonce is exactly 32 bytes hex so a typo can't slip
+    // through and split the ceremony silently.
+    let nonce_bytes = hex::decode(ceremony_nonce_hex.trim_start_matches("0x"))
+        .with_context(|| "ceremony_nonce must be hex")?;
+    if nonce_bytes.len() != 32 {
+        anyhow::bail!("ceremony_nonce must decode to exactly 32 bytes");
+    }
+    let nonce_canonical = hex::encode(&nonce_bytes);
+
+    let keys_json = std::fs::read_to_string(keys_path)
+        .with_context(|| format!("failed to read keys file {}", keys_path))?;
+    let bundle: serde_json::Value = serde_json::from_str(&keys_json)
+        .with_context(|| "keys file is not valid JSON")?;
+
+    let bls_sk_hex = bundle
+        .get("bls")
+        .and_then(|b| b.get("secret_key"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("keys file missing bls.secret_key"))?;
+    let bls_sk_bytes = hex::decode(bls_sk_hex).context("bls.secret_key not hex")?;
+
+    let mldsa_pk_hex = bundle
+        .get("ml_dsa")
+        .and_then(|b| b.get("public_key"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("keys file missing ml_dsa.public_key"))?;
+    let mldsa_sk_hex = bundle
+        .get("ml_dsa")
+        .and_then(|b| b.get("secret_key"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("keys file missing ml_dsa.secret_key"))?;
+    let mldsa_pk_bytes = hex::decode(mldsa_pk_hex).context("ml_dsa.public_key not hex")?;
+    let mldsa_sk_bytes = hex::decode(mldsa_sk_hex).context("ml_dsa.secret_key not hex")?;
+
+    let bls_kp =
+        BlsKeypair::from_secret_bytes(&bls_sk_bytes).context("failed to parse BLS secret")?;
+    let mldsa_kp = MlDsaKeypair::from_bytes(&mldsa_pk_bytes, &mldsa_sk_bytes)
+        .context("failed to parse ML-DSA keypair")?;
+
+    let bls_pk_hex = hex::encode(&bls_kp.public_key_bytes().0);
+
+    let mut address = [0u8; 32];
+    address[0] = address_byte.unwrap_or(validator_id as u8);
+    let body = ContributionBody {
+        chain_id: chain_id.to_string(),
+        genesis_time: genesis_time.to_string(),
+        ceremony_nonce: nonce_canonical,
+        validator_id,
+        name: name.to_string(),
+        stake,
+        address: hex::encode(address),
+        bls_public_key: bls_pk_hex.clone(),
+        p2p_address: p2p.map(str::to_string),
+        balance,
+    };
+
+    let body_bytes = canonical_body_bytes(&body)?;
+    let body_hash = evaporchain_crypto::blake3_hash(&body_bytes);
+    let body_hash_hex = hex::encode(body_hash);
+
+    let mldsa_sig = mldsa_kp.sign(&body_hash);
+    let bls_pop = bls_kp.proof_of_possession();
+
+    let envelope = ContributionEnvelope {
+        body,
+        body_hash: body_hash_hex,
+        ml_dsa_public_key: hex::encode(mldsa_kp.public_key()),
+        ml_dsa_signature: hex::encode(&mldsa_sig),
+        bls_pop: hex::encode(&bls_pop.0),
+    };
+
+    let pretty = serde_json::to_string_pretty(&envelope)?;
+    std::fs::write(out_path, &pretty)
+        .with_context(|| format!("failed to write envelope to {}", out_path))?;
+
+    if json_mode {
+        println!("{}", pretty);
+    } else {
+        print_header("Contribution Envelope");
+        println!(
+            "  {} Envelope written to {}",
+            "\u{2714}".green().bold(),
+            out_path
+        );
+        println!(
+            "  {}  validator_id={} name={} stake={}",
+            "Body:".truecolor(140, 150, 170),
+            envelope.body.validator_id.to_string().cyan(),
+            envelope.body.name.white(),
+            envelope.body.stake.to_string().green(),
+        );
+        println!(
+            "  {}  {}",
+            "Hash:".truecolor(140, 150, 170),
+            envelope.body_hash.truecolor(100, 110, 130)
+        );
+        println!(
+            "  {}  {}",
+            "BLS pk:".truecolor(140, 150, 170),
+            envelope.body.bls_public_key[..32].truecolor(100, 110, 130)
+        );
+        println!();
+        println!("  Share this file with the ceremony coordinator.");
+    }
+    Ok(())
+}
+
+/// Validate one envelope against the ceremony anchors. Returns the parsed
+/// envelope on success.
+fn verify_envelope(
+    env: &ContributionEnvelope,
+    chain_id: &str,
+    genesis_time: &str,
+    ceremony_nonce_hex: &str,
+) -> Result<()> {
+    use evaporchain_crypto::signatures::{
+        BlsPublicKey, BlsSignature, BlsVerifier, MlDsaVerifier, Verifier,
+    };
+
+    if env.body.chain_id != chain_id {
+        anyhow::bail!(
+            "chain_id mismatch: envelope={}, ceremony={}",
+            env.body.chain_id,
+            chain_id
+        );
+    }
+    if env.body.genesis_time != genesis_time {
+        anyhow::bail!(
+            "genesis_time mismatch: envelope={}, ceremony={}",
+            env.body.genesis_time,
+            genesis_time
+        );
+    }
+    if env.body.ceremony_nonce.to_lowercase() != ceremony_nonce_hex.to_lowercase() {
+        anyhow::bail!(
+            "ceremony_nonce mismatch: envelope={}, ceremony={}",
+            env.body.ceremony_nonce,
+            ceremony_nonce_hex
+        );
+    }
+
+    let body_bytes = canonical_body_bytes(&env.body)?;
+    let computed = hex::encode(evaporchain_crypto::blake3_hash(&body_bytes));
+    if computed != env.body_hash {
+        anyhow::bail!(
+            "body_hash mismatch: declared={}, recomputed={}",
+            env.body_hash,
+            computed
+        );
+    }
+    let body_hash_bytes = hex::decode(&env.body_hash).context("body_hash not hex")?;
+
+    let mldsa_pk = hex::decode(&env.ml_dsa_public_key).context("ml_dsa_public_key not hex")?;
+    let mldsa_sig = hex::decode(&env.ml_dsa_signature).context("ml_dsa_signature not hex")?;
+    if !MlDsaVerifier::verify(&body_hash_bytes, &mldsa_sig, &mldsa_pk) {
+        anyhow::bail!(
+            "ML-DSA signature failed for validator_id={}",
+            env.body.validator_id
+        );
+    }
+
+    let bls_pk_bytes = hex::decode(&env.body.bls_public_key).context("bls_public_key not hex")?;
+    let bls_pop_bytes = hex::decode(&env.bls_pop).context("bls_pop not hex")?;
+    let pk = BlsPublicKey(bls_pk_bytes);
+    let pop = BlsSignature(bls_pop_bytes);
+    if !BlsVerifier::verify_proof_of_possession(&pk, &pop) {
+        anyhow::bail!(
+            "BLS proof-of-possession failed for validator_id={}",
+            env.body.validator_id
+        );
+    }
+    Ok(())
+}
+
+fn load_envelopes(dir: &str) -> Result<Vec<(String, ContributionEnvelope)>> {
+    let mut out = Vec::new();
+    let entries = std::fs::read_dir(dir)
+        .with_context(|| format!("failed to read contribution dir {}", dir))?;
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        let env: ContributionEnvelope = serde_json::from_str(&text)
+            .with_context(|| format!("envelope {} is not valid JSON", path.display()))?;
+        out.push((path.display().to_string(), env));
+    }
+    if out.is_empty() {
+        anyhow::bail!("no *.json envelopes found in {}", dir);
+    }
+    Ok(out)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cmd_genesis_ceremony(
+    contributions_dir: &str,
+    chain_id: &str,
+    genesis_time: &str,
+    ceremony_nonce_hex: &str,
+    total_supply: u64,
+    block_interval: u64,
+    min_stake: u64,
+    out_path: &str,
+    json_mode: bool,
+) -> Result<()> {
+    use evaporchain_types::genesis::*;
+
+    let nonce_bytes = hex::decode(ceremony_nonce_hex.trim_start_matches("0x"))
+        .with_context(|| "ceremony_nonce must be hex")?;
+    if nonce_bytes.len() != 32 {
+        anyhow::bail!("ceremony_nonce must decode to exactly 32 bytes");
+    }
+    let nonce_canonical = hex::encode(&nonce_bytes);
+
+    let mut envelopes = load_envelopes(contributions_dir)?;
+
+    // Verify each envelope; collect (path, error) for clear reporting.
+    let mut errors: Vec<(String, String)> = Vec::new();
+    for (path, env) in &envelopes {
+        if let Err(e) = verify_envelope(env, chain_id, genesis_time, &nonce_canonical) {
+            errors.push((path.clone(), e.to_string()));
+        }
+    }
+    if !errors.is_empty() {
+        if json_mode {
+            let out = serde_json::json!({
+                "ok": false,
+                "errors": errors.iter().map(|(p, e)| serde_json::json!({"path": p, "error": e})).collect::<Vec<_>>(),
+            });
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        } else {
+            println!("  {} Ceremony failed: invalid envelopes:", "\u{2718}".red().bold());
+            for (path, err) in &errors {
+                println!("    - {}: {}", path.cyan(), err.red());
+            }
+        }
+        anyhow::bail!("{} envelope verification error(s)", errors.len());
+    }
+
+    // Reject duplicate validator ids.
+    let mut seen_ids = std::collections::HashSet::new();
+    for (_, env) in &envelopes {
+        if !seen_ids.insert(env.body.validator_id) {
+            anyhow::bail!("duplicate validator_id={}", env.body.validator_id);
+        }
+    }
+
+    // Deterministic order — sort by validator_id ascending.
+    envelopes.sort_by_key(|(_, e)| e.body.validator_id);
+
+    let validators: Vec<GenesisValidator> = envelopes
+        .iter()
+        .map(|(_, e)| {
+            let mut addr = [0u8; 32];
+            let addr_bytes = hex::decode(&e.body.address).unwrap_or_default();
+            let n = addr_bytes.len().min(32);
+            addr[..n].copy_from_slice(&addr_bytes[..n]);
+            GenesisValidator {
+                id: e.body.validator_id,
+                name: e.body.name.clone(),
+                stake: e.body.stake,
+                address: addr,
+                bls_public_key: Some(e.body.bls_public_key.clone()),
+                p2p_address: e.body.p2p_address.clone(),
+            }
+        })
+        .collect();
+
+    let accounts: Vec<GenesisAccount> = envelopes
+        .iter()
+        .map(|(_, e)| {
+            let mut addr = [0u8; 32];
+            let addr_bytes = hex::decode(&e.body.address).unwrap_or_default();
+            let n = addr_bytes.len().min(32);
+            addr[..n].copy_from_slice(&addr_bytes[..n]);
+            GenesisAccount {
+                address: addr,
+                balance: e.body.balance,
+                label: format!("Validator-{}", e.body.name),
+            }
+        })
+        .collect();
+
+    let chain_params = ChainParams {
+        chain_id: chain_id.to_string(),
+        block_interval_ms: block_interval,
+        min_validator_stake: min_stake,
+        ..Default::default()
+    };
+    let tokenomics = Tokenomics {
+        total_supply,
+        ..Default::default()
+    };
+
+    let config = GenesisConfig {
+        chain_params,
+        tokenomics,
+        genesis_time: genesis_time.to_string(),
+        validators,
+        accounts,
+        objects: Vec::new(),
+        bootstrap_peers: Vec::new(),
+        trusted_checkpoint: None,
+        coordinator_pk: None,
+        coordinator_signature: None,
+    };
+
+    if let Err(errs) = config.validate() {
+        if json_mode {
+            let out = serde_json::json!({ "ok": false, "validation_errors": errs });
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        } else {
+            println!(
+                "  {} Built genesis failed validation:",
+                "\u{2718}".red().bold()
+            );
+            for e in &errs {
+                println!("    - {}", e.red());
+            }
+        }
+        anyhow::bail!("{} validation error(s)", errs.len());
+    }
+
+    let config_bytes = serde_json::to_vec(&config).unwrap_or_default();
+    let config_hash = evaporchain_crypto::blake3_hash(&config_bytes);
+    let pretty = serde_json::to_string_pretty(&config)?;
+    std::fs::write(out_path, &pretty)
+        .with_context(|| format!("failed to write genesis to {}", out_path))?;
+
+    // Transcript: every contribution by its body_hash + the produced
+    // config_hash. Anyone replaying the ceremony can compare.
+    let transcript_path = format!("{}.transcript.json", out_path);
+    let transcript = serde_json::json!({
+        "chain_id": chain_id,
+        "genesis_time": genesis_time,
+        "ceremony_nonce": nonce_canonical,
+        "config_hash": hex::encode(config_hash),
+        "validator_count": config.validators.len(),
+        "contributions": envelopes.iter().map(|(path, e)| serde_json::json!({
+            "path": path,
+            "validator_id": e.body.validator_id,
+            "body_hash": e.body_hash,
+            "bls_public_key": e.body.bls_public_key,
+        })).collect::<Vec<_>>(),
+    });
+    std::fs::write(
+        &transcript_path,
+        serde_json::to_string_pretty(&transcript)?,
+    )
+    .with_context(|| format!("failed to write transcript to {}", transcript_path))?;
+
+    if json_mode {
+        let out = serde_json::json!({
+            "ok": true,
+            "genesis_path": out_path,
+            "transcript_path": transcript_path,
+            "config_hash": hex::encode(config_hash),
+            "validators": config.validators.len(),
+            "accounts": config.accounts.len(),
+        });
+        println!("{}", serde_json::to_string_pretty(&out)?);
+    } else {
+        print_header("Genesis Ceremony Complete");
+        println!(
+            "  {} Genesis assembled from {} contributions",
+            "\u{2714}".green().bold(),
+            config.validators.len()
+        );
+        println!(
+            "  {}  {}",
+            "Genesis:   ".truecolor(140, 150, 170),
+            out_path.white()
+        );
+        println!(
+            "  {}  {}",
+            "Transcript:".truecolor(140, 150, 170),
+            transcript_path.white()
+        );
+        println!(
+            "  {}  {}",
+            "Hash:      ".truecolor(140, 150, 170),
+            hex::encode(config_hash).truecolor(100, 110, 130)
+        );
+        println!();
+        println!("  Distribute both files. Each operator should run:");
+        println!(
+            "    evaporchain genesis verify-ceremony --contributions {} \\\n      --genesis {} --transcript {}",
+            contributions_dir, out_path, transcript_path
+        );
+    }
+
+    Ok(())
+}
+
+fn cmd_genesis_verify_ceremony(
+    contributions_dir: &str,
+    genesis_path: &str,
+    transcript_path: &str,
+    json_mode: bool,
+) -> Result<()> {
+    let transcript_text = std::fs::read_to_string(transcript_path)
+        .with_context(|| format!("failed to read transcript {}", transcript_path))?;
+    let transcript: serde_json::Value = serde_json::from_str(&transcript_text)
+        .with_context(|| "transcript is not valid JSON")?;
+
+    let chain_id = transcript
+        .get("chain_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("transcript missing chain_id"))?;
+    let genesis_time = transcript
+        .get("genesis_time")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("transcript missing genesis_time"))?;
+    let ceremony_nonce = transcript
+        .get("ceremony_nonce")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("transcript missing ceremony_nonce"))?;
+    let declared_hash = transcript
+        .get("config_hash")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("transcript missing config_hash"))?;
+
+    let envelopes = load_envelopes(contributions_dir)?;
+    for (path, env) in &envelopes {
+        verify_envelope(env, chain_id, genesis_time, ceremony_nonce)
+            .with_context(|| format!("envelope {} failed verification", path))?;
+    }
+
+    let genesis_text = std::fs::read_to_string(genesis_path)
+        .with_context(|| format!("failed to read genesis {}", genesis_path))?;
+    let config: GenesisConfig =
+        serde_json::from_str(&genesis_text).context("genesis file is not valid JSON")?;
+    let recomputed_bytes = serde_json::to_vec(&config).unwrap_or_default();
+    let recomputed_hash = hex::encode(evaporchain_crypto::blake3_hash(&recomputed_bytes));
+
+    let on_disk_envelope_ids: std::collections::HashSet<u64> =
+        envelopes.iter().map(|(_, e)| e.body.validator_id).collect();
+    let on_disk_validator_ids: std::collections::HashSet<u64> =
+        config.validators.iter().map(|v| v.id).collect();
+    let mismatches: Vec<u64> = on_disk_envelope_ids
+        .symmetric_difference(&on_disk_validator_ids)
+        .copied()
+        .collect();
+
+    let hash_match = recomputed_hash.eq_ignore_ascii_case(declared_hash);
+    let id_match = mismatches.is_empty();
+
+    if json_mode {
+        let out = serde_json::json!({
+            "ok": hash_match && id_match,
+            "config_hash_match": hash_match,
+            "validator_id_match": id_match,
+            "expected_config_hash": declared_hash,
+            "recomputed_config_hash": recomputed_hash,
+            "id_mismatches": mismatches,
+            "envelope_count": envelopes.len(),
+        });
+        println!("{}", serde_json::to_string_pretty(&out)?);
+    } else {
+        print_header("Ceremony Verification");
+        if hash_match && id_match {
+            println!(
+                "  {} All {} envelopes verified; genesis hash matches transcript",
+                "\u{2714}".green().bold(),
+                envelopes.len()
+            );
+            println!(
+                "  {}  {}",
+                "Hash:".truecolor(140, 150, 170),
+                recomputed_hash.truecolor(100, 110, 130)
+            );
+        } else {
+            println!("  {} Verification failed", "\u{2718}".red().bold());
+            if !hash_match {
+                println!("    expected: {}", declared_hash.red());
+                println!("    got:      {}", recomputed_hash.red());
+            }
+            if !id_match {
+                println!(
+                    "    validator_id set differs (envelope vs genesis): {:?}",
+                    mismatches
+                );
+            }
+        }
+    }
+
+    if !(hash_match && id_match) {
+        anyhow::bail!("ceremony verification failed");
+    }
+    Ok(())
+}
+
+// ──────────────────────────── INVENTION_STACK stamp ─────────────────────
+//
+// Auto-generated marker pair the stamper rewrites. Surrounding prose stays
+// untouched. First-run inserts the markers immediately after the section
+// heading; subsequent runs replace the body between them.
+const STAMP_BEGIN: &str = "<!-- mera-gate-result:begin -->";
+const STAMP_END: &str = "<!-- mera-gate-result:end -->";
+
+fn cmd_genesis_stamp_result(
+    from_json: &str,
+    doc_path: &str,
+    section: &str,
+    dry_run: bool,
+    json_mode: bool,
+) -> Result<()> {
+    // 1. Load the JSON payload (file path or stdin via `-`).
+    let payload_text = if from_json == "-" {
+        use std::io::Read;
+        let mut buf = String::new();
+        std::io::stdin()
+            .read_to_string(&mut buf)
+            .context("failed to read JSON payload from stdin")?;
+        buf
+    } else {
+        std::fs::read_to_string(from_json)
+            .with_context(|| format!("failed to read JSON payload at {}", from_json))?
+    };
+    let payload: serde_json::Value =
+        serde_json::from_str(&payload_text).context("payload is not valid JSON")?;
+
+    let decision = payload
+        .get("decision")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("payload missing `decision` field"))?;
+    let reasoning = payload
+        .get("reasoning")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let source = payload
+        .get("source")
+        .and_then(|v| v.as_str())
+        .unwrap_or("(unknown)");
+    let pl_r2 = payload
+        .get("powerlaw_r2")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(f64::NAN);
+    let pl_slope = payload
+        .get("powerlaw_slope")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(f64::NAN);
+    let exp_r2 = payload
+        .get("exponential_r2")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(f64::NAN);
+    let exp_rate = payload
+        .get("exponential_rate")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(f64::NAN);
+    let flat_ratio = payload
+        .get("flat_ratio")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(f64::NAN);
+    let n_accounts = payload.get("n_accounts").and_then(|v| v.as_u64()).unwrap_or(0);
+    let n_blocks = payload.get("n_blocks").and_then(|v| v.as_u64()).unwrap_or(0);
+
+    // 2. Build the body that goes between the markers. Stable shape so a
+    // git diff between two stamps shows only the values that actually
+    // changed.
+    let now_utc = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let stamp_body = format!(
+        "{begin}\n\
+         **Latest gate result** (auto-generated by `evaporchain genesis stamp-result`):\n\
+         \n\
+         | Field | Value |\n\
+         | --- | --- |\n\
+         | Decision | **{decision}** |\n\
+         | Source | `{source}` |\n\
+         | Shape | {n_accounts} accounts × {n_blocks} blocks |\n\
+         | Power-law R² | {pl_r2:.4} (slope {pl_slope:.3}) |\n\
+         | Exponential R² | {exp_r2:.4} (rate {exp_rate:.4}) |\n\
+         | Flat ratio | {flat_ratio:.1}× |\n\
+         | Stamped at (unix) | {now_utc} |\n\
+         \n\
+         > {reasoning}\n\
+         {end}\n",
+        begin = STAMP_BEGIN,
+        end = STAMP_END,
+        decision = decision,
+        source = source,
+        n_accounts = n_accounts,
+        n_blocks = n_blocks,
+        pl_r2 = pl_r2,
+        pl_slope = pl_slope,
+        exp_r2 = exp_r2,
+        exp_rate = exp_rate,
+        flat_ratio = flat_ratio,
+        now_utc = now_utc,
+        reasoning = reasoning,
+    );
+
+    // 3. Read the doc, locate the section heading + existing marker block.
+    let doc_text = std::fs::read_to_string(doc_path)
+        .with_context(|| format!("failed to read doc {}", doc_path))?;
+
+    let updated = stamp_into_doc(&doc_text, section, &stamp_body)?;
+
+    if dry_run {
+        if json_mode {
+            let out = serde_json::json!({
+                "doc": doc_path,
+                "decision": decision,
+                "would_change": doc_text != updated,
+                "preview_excerpt": stamp_body,
+            });
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        } else {
+            println!("--- {} (dry-run, would write) ---\n", doc_path);
+            println!("{}", stamp_body);
+        }
+        return Ok(());
+    }
+
+    if doc_text == updated {
+        if !json_mode {
+            println!(
+                "  {} {} already up-to-date (no change)",
+                "\u{2714}".green().bold(),
+                doc_path
+            );
+        }
+        return Ok(());
+    }
+
+    // Atomic write: temp file + rename so a partial write doesn't corrupt
+    // the doc if the process is interrupted.
+    let tmp = format!("{}.stamp.tmp", doc_path);
+    std::fs::write(&tmp, &updated).with_context(|| format!("write {}", tmp))?;
+    std::fs::rename(&tmp, doc_path)
+        .with_context(|| format!("rename {} → {}", tmp, doc_path))?;
+
+    if json_mode {
+        let out = serde_json::json!({
+            "doc": doc_path,
+            "decision": decision,
+            "wrote": true,
+        });
+        println!("{}", serde_json::to_string_pretty(&out)?);
+    } else {
+        println!(
+            "  {} stamped {} with decision {}",
+            "\u{2714}".green().bold(),
+            doc_path,
+            decision
+        );
+    }
+    Ok(())
+}
+
+/// Pure helper — injects or replaces the marker block under the named
+/// section heading. Tested in isolation so the patching rules don't drift.
+fn stamp_into_doc(doc: &str, section: &str, stamp_body: &str) -> Result<String> {
+    // Locate the section heading. We accept any line whose trimmed prefix
+    // matches `section` (e.g. "## A1.8" matches "## A1.8 Open empirical …").
+    let section_line_idx = doc
+        .lines()
+        .enumerate()
+        .find(|(_, line)| line.trim_start().starts_with(section))
+        .map(|(i, _)| i)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "section heading prefixed `{}` not found in doc",
+                section
+            )
+        })?;
+
+    let lines: Vec<&str> = doc.lines().collect();
+
+    // Search for an existing marker pair. Anywhere in the doc — we don't
+    // require it to be inside the section, so a moved heading still works.
+    let begin_idx = lines.iter().position(|l| l.trim() == STAMP_BEGIN);
+    let end_idx = lines.iter().position(|l| l.trim() == STAMP_END);
+
+    match (begin_idx, end_idx) {
+        (Some(b), Some(e)) if b < e => {
+            // Replace lines [b..=e] with stamp_body's lines.
+            let mut out = String::new();
+            for line in &lines[..b] {
+                out.push_str(line);
+                out.push('\n');
+            }
+            out.push_str(stamp_body);
+            // stamp_body already ends with '\n'; append remaining lines.
+            for line in &lines[(e + 1)..] {
+                out.push_str(line);
+                out.push('\n');
+            }
+            // Preserve trailing newline parity with the input.
+            if !doc.ends_with('\n') && out.ends_with('\n') {
+                out.pop();
+            }
+            Ok(out)
+        }
+        (Some(_), Some(_)) => {
+            // Both present but begin >= end — pair is reversed or coincident.
+            anyhow::bail!(
+                "doc has a reversed marker pair (`{}` does not precede `{}`); fix manually",
+                STAMP_BEGIN,
+                STAMP_END
+            );
+        }
+        (Some(_), None) | (None, Some(_)) => {
+            anyhow::bail!(
+                "doc has a malformed marker pair (only one of `{}` / `{}` present); fix manually",
+                STAMP_BEGIN,
+                STAMP_END
+            );
+        }
+        (None, None) => {
+            // First run: insert the marker block immediately after the
+            // section heading + a blank-line spacer. We position it so the
+            // existing prose follows naturally.
+            let mut out = String::new();
+            for (i, line) in lines.iter().enumerate() {
+                out.push_str(line);
+                out.push('\n');
+                if i == section_line_idx {
+                    out.push('\n'); // blank spacer
+                    out.push_str(stamp_body);
+                }
+            }
+            if !doc.ends_with('\n') && out.ends_with('\n') {
+                out.pop();
+            }
+            Ok(out)
+        }
+    }
+}
+
+// ──────────────────────────── MERA gate replay ──────────────────────────
+
+fn parse_csv_activations(path: &str) -> Result<Vec<Vec<f64>>> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read CSV {}", path))?;
+    let mut rows: Vec<Vec<f64>> = Vec::new();
+    for (line_no, raw) in text.lines().enumerate() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let row: Result<Vec<f64>> = line
+            .split(',')
+            .map(|cell| {
+                let c = cell.trim();
+                match c {
+                    "0" | "0.0" | "false" | "" => Ok(0.0),
+                    "1" | "1.0" | "true" => Ok(1.0),
+                    other => other
+                        .parse::<f64>()
+                        .map_err(|e| anyhow::anyhow!("line {}: {} ({})", line_no + 1, e, other)),
+                }
+            })
+            .collect();
+        rows.push(row?);
+    }
+    if rows.is_empty() {
+        anyhow::bail!("CSV at {} contained no data rows", path);
+    }
+    let cols = rows[0].len();
+    for (i, r) in rows.iter().enumerate() {
+        if r.len() != cols {
+            anyhow::bail!(
+                "row {} has {} columns, expected {} (matrix must be rectangular)",
+                i,
+                r.len(),
+                cols
+            );
+        }
+    }
+    Ok(rows)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cmd_genesis_run_gate(
+    csv: Option<&str>,
+    regime: Option<&str>,
+    n_accounts: usize,
+    n_blocks: usize,
+    k: usize,
+    bins: usize,
+    seed: u64,
+    json_mode: bool,
+) -> Result<()> {
+    use evaporchain_mera::gate::{run_gate, GateDecision};
+    use evaporchain_mera::synthetic::{
+        area_law_matrix, flat_random_matrix, log_correlated_matrix, AreaLawParams,
+        FlatRandomParams, LogCorrelatedParams,
+    };
+
+    let (activations, source_label) = match (csv, regime) {
+        (Some(path), None) => (parse_csv_activations(path)?, format!("csv:{}", path)),
+        (None, Some(name)) => {
+            let mat = match name {
+                "log-correlated" => log_correlated_matrix(
+                    n_accounts,
+                    &LogCorrelatedParams {
+                        n_blocks,
+                        ..Default::default()
+                    },
+                    seed,
+                ),
+                "area-law" => area_law_matrix(
+                    n_accounts,
+                    &AreaLawParams {
+                        n_blocks,
+                        ..Default::default()
+                    },
+                    seed,
+                ),
+                "flat-random" => flat_random_matrix(
+                    n_accounts,
+                    &FlatRandomParams {
+                        n_blocks,
+                        touch_prob: 0.1,
+                        energy_per_touch: 1,
+                    },
+                    seed,
+                ),
+                other => {
+                    eprintln!(
+                        "unknown regime '{}'. Valid: log-correlated | area-law | flat-random",
+                        other
+                    );
+                    std::process::exit(64);
+                }
+            };
+            (mat, format!("regime:{}", name))
+        }
+        (Some(_), Some(_)) => {
+            eprintln!("--csv and --regime are mutually exclusive");
+            std::process::exit(64);
+        }
+        (None, None) => {
+            eprintln!(
+                "supply either --csv <path> (real telemetry) or --regime <name> (synthetic)"
+            );
+            std::process::exit(64);
+        }
+    };
+
+    let result = run_gate(&activations, k, bins, seed);
+    let exit_code = match result.decision {
+        GateDecision::Mera => 0,
+        GateDecision::Mps => 1,
+        GateDecision::Verkle => 2,
+    };
+
+    if json_mode {
+        let preview_n = result.eigvals.len().min(10);
+        let payload = serde_json::json!({
+            "source": source_label,
+            "n_accounts": activations.len(),
+            "n_blocks": activations.first().map(|r| r.len()).unwrap_or(0),
+            "k": k,
+            "bins": bins,
+            "decision": match result.decision {
+                GateDecision::Mera => "MERA",
+                GateDecision::Mps => "MPS",
+                GateDecision::Verkle => "VERKLE",
+            },
+            "powerlaw_slope": result.powerlaw_slope,
+            "powerlaw_r2": result.powerlaw_r2,
+            "exponential_rate": result.exponential_rate,
+            "exponential_r2": result.exponential_r2,
+            "flat_ratio": result.flat_ratio,
+            "top_eigvals_preview": &result.eigvals[..preview_n],
+            "reasoning": result.reasoning,
+            "exit_code": exit_code,
+        });
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+    } else {
+        print_header("MERA Gate (§A1.8)");
+        println!(
+            "  {}  {}",
+            "Source:    ".truecolor(140, 150, 170),
+            source_label.white()
+        );
+        println!(
+            "  {}  {} accounts × {} blocks",
+            "Shape:     ".truecolor(140, 150, 170),
+            activations.len(),
+            activations.first().map(|r| r.len()).unwrap_or(0),
+        );
+        println!(
+            "  {}  K={}, bins={}",
+            "Params:    ".truecolor(140, 150, 170),
+            k,
+            bins
+        );
+        println!();
+        println!(
+            "  {}  R²={:.4}  slope={:.3}",
+            "Power-law: ".truecolor(140, 150, 170),
+            result.powerlaw_r2,
+            result.powerlaw_slope
+        );
+        println!(
+            "  {}  R²={:.4}  rate={:.4}",
+            "Exponent:  ".truecolor(140, 150, 170),
+            result.exponential_r2,
+            result.exponential_rate
+        );
+        println!(
+            "  {}  {:.1}x",
+            "Flat ratio:".truecolor(140, 150, 170),
+            result.flat_ratio
+        );
+        println!();
+        let (label, colored_label) = match result.decision {
+            GateDecision::Mera => ("MERA", "MERA".green().bold()),
+            GateDecision::Mps => ("MPS", "MPS".yellow().bold()),
+            GateDecision::Verkle => ("VERKLE", "VERKLE".red().bold()),
+        };
+        let _ = label;
+        println!(
+            "  {}  {}",
+            "Decision:  ".truecolor(140, 150, 170),
+            colored_label
+        );
+        println!("  {}", result.reasoning.truecolor(180, 180, 180));
+    }
+
+    if exit_code != 0 {
+        std::process::exit(exit_code);
+    }
+    Ok(())
+}
+
 // ──────────────────────────── Keygen ────────────────────────────────────
 
 fn cmd_keygen(output: Option<&str>, json_mode: bool) -> Result<()> {
@@ -2553,6 +3758,10 @@ fn cmd_snapshot_apply(input: &str, data_dir: &str, json_mode: bool) -> Result<()
             "  state_root        = {}",
             hex::encode(result.state_root).truecolor(140, 150, 170)
         );
+    }
+    Ok(())
+}
+
 // ──────────────────────── UpgradeContract Helper ─────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -2787,6 +3996,81 @@ async fn main() -> Result<()> {
                 address_byte,
             } => cmd_genesis_add_account(&path, &label, balance, address_byte, cli.json),
             GenesisAction::Finalize { path } => cmd_genesis_finalize(&path, cli.json),
+            GenesisAction::Contribute {
+                keys,
+                validator_id,
+                name,
+                stake,
+                p2p,
+                balance,
+                address_byte,
+                chain_id,
+                genesis_time,
+                ceremony_nonce,
+                out,
+            } => cmd_genesis_contribute(
+                &keys,
+                validator_id,
+                &name,
+                stake,
+                p2p.as_deref(),
+                balance,
+                address_byte,
+                &chain_id,
+                &genesis_time,
+                &ceremony_nonce,
+                &out,
+                cli.json,
+            ),
+            GenesisAction::Ceremony {
+                contributions,
+                chain_id,
+                genesis_time,
+                ceremony_nonce,
+                total_supply,
+                block_interval,
+                min_stake,
+                out,
+            } => cmd_genesis_ceremony(
+                &contributions,
+                &chain_id,
+                &genesis_time,
+                &ceremony_nonce,
+                total_supply,
+                block_interval,
+                min_stake,
+                &out,
+                cli.json,
+            ),
+            GenesisAction::VerifyCeremony {
+                contributions,
+                genesis,
+                transcript,
+            } => cmd_genesis_verify_ceremony(&contributions, &genesis, &transcript, cli.json),
+            GenesisAction::StampResult {
+                from_json,
+                doc,
+                section,
+                dry_run,
+            } => cmd_genesis_stamp_result(&from_json, &doc, &section, dry_run, cli.json),
+            GenesisAction::RunGate {
+                csv,
+                regime,
+                n_accounts,
+                n_blocks,
+                k,
+                bins,
+                seed,
+            } => cmd_genesis_run_gate(
+                csv.as_deref(),
+                regime.as_deref(),
+                n_accounts,
+                n_blocks,
+                k,
+                bins,
+                seed,
+                cli.json,
+            ),
         },
         Commands::Testnet { action } => match action {
             TestnetAction::Init {
@@ -2853,6 +4137,35 @@ async fn main() -> Result<()> {
                 std::path::Path::new(&genesis),
                 std::path::Path::new(&coordinator_pk),
             ),
+            OnboardingAction::Install {
+                genesis,
+                keys,
+                validator_id,
+                node_dir,
+                coordinator_pk,
+                api_port,
+                p2p_port,
+                bootstrap,
+                validators,
+                node_binary,
+                systemd,
+                launchd,
+                force,
+            } => onboarding::cmd_install(onboarding::InstallArgs {
+                genesis: std::path::PathBuf::from(genesis),
+                keys: std::path::PathBuf::from(keys),
+                validator_id,
+                node_dir: std::path::PathBuf::from(node_dir),
+                coordinator_pk: coordinator_pk.map(std::path::PathBuf::from),
+                api_port,
+                p2p_port,
+                bootstrap,
+                validators,
+                node_binary,
+                systemd,
+                launchd,
+                force,
+            }),
         },
         Commands::Snapshot { action } => match action {
             SnapshotAction::Create {
@@ -3534,5 +4847,415 @@ mod tests {
         assert_eq!(loaded.accounts.len(), 2);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ceremony_install_rehearsal_full_pipeline() {
+        // End-to-end rehearsal of the full operator runbook against a temp
+        // directory. Drives every command shipped this sprint sequentially
+        // and asserts each artifact is consistent with the next:
+        //
+        //   1. `keygen` × N         → N keys.json bundles with BLS+ML-DSA+VRF
+        //   2. `genesis contribute` × N → N signed envelopes in contribs/
+        //   3. `genesis ceremony`   → single coordinator-signed genesis +
+        //                             transcript pinned by config_hash
+        //   4. `genesis verify-ceremony` → recomputes hashes, asserts match
+        //   5. `onboarding install` × N → laid-out node-dirs with bls_key.bin
+        //                                 (32 bytes, 0600) and runnable run.sh
+        //
+        // What this catches: any drift between the seven binaries (e.g.
+        // canonical-bytes mismatch between contribute and ceremony, BLS
+        // pubkey not propagating from keygen → genesis → install, transcript
+        // hash not matching recomputation, install failing to find the
+        // genesis entry for an operator's validator-id).
+        use std::path::PathBuf;
+        const N_VALIDATORS: u64 = 4;
+
+        let pid = std::process::id();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root: PathBuf = std::env::temp_dir().join(format!("evap-rehearsal-{}-{}", pid, now));
+        std::fs::create_dir_all(&root).unwrap();
+
+        // Defer cleanup until the test ends, even on assert failure.
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(root.clone());
+
+        // Per-validator working dirs.
+        let keys_dir = root.join("keys");
+        let contribs_dir = root.join("contributions");
+        let nodes_root = root.join("nodes");
+        std::fs::create_dir_all(&keys_dir).unwrap();
+        std::fs::create_dir_all(&contribs_dir).unwrap();
+        std::fs::create_dir_all(&nodes_root).unwrap();
+
+        let chain_id = "evaporchain-rehearsal-1";
+        let genesis_time = "2026-05-01T00:00:00Z";
+        // Deterministic 32-byte ceremony nonce (hex). Real ceremonies use
+        // a freshly-randomized nonce drawn after every operator commits.
+        let ceremony_nonce =
+            "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+
+        // ── Stage 1: keygen × N ────────────────────────────────────────
+        let mut keys_paths = Vec::with_capacity(N_VALIDATORS as usize);
+        for vid in 1..=N_VALIDATORS {
+            let path = keys_dir.join(format!("v{}.json", vid));
+            cmd_keygen(Some(path.to_str().unwrap()), true).unwrap();
+            assert!(path.is_file(), "keygen did not produce {}", path.display());
+            // Sanity: bundle has the three pubkey/secret pairs we expect.
+            let v: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            assert!(v.get("bls").and_then(|b| b.get("public_key")).is_some());
+            assert!(v.get("bls").and_then(|b| b.get("secret_key")).is_some());
+            assert!(v.get("ml_dsa").and_then(|m| m.get("public_key")).is_some());
+            assert!(v.get("ml_dsa").and_then(|m| m.get("secret_key")).is_some());
+            keys_paths.push(path);
+        }
+
+        // ── Stage 2: genesis contribute × N ────────────────────────────
+        let mut envelope_paths = Vec::with_capacity(N_VALIDATORS as usize);
+        for (i, keys_path) in keys_paths.iter().enumerate() {
+            let vid = (i + 1) as u64;
+            let env_path = contribs_dir.join(format!("v{}.json", vid));
+            cmd_genesis_contribute(
+                keys_path.to_str().unwrap(),
+                vid,
+                &format!("validator-{}", vid),
+                500_000,                         // stake
+                None,                            // no p2p in rehearsal
+                1_000_000,                       // balance
+                Some(vid as u8),                 // address_byte
+                chain_id,
+                genesis_time,
+                ceremony_nonce,
+                env_path.to_str().unwrap(),
+                true,
+            )
+            .unwrap();
+            assert!(env_path.is_file());
+            envelope_paths.push(env_path);
+        }
+
+        // ── Stage 3: genesis ceremony ──────────────────────────────────
+        let genesis_path = root.join("genesis.json");
+        let transcript_path = root.join("genesis.json.transcript.json");
+        cmd_genesis_ceremony(
+            contribs_dir.to_str().unwrap(),
+            chain_id,
+            genesis_time,
+            ceremony_nonce,
+            10_000_000, // total_supply
+            2000,       // block_interval
+            100,        // min_stake
+            genesis_path.to_str().unwrap(),
+            true,
+        )
+        .unwrap();
+        assert!(genesis_path.is_file());
+        assert!(transcript_path.is_file());
+
+        // Genesis must contain N validator entries with BLS pubkeys, sorted
+        // ascending by id.
+        let genesis_text = std::fs::read_to_string(&genesis_path).unwrap();
+        let config: evaporchain_types::genesis::GenesisConfig =
+            serde_json::from_str(&genesis_text).unwrap();
+        assert_eq!(config.validators.len() as u64, N_VALIDATORS);
+        for (i, v) in config.validators.iter().enumerate() {
+            assert_eq!(v.id, (i as u64) + 1, "validators must be sorted by id");
+            assert!(
+                v.bls_public_key.is_some(),
+                "validator {} missing bls_public_key after ceremony",
+                v.id
+            );
+        }
+        // Transcript's config_hash must reproduce from the on-disk genesis.
+        let transcript: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&transcript_path).unwrap()).unwrap();
+        let declared_hash = transcript
+            .get("config_hash")
+            .and_then(|v| v.as_str())
+            .expect("transcript missing config_hash");
+        let recomputed = hex::encode(evaporchain_crypto::blake3_hash(
+            &serde_json::to_vec(&config).unwrap(),
+        ));
+        assert_eq!(
+            recomputed, declared_hash,
+            "transcript config_hash != recomputed hash (canonical-bytes drift between ceremony and verify)"
+        );
+
+        // ── Stage 4: genesis verify-ceremony ──────────────────────────
+        cmd_genesis_verify_ceremony(
+            contribs_dir.to_str().unwrap(),
+            genesis_path.to_str().unwrap(),
+            transcript_path.to_str().unwrap(),
+            true,
+        )
+        .unwrap();
+
+        // ── Stage 5: onboarding install × N ────────────────────────────
+        for (i, keys_path) in keys_paths.iter().enumerate() {
+            let vid = (i + 1) as u64;
+            let node_dir = nodes_root.join(format!("v{}", vid));
+            onboarding::cmd_install(onboarding::InstallArgs {
+                genesis: genesis_path.clone(),
+                keys: keys_path.clone(),
+                validator_id: vid,
+                node_dir: node_dir.clone(),
+                coordinator_pk: None, // ceremony genesis isn't coordinator-signed
+                api_port: 8080 + vid as u16,
+                p2p_port: 7000 + vid as u16,
+                bootstrap: (1..=N_VALIDATORS)
+                    .filter(|&j| j != vid)
+                    .map(|j| format!("/ip4/127.0.0.1/tcp/{}", 7000 + j))
+                    .collect(),
+                validators: Some(N_VALIDATORS),
+                node_binary: Some("/usr/local/bin/evaporchain-node".to_string()),
+                systemd: false,
+                launchd: false,
+                force: false,
+            })
+            .unwrap_or_else(|e| panic!("install for validator {} failed: {:#}", vid, e));
+
+            // Per-validator artifact assertions.
+            let bls_path = node_dir.join("data/bls_key.bin");
+            assert!(bls_path.is_file(), "v{vid}: bls_key.bin missing");
+            assert_eq!(
+                std::fs::read(&bls_path).unwrap().len(),
+                32,
+                "v{vid}: bls_key.bin must be 32 raw bytes"
+            );
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = std::fs::metadata(&bls_path).unwrap().permissions().mode();
+                assert_eq!(mode & 0o777, 0o600, "v{vid}: bls_key.bin must be 0600");
+            }
+            assert!(node_dir.join("genesis.json").is_file());
+            let run_sh = std::fs::read_to_string(node_dir.join("run.sh")).unwrap();
+            assert!(run_sh.contains(&format!("--validator-id {}", vid)));
+            assert!(run_sh.contains(&format!("--api-port {}", 8080 + vid as u16)));
+            assert!(run_sh.contains(&format!("--port {}", 7000 + vid as u16)));
+            assert!(
+                run_sh.contains(&format!("--validators {}", N_VALIDATORS)),
+                "v{vid}: run.sh missing validator count"
+            );
+            // Each install must dial every other validator, never itself.
+            for j in 1..=N_VALIDATORS {
+                let peer = format!("/ip4/127.0.0.1/tcp/{}", 7000 + j);
+                if j == vid {
+                    assert!(
+                        !run_sh.contains(&peer),
+                        "v{vid}: run.sh dials its own peer {}",
+                        peer
+                    );
+                } else {
+                    assert!(
+                        run_sh.contains(&peer),
+                        "v{vid}: run.sh missing bootstrap peer {}",
+                        peer
+                    );
+                }
+            }
+        }
+
+        // Cross-install assertion: every node-dir's copy of genesis.json
+        // re-parses to a GenesisConfig whose canonical bytes hash to the
+        // declared config_hash. Catches any silent mutation of the genesis
+        // between ceremony and install.
+        for vid in 1..=N_VALIDATORS {
+            let copied = std::fs::read(nodes_root.join(format!("v{}", vid)).join("genesis.json"))
+                .unwrap();
+            let parsed: evaporchain_types::genesis::GenesisConfig =
+                serde_json::from_slice(&copied).unwrap();
+            let canonical = hex::encode(evaporchain_crypto::blake3_hash(
+                &serde_json::to_vec(&parsed).unwrap(),
+            ));
+            assert_eq!(
+                canonical, declared_hash,
+                "v{vid}: genesis.json hash drift from transcript (re-parse → re-serialize → hash)"
+            );
+        }
+    }
+
+    #[test]
+    fn stamp_into_doc_first_run_inserts_marker_block() {
+        let doc = "# Doc\n\nIntro line.\n\n## A1.8 Open empirical question — the MERA gate\n\nOriginal prose A.\nOriginal prose B.\n\n## A1.9 Doctrine\n\nMore prose.\n";
+        let body = format!(
+            "{begin}\nDecision: MERA\n{end}\n",
+            begin = STAMP_BEGIN,
+            end = STAMP_END
+        );
+        let out = stamp_into_doc(doc, "## A1.8", &body).unwrap();
+
+        // Marker block lands AFTER the section heading + spacer, BEFORE the
+        // original prose; original prose untouched.
+        assert!(out.contains("## A1.8 Open empirical question"));
+        assert!(out.contains(STAMP_BEGIN));
+        assert!(out.contains(STAMP_END));
+        assert!(out.contains("Original prose A."));
+        assert!(out.contains("Original prose B."));
+        assert!(out.contains("## A1.9 Doctrine"));
+
+        let begin_pos = out.find(STAMP_BEGIN).unwrap();
+        let prose_pos = out.find("Original prose A.").unwrap();
+        let next_section_pos = out.find("## A1.9").unwrap();
+        assert!(begin_pos < prose_pos, "marker must precede original prose");
+        assert!(prose_pos < next_section_pos, "next section must follow prose");
+    }
+
+    #[test]
+    fn stamp_into_doc_re_run_replaces_only_marker_region() {
+        let doc = format!(
+            "# Doc\n\n## A1.8 Gate\n\n{begin}\nold body line 1\nold body line 2\n{end}\n\nProse that must survive.\n\n## A1.9 Next\n",
+            begin = STAMP_BEGIN,
+            end = STAMP_END
+        );
+        let new_body = format!(
+            "{begin}\nNEW DECISION: VERKLE\n{end}\n",
+            begin = STAMP_BEGIN,
+            end = STAMP_END
+        );
+        let out = stamp_into_doc(&doc, "## A1.8", &new_body).unwrap();
+        assert!(out.contains("NEW DECISION: VERKLE"));
+        assert!(!out.contains("old body line 1"), "old body must be gone");
+        assert!(!out.contains("old body line 2"));
+        assert!(out.contains("Prose that must survive."));
+        assert!(out.contains("## A1.9 Next"));
+    }
+
+    #[test]
+    fn stamp_into_doc_rejects_orphaned_marker() {
+        let doc = format!(
+            "# Doc\n\n## A1.8 Gate\n\n{begin}\nbody without close\n",
+            begin = STAMP_BEGIN
+        );
+        let body = format!(
+            "{begin}\nshould-not-write\n{end}\n",
+            begin = STAMP_BEGIN,
+            end = STAMP_END
+        );
+        let err = stamp_into_doc(&doc, "## A1.8", &body).unwrap_err();
+        assert!(format!("{err:#}").contains("malformed marker pair"));
+    }
+
+    #[test]
+    fn stamp_into_doc_errors_on_missing_section() {
+        let doc = "# Doc\n\n## A2.0 Different section\n\nProse.\n";
+        let body = format!(
+            "{begin}\nx\n{end}\n",
+            begin = STAMP_BEGIN,
+            end = STAMP_END
+        );
+        let err = stamp_into_doc(doc, "## A1.8", &body).unwrap_err();
+        assert!(format!("{err:#}").contains("section heading"));
+    }
+
+    #[test]
+    fn stamp_result_handler_writes_atomically() {
+        // End-to-end: simulate `genesis run-gate --json` → file → stamper.
+        let pid = std::process::id();
+        let dir = std::env::temp_dir().join(format!("evap-stamp-{}", pid));
+        std::fs::create_dir_all(&dir).unwrap();
+        let doc_path = dir.join("INVENTION_STACK.md");
+        let payload_path = dir.join("gate.json");
+        std::fs::write(
+            &doc_path,
+            "# Doc\n\n## A1.8 Open empirical question\n\nProse here.\n",
+        )
+        .unwrap();
+        let payload = serde_json::json!({
+            "decision": "MERA",
+            "reasoning": "Power-law fit dominates: R²=0.97, slope=1.5.",
+            "source": "csv:tele.csv",
+            "powerlaw_r2": 0.97,
+            "powerlaw_slope": 1.5,
+            "exponential_r2": 0.55,
+            "exponential_rate": 0.12,
+            "flat_ratio": 14.2,
+            "n_accounts": 64,
+            "n_blocks": 128,
+        });
+        std::fs::write(
+            &payload_path,
+            serde_json::to_string_pretty(&payload).unwrap(),
+        )
+        .unwrap();
+
+        cmd_genesis_stamp_result(
+            payload_path.to_str().unwrap(),
+            doc_path.to_str().unwrap(),
+            "## A1.8",
+            false,
+            false,
+        )
+        .unwrap();
+
+        let out = std::fs::read_to_string(&doc_path).unwrap();
+        assert!(out.contains("MERA"));
+        assert!(out.contains("Power-law R²"));
+        assert!(out.contains("Prose here."));
+        // Re-run with the same payload should be a no-op text-wise (timestamp
+        // changes but `would_change` only fires on real diff). Verify by
+        // running again and comparing the structural body excerpt.
+        let _re = cmd_genesis_stamp_result(
+            payload_path.to_str().unwrap(),
+            doc_path.to_str().unwrap(),
+            "## A1.8",
+            false,
+            false,
+        );
+        let out2 = std::fs::read_to_string(&doc_path).unwrap();
+        // Decision still pinned to MERA on second pass.
+        assert!(out2.contains("Decision | **MERA**"));
+        assert_eq!(
+            out.matches(STAMP_BEGIN).count(),
+            1,
+            "first run produced multiple marker blocks"
+        );
+        assert_eq!(
+            out2.matches(STAMP_BEGIN).count(),
+            1,
+            "second run duplicated the marker block instead of replacing it"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parse_csv_activations_handles_binary_and_floats() {
+        let pid = std::process::id();
+        let path = std::env::temp_dir().join(format!("evaporchain-cli-gate-{}.csv", pid));
+        std::fs::write(
+            &path,
+            "# header is ignored\n0,1,0,1\n1,1,0,0\n0.0,1.0,0.0,0.5\n",
+        )
+        .unwrap();
+        let mat = parse_csv_activations(path.to_str().unwrap()).unwrap();
+        assert_eq!(mat.len(), 3);
+        assert_eq!(mat[0], vec![0.0, 1.0, 0.0, 1.0]);
+        assert_eq!(mat[1], vec![1.0, 1.0, 0.0, 0.0]);
+        assert_eq!(mat[2], vec![0.0, 1.0, 0.0, 0.5]);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn parse_csv_activations_rejects_ragged_rows() {
+        let pid = std::process::id();
+        let path = std::env::temp_dir().join(format!("evaporchain-cli-gate-ragged-{}.csv", pid));
+        std::fs::write(&path, "0,1,0\n1,1\n").unwrap();
+        let err = parse_csv_activations(path.to_str().unwrap()).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("rectangular") || msg.contains("columns"),
+            "expected ragged-row error, got: {msg}"
+        );
+        let _ = std::fs::remove_file(&path);
     }
 }

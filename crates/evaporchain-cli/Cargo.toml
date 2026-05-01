@@ -34,3 +34,4 @@ evaporchain-types = { path = "../evaporchain-types" }
 evaporchain-execution = { path = "../evaporchain-execution" }
 evaporchain-crypto = { path = "../evaporchain-crypto" }
 evaporchain-state = { path = "../evaporchain-state" }
+evaporchain-mera = { path = "../evaporchain-mera" }

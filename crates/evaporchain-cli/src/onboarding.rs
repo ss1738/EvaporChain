@@ -317,6 +317,310 @@ pub fn cmd_verify(genesis_path: &Path, coordinator_pk_path: &Path) -> Result<()>
     Ok(())
 }
 
+// ─────────────────────────── Operator-side installer ─────────────────────
+
+pub struct InstallArgs {
+    pub genesis: std::path::PathBuf,
+    pub keys: std::path::PathBuf,
+    pub validator_id: u64,
+    pub node_dir: std::path::PathBuf,
+    pub coordinator_pk: Option<std::path::PathBuf>,
+    pub api_port: u16,
+    pub p2p_port: u16,
+    pub bootstrap: Vec<String>,
+    pub validators: Option<u64>,
+    pub node_binary: Option<String>,
+    pub systemd: bool,
+    pub launchd: bool,
+    pub force: bool,
+}
+
+/// Lay out a runnable validator node directory from a signed genesis +
+/// the operator's keygen bundle. The node binary expects:
+///
+/// ```text
+/// <node-dir>/
+///   genesis.json           ← coordinator-signed copy
+///   data/bls_key.bin       ← raw 32-byte BLS secret, mode 0600
+///   logs/                  ← created empty
+///   run.sh                 ← invokes evaporchain-node with the right flags
+///   evaporchain.service    ← optional, --systemd
+///   evaporchain.plist      ← optional, --launchd
+/// ```
+///
+/// Re-runnable: pass `--force` to overwrite. Defensive otherwise — refuses
+/// to clobber an existing layout silently.
+pub fn cmd_install(args: InstallArgs) -> Result<()> {
+    use evaporchain_crypto::BlsKeypair;
+
+    // 1. Load + parse genesis.
+    let genesis_text = std::fs::read_to_string(&args.genesis)
+        .with_context(|| format!("read {}", args.genesis.display()))?;
+    let config: GenesisConfig =
+        serde_json::from_str(&genesis_text).context("parse genesis JSON")?;
+
+    // 2. Optional signature verification — strongly recommended; only
+    // skipped when the operator has out-of-band assurance (e.g. checksum).
+    if let Some(ref pk_path) = args.coordinator_pk {
+        let pk_hex = std::fs::read_to_string(pk_path)
+            .with_context(|| format!("read {}", pk_path.display()))?;
+        let pk_bytes = parse_hex_strict(&pk_hex, 1952, "coordinator public key")?;
+        verify_signed_genesis(&config, &pk_bytes).with_context(|| {
+            format!(
+                "genesis at {} did not verify against {}",
+                args.genesis.display(),
+                pk_path.display()
+            )
+        })?;
+    }
+
+    // 3. Load keygen bundle, derive BLS pubkey, match to genesis entry.
+    let keys_text = std::fs::read_to_string(&args.keys)
+        .with_context(|| format!("read {}", args.keys.display()))?;
+    let bundle: serde_json::Value =
+        serde_json::from_str(&keys_text).context("parse keys JSON")?;
+    let bls_sk_hex = bundle
+        .get("bls")
+        .and_then(|b| b.get("secret_key"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("keys file missing bls.secret_key"))?;
+    let bls_sk_bytes = hex::decode(bls_sk_hex.trim_start_matches("0x"))
+        .context("bls.secret_key not hex")?;
+    let bls_kp = BlsKeypair::from_secret_bytes(&bls_sk_bytes)
+        .context("BLS secret is not a valid 32-byte scalar")?;
+    let derived_pk_hex = hex::encode(&bls_kp.public_key_bytes().0);
+
+    let entry = config
+        .validators
+        .iter()
+        .find(|v| v.id == args.validator_id)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "validator_id={} not found in genesis at {}",
+                args.validator_id,
+                args.genesis.display()
+            )
+        })?;
+    let expected_pk_hex = entry
+        .bls_public_key
+        .as_deref()
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "genesis validator id={} has no bls_public_key — re-run the ceremony",
+                args.validator_id
+            )
+        })?
+        .trim_start_matches("0x")
+        .to_lowercase();
+    if derived_pk_hex.to_lowercase() != expected_pk_hex {
+        anyhow::bail!(
+            "BLS pubkey mismatch for validator_id={}: keys file derives {}, genesis has {}",
+            args.validator_id,
+            derived_pk_hex,
+            expected_pk_hex
+        );
+    }
+
+    // 4. Lay out the node directory. Refuse to clobber unless --force.
+    if args.node_dir.exists() && !args.force {
+        let any_content = std::fs::read_dir(&args.node_dir)
+            .map(|mut it| it.next().is_some())
+            .unwrap_or(false);
+        if any_content {
+            anyhow::bail!(
+                "{} exists and is non-empty — pass --force to overwrite",
+                args.node_dir.display()
+            );
+        }
+    }
+    let data_dir = args.node_dir.join("data");
+    let logs_dir = args.node_dir.join("logs");
+    std::fs::create_dir_all(&data_dir)
+        .with_context(|| format!("mkdir {}", data_dir.display()))?;
+    std::fs::create_dir_all(&logs_dir)
+        .with_context(|| format!("mkdir {}", logs_dir.display()))?;
+
+    // 5. Write BLS secret to <data-dir>/bls_key.bin (mode 0600).
+    let bls_path = data_dir.join("bls_key.bin");
+    write_secret_0600(&bls_path, &bls_sk_bytes)?;
+
+    // 6. Copy the genesis into the node-dir so a single bundle is
+    // self-contained even if the operator moves the original.
+    let genesis_dst = args.node_dir.join("genesis.json");
+    std::fs::write(&genesis_dst, &genesis_text)
+        .with_context(|| format!("write {}", genesis_dst.display()))?;
+
+    // 7. Resolve --validators count: prefer explicit, else genesis size.
+    let validator_count = args
+        .validators
+        .unwrap_or_else(|| config.validators.len() as u64);
+
+    // 8. Emit run.sh — the canonical start command. Quoting is conservative
+    // (no shell expansion of bootstrap multiaddrs).
+    let node_binary = args
+        .node_binary
+        .as_deref()
+        .unwrap_or("evaporchain-node");
+    let mut bootstrap_lines = String::new();
+    for ma in &args.bootstrap {
+        bootstrap_lines.push_str(&format!("  --bootstrap '{}' \\\n", ma));
+    }
+    let chain_id_for_log = &config.chain_params.chain_id;
+    let abs_node_dir = args
+        .node_dir
+        .canonicalize()
+        .unwrap_or_else(|_| args.node_dir.clone());
+    let abs_genesis = genesis_dst
+        .canonicalize()
+        .unwrap_or_else(|_| genesis_dst.clone());
+    let abs_data = data_dir.canonicalize().unwrap_or_else(|_| data_dir.clone());
+    let run_sh = format!(
+        "#!/usr/bin/env bash\n\
+         # Generated by `evaporchain onboarding install` for {chain}.\n\
+         # Re-run the installer with --force to regenerate.\n\
+         set -euo pipefail\n\
+         cd '{node_dir}'\n\
+         exec '{bin}' \\\n  \
+           --tendermint \\\n  \
+           --network \\\n  \
+           --api \\\n  \
+           --validator-id {vid} \\\n  \
+           --validators {vcount} \\\n  \
+           --node-id v{vid} \\\n  \
+           --port {p2p} \\\n  \
+           --api-port {api} \\\n  \
+           --data-dir '{data}' \\\n  \
+           --genesis-config '{genesis}' \\\n\
+{boot}\
+           --startup-delay 1500\n",
+        chain = chain_id_for_log,
+        node_dir = abs_node_dir.display(),
+        bin = node_binary,
+        vid = args.validator_id,
+        vcount = validator_count,
+        p2p = args.p2p_port,
+        api = args.api_port,
+        data = abs_data.display(),
+        genesis = abs_genesis.display(),
+        boot = bootstrap_lines,
+    );
+    let run_path = args.node_dir.join("run.sh");
+    std::fs::write(&run_path, run_sh).with_context(|| format!("write {}", run_path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&run_path, std::fs::Permissions::from_mode(0o755))
+            .with_context(|| format!("chmod 0755 {}", run_path.display()))?;
+    }
+
+    // 9. Optional service files. systemd unit:
+    if args.systemd {
+        let unit = format!(
+            "[Unit]\n\
+             Description=EvaporChain validator (chain={chain}, vid={vid})\n\
+             After=network-online.target\n\
+             Wants=network-online.target\n\
+             \n\
+             [Service]\n\
+             Type=simple\n\
+             ExecStart={run}\n\
+             Restart=on-failure\n\
+             RestartSec=5s\n\
+             # Run as the operator, not root. Override before installing the unit.\n\
+             # User=evaporchain\n\
+             # Group=evaporchain\n\
+             WorkingDirectory={node_dir}\n\
+             StandardOutput=append:{logs}/node.log\n\
+             StandardError=append:{logs}/node.err\n\
+             # Hardening: read-only system, /tmp private, no new privileges.\n\
+             NoNewPrivileges=yes\n\
+             ProtectSystem=strict\n\
+             ProtectHome=yes\n\
+             PrivateTmp=yes\n\
+             ReadWritePaths={node_dir}\n\
+             \n\
+             [Install]\n\
+             WantedBy=multi-user.target\n",
+            chain = chain_id_for_log,
+            vid = args.validator_id,
+            run = run_path.canonicalize().unwrap_or_else(|_| run_path.clone()).display(),
+            node_dir = abs_node_dir.display(),
+            logs = logs_dir.canonicalize().unwrap_or_else(|_| logs_dir.clone()).display(),
+        );
+        let unit_path = args.node_dir.join("evaporchain.service");
+        std::fs::write(&unit_path, unit)
+            .with_context(|| format!("write {}", unit_path.display()))?;
+    }
+
+    // launchd plist (macOS):
+    if args.launchd {
+        let plist = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.evaporchain.validator.{vid}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{run}</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>{node_dir}</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>{logs}/node.log</string>
+    <key>StandardErrorPath</key>
+    <string>{logs}/node.err</string>
+</dict>
+</plist>
+"#,
+            vid = args.validator_id,
+            run = run_path.canonicalize().unwrap_or_else(|_| run_path.clone()).display(),
+            node_dir = abs_node_dir.display(),
+            logs = logs_dir.canonicalize().unwrap_or_else(|_| logs_dir.clone()).display(),
+        );
+        let plist_path = args.node_dir.join("evaporchain.plist");
+        std::fs::write(&plist_path, plist)
+            .with_context(|| format!("write {}", plist_path.display()))?;
+    }
+
+    // 10. Operator-facing summary.
+    println!("OK: validator {} installed at {}", args.validator_id, abs_node_dir.display());
+    println!("  chain_id:    {}", chain_id_for_log);
+    println!("  bls_pubkey:  {}", &derived_pk_hex[..32.min(derived_pk_hex.len())]);
+    println!("  data_dir:    {}", abs_data.display());
+    println!("  genesis:     {}", abs_genesis.display());
+    println!("  api_port:    {}", args.api_port);
+    println!("  p2p_port:    {}", args.p2p_port);
+    if !args.bootstrap.is_empty() {
+        println!("  bootstrap:   {} peer(s)", args.bootstrap.len());
+    }
+    println!();
+    println!("Next steps:");
+    println!("  cd {} && ./run.sh", abs_node_dir.display());
+    if args.systemd {
+        println!(
+            "  sudo cp {}/evaporchain.service /etc/systemd/system/",
+            abs_node_dir.display()
+        );
+        println!("  sudo systemctl daemon-reload && sudo systemctl enable --now evaporchain");
+    }
+    if args.launchd {
+        println!(
+            "  cp {}/evaporchain.plist ~/Library/LaunchAgents/",
+            abs_node_dir.display()
+        );
+        println!(
+            "  launchctl load ~/Library/LaunchAgents/evaporchain.plist"
+        );
+    }
+    Ok(())
+}
+
 /// Pure verification helper. Returns Err with a human reason on any failure;
 /// this is the same logic the node uses on startup so behaviour stays aligned.
 pub fn verify_signed_genesis(
@@ -424,5 +728,226 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(&genesis_path).unwrap()).unwrap();
         assert!(verify_signed_genesis(&config, other.public_key()).is_err(),
             "wrong pk must not verify");
+    }
+
+    /// Build a genesis whose validator's `bls_public_key` matches a real BLS
+    /// keypair we control, so the installer's pubkey-match check passes.
+    /// Returns (tmpdir, genesis_path, pk_path, keys_path).
+    fn build_matched_genesis(
+        validator_id: u64,
+    ) -> (
+        TmpDir,
+        std::path::PathBuf,
+        std::path::PathBuf,
+        std::path::PathBuf,
+    ) {
+        use evaporchain_crypto::BlsKeypair;
+        let tmp = tempdir();
+        cmd_generate_coordinator(tmp.path()).unwrap();
+        let pk_path = tmp.path().join("coordinator-pk.hex");
+        let sk_path = tmp.path().join("coordinator-sk.hex");
+
+        let bls = BlsKeypair::generate();
+        let bls_pk_hex = hex::encode(&bls.public_key_bytes().0);
+        let bls_sk_hex = hex::encode(&bls.secret_key_bytes().0);
+
+        let manifest_path = tmp.path().join("validators.json");
+        std::fs::write(
+            &manifest_path,
+            serde_json::json!({
+                "validators": [{
+                    "id": validator_id, "name": "alpha",
+                    "bls_public_key": bls_pk_hex,
+                    "stake": 200_000, "balance": 1_000_000,
+                }]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let genesis_path = tmp.path().join("genesis.json");
+        cmd_build_genesis(
+            &manifest_path,
+            &sk_path,
+            "evaporchain-install-1",
+            &genesis_path,
+            2000,
+            10_000_000,
+            100,
+        )
+        .unwrap();
+
+        let keys_path = tmp.path().join("keys.json");
+        std::fs::write(
+            &keys_path,
+            serde_json::json!({
+                "bls": {
+                    "public_key": bls_pk_hex,
+                    "secret_key": bls_sk_hex,
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        (tmp, genesis_path, pk_path, keys_path)
+    }
+
+    #[test]
+    fn install_lays_out_runnable_node_dir() {
+        let (tmp, genesis_path, pk_path, keys_path) = build_matched_genesis(1);
+        let node_dir = tmp.path().join("node1");
+        cmd_install(InstallArgs {
+            genesis: genesis_path.clone(),
+            keys: keys_path,
+            validator_id: 1,
+            node_dir: node_dir.clone(),
+            coordinator_pk: Some(pk_path.clone()),
+            api_port: 8080,
+            p2p_port: 7000,
+            bootstrap: vec![
+                "/ip4/127.0.0.1/tcp/7001".to_string(),
+                "/ip4/127.0.0.1/tcp/7002".to_string(),
+            ],
+            validators: None,
+            node_binary: Some("/usr/local/bin/evaporchain-node".to_string()),
+            systemd: true,
+            launchd: true,
+            force: false,
+        })
+        .unwrap();
+
+        // Layout assertions.
+        let bls_path = node_dir.join("data/bls_key.bin");
+        assert!(bls_path.is_file(), "bls_key.bin missing");
+        let bls_bytes = std::fs::read(&bls_path).unwrap();
+        assert_eq!(bls_bytes.len(), 32, "bls_key.bin must be 32 raw bytes");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&bls_path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600, "bls_key.bin must be 0600");
+        }
+
+        assert!(node_dir.join("genesis.json").is_file());
+        assert!(node_dir.join("logs").is_dir());
+
+        let run = std::fs::read_to_string(node_dir.join("run.sh")).unwrap();
+        assert!(run.starts_with("#!/usr/bin/env bash"));
+        assert!(run.contains("--validator-id 1"));
+        assert!(run.contains("--api-port 8080"));
+        assert!(run.contains("--port 7000"));
+        assert!(run.contains("/usr/local/bin/evaporchain-node"));
+        assert!(run.contains("/ip4/127.0.0.1/tcp/7001"));
+        assert!(run.contains("/ip4/127.0.0.1/tcp/7002"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(node_dir.join("run.sh"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o111, 0o111, "run.sh must be executable");
+        }
+
+        let unit = std::fs::read_to_string(node_dir.join("evaporchain.service")).unwrap();
+        assert!(unit.contains("[Unit]"));
+        assert!(unit.contains("[Service]"));
+        assert!(unit.contains("evaporchain-install-1"));
+
+        let plist = std::fs::read_to_string(node_dir.join("evaporchain.plist")).unwrap();
+        assert!(plist.contains("com.evaporchain.validator.1"));
+    }
+
+    #[test]
+    fn install_rejects_mismatched_bls_keys() {
+        use evaporchain_crypto::BlsKeypair;
+        // Genesis built with one BLS key; operator hands install a different
+        // BLS secret. Installer must refuse rather than silently set up a
+        // node that will fail consensus quorum.
+        let (tmp, genesis_path, pk_path, _orig_keys) = build_matched_genesis(1);
+
+        let other = BlsKeypair::generate();
+        let other_keys = tmp.path().join("attacker-keys.json");
+        std::fs::write(
+            &other_keys,
+            serde_json::json!({
+                "bls": {
+                    "public_key": hex::encode(&other.public_key_bytes().0),
+                    "secret_key": hex::encode(&other.secret_key_bytes().0),
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let node_dir = tmp.path().join("node-attacker");
+        let err = cmd_install(InstallArgs {
+            genesis: genesis_path,
+            keys: other_keys,
+            validator_id: 1,
+            node_dir: node_dir.clone(),
+            coordinator_pk: Some(pk_path),
+            api_port: 8080,
+            p2p_port: 7000,
+            bootstrap: vec![],
+            validators: None,
+            node_binary: None,
+            systemd: false,
+            launchd: false,
+            force: false,
+        })
+        .expect_err("mismatched BLS key must be rejected");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("BLS pubkey mismatch"),
+            "error must name BLS pubkey mismatch, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn install_refuses_to_clobber_without_force() {
+        let (tmp, genesis_path, pk_path, keys_path) = build_matched_genesis(1);
+        let node_dir = tmp.path().join("node1");
+        std::fs::create_dir_all(&node_dir).unwrap();
+        std::fs::write(node_dir.join("PRECIOUS.txt"), "do not delete").unwrap();
+        let err = cmd_install(InstallArgs {
+            genesis: genesis_path.clone(),
+            keys: keys_path.clone(),
+            validator_id: 1,
+            node_dir: node_dir.clone(),
+            coordinator_pk: Some(pk_path.clone()),
+            api_port: 8080,
+            p2p_port: 7000,
+            bootstrap: vec![],
+            validators: None,
+            node_binary: None,
+            systemd: false,
+            launchd: false,
+            force: false,
+        })
+        .expect_err("non-empty node-dir without --force must abort");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("--force"), "error must mention --force, got: {msg}");
+        // Pre-existing file untouched.
+        assert!(node_dir.join("PRECIOUS.txt").is_file());
+
+        // With --force the install proceeds.
+        cmd_install(InstallArgs {
+            genesis: genesis_path,
+            keys: keys_path,
+            validator_id: 1,
+            node_dir: node_dir.clone(),
+            coordinator_pk: Some(pk_path),
+            api_port: 8080,
+            p2p_port: 7000,
+            bootstrap: vec![],
+            validators: None,
+            node_binary: None,
+            systemd: false,
+            launchd: false,
+            force: true,
+        })
+        .unwrap();
+        assert!(node_dir.join("data/bls_key.bin").is_file());
     }
 }
