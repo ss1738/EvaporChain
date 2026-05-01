@@ -232,6 +232,19 @@ pub struct GenesisConfig {
     /// New nodes joining after genesis MUST include this to defend against long-range attacks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trusted_checkpoint: Option<GenesisCheckpoint>,
+
+    /// Coordinator's ML-DSA-65 public key (hex). Set by the genesis ceremony
+    /// coordinator and signed over the canonical bytes of every other field.
+    /// Closes K-07/K-08 by giving every operator a way to detect tampering of
+    /// the genesis JSON between the ceremony and node startup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coordinator_pk: Option<String>,
+
+    /// Coordinator's ML-DSA-65 signature (hex) over the canonical bytes of
+    /// every other field of this struct (i.e. with `coordinator_signature`
+    /// stripped). Verified by node startup and `evaporchain onboarding verify`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coordinator_signature: Option<String>,
 }
 
 /// A weak subjectivity checkpoint embedded in genesis config.
@@ -380,7 +393,24 @@ impl GenesisConfig {
                 "/ip4/127.0.0.1/tcp/9001".into(),
             ],
             trusted_checkpoint: None,
+            coordinator_pk: None,
+            coordinator_signature: None,
         }
+    }
+
+    /// Serialize the config to deterministic bytes for coordinator signing,
+    /// with `coordinator_signature` always set to `None` so the signature
+    /// covers every other field exactly. Field order is fixed by the struct
+    /// declaration; `serde_json` preserves it. The `coordinator_pk` is
+    /// included so its value is committed alongside the rest of the config.
+    pub fn canonical_signing_bytes(&self) -> Vec<u8> {
+        let mut clone = self.clone();
+        clone.coordinator_signature = None;
+        // Pretty-printing is deliberate: the resulting bytes are stable across
+        // round-trips through any JSON parser that re-emits the same struct
+        // ordering, and humans can diff candidate genesis files against the
+        // exact bytes that were signed.
+        serde_json::to_vec(&clone).expect("GenesisConfig is always JSON-serializable")
     }
 }
 

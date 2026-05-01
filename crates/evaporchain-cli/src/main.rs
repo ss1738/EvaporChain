@@ -7,6 +7,8 @@ use evaporchain_crypto::{BlsKeypair, MlDsaKeypair, VrfKeypair};
 use evaporchain_execution::genesis::{initialize_genesis, load_genesis_config};
 use evaporchain_types::genesis::GenesisConfig;
 
+mod onboarding;
+
 // ──────────────────────────── CLI Arguments ──────────────────────────────
 
 #[derive(Parser)]
@@ -134,11 +136,33 @@ pub enum Commands {
         action: GenesisAction,
     },
 
+    /// Multi-node local testnet orchestrator: init, up, status, down.
+    ///
+    /// Differs from `devnet` (which spawns nodes from scratch each run with
+    /// no shared genesis): `testnet init` produces a reproducible directory
+    /// layout with per-validator BLS keypairs, a shared genesis config that
+    /// pre-registers every validator's BLS pubkey, and persistent data
+    /// directories. `testnet up` spawns nodes against that layout and
+    /// writes pid files; `testnet status` polls every node's API; `testnet
+    /// down` kills the recorded pids.
+    Testnet {
+        #[command(subcommand)]
+        action: TestnetAction,
+    },
+
     /// Generate a validator keypair bundle (BLS + ML-DSA + VRF)
     Keygen {
         /// Output file path (default: stdout)
         #[arg(long)]
         output: Option<String>,
+    },
+
+    /// Multi-validator mainnet onboarding flow (closes audit K-07/K-08).
+    /// Produces a single coordinator-signed genesis-config.json that every
+    /// validator passes to its node via `--genesis-config <path>`.
+    Onboarding {
+        #[command(subcommand)]
+        action: OnboardingAction,
     },
 
     /// Encrypt a plaintext bls_key.bin into the EVK1 encrypted format.
@@ -293,6 +317,104 @@ pub enum GenesisAction {
         /// Path to genesis JSON file
         #[arg()]
         path: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum TestnetAction {
+    /// Generate a fresh testnet layout: per-validator BLS keys, shared
+    /// genesis (pre-registering every validator), per-validator data dirs.
+    Init {
+        /// Where to lay out the testnet (directory will be created).
+        #[arg(long, default_value = "./testnet")]
+        out: String,
+        /// Number of validators (≥ 1). 4 is the minimum for n>3f tolerance.
+        #[arg(long, default_value = "4")]
+        validators: u32,
+        /// Chain id baked into the genesis config.
+        #[arg(long, default_value = "evaporchain-testnet-1")]
+        chain_id: String,
+        /// Initial total supply (split equally among validators + faucet).
+        #[arg(long, default_value = "1000000000")]
+        total_supply: u64,
+        /// Per-validator stake at genesis.
+        #[arg(long, default_value = "1000000")]
+        stake: u64,
+        /// Block interval (ms) for this testnet.
+        #[arg(long, default_value = "2000")]
+        block_interval_ms: u64,
+        /// Base P2P port (validator i listens on base+i).
+        #[arg(long, default_value = "9000")]
+        p2p_base: u16,
+        /// Base API port (validator i listens on base+i).
+        #[arg(long, default_value = "8080")]
+        api_base: u16,
+        /// If the output directory already exists, remove and recreate it.
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Spawn every validator in a previously-initialised testnet directory.
+    /// Records per-validator pid files so `testnet down` can stop them.
+    Up {
+        /// Testnet layout directory (the same `--out` passed to `init`).
+        #[arg(long, default_value = "./testnet")]
+        dir: String,
+        /// Write each node's stdout+stderr to its data dir's `node.log`.
+        #[arg(long)]
+        split_logs: bool,
+    },
+
+    /// Poll every node's `/api/status` endpoint and print a summary table.
+    Status {
+        /// Testnet layout directory.
+        #[arg(long, default_value = "./testnet")]
+        dir: String,
+    },
+
+    /// Kill every node recorded in the testnet layout's pid files.
+    Down {
+        /// Testnet layout directory.
+        #[arg(long, default_value = "./testnet")]
+        dir: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum OnboardingAction {
+    /// Generate the coordinator ML-DSA-65 keypair (writes coordinator-pk.hex
+    /// and coordinator-sk.hex into out_dir).
+    GenerateCoordinator {
+        #[arg(long, default_value = ".")]
+        out_dir: String,
+    },
+
+    /// Build a signed genesis-config.json from a validator manifest and
+    /// coordinator secret key. Refuses to sign an invalid config.
+    BuildGenesis {
+        #[arg(long)]
+        validators: String,
+        #[arg(long)]
+        coordinator_sk: String,
+        #[arg(long)]
+        chain_id: String,
+        #[arg(long)]
+        output: String,
+        #[arg(long, default_value = "2000")]
+        block_interval_ms: u64,
+        #[arg(long, default_value = "1000000000")]
+        total_supply: u64,
+        #[arg(long, default_value = "100000")]
+        min_stake: u64,
+    },
+
+    /// Verify a genesis-config.json against a coordinator pk. Exit 0 valid,
+    /// 1 on any failure.
+    Verify {
+        #[arg(long)]
+        genesis: String,
+        #[arg(long)]
+        coordinator_pk: String,
     },
 }
 
@@ -957,6 +1079,413 @@ async fn cmd_devnet(validators: u32, demo: bool) -> Result<()> {
     Ok(())
 }
 
+// ──────────────────────────── Testnet orchestrator ──────────────────────
+
+#[derive(Serialize, Deserialize)]
+struct TestnetLayout {
+    chain_id: String,
+    validators: u32,
+    p2p_base: u16,
+    api_base: u16,
+    block_interval_ms: u64,
+    stake: u64,
+    /// Path (relative to layout dir) to the shared genesis JSON.
+    genesis_path: String,
+}
+
+fn validator_address(id: u64) -> [u8; 32] {
+    // Deterministic address: id encoded little-endian into the first 8 bytes,
+    // 0xAA pad in the rest. Avoids needing an ML-DSA pubkey just to seat a
+    // validator at genesis — the consensus engine only cares about (id, stake,
+    // bls_pk).
+    let mut a = [0xAAu8; 32];
+    a[..8].copy_from_slice(&id.to_le_bytes());
+    a
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cmd_testnet_init(
+    out: &str,
+    validators: u32,
+    chain_id: &str,
+    total_supply: u64,
+    stake: u64,
+    block_interval_ms: u64,
+    p2p_base: u16,
+    api_base: u16,
+    force: bool,
+) -> Result<()> {
+    use evaporchain_types::genesis::*;
+    use std::path::PathBuf;
+
+    if validators == 0 {
+        anyhow::bail!("--validators must be ≥ 1");
+    }
+
+    let root = PathBuf::from(out);
+    if root.exists() {
+        if force {
+            std::fs::remove_dir_all(&root)
+                .with_context(|| format!("Failed to remove existing layout at {}", out))?;
+        } else {
+            anyhow::bail!(
+                "{} already exists. Pass --force to overwrite, or pick a different --out.",
+                out
+            );
+        }
+    }
+    std::fs::create_dir_all(&root)
+        .with_context(|| format!("Failed to create layout at {}", out))?;
+
+    let mut genesis_validators = Vec::with_capacity(validators as usize);
+    let mut genesis_accounts = Vec::with_capacity(validators as usize + 1);
+
+    for vid in 1..=validators as u64 {
+        let v_dir = root.join(format!("v{}", vid));
+        std::fs::create_dir_all(v_dir.join("data"))
+            .with_context(|| format!("Failed to create v{}/data", vid))?;
+
+        // Generate the BLS keypair for this validator and write the raw
+        // 32-byte secret to <data_dir>/bls_key.bin (mode 0600). The node
+        // binary auto-detects plaintext vs EVK1 by length and looks
+        // inside its --data-dir, so colocating the key there is the
+        // simplest contract. Operator-side encryption is out of scope.
+        let kp = BlsKeypair::generate();
+        let sk_bytes = kp.secret_key_bytes();
+        let sk: &[u8] = &sk_bytes.0;
+        let pk_hex = hex::encode(&kp.public_key_bytes().0);
+        let bls_path = v_dir.join("data").join("bls_key.bin");
+        std::fs::write(&bls_path, &sk)
+            .with_context(|| format!("Failed to write {}", bls_path.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&bls_path, std::fs::Permissions::from_mode(0o600))?;
+        }
+
+        genesis_validators.push(GenesisValidator {
+            id: vid,
+            name: format!("validator-{}", vid),
+            stake,
+            address: validator_address(vid),
+            bls_public_key: Some(pk_hex),
+            p2p_address: Some(format!("/ip4/127.0.0.1/tcp/{}", p2p_base + vid as u16)),
+        });
+
+        genesis_accounts.push(GenesisAccount {
+            address: validator_address(vid),
+            balance: total_supply / (validators as u64 + 1),
+            label: format!("validator-{}-operator", vid),
+        });
+    }
+
+    // Faucet: hold the remaining share so the testnet has a known funded
+    // address tests/demos can transfer from.
+    let faucet_share = total_supply
+        .saturating_sub((total_supply / (validators as u64 + 1)) * (validators as u64));
+    genesis_accounts.push(GenesisAccount {
+        address: [0xFAu8; 32],
+        balance: faucet_share,
+        label: "faucet".into(),
+    });
+
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let config = GenesisConfig {
+        chain_params: ChainParams {
+            chain_id: chain_id.to_string(),
+            block_interval_ms,
+            grace_period: 5,
+            block_gas_limit: 500_000,
+            max_tx_size: 1_048_576,
+            max_txs_per_block: 200,
+            min_validator_stake: stake / 2,
+            unbonding_period: 10,
+        },
+        tokenomics: Tokenomics {
+            total_supply,
+            block_reward: 10,
+            reward_half_life: 100_000,
+            fee_burn_rate: 0.50,
+            staker_fee_share: 0.50,
+            target_staking_apy: 0.05,
+        },
+        genesis_time: format!("{}", now_secs),
+        validators: genesis_validators,
+        accounts: genesis_accounts,
+        objects: vec![],
+        bootstrap_peers: (1..=validators as u64)
+            .map(|vid| format!("/ip4/127.0.0.1/tcp/{}", p2p_base + vid as u16))
+            .collect(),
+        trusted_checkpoint: None,
+        coordinator_pk: None,
+        coordinator_signature: None,
+    };
+
+    let genesis_path = root.join("genesis.json");
+    let json = serde_json::to_string_pretty(&config)?;
+    std::fs::write(&genesis_path, &json)
+        .with_context(|| format!("Failed to write {}", genesis_path.display()))?;
+
+    let layout = TestnetLayout {
+        chain_id: chain_id.to_string(),
+        validators,
+        p2p_base,
+        api_base,
+        block_interval_ms,
+        stake,
+        genesis_path: "genesis.json".into(),
+    };
+    std::fs::write(
+        root.join("layout.json"),
+        serde_json::to_string_pretty(&layout)?,
+    )?;
+
+    println!(
+        "  {} Testnet layout written to {}",
+        "\u{2714}".green().bold(),
+        out
+    );
+    println!("  Validators:   {}", validators);
+    println!("  Chain id:     {}", chain_id);
+    println!(
+        "  P2P ports:    {}–{}",
+        p2p_base + 1,
+        p2p_base + validators as u16
+    );
+    println!(
+        "  API ports:    {}–{}",
+        api_base + 1,
+        api_base + validators as u16
+    );
+    println!(
+        "  Genesis:      {}",
+        genesis_path.display().to_string().white().bold()
+    );
+    println!();
+    println!("  Next: `evaporchain testnet up --dir {}`", out);
+    Ok(())
+}
+
+async fn cmd_testnet_up(dir: &str, split_logs: bool) -> Result<()> {
+    use std::path::PathBuf;
+
+    let root = PathBuf::from(dir);
+    let layout_path = root.join("layout.json");
+    let layout: TestnetLayout = serde_json::from_str(
+        &std::fs::read_to_string(&layout_path)
+            .with_context(|| format!("Failed to read {}", layout_path.display()))?,
+    )
+    .context("layout.json is corrupt — re-run `testnet init`")?;
+
+    let binary = std::env::current_exe()
+        .unwrap_or_else(|_| std::path::PathBuf::from("evaporchain"))
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join("evaporchain-node");
+    if !binary.exists() {
+        anyhow::bail!(
+            "evaporchain-node not found at {:?}. Build it: cargo build --release -p evaporchain-node",
+            binary
+        );
+    }
+
+    let genesis_abs = root.join(&layout.genesis_path).canonicalize()?;
+    let pid_dir = root.join("pids");
+    std::fs::create_dir_all(&pid_dir)?;
+
+    let mut bootstrap = Vec::new();
+    for vid in 1..=layout.validators as u64 {
+        bootstrap.push(format!(
+            "/ip4/127.0.0.1/tcp/{}",
+            layout.p2p_base + vid as u16
+        ));
+    }
+
+    println!(
+        "  {} Spawning {} validators against {}",
+        "".bold(),
+        layout.validators,
+        layout.chain_id.cyan()
+    );
+
+    for vid in 1..=layout.validators {
+        let v_dir = root.join(format!("v{}", vid));
+        let data_dir = v_dir.join("data").canonicalize()?;
+        let api_port = layout.api_base + vid as u16;
+        let p2p_port = layout.p2p_base + vid as u16;
+
+        let mut cmd = std::process::Command::new(&binary);
+        cmd.args([
+            "--tendermint",
+            "--network",
+            "--api",
+            "--validator-id",
+            &vid.to_string(),
+            "--validators",
+            &layout.validators.to_string(),
+            "--node-id",
+            &format!("v{}", vid),
+            "--port",
+            &p2p_port.to_string(),
+            "--api-port",
+            &api_port.to_string(),
+            "--data-dir",
+            &data_dir.to_string_lossy(),
+            "--genesis-config",
+            &genesis_abs.to_string_lossy(),
+            "--startup-delay",
+            "1500",
+        ]);
+        for peer in &bootstrap {
+            // Skip our own listener address so we don't dial ourselves.
+            if peer.ends_with(&format!("/{}", p2p_port)) {
+                continue;
+            }
+            cmd.args(["--bootstrap", peer]);
+        }
+
+        if split_logs {
+            let log_path = v_dir.join("node.log");
+            let log_file = std::fs::File::create(&log_path)
+                .with_context(|| format!("Failed to create {}", log_path.display()))?;
+            let log_clone = log_file.try_clone()?;
+            cmd.stdout(std::process::Stdio::from(log_file))
+                .stderr(std::process::Stdio::from(log_clone));
+        }
+
+        let child = cmd
+            .spawn()
+            .with_context(|| format!("Failed to spawn validator {}", vid))?;
+        let pid = child.id();
+        std::fs::write(pid_dir.join(format!("v{}.pid", vid)), pid.to_string())?;
+        // Detach: forget the Child so the OS reaps it independently of this CLI.
+        std::mem::forget(child);
+
+        println!(
+            "  Started v{} (pid={}, api=:{}, p2p=:{})",
+            vid, pid, api_port, p2p_port
+        );
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+    }
+
+    println!();
+    println!(
+        "  {} Run `evaporchain testnet status --dir {}` to check on the cluster",
+        "\u{2714}".green().bold(),
+        dir
+    );
+    println!(
+        "  {} Run `evaporchain testnet down   --dir {}` to stop it",
+        "".bold(),
+        dir
+    );
+    Ok(())
+}
+
+async fn cmd_testnet_status(dir: &str) -> Result<()> {
+    use std::path::PathBuf;
+
+    let root = PathBuf::from(dir);
+    let layout: TestnetLayout = serde_json::from_str(
+        &std::fs::read_to_string(root.join("layout.json"))
+            .with_context(|| format!("Failed to read {}/layout.json", dir))?,
+    )?;
+
+    println!(
+        "  {} Testnet status ({} validators, chain={})",
+        "".bold(),
+        layout.validators,
+        layout.chain_id.cyan()
+    );
+    println!(
+        "  {:<5} {:>6}  {:>10}  {:>10}  {}",
+        "node", "api", "height", "epoch", "status"
+    );
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()?;
+    for vid in 1..=layout.validators {
+        let api_port = layout.api_base + vid as u16;
+        let url = format!("http://127.0.0.1:{}/api/status", api_port);
+        let line = match client.get(&url).send().await {
+            Ok(resp) if resp.status().is_success() => match resp.json::<StatusResponse>().await {
+                Ok(s) => format!(
+                    "  {:<5} {:>6}  {:>10}  {:>10}  {}",
+                    format!("v{}", vid),
+                    api_port,
+                    s.block_height,
+                    s.epoch,
+                    "up".green()
+                ),
+                Err(_) => format!(
+                    "  {:<5} {:>6}  {:>10}  {:>10}  {}",
+                    format!("v{}", vid),
+                    api_port,
+                    "?",
+                    "?",
+                    "bad-json".yellow()
+                ),
+            },
+            _ => format!(
+                "  {:<5} {:>6}  {:>10}  {:>10}  {}",
+                format!("v{}", vid),
+                api_port,
+                "-",
+                "-",
+                "down".red()
+            ),
+        };
+        println!("{}", line);
+    }
+    Ok(())
+}
+
+fn cmd_testnet_down(dir: &str) -> Result<()> {
+    use std::path::PathBuf;
+
+    let root = PathBuf::from(dir);
+    let pid_dir = root.join("pids");
+    if !pid_dir.exists() {
+        println!(
+            "  {} No pids/ directory under {} — nothing recorded to stop.",
+            "".bold(),
+            dir
+        );
+        return Ok(());
+    }
+
+    let mut count = 0usize;
+    for entry in std::fs::read_dir(&pid_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("pid") {
+            continue;
+        }
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(pid) = content.trim().parse::<i32>() {
+                let killed = unsafe { libc::kill(pid, libc::SIGTERM) };
+                if killed == 0 {
+                    count += 1;
+                    println!(
+                        "  Stopped {} (pid={})",
+                        path.file_stem().and_then(|s| s.to_str()).unwrap_or("?"),
+                        pid
+                    );
+                }
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+    println!();
+    println!("  {} Stopped {} node(s)", "\u{2714}".green().bold(), count);
+    Ok(())
+}
+
 // ──────────────────────────── Genesis ───────────────────────────────────
 
 fn load_genesis_file(path: &str) -> Result<GenesisConfig> {
@@ -1220,6 +1749,8 @@ fn cmd_genesis_create(
         objects: vec![],
         bootstrap_peers: vec![],
         trusted_checkpoint: None,
+        coordinator_pk: None,
+        coordinator_signature: None,
     };
 
     let json = serde_json::to_string_pretty(&config)?;
@@ -1789,6 +2320,32 @@ async fn main() -> Result<()> {
             } => cmd_genesis_add_account(&path, &label, balance, address_byte, cli.json),
             GenesisAction::Finalize { path } => cmd_genesis_finalize(&path, cli.json),
         },
+        Commands::Testnet { action } => match action {
+            TestnetAction::Init {
+                out,
+                validators,
+                chain_id,
+                total_supply,
+                stake,
+                block_interval_ms,
+                p2p_base,
+                api_base,
+                force,
+            } => cmd_testnet_init(
+                &out,
+                validators,
+                &chain_id,
+                total_supply,
+                stake,
+                block_interval_ms,
+                p2p_base,
+                api_base,
+                force,
+            ),
+            TestnetAction::Up { dir, split_logs } => cmd_testnet_up(&dir, split_logs).await,
+            TestnetAction::Status { dir } => cmd_testnet_status(&dir).await,
+            TestnetAction::Down { dir } => cmd_testnet_down(&dir),
+        },
         Commands::Keygen { output } => cmd_keygen(output.as_deref(), cli.json),
         Commands::EncryptBlsKey {
             in_file,
@@ -1800,6 +2357,35 @@ async fn main() -> Result<()> {
             out_file,
             passphrase,
         } => cmd_decrypt_bls_key(&in_file, &out_file, passphrase.as_deref()),
+        Commands::Onboarding { action } => match action {
+            OnboardingAction::GenerateCoordinator { out_dir } => {
+                onboarding::cmd_generate_coordinator(std::path::Path::new(&out_dir))
+            }
+            OnboardingAction::BuildGenesis {
+                validators,
+                coordinator_sk,
+                chain_id,
+                output,
+                block_interval_ms,
+                total_supply,
+                min_stake,
+            } => onboarding::cmd_build_genesis(
+                std::path::Path::new(&validators),
+                std::path::Path::new(&coordinator_sk),
+                &chain_id,
+                std::path::Path::new(&output),
+                block_interval_ms,
+                total_supply,
+                min_stake,
+            ),
+            OnboardingAction::Verify {
+                genesis,
+                coordinator_pk,
+            } => onboarding::cmd_verify(
+                std::path::Path::new(&genesis),
+                std::path::Path::new(&coordinator_pk),
+            ),
+        },
     };
 
     if let Err(e) = result {

@@ -177,6 +177,8 @@ mod tests {
             objects: vec![],
             bootstrap_peers: vec![],
             trusted_checkpoint: None,
+            coordinator_pk: None,
+            coordinator_signature: None,
         }
     }
 
