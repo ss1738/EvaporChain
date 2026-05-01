@@ -2,11 +2,16 @@ use async_trait::async_trait;
 use evaporchain_types::{Block, Transaction};
 use thiserror::Error;
 
+pub mod banlist;
 pub mod service;
 pub mod tls;
 
+pub use banlist::{now_ms, BanEntry, BanList};
 pub use libp2p::PeerId;
-pub use service::{cache_da_package, NetworkConfig, P2pNetworkService, ShardCache};
+pub use service::{
+    cache_da_package, subnet_key, NetworkConfig, P2pNetworkService, PeerInfo, PeerScore,
+    RejectionReason, ShardCache, SybilState,
+};
 pub use tls::{PeerAuthority, TlsConfig};
 
 /// Errors that can occur in the network layer.

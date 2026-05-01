@@ -38,7 +38,7 @@ use evaporchain_state::db::StateDB;
 use evaporchain_types::{Block, CommitCertificate, Epoch, Transaction};
 
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing::{debug, info, warn};
 
@@ -513,6 +513,19 @@ pub struct TendermintConsensus {
     /// emit per-producer histogram observations (Grafana heatmap groups
     /// by `producer="validator-{id}"`).
     block_prod_history: std::collections::VecDeque<(u64, f64)>,
+    /// Per-height map (height -> committed_at_ms_unix) for blocks that
+    /// have been committed but whose finality certificate has not yet been
+    /// observed. On finalisation the entry is removed and a (height, gap_ms)
+    /// sample is pushed onto `finality_gap_history`. Surfaces the
+    /// "this height has been waiting N seconds for finality" signal that
+    /// drives the operator-visible finality-stall alert (Mainnet P1).
+    committed_at: BTreeMap<u64, u64>,
+    /// Ring buffer of recent (height, gap_ms) samples — the per-height
+    /// duration between commit and finalisation. Capped at
+    /// `FINALITY_GAP_HISTORY_CAP`; oldest entries fall off as new
+    /// finalisations land. Drives the `evap_finality_gap_seconds`
+    /// histogram on `/metrics`.
+    finality_gap_history: VecDeque<(u64, u64)>,
     /// Soft "draining" flag, toggled by the admin API
     /// (`POST /api/admin/drain` / `POST /api/admin/undrain`). When true
     /// the consensus tick skips proposing and prevoting — the node
@@ -529,6 +542,12 @@ pub struct TendermintConsensus {
 /// and is appended after every committed block. 1024 keeps the histogram
 /// scrape cheap while still covering ~17 min at a 1 s slot time.
 pub const BLOCK_PROD_HISTORY_CAP: usize = 1024;
+
+/// Cap on the per-height finality gap ring buffer. Each entry is
+/// `(height, commit_to_finalise_gap_ms)` recorded when a height's
+/// commit certificate is observed. 1024 keeps the histogram scrape
+/// cheap while covering ~17 min at a 1 s slot time.
+pub const FINALITY_GAP_HISTORY_CAP: usize = 1024;
 
 impl TendermintConsensus {
     /// Create a new Tendermint consensus engine.
@@ -606,6 +625,8 @@ impl TendermintConsensus {
             block_prod_history: std::collections::VecDeque::with_capacity(
                 BLOCK_PROD_HISTORY_CAP,
             ),
+            committed_at: BTreeMap::new(),
+            finality_gap_history: VecDeque::with_capacity(FINALITY_GAP_HISTORY_CAP),
             draining: false,
             drain_started_at_epoch: None,
         }
@@ -1341,6 +1362,8 @@ impl TendermintConsensus {
             block_prod_history: std::collections::VecDeque::with_capacity(
                 BLOCK_PROD_HISTORY_CAP,
             ),
+            committed_at: BTreeMap::new(),
+            finality_gap_history: VecDeque::with_capacity(FINALITY_GAP_HISTORY_CAP),
             draining: false,
             drain_started_at_epoch: None,
         }
@@ -1549,6 +1572,59 @@ impl TendermintConsensus {
         let exec_time_seconds = (exec_time_us as f64) / 1_000_000.0;
         self.block_prod_history
             .push_back((producer_id, exec_time_seconds));
+    }
+
+    /// Recent per-height finality gap samples, oldest first. Each entry
+    /// is `(height, commit_to_finalise_gap_ms)` recorded the moment a
+    /// height's commit certificate is observed in `on_block_committed`.
+    /// Bounded by `FINALITY_GAP_HISTORY_CAP`. Drives the
+    /// `evap_finality_gap_seconds` histogram on `/metrics`.
+    pub fn finality_gap_history(&self) -> Vec<(u64, u64)> {
+        self.finality_gap_history.iter().copied().collect()
+    }
+
+    /// Heights that have been committed but not yet seen a finality
+    /// certificate, projected to `(height, age_ms_since_commit)` against
+    /// the current wall clock. The worst (max) age is the operator's
+    /// "finality is stalling" signal — surfaced as
+    /// `evap_worst_unfinalised_gap_seconds`. Returned ordered by height.
+    pub fn unfinalised_tail(&self) -> Vec<(u64, u64)> {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        self.committed_at
+            .iter()
+            .map(|(h, committed_ms)| (*h, now_ms.saturating_sub(*committed_ms)))
+            .collect()
+    }
+
+    /// Maximum age in `unfinalised_tail()`. 0 when nothing is pending.
+    /// Drives the `EvapFinalityStalled` Prometheus alert.
+    pub fn worst_unfinalised_gap_ms(&self) -> u64 {
+        self.unfinalised_tail()
+            .into_iter()
+            .map(|(_, age)| age)
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Test-only: inject a synthetic commit timestamp for `height`. Used
+    /// to drive deterministic finality-gap tests without sleeping.
+    #[cfg(test)]
+    pub(crate) fn test_record_commit_at(&mut self, height: u64, committed_at_ms: u64) {
+        self.committed_at.insert(height, committed_at_ms);
+    }
+
+    /// Test-only: directly push a (height, gap_ms) sample, applying the
+    /// same ring-buffer cap as the production path. Lets tests assert
+    /// the eviction behaviour without running thousands of commits.
+    #[cfg(test)]
+    pub(crate) fn test_push_finality_gap(&mut self, height: u64, gap_ms: u64) {
+        self.finality_gap_history.push_back((height, gap_ms));
+        while self.finality_gap_history.len() > FINALITY_GAP_HISTORY_CAP {
+            self.finality_gap_history.pop_front();
+        }
     }
 
     /// Mark this node as draining — consensus stops proposing /
@@ -2729,6 +2805,18 @@ impl TendermintConsensus {
         state_root: [u8; 32],
         objects_evaporated: usize,
     ) {
+        // Per-height finality gap tracking (Mainnet P1).
+        // Stamp the wall-clock at commit time. The finalisation hook below
+        // (or a later out-of-band finalise) removes this entry and pushes
+        // a (height, gap_ms) sample into `finality_gap_history`. Heights
+        // committed without a cert remain in `committed_at` and surface
+        // through `unfinalised_tail()` so operators see the stall.
+        let commit_now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        self.committed_at.insert(block.number, commit_now_ms);
+
         // Update validator health
         if let Some(producer_id) = block.producer_id {
             self.validator_set
@@ -3013,6 +3101,25 @@ impl TendermintConsensus {
                 total_stake,
                 timestamp,
             );
+
+            // Per-height finality gap closure (Mainnet P1). Pop the
+            // commit timestamp for this height and record the
+            // commit→finalise duration. `commit_now_ms` was sampled at
+            // the top of this function so the gap reflects the work
+            // done between commit and cert observation; for single-slot
+            // finality it's tiny, but a stalled height stays in
+            // `committed_at` and is reported via `unfinalised_tail()`.
+            let finalise_now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            if let Some(committed_ms) = self.committed_at.remove(&block.number) {
+                let gap_ms = finalise_now_ms.saturating_sub(committed_ms);
+                self.finality_gap_history.push_back((block.number, gap_ms));
+                while self.finality_gap_history.len() > FINALITY_GAP_HISTORY_CAP {
+                    self.finality_gap_history.pop_front();
+                }
+            }
         }
 
         // ── DA Attestation Round ──
@@ -7883,5 +7990,104 @@ mod da_tests {
         // clear_draining when not draining: returns false, idempotent.
         let was = tc.clear_draining();
         assert!(!was);
+    }
+}
+
+// ─────────────────── Per-height finality gap tests (Mainnet P1) ─────
+//
+// These cover the operator-visible finality-stall surface added on top
+// of `TendermintConsensus`: per-height commit→finalise gap recording,
+// the unfinalised tail accessor, and the ring-buffer eviction policy
+// for the gap-history sample stream.
+
+#[cfg(test)]
+mod finality_gap_tests {
+    use super::*;
+    use crate::validator_set::ValidatorInfo;
+
+    fn make_tc() -> TendermintConsensus {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        TendermintConsensus::new_for_test(1, 5, vs)
+    }
+
+    fn now_ms() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64
+    }
+
+    #[test]
+    fn test_finality_gap_tracked_on_commit_and_finalise() {
+        // Inject a synthetic commit timestamp 50 ms in the past, then
+        // drive the same close-the-gap logic the production finalise
+        // hook uses: pop the entry, compute now - committed, push the
+        // sample. This avoids needing a fully-formed Block + cert path
+        // while still exercising the ring buffer + accessor surface.
+        let mut tc = make_tc();
+        let synthetic_committed = now_ms().saturating_sub(50);
+        tc.test_record_commit_at(1, synthetic_committed);
+
+        // Mirror the close-the-gap step from on_block_committed.
+        let pop_now = now_ms();
+        let committed = tc.committed_at.remove(&1).expect("commit recorded");
+        let gap_ms = pop_now.saturating_sub(committed);
+        tc.test_push_finality_gap(1, gap_ms);
+
+        let history = tc.finality_gap_history();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].0, 1);
+        assert!(
+            history[0].1 >= 50,
+            "gap should be >= 50 ms (got {} ms)",
+            history[0].1
+        );
+        // committed_at no longer holds height 1 → unfinalised tail empty.
+        assert!(tc.unfinalised_tail().is_empty());
+        assert_eq!(tc.worst_unfinalised_gap_ms(), 0);
+    }
+
+    #[test]
+    fn test_unfinalised_tail_reports_age() {
+        // Three heights committed with monotonically *older* timestamps
+        // (height 1 oldest → largest age). Tail must report all three
+        // and worst must equal the height-1 age.
+        let mut tc = make_tc();
+        let now = now_ms();
+        tc.test_record_commit_at(1, now.saturating_sub(300));
+        tc.test_record_commit_at(2, now.saturating_sub(200));
+        tc.test_record_commit_at(3, now.saturating_sub(100));
+
+        let tail = tc.unfinalised_tail();
+        assert_eq!(tail.len(), 3);
+        // BTreeMap iteration is height-ascending, so ages must be
+        // *descending* (older commit → larger age).
+        assert!(tail[0].1 >= tail[1].1);
+        assert!(tail[1].1 >= tail[2].1);
+        // The oldest commit dominates the worst-gap signal.
+        assert!(tc.worst_unfinalised_gap_ms() >= 300);
+        // Heights are ordered.
+        assert_eq!(tail[0].0, 1);
+        assert_eq!(tail[1].0, 2);
+        assert_eq!(tail[2].0, 3);
+    }
+
+    #[test]
+    fn test_finality_gap_history_ring_buffer_cap() {
+        // Push 1100 samples; the deque must cap at FINALITY_GAP_HISTORY_CAP
+        // and the oldest entries must be the ones evicted.
+        let mut tc = make_tc();
+        for h in 0u64..1100 {
+            tc.test_push_finality_gap(h, h);
+        }
+        let history = tc.finality_gap_history();
+        assert_eq!(history.len(), FINALITY_GAP_HISTORY_CAP);
+        // First retained sample = 1100 - 1024 = 76.
+        assert_eq!(history[0].0, 1100u64 - FINALITY_GAP_HISTORY_CAP as u64);
+        // Last retained sample = 1099.
+        assert_eq!(history[history.len() - 1].0, 1099);
     }
 }

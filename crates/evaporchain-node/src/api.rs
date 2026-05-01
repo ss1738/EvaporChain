@@ -153,6 +153,11 @@ pub struct ApiState {
     /// started with `--snapshot-dir` (or the default
     /// `<data_dir>/snapshots`). `None` disables snapshot serving.
     pub snapshot_dir: Option<std::path::PathBuf>,
+    /// libp2p Sybil-resistance state (peer IPs, scores, ban list,
+    /// rejection counters). `None` when the node was started without
+    /// `--network-mode` and the in-process libp2p swarm is absent.
+    pub network_sybil:
+        Option<Arc<std::sync::RwLock<evaporchain_network::SybilState>>>,
 }
 
 /// Public-facing snapshot of the four-act narrative spine state for
@@ -6409,6 +6414,14 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     ApiDocEntry { method: "POST", path: "/api/admin/drain",                  category: "admin", description: "Mark this node as draining. Consensus stops proposing/voting so peers route around the node before binary swap. Auth: Bearer EVAPORCHAIN_ADMIN_KEY. Returns {status:'draining'|'already_draining', draining:true, drain_started_at_epoch}.", example: None },
     ApiDocEntry { method: "POST", path: "/api/admin/undrain",                category: "admin", description: "Clear the drain flag — node resumes proposing/voting. Auth: Bearer EVAPORCHAIN_ADMIN_KEY.", example: None },
     ApiDocEntry { method: "GET",  path: "/api/admin/drain/status",           category: "admin", description: "Current drain state: {draining, drain_started_at_epoch}. Auth: Bearer EVAPORCHAIN_ADMIN_KEY.", example: None },
+    // Sybil resistance (Mainnet P1) — libp2p peer-set hardening surface.
+    ApiDocEntry { method: "GET",  path: "/api/network/peers",                category: "explorer", description: "Live peer-set view: [{peer_id, ip, subnet, since_ms, score, age_seconds}]. Read from the in-process libp2p Sybil state. Empty when run without --network-mode.", example: None },
+    ApiDocEntry { method: "GET",  path: "/api/network/banned",               category: "admin", description: "Currently-active IP bans with expiry. Auth: Bearer EVAPORCHAIN_ADMIN_KEY. Returns {bans:[{ip, until_ms, reason}], count}.", example: None },
+    ApiDocEntry { method: "POST", path: "/api/network/ban",                  category: "admin", description: "Manually ban a source IP for `duration_secs`. Body: {ip, duration_secs, reason?}. Auth: Bearer EVAPORCHAIN_ADMIN_KEY.", example: Some(r#"{"ip":"192.0.2.1","duration_secs":3600,"reason":"manual"}"#) },
+    ApiDocEntry { method: "POST", path: "/api/network/unban",                category: "admin", description: "Clear an active ban for the given IP. Body: {ip}. Auth: Bearer EVAPORCHAIN_ADMIN_KEY.", example: Some(r#"{"ip":"192.0.2.1"}"#) },
+    // Finality observability (Mainnet P1)
+    ApiDocEntry { method: "GET",  path: "/api/finality/gap",                  category: "consensus", description: "Per-height commit→finalise gap snapshot. Returns {unfinalised:[{height,age_seconds}], worst_gap_seconds, recent_gaps:[{height,gap_seconds}]} (recent capped at 100, newest-first). Drives the EvapFinalityStalled Prometheus alert.", example: None },
+
     // Block-explorer surface
     ApiDocEntry { method: "GET",  path: "/api/validators",                    category: "explorer", description: "Full active validator list with stake, effective_stake, jailed, BLS-registered flag, health_score, blocks_produced, total_slashed, plus aggregate totals.", example: None },
     ApiDocEntry { method: "GET",  path: "/api/network/health",                category: "explorer", description: "One-call oncall snapshot: height, last_block_age, peer_count, mempool_size, validator/jailed counts, finality lag, status verdict (healthy|syncing|stalled|isolated).", example: None },
@@ -6946,6 +6959,154 @@ async fn get_network(State(state): State<Arc<ApiState>>) -> Json<NetworkResponse
     Json(NetworkResponse {
         peer_count: state.peer_count.load(std::sync::atomic::Ordering::Relaxed),
     })
+}
+
+// ── /api/network/peers — live peer-set view (Mainnet P1 Sybil resistance) ──
+
+#[derive(Serialize)]
+struct PeersResponse {
+    peers: Vec<evaporchain_network::PeerInfo>,
+    count: usize,
+}
+
+async fn get_network_peers(State(state): State<Arc<ApiState>>) -> Json<PeersResponse> {
+    let peers = state
+        .network_sybil
+        .as_ref()
+        .and_then(|s| s.read().ok().map(|g| g.peer_view()))
+        .unwrap_or_default();
+    Json(PeersResponse {
+        count: peers.len(),
+        peers,
+    })
+}
+
+// ── /api/network/banned — list active IP bans (admin) ──
+
+#[derive(Serialize)]
+struct BannedResponse {
+    bans: Vec<evaporchain_network::BanEntry>,
+    count: usize,
+}
+
+async fn get_network_banned(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+) -> Result<Json<BannedResponse>, (StatusCode, Json<serde_json::Value>)> {
+    require_admin_auth(&headers)?;
+    let bans = state
+        .network_sybil
+        .as_ref()
+        .and_then(|s| s.read().ok().map(|g| g.bans.active_bans()))
+        .unwrap_or_default();
+    Ok(Json(BannedResponse {
+        count: bans.len(),
+        bans,
+    }))
+}
+
+// ── /api/network/ban — manual ban (admin) ──
+
+#[derive(Deserialize)]
+struct BanRequest {
+    ip: String,
+    duration_secs: u64,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+#[derive(Serialize)]
+struct BanResponse {
+    status: &'static str,
+    ip: String,
+    until_ms: u64,
+    reason: String,
+}
+
+async fn post_network_ban(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Json(req): Json<BanRequest>,
+) -> Result<Json<BanResponse>, (StatusCode, Json<serde_json::Value>)> {
+    require_admin_auth(&headers)?;
+    let ip: std::net::IpAddr = req.ip.parse().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": format!("invalid ip: {e}")})),
+        )
+    })?;
+    let Some(ref sybil) = state.network_sybil else {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "network not running"})),
+        ));
+    };
+    let reason = req.reason.unwrap_or_else(|| "manual".to_string());
+    let until_ms = evaporchain_network::now_ms() + req.duration_secs * 1_000;
+    {
+        let mut guard = sybil.write().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "sybil state poisoned"})),
+            )
+        })?;
+        guard.bans.add_ban(ip, until_ms, reason.clone());
+        if let Some(path) = guard.ban_list_path.clone() {
+            let _ = guard.bans.save(&path);
+        }
+    }
+    Ok(Json(BanResponse {
+        status: "banned",
+        ip: ip.to_string(),
+        until_ms,
+        reason,
+    }))
+}
+
+// ── /api/network/unban — manual unban (admin) ──
+
+#[derive(Deserialize)]
+struct UnbanRequest {
+    ip: String,
+}
+
+#[derive(Serialize)]
+struct UnbanResponse {
+    status: &'static str,
+    ip: String,
+}
+
+async fn post_network_unban(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Json(req): Json<UnbanRequest>,
+) -> Result<Json<UnbanResponse>, (StatusCode, Json<serde_json::Value>)> {
+    require_admin_auth(&headers)?;
+    let ip: std::net::IpAddr = req.ip.parse().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": format!("invalid ip: {e}")})),
+        )
+    })?;
+    let Some(ref sybil) = state.network_sybil else {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "network not running"})),
+        ));
+    };
+    let removed = {
+        let mut guard = sybil.write().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "sybil state poisoned"})),
+            )
+        })?;
+        guard.unban_ip(&ip)
+    };
+    Ok(Json(UnbanResponse {
+        status: if removed { "unbanned" } else { "not_banned" },
+        ip: ip.to_string(),
+    }))
 }
 
 // ── Block-explorer / monitoring: validators + opinionated health snapshot ──
@@ -11539,6 +11700,76 @@ async fn get_prometheus_metrics(
         out.push_str("# TYPE evap_finalized_height gauge\n");
         out.push_str(&format!("evap_finalized_height {}\n", finalized_height));
 
+        // ── Per-height finality gap (Mainnet P1) ─────────────────────────
+        //
+        // Source: `TendermintConsensus::finality_gap_history()` —
+        // a ring buffer of (height, commit_to_finalise_gap_ms) recorded
+        // each time a height's commit certificate is observed (see
+        // tendermint.rs::on_block_committed). Plus the live
+        // `unfinalised_tail()` for heights that have committed but
+        // whose cert has not arrived yet.
+        //
+        // Histogram buckets are in seconds and chosen to span the
+        // operational regime: 0.5 s / 1 s / 2 s catch healthy single-
+        // slot finality at 1 s slot time (most samples fall in the
+        // first bucket); 5 s / 10 s / 30 s cover degraded but still
+        // recovering states; 60 s / 300 s / 1800 s catch genuine
+        // stalls (the alert fires above 30 s anyway). +Inf is emitted
+        // separately per the Prometheus histogram convention.
+        let (gap_history, unfinalised_tail, worst_unfinalised_ms) =
+            if let Some(tc) = &state.tendermint {
+                let tc = safe_lock(tc);
+                (
+                    tc.finality_gap_history(),
+                    tc.unfinalised_tail(),
+                    tc.worst_unfinalised_gap_ms(),
+                )
+            } else {
+                (Vec::new(), Vec::new(), 0u64)
+            };
+
+        let gap_buckets: [f64; 9] = [0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 300.0, 1800.0];
+        out.push_str(
+            "# HELP evap_finality_gap_seconds Per-height commit→finalise duration (seconds)\n",
+        );
+        out.push_str("# TYPE evap_finality_gap_seconds histogram\n");
+        let gap_seconds: Vec<f64> = gap_history
+            .iter()
+            .map(|(_, gap_ms)| (*gap_ms as f64) / 1000.0)
+            .collect();
+        for ub in gap_buckets.iter() {
+            let cumulative = gap_seconds.iter().filter(|s| *s <= ub).count() as u64;
+            out.push_str(&format!(
+                "evap_finality_gap_seconds_bucket{{le=\"{}\"}} {}\n",
+                ub, cumulative
+            ));
+        }
+        let gap_total = gap_seconds.len() as u64;
+        out.push_str(&format!(
+            "evap_finality_gap_seconds_bucket{{le=\"+Inf\"}} {}\n",
+            gap_total
+        ));
+        let gap_sum: f64 = gap_seconds.iter().sum();
+        out.push_str(&format!("evap_finality_gap_seconds_sum {}\n", gap_sum));
+        out.push_str(&format!("evap_finality_gap_seconds_count {}\n", gap_total));
+
+        out.push_str(
+            "# HELP evap_unfinalised_height_count Heights committed but not yet finalised\n",
+        );
+        out.push_str("# TYPE evap_unfinalised_height_count gauge\n");
+        out.push_str(&format!(
+            "evap_unfinalised_height_count {}\n",
+            unfinalised_tail.len()
+        ));
+        out.push_str(
+            "# HELP evap_worst_unfinalised_gap_seconds Oldest commit→pending-cert age (seconds); drives EvapFinalityStalled\n",
+        );
+        out.push_str("# TYPE evap_worst_unfinalised_gap_seconds gauge\n");
+        out.push_str(&format!(
+            "evap_worst_unfinalised_gap_seconds {}\n",
+            (worst_unfinalised_ms as f64) / 1000.0
+        ));
+
         // Validator set — active = unjailed
         let (validator_total, active_validators, consensus_round) =
             if let Some(tc) = &state.tendermint {
@@ -11704,6 +11935,35 @@ async fn get_prometheus_metrics(
         out.push_str("# HELP evap_peer_count Currently-connected P2P peers\n");
         out.push_str("# TYPE evap_peer_count gauge\n");
         out.push_str(&format!("evap_peer_count {}\n", peer_count));
+
+        // ── libp2p Sybil resistance (Mainnet P1) ──
+        // Per-peer reputation gauge, bucketed score range, total
+        // active bans, and labelled rejection counters.
+        if let Some(sybil) = state.network_sybil.as_ref() {
+            if let Ok(g) = sybil.read() {
+                out.push_str("# HELP evap_peer_score Reputation score per connected peer (label = peer_id prefix)\n");
+                out.push_str("# TYPE evap_peer_score gauge\n");
+                for (pid, score) in g.scores.iter() {
+                    let pid_short: String =
+                        pid.to_string().chars().take(12).collect();
+                    out.push_str(&format!(
+                        "evap_peer_score{{peer_id=\"{}\"}} {}\n",
+                        pid_short, score.score
+                    ));
+                }
+                out.push_str("# HELP evap_active_bans Number of currently-active IP bans\n");
+                out.push_str("# TYPE evap_active_bans gauge\n");
+                out.push_str(&format!("evap_active_bans {}\n", g.bans.active_bans().len()));
+                out.push_str("# HELP evap_inbound_rejections_total Inbound libp2p connections refused, by reason\n");
+                out.push_str("# TYPE evap_inbound_rejections_total counter\n");
+                for (reason, count) in g.rejections.snapshot().iter() {
+                    out.push_str(&format!(
+                        "evap_inbound_rejections_total{{reason=\"{}\"}} {}\n",
+                        reason, count
+                    ));
+                }
+            }
+        }
 
         // Data availability — every finalised block carries a DA
         // attestation, so cumulative finalised count is a faithful
@@ -12968,6 +13228,56 @@ async fn get_finality_proof(
     }
 }
 
+/// Per-height finality gap snapshot (Mainnet P1).
+///
+/// Returns:
+/// - `unfinalised`: heights that have been committed but haven't seen a
+///   finality cert yet, projected to (height, age_seconds).
+/// - `worst_gap_seconds`: max age across `unfinalised`.
+/// - `recent_gaps`: most recent (last 100) commit→finalise gap samples,
+///   newest first, sourced from the consensus engine's ring buffer.
+async fn get_finality_gap(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
+    let (unfinalised, worst_ms, recent) = if let Some(tc) = &state.tendermint {
+        let tc = tc.lock().unwrap();
+        (
+            tc.unfinalised_tail(),
+            tc.worst_unfinalised_gap_ms(),
+            tc.finality_gap_history(),
+        )
+    } else {
+        (Vec::new(), 0u64, Vec::new())
+    };
+
+    let unfinalised_json: Vec<serde_json::Value> = unfinalised
+        .iter()
+        .map(|(h, age_ms)| {
+            serde_json::json!({
+                "height": h,
+                "age_seconds": (*age_ms as f64) / 1000.0,
+            })
+        })
+        .collect();
+
+    // Newest-first window of the last 100 samples.
+    let recent_json: Vec<serde_json::Value> = recent
+        .iter()
+        .rev()
+        .take(100)
+        .map(|(h, gap_ms)| {
+            serde_json::json!({
+                "height": h,
+                "gap_seconds": (*gap_ms as f64) / 1000.0,
+            })
+        })
+        .collect();
+
+    Json(serde_json::json!({
+        "unfinalised": unfinalised_json,
+        "worst_gap_seconds": (worst_ms as f64) / 1000.0,
+        "recent_gaps": recent_json,
+    }))
+}
+
 async fn get_sync_snapshot_info(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
     let info = state.snapshot_info.lock().unwrap();
     match *info {
@@ -13432,6 +13742,11 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         // Network
         .route("/api/network", get(get_network))
         .route("/api/network/health", get(get_network_health))
+        // Sybil resistance (Mainnet P1)
+        .route("/api/network/peers", get(get_network_peers))
+        .route("/api/network/banned", get(get_network_banned))
+        .route("/api/network/ban", post(post_network_ban))
+        .route("/api/network/unban", post(post_network_unban))
         // Block-explorer view: full validator list
         .route("/api/validators", get(get_validators))
         // Wallet / Transactions
@@ -13580,6 +13895,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         )
         .route("/api/finality", get(get_finality))
         .route("/api/finality/proof/:height", get(get_finality_proof))
+        .route("/api/finality/gap", get(get_finality_gap))
         // State sync
         .route("/api/sync/snapshot-info", get(get_sync_snapshot_info))
         // Fast-sync snapshot (zstd .zst blob format, see SnapshotFile)

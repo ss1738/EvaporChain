@@ -2327,6 +2327,9 @@ async fn main() -> Result<()> {
 
     // ── Network setup ──
     let mut peer_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut net_sybil_state: Option<
+        std::sync::Arc<std::sync::RwLock<evaporchain_network::SybilState>>,
+    > = None;
     let net_channels = if args.network_mode {
         let peer_authority = if args.allowed_peers.is_empty() {
             evaporchain_network::PeerAuthority::permissionless()
@@ -2348,6 +2351,9 @@ async fn main() -> Result<()> {
             println!("{} \x1b[1;32mTLS 1.3 transport enabled\x1b[0m", node_tag);
         }
 
+        let ban_list_path = std::path::PathBuf::from(&args.data_dir)
+            .join("network")
+            .join("bans.json");
         let net_config = NetworkConfig {
             listen_address: format!("/ip4/0.0.0.0/tcp/{}", args.port),
             bootstrap_peers: args.bootstrap_peers.clone(),
@@ -2355,6 +2361,12 @@ async fn main() -> Result<()> {
             use_tls: args.use_tls,
             tls_certs: None,
             peer_authority,
+            // Sybil resistance defaults — see NetworkConfig::default for tuning notes.
+            max_connections_per_ip: 4,
+            max_connections_per_subnet: 16,
+            max_inbound_connections: 200,
+            peer_ban_duration_secs: 3_600,
+            ban_list_path: Some(ban_list_path),
         };
         println!(
             "{} \x1b[1;33mNetwork mode active\x1b[0m — listening on port {}, {} bootstrap peer(s)",
@@ -2372,6 +2384,7 @@ async fn main() -> Result<()> {
         println!("{} \x1b[36mPeer ID: {}\x1b[0m", node_tag, peer_id);
         // Use the network's live peer count
         peer_count = channels.peer_count.clone();
+        net_sybil_state = Some(channels.sybil_state.clone());
         Some(channels)
     } else {
         None
@@ -3205,6 +3218,7 @@ async fn main() -> Result<()> {
                 evaporchain_pnt::PhasedNullifierTree::new(16).expect("window_depth=16 is valid"),
             )),
             snapshot_dir: Some(snapshot_dir_path.clone()),
+            network_sybil: net_sybil_state.clone(),
         });
         // Keep one Arc<ApiState> for the block-applying loop so it can
         // call update_four_act_snapshot after each commit.

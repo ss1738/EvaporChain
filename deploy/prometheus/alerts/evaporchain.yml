@@ -54,3 +54,21 @@ groups:
         annotations:
           summary: "Bell-Certified Beacon below local-realism bound"
           description: "{{ $labels.instance }} reports CHSH S = {{ $value }} milli; not Bell-certified for 30+ minutes."
+
+      - alert: EvapFinalityStalled
+        expr: evap_worst_unfinalised_gap_seconds > 30
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "EvaporChain finality stalled"
+          description: "Worst unfinalised height has been waiting {{ $value }}s for finality (>30s threshold)"
+
+      - alert: EvapHighInboundRejectRate
+        expr: rate(evap_inbound_rejections_total[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Sustained inbound libp2p rejections — possible Sybil pressure"
+          description: "{{ $labels.instance }} is rejecting >10 inbound peer connections/sec for 5+ minutes (reason={{ $labels.reason }}). Investigate per-IP / per-subnet caps and the active ban list."

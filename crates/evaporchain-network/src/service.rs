@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::net::IpAddr;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
@@ -16,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
+use crate::banlist::{now_ms, BanList};
 use crate::{NetworkError, NetworkService};
 use evaporchain_da::block_da::BlockDAPackage;
 use evaporchain_da::sampling::{DASampler, SampleQuery, SampleResponse};
@@ -309,6 +312,18 @@ pub struct NetworkConfig {
     pub tls_certs: Option<crate::tls::TlsConfig>,
     /// Peer authorization policy. Controls which peers can connect.
     pub peer_authority: crate::tls::PeerAuthority,
+    /// Max simultaneous connections from any single IP. Default 4.
+    pub max_connections_per_ip: usize,
+    /// Max simultaneous connections from any /24 (v4) or /48 (v6) subnet.
+    /// Default 16.
+    pub max_connections_per_subnet: usize,
+    /// Total inbound connection cap across all peers. Default 200.
+    pub max_inbound_connections: usize,
+    /// Soft-ban duration when a peer is scored below threshold. Default 1h.
+    pub peer_ban_duration_secs: u64,
+    /// On-disk path for ban-list persistence. `None` disables persistence
+    /// (the ban list is then memory-only).
+    pub ban_list_path: Option<PathBuf>,
 }
 
 impl Default for NetworkConfig {
@@ -320,7 +335,288 @@ impl Default for NetworkConfig {
             use_tls: false,
             tls_certs: None,
             peer_authority: crate::tls::PeerAuthority::permissionless(),
+            max_connections_per_ip: 4,
+            max_connections_per_subnet: 16,
+            max_inbound_connections: 200,
+            peer_ban_duration_secs: 3_600,
+            ban_list_path: None,
         }
+    }
+}
+
+// ─────────────────────── Sybil-resistance state ──────────────────────────
+
+/// A coarse subnet bucket: /24 for v4, /48 for v6. Returned as a
+/// stringified prefix so the bucket key is stable across map lookups
+/// and easy to log.
+pub fn subnet_key(ip: &IpAddr) -> String {
+    match ip {
+        IpAddr::V4(v4) => {
+            let o = v4.octets();
+            format!("{}.{}.{}.0/24", o[0], o[1], o[2])
+        }
+        IpAddr::V6(v6) => {
+            let s = v6.segments();
+            format!("{:x}:{:x}:{:x}::/48", s[0], s[1], s[2])
+        }
+    }
+}
+
+/// Reason an inbound connection was refused. Used to label the
+/// `evap_inbound_rejections_total` counter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RejectionReason {
+    PerIp,
+    PerSubnet,
+    TotalCap,
+    Banned,
+    Unauthorized,
+}
+
+impl RejectionReason {
+    pub fn label(&self) -> &'static str {
+        match self {
+            RejectionReason::PerIp => "per_ip",
+            RejectionReason::PerSubnet => "per_subnet",
+            RejectionReason::TotalCap => "total_cap",
+            RejectionReason::Banned => "banned",
+            RejectionReason::Unauthorized => "unauthorized",
+        }
+    }
+}
+
+/// Reputation score per remote peer. Decay-friendly counters; once
+/// `score` falls below the threshold the peer is soft-banned.
+#[derive(Debug, Clone, Copy)]
+pub struct PeerScore {
+    pub score: i32,
+    pub last_seen_ms: u64,
+    pub infractions: u32,
+}
+
+impl Default for PeerScore {
+    fn default() -> Self {
+        Self {
+            score: 0,
+            last_seen_ms: now_ms(),
+            infractions: 0,
+        }
+    }
+}
+
+/// Score deltas. Positive: useful work. Negative: protocol violations.
+pub const SCORE_VALID_BLOCK: i32 = 5;
+pub const SCORE_VALID_VOTE: i32 = 1;
+pub const SCORE_USEFUL_GOSSIP: i32 = 1;
+pub const SCORE_INVALID_SIG: i32 = -50;
+pub const SCORE_EQUIVOCATION: i32 = -100;
+pub const SCORE_IDLE_TICK: i32 = -1;
+/// Below this floor, the peer is soft-banned for `peer_ban_duration_secs`.
+pub const SCORE_BAN_THRESHOLD: i32 = -100;
+
+/// Per-peer summary for `/api/network/peers`.
+#[derive(Debug, Clone, Serialize)]
+pub struct PeerInfo {
+    pub peer_id: String,
+    pub ip: Option<String>,
+    pub subnet: Option<String>,
+    /// Unix-epoch ms of first observed connection.
+    pub since_ms: u64,
+    pub score: i32,
+    pub age_seconds: u64,
+}
+
+/// Counters surfaced to Prometheus as
+/// `evap_inbound_rejections_total{reason="..."}`.
+#[derive(Default, Debug)]
+pub struct RejectionCounters {
+    pub per_ip: AtomicU64,
+    pub per_subnet: AtomicU64,
+    pub total_cap: AtomicU64,
+    pub banned: AtomicU64,
+    pub unauthorized: AtomicU64,
+}
+
+impl RejectionCounters {
+    fn record(&self, reason: RejectionReason) {
+        let counter = match reason {
+            RejectionReason::PerIp => &self.per_ip,
+            RejectionReason::PerSubnet => &self.per_subnet,
+            RejectionReason::TotalCap => &self.total_cap,
+            RejectionReason::Banned => &self.banned,
+            RejectionReason::Unauthorized => &self.unauthorized,
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn snapshot(&self) -> [(&'static str, u64); 5] {
+        [
+            ("per_ip", self.per_ip.load(Ordering::Relaxed)),
+            ("per_subnet", self.per_subnet.load(Ordering::Relaxed)),
+            ("total_cap", self.total_cap.load(Ordering::Relaxed)),
+            ("banned", self.banned.load(Ordering::Relaxed)),
+            ("unauthorized", self.unauthorized.load(Ordering::Relaxed)),
+        ]
+    }
+}
+
+/// Live Sybil-resistance state. Held behind `Arc<RwLock<_>>` so the
+/// API layer (`/api/network/peers` etc.) can read it without going
+/// through a channel and without blocking the swarm event loop.
+pub struct SybilState {
+    /// peer_id -> (ip, since_ms)
+    pub peer_ips: HashMap<PeerId, (IpAddr, u64)>,
+    /// ip -> set of peer_ids
+    pub ip_peers: HashMap<IpAddr, Vec<PeerId>>,
+    /// "192.0.2.0/24" -> count of distinct active connections
+    pub subnet_counts: HashMap<String, usize>,
+    pub scores: HashMap<PeerId, PeerScore>,
+    pub bans: BanList,
+    pub rejections: RejectionCounters,
+    pub ban_list_path: Option<PathBuf>,
+    pub config: SybilConfig,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SybilConfig {
+    pub max_connections_per_ip: usize,
+    pub max_connections_per_subnet: usize,
+    pub max_inbound_connections: usize,
+    pub peer_ban_duration_secs: u64,
+}
+
+impl SybilState {
+    pub fn new(config: SybilConfig, ban_list_path: Option<PathBuf>) -> Self {
+        let bans = match &ban_list_path {
+            Some(path) => BanList::load(path),
+            None => BanList::new(),
+        };
+        Self {
+            peer_ips: HashMap::new(),
+            ip_peers: HashMap::new(),
+            subnet_counts: HashMap::new(),
+            scores: HashMap::new(),
+            bans,
+            rejections: RejectionCounters::default(),
+            ban_list_path,
+            config,
+        }
+    }
+
+    /// Try to admit a new inbound connection from `ip`. Returns `Ok(())`
+    /// if accepted; `Err(reason)` if it should be disconnected.
+    pub fn try_admit_inbound(
+        &mut self,
+        ip: IpAddr,
+        current_total: usize,
+    ) -> Result<(), RejectionReason> {
+        if self.bans.is_banned(&ip) {
+            self.rejections.record(RejectionReason::Banned);
+            return Err(RejectionReason::Banned);
+        }
+        if current_total >= self.config.max_inbound_connections {
+            self.rejections.record(RejectionReason::TotalCap);
+            return Err(RejectionReason::TotalCap);
+        }
+        let ip_count = self.ip_peers.get(&ip).map(|v| v.len()).unwrap_or(0);
+        if ip_count >= self.config.max_connections_per_ip {
+            self.rejections.record(RejectionReason::PerIp);
+            return Err(RejectionReason::PerIp);
+        }
+        let key = subnet_key(&ip);
+        let subnet_count = self.subnet_counts.get(&key).copied().unwrap_or(0);
+        if subnet_count >= self.config.max_connections_per_subnet {
+            self.rejections.record(RejectionReason::PerSubnet);
+            return Err(RejectionReason::PerSubnet);
+        }
+        Ok(())
+    }
+
+    /// Record a successful connection.
+    pub fn record_connect(&mut self, peer_id: PeerId, ip: IpAddr) {
+        let now = now_ms();
+        self.peer_ips.entry(peer_id).or_insert((ip, now));
+        let entry = self.ip_peers.entry(ip).or_default();
+        if !entry.contains(&peer_id) {
+            entry.push(peer_id);
+        }
+        *self.subnet_counts.entry(subnet_key(&ip)).or_insert(0) += 1;
+        self.scores.entry(peer_id).or_default();
+    }
+
+    /// Record a connection close. Idempotent.
+    pub fn record_disconnect(&mut self, peer_id: &PeerId) {
+        if let Some((ip, _)) = self.peer_ips.remove(peer_id) {
+            if let Some(v) = self.ip_peers.get_mut(&ip) {
+                v.retain(|p| p != peer_id);
+                if v.is_empty() {
+                    self.ip_peers.remove(&ip);
+                }
+            }
+            let key = subnet_key(&ip);
+            if let Some(c) = self.subnet_counts.get_mut(&key) {
+                if *c > 0 {
+                    *c -= 1;
+                }
+                if *c == 0 {
+                    self.subnet_counts.remove(&key);
+                }
+            }
+        }
+    }
+
+    /// Adjust score by `delta` and return `Some(ip)` to soft-ban iff
+    /// the threshold has been crossed for the first time.
+    pub fn adjust_score(&mut self, peer_id: &PeerId, delta: i32) -> Option<IpAddr> {
+        let entry = self.scores.entry(*peer_id).or_default();
+        entry.score = entry.score.saturating_add(delta);
+        entry.last_seen_ms = now_ms();
+        if delta < 0 {
+            entry.infractions = entry.infractions.saturating_add(1);
+        }
+        if entry.score < SCORE_BAN_THRESHOLD {
+            return self.peer_ips.get(peer_id).map(|(ip, _)| *ip);
+        }
+        None
+    }
+
+    /// Record a ban + persist immediately so the file survives a hard
+    /// crash mid-session.
+    pub fn ban_ip(&mut self, ip: IpAddr, reason: impl Into<String>) {
+        let until = now_ms() + self.config.peer_ban_duration_secs * 1_000;
+        self.bans.add_ban(ip, until, reason);
+        if let Some(path) = self.ban_list_path.clone() {
+            if let Err(e) = self.bans.save(&path) {
+                warn!("ban list save failed: {e}");
+            }
+        }
+    }
+
+    pub fn unban_ip(&mut self, ip: &IpAddr) -> bool {
+        let removed = self.bans.remove_ban(ip);
+        if removed {
+            if let Some(path) = self.ban_list_path.clone() {
+                if let Err(e) = self.bans.save(&path) {
+                    warn!("ban list save failed: {e}");
+                }
+            }
+        }
+        removed
+    }
+
+    pub fn peer_view(&self) -> Vec<PeerInfo> {
+        let now = now_ms();
+        self.peer_ips
+            .iter()
+            .map(|(pid, (ip, since))| PeerInfo {
+                peer_id: pid.to_string(),
+                ip: Some(ip.to_string()),
+                subnet: Some(subnet_key(ip)),
+                since_ms: *since,
+                score: self.scores.get(pid).map(|s| s.score).unwrap_or(0),
+                age_seconds: now.saturating_sub(*since) / 1_000,
+            })
+            .collect()
     }
 }
 
@@ -368,6 +664,10 @@ pub struct NetworkChannels {
     pub sample_request_sender: mpsc::Sender<Vec<SampleQuery>>,
     /// Receive shard sample responses from peers (network → light client).
     pub sample_response_receiver: mpsc::Receiver<Vec<SampleResponse>>,
+    /// Live Sybil-resistance state (peer IPs, scores, bans, rejection
+    /// counters). Read by the API layer for `/api/network/peers` /
+    /// `/api/network/banned` and by the metrics handler.
+    pub sybil_state: Arc<RwLock<SybilState>>,
 }
 
 /// Handle for broadcasting to a running network service.
@@ -454,6 +754,19 @@ impl P2pNetworkService {
 
         let peer_authority = config.peer_authority.clone();
         let use_tls = config.use_tls;
+
+        // ── Sybil-resistance state (per-IP/subnet caps, scoring, bans) ──
+        let sybil_cfg = SybilConfig {
+            max_connections_per_ip: config.max_connections_per_ip,
+            max_connections_per_subnet: config.max_connections_per_subnet,
+            max_inbound_connections: config.max_inbound_connections,
+            peer_ban_duration_secs: config.peer_ban_duration_secs,
+        };
+        let sybil_state = Arc::new(RwLock::new(SybilState::new(
+            sybil_cfg,
+            config.ban_list_path.clone(),
+        )));
+        let sybil_state_inner = Arc::clone(&sybil_state);
 
         // Behaviour constructor shared by both transport paths
         macro_rules! build_behaviour {
@@ -635,6 +948,7 @@ impl P2pNetworkService {
             shard_cache: Arc::clone(&shard_cache),
             sample_request_sender: sample_req_sender,
             sample_response_receiver: sample_resp_receiver,
+            sybil_state: Arc::clone(&sybil_state),
         };
 
         // Clone bootstrap addrs for periodic re-dial inside the event loop
@@ -643,6 +957,12 @@ impl P2pNetworkService {
             .iter()
             .filter_map(|s| s.parse::<Multiaddr>().ok())
             .collect();
+
+        // Snapshot the Sybil caps so the spawned event loop doesn't have
+        // to keep `config` around just for log lines.
+        let cap_per_ip = config.max_connections_per_ip;
+        let cap_per_subnet = config.max_connections_per_subnet;
+        let cap_total = config.max_inbound_connections;
 
         // Spawn the event loop
         tokio::spawn(async move {
@@ -658,9 +978,32 @@ impl P2pNetworkService {
             let mut ban_list = PeerBanList::new();
             let mut per_ip_tracker = PerIpConnectionTracker::new(MAX_CONNECTIONS_PER_IP);
             let mut gc_counter: u64 = 0;
+            let mut idle_score_timer = tokio::time::interval(Duration::from_secs(300));
+            idle_score_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
             loop {
                 tokio::select! {
+                    // Periodic 5-minute idle-score sweep. Quiet peers
+                    // accumulate -1 per tick; once below the ban
+                    // threshold their source IP is banned and the
+                    // connection dropped.
+                    _ = idle_score_timer.tick() => {
+                        let mut to_disconnect: Vec<(PeerId, IpAddr)> = Vec::new();
+                        if let Ok(mut s) = sybil_state_inner.write() {
+                            let peer_ids: Vec<PeerId> = s.scores.keys().copied().collect();
+                            for pid in peer_ids {
+                                if let Some(ip) = s.adjust_score(&pid, SCORE_IDLE_TICK) {
+                                    s.ban_ip(ip, "score_threshold_breach");
+                                    to_disconnect.push((pid, ip));
+                                }
+                            }
+                            s.bans.cleanup_expired();
+                        }
+                        for (pid, ip) in to_disconnect {
+                            warn!("network: soft-banning {ip} (peer {pid}) — score below {SCORE_BAN_THRESHOLD}");
+                            let _ = swarm.disconnect_peer_id(pid);
+                        }
+                    }
                     // Periodic bootstrap re-dial for peers that weren't reachable at startup
                     _ = redial_timer.tick() => {
                         let connected = swarm.connected_peers().count();
@@ -956,22 +1299,49 @@ impl P2pNetworkService {
                             // ── Connection events ──
                             SwarmEvent::ConnectionEstablished { peer_id, ref endpoint, .. } => {
                                 if !peer_authority.is_authorized(&peer_id) {
+                                    if let Ok(mut s) = sybil_state_inner.write() {
+                                        s.rejections.record(RejectionReason::Unauthorized);
+                                    }
                                     warn!("Unauthorized peer {peer_id} — disconnecting");
                                     let _ = swarm.disconnect_peer_id(peer_id);
                                     continue;
                                 }
-                                // Sybil cap: bound concurrent connections per source IP.
-                                // PeerId is cheap to mint, source IP is not — capping
-                                // per-IP makes Sybil attacks expensive.
-                                if let Some(ip) = endpoint_remote_ip(endpoint) {
-                                    if !per_ip_tracker.try_admit(ip) {
-                                        warn!(
-                                            "Per-IP cap reached ({} active from {}); rejecting {peer_id}",
-                                            per_ip_tracker.count_for(&ip),
-                                            ip
-                                        );
-                                        let _ = swarm.disconnect_peer_id(peer_id);
-                                        continue;
+                                // Sybil resistance: per-IP / per-subnet / total caps + ban list.
+                                // PeerId is cheap to mint, source IP is not.
+                                let endpoint_ip = endpoint_remote_ip(endpoint);
+                                if let Some(ip) = endpoint_ip {
+                                    let total = swarm.connected_peers().count();
+                                    let admit = sybil_state_inner.write().map(|mut s| {
+                                        s.try_admit_inbound(ip, total)
+                                    });
+                                    match admit {
+                                        Ok(Ok(())) => {
+                                            // Legacy in-loop tracker kept for back-compat, but the
+                                            // authoritative accounting is now SybilState.
+                                            let _ = per_ip_tracker.try_admit(ip);
+                                            if let Ok(mut s) = sybil_state_inner.write() {
+                                                s.record_connect(peer_id, ip);
+                                            }
+                                        }
+                                        Ok(Err(reason)) => {
+                                            let label = reason.label();
+                                            let cap_for_log = match reason {
+                                                RejectionReason::PerIp => cap_per_ip,
+                                                RejectionReason::PerSubnet => cap_per_subnet,
+                                                RejectionReason::TotalCap => cap_total,
+                                                _ => 0,
+                                            };
+                                            warn!(
+                                                "network: rejected inbound from IP={ip} reason={label}_limit_exceeded peer={peer_id} cap={cap_for_log}"
+                                            );
+                                            let _ = swarm.disconnect_peer_id(peer_id);
+                                            continue;
+                                        }
+                                        Err(_) => {
+                                            warn!("sybil_state lock poisoned during admit; rejecting {peer_id}");
+                                            let _ = swarm.disconnect_peer_id(peer_id);
+                                            continue;
+                                        }
                                     }
                                 }
                                 let count = swarm.connected_peers().count();
@@ -984,9 +1354,12 @@ impl P2pNetworkService {
                                     BlockSyncRequest { from_height: 0, to_height: 0 },
                                 );
                             }
-                            SwarmEvent::ConnectionClosed { ref endpoint, .. } => {
+                            SwarmEvent::ConnectionClosed { peer_id, ref endpoint, .. } => {
                                 if let Some(ip) = endpoint_remote_ip(endpoint) {
                                     per_ip_tracker.release(ip);
+                                }
+                                if let Ok(mut s) = sybil_state_inner.write() {
+                                    s.record_disconnect(&peer_id);
                                 }
                                 let count = swarm.connected_peers().count();
                                 peer_count_inner.store(count, Ordering::Relaxed);
@@ -1031,6 +1404,7 @@ mod tests {
             use_tls: false,
             tls_certs: None,
             peer_authority: crate::tls::PeerAuthority::permissionless(),
+            ..NetworkConfig::default()
         }
     }
 
@@ -1632,5 +2006,137 @@ mod tests {
         assert_eq!(*bl.violations.get(&peer).unwrap(), 1);
         bl.record_violation(peer);
         assert_eq!(*bl.violations.get(&peer).unwrap(), 2);
+    }
+
+    // ── Sybil-resistance state ──────────────────────────────────────────
+
+    fn sybil_cfg() -> SybilConfig {
+        SybilConfig {
+            max_connections_per_ip: 4,
+            max_connections_per_subnet: 16,
+            max_inbound_connections: 200,
+            peer_ban_duration_secs: 3_600,
+        }
+    }
+
+    fn ipv4(a: u8, b: u8, c: u8, d: u8) -> std::net::IpAddr {
+        std::net::IpAddr::V4(std::net::Ipv4Addr::new(a, b, c, d))
+    }
+
+    #[test]
+    fn test_subnet_key_v4_is_slash_24() {
+        let ip = ipv4(192, 0, 2, 47);
+        assert_eq!(subnet_key(&ip), "192.0.2.0/24");
+    }
+
+    #[test]
+    fn test_subnet_key_v6_is_slash_48() {
+        let ip = std::net::IpAddr::V6("2001:db8:abcd:1234::1".parse().unwrap());
+        assert_eq!(subnet_key(&ip), "2001:db8:abcd::/48");
+    }
+
+    #[test]
+    fn test_per_ip_limit_rejects_5th_connection() {
+        let mut s = SybilState::new(sybil_cfg(), None);
+        let ip = ipv4(192, 0, 2, 1);
+        for _ in 0..4 {
+            assert!(s.try_admit_inbound(ip, 0).is_ok());
+            s.record_connect(PeerId::random(), ip);
+        }
+        assert_eq!(s.try_admit_inbound(ip, 0), Err(RejectionReason::PerIp));
+        assert_eq!(s.rejections.per_ip.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_subnet_limit_rejects() {
+        // Cap subnet at 3 distinct IPs
+        let cfg = SybilConfig {
+            max_connections_per_ip: 1,
+            max_connections_per_subnet: 3,
+            max_inbound_connections: 200,
+            peer_ban_duration_secs: 60,
+        };
+        let mut s = SybilState::new(cfg, None);
+        for last in 1..=3u8 {
+            let ip = ipv4(192, 0, 2, last);
+            assert!(s.try_admit_inbound(ip, 0).is_ok());
+            s.record_connect(PeerId::random(), ip);
+        }
+        let blocked = ipv4(192, 0, 2, 99);
+        assert_eq!(
+            s.try_admit_inbound(blocked, 0),
+            Err(RejectionReason::PerSubnet)
+        );
+        assert_eq!(s.rejections.per_subnet.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_total_cap_rejects() {
+        let cfg = SybilConfig {
+            max_connections_per_ip: 100,
+            max_connections_per_subnet: 100,
+            max_inbound_connections: 5,
+            peer_ban_duration_secs: 60,
+        };
+        let mut s = SybilState::new(cfg, None);
+        let ip = ipv4(10, 0, 0, 1);
+        assert_eq!(s.try_admit_inbound(ip, 5), Err(RejectionReason::TotalCap));
+    }
+
+    #[test]
+    fn test_disconnect_releases_slots() {
+        let mut s = SybilState::new(sybil_cfg(), None);
+        let ip = ipv4(10, 0, 0, 1);
+        let pid = PeerId::random();
+        s.try_admit_inbound(ip, 0).unwrap();
+        s.record_connect(pid, ip);
+        s.record_disconnect(&pid);
+        assert_eq!(s.peer_ips.len(), 0);
+        assert_eq!(s.subnet_counts.len(), 0);
+    }
+
+    #[test]
+    fn test_score_decay_below_threshold_triggers_ban() {
+        let mut s = SybilState::new(sybil_cfg(), None);
+        let ip = ipv4(192, 0, 2, 17);
+        let pid = PeerId::random();
+        s.try_admit_inbound(ip, 0).unwrap();
+        s.record_connect(pid, ip);
+        // Apply a bigger-than-threshold negative delta in one go.
+        let triggered_ip = s.adjust_score(&pid, -150);
+        assert_eq!(triggered_ip, Some(ip));
+        s.ban_ip(ip, "score_threshold_breach");
+        assert!(s.bans.is_banned(&ip));
+        // A subsequent admit attempt is now refused with reason=banned.
+        let result = s.try_admit_inbound(ip, 0);
+        assert_eq!(result, Err(RejectionReason::Banned));
+    }
+
+    #[test]
+    fn test_ban_persists_across_restart() {
+        let dir = std::env::temp_dir().join(format!("evap_sybil_{}", crate::banlist::now_ms()));
+        let path = crate::banlist::BanList::default_path(&dir);
+        let cfg = sybil_cfg();
+        // Round 1: induce a ban + persist.
+        {
+            let mut s = SybilState::new(cfg, Some(path.clone()));
+            let ip = ipv4(198, 51, 100, 9);
+            s.ban_ip(ip, "test_persist");
+            assert!(s.bans.is_banned(&ip));
+        }
+        // Round 2: fresh instance reading from the same path.
+        {
+            let mut s = SybilState::new(cfg, Some(path.clone()));
+            let ip = ipv4(198, 51, 100, 9);
+            assert!(s.bans.is_banned(&ip), "ban must survive restart");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_unauthorized_increments_rejections() {
+        let s = SybilState::new(sybil_cfg(), None);
+        s.rejections.record(RejectionReason::Unauthorized);
+        assert_eq!(s.rejections.unauthorized.load(Ordering::Relaxed), 1);
     }
 }
