@@ -2990,7 +2990,9 @@ mod tests {
         assert_eq!(result.txs_executed, 2);
         assert_eq!(result.txs_failed, 0);
         assert_eq!(db.get_account(&addr(1)).unwrap().nonce, 2);
-        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 999_800);
+        // 1_000_000 − 200 (two transfers) − 8 (per-block demurrage on the
+        // sender's balance accrued at block.epoch=1 from last_touched_epoch=0).
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 999_792);
     }
 
     // ─── Object Creation with Energy ───
@@ -3152,7 +3154,10 @@ mod tests {
         assert_eq!(result.txs_executed, 4);
         assert_eq!(result.txs_failed, 0);
 
-        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 7500);
+        // 10_000 − 2000 (transfer) − 1000 (CreateObject MIN_STORAGE_DEPOSIT)
+        // − 500 (transfer) − 98 (per-block demurrage on the sender's
+        // balance accrued at block.epoch=1) = 6402.
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 6402);
         assert_eq!(db.get_account(&addr(1)).unwrap().nonce, 2);
         assert_eq!(db.get_account(&addr(2)).unwrap().balance, 6000);
         assert_eq!(db.get_account(&addr(3)).unwrap().balance, 1500);
@@ -3544,6 +3549,8 @@ mod tests {
     #[test]
     fn test_signed_create_object_succeeds() {
         let mut db = InMemoryStateDB::new();
+        // CreateObject debits the creator for MIN_STORAGE_DEPOSIT — fund first.
+        fund_account(&mut db, 1, 10_000);
         let mut executor = SimpleExecutor::new_with_sig_verification_for_test(7);
         let kp = MlDsaKeypair::generate();
 
@@ -4970,8 +4977,9 @@ contract Counter {
         assert_eq!(ready.txs_executed, 1);
         assert_eq!(
             db.get_account(&addr(1)).unwrap().balance,
-            pre_claim_balance + 1_500,
-            "claimed amount credited to balance"
+            // -1 for the per-block demurrage tick at the claim epoch.
+            pre_claim_balance + 1_500 - 1,
+            "claimed amount credited to balance (less 1-unit per-block demurrage)"
         );
         let rec = db.get_delegation(&addr(1), 7).unwrap();
         assert_eq!(rec.unbonding_amount, 0);
@@ -5040,6 +5048,150 @@ contract Counter {
         assert!(
             db.get_delegation(&addr(1), 7).is_none(),
             "fully unbonded delegation should be removed"
+        );
+    }
+
+    #[test]
+    fn test_delegations_for_validator_lists_all_delegators() {
+        // Two delegators bonding to the same validator, plus one bonding
+        // to a different validator. delegations_for_validator(7) must
+        // surface only the first two — that's what the wallet's
+        // GET /api/validator/:id/delegations endpoint returns.
+        let mut db = InMemoryStateDB::new();
+        seed_validator(&mut db, 7, 9, 100_000);
+        seed_validator(&mut db, 8, 10, 100_000);
+        fund_account(&mut db, 1, 5_000);
+        fund_account(&mut db, 2, 5_000);
+        fund_account(&mut db, 3, 5_000);
+
+        let mut executor = SimpleExecutor::new_for_test(7);
+        executor
+            .execute_block(
+                &mut db,
+                &make_block(
+                    1,
+                    1,
+                    vec![
+                        Transaction::Delegate(DelegateTx {
+                            delegator: addr(1),
+                            validator_id: 7,
+                            amount: 1_000,
+                            nonce: 0,
+                            signature: None,
+                            public_key: None,
+                        }),
+                        Transaction::Delegate(DelegateTx {
+                            delegator: addr(2),
+                            validator_id: 7,
+                            amount: 2_000,
+                            nonce: 0,
+                            signature: None,
+                            public_key: None,
+                        }),
+                        Transaction::Delegate(DelegateTx {
+                            delegator: addr(3),
+                            validator_id: 8,
+                            amount: 500,
+                            nonce: 0,
+                            signature: None,
+                            public_key: None,
+                        }),
+                    ],
+                ),
+            )
+            .unwrap();
+
+        let v7 = db.delegations_for_validator(7);
+        assert_eq!(v7.len(), 2, "validator 7 has two delegators");
+        let total: u64 = v7.iter().map(|d| d.amount).sum();
+        assert_eq!(total, 3_000, "Σ amount feeds delegated_stake");
+
+        let v8 = db.delegations_for_validator(8);
+        assert_eq!(v8.len(), 1);
+        assert_eq!(v8[0].amount, 500);
+    }
+
+    #[test]
+    fn test_full_delegation_lifecycle_roundtrip() {
+        // Round-trip: delegate → undelegate → wait for unbonding period
+        // → claim. Confirms that after a complete cycle the delegation
+        // record is cleaned up and the delegator's balance has been
+        // restored (less per-block demurrage). Wallet-facing endpoint
+        // /api/tx/{delegate,undelegate,claim_delegation} relies on this.
+        let mut db = InMemoryStateDB::new();
+        seed_validator(&mut db, 7, 9, 100_000);
+        fund_account(&mut db, 1, 10_000);
+        let starting_balance = db.get_account(&addr(1)).unwrap().balance;
+
+        let mut executor = SimpleExecutor::new_for_test(7);
+        // Bond 3000.
+        executor
+            .execute_block(
+                &mut db,
+                &make_block(
+                    1,
+                    1,
+                    vec![Transaction::Delegate(DelegateTx {
+                        delegator: addr(1),
+                        validator_id: 7,
+                        amount: 3_000,
+                        nonce: 0,
+                        signature: None,
+                        public_key: None,
+                    })],
+                ),
+            )
+            .unwrap();
+        // Unbond fully at epoch 5.
+        executor
+            .execute_block(
+                &mut db,
+                &make_block(
+                    2,
+                    5,
+                    vec![Transaction::Undelegate(UndelegateTx {
+                        delegator: addr(1),
+                        validator_id: 7,
+                        amount: 3_000,
+                        nonce: 1,
+                        signature: None,
+                        public_key: None,
+                    })],
+                ),
+            )
+            .unwrap();
+        // Claim AFTER unbonding period (5 + 256 = 261).
+        let r = executor
+            .execute_block(
+                &mut db,
+                &make_block(
+                    3,
+                    261,
+                    vec![Transaction::ClaimDelegation(ClaimDelegationTx {
+                        delegator: addr(1),
+                        validator_id: 7,
+                        nonce: 2,
+                        signature: None,
+                        public_key: None,
+                    })],
+                ),
+            )
+            .unwrap();
+        assert_eq!(r.txs_executed, 1);
+
+        // Balance restored (demurrage is small per-block; just check the
+        // funds came back in the right order of magnitude).
+        let final_balance = db.get_account(&addr(1)).unwrap().balance;
+        assert!(
+            final_balance >= starting_balance.saturating_sub(10),
+            "claim must restore the bonded amount: started {}, ended {}",
+            starting_balance,
+            final_balance
+        );
+        // Delegation record fully reaped.
+        assert!(
+            db.get_delegation(&addr(1), 7).is_none(),
+            "fully unbonded + claimed delegation should be removed"
         );
     }
 

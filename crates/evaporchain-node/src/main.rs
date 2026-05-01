@@ -950,6 +950,20 @@ struct NodeArgs {
     /// Disable the faucet per-address cooldown (for stress/load testing).
     /// Refused by --mainnet strict mode.
     devnet_no_rate_limit: bool,
+    /// Periodic SnapshotFile interval, in blocks. Defaults to 10_000.
+    /// 0 disables periodic snapshots.
+    snapshot_interval: u64,
+    /// How many of the most recent SnapshotFile blobs to keep on disk.
+    /// Older ones are pruned. Defaults to 3.
+    snapshot_keep: u64,
+    /// Directory to write `.zst` SnapshotFile blobs to. Defaults to
+    /// `<data_dir>/snapshots`. Served by `/api/snapshot/download/:height`.
+    snapshot_dir: Option<String>,
+    /// Peer URL to fast-sync from before engaging Tendermint normal-sync.
+    /// e.g. `http://validator-1.evaporchain.com:8080`. When set, the node
+    /// downloads the peer's latest SnapshotFile, verifies + applies it,
+    /// then advances normal-sync from `block_height + 1` onwards.
+    fast_sync_peer: Option<String>,
 }
 
 fn parse_args() -> NodeArgs {
@@ -1092,6 +1106,29 @@ fn parse_args() -> NodeArgs {
         }
     }
 
+    let snapshot_interval = args
+        .iter()
+        .position(|a| a == "--snapshot-interval")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(10_000);
+    let snapshot_keep = args
+        .iter()
+        .position(|a| a == "--snapshot-keep")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(3);
+    let snapshot_dir = args
+        .iter()
+        .position(|a| a == "--snapshot-dir")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
+    let fast_sync_peer = args
+        .iter()
+        .position(|a| a == "--fast-sync")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
+
     NodeArgs {
         demo_mode,
         prove_mode,
@@ -1122,6 +1159,10 @@ fn parse_args() -> NodeArgs {
         light_mode,
         mainnet_strict,
         devnet_no_rate_limit,
+        snapshot_interval,
+        snapshot_keep,
+        snapshot_dir,
+        fast_sync_peer,
     }
 }
 
@@ -2062,7 +2103,65 @@ async fn main() -> Result<()> {
     // same genesis-supplied BLS pubkeys rather than its own freshly-generated
     // ones.
     let mut genesis_config_loaded: Option<evaporchain_types::genesis::GenesisConfig> = None;
+    // Optional fast-sync: bootstrap from a peer's SnapshotFile before
+    // touching genesis. Runs only when `--fast-sync <peer-url>` is set
+    // AND the local state DB is empty. Wipes the (empty) DB and
+    // replays the peer's snapshot, after which Tendermint normal-sync
+    // picks up from `block_height + 1`.
     if is_fresh {
+        if let Some(peer_url) = args.fast_sync_peer.clone() {
+            println!(
+                "{} \x1b[1;36mFast-sync from peer: {}\x1b[0m",
+                node_tag, peer_url
+            );
+            let chain_id_for_sync = args.chain_id.clone();
+            // Fetch + verify outside the lock; apply requires &mut db.
+            // Two-phase to avoid holding the lock across `.await`.
+            let fetch_result =
+                sync::fetch_snapshot_blob_from_peer(&peer_url, &chain_id_for_sync).await;
+            match fetch_result {
+                Ok(file) => {
+                    let mut db = safe_lock(&db);
+                    match file.apply_to(&mut *db) {
+                        Ok(_) => {
+                            println!(
+                                "{} \x1b[1;32mFast-sync OK\x1b[0m — height={} epoch={} root={}",
+                                node_tag,
+                                file.block_height,
+                                file.epoch,
+                                hex::encode(file.state_root),
+                            );
+                            restored_height = Some(file.block_height);
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "{} \x1b[31mFast-sync apply failed:\x1b[0m {} — falling back to genesis bootstrap",
+                                node_tag, e
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "{} \x1b[31mFast-sync failed:\x1b[0m {} — falling back to genesis bootstrap",
+                        node_tag, e
+                    );
+                }
+            }
+        }
+    }
+
+    if is_fresh && restored_height.is_some() {
+        // Fast-sync succeeded — DB is populated, skip genesis bootstrap.
+        let db = safe_lock(&db);
+        println!(
+            "{}   {} accounts, {} objects, {} ghosts after fast-sync",
+            node_tag,
+            db.all_account_addresses().len(),
+            db.object_count(),
+            db.ghost_count(),
+        );
+    } else if is_fresh {
         let mut db = safe_lock(&db);
         // Try restoring from a local snapshot first (e.g., from a previous sync)
         if let Some((height, _epoch, _root)) =
@@ -2890,6 +2989,22 @@ async fn main() -> Result<()> {
     // Snapshot info — shared between API server and commit loop
     let snapshot_info = Arc::new(Mutex::new(None::<(u64, [u8; 32], usize)>));
 
+    // Resolve `--snapshot-dir` (or default to `<data_dir>/snapshots`).
+    // Created on demand by the periodic snapshot writer; passed to
+    // ApiState so /api/snapshot/{latest,download/:height} can serve.
+    let snapshot_dir_path: std::path::PathBuf = match args.snapshot_dir {
+        Some(ref dir) => std::path::PathBuf::from(dir),
+        None => std::path::PathBuf::from(format!("{}/snapshots", args.data_dir)),
+    };
+    if let Err(e) = std::fs::create_dir_all(&snapshot_dir_path) {
+        eprintln!(
+            "{} \x1b[33mWarning: could not create snapshot dir {}: {}\x1b[0m",
+            node_tag,
+            snapshot_dir_path.display(),
+            e
+        );
+    }
+
     // State sync server — serves snapshots to syncing peers
     let sync_server: Arc<Mutex<sync::SyncServer>> = {
         let mut srv = sync::SyncServer::new();
@@ -3089,6 +3204,7 @@ async fn main() -> Result<()> {
             pnt: Arc::new(Mutex::new(
                 evaporchain_pnt::PhasedNullifierTree::new(16).expect("window_depth=16 is valid"),
             )),
+            snapshot_dir: Some(snapshot_dir_path.clone()),
         });
         // Keep one Arc<ApiState> for the block-applying loop so it can
         // call update_four_act_snapshot after each commit.
@@ -3325,6 +3441,13 @@ async fn main() -> Result<()> {
                     ghost_count_val,
                     exec_elapsed_us,
                 );
+
+                // Per-validator block-production timing for the
+                // /metrics histogram (see tendermint::record_block_production_timing).
+                if let (Some(pid), Some(tc_ref)) = (result.block.producer_id, tendermint.as_ref()) {
+                    let mut tc = safe_lock(tc_ref);
+                    tc.record_block_production_timing(pid, exec_elapsed_us);
+                }
 
                 fatal_persist_err(
                     "consensus_meta",
@@ -4071,9 +4194,18 @@ async fn main() -> Result<()> {
                                     obj_count, ghost_count, exec_elapsed_us,
                                 );
 
+                                // Per-validator block-production timing: feed
+                                // (producer_id, exec_us) into the consensus's
+                                // ring buffer so /metrics can emit
+                                // evap_block_production_seconds{producer="validator-{id}"}.
+                                if let Some(pid) = block.producer_id {
+                                    let mut tc = safe_lock(tc_ref);
+                                    tc.record_block_production_timing(pid, exec_elapsed_us);
+                                }
+
                                 // Persist
                                 fatal_persist_err("consensus_meta", chain_store.save_consensus_meta(block.number, block.epoch, consensus_parent_hash));
-                                if let Some(r) = consensus_bell_reading {
+                                if let Some(ref r) = consensus_bell_reading {
                                     log_persist_err("bell_reading", chain_store.save_bell_reading(r.s_value_milli, r.block_height, r.epoch, r.certified));
                                 }
                                 fatal_persist_err("full_block", chain_store.save_full_block(&block));
@@ -4154,6 +4286,95 @@ async fn main() -> Result<()> {
                                             }
                                         }
                                         Err(e) => eprintln!("{} \x1b[31mSnapshot error: {}\x1b[0m", node_tag, e),
+                                    }
+                                }
+
+                                // Periodic SnapshotFile (.zst blob) generation for fast-sync.
+                                // Independent of the legacy 100-block sync-server snapshot above.
+                                // Default cadence is `--snapshot-interval` blocks (10_000 unless
+                                // overridden). Files land at `<snapshot_dir>/<height>.zst` and are
+                                // served via /api/snapshot/{latest,download/:height}.
+                                if args.snapshot_interval > 0
+                                    && block.number > 0
+                                    && block.number % args.snapshot_interval == 0
+                                {
+                                    let chain_id_for_snap = args.chain_id.clone();
+                                    let validator_set = {
+                                        let tc = safe_lock(tc_ref);
+                                        let vs = tc.validator_set();
+                                        evaporchain_state::ValidatorSetSnapshot {
+                                            validators: vs.validators().iter().map(|v| {
+                                                evaporchain_state::SnapshotValidator {
+                                                    id: v.id,
+                                                    stake: v.stake,
+                                                    address: v.address,
+                                                    bls_public_key: v.bls_public_key.clone(),
+                                                    vrf_public_key: v.vrf_public_key.clone(),
+                                                    jailed: v.jailed,
+                                                }
+                                            }).collect(),
+                                        }
+                                    };
+                                    let bell_reading = consensus_bell_reading.as_ref().map(|r| {
+                                        evaporchain_state::SnapshotBellReading {
+                                            s_value_milli: r.s_value_milli,
+                                            block_height: r.block_height,
+                                            epoch: r.epoch,
+                                            certified: r.certified,
+                                        }
+                                    });
+                                    let mut db_guard = safe_lock(&db);
+                                    match evaporchain_state::SnapshotFile::create(
+                                        &mut *db_guard,
+                                        chain_id_for_snap,
+                                        block.number,
+                                        block.epoch,
+                                        consensus_parent_hash,
+                                        bell_reading,
+                                        validator_set,
+                                    ) {
+                                        Ok(file) => {
+                                            let path = snapshot_dir_path.join(format!("{}.zst", block.number));
+                                            match file.write_to_path(&path) {
+                                                Ok(written) => {
+                                                    eprintln!(
+                                                        "{} \x1b[1;35mSnapshotFile written at height {} ({} bytes) -> {}\x1b[0m",
+                                                        node_tag, block.number, written, path.display(),
+                                                    );
+                                                    // Prune older blobs, keeping the newest K.
+                                                    if let Ok(entries) = std::fs::read_dir(&snapshot_dir_path) {
+                                                        let mut heights: Vec<u64> = entries.filter_map(|e| e.ok())
+                                                            .filter_map(|e| {
+                                                                let p = e.path();
+                                                                if p.extension().and_then(|s| s.to_str()) != Some("zst") {
+                                                                    return None;
+                                                                }
+                                                                p.file_stem()
+                                                                    .and_then(|s| s.to_str())
+                                                                    .and_then(|s| s.parse::<u64>().ok())
+                                                            })
+                                                            .collect();
+                                                        heights.sort();
+                                                        let keep = args.snapshot_keep as usize;
+                                                        if heights.len() > keep {
+                                                            let drop_count = heights.len() - keep;
+                                                            for h in &heights[..drop_count] {
+                                                                let p = snapshot_dir_path.join(format!("{}.zst", h));
+                                                                let _ = std::fs::remove_file(&p);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                Err(e) => eprintln!(
+                                                    "{} \x1b[31mSnapshotFile write error: {}\x1b[0m",
+                                                    node_tag, e,
+                                                ),
+                                            }
+                                        }
+                                        Err(e) => eprintln!(
+                                            "{} \x1b[31mSnapshotFile create error: {}\x1b[0m",
+                                            node_tag, e,
+                                        ),
                                     }
                                 }
 
@@ -4248,6 +4469,19 @@ async fn main() -> Result<()> {
                                         node_tag, cert.signer_ids.len(), cert.aggregate_signature.len(),
                                         signing_stake, total_stake,
                                         if total_stake > 0 { signing_stake as f64 / total_stake as f64 * 100.0 } else { 0.0 },
+                                    );
+                                } else {
+                                    // Cert missing on a committed block ⇒ FinalityTracker
+                                    // can't advance, light clients can't verify, bridges
+                                    // see frozen finality. Surface loudly so it's not
+                                    // silently observed in steady-state.
+                                    let (precommit_count, sigs_count) = {
+                                        let tc = safe_lock(tc_ref);
+                                        tc.precommit_diagnostics()
+                                    };
+                                    eprintln!(
+                                        "{} \x1b[1;33m⚠ COMMITTED #{} without BLS CommitCertificate — finality cannot advance (precommits={}, sigs={})\x1b[0m",
+                                        node_tag, block.number, precommit_count, sigs_count
                                     );
                                 }
                             }
@@ -4648,6 +4882,12 @@ async fn main() -> Result<()> {
                                         &block, &result.execution,
                                         obj_count, ghost_count, exec_elapsed_us,
                                     );
+                                    // Per-validator block-production timing for the
+                                    // /metrics histogram (see tendermint::record_block_production_timing).
+                                    if let Some(pid) = block.producer_id {
+                                        let mut tc = safe_lock(tc_ref);
+                                        tc.record_block_production_timing(pid, exec_elapsed_us);
+                                    }
                                     fatal_persist_err("consensus_meta", chain_store.save_consensus_meta(block.number, block.epoch, consensus_parent_hash));
                                     if let Some(r) = consensus_bell_reading {
                                         log_persist_err("bell_reading", chain_store.save_bell_reading(r.s_value_milli, r.block_height, r.epoch, r.certified));
@@ -5214,6 +5454,45 @@ async fn main() -> Result<()> {
                                         if stats.state_size_trend.len() > 1000 {
                                             let excess = stats.state_size_trend.len() - 1000;
                                             stats.state_size_trend.drain(..excess);
+                                        }
+                                    }
+                                    // Record finality on the sync path too. Without
+                                    // this, only the proposer's local-COMMITTED path
+                                    // feeds the FinalityTracker — every other node
+                                    // syncs the block but never marks it final, so
+                                    // /api/network/health reports finality_lag =
+                                    // block_height for non-proposing nodes.
+                                    if let Some(ref tc_ref) = tendermint {
+                                        if let Some(ref cert) = block.commit_certificate {
+                                            let (signing_stake, total_stake) = {
+                                                let tc = safe_lock(tc_ref);
+                                                let vs = tc.validator_set();
+                                                let signing: u64 = cert.signer_ids.iter()
+                                                    .filter_map(|&id| vs.get(id))
+                                                    .map(|v| v.stake)
+                                                    .sum();
+                                                (signing, vs.total_stake())
+                                            };
+                                            let mut ft = safe_lock(&finality_tracker);
+                                            let now = std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .unwrap_or_default()
+                                                .as_secs();
+                                            ft.on_block_finalized(
+                                                block.number,
+                                                cert.block_hash,
+                                                result.execution.state_root,
+                                                block.epoch,
+                                                cert.clone(),
+                                                signing_stake,
+                                                total_stake,
+                                                now,
+                                            );
+                                        } else {
+                                            eprintln!(
+                                                "{} \x1b[1;33m⚠ SYNCED #{} without BLS CommitCertificate — proposer dropped cert; finality stays frozen on this peer\x1b[0m",
+                                                node_tag, block.number
+                                            );
                                         }
                                     }
                                     println!(

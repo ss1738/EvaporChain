@@ -540,6 +540,360 @@ pub fn deserialize_snapshot(bytes: &[u8]) -> Result<StateSnapshot, SnapshotError
     bincode::deserialize(bytes).map_err(|e| SnapshotError::DeserializationError(e.to_string()))
 }
 
+// ─────────────────────── On-Disk Snapshot Blob ─────────────────────────
+//
+// The file format used by `evaporchain-cli snapshot create` and the
+// `/api/snapshot/download/:height` endpoint. Wraps the in-memory
+// `StateSnapshot` plus consensus metadata (chain_id, parent_hash,
+// validator_set_snapshot, bell_reading) and emits a zstd-compressed
+// bincode blob with a 4-byte magic header `EVSN` + 1-byte version.
+//
+// This is a fast-sync bootstrap format. New nodes download the blob,
+// verify the integrity hash, and apply it via `SnapshotFile::apply_to`
+// before engaging Tendermint normal-sync from `block_height + 1`.
+
+/// Magic header bytes — first four bytes of every `.zst` snapshot blob.
+pub const SNAPSHOT_MAGIC: &[u8; 4] = b"EVSN";
+
+/// On-disk version byte (5th byte of the file). Bumps when the file
+/// layout changes incompatibly. Distinct from `SNAPSHOT_VERSION` which
+/// covers the in-memory `StateSnapshot` schema.
+pub const SNAPSHOT_FILE_VERSION: u8 = 1;
+
+/// Default zstd compression level — balances throughput against size.
+pub const SNAPSHOT_COMPRESSION_LEVEL: i32 = 10;
+
+/// Per-block CHSH Bell-Beacon measurement persisted in the snapshot
+/// file so a fast-syncing node can restore the wallet-visible
+/// `/api/bell/latest` reading immediately. Mirrors the consensus-layer
+/// `CheckpointedBellReading` shape exactly so both crates can convert
+/// without pulling each other in as deps.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotBellReading {
+    pub s_value_milli: u64,
+    pub block_height: u64,
+    pub epoch: u64,
+    pub certified: bool,
+}
+
+/// Validator entry persisted in the snapshot file. Opaque to
+/// `evaporchain-state`; node-side code converts from
+/// `evaporchain_consensus::validator_set::ValidatorInfo`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotValidator {
+    pub id: u64,
+    pub stake: u64,
+    pub address: [u8; 32],
+    pub bls_public_key: Option<Vec<u8>>,
+    pub vrf_public_key: Option<Vec<u8>>,
+    pub jailed: bool,
+}
+
+/// Validator-set snapshot bundled with the state snapshot.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ValidatorSetSnapshot {
+    pub validators: Vec<SnapshotValidator>,
+}
+
+/// Smart-contract storage entry. The current `StateDB` trait does not
+/// expose contract storage as a typed surface, so this vec is reserved
+/// for forward compatibility — populated when contract storage is
+/// migrated under `StateDB`. Today: always empty.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContractEntry {
+    pub id: [u8; 32],
+    pub code: Vec<u8>,
+    pub storage: Vec<([u8; 32], Vec<u8>)>,
+}
+
+/// On-disk snapshot file. Serialised via `bincode`, compressed with
+/// `zstd`, prefixed with magic + version. The integrity hash is
+/// recomputed on load and asserted equal — flipping any byte causes
+/// a verify failure.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SnapshotFile {
+    /// Format version (file schema). Currently `1`.
+    pub version: u32,
+    /// Chain identifier (e.g. `evaporchain-mainnet-1`). Mismatch =>
+    /// reject — never apply a foreign chain's snapshot to a local DB.
+    pub chain_id: String,
+    /// Block height the snapshot was taken at.
+    pub block_height: u64,
+    /// State root at `block_height` (Verkle trie root).
+    pub state_root: [u8; 32],
+    /// Epoch at snapshot time.
+    pub epoch: u64,
+    /// Parent block hash for `block_height + 1`.
+    pub parent_hash: [u8; 32],
+    /// Unix milliseconds at file creation.
+    pub created_at: u64,
+    /// Entire account map.
+    pub accounts: Vec<Account>,
+    /// Entire object map (active state).
+    pub objects: Vec<StateObject>,
+    /// Entire contract storage. Empty until contracts move under StateDB.
+    pub contracts: Vec<ContractEntry>,
+    /// Ghost records (evaporated objects pending resurrection).
+    pub ghosts: Vec<GhostRecord>,
+    /// Spent nullifiers, sorted.
+    pub spent_nullifiers: Vec<[u8; 32]>,
+    /// Privacy layer state.
+    pub note_tree_root: [u8; 32],
+    pub shielded_pool_balance: u64,
+    pub note_count: u64,
+    /// Last per-block Bell-Beacon CHSH reading.
+    pub bell_reading: Option<SnapshotBellReading>,
+    /// Validator-set snapshot.
+    pub validator_set: ValidatorSetSnapshot,
+    /// BLAKE3 over all preceding fields canonically serialised. Verifier
+    /// recomputes and asserts equal.
+    pub integrity_hash: [u8; 32],
+}
+
+/// Lightweight metadata returned by `/api/snapshot/latest`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SnapshotMetadata {
+    pub version: u32,
+    pub chain_id: String,
+    pub block_height: u64,
+    pub state_root: [u8; 32],
+    pub epoch: u64,
+    pub integrity_hash: [u8; 32],
+    pub size_bytes: u64,
+    pub download_path: String,
+}
+
+impl SnapshotFile {
+    /// Build a snapshot file by reading the entire active state out of
+    /// `db`. Caller supplies consensus metadata (chain_id, parent_hash,
+    /// epoch, bell_reading, validator_set). The integrity hash is
+    /// computed and embedded.
+    pub fn create(
+        db: &mut dyn StateDB,
+        chain_id: impl Into<String>,
+        block_height: u64,
+        epoch: u64,
+        parent_hash: [u8; 32],
+        bell_reading: Option<SnapshotBellReading>,
+        validator_set: ValidatorSetSnapshot,
+    ) -> Result<Self, SnapshotError> {
+        let mut accounts: Vec<Account> = db
+            .all_account_addresses()
+            .into_iter()
+            .filter_map(|addr| db.get_account(&addr).cloned())
+            .collect();
+        accounts.sort_by_key(|a| a.address);
+
+        let mut objects: Vec<StateObject> = db
+            .all_object_ids()
+            .into_iter()
+            .filter_map(|id| db.get_object(&id).cloned())
+            .collect();
+        objects.sort_by_key(|o| o.id);
+
+        let mut ghosts: Vec<GhostRecord> = db
+            .all_ghost_ids()
+            .into_iter()
+            .filter_map(|id| db.get_ghost(&id).cloned())
+            .collect();
+        ghosts.sort_by_key(|g| g.object_id);
+
+        let mut spent_nullifiers = db.all_nullifiers();
+        spent_nullifiers.sort();
+
+        let state_root = db.compute_state_root();
+
+        let created_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+
+        let mut file = Self {
+            version: SNAPSHOT_VERSION,
+            chain_id: chain_id.into(),
+            block_height,
+            state_root,
+            epoch,
+            parent_hash,
+            created_at,
+            accounts,
+            objects,
+            contracts: Vec::new(),
+            ghosts,
+            spent_nullifiers,
+            note_tree_root: db.get_note_tree_root(),
+            shielded_pool_balance: db.get_shielded_pool_balance(),
+            note_count: db.get_note_count(),
+            bell_reading,
+            validator_set,
+            integrity_hash: [0u8; 32],
+        };
+        file.integrity_hash = file.compute_integrity_hash();
+        Ok(file)
+    }
+
+    /// Recompute the BLAKE3 over every field except `integrity_hash`
+    /// itself. Used both at create time (to fill the field) and at load
+    /// time (to verify it was not tampered).
+    fn compute_integrity_hash(&self) -> [u8; 32] {
+        // Canonical serialisation: clone with integrity_hash zeroed.
+        let mut canonical = self.clone();
+        canonical.integrity_hash = [0u8; 32];
+        match bincode::serialize(&canonical) {
+            Ok(bytes) => blake3_hash(&bytes),
+            Err(_) => [0u8; 32],
+        }
+    }
+
+    /// Serialise + compress + prefix with magic header. Returns the
+    /// full on-disk bytes.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, SnapshotError> {
+        let serialized = bincode::serialize(self)
+            .map_err(|e| SnapshotError::SerializationError(e.to_string()))?;
+        let compressed = zstd::stream::encode_all(&serialized[..], SNAPSHOT_COMPRESSION_LEVEL)
+            .map_err(|e| SnapshotError::SerializationError(format!("zstd encode: {e}")))?;
+        let mut out = Vec::with_capacity(5 + compressed.len());
+        out.extend_from_slice(SNAPSHOT_MAGIC);
+        out.push(SNAPSHOT_FILE_VERSION);
+        out.extend_from_slice(&compressed);
+        Ok(out)
+    }
+
+    /// Parse + decompress + deserialise + verify integrity hash.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, SnapshotError> {
+        if bytes.len() < 5 {
+            return Err(SnapshotError::Invalid(
+                "snapshot file too short for header".into(),
+            ));
+        }
+        if &bytes[..4] != SNAPSHOT_MAGIC {
+            return Err(SnapshotError::Invalid(format!(
+                "bad magic: expected {:?}, got {:?}",
+                SNAPSHOT_MAGIC,
+                &bytes[..4]
+            )));
+        }
+        if bytes[4] != SNAPSHOT_FILE_VERSION {
+            return Err(SnapshotError::VersionMismatch {
+                expected: SNAPSHOT_FILE_VERSION as u32,
+                actual: bytes[4] as u32,
+            });
+        }
+        let payload = &bytes[5..];
+        let decompressed = zstd::stream::decode_all(payload)
+            .map_err(|e| SnapshotError::DeserializationError(format!("zstd decode: {e}")))?;
+        let file: SnapshotFile = bincode::deserialize(&decompressed)
+            .map_err(|e| SnapshotError::DeserializationError(e.to_string()))?;
+
+        if file.version != SNAPSHOT_VERSION {
+            return Err(SnapshotError::VersionMismatch {
+                expected: SNAPSHOT_VERSION,
+                actual: file.version,
+            });
+        }
+
+        let recomputed = file.compute_integrity_hash();
+        if recomputed != file.integrity_hash {
+            return Err(SnapshotError::StateRootMismatch {
+                expected: hex::encode(file.integrity_hash),
+                actual: hex::encode(recomputed),
+            });
+        }
+        Ok(file)
+    }
+
+    /// Convenience: write the on-disk bytes to `path`. Caller should
+    /// pass a `.zst` extension for clarity but it isn't enforced.
+    pub fn write_to_path(&self, path: &std::path::Path) -> Result<u64, SnapshotError> {
+        let bytes = self.to_bytes()?;
+        let len = bytes.len() as u64;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| SnapshotError::Invalid(format!("create dir: {e}")))?;
+        }
+        std::fs::write(path, &bytes)
+            .map_err(|e| SnapshotError::Invalid(format!("write file: {e}")))?;
+        Ok(len)
+    }
+
+    /// Convenience: read + verify from disk.
+    pub fn load_and_verify(path: &std::path::Path) -> Result<Self, SnapshotError> {
+        let bytes = std::fs::read(path)
+            .map_err(|e| SnapshotError::Invalid(format!("read file {}: {e}", path.display())))?;
+        Self::from_bytes(&bytes)
+    }
+
+    /// Lightweight metadata view (does not include contents).
+    pub fn metadata(&self, size_bytes: u64) -> SnapshotMetadata {
+        SnapshotMetadata {
+            version: self.version,
+            chain_id: self.chain_id.clone(),
+            block_height: self.block_height,
+            state_root: self.state_root,
+            epoch: self.epoch,
+            integrity_hash: self.integrity_hash,
+            size_bytes,
+            download_path: format!("/api/snapshot/download/{}", self.block_height),
+        }
+    }
+
+    /// Wipe `db` and replay every account/object/ghost/contract/privacy
+    /// entry from the snapshot. Verifies the resulting state root
+    /// matches the embedded value.
+    pub fn apply_to(&self, db: &mut dyn StateDB) -> Result<ApplyResult, SnapshotError> {
+        let start = std::time::Instant::now();
+
+        // Wipe existing state so stale entries don't survive restore.
+        for id in db.all_object_ids() {
+            db.delete_object(&id);
+        }
+        for id in db.all_ghost_ids() {
+            db.remove_ghost(&id);
+        }
+        let snapshot_addrs: std::collections::HashSet<AccountAddress> =
+            self.accounts.iter().map(|a| a.address).collect();
+        for addr in db.all_account_addresses() {
+            if !snapshot_addrs.contains(&addr) {
+                db.delete_account(&addr);
+            }
+        }
+
+        for acc in &self.accounts {
+            db.put_account(acc.clone());
+        }
+        for obj in &self.objects {
+            db.put_object(obj.clone());
+        }
+        for ghost in &self.ghosts {
+            db.put_ghost(ghost.clone());
+        }
+
+        db.put_note_tree_root(self.note_tree_root);
+        db.put_shielded_pool_balance(self.shielded_pool_balance);
+        db.put_note_count(self.note_count);
+        for nullifier in &self.spent_nullifiers {
+            db.spend_nullifier(nullifier);
+        }
+
+        let computed_root = db.compute_state_root();
+        if computed_root != self.state_root {
+            return Err(SnapshotError::StateRootMismatch {
+                expected: hex::encode(self.state_root),
+                actual: hex::encode(computed_root),
+            });
+        }
+
+        Ok(ApplyResult {
+            accounts_restored: self.accounts.len(),
+            objects_restored: self.objects.len(),
+            ghosts_restored: self.ghosts.len(),
+            nullifiers_restored: self.spent_nullifiers.len(),
+            state_root: computed_root,
+            elapsed_ms: start.elapsed().as_millis() as u64,
+        })
+    }
+}
+
 // ─────────────────────── Tests ──────────────────────────────────────────
 
 #[cfg(test)]
@@ -910,5 +1264,191 @@ mod tests {
             target_db.get_account(&addr(99)).is_none(),
             "stale account must be deleted"
         );
+    }
+
+    // ─── SnapshotFile (on-disk blob format) ─────────────────────────────
+
+    fn make_validator_set() -> ValidatorSetSnapshot {
+        ValidatorSetSnapshot {
+            validators: vec![SnapshotValidator {
+                id: 1,
+                stake: 1_000_000,
+                address: addr(1),
+                bls_public_key: Some(vec![0xAA; 48]),
+                vrf_public_key: Some(vec![0xBB; 32]),
+                jailed: false,
+            }],
+        }
+    }
+
+    #[test]
+    fn snapshot_round_trip_in_memory() {
+        let mut db = InMemoryStateDB::new();
+        populate_db(&mut db);
+
+        let parent_hash = [0xCC; 32];
+        let bell = Some(SnapshotBellReading {
+            s_value_milli: 2828,
+            block_height: 100,
+            epoch: 5,
+            certified: true,
+        });
+        let file = SnapshotFile::create(
+            &mut db,
+            "evaporchain-test-1",
+            100,
+            5,
+            parent_hash,
+            bell.clone(),
+            make_validator_set(),
+        )
+        .unwrap();
+        let bytes = file.to_bytes().unwrap();
+        // Magic header + version byte present.
+        assert_eq!(&bytes[..4], SNAPSHOT_MAGIC);
+        assert_eq!(bytes[4], SNAPSHOT_FILE_VERSION);
+
+        let parsed = SnapshotFile::from_bytes(&bytes).unwrap();
+        assert_eq!(parsed.chain_id, "evaporchain-test-1");
+        assert_eq!(parsed.block_height, 100);
+        assert_eq!(parsed.epoch, 5);
+        assert_eq!(parsed.parent_hash, parent_hash);
+        assert_eq!(parsed.bell_reading, bell);
+        assert_eq!(parsed.validator_set.validators.len(), 1);
+
+        let mut target = InMemoryStateDB::new();
+        let result = parsed.apply_to(&mut target).unwrap();
+        assert_eq!(result.accounts_restored, 3);
+        assert_eq!(result.objects_restored, 2);
+        assert_eq!(result.ghosts_restored, 1);
+        assert_eq!(result.state_root, file.state_root);
+        assert_eq!(target.get_account(&addr(1)).unwrap().balance, 1_000_000);
+    }
+
+    #[test]
+    fn snapshot_integrity_hash_mismatch_rejects() {
+        let mut db = InMemoryStateDB::new();
+        populate_db(&mut db);
+
+        let file = SnapshotFile::create(
+            &mut db,
+            "evaporchain-test-1",
+            100,
+            5,
+            [0u8; 32],
+            None,
+            make_validator_set(),
+        )
+        .unwrap();
+        let mut bytes = file.to_bytes().unwrap();
+        // Flip a byte deep in the compressed payload (after the 5-byte
+        // header) — corrupts the bincode body, integrity hash recompute
+        // will not match.
+        let last = bytes.len() - 1;
+        bytes[last] ^= 0xFF;
+        let result = SnapshotFile::from_bytes(&bytes);
+        assert!(
+            result.is_err(),
+            "tampered snapshot must fail to verify; got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn snapshot_version_mismatch_rejects() {
+        let mut db = InMemoryStateDB::new();
+        populate_db(&mut db);
+
+        let file = SnapshotFile::create(
+            &mut db,
+            "evaporchain-test-1",
+            100,
+            5,
+            [0u8; 32],
+            None,
+            make_validator_set(),
+        )
+        .unwrap();
+        let mut bytes = file.to_bytes().unwrap();
+        // Mutate the on-disk version byte to a future value.
+        bytes[4] = SNAPSHOT_FILE_VERSION + 1;
+        let result = SnapshotFile::from_bytes(&bytes);
+        assert!(matches!(
+            result,
+            Err(SnapshotError::VersionMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn snapshot_chain_id_mismatch_rejects() {
+        // Verify that two snapshots with different chain ids produce
+        // different integrity hashes — i.e. a snapshot from chain A
+        // can't be silently applied to chain B without the verifier
+        // noticing. (A node-side check on `chain_id` belt-and-braces
+        // this — see fast_sync_from_peer.)
+        let mut db = InMemoryStateDB::new();
+        populate_db(&mut db);
+        let file_a = SnapshotFile::create(
+            &mut db,
+            "chain-a",
+            100,
+            5,
+            [0u8; 32],
+            None,
+            make_validator_set(),
+        )
+        .unwrap();
+        let file_b = SnapshotFile::create(
+            &mut db,
+            "chain-b",
+            100,
+            5,
+            [0u8; 32],
+            None,
+            make_validator_set(),
+        )
+        .unwrap();
+        assert_ne!(file_a.integrity_hash, file_b.integrity_hash);
+
+        // And: tampering the chain_id in a serialised blob is caught.
+        let mut bytes = file_a.to_bytes().unwrap();
+        // Easiest tamper that still parses: flip a payload byte to
+        // simulate corruption of the chain_id field. Verified via the
+        // integrity hash recompute. Pick a byte near the start of the
+        // compressed payload (post-header).
+        bytes[10] ^= 0x01;
+        assert!(SnapshotFile::from_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn snapshot_file_path_round_trip() {
+        let dir = std::env::temp_dir().join(format!(
+            "evaporchain-snap-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("snap-100.zst");
+
+        let mut db = InMemoryStateDB::new();
+        populate_db(&mut db);
+        let file = SnapshotFile::create(
+            &mut db,
+            "evaporchain-test-1",
+            100,
+            5,
+            [0u8; 32],
+            None,
+            make_validator_set(),
+        )
+        .unwrap();
+        let written = file.write_to_path(&path).unwrap();
+        assert!(written > 0);
+        assert!(path.exists());
+
+        let loaded = SnapshotFile::load_and_verify(&path).unwrap();
+        assert_eq!(loaded.block_height, 100);
+        assert_eq!(loaded.state_root, file.state_root);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

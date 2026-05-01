@@ -2,16 +2,18 @@
 # Take a state snapshot on every validator and rsync it back to the
 # operator's backup host.
 #
-# NOTE: as of HEAD 94e0298 the `evaporchain` CLI does NOT expose a
-# `snapshot create` subcommand (verified via crates/evaporchain-cli/src/main.rs).
-# Until that subcommand lands, this playbook falls back to a tar.zst of
-# the live data dir — taken AFTER the node is briefly stopped, to avoid
-# capturing a torn RocksDB-style write batch. The data dir layout is the
-# one created by the node binary at {{ data_dir }}.
+# Calls the native `evaporchain snapshot create` subcommand, which writes
+# a SnapshotFile (`.zst` blob with magic header `EVSN`) at
+# `{{ snapshot_local_path }}`. The blob is the same format served by
+# `/api/snapshot/download/:height` and consumed by a fast-syncing peer
+# via `--fast-sync <peer-url>` — i.e. this rsync'd backup is directly
+# replayable into a fresh node by `evaporchain snapshot apply --input
+# <path> --data-dir <new-dir>`.
 #
-# Once `evaporchain snapshot create --output <path>` exists, replace the
-# `Take filesystem snapshot` block with a CLI invocation against the
-# running node — that path will not require a stop/start.
+# The CLI hits the live RocksDB data dir, so we briefly stop the node
+# to avoid the single-writer lock conflict; once we move the snapshot
+# generation to a node-internal `/api/snapshot/create` endpoint this
+# stop/start can go away.
 #
 # Usage:
 #   ansible-playbook playbooks/snapshot.yml --ask-vault-pass
@@ -24,7 +26,7 @@
   vars_files:
     - ../group_vars/vault.yml
   vars:
-    snapshot_filename: "snapshot-{{ inventory_hostname }}-{{ ansible_date_time.epoch }}.tar.zst"
+    snapshot_filename: "snapshot-{{ inventory_hostname }}-{{ ansible_date_time.epoch }}.zst"
     snapshot_local_path: "{{ snapshot_dir }}/{{ snapshot_filename }}"
   tasks:
     - name: Ensure snapshot dir exists
@@ -41,19 +43,27 @@
         state: stopped
       register: stop_result
 
-    # TODO(satya): swap to `{{ cli_path }} snapshot create --output {{ snapshot_local_path }}`
-    # once the CLI implements the `Snapshot` subcommand. See main.rs::Commands.
-    - name: Take filesystem snapshot of state dir (fallback)
-      ansible.builtin.shell: |
-        set -euo pipefail
-        tar --use-compress-program='zstd -T0 -10' \
-            -cf '{{ snapshot_local_path }}' \
-            -C '{{ data_dir }}' .
-        chown {{ evaporchain_user }}:{{ evaporchain_group }} '{{ snapshot_local_path }}'
-        chmod 0640 '{{ snapshot_local_path }}'
-      args:
-        executable: /bin/bash
+    - name: Take native SnapshotFile via evaporchain snapshot create
+      ansible.builtin.command:
+        argv:
+          - "{{ cli_path }}"
+          - snapshot
+          - create
+          - --data-dir
+          - "{{ data_dir }}/state"
+          - --output
+          - "{{ snapshot_local_path }}"
+          - --chain-id
+          - "{{ chain_id }}"
         creates: "{{ snapshot_local_path }}"
+      become_user: "{{ evaporchain_user }}"
+
+    - name: Fix ownership/mode on snapshot file
+      ansible.builtin.file:
+        path: "{{ snapshot_local_path }}"
+        owner: "{{ evaporchain_user }}"
+        group: "{{ evaporchain_group }}"
+        mode: "0640"
 
     - name: Restart service after snapshot
       ansible.builtin.systemd:
@@ -106,6 +116,14 @@
       ansible.builtin.shell: |
         set -euo pipefail
         cd '{{ snapshot_dir }}'
+        # Native SnapshotFile blobs (`.zst` from `evaporchain snapshot create`)
+        ls -1t snapshot-*.zst 2>/dev/null \
+          | tail -n +$((1 + {{ snapshot_retain_count }})) \
+          | xargs -r rm -f
+        ls -1t snapshot-*.zst.sha256 2>/dev/null \
+          | tail -n +$((1 + {{ snapshot_retain_count }})) \
+          | xargs -r rm -f
+        # Legacy tar.zst blobs from the pre-CLI fallback (kept clean).
         ls -1t snapshot-*.tar.zst 2>/dev/null \
           | tail -n +$((1 + {{ snapshot_retain_count }})) \
           | xargs -r rm -f

@@ -13,4 +13,8 @@ pub use evaporation::{EvaporationEngine, EvaporationResult};
 pub use evaporchain_crypto::TrieHealth;
 pub use refresh::{RefreshEngine, RefreshError};
 pub use rocksdb_backend::RocksDBStateDB;
+pub use snapshot::{
+    ContractEntry, SnapshotBellReading, SnapshotFile, SnapshotMetadata, SnapshotValidator,
+    ValidatorSetSnapshot, SNAPSHOT_COMPRESSION_LEVEL, SNAPSHOT_FILE_VERSION, SNAPSHOT_MAGIC,
+};
 pub use wal::{WalEntry, WalMutation, WriteAheadLog};

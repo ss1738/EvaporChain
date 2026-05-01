@@ -14,8 +14,8 @@ use evaporchain_da::block_da_2d::BlockDA2DPackage;
 use evaporchain_state::db::StateDB;
 use evaporchain_state::RocksDBStateDB;
 use evaporchain_types::{
-    Block, CallContractTx, CreateObjectTx, DeployContractTx, ObjectState, RefreshTx, Transaction,
-    TransferTx,
+    Block, CallContractTx, ClaimDelegationTx, CreateObjectTx, DelegateTx, DeployContractTx,
+    ObjectState, RefreshTx, Transaction, TransferTx, UndelegateTx,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -148,6 +148,11 @@ pub struct ApiState {
     /// depth = 16 phases; each phase advances on explicit API call or
     /// per-epoch consensus hook.
     pub pnt: Arc<Mutex<evaporchain_pnt::PhasedNullifierTree>>,
+    /// Directory containing on-disk `.zst` `SnapshotFile` blobs served
+    /// by `/api/snapshot/download/:height`. Populated when the node was
+    /// started with `--snapshot-dir` (or the default
+    /// `<data_dir>/snapshots`). `None` disables snapshot serving.
+    pub snapshot_dir: Option<std::path::PathBuf>,
 }
 
 /// Public-facing snapshot of the four-act narrative spine state for
@@ -863,6 +868,84 @@ struct RefreshRequest {
     signature: Option<String>,
     #[serde(default)]
     public_key: Option<String>,
+}
+
+// ── Delegation request types (P0 #4 wallet-facing) ────────────────────
+//
+// These mirror the on-chain `DelegateTx` / `UndelegateTx` /
+// `ClaimDelegationTx` shapes (evaporchain-types) but accept the
+// wallet's canonical hex/json address form. Each handler validates the
+// ML-DSA signature against canonical bytes the same way
+// `post_transfer` does (let the consensus layer's signature check fire
+// at execute time). The validator-side accounting is already wired:
+// `TendermintConsensus::tick` calls
+// `validator_set.refresh_delegated_stakes()` which sums per-validator
+// `DelegationRecord.amount` into `ValidatorInfo.delegated_stake`, and
+// every consensus weight calc uses `effective_stake() = stake +
+// delegated_stake`. So the wallet-facing endpoints below are the only
+// missing piece on the delegation side of the chain.
+
+#[derive(Deserialize)]
+struct DelegateRequest {
+    delegator: serde_json::Value,
+    validator_id: u64,
+    amount: u64,
+    nonce: u64,
+    #[serde(default)]
+    signature: Option<String>,
+    #[serde(default)]
+    public_key: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct UndelegateRequest {
+    delegator: serde_json::Value,
+    validator_id: u64,
+    amount: u64,
+    nonce: u64,
+    #[serde(default)]
+    signature: Option<String>,
+    #[serde(default)]
+    public_key: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ClaimDelegationRequest {
+    delegator: serde_json::Value,
+    validator_id: u64,
+    nonce: u64,
+    #[serde(default)]
+    signature: Option<String>,
+    #[serde(default)]
+    public_key: Option<String>,
+}
+
+#[derive(Serialize)]
+struct DelegationView {
+    /// 0x-prefixed 32-byte delegator address.
+    pub delegator: String,
+    pub validator_id: u64,
+    /// Currently bonded delegation amount (counts toward
+    /// `validator.effective_stake`).
+    pub amount: u64,
+    pub delegated_at_epoch: u64,
+    /// Amount currently in the unbonding window (NOT counted in
+    /// effective stake; not yet returned to balance).
+    pub unbonding_amount: u64,
+    /// `Some(epoch)` if an undelegate is in progress; the delegator can
+    /// `claim_delegation` after `unbonding_epoch + UNBONDING_PERIOD_EPOCHS`.
+    pub unbonding_epoch: Option<u64>,
+}
+
+#[derive(Serialize)]
+struct ValidatorDelegationsResponse {
+    pub validator_id: u64,
+    pub delegation_count: usize,
+    /// Σ amount across active delegations — matches
+    /// `ValidatorInfo.delegated_stake` after the next consensus tick's
+    /// `refresh_delegated_stakes`.
+    pub total_delegated: u64,
+    pub delegations: Vec<DelegationView>,
 }
 
 #[derive(Serialize)]
@@ -6295,6 +6378,24 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
 
     // Demo
     ApiDocEntry { method: "POST", path: "/api/demo/reset",            category: "demo", description: "Clear HBCT book + Sentinel votes so the dashboard demo can re-run", example: None },
+
+    // Validator delegation (P0 #4 — wallet-facing)
+    ApiDocEntry { method: "POST", path: "/api/tx/delegate",                  category: "consensus", description: "Bond stake from `delegator` to a validator. ML-DSA signature required over canonical DelegateTx bytes. The chain refreshes per-validator delegated_stake at the next consensus tick (effective_stake = stake + delegated_stake).", example: Some(r#"{"delegator":"0x…","validator_id":7,"amount":1000,"nonce":0,"signature":"<hex>","public_key":"<hex>"}"#) },
+    ApiDocEntry { method: "POST", path: "/api/tx/undelegate",                category: "consensus", description: "Begin unbonding `amount` from an existing delegation. Funds are not credited back to balance until UNBONDING_PERIOD_EPOCHS (256) have elapsed; subsequent /api/tx/claim_delegation reclaims them.", example: Some(r#"{"delegator":"0x…","validator_id":7,"amount":600,"nonce":1,"signature":"<hex>","public_key":"<hex>"}"#) },
+    ApiDocEntry { method: "POST", path: "/api/tx/claim_delegation",          category: "consensus", description: "Claim previously-undelegated funds back to delegator's balance once the unbonding window has elapsed (chain enforces at execute time).", example: Some(r#"{"delegator":"0x…","validator_id":7,"nonce":2,"signature":"<hex>","public_key":"<hex>"}"#) },
+    ApiDocEntry { method: "GET",  path: "/api/validator/:id/delegations",    category: "consensus", description: "Full delegator list for a validator: each entry is (delegator, amount, delegated_at_epoch, unbonding_amount, unbonding_epoch). Σ amount matches the validator's delegated_stake after the next consensus tick.", example: Some("/api/validator/7/delegations") },
+
+    // Admin — graceful drain (Ansible upgrade playbook)
+    ApiDocEntry { method: "POST", path: "/api/admin/drain",                  category: "admin", description: "Mark this node as draining. Consensus stops proposing/voting so peers route around the node before binary swap. Auth: Bearer EVAPORCHAIN_ADMIN_KEY. Returns {status:'draining'|'already_draining', draining:true, drain_started_at_epoch}.", example: None },
+    ApiDocEntry { method: "POST", path: "/api/admin/undrain",                category: "admin", description: "Clear the drain flag — node resumes proposing/voting. Auth: Bearer EVAPORCHAIN_ADMIN_KEY.", example: None },
+    ApiDocEntry { method: "GET",  path: "/api/admin/drain/status",           category: "admin", description: "Current drain state: {draining, drain_started_at_epoch}. Auth: Bearer EVAPORCHAIN_ADMIN_KEY.", example: None },
+    // Block-explorer surface
+    ApiDocEntry { method: "GET",  path: "/api/validators",                    category: "explorer", description: "Full active validator list with stake, effective_stake, jailed, BLS-registered flag, health_score, blocks_produced, total_slashed, plus aggregate totals.", example: None },
+    ApiDocEntry { method: "GET",  path: "/api/network/health",                category: "explorer", description: "One-call oncall snapshot: height, last_block_age, peer_count, mempool_size, validator/jailed counts, finality lag, status verdict (healthy|syncing|stalled|isolated).", example: None },
+    ApiDocEntry { method: "GET",  path: "/api/account/:address",              category: "explorer", description: "Single-account snapshot: balance, nonce, owned_object_count, first 25 owned objects, indexed_tx_count and last_seen_block from the persistent index.", example: Some("/api/account/0x0100000000000000000000000000000000000000000000000000000000000000") },
+    ApiDocEntry { method: "GET",  path: "/api/account/:address/transactions", category: "explorer", description: "Paginated address tx history backed by the chain_store address-history index. Newest first. Query: ?limit=N (default 50, cap 500). 503 in light mode (no chain_store).", example: Some("/api/account/0x01…/transactions?limit=20") },
+    ApiDocEntry { method: "GET",  path: "/api/block/:number/transactions",    category: "explorer", description: "Full tx list for a specific block. Reads in-memory ring first, falls back to chain_store full-block payload for older blocks.", example: Some("/api/block/100/transactions") },
+    ApiDocEntry { method: "GET",  path: "/api/search/:query",                 category: "explorer", description: "Smart explorer search. Decimal → block height. 64-hex → tx hash if indexed, else address. Shorter hex → address. Returns {kind:'block'|'transaction'|'account'|'not_found', ...} on HTTP 200.", example: Some("/api/search/100") },
 ];
 
 async fn get_api_docs(State(state): State<Arc<ApiState>>) -> Json<ApiDocsResp> {
@@ -6946,6 +7047,274 @@ async fn get_events(
     Json(EventsResponse { events: evts })
 }
 
+// ── Block-explorer: per-account, per-block-tx, smart search ──
+
+#[derive(Debug, Serialize)]
+pub struct OwnedObjectRef {
+    pub id: String,
+    pub energy: u64,
+    pub half_life: u64,
+    pub state: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AccountDetailResponse {
+    pub address: String,
+    pub name: String,
+    pub balance: u64,
+    pub nonce: u64,
+    pub owned_object_count: usize,
+    /// First N owned-object refs (capped at `OWNED_OBJECTS_PREVIEW`).
+    pub owned_objects: Vec<OwnedObjectRef>,
+    /// Total transactions historically indexed against this address.
+    /// `None` when no chain_store is attached (e.g. dev/light mode).
+    pub indexed_tx_count: Option<usize>,
+    /// Most recent block number this address appeared in (sender or receiver).
+    /// `None` if the address has never transacted.
+    pub last_seen_block: Option<u64>,
+}
+
+const OWNED_OBJECTS_PREVIEW: usize = 25;
+
+/// `GET /api/account/:address` — single-account snapshot for an explorer.
+/// Returns balance, nonce, owned-object preview, and tx-history total. The
+/// caller can drill into `/api/account/:address/transactions` for paginated
+/// history.
+async fn get_account_detail(
+    State(state): State<Arc<ApiState>>,
+    Path(address): Path<String>,
+) -> Result<Json<AccountDetailResponse>, StatusCode> {
+    let addr = parse_hex_address(&address).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let db = safe_lock(&state.db);
+
+    let acc = db.get_account(&addr);
+    let (balance, nonce) = match &acc {
+        Some(a) => (a.balance, a.nonce),
+        // Address with no account record but possibly mentioned in tx history
+        // (e.g. faucet recipient pre-funding) — fall through with zeros so the
+        // explorer still renders the row instead of 404'ing.
+        None => (0, 0),
+    };
+
+    // Owned objects: scan all_object_ids and filter. Capped preview to keep
+    // the response small; total count is exact.
+    let mut owned_total = 0usize;
+    let mut owned_preview: Vec<OwnedObjectRef> = Vec::with_capacity(OWNED_OBJECTS_PREVIEW);
+    for oid in db.all_object_ids() {
+        if let Some(obj) = db.get_object(&oid) {
+            if obj.owner == addr {
+                owned_total += 1;
+                if owned_preview.len() < OWNED_OBJECTS_PREVIEW {
+                    owned_preview.push(OwnedObjectRef {
+                        id: format!("0x{}", hex::encode(oid)),
+                        energy: obj.energy,
+                        half_life: obj.half_life,
+                        state: format!("{:?}", obj.state),
+                    });
+                }
+            }
+        }
+    }
+    drop(db);
+
+    // Tx-history totals from the persistent index, when present.
+    let addr_hex = format!("0x{}", hex::encode(addr));
+    let (indexed_tx_count, last_seen_block) = if let Some(ref store) = state.chain_store {
+        let recent = store.get_address_transactions(&addr_hex, 1);
+        let last = recent.first().map(|r| r.block_number);
+        // get_address_transactions caps to limit, so use a wide pull for the
+        // count. Bounded by the index size for that address — cheap because
+        // it's prefix-iterated. Hard-cap to avoid pathological scans.
+        let all = store.get_address_transactions(&addr_hex, 10_000);
+        (Some(all.len()), last)
+    } else {
+        (None, None)
+    };
+
+    if acc.is_none() && owned_total == 0 && indexed_tx_count.unwrap_or(0) == 0 {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    Ok(Json(AccountDetailResponse {
+        address: account_full(&addr),
+        name: account_name(&addr),
+        balance,
+        nonce,
+        owned_object_count: owned_total,
+        owned_objects: owned_preview,
+        indexed_tx_count,
+        last_seen_block,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AccountTxQuery {
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AccountTxHistoryResponse {
+    pub address: String,
+    pub count: usize,
+    pub transactions: Vec<crate::persistence::TxReceipt>,
+}
+
+/// `GET /api/account/:address/transactions?limit=N` — paginated tx history
+/// for a single address. Backed by the chain_store address-history index.
+/// Returns 503 if there's no chain_store (light mode).
+async fn get_account_transactions(
+    State(state): State<Arc<ApiState>>,
+    Path(address): Path<String>,
+    Query(params): Query<AccountTxQuery>,
+) -> Result<Json<AccountTxHistoryResponse>, StatusCode> {
+    let addr = parse_hex_address(&address).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let store = state
+        .chain_store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+
+    let limit = params.limit.unwrap_or(50).min(500);
+    let addr_hex = format!("0x{}", hex::encode(addr));
+    let txs = store.get_address_transactions(&addr_hex, limit);
+
+    Ok(Json(AccountTxHistoryResponse {
+        address: addr_hex,
+        count: txs.len(),
+        transactions: txs,
+    }))
+}
+
+#[derive(Debug, Serialize)]
+pub struct BlockTxResponse {
+    pub block_number: u64,
+    pub epoch: u64,
+    pub tx_count: usize,
+    pub transactions: Vec<TxRecord>,
+}
+
+/// `GET /api/block/:number/transactions` — full tx list for a block out of
+/// the in-memory `block_history` ring. Older blocks (past the ring window)
+/// return 404; explorers should drop into per-tx queries via the
+/// chain_store-backed `/api/tx/:hash` endpoint for those.
+async fn get_block_transactions(
+    State(state): State<Arc<ApiState>>,
+    Path(number): Path<u64>,
+) -> Result<Json<BlockTxResponse>, StatusCode> {
+    let history = safe_lock(&state.block_history);
+    let b = history
+        .iter()
+        .find(|b| b.number == number)
+        .ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(BlockTxResponse {
+        block_number: b.number,
+        epoch: b.epoch,
+        tx_count: b.transactions.len(),
+        transactions: b.transactions.clone(),
+    }))
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SearchHit {
+    Block { number: u64 },
+    Transaction { hash: String, block_number: u64 },
+    Account { address: String },
+    NotFound { query: String },
+}
+
+#[derive(Debug, Serialize)]
+pub struct SearchResponse {
+    pub query: String,
+    pub hit: SearchHit,
+}
+
+/// `GET /api/search/:query` — explorer-style smart search. Resolves:
+///   - decimal digits → block by height
+///   - 32-byte hex (with/without `0x`) → tx hash if indexed, else address
+///   - shorter hex → address (left-padded by `parse_hex_address`)
+///
+/// Returns `kind: "not_found"` (HTTP 200) when nothing matches, so the UI
+/// can render a single response shape without 404 special-casing.
+async fn explorer_search(
+    State(state): State<Arc<ApiState>>,
+    Path(query): Path<String>,
+) -> Json<SearchResponse> {
+    let q = query.trim().to_string();
+
+    // 1. Pure decimal → block height lookup.
+    if let Ok(n) = q.parse::<u64>() {
+        let exists = {
+            let history = safe_lock(&state.block_history);
+            history.iter().any(|b| b.number == n)
+        } || state
+            .chain_store
+            .as_ref()
+            .and_then(|s| s.load_full_block(n))
+            .is_some();
+        if exists {
+            return Json(SearchResponse {
+                query: q.clone(),
+                hit: SearchHit::Block { number: n },
+            });
+        }
+    }
+
+    // 2. 32-byte hex → tx hash if indexed, else fall through to address.
+    let stripped = q.trim_start_matches("0x").to_lowercase();
+    if stripped.len() == 64 && stripped.chars().all(|c| c.is_ascii_hexdigit()) {
+        if let Some(ref store) = state.chain_store {
+            if let Some(receipt) = store.get_tx_receipt(&stripped) {
+                return Json(SearchResponse {
+                    query: q,
+                    hit: SearchHit::Transaction {
+                        hash: stripped,
+                        block_number: receipt.block_number,
+                    },
+                });
+            }
+        }
+        // Also scan the in-memory ring for un-indexed (recent / light-mode) txs.
+        let history = safe_lock(&state.block_history);
+        for block in history.iter().rev() {
+            for tx in &block.transactions {
+                if tx.hash == stripped {
+                    return Json(SearchResponse {
+                        query: q,
+                        hit: SearchHit::Transaction {
+                            hash: stripped,
+                            block_number: tx.block_number,
+                        },
+                    });
+                }
+            }
+        }
+    }
+
+    // 3. Hex (any length 1..=32 bytes) → account address.
+    if !stripped.is_empty()
+        && stripped.len() % 2 == 0
+        && stripped.len() <= 64
+        && stripped.chars().all(|c| c.is_ascii_hexdigit())
+    {
+        if let Ok(addr) = parse_hex_address(&q) {
+            let db = safe_lock(&state.db);
+            if db.get_account(&addr).is_some() {
+                return Json(SearchResponse {
+                    query: q,
+                    hit: SearchHit::Account {
+                        address: account_full(&addr),
+                    },
+                });
+            }
+        }
+    }
+
+    Json(SearchResponse {
+        query: q.clone(),
+        hit: SearchHit::NotFound { query: q },
+    })
+}
+
 // ── Transaction submission handlers ──
 
 async fn post_transfer(
@@ -7066,6 +7435,387 @@ async fn post_transfer(
             req.amount
         ),
         tx_hash: Some(hash),
+    })
+}
+
+/// `POST /api/tx/delegate` — bond stake from `delegator` to a
+/// validator. Mirrors `post_transfer`: ML-DSA signature is validated
+/// at execute time against the tx's canonical signing bytes; the
+/// queue layer is the existing mempool. The validator's
+/// `effective_stake` (consensus weight) is refreshed at every tick by
+/// `TendermintConsensus::refresh_delegated_stakes`, so a freshly
+/// queued delegation counts toward the next quorum decision once the
+/// block is committed.
+async fn post_delegate(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Json(req): Json<DelegateRequest>,
+) -> Json<TxResultResponse> {
+    let user_id = match require_tx_auth(&headers, &state, req.signature.is_some()) {
+        Ok(uid) => uid,
+        Err(resp) => return resp,
+    };
+    if req.amount == 0 {
+        return Json(TxResultResponse {
+            success: false,
+            message: "Amount must be greater than zero".into(),
+            tx_hash: None,
+        });
+    }
+    let delegator = match parse_address_value(&req.delegator) {
+        Ok(a) => a,
+        Err(e) => {
+            return Json(TxResultResponse {
+                success: false,
+                message: e,
+                tx_hash: None,
+            })
+        }
+    };
+    if let Err(resp) = require_wallet_ownership(&state, user_id, &account_full(&delegator)) {
+        return resp;
+    }
+    // Balance + nonce + validator-existence pre-check (matches
+    // execute_delegate's anti-griefing guard so the mempool rejects
+    // garbage rather than wasting block space).
+    {
+        let db = safe_lock(&state.db);
+        if let Some(acct) = db.get_account(&delegator) {
+            if acct.balance < req.amount {
+                return Json(TxResultResponse {
+                    success: false,
+                    message: format!("Insufficient balance: {} < {}", acct.balance, req.amount),
+                    tx_hash: None,
+                });
+            }
+            if req.nonce != acct.nonce {
+                return Json(TxResultResponse {
+                    success: false,
+                    message: format!("Invalid nonce: expected {}, got {}", acct.nonce, req.nonce),
+                    tx_hash: None,
+                });
+            }
+        } else {
+            return Json(TxResultResponse {
+                success: false,
+                message: "Account not found — use faucet first".into(),
+                tx_hash: None,
+            });
+        }
+        if db.get_stake(req.validator_id).is_none() {
+            return Json(TxResultResponse {
+                success: false,
+                message: format!(
+                    "Validator id {} has no stake record; cannot accept delegations",
+                    req.validator_id
+                ),
+                tx_hash: None,
+            });
+        }
+    }
+    let hash = tx_hash(&format!(
+        "delegate:{}:{}:{}:{}",
+        hex::encode(&delegator[..20]),
+        req.validator_id,
+        req.amount,
+        req.nonce
+    ));
+    let is_dup = state.mempool_contains(|tx| {
+        if let Transaction::Delegate(t) = tx {
+            t.delegator == delegator
+                && t.validator_id == req.validator_id
+                && t.amount == req.amount
+                && t.nonce == req.nonce
+        } else {
+            false
+        }
+    });
+    if is_dup {
+        return Json(TxResultResponse {
+            success: false,
+            message: "Duplicate transaction already in mempool".into(),
+            tx_hash: None,
+        });
+    }
+    let mut tx = Transaction::Delegate(DelegateTx {
+        delegator,
+        validator_id: req.validator_id,
+        amount: req.amount,
+        nonce: req.nonce,
+        signature: req.signature.and_then(|s| hex::decode(s).ok()),
+        public_key: req.public_key.and_then(|s| hex::decode(s).ok()),
+    });
+    let sender_addr = format!("0x{}", hex::encode(delegator));
+    sign_transaction(&mut tx, &state, Some(&sender_addr));
+    state.submit_tx(tx);
+    Json(TxResultResponse {
+        success: true,
+        message: format!(
+            "Delegate queued: {} -> validator-{} amount={}",
+            account_name(&delegator),
+            req.validator_id,
+            req.amount
+        ),
+        tx_hash: Some(hash),
+    })
+}
+
+/// `POST /api/tx/undelegate` — start unbonding `amount` from an
+/// existing delegation. Funds remain locked for `UNBONDING_PERIOD_EPOCHS`
+/// before they can be reclaimed via `/api/tx/claim_delegation`.
+async fn post_undelegate(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Json(req): Json<UndelegateRequest>,
+) -> Json<TxResultResponse> {
+    let user_id = match require_tx_auth(&headers, &state, req.signature.is_some()) {
+        Ok(uid) => uid,
+        Err(resp) => return resp,
+    };
+    if req.amount == 0 {
+        return Json(TxResultResponse {
+            success: false,
+            message: "Amount must be greater than zero".into(),
+            tx_hash: None,
+        });
+    }
+    let delegator = match parse_address_value(&req.delegator) {
+        Ok(a) => a,
+        Err(e) => {
+            return Json(TxResultResponse {
+                success: false,
+                message: e,
+                tx_hash: None,
+            })
+        }
+    };
+    if let Err(resp) = require_wallet_ownership(&state, user_id, &account_full(&delegator)) {
+        return resp;
+    }
+    {
+        let db = safe_lock(&state.db);
+        if let Some(acct) = db.get_account(&delegator) {
+            if req.nonce != acct.nonce {
+                return Json(TxResultResponse {
+                    success: false,
+                    message: format!("Invalid nonce: expected {}, got {}", acct.nonce, req.nonce),
+                    tx_hash: None,
+                });
+            }
+        } else {
+            return Json(TxResultResponse {
+                success: false,
+                message: "Account not found".into(),
+                tx_hash: None,
+            });
+        }
+        match db.get_delegation(&delegator, req.validator_id) {
+            Some(rec) if rec.amount >= req.amount => {}
+            Some(rec) => {
+                return Json(TxResultResponse {
+                    success: false,
+                    message: format!(
+                        "Delegation has only {} bonded; cannot undelegate {}",
+                        rec.amount, req.amount
+                    ),
+                    tx_hash: None,
+                });
+            }
+            None => {
+                return Json(TxResultResponse {
+                    success: false,
+                    message: format!(
+                        "No delegation from this address to validator {}",
+                        req.validator_id
+                    ),
+                    tx_hash: None,
+                });
+            }
+        }
+    }
+    let hash = tx_hash(&format!(
+        "undelegate:{}:{}:{}:{}",
+        hex::encode(&delegator[..20]),
+        req.validator_id,
+        req.amount,
+        req.nonce
+    ));
+    let is_dup = state.mempool_contains(|tx| {
+        if let Transaction::Undelegate(t) = tx {
+            t.delegator == delegator
+                && t.validator_id == req.validator_id
+                && t.amount == req.amount
+                && t.nonce == req.nonce
+        } else {
+            false
+        }
+    });
+    if is_dup {
+        return Json(TxResultResponse {
+            success: false,
+            message: "Duplicate transaction already in mempool".into(),
+            tx_hash: None,
+        });
+    }
+    let mut tx = Transaction::Undelegate(UndelegateTx {
+        delegator,
+        validator_id: req.validator_id,
+        amount: req.amount,
+        nonce: req.nonce,
+        signature: req.signature.and_then(|s| hex::decode(s).ok()),
+        public_key: req.public_key.and_then(|s| hex::decode(s).ok()),
+    });
+    let sender_addr = format!("0x{}", hex::encode(delegator));
+    sign_transaction(&mut tx, &state, Some(&sender_addr));
+    state.submit_tx(tx);
+    Json(TxResultResponse {
+        success: true,
+        message: format!(
+            "Undelegate queued: {} -> validator-{} amount={}",
+            account_name(&delegator),
+            req.validator_id,
+            req.amount
+        ),
+        tx_hash: Some(hash),
+    })
+}
+
+/// `POST /api/tx/claim_delegation` — claim previously-undelegated funds
+/// back to the delegator's balance. Requires the unbonding period to
+/// have elapsed; the chain enforces that at execute time.
+async fn post_claim_delegation(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Json(req): Json<ClaimDelegationRequest>,
+) -> Json<TxResultResponse> {
+    let user_id = match require_tx_auth(&headers, &state, req.signature.is_some()) {
+        Ok(uid) => uid,
+        Err(resp) => return resp,
+    };
+    let delegator = match parse_address_value(&req.delegator) {
+        Ok(a) => a,
+        Err(e) => {
+            return Json(TxResultResponse {
+                success: false,
+                message: e,
+                tx_hash: None,
+            })
+        }
+    };
+    if let Err(resp) = require_wallet_ownership(&state, user_id, &account_full(&delegator)) {
+        return resp;
+    }
+    {
+        let db = safe_lock(&state.db);
+        if let Some(acct) = db.get_account(&delegator) {
+            if req.nonce != acct.nonce {
+                return Json(TxResultResponse {
+                    success: false,
+                    message: format!("Invalid nonce: expected {}, got {}", acct.nonce, req.nonce),
+                    tx_hash: None,
+                });
+            }
+        } else {
+            return Json(TxResultResponse {
+                success: false,
+                message: "Account not found".into(),
+                tx_hash: None,
+            });
+        }
+        match db.get_delegation(&delegator, req.validator_id) {
+            Some(rec) if rec.unbonding_amount > 0 => {}
+            Some(_) => {
+                return Json(TxResultResponse {
+                    success: false,
+                    message: "No unbonding amount to claim".into(),
+                    tx_hash: None,
+                });
+            }
+            None => {
+                return Json(TxResultResponse {
+                    success: false,
+                    message: format!(
+                        "No delegation from this address to validator {}",
+                        req.validator_id
+                    ),
+                    tx_hash: None,
+                });
+            }
+        }
+    }
+    let hash = tx_hash(&format!(
+        "claim_delegation:{}:{}:{}",
+        hex::encode(&delegator[..20]),
+        req.validator_id,
+        req.nonce
+    ));
+    let is_dup = state.mempool_contains(|tx| {
+        if let Transaction::ClaimDelegation(t) = tx {
+            t.delegator == delegator
+                && t.validator_id == req.validator_id
+                && t.nonce == req.nonce
+        } else {
+            false
+        }
+    });
+    if is_dup {
+        return Json(TxResultResponse {
+            success: false,
+            message: "Duplicate transaction already in mempool".into(),
+            tx_hash: None,
+        });
+    }
+    let mut tx = Transaction::ClaimDelegation(ClaimDelegationTx {
+        delegator,
+        validator_id: req.validator_id,
+        nonce: req.nonce,
+        signature: req.signature.and_then(|s| hex::decode(s).ok()),
+        public_key: req.public_key.and_then(|s| hex::decode(s).ok()),
+    });
+    let sender_addr = format!("0x{}", hex::encode(delegator));
+    sign_transaction(&mut tx, &state, Some(&sender_addr));
+    state.submit_tx(tx);
+    Json(TxResultResponse {
+        success: true,
+        message: format!(
+            "ClaimDelegation queued: {} <- validator-{}",
+            account_name(&delegator),
+            req.validator_id
+        ),
+        tx_hash: Some(hash),
+    })
+}
+
+/// `GET /api/validator/:id/delegations` — full delegator list for a
+/// single validator. Returns each `(delegator, amount, since_epoch)`
+/// plus unbonding details so the wallet can render an "active
+/// delegations" view without iterating the full state trie.
+async fn get_validator_delegations(
+    State(state): State<Arc<ApiState>>,
+    Path(validator_id): Path<u64>,
+) -> Json<ValidatorDelegationsResponse> {
+    let db = safe_lock(&state.db);
+    let records = db.delegations_for_validator(validator_id);
+    let mut total_delegated: u64 = 0;
+    let delegations: Vec<DelegationView> = records
+        .iter()
+        .map(|r| {
+            total_delegated = total_delegated.saturating_add(r.amount);
+            DelegationView {
+                delegator: account_full(&r.delegator),
+                validator_id: r.validator_id,
+                amount: r.amount,
+                delegated_at_epoch: r.delegated_at_epoch,
+                unbonding_amount: r.unbonding_amount,
+                unbonding_epoch: r.unbonding_epoch,
+            }
+        })
+        .collect();
+    Json(ValidatorDelegationsResponse {
+        validator_id,
+        delegation_count: delegations.len(),
+        total_delegated,
+        delegations,
     })
 }
 
@@ -10262,6 +11012,105 @@ async fn get_metrics(
     }))
 }
 
+// ──────────────────────────── Drain (admin) ───────────────────────────
+//
+// `POST /api/admin/drain` is what the Ansible upgrade playbook calls
+// before swapping a node binary. The chain has to keep producing
+// blocks while one validator gracefully retires; "drain" means: stop
+// proposing, stop voting, mark this node as draining so peers route
+// around it. The flag lives on `TendermintConsensus` and is read by
+// the consensus tick before deciding to propose / prevote (see
+// tendermint.rs::tick — the `drain_gate_open` check).
+//
+// Auth: same `require_admin_auth` middleware as `/metrics`. If
+// `EVAPORCHAIN_ADMIN_KEY` is unset the gate is open (matches the
+// existing metrics behaviour); the warning is logged at startup by
+// `start_api_server` so this isn't a silent failure.
+
+#[derive(Serialize)]
+struct DrainResponse {
+    /// `"draining"` (success) or `"already_draining"` / `"not_draining"`.
+    pub status: &'static str,
+    pub draining: bool,
+    pub drain_started_at_epoch: Option<u64>,
+}
+
+async fn post_admin_drain(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+) -> Result<Json<DrainResponse>, (StatusCode, Json<serde_json::Value>)> {
+    require_admin_auth(&headers)?;
+    let Some(tc) = state.tendermint.as_ref() else {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": "drain unsupported in mock-consensus mode"
+            })),
+        ));
+    };
+    let mut tc = safe_lock(tc);
+    let was_draining = tc.is_draining();
+    let started_at = tc.set_draining();
+    tracing::warn!(
+        drain_started_at_epoch = started_at,
+        was_draining,
+        "Admin drain requested — node will stop proposing/voting"
+    );
+    Ok(Json(DrainResponse {
+        status: if was_draining {
+            "already_draining"
+        } else {
+            "draining"
+        },
+        draining: true,
+        drain_started_at_epoch: Some(started_at),
+    }))
+}
+
+async fn post_admin_undrain(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+) -> Result<Json<DrainResponse>, (StatusCode, Json<serde_json::Value>)> {
+    require_admin_auth(&headers)?;
+    let Some(tc) = state.tendermint.as_ref() else {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": "drain unsupported in mock-consensus mode"
+            })),
+        ));
+    };
+    let mut tc = safe_lock(tc);
+    let was_draining = tc.clear_draining();
+    tracing::info!(was_draining, "Admin undrain — node resumes consensus");
+    Ok(Json(DrainResponse {
+        status: if was_draining {
+            "draining"
+        } else {
+            "not_draining"
+        },
+        draining: false,
+        drain_started_at_epoch: None,
+    }))
+}
+
+async fn get_admin_drain_status(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+) -> Result<Json<DrainResponse>, (StatusCode, Json<serde_json::Value>)> {
+    require_admin_auth(&headers)?;
+    let (draining, since) = state
+        .tendermint
+        .as_ref()
+        .map(|tc| safe_lock(tc).drain_state())
+        .unwrap_or((false, None));
+    Ok(Json(DrainResponse {
+        status: if draining { "draining" } else { "not_draining" },
+        draining,
+        drain_started_at_epoch: since,
+    }))
+}
+
 /// GET /metrics — Prometheus text exposition format for scraping.
 async fn get_prometheus_metrics(
     State(state): State<Arc<ApiState>>,
@@ -10270,6 +11119,15 @@ async fn get_prometheus_metrics(
     if let Err(e) = require_admin_auth(&headers) {
         return e.into_response();
     }
+    // Snapshot per-validator timing history first (cheap copy) so we
+    // don't hold the tendermint lock concurrent with db / throughput /
+    // history locks below — the consensus loop in main.rs takes
+    // tendermint then db, so the reverse order here would deadlock.
+    let per_validator_history: Vec<(u64, f64)> = state
+        .tendermint
+        .as_ref()
+        .map(|tc| safe_lock(tc).block_production_history())
+        .unwrap_or_default();
     let t = safe_lock(&state.throughput);
     let stats = safe_lock(&state.stats);
     let db = safe_lock(&state.db);
@@ -10505,47 +11363,92 @@ async fn get_prometheus_metrics(
         ));
         out.push_str("evap_finalised_txs_total{result=\"failed\"} 0\n");
 
-        // Block-production timing histogram.
+        // Block-production timing histogram, partitioned by producer.
         //
-        // We don't yet keep a per-producer breakdown of block exec
-        // time; the throughput tracker stores the local node's recent
-        // exec times. We emit a single-series histogram tagged
-        // `producer="local"` with conventional latency buckets so the
-        // exposition format is valid Prometheus and rate() / quantile
-        // queries work end-to-end.
-        let exec_secs: Vec<f64> = t
-            .recent_blocks
-            .iter()
-            .map(|b| b.2 as f64 / 1_000_000.0)
-            .collect();
+        // Source: TendermintConsensus::block_production_history() —
+        // a ring buffer of (producer_id, exec_time_seconds) recorded
+        // per block commit (see tendermint.rs::record_block_production_timing).
+        // Label: `producer="validator-{id}"`. Falls back to a single
+        // `producer="local"` series sourced from the throughput tracker
+        // when the consensus engine is absent (mock mode) or empty
+        // (cold start, no committed blocks yet).
+        //
+        // Grafana heatmap: group by `producer` to render one row per
+        // validator; rate(evap_block_production_seconds_bucket[5m])
+        // gives the per-validator commit-latency distribution.
         let buckets: [f64; 10] = [
             0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0,
         ];
         out.push_str(
-            "# HELP evap_block_production_seconds Block execution wall-time histogram\n",
+            "# HELP evap_block_production_seconds Block execution wall-time histogram (per producer)\n",
         );
         out.push_str("# TYPE evap_block_production_seconds histogram\n");
-        for ub in buckets.iter() {
-            let cumulative = exec_secs.iter().filter(|s| *s <= ub).count() as u64;
+
+        // Reuse the snapshot taken at function entry (held in a local
+        // so we don't re-lock tendermint while db is locked).
+        if per_validator_history.is_empty() {
+            // Fallback: emit the local-only series so a freshly-started
+            // node still produces a valid exposition (and existing
+            // Grafana panels keyed on `producer="local"` don't go blank).
+            let exec_secs: Vec<f64> = t
+                .recent_blocks
+                .iter()
+                .map(|b| b.2 as f64 / 1_000_000.0)
+                .collect();
+            for ub in buckets.iter() {
+                let cumulative = exec_secs.iter().filter(|s| *s <= ub).count() as u64;
+                out.push_str(&format!(
+                    "evap_block_production_seconds_bucket{{producer=\"local\",le=\"{}\"}} {}\n",
+                    ub, cumulative
+                ));
+            }
+            let total_count = exec_secs.len() as u64;
             out.push_str(&format!(
-                "evap_block_production_seconds_bucket{{producer=\"local\",le=\"{}\"}} {}\n",
-                ub, cumulative
+                "evap_block_production_seconds_bucket{{producer=\"local\",le=\"+Inf\"}} {}\n",
+                total_count
             ));
+            let total_sum: f64 = exec_secs.iter().sum();
+            out.push_str(&format!(
+                "evap_block_production_seconds_sum{{producer=\"local\"}} {}\n",
+                total_sum
+            ));
+            out.push_str(&format!(
+                "evap_block_production_seconds_count{{producer=\"local\"}} {}\n",
+                total_count
+            ));
+        } else {
+            // Group samples by producer_id and emit one histogram
+            // series per validator. Producer labels use the canonical
+            // `validator-{id}` form so Grafana heatmaps group cleanly.
+            let mut by_producer: BTreeMap<u64, Vec<f64>> = BTreeMap::new();
+            for (pid, secs) in per_validator_history {
+                by_producer.entry(pid).or_default().push(secs);
+            }
+            for (pid, samples) in by_producer.iter() {
+                let label = format!("validator-{}", pid);
+                for ub in buckets.iter() {
+                    let cumulative = samples.iter().filter(|s| **s <= *ub).count() as u64;
+                    out.push_str(&format!(
+                        "evap_block_production_seconds_bucket{{producer=\"{}\",le=\"{}\"}} {}\n",
+                        label, ub, cumulative
+                    ));
+                }
+                let total_count = samples.len() as u64;
+                out.push_str(&format!(
+                    "evap_block_production_seconds_bucket{{producer=\"{}\",le=\"+Inf\"}} {}\n",
+                    label, total_count
+                ));
+                let total_sum: f64 = samples.iter().sum();
+                out.push_str(&format!(
+                    "evap_block_production_seconds_sum{{producer=\"{}\"}} {}\n",
+                    label, total_sum
+                ));
+                out.push_str(&format!(
+                    "evap_block_production_seconds_count{{producer=\"{}\"}} {}\n",
+                    label, total_count
+                ));
+            }
         }
-        let total_count = exec_secs.len() as u64;
-        out.push_str(&format!(
-            "evap_block_production_seconds_bucket{{producer=\"local\",le=\"+Inf\"}} {}\n",
-            total_count
-        ));
-        let total_sum: f64 = exec_secs.iter().sum();
-        out.push_str(&format!(
-            "evap_block_production_seconds_sum{{producer=\"local\"}} {}\n",
-            total_sum
-        ));
-        out.push_str(&format!(
-            "evap_block_production_seconds_count{{producer=\"local\"}} {}\n",
-            total_count
-        ));
 
         // Networking
         out.push_str("# HELP evap_peer_count Currently-connected P2P peers\n");
@@ -11830,6 +12733,131 @@ async fn get_sync_snapshot_info(State(state): State<Arc<ApiState>>) -> impl Into
     }
 }
 
+// ──────────────────────── Snapshot fast-sync endpoints ────────────────────
+//
+// `/api/snapshot/latest` — metadata of the most recent on-disk snapshot.
+// `/api/snapshot/download/:height` — raw .zst blob for that height.
+//
+// Snapshots are produced every `--snapshot-interval` blocks by main.rs.
+// A fast-syncing peer hits `/latest` to discover height, then GETs
+// `/download/:height` and verifies via `SnapshotFile::from_bytes`.
+
+/// Resolve the on-disk path of the snapshot file for `height` under the
+/// configured snapshot directory. Returns `None` if no snapshot dir is
+/// configured.
+fn snapshot_path_for(state: &ApiState, height: u64) -> Option<std::path::PathBuf> {
+    state
+        .snapshot_dir
+        .as_ref()
+        .map(|dir| dir.join(format!("{}.zst", height)))
+}
+
+/// Find the highest-numbered `.zst` file under `state.snapshot_dir`.
+fn latest_snapshot_height(state: &ApiState) -> Option<u64> {
+    let dir = state.snapshot_dir.as_ref()?;
+    let entries = std::fs::read_dir(dir).ok()?;
+    let mut best: Option<u64> = None;
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.extension().and_then(|s| s.to_str()) != Some("zst") {
+            continue;
+        }
+        let stem = match p.file_stem().and_then(|s| s.to_str()) {
+            Some(s) => s,
+            None => continue,
+        };
+        if let Ok(h) = stem.parse::<u64>() {
+            if best.map(|b| h > b).unwrap_or(true) {
+                best = Some(h);
+            }
+        }
+    }
+    best
+}
+
+/// `GET /api/snapshot/latest` — returns the most recent snapshot's
+/// metadata (or 404 if none).
+async fn get_snapshot_latest(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
+    let height = match latest_snapshot_height(&state) {
+        Some(h) => h,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "available": false,
+                    "reason": "no snapshot on disk",
+                })),
+            )
+                .into_response();
+        }
+    };
+    let path = match snapshot_path_for(&state, height) {
+        Some(p) => p,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "available": false,
+                    "reason": "snapshot dir not configured",
+                })),
+            )
+                .into_response();
+        }
+    };
+    match evaporchain_state::SnapshotFile::load_and_verify(&path) {
+        Ok(file) => {
+            let size_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            let meta = file.metadata(size_bytes);
+            Json(serde_json::json!({
+                "available": true,
+                "version": meta.version,
+                "chain_id": meta.chain_id,
+                "block_height": meta.block_height,
+                "state_root": hex::encode(meta.state_root),
+                "epoch": meta.epoch,
+                "integrity_hash": hex::encode(meta.integrity_hash),
+                "size_bytes": meta.size_bytes,
+                "download_path": meta.download_path,
+            }))
+            .into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "available": false,
+                "reason": format!("verify failed: {}", e),
+            })),
+        )
+            .into_response(),
+    }
+}
+
+/// `GET /api/snapshot/download/:height` — streams the `.zst` blob for
+/// the given height. 404 if not present.
+async fn get_snapshot_download(
+    State(state): State<Arc<ApiState>>,
+    Path(height): Path<u64>,
+) -> impl IntoResponse {
+    let path = match snapshot_path_for(&state, height) {
+        Some(p) => p,
+        None => return (StatusCode::NOT_FOUND, "snapshot dir not configured").into_response(),
+    };
+    let bytes = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(_) => return (StatusCode::NOT_FOUND, "snapshot not found").into_response(),
+    };
+    let len = bytes.len();
+    (
+        StatusCode::OK,
+        [
+            (axum::http::header::CONTENT_TYPE, "application/zstd".to_string()),
+            (axum::http::header::CONTENT_LENGTH, len.to_string()),
+        ],
+        bytes,
+    )
+        .into_response()
+}
+
 // ─────────────────── Offline signing helpers ─────────────────────────────
 
 /// Return the current nonce for an address (next expected nonce for signing).
@@ -12136,6 +13164,10 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/blocks/latest", get(get_latest_block))
         .route("/api/block/latest", get(get_latest_block))
         .route("/api/block/:number", get(get_single_block))
+        .route("/api/block/:number/transactions", get(get_block_transactions))
+        .route("/api/account/:address", get(get_account_detail))
+        .route("/api/account/:address/transactions", get(get_account_transactions))
+        .route("/api/search/:query", get(explorer_search))
         .route("/api/tx/:hash", get(get_tx_by_hash))
         .route("/api/transactions", get(get_transactions))
         .route("/block/:number", get(block_detail_html))
@@ -12158,6 +13190,14 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/tx/refresh", post(post_refresh))
         .route("/api/tx/resurrect", post(post_resurrect))
         .route("/api/tx/batch", post(post_batch))
+        // Validator delegation (P0 #4 wallet-facing surface)
+        .route("/api/tx/delegate", post(post_delegate))
+        .route("/api/tx/undelegate", post(post_undelegate))
+        .route("/api/tx/claim_delegation", post(post_claim_delegation))
+        .route(
+            "/api/validator/:id/delegations",
+            get(get_validator_delegations),
+        )
         // Offline signing helpers
         .route("/api/tx/nonce/:address", get(get_account_nonce))
         .route("/api/tx/signable", post(post_signable_bytes))
@@ -12232,6 +13272,10 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         // Metrics / Throughput
         .route("/api/metrics", get(get_metrics))
         .route("/metrics", get(get_prometheus_metrics))
+        // Admin — graceful drain (Ansible upgrade playbook)
+        .route("/api/admin/drain", post(post_admin_drain))
+        .route("/api/admin/undrain", post(post_admin_undrain))
+        .route("/api/admin/drain/status", get(get_admin_drain_status))
         // Nova Proofs / Light Client
         .route("/api/proof/latest", get(get_proof_latest))
         .route("/api/proof/status", get(get_proof_status))
@@ -12287,6 +13331,9 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/finality/proof/:height", get(get_finality_proof))
         // State sync
         .route("/api/sync/snapshot-info", get(get_sync_snapshot_info))
+        // Fast-sync snapshot (zstd .zst blob format, see SnapshotFile)
+        .route("/api/snapshot/latest", get(get_snapshot_latest))
+        .route("/api/snapshot/download/:height", get(get_snapshot_download))
         // PWA
         .route("/manifest.json", get(manifest_json))
         .route("/sw.js", get(service_worker_js))
@@ -12380,6 +13427,18 @@ pub async fn start_api_server(
             "\x1b[33m⚠ Dashboard serving over HTTP (plaintext). \
              For production, use a TLS-terminating reverse proxy \
              or set EVAPORCHAIN_TLS_CERT + EVAPORCHAIN_TLS_KEY.\x1b[0m"
+        );
+    }
+    // Loud warning when admin endpoints (drain / metrics / proof_replay)
+    // are open. EVAPORCHAIN_ADMIN_KEY=<secret> in env locks them down.
+    if std::env::var("EVAPORCHAIN_ADMIN_KEY")
+        .map(|v| v.is_empty())
+        .unwrap_or(true)
+    {
+        eprintln!(
+            "\x1b[1;31m⚠ EVAPORCHAIN_ADMIN_KEY is unset — admin endpoints \
+             (/api/admin/drain, /metrics, ...) are UNAUTHENTICATED. \
+             Set EVAPORCHAIN_ADMIN_KEY=<random-32-bytes> for production.\x1b[0m"
         );
     }
     println!(

@@ -202,6 +202,132 @@ pub fn apply_sync_snapshot(
     Ok((snapshot.header.block_height, snapshot.header.epoch))
 }
 
+// ─────────────── Fast-sync from peer snapshot endpoint ───────────────────
+//
+// Bootstrap a brand-new node by downloading the most recent
+// SnapshotFile blob from a single peer's
+// `/api/snapshot/{latest,download/:height}`, verifying its integrity
+// hash, and applying it to the local state DB. Tendermint normal-sync
+// then advances from `block_height + 1` onwards — i.e. the snapshot
+// short-circuits replay of every block from genesis.
+//
+// Trust model: same as weak-subjectivity / state-sync today. The peer
+// is trusted to serve a finalized snapshot for the chain
+// (`chain_id` mismatch is a hard reject). The integrity_hash check
+// catches any corruption in flight.
+
+/// Outcome of a successful fast-sync. The caller restores Tendermint
+/// state from these fields and then engages normal-sync from
+/// `block_height + 1` onwards.
+#[derive(Debug, Clone)]
+pub struct FastSyncOutcome {
+    pub chain_id: String,
+    pub block_height: u64,
+    pub epoch: u64,
+    pub state_root: [u8; 32],
+    pub parent_hash: [u8; 32],
+    pub bell_reading: Option<evaporchain_state::SnapshotBellReading>,
+    pub validator_set: evaporchain_state::ValidatorSetSnapshot,
+}
+
+/// Fetch + verify a SnapshotFile from `peer_url` (no state-DB
+/// mutation). Returns the parsed `SnapshotFile`; caller is responsible
+/// for `.apply_to(&mut db)` while holding the DB lock. Splitting the
+/// fetch/verify and apply phases keeps the std::sync DB Mutex out of
+/// the await chain.
+pub async fn fetch_snapshot_blob_from_peer(
+    peer_url: &str,
+    expected_chain_id: &str,
+) -> Result<evaporchain_state::SnapshotFile, String> {
+    let peer = peer_url.trim_end_matches('/');
+
+    // 1. Discover latest snapshot height + verify chain_id.
+    let latest_url = format!("{}/api/snapshot/latest", peer);
+    let latest = reqwest::get(&latest_url)
+        .await
+        .map_err(|e| format!("GET {}: {}", latest_url, e))?;
+    if !latest.status().is_success() {
+        return Err(format!(
+            "GET {} returned {}",
+            latest_url,
+            latest.status()
+        ));
+    }
+    let latest_json: serde_json::Value = latest
+        .json()
+        .await
+        .map_err(|e| format!("parse {}: {}", latest_url, e))?;
+    if !latest_json
+        .get("available")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        return Err(format!("peer {} reports no snapshot available", peer));
+    }
+    let height = latest_json
+        .get("block_height")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| "missing block_height in /api/snapshot/latest".to_string())?;
+    let peer_chain = latest_json
+        .get("chain_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if peer_chain != expected_chain_id {
+        return Err(format!(
+            "chain_id mismatch: peer={}, local={}",
+            peer_chain, expected_chain_id
+        ));
+    }
+
+    // 2. Download the blob.
+    let dl_url = format!("{}/api/snapshot/download/{}", peer, height);
+    let dl = reqwest::get(&dl_url)
+        .await
+        .map_err(|e| format!("GET {}: {}", dl_url, e))?;
+    if !dl.status().is_success() {
+        return Err(format!("GET {} returned {}", dl_url, dl.status()));
+    }
+    let bytes = dl
+        .bytes()
+        .await
+        .map_err(|e| format!("read body {}: {}", dl_url, e))?;
+
+    // 3. Verify integrity hash + double-check chain_id from the blob
+    //    itself (the metadata endpoint is informational only).
+    let file = evaporchain_state::SnapshotFile::from_bytes(&bytes)
+        .map_err(|e| format!("verify: {}", e))?;
+    if file.chain_id != expected_chain_id {
+        return Err(format!(
+            "blob chain_id mismatch: blob={}, local={}",
+            file.chain_id, expected_chain_id
+        ));
+    }
+
+    Ok(file)
+}
+
+/// Convenience wrapper: fetch + verify + apply in one call. Used in
+/// integration tests and tooling — production node startup splits the
+/// phases (see `main.rs` fast-sync block) to keep the DB Mutex out of
+/// the .await chain.
+pub async fn fast_sync_from_peer(
+    db: &mut dyn StateDB,
+    peer_url: &str,
+    expected_chain_id: &str,
+) -> Result<FastSyncOutcome, String> {
+    let file = fetch_snapshot_blob_from_peer(peer_url, expected_chain_id).await?;
+    let _ = file.apply_to(db).map_err(|e| format!("apply: {}", e))?;
+    Ok(FastSyncOutcome {
+        chain_id: file.chain_id.clone(),
+        block_height: file.block_height,
+        epoch: file.epoch,
+        state_root: file.state_root,
+        parent_hash: file.parent_hash,
+        bell_reading: file.bell_reading.clone(),
+        validator_set: file.validator_set.clone(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

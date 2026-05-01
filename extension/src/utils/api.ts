@@ -83,6 +83,51 @@ export interface TxResult {
   hash?: string;
 }
 
+// Validator delegation (P0 #4) — wire shapes match
+// crates/evaporchain-node/src/api.rs::{DelegateRequest, UndelegateRequest,
+// ClaimDelegationRequest, ValidatorDelegationsResponse, DelegationView}.
+export interface DelegateRequest {
+  delegator: string;
+  validatorId: number;
+  amount: number;
+  nonce: number;
+  signature?: string;
+  publicKey?: string;
+}
+
+export interface UndelegateRequest {
+  delegator: string;
+  validatorId: number;
+  amount: number;
+  nonce: number;
+  signature?: string;
+  publicKey?: string;
+}
+
+export interface ClaimDelegationRequest {
+  delegator: string;
+  validatorId: number;
+  nonce: number;
+  signature?: string;
+  publicKey?: string;
+}
+
+export interface DelegationView {
+  delegator: string;
+  validator_id: number;
+  amount: number;
+  delegated_at_epoch: number;
+  unbonding_amount: number;
+  unbonding_epoch: number | null;
+}
+
+export interface ValidatorDelegationsResponse {
+  validator_id: number;
+  delegation_count: number;
+  total_delegated: number;
+  delegations: DelegationView[];
+}
+
 export interface TransactionRecord {
   type: string;
   detail: string;
@@ -758,6 +803,51 @@ class EvaporChainAPI {
     return this.post("/api/tx/create-object", {
       creator, object_id: objectId, energy, half_life: halfLife,
     });
+  }
+
+  // ── Validator delegation (P0 #4 — wallet-facing) ──
+  //
+  // The node accepts ML-DSA-signed Delegate / Undelegate / ClaimDelegation
+  // transactions over /api/tx/{delegate,undelegate,claim_delegation}.
+  // The chain refreshes per-validator delegated_stake at every consensus
+  // tick (see TendermintConsensus::refresh_delegated_stakes); the
+  // delegator's funds are locked at execute time, returned via
+  // ClaimDelegation only after UNBONDING_PERIOD_EPOCHS.
+
+  async delegate(req: DelegateRequest): Promise<TxResult> {
+    return this.post("/api/tx/delegate", {
+      delegator: req.delegator,
+      validator_id: req.validatorId,
+      amount: req.amount,
+      nonce: req.nonce,
+      signature: req.signature,
+      public_key: req.publicKey,
+    });
+  }
+
+  async undelegate(req: UndelegateRequest): Promise<TxResult> {
+    return this.post("/api/tx/undelegate", {
+      delegator: req.delegator,
+      validator_id: req.validatorId,
+      amount: req.amount,
+      nonce: req.nonce,
+      signature: req.signature,
+      public_key: req.publicKey,
+    });
+  }
+
+  async claimDelegation(req: ClaimDelegationRequest): Promise<TxResult> {
+    return this.post("/api/tx/claim_delegation", {
+      delegator: req.delegator,
+      validator_id: req.validatorId,
+      nonce: req.nonce,
+      signature: req.signature,
+      public_key: req.publicKey,
+    });
+  }
+
+  async getValidatorDelegations(validatorId: number): Promise<ValidatorDelegationsResponse> {
+    return this.get(`/api/validator/${validatorId}/delegations`);
   }
 
   // ── Faucet ──

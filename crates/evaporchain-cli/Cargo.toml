@@ -19,6 +19,7 @@ reqwest = { version = "0.12", features = ["json"] }
 colored = "2"
 hex = { workspace = true }
 libc = "0.2"
+futures = "0.3"
 evaporchain-types = { path = "../evaporchain-types" }
 evaporchain-execution = { path = "../evaporchain-execution" }
 evaporchain-crypto = { path = "../evaporchain-crypto" }

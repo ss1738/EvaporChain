@@ -505,7 +505,30 @@ pub struct TendermintConsensus {
     /// the local-realism threshold (S > 2 in natural units, i.e. S_milli
     /// > 2000). False until the first measurement.
     last_bell_certified: bool,
+    /// Ring buffer of recent (producer_id, exec_time_seconds) samples,
+    /// recorded after each successful block commit. Capped at
+    /// `BLOCK_PROD_HISTORY_CAP` entries — the oldest entry is dropped
+    /// when full. Surfaced to the node API via
+    /// `block_production_history()` so the Prometheus exposition can
+    /// emit per-producer histogram observations (Grafana heatmap groups
+    /// by `producer="validator-{id}"`).
+    block_prod_history: std::collections::VecDeque<(u64, f64)>,
+    /// Soft "draining" flag, toggled by the admin API
+    /// (`POST /api/admin/drain` / `POST /api/admin/undrain`). When true
+    /// the consensus tick skips proposing and prevoting — the node
+    /// becomes an observer until undrained. Used by the Ansible upgrade
+    /// playbook to gracefully retire a node before binary swap.
+    draining: bool,
+    /// Wall-clock epoch (this consensus instance's `epoch`) at which the
+    /// most recent drain was started. `None` when not draining.
+    drain_started_at_epoch: Option<u64>,
 }
+
+/// Cap on the per-validator block-production timing ring buffer kept on
+/// `TendermintConsensus`. Each entry is `(producer_id, exec_time_seconds)`
+/// and is appended after every committed block. 1024 keeps the histogram
+/// scrape cheap while still covering ~17 min at a 1 s slot time.
+pub const BLOCK_PROD_HISTORY_CAP: usize = 1024;
 
 impl TendermintConsensus {
     /// Create a new Tendermint consensus engine.
@@ -580,6 +603,11 @@ impl TendermintConsensus {
             last_bell_block_height: 0,
             last_bell_epoch: 0,
             last_bell_certified: false,
+            block_prod_history: std::collections::VecDeque::with_capacity(
+                BLOCK_PROD_HISTORY_CAP,
+            ),
+            draining: false,
+            drain_started_at_epoch: None,
         }
     }
 
@@ -1310,6 +1338,11 @@ impl TendermintConsensus {
             last_bell_block_height: 0,
             last_bell_epoch: 0,
             last_bell_certified: false,
+            block_prod_history: std::collections::VecDeque::with_capacity(
+                BLOCK_PROD_HISTORY_CAP,
+            ),
+            draining: false,
+            drain_started_at_epoch: None,
         }
     }
 
@@ -1493,6 +1526,62 @@ impl TendermintConsensus {
         &self.validator_set
     }
 
+    /// Recent per-validator block-production timing samples, oldest
+    /// first. Each entry is `(producer_id, exec_time_seconds)` and
+    /// gets appended after every successful block commit; bounded by
+    /// `BLOCK_PROD_HISTORY_CAP`. Surfaced to the node's Prometheus
+    /// exposition (`/metrics`) so the histogram emits one bucket
+    /// series per `producer="validator-{id}"` label.
+    pub fn block_production_history(&self) -> Vec<(u64, f64)> {
+        self.block_prod_history.iter().copied().collect()
+    }
+
+    /// Record a per-validator block-production timing sample. Called
+    /// by the node's commit loop after a block is applied, with the
+    /// wall-clock execution time. Anonymous proposers (genesis,
+    /// no-producer-id replays) are dropped so the histogram label set
+    /// stays bounded. Oldest entry is evicted when the ring buffer is
+    /// full.
+    pub fn record_block_production_timing(&mut self, producer_id: u64, exec_time_us: u64) {
+        if self.block_prod_history.len() >= BLOCK_PROD_HISTORY_CAP {
+            self.block_prod_history.pop_front();
+        }
+        let exec_time_seconds = (exec_time_us as f64) / 1_000_000.0;
+        self.block_prod_history
+            .push_back((producer_id, exec_time_seconds));
+    }
+
+    /// Mark this node as draining — consensus stops proposing /
+    /// prevoting until `clear_draining` is called. Idempotent: a
+    /// repeat call refreshes `drain_started_at_epoch` to the current
+    /// epoch. Returns the epoch the drain is anchored to.
+    pub fn set_draining(&mut self) -> u64 {
+        let now = self.epoch;
+        self.draining = true;
+        self.drain_started_at_epoch = Some(now);
+        now
+    }
+
+    /// Clear the drain flag. Returns the previous draining state.
+    pub fn clear_draining(&mut self) -> bool {
+        let prev = self.draining;
+        self.draining = false;
+        self.drain_started_at_epoch = None;
+        prev
+    }
+
+    /// Current draining state — `(draining, drain_started_at_epoch)`.
+    pub fn drain_state(&self) -> (bool, Option<u64>) {
+        (self.draining, self.drain_started_at_epoch)
+    }
+
+    /// Whether this node is currently draining (refusing to propose
+    /// / prevote). Surfaced separately so hot-path consensus checks
+    /// don't allocate the option pair.
+    pub fn is_draining(&self) -> bool {
+        self.draining
+    }
+
     pub fn block_number(&self) -> u64 {
         self.height.saturating_sub(1)
     }
@@ -1507,6 +1596,18 @@ impl TendermintConsensus {
 
     pub fn phase(&self) -> Phase {
         self.round_state.phase
+    }
+
+    /// Diagnostic snapshot of the current round's precommit state.
+    /// Returns `(precommits_received, precommit_bls_sigs_present)`.
+    /// A healthy node committing with quorum should see both equal — when they
+    /// diverge, peers' Precommit messages were rejected for sig validation,
+    /// or our own self-precommit ran without a BLS keypair.
+    pub fn precommit_diagnostics(&self) -> (usize, usize) {
+        (
+            self.round_state.precommits.len(),
+            self.round_state.precommit_bls_sigs.len(),
+        )
     }
 
     /// Number of validators needed for a 2f+1 quorum (count-based, for certificate signer checks).
@@ -1607,8 +1708,18 @@ impl TendermintConsensus {
 
         match self.round_state.phase {
             Phase::Propose => {
+                // Drain gate: a draining node refuses to propose or
+                // self-prevote so peers route around it (Ansible upgrade
+                // playbook → POST /api/admin/drain). The node still
+                // observes consensus messages so it can apply blocks
+                // produced by the rest of the set, just doesn't
+                // contribute votes / proposals until undrained.
+                let drain_gate_open = !self.draining;
                 // If I'm the proposer and haven't proposed yet, propose
-                if self.am_i_proposer() && self.round_state.proposed_block.is_none() {
+                if drain_gate_open
+                    && self.am_i_proposer()
+                    && self.round_state.proposed_block.is_none()
+                {
                     if let Some(proposal) = self.create_proposal(db) {
                         let msg = ConsensusMessage::Proposal {
                             height: self.height,
@@ -1678,9 +1789,12 @@ impl TendermintConsensus {
                     }
                 }
 
-                // Timeout: move to prevote with nil
+                // Timeout: move to prevote with nil. Drain-gated: a
+                // draining node still advances its phase machine so it
+                // tracks the rest of the network, but does NOT broadcast
+                // a nil prevote (it has signalled "route around me").
                 if self.round_state.phase_start.elapsed() > self.propose_timeout {
-                    if !self.round_state.prevoted {
+                    if drain_gate_open && !self.round_state.prevoted {
                         self.round_state.prevoted = true;
                         let nil_hash: Option<[u8; 32]> = None;
                         let bls_sig = self.bls_sign_vote(
@@ -3655,11 +3769,15 @@ impl TendermintConsensus {
 
         // Collect (vid, sig_bytes, stake) for every signer of this hash.
         let mut entries: Vec<(u64, Vec<u8>, u64)> = Vec::new();
+        let mut precommit_match = 0usize;
+        let mut precommit_no_sig: Vec<u64> = Vec::new();
         for (vid, vote_hash) in &self.round_state.precommits {
             if *vote_hash != Some(block_hash) {
                 continue;
             }
+            precommit_match += 1;
             let Some(sig_bytes) = self.round_state.precommit_bls_sigs.get(vid) else {
+                precommit_no_sig.push(*vid);
                 continue;
             };
             // Must match `total_stake()` weight function. See audit P2-01.
@@ -3677,13 +3795,34 @@ impl TendermintConsensus {
 
         let signer_stake: u64 = entries.iter().map(|e| e.2).sum();
         if signer_stake < threshold {
+            warn!(
+                height = self.height,
+                round = self.round_state.round,
+                signer_stake,
+                threshold,
+                precommits_for_hash = precommit_match,
+                signers_with_sig = entries.len(),
+                missing_sig_vids = ?precommit_no_sig,
+                "try_build_commit_certificate: stake below quorum threshold (cert=None)"
+            );
             return None;
         }
 
         let signer_ids: Vec<u64> = entries.iter().map(|e| e.0).collect();
         let sigs: Vec<BlsSignature> = entries.iter().map(|e| BlsSignature(e.1.clone())).collect();
 
-        let agg_sig = BlsVerifier::aggregate_signatures(&sigs)?;
+        let agg_sig = match BlsVerifier::aggregate_signatures(&sigs) {
+            Some(s) => s,
+            None => {
+                warn!(
+                    height = self.height,
+                    round = self.round_state.round,
+                    n_sigs = sigs.len(),
+                    "try_build_commit_certificate: BLS aggregation failed (cert=None)"
+                );
+                return None;
+            }
+        };
         Some(CommitCertificate {
             height: self.height,
             round: self.round_state.round,
@@ -4814,14 +4953,13 @@ mod tests {
 
         let initial_round = tc.round();
 
-        // Simulate timeout-driven advancement:
-        // Each tick checks elapsed time, so we set phase_start to the past
-        // AFTER the tick resets it, then tick again to trigger the timeout.
+        // Simulate timeout-driven advancement. Propose timeout is 8s but
+        // prevote/precommit timeouts are 60s — set phase_start far enough
+        // in the past (90s) to trigger ALL three so the round actually
+        // advances, not just transitions Propose→Prevote→Precommit.
         for _ in 0..20 {
-            // Set phase_start far in the past to trigger timeout
             tc.round_state.phase_start =
-                std::time::Instant::now() - std::time::Duration::from_secs(10);
-            // Now tick — this should detect the timeout and advance
+                std::time::Instant::now() - std::time::Duration::from_secs(90);
             tc.tick(&mut db);
         }
 
@@ -6676,7 +6814,7 @@ mod mev_tests {
         let mut tc = make_test_tc();
         let mut db = InMemoryStateDB::new();
 
-        // Submit 60 plain txs (over MAX_TXS_PER_BLOCK = 50)
+        // Submit 60 plain txs (well below MAX_TXS_PER_BLOCK = 200, so all admit).
         for i in 0..60 {
             tc.mempool.submit(dummy_transfer(i));
         }
@@ -6698,8 +6836,9 @@ mod mev_tests {
         }
 
         let block = tc.create_proposal(&mut db).unwrap();
-        // Should be capped at 50 (5 revealed + 45 plain)
-        assert_eq!(block.transactions.len(), 50);
+        // Cap is 200 now (was 50 when this test was first written).
+        // 60 plain + 5 revealed = 65, well under the cap.
+        assert_eq!(block.transactions.len(), 65);
     }
 
     #[test]
@@ -7686,5 +7825,63 @@ mod da_tests {
             tc.verify_da_certificate(&block),
             "With enforcement_height=MAX, blocks should always pass soft mode"
         );
+    }
+
+    // ── Block-production timing ring buffer ──────────────────────────
+
+    #[test]
+    fn test_record_block_production_timing_appends_and_caps() {
+        let mut tc = make_test_tc();
+        assert!(tc.block_production_history().is_empty());
+
+        tc.record_block_production_timing(1, 1_000); // 1 ms
+        tc.record_block_production_timing(2, 2_000_000); // 2 s
+        tc.record_block_production_timing(1, 500);
+        let h = tc.block_production_history();
+        assert_eq!(h.len(), 3);
+        assert_eq!(h[0].0, 1);
+        assert!((h[0].1 - 0.001).abs() < 1e-9);
+        assert_eq!(h[1].0, 2);
+        assert!((h[1].1 - 2.0).abs() < 1e-9);
+        assert_eq!(h[2].0, 1);
+
+        // Overfill: ring buffer must drop oldest, never grow past the cap.
+        for _ in 0..(BLOCK_PROD_HISTORY_CAP + 50) {
+            tc.record_block_production_timing(9, 100);
+        }
+        let h = tc.block_production_history();
+        assert_eq!(h.len(), BLOCK_PROD_HISTORY_CAP);
+        // Last entries are all the producer-9 fills.
+        assert_eq!(h.last().unwrap().0, 9);
+    }
+
+    // ── Drain (admin) ────────────────────────────────────────────────
+
+    #[test]
+    fn test_drain_state_round_trip() {
+        let mut tc = make_test_tc();
+        let (draining, since) = tc.drain_state();
+        assert!(!draining);
+        assert!(since.is_none());
+
+        let started_at = tc.set_draining();
+        let (draining, since) = tc.drain_state();
+        assert!(draining);
+        assert_eq!(since, Some(started_at));
+        assert!(tc.is_draining());
+
+        // Idempotent: a second set_draining keeps the flag, refreshes anchor.
+        let started_at2 = tc.set_draining();
+        assert_eq!(started_at, started_at2, "epoch anchor stable at this height");
+
+        let was = tc.clear_draining();
+        assert!(was);
+        let (draining, since) = tc.drain_state();
+        assert!(!draining);
+        assert!(since.is_none());
+
+        // clear_draining when not draining: returns false, idempotent.
+        let was = tc.clear_draining();
+        assert!(!was);
     }
 }
