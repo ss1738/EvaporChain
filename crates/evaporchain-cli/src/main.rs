@@ -206,6 +206,15 @@ pub enum Commands {
         action: SnapshotAction,
     },
 
+    /// Data-availability tooling. Light-client cell sampling against a
+    /// remote node — closes the audit-memo gap (DA sampling over network
+    /// with real 2D erasure coding) by wiring `LightClientSampler` to an
+    /// HTTP cell source pointing at a real node URL.
+    Da {
+        #[command(subcommand)]
+        action: DaAction,
+    },
+
     /// Build (and optionally broadcast) an UpgradeContract transaction.
     ///
     /// Two authorisation modes — supply exactly one:
@@ -255,6 +264,43 @@ pub enum Commands {
         /// Broadcast to a running node instead of just printing the body.
         #[arg(long)]
         broadcast: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum DaAction {
+    /// Run a light-client DA sampling round against a remote node. Fetches
+    /// the 2D header from `/api/da/header/:block`, samples N random cells
+    /// via `/api/da/cell/:block/:row/:col`, and verifies each proof
+    /// locally. Exits 0 on `passes(threshold)`, non-zero on any failure.
+    ///
+    /// Catches: nodes that announce a data_root but can't actually serve
+    /// the underlying cells (data unavailability), nodes that serve
+    /// fabricated cells (wrong proofs), and node misconfiguration where
+    /// the 2D matrix is empty / out of date.
+    Verify {
+        /// Node URL, e.g. `http://localhost:8080`. The CLI's --api-url
+        /// global is overridden by this flag for the verify call only.
+        #[arg(long)]
+        node: String,
+        /// Block number to sample.
+        #[arg(long)]
+        block: u64,
+        /// Number of cells to sample. Celestia's analysis says 16 honest
+        /// samples gives >99.998% confidence that ≥50% of cells are
+        /// available. Default 16. Cap at 256 to avoid hammering nodes.
+        #[arg(long, default_value = "16")]
+        samples: usize,
+        /// Confidence threshold the sampling must clear for a 0 exit.
+        /// Default 0.999. Range (0.0, 1.0).
+        #[arg(long, default_value = "0.999")]
+        threshold: f64,
+        /// Optional 32-byte hex seed for the cell-query RNG. Defaults to
+        /// `blake3(block_le_bytes)` so two operators sampling the same
+        /// block hit the same cells (good for deterministic CI checks).
+        /// Pass a unique seed to spread the load across nodes.
+        #[arg(long)]
+        seed: Option<String>,
     },
 }
 
@@ -3023,6 +3069,326 @@ fn cmd_genesis_verify_ceremony(
     Ok(())
 }
 
+// ──────────────────────────── DA light-client verifier ──────────────────
+//
+// Closes the audit-memo gap "DA sampling over network with real 2D
+// erasure coding". The DA library ships a `LightClientSampler` generic
+// over a `CellSource` trait; the trait has been waiting for a real HTTP
+// implementation that hits a node's `/api/da/cell/:block/:row/:col`
+// endpoint instead of a local mock. This is that implementation.
+//
+// Operator flow:
+//   evaporchain da verify --node http://node:8080 --block 200
+//
+// Catches three classes of fault:
+//   1. Data unavailability — node announces a data_root but can't serve
+//      the underlying cells (404 or transport error per cell).
+//   2. Fabricated cells — node serves a CellProof whose Merkle path
+//      doesn't reconstruct to the published row/col root.
+//   3. Header drift — node's `/api/da/header/:block` no longer matches
+//      what was committed on-chain (handled at a higher layer; this
+//      command trusts the served header for now).
+
+struct HttpCellSource {
+    base: String,
+    client: reqwest::blocking::Client,
+}
+
+impl HttpCellSource {
+    fn new(base: &str) -> anyhow::Result<Self> {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .context("build reqwest client for HttpCellSource")?;
+        Ok(Self {
+            base: base.trim_end_matches('/').to_string(),
+            client,
+        })
+    }
+
+    fn fetch_header(
+        &self,
+        block: u64,
+    ) -> anyhow::Result<evaporchain_da::block_da_2d::BlockDA2DHeader> {
+        let url = format!("{}/api/da/header/{}", self.base, block);
+        let resp = self.client.get(&url).send().context("GET /api/da/header")?;
+        if !resp.status().is_success() {
+            anyhow::bail!(
+                "{} returned {}: {}",
+                url,
+                resp.status(),
+                resp.text().unwrap_or_default()
+            );
+        }
+        let v: serde_json::Value = resp.json().context("parse header JSON")?;
+        let parse32 = |key: &str| -> anyhow::Result<[u8; 32]> {
+            let s = v
+                .get(key)
+                .and_then(|x| x.as_str())
+                .ok_or_else(|| anyhow::anyhow!("header missing `{}`", key))?;
+            let bytes = hex::decode(s).with_context(|| format!("decode hex for `{}`", key))?;
+            if bytes.len() != 32 {
+                anyhow::bail!("`{}` is not 32 bytes", key);
+            }
+            let mut b = [0u8; 32];
+            b.copy_from_slice(&bytes);
+            Ok(b)
+        };
+        let parse_vec32 = |key: &str| -> anyhow::Result<Vec<[u8; 32]>> {
+            let arr = v
+                .get(key)
+                .and_then(|x| x.as_array())
+                .ok_or_else(|| anyhow::anyhow!("header missing `{}` array", key))?;
+            arr.iter()
+                .map(|x| {
+                    let s = x.as_str().ok_or_else(|| {
+                        anyhow::anyhow!("non-string in `{}`", key)
+                    })?;
+                    let bytes = hex::decode(s)
+                        .with_context(|| format!("decode hex in `{}`", key))?;
+                    if bytes.len() != 32 {
+                        anyhow::bail!("entry in `{}` is not 32 bytes", key);
+                    }
+                    let mut b = [0u8; 32];
+                    b.copy_from_slice(&bytes);
+                    Ok(b)
+                })
+                .collect()
+        };
+        let extended_dim = v
+            .get("extended_dim")
+            .and_then(|x| x.as_u64())
+            .ok_or_else(|| anyhow::anyhow!("header missing extended_dim"))?
+            as usize;
+        let original_dim = v
+            .get("original_dim")
+            .and_then(|x| x.as_u64())
+            .ok_or_else(|| anyhow::anyhow!("header missing original_dim"))?
+            as usize;
+        let cell_size = v
+            .get("cell_size")
+            .and_then(|x| x.as_u64())
+            .ok_or_else(|| anyhow::anyhow!("header missing cell_size"))?
+            as usize;
+        let original_len = v
+            .get("original_len")
+            .and_then(|x| x.as_u64())
+            .ok_or_else(|| anyhow::anyhow!("header missing original_len"))?
+            as usize;
+        Ok(evaporchain_da::block_da_2d::BlockDA2DHeader {
+            data_root: parse32("data_root")?,
+            row_roots: parse_vec32("row_roots")?,
+            col_roots: parse_vec32("col_roots")?,
+            extended_dim,
+            original_dim,
+            cell_size,
+            original_len,
+            data_hash: parse32("data_hash")?,
+            nmt_root: None,
+            blob_commitments: vec![],
+        })
+    }
+}
+
+impl evaporchain_da::light_client::CellSource for HttpCellSource {
+    fn fetch_cell(
+        &self,
+        height: u64,
+        row: usize,
+        col: usize,
+    ) -> Result<(String, evaporchain_da::commitments::CellProof), evaporchain_da::light_client::CellSourceError>
+    {
+        use evaporchain_da::light_client::CellSourceError;
+        let url = format!("{}/api/da/cell/{}/{}/{}", self.base, height, row, col);
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .map_err(|e| CellSourceError::Transport(e.to_string()))?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(CellSourceError::NotFound);
+        }
+        if !resp.status().is_success() {
+            return Err(CellSourceError::Transport(format!(
+                "{} → {}",
+                url,
+                resp.status()
+            )));
+        }
+        let v: serde_json::Value = resp
+            .json()
+            .map_err(|e| CellSourceError::Transport(format!("parse JSON: {}", e)))?;
+
+        // Helper closures push parse errors through the same Transport
+        // arm — the sampler treats Transport as "peer is unreachable or
+        // misbehaving" which is the right severity for malformed JSON.
+        let hex_bytes = |key: &str| -> Result<Vec<u8>, CellSourceError> {
+            let s = v
+                .get(key)
+                .and_then(|x| x.as_str())
+                .ok_or_else(|| CellSourceError::Transport(format!("missing `{}`", key)))?;
+            hex::decode(s).map_err(|e| CellSourceError::Transport(e.to_string()))
+        };
+        let hex_32 = |key: &str| -> Result<[u8; 32], CellSourceError> {
+            let bytes = hex_bytes(key)?;
+            if bytes.len() != 32 {
+                return Err(CellSourceError::Transport(format!(
+                    "`{}` is not 32 bytes ({} got)",
+                    key,
+                    bytes.len()
+                )));
+            }
+            let mut b = [0u8; 32];
+            b.copy_from_slice(&bytes);
+            Ok(b)
+        };
+        let hex_vec32 = |key: &str| -> Result<Vec<[u8; 32]>, CellSourceError> {
+            let arr = v
+                .get(key)
+                .and_then(|x| x.as_array())
+                .ok_or_else(|| CellSourceError::Transport(format!("missing `{}`", key)))?;
+            arr.iter()
+                .map(|x| {
+                    let s = x.as_str().ok_or_else(|| {
+                        CellSourceError::Transport(format!("non-string in `{}`", key))
+                    })?;
+                    let bytes = hex::decode(s)
+                        .map_err(|e| CellSourceError::Transport(e.to_string()))?;
+                    if bytes.len() != 32 {
+                        return Err(CellSourceError::Transport(format!(
+                            "entry in `{}` is not 32 bytes",
+                            key
+                        )));
+                    }
+                    let mut b = [0u8; 32];
+                    b.copy_from_slice(&bytes);
+                    Ok(b)
+                })
+                .collect()
+        };
+
+        let proof = evaporchain_da::commitments::CellProof {
+            cell_data: hex_bytes("cell_data")?,
+            row,
+            col,
+            cell_hash: hex_32("cell_hash")?,
+            row_root: hex_32("row_root")?,
+            col_root: hex_32("col_root")?,
+            row_siblings: hex_vec32("row_proof_siblings")?,
+            col_siblings: hex_vec32("col_proof_siblings")?,
+            data_root: hex_32("data_root")?,
+        };
+        Ok((self.base.clone(), proof))
+    }
+}
+
+async fn cmd_da_verify(
+    node: &str,
+    block: u64,
+    samples: usize,
+    threshold: f64,
+    seed_hex: Option<&str>,
+    json_mode: bool,
+) -> Result<()> {
+    let samples = samples.clamp(1, 256);
+    if !(0.0 < threshold && threshold < 1.0) {
+        anyhow::bail!(
+            "threshold must be in (0.0, 1.0); got {}",
+            threshold
+        );
+    }
+
+    // Run all the blocking HTTP work on a dedicated thread so we don't
+    // pin the tokio runtime. The sampler itself is sync.
+    let node = node.to_string();
+    let seed_owned: Option<Vec<u8>> = match seed_hex {
+        Some(s) => Some(
+            hex::decode(s.trim_start_matches("0x"))
+                .context("--seed must be hex")?,
+        ),
+        None => None,
+    };
+
+    let node_for_blocking = node.clone();
+    let report_blocking = tokio::task::spawn_blocking(move || -> Result<_> {
+        let source = HttpCellSource::new(&node_for_blocking)?;
+        let header = source.fetch_header(block)?;
+        let sampler = evaporchain_da::light_client::LightClientSampler::new(source);
+        let seed = seed_owned.unwrap_or_else(|| {
+            blake3::hash(&block.to_le_bytes()).as_bytes().to_vec()
+        });
+        Ok(sampler.sample_block(&header, block, samples, &seed))
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("blocking task: {}", e))??;
+
+    let passes = report_blocking.passes(threshold);
+
+    if json_mode {
+        let payload = serde_json::json!({
+            "node": node_to_string(node.as_ref()).unwrap_or_default(),
+            "block": block,
+            "samples_requested": report_blocking.results.len(),
+            "samples_valid": report_blocking.metrics.valid_samples,
+            "unique_rows_hit": report_blocking.metrics.unique_rows_hit,
+            "unique_cols_hit": report_blocking.metrics.unique_cols_hit,
+            "confidence": report_blocking.metrics.confidence,
+            "all_valid": report_blocking.all_valid,
+            "faulty_peers": report_blocking
+                .faulty_peers
+                .iter()
+                .map(|(p, r)| serde_json::json!({"peer": p, "reason": format!("{:?}", r)}))
+                .collect::<Vec<_>>(),
+            "threshold": threshold,
+            "passes": passes,
+        });
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+    } else {
+        print_header("DA Light-Client Verification");
+        println!(
+            "  {} block #{} on {}",
+            if passes { "✅".green() } else { "❌".red() },
+            block,
+            node
+        );
+        println!(
+            "  {}  {}/{} samples valid, {} rows covered, {} cols covered",
+            "Cells: ".truecolor(140, 150, 170),
+            report_blocking.metrics.valid_samples,
+            report_blocking.results.len(),
+            report_blocking.metrics.unique_rows_hit,
+            report_blocking.metrics.unique_cols_hit,
+        );
+        println!(
+            "  {}  {:.6} (threshold {:.6})",
+            "Confidence:".truecolor(140, 150, 170),
+            report_blocking.metrics.confidence,
+            threshold,
+        );
+        if !report_blocking.faulty_peers.is_empty() {
+            println!(
+                "  {} {} peer(s) served bad cells:",
+                "⚠".yellow(),
+                report_blocking.faulty_peers.len()
+            );
+            for (peer, reason) in &report_blocking.faulty_peers {
+                println!("    - {} ({:?})", peer, reason);
+            }
+        }
+    }
+
+    if !passes {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+// Tiny helper that just round-trips a string. Lets the JSON branch
+// above stay typed without introducing a parser for the URL.
+fn node_to_string(s: &str) -> Option<String> {
+    Some(s.to_string())
+}
+
 // ──────────────────────────── INVENTION_STACK stamp ─────────────────────
 //
 // Auto-generated marker pair the stamper rewrites. Surrounding prose stays
@@ -4177,6 +4543,15 @@ async fn main() -> Result<()> {
             SnapshotAction::Apply { input, data_dir } => {
                 cmd_snapshot_apply(&input, &data_dir, cli.json)
             }
+        },
+        Commands::Da { action } => match action {
+            DaAction::Verify {
+                node,
+                block,
+                samples,
+                threshold,
+                seed,
+            } => cmd_da_verify(&node, block, samples, threshold, seed.as_deref(), cli.json).await,
         },
         Commands::UpgradeContract {
             owner,

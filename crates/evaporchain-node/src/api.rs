@@ -12906,6 +12906,39 @@ async fn get_da_cell_sample(
     }
 }
 
+/// `GET /api/da/header/:block` — the full BlockDA2DHeader for `block`,
+/// hex-encoded as JSON. Light-client samplers (`LightClientSampler` /
+/// `evaporchain da verify`) need every row/col Merkle root to verify
+/// cell proofs locally; the per-cell endpoint only ships the two roots
+/// involved in that cell, not the full header. Returns 404 if no 2D
+/// package exists for this block (chain currently retains the last 64).
+async fn get_da_2d_header(
+    State(state): State<Arc<ApiState>>,
+    Path(block): Path<u64>,
+) -> impl IntoResponse {
+    let store = state.da_2d_store.lock().unwrap();
+    let Some(package) = store.get(&block) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": format!("no 2D DA data for block {}", block)})),
+        )
+            .into_response();
+    };
+    let h = &package.header;
+    Json(serde_json::json!({
+        "block": block,
+        "data_root": hex::encode(h.data_root),
+        "row_roots": h.row_roots.iter().map(hex::encode).collect::<Vec<_>>(),
+        "col_roots": h.col_roots.iter().map(hex::encode).collect::<Vec<_>>(),
+        "extended_dim": h.extended_dim,
+        "original_dim": h.original_dim,
+        "cell_size": h.cell_size,
+        "original_len": h.original_len,
+        "data_hash": hex::encode(h.data_hash),
+    }))
+    .into_response()
+}
+
 async fn get_da_2d_light_sample(
     State(state): State<Arc<ApiState>>,
     Path(block): Path<u64>,
@@ -14123,6 +14156,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/da/sample/:block/:shard_index", get(get_da_sample))
         .route("/api/da/light-sample/:block", get(get_da_light_sample))
         .route("/api/da/cell/:block/:row/:col", get(get_da_cell_sample))
+        .route("/api/da/header/:block", get(get_da_2d_header))
         .route(
             "/api/da/2d-light-sample/:block",
             get(get_da_2d_light_sample),
