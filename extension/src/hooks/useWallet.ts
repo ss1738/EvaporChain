@@ -30,6 +30,7 @@ import {
   type ForkChoiceModeStatus,
   type DsnStatus,
   type BellBeaconReq,
+  type SettleDemurrageResp,
 } from "@/utils/api";
 import type { WcSession, WcSessionProposal } from "@/utils/walletconnect";
 import { ledgerManager, type LedgerAccount } from "@/utils/ledger";
@@ -68,7 +69,19 @@ export type View =
   | "governance"
   | "dsn-details";
 
-export type PendingTxKind = "transfer" | "swap" | "resurrect" | "batch_refresh";
+export type PendingTxKind = "transfer" | "swap" | "resurrect" | "batch_refresh" | "settle_demurrage";
+
+/** Transient toast surface for tx-finalisation notifications. */
+export interface Toast {
+  id: string;
+  kind: "finalised" | "rejected";
+  /** Short summary copied from the finalising PendingTx. */
+  summary: string;
+  /** Tx hash (for the click-to-copy chip). */
+  hash: string;
+  /** Wall-clock ms when the toast was pushed. */
+  createdAt: number;
+}
 
 export interface PendingTx {
   hash: string;
@@ -122,6 +135,10 @@ interface WalletState {
   // Tx status tracking
   pendingTxs: PendingTx[];
 
+  // Toast queue — transient bottom-center surface for finalised/rejected
+  // txs. Each toast auto-dismisses after 4s (handled in the renderer).
+  toasts: Toast[];
+
   // Patronage
   patronageStatus: PatronageStatusResp | null;
   patronageImmunities: Record<string, PatronageImmuneResp>;
@@ -133,6 +150,10 @@ interface WalletState {
   feeDriftHistory: number[];
   /** Demurrage owed on the active account's idle balance, in EVAP. */
   demurrageOwed: number | null;
+  /** Cached `last_touched_epoch` for the active account, from the most
+   *  recent `/api/address/:addr` response. `null` until the first
+   *  refreshBalance / refreshDemurrage roundtrip. */
+  accountLastTouched: number | null;
   forkChoiceMode: ForkChoiceModeStatus | null;
   /** DSN privacy-window status: total folded count + aggregate root. */
   dsnStatus: DsnStatus | null;
@@ -195,6 +216,10 @@ interface WalletState {
   pollTxStatuses: () => Promise<void>;
   clearTx: (hash: string) => void;
 
+  // Toast queue
+  pushToast: (toast: Omit<Toast, "id" | "createdAt">) => void;
+  dismissToast: (id: string) => void;
+
   // Patronage
   refreshPatronage: () => Promise<void>;
   refreshPatronageImmunity: (objectIdHex: string, epoch: number) => Promise<void>;
@@ -209,6 +234,9 @@ interface WalletState {
   refreshForkChoiceMode: () => Promise<void>;
   refreshDsnStatus: () => Promise<void>;
   refreshBellBeacon: (req?: BellBeaconReq) => Promise<void>;
+
+  // Demurrage settlement (real on-chain debit + refresh-pool credit)
+  settleDemurrage: () => Promise<SettleDemurrageResp | null>;
 }
 
 interface TxSendResult {
@@ -245,12 +273,14 @@ export const useWallet = create<WalletState>((set, get) => ({
   ledgerAccounts: [],
   bridgeTransfers: [],
   pendingTxs: [],
+  toasts: [],
   patronageStatus: null,
   patronageImmunities: {},
   refreshPool: null,
   feeStatus: null,
   feeDriftHistory: [],
   demurrageOwed: null,
+  accountLastTouched: null,
   forkChoiceMode: null,
   dsnStatus: null,
   bellSValue: null,
@@ -380,7 +410,13 @@ export const useWallet = create<WalletState>((set, get) => ({
     if (!activeAccount) return;
     try {
       const detail = await api.getAddressDetail(activeAccount.address);
-      set({ balance: detail.balance, nonce: detail.nonce });
+      set({
+        balance: detail.balance,
+        nonce: detail.nonce,
+        // Cache last_touched_epoch from the same roundtrip — used by
+        // refreshDemurrage and DemurrageBadge gating.
+        accountLastTouched: detail.last_touched_epoch ?? 0,
+      });
     } catch {
       // Node might be unreachable — keep last known balance
     }
@@ -745,6 +781,10 @@ export const useWallet = create<WalletState>((set, get) => ({
 
     // Query each non-terminal tx.
     let anyNewlyFinalised = false;
+    // Track newly-terminal txs in this tick so we can fire a toast for
+    // each. We compare against the previous status on the in-memory
+    // record before we overwrite it.
+    const newlyTerminal: { tx: PendingTx; kind: "finalised" | "rejected" }[] = [];
     const updated = await Promise.all(live.map(async (tx) => {
       // Skip API call if already finalised/rejected — just preserve.
       if (tx.status === "finalised" || tx.status === "rejected") return tx;
@@ -759,6 +799,7 @@ export const useWallet = create<WalletState>((set, get) => ({
         };
         if (status.state === "finalised" || status.state === "rejected") {
           next.finalisedAt = Date.now();
+          newlyTerminal.push({ tx: next, kind: status.state });
           if (status.state === "finalised") anyNewlyFinalised = true;
         }
         return next;
@@ -769,12 +810,34 @@ export const useWallet = create<WalletState>((set, get) => ({
 
     set({ pendingTxs: updated });
 
+    // Push a transient toast for each tx that newly transitioned to a
+    // terminal state. Toasts auto-dismiss in the renderer after 4s.
+    for (const { tx, kind } of newlyTerminal) {
+      get().pushToast({ kind, summary: tx.summary, hash: tx.hash });
+    }
+
     // Spec: refresh DSN status after each tx finalises so the privacy
     // badge reflects the new accumulator if the tx was a shielded
     // transfer.
     if (anyNewlyFinalised) {
       get().refreshDsnStatus().catch(() => { /* swallow */ });
     }
+  },
+
+  // ── Toast queue ────────────────────────────────────────────────
+
+  pushToast: (toast) => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    set({
+      toasts: [
+        ...get().toasts,
+        { id, createdAt: Date.now(), ...toast },
+      ],
+    });
+  },
+
+  dismissToast: (id) => {
+    set({ toasts: get().toasts.filter(t => t.id !== id) });
   },
 
   // ── Patronage ─────────────────────────────────────────────────
@@ -879,29 +942,35 @@ export const useWallet = create<WalletState>((set, get) => ({
   },
 
   refreshDemurrage: async () => {
-    // The /api/address/:addr endpoint does NOT expose last_touched_epoch
-    // (see crates/evaporchain-node/src/api.rs §AddressDetailResponse,
-    // L7389-7397). Without it we cannot meaningfully compute demurrage
-    // owed on the active account. The badge component therefore gates
-    // itself behind import.meta.env.DEV and uses last_touched_epoch=0
-    // for demonstration. This action keeps the surface live so once
-    // last_touched_epoch is added to the address response it becomes a
-    // single edit here. TODO: wire real last_touched_epoch.
-    const { activeAccount, balance, chainStatus } = get();
+    // /api/address/:addr now exposes `last_touched_epoch` (api.rs
+    // §AddressDetailResponse). The node still serves `0` until the
+    // Account struct carries a real per-account epoch (see TODO at
+    // AddressDetailResponse.last_touched_epoch in api.rs), but once
+    // that lands the value below becomes accurate without further TS
+    // changes. We pull it via getAddressDetail to ensure a fresh
+    // value is cached even if refreshBalance hasn't fired this tick.
+    const { activeAccount, chainStatus } = get();
     if (!activeAccount || !chainStatus) {
       set({ demurrageOwed: null });
       return;
     }
     try {
+      const detail = await api.getAddressDetail(activeAccount.address);
+      const lastTouched = detail.last_touched_epoch ?? 0;
       const resp = await api.getDemurrageOwed({
-        balance,
-        last_touched_epoch: 0,
+        balance: detail.balance,
+        last_touched_epoch: lastTouched,
         current_epoch: chainStatus.epoch,
         // Default genesis params: lambda_base 1 ppm/epoch above 1024 threshold.
         lambda_base_ppm: 1,
         threshold: 1024,
       });
-      set({ demurrageOwed: resp.is_disabled ? 0 : resp.owed });
+      set({
+        balance: detail.balance,
+        nonce: detail.nonce,
+        accountLastTouched: lastTouched,
+        demurrageOwed: resp.is_disabled ? 0 : resp.owed,
+      });
     } catch {
       set({ demurrageOwed: null });
     }
@@ -925,13 +994,71 @@ export const useWallet = create<WalletState>((set, get) => ({
     }
   },
 
+  settleDemurrage: async () => {
+    // POST /api/tx/settle_demurrage — debits the active account's owed
+    // demurrage to the protocol-owned refresh pool. Signs the canonical
+    // payload `{type:"settle_demurrage",from,current_epoch}` (matches
+    // how the Rust handler reconstructs the message — see
+    // api.rs::post_settle_demurrage).
+    const { activeAccount, chainStatus } = get();
+    if (!activeAccount || !chainStatus) return null;
+    set({ loading: true, error: null });
+    try {
+      const txPayload = JSON.stringify({
+        type: "settle_demurrage",
+        from: activeAccount.address,
+        current_epoch: chainStatus.epoch,
+      });
+      const { signature, publicKey } = await get().signTransaction(txPayload);
+      const resp = await api.settleDemurrage(activeAccount.address, signature, publicKey);
+      if (resp.status === "settled") {
+        set({
+          loading: false,
+          notification: `Demurrage settled: ${resp.settled} EVAP → refresh pool`,
+          balance: resp.new_balance,
+          accountLastTouched: resp.new_last_touched_epoch,
+          demurrageOwed: 0,
+        });
+        // Refresh the refresh-pool view so the DEMU credit shows up.
+        get().refreshRefreshPool().catch(() => { /* swallow */ });
+        get().refreshBalance().catch(() => { /* swallow */ });
+      } else if (resp.status === "nothing_owed") {
+        set({
+          loading: false,
+          notification: "No demurrage owed",
+          demurrageOwed: 0,
+        });
+      } else {
+        set({ loading: false, error: resp.detail || "Settle failed" });
+      }
+      return resp;
+    } catch (e: any) {
+      set({ loading: false, error: e.message });
+      return null;
+    }
+  },
+
   refreshBellBeacon: async (req) => {
-    // Read-only POST: api.rs does not expose a GET form (Bell certifications
-    // come from per-block validator attestations, not a queryable cache).
-    // We feed the documented worked-example expectation values from
-    // §api.rs L5884 so the card shows the design-target S-value the
-    // beacon should hit. Real per-block S is reported in the chain
-    // header, not via this endpoint.
+    // Prefer the new read-only GET /api/bell/latest (api.rs
+    // §get_bell_latest). When the chain hasn't persisted a measurement
+    // yet (status === "no_data") we fall back to a single
+    // worked-example POST /api/bell_beacon roundtrip so the card still
+    // renders the design-target S — the BellBeaconCard then shows a
+    // "no live measurement yet" badge to make the distinction visible.
+    try {
+      const latest = await api.getBellBeaconLatest();
+      if (latest.status === "ok") {
+        set({
+          bellSValue: latest.s_value_milli,
+          bellThreshold: latest.threshold_milli,
+          bellCertified: latest.bell_certified,
+        });
+        return;
+      }
+      // no_data | error → fall through to worked-example POST.
+    } catch {
+      // GET unreachable; fall through.
+    }
     const body: BellBeaconReq = req ?? {
       e_ab: 500,
       e_ab_prime: -500,

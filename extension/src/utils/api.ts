@@ -22,6 +22,14 @@ export interface AccountDetail {
   name: string;
   balance: number;
   nonce: number;
+  /**
+   * Epoch the account was last "touched" by an outbound tx — used as the
+   * demurrage anchor. The node currently serves `0` because Account does
+   * not yet carry the field; once that lands this will be the real value
+   * and `DemurrageBadge` becomes accurate.
+   * api.rs §AddressDetailResponse.last_touched_epoch (~L7393).
+   */
+  last_touched_epoch?: number;
 }
 
 export interface StateObject {
@@ -34,6 +42,15 @@ export interface StateObject {
   state: "Active" | "Grace" | "Ghost" | "Risen";
   current_energy: number;
   decay_percentage: number;
+  /**
+   * Whether this object is governed by the LAD-VM substructural-resource
+   * type system (linear/affine/decaying). The node currently serves
+   * `false` for every object because StateObject does not yet carry a
+   * LAD marker; once that lands the wallet can show a "LAD" pill and
+   * gate substructural previews accordingly.
+   * api.rs §ObjectResponse.is_lad_typed.
+   */
+  is_lad_typed?: boolean;
 }
 
 export interface NftItem {
@@ -348,6 +365,26 @@ export interface DemurrageOwedResp {
   is_disabled: boolean;
 }
 
+// POST /api/tx/settle_demurrage — debits owed from the active account's
+// balance and credits the protocol-owned refresh pool under namespace
+// "DEMU". ML-DSA signature required over the canonical payload
+// JSON({type:"settle_demurrage",from,current_epoch}).
+// api.rs §post_settle_demurrage / SettleDemurrageReq / SettleDemurrageResp.
+
+export interface SettleDemurrageReq {
+  from: string;
+  signature: string;
+  public_key: string;
+}
+
+export interface SettleDemurrageResp {
+  status: "settled" | "nothing_owed" | "error";
+  settled: number;
+  new_balance: number;
+  new_last_touched_epoch: number;
+  detail: string;
+}
+
 // ── Governance fork-choice ─────────────────────────────────────────
 //
 // GET  /api/governance/fork_choice_mode (~L1951) — current mode + attractors.
@@ -508,6 +545,21 @@ export interface BellBeaconResp {
   s_value_milli: number;
   threshold_milli: number;
   bell_certified: boolean;
+  detail: string;
+}
+
+// GET /api/bell/latest — most recent measured Bell-Beacon S-value. The
+// node currently returns status:"no_data" until consensus persists S
+// per-block; in that case wallets render a "no live measurement"
+// fallback. api.rs §get_bell_latest / BellBeaconLatestResp.
+
+export interface BellBeaconLatestResp {
+  status: "ok" | "no_data" | "error";
+  s_value_milli: number;
+  threshold_milli: number;
+  bell_certified: boolean;
+  block_height: number;
+  epoch: number;
   detail: string;
 }
 
@@ -758,6 +810,14 @@ class EvaporChainAPI {
     return this.post("/api/demurrage/owed", req);
   }
 
+  async settleDemurrage(from: string, signature: string, publicKey: string): Promise<SettleDemurrageResp> {
+    return this.post("/api/tx/settle_demurrage", {
+      from,
+      signature,
+      public_key: publicKey,
+    });
+  }
+
   // ── Governance: fork-choice ──
 
   async getForkChoiceMode(): Promise<ForkChoiceModeStatus> {
@@ -802,6 +862,10 @@ class EvaporChainAPI {
 
   async getBellBeacon(req: BellBeaconReq): Promise<BellBeaconResp> {
     return this.post("/api/bell_beacon", req);
+  }
+
+  async getBellBeaconLatest(): Promise<BellBeaconLatestResp> {
+    return this.get("/api/bell/latest");
   }
 }
 

@@ -30,6 +30,7 @@ import { PatronageScreen } from "@/components/PatronageScreen";
 import { RefreshPoolScreen } from "@/components/RefreshPoolScreen";
 import { GovernanceScreen } from "@/components/GovernanceScreen";
 import { DsnDetailsScreen } from "@/components/DsnBadge";
+import { TxToastContainer } from "@/components/TxToast";
 
 export function App() {
   const { view, init, completeTutorial } = useWallet();
@@ -38,6 +39,18 @@ export function App() {
     init();
   }, [init]);
 
+  return (
+    <>
+      <AppView view={view} completeTutorial={completeTutorial} />
+      {/* Mounted once at the root so toasts overlay every screen. */}
+      <TxToastContainer />
+    </>
+  );
+}
+
+type ViewType = ReturnType<typeof useWallet.getState>["view"];
+
+function AppView({ view, completeTutorial }: { view: ViewType; completeTutorial: () => void }) {
   switch (view) {
     case "locked":
       return <LockScreen />;
@@ -105,3 +118,4 @@ export function App() {
       return <LockScreen />;
   }
 }
+

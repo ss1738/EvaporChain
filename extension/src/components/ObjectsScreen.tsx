@@ -62,14 +62,24 @@ export function ObjectsScreen() {
                       {obj.id.slice(0, 8)}...{obj.id.slice(-6)}
                     </p>
                   </div>
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full ${
-                    obj.state === "Active" ? "bg-evap-green/10 text-evap-green" :
-                    obj.state === "Grace" ? "bg-evap-amber/10 text-evap-amber" :
-                    obj.state === "Ghost" ? "bg-evap-ghost/10 text-evap-ghost" :
-                    "bg-evap-purple/10 text-evap-purple"
-                  }`}>
-                    {obj.state}
-                  </span>
+                  <div className="flex items-center gap-1">
+                    {obj.is_lad_typed === true && (
+                      <span
+                        className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-evap-purple/15 text-evap-purple border border-evap-purple/40"
+                        title="LAD-VM substructural-resource type"
+                      >
+                        LAD
+                      </span>
+                    )}
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full ${
+                      obj.state === "Active" ? "bg-evap-green/10 text-evap-green" :
+                      obj.state === "Grace" ? "bg-evap-amber/10 text-evap-amber" :
+                      obj.state === "Ghost" ? "bg-evap-ghost/10 text-evap-ghost" :
+                      "bg-evap-purple/10 text-evap-purple"
+                    }`}>
+                      {obj.state}
+                    </span>
+                  </div>
                 </div>
 
                 <EnergyBar current={obj.current_energy} max={obj.max_energy} />

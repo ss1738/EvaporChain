@@ -741,6 +741,22 @@ struct ObjectResponse {
     decay_percentage: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     decay_curve: Option<evaporchain_types::DecayCurve>,
+    /// Whether this object is governed by the LAD-VM substructural-
+    /// resource type system (linear/affine/decaying).
+    ///
+    /// TODO: `evaporchain-lad-vm` ships only the `Resource<T>` runtime
+    /// data structures (crates/evaporchain-lad-vm/src/{mode,resource,
+    /// ops}.rs); `evaporchain-types::StateObject` (L23-37) carries no
+    /// LAD marker. To populate this with real data we need to:
+    ///   1. Add `pub lad_mode: Option<evaporchain_lad_vm::Mode>` to
+    ///      `StateObject` (serde default = None for legacy objects).
+    ///   2. Stamp it during `CreateObjectTx` execution when the
+    ///      future `script-lad` compiler frontend lowers an
+    ///      annotated declaration (`@lad(mode=…)`).
+    ///   3. Map `lad_mode.is_some()` → `is_lad_typed` here.
+    /// Until that lands we serve `false`, which makes the wallet treat
+    /// every object as classical (non-substructural).
+    is_lad_typed: bool,
 }
 
 #[derive(Serialize)]
@@ -5387,6 +5403,242 @@ async fn post_demurrage_owed(Json(req): Json<DemurrageOwedReq>) -> Json<serde_js
     }))
 }
 
+// ─────────────── Settle Demurrage — debit account, credit refresh pool ─
+
+#[derive(Debug, Deserialize)]
+pub struct SettleDemurrageReq {
+    /// Sender address (hex, 1-32 bytes).
+    pub from: String,
+    /// Hex-encoded ML-DSA signature over the canonical settle-message.
+    /// Canonical bytes: `JSON({type:"settle_demurrage",from,current_epoch})`
+    /// — same convention the wallet's other tx flows use (see
+    /// `useWallet.signTransaction` / `useWallet.sendTransfer` in
+    /// extension/src/hooks/useWallet.ts L420-431).
+    pub signature: String,
+    /// Hex-encoded ML-DSA public key (1952 bytes).
+    pub public_key: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SettleDemurrageResp {
+    /// "settled" | "nothing_owed" | "error"
+    pub status: &'static str,
+    pub settled: u64,
+    pub new_balance: u64,
+    pub new_last_touched_epoch: u64,
+    pub detail: String,
+}
+
+/// POST /api/tx/settle_demurrage — debit `owed` from the sender's balance
+/// and credit it to the protocol-owned refresh pool under the canonical
+/// "DEMU" namespace, mirroring the slash-settlement path in
+/// `tendermint::settle_slash` (crates/evaporchain-consensus/src/
+/// tendermint.rs L659-665).
+///
+/// Computes `owed` exactly as `/api/demurrage/owed` does — same
+/// `evaporchain_demurrage::demurrage_owed(balance, last_touched, now,
+/// params)` formula. Genesis params are hard-coded here (lambda_base 1
+/// ppm, threshold 1024) until a chain-config endpoint exposes them.
+///
+/// Verifies the ML-DSA signature against the canonical signing
+/// payload `JSON({type:"settle_demurrage",from,current_epoch})`.
+///
+/// NOTE: `last_touched_epoch` is read as 0 because
+/// `evaporchain-types::Account` does not yet carry the field
+/// (see TODO on `AddressDetailResponse.last_touched_epoch`). The
+/// settled value is therefore conservative-from-genesis — over-charges
+/// accounts that have moved since but is correct for accounts that
+/// haven't. Once the field lands, swap the `0` below for
+/// `acct.last_touched_epoch`.
+async fn post_settle_demurrage(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<SettleDemurrageReq>,
+) -> Json<SettleDemurrageResp> {
+    use evaporchain_demurrage::{demurrage_owed, DemurrageParams};
+
+    let from = match parse_hex_address(&req.from) {
+        Ok(a) => a,
+        Err(e) => {
+            return Json(SettleDemurrageResp {
+                status: "error",
+                settled: 0,
+                new_balance: 0,
+                new_last_touched_epoch: 0,
+                detail: format!("invalid from address: {e}"),
+            });
+        }
+    };
+
+    // Verify ML-DSA signature over the canonical payload.
+    let sig_bytes = match hex::decode(&req.signature) {
+        Ok(b) => b,
+        Err(_) => {
+            return Json(SettleDemurrageResp {
+                status: "error",
+                settled: 0,
+                new_balance: 0,
+                new_last_touched_epoch: 0,
+                detail: "invalid signature hex".into(),
+            });
+        }
+    };
+    let pk_bytes = match hex::decode(&req.public_key) {
+        Ok(b) => b,
+        Err(_) => {
+            return Json(SettleDemurrageResp {
+                status: "error",
+                settled: 0,
+                new_balance: 0,
+                new_last_touched_epoch: 0,
+                detail: "invalid public_key hex".into(),
+            });
+        }
+    };
+
+    // Read the current epoch + balance + last_touched_epoch from chain
+    // state.
+    let history = safe_lock(&state.block_history);
+    let current_epoch = history.back().map(|b| b.epoch).unwrap_or(0);
+    drop(history);
+
+    let canonical = format!(
+        "{{\"type\":\"settle_demurrage\",\"from\":\"{}\",\"current_epoch\":{}}}",
+        req.from, current_epoch
+    );
+
+    use evaporchain_crypto::signatures::{MlDsaVerifier, Verifier};
+    if !MlDsaVerifier::verify(canonical.as_bytes(), &sig_bytes, &pk_bytes) {
+        return Json(SettleDemurrageResp {
+            status: "error",
+            settled: 0,
+            new_balance: 0,
+            new_last_touched_epoch: 0,
+            detail: "signature verification failed".into(),
+        });
+    }
+
+    let mut db = safe_lock(&state.db);
+    // TODO: Account.last_touched_epoch isn't tracked yet; using 0
+    // matches what /api/address/:addr serves.
+    let last_touched_epoch: u64 = 0;
+    let (balance, _nonce) = match db.get_account(&from) {
+        Some(acct) => (acct.balance, acct.nonce),
+        None => {
+            return Json(SettleDemurrageResp {
+                status: "error",
+                settled: 0,
+                new_balance: 0,
+                new_last_touched_epoch: 0,
+                detail: "account not found".into(),
+            });
+        }
+    };
+
+    // Genesis demurrage params (lambda_base 1 ppm, threshold 1024) —
+    // matches /api/demurrage/owed call sites in the wallet store.
+    let params = DemurrageParams::new(1, 1024);
+    let owed = demurrage_owed(balance, last_touched_epoch, current_epoch, &params);
+
+    if owed == 0 {
+        return Json(SettleDemurrageResp {
+            status: "nothing_owed",
+            settled: 0,
+            new_balance: balance,
+            new_last_touched_epoch: current_epoch,
+            detail: "no demurrage owed at current epoch".into(),
+        });
+    }
+
+    // Debit the account.
+    let to_debit = owed.min(balance);
+    if let Some(acct_mut) = db.get_account_mut(&from) {
+        acct_mut.balance = acct_mut.balance.saturating_sub(to_debit);
+    }
+    let new_balance = db.get_account(&from).map(|a| a.balance).unwrap_or(0);
+    drop(db);
+
+    // Credit the protocol-owned refresh pool under the canonical
+    // "DEMU" namespace, mirroring `settle_slash`'s "SLSH" pattern.
+    let demu_ns: Vec<u8> = vec![0x44, 0x45, 0x4d, 0x55]; // "DEMU"
+    let mut pool = safe_lock(&state.patronage_pool);
+    pool.accrue(demu_ns, to_debit, current_epoch);
+    drop(pool);
+
+    Json(SettleDemurrageResp {
+        status: "settled",
+        settled: to_debit,
+        new_balance,
+        // TODO: persist this on Account.last_touched_epoch once the
+        // field lands.
+        new_last_touched_epoch: current_epoch,
+        detail: format!(
+            "settled {} EVAP demurrage to refresh pool (DEMU)",
+            to_debit
+        ),
+    })
+}
+
+// ─────────────── Bell Beacon — latest measured S ──────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct BellBeaconLatestResp {
+    /// "ok" | "no_data" | "error"
+    pub status: &'static str,
+    /// Most recent S-value in milli-units. 0 when no data.
+    pub s_value_milli: u64,
+    /// Local-realism threshold in milli-units (always
+    /// LOCAL_REALISM_S_MILLI = 2000 unless overridden by chain config).
+    pub threshold_milli: u64,
+    /// Whether the most recent S-value clears the local-realism
+    /// threshold.
+    pub bell_certified: bool,
+    /// Block height the measurement is anchored to. 0 when no data.
+    pub block_height: u64,
+    /// Epoch the measurement is anchored to. 0 when no data.
+    pub epoch: u64,
+    pub detail: String,
+}
+
+/// GET /api/bell/latest — most recent Bell-Beacon measurement.
+///
+/// The consensus layer derives a per-block CHSH S-value from the VRF
+/// output (crates/evaporchain-consensus/src/tendermint.rs L2647-2682)
+/// but does NOT currently persist it in chain state — only an advisory
+/// `warn!` / `debug!` log line. Until that lands, this endpoint reports
+/// `status: "no_data"` with the latest block_height + epoch so wallets
+/// can render a "no live measurement" badge alongside the design-target
+/// fallback.
+///
+/// TODO: To populate real values:
+///   1. Add `last_bell_s_milli: Option<u64>` (and a paired height /
+///      epoch) field to `TendermintConsensus`.
+///   2. Set it from the Bell gate in the VRF-output handler at
+///      tendermint.rs L2665-2680 (right after `bell_chsh_s_value`).
+///   3. Expose it via a getter (mirroring `refresh_pool_credits` at
+///      tendermint.rs L669-675) and read it here from
+///      `state.tendermint`.
+async fn get_bell_latest(State(state): State<Arc<ApiState>>) -> Json<BellBeaconLatestResp> {
+    let history = safe_lock(&state.block_history);
+    let (block_height, epoch) = history
+        .back()
+        .map(|b| (b.number, b.epoch))
+        .unwrap_or((0, 0));
+    drop(history);
+
+    Json(BellBeaconLatestResp {
+        status: "no_data",
+        s_value_milli: 0,
+        threshold_milli: evaporchain_bell_beacon::LOCAL_REALISM_S_MILLI,
+        bell_certified: false,
+        block_height,
+        epoch,
+        detail: "consensus layer measures CHSH S per-block from VRF \
+                 output but does not yet persist it; see TODO at \
+                 get_bell_latest in api.rs"
+            .into(),
+    })
+}
+
 // ─────────────── MERA — authenticated energy state commitment ─────────
 
 #[derive(Debug, Deserialize)]
@@ -5992,6 +6244,8 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
 
     // Demurrage — native idle-balance demurrage (piecewise log rate)
     ApiDocEntry { method: "POST", path: "/api/demurrage/owed",              category: "substrate", description: "Compute demurrage owed by an idle balance over elapsed epochs. Rate = lambda_base_ppm × log2(balance/threshold) ppm/epoch. Sink → refresh pool. Capped at balance.", example: Some(r#"{"balance":2000000,"last_touched_epoch":0,"current_epoch":1000,"lambda_base_ppm":1,"threshold":1024}"#) },
+    ApiDocEntry { method: "POST", path: "/api/tx/settle_demurrage",         category: "substrate", description: "Settle the active account's demurrage: debit `owed` from balance, credit refresh pool under namespace 'DEMU'. ML-DSA signature required over JSON({type:'settle_demurrage',from,current_epoch}).", example: Some(r#"{"from":"0x…","signature":"<hex ML-DSA sig>","public_key":"<hex ML-DSA pk>"}"#) },
+    ApiDocEntry { method: "GET",  path: "/api/bell/latest",                 category: "substrate", description: "Most recent Bell-Beacon CHSH S-value measured per-block from VRF output. Currently returns status:'no_data' (consensus layer measures but does not persist S yet). See TODO in api.rs::get_bell_latest.", example: None },
 
     // MERA — Multi-scale Energy Renormalization Ansatz state commitment
     ApiDocEntry { method: "POST", path: "/api/mera/commit",                 category: "substrate", description: "Build a MERA tensor-network state commitment from account energies. Returns blake3 root_hash, per-layer hashes, and the 32-byte header_bytes for the block header. λ-parameterised Vidal 2007 MERA.", example: Some(r#"{"energies":[1000,2000,3000,4000],"lambda_half_life":4096,"base_half_life":100}"#) },
@@ -6195,6 +6449,10 @@ async fn get_objects(State(state): State<Arc<ApiState>>) -> Json<Vec<ObjectRespo
                 current_energy,
                 decay_percentage: (decay_pct * 10.0).round() / 10.0,
                 decay_curve: obj.decay_curve.clone(),
+                // TODO: pulled from a real StateObject.lad_mode once the
+                // field lands on evaporchain-types::StateObject. See
+                // struct comment.
+                is_lad_typed: false,
             })
         })
         .collect();
@@ -6259,6 +6517,9 @@ async fn get_single_object(
         current_energy,
         decay_percentage: (decay_pct * 10.0).round() / 10.0,
         decay_curve: obj.decay_curve.clone(),
+        // TODO: pulled from a real StateObject.lad_mode once the field
+        // lands on evaporchain-types::StateObject. See struct comment.
+        is_lad_typed: false,
     }))
 }
 
@@ -7391,6 +7652,22 @@ struct AddressDetailResponse {
     address: String,
     balance: u64,
     nonce: u64,
+    /// Epoch the account was last "touched" by an outbound tx (transfer
+    /// or refresh) — used as the demurrage anchor.
+    ///
+    /// TODO: `evaporchain-types::Account` does NOT yet carry a
+    /// `last_touched_epoch` field (see crates/evaporchain-types/src/lib.rs
+    /// L194-204). To populate this with real data we need to:
+    ///   1. Add `pub last_touched_epoch: u64` to `Account` (with serde
+    ///      default = 0 for legacy snapshots).
+    ///   2. Hook it from `evaporchain-execution` `apply_transfer` /
+    ///      `apply_refresh` paths so the sender's account is stamped
+    ///      with the block's epoch on every outbound tx.
+    ///   3. Persist via the existing `put_account` write path.
+    /// Until that lands we serve `0`, which makes
+    /// `/api/demurrage/owed` over-charge from genesis — accurate when the
+    /// account has never moved, conservative otherwise.
+    last_touched_epoch: u64,
     objects: Vec<ObjectResponse>,
     nfts: Vec<NftResponse>,
     tokens: Vec<serde_json::Value>,
@@ -7449,6 +7726,10 @@ async fn get_address_detail(
                 current_energy,
                 decay_percentage: (decay_pct * 10.0).round() / 10.0,
                 decay_curve: obj.decay_curve.clone(),
+                // TODO: pulled from a real StateObject.lad_mode once the
+                // field lands on evaporchain-types::StateObject. See
+                // struct comment.
+                is_lad_typed: false,
             })
         })
         .collect();
@@ -7495,6 +7776,9 @@ async fn get_address_detail(
         address: full_hex,
         balance,
         nonce,
+        // TODO: pulled from a real Account.last_touched_epoch once the
+        // field lands on evaporchain-types::Account. See struct comment.
+        last_touched_epoch: 0,
         objects,
         nfts,
         tokens,
@@ -11457,6 +11741,8 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         )
         .route("/api/elexon/epoch_to_slot", post(post_elexon_epoch_to_slot))
         .route("/api/demurrage/owed", post(post_demurrage_owed))
+        .route("/api/tx/settle_demurrage", post(post_settle_demurrage))
+        .route("/api/bell/latest", get(get_bell_latest))
         .route("/api/mera/commit", post(post_mera_commit))
         .route(
             "/api/annealing/temperature",

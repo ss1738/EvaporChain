@@ -93,9 +93,13 @@ export function SendScreen() {
           />
 
           {/* LAD-VM substructural-resource preview. Self-gates behind
-              import.meta.env.DEV — the chain doesn't yet expose an
-              is_lad_typed flag on objects, so until then this is a
-              manual probe tool. See LadVmPreview.tsx file header. */}
+              import.meta.env.DEV — /api/objects exposes `is_lad_typed`
+              but the chain currently always returns `false` (Account
+              & StateObject don't yet carry the marker), and Send takes
+              a recipient address rather than a target-object id, so
+              there's no signal to drive auto-rendering yet. Manual
+              probe tool until both gaps close. See LadVmPreview.tsx
+              file header. */}
           <LadVmPreview />
 
           {loading && (

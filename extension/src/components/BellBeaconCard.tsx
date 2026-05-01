@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useWallet } from "@/hooks/useWallet";
+import { api, type BellBeaconLatestResp } from "@/utils/api";
 
 /**
  * Bell-Beacon — quantum-randomness certification card.
@@ -17,17 +18,13 @@ import { useWallet } from "@/hooks/useWallet";
  * source.
  *
  * Endpoints (api.rs):
- *   POST /api/bell_beacon — L3447 — request: BellBeaconQuery
- *     { e_ab, e_ab_prime, e_a_prime_b, e_a_prime_b_prime, threshold_milli? }
- *     response: BellBeaconResp { status, s_value_milli, threshold_milli,
- *     bell_certified, detail } (L3438-3445).
- *
- * There is no read-only GET /api/bell or /api/beacon for the Bell-
- * Beacon module — beacon S-values are computed per-block and would
- * need to be exposed via the chain header to be queryable. Until
- * that's surfaced, this card runs ONE simulation on mount with the
- * documented worked-example values from /api/bell_beacon's API doc
- * entry (api.rs L5884) so users can see the design-target S-value.
+ *   GET  /api/bell/latest — most recent measured S, anchored to a
+ *     block_height/epoch. Currently returns status:"no_data" until the
+ *     consensus layer persists per-block S; in that case we render a
+ *     "no live measurement yet" badge alongside the worked-example
+ *     fallback so the design target is still visible.
+ *   POST /api/bell_beacon — pure compute simulator over the four
+ *     CHSH expectation values; used as the worked-example fallback.
  *
  * Read-only. No signing. Mounted from EnergyDashboard near the
  * refresh-pool button.
@@ -35,12 +32,19 @@ import { useWallet } from "@/hooks/useWallet";
 export function BellBeaconCard() {
   const { bellSValue, bellThreshold, bellCertified, refreshBellBeacon } = useWallet();
   const [hasMounted, setHasMounted] = useState(false);
+  const [latest, setLatest] = useState<BellBeaconLatestResp | null>(null);
 
   useEffect(() => {
     if (!hasMounted) {
       setHasMounted(true);
-      // ONE read on mount — see file header.
+      // refreshBellBeacon() already prefers GET /api/bell/latest and
+      // falls back to the worked-example POST when status="no_data".
+      // We also fetch the raw latest payload so the card can render a
+      // "no live measurement" badge when applicable.
       refreshBellBeacon();
+      api.getBellBeaconLatest()
+        .then(setLatest)
+        .catch(() => setLatest(null));
     }
   }, [hasMounted, refreshBellBeacon]);
 
@@ -107,10 +111,19 @@ export function BellBeaconCard() {
         local-realist source. <span className="font-mono">S &gt; 2</span>{" "}
         certifies quantum-mechanical correlation in the beacon.
       </p>
-      <p className="text-[9px] text-zinc-600 leading-snug mt-1.5">
-        This card shows the design-target S. Per-block validator-attested
-        S is reported in the chain header.
-      </p>
+      {latest && latest.status === "no_data" ? (
+        <div className="mt-1.5 inline-flex items-center gap-1 text-[9px] px-2 py-0.5 rounded-full bg-evap-amber/10 text-evap-amber border border-evap-amber/30">
+          <span>•</span>
+          <span>
+            No live measurement yet — design target shown (block {latest.block_height})
+          </span>
+        </div>
+      ) : (
+        <p className="text-[9px] text-zinc-600 leading-snug mt-1.5">
+          Per-block validator-attested S is reported via{" "}
+          <span className="font-mono">/api/bell/latest</span>.
+        </p>
+      )}
     </div>
   );
 }

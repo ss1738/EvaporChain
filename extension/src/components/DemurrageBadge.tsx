@@ -4,36 +4,42 @@ import { useWallet } from "@/hooks/useWallet";
 /**
  * Compact pill that shows demurrage owed on the active account.
  *
- * Backed by POST /api/demurrage/owed (api.rs §post_demurrage_owed, L5366)
- * which is a pure compute: returns { owed, rate_ppm, remaining_balance,
- * is_disabled, ... }. Note the response does NOT contain a `capped`
- * field — the brief said {owed, capped} but the real shape is owed +
- * is_disabled + remaining_balance. We use is_disabled to hide the badge
- * when the chain has demurrage off.
+ * Backed by POST /api/demurrage/owed (api.rs §post_demurrage_owed) which
+ * is a pure compute: returns { owed, rate_ppm, remaining_balance,
+ * is_disabled, ... }. We use is_disabled to hide the badge when the
+ * chain has demurrage off.
  *
- * IMPORTANT: GET /api/address/:addr (§AddressDetailResponse, L7389-7397)
- * does NOT expose `last_touched_epoch`. Without it, a real owed value
- * cannot be computed. The badge is therefore gated behind
- * import.meta.env.DEV until last_touched_epoch is added to the address
- * response; the demo value uses last_touched_epoch=0.
+ * `last_touched_epoch` is now exposed on /api/address/:addr (api.rs
+ * §AddressDetailResponse) — though the node still serves `0` until the
+ * Account struct carries the field. The badge therefore renders in
+ * production once accountLastTouched > 0 AND demurrageOwed > 0; until
+ * then it stays hidden so we don't over-charge from genesis.
  *
- * No demurrage/settle endpoint exists in api.rs — the modal's "Settle now"
- * action is disabled with a tooltip explaining settlement happens on the
- * next refresh tx.
+ * The "Settle now" button calls POST /api/tx/settle_demurrage which
+ * debits the owed amount from the account and credits the protocol-
+ * owned refresh pool under namespace "DEMU".
  */
 export function DemurrageBadge() {
-  const { demurrageOwed, balance, chainStatus, refreshDemurrage } = useWallet();
+  const {
+    demurrageOwed,
+    balance,
+    chainStatus,
+    accountLastTouched,
+    refreshDemurrage,
+    settleDemurrage,
+    loading,
+  } = useWallet();
   const [open, setOpen] = useState(false);
 
-  // Hide outside dev mode — see header comment.
-  const enabled = import.meta.env.DEV;
-
   useEffect(() => {
-    if (!enabled) return;
     refreshDemurrage();
-  }, [enabled, refreshDemurrage]);
+  }, [refreshDemurrage]);
 
-  if (!enabled) return null;
+  // Render only when we have a real touch epoch AND owed > 0. Until
+  // Account.last_touched_epoch is populated server-side this stays
+  // hidden in production — that's the correct behaviour.
+  const hasTouch = accountLastTouched != null && accountLastTouched > 0;
+  if (!hasTouch) return null;
   if (demurrageOwed == null || demurrageOwed <= 0) return null;
 
   const high = demurrageOwed > Math.max(1, balance * 0.01);
@@ -60,6 +66,14 @@ export function DemurrageBadge() {
           owed={demurrageOwed}
           balance={balance}
           currentEpoch={chainStatus?.epoch ?? 0}
+          lastTouchedEpoch={accountLastTouched ?? 0}
+          settling={loading}
+          onSettle={async () => {
+            const resp = await settleDemurrage();
+            if (resp && resp.status !== "error") {
+              setOpen(false);
+            }
+          }}
           onClose={() => setOpen(false)}
         />
       )}
@@ -71,16 +85,20 @@ function DemurrageModal({
   owed,
   balance,
   currentEpoch,
+  lastTouchedEpoch,
+  settling,
+  onSettle,
   onClose,
 }: {
   owed: number;
   balance: number;
   currentEpoch: number;
+  lastTouchedEpoch: number;
+  settling: boolean;
+  onSettle: () => void;
   onClose: () => void;
 }) {
-  // last_touched_epoch is unknown at this layer (see header comment).
-  // We display 0 to match what refreshDemurrage actually sent.
-  const sinceEpoch = 0;
+  const sinceEpoch = lastTouchedEpoch;
   const elapsed = Math.max(0, currentEpoch - sinceEpoch);
   // Genesis params used in the store.
   const lambdaBasePpm = 1;
@@ -130,19 +148,20 @@ function DemurrageModal({
 
         <div className="px-3 py-2 rounded-lg bg-evap-cyan/5 border border-evap-cyan/20">
           <p className="text-[9px] text-zinc-400 leading-snug">
-            Settlement is automatic on your next refresh tx — there is no settle endpoint
-            yet on this node. The owed amount is recomputed at every block from
-            <span className="font-mono"> last_touched_epoch </span>
+            Settling now debits <span className="font-mono">{owed.toLocaleString()}</span> EVAP
+            from your balance and credits the protocol-owned refresh pool
+            under namespace <span className="font-mono">DEMU</span>. The owed amount
+            is recomputed at every block from <span className="font-mono">last_touched_epoch</span>
             and the piecewise-log rate.
           </p>
         </div>
 
         <button
-          disabled
-          title="Settlement happens on next refresh tx"
-          className="w-full py-2 rounded-lg bg-evap-cyan/10 border border-evap-cyan/20 text-[11px] font-medium text-evap-cyan/40 cursor-not-allowed"
+          onClick={onSettle}
+          disabled={settling}
+          className="w-full py-2 rounded-lg bg-evap-cyan/15 border border-evap-cyan/40 text-[11px] font-semibold text-evap-cyan hover:bg-evap-cyan/25 transition disabled:opacity-50"
         >
-          Settle now (unavailable)
+          {settling ? "Settling…" : "Settle now"}
         </button>
       </div>
     </div>
