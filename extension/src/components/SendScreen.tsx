@@ -1,15 +1,27 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useWallet } from "@/hooks/useWallet";
 import { formatBalance } from "@/utils/format";
 import { Header } from "./Header";
 import { TxSimulation } from "./TxSimulation";
 import { LadVmPreview } from "./LadVmPreview";
+import { api } from "@/utils/api";
 
 type SendStep = "form" | "preview" | "sent";
 type SendMode = "address" | "object";
 
 export function SendScreen() {
-  const { sendTransfer, balance, setView, loading, error, chainStatus, objects, activeAccount } = useWallet();
+  const {
+    sendTransfer,
+    balance,
+    setView,
+    loading,
+    error,
+    chainStatus,
+    objects,
+    activeAccount,
+    shardsHealth,
+    addressShard,
+  } = useWallet();
   const [mode, setMode] = useState<SendMode>("address");
   const [to, setTo] = useState("");
   const [objectId, setObjectId] = useState("");
@@ -30,6 +42,30 @@ export function SendScreen() {
   const parsedAmount = parseInt(amount, 10);
   const recipientReady = mode === "address" ? to.length > 0 : objectId.length > 0;
   const isFormValid = recipientReady && !isNaN(parsedAmount) && parsedAmount > 0;
+
+  // Cross-shard awareness. Resolve the recipient address (`to` in
+  // address mode, the picked object's owner in object mode) and
+  // compare its shard against the sender's shard. Single-shard chains
+  // and "sharding disabled" responses both leave this null so the
+  // banner stays hidden.
+  const recipientAddrForShard =
+    mode === "address" ? to : targetObject?.owner ?? "";
+  const crossShardInfo = useMemo<{
+    sender: number;
+    recipient: number;
+  } | null>(() => {
+    if (!shardsHealth?.active) return null;
+    if (shardsHealth.total_shards <= 1) return null;
+    if (addressShard == null) return null;
+    if (!recipientAddrForShard) return null;
+    const r = api.computeShardForAddress(
+      recipientAddrForShard,
+      shardsHealth.total_shards,
+    );
+    if (r == null) return null;
+    if (r.shard_id === addressShard) return null;
+    return { sender: addressShard, recipient: r.shard_id };
+  }, [shardsHealth, addressShard, recipientAddrForShard]);
 
   const handlePreview = (e: React.FormEvent) => {
     e.preventDefault();
@@ -209,6 +245,14 @@ export function SendScreen() {
                 Owner: {targetObject.owner}
               </p>
             )}
+          </div>
+        )}
+
+        {crossShardInfo && (
+          <div className="px-3 py-2 rounded-lg bg-evap-cyan/5 border border-evap-cyan/30">
+            <p className="text-[11px] text-evap-cyan">
+              Cross-shard transfer: shard {crossShardInfo.sender} → shard {crossShardInfo.recipient}. May take longer to finalise.
+            </p>
           </div>
         )}
 

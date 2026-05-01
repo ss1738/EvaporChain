@@ -6,7 +6,7 @@ import { energyPercent, energyColor } from "@/utils/format";
 import { BellBeaconCard } from "./BellBeaconCard";
 
 export function EnergyDashboard() {
-  const { activeAccount, objects, setView, refreshObjects } = useWallet();
+  const { activeAccount, objects, setView, refreshObjects, chainStatus, shardsHealth } = useWallet();
   const [portfolio, setPortfolio] = useState<EnergyPortfolio | null>(null);
   const [history, setHistory] = useState<EnergyHistory | null>(null);
   const [loading, setLoading] = useState(true);
@@ -85,9 +85,20 @@ export function EnergyDashboard() {
         >
           ←
         </button>
-        <h1 className="text-sm font-semibold text-zinc-200">
-          Energy Dashboard
-        </h1>
+        <div className="flex-1">
+          <h1 className="text-sm font-semibold text-zinc-200">
+            Energy Dashboard
+          </h1>
+          {chainStatus && (
+            <p className="text-[10px] text-zinc-500">
+              Block {chainStatus.block_height.toLocaleString()}
+              {shardsHealth?.active && shardsHealth.total_shards > 0 && (
+                <> · {shardsHealth.total_shards} shard
+                {shardsHealth.total_shards === 1 ? "" : "s"}</>
+              )}
+            </p>
+          )}
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto">

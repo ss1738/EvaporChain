@@ -556,6 +556,77 @@ export interface BellBeaconResp {
   detail: string;
 }
 
+// ── Sharding — cross-shard visibility ──────────────────────────────
+//
+// The node exposes two read-only endpoints:
+//
+//   GET /api/shards         (api.rs §get_shard_status, ~L8034)
+//     → { active: true, num_shards, pending_cross_shard_messages }
+//     | { active: false }   when sharding is disabled
+//
+//   GET /api/shards/health  (api.rs §get_shard_health, ~L8047)
+//     → { shards: [{ shard_id, total_objects, live_objects,
+//                    total_energy, liveness_ratio, is_dead }],
+//         compaction_candidates }
+//     | { active: false }   when sharding is disabled
+//
+// There is NO /api/address/:addr/shard endpoint and `/api/objects`
+// does NOT include `shard_id`. We compute assignment client-side by
+// mirroring `evaporchain_sharding::shard_for_object` (api.rs imports
+// it via shard_bridge.rs):
+//
+//     shard = u16_be(id[0..2]) & (num_shards - 1)        when num_shards > 1
+//     shard = 0                                          when num_shards == 1
+//
+// The same formula applies to 20-byte account addresses (the chain
+// derives an address's shard from its first 2 bytes).
+
+export interface ShardInfo {
+  /** Numeric shard id (0..num_shards-1). Wire field: `shard_id`. */
+  shard_id: number;
+  /** Total objects ever recorded on this shard (live + dead). */
+  total_objects: number;
+  /** Currently-live objects (alive == true at last record). */
+  live_objects: number;
+  /** Sum of energy across live objects. */
+  total_energy: number;
+  /** live_objects / total_objects in [0,1]. */
+  liveness_ratio: number;
+  /** True when the shard's liveness ratio is at the compaction floor. */
+  is_dead: boolean;
+}
+
+/**
+ * Combined snapshot of sharding subsystem state. We synthesise
+ * `total_shards`, `healthy`, `unhealthy` from /api/shards (num_shards)
+ * and /api/shards/health (per-shard is_dead) so the UI can render
+ * them as one row.
+ */
+export interface ShardsHealth {
+  /** True iff `/api/shards` returned `active: true`. */
+  active: boolean;
+  /** Number of shards in the partition. 1 when sharding is single-shard. */
+  total_shards: number;
+  /** Count of shards with is_dead === false. */
+  healthy: number;
+  /** Count of shards with is_dead === true. */
+  unhealthy: number;
+  /** Bridge-level pending cross-shard messages (router queue depth). */
+  pending_cross_shard_messages: number;
+  /** From /api/shards/health: shards flagged for compaction. */
+  compaction_candidates: number;
+  /** Per-shard health rows from /api/shards/health. */
+  shards: ShardInfo[];
+}
+
+/** Result of computing the shard for an account address client-side. */
+export interface ShardAssignment {
+  /** The 20-byte hex address that was looked up. */
+  address: string;
+  /** Computed shard id, mirroring `shard_for_object`. */
+  shard_id: number;
+}
+
 // GET /api/bell/latest — most recent measured Bell-Beacon S-value. The
 // node currently returns status:"no_data" until consensus persists S
 // per-block; in that case wallets render a "no live measurement"
@@ -874,6 +945,114 @@ class EvaporChainAPI {
 
   async getBellBeaconLatest(): Promise<BellBeaconLatestResp> {
     return this.get("/api/bell/latest");
+  }
+
+  // ── Sharding ──
+  //
+  // /api/shards (api.rs L8034) reports num_shards + pending message
+  // count. /api/shards/health (api.rs L8047) reports per-shard health.
+  // We merge them into one ShardsHealth so callers don't have to.
+  // When sharding is disabled the node returns `{active:false}`; we
+  // surface that as a degraded-but-valid response with total_shards=1
+  // and no per-shard rows.
+
+  async getShards(): Promise<ShardInfo[]> {
+    const merged = await this.getShardsHealth();
+    return merged.shards;
+  }
+
+  async getShardsHealth(): Promise<ShardsHealth> {
+    const [statusRaw, healthRaw] = await Promise.all([
+      this.get<Record<string, unknown>>("/api/shards").catch(() => ({ active: false } as Record<string, unknown>)),
+      this.get<Record<string, unknown>>("/api/shards/health").catch(() => ({ active: false } as Record<string, unknown>)),
+    ]);
+
+    const active = statusRaw["active"] === true;
+    const numShards = typeof statusRaw["num_shards"] === "number"
+      ? (statusRaw["num_shards"] as number)
+      : (active ? 0 : 1);
+    const pending = typeof statusRaw["pending_cross_shard_messages"] === "number"
+      ? (statusRaw["pending_cross_shard_messages"] as number)
+      : 0;
+
+    const rawShards = Array.isArray(healthRaw["shards"])
+      ? (healthRaw["shards"] as Record<string, unknown>[])
+      : [];
+    const shards: ShardInfo[] = rawShards.map((s) => ({
+      shard_id: Number(s["shard_id"] ?? 0),
+      total_objects: Number(s["total_objects"] ?? 0),
+      live_objects: Number(s["live_objects"] ?? 0),
+      total_energy: Number(s["total_energy"] ?? 0),
+      liveness_ratio: Number(s["liveness_ratio"] ?? 0),
+      is_dead: Boolean(s["is_dead"] ?? false),
+    }));
+
+    const compactionCandidates = typeof healthRaw["compaction_candidates"] === "number"
+      ? (healthRaw["compaction_candidates"] as number)
+      : 0;
+
+    const healthy = shards.filter((s) => !s.is_dead).length;
+    const unhealthy = shards.filter((s) => s.is_dead).length;
+
+    return {
+      active,
+      total_shards: numShards,
+      healthy,
+      unhealthy,
+      pending_cross_shard_messages: pending,
+      compaction_candidates: compactionCandidates,
+      shards,
+    };
+  }
+
+  /**
+   * Compute the shard for a 20-byte hex address.
+   *
+   * The node does NOT expose an `/api/address/:addr/shard` endpoint —
+   * we mirror `evaporchain_sharding::shard_for_object` from the
+   * sharding crate (shard_assignment.rs L42-L49):
+   *
+   *     shard = u16_be(id[0..2]) & (num_shards - 1)   when num_shards > 1
+   *     shard = 0                                     otherwise
+   *
+   * Returns null when sharding is disabled (num_shards === 0) or the
+   * address is malformed. Caller is expected to pass num_shards from
+   * the cached ShardsHealth.
+   */
+  computeShardForAddress(address: string, numShards: number): ShardAssignment | null {
+    if (numShards <= 0) return null;
+    if (numShards === 1) return { address, shard_id: 0 };
+    // Strip optional 0x prefix; require at least 4 hex chars (2 bytes).
+    const hex = address.startsWith("0x") || address.startsWith("0X")
+      ? address.slice(2)
+      : address;
+    if (hex.length < 4) return null;
+    const b0 = parseInt(hex.slice(0, 2), 16);
+    const b1 = parseInt(hex.slice(2, 4), 16);
+    if (Number.isNaN(b0) || Number.isNaN(b1)) return null;
+    const raw = (b0 << 8) | b1;
+    // num_shards is required to be a power of 2 by ShardConfig; mask
+    // is num_shards - 1.
+    const mask = (numShards - 1) & 0xffff;
+    return { address, shard_id: raw & mask };
+  }
+
+  /**
+   * Address → shard. There is no node endpoint for this, so we read
+   * num_shards from /api/shards and compute locally. Returns null when
+   * sharding is disabled or the address is invalid.
+   */
+  async getShardForAddress(address: string): Promise<ShardAssignment | null> {
+    try {
+      const status = await this.get<Record<string, unknown>>("/api/shards");
+      if (status["active"] !== true) return null;
+      const numShards = typeof status["num_shards"] === "number"
+        ? (status["num_shards"] as number)
+        : 0;
+      return this.computeShardForAddress(address, numShards);
+    } catch {
+      return null;
+    }
   }
 }
 

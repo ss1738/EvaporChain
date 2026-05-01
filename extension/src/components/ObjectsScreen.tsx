@@ -1,18 +1,42 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useWallet } from "@/hooks/useWallet";
 import { EnergyBar } from "./EnergyBar";
 import { energyStatus } from "@/utils/format";
 import { Header } from "./Header";
 import { QuickRefresh } from "./QuickRefresh";
+import { api } from "@/utils/api";
 
 export function ObjectsScreen() {
-  const { objects, refreshObjects, setView } = useWallet();
+  const { objects, refreshObjects, setView, shardsHealth, refreshShards } = useWallet();
 
   useEffect(() => {
     refreshObjects();
+    refreshShards();
     const interval = setInterval(refreshObjects, 5000);
     return () => clearInterval(interval);
-  }, [refreshObjects]);
+  }, [refreshObjects, refreshShards]);
+
+  // /api/objects does NOT include `shard_id` per object (api.rs has no
+  // such field on ObjectResponse), so we compute shard locally from
+  // the owner address using the same formula the chain uses for
+  // 20-byte ids. Single-shard chains skip the chip.
+  const shardForOwner = useMemo(() => {
+    if (!shardsHealth?.active || shardsHealth.total_shards <= 1) {
+      return (_owner: string): number | null => null;
+    }
+    const cache = new Map<string, number | null>();
+    return (owner: string): number | null => {
+      const cached = cache.get(owner);
+      if (cached !== undefined) return cached;
+      const assignment = api.computeShardForAddress(
+        owner,
+        shardsHealth.total_shards,
+      );
+      const id = assignment?.shard_id ?? null;
+      cache.set(owner, id);
+      return id;
+    };
+  }, [shardsHealth]);
 
   return (
     <div className="flex flex-col h-full relative">
@@ -63,6 +87,18 @@ export function ObjectsScreen() {
                     </p>
                   </div>
                   <div className="flex items-center gap-1">
+                    {(() => {
+                      const sid = shardForOwner(obj.owner);
+                      if (sid == null) return null;
+                      return (
+                        <span
+                          className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-evap-cyan/10 text-evap-cyan border border-evap-cyan/30"
+                          title={`Object lives on shard ${sid} (computed from owner address; api.rs ObjectResponse has no shard_id field)`}
+                        >
+                          S{sid}
+                        </span>
+                      );
+                    })()}
                     {obj.is_lad_typed === true && (
                       <span
                         className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-evap-purple/15 text-evap-purple border border-evap-purple/40"

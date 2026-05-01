@@ -30,6 +30,7 @@ import { PatronageScreen } from "@/components/PatronageScreen";
 import { RefreshPoolScreen } from "@/components/RefreshPoolScreen";
 import { GovernanceScreen } from "@/components/GovernanceScreen";
 import { DsnDetailsScreen } from "@/components/DsnBadge";
+import { ShardScreen } from "@/components/ShardScreen";
 import { TxToastContainer } from "@/components/TxToast";
 
 export function App() {
@@ -115,6 +116,8 @@ function AppView({ view, completeTutorial }: { view: ViewType; completeTutorial:
       return <GovernanceScreen />;
     case "dsn-details":
       return <DsnDetailsScreen />;
+    case "shards":
+      return <ShardScreen />;
     default:
       return <LockScreen />;
   }

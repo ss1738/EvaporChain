@@ -2,9 +2,16 @@ import { useWallet } from "@/hooks/useWallet";
 import { shortAddress } from "@/utils/format";
 
 export function Header() {
-  const { activeAccount, chainStatus, lock, pendingTxs, setView } = useWallet();
+  const { activeAccount, chainStatus, lock, pendingTxs, setView, shardsHealth, addressShard } = useWallet();
   // Count txs that are still in flight (i.e. not yet finalised/rejected).
   const inflight = pendingTxs.filter(t => t.status !== "finalised" && t.status !== "rejected").length;
+  // Show the shard pill only when sharding is active and the chain
+  // has more than one shard — single-shard chains don't need to
+  // distract the user with shard info.
+  const showShardPill =
+    shardsHealth?.active === true &&
+    shardsHealth.total_shards > 1 &&
+    addressShard != null;
 
   return (
     <div className="flex items-center justify-between px-4 py-3 border-b border-evap-border">
@@ -13,8 +20,19 @@ export function Header() {
           E
         </div>
         <div>
-          <div className="text-xs font-semibold text-zinc-200">
-            {activeAccount?.name ?? "EvaporChain"}
+          <div className="flex items-center gap-1.5">
+            <div className="text-xs font-semibold text-zinc-200">
+              {activeAccount?.name ?? "EvaporChain"}
+            </div>
+            {showShardPill && (
+              <button
+                onClick={() => setView("shards")}
+                className="text-[9px] px-1.5 py-0.5 rounded-full bg-evap-cyan/10 text-evap-cyan border border-evap-cyan/30 hover:border-evap-cyan/60 transition"
+                title="View shard health"
+              >
+                Shard {addressShard}
+              </button>
+            )}
           </div>
           <div className="text-[10px] text-zinc-500 font-mono">
             {activeAccount ? shortAddress(activeAccount.address) : ""}
@@ -35,7 +53,12 @@ export function Header() {
         {chainStatus && (
           <div className="flex items-center gap-1">
             <div className="w-1.5 h-1.5 rounded-full bg-evap-green animate-pulse" />
-            <span className="text-[10px] text-zinc-500">Block {chainStatus.block_height}</span>
+            <span className="text-[10px] text-zinc-500">
+              Block {chainStatus.block_height}
+              {shardsHealth?.active && shardsHealth.total_shards > 0 && (
+                <> · {shardsHealth.total_shards} shard{shardsHealth.total_shards === 1 ? "" : "s"}</>
+              )}
+            </span>
           </div>
         )}
         <button

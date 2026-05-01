@@ -31,6 +31,8 @@ import {
   type DsnStatus,
   type BellBeaconReq,
   type SettleDemurrageResp,
+  type ShardInfo,
+  type ShardsHealth,
 } from "@/utils/api";
 import type { WcSession, WcSessionProposal } from "@/utils/walletconnect";
 import { ledgerManager, type LedgerAccount } from "@/utils/ledger";
@@ -67,7 +69,8 @@ export type View =
   | "patronage"
   | "refresh-pool"
   | "governance"
-  | "dsn-details";
+  | "dsn-details"
+  | "shards";
 
 export type PendingTxKind = "transfer" | "swap" | "resurrect" | "batch_refresh" | "settle_demurrage";
 
@@ -165,6 +168,15 @@ interface WalletState {
   /** Whether the last Bell read certified S > threshold. */
   bellCertified: boolean | null;
 
+  // Sharding visibility — per-shard health rows (or null if not yet
+  // refreshed / endpoint unavailable). The full snapshot lives in
+  // `shardsHealth`; `shards` is a convenience alias for the rows.
+  shards: ShardInfo[] | null;
+  shardsHealth: ShardsHealth | null;
+  /** Computed shard for the active account's address; null when
+   *  sharding is disabled or not yet refreshed. */
+  addressShard: number | null;
+
   // UI
   view: View;
   loading: boolean;
@@ -235,6 +247,10 @@ interface WalletState {
   refreshDsnStatus: () => Promise<void>;
   refreshBellBeacon: (req?: BellBeaconReq) => Promise<void>;
 
+  // Sharding — pulls /api/shards + /api/shards/health and recomputes
+  // `addressShard` for the active account.
+  refreshShards: () => Promise<void>;
+
   // Demurrage settlement (real on-chain debit + refresh-pool credit)
   settleDemurrage: () => Promise<SettleDemurrageResp | null>;
 }
@@ -286,6 +302,9 @@ export const useWallet = create<WalletState>((set, get) => ({
   bellSValue: null,
   bellThreshold: null,
   bellCertified: null,
+  shards: null,
+  shardsHealth: null,
+  addressShard: null,
   tutorialComplete: (() => { try { return localStorage.getItem("evaporchain_tutorial_complete") === "true"; } catch { return false; } })(),
   view: "locked",
   loading: false,
@@ -337,6 +356,10 @@ export const useWallet = create<WalletState>((set, get) => ({
     // status. Subsequent refreshes happen after each tx finalises, in
     // pollTxStatuses() below.
     get().refreshDsnStatus().catch(() => { /* swallow */ });
+    // Sharding snapshot — same lifecycle: refreshed once on init plus
+    // after each finalised tx so per-shard health/object counts move
+    // when objects evaporate.
+    get().refreshShards().catch(() => { /* swallow */ });
   },
 
   unlock: async (password: string) => {
@@ -818,9 +841,11 @@ export const useWallet = create<WalletState>((set, get) => ({
 
     // Spec: refresh DSN status after each tx finalises so the privacy
     // badge reflects the new accumulator if the tx was a shielded
-    // transfer.
+    // transfer. Same trigger drives refreshShards() so per-shard
+    // health/object counts reflect the post-tx state.
     if (anyNewlyFinalised) {
       get().refreshDsnStatus().catch(() => { /* swallow */ });
+      get().refreshShards().catch(() => { /* swallow */ });
     }
   },
 
@@ -1074,6 +1099,35 @@ export const useWallet = create<WalletState>((set, get) => ({
       });
     } catch {
       // Endpoint unavailable; keep previous values.
+    }
+  },
+
+  // ── Sharding ─────────────────────────────────────────────────
+  //
+  // Pulls /api/shards + /api/shards/health (combined into a
+  // ShardsHealth by the api client) and recomputes the active
+  // account's shard locally. There is no node endpoint for
+  // address→shard, so we mirror `shard_for_object` from
+  // crates/evaporchain-sharding/src/shard_assignment.rs L42-L49.
+  refreshShards: async () => {
+    try {
+      const snap = await api.getShardsHealth();
+      const { activeAccount } = get();
+      let addressShard: number | null = null;
+      if (snap.active && activeAccount) {
+        const assignment = api.computeShardForAddress(
+          activeAccount.address,
+          snap.total_shards,
+        );
+        addressShard = assignment?.shard_id ?? null;
+      }
+      set({
+        shardsHealth: snap,
+        shards: snap.shards,
+        addressShard,
+      });
+    } catch {
+      // Endpoints unavailable; keep previous values.
     }
   },
 }));
