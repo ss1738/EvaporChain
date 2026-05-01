@@ -2190,7 +2190,9 @@ impl BlockStmExecutor {
             final_writes: FinalWrites {
                 accounts: accounts
                     .iter()
-                    .map(|(addr, acct)| (*addr, (acct.balance, acct.nonce)))
+                    .map(|(addr, acct)| {
+                        (*addr, (acct.balance, acct.nonce, acct.last_touched_epoch))
+                    })
                     .collect(),
                 storage: accounts
                     .into_iter()
