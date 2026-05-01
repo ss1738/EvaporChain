@@ -85,7 +85,17 @@ fn write_pem_secret(path: &Path, pem: &str, label: &str) -> Result<(), String> {
 }
 
 /// Inner reader — caller supplies the passphrase explicitly. Used by tests.
-fn read_pem_secret_inner(path: &Path, passphrase: Option<&[u8]>) -> Result<String, String> {
+///
+/// `migrate_plaintext`: when true and the file on disk is plaintext PEM
+/// (`-----BEGIN ` prefix) AND a passphrase is available, the file is
+/// rewritten in EVKV-wrapped form before the decoded PEM is returned.
+/// Used by the public `read_pem_secret` path so a node started with the
+/// passphrase env set silently upgrades any legacy plaintext keys it finds.
+fn read_pem_secret_inner_with_migration(
+    path: &Path,
+    passphrase: Option<&[u8]>,
+    migrate_plaintext: bool,
+) -> Result<String, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
     if secret_file_store::is_evkv(&bytes) {
         let pass = passphrase.ok_or_else(|| {
@@ -99,8 +109,44 @@ fn read_pem_secret_inner(path: &Path, passphrase: Option<&[u8]>) -> Result<Strin
             .map_err(|e| format!("decrypt {}: {e}", path.display()))?;
         String::from_utf8(plain).map_err(|e| format!("decrypted PEM not valid UTF-8: {e}"))
     } else {
-        String::from_utf8(bytes).map_err(|e| format!("plaintext PEM not valid UTF-8: {e}"))
+        let pem = String::from_utf8(bytes.clone())
+            .map_err(|e| format!("plaintext PEM not valid UTF-8: {e}"))?;
+        // Auto-migrate legacy plaintext keys when a passphrase is available.
+        // Detection: `-----BEGIN ` prefix is the canonical PEM marker; it
+        // can never collide with the EVKV magic checked above.
+        if migrate_plaintext && pem.starts_with("-----BEGIN ") {
+            if let Some(pass) = passphrase {
+                match secret_file_store::encrypt_blob(pem.as_bytes(), pass) {
+                    Ok(blob) => {
+                        if let Err(e) = write_secret_file(path, &blob) {
+                            warn!(
+                                path = %path.display(),
+                                error = %e,
+                                "tls: failed to migrate plaintext PEM to EVKV envelope"
+                            );
+                        } else {
+                            info!(
+                                "tls: migrated {} to encrypted format (envelope EVKV v1)",
+                                path.display()
+                            );
+                        }
+                    }
+                    Err(e) => warn!(
+                        path = %path.display(),
+                        error = %e,
+                        "tls: failed to encrypt plaintext PEM during migration"
+                    ),
+                }
+            }
+        }
+        Ok(pem)
     }
+}
+
+/// Inner reader — caller supplies the passphrase explicitly. Used by tests.
+/// Migration is disabled by default to keep tests deterministic.
+fn read_pem_secret_inner(path: &Path, passphrase: Option<&[u8]>) -> Result<String, String> {
+    read_pem_secret_inner_with_migration(path, passphrase, false)
 }
 
 /// Load a TLS private key PEM from disk, transparently decrypting when the
@@ -109,8 +155,15 @@ fn read_pem_secret_inner(path: &Path, passphrase: Option<&[u8]>) -> Result<Strin
 /// Auto-detection is by magic prefix (4-byte `EVKV`). A plaintext PEM file
 /// will always start with `-----BEGIN`, which never collides with the
 /// EVKV magic, so the detection is unambiguous.
+///
+/// If a plaintext PEM is encountered AND
+/// `EVAPORCHAIN_VALIDATOR_KEY_PASS` is set, the file is auto-migrated
+/// in-place to the EVKV envelope (Argon2id + XChaCha20-Poly1305) and a
+/// one-line migration log is emitted. This closes the K-09 audit item:
+/// nodes restarted with the passphrase env set silently upgrade any
+/// legacy plaintext keys on disk.
 pub fn read_pem_secret(path: &Path) -> Result<String, String> {
-    read_pem_secret_inner(path, passphrase_from_env().as_deref())
+    read_pem_secret_inner_with_migration(path, passphrase_from_env().as_deref(), true)
 }
 
 /// Returns true if the file at `path` is in EVKV envelope format.
@@ -373,6 +426,59 @@ mod tests {
         // rather than handing back garbage bytes.
         let err = read_pem_secret_inner(&path, None).unwrap_err();
         assert!(err.contains("EVKV"), "unexpected error: {err}");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Auto-migration path: a plaintext PEM on disk is rewritten as an
+    /// EVKV envelope when the reader is invoked with a passphrase AND
+    /// migration is enabled. The decoded bytes returned to the caller
+    /// stay byte-identical to the original PEM.
+    #[test]
+    fn pem_secret_plaintext_migrates_to_evkv() {
+        let dir = std::env::temp_dir().join("evaporchain_tls_migrate_test");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("legacy-key.pem");
+
+        let pem = "-----BEGIN PRIVATE KEY-----\nlegacydata\n-----END PRIVATE KEY-----\n";
+        // Write plaintext directly — simulates a key persisted by an
+        // older node version that ran before the EVKV envelope existed.
+        std::fs::write(&path, pem).unwrap();
+        assert!(!is_pem_encrypted(&path).unwrap());
+
+        let pass: &[u8] = b"strict-mainnet-passphrase";
+        let recovered =
+            read_pem_secret_inner_with_migration(&path, Some(pass), true).expect("read+migrate");
+        assert_eq!(recovered, pem);
+
+        // Post-read: file on disk is now EVKV-wrapped.
+        assert!(is_pem_encrypted(&path).unwrap());
+
+        // And a follow-up read with the same passphrase still returns the
+        // original PEM bytes-for-bytes.
+        let again = read_pem_secret_inner(&path, Some(pass)).expect("re-read");
+        assert_eq!(again, pem);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Migration is a no-op when no passphrase is supplied — the file
+    /// stays plaintext and the reader still returns the bytes. This
+    /// preserves the legacy fallback for non-mainnet-strict nodes.
+    #[test]
+    fn pem_secret_plaintext_no_migration_without_passphrase() {
+        let dir = std::env::temp_dir().join("evaporchain_tls_no_migrate_test");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("legacy-key.pem");
+
+        let pem = "-----BEGIN PRIVATE KEY-----\nlegacydata\n-----END PRIVATE KEY-----\n";
+        std::fs::write(&path, pem).unwrap();
+
+        let recovered =
+            read_pem_secret_inner_with_migration(&path, None, true).expect("read no-migrate");
+        assert_eq!(recovered, pem);
+        // File untouched.
+        assert!(!is_pem_encrypted(&path).unwrap());
 
         let _ = std::fs::remove_dir_all(&dir);
     }

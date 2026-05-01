@@ -30,7 +30,7 @@ use evaporchain_consensus::validator_set::{
     slash_delegations_for_validator, ValidatorInfo, ValidatorSet,
 };
 use evaporchain_consensus::MockConsensus;
-use evaporchain_crypto::signatures::{MlDsaKeypair, Signer};
+use evaporchain_crypto::signatures::{MlDsaKeypair, MlDsaVerifier, Signer, Verifier};
 use evaporchain_da::block_da::{BlockDA, BlockDAPackage};
 use evaporchain_network::service::{cache_block, NetworkConfig, P2pNetworkService};
 use evaporchain_proving::chain_proof::ChainProver;
@@ -1125,6 +1125,85 @@ fn parse_args() -> NodeArgs {
     }
 }
 
+/// Hex-encoded ML-DSA-65 public key of the canonical mainnet genesis
+/// coordinator. Validators run with `--mainnet --genesis-config <path>` will
+/// only accept a genesis-config whose `coordinator_pk` matches this constant
+/// AND whose `coordinator_signature` verifies under it. Closes K-07/K-08.
+///
+/// TODO: replace with real coordinator pk before mainnet launch.
+/// (Placeholder is the 64-zero-hex string — any non-test mainnet startup
+/// against this value will hard-fail at the equality check below, which is
+/// the desired posture: nothing launches mainnet against a placeholder.)
+pub const MAINNET_COORDINATOR_PK: &str =
+    "0000000000000000000000000000000000000000000000000000000000000000";
+
+/// Validate the `coordinator_signature` on a loaded genesis-config.
+///
+/// In `--mainnet` strict mode this is a hard requirement: the signature must
+/// verify and the genesis-listed `coordinator_pk` must equal the baked-in
+/// `MAINNET_COORDINATOR_PK`. In non-mainnet (testnet/devnet) mode we accept
+/// a self-signed genesis (signature verifies under whatever `coordinator_pk`
+/// the genesis itself supplies) — useful for ephemeral local clusters that
+/// don't have a real coordinator. A genesis with no signature at all is
+/// allowed in non-mainnet mode (back-compat with existing test fixtures)
+/// but rejected in `--mainnet`.
+fn validate_genesis_coordinator_signature(
+    config: &evaporchain_types::genesis::GenesisConfig,
+    mainnet_strict: bool,
+) -> Result<(), String> {
+    let sig_hex = match config.coordinator_signature.as_deref() {
+        Some(s) => s,
+        None => {
+            if mainnet_strict {
+                return Err(
+                    "--mainnet requires a coordinator_signature in the genesis-config \
+                     (closes audit K-07/K-08). Re-run `evaporchain onboarding build-genesis` \
+                     with the real coordinator secret key."
+                        .into(),
+                );
+            }
+            return Ok(()); // testnet: silently allow legacy unsigned configs
+        }
+    };
+    let sig =
+        hex::decode(sig_hex.trim_start_matches("0x")).map_err(|e| format!("coordinator_signature is not valid hex: {e}"))?;
+
+    let claimed_pk_hex = config.coordinator_pk.as_deref().ok_or_else(|| {
+        "genesis-config has coordinator_signature but no coordinator_pk; cannot verify"
+            .to_string()
+    })?;
+    let claimed_pk = hex::decode(claimed_pk_hex.trim_start_matches("0x"))
+        .map_err(|e| format!("coordinator_pk is not valid hex: {e}"))?;
+
+    if mainnet_strict {
+        let baked = hex::decode(MAINNET_COORDINATOR_PK.trim_start_matches("0x"))
+            .map_err(|e| format!("MAINNET_COORDINATOR_PK constant invalid hex: {e}"))?;
+        if claimed_pk != baked {
+            return Err(format!(
+                "--mainnet rejects genesis: coordinator_pk in genesis ({} bytes) does not \
+                 match baked-in MAINNET_COORDINATOR_PK ({} bytes / different value). \
+                 If you are building the canonical mainnet, replace the placeholder constant \
+                 in evaporchain-node/src/main.rs first.",
+                claimed_pk.len(),
+                baked.len()
+            ));
+        }
+    }
+
+    let canonical = config.canonical_signing_bytes();
+    if !MlDsaVerifier::verify(&canonical, &sig, &claimed_pk) {
+        return Err(format!(
+            "genesis coordinator_signature does not verify under coordinator_pk \
+             (canonical bytes: {} bytes, signature: {} bytes). Genesis was tampered with \
+             or the wrong coordinator key was used.",
+            canonical.len(),
+            sig.len()
+        ));
+    }
+
+    Ok(())
+}
+
 /// In `--mainnet` strict mode the binary refuses to start unless every
 /// known footgun is closed. Returns an aggregated error listing every
 /// violated requirement so an operator sees the full punch list at once.
@@ -1923,6 +2002,20 @@ async fn main() -> Result<()> {
     }
 
     let args = parse_args();
+    // Surgical fast-path guard for K-07/K-08: refuse --mainnet --validators=N
+    // (N > 1) launches that don't supply a pre-signed genesis. This runs
+    // before networking/consensus init so an operator gets a single, terse
+    // line on stderr instead of a noisy bootstrap that would have diverged.
+    // The full aggregator below (`validate_mainnet_strict`) still catches
+    // all other footguns.
+    if args.mainnet_strict && args.validator_count > 1 && args.genesis_config.is_none() {
+        eprintln!(
+            "error: --mainnet with --validators > 1 requires --genesis-config <path>\n       \
+             Multi-validator mainnet launches must share a pre-signed genesis. See:\n       \
+             docs/GENESIS_CEREMONY.md"
+        );
+        std::process::exit(1);
+    }
     if let Err(e) = validate_mainnet_strict(&args) {
         eprintln!("\x1b[1;31m{}\x1b[0m", e);
         std::process::exit(1);
@@ -1986,6 +2079,14 @@ async fn main() -> Result<()> {
             });
             let config = evaporchain_execution::genesis::load_genesis_config(&json)
                 .unwrap_or_else(|e| panic!("Invalid genesis config: {}", e));
+            // K-07/K-08: every multi-validator genesis must be coordinator-signed
+            // so all operators verify byte-equality of the validator set + chain
+            // params before any state is written.
+            if let Err(e) =
+                validate_genesis_coordinator_signature(&config, args.mainnet_strict)
+            {
+                panic!("genesis-config signature check failed: {}", e);
+            }
             let result = evaporchain_execution::genesis::initialize_genesis(&mut *db, &config)
                 .unwrap_or_else(|e| panic!("Genesis initialization failed: {}", e));
             println!("{} \x1b[1;32mGenesis block #{} created\x1b[0m — {} accounts, {} validators, state_root={}",
@@ -2025,6 +2126,13 @@ async fn main() -> Result<()> {
         if let Some(ref genesis_path) = args.genesis_config {
             if let Ok(json) = std::fs::read_to_string(genesis_path) {
                 if let Ok(config) = evaporchain_execution::genesis::load_genesis_config(&json) {
+                    // Re-verify on the resume path so a tampered file dropped in
+                    // between restarts cannot silently change the validator set.
+                    if let Err(e) =
+                        validate_genesis_coordinator_signature(&config, args.mainnet_strict)
+                    {
+                        panic!("genesis-config signature check failed on resume: {}", e);
+                    }
                     genesis_config_loaded = Some(config);
                 }
             }
