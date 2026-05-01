@@ -18,9 +18,51 @@ use std::path::{Path, PathBuf};
 
 // ─────────────────────── Persisted State ────────────────────────────────
 
+/// Current `ConsensusCheckpoint` schema version.
+///
+/// History:
+/// - `1` (implicit, pre-bump): original fields only — `height`, `epoch`,
+///   `parent_hash`, `weak_subjectivity_checkpoints`, `validators`. Files
+///   written before this constant existed have no `version` key and
+///   deserialize as `version = 1` via `default_checkpoint_version`.
+/// - `2`: adds optional `last_bell_reading: Option<CheckpointedBellReading>`
+///   so per-block CHSH Bell-Beacon readings survive node restart and the
+///   wallet `BellBeaconCard` (via `GET /api/bell/latest`) keeps reporting
+///   the last live S-value across restarts instead of resetting to
+///   `no_data` until the next block commits.
+pub const CHECKPOINT_VERSION: u32 = 2;
+
+/// Default for `version` when deserializing an older checkpoint that
+/// pre-dates the field. Returns `1` (the implicit pre-bump version).
+fn default_checkpoint_version() -> u32 {
+    1
+}
+
+/// Per-block CHSH Bell-Beacon measurement persisted alongside the
+/// consensus checkpoint so a node restart preserves the live reading
+/// surfaced to wallets via `GET /api/bell/latest`.
+///
+/// Mirrors the volatile `last_bell_*` fields on `TendermintConsensus`.
+/// The runtime `BellBeaconReading` carries `threshold_milli` as well,
+/// but that's a chain-wide constant (`LOCAL_REALISM_S_MILLI`) and is
+/// reconstructed at read time — only the four per-block fields below
+/// need to round-trip through the checkpoint.
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct CheckpointedBellReading {
+    pub s_value_milli: u64,
+    pub block_height: u64,
+    pub epoch: u64,
+    pub certified: bool,
+}
+
 /// Snapshot of consensus state written on every commit.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConsensusCheckpoint {
+    /// Schema version. See `CHECKPOINT_VERSION` for history.
+    /// Defaults to `1` when missing so pre-versioned checkpoints
+    /// deserialize cleanly.
+    #[serde(default = "default_checkpoint_version")]
+    pub version: u32,
     /// Last committed block height.
     pub height: u64,
     /// Current epoch.
@@ -32,6 +74,11 @@ pub struct ConsensusCheckpoint {
     /// Validator set state (serialized separately since ValidatorSet
     /// doesn't derive Serialize — we store the inner validators).
     pub validators: Vec<ValidatorInfoSnapshot>,
+    /// Last per-block Bell-Beacon CHSH reading (added in `version = 2`).
+    /// `None` for old checkpoints written before the field existed —
+    /// `#[serde(default)]` keeps backwards compatibility.
+    #[serde(default)]
+    pub last_bell_reading: Option<CheckpointedBellReading>,
 }
 
 /// Minimal validator snapshot for persistence.
@@ -90,6 +137,10 @@ impl ValidatorInfoSnapshot {
 
 impl ConsensusCheckpoint {
     /// Build a checkpoint from the current consensus state.
+    ///
+    /// Produces a `version = CHECKPOINT_VERSION` (currently `2`) checkpoint
+    /// with `last_bell_reading = None`. Use `with_bell_reading` to attach
+    /// a per-block CHSH measurement before persisting.
     pub fn from_consensus(
         height: u64,
         epoch: u64,
@@ -98,6 +149,7 @@ impl ConsensusCheckpoint {
         weak_subjectivity_checkpoints: &[(u64, [u8; 32])],
     ) -> Self {
         Self {
+            version: CHECKPOINT_VERSION,
             height,
             epoch,
             parent_hash,
@@ -107,7 +159,16 @@ impl ConsensusCheckpoint {
                 .iter()
                 .map(ValidatorInfoSnapshot::from)
                 .collect(),
+            last_bell_reading: None,
         }
+    }
+
+    /// Attach a Bell-Beacon reading to this checkpoint (chained builder).
+    /// Pass `None` to clear, `Some(...)` to persist the latest reading so
+    /// it survives node restart.
+    pub fn with_bell_reading(mut self, reading: Option<CheckpointedBellReading>) -> Self {
+        self.last_bell_reading = reading;
+        self
     }
 
     /// Reconstruct the validator set from the snapshot.

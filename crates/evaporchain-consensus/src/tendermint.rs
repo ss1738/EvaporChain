@@ -1338,6 +1338,47 @@ impl TendermintConsensus {
         self.current_state_root = state_root;
     }
 
+    /// Snapshot the four `last_bell_*` fields into a serializable
+    /// `CheckpointedBellReading`. Returns `None` if no Bell-Beacon
+    /// reading has been observed yet (matching `last_bell_reading`).
+    ///
+    /// Persisted as part of `ConsensusCheckpoint::with_bell_reading` so
+    /// the wallet `BellBeaconCard` keeps reporting the last live S-value
+    /// across node restart instead of resetting to `no_data`.
+    pub fn checkpoint_bell_reading(
+        &self,
+    ) -> Option<crate::persistence::CheckpointedBellReading> {
+        self.last_bell_s_milli
+            .map(|s| crate::persistence::CheckpointedBellReading {
+                s_value_milli: s,
+                block_height: self.last_bell_block_height,
+                epoch: self.last_bell_epoch,
+                certified: self.last_bell_certified,
+            })
+    }
+
+    /// Restore the `last_bell_*` fields from a checkpoint. Pass the
+    /// `last_bell_reading` field of a loaded `ConsensusCheckpoint`.
+    /// `None` (or a checkpoint that pre-dates the field) leaves the
+    /// fields at their default (`None` / `0` / `0` / `false`) so the
+    /// next block produces a fresh measurement.
+    pub fn restore_bell_reading(
+        &mut self,
+        reading: Option<&crate::persistence::CheckpointedBellReading>,
+    ) {
+        if let Some(r) = reading {
+            self.last_bell_s_milli = Some(r.s_value_milli);
+            self.last_bell_block_height = r.block_height;
+            self.last_bell_epoch = r.epoch;
+            self.last_bell_certified = r.certified;
+        } else {
+            self.last_bell_s_milli = None;
+            self.last_bell_block_height = 0;
+            self.last_bell_epoch = 0;
+            self.last_bell_certified = false;
+        }
+    }
+
     /// Rebuild the in-memory privacy note tree from commitments persisted
     /// in the StateDB. Call exactly once at node startup, after `restore_state`,
     /// before any block is processed. Errors propagated from the engine
