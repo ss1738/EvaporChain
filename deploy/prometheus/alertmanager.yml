@@ -1,0 +1,28 @@
+global:
+  resolve_timeout: 5m
+
+# TODO: replace with real Slack webhook before testnet launch
+route:
+  group_by: ['alertname', 'cluster']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: 'slack-default'
+  routes:
+    - matchers:
+        - severity = "critical"
+      receiver: 'slack-default'
+      repeat_interval: 1h
+
+receivers:
+  - name: 'slack-default'
+    webhook_configs:
+      - url: 'https://hooks.slack.com/REPLACE_ME'
+        send_resolved: true
+
+inhibit_rules:
+  - source_matchers:
+      - severity = "critical"
+    target_matchers:
+      - severity = "warning"
+    equal: ['alertname', 'cluster', 'instance']

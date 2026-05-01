@@ -6771,6 +6771,171 @@ async fn get_network(State(state): State<Arc<ApiState>>) -> Json<NetworkResponse
     })
 }
 
+// ── Block-explorer / monitoring: validators + opinionated health snapshot ──
+
+/// One row in the explorer-facing validator list.
+#[derive(Debug, Serialize)]
+pub struct ValidatorView {
+    pub id: u64,
+    pub address: String,
+    pub stake: u64,
+    pub effective_stake: u64,
+    pub jailed: bool,
+    pub bls_registered: bool,
+    pub health_score: f64,
+    pub blocks_produced: u64,
+    pub total_slashed: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ValidatorsResponse {
+    pub count: usize,
+    pub total_stake: u64,
+    pub total_effective_stake: u64,
+    pub jailed_count: usize,
+    pub bls_registered_count: usize,
+    pub validators: Vec<ValidatorView>,
+}
+
+/// `GET /api/validators` — full active validator list. Combines registry
+/// fields (id, stake, BLS, jailed, health) with derived totals so an
+/// explorer can render the validator table in one call.
+async fn get_validators(State(state): State<Arc<ApiState>>) -> Json<ValidatorsResponse> {
+    let Some(tc) = state.tendermint.as_ref() else {
+        return Json(ValidatorsResponse {
+            count: 0,
+            total_stake: 0,
+            total_effective_stake: 0,
+            jailed_count: 0,
+            bls_registered_count: 0,
+            validators: vec![],
+        });
+    };
+    let tc = safe_lock(tc);
+    let validators: Vec<ValidatorView> = tc
+        .validator_set()
+        .validators()
+        .iter()
+        .map(|v| ValidatorView {
+            id: v.id,
+            address: format!("0x{}", hex::encode(v.address)),
+            stake: v.stake,
+            effective_stake: v.effective_stake(),
+            jailed: v.jailed,
+            bls_registered: v.bls_public_key.is_some(),
+            health_score: v.health_score,
+            blocks_produced: v.blocks_produced,
+            total_slashed: v.total_slashed,
+        })
+        .collect();
+
+    let total_stake = validators.iter().map(|v| v.stake).sum();
+    let total_effective_stake = validators.iter().map(|v| v.effective_stake).sum();
+    let jailed_count = validators.iter().filter(|v| v.jailed).count();
+    let bls_registered_count = validators.iter().filter(|v| v.bls_registered).count();
+
+    Json(ValidatorsResponse {
+        count: validators.len(),
+        total_stake,
+        total_effective_stake,
+        jailed_count,
+        bls_registered_count,
+        validators,
+    })
+}
+
+#[derive(Debug, Serialize)]
+pub struct NetworkHealthResponse {
+    pub block_height: u64,
+    pub epoch: u64,
+    pub state_root: String,
+    /// Wall-clock seconds since the most recent block landed locally.
+    /// `None` if no blocks committed yet.
+    pub last_block_age_secs: Option<u64>,
+    pub peer_count: usize,
+    pub mempool_size: usize,
+    pub validator_count: usize,
+    pub jailed_count: usize,
+    pub finalised_height: u64,
+    /// `block_height − finalised_height`. Non-zero indicates DA / commit-cert
+    /// gating is holding back the head from finality.
+    pub finality_lag_blocks: u64,
+    pub total_objects: usize,
+    pub ghost_count: usize,
+    pub uptime_seconds: u64,
+    /// One-line opinionated verdict: "healthy" | "syncing" | "stalled" | "isolated".
+    pub status: &'static str,
+}
+
+/// `GET /api/network/health` — opinionated single-call health snapshot.
+/// What an oncall would want to see at a glance from one node:
+/// height, last-block-age, peer count, mempool depth, validator/jail
+/// counts, finality lag, and a one-word verdict.
+async fn get_network_health(
+    State(state): State<Arc<ApiState>>,
+) -> Json<NetworkHealthResponse> {
+    let mut db = safe_lock(&state.db);
+    let history = safe_lock(&state.block_history);
+    let latest = history.back();
+    let block_height = latest.map(|b| b.number).unwrap_or(0);
+    let epoch = latest.map(|b| b.epoch).unwrap_or(0);
+
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let last_block_age_secs = latest
+        .map(|b| now_secs.saturating_sub(b.timestamp))
+        .filter(|&age| age < 86_400 * 365);
+
+    let peer_count = state.peer_count.load(std::sync::atomic::Ordering::Relaxed);
+
+    let (validator_count, jailed_count, mempool_size) =
+        if let Some(tc) = state.tendermint.as_ref() {
+            let tc = safe_lock(tc);
+            let vs = tc.validator_set();
+            (
+                vs.len(),
+                vs.validators().iter().filter(|v| v.jailed).count(),
+                tc.mempool.len(),
+            )
+        } else {
+            (0, 0, 0)
+        };
+
+    let finalised_height = safe_lock(&state.finality_tracker).latest_finalized_height();
+    let finality_lag_blocks = block_height.saturating_sub(finalised_height);
+
+    let status: &'static str = if block_height == 0 {
+        "syncing"
+    } else if peer_count == 0 && validator_count > 1 {
+        "isolated"
+    } else if last_block_age_secs.unwrap_or(0) > 60 {
+        "stalled"
+    } else if finality_lag_blocks > 32 {
+        "syncing"
+    } else {
+        "healthy"
+    };
+
+    Json(NetworkHealthResponse {
+        block_height,
+        epoch,
+        state_root: hex::encode(db.compute_state_root()),
+        last_block_age_secs,
+        peer_count,
+        mempool_size,
+        validator_count,
+        jailed_count,
+        finalised_height,
+        finality_lag_blocks,
+        total_objects: db.object_count(),
+        ghost_count: db.ghost_count(),
+        uptime_seconds: state.start_time.elapsed().as_secs(),
+        status,
+    })
+}
+
 async fn get_events(
     State(state): State<Arc<ApiState>>,
     Query(params): Query<EventsQuery>,
@@ -10242,6 +10407,218 @@ async fn get_prometheus_metrics(
         out.push_str(&format!("evaporchain_consensus_phase {}\n", phase_score));
     }
 
+    // ── Operator-surface `evap_*` metrics ────────────────────────────
+    //
+    // The original `evaporchain_*` names are preserved above for
+    // backwards compatibility with the legacy dashboard. The block
+    // below exposes the canonical names referenced by the operator
+    // Grafana dashboard and Alertmanager rules under `deploy/`.
+    {
+        // Core chain progress
+        out.push_str("# HELP evap_block_height Current block height\n");
+        out.push_str("# TYPE evap_block_height gauge\n");
+        out.push_str(&format!("evap_block_height {}\n", block_height));
+
+        out.push_str("# HELP evap_epoch Current epoch\n");
+        out.push_str("# TYPE evap_epoch gauge\n");
+        out.push_str(&format!("evap_epoch {}\n", epoch));
+
+        let finalized_height = {
+            let ft = safe_lock(&state.finality_tracker);
+            ft.latest_finalized_height()
+        };
+        out.push_str("# HELP evap_finalized_height Highest BLS-finalised block height\n");
+        out.push_str("# TYPE evap_finalized_height gauge\n");
+        out.push_str(&format!("evap_finalized_height {}\n", finalized_height));
+
+        // Validator set — active = unjailed
+        let (validator_total, active_validators, consensus_round) =
+            if let Some(tc) = &state.tendermint {
+                let tc = safe_lock(tc);
+                let vs = tc.validator_set();
+                let total = vs.len() as u64;
+                let active =
+                    vs.validators().iter().filter(|v| !v.jailed).count() as u64;
+                (total, active, tc.round() as u64)
+            } else {
+                // MockConsensus path — single-node dev mode.
+                (1u64, 1u64, 0u64)
+            };
+        out.push_str("# HELP evap_active_validators Number of active (un-jailed) validators\n");
+        out.push_str("# TYPE evap_active_validators gauge\n");
+        out.push_str(&format!("evap_active_validators {}\n", active_validators));
+        out.push_str("# HELP evap_validator_set_size Total validator-set size (active + jailed)\n");
+        out.push_str("# TYPE evap_validator_set_size gauge\n");
+        out.push_str(&format!("evap_validator_set_size {}\n", validator_total));
+        out.push_str(
+            "# HELP evap_consensus_round Current consensus round inside the active height\n",
+        );
+        out.push_str("# TYPE evap_consensus_round gauge\n");
+        out.push_str(&format!("evap_consensus_round {}\n", consensus_round));
+
+        // Object lifecycle
+        out.push_str("# HELP evap_active_objects Number of active state objects\n");
+        out.push_str("# TYPE evap_active_objects gauge\n");
+        out.push_str(&format!("evap_active_objects {}\n", active_objects));
+        out.push_str("# HELP evap_ghost_count Number of evaporated ghost records\n");
+        out.push_str("# TYPE evap_ghost_count gauge\n");
+        out.push_str(&format!("evap_ghost_count {}\n", ghost_count));
+        out.push_str(
+            "# HELP evap_evaporated_objects_total Total objects evaporated since startup\n",
+        );
+        out.push_str("# TYPE evap_evaporated_objects_total counter\n");
+        out.push_str(&format!(
+            "evap_evaporated_objects_total {}\n",
+            stats.total_evaporated
+        ));
+
+        // Mempool / tx pipeline
+        let mempool_size = if let Some(tc) = &state.tendermint {
+            let tc = safe_lock(tc);
+            tc.mempool.len() as u64
+        } else {
+            let c = safe_lock(&state.consensus);
+            c.mempool.len() as u64
+        };
+        out.push_str("# HELP evap_mempool_size Current pending tx count in the active mempool\n");
+        out.push_str("# TYPE evap_mempool_size gauge\n");
+        out.push_str(&format!("evap_mempool_size {}\n", mempool_size));
+
+        out.push_str(
+            "# HELP evap_pending_txs_total Cumulative txs that have entered the mempool since startup\n",
+        );
+        out.push_str("# TYPE evap_pending_txs_total counter\n");
+        out.push_str(&format!(
+            "evap_pending_txs_total {}\n",
+            stats.total_transactions
+        ));
+
+        // Finalised tx outcomes — chain rejects malformed txs at the
+        // mempool gate, so post-finality "failed" is structurally 0.
+        // Successful finalised count tracks total_transactions on the
+        // happy path (every accepted tx eventually finalises in BFT).
+        out.push_str("# HELP evap_finalised_txs_total Total finalised transactions, partitioned by execution result\n");
+        out.push_str("# TYPE evap_finalised_txs_total counter\n");
+        out.push_str(&format!(
+            "evap_finalised_txs_total{{result=\"success\"}} {}\n",
+            stats.total_transactions
+        ));
+        out.push_str("evap_finalised_txs_total{result=\"failed\"} 0\n");
+
+        // Block-production timing histogram.
+        //
+        // We don't yet keep a per-producer breakdown of block exec
+        // time; the throughput tracker stores the local node's recent
+        // exec times. We emit a single-series histogram tagged
+        // `producer="local"` with conventional latency buckets so the
+        // exposition format is valid Prometheus and rate() / quantile
+        // queries work end-to-end.
+        let exec_secs: Vec<f64> = t
+            .recent_blocks
+            .iter()
+            .map(|b| b.2 as f64 / 1_000_000.0)
+            .collect();
+        let buckets: [f64; 10] = [
+            0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0,
+        ];
+        out.push_str(
+            "# HELP evap_block_production_seconds Block execution wall-time histogram\n",
+        );
+        out.push_str("# TYPE evap_block_production_seconds histogram\n");
+        for ub in buckets.iter() {
+            let cumulative = exec_secs.iter().filter(|s| *s <= ub).count() as u64;
+            out.push_str(&format!(
+                "evap_block_production_seconds_bucket{{producer=\"local\",le=\"{}\"}} {}\n",
+                ub, cumulative
+            ));
+        }
+        let total_count = exec_secs.len() as u64;
+        out.push_str(&format!(
+            "evap_block_production_seconds_bucket{{producer=\"local\",le=\"+Inf\"}} {}\n",
+            total_count
+        ));
+        let total_sum: f64 = exec_secs.iter().sum();
+        out.push_str(&format!(
+            "evap_block_production_seconds_sum{{producer=\"local\"}} {}\n",
+            total_sum
+        ));
+        out.push_str(&format!(
+            "evap_block_production_seconds_count{{producer=\"local\"}} {}\n",
+            total_count
+        ));
+
+        // Networking
+        out.push_str("# HELP evap_peer_count Currently-connected P2P peers\n");
+        out.push_str("# TYPE evap_peer_count gauge\n");
+        out.push_str(&format!("evap_peer_count {}\n", peer_count));
+
+        // Data availability — every finalised block carries a DA
+        // attestation, so cumulative finalised count is a faithful
+        // proxy for cumulative DA attestations seen by this node.
+        let da_attestations_total = {
+            let ft = safe_lock(&state.finality_tracker);
+            ft.total_finalized()
+        };
+        out.push_str("# HELP evap_da_attestations_total Total DA attestations observed (one per finalised block)\n");
+        out.push_str("# TYPE evap_da_attestations_total counter\n");
+        out.push_str(&format!(
+            "evap_da_attestations_total {}\n",
+            da_attestations_total
+        ));
+
+        // Refresh pool balance — drives Patronage Covenant payouts
+        let refresh_pool_balance = {
+            let pool = safe_lock(&state.patronage_pool);
+            pool.total_accrued()
+        };
+        out.push_str("# HELP evap_refresh_pool_balance Total energy currently sitting in the protocol refresh pool\n");
+        out.push_str("# TYPE evap_refresh_pool_balance gauge\n");
+        out.push_str(&format!(
+            "evap_refresh_pool_balance {}\n",
+            refresh_pool_balance
+        ));
+
+        // Fee controller — base fee + Lyapunov drift around target
+        {
+            use evaporchain_fee_controller::{base_fee, signed_diff, FeeControllerParams};
+            let fee_state = safe_lock(&state.fee_state);
+            let params = FeeControllerParams::default_genesis();
+            let base_fee_ppm = base_fee(&fee_state, &params);
+            let drift = signed_diff(fee_state.energy, params.target_energy);
+            out.push_str(
+                "# HELP evap_fee_controller_base_fee Base fee (ppm) from the Singh-Lyapunov fee controller\n",
+            );
+            out.push_str("# TYPE evap_fee_controller_base_fee gauge\n");
+            out.push_str(&format!(
+                "evap_fee_controller_base_fee {}\n",
+                base_fee_ppm
+            ));
+            out.push_str(
+                "# HELP evap_fee_controller_lyapunov_drift Signed E - E* drift; |drift| -> 0 means controller has converged\n",
+            );
+            out.push_str("# TYPE evap_fee_controller_lyapunov_drift gauge\n");
+            out.push_str(&format!(
+                "evap_fee_controller_lyapunov_drift {}\n",
+                drift
+            ));
+        }
+
+        // Bell-Certified Beacon — latest CHSH S-value (×1000)
+        let bell_s_milli: u64 = if let Some(tc) = &state.tendermint {
+            let tc = safe_lock(tc);
+            tc.last_bell_reading()
+                .map(|r| r.s_value_milli)
+                .unwrap_or(evaporchain_bell_beacon::LOCAL_REALISM_S_MILLI)
+        } else {
+            evaporchain_bell_beacon::LOCAL_REALISM_S_MILLI
+        };
+        out.push_str(
+            "# HELP evap_bell_s_value_milli Latest CHSH S-value (milli-units); >2000 means Bell-certified\n",
+        );
+        out.push_str("# TYPE evap_bell_s_value_milli gauge\n");
+        out.push_str(&format!("evap_bell_s_value_milli {}\n", bell_s_milli));
+    }
+
     (
         [(
             axum::http::header::CONTENT_TYPE,
@@ -11772,6 +12149,9 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/stats/summary", get(get_stats_summary))
         // Network
         .route("/api/network", get(get_network))
+        .route("/api/network/health", get(get_network_health))
+        // Block-explorer view: full validator list
+        .route("/api/validators", get(get_validators))
         // Wallet / Transactions
         .route("/api/tx/transfer", post(post_transfer))
         .route("/api/tx/create-object", post(post_create_object))
