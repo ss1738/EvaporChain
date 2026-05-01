@@ -2562,9 +2562,21 @@ async fn main() -> Result<()> {
     // Restore consensus state from disk if available
     if !is_fresh {
         if let Some((block_number, epoch, parent_hash)) = chain_store.load_consensus_meta() {
+            // Bell-Beacon reading rides alongside consensus_meta so that
+            // /api/bell/latest survives restart until the next block measures.
+            let bell = chain_store.load_bell_reading();
             if let Some(ref tc) = tendermint {
                 let mut c = safe_lock(tc);
                 c.restore_state(block_number, epoch, parent_hash);
+                if let Some((s, h, e, cert)) = bell {
+                    let reading = evaporchain_consensus::persistence::CheckpointedBellReading {
+                        s_value_milli: s,
+                        block_height: h,
+                        epoch: e,
+                        certified: cert,
+                    };
+                    c.restore_bell_reading(Some(&reading));
+                }
                 println!(
                     "{} \x1b[1;32mTendermint restored:\x1b[0m block={}, epoch={}, parent_hash={}…",
                     node_tag,
@@ -3740,10 +3752,10 @@ async fn main() -> Result<()> {
                                 let peers = peer_count.load(std::sync::atomic::Ordering::Relaxed);
 
                                 // Advance consensus state
-                                let consensus_parent_hash = {
+                                let (consensus_parent_hash, consensus_bell_reading) = {
                                     let mut tc = safe_lock(tc_ref);
                                     tc.on_block_committed(&block, result.execution.state_root, result.execution.objects_evaporated);
-                                    tc.parent_hash()
+                                    (tc.parent_hash(), tc.checkpoint_bell_reading())
                                 };
 
                                 // DSN + PNT per-block wiring.
@@ -3953,6 +3965,9 @@ async fn main() -> Result<()> {
 
                                 // Persist
                                 fatal_persist_err("consensus_meta", chain_store.save_consensus_meta(block.number, block.epoch, consensus_parent_hash));
+                                if let Some(r) = consensus_bell_reading {
+                                    log_persist_err("bell_reading", chain_store.save_bell_reading(r.s_value_milli, r.block_height, r.epoch, r.certified));
+                                }
                                 fatal_persist_err("full_block", chain_store.save_full_block(&block));
                                 log_persist_err("tx_index", chain_store.index_block_transactions(&block).map(|_| ()));
                                 {
@@ -4426,10 +4441,10 @@ async fn main() -> Result<()> {
                                     };
                                     let peers = peer_count.load(std::sync::atomic::Ordering::Relaxed);
 
-                                    let consensus_parent_hash = {
+                                    let (consensus_parent_hash, consensus_bell_reading) = {
                                         let mut tc = safe_lock(tc_ref);
                                         tc.on_block_committed(&block, result.execution.state_root, result.execution.objects_evaporated);
-                                        tc.parent_hash()
+                                        (tc.parent_hash(), tc.checkpoint_bell_reading())
                                     };
 
                                     // ── Frontier primitives update (gossip path) ──
@@ -4526,6 +4541,9 @@ async fn main() -> Result<()> {
                                         obj_count, ghost_count, exec_elapsed_us,
                                     );
                                     fatal_persist_err("consensus_meta", chain_store.save_consensus_meta(block.number, block.epoch, consensus_parent_hash));
+                                    if let Some(r) = consensus_bell_reading {
+                                        log_persist_err("bell_reading", chain_store.save_bell_reading(r.s_value_milli, r.block_height, r.epoch, r.certified));
+                                    }
                                     fatal_persist_err("full_block", chain_store.save_full_block(&block));
                                     log_persist_err("tx_index", chain_store.index_block_transactions(&block).map(|_| ()));
                                     index_contract_events_from_exec(&chain_store, &block, &result.execution);
@@ -4999,12 +5017,13 @@ async fn main() -> Result<()> {
 
                         if let Some(ref tc_ref) = tendermint {
                             // Apply via Tendermint consensus for state consistency
-                            let (result, consensus_parent_hash) = {
+                            let (result, consensus_parent_hash, consensus_bell_reading) = {
                                 let mut tc = safe_lock(tc_ref);
                                 let mut db_guard = safe_lock(&db);
                                 let r = tc.apply_block(&mut *db_guard, block);
                                 let ph = tc.parent_hash();
-                                (r, ph)
+                                let bell = tc.checkpoint_bell_reading();
+                                (r, ph, bell)
                             };
                             match result {
                                 Ok(result) => {
@@ -5026,6 +5045,9 @@ async fn main() -> Result<()> {
                                         cache_block(cache, block);
                                     }
                                     fatal_persist_err("consensus_meta", chain_store.save_consensus_meta(block.number, block.epoch, consensus_parent_hash));
+                                    if let Some(r) = consensus_bell_reading {
+                                        log_persist_err("bell_reading", chain_store.save_bell_reading(r.s_value_milli, r.block_height, r.epoch, r.certified));
+                                    }
                                     // Record in block history & chain store
                                     {
                                         let record = BlockRecord {
@@ -5138,12 +5160,13 @@ async fn main() -> Result<()> {
                                 }
                             }
                             if let Some(ref tc_ref) = tendermint {
-                                let (result, consensus_parent_hash) = {
+                                let (result, consensus_parent_hash, consensus_bell_reading) = {
                                     let mut tc = safe_lock(tc_ref);
                                     let mut db_guard = safe_lock(&db);
                                     let r = tc.apply_block(&mut *db_guard, &queued);
                                     let ph = tc.parent_hash();
-                                    (r, ph)
+                                    let bell = tc.checkpoint_bell_reading();
+                                    (r, ph, bell)
                                 };
                                 if let Ok(result) = result {
                                     let mut db_guard = safe_lock(&db);
@@ -5154,6 +5177,9 @@ async fn main() -> Result<()> {
                                     drop(db_guard);
                                     let _ = safe_lock(&chain_prover).fold_block(&queued, result.execution.state_root);
                                     fatal_persist_err("consensus_meta", chain_store.save_consensus_meta(queued.number, queued.epoch, consensus_parent_hash));
+                                    if let Some(r) = consensus_bell_reading {
+                                        log_persist_err("bell_reading", chain_store.save_bell_reading(r.s_value_milli, r.block_height, r.epoch, r.certified));
+                                    }
                                     // Update stats for queued/pending blocks
                                     {
                                         let mut tx_creates = 0u64;

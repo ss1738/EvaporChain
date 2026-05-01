@@ -12,6 +12,7 @@ pub mod ib_integration;
 pub mod light_client;
 pub mod mempool;
 pub mod persistence;
+pub use persistence::CheckpointedBellReading;
 pub mod rg_phase_integration;
 pub mod state_sync;
 pub mod tendermint;

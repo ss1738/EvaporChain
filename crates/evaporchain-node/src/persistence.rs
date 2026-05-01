@@ -100,6 +100,45 @@ impl ChainStore {
         Some((block_number, epoch, parent_hash))
     }
 
+    // ─── Bell-Beacon reading ───
+    //
+    // Persists the per-block CHSH S-value alongside consensus_meta so that a
+    // restart preserves /api/bell/latest until the next block produces a
+    // measurement. Stored as a single JSON blob under CF_META; absent when
+    // the consensus has never measured (e.g. pre-VRF-output blocks).
+
+    pub fn save_bell_reading(
+        &self,
+        s_value_milli: u64,
+        block_height: u64,
+        epoch: u64,
+        certified: bool,
+    ) -> Result<(), String> {
+        let cf = self.db.cf_handle(CF_META).unwrap();
+        let value = serde_json::json!({
+            "s_value_milli": s_value_milli,
+            "block_height": block_height,
+            "epoch": epoch,
+            "certified": certified,
+        });
+        let bytes = serde_json::to_vec(&value).map_err(|e| e.to_string())?;
+        self.db
+            .put_cf(cf, b"bell_reading", bytes)
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn load_bell_reading(&self) -> Option<(u64, u64, u64, bool)> {
+        let cf = self.db.cf_handle(CF_META).unwrap();
+        let bytes = self.db.get_cf(cf, b"bell_reading").ok()??;
+        let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+        Some((
+            v.get("s_value_milli")?.as_u64()?,
+            v.get("block_height")?.as_u64()?,
+            v.get("epoch")?.as_u64()?,
+            v.get("certified")?.as_bool()?,
+        ))
+    }
+
     // ─── Block history ───
 
     pub fn save_block(&self, record: &BlockRecord) -> Result<(), String> {
