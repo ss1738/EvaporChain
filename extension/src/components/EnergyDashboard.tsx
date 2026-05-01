@@ -4,6 +4,7 @@ import { api, type StateObject, type EnergyPortfolio, type EnergyHistory } from 
 import { EnergyBar } from "./EnergyBar";
 import { energyPercent, energyColor } from "@/utils/format";
 import { BellBeaconCard } from "./BellBeaconCard";
+import { HotColdStakeCard } from "./HotColdStakeCard";
 
 export function EnergyDashboard() {
   const { activeAccount, objects, setView, refreshObjects, chainStatus, shardsHealth } = useWallet();
@@ -115,6 +116,11 @@ export function EnergyDashboard() {
         {/* Bell-Beacon CHSH card — quantum-randomness certification */}
         <div className="mx-4 mt-3">
           <BellBeaconCard />
+        </div>
+
+        {/* Hot/Cold stake — two-temperature validator equilibrium */}
+        <div className="mx-4 mt-3">
+          <HotColdStakeCard />
         </div>
 
         {/* Urgency banner */}

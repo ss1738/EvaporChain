@@ -642,6 +642,48 @@ export interface BellBeaconLatestResp {
   detail: string;
 }
 
+// ── Hot/Cold Stake — two-temperature validator equilibrium ─────────
+//
+// HotColdStakeReq mirrors api.rs §HotColdStakeReq (L4923-4935). All
+// three endpoints (decay/promote/demote) take the same body; only
+// promote/demote read the optional `amount` field. Pure compute, no
+// signature.
+
+export interface HotColdStakeReq {
+  hot: number;
+  cold: number;
+  /** Hot half-life in epochs (api.rs default 100). */
+  hot_lambda_epochs: number;
+  /** Cold half-life in epochs (api.rs default 10000). */
+  cold_lambda_epochs: number;
+  last_touched_epoch: number;
+  current_epoch: number;
+  /** For promote/demote: amount to move cold↔hot. */
+  amount?: number;
+}
+
+/** /api/hot_cold_stake/decay → status, hot_after, cold_after, total_after. */
+export interface HotColdStakeDecayResp {
+  status: string;
+  hot_after: number;
+  cold_after: number;
+  total_after: number;
+  epochs_elapsed: number;
+}
+
+/** /api/hot_cold_stake/{promote,demote}. `detail` is set on error. */
+export interface HotColdStakeMoveResp {
+  status: string;             // "ok" | "error"
+  hot_after?: number;
+  cold_after?: number;
+  total_after?: number;
+  /** Present on promote responses only; mirrors api.rs L4968. */
+  promoted?: number;
+  /** Present on demote responses only; mirrors api.rs L4983. */
+  demoted?: number;
+  detail?: string;
+}
+
 class EvaporChainAPI {
   private baseUrl: string;
 
@@ -945,6 +987,45 @@ class EvaporChainAPI {
 
   async getBellBeaconLatest(): Promise<BellBeaconLatestResp> {
     return this.get("/api/bell/latest");
+  }
+
+  // ── Hot/Cold Stake ──
+  //
+  // Two-temperature equilibrium per validator (research/INVENTION_STACK.md
+  // §4.2). Hot stake decays fast and earns refresh credit; cold stake
+  // decays slow and acts as long-term skin in the game. Validators
+  // promote cold→hot (instant) and demote hot→cold.
+  //
+  // Endpoints (api.rs §"Hot/Cold Stake", L4921-4987):
+  //   POST /api/hot_cold_stake/decay    (~L4948) — apply both decays from
+  //        last_touched_epoch to current_epoch.
+  //   POST /api/hot_cold_stake/promote  (~L4959) — simulate cold→hot move
+  //        of `amount` (after decay). Returns "error" on insufficient cold.
+  //   POST /api/hot_cold_stake/demote   (~L4974) — simulate hot→cold move
+  //        of `amount` (after decay). Returns "error" on insufficient hot.
+  //
+  // All three are PURE COMPUTE — no chain state mutated, no signature
+  // accepted. The wallet treats them as a what-if simulator over a
+  // validator's hot/cold pools; the real promote/demote that mutates
+  // chain state would land via a signed validator-stake transaction
+  // once that's wired through evaporchain-execution. Until then the
+  // card surfaces the substrate's behaviour visibly.
+  //
+  // HotColdStakeReq (api.rs §HotColdStakeReq, L4923-4935): hot, cold,
+  // hot_lambda_epochs (default 100), cold_lambda_epochs (default 10000),
+  // last_touched_epoch, current_epoch, optional `amount` for promote/
+  // demote. Hot/cold-after responses return Energy units as u64.
+
+  async hotColdStakeDecay(req: HotColdStakeReq): Promise<HotColdStakeDecayResp> {
+    return this.post("/api/hot_cold_stake/decay", req);
+  }
+
+  async hotColdStakePromote(req: HotColdStakeReq): Promise<HotColdStakeMoveResp> {
+    return this.post("/api/hot_cold_stake/promote", req);
+  }
+
+  async hotColdStakeDemote(req: HotColdStakeReq): Promise<HotColdStakeMoveResp> {
+    return this.post("/api/hot_cold_stake/demote", req);
   }
 
   // ── Sharding ──
