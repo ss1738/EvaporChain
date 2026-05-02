@@ -3619,12 +3619,14 @@ async fn main() -> Result<()> {
     // ── Helper: apply a single block (follower path) ──
     // Returns (obj_count, ghost_count) on success
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     fn apply_follower_block(
         node_tag: &str,
         block: &evaporchain_types::Block,
         consensus: &Arc<Mutex<MockConsensus>>,
         db: &Arc<Mutex<RocksDBStateDB>>,
         prover: &Arc<Mutex<ChainProver>>,
+        fold_queue: &Arc<evaporchain_proving::async_fold::FoldQueue>,
         prove_mode: bool,
         block_history: &Arc<Mutex<VecDeque<BlockRecord>>>,
         chain_stats: &Arc<Mutex<ChainStats>>,
@@ -3669,21 +3671,28 @@ async fn main() -> Result<()> {
                 db_guard.flush_accounts();
                 db_guard.flush_objects();
 
-                let mut p = safe_lock(prover);
-                match p.fold_block(&result.block, result.execution.state_root) {
-                    Ok(fold_res) if prove_mode => {
-                        println!(
-                            "{}   \x1b[35mProof: fold={:.1}ms  acc={}B  folded={}\x1b[0m",
-                            node_tag,
-                            fold_res.fold_time_us as f64 / 1000.0,
-                            fold_res.accumulator_size,
-                            p.blocks_folded(),
-                        );
+                // Async fold via FoldQueue (Task #13). Falls back to
+                // synchronous lock-and-fold under backpressure so a
+                // fold is never silently dropped. The fold-time
+                // diagnostic line that the previous sync path printed
+                // moves into the worker — no per-block log here.
+                {
+                    use evaporchain_proving::async_fold::SubmitOutcome;
+                    let outcome = fold_queue
+                        .submit(result.block.clone(), result.execution.state_root);
+                    if let SubmitOutcome::QueueFull | SubmitOutcome::WorkerGone = outcome {
+                        let mut p = safe_lock(prover);
+                        if let Err(e) =
+                            p.fold_block(&result.block, result.execution.state_root)
+                        {
+                            eprintln!(
+                                "{} \x1b[31mProving error (sync fallback): {}\x1b[0m",
+                                node_tag, e
+                            );
+                        }
                     }
-                    Err(e) => eprintln!("{} \x1b[31mProving error: {}\x1b[0m", node_tag, e),
-                    _ => {}
                 }
-                drop(p);
+                let _ = prove_mode; // diagnostic moved to worker
 
                 let obj_count = db_guard.object_count();
                 let ghost_count_val = db_guard.ghost_count();
@@ -5849,6 +5858,7 @@ async fn main() -> Result<()> {
                     // Perfect: next block in sequence — apply it
                     apply_follower_block(
                         &node_tag, &block, &consensus, &db, &chain_prover,
+                        &fold_queue,
                         args.prove_mode, &block_history, &chain_stats, &events,
                         &throughput, &chain_store, &peer_count, &block_cache,
                         &tendermint, &ws_broadcaster,
@@ -5863,6 +5873,7 @@ async fn main() -> Result<()> {
                         if let Some(queued) = pending_blocks.remove(&next) {
                             apply_follower_block(
                                 &node_tag, &queued, &consensus, &db, &chain_prover,
+                                &fold_queue,
                                 args.prove_mode, &block_history, &chain_stats, &events,
                                 &throughput, &chain_store, &peer_count, &block_cache,
                                 &tendermint, &ws_broadcaster,
@@ -5998,9 +6009,21 @@ async fn main() -> Result<()> {
                                         db_guard.flush_accounts();
                                         db_guard.flush_objects();
                                     }
+                                    // Async fold (Task #13). SYNCED-reconstruction
+                                    // path; falls back to sync under backpressure.
                                     {
-                                        let mut p = safe_lock(&chain_prover);
-                                        let _ = p.fold_block(block, result.execution.state_root);
+                                        use evaporchain_proving::async_fold::SubmitOutcome;
+                                        let outcome = fold_queue.submit(
+                                            block.clone(),
+                                            result.execution.state_root,
+                                        );
+                                        if let SubmitOutcome::QueueFull
+                                        | SubmitOutcome::WorkerGone = outcome
+                                        {
+                                            let mut p = safe_lock(&chain_prover);
+                                            let _ = p
+                                                .fold_block(block, result.execution.state_root);
+                                        }
                                     }
                                     let (obj_count, ghost_count) = {
                                         let db_guard = safe_lock(&db);
@@ -6157,6 +6180,7 @@ async fn main() -> Result<()> {
                         } else {
                             apply_follower_block(
                                 &node_tag, block, &consensus, &db, &chain_prover,
+                                &fold_queue,
                                 args.prove_mode, &block_history, &chain_stats, &events,
                                 &throughput, &chain_store, &peer_count, &block_cache,
                                 &tendermint, &ws_broadcaster,
@@ -6212,7 +6236,21 @@ async fn main() -> Result<()> {
                                     let obj_count = db_guard.object_count();
                                     let gh_count = db_guard.ghost_count();
                                     drop(db_guard);
-                                    let _ = safe_lock(&chain_prover).fold_block(&queued, result.execution.state_root);
+                                    // Async fold (Task #13). Queued-block-apply
+                                    // path; sync fallback under backpressure.
+                                    {
+                                        use evaporchain_proving::async_fold::SubmitOutcome;
+                                        let outcome = fold_queue.submit(
+                                            queued.clone(),
+                                            result.execution.state_root,
+                                        );
+                                        if let SubmitOutcome::QueueFull
+                                        | SubmitOutcome::WorkerGone = outcome
+                                        {
+                                            let _ = safe_lock(&chain_prover)
+                                                .fold_block(&queued, result.execution.state_root);
+                                        }
+                                    }
                                     fatal_persist_err("consensus_meta", chain_store.save_consensus_meta(queued.number, queued.epoch, consensus_parent_hash));
                                     if let Some(r) = consensus_bell_reading {
                                         log_persist_err("bell_reading", chain_store.save_bell_reading(r.s_value_milli, r.block_height, r.epoch, r.certified));
@@ -6254,6 +6292,7 @@ async fn main() -> Result<()> {
                             } else {
                                 apply_follower_block(
                                     &node_tag, &queued, &consensus, &db, &chain_prover,
+                                    &fold_queue,
                                     args.prove_mode, &block_history, &chain_stats, &events,
                                     &throughput, &chain_store, &peer_count, &block_cache,
                                     &tendermint, &ws_broadcaster,
