@@ -360,6 +360,20 @@ export interface Transaction {
   to: string;
   amount: string;
   timestamp: number;
+  /**
+   * Lifecycle outcome from the executor — "success" or "rejected".
+   * Mirrors the node's `TxRecord.status` field so consumers can
+   * filter / surface failed txs without a separate /api/tx/:hash
+   * roundtrip.
+   */
+  status?: "success" | "rejected" | string;
+  /**
+   * Executor error string when `status === "rejected"`. Absent on
+   * success. Wired through TxRecord.error from the node, which uses
+   * `skip_serializing_if = "Option::is_none"` so successful txs
+   * stay slim on the wire.
+   */
+  error?: string;
 }
 
 /** Parameters for creating a new decaying object. */

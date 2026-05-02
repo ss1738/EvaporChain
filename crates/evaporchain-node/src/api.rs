@@ -436,6 +436,14 @@ pub struct TxRecord {
     pub block_number: u64,
     pub epoch: u64,
     pub status: String,
+    /// Executor error message when `status == "rejected"`. Carries the
+    /// stringified `TxOutcome.error` produced by the execution engine
+    /// (e.g. `"InsufficientBalance: have 100, need 500"`). Absent for
+    /// successful txs and serialised as missing — wallets / explorers
+    /// surface this to answer "why did my tx fail?". Wired through
+    /// `tx_records_from_block_with_outcomes` from `outcome_to_status`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// Accumulated chain statistics.
@@ -14439,12 +14447,11 @@ pub fn tx_records_from_block_with_outcomes(
         .map(|(i, tx)| {
             let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
             let gas = estimate_tx_gas(tx);
-            let (status, _err) = outcome_to_status(tx, i, outcomes);
-            // NB: `_err` is intentionally not surfaced through TxRecord
-            // today (TxRecord has no error field) — the rejection error
-            // lives in the executor logs and the metric. Adding an
-            // `error` field to TxRecord would break the wallet/explorer
-            // contract; plumb later if needed.
+            let (status, error) = outcome_to_status(tx, i, outcomes);
+            // `error` is plumbed onto TxRecord.error so wallets and
+            // explorers can surface the executor's rejection reason
+            // (e.g. "InsufficientBalance"). Absent for successful txs;
+            // serialised as missing via `skip_serializing_if`.
             match tx {
                 Transaction::Transfer(t) => TxRecord {
                     hash,
@@ -14460,6 +14467,7 @@ pub fn tx_records_from_block_with_outcomes(
                     block_number: block.number,
                     epoch: block.epoch,
                     status: status.clone(),
+                    error: error.clone(),
                 },
                 Transaction::CreateObject(t) => TxRecord {
                     hash,
@@ -14475,6 +14483,7 @@ pub fn tx_records_from_block_with_outcomes(
                     block_number: block.number,
                     epoch: block.epoch,
                     status: status.clone(),
+                    error: error.clone(),
                 },
                 Transaction::Refresh(t) => TxRecord {
                     hash,
@@ -14490,6 +14499,7 @@ pub fn tx_records_from_block_with_outcomes(
                     block_number: block.number,
                     epoch: block.epoch,
                     status: status.clone(),
+                    error: error.clone(),
                 },
                 Transaction::DeployContract(t) => TxRecord {
                     hash,
@@ -14505,6 +14515,7 @@ pub fn tx_records_from_block_with_outcomes(
                     block_number: block.number,
                     epoch: block.epoch,
                     status: status.clone(),
+                    error: error.clone(),
                 },
                 Transaction::CallContract(t) => TxRecord {
                     hash,
@@ -14520,6 +14531,7 @@ pub fn tx_records_from_block_with_outcomes(
                     block_number: block.number,
                     epoch: block.epoch,
                     status: status.clone(),
+                    error: error.clone(),
                 },
                 Transaction::DeployScript(t) => TxRecord {
                     hash,
@@ -14535,6 +14547,7 @@ pub fn tx_records_from_block_with_outcomes(
                     block_number: block.number,
                     epoch: block.epoch,
                     status: status.clone(),
+                    error: error.clone(),
                 },
                 Transaction::CallScript(t) => TxRecord {
                     hash,
@@ -14550,6 +14563,7 @@ pub fn tx_records_from_block_with_outcomes(
                     block_number: block.number,
                     epoch: block.epoch,
                     status: status.clone(),
+                    error: error.clone(),
                 },
                 Transaction::ValidatorStake(t) => TxRecord {
                     hash,
@@ -14565,6 +14579,7 @@ pub fn tx_records_from_block_with_outcomes(
                     block_number: block.number,
                     epoch: block.epoch,
                     status: status.clone(),
+                    error: error.clone(),
                 },
                 Transaction::ValidatorExit(t) => TxRecord {
                     hash,
@@ -14580,6 +14595,7 @@ pub fn tx_records_from_block_with_outcomes(
                     block_number: block.number,
                     epoch: block.epoch,
                     status: status.clone(),
+                    error: error.clone(),
                 },
                 Transaction::ValidatorClaimStake(t) => TxRecord {
                     hash,
@@ -14595,6 +14611,7 @@ pub fn tx_records_from_block_with_outcomes(
                     block_number: block.number,
                     epoch: block.epoch,
                     status: status.clone(),
+                    error: error.clone(),
                 },
                 Transaction::Shield(t) => TxRecord {
                     hash,
@@ -14610,6 +14627,7 @@ pub fn tx_records_from_block_with_outcomes(
                     block_number: block.number,
                     epoch: block.epoch,
                     status: status.clone(),
+                    error: error.clone(),
                 },
                 Transaction::Unshield(t) => TxRecord {
                     hash,
@@ -14625,6 +14643,7 @@ pub fn tx_records_from_block_with_outcomes(
                     block_number: block.number,
                     epoch: block.epoch,
                     status: status.clone(),
+                    error: error.clone(),
                 },
                 Transaction::PrivateTransfer(t) => TxRecord {
                     hash,
@@ -14640,6 +14659,7 @@ pub fn tx_records_from_block_with_outcomes(
                     block_number: block.number,
                     epoch: block.epoch,
                     status: status.clone(),
+                    error: error.clone(),
                 },
                 Transaction::Deferred(dtx) => TxRecord {
                     hash,
@@ -14655,6 +14675,7 @@ pub fn tx_records_from_block_with_outcomes(
                     block_number: block.number,
                     epoch: block.epoch,
                     status: status.clone(),
+                    error: error.clone(),
                 },
                 Transaction::Blob(tx) => TxRecord {
                     hash,
@@ -14670,6 +14691,7 @@ pub fn tx_records_from_block_with_outcomes(
                     block_number: block.number,
                     epoch: block.epoch,
                     status: status.clone(),
+                    error: error.clone(),
                 },
                 Transaction::Governance(tx) => TxRecord {
                     hash,
@@ -14685,6 +14707,7 @@ pub fn tx_records_from_block_with_outcomes(
                     block_number: block.number,
                     epoch: block.epoch,
                     status: status.clone(),
+                    error: error.clone(),
                 },
                 Transaction::MultiSig(tx) => TxRecord {
                     hash,
@@ -14700,6 +14723,7 @@ pub fn tx_records_from_block_with_outcomes(
                     block_number: block.number,
                     epoch: block.epoch,
                     status: status.clone(),
+                    error: error.clone(),
                 },
                 Transaction::UserOp(tx) => TxRecord {
                     hash,
@@ -14715,6 +14739,7 @@ pub fn tx_records_from_block_with_outcomes(
                     block_number: block.number,
                     epoch: block.epoch,
                     status: status.clone(),
+                    error: error.clone(),
                 },
                 Transaction::UpgradeContract(tx) => TxRecord {
                     hash,
@@ -14730,6 +14755,7 @@ pub fn tx_records_from_block_with_outcomes(
                     block_number: block.number,
                     epoch: block.epoch,
                     status: status.clone(),
+                    error: error.clone(),
                 },
                 Transaction::Delegate(tx) => TxRecord {
                     hash,
@@ -14745,6 +14771,7 @@ pub fn tx_records_from_block_with_outcomes(
                     block_number: block.number,
                     epoch: block.epoch,
                     status: status.clone(),
+                    error: error.clone(),
                 },
                 Transaction::Undelegate(tx) => TxRecord {
                     hash,
@@ -14760,6 +14787,7 @@ pub fn tx_records_from_block_with_outcomes(
                     block_number: block.number,
                     epoch: block.epoch,
                     status: status.clone(),
+                    error: error.clone(),
                 },
                 Transaction::RotateValidatorKey(tx) => TxRecord {
                     hash,
@@ -14775,6 +14803,7 @@ pub fn tx_records_from_block_with_outcomes(
                     block_number: block.number,
                     epoch: block.epoch,
                     status: status.clone(),
+                    error: error.clone(),
                 },
                 Transaction::ClaimDelegation(tx) => TxRecord {
                     hash,
@@ -14790,6 +14819,7 @@ pub fn tx_records_from_block_with_outcomes(
                     block_number: block.number,
                     epoch: block.epoch,
                     status: status.clone(),
+                    error: error.clone(),
                 },
             }
         })
@@ -14913,6 +14943,73 @@ mod tx_status_tests {
             exec.tx_outcomes[0].tx_hash,
             block.transactions[0].tx_hash()
         );
+    }
+
+    /// A rejected Transfer must surface the executor error string on
+    /// the TxRecord so wallets can answer "why did my tx fail?". The
+    /// JSON serialisation must include a non-empty `error` field for
+    /// rejected txs and omit it entirely for successful ones (per the
+    /// `skip_serializing_if` contract).
+    #[test]
+    fn rejected_tx_record_carries_error_string_and_serialises_it() {
+        let mut db = InMemoryStateDB::new();
+        fund(&mut db, 1, 100);
+        let mut executor = SimpleExecutor::new(7);
+        let block = make_block(
+            1,
+            1,
+            vec![
+                transfer(1, 2, 500, 0), // rejected — InsufficientBalance
+                transfer(1, 2, 50, 1),  // success after partial debit? actually
+                                        // both run against the same DB; second
+                                        // may also fail. We only care about the
+                                        // first record here, but include a
+                                        // second tx so the field-omission
+                                        // assertion has something to bite on
+                                        // when the executor accepts it.
+            ],
+        );
+
+        let exec = executor.execute_block(&mut db, &block).unwrap();
+        let records = tx_records_from_block_with_outcomes(&block, &exec.tx_outcomes);
+        assert_eq!(records.len(), 2);
+
+        // First tx: must be rejected with a non-empty error string.
+        assert_eq!(records[0].status, "rejected");
+        let err = records[0]
+            .error
+            .as_ref()
+            .expect("rejected TxRecord must carry an executor error string");
+        assert!(
+            !err.is_empty(),
+            "TxRecord.error must be a non-empty string for rejected txs, got {:?}",
+            err
+        );
+
+        // JSON wire shape: rejected tx must serialise an `error` field
+        // with a non-empty string value.
+        let json0 = serde_json::to_value(&records[0]).expect("TxRecord serialises");
+        let err_json = json0
+            .get("error")
+            .and_then(|v| v.as_str())
+            .expect("rejected TxRecord JSON must include `error` field");
+        assert!(
+            !err_json.is_empty(),
+            "rejected TxRecord JSON `error` must be non-empty"
+        );
+
+        // For any tx that succeeded, the JSON must omit `error` entirely
+        // (skip_serializing_if = "Option::is_none"). For a rejected tx
+        // with the same outcome it must be present. This guards the
+        // wire-format contract that wallet/explorer consumers depend on.
+        if records[1].status == "success" {
+            let json1 = serde_json::to_value(&records[1]).expect("TxRecord serialises");
+            assert!(
+                json1.get("error").is_none(),
+                "successful TxRecord JSON must omit `error` field, got {:?}",
+                json1
+            );
+        }
     }
 
     /// A valid Transfer should be reported as "success" in

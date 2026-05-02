@@ -100,6 +100,13 @@ export interface Toast {
   hash: string;
   /** Wall-clock ms when the toast was pushed. */
   createdAt: number;
+  /**
+   * Executor error string for rejected toasts — sourced from
+   * `TxStatus.error` (which now flows through from TxRecord.error on
+   * the node). Surfaced under the summary in red so the user can see
+   * "why did my tx fail?" without opening the activity panel.
+   */
+  error?: string;
 }
 
 export interface PendingTx {
@@ -1036,7 +1043,15 @@ export const useWallet = create<WalletState>((set, get) => ({
     // Push a transient toast for each tx that newly transitioned to a
     // terminal state. Toasts auto-dismiss in the renderer after 4s.
     for (const { tx, kind } of newlyTerminal) {
-      get().pushToast({ kind, summary: tx.summary, hash: tx.hash });
+      get().pushToast({
+        kind,
+        summary: tx.summary,
+        hash: tx.hash,
+        // Forward the executor error string so rejected toasts can
+        // render "why" beneath the summary. Always undefined for
+        // finalised txs.
+        error: kind === "rejected" ? tx.error : undefined,
+      });
     }
 
     // Spec: refresh DSN status after each tx finalises so the privacy

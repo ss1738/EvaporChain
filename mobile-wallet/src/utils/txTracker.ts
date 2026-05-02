@@ -105,7 +105,15 @@ class TxTracker {
     handle.applyStatuses(updated);
 
     for (const { tx, kind } of newlyTerminal) {
-      handle.pushToast({ kind, summary: tx.summary, hash: tx.hash });
+      handle.pushToast({
+        kind,
+        summary: tx.summary,
+        hash: tx.hash,
+        // Forward executor error string so rejected toasts can render
+        // the failure reason (e.g. "InsufficientBalance") beneath the
+        // summary. Always undefined for finalised toasts.
+        error: kind === 'rejected' ? tx.error : undefined,
+      });
     }
   }
 }

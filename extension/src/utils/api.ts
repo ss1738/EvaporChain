@@ -132,6 +132,19 @@ export interface TransactionRecord {
   type: string;
   detail: string;
   hash?: string;
+  /**
+   * Lifecycle state when this record was emitted by the node:
+   * "success" for accepted txs, "rejected" for executor-failed txs.
+   * Mirrors `TxRecord.status` (api.rs §TxRecord).
+   */
+  status?: "success" | "rejected" | string;
+  /**
+   * Executor error message when `status === "rejected"` — e.g.
+   * "InsufficientBalance" / "InvalidNonce". Absent on success.
+   * Wired through TxRecord.error from the new field added in this
+   * commit (skip_serializing_if = Option::is_none on the Rust side).
+   */
+  error?: string;
 }
 
 export interface SimulateTransactionRequest {

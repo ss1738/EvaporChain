@@ -1076,11 +1076,27 @@ function renderBlocks(){
       if(b.transactions&&b.transactions.length>0){
         html+='<div style="font-size:12px;margin-bottom:6px"><strong>Transactions:</strong></div>';
         b.transactions.forEach(function(tx){
+          // Status pill — green for success, red for rejected. Older
+          // BlockRecord payloads (pre-error-plumbing) had `status` but
+          // no `error`; we tolerate either shape.
+          var isRejected = tx.status === 'rejected';
+          var statusBadge = isRejected
+            ? '<span class="badge" style="background:rgba(239,68,68,0.12);color:#ef4444;margin-left:6px">rejected</span>'
+            : '';
+          // Per-tx execution error row (TxRecord.error). Only present
+          // when the executor rejected the tx; rendered in red beneath
+          // the from→to summary so users can answer "why did my tx
+          // fail?" without opening the tx detail page.
+          var errorRow = (isRejected && tx.error)
+            ? '<div style="margin-top:4px;font-family:var(--font-mono);font-size:11px;color:#ef4444;word-break:break-all">'+esc(tx.error)+'</div>'
+            : '';
           html+='<div class="block-tx-item">'+
             '<span class="badge badge-ember" style="margin-right:8px">'+esc(tx.tx_type||'tx')+'</span>'+
             '<span style="font-family:var(--font-mono);font-size:11px">From: <span class="addr-copy" onclick="copyAddr(this)" title="Click to copy">'+truncHash(tx.from||tx.sender,10)+'</span> → '+
             (tx.to?'<span class="addr-copy" onclick="copyAddr(this)" title="Click to copy">'+truncHash(tx.to,10)+'</span>':'contract')+'</span>'+
             (tx.amount?' <span style="color:var(--green);margin-left:8px">'+fmtNum(tx.amount)+' EVAP</span>':'')+
+            statusBadge+
+            errorRow+
             '</div>';
         });
       } else {

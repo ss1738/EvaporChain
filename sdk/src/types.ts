@@ -57,6 +57,18 @@ export interface Block {
 export interface TxRecord {
   type: string;
   detail: string;
+  /**
+   * Lifecycle outcome from the executor. "success" for accepted txs,
+   * "rejected" for executor-failed txs (e.g. insufficient balance,
+   * invalid nonce). Mirrors the node's `TxRecord.status` field.
+   */
+  status?: "success" | "rejected" | string;
+  /**
+   * Executor error string when `status === "rejected"`. Absent on
+   * success — the node uses `skip_serializing_if = "Option::is_none"`
+   * on the Rust side so the wire shape stays minimal.
+   */
+  error?: string;
 }
 
 /** A ghost (evaporated object) */

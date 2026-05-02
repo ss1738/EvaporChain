@@ -121,6 +121,16 @@ export interface TxRecord {
   block_number: number;
   epoch: number;
   status: string;
+  /**
+   * Executor error message when `status === "rejected"` — e.g.
+   * "InsufficientBalance", "InvalidNonce", or a stack/multi-line
+   * detail. Absent for successful txs (the node uses
+   * `skip_serializing_if = "Option::is_none"` on the Rust TxRecord
+   * so the wire shape stays minimal). Surfaced beneath the state
+   * badge on the tx detail page with a "View error" expandable
+   * section for multi-line content.
+   */
+  error?: string;
 }
 
 export interface BlockDetail {

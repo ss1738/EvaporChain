@@ -90,6 +90,11 @@ function TxToast({ toast }: { toast: Toast }) {
           <p className="text-[11px] font-semibold leading-tight">
             {label} <span className="text-zinc-400 font-normal">— {toast.summary}</span>
           </p>
+          {!isFinalised && toast.error && (
+            <p className="mt-0.5 text-[9px] font-mono text-evap-red truncate" title={toast.error}>
+              {toast.error}
+            </p>
+          )}
           <button
             onClick={handleCopy}
             className="mt-1 inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded border border-evap-border bg-evap-bg text-evap-cyan hover:border-evap-cyan/60 transition"

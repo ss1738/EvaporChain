@@ -93,24 +93,46 @@ export default function TxPage({ params }: { params: Promise<{ hash: string }> }
           {status && <StateBadge state={status.state} />}
         </div>
         {status ? (
-          <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2">
-            {status.block_height != null && (
-              <Field k="Block" v={`#${status.block_height}`} />
+          <>
+            {/*
+              Rejected-tx error surfacing. The error string can come from
+              either /api/tx/:hash (TxStatus.error) or the per-block
+              /api/transactions feed (TxRecord.error) — they're sourced
+              from the same TxOutcome.error on the executor and should
+              agree, but we tolerate one being absent. Multi-line stack
+              traces are rendered behind a <details> so the row stays
+              compact by default.
+            */}
+            {status.state === "rejected" && (status.error || tx?.error) && (
+              <RejectedError text={status.error ?? tx?.error ?? ""} />
             )}
-            {status.epoch != null && <Field k="Epoch" v={`${status.epoch}`} />}
-            {status.confirmations != null && (
-              <Field k="Confirmations" v={`${status.confirmations}`} />
-            )}
-            {status.gas_used != null && <Field k="Gas used" v={status.gas_used.toLocaleString()} />}
-            {status.tx_index != null && <Field k="Tx index" v={`${status.tx_index}`} />}
-            {status.mempool_position != null && (
-              <Field
-                k="Mempool position"
-                v={`${status.mempool_position} of ${status.mempool_size ?? "?"}`}
-              />
-            )}
-            {status.error && <Field k="Error" v={status.error} />}
-          </dl>
+            <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2">
+              {status.block_height != null && (
+                <Field k="Block" v={`#${status.block_height}`} />
+              )}
+              {status.epoch != null && <Field k="Epoch" v={`${status.epoch}`} />}
+              {status.confirmations != null && (
+                <Field k="Confirmations" v={`${status.confirmations}`} />
+              )}
+              {status.gas_used != null && <Field k="Gas used" v={status.gas_used.toLocaleString()} />}
+              {status.tx_index != null && <Field k="Tx index" v={`${status.tx_index}`} />}
+              {status.mempool_position != null && (
+                <Field
+                  k="Mempool position"
+                  v={`${status.mempool_position} of ${status.mempool_size ?? "?"}`}
+                />
+              )}
+              {/*
+                Inline summary line for cases where the explorer reads
+                /api/transactions instead of /api/tx/:hash (e.g. the
+                state machine has long since finalised); the Rejected
+                callout above is the primary surface.
+              */}
+              {status.state !== "rejected" && status.error && (
+                <Field k="Error" v={status.error} />
+              )}
+            </dl>
+          </>
         ) : (
           <div className="mt-3 h-16 animate-pulse rounded bg-zinc-100" />
         )}
@@ -153,6 +175,36 @@ function Field({ k, v, mono, full }: { k: string; v: string; mono?: boolean; ful
     <div className={full ? "sm:col-span-2" : undefined}>
       <dt className="text-[10px] uppercase tracking-wider text-zinc-400">{k}</dt>
       <dd className={`text-xs text-zinc-700 ${mono ? "break-all font-mono" : ""}`}>{v}</dd>
+    </div>
+  );
+}
+
+/**
+ * Red-tinted callout that surfaces the executor rejection reason for
+ * a failed tx. Single-line strings render inline; multi-line content
+ * (stack-style detail) is collapsed behind a "View error" disclosure
+ * so the row stays compact while still letting users diagnose deep
+ * failures.
+ */
+function RejectedError({ text }: { text: string }) {
+  const isMultiLine = text.includes("\n");
+  const firstLine = isMultiLine ? text.split("\n", 1)[0] : text;
+  return (
+    <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3">
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-evap-red">
+        Execution error
+      </p>
+      <p className="mt-1 break-all font-mono text-xs text-evap-red">{firstLine}</p>
+      {isMultiLine && (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-[11px] text-evap-red hover:underline">
+            View error
+          </summary>
+          <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded bg-white/60 p-2 font-mono text-[11px] text-evap-red">
+            {text}
+          </pre>
+        </details>
+      )}
     </div>
   );
 }

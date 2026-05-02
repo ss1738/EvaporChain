@@ -125,6 +125,14 @@ const TxToast: React.FC<{ toast: Toast }> = ({ toast }) => {
           <Text style={styles.labelStrong}>{label}</Text>
           <Text style={styles.labelDim}>{` — ${toast.summary}`}</Text>
         </Text>
+        {!isFinalised && toast.error ? (
+          <Text
+            style={[styles.errorLine, { color: palette.accent }]}
+            numberOfLines={2}
+          >
+            {toast.error}
+          </Text>
+        ) : null}
         <TouchableOpacity
           onPress={handleCopy}
           style={[styles.chip, { borderColor: palette.border }]}
@@ -193,6 +201,12 @@ const styles = StyleSheet.create({
   },
   labelDim: {
     color: '#6b7280',
+  },
+  errorLine: {
+    fontSize: 11,
+    fontFamily: 'monospace',
+    fontWeight: '500',
+    marginTop: 4,
   },
   chip: {
     flexDirection: 'row',

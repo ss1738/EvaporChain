@@ -47,6 +47,13 @@ export interface Toast {
   /** Tx hash for the click-to-copy chip. */
   hash: string;
   createdAt: number;
+  /**
+   * Executor error string for rejected toasts — mirrors the extension
+   * Toast.error and ultimately TxRecord.error / TxStatus.error from
+   * the node. Rendered in red beneath the summary on the rejected
+   * variant.
+   */
+  error?: string;
 }
 
 interface State {
