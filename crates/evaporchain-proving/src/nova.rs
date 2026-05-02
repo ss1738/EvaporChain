@@ -155,11 +155,25 @@ impl<G: Group> StepCircuit<G::Scalar> for BlockStepCircuit<G> {
 // ─────────────────────────── Helpers ─────────────────────────────────────
 
 /// Truncate a 32-byte state root to u64 for circuit use.
-/// Uses only 4 bytes (32 bits) to prevent overflow in polynomial constraints.
+///
+/// Reads the first 8 bytes little-endian. This MUST match
+/// `hash_to_limbs(root)[0]` because the circuit's `sr_limb0_eq` /
+/// `mr_limb0_eq` constraints enforce
+/// `state_root_limbs[0] == new_state_hash`. Earlier this read 4 bytes
+/// and upcast to u64; the constraint was satisfiable only when bytes
+/// 4..8 of the root were zero, which is true of test fixtures
+/// (`make_state_root(seed)` zeros byte 2 onward) but not of any real
+/// verkle root from `db.compute_state_root()`. Cluster smoke under
+/// `--prove` 2026-05-02 hit this every checkpoint with the actual root
+/// `2f131cff47d9e27d…` whose byte-4..8 = `47 d9 e2 7d` ≠ 0.
+///
+/// The circuit already decomposes the value via `range_check_bits(...,
+/// 64)`, so a u64 fits the constraint system fine — the original
+/// comment about 32-bit truncation was stale.
 fn state_root_to_u64(root: &[u8; 32]) -> u64 {
-    let mut buf = [0u8; 4];
-    buf.copy_from_slice(&root[..4]);
-    u32::from_le_bytes(buf) as u64
+    let mut buf = [0u8; 8];
+    buf.copy_from_slice(&root[..8]);
+    u64::from_le_bytes(buf)
 }
 
 // ─────────────────────────── NovaProver ──────────────────────────────────
@@ -1608,6 +1622,8 @@ mod tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
         }
     }
 
@@ -1742,6 +1758,8 @@ mod tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
         }
     }
 
@@ -2065,6 +2083,171 @@ mod tests {
 
         assert_eq!(prover.num_blocks_folded(), 1);
         assert!(prover.last_fold_time_us() > 0);
+    }
+
+    /// Bisect 3rd dim: non-zero mmr + STATIC state. If this fails,
+    /// "static state across folds" is alone sufficient to trigger
+    /// the unsat regardless of mmr.
+    #[test]
+    #[ignore = "slow"]
+    fn test_chainprover_nonzero_mmr_static_state() {
+        use crate::chain_proof::ChainProver;
+        let genesis_dc = make_dual_commitment(0xAB, 0);
+        let real_prover = RealBlockProver::new(&genesis_dc).expect("setup");
+        let mut chain_prover = ChainProver::new(
+            Box::new(real_prover) as Box<dyn ProvingEngine>,
+            genesis_dc.verkle_root,
+            100,
+        );
+        let static_root = genesis_dc.verkle_root;
+        for i in 1..=100u64 {
+            let block = make_block_with_txs(i, i, 0);
+            chain_prover.fold_block(&block, static_root).expect("fold");
+        }
+        let proof = chain_prover.generate_chain_proof().expect("chain_proof");
+        assert_eq!(proof.num_steps, 100);
+    }
+
+    /// Bisect the failing-vs-passing 100-fold tests: this one keeps
+    /// the production-shaped genesis (zero mmr_root) but VARIES the
+    /// per-fold state_root. If this passes, the trigger is "static
+    /// state root across folds" (cluster has no traffic).
+    #[test]
+    #[ignore = "slow"]
+    fn test_chainprover_zero_mmr_varying_state() {
+        use crate::chain_proof::ChainProver;
+        let genesis_dc = DualCommitment {
+            verkle_root: make_state_root(0xAB),
+            mmr_root: [0u8; 32],
+            epoch: 0,
+            active_count: 0,
+            ghost_count: 0,
+        };
+        let real_prover = RealBlockProver::new(&genesis_dc).expect("setup");
+        let mut chain_prover = ChainProver::new(
+            Box::new(real_prover) as Box<dyn ProvingEngine>,
+            genesis_dc.verkle_root,
+            100,
+        );
+        for i in 1..=100u64 {
+            let block = make_block_with_txs(i, i, 0);
+            let new_root = make_state_root((i % 251) as u8 + 1);
+            chain_prover.fold_block(&block, new_root).expect("fold");
+        }
+        let proof = chain_prover.generate_chain_proof().expect("chain_proof");
+        assert_eq!(proof.num_steps, 100);
+    }
+
+    /// Faithful repro of the production path: ChainProver::fold_block
+    /// (which auto-chains old_state_root → new_state_root via
+    /// self.latest_state_root) over a non-zero genesis state root and
+    /// a static post-fold state root (mimicking a no-traffic cluster
+    /// where the state never changes from genesis). Then get_proof at
+    /// h=100. Pre-fix this fires UnSat; post-fix this passes.
+    #[test]
+    #[ignore = "slow — ~30+ s under release; run with --ignored"]
+    fn test_chainprover_path_compresses_at_100_static_state() {
+        use crate::chain_proof::ChainProver;
+        // Genesis with a non-zero verkle_root, mimicking the cluster's
+        // "2f131cff47d9e27d…" root produced by `db.compute_state_root()`
+        // after genesis initialization.
+        let genesis_dc = DualCommitment {
+            verkle_root: {
+                let mut r = [0u8; 32];
+                r[0] = 0x2f;
+                r[1] = 0x13;
+                r[2] = 0x1c;
+                r[3] = 0xff;
+                r[4] = 0x47;
+                r[5] = 0xd9;
+                r[6] = 0xe2;
+                r[7] = 0x7d;
+                r
+            },
+            mmr_root: [0u8; 32],
+            epoch: 0,
+            active_count: 0,
+            ghost_count: 0,
+        };
+        let real_prover = RealBlockProver::new(&genesis_dc).expect("setup");
+        let mut chain_prover = ChainProver::new(
+            Box::new(real_prover) as Box<dyn ProvingEngine>,
+            genesis_dc.verkle_root,
+            100,
+        );
+
+        // 100 folds with a static state_root (no traffic — same root on
+        // every fold). This is exactly what the cluster looked like at
+        // the point of failure.
+        let static_root = genesis_dc.verkle_root;
+        for i in 1..=100u64 {
+            let block = make_block_with_txs(i, i, 0);
+            chain_prover.fold_block(&block, static_root).expect("fold");
+        }
+
+        let proof = chain_prover.generate_chain_proof().expect("chain_proof");
+        assert_eq!(proof.num_steps, 100);
+    }
+
+    /// Repro of the production bug at the actual checkpoint height.
+    /// The cluster smoke generates a chain_proof at h=100 and that's
+    /// where the unsat fires. 5-fold tests don't reach the failure
+    /// mode.
+    #[test]
+    #[ignore = "slow — ~30+ s under release; run with --ignored"]
+    fn test_real_block_trait_path_compresses_at_100_folds() {
+        let genesis = make_dual_commitment(0, 0);
+        let mut prover: Box<dyn ProvingEngine> =
+            Box::new(RealBlockProver::new(&genesis).expect("setup failed"));
+
+        for i in 1..=100u64 {
+            let block = make_block_with_txs(i, i, 0);
+            let new_root = make_state_root((i % 251) as u8 + 1);
+            prover.fold_block(&block, [0u8; 32], new_root).expect("fold");
+        }
+
+        // Per the cluster log, this is where it errs:
+        //   "recursive verify failed: UnSat ..."
+        let proof = prover.get_proof().expect("get_proof at 100 folds");
+        assert_eq!(proof.num_steps, 100);
+    }
+
+    /// Reproduces the production-path bug surfaced by the async-fold
+    /// cluster smoke 2026-05-02: every `get_proof()` after folds via the
+    /// `ProvingEngine` trait failed with
+    /// `compression failed: recursive verify failed: UnSat`. The
+    /// `fold_real_block(...)` direct path passes the same workflow
+    /// (`test_real_block_multi_fold_and_compress`); the trait path
+    /// diverges in how it builds the `DualCommitment` (mmr_root forced
+    /// to [0; 32], active_count/ghost_count forced to 0), and the
+    /// circuit's z-output is bound to the witness's mmr root hash.
+    #[test]
+    fn test_real_block_trait_path_compresses() {
+        let genesis = make_dual_commitment(0, 0);
+        let mut prover: Box<dyn ProvingEngine> =
+            Box::new(RealBlockProver::new(&genesis).expect("setup failed"));
+
+        // Same shape as the cluster: 5 sequential folds via the trait
+        // surface, each with a distinct `new_state_root` and an
+        // increasing block.number / block.epoch.
+        for i in 1..=5u64 {
+            let block = make_block_with_txs(i, i, 1);
+            let new_root = make_state_root(i as u8);
+            prover.fold_block(&block, [0u8; 32], new_root).expect("fold");
+        }
+
+        // Pre-fix, this path always failed `get_proof` with
+        // "Relaxed R1CS is unsatisfiable" because the genesis z0
+        // baked the genesis mmr_root_hash, but every fold's witness
+        // forced new_mmr_root_hash = state_root_to_u64([0u8; 32]) = 0,
+        // breaking the circuit's mmr-binding constraint chain at
+        // step 1 (genesis mmr ≠ 0). Asserting success here pins the
+        // contract: the trait path MUST produce a verifiable proof.
+        let proof = prover.get_proof().expect("get_proof via trait failed");
+        assert_eq!(proof.num_steps, 5);
+        assert!(prover
+            .verify_proof(&proof, 5, [0u8; 32])
+            .expect("verify_proof via trait failed"));
     }
 
     #[test]
