@@ -1,3 +1,4 @@
+pub mod async_fold;
 pub mod chain_proof;
 pub mod evaporation_proof;
 #[cfg(feature = "nova")]
