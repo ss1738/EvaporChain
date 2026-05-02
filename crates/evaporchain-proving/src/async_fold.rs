@@ -24,12 +24,11 @@
 //!   back to the synchronous `chain_prover.fold_block` path for that
 //!   one block — never silently dropped.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, RwLock};
 use tracing::{error, warn};
 
 use crate::chain_proof::{ChainProof, ChainProver};
-use crate::ProvingError;
 use evaporchain_types::Block;
 
 /// Default channel capacity. 256 blocks of headroom — at 1 blk/s
@@ -81,10 +80,11 @@ pub struct FoldQueue {
 }
 
 impl FoldQueue {
-    /// Spawn a worker that owns the given prover. Returns a
-    /// non-`Send`-clonable [`FoldQueue`] handle. The worker exits when
-    /// the queue is dropped.
-    pub fn spawn(prover: ChainProver, capacity: usize) -> Self {
+    /// Spawn a worker that holds the same `Arc<Mutex<ChainProver>>`
+    /// the rest of the node uses (verifier, /api/chain_proof, etc.).
+    /// The worker locks the mutex only briefly per fold so verification
+    /// reads aren't starved.
+    pub fn spawn(prover: Arc<Mutex<ChainProver>>, capacity: usize) -> Self {
         let (tx, rx) = mpsc::channel::<FoldJob>(capacity);
         let latest_proof = Arc::new(RwLock::new(None));
         let backpressure_warned = Arc::new(RwLock::new(false));
@@ -176,38 +176,47 @@ impl FoldQueue {
 }
 
 async fn run_fold_worker(
-    mut prover: ChainProver,
+    prover: Arc<Mutex<ChainProver>>,
     mut rx: mpsc::Receiver<FoldJob>,
     latest_proof: Arc<RwLock<Option<ChainProof>>>,
 ) {
     while let Some(job) = rx.recv().await {
-        // The fold itself is CPU-bound and synchronous inside
-        // `ChainProver::fold_block`. We run it on the current tokio
-        // worker thread — the runtime's blocking pool is the right
-        // place if folds get slower, but for now ~300ms in a
-        // multi-threaded runtime keeps the rest of the node
-        // unblocked.
-        match prover.fold_block(&job.block, job.new_state_root) {
-            Ok(_fold_res) => match prover.generate_chain_proof() {
-                Ok(proof) => {
-                    let mut guard = latest_proof.write().await;
-                    *guard = Some(proof);
-                }
+        // The fold + proof generation are CPU-bound and synchronous
+        // inside `ChainProver`. Lock the shared mutex, do the work,
+        // drop the lock — verification + observability paths only see
+        // brief contention. This is the same lock the previous sync
+        // path held; the only difference is that we hold it on a
+        // worker task, not the consensus tick.
+        let proof_result = {
+            let mut p = match prover.lock() {
+                Ok(g) => g,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            match p.fold_block(&job.block, job.new_state_root) {
+                Ok(_fold_res) => Some(p.generate_chain_proof()),
                 Err(e) => {
                     error!(
                         height = job.block.number,
                         error = %e,
-                        "FoldQueue worker: chain proof generation failed"
+                        "FoldQueue worker: fold_block failed"
                     );
+                    None
                 }
-            },
-            Err(e) => {
+            }
+        };
+        match proof_result {
+            Some(Ok(proof)) => {
+                let mut guard = latest_proof.write().await;
+                *guard = Some(proof);
+            }
+            Some(Err(e)) => {
                 error!(
                     height = job.block.number,
                     error = %e,
-                    "FoldQueue worker: fold_block failed"
+                    "FoldQueue worker: chain proof generation failed"
                 );
             }
+            None => {} // already logged above
         }
     }
 }
@@ -245,7 +254,11 @@ mod tests {
     }
 
     fn make_queue(capacity: usize) -> FoldQueue {
-        let prover = ChainProver::new(Box::new(MockProver::new()), [0u8; 32], 0);
+        let prover = Arc::new(Mutex::new(ChainProver::new(
+            Box::new(MockProver::new()),
+            [0u8; 32],
+            0,
+        )));
         FoldQueue::spawn(prover, capacity)
     }
 
