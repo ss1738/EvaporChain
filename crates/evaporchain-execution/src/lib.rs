@@ -5433,7 +5433,7 @@ contract Counter {
     const COUNTER_SCRIPT_V2: &str = r#"
 contract Counter {
     state {
-        count: u64 = 0,
+        count: u64 = 0
         version: u64 = 2
     }
     fn increment(n: u64) {
