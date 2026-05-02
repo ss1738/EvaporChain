@@ -1,14 +1,19 @@
 name: CI
-on: [push, pull_request]
+
+# Only fire on main branch pushes and PRs targeting main.
+# Feature branch pushes are validated locally on the Minis before merge.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
 
 jobs:
   rust:
     name: Rust — check, test, lint
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, mini]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace
       - run: cargo test --workspace
       - run: cargo clippy --workspace -- -D warnings
@@ -16,11 +21,9 @@ jobs:
 
   integration:
     name: Rust — integration tests
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, mini]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
       - run: cargo test -p integration-tests -- --include-ignored
         timeout-minutes: 15
 
@@ -42,14 +45,14 @@ jobs:
         with:
           command: check all
 
+  # Coverage runs weekly (Sunday 03:00 UTC) or manually — NOT on every push.
+  # cargo install tarpaulin alone takes 8-10 min on GitHub hosted runners.
   coverage:
     name: Coverage — tarpaulin
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, mini]
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo install cargo-tarpaulin
       - run: cargo tarpaulin --workspace --out xml --skip-clean --timeout 300
         timeout-minutes: 20
       - uses: codecov/codecov-action@v4
@@ -60,14 +63,12 @@ jobs:
 
   bench:
     name: Benchmarks — regression check
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, mini]
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
       - name: Run benchmarks on PR branch
         run: |
           cargo bench --workspace --no-fail-fast -- --output-format bencher 2>&1 | tee bench-pr.txt
@@ -118,6 +119,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
       - uses: jetli/wasm-pack-action@v0.4.0
       - run: wasm-pack build crates/evaporchain-crypto-wasm --target web --release --out-dir ../../extension/src/crypto/wasm
       - uses: actions/upload-artifact@v4
