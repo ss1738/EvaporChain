@@ -660,6 +660,15 @@ pub enum TestnetAction {
         /// after `init` or pass the cluster-wide IP for every node here.
         #[arg(long, default_value = "127.0.0.1")]
         listen_ip: String,
+        /// Per-validator IPv4 addresses (comma-separated, one per
+        /// validator) to bake into the generated multiaddrs. When set,
+        /// `--listen-ip` is ignored. Lets a cross-host cluster (e.g.
+        /// 3-Mini Tailnet deploy) be initialised in a single command
+        /// instead of init + manual genesis-JSON patch.
+        ///
+        /// Example: `--per-validator-ips 100.119.53.101,100.113.253.72,100.103.216.125`
+        #[arg(long, value_delimiter = ',')]
+        per_validator_ips: Vec<String>,
         /// If the output directory already exists, remove and recreate it.
         #[arg(long)]
         force: bool,
@@ -1495,6 +1504,7 @@ fn cmd_testnet_init(
     p2p_base: u16,
     api_base: u16,
     listen_ip: &str,
+    per_validator_ips: &[String],
     force: bool,
 ) -> Result<()> {
     use evaporchain_types::genesis::*;
@@ -1503,6 +1513,31 @@ fn cmd_testnet_init(
     if validators == 0 {
         anyhow::bail!("--validators must be ≥ 1");
     }
+
+    // Resolve the per-validator IP vector. If --per-validator-ips is
+    // supplied, it must align 1:1 with --validators and overrides the
+    // single --listen-ip (genesis bakes one multiaddr per validator with
+    // the corresponding IP — turns the cross-host cluster recipe into a
+    // single command). Otherwise every validator inherits --listen-ip.
+    let per_validator_ips: Vec<String> = if !per_validator_ips.is_empty() {
+        if per_validator_ips.len() != validators as usize {
+            anyhow::bail!(
+                "--per-validator-ips has {} entries but --validators is {}",
+                per_validator_ips.len(),
+                validators
+            );
+        }
+        if listen_ip != "127.0.0.1" {
+            eprintln!(
+                "warning: ignoring --listen-ip, using --per-validator-ips"
+            );
+        }
+        per_validator_ips.to_vec()
+    } else {
+        std::iter::repeat(listen_ip.to_string())
+            .take(validators as usize)
+            .collect()
+    };
 
     let root = PathBuf::from(out);
     if root.exists() {
@@ -1567,8 +1602,9 @@ fn cmd_testnet_init(
                 )
             })?;
         let v_peer_id = v_keypair.public().to_peer_id();
+        let v_ip = &per_validator_ips[(vid - 1) as usize];
         let v_multiaddr =
-            format!("/ip4/{}/tcp/{}/p2p/{}", listen_ip, v_port, v_peer_id);
+            format!("/ip4/{}/tcp/{}/p2p/{}", v_ip, v_port, v_peer_id);
         bootstrap_multiaddrs.push(v_multiaddr.clone());
 
         genesis_validators.push(GenesisValidator {
@@ -1667,6 +1703,18 @@ fn cmd_testnet_init(
         api_base + 1,
         api_base + validators as u16
     );
+    // Surface the per-validator IP block when callers passed the override
+    // so it's obvious which validator is being addressed at which IP
+    // (single-IP runs stay quiet to keep the default summary tight).
+    let all_same_ip = per_validator_ips
+        .iter()
+        .all(|ip| ip == &per_validator_ips[0]);
+    if !all_same_ip {
+        println!("  Per-validator IPs:");
+        for (i, ip) in per_validator_ips.iter().enumerate() {
+            println!("    v{} → {}", i + 1, ip);
+        }
+    }
     println!(
         "  Genesis:      {}",
         genesis_path.display().to_string().white().bold()
@@ -4173,8 +4221,13 @@ fn cmd_encrypt_bls_key(in_file: &str, out_file: &str, passphrase: Option<&str>) 
             secret.len()
         );
     }
-    let blob = evaporchain_crypto::bls_key_store::encrypt_bls_secret(&secret, &pass)
-        .map_err(|e| anyhow::anyhow!("encrypt failed: {}", e))?;
+    // H5: bind ciphertext to the destination file path so a relocated
+    // blob silently fails to decrypt under the wrong path.
+    let aad = evaporchain_crypto::bls_key_store::path_aad(out_file.as_bytes());
+    let blob = evaporchain_crypto::bls_key_store::encrypt_bls_secret_with_aad(
+        &secret, &pass, &aad,
+    )
+    .map_err(|e| anyhow::anyhow!("encrypt failed: {}", e))?;
     write_secret_file_0600(out_file, &blob)?;
     println!(
         "  {} Wrote {} encrypted bytes (EVK1) to {}",
@@ -4193,8 +4246,14 @@ fn cmd_encrypt_bls_key(in_file: &str, out_file: &str, passphrase: Option<&str>) 
 fn cmd_decrypt_bls_key(in_file: &str, out_file: &str, passphrase: Option<&str>) -> Result<()> {
     let pass = resolve_passphrase(passphrase)?;
     let blob = std::fs::read(in_file).with_context(|| format!("Failed to read {}", in_file))?;
-    let plaintext = evaporchain_crypto::bls_key_store::decrypt_bls_secret(&blob, &pass)
-        .map_err(|e| anyhow::anyhow!("decrypt failed: {}", e))?;
+    // H5: try AAD-bound decrypt first (current write format), fall
+    // back to legacy empty-AAD for blobs from before deployment.
+    let aad = evaporchain_crypto::bls_key_store::path_aad(in_file.as_bytes());
+    let plaintext = evaporchain_crypto::bls_key_store::decrypt_bls_secret_with_aad(
+        &blob, &pass, &aad,
+    )
+    .or_else(|_| evaporchain_crypto::bls_key_store::decrypt_bls_secret(&blob, &pass))
+    .map_err(|e| anyhow::anyhow!("decrypt failed: {}", e))?;
     write_secret_file_0600(out_file, &plaintext)?;
     println!(
         "  {} Wrote 32-byte plaintext BLS secret to {}",
@@ -4684,6 +4743,7 @@ async fn main() -> Result<()> {
                 p2p_base,
                 api_base,
                 listen_ip,
+                per_validator_ips,
                 force,
             } => cmd_testnet_init(
                 &out,
@@ -4695,6 +4755,7 @@ async fn main() -> Result<()> {
                 p2p_base,
                 api_base,
                 &listen_ip,
+                &per_validator_ips,
                 force,
             ),
             TestnetAction::Up { dir, split_logs } => cmd_testnet_up(&dir, split_logs).await,
@@ -6265,6 +6326,7 @@ mod tests {
             p2p_base,
             api_base,
             listen_ip,
+            &[],
             true,
         )
         .expect("cmd_testnet_init");
@@ -6301,6 +6363,106 @@ mod tests {
                 "bootstrap_peer[{i}] {ma} must end with /p2p/{pid}"
             );
         }
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn testnet_init_per_validator_ips_writes_distinct_multiaddrs() {
+        // With --per-validator-ips supplied, each generated bootstrap
+        // multiaddr must use the IP at the corresponding slot (and
+        // --listen-ip becomes a no-op). This is the cross-Mini Tailnet
+        // single-command init path.
+        let n = 3u32;
+        let ips = [
+            "10.0.0.1".to_string(),
+            "10.0.0.2".to_string(),
+            "10.0.0.3".to_string(),
+        ];
+        let p2p_base = 19_100u16;
+        let api_base = 18_100u16;
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let tmp = std::env::temp_dir()
+            .join(format!("evapor-testnet-init-pvi-{nonce}"));
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        cmd_testnet_init(
+            tmp.to_str().unwrap(),
+            n,
+            "evaporchain-test-init-pvi-1",
+            10_000_000,
+            1_000_000,
+            500,
+            p2p_base,
+            api_base,
+            "127.0.0.1",
+            &ips,
+            true,
+        )
+        .expect("cmd_testnet_init with per_validator_ips");
+
+        let genesis_json = std::fs::read_to_string(tmp.join("genesis.json"))
+            .expect("read genesis.json");
+        let parsed: GenesisConfig = serde_json::from_str(&genesis_json)
+            .expect("parse genesis.json");
+
+        assert_eq!(parsed.bootstrap_peers.len(), n as usize);
+        for (i, ma) in parsed.bootstrap_peers.iter().enumerate() {
+            let vid = (i + 1) as u16;
+            let expected_port = p2p_base + vid;
+            let expected_prefix =
+                format!("/ip4/{}/tcp/{}/p2p/", ips[i], expected_port);
+            assert!(
+                ma.starts_with(&expected_prefix),
+                "bootstrap_peer[{i}] {ma} must start with {expected_prefix}"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn testnet_init_per_validator_ips_length_mismatch_errors() {
+        // If --per-validator-ips count != --validators, init must
+        // refuse rather than silently truncate or pad.
+        let n = 3u32;
+        let ips = [
+            "10.0.0.1".to_string(),
+            "10.0.0.2".to_string(),
+        ];
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let tmp = std::env::temp_dir()
+            .join(format!("evapor-testnet-init-pvi-bad-{nonce}"));
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        let res = cmd_testnet_init(
+            tmp.to_str().unwrap(),
+            n,
+            "evaporchain-test-init-pvi-bad",
+            10_000_000,
+            1_000_000,
+            500,
+            19_200,
+            18_200,
+            "127.0.0.1",
+            &ips,
+            true,
+        );
+        assert!(
+            res.is_err(),
+            "expected error when --per-validator-ips length != --validators"
+        );
+        let msg = format!("{}", res.unwrap_err());
+        assert!(
+            msg.contains("--per-validator-ips") && msg.contains("--validators"),
+            "error message should name both flags, got: {msg}"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

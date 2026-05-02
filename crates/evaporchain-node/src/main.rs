@@ -2111,7 +2111,13 @@ fn initialize_dao_store() -> DAOStore {
 // ──────────────────────────── Main ───────────────────────────────────────
 
 #[tokio::main]
-#[allow(clippy::await_holding_lock)]
+// H3 (audit 2026-05-02): the chain previously carried a blanket
+// `#[allow(clippy::await_holding_lock)]` here because of a few
+// long-form select-arms that held `safe_lock` across `.await`.
+// Subsequent fixes (FinalityTracker drops, broadcast_consensus_actions
+// extraction, per-arm explicit `drop(tc);` before `sender.send().await`)
+// retired every lock-across-await site, so the allow is no longer
+// needed. Removing it makes future regressions visible at compile time.
 async fn main() -> Result<()> {
     // Quick exit for --bench mode
     if std::env::args().any(|a| a == "--bench") {
@@ -2686,11 +2692,22 @@ async fn main() -> Result<()> {
             .unwrap_or_else(|| format!("{}/bls_key.bin", args.data_dir));
         let validator_passphrase = evaporchain_crypto::bls_key_store::passphrase_from_env();
         let write_bls_secret = |path: &str, sk: &[u8]| match validator_passphrase.as_deref() {
-            Some(pass) => match evaporchain_crypto::bls_key_store::encrypt_bls_secret(sk, pass) {
+            Some(pass) => {
+                // H5 deployment (audit re-pass 2026-05-02): bind the
+                // ciphertext to the canonical file path via AAD so a
+                // ciphertext silently relocated to a different file
+                // path fails to decrypt. The canonical_path_bytes
+                // helper below normalises symlinks / relative paths.
+                let aad = evaporchain_crypto::bls_key_store::path_aad(
+                    path.as_bytes(),
+                );
+                match evaporchain_crypto::bls_key_store::encrypt_bls_secret_with_aad(
+                    sk, pass, &aad,
+                ) {
                 Ok(blob) => {
                     write_secret_file(path, &blob);
                     println!(
-                            "{} \x1b[1;36mBLS validator key encrypted at rest\x1b[0m (Argon2id+XChaCha20-Poly1305)",
+                            "{} \x1b[1;36mBLS validator key encrypted at rest\x1b[0m (Argon2id+XChaCha20-Poly1305, path-bound AAD)",
                             node_tag
                         );
                 }
@@ -2700,6 +2717,7 @@ async fn main() -> Result<()> {
                             node_tag, e
                         );
                     write_secret_file(path, sk);
+                }
                 }
             },
             None => {
@@ -2727,10 +2745,21 @@ async fn main() -> Result<()> {
                 }
                 evaporchain_crypto::bls_key_store::ENCRYPTED_LEN => {
                     match validator_passphrase.as_deref() {
-                        Some(pass) => match evaporchain_crypto::bls_key_store::decrypt_bls_secret(
-                            &file_bytes,
-                            pass,
-                        ) {
+                        Some(pass) => {
+                            // H5: try AAD-bound decrypt first (current
+                            // format). Fall back to legacy empty-AAD
+                            // for back-compat with EVKV blobs written
+                            // before the deployment of path-binding.
+                            let aad = evaporchain_crypto::bls_key_store::path_aad(
+                                bls_key_path.as_bytes(),
+                            );
+                            let result = evaporchain_crypto::bls_key_store::decrypt_bls_secret_with_aad(
+                                &file_bytes, pass, &aad,
+                            )
+                            .or_else(|_| evaporchain_crypto::bls_key_store::decrypt_bls_secret(
+                                &file_bytes, pass,
+                            ));
+                            match result {
                             Ok(plain) => Some(plain.to_vec()),
                             Err(e) => {
                                 eprintln!(
@@ -2742,7 +2771,8 @@ async fn main() -> Result<()> {
                             );
                                 std::process::exit(1);
                             }
-                        },
+                        }
+                        }
                         None => {
                             eprintln!(
                             "{} \x1b[31mBLS key file is encrypted but {} is not set; refusing to overwrite\x1b[0m",
@@ -2991,6 +3021,29 @@ async fn main() -> Result<()> {
         } else {
             let da_start = c.height().saturating_add(200);
             c.set_da_enforcement_height(da_start);
+        }
+        // Small-cluster DA mode: with <= 3 validators, the proposer-exclusion
+        // rule for DA cert assembly leaves zero fault tolerance (every cert
+        // would need 2-of-2 non-proposer attestations). Auto-enable so
+        // proposer self-attestations count toward DA quorum and the cluster
+        // can make liveness progress under DA enforcement. Mainnet (>= 4
+        // validators) keeps the strict proposer-exclusion behavior.
+        // Mainnet strict mode NEVER auto-enables this; --mainnet with <= 3
+        // validators is rejected upstream by validate_mainnet_strict.
+        let validator_count = c.validator_set().len();
+        if !args.mainnet_strict
+            && !args.no_da_enforcement
+            && validator_count > 0
+            && validator_count <= 3
+        {
+            tracing::warn!(
+                validators = validator_count,
+                "Auto-enabling small-cluster DA mode (validators <= 3): proposer self-attestations \
+                 will count toward DA quorum. This is intended for trusted cluster-smoke / devnet \
+                 topologies — NOT mainnet. Increase the validator set to >= 4 to restore strict \
+                 proposer-exclusion."
+            );
+            c.set_small_cluster_da_mode(true);
         }
     }
 
@@ -3731,28 +3784,37 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
-                let tc = safe_lock(tc_ref);
-                if tc.validator_set().has_bls_keys() {
-                    println!(
-                        "{} \x1b[1;32mAll BLS keys registered — consensus ready\x1b[0m",
-                        node_tag
-                    );
-                    break;
-                }
-                // Re-broadcast KeyAnnounce every 5s (gossipsub mesh may not be ready on first send)
-                if tokio::time::Instant::now().duration_since(last_rebroadcast)
-                    >= Duration::from_secs(5)
-                {
-                    if let Some(key_msg) = tc.make_key_announce() {
-                        if let Some(ref sender) = consensus_net_sender {
-                            if let Ok(data) = serde_json::to_vec(&key_msg) {
-                                let _ = sender.try_send(data);
-                            }
+                // H3 (audit 2026-05-02): scope the lock so the guard
+                // drops before the `.await` regardless of which branch
+                // exits. Previous version had `drop(tc)` only on the
+                // non-break path; clippy::await_holding_lock still
+                // warned because conditional break paths also exit
+                // without dropping in compiler eyes.
+                let key_msg_to_send = {
+                    let tc = safe_lock(tc_ref);
+                    if tc.validator_set().has_bls_keys() {
+                        println!(
+                            "{} \x1b[1;32mAll BLS keys registered — consensus ready\x1b[0m",
+                            node_tag
+                        );
+                        break;
+                    }
+                    if tokio::time::Instant::now().duration_since(last_rebroadcast)
+                        >= Duration::from_secs(5)
+                    {
+                        last_rebroadcast = tokio::time::Instant::now();
+                        tc.make_key_announce()
+                    } else {
+                        None
+                    }
+                };
+                if let Some(key_msg) = key_msg_to_send {
+                    if let Some(ref sender) = consensus_net_sender {
+                        if let Ok(data) = serde_json::to_vec(&key_msg) {
+                            let _ = sender.try_send(data);
                         }
                     }
-                    last_rebroadcast = tokio::time::Instant::now();
                 }
-                drop(tc);
                 if tokio::time::Instant::now() >= deadline {
                     eprintln!("{} \x1b[33mBLS key exchange timeout (45s) — starting consensus with partial keys\x1b[0m", node_tag);
                     break;
@@ -3952,6 +4014,21 @@ async fn main() -> Result<()> {
                             Ok(result) => {
                                 block.state_root = result.execution.state_root;
 
+                                // C3 (audit 2026-05-02): durability ordering.
+                                // Persist the cert-bearing block to chain_store
+                                // BEFORE committing state. If a crash lands
+                                // between, we have cert-without-state
+                                // (recoverable via sync replay) instead of
+                                // state-without-cert (silently bypasses DA
+                                // enforcement on restart, the actual security
+                                // bug). The later `save_full_block` is now an
+                                // idempotent overwrite that fills in any
+                                // post-commit mutations.
+                                log_persist_err(
+                                    "full_block:pre_commit",
+                                    chain_store.save_full_block(&block),
+                                );
+
                                 // Flush state atomically
                                 {
                                     let mut db_guard = safe_lock(&db);
@@ -4042,15 +4119,20 @@ async fn main() -> Result<()> {
                                                     shard_count,
                                                     &hex::encode(package.header.commitment_root)[..16],
                                                 );
-                                                let mut store = safe_lock(&da_store);
-                                                store.insert(block.number, package.clone());
-                                                // Keep only last 64 blocks in memory
-                                                while store.len() > 64 {
-                                                    if let Some(&oldest) = store.keys().next() {
-                                                        store.remove(&oldest);
+                                                // H3: scope-bound da_store lock so the guard
+                                                // is statically out of scope before any later
+                                                // .await — fixes clippy::await_holding_lock
+                                                // even though previous code had an explicit
+                                                // drop(store) (binding still live in scope).
+                                                {
+                                                    let mut store = safe_lock(&da_store);
+                                                    store.insert(block.number, package.clone());
+                                                    while store.len() > 64 {
+                                                        if let Some(&oldest) = store.keys().next() {
+                                                            store.remove(&oldest);
+                                                        }
                                                     }
                                                 }
-                                                drop(store);
                                                 // Persist to disk
                                                 log_persist_err("da_package", chain_store.save_da_package(block.number, &package));
                                                 if block.number % 100 == 0 {
@@ -4094,22 +4176,27 @@ async fn main() -> Result<()> {
                                                     da_valid_sample_count = 0;
                                                     _da_total_sample_count = 0;
 
-                                                    // Attest with local verification (peer sample results handled async below)
-                                                    let mut tc = safe_lock(tc_ref);
-                                                    if let Some(att_msg) = tc.make_da_attestation(block.number, data_root, shard_count) {
-                                                        // Self-register the attestation
-                                                        tc.on_message(att_msg.clone());
-                                                        // Try to build certificate
-                                                        if let Some(cert_bytes) = tc.try_build_da_certificate(block.number, data_root) {
-                                                            block.da_certificate = Some(cert_bytes);
-                                                            println!(
-                                                                "{}   \x1b[1;35mDA Certificate: block #{}, supermajority reached\x1b[0m",
-                                                                node_tag, block.number,
-                                                            );
+                                                    // H3: extract att_msg under a scoped lock,
+                                                    // then broadcast outside the lock scope so
+                                                    // the guard is statically gone before
+                                                    // .await.
+                                                    let att_msg_to_broadcast = {
+                                                        let mut tc = safe_lock(tc_ref);
+                                                        let am = tc.make_da_attestation(block.number, data_root, shard_count);
+                                                        if let Some(ref m) = am {
+                                                            tc.on_message(m.clone());
+                                                            if let Some(cert_bytes) = tc.try_build_da_certificate(block.number, data_root) {
+                                                                block.da_certificate = Some(cert_bytes);
+                                                                println!(
+                                                                    "{}   \x1b[1;35mDA Certificate: block #{}, supermajority reached\x1b[0m",
+                                                                    node_tag, block.number,
+                                                                );
+                                                            }
+                                                            tc.prune_da_attestations();
                                                         }
-                                                        tc.prune_da_attestations();
-                                                        drop(tc);
-                                                        // Broadcast attestation to peers
+                                                        am
+                                                    };
+                                                    if let Some(att_msg) = att_msg_to_broadcast {
                                                         if let Some(ref sender) = consensus_net_sender {
                                                             if let Ok(data) = serde_json::to_vec(&att_msg) {
                                                                 let _ = sender.send(data).await;
@@ -4692,13 +4779,17 @@ async fn main() -> Result<()> {
                             }
                         }
                     } else {
-                        // We're not syncing — serve the request if it's a tip request
-                        if let Ok(srv) = sync_server.lock() {
-                            if let Some(resp) = srv.handle_request(&sync_msg) {
-                                if let Some(ref sender) = consensus_net_sender {
-                                    if let Ok(data) = serde_json::to_vec(&resp) {
-                                        let _ = sender.send(data).await;
-                                    }
+                        // We're not syncing — serve the request if it's a tip request.
+                        // H3: extract response under the std-Mutex lock, then drop
+                        // the guard before `.await` on the broadcast channel.
+                        let response = sync_server
+                            .lock()
+                            .ok()
+                            .and_then(|srv| srv.handle_request(&sync_msg));
+                        if let Some(resp) = response {
+                            if let Some(ref sender) = consensus_net_sender {
+                                if let Ok(data) = serde_json::to_vec(&resp) {
+                                    let _ = sender.send(data).await;
                                 }
                             }
                         }
@@ -4822,6 +4913,11 @@ async fn main() -> Result<()> {
                             match result {
                                 Ok(result) => {
                                     block.state_root = result.execution.state_root;
+                                    // C3: pre-commit durable cert before state.
+                                    log_persist_err(
+                                        "full_block:pre_commit",
+                                        chain_store.save_full_block(&block),
+                                    );
                                     {
                                         let mut db_guard = safe_lock(&db);
                                         db_guard.flush_accounts();
@@ -4856,14 +4952,16 @@ async fn main() -> Result<()> {
                                                         shard_count,
                                                         &hex::encode(package.header.commitment_root)[..16],
                                                     );
-                                                    let mut store = safe_lock(&da_store);
-                                                    store.insert(block.number, package.clone());
-                                                    while store.len() > 64 {
-                                                        if let Some(&oldest) = store.keys().next() {
-                                                            store.remove(&oldest);
+                                                    // H3: scope-bound da_store lock.
+                                                    {
+                                                        let mut store = safe_lock(&da_store);
+                                                        store.insert(block.number, package.clone());
+                                                        while store.len() > 64 {
+                                                            if let Some(&oldest) = store.keys().next() {
+                                                                store.remove(&oldest);
+                                                            }
                                                         }
                                                     }
-                                                    drop(store);
                                                     if let Some(ref sc) = shard_cache {
                                                         let mut cache = sc.write().unwrap_or_else(|p| p.into_inner());
                                                         cache.insert(block.number, package.clone());
@@ -4900,18 +4998,24 @@ async fn main() -> Result<()> {
                                                         da_valid_sample_count = 0;
                                                         _da_total_sample_count = 0;
 
-                                                        let mut tc = safe_lock(tc_ref);
-                                                        if let Some(att_msg) = tc.make_da_attestation(block.number, data_root, shard_count) {
-                                                            tc.on_message(att_msg.clone());
-                                                            if let Some(cert_bytes) = tc.try_build_da_certificate(block.number, data_root) {
-                                                                block.da_certificate = Some(cert_bytes);
-                                                                println!(
-                                                                    "{}   \x1b[1;35mDA Certificate: block #{}, supermajority reached\x1b[0m",
-                                                                    node_tag, block.number,
-                                                                );
+                                                        // H3: scope-bound tc lock; broadcast outside.
+                                                        let att_msg_to_broadcast = {
+                                                            let mut tc = safe_lock(tc_ref);
+                                                            let am = tc.make_da_attestation(block.number, data_root, shard_count);
+                                                            if let Some(ref m) = am {
+                                                                tc.on_message(m.clone());
+                                                                if let Some(cert_bytes) = tc.try_build_da_certificate(block.number, data_root) {
+                                                                    block.da_certificate = Some(cert_bytes);
+                                                                    println!(
+                                                                        "{}   \x1b[1;35mDA Certificate: block #{}, supermajority reached\x1b[0m",
+                                                                        node_tag, block.number,
+                                                                    );
+                                                                }
+                                                                tc.prune_da_attestations();
                                                             }
-                                                            tc.prune_da_attestations();
-                                                            drop(tc);
+                                                            am
+                                                        };
+                                                        if let Some(att_msg) = att_msg_to_broadcast {
                                                             if let Some(ref sender) = consensus_net_sender {
                                                                 if let Ok(data) = serde_json::to_vec(&att_msg) {
                                                                     let _ = sender.send(data).await;
@@ -5248,6 +5352,12 @@ async fn main() -> Result<()> {
                                 Err(e) => eprintln!("{} \x1b[31mProving error: {}\x1b[0m", node_tag, e),
                             }
                             drop(p);
+
+                            // C3: pre-commit durable cert before state.
+                            log_persist_err(
+                                "full_block:pre_commit",
+                                chain_store.save_full_block(&result.block),
+                            );
 
                             // Flush mutated state to RocksDB atomically
                             db_guard.flush_accounts();
@@ -5596,6 +5706,11 @@ async fn main() -> Result<()> {
                             };
                             match result {
                                 Ok(result) => {
+                                    // C3: pre-flush durable cert.
+                                    log_persist_err(
+                                        "full_block:pre_commit",
+                                        chain_store.save_full_block(block),
+                                    );
                                     {
                                         let mut db_guard = safe_lock(&db);
                                         db_guard.flush_accounts();
@@ -5784,6 +5899,11 @@ async fn main() -> Result<()> {
                                     (r, ph, bell)
                                 };
                                 if let Ok(result) = result {
+                                    // C3: pre-flush durable cert.
+                                    log_persist_err(
+                                        "full_block:pre_commit",
+                                        chain_store.save_full_block(&queued),
+                                    );
                                     let mut db_guard = safe_lock(&db);
                                     db_guard.flush_accounts();
                                     db_guard.flush_objects();
@@ -5957,40 +6077,47 @@ async fn main() -> Result<()> {
                         );
                     }
 
-                    // Only send attestation if confidence meets threshold
+                    // Only send attestation if confidence meets threshold.
+                    // H3: scope-bound tc lock; broadcast outside the lock.
                     if confidence >= DA_MIN_CONFIDENCE {
                         if let Some(ref tc_ref) = tendermint {
-                            let mut tc = safe_lock(tc_ref);
-                            let current_height = tc.height();
-                            let sampled_block = current_height.saturating_sub(1);
-                            if let Some(data_root) = {
-                                let store = safe_lock(&da_store);
-                                store.get(&sampled_block).map(|p| p.header.commitment_root)
-                            } {
-                                let shard_count = {
+                            let att_msg_to_broadcast = {
+                                let mut tc = safe_lock(tc_ref);
+                                let current_height = tc.height();
+                                let sampled_block = current_height.saturating_sub(1);
+                                let store_view = {
                                     let store = safe_lock(&da_store);
-                                    store.get(&sampled_block).map(|p| p.shards.len() as u32).unwrap_or(8)
+                                    store.get(&sampled_block).map(|p| {
+                                        (p.header.commitment_root, p.shards.len() as u32)
+                                    })
                                 };
-                                if let Some(att_msg) = tc.make_da_attestation(sampled_block, data_root, shard_count) {
-                                    tc.on_message(att_msg.clone());
-                                    println!(
-                                        "{}   \x1b[1;32mDA attestation: block #{}, confidence={:.6} >= {}\x1b[0m",
-                                        node_tag, sampled_block, confidence, DA_MIN_CONFIDENCE,
-                                    );
-                                    if let Some(_cert_bytes) = tc.try_build_da_certificate(sampled_block, data_root) {
+                                if let Some((data_root, shard_count)) = store_view {
+                                    if let Some(att_msg) = tc.make_da_attestation(sampled_block, data_root, shard_count) {
+                                        tc.on_message(att_msg.clone());
                                         println!(
-                                            "{}   \x1b[1;35mDA Certificate: block #{}, supermajority via peer samples\x1b[0m",
-                                            node_tag, sampled_block,
+                                            "{}   \x1b[1;32mDA attestation: block #{}, confidence={:.6} >= {}\x1b[0m",
+                                            node_tag, sampled_block, confidence, DA_MIN_CONFIDENCE,
                                         );
-                                        let mut fs = safe_lock(&frontier_state);
-                                        fs.poha.register(sampled_block, data_root, 8, 3000, 4000, sampled_block, vec![], vec![]);
-                                        drop(fs);
-                                    }
-                                    drop(tc);
-                                    if let Some(ref sender) = consensus_net_sender {
-                                        if let Ok(data) = serde_json::to_vec(&att_msg) {
-                                            let _ = sender.send(data).await;
+                                        if let Some(_cert_bytes) = tc.try_build_da_certificate(sampled_block, data_root) {
+                                            println!(
+                                                "{}   \x1b[1;35mDA Certificate: block #{}, supermajority via peer samples\x1b[0m",
+                                                node_tag, sampled_block,
+                                            );
+                                            let mut fs = safe_lock(&frontier_state);
+                                            fs.poha.register(sampled_block, data_root, 8, 3000, 4000, sampled_block, vec![], vec![]);
                                         }
+                                        Some(att_msg)
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                }
+                            };
+                            if let Some(att_msg) = att_msg_to_broadcast {
+                                if let Some(ref sender) = consensus_net_sender {
+                                    if let Ok(data) = serde_json::to_vec(&att_msg) {
+                                        let _ = sender.send(data).await;
                                     }
                                 }
                             }

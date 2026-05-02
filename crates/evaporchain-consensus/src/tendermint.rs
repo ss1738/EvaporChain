@@ -74,8 +74,13 @@ const SANOV_EQUIVOCATION_WINDOW: u64 = 100;
 const SANOV_DOWNTIME_WINDOW: u64 = 20;
 
 const PROPOSE_TIMEOUT_MS: u64 = 8000;
-const PREVOTE_TIMEOUT_MS: u64 = 60000;
-const PRECOMMIT_TIMEOUT_MS: u64 = 60000;
+// H1 (audit 2026-05-02): prevote/precommit were 60s, 15× the propose
+// window. Under partial network failures one validator could timeout
+// and advance rounds while peers were still in prevote, causing a
+// permanent phase desync livelock. Cap at 4× propose so timeouts ride
+// the same cadence as proposal arrival.
+const PREVOTE_TIMEOUT_MS: u64 = 32000;
+const PRECOMMIT_TIMEOUT_MS: u64 = 32000;
 
 /// Maximum rounds before forcing commit (prevents livelock).
 const MAX_ROUNDS_PER_HEIGHT: u32 = 10;
@@ -409,6 +414,12 @@ pub struct TendermintConsensus {
     /// Used to detect equivocation (same validator proposing two different blocks).
     #[allow(clippy::type_complexity)]
     proposals_seen: HashMap<(u64, u32), Vec<(u64, [u8; 32])>>,
+    /// H2 (audit 2026-05-02): block hashes from validators caught
+    /// equivocating. Fork-choice (singh-attractor / MCC) filters
+    /// candidate heads against this set so a validator who double-
+    /// signed can't have either of their forks selected. Both the
+    /// original and conflicting hash get inserted at slash time.
+    slashed_equivocator_blocks: HashSet<[u8; 32]>,
     /// Tracks consecutive missed proposals per validator.
     /// Reset to 0 when the validator successfully produces a block.
     missed_proposals: HashMap<u64, u64>,
@@ -535,6 +546,18 @@ pub struct TendermintConsensus {
     /// Wall-clock epoch (this consensus instance's `epoch`) at which the
     /// most recent drain was started. `None` when not draining.
     drain_started_at_epoch: Option<u64>,
+    /// Small-cluster DA mode. When `true`, the proposer's own DA
+    /// attestation is INCLUDED in cert assembly and quorum counting
+    /// (instead of being filtered out). This is unsafe for adversarial
+    /// settings (a Byzantine proposer could attest to garbage data) but
+    /// is the only way a 3-validator cluster can make liveness progress
+    /// under DA enforcement: with proposer excluded, every cert needs
+    /// 2-of-2 non-proposer attestations, and any single dropped /
+    /// delayed gossip stalls consensus. Auto-enabled by the node binary
+    /// when `validator_set.len() <= 3`. For mainnet (≥ 4 validators)
+    /// this is left `false` and standard 2/3 supermajority of
+    /// non-proposer stake is required.
+    small_cluster_da_mode: bool,
 }
 
 /// Cap on the per-validator block-production timing ring buffer kept on
@@ -588,6 +611,7 @@ impl TendermintConsensus {
             precommit_timeout: Duration::from_millis(PRECOMMIT_TIMEOUT_MS),
             committed_heights: HashSet::new(),
             proposals_seen: HashMap::new(),
+            slashed_equivocator_blocks: HashSet::new(),
             missed_proposals: HashMap::new(),
             missed_votes: HashMap::new(),
             weak_subjectivity_checkpoints: Vec::new(),
@@ -629,6 +653,7 @@ impl TendermintConsensus {
             finality_gap_history: VecDeque::with_capacity(FINALITY_GAP_HISTORY_CAP),
             draining: false,
             drain_started_at_epoch: None,
+            small_cluster_da_mode: false,
         }
     }
 
@@ -829,6 +854,12 @@ impl TendermintConsensus {
         }
         let mut best: Option<([u8; 32], u64)> = None;
         for head in candidate_heads {
+            // H2 (audit 2026-05-02): never select a tainted head — any
+            // hash whose proposer was caught equivocating is filtered
+            // out of fork-choice.
+            if self.slashed_equivocator_blocks.contains(head) {
+                continue;
+            }
             let block = self.light_cone_dag.get(head)?;
             let energy = block.energy;
             // Prefer in-basin candidates; fall back to closest-to-center.
@@ -874,6 +905,10 @@ impl TendermintConsensus {
     pub fn mcc_choose_fork(&self, candidate_heads: &[[u8; 32]], beta_mb: u64) -> Option<[u8; 32]> {
         let trajectories: Vec<evaporchain_mcc::Trajectory> = candidate_heads
             .iter()
+            // H2 (audit 2026-05-02): drop tainted heads before
+            // building trajectories so MCC never scores an
+            // equivocating chain.
+            .filter(|head| !self.slashed_equivocator_blocks.contains(*head))
             .filter_map(|head| self.trajectory_to_genesis(*head))
             .collect();
         if trajectories.is_empty() {
@@ -1269,6 +1304,29 @@ impl TendermintConsensus {
         self.da_enforcement_height
     }
 
+    /// Enable or disable small-cluster DA mode. See the
+    /// `small_cluster_da_mode` field doc-comment for the safety
+    /// implications. Intended to be auto-set at boot by the node
+    /// binary based on validator-set size — NOT changed at runtime.
+    pub fn set_small_cluster_da_mode(&mut self, enabled: bool) {
+        if enabled && !self.small_cluster_da_mode {
+            warn!(
+                validators = self.validator_set.len(),
+                "small-cluster DA mode ENABLED: proposer self-attestations \
+                 will count toward DA quorum. Safe only for trusted devnet / \
+                 cluster-smoke topologies (validators <= 3). DO NOT enable on mainnet."
+            );
+        } else if !enabled && self.small_cluster_da_mode {
+            info!("small-cluster DA mode disabled — strict proposer-exclusion restored");
+        }
+        self.small_cluster_da_mode = enabled;
+    }
+
+    /// Whether small-cluster DA mode is active.
+    pub fn small_cluster_da_mode(&self) -> bool {
+        self.small_cluster_da_mode
+    }
+
     /// Submit an encrypted transaction to the MEV-protected mempool.
     pub fn submit_encrypted_tx(&mut self, encrypted_tx: EncryptedTransaction) {
         debug!(
@@ -1325,6 +1383,7 @@ impl TendermintConsensus {
             precommit_timeout: Duration::from_millis(PRECOMMIT_TIMEOUT_MS),
             committed_heights: HashSet::new(),
             proposals_seen: HashMap::new(),
+            slashed_equivocator_blocks: HashSet::new(),
             missed_proposals: HashMap::new(),
             missed_votes: HashMap::new(),
             weak_subjectivity_checkpoints: Vec::new(),
@@ -1366,6 +1425,7 @@ impl TendermintConsensus {
             finality_gap_history: VecDeque::with_capacity(FINALITY_GAP_HISTORY_CAP),
             draining: false,
             drain_started_at_epoch: None,
+            small_cluster_da_mode: false,
         }
     }
 
@@ -1736,25 +1796,78 @@ impl TendermintConsensus {
     }
 
     /// Compute the hash of a block for voting purposes.
+    ///
+    /// MUST be deterministic across honest validators given the same
+    /// committed-block payload — otherwise commit-certificate
+    /// `block_hash` (signed at proposal time, before the gossip-path
+    /// commit applies post-execution diagnostics) won't match the
+    /// locally-recomputed hash, and follower nodes log
+    /// "Commit certificate block_hash does not match actual block hash"
+    /// every block. The fields below are the only ones guaranteed to be
+    /// identical on every honest node by the time precommits are signed:
+    /// number, epoch, parent_hash, state_root, timestamp, vrf_output,
+    /// transactions. Anything set later in the gossip path
+    /// (`state_function_commitment`, `oracle_state_root`, `shard_count`,
+    /// DA roots from a node-local 2D encode) MUST be excluded — those
+    /// are computed per-validator after consensus and would diverge.
+    /// State authenticity is already covered by `state_root`.
     fn block_hash(block: &Block) -> [u8; 32] {
+        // Consensus-4 (re-audit 2026-05-02): also commit producer_id,
+        // vrf_proof, and data_root so two distinct blocks can never
+        // hash identically. Previously two blocks with the same tx
+        // set + state_root but different VRF or DA encodings could
+        // collide. Each field gets a 1-byte presence tag + a length
+        // prefix where applicable, so absent vs zero-length is
+        // distinguishable.
         let mut input = Vec::new();
         input.extend_from_slice(&block.number.to_le_bytes());
         input.extend_from_slice(&block.epoch.to_le_bytes());
         input.extend_from_slice(&block.parent_hash);
         input.extend_from_slice(&block.state_root);
         input.extend_from_slice(&block.timestamp.to_le_bytes());
-        // Include VRF output in block hash (commits randomness to the block).
-        if let Some(ref vrf_out) = block.vrf_output {
-            input.extend_from_slice(vrf_out);
+        // producer_id (Option<u64>) — 1-byte tag + 8 bytes if Some.
+        match block.producer_id {
+            Some(pid) => {
+                input.push(1);
+                input.extend_from_slice(&pid.to_le_bytes());
+            }
+            None => input.push(0),
         }
-        // Include state function commitment hash (Rule-Based Consensus).
-        if let Some(ref sfc) = block.state_function_commitment {
-            input.extend_from_slice(&sfc.commitment_hash);
+        // VRF output (commits chain randomness) — tag + bytes.
+        match block.vrf_output {
+            Some(ref vrf_out) => {
+                input.push(1);
+                input.extend_from_slice(&(vrf_out.len() as u32).to_le_bytes());
+                input.extend_from_slice(vrf_out);
+            }
+            None => input.push(0),
         }
+        // VRF proof — separate from output; both must be authenticated.
+        match block.vrf_proof {
+            Some(ref vrf_proof) => {
+                input.push(1);
+                input.extend_from_slice(&(vrf_proof.len() as u32).to_le_bytes());
+                input.extend_from_slice(vrf_proof);
+            }
+            None => input.push(0),
+        }
+        // DA root — must match across honest validators (post-fix:
+        // built from `build_block_da_inputs(txs)`, deterministic).
+        match block.data_root {
+            Some(root) => {
+                input.push(1);
+                input.extend_from_slice(&root);
+            }
+            None => input.push(0),
+        }
+        // Length-prefix each tx so concatenation isn't ambiguous —
+        // closes the audit's "T1 + T2 vs T1||T2_suffix can collide"
+        // edge case.
         for tx in &block.transactions {
-            input.extend_from_slice(
-                &serde_json::to_vec(tx).expect("transaction serialization must not fail"),
-            );
+            let bytes = serde_json::to_vec(tx)
+                .expect("transaction serialization must not fail");
+            input.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+            input.extend_from_slice(&bytes);
         }
         blake3_hash(&input)
     }
@@ -1805,6 +1918,15 @@ impl TendermintConsensus {
                         };
                         self.round_state.proposed_block = Some(proposal.clone());
                         self.round_state.proposed_hash = Some(Self::block_hash(&proposal));
+                        // Consensus-1 (re-audit 2026-05-02): observe
+                        // OUR OWN proposal here too. The follower
+                        // path observes incoming proposals at
+                        // on_message::Proposal (~line 2403), but the
+                        // proposer never goes through on_message for
+                        // its own proposal — without this call,
+                        // backfill replay protection on the proposer
+                        // is missing for heights we proposed.
+                        self.finality_tracker.observe_proposal(self.height);
                         actions.push(ConsensusAction::BroadcastMessage(msg));
 
                         // Self-prevote for our own proposal
@@ -1977,21 +2099,33 @@ impl TendermintConsensus {
             Phase::Precommit => {
                 // Check if we have quorum of precommits for a block
                 if let Some(Some(hash)) = self.check_precommit_quorum() {
-                    // 2f+1 precommits for a block → commit!
-                    if let Some(mut block) = self.round_state.proposed_block.take() {
+                    // 2f+1 precommits for a block → commit, *if* the rest of
+                    // the gating signals are also ready. Peek with `as_ref()`
+                    // first; only `take()` once we are committed to applying
+                    // the block. Earlier we always `take()`d here, which
+                    // consumed `proposed_block` even when DA supermajority
+                    // hadn't arrived yet — the next tick saw `proposed=None`
+                    // and consensus advanced to a fresh round whose
+                    // precommits then went nil, looping forever. Reproduced
+                    // 2026-05-02 against a tx-bearing block: precommit
+                    // quorum hit before the 4th DA attestation gossip
+                    // arrived, block got dropped, cluster wedged.
+                    if let Some(block) = self.round_state.proposed_block.as_ref() {
                         // Verify the proposed block matches the quorum hash
-                        let block_hash = Self::block_hash(&block);
+                        let block_hash = Self::block_hash(block);
                         if block_hash != hash {
                             warn!(
                                 height = self.height,
                                 round = self.round_state.round,
                                 "Precommit quorum hash mismatch — our block differs from network consensus"
                             );
-                            // Return txs to mempool since our block won't be committed
-                            for tx in block.transactions.iter().rev() {
-                                self.mempool.submit_priority(tx.clone());
+                            // Local block disagrees with the network's quorum hash.
+                            // Drop the local copy and request sync.
+                            if let Some(stale) = self.round_state.proposed_block.take() {
+                                for tx in stale.transactions.iter().rev() {
+                                    self.mempool.submit_priority(tx.clone());
+                                }
                             }
-                            // We don't have the correct block — request sync
                             actions
                                 .push(ConsensusAction::RequestSync(self.height, self.height + 1));
                         } else {
@@ -2000,6 +2134,9 @@ impl TendermintConsensus {
                             // reached. Below `da_enforcement_height` we skip
                             // (genesis bootstrap window). On chain_id starting
                             // with `mainnet-` we enforce regardless of height.
+                            // Importantly: keep `proposed_block` intact so
+                            // the next tick can retry once the trailing DA
+                            // attestation lands.
                             let mainnet = block.chain_id.starts_with("mainnet-");
                             let enforce_da = mainnet || self.height >= self.da_enforcement_height;
                             if enforce_da
@@ -2010,12 +2147,17 @@ impl TendermintConsensus {
                                     height = block.number,
                                     "P2-04: refusing to commit — DA attestation supermajority not reached"
                                 );
-                                actions.push(ConsensusAction::RequestSync(
-                                    self.height,
-                                    self.height + 1,
-                                ));
+                                // No RequestSync here — we have the right
+                                // block, we just need to wait one more
+                                // attestation gossip.
                                 return actions;
                             }
+                            // All gating passed — now consume the block.
+                            let mut block = self
+                                .round_state
+                                .proposed_block
+                                .take()
+                                .expect("proposed_block was Some above");
                             if block.commit_certificate.is_none() {
                                 block.commit_certificate = self.try_build_commit_certificate(hash);
                             }
@@ -2119,10 +2261,52 @@ impl TendermintConsensus {
             ref public_key,
         } = msg
         {
-            if self.validator_set.get(validator_id).is_none() {
+            // H4 (audit 2026-05-02): verify the BLS signature AND
+            // confirm the public key matches the validator's
+            // registered key BEFORE storing. Previously any peer could
+            // forge attestations on behalf of any validator id; the
+            // map filled with garbage and `has_da_supermajority` would
+            // count them, triggering premature commits whose certs
+            // later failed verification on light clients.
+            let v = match self.validator_set.get(validator_id) {
+                Some(v) => v,
+                None => {
+                    warn!(
+                        validator_id,
+                        "Rejecting DA attestation from unknown validator"
+                    );
+                    return actions;
+                }
+            };
+            // Validator must have a registered BLS pk and the
+            // attestation must claim that exact pk.
+            match v.bls_public_key.as_deref() {
+                Some(registered) if registered == public_key.as_slice() => {}
+                _ => {
+                    warn!(
+                        validator_id,
+                        "Rejecting DA attestation: public_key mismatch with registered BLS key"
+                    );
+                    return actions;
+                }
+            }
+            // Reconstruct and verify the signed message exactly as
+            // `evaporchain_da::certificate::create_attestation` builds it.
+            let mut signed = Vec::with_capacity(
+                evaporchain_da::certificate::DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4,
+            );
+            signed.extend_from_slice(evaporchain_da::certificate::DA_ATTESTATION_DST);
+            signed.extend_from_slice(&block_number.to_le_bytes());
+            signed.extend_from_slice(&data_root);
+            signed.extend_from_slice(&validator_id.to_le_bytes());
+            signed.extend_from_slice(&samples_verified.to_le_bytes());
+            let pk = evaporchain_crypto::signatures::BlsPublicKey(public_key.clone());
+            let sig = evaporchain_crypto::signatures::BlsSignature(signature.clone());
+            if !evaporchain_crypto::signatures::BlsVerifier::verify(&signed, &sig, &pk) {
                 warn!(
                     validator_id,
-                    "Rejecting DA attestation from unknown validator"
+                    block_number,
+                    "Rejecting DA attestation: BLS signature did not verify"
                 );
                 return actions;
             }
@@ -2143,7 +2327,7 @@ impl TendermintConsensus {
                     block = block_number,
                     validator = validator_id,
                     total_atts = atts.len(),
-                    "DA attestation received"
+                    "DA attestation received (verified)"
                 );
             }
             return actions;
@@ -2325,10 +2509,20 @@ impl TendermintConsensus {
                 // Track proposals per (height, round). If the same proposer sends
                 // two different block hashes for the same slot, slash them.
                 let key = (height, round);
-                let entry = self.proposals_seen.entry(key).or_default();
-                let already_proposed = entry.iter().find(|(id, _)| *id == proposer_id);
-                if let Some((_, prev_hash)) = already_proposed {
-                    if *prev_hash != hash {
+                // Look up any prior proposal hash from this validator
+                // *and* drop the borrow before calling self-mutating
+                // slash / taint methods. Holding `entry` across those
+                // calls trips the borrow checker (E0499).
+                let prev_hash_for_proposer: Option<[u8; 32]> = self
+                    .proposals_seen
+                    .get(&key)
+                    .and_then(|v| {
+                        v.iter()
+                            .find(|(id, _)| *id == proposer_id)
+                            .map(|(_, h)| *h)
+                    });
+                if let Some(prev_hash) = prev_hash_for_proposer {
+                    if prev_hash != hash {
                         // EQUIVOCATION: same proposer, same slot, different block!
                         let slashed =
                             self.sanov_slash_equivocation(proposer_id, SANOV_EQUIVOCATION_WINDOW);
@@ -2339,6 +2533,12 @@ impl TendermintConsensus {
                             round = round,
                             "SLASHED for equivocation (double-signing)"
                         );
+                        // H2 (audit 2026-05-02): taint BOTH the prior
+                        // and the conflicting hash so fork-choice
+                        // (singh-attractor / MCC) can never select
+                        // either branch.
+                        self.slashed_equivocator_blocks.insert(prev_hash);
+                        self.slashed_equivocator_blocks.insert(hash);
                         actions.push(ConsensusAction::SlashValidator {
                             validator_id: proposer_id,
                             amount: slashed,
@@ -2347,7 +2547,10 @@ impl TendermintConsensus {
                         return actions; // Reject the equivocating proposal
                     }
                 } else {
-                    entry.push((proposer_id, hash));
+                    self.proposals_seen
+                        .entry(key)
+                        .or_default()
+                        .push((proposer_id, hash));
                 }
 
                 // ── Nova proof verification ──
@@ -2744,13 +2947,17 @@ impl TendermintConsensus {
                             .insert(validator_id, sig);
                     }
 
-                    // Check if we can commit now
+                    // Check if we can commit now. Peek before `take()`ing —
+                    // see the matching tick-path block above for the bug
+                    // history (DA-attestation race wedged the cluster).
                     if let Some(Some(hash)) = self.check_precommit_quorum() {
-                        if let Some(mut block) = self.round_state.proposed_block.take() {
-                            let block_hash = Self::block_hash(&block);
+                        if let Some(block) = self.round_state.proposed_block.as_ref() {
+                            let block_hash = Self::block_hash(block);
                             if block_hash != hash {
-                                for tx in block.transactions.iter().rev() {
-                                    self.mempool.submit_priority(tx.clone());
+                                if let Some(stale) = self.round_state.proposed_block.take() {
+                                    for tx in stale.transactions.iter().rev() {
+                                        self.mempool.submit_priority(tx.clone());
+                                    }
                                 }
                                 actions.push(ConsensusAction::RequestSync(
                                     self.height,
@@ -2770,11 +2977,15 @@ impl TendermintConsensus {
                                         height = block.number,
                                         "P2-04: refusing to commit — DA attestation supermajority not reached (msg path)"
                                     );
-                                    actions.push(ConsensusAction::RequestSync(
-                                        self.height,
-                                        self.height + 1,
-                                    ));
+                                    // Keep proposed_block so the next tick
+                                    // can retry once the missing DA
+                                    // attestation gossip arrives.
                                 } else {
+                                    let mut block = self
+                                        .round_state
+                                        .proposed_block
+                                        .take()
+                                        .expect("proposed_block was Some above");
                                     if block.commit_certificate.is_none() {
                                         block.commit_certificate =
                                             self.try_build_commit_certificate(hash);
@@ -4104,11 +4315,16 @@ impl TendermintConsensus {
         if threshold == u64::MAX {
             return false;
         }
+        // Small-cluster DA mode (validators <= 3): proposer self-attests
+        // because filtering it out makes 2-of-2 non-proposer attestations
+        // mandatory for every cert — any single dropped/delayed gossip
+        // halts the chain. See `small_cluster_da_mode` field doc.
+        let exclude_proposer = !self.small_cluster_da_mode;
         let proposer = self.da_block_proposers.get(&block_number).copied();
         let attesters: Vec<u64> = match self.da_attestations.get(&block_number) {
             Some(atts) => atts
                 .iter()
-                .filter(|att| Some(att.validator_id) != proposer)
+                .filter(|att| !exclude_proposer || Some(att.validator_id) != proposer)
                 .map(|att| att.validator_id)
                 .collect(),
             None => return false,
@@ -4149,9 +4365,13 @@ impl TendermintConsensus {
         // different orders.
         let mut sorted_atts: Vec<_> = atts.iter().collect();
         sorted_atts.sort_by_key(|att| att.validator_id);
+        // Small-cluster mode: include the proposer's own attestation in the
+        // cert. See `small_cluster_da_mode` field doc for the safety
+        // implication. In normal mode, the proposer is excluded so they
+        // cannot attest to their own block's DA.
+        let exclude_proposer = !self.small_cluster_da_mode;
         for att in sorted_atts {
-            // Exclude the block proposer — they cannot attest to their own block's DA
-            if Some(att.validator_id) == proposer {
+            if exclude_proposer && Some(att.validator_id) == proposer {
                 continue;
             }
             builder.add_attestation(att.clone());
@@ -7893,6 +8113,167 @@ mod da_tests {
             !tc.verify_da_certificate(&block),
             "Forged DA cert should be rejected in hard mode"
         );
+    }
+
+    // ── Small-cluster DA mode: 3-validator quorum reachability ──────────
+    //
+    // Regression for the cluster-smoke failure (h=201 r=N) where every block
+    // was rejected with `missing DA certificate (hard mode — enforcement
+    // active)` because, with proposer-exclusion enforced and only 3
+    // validators total, every cert needed 2-of-2 non-proposer attestations
+    // — fragile against a single dropped/delayed gossip across a Tailnet
+    // hop. The fix: small-cluster mode lets the proposer's self-attestation
+    // count toward DA quorum.
+
+    /// Helper: directly inject an attestation into a TC's bookkeeping
+    /// without going through gossip / signature verification. Mirrors what
+    /// `on_message(ConsensusMessage::DAAttestation)` does after the BLS
+    /// verify path. Used by the small-cluster tests below.
+    fn inject_da_attestation(
+        tc: &mut TendermintConsensus,
+        block_number: u64,
+        data_root: [u8; 32],
+        validator_id: u64,
+        stake: u64,
+    ) {
+        let kp = BlsKeypair::generate();
+        let att = evaporchain_da::certificate::create_attestation(
+            block_number,
+            &data_root,
+            validator_id,
+            8,
+            stake,
+            &kp,
+        );
+        let atts = tc.da_attestations.entry(block_number).or_default();
+        if !atts.iter().any(|a| a.validator_id == validator_id) {
+            atts.push(att);
+        }
+    }
+
+    fn make_3_validator_tc() -> TendermintConsensus {
+        let mut vs = ValidatorSet::new();
+        vs.add_validator(ValidatorInfo::new(1, 1000, [1u8; 32]));
+        vs.add_validator(ValidatorInfo::new(2, 1000, [2u8; 32]));
+        vs.add_validator(ValidatorInfo::new(3, 1000, [3u8; 32]));
+        TendermintConsensus::new_for_test(1, 100, vs)
+    }
+
+    #[test]
+    fn da_quorum_reached_with_3_validators() {
+        // A 3-validator cluster in small-cluster DA mode must reach DA quorum
+        // for every height when all three validators attest (regardless of
+        // who the proposer is).
+        let mut tc = make_3_validator_tc();
+        tc.set_small_cluster_da_mode(true);
+
+        let data_root = [0xABu8; 32];
+        for h in 1u64..=10 {
+            // Round-robin proposer across the 3 validators.
+            let proposer = ((h - 1) % 3) + 1;
+            tc.da_block_proposers.insert(h, proposer);
+
+            // All three validators (including the proposer) attest. This is
+            // what would arrive at a peer over gossip after each validator
+            // performs its own DA sampling.
+            for vid in 1u64..=3 {
+                inject_da_attestation(&mut tc, h, data_root, vid, 1000);
+            }
+
+            assert!(
+                tc.has_da_supermajority(h),
+                "small-cluster mode: 3-of-3 attestations should clear quorum at h={h} (proposer={proposer})"
+            );
+            let cert_bytes = tc
+                .try_build_da_certificate(h, data_root)
+                .unwrap_or_else(|| panic!("DA certificate should build for h={h} (proposer={proposer})"));
+            let cert: evaporchain_da::certificate::DACertificate =
+                serde_json::from_slice(&cert_bytes).unwrap();
+            assert!(
+                cert.is_supermajority(),
+                "rebuilt cert for h={h} should claim supermajority"
+            );
+            // In small-cluster mode the proposer's own attestation IS
+            // included → all 3 attestations show up in the cert.
+            assert_eq!(
+                cert.attestations.len(),
+                3,
+                "small-cluster cert should include the proposer's self-attestation"
+            );
+            assert_eq!(cert.attested_stake, 3000);
+            assert_eq!(cert.total_stake, 3000);
+        }
+    }
+
+    #[test]
+    fn da_quorum_3_validators_strict_mode_fails_with_dropped_attestation() {
+        // Without small-cluster mode, dropping ONE non-proposer attestation
+        // breaks DA quorum entirely — this is the production failure mode
+        // the cluster smoke ran into. Documents why the fix is needed.
+        let mut tc = make_3_validator_tc();
+        tc.set_small_cluster_da_mode(false);
+
+        let data_root = [0xCDu8; 32];
+        let h = 5u64;
+        let proposer = 1u64;
+        tc.da_block_proposers.insert(h, proposer);
+
+        // Proposer self-attests (will be filtered out) + only ONE of the two
+        // peers attests in time. This is exactly the cluster-smoke pattern.
+        inject_da_attestation(&mut tc, h, data_root, proposer, 1000);
+        inject_da_attestation(&mut tc, h, data_root, 2, 1000);
+        // validator 3's attestation is "delayed" — does not arrive.
+
+        assert!(
+            !tc.has_da_supermajority(h),
+            "strict mode + 1-of-2 non-proposer attestations should NOT reach quorum"
+        );
+        assert!(
+            tc.try_build_da_certificate(h, data_root).is_none(),
+            "strict mode: cert build should fail under-quorum"
+        );
+    }
+
+    #[test]
+    fn da_quorum_3_validators_strict_mode_succeeds_with_both_peers() {
+        // Sanity: in strict (proposer-excluded) mode, 2-of-2 non-proposer
+        // attestations DOES reach quorum. Both peers attesting is the only
+        // viable path in n=3 strict mode.
+        let mut tc = make_3_validator_tc();
+        tc.set_small_cluster_da_mode(false);
+
+        let data_root = [0xEFu8; 32];
+        let h = 7u64;
+        let proposer = 2u64;
+        tc.da_block_proposers.insert(h, proposer);
+
+        // Proposer attestation arrives but is filtered out in strict mode.
+        inject_da_attestation(&mut tc, h, data_root, proposer, 1000);
+        // Both peers attest in time.
+        inject_da_attestation(&mut tc, h, data_root, 1, 1000);
+        inject_da_attestation(&mut tc, h, data_root, 3, 1000);
+
+        assert!(
+            tc.has_da_supermajority(h),
+            "strict mode: 2-of-2 non-proposer attestations should clear quorum"
+        );
+        let cert_bytes = tc.try_build_da_certificate(h, data_root).unwrap();
+        let cert: evaporchain_da::certificate::DACertificate =
+            serde_json::from_slice(&cert_bytes).unwrap();
+        // Strict mode: proposer's attestation is filtered → only 2 in cert.
+        assert_eq!(cert.attestations.len(), 2);
+        assert_eq!(cert.attested_stake, 2000);
+        assert!(cert.is_supermajority());
+    }
+
+    #[test]
+    fn small_cluster_mode_setter_round_trip() {
+        let mut tc = make_3_validator_tc();
+        assert!(!tc.small_cluster_da_mode());
+        tc.set_small_cluster_da_mode(true);
+        assert!(tc.small_cluster_da_mode());
+        tc.set_small_cluster_da_mode(false);
+        assert!(!tc.small_cluster_da_mode());
     }
 
     #[test]
