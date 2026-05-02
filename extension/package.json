@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@noble/hashes": "^1.7.0",
+    "@scure/bip39": "^1.5.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "zustand": "^5.0.0"

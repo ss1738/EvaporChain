@@ -12,7 +12,7 @@
  * Read `wallet/src/mnemonic.rs::derive_key_at` and `recover_keypair`. This file
  * is the JS twin and must stay in lock-step.
  */
-import { wordlist as ENGLISH_WORDLIST } from "@scure/bip39/wordlists/english.js";
+import { wordlist as ENGLISH_WORDLIST } from "@scure/bip39/wordlists/english";
 import { blake3 } from "@noble/hashes/blake3";
 
 export interface MnemonicBackup {
