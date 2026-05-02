@@ -9,7 +9,7 @@
 | Workspace `crates/` entries | **78** | `Cargo.toml` |
 | Core crates (long-standing) | **18** | types, consensus, node, network, state, execution, contracts, crypto, proving, da, cli, mcp, script, script-lad, wsbf, ib-validators, sentinel, sddc |
 | Substrate primitives | **60** | The remaining `crates/` members |
-| Workspace tests | **2,781 / 2,785 pass** | `cargo test --workspace --release` on satyawan 2026-05-02. 1 failure + 3 ignored. |
+| Workspace tests | **6,046 / 6,051 pass** | `cargo test --workspace --release` on satyawan 2026-05-02. 0 failures + 5 ignored. (An earlier truncated count of 2,781 in this report's first draft was a parser artifact from a `tail -50` on the per-binary result lines — the un-truncated log shows 173 result lines summing to 6,046 passes.) |
 
 In-source patches applied this re-audit (commits to follow):
 - `crates/evaporchain-contracts/src/lib.rs` — top doc-comment 6→8 templates; `ContractTemplate` doc 6→8.
@@ -20,9 +20,9 @@ In-source patches applied this re-audit (commits to follow):
 
 Items still open (not patched here): whitepaper §4 rewrite (Tendermint not Health-Score), pitch-deck Mysticeti/RSA-accumulator/founder-plurality drift, EF + Sui grant text. Those need narrative editing, not number swaps; the original 2026-04-27 report below has the full action list.
 
-**Note on test count**: prior memory noted 5,801/5,807 (2026-05-02 morning). Today's re-run shows 2,781 — likely the prior figure included WASM tests + integration tests run separately, while `cargo test --workspace --release` skips those and excludes #[ignore]'d. Single-source-of-truth preferred: cite "2,781 tests via `cargo test --workspace --release`" or "5,801 with WASM + integration suites" with explicit scope.
+**Note on test count**: 6,046/6,051 (`cargo test --workspace --release` on satyawan 2026-05-02 evening). Up from the prior memory of 5,801/5,807 by ~245 tests (the regression repros for nova `state_root_to_u64` plus FoldQueue tests + others added during this sprint). Single-source-of-truth: this number is from the un-truncated test-result-line sum.
 
-The 1-test failure deserves triage but is unrelated to the doc-drift sweep.
+No failing tests in the latest run.
 
 ---
 
