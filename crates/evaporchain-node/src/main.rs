@@ -2761,19 +2761,36 @@ async fn main() -> Result<()> {
             }
         };
         let bls_kp = if let Ok(file_bytes) = std::fs::read(&bls_key_path) {
-            let secret_bytes_opt: Option<Vec<u8>> = match file_bytes.len() {
-                32 => {
+            // Re-audit (2026-05-02) plaintext format auto-migration:
+            // dispatch by `detect_bls_key_format` (magic-bytes-based)
+            // instead of length alone, so a 32-byte ciphertext fragment
+            // can no longer be misclassified as plaintext.
+            let format = evaporchain_crypto::bls_key_store::detect_bls_key_format(&file_bytes);
+            let secret_bytes_opt: Option<Vec<u8>> = match format {
+                evaporchain_crypto::bls_key_store::BlsKeyFormat::PlaintextMagic => {
                     if validator_passphrase.is_some() {
                         eprintln!(
-                            "{} \x1b[33mWARNING: BLS key file is plaintext but {} is set.\x1b[0m \
+                            "{} \x1b[33mWARNING: BLS key file is plaintext (EVPL) but {} is set.\x1b[0m \
                              Re-save the key to migrate to encrypted format.",
                             node_tag,
                             evaporchain_crypto::bls_key_store::ENV_PASSPHRASE
                         );
                     }
-                    Some(file_bytes)
+                    evaporchain_crypto::bls_key_store::extract_plaintext(&file_bytes)
+                        .ok()
+                        .map(|b| b.to_vec())
                 }
-                evaporchain_crypto::bls_key_store::ENCRYPTED_LEN => {
+                evaporchain_crypto::bls_key_store::BlsKeyFormat::LegacyRaw => {
+                    eprintln!(
+                        "{} \x1b[33mWARNING: BLS key file is legacy raw-32 plaintext.\x1b[0m \
+                         New writes use the EVPL magic-prefixed format; \
+                         re-save the key (or set {}) to migrate.",
+                        node_tag,
+                        evaporchain_crypto::bls_key_store::ENV_PASSPHRASE
+                    );
+                    Some(file_bytes.clone())
+                }
+                evaporchain_crypto::bls_key_store::BlsKeyFormat::Encrypted => {
                     match validator_passphrase.as_deref() {
                         Some(pass) => {
                             // H5: try AAD-bound decrypt first (current
@@ -2813,10 +2830,11 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
-                other => {
+                evaporchain_crypto::bls_key_store::BlsKeyFormat::Unknown => {
                     eprintln!(
-                        "{} BLS key file wrong size ({}B), regenerating",
-                        node_tag, other
+                        "{} BLS key file unrecognised format ({}B), regenerating",
+                        node_tag,
+                        file_bytes.len()
                     );
                     None
                 }
@@ -5171,7 +5189,11 @@ async fn main() -> Result<()> {
                                         tc.record_block_production_timing(pid, exec_elapsed_us);
                                     }
                                     fatal_persist_err("consensus_meta", chain_store.save_consensus_meta(block.number, block.epoch, consensus_parent_hash));
-                                    if let Some(r) = consensus_bell_reading {
+                                    // 2026-05-02: keep `consensus_bell_reading` alive past
+                                    // this save so the follower-path snapshot block below
+                                    // can hand it to SnapshotFile::create. The proposer
+                                    // path at line 4490 already uses `Some(ref r)`.
+                                    if let Some(ref r) = consensus_bell_reading {
                                         log_persist_err("bell_reading", chain_store.save_bell_reading(r.s_value_milli, r.block_height, r.epoch, r.certified));
                                     }
                                     fatal_persist_err("full_block", chain_store.save_full_block(&block));
@@ -5225,6 +5247,125 @@ async fn main() -> Result<()> {
                                                     store.remove(&oldest);
                                                 }
                                             }
+                                        }
+                                    }
+
+                                    // 2026-05-02 (Track-6): mirror the proposer-local
+                                    // snapshot generation onto the follower commit path
+                                    // so EVERY node — not just the proposer of that
+                                    // particular block — writes snapshots. Without this,
+                                    // a fast-syncing joiner can only bootstrap from
+                                    // whichever peer happened to propose the most
+                                    // recent snapshot-interval block; on a 3-node
+                                    // cluster that's roughly 1/3 of peers and the
+                                    // joiner has to gamble.
+                                    if block.number % 100 == 0 && block.number > 0 {
+                                        let mut db_guard = safe_lock(&db);
+                                        match evaporchain_state::snapshot::SnapshotBuilder::create(
+                                            &mut *db_guard, block.number, block.epoch,
+                                        ) {
+                                            Ok(snapshot) => {
+                                                if let Ok(bytes) = evaporchain_state::snapshot::serialize_snapshot(&snapshot) {
+                                                    let size = bytes.len();
+                                                    log_persist_err("snapshot", chain_store.save_snapshot(block.number, &bytes, result.execution.state_root));
+                                                    {
+                                                        let mut info = snapshot_info.lock().unwrap();
+                                                        *info = Some((block.number, result.execution.state_root, size));
+                                                    }
+                                                    if let Ok(mut srv) = sync_server.lock() {
+                                                        srv.register_snapshot(block.number, block.epoch, result.execution.state_root, &bytes);
+                                                    }
+                                                    eprintln!(
+                                                        "{} \x1b[1;35mSnapshot created at height {} ({} bytes, {} accounts, {} objects) [follower]\x1b[0m",
+                                                        node_tag, block.number, size,
+                                                        snapshot.header.account_count, snapshot.header.object_count,
+                                                    );
+                                                }
+                                            }
+                                            Err(e) => eprintln!("{} \x1b[31mSnapshot error (follower): {}\x1b[0m", node_tag, e),
+                                        }
+                                    }
+
+                                    if args.snapshot_interval > 0
+                                        && block.number > 0
+                                        && block.number % args.snapshot_interval == 0
+                                    {
+                                        let chain_id_for_snap = args.chain_id.clone();
+                                        let validator_set = {
+                                            let tc = safe_lock(tc_ref);
+                                            let vs = tc.validator_set();
+                                            evaporchain_state::ValidatorSetSnapshot {
+                                                validators: vs.validators().iter().map(|v| {
+                                                    evaporchain_state::SnapshotValidator {
+                                                        id: v.id,
+                                                        stake: v.stake,
+                                                        address: v.address,
+                                                        bls_public_key: v.bls_public_key.clone(),
+                                                        vrf_public_key: v.vrf_public_key.clone(),
+                                                        jailed: v.jailed,
+                                                    }
+                                                }).collect(),
+                                            }
+                                        };
+                                        let bell_reading = consensus_bell_reading.as_ref().map(|r| {
+                                            evaporchain_state::SnapshotBellReading {
+                                                s_value_milli: r.s_value_milli,
+                                                block_height: r.block_height,
+                                                epoch: r.epoch,
+                                                certified: r.certified,
+                                            }
+                                        });
+                                        let mut db_guard = safe_lock(&db);
+                                        match evaporchain_state::SnapshotFile::create(
+                                            &mut *db_guard,
+                                            chain_id_for_snap,
+                                            block.number,
+                                            block.epoch,
+                                            consensus_parent_hash,
+                                            bell_reading,
+                                            validator_set,
+                                        ) {
+                                            Ok(file) => {
+                                                let path = snapshot_dir_path.join(format!("{}.zst", block.number));
+                                                match file.write_to_path(&path) {
+                                                    Ok(written) => {
+                                                        eprintln!(
+                                                            "{} \x1b[1;35mSnapshotFile written at height {} ({} bytes) -> {} [follower]\x1b[0m",
+                                                            node_tag, block.number, written, path.display(),
+                                                        );
+                                                        if let Ok(entries) = std::fs::read_dir(&snapshot_dir_path) {
+                                                            let mut heights: Vec<u64> = entries.filter_map(|e| e.ok())
+                                                                .filter_map(|e| {
+                                                                    let p = e.path();
+                                                                    if p.extension().and_then(|s| s.to_str()) != Some("zst") {
+                                                                        return None;
+                                                                    }
+                                                                    p.file_stem()
+                                                                        .and_then(|s| s.to_str())
+                                                                        .and_then(|s| s.parse::<u64>().ok())
+                                                                })
+                                                                .collect();
+                                                            heights.sort();
+                                                            let keep = args.snapshot_keep as usize;
+                                                            if heights.len() > keep {
+                                                                let drop_count = heights.len() - keep;
+                                                                for h in &heights[..drop_count] {
+                                                                    let p = snapshot_dir_path.join(format!("{}.zst", h));
+                                                                    let _ = std::fs::remove_file(&p);
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    Err(e) => eprintln!(
+                                                        "{} \x1b[31mSnapshotFile write error (follower): {}\x1b[0m",
+                                                        node_tag, e,
+                                                    ),
+                                                }
+                                            }
+                                            Err(e) => eprintln!(
+                                                "{} \x1b[31mSnapshotFile create error (follower): {}\x1b[0m",
+                                                node_tag, e,
+                                            ),
                                         }
                                     }
 
