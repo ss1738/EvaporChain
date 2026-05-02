@@ -602,6 +602,7 @@ impl ChainStore {
     /// at the data level. The block applier should call this exactly once
     /// per successful deploy; recording twice with conflicting ids would
     /// silently overwrite.
+    #[allow(dead_code)]
     pub fn record_deployed_contract(
         &self,
         tx_hash: &[u8; 32],
@@ -1446,6 +1447,217 @@ mod tests {
         assert_eq!(h, 100);
         assert_eq!(root, [0xBB; 32]);
         assert_eq!(d, data);
+        drop(cs);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn empty_block_record(n: u64) -> BlockRecord {
+        BlockRecord {
+            number: n,
+            epoch: n / 10,
+            parent_hash: hex::encode([n as u8; 32]),
+            state_root: hex::encode([(n + 1) as u8; 32]),
+            tx_count: 0,
+            evaporations: 0,
+            entered_grace: 0,
+            timestamp: n * 1000,
+            active_objects: 0,
+            ghost_count: 0,
+            gas_used: 0,
+            base_fee: 1,
+            total_fees: 0,
+            transactions: vec![],
+            has_nova_proof: false,
+            nova_proof_size: 0,
+            data_root: None,
+            da_square_size: 0,
+            blob_count: 0,
+            has_state_commitment: false,
+            is_anchor: false,
+            anchor_epoch: 0,
+        }
+    }
+
+    fn empty_block(n: u64) -> Block {
+        Block {
+            number: n,
+            epoch: n / 10,
+            state_root: [(n + 1) as u8; 32],
+            parent_hash: [n as u8; 32],
+            timestamp: n * 1000,
+            transactions: vec![],
+            chain_id: String::new(),
+            producer_id: None,
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
+            nova_proof: None,
+            anchor_hash: None,
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
+        }
+    }
+
+    fn fresh_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "evap_test_{}_{}_{}",
+            tag,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn test_chain_store_block_history_ordered_ascending() {
+        let dir = fresh_dir("blkhist");
+        let cs = ChainStore::open(&dir).unwrap();
+        for n in [3u64, 1, 2, 5, 4] {
+            cs.save_block(&empty_block_record(n)).unwrap();
+        }
+        let history = cs.load_block_history(10);
+        let nums: Vec<u64> = history.iter().map(|r| r.number).collect();
+        assert_eq!(nums, vec![1, 2, 3, 4, 5]);
+        // Limit is honoured — most recent N
+        let history = cs.load_block_history(2);
+        let nums: Vec<u64> = history.iter().map(|r| r.number).collect();
+        assert_eq!(nums, vec![4, 5]);
+        drop(cs);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_chain_store_full_block_roundtrip() {
+        let dir = fresh_dir("fullblk");
+        let cs = ChainStore::open(&dir).unwrap();
+        let blk = empty_block(7);
+        cs.save_full_block(&blk).unwrap();
+        let loaded = cs.load_full_block(7).expect("block 7 should load");
+        assert_eq!(loaded.number, 7);
+        assert_eq!(loaded.state_root, blk.state_root);
+        // Missing height returns None
+        assert!(cs.load_full_block(999).is_none());
+        drop(cs);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_chain_store_load_recent_full_blocks_ascending() {
+        let dir = fresh_dir("recblks");
+        let cs = ChainStore::open(&dir).unwrap();
+        for n in 1..=5u64 {
+            cs.save_full_block(&empty_block(n)).unwrap();
+        }
+        let blocks = cs.load_recent_full_blocks(3);
+        let nums: Vec<u64> = blocks.iter().map(|b| b.number).collect();
+        // load_recent_full_blocks reverses to ascending after picking most-recent N
+        assert_eq!(nums, vec![3, 4, 5]);
+        drop(cs);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_chain_store_prune_blocks_respects_retain() {
+        let dir = fresh_dir("prune");
+        let cs = ChainStore::open(&dir).unwrap();
+        for n in 1..=10u64 {
+            cs.save_block(&empty_block_record(n)).unwrap();
+        }
+        // current=10, retain=3 ⇒ cutoff=7, keep [7,8,9,10], prune [1..=6]
+        let pruned = cs.prune_blocks(10, 3);
+        assert_eq!(pruned, 6);
+        let history = cs.load_block_history(20);
+        let nums: Vec<u64> = history.iter().map(|r| r.number).collect();
+        assert_eq!(nums, vec![7, 8, 9, 10]);
+        // current<=retain ⇒ no-op
+        assert_eq!(cs.prune_blocks(2, 3), 0);
+        drop(cs);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_chain_store_prune_full_blocks_respects_retain() {
+        let dir = fresh_dir("prune_full");
+        let cs = ChainStore::open(&dir).unwrap();
+        for n in 1..=8u64 {
+            cs.save_full_block(&empty_block(n)).unwrap();
+        }
+        let pruned = cs.prune_full_blocks(8, 4);
+        // cutoff=4 ⇒ delete 1,2,3 ⇒ pruned=3
+        assert_eq!(pruned, 3);
+        assert!(cs.load_full_block(3).is_none());
+        assert!(cs.load_full_block(4).is_some());
+        assert!(cs.load_full_block(8).is_some());
+        drop(cs);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_chain_store_bell_reading_roundtrip() {
+        let dir = fresh_dir("bell");
+        let cs = ChainStore::open(&dir).unwrap();
+        assert!(cs.load_bell_reading().is_none());
+        cs.save_bell_reading(2828, 42, 5, true).unwrap();
+        let (s, h, e, c) = cs.load_bell_reading().unwrap();
+        assert_eq!(s, 2828);
+        assert_eq!(h, 42);
+        assert_eq!(e, 5);
+        assert!(c);
+        drop(cs);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_chain_store_chain_stats_roundtrip_with_default_field() {
+        let dir = fresh_dir("stats");
+        let cs = ChainStore::open(&dir).unwrap();
+        let mut stats = ChainStats::new();
+        stats.total_objects_created = 10;
+        stats.total_evaporated = 3;
+        stats.total_transactions = 100;
+        stats.total_rejected_transactions = 7;
+        cs.save_chain_stats(&stats).unwrap();
+        let loaded = cs.load_chain_stats().unwrap();
+        assert_eq!(loaded.total_objects_created, 10);
+        assert_eq!(loaded.total_evaporated, 3);
+        assert_eq!(loaded.total_transactions, 100);
+        assert_eq!(loaded.total_rejected_transactions, 7);
+        drop(cs);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_chain_store_events_roundtrip() {
+        let dir = fresh_dir("events");
+        let cs = ChainStore::open(&dir).unwrap();
+        let mut events: VecDeque<EventRecord> = VecDeque::new();
+        events.push_back(EventRecord {
+            epoch: 1,
+            event_type: "evaporated".into(),
+            message: "object 0xdead evaporated".into(),
+            timestamp_ms: 1_700_000_000_000,
+        });
+        events.push_back(EventRecord {
+            epoch: 1,
+            event_type: "transfer".into(),
+            message: "1000 from a to b".into(),
+            timestamp_ms: 1_700_000_001_000,
+        });
+        cs.save_events(&events).unwrap();
+        let loaded = cs.load_events();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].event_type, "evaporated");
+        assert_eq!(loaded[1].event_type, "transfer");
         drop(cs);
         let _ = std::fs::remove_dir_all(&dir);
     }

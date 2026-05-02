@@ -39,6 +39,7 @@ pub fn production_feed(genesis_unix_ts: u64, epoch_duration_s: u64) -> ElexonOra
 }
 
 /// Build the Elexon feed pointing at a custom base URL (test / staging).
+#[allow(dead_code)]
 pub fn feed_with_url(
     base_url: &str,
     genesis_unix_ts: u64,

@@ -10,7 +10,7 @@
 
 Thermodynamic state decay + recursive proof folding.
 
-Infonova Solutions Ltd
+Satyawan Singh — Independent Researcher · University of Leicester
 
 ---
 
@@ -50,8 +50,8 @@ This is not a new idea. It is how every physical system works. Blockchains forgo
 ## Slide 5: How EvaporChain Works
 
 - Every state object has **energy** that depletes per epoch (configurable half-life)
-- Energy reaches zero: **7-day grace period**, then **evaporation** (removal from active state)
-- Evaporated objects leave a **cryptographic nullifier** (RSA accumulator membership proof) -- the object existed, and that fact is permanently provable
+- Energy reaches zero: **5-epoch grace period (~10s at 2-second block time)**, then **evaporation** (removal from active state)
+- Evaporated objects leave a **cryptographic nullifier** (MMR (Merkle Mountain Range) nullifier accumulator membership proof) -- the object existed, and that fact is permanently provable
 - **Revival**: one-click transaction with micro-payment to restore energy. Nothing is permanently lost; it is temporarily inactive.
 - Result: the state trie **shrinks over time**. Active state reflects active usage. The chain reaches an equilibrium size determined by real demand, not accumulated history.
 
@@ -71,7 +71,7 @@ New nodes sync by checking ONE proof. No replaying history. No downloading terab
 
 ## Slide 7: Benchmark Results
 
-**We folded 1,000 blocks in 6.2 seconds with 6.2ms per block.**
+**Nova IVC proving prototype (`prototypes/fold-a-block`): 1,000 blocks folded in 6.2 seconds, amortized 6.2ms per block.** Live testnet throughput is a separate metric — see project status.
 
 | Metric | Value |
 |---|---|
@@ -91,11 +91,11 @@ Open-source prototype: [github.com/ss1738/EvaporChain](https://github.com/ss1738
 
 | Layer | Technology | Rationale |
 |---|---|---|
-| Consensus | Mysticeti DAG-BFT | Sub-second finality, proven at scale on Sui |
+| Consensus | Tendermint BFT | Stake-weighted 2/3 quorum + BLS12-381 aggregate signatures + checked-arithmetic execution (`crates/evaporchain-consensus/src/tendermint.rs`) |
 | Execution | EvaporScript VM | 44 gas-metered opcodes including temporal primitives (`EnergyOf`, `ComputeDecay`, `RequireEpochRange`); non-Turing-complete by design |
 | ZK proving | Nova IVC folding | 6.2ms/block today; HyperNova/CCS + Binius binary-field backend on roadmap |
 | Active state | Verkle trie | Smaller proofs than Merkle Patricia, bandwidth-efficient sync |
-| Evaporated state | RSA accumulator | Constant-size membership proofs for evaporated objects |
+| Evaporated state | MMR (Merkle Mountain Range) nullifier accumulator | Append-only membership proofs for evaporated objects |
 | Signatures | ML-DSA (Dilithium) | Post-quantum security from genesis, NIST standardized 2024 |
 
 All components chosen for production readiness and cutting-edge performance. No novel cryptography -- novel combination of proven primitives.
@@ -106,7 +106,7 @@ All components chosen for production readiness and cutting-edge performance. No 
 
 - **44 gas-metered opcodes**, non-Turing-complete by design — eliminates unbounded execution as an attack surface. Reentrancy guard enforced at the VM level.
 - **Temporal primitives built into the VM**: `EpochNow`, `BlockNum`, `EnergyOf`, `RequireEpochRange`, `ComputeDecay`. State expiry isn't a contract pattern bolted on top — it's a first-class VM operation.
-- **7 template contracts shipped**: DecayingToken, MortalNFT, ThermodynamicEscrow, DecayingAuction, StakingPool, DAOVote, TemporalContract. Common decay patterns are off-the-shelf and audited.
+- **8 template contracts shipped** (`crates/evaporchain-contracts/src/lib.rs ContractTemplate`). Common decay patterns are off-the-shelf and audited.
 - **Declarative rule engine** for triggers, conditions, and actions on contracts. Each contract instance carries its own energy and half-life — contracts themselves evaporate when unused.
 
 ---
@@ -153,20 +153,20 @@ First-mover advantage in thermodynamic blockchain design.
 | Research phases 1-3 (1.2MB research corpus, 188KB whitepaper, 70 citations) | Q2 2025 | Complete |
 | Fold-a-Block prototype -- 6.2ms/block, PASS | Q2 2025 | Complete |
 | Project scaffold -- 9-crate Cargo workspace | Q3 2025 | Complete |
-| EvaporScript VM (44 temporal opcodes) + 7 template contracts | Q4 2025 | Complete |
-| Public testnet with Mysticeti consensus | Q2 2026 | Planned |
+| EvaporScript VM (44 temporal opcodes) + 8 template contracts | Q4 2025 | Complete |
+| Public testnet with Tendermint BFT consensus | Q3 2026 | Planned (after audit completion) |
 | Security audits + mainnet genesis | Q4 2026 | Planned |
 
 ---
 
 ## Slide 14: Team and Ask
 
-Founded by engineers with ML/systems background building at the intersection of cryptography, distributed systems, and applied thermodynamics.
+Founded by Satyawan Singh — ML Engineer, University of Leicester student — building at the intersection of cryptography, distributed systems, and applied thermodynamics.
 
 **First 5 hires:**
 1. ZK Cryptographer -- Nova/HyperNova implementation, circuit optimization
 2. Smart Contract Engineer -- EvaporScript VM extensions, formal verification, developer tooling
-3. Consensus Engineer -- Mysticeti DAG-BFT integration, networking
+3. Consensus Engineer -- Tendermint BFT hardening, networking
 4. Systems/Infra Lead -- node architecture, DevOps, benchmarking infrastructure
 5. DevRel -- documentation, developer ecosystem, grants program
 

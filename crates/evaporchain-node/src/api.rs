@@ -5023,7 +5023,6 @@ async fn post_antichain_compute(Json(req): Json<AntichainComputeReq>) -> Json<se
     use evaporchain_antichain_mempool::{extend_to_maximal, total_energy_meets_threshold};
     use evaporchain_energy_kernel::{ChainLambda, Lambda};
     use evaporchain_light_cone::{Block, BlockId, LightCone};
-    use std::collections::BTreeSet;
 
     fn parse_id(s: &str) -> Option<BlockId> {
         let bytes = hex::decode(s).ok()?;
@@ -7491,7 +7490,7 @@ async fn get_account_detail(
         // explorer still renders the row instead of 404'ing.
         None => (0, 0),
     };
-    drop(acc);
+    let _ = acc;
 
     // Owned objects: scan all_object_ids and filter. Capped preview to keep
     // the response small; total count is exact.
@@ -10599,6 +10598,7 @@ struct SwapQuoteRequest {
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)] // serde DTO accepts public_key from clients; field is read on the bind site only.
 struct SwapExecuteRequest {
     from_token: String,
     to_token: String,

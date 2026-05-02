@@ -1,3 +1,8 @@
+// Pre-wired API: this module is intentionally kept exported but not yet
+// invoked from main.rs. Once the consensus loop calls `NodeAutopoiesis::check`
+// (per INVENTION_STACK.md §A4.3.8) the dead-code allowance can be lifted.
+#![allow(dead_code)]
+
 //! Autopoietic health integration — wires `evaporchain-autopoietic` into
 //! the node boot and block-production loop.
 //!
