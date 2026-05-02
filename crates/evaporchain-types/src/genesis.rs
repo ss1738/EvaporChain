@@ -371,6 +371,7 @@ impl GenesisConfig {
                     stake: 1000,
                     address: addr1,
                     bls_public_key: None,
+                    bls_pop: None,
                     p2p_address: Some("/ip4/127.0.0.1/tcp/9000".into()),
                 },
                 GenesisValidator {
@@ -379,6 +380,7 @@ impl GenesisConfig {
                     stake: 1000,
                     address: addr2,
                     bls_public_key: None,
+                    bls_pop: None,
                     p2p_address: Some("/ip4/127.0.0.1/tcp/9001".into()),
                 },
             ],
