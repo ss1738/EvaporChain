@@ -4168,9 +4168,20 @@ async fn main() -> Result<()> {
                                             }
                                         }
                                     }
+                                    // Only attach nova_proof to blocks whose
+                                    // height matches the checkpoint just
+                                    // published — otherwise consecutive
+                                    // blocks would carry the same proof blob
+                                    // 99 times and bloat the chain. The
+                                    // worker publishes at every
+                                    // DEFAULT_CHAIN_PROOF_INTERVAL boundary;
+                                    // mismatch means latest_proof is from a
+                                    // prior checkpoint, not this block.
                                     if let Some(chain_proof) = fold_queue.latest_proof() {
-                                        block.nova_proof =
-                                            Some(chain_proof.proof.proof_bytes);
+                                        if chain_proof.block_height == block.number {
+                                            block.nova_proof =
+                                                Some(chain_proof.proof.proof_bytes);
+                                        }
                                     }
                                 }
 
@@ -5033,8 +5044,10 @@ async fn main() -> Result<()> {
                                             }
                                         }
                                         if let Some(chain_proof) = fold_queue.latest_proof() {
-                                            block.nova_proof =
-                                                Some(chain_proof.proof.proof_bytes);
+                                            if chain_proof.block_height == block.number {
+                                                block.nova_proof =
+                                                    Some(chain_proof.proof.proof_bytes);
+                                            }
                                         }
                                     }
 
@@ -5585,8 +5598,10 @@ async fn main() -> Result<()> {
                                     }
                                 }
                                 if let Some(chain_proof) = fold_queue.latest_proof() {
-                                    result.block.nova_proof =
-                                        Some(chain_proof.proof.proof_bytes);
+                                    if chain_proof.block_height == result.block.number {
+                                        result.block.nova_proof =
+                                            Some(chain_proof.proof.proof_bytes);
+                                    }
                                 }
                             }
 

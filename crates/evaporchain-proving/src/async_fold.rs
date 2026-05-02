@@ -80,18 +80,29 @@ pub struct FoldQueue {
 }
 
 impl FoldQueue {
+    /// Spawn a worker with the default chain-proof interval.
+    pub fn spawn(prover: Arc<Mutex<ChainProver>>, capacity: usize) -> Self {
+        Self::spawn_with(prover, capacity, DEFAULT_CHAIN_PROOF_INTERVAL)
+    }
+
     /// Spawn a worker that holds the same `Arc<Mutex<ChainProver>>`
     /// the rest of the node uses (verifier, /api/chain_proof, etc.).
     /// The worker locks the mutex only briefly per fold so verification
-    /// reads aren't starved.
-    pub fn spawn(prover: Arc<Mutex<ChainProver>>, capacity: usize) -> Self {
+    /// reads aren't starved. `chain_proof_interval` controls how often
+    /// `generate_chain_proof` is called and the result published; pass
+    /// 0 to publish only on demand (no automatic publication).
+    pub fn spawn_with(
+        prover: Arc<Mutex<ChainProver>>,
+        capacity: usize,
+        chain_proof_interval: u64,
+    ) -> Self {
         let (tx, rx) = mpsc::channel::<FoldJob>(capacity);
         let latest_proof = Arc::new(RwLock::new(None));
         let backpressure_warned = Arc::new(RwLock::new(false));
 
         let worker_proof = Arc::clone(&latest_proof);
         tokio::spawn(async move {
-            run_fold_worker(prover, rx, worker_proof).await;
+            run_fold_worker(prover, rx, worker_proof, chain_proof_interval).await;
         });
 
         Self {
@@ -175,10 +186,24 @@ impl FoldQueue {
     }
 }
 
+/// Default cadence (in blocks) at which the worker calls
+/// `generate_chain_proof` and publishes the result. nova-snark's
+/// compression is expensive and (depending on the underlying R1CS)
+/// only satisfiable after enough IVC steps have accumulated. The
+/// previous synchronous path called `generate_chain_proof` every
+/// block but silently swallowed the per-block "Relaxed R1CS
+/// unsatisfiable" errs at low heights via
+/// `if let Ok(chain_proof) = ...`. Surfacing the err loudly from the
+/// worker is the right behavior — and we avoid the wasted work by
+/// only generating at this interval, matching the chain-proof
+/// checkpoint cadence already configured on `ChainProver`.
+pub const DEFAULT_CHAIN_PROOF_INTERVAL: u64 = 100;
+
 async fn run_fold_worker(
     prover: Arc<Mutex<ChainProver>>,
     mut rx: mpsc::Receiver<FoldJob>,
     latest_proof: Arc<RwLock<Option<ChainProof>>>,
+    chain_proof_interval: u64,
 ) {
     while let Some(job) = rx.recv().await {
         // The fold + proof generation are CPU-bound and synchronous
@@ -187,16 +212,25 @@ async fn run_fold_worker(
         // brief contention. This is the same lock the previous sync
         // path held; the only difference is that we hold it on a
         // worker task, not the consensus tick.
+        let height = job.block.number;
+        let should_publish =
+            chain_proof_interval > 0 && height > 0 && height % chain_proof_interval == 0;
         let proof_result = {
             let mut p = match prover.lock() {
                 Ok(g) => g,
                 Err(poisoned) => poisoned.into_inner(),
             };
             match p.fold_block(&job.block, job.new_state_root) {
-                Ok(_fold_res) => Some(p.generate_chain_proof()),
+                Ok(_fold_res) => {
+                    if should_publish {
+                        Some(p.generate_chain_proof())
+                    } else {
+                        None
+                    }
+                }
                 Err(e) => {
                     error!(
-                        height = job.block.number,
+                        height,
                         error = %e,
                         "FoldQueue worker: fold_block failed"
                     );
@@ -204,19 +238,20 @@ async fn run_fold_worker(
                 }
             }
         };
-        match proof_result {
-            Some(Ok(proof)) => {
-                let mut guard = latest_proof.write().await;
-                *guard = Some(proof);
+        if let Some(result) = proof_result {
+            match result {
+                Ok(proof) => {
+                    let mut guard = latest_proof.write().await;
+                    *guard = Some(proof);
+                }
+                Err(e) => {
+                    error!(
+                        height,
+                        error = %e,
+                        "FoldQueue worker: chain proof generation failed at checkpoint"
+                    );
+                }
             }
-            Some(Err(e)) => {
-                error!(
-                    height = job.block.number,
-                    error = %e,
-                    "FoldQueue worker: chain proof generation failed"
-                );
-            }
-            None => {} // already logged above
         }
     }
 }
@@ -259,7 +294,11 @@ mod tests {
             [0u8; 32],
             0,
         )));
-        FoldQueue::spawn(prover, capacity)
+        // Chain-proof interval = 1 so each fold publishes a proof — the
+        // default 100 would mean tests below need to submit ≥100 blocks
+        // before latest_proof returns Some. MockProver's
+        // generate_chain_proof never errs at any height.
+        FoldQueue::spawn_with(prover, capacity, 1)
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
