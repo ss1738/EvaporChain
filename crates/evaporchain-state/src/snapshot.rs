@@ -1418,11 +1418,7 @@ mod tests {
         tampered.chain_id = "chain-b".to_string();
         // Re-serialise without recomputing the integrity_hash (mimics an
         // attacker swapping the field but not regenerating the hash).
-        let blob_after_tamper = bincode::serde::encode_to_vec(
-            &tampered,
-            bincode::config::standard(),
-        )
-        .unwrap();
+        let blob_after_tamper = bincode::serialize(&tampered).unwrap();
         let mut framed = Vec::new();
         framed.extend_from_slice(SNAPSHOT_MAGIC);
         framed.push(SNAPSHOT_FILE_VERSION);
