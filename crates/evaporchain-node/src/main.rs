@@ -4168,19 +4168,28 @@ async fn main() -> Result<()> {
                                             }
                                         }
                                     }
-                                    // Only attach nova_proof to blocks whose
-                                    // height matches the checkpoint just
-                                    // published — otherwise consecutive
-                                    // blocks would carry the same proof blob
-                                    // 99 times and bloat the chain. The
-                                    // worker publishes at every
-                                    // DEFAULT_CHAIN_PROOF_INTERVAL boundary;
-                                    // mismatch means latest_proof is from a
-                                    // prior checkpoint, not this block.
-                                    if let Some(chain_proof) = fold_queue.latest_proof() {
-                                        if chain_proof.block_height == block.number {
-                                            block.nova_proof =
-                                                Some(chain_proof.proof.proof_bytes);
+                                    // Attach nova_proof to checkpoint blocks
+                                    // (height % CHAIN_PROOF_INTERVAL == 0)
+                                    // only — consecutive blocks between
+                                    // checkpoints would otherwise carry the
+                                    // same proof blob 99 times. Equality on
+                                    // height isn't a fit because compression
+                                    // (~2 s) typically finishes after the
+                                    // checkpoint block has already committed,
+                                    // so the proof attached at checkpoint N
+                                    // is for the PREVIOUS checkpoint
+                                    // (block_height < N). Receivers know the
+                                    // exact coverage from chain_proof.num_steps.
+                                    if block.number > 0
+                                        && block.number
+                                            % evaporchain_proving::async_fold::DEFAULT_CHAIN_PROOF_INTERVAL
+                                            == 0
+                                    {
+                                        if let Some(chain_proof) = fold_queue.latest_proof() {
+                                            if chain_proof.block_height < block.number {
+                                                block.nova_proof =
+                                                    Some(chain_proof.proof.proof_bytes);
+                                            }
                                         }
                                     }
                                 }
@@ -5043,10 +5052,23 @@ async fn main() -> Result<()> {
                                                 );
                                             }
                                         }
-                                        if let Some(chain_proof) = fold_queue.latest_proof() {
-                                            if chain_proof.block_height == block.number {
-                                                block.nova_proof =
-                                                    Some(chain_proof.proof.proof_bytes);
+                                        // See proposer-local site above
+                                        // for rationale: attach at checkpoint
+                                        // boundaries with proof.block_height <
+                                        // block.number (proof finishes after
+                                        // its checkpoint block commits).
+                                        if block.number > 0
+                                            && block.number
+                                                % evaporchain_proving::async_fold::DEFAULT_CHAIN_PROOF_INTERVAL
+                                                == 0
+                                        {
+                                            if let Some(chain_proof) =
+                                                fold_queue.latest_proof()
+                                            {
+                                                if chain_proof.block_height < block.number {
+                                                    block.nova_proof =
+                                                        Some(chain_proof.proof.proof_bytes);
+                                                }
                                             }
                                         }
                                     }
@@ -5597,10 +5619,18 @@ async fn main() -> Result<()> {
                                         );
                                     }
                                 }
-                                if let Some(chain_proof) = fold_queue.latest_proof() {
-                                    if chain_proof.block_height == result.block.number {
-                                        result.block.nova_proof =
-                                            Some(chain_proof.proof.proof_bytes);
+                                // Attach at checkpoint boundaries; see
+                                // proposer-local site for rationale.
+                                if result.block.number > 0
+                                    && result.block.number
+                                        % evaporchain_proving::async_fold::DEFAULT_CHAIN_PROOF_INTERVAL
+                                        == 0
+                                {
+                                    if let Some(chain_proof) = fold_queue.latest_proof() {
+                                        if chain_proof.block_height < result.block.number {
+                                            result.block.nova_proof =
+                                                Some(chain_proof.proof.proof_bytes);
+                                        }
                                     }
                                 }
                             }
