@@ -381,9 +381,15 @@ impl ValidatorSet {
             return None;
         }
 
+        // CRITICAL DETERMINISM INVARIANT: leader selection uses base `stake`,
+        // NOT health-weighted `effective_weight`. Different nodes may compute
+        // slightly different health_score values (timing of health updates is
+        // not strictly synchronised), and any divergence here would cause
+        // different nodes to pick different leaders — breaking liveness.
+        // effective_weight is reserved for non-consensus-critical paths.
         let total: u64 = active
             .iter()
-            .map(|v| v.effective_weight())
+            .map(|v| v.stake)
             .fold(0u64, |a, w| a.saturating_add(w));
         if total == 0 {
             let idx = epoch as usize % active.len();
@@ -394,7 +400,7 @@ impl ValidatorSet {
         let mut accumulated = 0u64;
 
         for validator in &active {
-            accumulated = accumulated.saturating_add(validator.effective_weight());
+            accumulated = accumulated.saturating_add(validator.stake);
             if accumulated > weighted_index {
                 return Some(validator);
             }
@@ -657,9 +663,11 @@ impl ValidatorSet {
         if active.is_empty() {
             return None;
         }
+        // Determinism invariant — use base stake, not health-weighted weight.
+        // See `leader_for_epoch` for the full rationale.
         let total: u64 = active
             .iter()
-            .map(|v| v.effective_weight())
+            .map(|v| v.stake)
             .fold(0u64, |a, w| a.saturating_add(w));
         if total == 0 {
             let idx = epoch as usize % active.len();
@@ -668,7 +676,7 @@ impl ValidatorSet {
         let weighted_index = Self::epoch_hash_with_seed(epoch, beacon_seed) % total;
         let mut accumulated = 0u64;
         for validator in &active {
-            accumulated = accumulated.saturating_add(validator.effective_weight());
+            accumulated = accumulated.saturating_add(validator.stake);
             if accumulated > weighted_index {
                 return Some(validator);
             }

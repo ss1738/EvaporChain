@@ -91,12 +91,14 @@ mod tests {
 
     #[test]
     fn divergent_distributions_commit_at_moderate_lambda() {
-        // Truly divergent distributions: every value lives in a different
-        // bin. The earlier version of this test used [1000, 1, 1, 1, ..]
-        // vs [1, 1, 1, .., 1000] — those bin identically (7 ones at bin 0
-        // + one entry at bin 15) because StateSignature is order-agnostic.
-        let local = vec![100, 100, 100, 100, 100, 100, 100, 100];
-        let prior = vec![900, 900, 900, 900, 900, 900, 900, 900];
+        // KL is asymmetric: kl_millibits(self, other) only contributes when
+        // log2(self.bins[k]) > log2(other.bins[k]). The substrate's
+        // build_validator_signature normalises by max(stake), so [N;8] and
+        // [M;8] (any constants) produce *identical* histograms (all 1000 in
+        // bin 15) — KL = 0. Pick distributions where local concentrates in
+        // a bin that prior spreads across.
+        let local = vec![100, 100, 100, 100, 100, 100, 100, 100]; // all bin 15
+        let prior = vec![10, 20, 30, 40, 50, 60, 70, 80];          // spread bins
         // lambda_mb = 1 — tiny threshold should still commit.
         let vote = ib_vote_from_stakes(&local, &prior, 1);
         assert_eq!(vote, IbVote::Commit);
