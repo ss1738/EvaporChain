@@ -24,10 +24,20 @@ export function DaVerifyScreen() {
   const [running, setRunning] = useState(false);
   const [outcome, setOutcome] = useState<DaVerifyOutcome | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Extra peer URLs. Active node is always first; the textarea lets the
+  // operator paste additional URLs (one per line) for multi-peer round-
+  // robin sampling. Faulty-peer reports name the specific URL that
+  // served bad cells, so two-or-more peers makes the signal sharper.
+  const [extraPeersText, setExtraPeersText] = useState<string>("");
 
-  // Default to "use whatever the wallet's pointed at". Future: support
-  // multi-node round-robin by exposing a textarea for additional URLs.
-  const nodes = [nodeUrl];
+  // Parse + dedupe + drop the active node if the operator pasted it again.
+  const extraPeers = extraPeersText
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .filter((s, i, arr) => arr.indexOf(s) === i)
+    .filter((s) => s !== nodeUrl);
+  const nodes = [nodeUrl, ...extraPeers];
 
   const resolveBlockNumber = async (): Promise<number> => {
     if (blockInput.trim()) {
@@ -79,15 +89,44 @@ export function DaVerifyScreen() {
         </button>
         <h2 className="text-lg font-semibold text-zinc-200">Verify node honesty</h2>
         <p className="text-[11px] text-zinc-500 mt-1 leading-snug">
-          Run a Celestia-style data-availability sampling round against{" "}
-          <span className="font-mono">{nodeUrl}</span>. Cross-checks the on-chain{" "}
-          <code>data_root</code> against the served 2D header, then samples{" "}
-          random cells and verifies each Merkle path locally. A pass means the
-          node is actually serving real block data (or proves it isn&apos;t).
+          Run a Celestia-style data-availability sampling round against the{" "}
+          {nodes.length === 1 ? "active node" : `${nodes.length} configured nodes`}.
+          Cross-checks the on-chain <code>data_root</code> against the served 2D
+          header, then samples random cells and verifies each Merkle path
+          locally. With multiple peers the sampler round-robins per cell —
+          faulty-peer reports name the specific URL that served bad data.
         </p>
       </div>
 
       <div className="flex-1 px-4 space-y-3 overflow-y-auto">
+        {/* Active node + extra peers */}
+        <div>
+          <label className="block text-xs font-medium text-zinc-400 mb-1">
+            Active node <span className="text-zinc-600">(always sampled)</span>
+          </label>
+          <div className="rounded-lg bg-evap-surface border border-evap-border px-3 py-2 text-[11px] font-mono text-zinc-400 break-all">
+            {nodeUrl}
+          </div>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-zinc-400 mb-1">
+            Additional peers{" "}
+            <span className="text-zinc-600">(one URL per line, optional)</span>
+          </label>
+          <textarea
+            value={extraPeersText}
+            onChange={(e) => setExtraPeersText(e.target.value)}
+            placeholder={"http://node2:8080\nhttp://node3:8080"}
+            rows={3}
+            className="w-full rounded-lg border border-evap-border bg-evap-surface px-3 py-2 text-[11px] font-mono text-zinc-200 placeholder:text-zinc-600 focus:border-evap-cyan focus:outline-none focus:ring-1 focus:ring-evap-cyan resize-y"
+          />
+          {extraPeers.length > 0 && (
+            <p className="mt-1 text-[10px] text-zinc-500">
+              Round-robining across {nodes.length} peers per cell.
+            </p>
+          )}
+        </div>
+
         {/* Block selector */}
         <div>
           <label className="block text-xs font-medium text-zinc-400 mb-1">
