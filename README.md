@@ -11,7 +11,7 @@ EvaporChain introduces thermodynamic state decay — every piece of on-chain sta
 - [x] Core types and cryptographic layer (BLAKE3, ML-DSA, Verkle, MMR)
 - [x] State layer (evaporation engine, refresh engine, dual commitment)
 - [x] Execution engine (gas, fees, PID controller, signature verification)
-- [x] Smart contracts (7 templates + rule engine)
+- [x] Smart contracts (8 templates + rule engine)
 - [x] EvaporScript (parser, compiler, VM with gas metering)
 - [x] Consensus (Tendermint BFT — Propose/Prevote/Precommit/Commit, BLS aggregation, encrypted mempool, validator sets)
 - [x] ZK proving (Nova recursive proof folding)

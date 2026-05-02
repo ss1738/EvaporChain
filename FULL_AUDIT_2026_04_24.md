@@ -63,8 +63,8 @@ The existing docs (ARCHITECTURE.md, THREAT_MODEL.md, AUDIT_SCOPE.md, PROGRESS.md
 | Doc Claim | Reality |
 |-----------|---------|
 | ARCHITECTURE.md: "Rotating Leader Selection" | Code has full Tendermint BFT state machine (Propose→Prevote→Precommit→Commit) |
-| ARCHITECTURE.md: "6 pre-built contract templates" | Actually 7 templates (includes Temporal) |
-| ARCHITECTURE.md: "91 opcodes" | ~95 opcodes (array ops added, plus recent additions) |
+| ARCHITECTURE.md: "6 pre-built contract templates" | Actually 8 templates (DecayingToken, MortalNFT, ThermodynamicEscrow, DecayingAuction, StakingPool, DAOVote, DecayingDAO, TemporalContract) |
+| ARCHITECTURE.md: "91 opcodes" | Actually 44 opcodes (`crates/evaporchain-script/src/compiler.rs:9 enum Op`). The 91 figure was always wrong; cross-checked 2026-05-02. |
 | Pitch deck / external: "MoveVM" | Not present anywhere in codebase — EvaporScript only |
 | THREAT_MODEL.md: "Checked arithmetic (errors on overflow)" | Parser silently truncates to 0 on overflow (CRITICAL #13) |
 | THREAT_MODEL.md: "Gas deducted per opcode before execution" | gas_limit=0 (unlimited) in ScriptEngine::call() (HIGH) |

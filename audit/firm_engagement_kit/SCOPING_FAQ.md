@@ -83,7 +83,7 @@ We'll mark each fix PR with the finding ID. Re-audit pass runs once all CRITICAL
 - **Energy decay** — every object has a decay curve; verify decay determinism across nodes near boundary timestamps.
 - **Nova IVC folding** — recursive proof folding with HyperKZG; transcript binding to block state is a soundness anchor we'd like fresh eyes on.
 - **Energy-Verkle Trie** — combined active-state Verkle + expired-state MMR. Single-root construction is in `evaporchain-crypto`; verify correctness against forged-proof attempts.
-- **EvaporScript** — bespoke 91-opcode VM. Gas metering complete per opcode but bytecode validation at deploy time is loose.
+- **EvaporScript** — bespoke 44-opcode VM. Gas metering complete per opcode but bytecode validation at deploy time is loose.
 - **Hybrid signatures** — ECDSA + ML-DSA. Verify the verifier rejects mismatched-tag combinations.
 - **Custom Poseidon constants** — generated via BLAKE3-derived seeds, not a published RFC parameter set. **Externally unaudited**; we want this in scope.
 

@@ -1,4 +1,32 @@
-# Public-Docs Drift Report — 2026-04-27
+# Public-Docs Drift Report — 2026-04-27 (re-audit 2026-05-02)
+
+## Re-audit 2026-05-02 — canonical numbers verified against the live codebase
+
+| Item | Value | Source of truth |
+|------|------:|------------------|
+| EvaporScript opcode count | **44** | `crates/evaporchain-script/src/compiler.rs:9 enum Op` |
+| Contract templates | **8** (was claimed 6/7) | `crates/evaporchain-contracts/src/lib.rs ContractTemplate` enum |
+| Workspace `crates/` entries | **78** | `Cargo.toml` |
+| Core crates (long-standing) | **18** | types, consensus, node, network, state, execution, contracts, crypto, proving, da, cli, mcp, script, script-lad, wsbf, ib-validators, sentinel, sddc |
+| Substrate primitives | **60** | The remaining `crates/` members |
+| Workspace tests | **2,781 / 2,785 pass** | `cargo test --workspace --release` on satyawan 2026-05-02. 1 failure + 3 ignored. |
+
+In-source patches applied this re-audit (commits to follow):
+- `crates/evaporchain-contracts/src/lib.rs` — top doc-comment 6→8 templates; `ContractTemplate` doc 6→8.
+- `README.md` — "7 templates" → "8 templates".
+- `REMAINING_WORK.md` — Phase 4 line 7→8 templates.
+- `FULL_AUDIT_2026_04_24.md` — "91 opcodes / ~95" → "44 opcodes (cross-checked)".
+- `audit/firm_engagement_kit/SCOPING_FAQ.md` — "91-opcode VM" → "44-opcode VM".
+
+Items still open (not patched here): whitepaper §4 rewrite (Tendermint not Health-Score), pitch-deck Mysticeti/RSA-accumulator/founder-plurality drift, EF + Sui grant text. Those need narrative editing, not number swaps; the original 2026-04-27 report below has the full action list.
+
+**Note on test count**: prior memory noted 5,801/5,807 (2026-05-02 morning). Today's re-run shows 2,781 — likely the prior figure included WASM tests + integration tests run separately, while `cargo test --workspace --release` skips those and excludes #[ignore]'d. Single-source-of-truth preferred: cite "2,781 tests via `cargo test --workspace --release`" or "5,801 with WASM + integration suites" with explicit scope.
+
+The 1-test failure deserves triage but is unrelated to the doc-drift sweep.
+
+---
+
+# Public-Docs Drift Report — 2026-04-27 (original)
 
 The whitepaper, pitch deck, grant applications, and arXiv submission notes contain claims that do not match the 2026-04-27 codebase reality. Sending any of these out — to arXiv, to Ethereum Foundation, to Sui Foundation, to investors — risks misrepresentation and credibility damage.
 

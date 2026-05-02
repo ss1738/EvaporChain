@@ -1,7 +1,11 @@
 //! Smart contract system for EvaporChain testnet.
 //!
 //! Two layers:
-//!   1. **Contract Templates** — 6 pre-built templates with thermodynamic decay
+//!   1. **Contract Templates** — 8 pre-built templates with thermodynamic
+//!      decay: DecayingToken, MortalNFT, ThermodynamicEscrow,
+//!      DecayingAuction, StakingPool, DAOVote, DecayingDAO,
+//!      TemporalContract. (DecayingDAO + TemporalContract were added
+//!      after the original "6 templates" comment was written.)
 //!   2. **Rule Engine** — simple condition→action rules for custom behavior
 //!
 //! Every contract instance is itself a decaying state object: it has energy and
@@ -49,7 +53,7 @@ pub enum ContractError {
 // LAYER 1: Contract Templates
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// The 6 pre-built contract templates.
+/// The 8 pre-built contract templates.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ContractTemplate {
     DecayingToken,

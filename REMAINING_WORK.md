@@ -142,7 +142,7 @@ All 7 development phases complete:
 - [x] Phase 1: Critical fixes (signatures, gas, overclaim)
 - [x] Phase 2: Real consensus (Tendermint BFT, BLS, validators, libp2p)
 - [x] Phase 3: Nova proving (IVC, chain proofs, light client)
-- [x] Phase 4: Smart contracts (EvaporScript, 7 templates, lifecycle hooks)
+- [x] Phase 4: Smart contracts (EvaporScript, 8 templates, lifecycle hooks)
 - [x] Phase 5: Stress testing (468K TPS peak, 7K sustained)
 - [x] Phase 6: Audit prep (proptests, Byzantine tests, invariants, fuzzing)
 - [x] Phase 7: Mainnet genesis (genesis config, CLI tools, launch scripts)
