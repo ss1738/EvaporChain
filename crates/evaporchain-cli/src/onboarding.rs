@@ -7,6 +7,7 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use zeroize::Zeroize;
 
 use evaporchain_crypto::{
     signatures::{Signer as _, Verifier as _},
@@ -33,9 +34,17 @@ pub struct ValidatorEntry {
     /// Optional initial token allocation paid to this validator's address.
     #[serde(default)]
     pub balance: u64,
-    /// Optional libp2p multiaddress for bootstrap peers.
+    /// Optional libp2p multiaddress for bootstrap peers (legacy field name).
+    /// Prefer `multiaddr` going forward; both are honoured by `build-genesis`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub p2p_address: Option<String>,
+    /// Operator-supplied libp2p multiaddr including `/p2p/<peer_id>` tail
+    /// (e.g. `/ip4/100.119.53.101/tcp/19001/p2p/12D3Koo...`). When present
+    /// it is folded into the signed `genesis.bootstrap_peers` so every
+    /// node can dial every other node by both location AND identity.
+    /// Generate one with `evaporchain onboarding generate-network-key`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multiaddr: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,6 +135,40 @@ pub fn cmd_generate_coordinator(out_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+// ─────────────────────────── generate-network-key ────────────────────────
+
+/// Generate a libp2p ed25519 identity for one validator and persist it as
+/// `<out_dir>/network_key.bin` (mode 0600). Prints the PeerId and the
+/// fully-formed multiaddr template so the operator can copy/paste both
+/// the file (onto their validator host's `<data-dir>/network_key.bin`)
+/// and the multiaddr (into the coordinator's manifest).
+pub fn cmd_generate_network_key(
+    out_dir: &Path,
+    listen_ip: &str,
+    port: u16,
+) -> Result<()> {
+    if !out_dir.exists() {
+        std::fs::create_dir_all(out_dir)
+            .with_context(|| format!("create {}", out_dir.display()))?;
+    }
+    // Reuse the network crate's loader/generator so the on-disk format is
+    // exactly what `P2pNetworkService::start` will read at node startup.
+    let kp = evaporchain_network::load_or_generate_identity(out_dir)
+        .with_context(|| format!("generate identity at {}", out_dir.display()))?;
+    let peer_id = kp.public().to_peer_id();
+    let multiaddr = format!("/ip4/{}/tcp/{}/p2p/{}", listen_ip, port, peer_id);
+
+    let key_path = out_dir.join("network_key.bin");
+    println!("libp2p identity written:");
+    println!("  network_key.bin: {} (0600)", key_path.display());
+    println!("  PeerId:          {}", peer_id);
+    println!("  multiaddr:       {}", multiaddr);
+    println!();
+    println!("Add this to your coordinator's validator manifest:");
+    println!("  {{ \"id\": <vid>, ..., \"multiaddr\": \"{}\" }}", multiaddr);
+    Ok(())
+}
+
 // ─────────────────────────── build-genesis ────────────────────────────────
 
 #[allow(clippy::too_many_arguments)]
@@ -166,6 +209,7 @@ pub fn cmd_build_genesis(
     // (matches the existing genesis ceremony convention in cmd_genesis_add_validator).
     let mut validators = Vec::with_capacity(manifest.validators.len());
     let mut accounts = Vec::new();
+    let mut bootstrap_peers: Vec<String> = Vec::new();
     for v in &manifest.validators {
         // Sanity: BLS pk is 48 bytes (96 hex chars).
         let _ = parse_hex_strict(&v.bls_public_key, 48, "validator bls_public_key")?;
@@ -174,13 +218,30 @@ pub fn cmd_build_genesis(
         }
         let mut addr = [0u8; 32];
         addr[0] = v.id as u8;
+        // Prefer the new explicit `multiaddr` field; fall back to the legacy
+        // `p2p_address` for older manifests. Either way, an entry that
+        // includes `/p2p/<peer_id>` is folded into `bootstrap_peers` so
+        // every node ships with the canonical dialable address+identity
+        // of every other validator at startup.
+        let chosen_ma = v.multiaddr.clone().or_else(|| v.p2p_address.clone());
+        if let Some(ref ma) = chosen_ma {
+            if !ma.contains("/p2p/") {
+                anyhow::bail!(
+                    "validator id={} multiaddr `{}` is missing /p2p/<peer_id> suffix — \
+                     run `evaporchain onboarding generate-network-key` first",
+                    v.id,
+                    ma
+                );
+            }
+            bootstrap_peers.push(ma.clone());
+        }
         validators.push(GenesisValidator {
             id: v.id,
             name: v.name.clone(),
             stake: v.stake,
             address: addr,
             bls_public_key: Some(v.bls_public_key.to_lowercase()),
-            p2p_address: v.p2p_address.clone(),
+            p2p_address: chosen_ma,
         });
         if v.balance > 0 {
             accounts.push(GenesisAccount {
@@ -228,7 +289,7 @@ pub fn cmd_build_genesis(
         validators,
         accounts,
         objects: vec![],
-        bootstrap_peers: vec![],
+        bootstrap_peers,
         trusted_checkpoint: None,
         coordinator_pk: Some(coordinator_pk_hex.clone()),
         coordinator_signature: None, // filled below
@@ -384,7 +445,7 @@ pub fn cmd_install(args: InstallArgs) -> Result<()> {
         .and_then(|b| b.get("secret_key"))
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("keys file missing bls.secret_key"))?;
-    let bls_sk_bytes = hex::decode(bls_sk_hex.trim_start_matches("0x"))
+    let mut bls_sk_bytes = hex::decode(bls_sk_hex.trim_start_matches("0x"))
         .context("bls.secret_key not hex")?;
     let bls_kp = BlsKeypair::from_secret_bytes(&bls_sk_bytes)
         .context("BLS secret is not a valid 32-byte scalar")?;
@@ -443,6 +504,12 @@ pub fn cmd_install(args: InstallArgs) -> Result<()> {
     // 5. Write BLS secret to <data-dir>/bls_key.bin (mode 0600).
     let bls_path = data_dir.join("bls_key.bin");
     write_secret_0600(&bls_path, &bls_sk_bytes)?;
+    // H7 (audit 2026-05-02): the plaintext sk lingers in this Vec
+    // (and inside the JSON `bundle` parsed earlier) until function
+    // return. A core dump or signal handler in the window between
+    // verify and write would leak it. Zeroize the explicit copy as
+    // soon as the on-disk write succeeds.
+    bls_sk_bytes.zeroize();
 
     // 6. Copy the genesis into the node-dir so a single bundle is
     // self-contained even if the operator moves the original.
@@ -669,9 +736,18 @@ mod tests {
         fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
     }
     fn tempdir() -> TmpDir {
+        // SystemTime::now() can return identical nanosecond stamps across
+        // parallel cargo-test threads on the same machine, leading to
+        // shared temp-dirs and cross-test contamination (one test writes
+        // genesis.json with its BLS pk, a sibling test reads it and sees
+        // a stranger's keys). Mix in a process-wide atomic so every call
+        // produces a unique path even when threads race.
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let p = std::env::temp_dir().join(format!("evaporchain-onboard-{}", nonce));
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let p = std::env::temp_dir().join(format!("evaporchain-onboard-{}-{}", nonce, n));
         std::fs::create_dir_all(&p).unwrap();
         TmpDir(p)
     }

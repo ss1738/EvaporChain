@@ -2438,9 +2438,54 @@ async fn main() -> Result<()> {
         let ban_list_path = std::path::PathBuf::from(&args.data_dir)
             .join("network")
             .join("bans.json");
+
+        // Load (or generate-and-persist) the libp2p identity now so we can
+        // compute our own PeerId and filter ourselves out of the genesis
+        // bootstrap_peers list before dialing. The same path is read again
+        // by `P2pNetworkService::start` via NetworkConfig.data_dir.
+        let net_data_dir = std::path::PathBuf::from(&args.data_dir);
+        if !net_data_dir.exists() {
+            std::fs::create_dir_all(&net_data_dir).ok();
+        }
+        let local_identity =
+            evaporchain_network::load_or_generate_identity(&net_data_dir).map_err(|e| {
+                anyhow::anyhow!("load_or_generate_identity({}): {e}", net_data_dir.display())
+            })?;
+        let local_peer_id_str = local_identity.public().to_peer_id().to_string();
+
+        // Resolve effective bootstrap peer list:
+        //   1. CLI --bootstrap takes precedence (operator override).
+        //   2. Otherwise fall back to genesis.bootstrap_peers when present.
+        //   3. Filter out our own multiaddr by /p2p/<peer_id> tail match
+        //      so we don't dial ourselves.
+        let effective_bootstrap_peers: Vec<String> = if !args.bootstrap_peers.is_empty() {
+            args.bootstrap_peers
+                .iter()
+                .filter(|p| !p.contains(&format!("/p2p/{}", local_peer_id_str)))
+                .cloned()
+                .collect()
+        } else if let Some(ref gc) = genesis_config_loaded {
+            let filtered: Vec<String> = gc
+                .bootstrap_peers
+                .iter()
+                .filter(|p| !p.contains(&format!("/p2p/{}", local_peer_id_str)))
+                .cloned()
+                .collect();
+            if !filtered.is_empty() {
+                println!(
+                    "{} Using {} bootstrap peers from genesis.bootstrap_peers",
+                    node_tag,
+                    filtered.len()
+                );
+            }
+            filtered
+        } else {
+            Vec::new()
+        };
+
         let net_config = NetworkConfig {
             listen_address: format!("/ip4/0.0.0.0/tcp/{}", args.port),
-            bootstrap_peers: args.bootstrap_peers.clone(),
+            bootstrap_peers: effective_bootstrap_peers.clone(),
             channel_buffer: 256,
             use_tls: args.use_tls,
             tls_certs: None,
@@ -2451,6 +2496,9 @@ async fn main() -> Result<()> {
             max_inbound_connections: 200,
             peer_ban_duration_secs: 3_600,
             ban_list_path: Some(ban_list_path),
+            chain_id: args.chain_id.clone(),
+            enable_mdns: false,
+            data_dir: Some(net_data_dir),
         };
         println!(
             "{} \x1b[1;33mNetwork mode active\x1b[0m — listening on port {}, {} bootstrap peer(s)",
@@ -2460,7 +2508,7 @@ async fn main() -> Result<()> {
             } else {
                 args.port.to_string()
             },
-            args.bootstrap_peers.len()
+            effective_bootstrap_peers.len()
         );
         let (channels, _handle, peer_id) = P2pNetworkService::start(net_config)
             .await

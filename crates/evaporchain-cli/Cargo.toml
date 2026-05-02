@@ -36,3 +36,6 @@ evaporchain-crypto = { path = "../evaporchain-crypto" }
 evaporchain-state = { path = "../evaporchain-state" }
 evaporchain-mera = { path = "../evaporchain-mera" }
 evaporchain-da = { path = "../evaporchain-da" }
+evaporchain-network = { path = "../evaporchain-network" }
+libp2p-identity = { version = "0.2", features = ["ed25519", "peerid"] }
+zeroize = "1"

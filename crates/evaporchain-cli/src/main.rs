@@ -654,6 +654,12 @@ pub enum TestnetAction {
         /// Base API port (validator i listens on base+i).
         #[arg(long, default_value = "8080")]
         api_base: u16,
+        /// IPv4 address baked into the generated bootstrap multiaddrs. For a
+        /// single-host testnet leave the default. For a real cross-host
+        /// cluster (e.g. 3-Mini Tailscale deploy) override per-validator
+        /// after `init` or pass the cluster-wide IP for every node here.
+        #[arg(long, default_value = "127.0.0.1")]
+        listen_ip: String,
         /// If the output directory already exists, remove and recreate it.
         #[arg(long)]
         force: bool,
@@ -720,6 +726,24 @@ pub enum OnboardingAction {
         genesis: String,
         #[arg(long)]
         coordinator_pk: String,
+    },
+
+    /// Generate a libp2p ed25519 identity key for one validator and print
+    /// the resulting `/p2p/<peer_id>` so the operator can hand the
+    /// multiaddr to the coordinator. Writes `network_key.bin` (mode 0600)
+    /// into `--out-dir`. The same file MUST land at `<data-dir>/network_key.bin`
+    /// on the validator's host before the node starts; otherwise the
+    /// PeerId on disk will not match the one the cluster expects.
+    GenerateNetworkKey {
+        #[arg(long, default_value = ".")]
+        out_dir: String,
+        /// Optional listen IP for the printed multiaddr template
+        /// (the operator can paste the result directly into the manifest).
+        #[arg(long, default_value = "0.0.0.0")]
+        listen_ip: String,
+        /// Optional TCP port for the printed multiaddr template.
+        #[arg(long, default_value = "9000")]
+        port: u16,
     },
 
     /// Operator-side installer: lay out a node directory from a signed
@@ -1470,6 +1494,7 @@ fn cmd_testnet_init(
     block_interval_ms: u64,
     p2p_base: u16,
     api_base: u16,
+    listen_ip: &str,
     force: bool,
 ) -> Result<()> {
     use evaporchain_types::genesis::*;
@@ -1496,10 +1521,18 @@ fn cmd_testnet_init(
 
     let mut genesis_validators = Vec::with_capacity(validators as usize);
     let mut genesis_accounts = Vec::with_capacity(validators as usize + 1);
+    // Bootstrap multiaddrs (with /p2p/<peer_id> suffix) collected as we
+    // generate each validator's libp2p identity. These get baked into
+    // genesis.bootstrap_peers so every node in the cluster knows the
+    // canonical address+identity of every other node at startup,
+    // closing the gap that prevented gossipsub mesh formation on the
+    // 3-Mini Tailscale cluster (peer_count stuck at 0).
+    let mut bootstrap_multiaddrs: Vec<String> = Vec::with_capacity(validators as usize);
 
     for vid in 1..=validators as u64 {
         let v_dir = root.join(format!("v{}", vid));
-        std::fs::create_dir_all(v_dir.join("data"))
+        let v_data_dir = v_dir.join("data");
+        std::fs::create_dir_all(&v_data_dir)
             .with_context(|| format!("Failed to create v{}/data", vid))?;
 
         // Generate the BLS keypair for this validator and write the raw
@@ -1511,7 +1544,7 @@ fn cmd_testnet_init(
         let sk_bytes = kp.secret_key_bytes();
         let sk: &[u8] = &sk_bytes.0;
         let pk_hex = hex::encode(&kp.public_key_bytes().0);
-        let bls_path = v_dir.join("data").join("bls_key.bin");
+        let bls_path = v_data_dir.join("bls_key.bin");
         std::fs::write(&bls_path, &sk)
             .with_context(|| format!("Failed to write {}", bls_path.display()))?;
         #[cfg(unix)]
@@ -1520,13 +1553,31 @@ fn cmd_testnet_init(
             std::fs::set_permissions(&bls_path, std::fs::Permissions::from_mode(0o600))?;
         }
 
+        // Generate (or reuse if already on disk) this validator's libp2p
+        // identity ed25519 keypair, persisted as
+        // <v_dir>/data/network_key.bin (mode 0600). Compute the PeerId
+        // and assemble the deterministic dialable multiaddr so genesis
+        // can publish a stable peer-id-suffixed entry.
+        let v_port = p2p_base + vid as u16;
+        let v_keypair = evaporchain_network::load_or_generate_identity(&v_data_dir)
+            .with_context(|| {
+                format!(
+                    "Failed to load_or_generate libp2p identity for v{}",
+                    vid
+                )
+            })?;
+        let v_peer_id = v_keypair.public().to_peer_id();
+        let v_multiaddr =
+            format!("/ip4/{}/tcp/{}/p2p/{}", listen_ip, v_port, v_peer_id);
+        bootstrap_multiaddrs.push(v_multiaddr.clone());
+
         genesis_validators.push(GenesisValidator {
             id: vid,
             name: format!("validator-{}", vid),
             stake,
             address: validator_address(vid),
             bls_public_key: Some(pk_hex),
-            p2p_address: Some(format!("/ip4/127.0.0.1/tcp/{}", p2p_base + vid as u16)),
+            p2p_address: Some(v_multiaddr),
         });
 
         genesis_accounts.push(GenesisAccount {
@@ -1574,9 +1625,7 @@ fn cmd_testnet_init(
         validators: genesis_validators,
         accounts: genesis_accounts,
         objects: vec![],
-        bootstrap_peers: (1..=validators as u64)
-            .map(|vid| format!("/ip4/127.0.0.1/tcp/{}", p2p_base + vid as u16))
-            .collect(),
+        bootstrap_peers: bootstrap_multiaddrs.clone(),
         trusted_checkpoint: None,
         coordinator_pk: None,
         coordinator_signature: None,
@@ -1696,6 +1745,12 @@ async fn cmd_testnet_up(dir: &str, split_logs: bool) -> Result<()> {
             &genesis_abs.to_string_lossy(),
             "--startup-delay",
             "1500",
+            // Release builds refuse to start without one of --prove
+            // or --mock-prove (chain refuses to silently produce
+            // un-attested blocks). Testnet is a devnet by definition,
+            // so use the mock prover. Operators running a real chain
+            // start the binary directly with --prove + a real prover.
+            "--mock-prove",
         ]);
         for peer in &bootstrap {
             // Skip our own listener address so we don't dial ourselves.
@@ -4628,6 +4683,7 @@ async fn main() -> Result<()> {
                 block_interval_ms,
                 p2p_base,
                 api_base,
+                listen_ip,
                 force,
             } => cmd_testnet_init(
                 &out,
@@ -4638,6 +4694,7 @@ async fn main() -> Result<()> {
                 block_interval_ms,
                 p2p_base,
                 api_base,
+                &listen_ip,
                 force,
             ),
             TestnetAction::Up { dir, split_logs } => cmd_testnet_up(&dir, split_logs).await,
@@ -4682,6 +4739,15 @@ async fn main() -> Result<()> {
             } => onboarding::cmd_verify(
                 std::path::Path::new(&genesis),
                 std::path::Path::new(&coordinator_pk),
+            ),
+            OnboardingAction::GenerateNetworkKey {
+                out_dir,
+                listen_ip,
+                port,
+            } => onboarding::cmd_generate_network_key(
+                std::path::Path::new(&out_dir),
+                &listen_ip,
+                port,
             ),
             OnboardingAction::Install {
                 genesis,
@@ -6168,5 +6234,74 @@ mod tests {
             "honest node 2 must NOT appear in faulty_peers"
         );
         assert!(!outcome.passes);
+    }
+
+    #[test]
+    fn testnet_init_writes_bootstrap_peers_into_genesis() {
+        // Run cmd_testnet_init programmatically and assert that the
+        // generated genesis.json contains one /p2p/-suffixed multiaddr per
+        // validator, that each validator's data dir holds a network_key.bin
+        // matching the published PeerId, and that the multiaddr embeds the
+        // listen-ip override.
+        let n = 3u32;
+        let listen_ip = "100.64.0.7";
+        let p2p_base = 19_000u16;
+        let api_base = 18_000u16;
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let tmp =
+            std::env::temp_dir().join(format!("evapor-testnet-init-{nonce}"));
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        cmd_testnet_init(
+            tmp.to_str().unwrap(),
+            n,
+            "evaporchain-test-init-1",
+            10_000_000,
+            1_000_000,
+            500,
+            p2p_base,
+            api_base,
+            listen_ip,
+            true,
+        )
+        .expect("cmd_testnet_init");
+
+        let genesis_json = std::fs::read_to_string(tmp.join("genesis.json"))
+            .expect("read genesis.json");
+        let parsed: GenesisConfig = serde_json::from_str(&genesis_json)
+            .expect("parse genesis.json");
+
+        assert_eq!(
+            parsed.bootstrap_peers.len(),
+            n as usize,
+            "bootstrap_peers must contain one entry per validator"
+        );
+        for (i, ma) in parsed.bootstrap_peers.iter().enumerate() {
+            let vid = (i + 1) as u16;
+            let expected_port = p2p_base + vid;
+            assert!(
+                ma.starts_with(&format!("/ip4/{}/tcp/{}/p2p/", listen_ip, expected_port)),
+                "bootstrap_peer[{i}] {ma} must use --listen-ip and /p2p/<peer_id> suffix"
+            );
+            // PeerId tail must match the network_key on disk.
+            let key_path = tmp
+                .join(format!("v{}", vid))
+                .join("data")
+                .join("network_key.bin");
+            assert!(key_path.is_file(), "network_key.bin missing for v{vid}");
+            let bytes = std::fs::read(&key_path).unwrap();
+            let kp = libp2p_identity::Keypair::from_protobuf_encoding(&bytes)
+                .expect("decode network_key.bin");
+            let pid = kp.public().to_peer_id().to_string();
+            assert!(
+                ma.ends_with(&format!("/p2p/{}", pid)),
+                "bootstrap_peer[{i}] {ma} must end with /p2p/{pid}"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

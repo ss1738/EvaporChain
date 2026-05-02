@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::net::IpAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -9,9 +9,9 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use libp2p::{
     gossipsub::{self, IdentTopic, MessageAuthenticity},
-    identify, mdns, noise,
+    identify, identity, mdns, noise,
     request_response::{self, ProtocolSupport},
-    swarm::{NetworkBehaviour, SwarmEvent},
+    swarm::{behaviour::toggle::Toggle, NetworkBehaviour, SwarmEvent},
     tcp, tls, yamux, Multiaddr, PeerId, StreamProtocol, SwarmBuilder,
 };
 use serde::{Deserialize, Serialize};
@@ -324,6 +324,28 @@ pub struct NetworkConfig {
     /// On-disk path for ban-list persistence. `None` disables persistence
     /// (the ban list is then memory-only).
     pub ban_list_path: Option<PathBuf>,
+    /// Chain id baked into every gossipsub topic name so independent
+    /// testnets running on the same LAN (e.g. via mDNS auto-discovery)
+    /// can't cross-pollinate consensus messages, blocks, or txs. Empty
+    /// string falls back to the legacy unscoped topic for backwards
+    /// compatibility with any caller that hasn't been updated yet.
+    pub chain_id: String,
+    /// Enable libp2p mDNS LAN auto-discovery. Off by default — operators
+    /// running multi-validator deployments should rely on
+    /// `bootstrap_peers` (deterministic + chain-id-scoped). Leaving mDNS
+    /// on caused cross-testnet poisoning when a stale cluster on the
+    /// same subnet was auto-discovered and consumed connection slots.
+    pub enable_mdns: bool,
+    /// On-disk directory where the persistent libp2p identity key
+    /// (`network_key.bin`) is stored. When `Some`, the service loads
+    /// the key on startup if it exists, generating-and-persisting
+    /// otherwise. When `None`, the service falls back to a fresh
+    /// ephemeral identity each startup (legacy behaviour kept so the
+    /// existing tests still pass without setting up a temp dir).
+    /// Persisting the identity is what makes `bootstrap_peers` entries
+    /// in genesis (which embed `/p2p/<peer_id>`) actually resolve to
+    /// the right node across restarts.
+    pub data_dir: Option<PathBuf>,
 }
 
 impl Default for NetworkConfig {
@@ -340,8 +362,47 @@ impl Default for NetworkConfig {
             max_inbound_connections: 200,
             peer_ban_duration_secs: 3_600,
             ban_list_path: None,
+            chain_id: String::new(),
+            enable_mdns: false,
+            data_dir: None,
         }
     }
+}
+
+/// Load the persistent libp2p identity from `<data_dir>/network_key.bin`,
+/// or generate a fresh ed25519 keypair and persist it (mode 0600 on Unix)
+/// if the file does not yet exist. The on-disk format is libp2p's protobuf
+/// keypair encoding (`Keypair::to_protobuf_encoding`), matching the wider
+/// libp2p ecosystem so an operator can swap the file with one produced by
+/// any libp2p tool.
+pub fn load_or_generate_identity(data_dir: &Path) -> std::io::Result<identity::Keypair> {
+    let key_path = data_dir.join("network_key.bin");
+    if key_path.exists() {
+        let bytes = std::fs::read(&key_path)?;
+        return identity::Keypair::from_protobuf_encoding(&bytes).map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("decode network_key.bin: {e}"),
+            )
+        });
+    }
+    if !data_dir.exists() {
+        std::fs::create_dir_all(data_dir)?;
+    }
+    let kp = identity::Keypair::generate_ed25519();
+    let bytes = kp.to_protobuf_encoding().map_err(|e| {
+        std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("encode keypair: {e}"),
+        )
+    })?;
+    std::fs::write(&key_path, &bytes)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(kp)
 }
 
 // ─────────────────────── Sybil-resistance state ──────────────────────────
@@ -625,7 +686,11 @@ impl SybilState {
 #[derive(NetworkBehaviour)]
 struct EvaporBehaviour {
     gossipsub: gossipsub::Behaviour,
-    mdns: mdns::tokio::Behaviour,
+    // mDNS is opt-in via NetworkConfig::enable_mdns. Disabled by default
+    // because LAN-side discovery cross-pollinates independent testnets
+    // running on the same subnet (a stranger 4-validator cluster on .227
+    // poisoned our peer counts during P1 #11 verification 2026-05-02).
+    mdns: Toggle<mdns::tokio::Behaviour>,
     identify: identify::Behaviour,
     block_sync: request_response::json::Behaviour<BlockSyncRequest, BlockSyncResponse>,
     shard_sample: request_response::json::Behaviour<ShardSampleRequest, ShardSampleResponse>,
@@ -773,9 +838,17 @@ impl P2pNetworkService {
             ($key:ident) => {{
                 // Use default message ID (source + seq_no) so each validator's
                 // consensus votes get unique IDs even across rounds.
+                // H8 (audit 2026-05-02): was Permissive, which let
+                // malformed / unsigned messages traverse the mesh and
+                // forced expensive deserialization downstream before
+                // any rejection. Strict drops them at the protocol
+                // boundary using libp2p-gossipsub's signature check
+                // (we already pass MessageAuthenticity::Signed). Pair
+                // with `MessageAuthenticity::Signed` below — the two
+                // settings are coupled.
                 let gossipsub_config = gossipsub::ConfigBuilder::default()
                     .heartbeat_interval(Duration::from_millis(500))
-                    .validation_mode(gossipsub::ValidationMode::Permissive)
+                    .validation_mode(gossipsub::ValidationMode::Strict)
                     .max_transmit_size(4 * 1024 * 1024)
                     .mesh_n(3)
                     .mesh_n_low(2)
@@ -790,11 +863,18 @@ impl P2pNetworkService {
                 )
                 .expect("valid gossipsub behaviour");
 
-                let mdns = mdns::tokio::Behaviour::new(
-                    mdns::Config::default(),
-                    $key.public().to_peer_id(),
-                )
-                .expect("valid mdns behaviour");
+                let mdns: Toggle<mdns::tokio::Behaviour> = if config.enable_mdns {
+                    Some(
+                        mdns::tokio::Behaviour::new(
+                            mdns::Config::default(),
+                            $key.public().to_peer_id(),
+                        )
+                        .expect("valid mdns behaviour"),
+                    )
+                    .into()
+                } else {
+                    None.into()
+                };
 
                 let identify = identify::Behaviour::new(identify::Config::new(
                     "/evaporchain/1.0.0".to_string(),
@@ -844,9 +924,26 @@ impl P2pNetworkService {
         // for the actual deprecation to be enforced.
         #[allow(deprecated)]
         let tcp_cfg = || tcp::Config::default().port_reuse(true);
+
+        // Resolve the libp2p identity. When `data_dir` is set, persist it
+        // so the PeerId is stable across restarts — required for
+        // bootstrap_peers entries baked into genesis (which embed
+        // `/p2p/<peer_id>` suffixes) to actually resolve to the right
+        // node. When `data_dir` is None, fall back to a fresh ephemeral
+        // identity (legacy behaviour, used by unit tests).
+        let local_keypair = match config.data_dir.as_deref() {
+            Some(dir) => load_or_generate_identity(dir).map_err(|e| {
+                NetworkError::ConnectionError(format!(
+                    "load_or_generate_identity({}): {e}",
+                    dir.display()
+                ))
+            })?,
+            None => identity::Keypair::generate_ed25519(),
+        };
+
         let mut swarm = if use_tls {
             info!("Using TLS 1.3 transport (libp2p-tls)");
-            SwarmBuilder::with_new_identity()
+            SwarmBuilder::with_existing_identity(local_keypair.clone())
                 .with_tokio()
                 .with_tcp(tcp_cfg(), tls::Config::new, yamux::Config::default)
                 .map_err(|e| NetworkError::ConnectionError(format!("tls transport: {e}")))?
@@ -855,7 +952,7 @@ impl P2pNetworkService {
                 .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(60)))
                 .build()
         } else {
-            SwarmBuilder::with_new_identity()
+            SwarmBuilder::with_existing_identity(local_keypair.clone())
                 .with_tokio()
                 .with_tcp(tcp_cfg(), noise::Config::new, yamux::Config::default)
                 .map_err(|e| NetworkError::ConnectionError(format!("tcp transport: {e}")))?
@@ -868,9 +965,18 @@ impl P2pNetworkService {
         let local_peer_id = *swarm.local_peer_id();
 
         // Subscribe to topics
-        let tx_topic = IdentTopic::new(TX_TOPIC);
-        let block_topic = IdentTopic::new(BLOCK_TOPIC);
-        let consensus_topic = IdentTopic::new(CONSENSUS_TOPIC);
+        // Scope topics by chain_id so a stray validator from a different
+        // testnet on the same LAN (mDNS auto-discovery is on) doesn't
+        // join our gossip mesh and pollute mempools / sync requests.
+        // Empty chain_id keeps the legacy topic for back-compat.
+        let topic_suffix = if config.chain_id.is_empty() {
+            String::new()
+        } else {
+            format!("/{}", config.chain_id)
+        };
+        let tx_topic = IdentTopic::new(format!("{}{}", TX_TOPIC, topic_suffix));
+        let block_topic = IdentTopic::new(format!("{}{}", BLOCK_TOPIC, topic_suffix));
+        let consensus_topic = IdentTopic::new(format!("{}{}", CONSENSUS_TOPIC, topic_suffix));
         swarm
             .behaviour_mut()
             .gossipsub
@@ -978,6 +1084,15 @@ impl P2pNetworkService {
             let mut ban_list = PeerBanList::new();
             let mut per_ip_tracker = PerIpConnectionTracker::new(MAX_CONNECTIONS_PER_IP);
             let mut gc_counter: u64 = 0;
+            // M12 (audit 2026-05-02): rotate the picked peer for
+            // request_response (block-sync / shard-sample) per call.
+            // Previously all outbound requests always hit peers[0],
+            // so a single slow / unresponsive peer wedged every
+            // sync request — no retry, no rotation, no jitter.
+            // Each request increments the counter; the modulo picks a
+            // different connected peer, spreading load + giving the
+            // chain a path forward when peer 0 is misbehaving.
+            let mut req_rotation: u64 = 0;
             let mut idle_score_timer = tokio::time::interval(Duration::from_secs(300));
             idle_score_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -1031,8 +1146,9 @@ impl P2pNetworkService {
                     Some(block) = net_block_receiver.recv() => {
                         match serde_json::to_vec(&block) {
                             Ok(data) => {
+                                let sz = data.len();
                                 if let Err(e) = swarm.behaviour_mut().gossipsub.publish(block_topic.clone(), data) {
-                                    debug!("Failed to publish block: {e}");
+                                    warn!("Failed to publish block #{} ({sz} bytes): {e}", block.number);
                                 }
                             }
                             Err(e) => warn!("Failed to serialize block: {e}"),
@@ -1040,8 +1156,9 @@ impl P2pNetworkService {
                     }
                     // App wants to broadcast a consensus message
                     Some(data) = net_consensus_receiver.recv() => {
+                        let sz = data.len();
                         if let Err(e) = swarm.behaviour_mut().gossipsub.publish(consensus_topic.clone(), data) {
-                            debug!("Failed to publish consensus msg: {e}");
+                            warn!("Failed to publish consensus msg ({sz} bytes): {e}");
                         }
                     }
                     // App requests shard samples from peers (light client DAS)
@@ -1050,7 +1167,11 @@ impl P2pNetworkService {
                         if peers.is_empty() {
                             warn!("No peers available for shard sample request");
                         } else {
-                            let target = peers[0];
+                            // M12: rotate picked peer per request so a
+                            // single slow peer can't wedge every sample.
+                            let idx = (req_rotation as usize) % peers.len();
+                            req_rotation = req_rotation.wrapping_add(1);
+                            let target = peers[idx];
                             debug!("Requesting {} shard samples from peer {target}", queries.len());
                             swarm.behaviour_mut().shard_sample.send_request(
                                 &target,
@@ -1065,8 +1186,10 @@ impl P2pNetworkService {
                         if peers.is_empty() {
                             warn!("No peers available for block sync request {from}..{to}");
                         } else {
-                            // Request from each peer (first responder wins)
-                            let target = peers[0]; // Pick first peer
+                            // M12: rotate target peer (was always peers[0]).
+                            let idx = (req_rotation as usize) % peers.len();
+                            req_rotation = req_rotation.wrapping_add(1);
+                            let target = peers[idx];
                             if from > to {
                                 warn!("Invalid sync range: from={from} > to={to}");
                                 continue;
@@ -1764,6 +1887,51 @@ mod tests {
         assert_eq!(cfg.listen_address, "/ip4/0.0.0.0/tcp/0");
         assert!(cfg.bootstrap_peers.is_empty());
         assert_eq!(cfg.channel_buffer, 256);
+        assert!(cfg.data_dir.is_none());
+    }
+
+    #[test]
+    fn load_or_generate_identity_round_trip() {
+        // Round-trip: persist a fresh keypair, reload it, and assert the
+        // PeerId (and protobuf-encoded bytes) match. This is the core
+        // invariant that lets bootstrap_peers in genesis embed a stable
+        // `/p2p/<peer_id>` suffix.
+        let dir = std::env::temp_dir().join(format!(
+            "evapor-net-key-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // First call: generates and persists.
+        let kp1 = load_or_generate_identity(&dir).expect("generate");
+        let key_path = dir.join("network_key.bin");
+        assert!(key_path.is_file(), "network_key.bin must be written");
+        let bytes_on_disk = std::fs::read(&key_path).unwrap();
+        assert!(!bytes_on_disk.is_empty(), "key bytes must be non-empty");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&key_path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600, "network_key.bin must be 0600");
+        }
+
+        // Second call: must load the same key, returning the same PeerId.
+        let kp2 = load_or_generate_identity(&dir).expect("reload");
+        let pid1 = kp1.public().to_peer_id();
+        let pid2 = kp2.public().to_peer_id();
+        assert_eq!(pid1, pid2, "PeerId must be stable across reload");
+
+        // Encoded bytes round-trip too.
+        let enc1 = kp1.to_protobuf_encoding().unwrap();
+        let enc2 = kp2.to_protobuf_encoding().unwrap();
+        assert_eq!(enc1, enc2, "protobuf encoding must be stable");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

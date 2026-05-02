@@ -167,6 +167,12 @@ impl BanList {
     }
 
     /// Persist to disk. Creates parent directories if needed.
+    ///
+    /// L7 (audit 2026-05-02): writes are atomic — serialize to a tmp
+    /// file, fsync, then rename onto `path`. Previously a crash mid-
+    /// `fs::write` left a half-written JSON; the next start logged
+    /// "ban list parse error … starting empty" and silently dropped
+    /// every active ban, re-admitting the attackers we just ejected.
     pub fn save(&mut self, path: &Path) -> std::io::Result<()> {
         self.cleanup_expired();
         if let Some(parent) = path.parent() {
@@ -178,7 +184,14 @@ impl BanList {
         };
         let json = serde_json::to_vec_pretty(&file)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-        std::fs::write(path, json)?;
+        let tmp_path = path.with_extension("json.tmp");
+        {
+            use std::io::Write;
+            let mut f = std::fs::File::create(&tmp_path)?;
+            f.write_all(&json)?;
+            f.sync_all()?;
+        }
+        std::fs::rename(&tmp_path, path)?;
         Ok(())
     }
 }
