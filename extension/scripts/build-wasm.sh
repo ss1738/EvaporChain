@@ -209,7 +209,11 @@ rm -rf "$PKG_DIR"
 # Deterministic post-processing with wasm-opt
 # -----------------------------------------------------------------------------
 bold "Running wasm-opt -O3 --strip-debug --strip-producers..."
-wasm-opt -O3 --strip-debug --strip-producers \
+# --enable-bulk-memory keeps wasm-opt happy with rustc-emitted memory.copy /
+# memory.fill ops (Rust 1.85+ stable defaults to bulk-memory). The runtime
+# (browser WASM engine) has supported it since 2018; no compatibility cost.
+wasm-opt -O3 --enable-bulk-memory --enable-mutable-globals \
+  --strip-debug --strip-producers \
   -o "$PKG_DIR/$WASM_FILE_NAME.opt" \
   "$PKG_DIR/$WASM_FILE_NAME"
 mv "$PKG_DIR/$WASM_FILE_NAME.opt" "$PKG_DIR/$WASM_FILE_NAME"
