@@ -226,6 +226,16 @@ pub const MIN_STORAGE_DEPOSIT: u64 = 1000;
 /// stamped by `evaporchain-cli testnet init` and the Genesis-Ceremony flow.
 pub const FAUCET_ADDRESS: [u8; 32] = [0xFAu8; 32];
 
+/// Returns `true` iff `addr` is the canonical genesis-seeded faucet address
+/// ([`FAUCET_ADDRESS`] = `[0xFA; 32]`). This is distinct from the legacy
+/// mint-bypass address (`[0u8; 32]`) used by execution paths to skip nonce
+/// checks; the FAUCET_ADDRESS is a normal pre-funded account whose transfers
+/// flow through the standard nonce + balance checks.
+#[inline]
+pub fn is_faucet_address(addr: &[u8; 32]) -> bool {
+    *addr == FAUCET_ADDRESS
+}
+
 /// An account with a balance.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Account {

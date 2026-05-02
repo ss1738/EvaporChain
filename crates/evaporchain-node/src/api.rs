@@ -446,6 +446,13 @@ pub struct ChainStats {
     pub total_resurrected: u64,
     pub total_refreshed: u64,
     pub total_transactions: u64,
+    /// Cumulative count of finalised transactions that the executor
+    /// rejected (insufficient balance, invalid nonce, signature failure,
+    /// etc.). Mirrors the `evap_finalised_txs_total{result="failed"}`
+    /// Prometheus series. `#[serde(default)]` so persisted ChainStats
+    /// from before this field existed deserialize cleanly to 0.
+    #[serde(default)]
+    pub total_rejected_transactions: u64,
     pub state_size_trend: Vec<EpochSnapshot>,
 }
 
@@ -465,6 +472,7 @@ impl ChainStats {
             total_resurrected: 0,
             total_refreshed: 0,
             total_transactions: 0,
+            total_rejected_transactions: 0,
             state_size_trend: Vec::new(),
         }
     }
@@ -12089,17 +12097,23 @@ async fn get_prometheus_metrics(
             stats.total_transactions
         ));
 
-        // Finalised tx outcomes — chain rejects malformed txs at the
-        // mempool gate, so post-finality "failed" is structurally 0.
-        // Successful finalised count tracks total_transactions on the
-        // happy path (every accepted tx eventually finalises in BFT).
+        // Finalised tx outcomes. Mempool gates malformed txs, but the
+        // executor still rejects valid-format txs at runtime
+        // (InsufficientBalance, InvalidNonce, signature failure, etc.).
+        // Both labels are now driven by per-tx outcomes from
+        // BlockExecutionResult — failed buckets are no longer
+        // hardcoded to 0.
+        let total_finalised = stats.total_transactions;
+        let total_rejected = stats.total_rejected_transactions;
+        let total_success = total_finalised.saturating_sub(total_rejected);
         out.push_str("# HELP evap_finalised_txs_total Total finalised transactions, partitioned by execution result\n");
         out.push_str("# TYPE evap_finalised_txs_total counter\n");
         out.push_str(&format!(
-            "evap_finalised_txs_total{{result=\"success\"}} {}\n",
-            stats.total_transactions
+            "evap_finalised_txs_total{{result=\"success\"}} {total_success}\n"
         ));
-        out.push_str("evap_finalised_txs_total{result=\"failed\"} 0\n");
+        out.push_str(&format!(
+            "evap_finalised_txs_total{{result=\"failed\"}} {total_rejected}\n"
+        ));
 
         // Block-production timing histogram, partitioned by producer.
         //
@@ -14348,13 +14362,89 @@ fn estimate_tx_gas(tx: &Transaction) -> u64 {
     }
 }
 
-pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
+/// Resolve a per-tx (status, error) tuple from a block-aligned outcomes
+/// slice. Index-aligned with `block.transactions`. When the slice is
+/// empty (legacy execution path that did not populate outcomes) or the
+/// hash mismatches, falls back to `"success"` and emits a warn-level
+/// log so missing wiring is surfaced rather than silently lying.
+///
+/// Tied to the bug uncovered during the 3-node faucet smoke run where
+/// `/api/transactions` reported success for every tx regardless of
+/// whether the transfer actually credited the recipient.
+fn outcome_to_status(
+    tx: &Transaction,
+    idx: usize,
+    outcomes: &[evaporchain_execution::TxOutcome],
+) -> (String, Option<String>) {
+    if outcomes.is_empty() {
+        tracing::warn!(
+            tx_hash = %hex::encode(tx.tx_hash()),
+            "tx_records_from_block: no per-tx outcomes available — \
+             falling back to 'success' (executor not wired through). \
+             /api/transactions status may be inaccurate."
+        );
+        return ("success".to_string(), None);
+    }
+    match outcomes.get(idx) {
+        Some(o) if o.tx_hash == tx.tx_hash() => {
+            if o.success {
+                ("success".to_string(), None)
+            } else {
+                (
+                    "rejected".to_string(),
+                    Some(o.error.clone().unwrap_or_else(|| "rejected".to_string())),
+                )
+            }
+        }
+        Some(o) => {
+            // Slice is non-empty but the hash doesn't match — the
+            // executor returned a misaligned outcomes vec. Fall back
+            // safely and log loudly.
+            tracing::warn!(
+                tx_hash = %hex::encode(tx.tx_hash()),
+                outcome_hash = %hex::encode(o.tx_hash),
+                idx,
+                "tx_records_from_block: outcome hash mismatch — \
+                 treating as success (executor wiring bug)"
+            );
+            ("success".to_string(), None)
+        }
+        None => {
+            tracing::warn!(
+                tx_hash = %hex::encode(tx.tx_hash()),
+                idx,
+                outcomes_len = outcomes.len(),
+                "tx_records_from_block: outcome missing for tx index — \
+                 falling back to 'success'"
+            );
+            ("success".to_string(), None)
+        }
+    }
+}
+
+/// Build TxRecord entries from a block + per-tx outcomes.
+///
+/// Outcomes are produced by `ExecutionEngine::execute_block` and must
+/// be aligned with `block.transactions`. Pass `&[]` for legacy paths
+/// that don't yet have outcomes — this falls back to `"success"` with
+/// a warn-level log (preserves the prior reporting behaviour).
+pub fn tx_records_from_block_with_outcomes(
+    block: &Block,
+    outcomes: &[evaporchain_execution::TxOutcome],
+) -> Vec<TxRecord> {
     block
         .transactions
         .iter()
-        .map(|tx| {
+        .enumerate()
+        .map(|(i, tx)| {
             let hash = hex::encode(blake3::hash(&tx.signable_bytes()).as_bytes());
             let gas = estimate_tx_gas(tx);
+            let (status, _err) = outcome_to_status(tx, i, outcomes);
+            // NB: `_err` is intentionally not surfaced through TxRecord
+            // today (TxRecord has no error field) — the rejection error
+            // lives in the executor logs and the metric. Adding an
+            // `error` field to TxRecord would break the wallet/explorer
+            // contract; plumb later if needed.
             match tx {
                 Transaction::Transfer(t) => TxRecord {
                     hash,
@@ -14369,7 +14459,7 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     gas,
                     block_number: block.number,
                     epoch: block.epoch,
-                    status: "success".to_string(),
+                    status: status.clone(),
                 },
                 Transaction::CreateObject(t) => TxRecord {
                     hash,
@@ -14384,7 +14474,7 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     gas,
                     block_number: block.number,
                     epoch: block.epoch,
-                    status: "success".to_string(),
+                    status: status.clone(),
                 },
                 Transaction::Refresh(t) => TxRecord {
                     hash,
@@ -14399,7 +14489,7 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     gas,
                     block_number: block.number,
                     epoch: block.epoch,
-                    status: "success".to_string(),
+                    status: status.clone(),
                 },
                 Transaction::DeployContract(t) => TxRecord {
                     hash,
@@ -14414,7 +14504,7 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     gas,
                     block_number: block.number,
                     epoch: block.epoch,
-                    status: "success".to_string(),
+                    status: status.clone(),
                 },
                 Transaction::CallContract(t) => TxRecord {
                     hash,
@@ -14429,7 +14519,7 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     gas,
                     block_number: block.number,
                     epoch: block.epoch,
-                    status: "success".to_string(),
+                    status: status.clone(),
                 },
                 Transaction::DeployScript(t) => TxRecord {
                     hash,
@@ -14444,7 +14534,7 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     gas,
                     block_number: block.number,
                     epoch: block.epoch,
-                    status: "success".to_string(),
+                    status: status.clone(),
                 },
                 Transaction::CallScript(t) => TxRecord {
                     hash,
@@ -14459,7 +14549,7 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     gas,
                     block_number: block.number,
                     epoch: block.epoch,
-                    status: "success".to_string(),
+                    status: status.clone(),
                 },
                 Transaction::ValidatorStake(t) => TxRecord {
                     hash,
@@ -14474,7 +14564,7 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     gas,
                     block_number: block.number,
                     epoch: block.epoch,
-                    status: "success".to_string(),
+                    status: status.clone(),
                 },
                 Transaction::ValidatorExit(t) => TxRecord {
                     hash,
@@ -14489,7 +14579,7 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     gas,
                     block_number: block.number,
                     epoch: block.epoch,
-                    status: "success".to_string(),
+                    status: status.clone(),
                 },
                 Transaction::ValidatorClaimStake(t) => TxRecord {
                     hash,
@@ -14504,7 +14594,7 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     gas,
                     block_number: block.number,
                     epoch: block.epoch,
-                    status: "success".to_string(),
+                    status: status.clone(),
                 },
                 Transaction::Shield(t) => TxRecord {
                     hash,
@@ -14519,7 +14609,7 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     gas,
                     block_number: block.number,
                     epoch: block.epoch,
-                    status: "success".to_string(),
+                    status: status.clone(),
                 },
                 Transaction::Unshield(t) => TxRecord {
                     hash,
@@ -14534,7 +14624,7 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     gas,
                     block_number: block.number,
                     epoch: block.epoch,
-                    status: "success".to_string(),
+                    status: status.clone(),
                 },
                 Transaction::PrivateTransfer(t) => TxRecord {
                     hash,
@@ -14549,7 +14639,7 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     gas,
                     block_number: block.number,
                     epoch: block.epoch,
-                    status: "success".to_string(),
+                    status: status.clone(),
                 },
                 Transaction::Deferred(dtx) => TxRecord {
                     hash,
@@ -14564,7 +14654,7 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     gas,
                     block_number: block.number,
                     epoch: block.epoch,
-                    status: "success".to_string(),
+                    status: status.clone(),
                 },
                 Transaction::Blob(tx) => TxRecord {
                     hash,
@@ -14579,7 +14669,7 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     gas,
                     block_number: block.number,
                     epoch: block.epoch,
-                    status: "success".to_string(),
+                    status: status.clone(),
                 },
                 Transaction::Governance(tx) => TxRecord {
                     hash,
@@ -14594,7 +14684,7 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     gas,
                     block_number: block.number,
                     epoch: block.epoch,
-                    status: "success".to_string(),
+                    status: status.clone(),
                 },
                 Transaction::MultiSig(tx) => TxRecord {
                     hash,
@@ -14609,7 +14699,7 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     gas,
                     block_number: block.number,
                     epoch: block.epoch,
-                    status: "success".to_string(),
+                    status: status.clone(),
                 },
                 Transaction::UserOp(tx) => TxRecord {
                     hash,
@@ -14624,7 +14714,7 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     gas,
                     block_number: block.number,
                     epoch: block.epoch,
-                    status: "success".to_string(),
+                    status: status.clone(),
                 },
                 Transaction::UpgradeContract(tx) => TxRecord {
                     hash,
@@ -14639,7 +14729,7 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     gas,
                     block_number: block.number,
                     epoch: block.epoch,
-                    status: "success".to_string(),
+                    status: status.clone(),
                 },
                 Transaction::Delegate(tx) => TxRecord {
                     hash,
@@ -14654,7 +14744,7 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     gas,
                     block_number: block.number,
                     epoch: block.epoch,
-                    status: "success".to_string(),
+                    status: status.clone(),
                 },
                 Transaction::Undelegate(tx) => TxRecord {
                     hash,
@@ -14669,7 +14759,7 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     gas,
                     block_number: block.number,
                     epoch: block.epoch,
-                    status: "success".to_string(),
+                    status: status.clone(),
                 },
                 Transaction::RotateValidatorKey(tx) => TxRecord {
                     hash,
@@ -14684,7 +14774,7 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     gas,
                     block_number: block.number,
                     epoch: block.epoch,
-                    status: "success".to_string(),
+                    status: status.clone(),
                 },
                 Transaction::ClaimDelegation(tx) => TxRecord {
                     hash,
@@ -14699,7 +14789,7 @@ pub fn tx_records_from_block(block: &Block) -> Vec<TxRecord> {
                     gas,
                     block_number: block.number,
                     epoch: block.epoch,
-                    status: "success".to_string(),
+                    status: status.clone(),
                 },
             }
         })
@@ -14727,5 +14817,172 @@ pub fn push_event(
     // Keep last 200 events
     while evts.len() > 200 {
         evts.pop_front();
+    }
+}
+
+#[cfg(test)]
+mod tx_status_tests {
+    //! Smoke tests for the per-tx-status reporting fix.
+    //!
+    //! Covers the bug surfaced during the 3-node faucet smoke run
+    //! (commit 58c70bc context) where every recorded tx in a
+    //! BlockRecord reported `status: "success"` regardless of whether
+    //! the executor actually committed it. After the fix:
+    //!   - InsufficientBalance / InvalidNonce → status = "rejected"
+    //!   - successful Transfer → status = "success"
+    //!   - the legacy code path (empty outcomes slice) still emits
+    //!     "success" with a warn log (back-compat).
+    use super::*;
+    use evaporchain_execution::{ExecutionEngine, SimpleExecutor, TxOutcome};
+    use evaporchain_state::InMemoryStateDB;
+    use evaporchain_types::{Account, Block, Transaction, TransferTx};
+
+    fn addr(byte: u8) -> [u8; 32] {
+        let mut a = [0u8; 32];
+        a[0] = byte;
+        a
+    }
+
+    fn fund(db: &mut InMemoryStateDB, byte: u8, balance: u64) {
+        db.put_account(Account {
+            address: addr(byte),
+            balance,
+            nonce: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+        });
+    }
+
+    fn make_block(number: u64, epoch: u64, txs: Vec<Transaction>) -> Block {
+        Block {
+            number,
+            epoch,
+            parent_hash: [0u8; 32],
+            state_root: [0u8; 32],
+            transactions: txs,
+            timestamp: 0,
+            chain_id: String::new(),
+            producer_id: None,
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
+            nova_proof: None,
+            anchor_hash: None,
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+        }
+    }
+
+    fn transfer(from: u8, to: u8, amount: u64, nonce: u64) -> Transaction {
+        Transaction::Transfer(TransferTx {
+            from: addr(from),
+            to: addr(to),
+            amount,
+            nonce,
+            signature: None,
+            public_key: None,
+        })
+    }
+
+    /// A Transfer with insufficient balance should be reported as
+    /// "rejected" with a non-empty error in /api/transactions.
+    #[test]
+    fn insufficient_balance_transfer_reports_rejected() {
+        let mut db = InMemoryStateDB::new();
+        fund(&mut db, 1, 100); // sender has 100, asks for 500
+        let mut executor = SimpleExecutor::new(7);
+        let block = make_block(1, 1, vec![transfer(1, 2, 500, 0)]);
+
+        let exec = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(exec.tx_outcomes.len(), 1);
+        assert!(!exec.tx_outcomes[0].success);
+        assert!(exec.tx_outcomes[0].error.is_some());
+
+        let records = tx_records_from_block_with_outcomes(&block, &exec.tx_outcomes);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].status, "rejected");
+        // Hash alignment must hold so the API can map outcomes back to txs.
+        assert_eq!(
+            exec.tx_outcomes[0].tx_hash,
+            block.transactions[0].tx_hash()
+        );
+    }
+
+    /// A valid Transfer should be reported as "success" in
+    /// /api/transactions.
+    #[test]
+    fn valid_transfer_reports_success() {
+        let mut db = InMemoryStateDB::new();
+        fund(&mut db, 1, 1000);
+        let mut executor = SimpleExecutor::new(7);
+        let block = make_block(1, 1, vec![transfer(1, 2, 100, 0)]);
+
+        let exec = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(exec.tx_outcomes.len(), 1);
+        assert!(exec.tx_outcomes[0].success);
+        assert!(exec.tx_outcomes[0].error.is_none());
+
+        let records = tx_records_from_block_with_outcomes(&block, &exec.tx_outcomes);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].status, "success");
+    }
+
+    /// A mixed block (one valid, one invalid) must report each tx with
+    /// its own status — proves outcomes are positionally correct.
+    #[test]
+    fn mixed_block_reports_per_tx_status() {
+        let mut db = InMemoryStateDB::new();
+        fund(&mut db, 1, 1000);
+        fund(&mut db, 3, 50); // too poor for a 500 transfer
+        let mut executor = SimpleExecutor::new(7);
+        let block = make_block(
+            1,
+            1,
+            vec![
+                transfer(1, 2, 100, 0), // good
+                transfer(3, 4, 500, 0), // insufficient balance
+            ],
+        );
+
+        let exec = executor.execute_block(&mut db, &block).unwrap();
+        let records = tx_records_from_block_with_outcomes(&block, &exec.tx_outcomes);
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].status, "success");
+        assert_eq!(records[1].status, "rejected");
+    }
+
+    /// Legacy back-compat: empty outcomes slice falls back to
+    /// "success" + warn log (preserves prior behaviour for any code
+    /// path not yet wired through). This is the documented fallback.
+    #[test]
+    fn empty_outcomes_falls_back_to_success() {
+        let block = make_block(1, 1, vec![transfer(1, 2, 100, 0)]);
+        let records: Vec<TxRecord> = tx_records_from_block_with_outcomes(&block, &[]);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].status, "success");
+    }
+
+    /// Mismatched outcome hash falls back to success rather than
+    /// crashing — guards against accidental misalignment from a
+    /// future executor change.
+    #[test]
+    fn hash_mismatch_falls_back_to_success() {
+        let block = make_block(1, 1, vec![transfer(1, 2, 100, 0)]);
+        let bogus = vec![TxOutcome {
+            tx_hash: [0xAB; 32], // not the real hash
+            success: false,
+            error: Some("not even my tx".into()),
+            gas_used: 0,
+        }];
+        let records = tx_records_from_block_with_outcomes(&block, &bogus);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].status, "success");
     }
 }

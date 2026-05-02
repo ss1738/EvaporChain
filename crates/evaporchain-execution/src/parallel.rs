@@ -527,6 +527,9 @@ struct PartitionResult {
     txs_failed: usize,
     gas_used: u64,
     total_fees: u64,
+    /// Per-tx outcomes tagged with their original block index so the
+    /// caller can re-assemble a block-order outcomes vec.
+    tx_outcomes: Vec<(usize, crate::TxOutcome)>,
 }
 
 // ─── Parallel Executor ─────────────────────────────────────────────────────
@@ -829,12 +832,23 @@ impl ParallelExecutor {
         let mut txs_failed = 0;
         let mut gas_used = 0u64;
         let mut total_fees = 0u64;
+        let mut tx_outcomes: Vec<(usize, crate::TxOutcome)> = Vec::with_capacity(txs.len());
 
         for &(idx, tx) in txs {
+            let tx_hash = tx.tx_hash();
             // Signature verification
             if let Err(e) = Self::verify_tx_signature(verify_signatures, tx, chain_id) {
                 debug!(tx_idx = idx, error = %e, "Parallel: signature verification failed");
                 txs_failed += 1;
+                tx_outcomes.push((
+                    idx,
+                    crate::TxOutcome {
+                        tx_hash,
+                        success: false,
+                        error: Some(format!("signature: {e}")),
+                        gas_used: 0,
+                    },
+                ));
                 continue;
             }
 
@@ -844,6 +858,15 @@ impl ParallelExecutor {
             if *gas_budget < tx_gas {
                 debug!(tx_idx = idx, "Parallel: block gas limit exceeded");
                 txs_failed += 1;
+                tx_outcomes.push((
+                    idx,
+                    crate::TxOutcome {
+                        tx_hash,
+                        success: false,
+                        error: Some("block gas limit exceeded".to_string()),
+                        gas_used: 0,
+                    },
+                ));
                 continue;
             }
 
@@ -864,6 +887,18 @@ impl ParallelExecutor {
                     if sender.balance < total_tx_fee {
                         debug!(tx_idx = idx, "Parallel: insufficient balance for fees");
                         txs_failed += 1;
+                        tx_outcomes.push((
+                            idx,
+                            crate::TxOutcome {
+                                tx_hash,
+                                success: false,
+                                error: Some(format!(
+                                    "insufficient balance for gas: {}/{}",
+                                    sender.balance, total_tx_fee
+                                )),
+                                gas_used: 0,
+                            },
+                        ));
                         continue;
                     }
                     sender.balance -= total_tx_fee;
@@ -956,6 +991,15 @@ impl ParallelExecutor {
                     gas_used += tx_gas;
                     total_fees += tx_fee;
                     *gas_budget = gas_budget.saturating_sub(tx_gas);
+                    tx_outcomes.push((
+                        idx,
+                        crate::TxOutcome {
+                            tx_hash,
+                            success: true,
+                            error: None,
+                            gas_used: tx_gas,
+                        },
+                    ));
                 }
                 Err(e) => {
                     if let (Some(sender_addr), Some((snap_bal, snap_nonce))) =
@@ -969,6 +1013,15 @@ impl ParallelExecutor {
                     debug!(tx_idx = idx, error = %e, "Parallel: tx failed, reverted");
                     txs_failed += 1;
                     total_fees += tx_fee;
+                    tx_outcomes.push((
+                        idx,
+                        crate::TxOutcome {
+                            tx_hash,
+                            success: false,
+                            error: Some(e.to_string()),
+                            gas_used: tx_gas,
+                        },
+                    ));
                 }
             }
         }
@@ -979,6 +1032,7 @@ impl ParallelExecutor {
             txs_failed,
             gas_used,
             total_fees,
+            tx_outcomes,
         }
     }
 
@@ -1031,11 +1085,14 @@ impl ParallelExecutor {
         }
 
         let sender = db.get_or_create_account(&tx.from);
-        // Skip nonce check for the all-zeros faucet/mint address — it is a
-        // special pre-seeded account not owned by any user keypair, so
-        // concurrent faucet txs can arrive in any nonce order and all succeed.
-        let is_faucet = tx.from == [0u8; 32];
-        if !is_faucet && sender.nonce != tx.nonce {
+        // Mint-bypass: a transfer from the all-zeros address skips both
+        // nonce check (no source account exists) and nonce increment, and
+        // creates the recipient out of thin air. Used for legacy faucet
+        // and genesis-time minting paths. The canonical genesis faucet at
+        // FAUCET_ADDRESS = [0xFA; 32] does NOT use this bypass — it has a
+        // real balance and goes through the normal Transfer path.
+        let is_mint_bypass = tx.from == [0u8; 32];
+        if !is_mint_bypass && sender.nonce != tx.nonce {
             return Err(ExecutionError::InvalidNonce {
                 expected: sender.nonce,
                 got: tx.nonce,
@@ -1049,7 +1106,7 @@ impl ParallelExecutor {
             });
         }
         sender.balance -= tx.amount;
-        if !is_faucet {
+        if !is_mint_bypass {
             sender.nonce += 1;
         }
         // Stamp the demurrage anchor: balance (and possibly nonce) just mutated.
@@ -1324,11 +1381,18 @@ impl ExecutionEngine for ParallelExecutor {
 
         // ── Phase 5: Merge overlays back ──
 
+        // Indexed outcomes by original block index — re-assembled in
+        // block-tx order at the end of execute_block so the API layer
+        // sees a 1:1 mapping with block.transactions.
+        let mut indexed_outcomes: Vec<(usize, crate::TxOutcome)> =
+            Vec::with_capacity(block.transactions.len());
+
         for result in partition_results {
             total_txs_executed += result.txs_executed;
             total_txs_failed += result.txs_failed;
             total_gas_used += result.gas_used;
             total_fees += result.total_fees;
+            indexed_outcomes.extend(result.tx_outcomes);
             Self::merge_overlay(db, result.overlay);
         }
 
@@ -1341,9 +1405,19 @@ impl ExecutionEngine for ParallelExecutor {
         // layer can apply them post-commit. Closes punch-list 4b.
         let mut validator_key_rotations: Vec<crate::ValidatorKeyRotation> = Vec::new();
         for &(idx, tx) in &serial_txs {
+            let tx_hash = tx.tx_hash();
             if let Err(e) = Self::verify_tx_signature(self.verify_signatures, tx, &self.chain_id) {
                 debug!(tx_idx = idx, error = %e, "Serial: signature verification failed");
                 total_txs_failed += 1;
+                indexed_outcomes.push((
+                    idx,
+                    crate::TxOutcome {
+                        tx_hash,
+                        success: false,
+                        error: Some(format!("signature: {e}")),
+                        gas_used: 0,
+                    },
+                ));
                 continue;
             }
 
@@ -1351,6 +1425,15 @@ impl ExecutionEngine for ParallelExecutor {
             if self.block_gas_limit > 0 && total_gas_used + tx_gas > self.block_gas_limit {
                 debug!(tx_idx = idx, "Serial: block gas limit exceeded");
                 total_txs_failed += 1;
+                indexed_outcomes.push((
+                    idx,
+                    crate::TxOutcome {
+                        tx_hash,
+                        success: false,
+                        error: Some("block gas limit exceeded".to_string()),
+                        gas_used: 0,
+                    },
+                ));
                 continue;
             }
 
@@ -1360,6 +1443,18 @@ impl ExecutionEngine for ParallelExecutor {
                     let sender = db.get_or_create_account(sender_addr);
                     if sender.balance < total_tx_fee {
                         total_txs_failed += 1;
+                        indexed_outcomes.push((
+                            idx,
+                            crate::TxOutcome {
+                                tx_hash,
+                                success: false,
+                                error: Some(format!(
+                                    "insufficient balance for gas: {}/{}",
+                                    sender.balance, total_tx_fee
+                                )),
+                                gas_used: 0,
+                            },
+                        ));
                         continue;
                     }
                     sender.balance -= total_tx_fee;
@@ -1642,6 +1737,15 @@ impl ExecutionEngine for ParallelExecutor {
                     total_txs_executed += 1;
                     total_gas_used += tx_gas;
                     total_fees += tx_fee;
+                    indexed_outcomes.push((
+                        idx,
+                        crate::TxOutcome {
+                            tx_hash,
+                            success: true,
+                            error: None,
+                            gas_used: tx_gas,
+                        },
+                    ));
                 }
                 Err(e) => {
                     // Revert fee deduction on failure? No — same as SimpleExecutor:
@@ -1649,6 +1753,15 @@ impl ExecutionEngine for ParallelExecutor {
                     debug!(tx_idx = idx, error = %e, "Serial: tx failed");
                     total_txs_failed += 1;
                     total_fees += tx_fee;
+                    indexed_outcomes.push((
+                        idx,
+                        crate::TxOutcome {
+                            tx_hash,
+                            success: false,
+                            error: Some(e.to_string()),
+                            gas_used: tx_gas,
+                        },
+                    ));
                 }
             }
         }
@@ -1779,6 +1892,13 @@ impl ExecutionEngine for ParallelExecutor {
             Some(mera_root)
         };
 
+        // Re-assemble outcomes in block-tx order so the API layer can
+        // index by position alongside `block.transactions`. Stable-sort
+        // by original block index.
+        indexed_outcomes.sort_by_key(|(i, _)| *i);
+        let tx_outcomes: Vec<crate::TxOutcome> =
+            indexed_outcomes.into_iter().map(|(_, o)| o).collect();
+
         Ok(BlockExecutionResult {
             state_root,
             mmr_root: self.mmr.root(),
@@ -1795,6 +1915,7 @@ impl ExecutionEngine for ParallelExecutor {
             cross_shard_receipts,
             validator_key_rotations,
             mera_commitment,
+            tx_outcomes,
         })
     }
 

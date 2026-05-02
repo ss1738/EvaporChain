@@ -88,6 +88,26 @@ pub struct BlockContractEvent {
     pub event: evaporchain_script::ContractEvent,
 }
 
+/// Per-transaction execution outcome surfaced through `BlockExecutionResult`.
+///
+/// Populated by every `ExecutionEngine::execute_block` implementation so the
+/// node API layer can report accurate per-tx status (`success` / `rejected`)
+/// instead of unconditionally claiming success. Closes the
+/// "BlockRecord.status hardcoded" reporting bug uncovered during the 3-node
+/// faucet smoke run.
+#[derive(Debug, Clone)]
+pub struct TxOutcome {
+    /// Canonical BLAKE3 transaction hash (matches `Transaction::tx_hash`).
+    pub tx_hash: [u8; 32],
+    /// True iff the transaction's primary effect committed (no rollback).
+    pub success: bool,
+    /// Error message when `success == false`. None on success.
+    pub error: Option<String>,
+    /// Gas accounted to this transaction (deducted whether or not the
+    /// primary effect committed — fees burn on revert).
+    pub gas_used: u64,
+}
+
 /// Result of executing a single block.
 #[derive(Debug)]
 pub struct BlockExecutionResult {
@@ -122,6 +142,10 @@ pub struct BlockExecutionResult {
     /// all account energies after this block.  None if the MERA tree could not
     /// be computed (empty state).
     pub mera_commitment: Option<[u8; 32]>,
+    /// Per-transaction execution outcomes, in block.transactions order.
+    /// Empty when the executor predates the outcomes wiring (legacy path —
+    /// the node layer logs a warn and falls back to the prior behaviour).
+    pub tx_outcomes: Vec<TxOutcome>,
 }
 
 /// Side-effect emitted by `Transaction::RotateValidatorKey` execution and
@@ -975,10 +999,15 @@ impl SimpleExecutor {
             return Err(ExecutionError::ZeroAmount);
         }
 
-        // Check sender nonce (skipped for the all-zeros faucet/mint address).
-        let is_faucet = tx.from == [0u8; 32];
+        // Mint-bypass: a transfer from the all-zeros address skips both
+        // nonce check (no source account exists) and nonce increment, and
+        // creates the recipient out of thin air. Used for legacy faucet
+        // and genesis-time minting paths. The canonical genesis faucet at
+        // FAUCET_ADDRESS = [0xFA; 32] does NOT use this bypass — it has a
+        // real balance and goes through the normal Transfer path.
+        let is_mint_bypass = tx.from == [0u8; 32];
         let sender = db.get_or_create_account(&tx.from);
-        if !is_faucet && sender.nonce != tx.nonce {
+        if !is_mint_bypass && sender.nonce != tx.nonce {
             return Err(ExecutionError::InvalidNonce {
                 expected: sender.nonce,
                 got: tx.nonce,
@@ -994,7 +1023,7 @@ impl SimpleExecutor {
 
         // Debit sender
         sender.balance -= tx.amount;
-        if !is_faucet {
+        if !is_mint_bypass {
             sender.nonce += 1;
         }
         // Stamp the demurrage anchor: balance (and possibly nonce) just
@@ -2257,13 +2286,21 @@ impl ExecutionEngine for SimpleExecutor {
         let mut total_fees = 0u64;
         let base_fee = self.fee_controller.as_ref().map_or(0, |fc| fc.base_fee);
         let mut validator_key_rotations: Vec<ValidatorKeyRotation> = Vec::new();
+        let mut tx_outcomes: Vec<TxOutcome> = Vec::with_capacity(block.transactions.len());
 
         // Execute transactions
         for tx in &block.transactions {
+            let tx_hash = tx.tx_hash();
             // Signature verification (if enabled)
             if let Err(e) = self.verify_tx_signature(tx) {
                 debug!(error = %e, "Signature verification failed");
                 txs_failed += 1;
+                tx_outcomes.push(TxOutcome {
+                    tx_hash,
+                    success: false,
+                    error: Some(format!("signature: {e}")),
+                    gas_used: 0,
+                });
                 continue;
             }
 
@@ -2278,6 +2315,15 @@ impl ExecutionEngine for SimpleExecutor {
                     "Skipping transaction: block gas limit would be exceeded"
                 );
                 txs_failed += 1;
+                tx_outcomes.push(TxOutcome {
+                    tx_hash,
+                    success: false,
+                    error: Some(format!(
+                        "block gas limit exceeded (used={gas_used}, tx={tx_gas}, limit={})",
+                        self.block_gas_limit
+                    )),
+                    gas_used: 0,
+                });
                 continue;
             }
 
@@ -2304,6 +2350,15 @@ impl ExecutionEngine for SimpleExecutor {
                             "Insufficient balance for gas fees"
                         );
                         txs_failed += 1;
+                        tx_outcomes.push(TxOutcome {
+                            tx_hash,
+                            success: false,
+                            error: Some(format!(
+                                "insufficient balance for gas: {}/{}",
+                                sender.balance, total_tx_fee
+                            )),
+                            gas_used: 0,
+                        });
                         continue;
                     }
                     // Deduct fees upfront (burned — deflationary model)
@@ -2477,6 +2532,12 @@ impl ExecutionEngine for SimpleExecutor {
                     txs_executed += 1;
                     gas_used += tx_gas;
                     total_fees += tx_fee;
+                    tx_outcomes.push(TxOutcome {
+                        tx_hash,
+                        success: true,
+                        error: None,
+                        gas_used: tx_gas,
+                    });
                 }
                 Err(e) => {
                     // Revert sender state changes from the failed execution,
@@ -2494,6 +2555,12 @@ impl ExecutionEngine for SimpleExecutor {
                     debug!(error = %e, "Transaction failed — state reverted, fee kept");
                     txs_failed += 1;
                     total_fees += tx_fee; // Fee is still burned even on failure
+                    tx_outcomes.push(TxOutcome {
+                        tx_hash,
+                        success: false,
+                        error: Some(e.to_string()),
+                        gas_used: tx_gas,
+                    });
                 }
             }
         }
@@ -2752,6 +2819,7 @@ impl ExecutionEngine for SimpleExecutor {
             cross_shard_receipts: Vec::new(),
             validator_key_rotations,
             mera_commitment,
+            tx_outcomes,
         })
     }
 

@@ -21,7 +21,7 @@ pub mod wsbf_integration;
 
 use encrypted_mempool::EncryptedMempool;
 use evaporchain_crypto::hash::blake3_hash;
-use evaporchain_da::{BlockDA2D, NamespacedBlob};
+use evaporchain_da::BlockDA2D;
 use evaporchain_execution::parallel::ParallelExecutor;
 use evaporchain_execution::{fees::PidFeeController, BlockExecutionResult, ExecutionEngine};
 use evaporchain_state::db::StateDB;
@@ -59,10 +59,10 @@ fn compute_block_da(txs: &[Transaction]) -> BlockDaOutputs {
             blob_commitments: vec![],
         };
     }
-    let tx_bytes = match serde_json::to_vec(txs) {
-        Ok(b) => b,
-        Err(e) => {
-            warn!("DA: tx serialization failed: {e} — block produced without data_root");
+    let (tx_bytes, blobs) = match evaporchain_da::block_da_2d::build_block_da_inputs(txs) {
+        Some(x) => x,
+        None => {
+            warn!("DA: tx serialization failed — block produced without data_root");
             return BlockDaOutputs {
                 data_root: None,
                 da_row_roots: vec![],
@@ -71,18 +71,6 @@ fn compute_block_da(txs: &[Transaction]) -> BlockDaOutputs {
             };
         }
     };
-    let blobs: Vec<NamespacedBlob> = txs
-        .iter()
-        .map(|tx| {
-            let (ns_id, data) = match tx {
-                Transaction::Blob(blob_tx) => (blob_tx.namespace_id, blob_tx.data.clone()),
-                _ => (0u64, serde_json::to_vec(tx).unwrap_or_default()),
-            };
-            let mut namespace = [0u8; 8];
-            namespace.copy_from_slice(&ns_id.to_be_bytes());
-            NamespacedBlob { namespace, data }
-        })
-        .collect();
     let da2d = BlockDA2D::new();
     match da2d.encode_block_with_blobs(&tx_bytes, &blobs) {
         Ok(package) => BlockDaOutputs {

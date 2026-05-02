@@ -592,7 +592,13 @@ enum TxExecResult {
     /// Transaction executed successfully.
     Success { gas_used: u64, fee: u64 },
     /// Transaction failed but fee is still charged.
-    Failed { fee: u64 },
+    Failed {
+        fee: u64,
+        /// Reason captured for the API tx-status surface.
+        /// `None` only on pre-flight aborts (overflow, missing balance for
+        /// fees) where we have no `ExecutionError` to clone.
+        error: Option<String>,
+    },
     /// Need to wait for another transaction (dependency on Estimate).
     #[allow(dead_code)]
     Blocked(u32),
@@ -617,7 +623,12 @@ fn execute_tx(
         };
         let total_tx_fee = match gas_fee.checked_add(extra_fee) {
             Some(v) => v,
-            None => return TxExecResult::Failed { fee: 0 },
+            None => {
+                return TxExecResult::Failed {
+                    fee: 0,
+                    error: Some("fee overflow".to_string()),
+                }
+            }
         };
 
         if let Some(sender_addr) = tx.sender() {
@@ -626,7 +637,12 @@ fn execute_tx(
                 Err(blocked) => return TxExecResult::Blocked(blocked),
             };
             if balance < total_tx_fee {
-                return TxExecResult::Failed { fee: 0 };
+                return TxExecResult::Failed {
+                    fee: 0,
+                    error: Some(format!(
+                        "insufficient balance for gas: {balance}/{total_tx_fee}"
+                    )),
+                };
             }
             let nonce = match view.read_nonce(sender_addr) {
                 Ok(n) => n,
@@ -634,7 +650,12 @@ fn execute_tx(
             };
             let new_balance = match balance.checked_sub(total_tx_fee) {
                 Some(v) => v,
-                None => return TxExecResult::Failed { fee: 0 },
+                None => {
+                    return TxExecResult::Failed {
+                        fee: 0,
+                        error: Some("balance underflow during fee deduction".to_string()),
+                    }
+                }
             };
             view.write_account(*sender_addr, new_balance, nonce, epoch);
         }
@@ -724,10 +745,13 @@ fn execute_tx(
             fee: tx_fee,
         },
         Err(TxViewError::Blocked(blocked_by)) => TxExecResult::Blocked(blocked_by),
-        Err(TxViewError::ExecutionError(_e)) => {
+        Err(TxViewError::ExecutionError(e)) => {
             // Revert execution writes but keep fee deduction
             view.revert_to_fee_checkpoint();
-            TxExecResult::Failed { fee: tx_fee }
+            TxExecResult::Failed {
+                fee: tx_fee,
+                error: Some(e.to_string()),
+            }
         }
     }
 }
@@ -792,11 +816,17 @@ fn exec_transfer(view: &mut TxView, tx: &TransferTx, epoch: Epoch) -> Result<(),
         return Err(ExecutionError::ZeroAmount.into());
     }
 
-    let is_faucet = tx.from == [0u8; 32];
+    // Mint-bypass: a transfer from the all-zeros address skips both
+    // nonce check (no source account exists) and nonce increment, and
+    // creates the recipient out of thin air. Used for legacy faucet
+    // and genesis-time minting paths. The canonical genesis faucet at
+    // FAUCET_ADDRESS = [0xFA; 32] does NOT use this bypass — it has a
+    // real balance and goes through the normal Transfer path.
+    let is_mint_bypass = tx.from == [0u8; 32];
     let sender_balance = view.read_balance(&tx.from).map_err(TxViewError::Blocked)?;
     let sender_nonce = view.read_nonce(&tx.from).map_err(TxViewError::Blocked)?;
 
-    if !is_faucet && sender_nonce != tx.nonce {
+    if !is_mint_bypass && sender_nonce != tx.nonce {
         return Err(ExecutionError::InvalidNonce {
             expected: sender_nonce,
             got: tx.nonce,
@@ -820,7 +850,7 @@ fn exec_transfer(view: &mut TxView, tx: &TransferTx, epoch: Epoch) -> Result<(),
             required: tx.amount,
         })
     })?;
-    let new_sender_nonce = if is_faucet {
+    let new_sender_nonce = if is_mint_bypass {
         sender_nonce
     } else {
         sender_nonce.checked_add(1).ok_or_else(|| {
@@ -1181,7 +1211,10 @@ impl BlockStmExecutor {
                         tx_idx,
                         Vec::new(),
                         Vec::new(),
-                        TxExecResult::Failed { fee: 0 },
+                        TxExecResult::Failed {
+                            fee: 0,
+                            error: Some("signature verification failed".to_string()),
+                        },
                     );
                 }
 
@@ -1195,7 +1228,10 @@ impl BlockStmExecutor {
                             tx_idx,
                             Vec::new(),
                             Vec::new(),
-                            TxExecResult::Failed { fee: 0 },
+                            TxExecResult::Failed {
+                                fee: 0,
+                                error: Some("blocked on wave 1 (no prior writes)".to_string()),
+                            },
                         )
                     }
                     _ => {
@@ -1290,7 +1326,10 @@ impl BlockStmExecutor {
                     && crate::parallel::ParallelExecutor::verify_tx_signature(true, tx, chain_id)
                         .is_err()
                 {
-                    results[tx_idx as usize] = Some(TxExecResult::Failed { fee: 0 });
+                    results[tx_idx as usize] = Some(TxExecResult::Failed {
+                        fee: 0,
+                        error: Some("signature verification failed".to_string()),
+                    });
                     continue;
                 }
 
@@ -1298,7 +1337,10 @@ impl BlockStmExecutor {
                 let result = execute_tx(&mut view, tx, epoch, fee_ctrl);
                 match result {
                     TxExecResult::Blocked(_) => {
-                        results[tx_idx as usize] = Some(TxExecResult::Failed { fee: 0 });
+                        results[tx_idx as usize] = Some(TxExecResult::Failed {
+                            fee: 0,
+                            error: Some("blocked after serial fallback".to_string()),
+                        });
                     }
                     _ => {
                         let (rs, wl) = view.flush_writes();
@@ -1327,7 +1369,10 @@ impl BlockStmExecutor {
                                 tx_idx,
                                 Vec::new(),
                                 Vec::new(),
-                                TxExecResult::Failed { fee: 0 },
+                                TxExecResult::Failed {
+                                    fee: 0,
+                                    error: Some("signature verification failed".to_string()),
+                                },
                             );
                         }
 
@@ -1339,7 +1384,10 @@ impl BlockStmExecutor {
                                 tx_idx,
                                 Vec::new(),
                                 Vec::new(),
-                                TxExecResult::Failed { fee: 0 },
+                                TxExecResult::Failed {
+                                    fee: 0,
+                                    error: Some("blocked after re-exec wave".to_string()),
+                                },
                             ),
                             _ => {
                                 let (rs, wl) = view.flush_writes();
@@ -1362,13 +1410,21 @@ impl BlockStmExecutor {
         let mut txs_executed = 0usize;
         let mut txs_failed = 0usize;
         let mut gas_exceeded_from: Option<u32> = None;
+        let mut tx_outcomes: Vec<crate::TxOutcome> = Vec::with_capacity(num_txs as usize);
 
         for i in 0..num_txs {
+            let tx_hash = parallel_txs[i as usize].tx_hash();
             // Check if this tx would exceed the block gas limit
             if gas_exceeded_from.is_some() {
                 // All remaining txs are over the limit — remove their writes
                 mv_memory.delete_writes(i, &write_locs[i as usize]);
                 txs_failed += 1;
+                tx_outcomes.push(crate::TxOutcome {
+                    tx_hash,
+                    success: false,
+                    error: Some("block gas limit exceeded".to_string()),
+                    gas_used: 0,
+                });
                 continue;
             }
 
@@ -1379,18 +1435,42 @@ impl BlockStmExecutor {
                         mv_memory.delete_writes(i, &write_locs[i as usize]);
                         gas_exceeded_from = Some(i);
                         txs_failed += 1;
+                        tx_outcomes.push(crate::TxOutcome {
+                            tx_hash,
+                            success: false,
+                            error: Some("block gas limit exceeded".to_string()),
+                            gas_used: 0,
+                        });
                     } else {
                         txs_executed += 1;
                         total_gas += gas_used;
                         total_fees += fee;
+                        tx_outcomes.push(crate::TxOutcome {
+                            tx_hash,
+                            success: true,
+                            error: None,
+                            gas_used,
+                        });
                     }
                 }
-                Some(TxExecResult::Failed { fee }) => {
+                Some(TxExecResult::Failed { fee, error }) => {
                     txs_failed += 1;
                     total_fees += fee;
+                    tx_outcomes.push(crate::TxOutcome {
+                        tx_hash,
+                        success: false,
+                        error: error.or_else(|| Some("execution failed".to_string())),
+                        gas_used: 0,
+                    });
                 }
                 _ => {
                     txs_failed += 1;
+                    tx_outcomes.push(crate::TxOutcome {
+                        tx_hash,
+                        success: false,
+                        error: Some("blocked / unknown".to_string()),
+                        gas_used: 0,
+                    });
                 }
             }
         }
@@ -1403,6 +1483,7 @@ impl BlockStmExecutor {
             gas_used: total_gas,
             total_fees,
             final_writes,
+            tx_outcomes,
         }
     }
 
@@ -1521,6 +1602,10 @@ struct ParallelResult {
     gas_used: u64,
     total_fees: u64,
     final_writes: FinalWrites,
+    /// Per-tx outcomes in `parallel_txs` order. The caller maps these
+    /// back to original block indices via `parallel_indices` so the
+    /// final outcomes vec mirrors `block.transactions`.
+    tx_outcomes: Vec<crate::TxOutcome>,
 }
 
 /// Materialized final writes from Block-STM execution.
@@ -1549,6 +1634,10 @@ impl ExecutionEngine for BlockStmExecutor {
 
         // ── Phase 1: Separate contract/script txs (must be serial) ──
         let mut parallel_txs: Vec<&Transaction> = Vec::new();
+        // Original block-tx index for each entry in `parallel_txs`, in
+        // matching order. Used to project per-tx outcomes back into
+        // block.transactions order at the end of execute_block.
+        let mut parallel_indices: Vec<usize> = Vec::new();
         let mut serial_txs: Vec<(usize, &Transaction)> = Vec::new();
 
         for (i, tx) in block.transactions.iter().enumerate() {
@@ -1563,7 +1652,10 @@ impl ExecutionEngine for BlockStmExecutor {
                 | Transaction::Deferred(_)
                 | Transaction::ValidatorExit(_)
                 | Transaction::ValidatorClaimStake(_) => serial_txs.push((i, tx)),
-                _ => parallel_txs.push(tx),
+                _ => {
+                    parallel_txs.push(tx);
+                    parallel_indices.push(i);
+                }
             }
         }
 
@@ -1590,15 +1682,36 @@ impl ExecutionEngine for BlockStmExecutor {
         let mut total_gas_used = par_result.gas_used;
         let mut total_fees = par_result.total_fees;
 
+        // Per-block-tx outcome buffer, keyed by original block index.
+        // Seeded from the parallel-phase outcomes (mapped through
+        // `parallel_indices`); the serial loop below appends its own.
+        let mut indexed_outcomes: Vec<(usize, crate::TxOutcome)> =
+            Vec::with_capacity(block.transactions.len());
+        for (i, outcome) in par_result.tx_outcomes.into_iter().enumerate() {
+            if let Some(&orig) = parallel_indices.get(i) {
+                indexed_outcomes.push((orig, outcome));
+            }
+        }
+
         // ── Phase 3: Execute serial txs (contract/script) ──
         let mut serial_call_depth: usize = 0;
         for &(idx, tx) in &serial_txs {
+            let tx_hash = tx.tx_hash();
             if self.verify_signatures {
                 if let Err(e) =
                     crate::parallel::ParallelExecutor::verify_tx_signature(true, tx, &self.chain_id)
                 {
                     debug!(tx_idx = idx, error = %e, "Serial: sig verification failed");
                     total_txs_failed += 1;
+                    indexed_outcomes.push((
+                        idx,
+                        crate::TxOutcome {
+                            tx_hash,
+                            success: false,
+                            error: Some(format!("signature: {e}")),
+                            gas_used: 0,
+                        },
+                    ));
                     continue;
                 }
             }
@@ -1606,6 +1719,15 @@ impl ExecutionEngine for BlockStmExecutor {
             let tx_gas = estimate_gas(tx);
             if self.block_gas_limit > 0 && total_gas_used + tx_gas > self.block_gas_limit {
                 total_txs_failed += 1;
+                indexed_outcomes.push((
+                    idx,
+                    crate::TxOutcome {
+                        tx_hash,
+                        success: false,
+                        error: Some("block gas limit exceeded".to_string()),
+                        gas_used: 0,
+                    },
+                ));
                 continue;
             }
 
@@ -1615,12 +1737,33 @@ impl ExecutionEngine for BlockStmExecutor {
                     let sender = db.get_or_create_account(sender_addr);
                     if sender.balance < total_tx_fee {
                         total_txs_failed += 1;
+                        indexed_outcomes.push((
+                            idx,
+                            crate::TxOutcome {
+                                tx_hash,
+                                success: false,
+                                error: Some(format!(
+                                    "insufficient balance for gas: {}/{}",
+                                    sender.balance, total_tx_fee
+                                )),
+                                gas_used: 0,
+                            },
+                        ));
                         continue;
                     }
                     sender.balance = match sender.balance.checked_sub(total_tx_fee) {
                         Some(v) => v,
                         None => {
                             total_txs_failed += 1;
+                            indexed_outcomes.push((
+                                idx,
+                                crate::TxOutcome {
+                                    tx_hash,
+                                    success: false,
+                                    error: Some("balance underflow".to_string()),
+                                    gas_used: 0,
+                                },
+                            ));
                             continue;
                         }
                     };
@@ -1837,11 +1980,29 @@ impl ExecutionEngine for BlockStmExecutor {
                     total_txs_executed += 1;
                     total_gas_used += tx_gas;
                     total_fees += tx_fee;
+                    indexed_outcomes.push((
+                        idx,
+                        crate::TxOutcome {
+                            tx_hash,
+                            success: true,
+                            error: None,
+                            gas_used: tx_gas,
+                        },
+                    ));
                 }
                 Err(e) => {
                     debug!(tx_idx = idx, error = %e, "Serial: tx failed");
                     total_txs_failed += 1;
                     total_fees += tx_fee;
+                    indexed_outcomes.push((
+                        idx,
+                        crate::TxOutcome {
+                            tx_hash,
+                            success: false,
+                            error: Some(e.to_string()),
+                            gas_used: tx_gas,
+                        },
+                    ));
                 }
             }
         }
@@ -1904,6 +2065,12 @@ impl ExecutionEngine for BlockStmExecutor {
             Some(mera_root)
         };
 
+        // Re-assemble outcomes in block-tx order (parallel + serial both
+        // tagged with original block index).
+        indexed_outcomes.sort_by_key(|(i, _)| *i);
+        let tx_outcomes: Vec<crate::TxOutcome> =
+            indexed_outcomes.into_iter().map(|(_, o)| o).collect();
+
         Ok(BlockExecutionResult {
             state_root,
             mmr_root: self.mmr.root(),
@@ -1922,6 +2089,7 @@ impl ExecutionEngine for BlockStmExecutor {
             // arm in `execute_tx_view`) so Block-STM never accumulates them.
             validator_key_rotations: Vec::new(),
             mera_commitment,
+            tx_outcomes,
         })
     }
 
@@ -1949,6 +2117,7 @@ impl BlockStmExecutor {
         let mut txs_failed = 0;
         let mut gas_used = 0u64;
         let mut total_fees = 0u64;
+        let mut tx_outcomes: Vec<crate::TxOutcome> = Vec::with_capacity(txs.len());
 
         // Helper closures to read from local overlay → base DB
         let get_balance =
@@ -1967,6 +2136,7 @@ impl BlockStmExecutor {
             };
 
         for tx in txs {
+            let tx_hash = tx.tx_hash();
             let tx_gas = estimate_gas(tx);
 
             // Fee deduction
@@ -1985,6 +2155,12 @@ impl BlockStmExecutor {
                     Some(v) => v,
                     None => {
                         txs_failed += 1;
+                        tx_outcomes.push(crate::TxOutcome {
+                            tx_hash,
+                            success: false,
+                            error: Some("fee overflow".to_string()),
+                            gas_used: 0,
+                        });
                         continue;
                     }
                 };
@@ -1992,6 +2168,14 @@ impl BlockStmExecutor {
                     let bal = get_balance(sender_addr, &accounts);
                     if bal < total_tx_fee {
                         txs_failed += 1;
+                        tx_outcomes.push(crate::TxOutcome {
+                            tx_hash,
+                            success: false,
+                            error: Some(format!(
+                                "insufficient balance for gas: {bal}/{total_tx_fee}"
+                            )),
+                            gas_used: 0,
+                        });
                         continue;
                     }
                     let nonce = get_nonce(sender_addr, &accounts);
@@ -1999,6 +2183,12 @@ impl BlockStmExecutor {
                         Some(v) => v,
                         None => {
                             txs_failed += 1;
+                            tx_outcomes.push(crate::TxOutcome {
+                                tx_hash,
+                                success: false,
+                                error: Some("balance underflow".to_string()),
+                                gas_used: 0,
+                            });
                             continue;
                         }
                     };
@@ -2176,9 +2366,21 @@ impl BlockStmExecutor {
                 txs_executed += 1;
                 gas_used += tx_gas;
                 total_fees += tx_fee;
+                tx_outcomes.push(crate::TxOutcome {
+                    tx_hash,
+                    success: true,
+                    error: None,
+                    gas_used: tx_gas,
+                });
             } else {
                 txs_failed += 1;
                 total_fees += tx_fee;
+                tx_outcomes.push(crate::TxOutcome {
+                    tx_hash,
+                    success: false,
+                    error: Some("execution failed".to_string()),
+                    gas_used: tx_gas,
+                });
             }
         }
 
@@ -2187,6 +2389,7 @@ impl BlockStmExecutor {
             txs_failed,
             gas_used,
             total_fees,
+            tx_outcomes,
             final_writes: FinalWrites {
                 accounts: accounts
                     .iter()

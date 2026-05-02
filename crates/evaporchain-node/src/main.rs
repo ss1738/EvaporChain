@@ -34,7 +34,6 @@ use evaporchain_crypto::signatures::{MlDsaKeypair, MlDsaVerifier, Signer, Verifi
 use evaporchain_da::block_da::{BlockDA, BlockDAPackage};
 use evaporchain_network::service::{cache_block, NetworkConfig, P2pNetworkService};
 use evaporchain_proving::chain_proof::ChainProver;
-#[cfg(any(test, feature = "test-utils", debug_assertions))]
 use evaporchain_proving::MockProver;
 use evaporchain_proving::ProvingEngine;
 use evaporchain_state::db::StateDB;
@@ -493,33 +492,29 @@ fn seed_demo_objects(db: &mut RocksDBStateDB, node_tag: &str) {
 /// Produce 2D erasure encoding with NMT blob commitments for a block.
 /// Populates `block.da_row_roots`, `block.da_col_roots`, and `block.blob_commitments`.
 /// Returns the full 2D package (for storage) and the data_root.
+///
+/// MUST mirror `evaporchain_consensus::compute_block_da` byte-for-byte: same
+/// input (transaction list serialized once), same blob construction (every
+/// tx becomes a blob, Blob txs use their namespace_id, everything else
+/// shares ns 0). Otherwise the 2D matrix served via `/api/da/header/:N` ends
+/// up with a `data_root` that disagrees with `block.data_root` (committed
+/// at production time), and light-client chain-attestation cross-checks
+/// reject every cell. The `_block_bytes` arg is kept for the call sites'
+/// convenience but intentionally unused — re-deriving from
+/// `block.transactions` is the only way to guarantee parity with consensus,
+/// because the calling sites pass `serde_json::to_vec(&block)` which
+/// includes locally-mutated fields (state_function_commitment,
+/// oracle_state_root, shard_count) that diverge per validator.
 fn encode_block_2d(
     block: &mut evaporchain_types::Block,
-    block_bytes: &[u8],
+    _block_bytes: &[u8],
 ) -> Option<(evaporchain_da::block_da_2d::BlockDA2DPackage, [u8; 32])> {
-    use evaporchain_da::block_da_2d::{namespace_for_tx_type, BlockDA2D};
-    use evaporchain_da::namespace::NamespacedBlob;
+    use evaporchain_da::block_da_2d::{build_block_da_inputs, BlockDA2D};
+
+    let (tx_bytes, blobs) = build_block_da_inputs(&block.transactions)?;
 
     let da2d = BlockDA2D::new();
-
-    let blobs: Vec<NamespacedBlob> = block
-        .transactions
-        .iter()
-        .filter_map(|tx| {
-            let (ns_type, data) = match tx {
-                Transaction::Transfer(t) => ("transfer", serde_json::to_vec(t).ok()?),
-                Transaction::CreateObject(t) => ("create_object", serde_json::to_vec(t).ok()?),
-                Transaction::Refresh(t) => ("refresh", serde_json::to_vec(t).ok()?),
-                _ => return None,
-            };
-            Some(NamespacedBlob {
-                namespace: namespace_for_tx_type(ns_type),
-                data,
-            })
-        })
-        .collect();
-
-    match da2d.encode_block_with_blobs(block_bytes, &blobs) {
+    match da2d.encode_block_with_blobs(&tx_bytes, &blobs) {
         Ok(package) => {
             block.da_row_roots = package.header.row_roots.clone();
             block.da_col_roots = package.header.col_roots.clone();
@@ -1333,6 +1328,11 @@ fn validate_mainnet_strict(args: &NodeArgs) -> Result<(), String> {
             "--mock-consensus is incompatible with --mainnet (Tendermint BFT required)".into(),
         );
     }
+    if args.mock_prove_mode {
+        issues.push(
+            "--mock-prove is incompatible with --mainnet (proofs would not be cryptographically verified)".into(),
+        );
+    }
     if args.demo_mode {
         issues.push("--demo generates synthetic txs and is incompatible with --mainnet".into());
     }
@@ -1576,7 +1576,7 @@ fn record_block(
         gas_used: execution.gas_used,
         base_fee: execution.base_fee,
         total_fees: execution.total_fees,
-        transactions: api::tx_records_from_block(block),
+        transactions: api::tx_records_from_block_with_outcomes(block, &execution.tx_outcomes),
         has_nova_proof: block.nova_proof.is_some(),
         nova_proof_size: block.nova_proof.as_ref().map_or(0, |p| p.len()),
         data_root: block.data_root.map(hex::encode),
@@ -1609,6 +1609,14 @@ fn record_block(
         stats.total_refreshed += tx_refreshes;
         stats.total_evaporated += execution.objects_evaporated as u64;
         stats.total_transactions += block.transactions.len() as u64;
+        // Per-tx outcomes drive the failed bucket on
+        // /metrics::evap_finalised_txs_total{result="failed"}.
+        let rejected_in_block = execution
+            .tx_outcomes
+            .iter()
+            .filter(|o| !o.success)
+            .count() as u64;
+        stats.total_rejected_transactions += rejected_in_block;
 
         // Compute total energy across active objects (approximate from active count * avg)
         // We store per-epoch snapshot for the timeline chart
@@ -2356,24 +2364,13 @@ async fn main() -> Result<()> {
     } else {
         if args.mock_prove_mode {
             eprintln!(
-                "\x1b[33m⚠ WARNING: --mock-prove active. Proofs are NOT cryptographically verified.\x1b[0m"
+                "\x1b[33m⚠ --mock-prove active. Proofs are NOT cryptographically verified. This is acceptable for testnet/devnet. For production, use --prove.\x1b[0m"
             );
-            eprintln!(
-                "\x1b[33m  This is acceptable for testnet/devnet. For production, use --prove.\x1b[0m"
-            );
-            #[cfg(any(test, feature = "test-utils", debug_assertions))]
-            {
-                Arc::new(Mutex::new(ChainProver::new(
-                    Box::new(MockProver::new()) as Box<dyn ProvingEngine>,
-                    genesis_state_root,
-                    100,
-                )))
-            }
-            #[cfg(not(any(test, feature = "test-utils", debug_assertions)))]
-            {
-                eprintln!("\x1b[31mFATAL: --mock-prove requires debug build or test-utils feature.\x1b[0m");
-                std::process::exit(1);
-            }
+            Arc::new(Mutex::new(ChainProver::new(
+                Box::new(MockProver::new()) as Box<dyn ProvingEngine>,
+                genesis_state_root,
+                100,
+            )))
         } else {
             #[cfg(not(any(test, feature = "test-utils", debug_assertions)))]
             {
@@ -2439,6 +2436,8 @@ async fn main() -> Result<()> {
             max_inbound_connections: 200,
             peer_ban_duration_secs: 3_600,
             ban_list_path: Some(ban_list_path),
+            chain_id: args.chain_id.clone(),
+            enable_mdns: false,
         };
         println!(
             "{} \x1b[1;33mNetwork mode active\x1b[0m — listening on port {}, {} bootstrap peer(s)",
@@ -5048,6 +5047,78 @@ async fn main() -> Result<()> {
                                         obj_count, ghost_count,
                                         &result.execution.state_root, peers,
                                     );
+                                    // Gossip-path commit: every node — including the
+                                    // proposer's own loop after broadcasting CommitBlock —
+                                    // funnels through here. Without this branch the
+                                    // FinalityTracker only advances on the local Decide
+                                    // arm (line 4504), which fires for at most one block
+                                    // per height and never on followers, leaving
+                                    // finalised=0 across the cluster.
+                                    if let Some(ref cert) = block.commit_certificate {
+                                        let (signing_stake, total_stake) = {
+                                            let tc = safe_lock(tc_ref);
+                                            let vs = tc.validator_set();
+                                            let signing: u64 = cert.signer_ids.iter()
+                                                .filter_map(|&id| vs.get(id))
+                                                .map(|v| v.stake)
+                                                .sum();
+                                            (signing, vs.total_stake())
+                                        };
+                                        {
+                                            let mut ft = safe_lock(&finality_tracker);
+                                            let now = std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .unwrap_or_default()
+                                                .as_secs();
+                                            ft.on_block_finalized(
+                                                block.number,
+                                                cert.block_hash,
+                                                result.execution.state_root,
+                                                block.epoch,
+                                                cert.clone(),
+                                                signing_stake,
+                                                total_stake,
+                                                now,
+                                            );
+                                        }
+                                        {
+                                            let vs = {
+                                                let tc = safe_lock(tc_ref);
+                                                tc.validator_set().clone()
+                                            };
+                                            let now = std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .unwrap_or_default()
+                                                .as_secs();
+                                            let lbh = LightBlockHeader {
+                                                height: block.number,
+                                                epoch: block.epoch,
+                                                block_hash: cert.block_hash,
+                                                parent_hash: block.parent_hash,
+                                                state_root: result.execution.state_root,
+                                                timestamp: now,
+                                                validator_set: vs,
+                                                commit_certificate: cert.clone(),
+                                            };
+                                            let mut lc = safe_lock(&light_client);
+                                            lc.verify(&lbh, now);
+                                        }
+                                        println!(
+                                            "{}   \x1b[1;36mBLS CommitCertificate (gossip): {} signers, agg_sig={}B, stake={}/{}({:.0}%)\x1b[0m",
+                                            node_tag, cert.signer_ids.len(), cert.aggregate_signature.len(),
+                                            signing_stake, total_stake,
+                                            if total_stake > 0 { signing_stake as f64 / total_stake as f64 * 100.0 } else { 0.0 },
+                                        );
+                                    } else {
+                                        let (precommit_count, sigs_count) = {
+                                            let tc = safe_lock(tc_ref);
+                                            tc.precommit_diagnostics()
+                                        };
+                                        eprintln!(
+                                            "{} \x1b[1;33m⚠ COMMITTED #{} (gossip) without BLS CommitCertificate — finality cannot advance (precommits={}, sigs={})\x1b[0m",
+                                            node_tag, block.number, precommit_count, sigs_count
+                                        );
+                                    }
                                 }
                                 Err(e) => {
                                     safe_lock(&db).rollback_batch();
@@ -5501,7 +5572,7 @@ async fn main() -> Result<()> {
                                             gas_used: result.execution.gas_used,
                                             base_fee: result.execution.base_fee,
                                             total_fees: result.execution.total_fees,
-                                            transactions: api::tx_records_from_block(block),
+                                            transactions: api::tx_records_from_block_with_outcomes(block, &result.execution.tx_outcomes),
                                             has_nova_proof: block.nova_proof.is_some(),
                                             nova_proof_size: block.nova_proof.as_ref().map_or(0, |p| p.len()),
                                             data_root: block.data_root.map(hex::encode),
@@ -5535,6 +5606,12 @@ async fn main() -> Result<()> {
                                         stats.total_refreshed += tx_refreshes;
                                         stats.total_evaporated += result.execution.objects_evaporated as u64;
                                         stats.total_transactions += block.transactions.len() as u64;
+                                        stats.total_rejected_transactions += result
+                                            .execution
+                                            .tx_outcomes
+                                            .iter()
+                                            .filter(|o| !o.success)
+                                            .count() as u64;
                                         stats.state_size_trend.push(api::EpochSnapshot {
                                             epoch: block.epoch,
                                             active_count: obj_count,
@@ -5673,6 +5750,12 @@ async fn main() -> Result<()> {
                                         stats.total_refreshed += tx_refreshes;
                                         stats.total_evaporated += result.execution.objects_evaporated as u64;
                                         stats.total_transactions += queued.transactions.len() as u64;
+                                        stats.total_rejected_transactions += result
+                                            .execution
+                                            .tx_outcomes
+                                            .iter()
+                                            .filter(|o| !o.success)
+                                            .count() as u64;
                                         stats.state_size_trend.push(api::EpochSnapshot {
                                             epoch: queued.epoch,
                                             active_count: obj_count,
