@@ -1286,6 +1286,21 @@ fn validate_genesis_coordinator_signature(
     if mainnet_strict {
         let baked = hex::decode(MAINNET_COORDINATOR_PK.trim_start_matches("0x"))
             .map_err(|e| format!("MAINNET_COORDINATOR_PK constant invalid hex: {e}"))?;
+        // H9 (audit 2026-05-02): baked-in MAINNET_COORDINATOR_PK is a
+        // 64-zero placeholder until the real ceremony PK is dropped in
+        // before launch. If we reach this branch with the placeholder,
+        // ANY all-zero coordinator_pk in genesis would compare-equal
+        // and pass — that's a footgun (a leaked all-zero key would
+        // sign valid genesis configs). Refuse upfront.
+        if baked.iter().all(|&b| b == 0) {
+            return Err(
+                "--mainnet refuses to start: MAINNET_COORDINATOR_PK is still the \
+                 64-zero placeholder. Replace the constant in evaporchain-node/src/main.rs \
+                 with the real ML-DSA-65 public key produced by the genesis ceremony \
+                 before any mainnet launch."
+                    .into(),
+            );
+        }
         if claimed_pk != baked {
             return Err(format!(
                 "--mainnet rejects genesis: coordinator_pk in genesis ({} bytes) does not \
@@ -2436,8 +2451,6 @@ async fn main() -> Result<()> {
             max_inbound_connections: 200,
             peer_ban_duration_secs: 3_600,
             ban_list_path: Some(ban_list_path),
-            chain_id: args.chain_id.clone(),
-            enable_mdns: false,
         };
         println!(
             "{} \x1b[1;33mNetwork mode active\x1b[0m — listening on port {}, {} bootstrap peer(s)",
