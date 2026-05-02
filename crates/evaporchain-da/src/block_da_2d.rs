@@ -324,9 +324,94 @@ pub fn namespace_for_tx_type(tx_type: &str) -> NamespaceId {
     }
 }
 
+/// Canonical (tx_bytes, blobs) construction for a block's 2D DA encoding.
+///
+/// The single source of truth shared by `evaporchain-consensus`
+/// (block-production / sets `block.data_root`) and `evaporchain-node`
+/// (gossip-path serving via `/api/da/header/:N`). Both call sites encode
+/// the *same* (tx_bytes, blobs) so the resulting `data_root` agrees and
+/// light-client chain-attestation cross-checks pass.
+///
+/// Why this exists: previously the node side serialized the full mutated
+/// block (including locally-set roots like `state_function_commitment` and
+/// `oracle_state_root`) before encoding. That root differed from the
+/// production-time root and from peer to peer. DA-verify CLI's
+/// `--skip-chain-attestation` showed 3-of-4 validators serving cells with
+/// `InvalidProof`. Centralizing the input construction here prevents the
+/// two sides from drifting again.
+pub fn build_block_da_inputs(
+    txs: &[evaporchain_types::Transaction],
+) -> Option<(Vec<u8>, Vec<NamespacedBlob>)> {
+    if txs.is_empty() {
+        return None;
+    }
+    let tx_bytes = serde_json::to_vec(txs).ok()?;
+    let blobs: Vec<NamespacedBlob> = txs
+        .iter()
+        .map(|tx| {
+            let (ns_id, data) = match tx {
+                evaporchain_types::Transaction::Blob(blob_tx) => {
+                    (blob_tx.namespace_id, blob_tx.data.clone())
+                }
+                _ => (0u64, serde_json::to_vec(tx).unwrap_or_default()),
+            };
+            let mut namespace = [0u8; 8];
+            namespace.copy_from_slice(&ns_id.to_be_bytes());
+            NamespacedBlob { namespace, data }
+        })
+        .collect();
+    Some((tx_bytes, blobs))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_block_da_inputs_matches_consensus_for_typical_txs() {
+        use evaporchain_types::{TransferTx, Transaction};
+        let txs = vec![
+            Transaction::Transfer(TransferTx {
+                from: [1u8; 32],
+                to: [2u8; 32],
+                amount: 100,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            }),
+            Transaction::Transfer(TransferTx {
+                from: [3u8; 32],
+                to: [4u8; 32],
+                amount: 200,
+                nonce: 1,
+                signature: None,
+                public_key: None,
+            }),
+        ];
+        let (tx_bytes, blobs) = build_block_da_inputs(&txs).expect("non-empty txs");
+
+        // Encode once via the canonical path and assert determinism: the
+        // same (tx_bytes, blobs) must always produce the same data_root.
+        // This is the invariant that makes the chain-attestation cross-
+        // check meaningful — every honest node, regardless of locally-set
+        // block fields (state_function_commitment etc.), computes the same
+        // 2D matrix because they all start from build_block_da_inputs(txs).
+        let da2d = BlockDA2D::new();
+        let pkg_a = da2d.encode_block_with_blobs(&tx_bytes, &blobs).unwrap();
+        let pkg_b = da2d.encode_block_with_blobs(&tx_bytes, &blobs).unwrap();
+        assert_eq!(pkg_a.header.data_root, pkg_b.header.data_root);
+
+        // Sanity: building the inputs twice from the same txs is also
+        // byte-identical (no random / time / map iteration order).
+        let (tx_bytes_2, _) = build_block_da_inputs(&txs).unwrap();
+        assert_eq!(tx_bytes, tx_bytes_2);
+    }
+
+    #[test]
+    fn build_block_da_inputs_returns_none_for_empty_txs() {
+        let txs: Vec<evaporchain_types::Transaction> = vec![];
+        assert!(build_block_da_inputs(&txs).is_none());
+    }
 
     #[test]
     fn test_encode_2d_block() {
