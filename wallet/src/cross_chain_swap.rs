@@ -211,7 +211,12 @@ impl CrossChainManager {
             status: SwapStatus::Pending,
             hashlock,
             timelock_expiry,
-            created_at: now.to_rfc3339(),
+            // RFC3339 only resolves to microseconds; three swaps initiated
+            // in the same microsecond would collide on `created_at` and
+            // swap_history's sort would return an unstable order. Append
+            // the per-process counter `n` so the string is unique across
+            // calls within the same instant. Sort stays lexicographic.
+            created_at: format!("{}#{:020}", now.to_rfc3339(), n),
             completed_at: None,
             source_tx: None,
             dest_tx: None,
