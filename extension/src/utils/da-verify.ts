@@ -11,7 +11,7 @@
 // (sibling ‖ current)). Bug-for-bug parity is what makes "the wallet
 // rejects a block iff a Rust node's verifier would" hold.
 
-import { blake3 } from "@noble/hashes/blake3.js";
+import { blake3 } from "@noble/hashes/blake3";
 
 // ── Types matching the chain's API surface ─────────────────────────
 
