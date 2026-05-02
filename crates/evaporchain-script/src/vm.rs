@@ -71,6 +71,14 @@ pub struct EvaporVM {
     step_count: u64,
     /// Running total of heap bytes allocated (strings, arrays, maps).
     memory_used: usize,
+    /// M6 (audit 2026-05-02): true while the VM is executing one of
+    /// the lifecycle-hook methods (`on_grace`, `on_refresh`,
+    /// `on_evaporate`). When set, `Op::CallExternal` is rejected — a
+    /// hook making cross-contract calls invites re-entrant lifecycle
+    /// invocations which can race-mutate the same contract's state
+    /// (e.g. a refresh hook bumping a counter while a callee triggers
+    /// another refresh on the same object).
+    in_lifecycle_hook: bool,
 }
 
 impl EvaporVM {
@@ -85,7 +93,15 @@ impl EvaporVM {
             gas_limit,
             step_count: 0,
             memory_used: 0,
+            in_lifecycle_hook: false,
         }
+    }
+
+    /// Returns true if `method` is one of the structurally-special
+    /// lifecycle hooks. Hooks run with `Op::CallExternal` disabled
+    /// (M6: re-entrancy guard).
+    fn is_lifecycle_hook(method: &str) -> bool {
+        matches!(method, "on_grace" | "on_refresh" | "on_evaporate")
     }
 
     fn track_memory(&mut self, bytes: usize) -> Result<(), ScriptError> {
@@ -504,6 +520,17 @@ impl EvaporVM {
                 }
 
                 Op::MapGet(field) => {
+                    // H10 (audit 2026-05-02): considered returning
+                    // `Value::Null` for missing keys but reverted —
+                    // EvaporScript contracts idiomatically use
+                    // `self.map[k] += amount`, which the compiler
+                    // lowers to `MapGet; Push amount; Add; MapSet`. A
+                    // Null here breaks `Add` with a numeric op2. The
+                    // audit finding is filed as a *language-design*
+                    // choice (Solidity-like default-zero), not a
+                    // VM-level bug. Contracts that need to detect
+                    // missing-vs-zero must compare with a sentinel or
+                    // use a separate presence map.
                     self.charge_gas(GAS_MAP_GET)?;
                     let key = self.pop()?;
                     let val = match self.state.get(field) {
@@ -530,6 +557,23 @@ impl EvaporVM {
                     self.charge_gas(GAS_MAP_SET)?;
                     let val = self.pop()?;
                     let key = self.pop()?;
+
+                    // M9 (audit 2026-05-02): if the field already holds a
+                    // non-Map / non-Array value (e.g. U64 from earlier
+                    // initialization), the previous code silently
+                    // replaced it with `Value::Map(...)`, losing data
+                    // and converting types behind the contract's back.
+                    // Reject the set instead — type changes must be
+                    // explicit.
+                    match self.state.get(field.as_str()) {
+                        Some(Value::Map(_)) | Some(Value::Array(_)) | None => {}
+                        Some(_) => {
+                            return Err(ScriptError::Runtime(format!(
+                                "MapSet on field '{field}' which is not a Map or Array — \
+                                 refuse to silently coerce; declare the field as a map at deploy"
+                            )));
+                        }
+                    }
 
                     // Check if this is a new map entry — track memory before borrowing state
                     let is_new_entry = match self.state.get(field.as_str()) {
@@ -704,6 +748,20 @@ impl EvaporVM {
 
                 Op::CallExternal { arg_count } => {
                     self.charge_gas(GAS_CALL_EXTERNAL)?;
+                    // M6 (audit 2026-05-02): refuse cross-contract
+                    // calls inside a lifecycle hook. The hook runs
+                    // synchronously while the chain is mutating the
+                    // owning object's state; allowing CallExternal
+                    // here lets a callee (or its own lifecycle) trip
+                    // back into this same object before the original
+                    // mutation lands.
+                    if self.in_lifecycle_hook {
+                        return Err(ScriptError::Runtime(
+                            "cross-contract calls are forbidden inside lifecycle hooks \
+                             (on_grace / on_refresh / on_evaporate)"
+                                .into(),
+                        ));
+                    }
                     if ctx.call_depth >= MAX_CALL_DEPTH {
                         return Err(ScriptError::Runtime(format!(
                             "cross-contract call depth exceeded (max {})",
@@ -953,6 +1011,12 @@ impl EvaporVM {
         mut external: Option<&mut dyn ExternalCaller>,
     ) -> Result<ScriptCallResult, ScriptError> {
         let mut vm = Self::new(state, gas_limit);
+        // M6 (audit 2026-05-02): mark hook entry so `Op::CallExternal`
+        // will refuse to dispatch — closes the lifecycle re-entrancy
+        // window where `on_grace`/`on_refresh`/`on_evaporate` could
+        // make cross-contract calls that recursed back into another
+        // hook on the same object.
+        vm.in_lifecycle_hook = Self::is_lifecycle_hook(method);
         let return_value = vm.execute_method(bytecode, method, args, ctx, &mut external)?;
 
         Ok(ScriptCallResult {

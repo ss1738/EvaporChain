@@ -420,6 +420,13 @@ pub struct TendermintConsensus {
     /// signed can't have either of their forks selected. Both the
     /// original and conflicting hash get inserted at slash time.
     slashed_equivocator_blocks: HashSet<[u8; 32]>,
+    /// Verification-track (re-audit 2026-05-02): suppress duplicate
+    /// P2-04 ("refusing to commit — DA attestation supermajority not
+    /// reached") warnings. The consensus tick fires every 100ms; if
+    /// a height stalls on DA we'd previously emit 10 identical lines
+    /// per second per node. Track the last warned (height, round)
+    /// so we log only once per (height, round) combination.
+    p2_04_last_warned: Option<(u64, u32)>,
     /// Tracks consecutive missed proposals per validator.
     /// Reset to 0 when the validator successfully produces a block.
     missed_proposals: HashMap<u64, u64>,
@@ -612,6 +619,7 @@ impl TendermintConsensus {
             committed_heights: HashSet::new(),
             proposals_seen: HashMap::new(),
             slashed_equivocator_blocks: HashSet::new(),
+            p2_04_last_warned: None,
             missed_proposals: HashMap::new(),
             missed_votes: HashMap::new(),
             weak_subjectivity_checkpoints: Vec::new(),
@@ -1384,6 +1392,7 @@ impl TendermintConsensus {
             committed_heights: HashSet::new(),
             proposals_seen: HashMap::new(),
             slashed_equivocator_blocks: HashSet::new(),
+            p2_04_last_warned: None,
             missed_proposals: HashMap::new(),
             missed_votes: HashMap::new(),
             weak_subjectivity_checkpoints: Vec::new(),
@@ -2143,10 +2152,18 @@ impl TendermintConsensus {
                                 && block.data_root.is_some()
                                 && !self.has_da_supermajority(block.number)
                             {
-                                warn!(
-                                    height = block.number,
-                                    "P2-04: refusing to commit — DA attestation supermajority not reached"
-                                );
+                                // Suppress duplicate warnings — only emit
+                                // once per (height, round). Without this,
+                                // a DA-stalled height generates 10
+                                // warns/sec via the 100ms tick.
+                                let key = (block.number, self.round_state.round);
+                                if self.p2_04_last_warned != Some(key) {
+                                    self.p2_04_last_warned = Some(key);
+                                    warn!(
+                                        height = block.number,
+                                        "P2-04: refusing to commit — DA attestation supermajority not reached"
+                                    );
+                                }
                                 // No RequestSync here — we have the right
                                 // block, we just need to wait one more
                                 // attestation gossip.
@@ -2973,10 +2990,14 @@ impl TendermintConsensus {
                                     && block.data_root.is_some()
                                     && !self.has_da_supermajority(block.number)
                                 {
-                                    warn!(
-                                        height = block.number,
-                                        "P2-04: refusing to commit — DA attestation supermajority not reached (msg path)"
-                                    );
+                                    let key = (block.number, self.round_state.round);
+                                    if self.p2_04_last_warned != Some(key) {
+                                        self.p2_04_last_warned = Some(key);
+                                        warn!(
+                                            height = block.number,
+                                            "P2-04: refusing to commit — DA attestation supermajority not reached (msg path)"
+                                        );
+                                    }
                                     // Keep proposed_block so the next tick
                                     // can retry once the missing DA
                                     // attestation gossip arrives.
@@ -4321,6 +4342,17 @@ impl TendermintConsensus {
         // halts the chain. See `small_cluster_da_mode` field doc.
         let exclude_proposer = !self.small_cluster_da_mode;
         let proposer = self.da_block_proposers.get(&block_number).copied();
+        // Re-audit (2026-05-02) Cons-DA: when proposer-exclusion is
+        // expected (n>3 cluster) but the proposer cache is missing
+        // for this block, fail CLOSED. The previous behaviour failed
+        // open — a missing proposer entry let `Some(_) != None`
+        // succeed for every attestation, including the proposer's
+        // own self-attestation, over-counting toward supermajority.
+        // Refusing here forces the caller to retry once the proposer
+        // record is populated; safer than silent over-count.
+        if exclude_proposer && proposer.is_none() {
+            return false;
+        }
         let attesters: Vec<u64> = match self.da_attestations.get(&block_number) {
             Some(atts) => atts
                 .iter()

@@ -1015,8 +1015,16 @@ struct NodeArgs {
     /// Mainnet strict mode — refuses any insecure default at startup.
     mainnet_strict: bool,
     /// Disable the faucet per-address cooldown (for stress/load testing).
-    /// Refused by --mainnet strict mode.
-    devnet_no_rate_limit: bool,
+    /// Set by EITHER `--devnet-no-rate-limit` (legacy) or
+    /// `--faucet-rate-limit-disabled` (alias added 2026-04-30 alongside
+    /// the (IP, full-addr) rate-limit key shape). Refused by --mainnet
+    /// strict mode regardless of which flag triggered it.
+    /// Wired into `ApiState.faucet_rate_limit_disabled`.
+    faucet_rate_limit_disabled: bool,
+    /// Override the faucet cooldown window in seconds. Defaults to
+    /// `api::FAUCET_RATE_LIMIT_SECS` (3600). 0 effectively disables the
+    /// cooldown without disabling the bookkeeping.
+    faucet_rate_limit_secs: u64,
     /// Periodic SnapshotFile interval, in blocks. Defaults to 10_000.
     /// 0 disables periodic snapshots.
     snapshot_interval: u64,
@@ -1081,6 +1089,17 @@ fn parse_args() -> NodeArgs {
     let tendermint_mode = !mock_consensus;
     let mainnet_strict = args.iter().any(|a| a == "--mainnet");
     let devnet_no_rate_limit = args.iter().any(|a| a == "--devnet-no-rate-limit");
+    // 2026-04-30: alias for --devnet-no-rate-limit so harnesses can opt
+    // out of the per-(IP, address) faucet cooldown by name. Either flag
+    // sets the same disable bit on `ApiState.faucet_rate_limit_disabled`.
+    let faucet_rate_limit_disabled =
+        devnet_no_rate_limit || args.iter().any(|a| a == "--faucet-rate-limit-disabled");
+    let faucet_rate_limit_secs = args
+        .iter()
+        .position(|a| a == "--faucet-rate-limit-secs")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(api::FAUCET_RATE_LIMIT_SECS);
     let validator_id = args
         .iter()
         .position(|a| a == "--validator-id")
@@ -1225,7 +1244,8 @@ fn parse_args() -> NodeArgs {
         chain_id,
         light_mode,
         mainnet_strict,
-        devnet_no_rate_limit,
+        faucet_rate_limit_disabled,
+        faucet_rate_limit_secs,
         snapshot_interval,
         snapshot_keep,
         snapshot_dir,
@@ -1356,9 +1376,13 @@ fn validate_mainnet_strict(args: &NodeArgs) -> Result<(), String> {
             "--no-da-enforcement bypasses DA attestation and is incompatible with --mainnet".into(),
         );
     }
-    if args.devnet_no_rate_limit {
+    if args.faucet_rate_limit_disabled {
+        // Covers both --devnet-no-rate-limit and the new
+        // --faucet-rate-limit-disabled alias; either disables the cooldown
+        // and is therefore incompatible with mainnet strict mode.
         issues.push(
-            "--devnet-no-rate-limit disables faucet cooldowns and is incompatible with --mainnet"
+            "--devnet-no-rate-limit / --faucet-rate-limit-disabled disables faucet cooldowns \
+             and is incompatible with --mainnet"
                 .into(),
         );
     }
@@ -2169,10 +2193,16 @@ async fn main() -> Result<()> {
             node_tag
         );
     }
-    if args.devnet_no_rate_limit {
+    if args.faucet_rate_limit_disabled {
         println!(
-            "{} \x1b[1;33m--devnet-no-rate-limit ACTIVE\x1b[0m — faucet cooldowns disabled (load-test only)",
+            "{} \x1b[1;33mFAUCET RATE LIMIT DISABLED\x1b[0m — faucet cooldowns OFF \
+             (load-test only; via --devnet-no-rate-limit / --faucet-rate-limit-disabled)",
             node_tag
+        );
+    } else if args.faucet_rate_limit_secs != api::FAUCET_RATE_LIMIT_SECS {
+        println!(
+            "{} \x1b[1;36mFaucet cooldown overridden:\x1b[0m {}s (default {}s)",
+            node_tag, args.faucet_rate_limit_secs, api::FAUCET_RATE_LIMIT_SECS
         );
     }
 
@@ -3332,7 +3362,8 @@ async fn main() -> Result<()> {
             prove_mode: args.prove_mode,
             start_time,
             faucet_rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
-            faucet_rate_limit_disabled: args.devnet_no_rate_limit,
+            faucet_rate_limit_disabled: args.faucet_rate_limit_disabled,
+            faucet_rate_limit_secs: args.faucet_rate_limit_secs,
             pending_nonces: std::sync::Mutex::new(std::collections::HashMap::new()),
             nft_store,
             token_store,

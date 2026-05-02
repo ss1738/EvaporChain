@@ -79,6 +79,19 @@ struct SubscriptionFilter {
     contract_events: bool,
 }
 
+/// All topic names recognised by the WebSocket subscribe parser. A
+/// subscribe param containing any other token is logged as a typo so
+/// clients aren't silently filtered to nothing — see Network/N10
+/// (re-audit 2026-05-02).
+const KNOWN_WS_TOPICS: &[&str] = &[
+    "blocks",
+    "transactions",
+    "evaporations",
+    "events",
+    "peers",
+    "contract_events",
+];
+
 impl SubscriptionFilter {
     fn from_param(param: &Option<String>) -> Self {
         match param {
@@ -86,6 +99,15 @@ impl SubscriptionFilter {
             Some(s) if s == "all" => Self::all(),
             Some(s) => {
                 let topics: Vec<&str> = s.split(',').map(|t| t.trim()).collect();
+                for t in &topics {
+                    if !t.is_empty() && !KNOWN_WS_TOPICS.contains(t) {
+                        warn!(
+                            "WebSocket subscribe: unknown topic '{}' (known: {}). Client will receive nothing for that token.",
+                            t,
+                            KNOWN_WS_TOPICS.join(",")
+                        );
+                    }
+                }
                 Self {
                     blocks: topics.contains(&"blocks"),
                     transactions: topics.contains(&"transactions"),
@@ -123,14 +145,26 @@ impl SubscriptionFilter {
 
 // ──────────────────────────── Broadcaster ───────────────────────────────
 
+/// M11 (audit 2026-05-02): cap concurrent WebSocket subscribers globally.
+/// Without this an attacker can open thousands of sockets, each spawning
+/// a tokio task and consuming a `broadcast::Receiver` slot. Default is
+/// 4096 subscribers — far above legitimate UI / wallet load, well below
+/// kernel FD limits. Override via `WsBroadcaster::new_with_cap`.
+pub const DEFAULT_MAX_WS_SUBSCRIBERS: usize = 4096;
+
 pub struct WsBroadcaster {
     tx: broadcast::Sender<WsEvent>,
+    max_subscribers: usize,
 }
 
 impl WsBroadcaster {
     pub fn new(capacity: usize) -> Self {
+        Self::new_with_cap(capacity, DEFAULT_MAX_WS_SUBSCRIBERS)
+    }
+
+    pub fn new_with_cap(capacity: usize, max_subscribers: usize) -> Self {
         let (tx, _) = broadcast::channel(capacity);
-        Self { tx }
+        Self { tx, max_subscribers }
     }
 
     pub fn publish(&self, event: WsEvent) {
@@ -141,8 +175,19 @@ impl WsBroadcaster {
         self.tx.subscribe()
     }
 
+    pub fn try_subscribe(&self) -> Option<broadcast::Receiver<WsEvent>> {
+        if self.tx.receiver_count() >= self.max_subscribers {
+            return None;
+        }
+        Some(self.tx.subscribe())
+    }
+
     pub fn subscriber_count(&self) -> usize {
         self.tx.receiver_count()
+    }
+
+    pub fn max_subscribers(&self) -> usize {
+        self.max_subscribers
     }
 }
 
@@ -159,7 +204,26 @@ pub async fn handle_ws_connection(
 
 async fn handle_ws(socket: WebSocket, broadcaster: Arc<WsBroadcaster>, filter: SubscriptionFilter) {
     let (mut sender, mut receiver) = socket.split();
-    let mut rx = broadcaster.subscribe();
+
+    // M11 (audit 2026-05-02): refuse new subscribers past the cap so a
+    // socket-flood attack can't exhaust task / receiver slots.
+    let mut rx = match broadcaster.try_subscribe() {
+        Some(rx) => rx,
+        None => {
+            let busy = serde_json::json!({
+                "type": "error",
+                "message": format!(
+                    "WebSocket subscriber cap reached ({}); try again later",
+                    broadcaster.max_subscribers()
+                ),
+            });
+            let _ = sender
+                .send(Message::Text(serde_json::to_string(&busy).unwrap()))
+                .await;
+            let _ = sender.close().await;
+            return;
+        }
+    };
 
     let welcome = serde_json::json!({
         "type": "connected",

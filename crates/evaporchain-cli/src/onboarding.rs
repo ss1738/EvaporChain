@@ -111,10 +111,14 @@ fn now_unix_ms() -> u64 {
 // ─────────────────────────── generate-coordinator ─────────────────────────
 
 pub fn cmd_generate_coordinator(out_dir: &Path) -> Result<()> {
-    if !out_dir.exists() {
-        std::fs::create_dir_all(out_dir)
-            .with_context(|| format!("create {}", out_dir.display()))?;
-    }
+    // Crypto-TOCTOU (re-audit 2026-05-02): drop the exists() check.
+    // `create_dir_all` is idempotent (no-op if the dir already exists)
+    // and atomic for the create-vs-symlink-swap window. Previous
+    // exists()-then-create pattern let an attacker on the same host
+    // replace `out_dir` with a symlink between the two calls, then
+    // we'd write keys into the target.
+    std::fs::create_dir_all(out_dir)
+        .with_context(|| format!("create {}", out_dir.display()))?;
     let kp = MlDsaKeypair::generate();
     let pk_hex = hex::encode(kp.public_key());
     let sk_hex = hex::encode(kp.secret_key());
@@ -147,10 +151,9 @@ pub fn cmd_generate_network_key(
     listen_ip: &str,
     port: u16,
 ) -> Result<()> {
-    if !out_dir.exists() {
-        std::fs::create_dir_all(out_dir)
-            .with_context(|| format!("create {}", out_dir.display()))?;
-    }
+    // Crypto-TOCTOU: idempotent create, no exists()-then-create window.
+    std::fs::create_dir_all(out_dir)
+        .with_context(|| format!("create {}", out_dir.display()))?;
     // Reuse the network crate's loader/generator so the on-disk format is
     // exactly what `P2pNetworkService::start` will read at node startup.
     let kp = evaporchain_network::load_or_generate_identity(out_dir)
@@ -436,17 +439,28 @@ pub fn cmd_install(args: InstallArgs) -> Result<()> {
     }
 
     // 3. Load keygen bundle, derive BLS pubkey, match to genesis entry.
-    let keys_text = std::fs::read_to_string(&args.keys)
+    let mut keys_text = std::fs::read_to_string(&args.keys)
         .with_context(|| format!("read {}", args.keys.display()))?;
     let bundle: serde_json::Value =
         serde_json::from_str(&keys_text).context("parse keys JSON")?;
-    let bls_sk_hex = bundle
+    // Crypto-2 (re-audit 2026-05-02): the parsed `keys_text` String
+    // and the JSON `bundle` both hold the plaintext BLS sk hex
+    // until function return. Zeroize the raw text so a core dump or
+    // signal handler can't leak it. The JSON `bundle` is a Value
+    // tree whose internal allocations we can't reach from here, so
+    // we drop it as soon as we've extracted the hex.
+    let bls_sk_hex_owned: String = bundle
         .get("bls")
         .and_then(|b| b.get("secret_key"))
         .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
         .ok_or_else(|| anyhow::anyhow!("keys file missing bls.secret_key"))?;
-    let mut bls_sk_bytes = hex::decode(bls_sk_hex.trim_start_matches("0x"))
+    drop(bundle);
+    keys_text.zeroize();
+    let mut bls_sk_hex_buf = bls_sk_hex_owned;
+    let mut bls_sk_bytes = hex::decode(bls_sk_hex_buf.trim_start_matches("0x"))
         .context("bls.secret_key not hex")?;
+    bls_sk_hex_buf.zeroize();
     let bls_kp = BlsKeypair::from_secret_bytes(&bls_sk_bytes)
         .context("BLS secret is not a valid 32-byte scalar")?;
     let derived_pk_hex = hex::encode(&bls_kp.public_key_bytes().0);
@@ -705,7 +719,17 @@ pub fn verify_signed_genesis(
     if let Some(ref claimed_pk_hex) = config.coordinator_pk {
         let claimed = hex::decode(claimed_pk_hex.trim_start_matches("0x"))
             .context("coordinator_pk is not valid hex")?;
-        if claimed != expected_pk {
+        // Crypto-3 (re-audit 2026-05-02): constant-time comparison
+        // for the 1952-byte ML-DSA pk so a network attacker can't
+        // brute-force coordinator_pk byte-by-byte by measuring
+        // verification latency. Length mismatch short-circuits to
+        // bail (it's already public information). Equal-length
+        // payloads always run the full subtle compare.
+        if claimed.len() != expected_pk.len()
+            || !bool::from(
+                <[u8] as subtle::ConstantTimeEq>::ct_eq(&claimed[..], expected_pk),
+            )
+        {
             anyhow::bail!(
                 "coordinator_pk in genesis ({} bytes) does not match expected ({} bytes / different value)",
                 claimed.len(),

@@ -449,11 +449,23 @@ impl Lexer {
     }
 
     fn tokenize(&mut self) -> Result<Vec<(Token, usize)>, ScriptError> {
+        // Re-audit (2026-05-02): cap token count to bound parser
+        // memory. Without this, a pathological source with millions
+        // of single-char tokens (e.g., `((((...((((` repeated) can
+        // allocate unbounded `Vec<Token>` before any depth-limit or
+        // size check fires. Conservative cap — 1M tokens is far
+        // beyond any reasonable contract source.
+        const MAX_TOKENS: usize = 1_000_000;
         let mut tokens = Vec::new();
         loop {
             let (tok, line) = self.next_token()?;
             let is_eof = tok == Token::Eof;
             tokens.push((tok, line));
+            if tokens.len() > MAX_TOKENS {
+                return Err(ScriptError::Runtime(format!(
+                    "source too large: token count exceeds {MAX_TOKENS}"
+                )));
+            }
             if is_eof {
                 break;
             }

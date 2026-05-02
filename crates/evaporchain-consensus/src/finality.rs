@@ -184,6 +184,12 @@ impl FinalityTracker {
     ///
     /// Called after a block commits with a valid CommitCertificate.
     /// Returns true if this is a new finalization, false if already recorded.
+    ///
+    /// Equivalent to `on_block_finalized_with_active(..., None)`. Use
+    /// `on_block_finalized_with_active` with a real predicate for the
+    /// backfill path so historical signers who have since exited /
+    /// been jailed are filtered out (audit Cons-WS, re-audit
+    /// 2026-05-02).
     #[allow(clippy::too_many_arguments)]
     pub fn on_block_finalized(
         &mut self,
@@ -196,6 +202,62 @@ impl FinalityTracker {
         total_stake: u64,
         timestamp: u64,
     ) -> bool {
+        self.on_block_finalized_with_active(
+            height,
+            block_hash,
+            state_root,
+            epoch,
+            certificate,
+            signing_stake,
+            total_stake,
+            timestamp,
+            None,
+        )
+    }
+
+    /// Strict variant: also enforces that the certificate's
+    /// `signer_ids` are currently active per `is_active(validator_id)`.
+    /// Pass `Some(&|vid| vs.is_active(vid))` from the backfill path
+    /// where historical signers may have exited or been jailed; pass
+    /// `None` from the normal path where the producer just committed
+    /// and the validator set hasn't changed under us.
+    ///
+    /// Re-audit 2026-05-02 (Cons-WS): closes the residual surface
+    /// where a stale certificate signed by validators who are no
+    /// longer in the active set could still backfill a finality
+    /// record at supermajority.
+    #[allow(clippy::too_many_arguments)]
+    pub fn on_block_finalized_with_active(
+        &mut self,
+        height: u64,
+        block_hash: [u8; 32],
+        state_root: [u8; 32],
+        epoch: u64,
+        certificate: CommitCertificate,
+        signing_stake: u64,
+        total_stake: u64,
+        timestamp: u64,
+        is_active: Option<&dyn Fn(u64) -> bool>,
+    ) -> bool {
+        // Active-signer guard fires BEFORE the duplicate / floor /
+        // observation checks so a backfilled cert with stale signers
+        // is rejected with the most informative reason.
+        if let Some(pred) = is_active {
+            let inactive: Vec<u64> = certificate
+                .signer_ids
+                .iter()
+                .filter(|id| !pred(**id))
+                .copied()
+                .collect();
+            if !inactive.is_empty() {
+                debug!(
+                    height,
+                    inactive_signers = ?inactive,
+                    "Rejecting backfill: cert signed by validators no longer active"
+                );
+                return false;
+            }
+        }
         if self.records.contains_key(&height) {
             return false; // Already recorded — duplicate-finalization guard
         }

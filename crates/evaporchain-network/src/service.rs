@@ -162,6 +162,24 @@ impl PeerBanList {
         false
     }
 
+    /// Re-audit (2026-05-02): full sweep of expired bans + stale
+    /// violation counts. `is_banned()` lazily prunes only the queried
+    /// peer; long-lived nodes accumulate stale entries from peers
+    /// they never re-encounter. Called periodically from the network
+    /// event loop.
+    fn gc(&mut self) {
+        let now = Instant::now();
+        self.banned.retain(|_, expiry| now < *expiry);
+        // Drop violation counts older than 2× the ban window —
+        // arbitrary but bounded. Without timestamps on violations
+        // we approximate by clearing if the ban set is empty (any
+        // currently-tracked violations couldn't have triggered a ban
+        // by now if BAN_DURATION has passed).
+        if self.banned.is_empty() && self.violations.len() > 1024 {
+            self.violations.clear();
+        }
+    }
+
     fn record_violation(&mut self, peer: PeerId) -> bool {
         let count = self.violations.entry(peer).or_insert(0);
         *count += 1;
@@ -1103,6 +1121,11 @@ impl P2pNetworkService {
                     // threshold their source IP is banned and the
                     // connection dropped.
                     _ = idle_score_timer.tick() => {
+                        // Re-audit (2026-05-02): periodic GC of
+                        // expired bans + stale violation counts so
+                        // long-lived nodes don't accumulate ban
+                        // entries from peers never re-seen.
+                        ban_list.gc();
                         let mut to_disconnect: Vec<(PeerId, IpAddr)> = Vec::new();
                         if let Ok(mut s) = sybil_state_inner.write() {
                             let peer_ids: Vec<PeerId> = s.scores.keys().copied().collect();

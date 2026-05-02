@@ -97,6 +97,47 @@ impl DACertificate {
     pub fn verify_all(&self) -> bool {
         self.verify_signatures() && self.is_supermajority()
     }
+
+    /// M4 (audit 2026-05-02): like `verify_signatures`, but only counts
+    /// attestations whose signer is currently active per
+    /// `is_active(validator_id)`. A stale cert with signers who have
+    /// since exited or been jailed will fail this check even if the
+    /// raw BLS signatures themselves verify. Use this method (not
+    /// `verify_signatures`) anywhere a cert reaches consensus or
+    /// finality gating.
+    pub fn verify_signatures_with_active(&self, is_active: &dyn Fn(u64) -> bool) -> bool {
+        if self.attestations.is_empty() {
+            return false;
+        }
+        let mut recomputed_stake: u64 = 0;
+        for att in &self.attestations {
+            if att.block_number != self.block_number || att.data_root != self.data_root {
+                return false;
+            }
+            if !is_active(att.validator_id) {
+                // Inactive / jailed signer — skip this attestation.
+                // We do NOT short-circuit return false; jailing a
+                // single signer post-hoc shouldn't invalidate the
+                // whole cert if the remaining signers still meet
+                // supermajority on their own.
+                continue;
+            }
+            let mut msg = Vec::with_capacity(DA_ATTESTATION_DST.len() + 8 + 32 + 8 + 4);
+            msg.extend_from_slice(DA_ATTESTATION_DST);
+            msg.extend_from_slice(&att.block_number.to_le_bytes());
+            msg.extend_from_slice(&att.data_root);
+            msg.extend_from_slice(&att.validator_id.to_le_bytes());
+            msg.extend_from_slice(&att.samples_verified.to_le_bytes());
+            let pk = BlsPublicKey(att.public_key.clone());
+            let sig = BlsSignature(att.signature.clone());
+            if !BlsVerifier::verify(&msg, &sig, &pk) {
+                return false;
+            }
+            recomputed_stake = recomputed_stake.saturating_add(att.stake);
+        }
+        // The active-only stake must still hit supermajority.
+        recomputed_stake.saturating_mul(3) >= self.total_stake.saturating_mul(2)
+    }
 }
 
 /// Domain-separation tag for DA attestation signatures.

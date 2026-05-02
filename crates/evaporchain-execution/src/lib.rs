@@ -930,9 +930,19 @@ impl SimpleExecutor {
                 GAS_CREATE_OBJECT_PER_BYTE.saturating_mul(create.data.len() as u64),
             ),
             Transaction::Refresh(_) => GAS_REFRESH,
+            // N3 (re-audit 2026-05-02): DeployScript was a flat cost
+            // regardless of source size — a 1MB malicious script paid
+            // the same as 100B. Source is stored on-chain (modulo
+            // evaporation) and compiled, so cost must scale with size
+            // to deny cheap on-chain ballast. Same coefficient as
+            // CreateObject's per-byte rate. DeployContract dispatches
+            // a built-in template + init_args string of bounded size,
+            // so flat-cost there is fine.
             Transaction::DeployContract(_) => GAS_DEPLOY_CONTRACT,
             Transaction::CallContract(_) => GAS_CALL_CONTRACT,
-            Transaction::DeployScript(_) => GAS_DEPLOY_SCRIPT,
+            Transaction::DeployScript(d) => GAS_DEPLOY_SCRIPT.saturating_add(
+                GAS_CREATE_OBJECT_PER_BYTE.saturating_mul(d.source_code.len() as u64),
+            ),
             Transaction::CallScript(_) => GAS_CALL_SCRIPT,
             Transaction::ValidatorStake(_) => GAS_VALIDATOR_STAKE,
             Transaction::ValidatorExit(_) => GAS_VALIDATOR_EXIT,
@@ -1316,7 +1326,11 @@ impl SimpleExecutor {
             validator_id: tx.validator_id,
             validator_address: tx.validator_address,
             staked_amount: existing_stake + tx.stake_amount,
-            staked_at_epoch: 0,
+            // C1 (audit 2026-05-02): was hardcoded 0, breaking
+            // unbonding-period enforcement (UNBONDING_EPOCHS check uses
+            // this field). Stamping the actual epoch makes
+            // execute_validator_claim_stake's cooldown gate effective.
+            staked_at_epoch: epoch,
             unbonding_epoch: None,
             slashed_amount: 0,
         });
@@ -2306,8 +2320,16 @@ impl ExecutionEngine for SimpleExecutor {
 
             let tx_gas = Self::estimate_gas(tx);
 
-            // Enforce per-block gas limit: skip transactions that would exceed it
-            if self.block_gas_limit > 0 && gas_used + tx_gas > self.block_gas_limit {
+            // Enforce per-block gas limit: skip transactions that would exceed it.
+            // Re-audit (2026-05-02): use checked_add so gas_used near
+            // u64::MAX with non-zero tx_gas doesn't wrap to a small
+            // value and silently bypass the limit. Overflow is a
+            // skip, same as exceeding the limit.
+            let exceeds = match gas_used.checked_add(tx_gas) {
+                Some(p) => p > self.block_gas_limit,
+                None => true, // overflow → treat as exceeded
+            };
+            if self.block_gas_limit > 0 && exceeds {
                 debug!(
                     gas_used,
                     tx_gas,
@@ -2387,11 +2409,31 @@ impl ExecutionEngine for SimpleExecutor {
                 Transaction::DeployContract(deploy) => {
                     self.execute_deploy_contract(deploy, block.epoch)
                 }
-                Transaction::CallContract(call) => self.execute_call_contract(call),
+                Transaction::CallContract(call) => {
+                    let res = self.execute_call_contract(call);
+                    // M8 (audit 2026-05-02): on success, stamp the caller's
+                    // demurrage anchor so an active contract user isn't
+                    // billed demurrage on a stale anchor while their
+                    // balance is being touched indirectly via contract state.
+                    if res.is_ok() {
+                        if let Some(acct) = db.get_account_mut(&call.caller) {
+                            acct.last_touched_epoch = block.epoch;
+                        }
+                    }
+                    res
+                }
                 Transaction::DeployScript(deploy) => {
                     self.execute_deploy_script(deploy, block.epoch)
                 }
-                Transaction::CallScript(call) => self.execute_call_script(call),
+                Transaction::CallScript(call) => {
+                    let res = self.execute_call_script(call);
+                    if res.is_ok() {
+                        if let Some(acct) = db.get_account_mut(&call.caller) {
+                            acct.last_touched_epoch = block.epoch;
+                        }
+                    }
+                    res
+                }
                 Transaction::ValidatorStake(stake) => {
                     self.execute_validator_stake(db, stake, block.epoch)
                 }
