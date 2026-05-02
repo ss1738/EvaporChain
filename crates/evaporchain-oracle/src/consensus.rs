@@ -102,10 +102,18 @@ impl TwapAccumulator {
     }
 
     pub fn twap(&self) -> Option<f64> {
-        // Require at least 2 entries with non-zero total duration.
-        // A single-entry TWAP is trivially manipulable in one block;
-        // returning None forces callers to wait for real history.
-        if self.entries.len() < 2 {
+        // Require at least 3 entries with non-zero total duration.
+        //
+        // Audit `end_to_end_audit_2026_04_27.md §5` (re-confirmed in
+        // the 2026-05-02 building-mode sweep): a 2-entry TWAP is still
+        // single-block-manipulable — an attacker controlling both
+        // endpoints can pin the average to any value within the
+        // entries' span, because the only weight in the sum is
+        // `entries[0].1 * (entries[1].0 - entries[0].0)`. Requiring
+        // ≥3 entries forces at least one intermediate value the
+        // attacker doesn't control in the same block, so a
+        // single-block-pinned spread no longer dominates the average.
+        if self.entries.len() < 3 {
             return None;
         }
         let mut weighted_sum = 0.0f64;
@@ -495,20 +503,35 @@ mod tests {
 
     #[test]
     fn test_twap_single_entry() {
-        // Single-entry TWAP returns None — requires at least 2 data points
-        // with non-zero time separation to prevent single-block manipulation.
+        // Single-entry TWAP returns None — requires at least 3 data points
+        // with non-zero time separation to prevent single-block manipulation
+        // (audit-tightened from ≥2 to ≥3 on 2026-05-02; ≥2 was still
+        // single-block-pinnable when an attacker controlled both endpoints).
         let mut twap = TwapAccumulator::new(3600);
         twap.push(1000, 60000.0);
         assert_eq!(twap.twap(), None);
     }
 
     #[test]
-    fn test_twap_two_entries() {
+    fn test_twap_two_entries_returns_none() {
+        // Audit-tightened (2026-05-02): ≥3 entries required. Two
+        // entries are still single-block-pinnable.
         let mut twap = TwapAccumulator::new(3600);
         twap.push(1000, 60000.0);
         twap.push(2000, 61000.0);
+        assert_eq!(twap.twap(), None);
+    }
+
+    #[test]
+    fn test_twap_three_entries() {
+        let mut twap = TwapAccumulator::new(3600);
+        twap.push(1000, 60000.0);
+        twap.push(2000, 61000.0);
+        twap.push(3000, 62000.0);
+        // Weighted: 60000*(2000-1000) + 61000*(3000-2000) = 121_000_000
+        // Total duration: 2000. Avg = 60500.
         let t = twap.twap().unwrap();
-        assert!((t - 60000.0).abs() < 0.01);
+        assert!((t - 60500.0).abs() < 0.01);
     }
 
     #[test]
