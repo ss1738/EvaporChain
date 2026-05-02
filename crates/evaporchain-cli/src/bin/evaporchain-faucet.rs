@@ -672,14 +672,10 @@ mod tests {
 
     #[test]
     fn normalise_address_accepts_20_and_32_bytes() {
-        assert_eq!(
-            normalise_address("0x".to_string() + &"a".repeat(64)).unwrap().len(),
-            64
-        );
-        assert_eq!(
-            normalise_address("0x".to_string() + &"b".repeat(40)).unwrap().len(),
-            40
-        );
+        let s64 = "0x".to_string() + &"a".repeat(64);
+        let s40 = "0x".to_string() + &"b".repeat(40);
+        assert_eq!(normalise_address(&s64).unwrap().len(), 64);
+        assert_eq!(normalise_address(&s40).unwrap().len(), 40);
         assert!(normalise_address("0xzzzz").is_err());
         assert!(normalise_address("").is_err());
         assert!(normalise_address("0xabcd").is_err());

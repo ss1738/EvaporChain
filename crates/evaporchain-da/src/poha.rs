@@ -559,8 +559,12 @@ mod tests {
         assert_eq!(decayed, 3);
         assert_eq!(evaporated, 0);
 
-        // At epoch 1000: all should be dead (energy = 0)
-        let (_decayed, evaporated) = store.process_epoch(1000);
+        // At epoch 1000: all should be dead (energy = 0). The test
+        // previously bound the second tuple slot as `_decayed`, leaving
+        // the assertion below to check the FIRST call's `decayed=3`
+        // against `0`. Re-bind so we're asserting the post-evaporation
+        // state, which is the actual contract being tested.
+        let (decayed, evaporated) = store.process_epoch(1000);
         assert_eq!(decayed, 0);
         assert_eq!(evaporated, 3);
         assert_eq!(store.active_count(), 0);
