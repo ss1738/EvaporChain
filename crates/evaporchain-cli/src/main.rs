@@ -279,10 +279,12 @@ pub enum DaAction {
     /// fabricated cells (wrong proofs), and node misconfiguration where
     /// the 2D matrix is empty / out of date.
     Verify {
-        /// Node URL, e.g. `http://localhost:8080`. The CLI's --api-url
-        /// global is overridden by this flag for the verify call only.
-        #[arg(long)]
-        node: String,
+        /// Node URL(s), e.g. `--node http://node1:8080 --node http://node2:8080`.
+        /// Repeatable. When more than one is supplied, the sampler round-
+        /// robins per cell; faulty-peer detection then names the specific
+        /// URL that served a bad cell.
+        #[arg(long = "node", required = true)]
+        nodes: Vec<String>,
         /// Block number to sample.
         #[arg(long)]
         block: u64,
@@ -301,6 +303,14 @@ pub enum DaAction {
         /// Pass a unique seed to spread the load across nodes.
         #[arg(long)]
         seed: Option<String>,
+        /// Skip the on-chain `data_root` cross-check. Without this flag,
+        /// the verifier fetches `/api/block/:N` from the FIRST `--node`
+        /// and refuses to sample if its `data_root` disagrees with the
+        /// served 2D header's `data_root`. Catches a producer that
+        /// publishes a header for a block whose committed `data_root`
+        /// was something else.
+        #[arg(long)]
+        skip_chain_attestation: bool,
     },
 }
 
@@ -3089,28 +3099,89 @@ fn cmd_genesis_verify_ceremony(
 //      what was committed on-chain (handled at a higher layer; this
 //      command trusts the served header for now).
 
+/// Round-robins per-cell across one or more node URLs. Each fetch_cell
+/// call increments an atomic cursor and picks the next base URL — the
+/// peer_id returned to the sampler is that exact URL, so faulty-peer
+/// reports name the specific node that served a bad cell.
 struct HttpCellSource {
-    base: String,
+    bases: Vec<String>,
+    cursor: std::sync::atomic::AtomicUsize,
     client: reqwest::blocking::Client,
 }
 
 impl HttpCellSource {
-    fn new(base: &str) -> anyhow::Result<Self> {
+    fn new(bases: &[String]) -> anyhow::Result<Self> {
+        if bases.is_empty() {
+            anyhow::bail!("HttpCellSource requires at least one --node URL");
+        }
+        let bases: Vec<String> = bases
+            .iter()
+            .map(|b| b.trim_end_matches('/').to_string())
+            .collect();
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(15))
             .build()
             .context("build reqwest client for HttpCellSource")?;
         Ok(Self {
-            base: base.trim_end_matches('/').to_string(),
+            bases,
+            cursor: std::sync::atomic::AtomicUsize::new(0),
             client,
         })
+    }
+
+    /// Pick the next base URL for outgoing requests. Round-robin under
+    /// concurrency-safe atomic increment.
+    fn next_base(&self) -> &str {
+        let i = self.cursor.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        &self.bases[i % self.bases.len()]
+    }
+
+    /// First base URL — used for one-shot reads (header, on-chain block
+    /// record) where round-robining doesn't add value.
+    fn primary_base(&self) -> &str {
+        &self.bases[0]
+    }
+
+    /// Fetch the on-chain `data_root` for `block` from the primary node's
+    /// `/api/block/:N` endpoint. Returns `Ok(None)` when the block has no
+    /// `data_root` (consensus didn't carry one — e.g. a sentinel-empty
+    /// block or the chain was started without DA enforcement). The
+    /// caller treats `None` as "skip the cross-check, don't bail".
+    fn fetch_block_data_root(&self, block: u64) -> anyhow::Result<Option<[u8; 32]>> {
+        let url = format!("{}/api/block/{}", self.primary_base(), block);
+        let resp = self.client.get(&url).send().context("GET /api/block/:N")?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            // Block aged out of the in-memory ring; we can't cross-check
+            // — caller decides whether to abort.
+            return Ok(None);
+        }
+        if !resp.status().is_success() {
+            anyhow::bail!(
+                "{} returned {}: {}",
+                url,
+                resp.status(),
+                resp.text().unwrap_or_default()
+            );
+        }
+        let v: serde_json::Value = resp.json().context("parse block JSON")?;
+        let Some(root_str) = v.get("data_root").and_then(|x| x.as_str()) else {
+            return Ok(None);
+        };
+        let bytes =
+            hex::decode(root_str.trim_start_matches("0x")).context("decode data_root hex")?;
+        if bytes.len() != 32 {
+            anyhow::bail!("on-chain data_root is not 32 bytes");
+        }
+        let mut b = [0u8; 32];
+        b.copy_from_slice(&bytes);
+        Ok(Some(b))
     }
 
     fn fetch_header(
         &self,
         block: u64,
     ) -> anyhow::Result<evaporchain_da::block_da_2d::BlockDA2DHeader> {
-        let url = format!("{}/api/da/header/{}", self.base, block);
+        let url = format!("{}/api/da/header/{}", self.primary_base(), block);
         let resp = self.client.get(&url).send().context("GET /api/da/header")?;
         if !resp.status().is_success() {
             anyhow::bail!(
@@ -3199,7 +3270,8 @@ impl evaporchain_da::light_client::CellSource for HttpCellSource {
     ) -> Result<(String, evaporchain_da::commitments::CellProof), evaporchain_da::light_client::CellSourceError>
     {
         use evaporchain_da::light_client::CellSourceError;
-        let url = format!("{}/api/da/cell/{}/{}/{}", self.base, height, row, col);
+        let base = self.next_base();
+        let url = format!("{}/api/da/cell/{}/{}/{}", base, height, row, col);
         let resp = self
             .client
             .get(&url)
@@ -3278,100 +3350,162 @@ impl evaporchain_da::light_client::CellSource for HttpCellSource {
             col_siblings: hex_vec32("col_proof_siblings")?,
             data_root: hex_32("data_root")?,
         };
-        Ok((self.base.clone(), proof))
+        Ok((base.to_string(), proof))
     }
 }
 
+/// Result of the optional on-chain attestation cross-check.
+enum ChainAttestation {
+    /// On-chain `data_root` matches the served 2D header's `data_root`.
+    Verified,
+    /// Operator passed `--skip-chain-attestation`; cross-check skipped.
+    Skipped,
+    /// Block has no on-chain `data_root` (sentinel/no-DA-enforcement).
+    NoDataRoot,
+    /// Block exists but isn't in the node's in-memory ring.
+    BlockNotInRing,
+    /// On-chain root and served header disagree. Hard fail.
+    Mismatch { on_chain: [u8; 32], served: [u8; 32] },
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn cmd_da_verify(
-    node: &str,
+    nodes: &[String],
     block: u64,
     samples: usize,
     threshold: f64,
     seed_hex: Option<&str>,
+    skip_chain_attestation: bool,
     json_mode: bool,
 ) -> Result<()> {
+    if nodes.is_empty() {
+        anyhow::bail!("at least one --node URL is required");
+    }
     let samples = samples.clamp(1, 256);
     if !(0.0 < threshold && threshold < 1.0) {
-        anyhow::bail!(
-            "threshold must be in (0.0, 1.0); got {}",
-            threshold
-        );
+        anyhow::bail!("threshold must be in (0.0, 1.0); got {}", threshold);
     }
 
-    // Run all the blocking HTTP work on a dedicated thread so we don't
-    // pin the tokio runtime. The sampler itself is sync.
-    let node = node.to_string();
+    let nodes_owned: Vec<String> = nodes.to_vec();
     let seed_owned: Option<Vec<u8>> = match seed_hex {
         Some(s) => Some(
-            hex::decode(s.trim_start_matches("0x"))
-                .context("--seed must be hex")?,
+            hex::decode(s.trim_start_matches("0x")).context("--seed must be hex")?,
         ),
         None => None,
     };
 
-    let node_for_blocking = node.clone();
-    let report_blocking = tokio::task::spawn_blocking(move || -> Result<_> {
-        let source = HttpCellSource::new(&node_for_blocking)?;
+    // Run all the blocking HTTP work on a dedicated thread so we don't
+    // pin the tokio runtime. The sampler itself is sync.
+    let nodes_for_blocking = nodes_owned.clone();
+    let result: (
+        ChainAttestation,
+        evaporchain_da::light_client::SamplingReport,
+    ) = tokio::task::spawn_blocking(move || -> Result<_> {
+        let source = HttpCellSource::new(&nodes_for_blocking)?;
         let header = source.fetch_header(block)?;
+
+        // Chain-attestation cross-check. Hard fail on mismatch — anything
+        // sampled below would be against the wrong block's data.
+        let attestation = if skip_chain_attestation {
+            ChainAttestation::Skipped
+        } else {
+            match source.fetch_block_data_root(block)? {
+                None => ChainAttestation::BlockNotInRing,
+                Some(on_chain) if on_chain == [0u8; 32] => ChainAttestation::NoDataRoot,
+                Some(on_chain) if on_chain == header.data_root => ChainAttestation::Verified,
+                Some(on_chain) => ChainAttestation::Mismatch {
+                    on_chain,
+                    served: header.data_root,
+                },
+            }
+        };
+        if let ChainAttestation::Mismatch { on_chain, served } = &attestation {
+            anyhow::bail!(
+                "on-chain data_root {} does not match served 2D header data_root {} — \
+                 producer is publishing a header for a block whose committed \
+                 data_root was something else. Aborting before sampling.",
+                hex::encode(on_chain),
+                hex::encode(served)
+            );
+        }
+
         let sampler = evaporchain_da::light_client::LightClientSampler::new(source);
-        let seed = seed_owned.unwrap_or_else(|| {
-            blake3::hash(&block.to_le_bytes()).as_bytes().to_vec()
-        });
-        Ok(sampler.sample_block(&header, block, samples, &seed))
+        let seed = seed_owned
+            .unwrap_or_else(|| blake3::hash(&block.to_le_bytes()).as_bytes().to_vec());
+        let report = sampler.sample_block(&header, block, samples, &seed);
+        Ok((attestation, report))
     })
     .await
     .map_err(|e| anyhow::anyhow!("blocking task: {}", e))??;
 
-    let passes = report_blocking.passes(threshold);
+    let (attestation, report) = result;
+    let passes = report.passes(threshold);
+
+    let attestation_label = match &attestation {
+        ChainAttestation::Verified => "verified",
+        ChainAttestation::Skipped => "skipped",
+        ChainAttestation::NoDataRoot => "no-data-root",
+        ChainAttestation::BlockNotInRing => "block-not-in-ring",
+        ChainAttestation::Mismatch { .. } => "mismatch", // unreachable
+    };
 
     if json_mode {
         let payload = serde_json::json!({
-            "node": node_to_string(node.as_ref()).unwrap_or_default(),
+            "nodes": nodes_owned,
             "block": block,
-            "samples_requested": report_blocking.results.len(),
-            "samples_valid": report_blocking.metrics.valid_samples,
-            "unique_rows_hit": report_blocking.metrics.unique_rows_hit,
-            "unique_cols_hit": report_blocking.metrics.unique_cols_hit,
-            "confidence": report_blocking.metrics.confidence,
-            "all_valid": report_blocking.all_valid,
-            "faulty_peers": report_blocking
+            "samples_requested": report.results.len(),
+            "samples_valid": report.metrics.valid_samples,
+            "unique_rows_hit": report.metrics.unique_rows_hit,
+            "unique_cols_hit": report.metrics.unique_cols_hit,
+            "confidence": report.metrics.confidence,
+            "all_valid": report.all_valid,
+            "faulty_peers": report
                 .faulty_peers
                 .iter()
                 .map(|(p, r)| serde_json::json!({"peer": p, "reason": format!("{:?}", r)}))
                 .collect::<Vec<_>>(),
             "threshold": threshold,
+            "chain_attestation": attestation_label,
             "passes": passes,
         });
         println!("{}", serde_json::to_string_pretty(&payload)?);
     } else {
         print_header("DA Light-Client Verification");
         println!(
-            "  {} block #{} on {}",
+            "  {} block #{} across {} node(s)",
             if passes { "✅".green() } else { "❌".red() },
             block,
-            node
+            nodes_owned.len()
+        );
+        for n in &nodes_owned {
+            println!("  {} {}", "Node:        ".truecolor(140, 150, 170), n);
+        }
+        println!(
+            "  {} {}",
+            "Chain attest:".truecolor(140, 150, 170),
+            attestation_label
         );
         println!(
-            "  {}  {}/{} samples valid, {} rows covered, {} cols covered",
-            "Cells: ".truecolor(140, 150, 170),
-            report_blocking.metrics.valid_samples,
-            report_blocking.results.len(),
-            report_blocking.metrics.unique_rows_hit,
-            report_blocking.metrics.unique_cols_hit,
+            "  {} {}/{} samples valid, {} rows hit, {} cols hit",
+            "Cells:       ".truecolor(140, 150, 170),
+            report.metrics.valid_samples,
+            report.results.len(),
+            report.metrics.unique_rows_hit,
+            report.metrics.unique_cols_hit,
         );
         println!(
-            "  {}  {:.6} (threshold {:.6})",
-            "Confidence:".truecolor(140, 150, 170),
-            report_blocking.metrics.confidence,
+            "  {} {:.6} (threshold {:.6})",
+            "Confidence:  ".truecolor(140, 150, 170),
+            report.metrics.confidence,
             threshold,
         );
-        if !report_blocking.faulty_peers.is_empty() {
+        if !report.faulty_peers.is_empty() {
             println!(
                 "  {} {} peer(s) served bad cells:",
                 "⚠".yellow(),
-                report_blocking.faulty_peers.len()
+                report.faulty_peers.len()
             );
-            for (peer, reason) in &report_blocking.faulty_peers {
+            for (peer, reason) in &report.faulty_peers {
                 println!("    - {} ({:?})", peer, reason);
             }
         }
@@ -3381,12 +3515,6 @@ async fn cmd_da_verify(
         std::process::exit(1);
     }
     Ok(())
-}
-
-// Tiny helper that just round-trips a string. Lets the JSON branch
-// above stay typed without introducing a parser for the URL.
-fn node_to_string(s: &str) -> Option<String> {
-    Some(s.to_string())
 }
 
 // ──────────────────────────── INVENTION_STACK stamp ─────────────────────
@@ -4546,12 +4674,24 @@ async fn main() -> Result<()> {
         },
         Commands::Da { action } => match action {
             DaAction::Verify {
-                node,
+                nodes,
                 block,
                 samples,
                 threshold,
                 seed,
-            } => cmd_da_verify(&node, block, samples, threshold, seed.as_deref(), cli.json).await,
+                skip_chain_attestation,
+            } => {
+                cmd_da_verify(
+                    &nodes,
+                    block,
+                    samples,
+                    threshold,
+                    seed.as_deref(),
+                    skip_chain_attestation,
+                    cli.json,
+                )
+                .await
+            }
         },
         Commands::UpgradeContract {
             owner,
