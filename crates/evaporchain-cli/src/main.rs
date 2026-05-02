@@ -1579,6 +1579,14 @@ fn cmd_testnet_init(
         let sk_bytes = kp.secret_key_bytes();
         let sk: &[u8] = &sk_bytes.0;
         let pk_hex = hex::encode(&kp.public_key_bytes().0);
+        // Audit fix 2026-05-02: also produce the BLS proof-of-
+        // possession at testnet-init time so the per-validator entry
+        // in genesis carries `bls_pop`. Without this, the node-side
+        // registration sets `pop_verified=false` (no PoP supplied),
+        // and the validator's BLS key cannot enter aggregate
+        // certificates until a KeyAnnounce broadcast verifies a PoP.
+        // Devnet is fine without this gate; mainnet requires it.
+        let bls_pop_hex = hex::encode(&kp.proof_of_possession().0);
         let bls_path = v_data_dir.join("bls_key.bin");
         std::fs::write(&bls_path, &sk)
             .with_context(|| format!("Failed to write {}", bls_path.display()))?;
@@ -1613,6 +1621,7 @@ fn cmd_testnet_init(
             stake,
             address: validator_address(vid),
             bls_public_key: Some(pk_hex),
+            bls_pop: Some(bls_pop_hex),
             p2p_address: Some(v_multiaddr),
         });
 
@@ -2336,12 +2345,23 @@ fn cmd_genesis_add_validator(
         None
     };
 
+    let bls_pop = matches
+        .get_one::<String>("validator-json")
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|j| {
+            j.get("bls")
+                .and_then(|b| b.get("pop"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        });
     config.validators.push(GenesisValidator {
         id: next_id,
         name: name.to_string(),
         stake,
         address: addr,
         bls_public_key: bls_pk.clone(),
+        bls_pop,
         p2p_address: p2p.map(|s| s.to_string()),
     });
 
@@ -2953,6 +2973,7 @@ fn cmd_genesis_ceremony(
                 stake: e.body.stake,
                 address: addr,
                 bls_public_key: Some(e.body.bls_public_key.clone()),
+                bls_pop: Some(e.body.bls_pop.clone()),
                 p2p_address: e.body.p2p_address.clone(),
             }
         })

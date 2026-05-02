@@ -29,6 +29,14 @@ pub struct ValidatorEntry {
     pub name: String,
     /// Validator's BLS12-381 G1 compressed public key (hex, 96 chars).
     pub bls_public_key: String,
+    /// Validator's BLS12-381 proof-of-possession (hex). Defeats
+    /// rogue-key attacks: the genesis-loader verifies this signature
+    /// against `bls_public_key` before marking the validator
+    /// `pop_verified`. Manifests without this field load with
+    /// `pop_verified=false`. Audit-flagged 2026-04-27 §2; closed
+    /// 2026-05-02.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub bls_pop: String,
     /// Stake amount at genesis (must be >= chain_params.min_validator_stake).
     pub stake: u64,
     /// Optional initial token allocation paid to this validator's address.
@@ -244,6 +252,11 @@ pub fn cmd_build_genesis(
             stake: v.stake,
             address: addr,
             bls_public_key: Some(v.bls_public_key.to_lowercase()),
+            bls_pop: if v.bls_pop.is_empty() {
+                None
+            } else {
+                Some(v.bls_pop.to_lowercase())
+            },
             p2p_address: chosen_ma,
         });
         if v.balance > 0 {

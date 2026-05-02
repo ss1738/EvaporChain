@@ -2693,9 +2693,51 @@ async fn main() -> Result<()> {
                             Ok(pk_bytes) => {
                                 with_bls += 1;
                                 let mut vi = ValidatorInfo::with_bls_key(
-                                    gv.id, gv.stake, gv.address, pk_bytes,
+                                    gv.id, gv.stake, gv.address, pk_bytes.clone(),
                                 );
-                                vi.pop_verified = true;
+                                // Audit fix 2026-05-02 (rogue-key attack
+                                // surface): the genesis-registration path
+                                // previously set `pop_verified=true`
+                                // unconditionally. A genesis with a
+                                // crafted `bls_public_key` (no real PoP
+                                // ever produced for it) would then be
+                                // accepted into aggregate signatures.
+                                // Now verify the genesis-supplied PoP
+                                // before flipping the flag; if no PoP is
+                                // supplied or it fails to verify, leave
+                                // `pop_verified=false` and the
+                                // downstream aggregate-signature path
+                                // (tendermint.rs:4228) refuses to use
+                                // this validator's key until they
+                                // broadcast a verified `KeyAnnounce`.
+                                if let Some(pop_hex) = &gv.bls_pop {
+                                    match hex::decode(pop_hex) {
+                                        Ok(pop_bytes) => {
+                                            if evaporchain_consensus::validator_set::ValidatorSet::verify_pop(
+                                                &pk_bytes, &pop_bytes,
+                                            ) {
+                                                vi.bls_pop = Some(pop_bytes);
+                                                vi.pop_verified = true;
+                                            } else {
+                                                eprintln!(
+                                                    "{} \x1b[31mGenesis validator {}: bls_pop did NOT verify under bls_public_key — registering with pop_verified=false (key cannot enter aggregate sigs until KeyAnnounce broadcasts a valid PoP)\x1b[0m",
+                                                    node_tag, gv.id
+                                                );
+                                            }
+                                        }
+                                        Err(e) => {
+                                            eprintln!(
+                                                "{} \x1b[31mGenesis validator {}: invalid bls_pop hex ({}) — registering with pop_verified=false\x1b[0m",
+                                                node_tag, gv.id, e
+                                            );
+                                        }
+                                    }
+                                } else {
+                                    eprintln!(
+                                        "{} \x1b[33mGenesis validator {}: no bls_pop supplied — registering with pop_verified=false. The validator must broadcast a KeyAnnounce with a valid proof-of-possession before their BLS key is accepted in aggregate certificates.\x1b[0m",
+                                        node_tag, gv.id
+                                    );
+                                }
                                 vi
                             }
                             Err(e) => {

@@ -178,6 +178,18 @@ pub struct GenesisValidator {
     /// BLS12-381 public key (hex-encoded, 48 bytes compressed).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bls_public_key: Option<String>,
+    /// BLS12-381 proof-of-possession (hex-encoded signature over
+    /// `bls_public_key` under `BLS_POP_DST`). Required to defeat
+    /// rogue-key attacks on aggregate signatures: the node verifies
+    /// this PoP against `bls_public_key` and only marks the validator
+    /// `pop_verified` if it succeeds. Genesis configs without this
+    /// field load with `pop_verified=false`, which prevents the
+    /// validator's BLS key from being used in aggregate certificates
+    /// until they broadcast a verified KeyAnnounce. Audit-flagged
+    /// 2026-04-27 §2 ("BLS PoP is implemented but not enforced at
+    /// validator registration"); closed 2026-05-02.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bls_pop: Option<String>,
     /// P2P multiaddress.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub p2p_address: Option<String>,

@@ -160,6 +160,7 @@ mod tests {
                 stake: 1000,
                 address: addr(1),
                 bls_public_key: None,
+                bls_pop: None,
                 p2p_address: None,
             }],
             accounts: vec![
@@ -278,6 +279,7 @@ mod tests {
             stake: 2000,
             address: addr(3),
             bls_public_key: None,
+            bls_pop: None,
             p2p_address: None,
         });
 
