@@ -220,6 +220,12 @@ pub struct CommitCertificate {
 pub const STORAGE_RENT_PER_BYTE_PER_EPOCH: u64 = 1;
 pub const MIN_STORAGE_DEPOSIT: u64 = 1000;
 
+/// Canonical genesis-seeded faucet address (`[0xFA; 32]`). Pre-funded with
+/// the residual `total_supply - validators × per-validator share`. Used by
+/// `/api/faucet` as the source of faucet transfers; matches the address
+/// stamped by `evaporchain-cli testnet init` and the Genesis-Ceremony flow.
+pub const FAUCET_ADDRESS: [u8; 32] = [0xFAu8; 32];
+
 /// An account with a balance.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Account {

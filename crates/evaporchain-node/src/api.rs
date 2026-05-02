@@ -9438,7 +9438,11 @@ async fn post_faucet(
     // through consensus so all validators see it. Reserve a unique nonce
     // via the pending-nonce cache so concurrent faucet hits don't all
     // collide on the same db.nonce (only one would land otherwise).
-    let faucet_addr = [0u8; 32]; // special faucet/mint address (pre-seeded at genesis)
+    // Genesis pre-seeds the faucet at FAUCET_ADDRESS = [0xFA; 32] (see
+    // evaporchain_types::FAUCET_ADDRESS + evaporchain-cli testnet init).
+    // The previous [0u8; 32] address had no balance — every faucet
+    // transfer failed InsufficientBalance silently.
+    let faucet_addr = evaporchain_types::FAUCET_ADDRESS;
     let nonce = state.reserve_nonce(&faucet_addr);
     let mut tx = Transaction::Transfer(TransferTx {
         from: faucet_addr,
