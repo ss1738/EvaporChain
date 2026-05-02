@@ -3334,6 +3334,30 @@ impl TendermintConsensus {
                 timestamp,
             );
 
+            // Re-audit (2026-05-02) integration of LightCone prune:
+            // call `prune_before_epoch` every 100 finalised blocks
+            // with a retention window of 1000 epochs of headroom.
+            // This bounds DAG memory without affecting fork-choice
+            // (anything we prune is far behind latest_finalized and
+            // can't be a candidate head). Same cadence + retention as
+            // the node-side block-record prune at main.rs ~line 4357.
+            const LIGHT_CONE_PRUNE_INTERVAL: u64 = 100;
+            const LIGHT_CONE_RETENTION_EPOCHS: u64 = 1_000;
+            if block.number > 0 && block.number % LIGHT_CONE_PRUNE_INTERVAL == 0 {
+                let cutoff = block.epoch.saturating_sub(LIGHT_CONE_RETENTION_EPOCHS);
+                if cutoff > 0 {
+                    let pruned = self.light_cone_dag.prune_before_epoch(cutoff);
+                    if pruned > 0 {
+                        debug!(
+                            block = block.number,
+                            cutoff_epoch = cutoff,
+                            pruned,
+                            "LightCone DAG pruned"
+                        );
+                    }
+                }
+            }
+
             // Per-height finality gap closure (Mainnet P1). Pop the
             // commit timestamp for this height and record the
             // commit→finalise duration. `commit_now_ms` was sampled at

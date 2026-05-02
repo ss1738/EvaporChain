@@ -82,9 +82,14 @@ const MAX_SYNC_BATCH: u64 = 100;
 /// Maximum number of blocks to keep in the cache.
 const MAX_CACHE_SIZE: usize = 2000;
 
-/// Maximum allowed gossip message size (10 MB). Messages exceeding this
-/// are dropped before deserialization to prevent OOM attacks.
-const MAX_GOSSIP_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
+/// Maximum allowed gossip message size. Re-audit (2026-05-02): unified
+/// with libp2p-gossipsub's `max_transmit_size` below so the inbound
+/// drop-on-arrival check is meaningful (previously 10 MB, but
+/// gossipsub already rejected anything > 4 MB at the transport layer,
+/// making the 10 MB ceiling unreachable). Both constants must move
+/// together if either is tuned.
+const MAX_GOSSIP_MESSAGE_SIZE: usize = 4 * 1024 * 1024;
+const MAX_GOSSIPSUB_TRANSMIT_SIZE: usize = MAX_GOSSIP_MESSAGE_SIZE;
 const MAX_CONSENSUS_MESSAGE_SIZE: usize = 512 * 1024;
 
 /// Maximum gossip messages per peer per window before throttling.
@@ -867,7 +872,7 @@ impl P2pNetworkService {
                 let gossipsub_config = gossipsub::ConfigBuilder::default()
                     .heartbeat_interval(Duration::from_millis(500))
                     .validation_mode(gossipsub::ValidationMode::Strict)
-                    .max_transmit_size(4 * 1024 * 1024)
+                    .max_transmit_size(MAX_GOSSIPSUB_TRANSMIT_SIZE)
                     .mesh_n(3)
                     .mesh_n_low(2)
                     .mesh_n_high(6)
@@ -1959,7 +1964,12 @@ mod tests {
 
     #[test]
     fn test_constants_sane() {
-        assert_eq!(MAX_GOSSIP_MESSAGE_SIZE, 10 * 1024 * 1024);
+        // Re-audit (2026-05-02): MAX_GOSSIP_MESSAGE_SIZE unified with
+        // gossipsub's max_transmit_size to make the inbound drop
+        // check meaningful (previously 10 MB ceiling > 4 MB transport
+        // limit was unreachable).
+        assert_eq!(MAX_GOSSIP_MESSAGE_SIZE, 4 * 1024 * 1024);
+        assert_eq!(MAX_GOSSIPSUB_TRANSMIT_SIZE, MAX_GOSSIP_MESSAGE_SIZE);
         assert_eq!(MAX_CACHE_SIZE, 2000);
         assert_eq!(MAX_SHARD_CACHE_SIZE, 500);
         assert_eq!(MAX_SYNC_BATCH, 100);

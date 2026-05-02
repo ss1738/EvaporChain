@@ -76,6 +76,37 @@ impl LightCone {
         self.blocks.insert(block.id, block);
         Ok(())
     }
+
+    /// Re-audit (2026-05-02) Light-cone prune bound: drop any block
+    /// whose `observed_epoch` is strictly less than `keep_after_epoch`,
+    /// along with the inverse-adjacency edges pointing to / from it.
+    /// This is the only sanctioned way to bound the DAG's memory; the
+    /// `insert` path is otherwise append-only. Returns the number of
+    /// blocks pruned. Caller is responsible for choosing a watermark
+    /// that respects fork-choice / causal-cone consumers — typically
+    /// `latest_finalized.observed_epoch - retention_window`.
+    pub fn prune_before_epoch(&mut self, keep_after_epoch: u64) -> usize {
+        let to_prune: Vec<BlockId> = self
+            .blocks
+            .iter()
+            .filter(|(_, b)| b.observed_epoch < keep_after_epoch)
+            .map(|(id, _)| *id)
+            .collect();
+        let count = to_prune.len();
+        for id in &to_prune {
+            // Remove the block itself.
+            self.blocks.remove(id);
+            // Remove its outbound edges (this id appearing as someone's parent).
+            self.children.remove(id);
+        }
+        // Strip pruned ids from any remaining inverse-adjacency sets.
+        for child_set in self.children.values_mut() {
+            for id in &to_prune {
+                child_set.remove(id);
+            }
+        }
+        count
+    }
 }
 
 /// All blocks (transitively) reachable via parent edges from `start`,
