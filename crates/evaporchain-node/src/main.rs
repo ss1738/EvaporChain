@@ -2445,6 +2445,19 @@ async fn main() -> Result<()> {
         }
     };
 
+    // ── Async fold queue ──
+    // Wraps the shared `chain_prover` mutex with a single tokio worker
+    // that drains submitted (block, root) pairs and folds them in
+    // order. Consumers (the 4 fold sites below) call submit() instead
+    // of locking + folding inline; the worker locks the mutex only
+    // briefly per fold so the verifier path isn't starved. If the
+    // queue is full the caller falls back to the synchronous lock-
+    // and-fold path so a fold is never silently dropped.
+    let fold_queue = std::sync::Arc::new(evaporchain_proving::async_fold::FoldQueue::spawn(
+        Arc::clone(&chain_prover),
+        evaporchain_proving::async_fold::DEFAULT_FOLD_QUEUE_CAPACITY,
+    ));
+
     // ── Network setup ──
     let mut peer_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut net_sybil_state: Option<
@@ -4127,16 +4140,37 @@ async fn main() -> Result<()> {
                                     }
                                 }
 
-                                // Fold proof & attach to block
+                                // Submit fold to async worker (proposer-local
+                                // path) and attach the most-recent
+                                // successfully-generated chain proof — the
+                                // proof's num_steps tells receivers exactly
+                                // which prefix it covers so wire-compat with
+                                // the previous synchronous attach is preserved.
+                                // If the queue is full we fall back to the
+                                // synchronous lock-and-fold so we never silently
+                                // drop a fold.
                                 {
-                                    let mut p = safe_lock(&chain_prover);
-                                    match p.fold_block(&block, result.execution.state_root) {
-                                        Ok(_fold_res) => {
-                                            if let Ok(chain_proof) = p.generate_chain_proof() {
-                                                block.nova_proof = Some(chain_proof.proof.proof_bytes);
+                                    use evaporchain_proving::async_fold::SubmitOutcome;
+                                    let outcome = fold_queue
+                                        .submit(block.clone(), result.execution.state_root);
+                                    match outcome {
+                                        SubmitOutcome::Queued => {}
+                                        SubmitOutcome::QueueFull | SubmitOutcome::WorkerGone => {
+                                            let mut p = safe_lock(&chain_prover);
+                                            if let Err(e) = p.fold_block(
+                                                &block,
+                                                result.execution.state_root,
+                                            ) {
+                                                eprintln!(
+                                                    "{} \x1b[31mProving error (sync fallback): {}\x1b[0m",
+                                                    node_tag, e
+                                                );
                                             }
                                         }
-                                        Err(e) => eprintln!("{} \x1b[31mProving error: {}\x1b[0m", node_tag, e),
+                                    }
+                                    if let Some(chain_proof) = fold_queue.latest_proof() {
+                                        block.nova_proof =
+                                            Some(chain_proof.proof.proof_bytes);
                                     }
                                 }
 
@@ -4975,12 +5009,32 @@ async fn main() -> Result<()> {
                                             eprintln!("\x1b[31mFATAL: state batch commit failed: {}\x1b[0m", e);
                                         }
                                     }
+                                    // Submit fold to async worker (gossip-
+                                    // receiver path); fall back to sync if
+                                    // the queue is saturated. Attach the
+                                    // most-recent generated chain proof to
+                                    // block.nova_proof — see the proposer-
+                                    // local site above for the rationale.
                                     {
-                                        let mut p = safe_lock(&chain_prover);
-                                        if p.fold_block(&block, result.execution.state_root).is_ok() {
-                                            if let Ok(chain_proof) = p.generate_chain_proof() {
-                                                block.nova_proof = Some(chain_proof.proof.proof_bytes);
+                                        use evaporchain_proving::async_fold::SubmitOutcome;
+                                        let outcome = fold_queue.submit(
+                                            block.clone(),
+                                            result.execution.state_root,
+                                        );
+                                        match outcome {
+                                            SubmitOutcome::Queued => {}
+                                            SubmitOutcome::QueueFull
+                                            | SubmitOutcome::WorkerGone => {
+                                                let mut p = safe_lock(&chain_prover);
+                                                let _ = p.fold_block(
+                                                    &block,
+                                                    result.execution.state_root,
+                                                );
                                             }
+                                        }
+                                        if let Some(chain_proof) = fold_queue.latest_proof() {
+                                            block.nova_proof =
+                                                Some(chain_proof.proof.proof_bytes);
                                         }
                                     }
 
@@ -5505,25 +5559,36 @@ async fn main() -> Result<()> {
 
                     match c.produce_block(&mut *db_guard) {
                         Ok(mut result) => {
-                            let mut p = safe_lock(&chain_prover);
-                            match p.fold_block(&result.block, result.execution.state_root) {
-                                Ok(fold_res) => {
-                                    if args.prove_mode {
-                                        println!(
-                                            "{}   \x1b[35mProof: fold={:.1}ms  acc={}B  folded={}\x1b[0m",
-                                            node_tag,
-                                            fold_res.fold_time_us as f64 / 1000.0,
-                                            fold_res.accumulator_size,
-                                            p.blocks_folded(),
+                            // Mock-consensus producer path. Submit fold to
+                            // async worker; fall back to synchronous lock-
+                            // and-fold under backpressure. The fold-time
+                            // diagnostic line moves to the worker — at this
+                            // site we just see "submitted" semantics.
+                            {
+                                use evaporchain_proving::async_fold::SubmitOutcome;
+                                let outcome = fold_queue.submit(
+                                    result.block.clone(),
+                                    result.execution.state_root,
+                                );
+                                if let SubmitOutcome::QueueFull | SubmitOutcome::WorkerGone =
+                                    outcome
+                                {
+                                    let mut p = safe_lock(&chain_prover);
+                                    if let Err(e) = p.fold_block(
+                                        &result.block,
+                                        result.execution.state_root,
+                                    ) {
+                                        eprintln!(
+                                            "{} \x1b[31mProving error (sync fallback): {}\x1b[0m",
+                                            node_tag, e
                                         );
                                     }
-                                    if let Ok(chain_proof) = p.generate_chain_proof() {
-                                        result.block.nova_proof = Some(chain_proof.proof.proof_bytes);
-                                    }
                                 }
-                                Err(e) => eprintln!("{} \x1b[31mProving error: {}\x1b[0m", node_tag, e),
+                                if let Some(chain_proof) = fold_queue.latest_proof() {
+                                    result.block.nova_proof =
+                                        Some(chain_proof.proof.proof_bytes);
+                                }
                             }
-                            drop(p);
 
                             // C3: pre-commit durable cert before state.
                             log_persist_err(
