@@ -733,12 +733,23 @@ impl SnapshotFile {
     }
 
     /// Recompute the BLAKE3 over every field except `integrity_hash`
-    /// itself. Used both at create time (to fill the field) and at load
-    /// time (to verify it was not tampered).
+    /// itself AND `created_at`. Used both at create time (to fill the
+    /// field) and at load time (to verify it was not tampered).
+    ///
+    /// `created_at` is excluded from the canonical hash because it's
+    /// `SystemTime::now()` at create time — every peer's commit handler
+    /// fires at a slightly different wall-clock instant, so including
+    /// it makes the integrity_hash diverge across peers even when the
+    /// underlying state is byte-identical. With it excluded, two peers
+    /// holding the same `block_height + state_root + validator_set + ...`
+    /// produce the same `integrity_hash`, which lets a fast-syncing
+    /// joiner verify it received a snapshot matching a quorum of peers'
+    /// reported hashes (Track-1 follow-up to the 2026-05-02 fast-sync
+    /// validation).
     fn compute_integrity_hash(&self) -> [u8; 32] {
-        // Canonical serialisation: clone with integrity_hash zeroed.
         let mut canonical = self.clone();
         canonical.integrity_hash = [0u8; 32];
+        canonical.created_at = 0;
         match bincode::serialize(&canonical) {
             Ok(bytes) => blake3_hash(&bytes),
             Err(_) => [0u8; 32],
@@ -1377,6 +1388,65 @@ mod tests {
             result,
             Err(SnapshotError::VersionMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn snapshot_integrity_hash_excludes_created_at() {
+        // Two peers commit the same block at slightly different
+        // wall-clock instants. The state and consensus metadata are
+        // byte-identical; only `created_at` differs. The integrity_hash
+        // MUST match so a fast-syncing joiner can quorum-verify the
+        // snapshot it received against `/api/snapshot/latest` from
+        // multiple peers (see comment on `compute_integrity_hash`).
+        let mut db = InMemoryStateDB::new();
+        populate_db(&mut db);
+
+        let mut file_a = SnapshotFile::create(
+            &mut db,
+            "evaporchain-test-1",
+            100,
+            5,
+            [7u8; 32],
+            None,
+            make_validator_set(),
+        )
+        .unwrap();
+        let mut file_b = SnapshotFile::create(
+            &mut db,
+            "evaporchain-test-1",
+            100,
+            5,
+            [7u8; 32],
+            None,
+            make_validator_set(),
+        )
+        .unwrap();
+
+        // Force diverging created_at — mimics two peers' commit
+        // handlers firing milliseconds apart.
+        file_a.created_at = 1_000_000;
+        file_b.created_at = 1_000_500;
+        file_a.integrity_hash = file_a.compute_integrity_hash();
+        file_b.integrity_hash = file_b.compute_integrity_hash();
+
+        assert_eq!(
+            file_a.integrity_hash, file_b.integrity_hash,
+            "integrity_hash must be reproducible across peers — only \
+             `integrity_hash` itself and `created_at` are excluded"
+        );
+
+        // Round-trip through bytes: both files must still verify, and
+        // both must report the same hash post-load.
+        let bytes_a = file_a.to_bytes().unwrap();
+        let bytes_b = file_b.to_bytes().unwrap();
+        let parsed_a = SnapshotFile::from_bytes(&bytes_a).unwrap();
+        let parsed_b = SnapshotFile::from_bytes(&bytes_b).unwrap();
+        assert_eq!(parsed_a.integrity_hash, parsed_b.integrity_hash);
+        assert_ne!(
+            parsed_a.created_at, parsed_b.created_at,
+            "created_at should round-trip distinctly even though it \
+             doesn't influence the hash"
+        );
     }
 
     #[test]
