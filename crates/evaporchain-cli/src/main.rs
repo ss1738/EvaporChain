@@ -2345,16 +2345,22 @@ fn cmd_genesis_add_validator(
         None
     };
 
-    let bls_pop = matches
-        .get_one::<String>("validator-json")
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .and_then(|j| {
-            j.get("bls")
-                .and_then(|b| b.get("pop"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        });
+    // Pull the BLS proof-of-possession from the same keys-file the
+    // public key came from (if any). Same `keys_path` parameter the
+    // `bls_pk` derivation above used.
+    let bls_pop = if let Some(kp) = keys_path {
+        std::fs::read_to_string(kp)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|j| {
+                j.get("bls")
+                    .and_then(|b| b.get("pop"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+    } else {
+        None
+    };
     config.validators.push(GenesisValidator {
         id: next_id,
         name: name.to_string(),
@@ -2973,7 +2979,12 @@ fn cmd_genesis_ceremony(
                 stake: e.body.stake,
                 address: addr,
                 bls_public_key: Some(e.body.bls_public_key.clone()),
-                bls_pop: Some(e.body.bls_pop.clone()),
+                // ContributionBody V1 doesn't carry the PoP yet; the
+                // ceremony format extension is a separate refactor
+                // (would change canonical_body_bytes and break existing
+                // envelopes). Until then leave None — operators can
+                // backfill via `genesis-ceremony patch-pop` once shipped.
+                bls_pop: None,
                 p2p_address: e.body.p2p_address.clone(),
             }
         })
