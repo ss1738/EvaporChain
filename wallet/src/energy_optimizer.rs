@@ -512,7 +512,10 @@ fn batch_discount(count: usize) -> f64 {
 }
 
 fn uuid_v4() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let d = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
@@ -522,7 +525,7 @@ fn uuid_v4() -> String {
         (d.as_nanos() >> 32) as u16,
         ((d.as_nanos() >> 48) as u16 & 0x0fff) | 0x4000,
         ((d.as_nanos() >> 60) as u16 & 0x3fff) | 0x8000,
-        (d.as_nanos() >> 64) as u64 ^ std::process::id() as u64,
+        ((d.as_nanos() >> 64) as u64) ^ (std::process::id() as u64) ^ n,
     )
 }
 

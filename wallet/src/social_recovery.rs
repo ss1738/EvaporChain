@@ -214,7 +214,17 @@ impl SocialRecoveryManager {
 
         let now = chrono::Utc::now();
         let timelock_until = now + chrono::Duration::hours(self.config.timelock_hours as i64);
-        let id = format!("recovery_{}", now.timestamp_nanos_opt().unwrap_or(0));
+        // Two consecutive initiate_recovery calls inside the same nanosecond
+        // (test_pending_requests does exactly that) must produce distinct
+        // ids — otherwise HashMap::insert silently collides. Mix in a
+        // process-wide monotonic counter.
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let id = format!(
+            "recovery_{}_{}",
+            now.timestamp_nanos_opt().unwrap_or(0),
+            n
+        );
 
         let request = RecoveryRequest {
             id: id.clone(),

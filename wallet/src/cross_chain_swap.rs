@@ -180,14 +180,21 @@ impl CrossChainManager {
         let fee = gross * route.fee_bps as u64 / 10_000;
         let expected_output = gross - fee;
 
-        // Generate hashlock from random-ish data using blake3.
+        // Generate hashlock from random-ish data using blake3. Mix a
+        // process-wide monotonic counter into the preimage so two swaps
+        // initiated in the same nanosecond (e.g. test_swap_history_ordering)
+        // produce distinct hashlocks → distinct swap ids → distinct
+        // HashMap entries.
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let now = chrono::Utc::now();
         let preimage = format!(
-            "{}-{}-{}-{}",
+            "{}-{}-{}-{}-{}",
             route_id,
             source_amount,
             now.timestamp_nanos_opt().unwrap_or(0),
-            expected_output
+            expected_output,
+            n
         );
         let hashlock = blake3::hash(preimage.as_bytes()).to_hex().to_string();
 
