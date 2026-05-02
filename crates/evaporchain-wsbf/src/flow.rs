@@ -166,8 +166,11 @@ mod tests {
             coarse_grain: 2,
             entropy_scale_mb: 1_000_000,
         };
-        // Two blocks with very different energies → high entropy → large correction.
-        let w = vec![block(0, 1, 10, 4096), block(1, 1_000_000, 10, 4096)];
+        // High Shannon entropy = UNIFORM-like distribution (each outcome
+        // nearly equally probable). Two equal-energy blocks give p=0.5 each
+        // → H = log2(2) = 1 bit = 1000 mb. A skewed split like [1, 1_000_000]
+        // would actually give LOW entropy (block 1 dominates with p ≈ 1).
+        let w = vec![block(0, 1_000_000, 10, 4096), block(1, 1_000_000, 10, 4096)];
         let ep = rg_step(&w, 0, &p).unwrap();
         assert!(
             ep.lambda_eff < 4096,

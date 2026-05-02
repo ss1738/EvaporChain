@@ -180,8 +180,17 @@ mod tests {
 
     #[test]
     fn high_temperature_accepts_some_degrading_moves() {
-        // T very high (epoch=0, lambda=10000) → threshold ~50% → nonce=0 accepted.
-        let p = params(10_000);
+        // SA acceptance threshold = T/(T+Δscore). Score units depend on
+        // beta_mb: with beta_mb>0, proposer_weight multiplies by a u32-scale
+        // boost (~2^32), so even a 1-stake delta produces Δ in the billions
+        // and any reasonable T is dwarfed → threshold ≈ 0. With beta_mb=0
+        // score = stake × uptime_milli, so delta is on the same order as T
+        // (epoch counts) and the gate can actually accept degrading moves.
+        // This test exercises that hot-start acceptance regime.
+        let p = AnnealingParams {
+            lambda_half_life: 10_000,
+            beta_mb: 0,
+        };
         let strong = AnnealedScore {
             stake: 10_000,
             activity: 50,
@@ -192,7 +201,9 @@ mod tests {
             activity: 50,
             uptime_milli: 1_000,
         };
-        // nonce=0 < threshold (which is ~NONCE_MOD * T/(T+delta) ≈ large)
+        // T = 10_000, delta = 1 stake × 1000 milli = 1_000.
+        // threshold = 10_000/(10_000+1_000) × 1_000_000 ≈ 909_090.
+        // nonce=0 < 909_090 → accept.
         assert!(accepts_candidate(&p, 0, &strong, &barely_worse, 0));
     }
 }

@@ -283,12 +283,13 @@ mod tests {
         pledge(&mut book, &mut pool, obj(1), ns(1), 100, 10, 0).unwrap();
         honour(&mut book, &mut pool, &obj(1), 1).unwrap(); // 100 donated
         let archived = revoke(&mut book, &mut pool, &obj(1), 2).unwrap();
-        // 900 refunded to ns(1)
         assert_eq!(archived.patronage_score, 100);
         assert!(book.is_empty());
-        // ns(1) credit = 1_000_000 - 1_000 + 900 = 999_900 (minus what went to patronage_ns)
-        // pool ns(1) gets 900 back; total pool = 999_900 + 100 (in patronage_ns)
-        assert_eq!(pool.total_accrued(), 1_000_000 - 100); // only donated amount is "spent"
+        // Conservation: honour moves 100 from ns(1) → patronage_ns inside the
+        // pool (not out of it), and revoke refunds the remaining 900 to ns(1).
+        // ns(1) = 1_000_000 - 1_000 + 900 = 999_900; patronage_ns = 100.
+        // Total stays at 1_000_000 — see conservation_honour_then_revoke.
+        assert_eq!(pool.total_accrued(), 1_000_000);
     }
 
     #[test]
