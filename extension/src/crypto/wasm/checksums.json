@@ -1,9 +1,9 @@
 {
-  "evaporchain_crypto_wasm_bg.wasm": "0000000000000000000000000000000000000000000000000000000000000000",
-  "evaporchain_crypto_wasm.js": "0000000000000000000000000000000000000000000000000000000000000000",
-  "built_at": null,
-  "rust": "1.83.0",
+  "evaporchain_crypto_wasm_bg.wasm": "7fe0f50221ddaf8c24a69f1e3c1aa66f3b5667dfdd6a7256ed3b3424154e8c82",
+  "evaporchain_crypto_wasm.js": "65f099e685bfeef74909d3ce8c84d3716971ff1932d64b53ba6c8146ca17131e",
+  "built_at": "2026-05-02T06:06:42Z",
+  "rust": "1.95.0",
   "wasm_pack": "0.13.1",
   "wasm_opt": "121",
-  "pinned_commit": "unset"
+  "pinned_commit": "b70ebab15a89b984e02d815b5a2854005030e64a"
 }
