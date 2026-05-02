@@ -1253,23 +1253,40 @@ fn parse_args() -> NodeArgs {
     }
 }
 
-/// Hex-encoded ML-DSA-65 public key of the canonical mainnet genesis
-/// coordinator. Validators run with `--mainnet --genesis-config <path>` will
-/// only accept a genesis-config whose `coordinator_pk` matches this constant
-/// AND whose `coordinator_signature` verifies under it. Closes K-07/K-08.
+/// ML-DSA-65 public key of the canonical mainnet genesis coordinator,
+/// as raw bytes. Validators running `--mainnet --genesis-config <path>`
+/// only accept a genesis-config whose `coordinator_pk` (hex-decoded)
+/// matches these bytes AND whose `coordinator_signature` verifies
+/// under them. Closes K-07/K-08.
 ///
-/// TODO: replace with real coordinator pk before mainnet launch.
-/// (Placeholder is the 64-zero-hex string — any non-test mainnet startup
-/// against this value will hard-fail at the equality check below, which is
-/// the desired posture: nothing launches mainnet against a placeholder.)
-pub const MAINNET_COORDINATOR_PK: &str =
-    "0000000000000000000000000000000000000000000000000000000000000000";
+/// **Swap procedure** (run at release-tagging time, NOT at deploy):
+///   1. Run the genesis ceremony to produce a real ML-DSA-65 keypair.
+///   2. Convert the public key bytes to a Rust array literal of length
+///      `ML_DSA_PUBLIC_KEY_BYTES` (1952 for Dilithium3) and replace
+///      `MAINNET_COORDINATOR_PK_BYTES` below with `Some(&[ ... ])`.
+///   3. Run `cargo build --release -p evaporchain-node --features prove`
+///      and ship the produced binary as the canonical mainnet build.
+///   4. Validate: `cargo run --bin evaporchain-node -- --mainnet
+///      --genesis-config <real>.json` should boot. If the constant is
+///      still `None` (placeholder), the validator hard-fails at startup
+///      (see `validate_genesis_coordinator_signature` below).
+///
+/// **Why `Option<&[u8]>` instead of a hex string**:
+/// - `None` is unambiguously a placeholder (no all-zero / all-AA edge
+///   cases that could collide with a real key).
+/// - `&[u8]` length is checked at runtime against
+///   `ML_DSA_PUBLIC_KEY_BYTES` so a wrong-shape paste fails loudly.
+/// - The previous `&str = "00...00"` form was 32 bytes (wrong shape
+///   for Dilithium3) — masking a config bug as "looks like a key but
+///   is shorter than required". `Option<&[u8]>` makes the
+///   not-configured state explicit.
+pub const MAINNET_COORDINATOR_PK_BYTES: Option<&[u8]> = None;
 
 /// Validate the `coordinator_signature` on a loaded genesis-config.
 ///
 /// In `--mainnet` strict mode this is a hard requirement: the signature must
 /// verify and the genesis-listed `coordinator_pk` must equal the baked-in
-/// `MAINNET_COORDINATOR_PK`. In non-mainnet (testnet/devnet) mode we accept
+/// `MAINNET_COORDINATOR_PK_BYTES`. In non-mainnet (testnet/devnet) mode we accept
 /// a self-signed genesis (signature verifies under whatever `coordinator_pk`
 /// the genesis itself supplies) — useful for ephemeral local clusters that
 /// don't have a real coordinator. A genesis with no signature at all is
@@ -1304,27 +1321,41 @@ fn validate_genesis_coordinator_signature(
         .map_err(|e| format!("coordinator_pk is not valid hex: {e}"))?;
 
     if mainnet_strict {
-        let baked = hex::decode(MAINNET_COORDINATOR_PK.trim_start_matches("0x"))
-            .map_err(|e| format!("MAINNET_COORDINATOR_PK constant invalid hex: {e}"))?;
-        // H9 (audit 2026-05-02): baked-in MAINNET_COORDINATOR_PK is a
-        // 64-zero placeholder until the real ceremony PK is dropped in
-        // before launch. If we reach this branch with the placeholder,
-        // ANY all-zero coordinator_pk in genesis would compare-equal
-        // and pass — that's a footgun (a leaked all-zero key would
-        // sign valid genesis configs). Refuse upfront.
-        if baked.iter().all(|&b| b == 0) {
-            return Err(
-                "--mainnet refuses to start: MAINNET_COORDINATOR_PK is still the \
-                 64-zero placeholder. Replace the constant in evaporchain-node/src/main.rs \
-                 with the real ML-DSA-65 public key produced by the genesis ceremony \
-                 before any mainnet launch."
-                    .into(),
-            );
+        // H9 (audit 2026-05-02, hardened 2026-05-02 again):
+        // baked-in `MAINNET_COORDINATOR_PK_BYTES` is `None` until the
+        // real ceremony PK is dropped in before launch. If we reach
+        // this branch with `None`, the binary is not configured for
+        // mainnet — refuse to start.
+        let baked = match MAINNET_COORDINATOR_PK_BYTES {
+            Some(b) => b,
+            None => {
+                return Err(
+                    "--mainnet refuses to start: MAINNET_COORDINATOR_PK_BYTES is None \
+                     (placeholder). Replace the constant in evaporchain-node/src/main.rs \
+                     with `Some(&[ ... ])` containing the real ML-DSA-65 public key \
+                     produced by the genesis ceremony, then rebuild. See the doc-comment \
+                     on the constant for the swap procedure."
+                        .into(),
+                );
+            }
+        };
+        // Shape check: a real ML-DSA-65 pk MUST be exactly
+        // ML_DSA_PUBLIC_KEY_BYTES (1952 for Dilithium3). The
+        // previous 64-zero hex form silently masked a 32-byte
+        // wrong-shape paste; this rejects it loudly.
+        if baked.len() != evaporchain_crypto::signatures::ML_DSA_PUBLIC_KEY_BYTES {
+            return Err(format!(
+                "--mainnet refuses to start: MAINNET_COORDINATOR_PK_BYTES has wrong \
+                 length ({} bytes, expected {} for ML-DSA-65). The constant was either \
+                 pasted from the wrong key type or truncated.",
+                baked.len(),
+                evaporchain_crypto::signatures::ML_DSA_PUBLIC_KEY_BYTES,
+            ));
         }
         if claimed_pk != baked {
             return Err(format!(
                 "--mainnet rejects genesis: coordinator_pk in genesis ({} bytes) does not \
-                 match baked-in MAINNET_COORDINATOR_PK ({} bytes / different value). \
+                 match baked-in MAINNET_COORDINATOR_PK_BYTES ({} bytes / different value). \
                  If you are building the canonical mainnet, replace the placeholder constant \
                  in evaporchain-node/src/main.rs first.",
                 claimed_pk.len(),

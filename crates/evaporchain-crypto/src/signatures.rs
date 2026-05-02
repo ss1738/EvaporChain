@@ -254,6 +254,16 @@ pub enum EcdsaError {
 //
 // Verification: BOTH signatures must independently verify.
 
+/// Byte length of an ML-DSA-65 (Dilithium3) public key. Re-export of
+/// `pqc_dilithium::PUBLICKEYBYTES` so consumers in other crates don't
+/// need a direct dep on `pqc_dilithium`. Used by
+/// `evaporchain-node`'s coordinator-pk validation to reject
+/// wrong-shape keys at swap time.
+pub const ML_DSA_PUBLIC_KEY_BYTES: usize = pqc_dilithium::PUBLICKEYBYTES;
+
+/// Byte length of an ML-DSA-65 signature.
+pub const ML_DSA_SIGNATURE_BYTES: usize = pqc_dilithium::SIGNBYTES;
+
 const HYBRID_TAG: u8 = 0x02;
 pub const HYBRID_PK_LEN: usize = 1 + ECDSA_COMPRESSED_PK_LEN + pqc_dilithium::PUBLICKEYBYTES;
 pub const HYBRID_SIG_LEN: usize = 1 + ECDSA_SIGNATURE_LEN + pqc_dilithium::SIGNBYTES;
