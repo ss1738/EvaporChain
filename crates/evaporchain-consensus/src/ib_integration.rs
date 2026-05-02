@@ -74,9 +74,13 @@ mod tests {
     }
 
     #[test]
-    fn zero_lambda_always_commits() {
-        let local = uniform_stakes(4, 100);
-        let prior = uniform_stakes(4, 200);
+    fn zero_lambda_commits_when_kl_positive() {
+        // Substrate uses strict `>`: lambda=0 commits iff KL > 0. Identical
+        // views (KL=0) abstain regardless of lambda — see ib::ib_vote
+        // comment for the IB-as-information-barrier rationale.
+        // Local concentrates in bin 15; prior spreads → KL > 0.
+        let local = vec![100, 100, 100, 100, 100, 100, 100, 100];
+        let prior = vec![10, 20, 30, 40, 50, 60, 70, 80];
         let vote = ib_vote_from_stakes(&local, &prior, 0);
         assert_eq!(vote, IbVote::Commit);
     }

@@ -62,11 +62,12 @@ pub fn ib_vote(
     params: &IbParams,
 ) -> IbVote {
     let kl = local_sig.kl_millibits(prior_sig);
-    // `>=` so a zero information barrier (lambda=0) always commits, even
-    // when the local and prior distributions normalise to the same PMF
-    // (KL = 0). Strict `>` would treat zero-lambda as "never commit",
-    // which contradicts the IB-as-threshold semantics.
-    if kl >= params.lambda_mb {
+    // Strict `>`: identical views (KL = 0) MUST abstain regardless of
+    // lambda_mb. Otherwise an attacker who replicates the prior verbatim
+    // can still ride the threshold to a Commit, defeating the
+    // information-bottleneck premise that "your local view must carry
+    // strictly more info than the network's prior to vote".
+    if kl > params.lambda_mb {
         IbVote::Commit
     } else {
         IbVote::Abstain
