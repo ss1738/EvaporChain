@@ -85,7 +85,8 @@ export type View =
   | "governance"
   | "dsn-details"
   | "shards"
-  | "contacts";
+  | "contacts"
+  | "da-verify";
 
 export type PendingTxKind = "transfer" | "swap" | "resurrect" | "batch_refresh" | "settle_demurrage";
 

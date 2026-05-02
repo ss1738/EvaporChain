@@ -294,6 +294,14 @@ export function SettingsScreen() {
           Chain governance ↗
         </button>
 
+        {/* DA verify — verify the active node is serving real block data. */}
+        <button
+          onClick={() => setView("da-verify")}
+          className="w-full py-2 rounded-lg bg-evap-surface border border-evap-border text-xs text-zinc-300 hover:border-evap-cyan/40 transition text-left px-3"
+        >
+          Verify node honesty (DA sampling) ↗
+        </button>
+
         {/* Lock */}
         <button
           onClick={lock}

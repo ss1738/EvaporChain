@@ -32,6 +32,7 @@ import { GovernanceScreen } from "@/components/GovernanceScreen";
 import { DsnDetailsScreen } from "@/components/DsnBadge";
 import { ShardScreen } from "@/components/ShardScreen";
 import { ContactsScreen } from "@/components/ContactsScreen";
+import { DaVerifyScreen } from "@/components/DaVerifyScreen";
 import { TxToastContainer } from "@/components/TxToast";
 
 export function App() {
@@ -165,6 +166,8 @@ function AppView({ view, completeTutorial }: { view: ViewType; completeTutorial:
       return <ShardScreen />;
     case "contacts":
       return <ContactsScreen />;
+    case "da-verify":
+      return <DaVerifyScreen />;
     default:
       return <LockScreen />;
   }
