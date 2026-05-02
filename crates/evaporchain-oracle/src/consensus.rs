@@ -568,12 +568,12 @@ mod tests {
 
     #[test]
     fn test_finalize_includes_twap() {
-        // TWAP requires ≥ 2 accumulator entries with non-zero time separation
-        // (see test_twap_single_entry). Each finalize() pushes a single
-        // (max_vote_timestamp, median) into the round's accumulator, so the
-        // first finalize on a fresh round always reports twap=None.
-        // Submit a second vote with a later timestamp and finalize again to
-        // confirm the wiring populates the field once history exists.
+        // TWAP requires ≥ 3 accumulator entries with non-zero time
+        // separation (audit-tightened 2026-05-02; was ≥2). Each
+        // finalize() pushes a single (max_vote_timestamp, median)
+        // into the round's accumulator, so the first two finalizes
+        // on a fresh round always report twap=None and only the
+        // third (or later) populates the field.
         let mut round = OracleConsensusRound::new("btc_usd", 1, 1, 3600);
         let kp0 = BlsKeypair::generate();
         let (v0, pk0) = signed(&kp0, 0, "btc_usd", 60000.0, 1, 1000);
@@ -585,7 +585,13 @@ mod tests {
         let (v1, pk1) = signed(&kp1, 1, "btc_usd", 60100.0, 1, 2000);
         round.submit_vote(v1, &pk1).unwrap();
         let second = round.finalize().unwrap();
-        assert!(second.twap.is_some(), "second finalize: TWAP should be populated");
+        assert!(second.twap.is_none(), "second finalize: only 2 accumulator entries (still single-block-pinnable)");
+
+        let kp2 = BlsKeypair::generate();
+        let (v2, pk2) = signed(&kp2, 2, "btc_usd", 60200.0, 1, 3000);
+        round.submit_vote(v2, &pk2).unwrap();
+        let third = round.finalize().unwrap();
+        assert!(third.twap.is_some(), "third finalize: TWAP should be populated");
     }
 
     #[test]
