@@ -2605,9 +2605,12 @@ mod tests {
         let result = executor.execute_block(&mut db, &block).unwrap();
 
         assert_eq!(result.txs_executed, 3);
-        // addr(1): 10000 - 500 (transfer) - 1000 (storage deposit) = 8500
-        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 8500);
-        assert_eq!(db.get_account(&addr(2)).unwrap().balance, 9500); // +500 -1000
+        // addr(1): 10000 - 500 (transfer) - 1000 (storage deposit)
+        //         - 99 (storage rent: STORAGE_RENT_PER_BYTE_PER_EPOCH * 99-byte object)
+        //         = 8401. End-of-block rent collection runs in execute_block,
+        //         charging storage_bytes × rate from balance — see L1870-1882.
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 8401);
+        assert_eq!(db.get_account(&addr(2)).unwrap().balance, 9500); // +500 -1000 (no rent: no objects)
         assert!(db.get_object(&obj_id(1)).is_some());
     }
 
