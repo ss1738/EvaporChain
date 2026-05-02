@@ -336,15 +336,36 @@ impl HybridVerifier {
             Some(sigs) => sigs,
             None => return false,
         };
-        EcdsaVerifier::verify(msg, ecdsa_sig, ecdsa_pk)
-            && MlDsaVerifier::verify(msg, mldsa_sig, mldsa_pk)
+        // Crypto-3 timing mitigation (re-audit 2026-05-02): always
+        // run BOTH verifiers — never short-circuit on the first
+        // failure. `&` (non-short-circuit AND) forces both calls so
+        // a network attacker can't infer which scheme failed by
+        // measuring per-attempt latency. Both verifiers are
+        // constant-time enough for this to mask scheme detection;
+        // the overall decision is still the AND of both results.
+        let ecdsa_ok = EcdsaVerifier::verify(msg, ecdsa_sig, ecdsa_pk);
+        let mldsa_ok = MlDsaVerifier::verify(msg, mldsa_sig, mldsa_pk);
+        ecdsa_ok & mldsa_ok
     }
 }
 
 impl Verifier for HybridVerifier {
     fn verify(msg: &[u8], signature: &[u8], public_key: &[u8]) -> bool {
-        if Self::is_hybrid_pk(public_key) || Self::is_hybrid_sig(signature) {
+        // C4 (audit 2026-05-02): require BOTH pk and sig to be hybrid-
+        // tagged before invoking the hybrid path. Previously `||` let a
+        // mixed pair (e.g. hybrid pk + ML-DSA-only sig) reach
+        // `verify_hybrid`, which would then `split_sig` on a wrongly-
+        // sized buffer and short-circuit to `false` — but the
+        // *intended* path (verify against the inner ML-DSA scheme)
+        // never ran, so a legitimately-signed legacy ML-DSA blob
+        // misclassified as hybrid would falsely fail. Worse, an
+        // attacker could probe the boundary to detect which scheme is
+        // in use. AND eliminates the ambiguous middle case.
+        if Self::is_hybrid_pk(public_key) && Self::is_hybrid_sig(signature) {
             Self::verify_hybrid(msg, signature, public_key)
+        } else if Self::is_hybrid_pk(public_key) || Self::is_hybrid_sig(signature) {
+            // Mixed format — reject outright instead of falling through.
+            false
         } else {
             MlDsaVerifier::verify(msg, signature, public_key)
         }

@@ -55,7 +55,27 @@ fn kdf(passphrase: &[u8], salt: &[u8]) -> Result<[u8; 32], String> {
 }
 
 /// Encrypt a 32-byte BLS secret with a passphrase. Returns 92 bytes.
+///
+/// Equivalent to `encrypt_bls_secret_with_aad(secret, passphrase, &[])`.
+/// Prefer the `_with_aad` form and pass `path_aad(file_path)` as the AAD
+/// so a ciphertext can't be silently relocated to a different file path
+/// (H5 — audit 2026-05-02). Old EVK1 blobs without AAD remain decodable.
 pub fn encrypt_bls_secret(secret: &[u8], passphrase: &[u8]) -> Result<Vec<u8>, String> {
+    encrypt_bls_secret_with_aad(secret, passphrase, &[])
+}
+
+/// Encrypt a 32-byte BLS secret with a passphrase and bind it to AAD.
+///
+/// H5 (audit 2026-05-02): pass `path_aad(file_path)` for production
+/// writes. The AAD is authenticated by XChaCha20-Poly1305 — any
+/// attempt to decrypt the same ciphertext under a different AAD
+/// (i.e., a swapped file path) yields an authentication failure.
+pub fn encrypt_bls_secret_with_aad(
+    secret: &[u8],
+    passphrase: &[u8],
+    aad: &[u8],
+) -> Result<Vec<u8>, String> {
+    use chacha20poly1305::aead::Payload;
     if secret.len() != PLAINTEXT_LEN {
         return Err(format!(
             "BLS secret must be {} bytes, got {}",
@@ -73,7 +93,7 @@ pub fn encrypt_bls_secret(secret: &[u8], passphrase: &[u8]) -> Result<Vec<u8>, S
         XChaCha20Poly1305::new_from_slice(&key).map_err(|e| format!("cipher init: {e}"))?;
     let nonce = XNonce::from_slice(&nonce_bytes);
     let ciphertext = cipher
-        .encrypt(nonce, secret)
+        .encrypt(nonce, Payload { msg: secret, aad })
         .map_err(|e| format!("encrypt: {e}"))?;
 
     let mut out = Vec::with_capacity(ENCRYPTED_LEN);
@@ -87,6 +107,19 @@ pub fn encrypt_bls_secret(secret: &[u8], passphrase: &[u8]) -> Result<Vec<u8>, S
 
 /// Decrypt a 92-byte encrypted blob with the supplied passphrase.
 pub fn decrypt_bls_secret(blob: &[u8], passphrase: &[u8]) -> Result<[u8; 32], String> {
+    decrypt_bls_secret_with_aad(blob, passphrase, &[])
+}
+
+/// Decrypt with explicit AAD. Use the same `aad` value that was passed
+/// to `encrypt_bls_secret_with_aad` (e.g. `path_aad(file_path)`) — a
+/// mismatch yields a generic `decrypt failed` error indistinguishable
+/// from a wrong passphrase, by design.
+pub fn decrypt_bls_secret_with_aad(
+    blob: &[u8],
+    passphrase: &[u8],
+    aad: &[u8],
+) -> Result<[u8; 32], String> {
+    use chacha20poly1305::aead::Payload;
     if blob.len() != ENCRYPTED_LEN {
         return Err(format!(
             "expected {} encrypted bytes, got {}",
@@ -106,7 +139,7 @@ pub fn decrypt_bls_secret(blob: &[u8], passphrase: &[u8]) -> Result<[u8; 32], St
         XChaCha20Poly1305::new_from_slice(&key).map_err(|e| format!("cipher init: {e}"))?;
     let nonce = XNonce::from_slice(nonce_bytes);
     let plaintext = cipher
-        .decrypt(nonce, ciphertext)
+        .decrypt(nonce, Payload { msg: ciphertext, aad })
         .map_err(|_| "decrypt failed — wrong passphrase or corrupt blob".to_string())?;
     if plaintext.len() != PLAINTEXT_LEN {
         return Err(format!(
@@ -117,6 +150,14 @@ pub fn decrypt_bls_secret(blob: &[u8], passphrase: &[u8]) -> Result<[u8; 32], St
     let mut out = [0u8; PLAINTEXT_LEN];
     out.copy_from_slice(&plaintext);
     Ok(out)
+}
+
+/// Produce a deterministic AAD bytes from a canonical file path.
+/// Use the `Path::canonicalize()` result (or `path.to_string_lossy()`
+/// on Linux) so the AAD is stable across symlinks and relative-vs-
+/// absolute path expressions.
+pub fn path_aad(path_bytes: &[u8]) -> [u8; 32] {
+    *blake3::hash(path_bytes).as_bytes()
 }
 
 #[cfg(test)]
