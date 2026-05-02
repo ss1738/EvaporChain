@@ -13,7 +13,7 @@
  * is the JS twin and must stay in lock-step.
  */
 import { wordlist as ENGLISH_WORDLIST } from "@scure/bip39/wordlists/english.js";
-import { blake3 } from "@noble/hashes/blake3.js";
+import { blake3 } from "@noble/hashes/blake3";
 
 export interface MnemonicBackup {
   version: number;
