@@ -3142,18 +3142,17 @@ impl HttpCellSource {
         &self.bases[0]
     }
 
-    /// Fetch the on-chain `data_root` for `block` from the primary node's
-    /// `/api/block/:N` endpoint. Returns `Ok(None)` when the block has no
-    /// `data_root` (consensus didn't carry one — e.g. a sentinel-empty
-    /// block or the chain was started without DA enforcement). The
-    /// caller treats `None` as "skip the cross-check, don't bail".
-    fn fetch_block_data_root(&self, block: u64) -> anyhow::Result<Option<[u8; 32]>> {
+    /// Fetch the on-chain `data_root` for `block`. Tri-state result:
+    ///   - `BlockLookup::NotFound` — HTTP 404 (block aged out of ring).
+    ///   - `BlockLookup::NoDataRoot` — block exists but its `data_root`
+    ///     field is null (sentinel/no-DA-enforcement).
+    ///   - `BlockLookup::Root(r)` — block exists with a 32-byte root.
+    /// Other transport / parse failures bubble up via `Err`.
+    fn fetch_block_data_root(&self, block: u64) -> anyhow::Result<BlockLookup> {
         let url = format!("{}/api/block/{}", self.primary_base(), block);
         let resp = self.client.get(&url).send().context("GET /api/block/:N")?;
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
-            // Block aged out of the in-memory ring; we can't cross-check
-            // — caller decides whether to abort.
-            return Ok(None);
+            return Ok(BlockLookup::NotFound);
         }
         if !resp.status().is_success() {
             anyhow::bail!(
@@ -3165,7 +3164,7 @@ impl HttpCellSource {
         }
         let v: serde_json::Value = resp.json().context("parse block JSON")?;
         let Some(root_str) = v.get("data_root").and_then(|x| x.as_str()) else {
-            return Ok(None);
+            return Ok(BlockLookup::NoDataRoot);
         };
         let bytes =
             hex::decode(root_str.trim_start_matches("0x")).context("decode data_root hex")?;
@@ -3174,7 +3173,7 @@ impl HttpCellSource {
         }
         let mut b = [0u8; 32];
         b.copy_from_slice(&bytes);
-        Ok(Some(b))
+        Ok(BlockLookup::Root(b))
     }
 
     fn fetch_header(
@@ -3354,6 +3353,13 @@ impl evaporchain_da::light_client::CellSource for HttpCellSource {
     }
 }
 
+/// Tri-state result from `HttpCellSource::fetch_block_data_root`.
+enum BlockLookup {
+    NotFound,
+    NoDataRoot,
+    Root([u8; 32]),
+}
+
 /// Result of the optional on-chain attestation cross-check.
 enum ChainAttestation {
     /// On-chain `data_root` matches the served 2D header's `data_root`.
@@ -3368,16 +3374,29 @@ enum ChainAttestation {
     Mismatch { on_chain: [u8; 32], served: [u8; 32] },
 }
 
+/// Output of a DA verify run. Tests call `da_verify_inner` directly to
+/// inspect this structure; `cmd_da_verify` wraps it with the exit-code
+/// + pretty-printing logic.
+#[derive(Debug)]
+pub struct DaVerifyOutcome {
+    pub attestation_label: &'static str,
+    pub passes: bool,
+    pub samples_requested: usize,
+    pub samples_valid: usize,
+    pub all_valid: bool,
+    pub confidence: f64,
+    pub faulty_peers: Vec<(String, String)>,
+}
+
 #[allow(clippy::too_many_arguments)]
-async fn cmd_da_verify(
+async fn da_verify_inner(
     nodes: &[String],
     block: u64,
     samples: usize,
     threshold: f64,
     seed_hex: Option<&str>,
     skip_chain_attestation: bool,
-    json_mode: bool,
-) -> Result<()> {
+) -> Result<DaVerifyOutcome> {
     if nodes.is_empty() {
         anyhow::bail!("at least one --node URL is required");
     }
@@ -3410,10 +3429,12 @@ async fn cmd_da_verify(
             ChainAttestation::Skipped
         } else {
             match source.fetch_block_data_root(block)? {
-                None => ChainAttestation::BlockNotInRing,
-                Some(on_chain) if on_chain == [0u8; 32] => ChainAttestation::NoDataRoot,
-                Some(on_chain) if on_chain == header.data_root => ChainAttestation::Verified,
-                Some(on_chain) => ChainAttestation::Mismatch {
+                BlockLookup::NotFound => ChainAttestation::BlockNotInRing,
+                BlockLookup::NoDataRoot => ChainAttestation::NoDataRoot,
+                BlockLookup::Root(on_chain) if on_chain == header.data_root => {
+                    ChainAttestation::Verified
+                }
+                BlockLookup::Root(on_chain) => ChainAttestation::Mismatch {
                     on_chain,
                     served: header.data_root,
                 },
@@ -3441,7 +3462,7 @@ async fn cmd_da_verify(
     let (attestation, report) = result;
     let passes = report.passes(threshold);
 
-    let attestation_label = match &attestation {
+    let attestation_label: &'static str = match &attestation {
         ChainAttestation::Verified => "verified",
         ChainAttestation::Skipped => "skipped",
         ChainAttestation::NoDataRoot => "no-data-root",
@@ -3449,69 +3470,100 @@ async fn cmd_da_verify(
         ChainAttestation::Mismatch { .. } => "mismatch", // unreachable
     };
 
+    Ok(DaVerifyOutcome {
+        attestation_label,
+        passes,
+        samples_requested: report.results.len(),
+        samples_valid: report.metrics.valid_samples,
+        all_valid: report.all_valid,
+        confidence: report.metrics.confidence,
+        faulty_peers: report
+            .faulty_peers
+            .iter()
+            .map(|(p, r)| (p.clone(), format!("{:?}", r)))
+            .collect(),
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn cmd_da_verify(
+    nodes: &[String],
+    block: u64,
+    samples: usize,
+    threshold: f64,
+    seed_hex: Option<&str>,
+    skip_chain_attestation: bool,
+    json_mode: bool,
+) -> Result<()> {
+    let outcome = da_verify_inner(
+        nodes,
+        block,
+        samples,
+        threshold,
+        seed_hex,
+        skip_chain_attestation,
+    )
+    .await?;
+
     if json_mode {
         let payload = serde_json::json!({
-            "nodes": nodes_owned,
+            "nodes": nodes,
             "block": block,
-            "samples_requested": report.results.len(),
-            "samples_valid": report.metrics.valid_samples,
-            "unique_rows_hit": report.metrics.unique_rows_hit,
-            "unique_cols_hit": report.metrics.unique_cols_hit,
-            "confidence": report.metrics.confidence,
-            "all_valid": report.all_valid,
-            "faulty_peers": report
+            "samples_requested": outcome.samples_requested,
+            "samples_valid": outcome.samples_valid,
+            "all_valid": outcome.all_valid,
+            "confidence": outcome.confidence,
+            "faulty_peers": outcome
                 .faulty_peers
                 .iter()
-                .map(|(p, r)| serde_json::json!({"peer": p, "reason": format!("{:?}", r)}))
+                .map(|(p, r)| serde_json::json!({"peer": p, "reason": r}))
                 .collect::<Vec<_>>(),
             "threshold": threshold,
-            "chain_attestation": attestation_label,
-            "passes": passes,
+            "chain_attestation": outcome.attestation_label,
+            "passes": outcome.passes,
         });
         println!("{}", serde_json::to_string_pretty(&payload)?);
     } else {
         print_header("DA Light-Client Verification");
         println!(
             "  {} block #{} across {} node(s)",
-            if passes { "✅".green() } else { "❌".red() },
+            if outcome.passes { "✅".green() } else { "❌".red() },
             block,
-            nodes_owned.len()
+            nodes.len()
         );
-        for n in &nodes_owned {
+        for n in nodes {
             println!("  {} {}", "Node:        ".truecolor(140, 150, 170), n);
         }
         println!(
             "  {} {}",
             "Chain attest:".truecolor(140, 150, 170),
-            attestation_label
+            outcome.attestation_label
         );
         println!(
-            "  {} {}/{} samples valid, {} rows hit, {} cols hit",
+            "  {} {}/{} samples valid",
             "Cells:       ".truecolor(140, 150, 170),
-            report.metrics.valid_samples,
-            report.results.len(),
-            report.metrics.unique_rows_hit,
-            report.metrics.unique_cols_hit,
+            outcome.samples_valid,
+            outcome.samples_requested,
         );
         println!(
             "  {} {:.6} (threshold {:.6})",
             "Confidence:  ".truecolor(140, 150, 170),
-            report.metrics.confidence,
+            outcome.confidence,
             threshold,
         );
-        if !report.faulty_peers.is_empty() {
+        if !outcome.faulty_peers.is_empty() {
             println!(
                 "  {} {} peer(s) served bad cells:",
                 "⚠".yellow(),
-                report.faulty_peers.len()
+                outcome.faulty_peers.len()
             );
-            for (peer, reason) in &report.faulty_peers {
-                println!("    - {} ({:?})", peer, reason);
+            for (peer, reason) in &outcome.faulty_peers {
+                println!("    - {} ({})", peer, reason);
             }
         }
     }
 
-    if !passes {
+    if !outcome.passes {
         std::process::exit(1);
     }
     Ok(())
@@ -5313,7 +5365,7 @@ mod tests {
         // of accounts via the state DB directly, then run the CLI
         // create + verify functions and confirm the on-disk blob
         // round-trips with matching state_root and integrity_hash.
-        use evaporchain_state::{RocksDBStateDB, SnapshotFile};
+        use evaporchain_state::{db::StateDB as _, RocksDBStateDB, SnapshotFile};
         use evaporchain_types::Account;
         let pid = std::process::id();
         let dir = std::env::temp_dir().join(format!("evaporchain-cli-snap-{}", pid));
@@ -5772,5 +5824,349 @@ mod tests {
             "expected ragged-row error, got: {msg}"
         );
         let _ = std::fs::remove_file(&path);
+    }
+
+    // ────────────────── DA verify integration tests ──────────────────
+    //
+    // Spin up an in-process axum server that mirrors the three real
+    // endpoints `cmd_da_verify` consumes: /api/block/:N (chain
+    // attestation), /api/da/header/:N (2D header), /api/da/cell/:N/:r/:c
+    // (per-cell proof). Drive `da_verify_inner` against the server and
+    // assert each ChainAttestation outcome plus multi-peer round-robin.
+    //
+    // Pure in-process — `cargo test` runs them; no cluster.
+
+    use axum::{extract::Path as AxumPath, routing::get, Router};
+    use std::sync::Arc as StdArc;
+
+    /// Per-test mode driving how the in-process server responds.
+    #[derive(Clone, Copy)]
+    enum DaServerMode {
+        /// Honest server — real header, real cells, real chain root match.
+        Honest,
+        /// `/api/block/:N` returns a `data_root` that disagrees with the
+        /// served 2D header. Should trigger ChainAttestation::Mismatch.
+        ChainRootMismatch,
+        /// `/api/block/:N` returns 404 — block aged out of the ring.
+        /// Should resolve to BlockNotInRing.
+        BlockNotInRing,
+        /// `/api/block/:N` returns a record with `data_root: null`.
+        /// Should resolve to NoDataRoot.
+        NoDataRoot,
+        /// `/api/da/cell/:N/:r/:c` returns proofs whose cell_data hashes
+        /// to a different cell_hash — the sampler's verify should mark
+        /// this peer as faulty.
+        FabricatedCells,
+    }
+
+    struct TestDaServer {
+        addr: String,
+        // Keep the JoinHandle alive for the duration of the test; abort
+        // happens on drop via the runtime shutdown.
+        _handle: tokio::task::JoinHandle<()>,
+    }
+
+    fn build_test_package() -> evaporchain_da::block_da_2d::BlockDA2DPackage {
+        // Big enough that 2D encoding picks a non-trivial extended_dim
+        // and we have multiple rows/cols to sample.
+        let payload: Vec<u8> = (0..2048u32).map(|i| (i % 251) as u8).collect();
+        evaporchain_da::block_da_2d::BlockDA2D::new()
+            .encode_block(&payload)
+            .expect("test package must encode")
+    }
+
+    /// Build an axum router that serves the DA endpoints. Both `block`
+    /// and the package are captured into closures so each test gets its
+    /// own state.
+    fn router_for(
+        block: u64,
+        package: evaporchain_da::block_da_2d::BlockDA2DPackage,
+        mode: DaServerMode,
+    ) -> Router {
+        let pkg = StdArc::new(package);
+        let pkg_for_block = pkg.clone();
+        let pkg_for_header = pkg.clone();
+        let pkg_for_cell = pkg.clone();
+
+        let block_handler = move |AxumPath(n): AxumPath<u64>| {
+            let pkg = pkg_for_block.clone();
+            async move {
+                if n != block {
+                    return (
+                        axum::http::StatusCode::NOT_FOUND,
+                        axum::Json(serde_json::json!({"error": "block not found"})),
+                    );
+                }
+                match mode {
+                    DaServerMode::BlockNotInRing => (
+                        axum::http::StatusCode::NOT_FOUND,
+                        axum::Json(serde_json::json!({"error": "block not in ring"})),
+                    ),
+                    DaServerMode::NoDataRoot => (
+                        axum::http::StatusCode::OK,
+                        axum::Json(serde_json::json!({"number": n, "data_root": null})),
+                    ),
+                    DaServerMode::ChainRootMismatch => (
+                        axum::http::StatusCode::OK,
+                        axum::Json(serde_json::json!({
+                            "number": n,
+                            "data_root": format!("0x{}", hex::encode([0xFFu8; 32])),
+                        })),
+                    ),
+                    DaServerMode::Honest | DaServerMode::FabricatedCells => (
+                        axum::http::StatusCode::OK,
+                        axum::Json(serde_json::json!({
+                            "number": n,
+                            "data_root": format!("0x{}", hex::encode(pkg.header.data_root)),
+                        })),
+                    ),
+                }
+            }
+        };
+
+        let header_handler = move |AxumPath(_n): AxumPath<u64>| {
+            let pkg = pkg_for_header.clone();
+            async move {
+                let h = &pkg.header;
+                axum::Json(serde_json::json!({
+                    "data_root": hex::encode(h.data_root),
+                    "row_roots": h.row_roots.iter().map(hex::encode).collect::<Vec<_>>(),
+                    "col_roots": h.col_roots.iter().map(hex::encode).collect::<Vec<_>>(),
+                    "extended_dim": h.extended_dim,
+                    "original_dim": h.original_dim,
+                    "cell_size": h.cell_size,
+                    "original_len": h.original_len,
+                    "data_hash": hex::encode(h.data_hash),
+                }))
+            }
+        };
+
+        let cell_handler = move |AxumPath((_n, row, col)): AxumPath<(u64, usize, usize)>| {
+            let pkg = pkg_for_cell.clone();
+            async move {
+                let da = evaporchain_da::block_da_2d::BlockDA2D::new();
+                let mut proof = match da.prove_cell(&pkg, row, col) {
+                    Ok(p) => p,
+                    Err(_) => {
+                        return (
+                            axum::http::StatusCode::NOT_FOUND,
+                            axum::Json(serde_json::json!({"error": "no cell"})),
+                        );
+                    }
+                };
+                if matches!(mode, DaServerMode::FabricatedCells) {
+                    // Mutate cell_data so the on-the-wire bytes hash to
+                    // something other than cell_hash. The sampler's
+                    // verify_cell_proof recomputes cell_hash from
+                    // cell_data and rejects.
+                    if !proof.cell_data.is_empty() {
+                        proof.cell_data[0] ^= 0xFF;
+                    } else {
+                        proof.cell_data = vec![0xAA];
+                    }
+                }
+                (
+                    axum::http::StatusCode::OK,
+                    axum::Json(serde_json::json!({
+                        "block": _n,
+                        "row": row,
+                        "col": col,
+                        "cell_data": hex::encode(&proof.cell_data),
+                        "cell_hash": hex::encode(proof.cell_hash),
+                        "row_root": hex::encode(proof.row_root),
+                        "col_root": hex::encode(proof.col_root),
+                        "data_root": hex::encode(proof.data_root),
+                        "extended_dim": pkg.header.extended_dim,
+                        "row_proof_siblings": proof.row_siblings.iter().map(hex::encode).collect::<Vec<_>>(),
+                        "col_proof_siblings": proof.col_siblings.iter().map(hex::encode).collect::<Vec<_>>(),
+                    })),
+                )
+            }
+        };
+
+        Router::new()
+            .route("/api/block/:n", get(block_handler))
+            .route("/api/da/header/:n", get(header_handler))
+            .route("/api/da/cell/:n/:row/:col", get(cell_handler))
+    }
+
+    async fn spawn_server(
+        block: u64,
+        package: evaporchain_da::block_da_2d::BlockDA2DPackage,
+        mode: DaServerMode,
+    ) -> TestDaServer {
+        let router = router_for(block, package, mode);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind ephemeral port");
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, router).await;
+        });
+        TestDaServer {
+            addr: format!("http://{}", addr),
+            _handle: handle,
+        }
+    }
+
+    #[tokio::test]
+    async fn da_verify_honest_server_passes() {
+        let pkg = build_test_package();
+        let server = spawn_server(7, pkg, DaServerMode::Honest).await;
+        let outcome = da_verify_inner(
+            &[server.addr.clone()],
+            7,
+            8,
+            0.99,
+            None,
+            false,
+        )
+        .await
+        .expect("honest server must produce an outcome");
+        assert_eq!(outcome.attestation_label, "verified");
+        assert!(outcome.all_valid, "every cell from honest server must verify");
+        assert!(outcome.passes, "honest server must clear threshold");
+    }
+
+    #[tokio::test]
+    async fn da_verify_chain_root_mismatch_aborts_before_sampling() {
+        let pkg = build_test_package();
+        let server = spawn_server(7, pkg, DaServerMode::ChainRootMismatch).await;
+        let err = da_verify_inner(
+            &[server.addr.clone()],
+            7,
+            8,
+            0.99,
+            None,
+            false,
+        )
+        .await
+        .expect_err("mismatch must abort");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("does not match"),
+            "abort message must mention mismatch: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn da_verify_skip_attestation_proceeds_despite_chain_disagreement() {
+        let pkg = build_test_package();
+        // Even with a chain mismatch, --skip-chain-attestation lets the
+        // sampler run. Cells from this honest header still verify, so
+        // the threshold passes. The label reflects the opt-out.
+        let server = spawn_server(7, pkg, DaServerMode::ChainRootMismatch).await;
+        let outcome = da_verify_inner(
+            &[server.addr.clone()],
+            7,
+            8,
+            0.99,
+            None,
+            true, // skip_chain_attestation
+        )
+        .await
+        .expect("skip flag must bypass the cross-check");
+        assert_eq!(outcome.attestation_label, "skipped");
+        assert!(outcome.passes);
+    }
+
+    #[tokio::test]
+    async fn da_verify_block_not_in_ring_proceeds_with_label() {
+        let pkg = build_test_package();
+        let server = spawn_server(7, pkg, DaServerMode::BlockNotInRing).await;
+        let outcome = da_verify_inner(
+            &[server.addr.clone()],
+            7,
+            8,
+            0.99,
+            None,
+            false,
+        )
+        .await
+        .expect("block-not-in-ring is not a hard fail");
+        assert_eq!(outcome.attestation_label, "block-not-in-ring");
+        // Cells still verify against the served header; sampling passes.
+        assert!(outcome.passes);
+    }
+
+    #[tokio::test]
+    async fn da_verify_no_data_root_proceeds_with_label() {
+        let pkg = build_test_package();
+        let server = spawn_server(7, pkg, DaServerMode::NoDataRoot).await;
+        let outcome = da_verify_inner(
+            &[server.addr.clone()],
+            7,
+            8,
+            0.99,
+            None,
+            false,
+        )
+        .await
+        .expect("no-data-root is not a hard fail");
+        assert_eq!(outcome.attestation_label, "no-data-root");
+        assert!(outcome.passes);
+    }
+
+    #[tokio::test]
+    async fn da_verify_fabricated_cells_marks_peer_faulty() {
+        let pkg = build_test_package();
+        let server = spawn_server(7, pkg, DaServerMode::FabricatedCells).await;
+        let outcome = da_verify_inner(
+            &[server.addr.clone()],
+            7,
+            8,
+            0.99,
+            None,
+            false,
+        )
+        .await
+        .expect("fabricated cells produce an outcome (with faulty peers)");
+        assert!(
+            !outcome.faulty_peers.is_empty(),
+            "fabricated cells must trip the faulty-peer detector; got {:?}",
+            outcome.faulty_peers
+        );
+        assert!(
+            outcome.faulty_peers.iter().any(|(p, _)| p == &server.addr),
+            "faulty peer must be the URL we pointed at"
+        );
+        assert!(!outcome.passes, "any faulty peer must fail the verify");
+    }
+
+    #[tokio::test]
+    async fn da_verify_multi_peer_round_robins_across_nodes() {
+        // Two HONEST servers + one FABRICATING server. Round-robin means
+        // every third cell goes to the bad node. With 9 samples we hit
+        // it 3 times → faulty_peers names that URL specifically.
+        let pkg = build_test_package();
+        let s1 = spawn_server(7, pkg.clone(), DaServerMode::Honest).await;
+        let s2 = spawn_server(7, pkg.clone(), DaServerMode::Honest).await;
+        let s3 = spawn_server(7, pkg, DaServerMode::FabricatedCells).await;
+        let outcome = da_verify_inner(
+            &[s1.addr.clone(), s2.addr.clone(), s3.addr.clone()],
+            7,
+            9,
+            0.99,
+            None,
+            false,
+        )
+        .await
+        .expect("multi-peer outcome");
+        // The bad node served at least one cell; faulty_peers includes
+        // its URL, NOT the honest ones.
+        assert!(
+            outcome.faulty_peers.iter().any(|(p, _)| p == &s3.addr),
+            "bad node must appear in faulty_peers; got {:?}",
+            outcome.faulty_peers
+        );
+        assert!(
+            outcome.faulty_peers.iter().all(|(p, _)| p != &s1.addr),
+            "honest node 1 must NOT appear in faulty_peers"
+        );
+        assert!(
+            outcome.faulty_peers.iter().all(|(p, _)| p != &s2.addr),
+            "honest node 2 must NOT appear in faulty_peers"
+        );
+        assert!(!outcome.passes);
     }
 }
