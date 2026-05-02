@@ -5977,8 +5977,26 @@ async fn main() -> Result<()> {
                                     // syncs the block but never marks it final, so
                                     // /api/network/health reports finality_lag =
                                     // block_height for non-proposing nodes.
+                                    //
+                                    // Re-audit (2026-05-02) Cons-WS: this IS the
+                                    // backfill path — it processes blocks from a
+                                    // peer's history where signers may have exited
+                                    // or been jailed since. Use
+                                    // `on_block_finalized_with_active` with a
+                                    // current-active predicate so a stale cert
+                                    // signed by validators no longer in the active
+                                    // set is rejected.
                                     if let Some(ref tc_ref) = tendermint {
                                         if let Some(ref cert) = block.commit_certificate {
+                                            let active_ids: std::collections::HashSet<u64> = {
+                                                let tc = safe_lock(tc_ref);
+                                                tc.validator_set()
+                                                    .validators()
+                                                    .iter()
+                                                    .filter(|v| !v.jailed)
+                                                    .map(|v| v.id)
+                                                    .collect()
+                                            };
                                             let (signing_stake, total_stake) = {
                                                 let tc = safe_lock(tc_ref);
                                                 let vs = tc.validator_set();
@@ -5993,7 +6011,8 @@ async fn main() -> Result<()> {
                                                 .duration_since(std::time::UNIX_EPOCH)
                                                 .unwrap_or_default()
                                                 .as_secs();
-                                            ft.on_block_finalized(
+                                            let is_active = |vid: u64| active_ids.contains(&vid);
+                                            ft.on_block_finalized_with_active(
                                                 block.number,
                                                 cert.block_hash,
                                                 result.execution.state_root,
@@ -6002,6 +6021,7 @@ async fn main() -> Result<()> {
                                                 signing_stake,
                                                 total_stake,
                                                 now,
+                                                Some(&is_active),
                                             );
                                         } else {
                                             eprintln!(

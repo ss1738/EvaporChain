@@ -1116,6 +1116,18 @@ impl P2pNetworkService {
             // different connected peer, spreading load + giving the
             // chain a path forward when peer 0 is misbehaving.
             let mut req_rotation: u64 = 0;
+            // Re-audit (2026-05-02) freshness/age-out: peers that
+            // recently failed an OutboundFailure are tracked here
+            // with a cool-off timestamp. Picking logic skips them
+            // for `REQ_PEER_COOLOFF` seconds, so a flapping peer is
+            // naturally rotated out of the request pool until it
+            // looks healthy again. Implements both M12-followup
+            // (peer rotation freshness) and the request_response
+            // retry-queue audit item: any caller re-issuing a
+            // request after a failure lands on a different peer.
+            const REQ_PEER_COOLOFF: Duration = Duration::from_secs(30);
+            const REQ_FAIL_MAP_CAP: usize = 256;
+            let mut recently_failed: HashMap<PeerId, Instant> = HashMap::new();
             let mut idle_score_timer = tokio::time::interval(Duration::from_secs(300));
             idle_score_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -1191,15 +1203,25 @@ impl P2pNetworkService {
                     }
                     // App requests shard samples from peers (light client DAS)
                     Some(queries) = sample_req_receiver.recv() => {
-                        let peers: Vec<PeerId> = swarm.connected_peers().cloned().collect();
-                        if peers.is_empty() {
+                        // GC the failure map opportunistically.
+                        let now_inst = Instant::now();
+                        recently_failed.retain(|_, t| now_inst.duration_since(*t) < REQ_PEER_COOLOFF);
+                        let all_peers: Vec<PeerId> = swarm.connected_peers().cloned().collect();
+                        let healthy: Vec<PeerId> = all_peers
+                            .iter()
+                            .copied()
+                            .filter(|p| !recently_failed.contains_key(p))
+                            .collect();
+                        // Prefer healthy peers; if none, fall back to all
+                        // (better to retry against a recently-failed peer
+                        // than wedge waiting for cool-off).
+                        let pool = if !healthy.is_empty() { &healthy } else { &all_peers };
+                        if pool.is_empty() {
                             warn!("No peers available for shard sample request");
                         } else {
-                            // M12: rotate picked peer per request so a
-                            // single slow peer can't wedge every sample.
-                            let idx = (req_rotation as usize) % peers.len();
+                            let idx = (req_rotation as usize) % pool.len();
                             req_rotation = req_rotation.wrapping_add(1);
-                            let target = peers[idx];
+                            let target = pool[idx];
                             debug!("Requesting {} shard samples from peer {target}", queries.len());
                             swarm.behaviour_mut().shard_sample.send_request(
                                 &target,
@@ -1209,15 +1231,21 @@ impl P2pNetworkService {
                     }
                     // App requests block sync from peers
                     Some((from, to)) = sync_req_receiver.recv() => {
-                        // Pick a connected peer to request blocks from
-                        let peers: Vec<PeerId> = swarm.connected_peers().cloned().collect();
-                        if peers.is_empty() {
+                        let now_inst = Instant::now();
+                        recently_failed.retain(|_, t| now_inst.duration_since(*t) < REQ_PEER_COOLOFF);
+                        let all_peers: Vec<PeerId> = swarm.connected_peers().cloned().collect();
+                        let healthy: Vec<PeerId> = all_peers
+                            .iter()
+                            .copied()
+                            .filter(|p| !recently_failed.contains_key(p))
+                            .collect();
+                        let pool = if !healthy.is_empty() { &healthy } else { &all_peers };
+                        if pool.is_empty() {
                             warn!("No peers available for block sync request {from}..{to}");
                         } else {
-                            // M12: rotate target peer (was always peers[0]).
-                            let idx = (req_rotation as usize) % peers.len();
+                            let idx = (req_rotation as usize) % pool.len();
                             req_rotation = req_rotation.wrapping_add(1);
-                            let target = peers[idx];
+                            let target = pool[idx];
                             if from > to {
                                 warn!("Invalid sync range: from={from} > to={to}");
                                 continue;
@@ -1354,6 +1382,11 @@ impl P2pNetworkService {
                                 request_response::Event::OutboundFailure { peer, error, .. },
                             )) => {
                                 warn!("Block sync request to {peer} failed: {error}");
+                                // Cool the failing peer out of the request rotation.
+                                if recently_failed.len() >= REQ_FAIL_MAP_CAP {
+                                    recently_failed.clear();
+                                }
+                                recently_failed.insert(peer, Instant::now());
                             }
                             SwarmEvent::Behaviour(EvaporBehaviourEvent::BlockSync(
                                 request_response::Event::InboundFailure { peer, error, .. },
@@ -1417,6 +1450,10 @@ impl P2pNetworkService {
                                 request_response::Event::OutboundFailure { peer, error, .. },
                             )) => {
                                 warn!("Shard sample request to {peer} failed: {error}");
+                                if recently_failed.len() >= REQ_FAIL_MAP_CAP {
+                                    recently_failed.clear();
+                                }
+                                recently_failed.insert(peer, Instant::now());
                             }
                             SwarmEvent::Behaviour(EvaporBehaviourEvent::ShardSample(
                                 request_response::Event::InboundFailure { peer, error, .. },
