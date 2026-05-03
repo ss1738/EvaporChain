@@ -11,6 +11,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 hex = { workspace = true }
 evaporchain-types = { path = "../evaporchain-types" }
+evaporchain-allen-decay = { path = "../evaporchain-allen-decay" }
 blake3 = "1"
 
 [dev-dependencies]

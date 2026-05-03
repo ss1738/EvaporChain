@@ -225,6 +225,9 @@ pub struct PoHAStore {
     pub re_attestation_boost: u64,
     /// Maximum certificates to keep active.
     pub max_active: usize,
+    /// Most recent epoch a sampler tick fired (for cadence enforcement).
+    /// `None` means "never fired" — first call always fires.
+    last_sampler_epoch: Option<u64>,
 }
 
 impl PoHAStore {
@@ -237,7 +240,47 @@ impl PoHAStore {
             default_half_life,
             re_attestation_boost: default_energy / 4, // 25% boost per re-attestation
             max_active: 1024,
+            last_sampler_epoch: None,
         }
+    }
+
+    /// Epoch-cadence re-attestation sampler. Picks up to `sample_size`
+    /// certificates ranked by lowest energy (i.e. most in need) via
+    /// [`select_for_re_attestation`] and re-attests them, boosting
+    /// their energy by `re_attestation_boost`.
+    ///
+    /// Cadence: only fires when `epoch >= last_sampler_epoch + interval_epochs`.
+    /// Returns the number of certificates actually re-attested this tick
+    /// (zero if cadence not met or no candidates).
+    ///
+    /// Wires Phase-1 of the PoHA temperature gradient (Hot / Warm / Cold /
+    /// Evaporated) — without periodic re-attestation, all certificates
+    /// decay uniformly and the gradient collapses. Selection is energy-
+    /// prioritized rather than RNG-randomized; the term "sampler" is kept
+    /// for parity with the proposal vocabulary, and a future iteration
+    /// can mix in stake-weighted RNG without API churn.
+    pub fn tick_re_attestation_sampler(
+        &mut self,
+        epoch: u64,
+        sample_size: usize,
+        interval_epochs: u64,
+    ) -> usize {
+        if let Some(last) = self.last_sampler_epoch {
+            if epoch < last.saturating_add(interval_epochs) {
+                return 0;
+            }
+        }
+        let candidates = self.select_for_re_attestation(epoch, sample_size);
+        let mut count = 0;
+        for bn in candidates {
+            if self.re_attest(bn, epoch) {
+                count += 1;
+            }
+        }
+        if count > 0 {
+            self.last_sampler_epoch = Some(epoch);
+        }
+        count
     }
 
     /// Register a new DA certificate as a PoHA certificate.
@@ -876,5 +919,43 @@ mod tests {
             CertTemperature::from_energy(0, 0),
             CertTemperature::Evaporated
         );
+    }
+
+    #[test]
+    fn tick_re_attestation_respects_cadence() {
+        // Fast decay (half_life=10) so certs slip into Warm/Cold ranges
+        // within a small epoch window (decay is integer bit-shift on
+        // elapsed/half_life, so we need at least one full half-life).
+        let mut store = PoHAStore::new(1000, 10);
+        register_cert(&mut store, 1, 0);
+        register_cert(&mut store, 2, 0);
+        register_cert(&mut store, 3, 0);
+
+        // 30 epochs = 3 half-lives → energy = 1000 >> 3 = 125 (Cold).
+        store.process_epoch(30);
+
+        // First tick at epoch 30, interval = 50, sample = 2. Should fire.
+        let n1 = store.tick_re_attestation_sampler(30, 2, 50);
+        assert!(n1 > 0, "first tick at epoch 30 must re-attest at least one cert");
+
+        // Immediate second tick at epoch 50 should be SUPPRESSED by cadence
+        // (last fired at 30, interval 50 → next allowed at 80).
+        let n2 = store.tick_re_attestation_sampler(50, 2, 50);
+        assert_eq!(n2, 0, "tick must respect interval_epochs cadence");
+
+        // Past the cadence boundary, tick fires again. Decay first to
+        // ensure certs are still in re-attestation-eligible ranges.
+        store.process_epoch(85);
+        let n3 = store.tick_re_attestation_sampler(85, 2, 50);
+        assert!(n3 > 0, "tick must fire again after interval elapsed");
+    }
+
+    #[test]
+    fn tick_re_attestation_zero_when_no_candidates() {
+        let mut store = PoHAStore::new(1000, 100);
+        register_cert(&mut store, 1, 0);
+        // Cert is Hot at epoch 0 (full energy) — not a re-attestation candidate.
+        let n = store.tick_re_attestation_sampler(0, 5, 1);
+        assert_eq!(n, 0);
     }
 }

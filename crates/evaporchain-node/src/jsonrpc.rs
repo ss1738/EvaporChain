@@ -122,6 +122,7 @@ fn dispatch(state: &ApiState, req: JsonRpcRequest) -> JsonRpcResponse {
         "evap_mempoolSize" => rpc_mempool_size(state, req.id),
         "evap_getMMRProof" => rpc_get_mmr_proof(state, &req.params, req.id),
         "evap_getMMRRoot" => rpc_get_mmr_root(state, req.id),
+        "evap_decayForgetProof" => rpc_decay_forget_proof(state, &req.params, req.id),
         "evap_getLogs" => rpc_get_logs(state, &req.params, req.id),
         "evap_getBlockLogs" => rpc_get_block_logs(state, &req.params, req.id),
         "evap_getFinalityStatus" => rpc_get_finality_status(state, &req.params, req.id),
@@ -381,6 +382,96 @@ fn rpc_get_mmr_proof(state: &ApiState, params: &Value, id: Value) -> JsonRpcResp
         }
         None => JsonRpcResponse::ok(id, Value::Null),
     }
+}
+
+/// `evap_decayForgetProof([record_id_hex32, original_commitment_hex,
+///                         activated_epoch_hex, query_epoch_hex,
+///                         forget_threshold_hex, half_life_epochs_hex])`
+///
+/// Computational RPC for GDPR-Article-17-style "right to be forgotten"
+/// attestations: returns a `DecayForgetProof` showing that a record's
+/// recoverability commitment has decayed below `forget_threshold` at
+/// `query_epoch`. Verified by anyone via `verify_forget_proof`.
+///
+/// **Production wiring** will consume `original_commitment` and
+/// `activated_epoch` from a per-record commitment store (currently
+/// driven by the caller; a chain-side store keyed on `record_id` is the
+/// follow-up build).
+fn rpc_decay_forget_proof(state: &ApiState, params: &Value, id: Value) -> JsonRpcResponse {
+    let _ = state; // pure computation, no chain state read in this iteration
+    let arr = match params.as_array() {
+        Some(a) if a.len() == 6 => a,
+        _ => {
+            return JsonRpcResponse::invalid_params(
+                id,
+                "expected 6 hex params: [record_id, original_commitment, \
+                 activated_epoch, query_epoch, forget_threshold, half_life]",
+            )
+        }
+    };
+    let record_hex = match arr[0].as_str() {
+        Some(s) => s.strip_prefix("0x").unwrap_or(s),
+        None => return JsonRpcResponse::invalid_params(id, "record_id must be hex string"),
+    };
+    let record_bytes = match hex::decode(record_hex) {
+        Ok(b) if b.len() == 32 => {
+            let mut a = [0u8; 32];
+            a.copy_from_slice(&b);
+            a
+        }
+        _ => return JsonRpcResponse::invalid_params(id, "record_id must be 32 bytes hex"),
+    };
+    let parse_u64 = |v: &Value| -> Option<u64> {
+        v.as_str()
+            .and_then(|s| u64::from_str_radix(s.strip_prefix("0x").unwrap_or(s), 16).ok())
+    };
+    let original_commitment = match parse_u64(&arr[1]) {
+        Some(n) => n,
+        None => return JsonRpcResponse::invalid_params(id, "original_commitment must be hex u64"),
+    };
+    let activated_epoch = match parse_u64(&arr[2]) {
+        Some(n) => n,
+        None => return JsonRpcResponse::invalid_params(id, "activated_epoch must be hex u64"),
+    };
+    let query_epoch = match parse_u64(&arr[3]) {
+        Some(n) => n,
+        None => return JsonRpcResponse::invalid_params(id, "query_epoch must be hex u64"),
+    };
+    let forget_threshold = match parse_u64(&arr[4]) {
+        Some(n) => n,
+        None => return JsonRpcResponse::invalid_params(id, "forget_threshold must be hex u64"),
+    };
+    let half_life = match parse_u64(&arr[5]) {
+        Some(n) if n > 0 => n,
+        _ => {
+            return JsonRpcResponse::invalid_params(
+                id,
+                "half_life must be hex u64 > 0",
+            )
+        }
+    };
+    let lambda = evaporchain_energy_kernel::ChainLambda::new(
+        evaporchain_energy_kernel::Lambda::from_epochs(half_life),
+    );
+    let proof = evaporchain_decay_forget::prove_forgotten(
+        record_bytes,
+        original_commitment,
+        lambda,
+        activated_epoch,
+        query_epoch,
+        forget_threshold,
+    );
+    let json = serde_json::json!({
+        "record_id": format!("0x{}", hex::encode(proof.record_id)),
+        "original_commitment": json_hex_u64(proof.original_commitment),
+        "activated_epoch": json_hex_u64(proof.activated_epoch),
+        "forgotten_at_epoch": json_hex_u64(proof.forgotten_at_epoch),
+        "forget_threshold": json_hex_u64(proof.forget_threshold),
+        "decayed_commitment": json_hex_u64(proof.decayed_commitment),
+        "witness": format!("0x{}", hex::encode(proof.witness)),
+        "is_forgotten": proof.decayed_commitment <= proof.forget_threshold,
+    });
+    JsonRpcResponse::ok(id, json)
 }
 
 /// `evap_getMMRRoot()` — return the current evaporation-nullifier MMR

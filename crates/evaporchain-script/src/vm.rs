@@ -858,6 +858,65 @@ impl EvaporVM {
                 Ok(Value::Null)
             }
 
+            // Allen-Decay temporal-interval relation. Wraps the 13-relation
+            // interval algebra (Allen 1983) from `evaporchain-allen-decay`
+            // into a single VM built-in to keep the opcode count small —
+            // contracts branch on the returned u64 code rather than calling
+            // 13 separate builtins. Encoding (must match
+            // `crate::allen::ALLEN_RELATION_*` constants in this file):
+            //   0 Before, 1 Meets, 2 Overlaps, 3 Starts, 4 During,
+            //   5 Finishes, 6 Equals, 7 FinishedBy, 8 Contains,
+            //   9 StartedBy, 10 OverlappedBy, 11 MetBy, 12 After.
+            // Args (top of stack first to last popped): start_a, end_a,
+            // start_b, end_b. Stack semantics match other 4-arg builtins.
+            // Returns a u64 in 0..=12, or errors if any interval is
+            // invalid (start >= end).
+            "allen_relation" => {
+                if arg_count != 4 {
+                    return Err(ScriptError::Runtime(
+                        "allen_relation() takes 4 arguments: start_a, end_a, start_b, end_b"
+                            .into(),
+                    ));
+                }
+                let end_b = self.pop()?.as_u64()?;
+                let start_b = self.pop()?.as_u64()?;
+                let end_a = self.pop()?.as_u64()?;
+                let start_a = self.pop()?.as_u64()?;
+                let interval_a =
+                    evaporchain_allen_decay::Interval::new(start_a, end_a)
+                        .map_err(|e| {
+                            ScriptError::Runtime(format!(
+                                "allen_relation: invalid interval A: {e}"
+                            ))
+                        })?;
+                let interval_b =
+                    evaporchain_allen_decay::Interval::new(start_b, end_b)
+                        .map_err(|e| {
+                            ScriptError::Runtime(format!(
+                                "allen_relation: invalid interval B: {e}"
+                            ))
+                        })?;
+                let rel = evaporchain_allen_decay::compute_relation(
+                    interval_a, interval_b,
+                );
+                let code = match rel {
+                    evaporchain_allen_decay::AllenRelation::Before => 0u64,
+                    evaporchain_allen_decay::AllenRelation::Meets => 1,
+                    evaporchain_allen_decay::AllenRelation::Overlaps => 2,
+                    evaporchain_allen_decay::AllenRelation::Starts => 3,
+                    evaporchain_allen_decay::AllenRelation::During => 4,
+                    evaporchain_allen_decay::AllenRelation::Finishes => 5,
+                    evaporchain_allen_decay::AllenRelation::Equals => 6,
+                    evaporchain_allen_decay::AllenRelation::FinishedBy => 7,
+                    evaporchain_allen_decay::AllenRelation::Contains => 8,
+                    evaporchain_allen_decay::AllenRelation::StartedBy => 9,
+                    evaporchain_allen_decay::AllenRelation::OverlappedBy => 10,
+                    evaporchain_allen_decay::AllenRelation::MetBy => 11,
+                    evaporchain_allen_decay::AllenRelation::After => 12,
+                };
+                Ok(Value::U64(code))
+            }
+
             "emit_event" => {
                 if arg_count < 2 {
                     return Err(ScriptError::Runtime(
@@ -1318,6 +1377,57 @@ contract Events {
         assert_eq!(result.events.len(), 2);
         assert_eq!(result.events[0], "hello world");
         assert_eq!(result.events[1], "second event");
+    }
+
+    #[test]
+    fn test_vm_allen_relation_builtin() {
+        // Allen-Decay built-in (research-buildable item #9). Returns the
+        // 13-relation interval-algebra code as u64. Code 0 = Before:
+        // [0, 5) is Before [10, 20). Code 6 = Equals: [3, 7) Equals
+        // [3, 7). Code 12 = After: [50, 60) is After [10, 20).
+        let src = r#"
+contract Allen {
+    state { x: u64 = 0 }
+    fn before() -> u64 {
+        return allen_relation(0, 5, 10, 20)
+    }
+    fn equals() -> u64 {
+        return allen_relation(3, 7, 3, 7)
+    }
+    fn after_rel() -> u64 {
+        return allen_relation(50, 60, 10, 20)
+    }
+}
+"#;
+        let bytecode = compile_src(src);
+        let ctx = test_ctx();
+
+        let r1 = EvaporVM::execute(&bytecode, "before", vec![], empty_state(), &ctx).unwrap();
+        assert_eq!(r1.return_value, Value::U64(0), "Before encodes as 0");
+
+        let r2 = EvaporVM::execute(&bytecode, "equals", vec![], empty_state(), &ctx).unwrap();
+        assert_eq!(r2.return_value, Value::U64(6), "Equals encodes as 6");
+
+        let r3 =
+            EvaporVM::execute(&bytecode, "after_rel", vec![], empty_state(), &ctx).unwrap();
+        assert_eq!(r3.return_value, Value::U64(12), "After encodes as 12");
+    }
+
+    #[test]
+    fn test_vm_allen_relation_invalid_interval_rejected() {
+        // start_a >= end_a must be rejected by the underlying Interval::new.
+        let src = r#"
+contract AllenBad {
+    state { x: u64 = 0 }
+    fn bad() -> u64 {
+        return allen_relation(10, 5, 0, 1)
+    }
+}
+"#;
+        let bytecode = compile_src(src);
+        let ctx = test_ctx();
+        let err = EvaporVM::execute(&bytecode, "bad", vec![], empty_state(), &ctx);
+        assert!(err.is_err(), "invalid interval must error");
     }
 
     #[test]
