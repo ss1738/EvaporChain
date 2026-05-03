@@ -1822,6 +1822,34 @@ impl SimpleExecutor {
         Ok(())
     }
 
+    /// Execute a UserOp transaction.
+    ///
+    /// **Atomicity / replay protection** (audit `end_to_end_audit_2026_04_27.md`
+    /// §3 was concerned about Block-STM MVCC retries draining the paymaster):
+    ///
+    /// 1. UserOps execute **serial only** — `block_stm.rs:722` rejects
+    ///    them from the parallel path with `"user-op txs execute in
+    ///    serial phase"`. So MVCC-retry-drain doesn't apply.
+    ///
+    /// 2. Even if UserOps moved to the parallel path, the sender-nonce
+    ///    check at the top of this function is a once-per-`(sender,
+    ///    nonce)` gate. A second execution of the same tx (after the
+    ///    nonce was bumped) sees `sender.nonce == tx.nonce + 1` and
+    ///    returns `InvalidNonce`. The paymaster cannot be debited
+    ///    twice for the same `(sender, nonce)` pair.
+    ///
+    /// 3. `tx_access_keys` declares both `tx.sender` and
+    ///    `tx.paymaster` as access keys, so the partitioner schedules
+    ///    UserOps sharing a paymaster onto the same lane — they
+    ///    execute in tx-order with no in-block race.
+    ///
+    /// The audit's "no paymaster nonce" concern is addressed by
+    /// (2) — the sender's nonce IS the per-tx idempotency token.
+    /// A separate paymaster-side nonce would only be needed if the
+    /// chain ever processed two distinct UserOps from different
+    /// senders with overlapping access patterns *and* paid by the
+    /// same paymaster *and* got duplicated by a scheduler bug —
+    /// every layer of that conjunction is independently prevented.
     fn execute_user_op(
         &self,
         db: &mut dyn StateDB,
@@ -1840,7 +1868,27 @@ impl SimpleExecutor {
         sender.last_touched_epoch = epoch;
 
         if let Some(ref paymaster) = tx.paymaster {
+            // Phase 4.1 (2026-05-03): wire paymaster_nonce into the
+            // execution path. The field has existed on UserOpTx since
+            // an earlier audit pass but `execute_user_op` ignored it —
+            // leaving the replay protection unwired. The paymaster's
+            // own `nonce` field doubles as a sponsorship counter
+            // (operationally a paymaster does not also send its own
+            // txs; it's a sponsorship-only account by convention).
+            let paymaster_nonce = tx.paymaster_nonce.ok_or_else(|| {
+                ExecutionError::ContractError(
+                    "UserOpTx with paymaster must include paymaster_nonce \
+                     (replay protection — see audit §3 / 2026-05-03 closure)"
+                        .into(),
+                )
+            })?;
             let pm = db.get_or_create_account(paymaster);
+            if pm.nonce != paymaster_nonce {
+                return Err(ExecutionError::InvalidNonce {
+                    expected: pm.nonce,
+                    got: paymaster_nonce,
+                });
+            }
             let total_gas_cost = tx.call_gas_limit.saturating_add(GAS_USER_OP);
             if pm.balance < total_gas_cost {
                 return Err(ExecutionError::InsufficientGas {
@@ -1850,6 +1898,7 @@ impl SimpleExecutor {
                 });
             }
             pm.balance = pm.balance.saturating_sub(total_gas_cost);
+            pm.nonce = pm.nonce.saturating_add(1);
             // Paymaster's balance just changed — reset its anchor too.
             pm.last_touched_epoch = epoch;
         }
@@ -5904,5 +5953,91 @@ contract Counter {
 
         // Upgrade count never bumped.
         assert_eq!(executor.script_engine.get(id).unwrap().upgrade_count, 0);
+    }
+
+    // ─── Phase 4.1 (2026-05-03): UserOp paymaster nonce ────────────
+
+    fn make_user_op(
+        sender_byte: u8,
+        nonce: u64,
+        paymaster_byte: Option<u8>,
+        paymaster_nonce: Option<u64>,
+        gas_limit: u64,
+    ) -> evaporchain_types::UserOpTx {
+        evaporchain_types::UserOpTx {
+            sender: addr(sender_byte),
+            nonce,
+            call_data: vec![0u8; 16],
+            call_gas_limit: gas_limit,
+            paymaster: paymaster_byte.map(addr),
+            paymaster_nonce,
+            paymaster_data: None,
+            signature: None,
+            public_key: None,
+        }
+    }
+
+    #[test]
+    fn test_user_op_paymaster_nonce_required_when_paymaster_set() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 0);
+        fund_account(&mut db, 2, 1_000_000);
+        let executor = Executor::new();
+        // paymaster_nonce = None must fail.
+        let tx = make_user_op(1, 0, Some(2), None, 1000);
+        let r = executor.execute_user_op(&mut db, &tx, 0);
+        assert!(matches!(r, Err(ExecutionError::ContractError(_))));
+    }
+
+    #[test]
+    fn test_user_op_paymaster_nonce_correct_succeeds_and_bumps() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 0);
+        fund_account(&mut db, 2, 1_000_000);
+        let executor = Executor::new();
+        let tx = make_user_op(1, 0, Some(2), Some(0), 1000);
+        executor.execute_user_op(&mut db, &tx, 0).expect("first exec");
+
+        let pm = db.get_account(&addr(2)).expect("paymaster exists").clone();
+        assert_eq!(
+            pm.nonce, 1,
+            "paymaster nonce should bump from 0 to 1 after successful sponsorship"
+        );
+        assert!(pm.balance < 1_000_000, "paymaster balance should be debited");
+    }
+
+    #[test]
+    fn test_user_op_paymaster_replay_blocked() {
+        // Replaying the SAME UserOp (same sender_nonce, same
+        // paymaster_nonce) must fail. Without the paymaster nonce
+        // check the paymaster could be drained twice.
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 0);
+        fund_account(&mut db, 2, 1_000_000);
+        let executor = Executor::new();
+        let tx = make_user_op(1, 0, Some(2), Some(0), 1000);
+
+        executor.execute_user_op(&mut db, &tx, 0).expect("first exec");
+
+        // Replay the same tx — sender nonce check catches it first.
+        let r = executor.execute_user_op(&mut db, &tx, 0);
+        assert!(matches!(r, Err(ExecutionError::InvalidNonce { .. })));
+
+        // Even if a malicious actor somehow bumps the sender's nonce
+        // independently and then tries to replay only the paymaster
+        // sponsorship, the paymaster_nonce check catches it on the
+        // paymaster side.
+        // Simulate: bump sender nonce manually as if a new tx
+        // legitimately moved it forward.
+        let s = db.get_or_create_account(&addr(1));
+        s.nonce = 1;
+        // Same tx with sender nonce=1 but paymaster_nonce STILL 0
+        // (replay of the original sponsorship).
+        let replay = make_user_op(1, 1, Some(2), Some(0), 1000);
+        let r = executor.execute_user_op(&mut db, &replay, 0);
+        assert!(
+            matches!(r, Err(ExecutionError::InvalidNonce { .. })),
+            "paymaster nonce check should reject replayed sponsorship"
+        );
     }
 }
