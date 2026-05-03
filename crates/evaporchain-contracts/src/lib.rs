@@ -727,9 +727,11 @@ impl ContractEngine {
                 let decay_half_life = get_u64(params, "decay_half_life")?;
                 // Canonicalize the owner string at the API boundary so the
                 // balances-map key matches `hex::encode(caller)` exactly.
-                // Closes the per-template-init half of the canonicalization
-                // sweep (audit gap §5).
-                let owner = get_str(params, "owner")?.to_string();
+                // Phase 3.1 (2026-05-03): now actually canonicalized
+                // (the prior comment claimed it was, but the
+                // canonicalize_address_hex helper was #[allow(dead_code)]
+                // and never invoked).
+                let owner = canonicalize_address_hex(&get_str(params, "owner")?)?;
 
                 let mut balances = HashMap::new();
                 balances.insert(owner.clone(), total_supply);
@@ -756,11 +758,18 @@ impl ContractEngine {
                 // pre-deposited balance and credits renewal_recipient
                 // (or the contract creator if recipient is empty).
                 let renewal_fee = get_u64(params, "renewal_fee").unwrap_or(0);
-                let renewal_recipient = params
+                // Phase 3.1: canonicalize renewal_recipient if supplied.
+                // Empty string is the sentinel "creator pays / receives"
+                // and stays empty; non-empty must be a valid address.
+                let renewal_recipient_raw = params
                     .get("renewal_recipient")
                     .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
+                    .unwrap_or("");
+                let renewal_recipient = if renewal_recipient_raw.is_empty() {
+                    String::new()
+                } else {
+                    canonicalize_address_hex(renewal_recipient_raw)?
+                };
                 // EVR-721 Phase 2.2: deployer-configurable grace period.
                 // Default 5 epochs matches the spec / testnet number.
                 let grace_period =
@@ -782,11 +791,13 @@ impl ContractEngine {
             }
 
             ContractTemplate::ThermodynamicEscrow => {
-                // Canonicalize sender/receiver at init so stored fields
-                // match `hex::encode(caller)` for comparisons. Closes
-                // per-template-init half of the canonicalization sweep.
-                let sender = get_str(params, "sender")?.to_string();
-                let receiver = get_str(params, "receiver")?.to_string();
+                // Phase 3.1 (2026-05-03): canonicalize sender/receiver
+                // at init so stored fields match `hex::encode(caller)`
+                // exactly. Comment claimed canonicalization since the
+                // earlier sweep, but the helper was never invoked
+                // until now.
+                let sender = canonicalize_address_hex(&get_str(params, "sender")?)?;
+                let receiver = canonicalize_address_hex(&get_str(params, "receiver")?)?;
                 let amount = get_u64(params, "amount")?;
                 let release_epoch = get_u64(params, "release_epoch")?;
                 let decay_after_epochs = get_u64(params, "decay_after_epochs")?;
@@ -805,8 +816,8 @@ impl ContractEngine {
             }
 
             ContractTemplate::DecayingAuction => {
-                // Canonicalize seller at init.
-                let seller = get_str(params, "seller")?.to_string();
+                // Phase 3.1 (2026-05-03): canonicalize seller at init.
+                let seller = canonicalize_address_hex(&get_str(params, "seller")?)?;
                 let item_description = get_str(params, "item_description")?;
                 let min_bid = get_u64(params, "min_bid")?;
                 let duration_epochs = get_u64(params, "duration_epochs")?;
@@ -871,11 +882,12 @@ impl ContractEngine {
 
             ContractTemplate::TemporalContract => {
                 let name = get_str(params, "name")?;
-                // Canonicalize at the API boundary so caller_hex (always
-                // lowercase from hex::encode) matches ts.owner regardless of
-                // how the deployer encoded the param. See
+                // Phase 3.1 (2026-05-03): canonicalize at the API
+                // boundary so caller_hex (always lowercase from
+                // hex::encode) matches ts.owner regardless of how the
+                // deployer encoded the param. See
                 // audit/end_to_end_audit_2026_04_27.md §5.
-                let owner = get_str(params, "owner")?.to_string();
+                let owner = canonicalize_address_hex(&get_str(params, "owner")?)?;
                 let low_energy_threshold = params
                     .get("low_energy_threshold")
                     .and_then(|v| v.as_u64())
@@ -983,7 +995,7 @@ fn exec_token(
                     "only owner can mint".into(),
                 ));
             }
-            let to = get_str(args, "to")?;
+            let to = canonicalize_address_hex(&get_str(args, "to")?)?;
             let amount = get_u64(args, "amount")?;
             let bal = ts.balances.entry(to).or_insert(0);
             *bal = bal
@@ -996,8 +1008,8 @@ fn exec_token(
             serde_json::json!({ "minted": amount })
         }
         "transfer" => {
-            let from = get_str(args, "from")?.to_string();
-            let to = get_str(args, "to")?;
+            let from = canonicalize_address_hex(&get_str(args, "from")?)?;
+            let to = canonicalize_address_hex(&get_str(args, "to")?)?;
             let amount = get_u64(args, "amount")?;
             // EVR-20 spec auth: caller must equal `from` (token
             // holder is the only one who can move their balance).
@@ -1027,7 +1039,7 @@ fn exec_token(
             serde_json::json!({ "transferred": amount })
         }
         "balance_of" => {
-            let addr = get_str(args, "addr")?;
+            let addr = canonicalize_address_hex(&get_str(args, "addr")?)?;
             let bal = ts.balances.get(&addr).copied().unwrap_or(0);
             serde_json::json!({ "balance": bal })
         }
@@ -1042,7 +1054,7 @@ fn exec_token(
             // Reconciled to spec 2026-05-03: caller must equal `from`.
             // The contract creator retains an admin path only via
             // burning their own held balance (no special privilege).
-            let from = get_str(args, "from")?.to_string();
+            let from = canonicalize_address_hex(&get_str(args, "from")?)?;
             let caller_hex = hex::encode(caller);
             if !caller_hex.eq_ignore_ascii_case(&from) {
                 return Err(ContractError::PermissionDenied(
@@ -1068,7 +1080,7 @@ fn exec_token(
             // without the deployer online. The amount of `energy` to
             // restore is bounded by the per-balance refresh cost
             // upstream — this method just applies the credit.
-            let addr = get_str(args, "addr")?;
+            let addr = canonicalize_address_hex(&get_str(args, "addr")?)?;
             let energy = get_u64(args, "energy")?;
             *ts.balances.entry(addr).or_insert(0) += energy;
             // `caller` is intentionally not consulted — see comment.
@@ -1105,11 +1117,11 @@ fn exec_nft(
                     "only contract creator can mint NFTs".into(),
                 ));
             }
-            // Canonicalize the recipient address so the stored NFT owner
-            // matches `hex::encode(caller)` exactly when that recipient
-            // later calls transfer/refresh/burn. Closes the mint-time
-            // half of the per-template canonicalization sweep.
-            let to = get_str(args, "to")?.to_string();
+            // Phase 3.1 (2026-05-03): canonicalize the recipient
+            // address so the stored NFT owner matches
+            // `hex::encode(caller)` exactly for that recipient's
+            // future transfer/refresh/burn calls.
+            let to = canonicalize_address_hex(&get_str(args, "to")?)?;
             let metadata_hash = get_str(args, "metadata_hash")?;
             let energy = get_u64(args, "energy")?;
             let half_life = get_u64(args, "half_life")?;
@@ -1139,9 +1151,10 @@ fn exec_nft(
         }
         "transfer" => {
             let token_id = get_u64(args, "token_id")?;
-            // Canonicalize the recipient so the new owner string matches
-            // `hex::encode(caller)` for that recipient's future calls.
-            let to = get_str(args, "to")?.to_string();
+            // Phase 3.1 (2026-05-03): canonicalize the recipient so
+            // the new owner string matches `hex::encode(caller)` for
+            // that recipient's future calls.
+            let to = canonicalize_address_hex(&get_str(args, "to")?)?;
             let nft = ns
                 .tokens
                 .get_mut(&token_id)
@@ -1387,7 +1400,7 @@ fn exec_nft(
             serde_json::json!({ "balance": bal.saturating_add(amount) })
         }
         "renewal_balance" => {
-            let addr = get_str(args, "addr")?.to_string();
+            let addr = canonicalize_address_hex(&get_str(args, "addr")?)?;
             let bal = ns.renewal_balances.get(&addr).copied().unwrap_or(0);
             serde_json::json!({ "balance": bal })
         }
@@ -1505,7 +1518,7 @@ fn exec_auction(
             if current_epoch >= aus.start_epoch + aus.duration_epochs {
                 return Err(ContractError::StateError("auction ended".into()));
             }
-            let bidder = get_str(args, "bidder")?.to_string();
+            let bidder = canonicalize_address_hex(&get_str(args, "bidder")?)?;
             if !caller_hex.eq_ignore_ascii_case(&bidder) {
                 return Err(ContractError::PermissionDenied(
                     "caller must be the bidder".into(),
@@ -1594,7 +1607,7 @@ fn exec_staking(
 
     let result = match method {
         "stake" => {
-            let staker = get_str(args, "staker")?.to_string();
+            let staker = canonicalize_address_hex(&get_str(args, "staker")?)?;
             // Caller must be the staker themselves, or the contract creator.
             if !caller_hex.eq_ignore_ascii_case(&staker) && caller != creator {
                 return Err(ContractError::PermissionDenied(
@@ -1613,7 +1626,7 @@ fn exec_staking(
             serde_json::json!({ "staked": amount })
         }
         "unstake" => {
-            let staker = get_str(args, "staker")?.to_string();
+            let staker = canonicalize_address_hex(&get_str(args, "staker")?)?;
             // Caller must be the staker themselves, or the contract creator.
             if !caller_hex.eq_ignore_ascii_case(&staker) && caller != creator {
                 return Err(ContractError::PermissionDenied(
@@ -1628,7 +1641,7 @@ fn exec_staking(
             serde_json::json!({ "unstaked": info.amount, "unclaimed_rewards": info.unclaimed_rewards })
         }
         "claim_rewards" => {
-            let staker = get_str(args, "staker")?.to_string();
+            let staker = canonicalize_address_hex(&get_str(args, "staker")?)?;
             // Caller must be the staker themselves, or the contract creator.
             if !caller_hex.eq_ignore_ascii_case(&staker) && caller != creator {
                 return Err(ContractError::PermissionDenied(
@@ -1653,7 +1666,7 @@ fn exec_staking(
             })
         }
         "pending_rewards" => {
-            let staker = get_str(args, "staker")?.to_string();
+            let staker = canonicalize_address_hex(&get_str(args, "staker")?)?;
             let info = ss
                 .stakes
                 .get(&staker)
@@ -1688,7 +1701,7 @@ fn exec_dao(
             if current_epoch >= ds.start_epoch + ds.voting_period_epochs {
                 return Err(ContractError::StateError("voting period ended".into()));
             }
-            let voter = get_str(args, "voter")?.to_string();
+            let voter = canonicalize_address_hex(&get_str(args, "voter")?)?;
             if !caller_hex.eq_ignore_ascii_case(&voter) {
                 return Err(ContractError::PermissionDenied(
                     "caller must be the voter".into(),
@@ -2408,7 +2421,16 @@ fn get_u64(v: &serde_json::Value, key: &str) -> Result<u64, ContractError> {
 ///
 /// Accepts inputs with or without a leading `0x` / `0X` prefix. Rejects
 /// anything that isn't a valid 32-byte hex address.
-#[allow(dead_code)]
+///
+/// Phase 3.1 (2026-05-03): wired into every address-storing site
+/// across all 8 templates. Previously this helper existed but was
+/// dead-code; storage paths accepted raw strings (uppercase /
+/// 0x-prefixed / friendly names) and the comparison sites did
+/// `caller_hex.eq_ignore_ascii_case(&stored)` which masked the
+/// canonicalization gap as long as the stored form happened to be
+/// 64-char lowercase. The dead-code allowance is removed; any
+/// caller that constructs a state field from a JSON string MUST
+/// route through this helper.
 fn canonicalize_address_hex(s: &str) -> Result<String, ContractError> {
     let trimmed = s.trim();
     let no_prefix = trimmed
@@ -2537,7 +2559,7 @@ mod tests {
                     "symbol": "TC",
                     "total_supply": 1_000_000,
                     "decay_half_life": 100,
-                    "owner": "alice"
+                    "owner": addr_hex(1),
                 }),
                 vec![],
                 addr(1),
@@ -2602,7 +2624,7 @@ mod tests {
             .deploy(
                 ContractTemplate::DecayingAuction,
                 serde_json::json!({
-                    "seller": "alice",
+                    "seller": addr_hex(1),
                     "item_description": "Rare sword",
                     "min_bid": 100,
                     "duration_epochs": 50,
@@ -3314,7 +3336,7 @@ mod tests {
         eng.deploy(
             ContractTemplate::DecayingAuction,
             serde_json::json!({
-                "seller": "alice",
+                "seller": addr_hex(1),
                 "item_description": "Rare Sword",
                 "min_bid": 100,
                 "duration_epochs": 10,
@@ -3704,7 +3726,7 @@ mod tests {
                     "symbol": "NM",
                     "total_supply": 1000,
                     "decay_half_life": 100,
-                    "owner": "alice"
+                    "owner": addr_hex(1),
                 }),
                 rules,
                 addr(1),
@@ -3718,7 +3740,7 @@ mod tests {
         let r = eng.call(
             id,
             "mint",
-            &serde_json::json!({"to": "bob", "amount": 500}),
+            &serde_json::json!({"to": addr_hex(2), "amount": 500}),
             &addr(1),
             0,
         );
@@ -3781,7 +3803,7 @@ mod tests {
                     "symbol": "DC",
                     "total_supply": 1000,
                     "decay_half_life": 100,
-                    "owner": "alice"
+                    "owner": addr_hex(1),
                 }),
                 vec![],
                 addr(1),
@@ -3810,7 +3832,7 @@ mod tests {
                     "symbol": "DC",
                     "total_supply": 1000,
                     "decay_half_life": 100,
-                    "owner": "alice"
+                    "owner": addr_hex(1),
                 }),
                 vec![],
                 addr(1),
@@ -3825,7 +3847,7 @@ mod tests {
         let r = eng.call(
             id,
             "balance_of",
-            &serde_json::json!({"addr": "alice"}),
+            &serde_json::json!({"addr": addr_hex(1)}),
             &addr(1),
             5,
         );
@@ -3934,7 +3956,7 @@ mod tests {
                     "symbol": "RF",
                     "total_supply": 1000,
                     "decay_half_life": 100,
-                    "owner": "alice"
+                    "owner": addr_hex(1),
                 }),
                 vec![],
                 addr(1),
