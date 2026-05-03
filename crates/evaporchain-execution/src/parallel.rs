@@ -3073,10 +3073,11 @@ mod tests {
         // sat at genesis equilibrium forever and the controller's
         // doctrine claim was folklore (DOCTRINE_PUNCH_LIST.md §6).
         //
-        // A single transfer uses GAS_TRANSFER (21k) which is below the
-        // controller's target_gas (~25M). Below-target gas ⇒ drift < 0
-        // ⇒ energy decreases below the genesis equilibrium. We assert
-        // exactly that: after one block, fee_state.energy < target_energy.
+        // The controller is a no-op at *exact* equilibrium (V=0 must
+        // stay 0 — Lyapunov monotone-non-increasing invariant — so
+        // perturbations clip to zero magnitude). To prove the tick
+        // actually fires from execute_block we seed off-equilibrium and
+        // assert it decays toward target.
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 1000);
 
@@ -3096,24 +3097,31 @@ mod tests {
         let mut executor = ParallelExecutor::new_for_test(100);
         let target_e = executor.lyapunov_fee_params.target_energy;
 
-        // Pre-state: at equilibrium.
-        assert_eq!(
-            executor.lyapunov_fee_state.energy, target_e,
-            "executor should boot at equilibrium"
-        );
+        // Seed off-equilibrium: energy above target. A low-gas block
+        // (one transfer, ~21k gas << target_gas) must let the controller
+        // pull energy back toward target.
+        let seeded_energy = target_e + 100_000;
+        executor.lyapunov_fee_state =
+            evaporchain_fee_controller::FeeState::new(seeded_energy);
+        assert_eq!(executor.lyapunov_fee_state.energy, seeded_energy);
 
         let _ = executor.execute_block(&mut db, &block).unwrap();
 
-        // Post-state: energy must have decreased (one transfer << target_gas
-        // ⇒ negative drift ⇒ energy decays below equilibrium). The exact
-        // delta depends on λ-decay parameters; the load-bearing assertion
-        // is just that the state mutated, proving execute_block actually
-        // called the tick. A static state would be the regression we care
-        // about.
         assert!(
-            executor.lyapunov_fee_state.energy < target_e,
-            "lyapunov_fee_state.energy must decrease after a low-gas block — got {} (target {})",
-            executor.lyapunov_fee_state.energy, target_e
+            executor.lyapunov_fee_state.energy < seeded_energy,
+            "lyapunov_fee_state.energy must decay toward target after \
+             execute_block — got {} (started {}, target {})",
+            executor.lyapunov_fee_state.energy,
+            seeded_energy,
+            target_e
+        );
+        // And it should not undershoot below target_e — the controller
+        // pulls toward equilibrium, never past it.
+        assert!(
+            executor.lyapunov_fee_state.energy >= target_e,
+            "controller must not overshoot target — got {} (target {})",
+            executor.lyapunov_fee_state.energy,
+            target_e
         );
     }
 }
