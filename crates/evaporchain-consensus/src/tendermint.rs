@@ -7966,6 +7966,126 @@ mod da_tests {
     }
 
     #[test]
+    fn test_block_source_mode_antichain_dedups_same_sender_in_proposal() {
+        // Lane J.1 integration test: when governance sets
+        // `block_source_mode = "antichain"`, create_proposal post-filters
+        // the FIFO draw via antichain_project so the resulting block
+        // carries at most one tx per sender. This exercises the full
+        // wire path:
+        //   governance_params (set)
+        //   → create_proposal lookup (Lane I.5 dispatch)
+        //   → antichain_project helper (Lane I.5 follow-up)
+        //   → block.transactions
+        //
+        // Distinct from the unit tests on antichain_project itself —
+        // this verifies the consensus loop actually consults the flag.
+        let mut tc = make_proposer_tc();
+        let mut db = InMemoryStateDB::new();
+
+        let kp = BlsKeypair::generate();
+        tc.set_bls_keypair(kp);
+
+        // Flip the Lane I.5 flag.
+        tc.governance_params.insert(
+            "block_source_mode".to_string(),
+            "antichain".to_string(),
+        );
+
+        // Three same-sender txs (sender 1, nonces 0/1/2) + one
+        // different-sender tx (sender 2). Antichain admits at most
+        // one from each sender.
+        let mk = |from: u8, nonce: u64| {
+            Transaction::Transfer(TransferTx {
+                from: [from; 32],
+                to: [99u8; 32],
+                amount: 100,
+                nonce,
+                signature: None,
+                public_key: None,
+            })
+        };
+        tc.mempool.set_epoch(0);
+        tc.mempool.submit(mk(1, 0));
+        tc.mempool.submit(mk(1, 1));
+        tc.mempool.submit(mk(1, 2));
+        tc.mempool.submit(mk(2, 0));
+        assert_eq!(tc.mempool.len(), 4);
+
+        let block = tc.create_proposal(&mut db).unwrap();
+
+        // Assert antichain semantics: each sender appears at most once
+        // in the proposal's transactions.
+        let mut seen_senders: std::collections::HashSet<[u8; 32]> =
+            std::collections::HashSet::new();
+        for tx in &block.transactions {
+            if let Some(addr) = tx.sender() {
+                assert!(
+                    seen_senders.insert(*addr),
+                    "antichain mode must not admit two txs with sender {:?}",
+                    addr
+                );
+            }
+        }
+
+        // Dropped (same-sender) txs returned to mempool — should still
+        // be there for the next proposal.
+        assert!(
+            tc.mempool.len() >= 1,
+            "dropped same-sender txs must remain in pool — got {} pending",
+            tc.mempool.len()
+        );
+
+        // Sanity: with FIFO default, all 4 txs would have made it into
+        // the block. The antichain dedup must have actually filtered.
+        assert!(
+            block.transactions.len() <= 2,
+            "antichain mode must filter — got {} txs in proposal",
+            block.transactions.len()
+        );
+    }
+
+    #[test]
+    fn test_block_source_mode_default_admits_all_same_sender() {
+        // Negative case: under the default `block_source_mode = "fifo"`,
+        // same-sender txs all make it into the proposal (legacy
+        // FIFO-with-priority behaviour). Confirms Lane I.5 wiring is
+        // strictly opt-in and a typo can never accidentally engage.
+        let mut tc = make_proposer_tc();
+        let mut db = InMemoryStateDB::new();
+
+        let kp = BlsKeypair::generate();
+        tc.set_bls_keypair(kp);
+
+        // Type the value WRONG to confirm typo-safety.
+        tc.governance_params.insert(
+            "block_source_mode".to_string(),
+            "antichian".to_string(), // sic: typo'd
+        );
+
+        let mk = |from: u8, nonce: u64| {
+            Transaction::Transfer(TransferTx {
+                from: [from; 32],
+                to: [99u8; 32],
+                amount: 100,
+                nonce,
+                signature: None,
+                public_key: None,
+            })
+        };
+        tc.mempool.set_epoch(0);
+        tc.mempool.submit(mk(1, 0));
+        tc.mempool.submit(mk(1, 1));
+
+        let block = tc.create_proposal(&mut db).unwrap();
+        // Both same-sender txs admitted (typo fell through to FIFO).
+        assert_eq!(
+            block.transactions.len(),
+            2,
+            "typo'd governance value must fall through to FIFO default"
+        );
+    }
+
+    #[test]
     fn test_create_proposal_orders_by_energy_priority() {
         // Phase 1 of `research/proposals/energy-stamped-mev-resistance.md`:
         // create_proposal() must order plaintext-mempool txs via
