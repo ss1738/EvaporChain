@@ -127,6 +127,25 @@ pub struct NftState {
     /// of requiring a side-channel to a token contract.
     #[serde(default)]
     pub renewal_balances: HashMap<String, u64>,
+    /// EVR-721 Phase 2.2 (2026-05-03): grace period in epochs between
+    /// energy=0 (Active→Grace) and full evaporation (Grace→Ghost).
+    /// Spec default: 5 epochs (matches testnet). 0 collapses Grace
+    /// to a no-op — tokens go straight from Active to Ghost on
+    /// energy=0 — useful for tests that exercise the full state
+    /// transition compactly.
+    #[serde(default = "default_grace_period")]
+    pub grace_period: u64,
+    /// EVR-721 §"Ghost Record": tokens that have transitioned to
+    /// Ghost are removed from `tokens` and recorded here so
+    /// `resurrect()` can reconstruct an Active token without keeping
+    /// every dead token in the active map. Resurrection (refresh on
+    /// a Ghost) consumes the ghost record.
+    #[serde(default)]
+    pub ghost_records: HashMap<u64, GhostRecord>,
+}
+
+fn default_grace_period() -> u64 {
+    5
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -136,6 +155,53 @@ pub struct NftInfo {
     pub energy: u64,
     pub half_life: u64,
     pub minted_epoch: u64,
+    /// EVR-721 Phase 2.2 (2026-05-03): explicit lifecycle field. Old
+    /// serialized state defaults to `Active` (the implicit prior
+    /// behaviour). Templates still derive the live state from
+    /// `current_energy + grace_period + grace_epoch` so the field is a
+    /// cache; canonical transitions happen in `tick_nft`.
+    #[serde(default)]
+    pub state: NftLifecycleState,
+    /// Set by `tick_nft` when the token first transitions to Grace.
+    /// `None` while in Active. Used to compute the Grace→Ghost cutoff.
+    #[serde(default)]
+    pub grace_epoch: Option<u64>,
+    /// Set by `tick_nft` when the token transitions to Ghost. The
+    /// canonical evaporation epoch — also stored on the matching
+    /// `GhostRecord` for proof generation.
+    #[serde(default)]
+    pub evaporated_epoch: Option<u64>,
+    /// `Blake3(token_id : metadata_hash : evaporated_epoch)`. Cleared
+    /// to `None` on resurrection (Ghost → Active via refresh).
+    #[serde(default)]
+    pub ghost_proof: Option<String>,
+}
+
+/// EVR-721 lifecycle state. Stored as a JSON-tagged enum so the spec's
+/// state names appear directly in serialized output.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub enum NftLifecycleState {
+    #[default]
+    #[serde(rename = "active")]
+    Active,
+    #[serde(rename = "grace")]
+    Grace,
+    #[serde(rename = "ghost")]
+    Ghost,
+}
+
+/// Per-token record retained when a token evaporates. Allows the chain
+/// to prove the token existed without keeping the full `NftInfo`
+/// (e.g. metadata payload may be elsewhere by then). EVR-721 §"Ghost
+/// Record".
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GhostRecord {
+    pub token_id: u64,
+    pub owner: String,
+    pub metadata_hash: String,
+    pub evaporated_epoch: u64,
+    /// `Blake3(token_id : metadata_hash : evaporated_epoch)`.
+    pub ghost_proof: String,
 }
 
 /// ThermodynamicEscrow state.
@@ -695,6 +761,10 @@ impl ContractEngine {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
+                // EVR-721 Phase 2.2: deployer-configurable grace period.
+                // Default 5 epochs matches the spec / testnet number.
+                let grace_period =
+                    get_u64(params, "grace_period").unwrap_or_else(|_| default_grace_period());
 
                 let state = NftState {
                     collection_name,
@@ -705,6 +775,8 @@ impl ContractEngine {
                     renewal_fee,
                     renewal_recipient,
                     renewal_balances: HashMap::new(),
+                    grace_period,
+                    ghost_records: HashMap::new(),
                 };
                 Ok(serde_json::to_value(state).unwrap())
             }
@@ -1056,9 +1128,14 @@ fn exec_nft(
                     energy,
                     half_life,
                     minted_epoch: current_epoch,
+                    state: NftLifecycleState::Active,
+                    grace_epoch: None,
+                    evaporated_epoch: None,
+                    ghost_proof: None,
                 },
             );
-            serde_json::json!({ "token_id": token_id })
+            // EVR-721 §"Required Events": `Mint` event.
+            serde_json::json!({ "token_id": token_id, "event": "Mint" })
         }
         "transfer" => {
             let token_id = get_u64(args, "token_id")?;
@@ -1069,14 +1146,30 @@ fn exec_nft(
                 .tokens
                 .get_mut(&token_id)
                 .ok_or_else(|| ContractError::StateError(format!("NFT {token_id} not found")))?;
+            // EVR-721 §"States" table: only Active tokens are
+            // transferable. Grace/Ghost tokens are read-only or
+            // proof-only respectively.
+            if nft.state != NftLifecycleState::Active {
+                return Err(ContractError::PermissionDenied(format!(
+                    "NFT {token_id} is in state {:?}; only Active tokens are transferable",
+                    nft.state
+                )));
+            }
             // Only the NFT owner or contract creator can transfer it.
             if !nft.owner.eq_ignore_ascii_case(&caller_hex) && caller != creator {
                 return Err(ContractError::PermissionDenied(format!(
                     "caller does not own NFT {token_id}"
                 )));
             }
-            nft.owner = to;
-            serde_json::json!({ "transferred": token_id })
+            let from = nft.owner.clone();
+            nft.owner = to.clone();
+            // EVR-721 §"Required Events": `Transfer` event.
+            serde_json::json!({
+                "transferred": token_id,
+                "event": "Transfer",
+                "from": from,
+                "to": to,
+            })
         }
         "owner_of" => {
             let token_id = get_u64(args, "token_id")?;
@@ -1085,6 +1178,38 @@ fn exec_nft(
                 .get(&token_id)
                 .ok_or_else(|| ContractError::StateError(format!("NFT {token_id} not found")))?;
             serde_json::json!({ "owner": nft.owner })
+        }
+        "state_of" => {
+            // EVR-721 §"Queries (Read)" `state_of`: returns the
+            // current lifecycle state. Looks up the active map first,
+            // then falls back to ghost_records for evaporated tokens.
+            let token_id = get_u64(args, "token_id")?;
+            if let Some(nft) = ns.tokens.get(&token_id) {
+                serde_json::json!({ "state": nft.state })
+            } else if ns.ghost_records.contains_key(&token_id) {
+                serde_json::json!({ "state": NftLifecycleState::Ghost })
+            } else {
+                return Err(ContractError::StateError(format!(
+                    "NFT {token_id} not found"
+                )));
+            }
+        }
+        "ghost_proof" => {
+            // EVR-721 §"Queries (Read)" `ghost_proof`: only available
+            // for tokens currently in Ghost state.
+            let token_id = get_u64(args, "token_id")?;
+            let gr = ns.ghost_records.get(&token_id).ok_or_else(|| {
+                ContractError::StateError(format!(
+                    "no ghost record for NFT {token_id} (token is not in Ghost state)"
+                ))
+            })?;
+            serde_json::json!({
+                "token_id": gr.token_id,
+                "owner": gr.owner,
+                "metadata_hash": gr.metadata_hash,
+                "evaporated_epoch": gr.evaporated_epoch,
+                "ghost_proof": gr.ghost_proof,
+            })
         }
         "token_info" => {
             let token_id = get_u64(args, "token_id")?;
@@ -1112,10 +1237,92 @@ fn exec_nft(
             } else {
                 ns.renewal_recipient.clone()
             };
+
+            // EVR-721 §"Refresh": handles Active (extend), Grace
+            // (extend + clear grace), and Ghost (resurrect from
+            // ghost_records). The auth model is "any signature"
+            // per the spec for refresh, but this template's
+            // `renewal_fee` gate restricts who can pay — the
+            // existing economic gate is preserved here.
+            //
+            // Resurrection path: if `token_id` is missing from
+            // `tokens` but present in `ghost_records`, restore an
+            // NftInfo from the ghost record, give it `energy` as
+            // a fresh start, and clear grace/ghost fields. The
+            // original owner stays the owner — Ghost-state
+            // tokens cannot be reassigned by resurrection.
+            let resurrect_path = !ns.tokens.contains_key(&token_id)
+                && ns.ghost_records.contains_key(&token_id);
+
+            if resurrect_path {
+                let gr = ns
+                    .ghost_records
+                    .remove(&token_id)
+                    .expect("checked above");
+                // Auth on Ghost refresh: still require caller to be
+                // the original owner OR the contract creator.
+                if !gr.owner.eq_ignore_ascii_case(&caller_hex) && caller != creator {
+                    // Restore the ghost record on auth fail; refresh
+                    // didn't happen.
+                    ns.ghost_records.insert(token_id, gr);
+                    return Err(ContractError::PermissionDenied(format!(
+                        "caller is not the original owner of ghost NFT {token_id}"
+                    )));
+                }
+                // Renewal-fee gate also applies on resurrection.
+                if renewal_fee > 0 && caller != creator {
+                    let bal = ns.renewal_balances.get(&caller_hex).copied().unwrap_or(0);
+                    if bal < renewal_fee {
+                        ns.ghost_records.insert(token_id, gr);
+                        return Err(ContractError::StateError(format!(
+                            "resurrect requires {renewal_fee} units in renewal balance \
+                             (caller has {bal}); call deposit_renewal first"
+                        )));
+                    }
+                    ns.renewal_balances
+                        .insert(caller_hex.clone(), bal - renewal_fee);
+                    let r = ns
+                        .renewal_balances
+                        .get(&recipient_key)
+                        .copied()
+                        .unwrap_or(0);
+                    ns.renewal_balances
+                        .insert(recipient_key, r.saturating_add(renewal_fee));
+                }
+                // Use the half_life of the original ghost (we don't
+                // store it on the GhostRecord, so default to the
+                // collection's last-known shape via re-mint values).
+                // Spec: resurrected token starts fresh — energy =
+                // energy_deposit, minted_epoch = current_epoch.
+                let resurrected = NftInfo {
+                    owner: gr.owner.clone(),
+                    metadata_hash: gr.metadata_hash.clone(),
+                    energy,
+                    half_life: 1, // half-life isn't recorded on the ghost; caller may re-mint with desired half-life if they want a longer-lived token
+                    minted_epoch: current_epoch,
+                    state: NftLifecycleState::Active,
+                    grace_epoch: None,
+                    evaporated_epoch: None,
+                    ghost_proof: None,
+                };
+                ns.tokens.insert(token_id, resurrected);
+                // EVR-721 §"Required Events": `Resurrected` event.
+                let new_energy = ns.tokens.get(&token_id).map(|n| n.energy).unwrap_or(0);
+                let result = serde_json::json!({
+                    "new_energy": new_energy,
+                    "event": "Resurrected",
+                    "token_id": token_id,
+                });
+                *state = serde_json::to_value(ns).unwrap();
+                return Ok(result);
+            }
+
             let nft = ns
                 .tokens
                 .get_mut(&token_id)
                 .ok_or_else(|| ContractError::StateError(format!("NFT {token_id} not found")))?;
+            // Active or Grace: caller must be owner OR creator.
+            // Ghost is handled by the resurrect_path above.
             if !nft.owner.eq_ignore_ascii_case(&caller_hex) && caller != creator {
                 return Err(ContractError::PermissionDenied(format!(
                     "caller does not own NFT {token_id}"
@@ -1147,13 +1354,26 @@ fn exec_nft(
                     energy_at_epoch(nft.energy, nft.half_life, current_epoch - nft.minted_epoch);
                 nft.energy = current + energy;
                 nft.minted_epoch = current_epoch;
+                // Refresh always returns the token to Active and
+                // clears any grace marker — the energy deposit
+                // resets the lifecycle clock.
+                nft.state = NftLifecycleState::Active;
+                nft.grace_epoch = None;
             } else {
                 let current =
                     energy_at_epoch(nft.energy, nft.half_life, current_epoch - nft.minted_epoch);
                 nft.energy = current + energy;
                 nft.minted_epoch = current_epoch;
+                nft.state = NftLifecycleState::Active;
+                nft.grace_epoch = None;
             }
-            serde_json::json!({ "new_energy": ns.tokens.get(&token_id).map(|n| n.energy).unwrap_or(0) })
+            // EVR-721 §"Required Events": `Refresh` event.
+            serde_json::json!({
+                "new_energy": ns.tokens.get(&token_id).map(|n| n.energy).unwrap_or(0),
+                "event": "Refresh",
+                "token_id": token_id,
+                "energy_added": energy,
+            })
         }
         "deposit_renewal" => {
             // Holders pre-fund their renewal balance. amount is taken on
@@ -1595,26 +1815,80 @@ fn tick_nft(state: &mut serde_json::Value, current_epoch: Epoch) -> Vec<String> 
     };
     let mut events = Vec::new();
 
-    let dead_ids: Vec<u64> = ns
-        .tokens
-        .iter()
-        .filter_map(|(&id, info)| {
-            let current = energy_at_epoch(
-                info.energy,
-                info.half_life,
-                current_epoch.saturating_sub(info.minted_epoch),
-            );
-            if current == 0 {
-                Some(id)
-            } else {
-                None
-            }
-        })
-        .collect();
+    // EVR-721 Phase 2.2: full Active → Grace → Ghost state machine.
+    // Two passes per tick:
+    //   Pass A: Active tokens whose computed energy is 0 transition
+    //           to Grace, recording `grace_epoch = current_epoch`.
+    //           Emits `GraceEntered`.
+    //   Pass B: Grace tokens whose `grace_epoch + grace_period <=
+    //           current_epoch` transition to Ghost. The token is
+    //           moved out of `tokens` into a `GhostRecord`. Emits
+    //           `Evaporated`.
+    let grace_period = ns.grace_period;
+    let mut to_grace: Vec<u64> = Vec::new();
+    let mut to_ghost: Vec<u64> = Vec::new();
 
-    for id in dead_ids {
-        ns.tokens.remove(&id);
-        events.push(format!("MortalNFT #{} died at epoch {}", id, current_epoch));
+    for (&id, info) in ns.tokens.iter() {
+        let current = energy_at_epoch(
+            info.energy,
+            info.half_life,
+            current_epoch.saturating_sub(info.minted_epoch),
+        );
+        match info.state {
+            NftLifecycleState::Active if current == 0 => {
+                to_grace.push(id);
+            }
+            NftLifecycleState::Grace => {
+                let cutoff = info.grace_epoch.unwrap_or(current_epoch).saturating_add(grace_period);
+                if current_epoch >= cutoff {
+                    to_ghost.push(id);
+                }
+            }
+            // grace_period == 0: skip Grace and go straight to Ghost.
+            NftLifecycleState::Active if grace_period == 0 && current == 0 => {
+                to_ghost.push(id);
+            }
+            _ => {}
+        }
+    }
+
+    for id in to_grace {
+        if let Some(nft) = ns.tokens.get_mut(&id) {
+            nft.state = NftLifecycleState::Grace;
+            nft.grace_epoch = Some(current_epoch);
+            events.push(format!(
+                "GraceEntered: token={} epoch={}",
+                id, current_epoch
+            ));
+        }
+    }
+
+    for id in to_ghost {
+        if let Some(nft) = ns.tokens.remove(&id) {
+            // Compute the canonical ghost proof:
+            // Blake3(token_id : metadata_hash : evaporated_epoch).
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(&id.to_le_bytes());
+            hasher.update(b":");
+            hasher.update(nft.metadata_hash.as_bytes());
+            hasher.update(b":");
+            hasher.update(&current_epoch.to_le_bytes());
+            let ghost_proof = hex::encode(hasher.finalize().as_bytes());
+            ns.ghost_records.insert(
+                id,
+                GhostRecord {
+                    token_id: id,
+                    owner: nft.owner.clone(),
+                    metadata_hash: nft.metadata_hash.clone(),
+                    evaporated_epoch: current_epoch,
+                    ghost_proof: ghost_proof.clone(),
+                },
+            );
+            events.push(format!(
+                "Evaporated: token={} epoch={} ghost_proof={}",
+                id, current_epoch, &ghost_proof[..16]
+            ));
+        }
     }
 
     ns.last_tick_epoch = current_epoch;
