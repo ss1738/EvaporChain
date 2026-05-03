@@ -1,9 +1,13 @@
 # Threat Model Supplement — 2026-04-27 (post-closure annotated 2026-05-03)
 
 > **Status as of 2026-05-03:** §2.1, §2.2, §2.3, §2.5, §2.6 are **closed in code**.
-> Closure annotations are inline in each subsection. §2.4 and §2.7 remain open
-> (noted at their headings). When `THREAT_MODEL.md` §6 is rewritten for mainnet,
-> this supplement folds in and is deleted, per §5 below.
+> Closure annotations are inline in each subsection. Only §2.4 remains open.
+> §2.7 was re-audited 2026-05-03 and found already-closed: every `db.put_cf`
+> / `db.write` site in `rocksdb_backend.rs` matches the `if let Err(e) = ...
+> { fatal_persistence_error(op, e); }` pattern, and the helper at lines
+> 62–71 logs + `exit(2)`s instead of panicking. When `THREAT_MODEL.md` §6
+> is rewritten for mainnet, this supplement folds in and is deleted, per
+> §5 below.
 
 This is a **supplement** to `docs/THREAT_MODEL.md`, not a replacement. The base document still defines the system overview, trust assumptions, and adversary model. This supplement adds:
 
@@ -112,9 +116,20 @@ Combined with `genesis-mainnet.json` allocating 35% of supply to a single Founda
 
 **Fix required:** passphrase or KMS-backed encryption of `bls_key.bin` before mainnet. Document key-rotation procedure.
 
-### 2.7 Persistence panic on write failure (HIGH, **OPEN** — code-side audit-backlog item)
+### 2.7 Persistence panic on write failure (HIGH, **CLOSED** — verified 2026-05-03)
 
-**Adversary capability added:** an adversary who fills the disk or revokes write permissions on a validator host triggers a panic in `rocksdb_backend.rs:338, 388` (`.expect("write object to RocksDB")`), crashing the node.
+> **Closure note (2026-05-03):** re-audit of `rocksdb_backend.rs` at commit
+> `fff3e6f` confirmed that EVERY persistence write site uses the
+> `if let Err(e) = ... { fatal_persistence_error(op, e); }` pattern. The
+> helper at lines 62–71 emits a structured `tracing::error!` with the
+> failed operation name + I/O error, sleeps 100 ms for the subscriber
+> to flush, then `std::process::exit(2)`s. The two remaining `.expect()`
+> calls in the file (line 1014 just-inserted-HashMap-lookup, line 1209
+> startup-time CF handle) are programmer-invariant checks, not I/O paths.
+> The original audit-flagged `.expect("write object to RocksDB")` was
+> closed in an earlier sprint and the supplement was simply not refreshed.
+
+**Adversary capability added (historic):** an adversary who fills the disk or revokes write permissions on a validator host triggered a panic in `rocksdb_backend.rs:338, 388` (`.expect("write object to RocksDB")`), crashing the node.
 
 **Why it's not in the base doc:** the base doc treats persistence as "RocksDB with crash recovery" without enumerating the failure-mode surface. Crashes on local resource exhaustion are slashable downtime.
 
