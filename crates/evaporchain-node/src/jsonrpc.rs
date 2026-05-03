@@ -128,6 +128,7 @@ fn dispatch(state: &ApiState, req: JsonRpcRequest) -> JsonRpcResponse {
         "evap_getLamportClock" => rpc_get_lamport_clock(state, req.id),
         "evap_getDsnWindow" => rpc_get_dsn_window(state, req.id),
         "evap_getEpvRegistry" => rpc_get_epv_registry(state, req.id),
+        "evap_getFeeState" => rpc_get_fee_state(state, req.id),
         "evap_getLogs" => rpc_get_logs(state, &req.params, req.id),
         "evap_getBlockLogs" => rpc_get_block_logs(state, &req.params, req.id),
         "evap_getFinalityStatus" => rpc_get_finality_status(state, &req.params, req.id),
@@ -639,6 +640,34 @@ fn format_lamport_clock_response(
         "accumulated_energy": json_hex_u64(accumulated_energy),
         "tick_quantum": json_hex_u64(tick_quantum),
     })
+}
+
+/// Pure formatter for FeeState RPC responses. The fee controller
+/// is a Lyapunov-stable integrator-with-λ-decay over cumulative
+/// block-gas pressure (INVENTION_STACK §A1.5). `energy` is the
+/// only state field — the base fee is a stateless derived function
+/// of `(energy, params)`, by design.
+fn format_fee_state_response(energy: u64) -> Value {
+    serde_json::json!({
+        "energy": json_hex_u64(energy),
+    })
+}
+
+/// `evap_getFeeState()` — current cumulative energy in the fee
+/// controller's integrator. Operators graph this against
+/// `target_energy` (a static config) to see whether the chain is
+/// currently above- or below-equilibrium gas pressure.
+fn rpc_get_fee_state(state: &ApiState, id: Value) -> JsonRpcResponse {
+    let energy = match state.fee_state.lock() {
+        Ok(s) => s.energy,
+        Err(_) => {
+            return JsonRpcResponse::ok(
+                id,
+                serde_json::json!({ "fee_state_unavailable": true }),
+            );
+        }
+    };
+    JsonRpcResponse::ok(id, format_fee_state_response(energy))
 }
 
 /// Pure formatter for EPV registry RPC responses. The Evaporative
@@ -1278,6 +1307,18 @@ mod tests {
         assert_eq!(trie["compressions"], "0x5");
         assert_eq!(trie["decompressions"], "0x1");
         assert_eq!(v["lazy_snapshot_count"], "0x9");
+    }
+
+    #[test]
+    fn test_format_fee_state_basic() {
+        let v = format_fee_state_response(1_500_000);
+        assert_eq!(v["energy"], "0x16e360"); // 1_500_000
+    }
+
+    #[test]
+    fn test_format_fee_state_zero() {
+        let v = format_fee_state_response(0);
+        assert_eq!(v["energy"], "0x0");
     }
 
     #[test]
