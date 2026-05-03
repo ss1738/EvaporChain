@@ -1312,6 +1312,13 @@ impl ExecutionEngine for ParallelExecutor {
         db: &mut dyn StateDB,
         block: &Block,
     ) -> Result<BlockExecutionResult, ExecutionError> {
+        // Lane B.2: stamp the block's protocol_version onto the privacy
+        // executor BEFORE any privacy txs run. Subsequent
+        // execute_unshield / execute_private_transfer will read this
+        // to pick the dual-mode double-spend backend (v0 = unbounded
+        // db set, v1+ = PNT bounded window).
+        self.privacy_executor
+            .set_protocol_version(block.protocol_version);
         // Pre-block §1.2 conservation snapshot (read-only over StateDB).
         let conservation_before = crate::energy_audit::compartment_snapshot_with_pool(
             db,

@@ -2440,6 +2440,10 @@ impl ExecutionEngine for SimpleExecutor {
         db: &mut dyn StateDB,
         block: &Block,
     ) -> Result<BlockExecutionResult, ExecutionError> {
+        // Lane B.2: stamp protocol_version onto privacy executor for
+        // dual-mode double-spend gating (v0=db / v1+=PNT).
+        self.privacy_executor
+            .set_protocol_version(block.protocol_version);
         // Pre-block §1.2 conservation snapshot (read-only over StateDB).
         let conservation_before = crate::energy_audit::compartment_snapshot_with_pool(
             db,

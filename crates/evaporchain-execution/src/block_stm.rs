@@ -1660,6 +1660,10 @@ impl ExecutionEngine for BlockStmExecutor {
         db: &mut dyn StateDB,
         block: &Block,
     ) -> Result<BlockExecutionResult, ExecutionError> {
+        // Lane B.2: protocol_version → privacy_executor for dual-mode
+        // double-spend gating.
+        self.privacy_executor
+            .set_protocol_version(block.protocol_version);
         let base_fee = self.fee_controller.as_ref().map_or(0, |fc| fc.base_fee);
 
         // ── Phase 1: Separate contract/script txs (must be serial) ──

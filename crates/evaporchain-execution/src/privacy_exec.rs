@@ -138,6 +138,18 @@ pub struct PrivacyExecutor {
     /// window. `0` disables auto-advance entirely (caller must drive
     /// it via the original `pnt_advance_phase` direct-call path).
     pnt_phase_interval_epochs: u64,
+    /// Protocol version of the block currently being executed.
+    /// Set by the executor BEFORE dispatching privacy txs. Lane B.2
+    /// gates the double-spend check on this:
+    ///   v0 (legacy)  → check `db.is_nullifier_spent` (unbounded set,
+    ///                  what every chain runs today).
+    ///   v1+         → check `pnt.is_spent_in_window` (bounded sliding
+    ///                  window, PNT-authoritative).
+    /// Default is 0; followers reading a v1 block flip the gate via
+    /// `set_protocol_version` per-block. The PNT shadow-tracking from
+    /// Stage 1 keeps inserting on every spend regardless of version,
+    /// so the PNT mirror is always up-to-date when the chain flips.
+    current_protocol_version: u8,
 }
 
 impl PrivacyExecutor {
@@ -150,6 +162,7 @@ impl PrivacyExecutor {
                 .expect("PNT_WINDOW_DEPTH must be >= 1"),
             pnt_last_phase_epoch: None,
             pnt_phase_interval_epochs: PNT_DEFAULT_PHASE_INTERVAL_EPOCHS,
+            current_protocol_version: 0,
         }
     }
 
@@ -162,6 +175,7 @@ impl PrivacyExecutor {
                 .expect("PNT_WINDOW_DEPTH must be >= 1"),
             pnt_last_phase_epoch: None,
             pnt_phase_interval_epochs: PNT_DEFAULT_PHASE_INTERVAL_EPOCHS,
+            current_protocol_version: 0,
         }
     }
 
@@ -215,6 +229,40 @@ impl PrivacyExecutor {
     pub fn set_epoch(&mut self, epoch: u64) {
         self.current_epoch = epoch;
         self.engine.set_epoch(epoch);
+    }
+
+    /// Set the block's `protocol_version` so subsequent privacy-tx
+    /// double-spend checks pick the correct backend (v0 = legacy
+    /// unbounded set, v1+ = PNT-authoritative). Call BEFORE
+    /// `execute_unshield` / `execute_private_transfer` for each
+    /// block. Lane B.2 wiring.
+    pub fn set_protocol_version(&mut self, version: u8) {
+        self.current_protocol_version = version;
+    }
+
+    /// Read the currently-set protocol version. Exposed for tests
+    /// and operator diagnostics.
+    pub fn current_protocol_version(&self) -> u8 {
+        self.current_protocol_version
+    }
+
+    /// Lane B.2 dual-mode double-spend check. Returns `true` iff the
+    /// nullifier is already considered spent under the active
+    /// protocol version's authoritative source:
+    ///   v0  → `db.is_nullifier_spent` (unbounded set)
+    ///   v1+ → `pnt.is_spent_in_window` (bounded sliding window)
+    ///
+    /// PNT shadow-tracking from Stage 1 keeps the bounded set in
+    /// sync with the unbounded set on every spend, so the flip from
+    /// v0 to v1 at a fork epoch is monotone — every nullifier the
+    /// chain has spent is already in the PNT live window if it's
+    /// recent enough to matter.
+    pub fn is_double_spend(&self, db: &dyn StateDB, nullifier: &[u8; 32]) -> bool {
+        if self.current_protocol_version >= 1 {
+            self.pnt.is_spent_in_window(nullifier)
+        } else {
+            db.is_nullifier_spent(nullifier)
+        }
     }
 
     /// Restore in-memory privacy state (note tree, nullifier set) from
@@ -445,7 +493,10 @@ impl PrivacyExecutor {
 
         // 3. Check nullifiers not already spent (against persisted db state).
         for nf in &tx.input_nullifiers {
-            if db.is_nullifier_spent(nf) {
+            // Lane B.2 dual-mode: v0 reads db's unbounded set, v1+
+            // reads pnt's bounded sliding window. PNT shadow-tracking
+            // (Stage 1) keeps both in sync so the flip is monotone.
+            if self.is_double_spend(db, nf) {
                 return Err(PrivacyExecError::DoubleSpend(hex::encode(&nf[..8])));
             }
         }
@@ -661,7 +712,10 @@ impl PrivacyExecutor {
 
         // 3. Check nullifiers not already spent
         for nf in &tx.input_nullifiers {
-            if db.is_nullifier_spent(nf) {
+            // Lane B.2 dual-mode: v0 reads db's unbounded set, v1+
+            // reads pnt's bounded sliding window. PNT shadow-tracking
+            // (Stage 1) keeps both in sync so the flip is monotone.
+            if self.is_double_spend(db, nf) {
                 return Err(PrivacyExecError::DoubleSpend(hex::encode(&nf[..8])));
             }
         }
@@ -1444,6 +1498,56 @@ mod tests {
             executor.pnt.is_spent_in_window(&nullifier),
             "nullifier must remain live within the window"
         );
+    }
+
+    #[test]
+    fn test_pnt_authoritative_v1_uses_pnt_window() {
+        // Lane B.2: under protocol_version=1, the double-spend check
+        // reads `pnt.is_spent_in_window`, NOT `db.is_nullifier_spent`.
+        // Pre-poison the PNT (without touching the db) and assert the
+        // v1 path rejects.
+        let sender = test_addr(1);
+        let receiver = test_addr(2);
+        let mut db = setup_db_with_balance(&sender, 10_000);
+        let mut executor = PrivacyExecutor::with_depth(8);
+        executor.set_epoch(1);
+
+        let note = do_shield(
+            &mut executor,
+            &mut db,
+            &sender,
+            5_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
+        );
+        let tx = build_real_unshield(&executor, &note, receiver, 5_000);
+
+        // Pre-poison PNT only — db stays clean.
+        executor
+            .pnt
+            .insert_nullifier(tx.input_nullifiers[0])
+            .unwrap();
+
+        // v0: legacy reads db (unbounded set) → tx passes the check
+        // because db has nothing. PNT poison is invisible.
+        executor.set_protocol_version(0);
+        assert!(!executor.is_double_spend(&db, &tx.input_nullifiers[0]),
+            "v0 must read db, not pnt");
+
+        // v1: PNT-authoritative → tx fails the check because PNT has it.
+        executor.set_protocol_version(1);
+        assert!(executor.is_double_spend(&db, &tx.input_nullifiers[0]),
+            "v1 must read pnt, not db");
+    }
+
+    #[test]
+    fn test_pnt_authoritative_v0_default_is_legacy() {
+        // A fresh PrivacyExecutor defaults to v0 (legacy unbounded set).
+        // This is the bit-compat guarantee for every existing chain.
+        let executor = PrivacyExecutor::with_depth(8);
+        assert_eq!(executor.current_protocol_version(), 0);
     }
 
     #[test]
