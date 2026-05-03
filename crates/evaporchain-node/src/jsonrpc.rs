@@ -123,6 +123,8 @@ fn dispatch(state: &ApiState, req: JsonRpcRequest) -> JsonRpcResponse {
         "evap_getMMRProof" => rpc_get_mmr_proof(state, &req.params, req.id),
         "evap_getMMRRoot" => rpc_get_mmr_root(state, req.id),
         "evap_decayForgetProof" => rpc_decay_forget_proof(state, &req.params, req.id),
+        "evap_getPntStatus" => rpc_get_pnt_status(state, req.id),
+        "evap_getFrontierStatus" => rpc_get_frontier_status(state, req.id),
         "evap_getLogs" => rpc_get_logs(state, &req.params, req.id),
         "evap_getBlockLogs" => rpc_get_block_logs(state, &req.params, req.id),
         "evap_getFinalityStatus" => rpc_get_finality_status(state, &req.params, req.id),
@@ -525,6 +527,132 @@ fn rpc_get_mmr_root(state: &ApiState, id: Value) -> JsonRpcResponse {
         (c.executor.mmr_root(), c.executor.mmr_size())
     };
     JsonRpcResponse::ok(id, format_mmr_root_response(root, size))
+}
+
+/// Pure formatter for PNT-status responses. `current_phase` rotates
+/// every block by `tick_pnt_phase` (commit 05a36b1); `live_count` is
+/// the number of nullifiers retained in the live window. Operators
+/// compare growth curves between this bounded count and the unbounded
+/// canonical nullifier set before flipping the future hard-fork that
+/// makes PNT authoritative.
+fn format_pnt_status_response(
+    current_phase: u64,
+    live_count: usize,
+    window_depth: usize,
+    last_phase_epoch: Option<u64>,
+    phase_interval_epochs: u64,
+) -> Value {
+    serde_json::json!({
+        "current_phase": json_hex_u64(current_phase),
+        "live_count": json_hex_u64(live_count as u64),
+        "window_depth": window_depth,
+        "last_phase_epoch": last_phase_epoch.map(json_hex_u64).unwrap_or(Value::Null),
+        "phase_interval_epochs": json_hex_u64(phase_interval_epochs),
+    })
+}
+
+/// `evap_getPntStatus()` — current Phasing Nullifier Tree state for
+/// operator monitoring. PNT runs in shadow alongside the canonical
+/// (unbounded) nullifier set; `live_count` is the bounded count.
+fn rpc_get_pnt_status(state: &ApiState, id: Value) -> JsonRpcResponse {
+    let (current_phase, live_count, window_depth, last_epoch, interval) = {
+        let c = safe_lock(&state.consensus);
+        let pe = &c.executor.privacy_executor;
+        (
+            pe.pnt.current_phase,
+            pe.pnt.live_count(),
+            pe.pnt.window_depth,
+            pe.pnt_last_phase_epoch(),
+            pe.pnt_phase_interval_epochs(),
+        )
+    };
+    JsonRpcResponse::ok(
+        id,
+        format_pnt_status_response(
+            current_phase,
+            live_count,
+            window_depth,
+            last_epoch,
+            interval,
+        ),
+    )
+}
+
+/// Pure formatter for FrontierState status. Surfaces anchor count,
+/// PoHA temperature distribution, energy-verkle health snapshot, and
+/// the lazy-state-cache size — substrate state operators need but
+/// can't see otherwise.
+#[allow(clippy::too_many_arguments)]
+fn format_frontier_status_response(
+    anchor_count: usize,
+    poha_active: usize,
+    poha_ghosts: usize,
+    poha_hot: u32,
+    poha_warm: u32,
+    poha_cold: u32,
+    poha_evaporated: u32,
+    trie_active_leaves: u32,
+    trie_compressed_leaves: u32,
+    trie_total_nodes: u32,
+    trie_compressions: u64,
+    trie_decompressions: u64,
+    lazy_snapshot_count: usize,
+) -> Value {
+    serde_json::json!({
+        "anchor_count": json_hex_u64(anchor_count as u64),
+        "poha": {
+            "active": json_hex_u64(poha_active as u64),
+            "ghosts": json_hex_u64(poha_ghosts as u64),
+            "temperature": {
+                "hot": json_hex_u64(poha_hot as u64),
+                "warm": json_hex_u64(poha_warm as u64),
+                "cold": json_hex_u64(poha_cold as u64),
+                "evaporated": json_hex_u64(poha_evaporated as u64),
+            },
+        },
+        "energy_trie": {
+            "active_leaves": json_hex_u64(trie_active_leaves as u64),
+            "compressed_leaves": json_hex_u64(trie_compressed_leaves as u64),
+            "total_nodes": json_hex_u64(trie_total_nodes as u64),
+            "compressions": json_hex_u64(trie_compressions),
+            "decompressions": json_hex_u64(trie_decompressions),
+        },
+        "lazy_snapshot_count": json_hex_u64(lazy_snapshot_count as u64),
+    })
+}
+
+/// `evap_getFrontierStatus()` — anchor count, PoHA temperature
+/// distribution, energy-Verkle trie health, lazy-state-cache size.
+/// Returns a "frontier_state_disabled" body when no FrontierState
+/// is wired (i.e. the operator didn't construct one in main.rs).
+fn rpc_get_frontier_status(state: &ApiState, id: Value) -> JsonRpcResponse {
+    let Some(ref fs_arc) = state.frontier_state else {
+        return JsonRpcResponse::ok(
+            id,
+            serde_json::json!({ "frontier_state_disabled": true }),
+        );
+    };
+    let fs = safe_lock(fs_arc);
+    let dist = fs.poha.temperature_distribution();
+    let health = fs.energy_trie.health();
+    JsonRpcResponse::ok(
+        id,
+        format_frontier_status_response(
+            fs.anchors.anchor_count(),
+            fs.poha.active_count(),
+            fs.poha.ghost_count(),
+            dist.hot,
+            dist.warm,
+            dist.cold,
+            dist.evaporated,
+            health.active_leaves,
+            health.compressed_leaves,
+            health.total_nodes,
+            health.compressions,
+            health.decompressions,
+            fs.lazy_cache.snapshot_count(),
+        ),
+    )
 }
 
 fn rpc_mempool_size(state: &ApiState, id: Value) -> JsonRpcResponse {
@@ -974,6 +1102,58 @@ mod tests {
         assert_eq!(json["epoch"], "0x5");
         assert_eq!(json["txCount"], 0);
         assert!(json["stateRoot"].as_str().unwrap().starts_with("0x"));
+    }
+
+    // ── PNT + Frontier status formatters ──
+
+    #[test]
+    fn test_format_pnt_status_basic() {
+        let v = format_pnt_status_response(3, 42, 5, Some(100), 100);
+        assert_eq!(v["current_phase"], "0x3");
+        assert_eq!(v["live_count"], "0x2a");
+        assert_eq!(v["window_depth"], 5);
+        assert_eq!(v["last_phase_epoch"], "0x64");
+        assert_eq!(v["phase_interval_epochs"], "0x64");
+    }
+
+    #[test]
+    fn test_format_pnt_status_no_advance_yet() {
+        // Fresh executor: last_phase_epoch is None → JSON null.
+        let v = format_pnt_status_response(0, 0, 5, None, 100);
+        assert_eq!(v["current_phase"], "0x0");
+        assert_eq!(v["live_count"], "0x0");
+        assert_eq!(v["last_phase_epoch"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn test_format_frontier_status_basic() {
+        let v = format_frontier_status_response(
+            7, 12, 3, 4, 5, 2, 1, 100, 8, 116, 5, 1, 9,
+        );
+        assert_eq!(v["anchor_count"], "0x7");
+        assert_eq!(v["poha"]["active"], "0xc"); // 12
+        assert_eq!(v["poha"]["ghosts"], "0x3");
+        let temp = &v["poha"]["temperature"];
+        assert_eq!(temp["hot"], "0x4");
+        assert_eq!(temp["warm"], "0x5");
+        assert_eq!(temp["cold"], "0x2");
+        assert_eq!(temp["evaporated"], "0x1");
+        let trie = &v["energy_trie"];
+        assert_eq!(trie["active_leaves"], "0x64"); // 100
+        assert_eq!(trie["compressed_leaves"], "0x8");
+        assert_eq!(trie["total_nodes"], "0x74"); // 116
+        assert_eq!(trie["compressions"], "0x5");
+        assert_eq!(trie["decompressions"], "0x1");
+        assert_eq!(v["lazy_snapshot_count"], "0x9");
+    }
+
+    #[test]
+    fn test_format_frontier_status_zero_distribution() {
+        // An empty/quiescent FrontierState — every count is 0.
+        let v = format_frontier_status_response(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        assert_eq!(v["anchor_count"], "0x0");
+        assert_eq!(v["poha"]["temperature"]["hot"], "0x0");
+        assert_eq!(v["energy_trie"]["compressions"], "0x0");
     }
 
     // ── compute_decay_forget_response (evap_decayForgetProof core) ──
