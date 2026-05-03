@@ -3088,8 +3088,14 @@ mod tests {
         )
         .unwrap();
 
-        // energy=4, hl=1: epoch 1→2, epoch 2→1, epoch 3→0 (Active→Grace).
-        // Then 5 more epochs of grace until epoch 8 (Grace→Ghost).
+        // Each `eng.tick(N)` is a single tick at epoch N, not a
+        // sweep through all prior epochs. We need TWO ticks to drive
+        // the full state machine:
+        //   tick(3): energy reaches 0 → Active → Grace, with
+        //            grace_epoch=3.
+        //   tick(8): grace cutoff = 3 + grace_period(5) = 8 → Grace
+        //            → Ghost.
+        eng.tick(3);
         eng.tick(8);
 
         let r = eng.call(
@@ -3196,6 +3202,8 @@ mod tests {
             0,
         )
         .unwrap();
+        // Two ticks: epoch 3 (Active→Grace), epoch 8 (Grace→Ghost).
+        eng.tick(3);
         eng.tick(8);
 
         let r = eng
