@@ -5540,6 +5540,170 @@ mod tests {
     }
 
     #[test]
+    fn test_parent_acceptance_mode_mcc_diverges_from_linear_on_diverging_parent() {
+        // Lane J.2 integration test: with parent_acceptance_mode = "mcc",
+        // a proposal with diverging parent_hash dispatches through
+        // MccForkChoice (Lane I.4 wire-up + I.6 β derivation) instead
+        // of the legacy `local == candidate` equality check. With an
+        // empty LightCone DAG (fresh TC), MccForkChoice falls through
+        // to lex tie-break on the trajectory heads — accepts the
+        // candidate iff its hash is lex-larger than local's.
+        //
+        // Pick `block.parent_hash = [0xFF; 32]` (lex max) and
+        // `tc.parent_hash = [0x00; 32]` (lex min, the default).
+        //   - Linear mode: REJECT (parents don't match) → RequestSync
+        //   - MCC mode: ACCEPT (FF > 00 lex tie-break)
+        //
+        // This is the load-bearing differential test: it proves the
+        // mode flag actually gets consulted, by observing different
+        // outcomes from the same input.
+        let ids = &[1, 2, 3, 4];
+        let mut tc = make_consensus(1, ids);
+
+        // Force a known proposer for round 0 + valid signing key.
+        let proposer_id = tc.proposer_for_round(1, 0).unwrap().id;
+
+        // Construct a proposal whose parent_hash diverges from local.
+        let mk_proposal = || {
+            let block = Block {
+                number: 1,
+                epoch: 1,
+                parent_hash: [0xFF; 32], // lex max — diverges from default [0; 32]
+                state_root: [0u8; 32],
+                transactions: vec![],
+                timestamp: 0,
+                chain_id: String::new(),
+                producer_id: Some(proposer_id),
+                vrf_output: None,
+                vrf_proof: None,
+                data_root: None,
+                da_row_roots: vec![],
+                da_col_roots: vec![],
+                blob_commitments: vec![],
+                da_certificate: None,
+                commit_certificate: None,
+                nova_proof: None,
+                anchor_hash: None,
+                state_function_commitment: None,
+                oracle_state_root: None,
+                shard_count: None,
+                protocol_version: 0,
+                state_root_version: 0,
+                submit_epoch_hints: vec![],
+            };
+            ConsensusMessage::Proposal {
+                height: 1,
+                round: 0,
+                block,
+                proposer_id,
+            }
+        };
+
+        // Sanity: tc.parent_hash starts at [0; 32].
+        assert_eq!(tc.parent_hash, [0u8; 32]);
+
+        // ── Mode: linear (default). Diverging parent → reject + RequestSync.
+        let actions_linear = tc.on_message(mk_proposal());
+        let linear_request_sync = actions_linear
+            .iter()
+            .any(|a| matches!(a, ConsensusAction::RequestSync(_, _)));
+        assert!(
+            linear_request_sync,
+            "linear mode must reject diverging parent and emit RequestSync"
+        );
+
+        // ── Mode: mcc. Same proposal, different governance flag.
+        // Reset round state for a fresh on_message call.
+        let mut tc2 = make_consensus(1, ids);
+        tc2.governance_params.insert(
+            "parent_acceptance_mode".to_string(),
+            "mcc".to_string(),
+        );
+        assert_eq!(tc2.parent_hash, [0u8; 32]);
+
+        let actions_mcc = tc2.on_message(mk_proposal());
+        // MCC mode accepts (lex tie-break: FF > 00). The proposal
+        // proceeds past the parent check; we don't assert on what
+        // happens after (timestamp, chain_id, sig checks may still
+        // intervene), only that the parent-hash gate did NOT
+        // short-circuit with RequestSync.
+        let mcc_request_sync = actions_mcc.iter().any(|a| {
+            matches!(
+                a,
+                ConsensusAction::RequestSync(s, _) if *s == tc2.height.saturating_sub(5)
+            )
+        });
+        assert!(
+            !mcc_request_sync,
+            "mcc mode must NOT emit the parent-hash-divergence RequestSync \
+             at the linear short-circuit site (FF > 00 lex tie-break accepts) \
+             — got actions {:?}",
+            actions_mcc
+        );
+    }
+
+    #[test]
+    fn test_parent_acceptance_mode_typo_falls_through_to_linear() {
+        // Lane J.2 typo-safety negative: a typo'd governance value
+        // (e.g. "mcc " or "MCC" or anything not exactly "mcc") falls
+        // through to the legacy linear rule. Confirms a misspelled
+        // amendment cannot accidentally engage MCC fork-choice.
+        let ids = &[1, 2, 3, 4];
+        let mut tc = make_consensus(1, ids);
+        let proposer_id = tc.proposer_for_round(1, 0).unwrap().id;
+
+        // Typo'd value (sic).
+        tc.governance_params.insert(
+            "parent_acceptance_mode".to_string(),
+            "mcc ".to_string(), // trailing space — literal mismatch
+        );
+
+        let block = Block {
+            number: 1,
+            epoch: 1,
+            parent_hash: [0xFF; 32],
+            state_root: [0u8; 32],
+            transactions: vec![],
+            timestamp: 0,
+            chain_id: String::new(),
+            producer_id: Some(proposer_id),
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
+            nova_proof: None,
+            anchor_hash: None,
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
+            protocol_version: 0,
+            state_root_version: 0,
+            submit_epoch_hints: vec![],
+        };
+        let proposal = ConsensusMessage::Proposal {
+            height: 1,
+            round: 0,
+            block,
+            proposer_id,
+        };
+
+        let actions = tc.on_message(proposal);
+        // Typo → linear default → diverging parent → RequestSync emitted.
+        let request_sync = actions
+            .iter()
+            .any(|a| matches!(a, ConsensusAction::RequestSync(_, _)));
+        assert!(
+            request_sync,
+            "typo'd governance value must fall through to linear default \
+             (and emit RequestSync on diverging parent)"
+        );
+    }
+
+    #[test]
     fn test_consensus_liveness_with_timeouts() {
         // Even with no messages, consensus should advance rounds via timeouts
         let mut tc = make_consensus(1, &[1, 2, 3, 4]);
