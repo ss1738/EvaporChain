@@ -1,0 +1,79 @@
+{
+  "_comment": "3-Mini Tailscale cluster genesis — generated 2026-05-03 from validator-1/2/3-keys.json. Validators 1/2/3 live on Mini 1 (satyawansingh@100.119.53.101), Mini 2 (satyawan-mini-1@100.113.253.72), Mini 3 (satyawan-mini-2@100.103.216.125) respectively. Each validator's bls_public_key + bls_pop come straight out of `evaporchain keygen --output validator-N-keys.json` (commit c4e2c4b adds the proof_of_possession field). Tokenomics + chain_params are scaled-down dev values.",
+  "chain_params": {
+    "chain_id": "evaporchain-tailscale-3node-1",
+    "block_interval_ms": 2000,
+    "grace_period": 5,
+    "block_gas_limit": 500000,
+    "max_tx_size": 1048576,
+    "max_txs_per_block": 10000,
+    "min_validator_stake": 100000,
+    "unbonding_period": 100
+  },
+  "tokenomics": {
+    "total_supply": 1000000,
+    "block_reward": 100,
+    "reward_half_life": 1000000,
+    "fee_burn_rate": 0.50,
+    "staker_fee_share": 0.50,
+    "target_staking_apy": 0.05
+  },
+  "genesis_time": "2026-05-03T12:00:00Z",
+  "validators": [
+    {
+      "id": 1,
+      "name": "validator-1-mini-satyawan",
+      "stake": 250000,
+      "address": [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "bls_public_key": "b52c7d0302244dc8a4c51efe39925adde2c3833e36521dd3a76f2bd33d93ee4f5d3f07443697bbba12b74cd27c81c0d2",
+      "bls_pop": "817d1d402bafb54d9a593da416edb27ae2237b47d1c80c566ed30192378f4b17dcc226f48d2b66e62b0dfd7646713ce808dd494418ad9abac289335a667636931fe243d93613df156eb21213959f00376fc244198928f2d41f3c8c7ca18c96e7",
+      "p2p_address": "/ip4/100.119.53.101/tcp/9000"
+    },
+    {
+      "id": 2,
+      "name": "validator-2-mini-apsarth",
+      "stake": 250000,
+      "address": [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "bls_public_key": "b566fbbbc7e782fbe414b75b5cb784921def3ac98ece7598fc483d0c2ce8faf22125cc4cf7f5bdc177719a519a3b006d",
+      "bls_pop": "81d1c91a874ef3132d5402821c5afcb9d93960cc2be50439cd823add77695f66581ae303d40282e1be78e7118af31f03041cc9578d86f3af461b0a8079c770d49ae3bea21e6ab35d99ee8e6983017b422883cae501f99b9902ba0d1233c9de4a",
+      "p2p_address": "/ip4/100.113.253.72/tcp/9000"
+    },
+    {
+      "id": 3,
+      "name": "validator-3-mini-ironman",
+      "stake": 250000,
+      "address": [3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "bls_public_key": "8c4eb8a79ce8b43077e025990ccc7ad2d990b4e76367fa5f3e52f6a2782a532ba14dded6e1d2f719fdadd8ec9c4a8ebf",
+      "bls_pop": "88ebda3c59dae09ff8792796e0f078bf64bada3a548562aef5c37f1e985105a4030533a0f996955d1dbfa84ce728dc900b5c5d560a6e6e9776359eeb1b312f0c4a665e3a5a71ad1d38d859e62e701bc3054654ee9fd93e80356836708159cbc6",
+      "p2p_address": "/ip4/100.103.216.125/tcp/9000"
+    }
+  ],
+  "accounts": [
+    {
+      "address": [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "balance": 250000,
+      "label": "Validator-1 Operator"
+    },
+    {
+      "address": [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "balance": 250000,
+      "label": "Validator-2 Operator"
+    },
+    {
+      "address": [3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "balance": 250000,
+      "label": "Validator-3 Operator"
+    },
+    {
+      "address": [160, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "balance": 250000,
+      "label": "Devnet Faucet"
+    }
+  ],
+  "objects": [],
+  "bootstrap_peers": [
+    "/ip4/100.119.53.101/tcp/9000",
+    "/ip4/100.113.253.72/tcp/9000",
+    "/ip4/100.103.216.125/tcp/9000"
+  ]
+}
