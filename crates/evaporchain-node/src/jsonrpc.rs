@@ -131,6 +131,7 @@ fn dispatch(state: &ApiState, req: JsonRpcRequest) -> JsonRpcResponse {
         "evap_getFeeState" => rpc_get_fee_state(state, req.id),
         "evap_getFourActSnapshot" => rpc_get_four_act_snapshot(state, req.id),
         "evap_getHbctStatus" => rpc_get_hbct_status(state, req.id),
+        "evap_getPatronageStatus" => rpc_get_patronage_status(state, req.id),
         "evap_getLogs" => rpc_get_logs(state, &req.params, req.id),
         "evap_getBlockLogs" => rpc_get_block_logs(state, &req.params, req.id),
         "evap_getFinalityStatus" => rpc_get_finality_status(state, &req.params, req.id),
@@ -642,6 +643,87 @@ fn format_lamport_clock_response(
         "accumulated_energy": json_hex_u64(accumulated_energy),
         "tick_quantum": json_hex_u64(tick_quantum),
     })
+}
+
+/// Pure formatter for Patronage RPC responses. Surfaces both the
+/// PatronageBook (active covenants, immunity counts) AND the
+/// RefreshPool (cumulative accrued energy across all namespaces).
+/// INVENTION_STACK §4.1 #13 Refresh-Pool Patronage primitive.
+fn format_patronage_status_response(
+    covenant_count: usize,
+    active_covenants: usize,
+    total_pre_funded: u64,
+    total_patronage_score: u64,
+    refresh_pool_total_accrued: u64,
+    refresh_pool_credit_count: usize,
+) -> Value {
+    serde_json::json!({
+        "covenant_count": json_hex_u64(covenant_count as u64),
+        "active_covenants": json_hex_u64(active_covenants as u64),
+        "total_pre_funded": json_hex_u64(total_pre_funded),
+        "total_patronage_score": json_hex_u64(total_patronage_score),
+        "refresh_pool": {
+            "total_accrued": json_hex_u64(refresh_pool_total_accrued),
+            "credit_count": json_hex_u64(refresh_pool_credit_count as u64),
+        },
+    })
+}
+
+/// `evap_getPatronageStatus()` — Refresh-Pool Patronage book + pool
+/// aggregate state. Operators watch:
+///  - `active_covenants` (those whose `expires_epoch` is still in
+///     the future) versus `covenant_count` (everything in the book
+///     including expired-but-not-pruned).
+///  - `total_pre_funded` (energy locked in covenants).
+///  - `total_patronage_score` (cumulative donation already drained
+///     to the pool).
+///  - `refresh_pool.total_accrued` + `credit_count` (the protocol-
+///     owned RefreshPool's namespace-keyed credits).
+fn rpc_get_patronage_status(state: &ApiState, id: Value) -> JsonRpcResponse {
+    let book_lock = state.patronage_book.lock();
+    let pool_lock = state.patronage_pool.lock();
+    let (book, pool) = match (book_lock, pool_lock) {
+        (Ok(b), Ok(p)) => (b, p),
+        _ => {
+            return JsonRpcResponse::ok(
+                id,
+                serde_json::json!({ "patronage_unavailable": true }),
+            );
+        }
+    };
+    // We need a current_epoch to compute `active_covenants`. Pull it
+    // from the consensus engine's current view; falls back to 0 if
+    // the lock is contended (active_covenants then approximates
+    // active==expired-in-future-only).
+    let current_epoch = match state.consensus.lock() {
+        Ok(c) => c.epoch(),
+        Err(_) => 0,
+    };
+    let mut active_covenants = 0usize;
+    let mut total_pre_funded = 0u64;
+    let mut total_patronage_score = 0u64;
+    for cv in book.iter() {
+        if cv.is_active(current_epoch) {
+            active_covenants += 1;
+        }
+        total_pre_funded = total_pre_funded.saturating_add(cv.pre_funded);
+        total_patronage_score =
+            total_patronage_score.saturating_add(cv.patronage_score);
+    }
+    let pool_total = pool.total_accrued();
+    let pool_credit_count = pool.credits().count();
+
+    JsonRpcResponse::ok(
+        id,
+        format_patronage_status_response(
+            book.len(),
+            active_covenants,
+            total_pre_funded,
+            total_patronage_score,
+            pool_total,
+            pool_credit_count,
+        ),
+    )
 }
 
 /// Pure formatter for HBCT status RPC responses.
@@ -1436,6 +1518,26 @@ mod tests {
         assert_eq!(trie["compressions"], "0x5");
         assert_eq!(trie["decompressions"], "0x1");
         assert_eq!(v["lazy_snapshot_count"], "0x9");
+    }
+
+    #[test]
+    fn test_format_patronage_status_populated() {
+        let v = format_patronage_status_response(10, 7, 50_000, 12_345, 99_999, 4);
+        assert_eq!(v["covenant_count"], "0xa");
+        assert_eq!(v["active_covenants"], "0x7");
+        assert_eq!(v["total_pre_funded"], "0xc350"); // 50_000
+        assert_eq!(v["total_patronage_score"], "0x3039"); // 12_345
+        let pool = &v["refresh_pool"];
+        assert_eq!(pool["total_accrued"], "0x1869f"); // 99_999
+        assert_eq!(pool["credit_count"], "0x4");
+    }
+
+    #[test]
+    fn test_format_patronage_status_empty() {
+        let v = format_patronage_status_response(0, 0, 0, 0, 0, 0);
+        assert_eq!(v["covenant_count"], "0x0");
+        assert_eq!(v["active_covenants"], "0x0");
+        assert_eq!(v["refresh_pool"]["total_accrued"], "0x0");
     }
 
     #[test]
