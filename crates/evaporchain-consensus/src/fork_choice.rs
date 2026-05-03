@@ -374,4 +374,84 @@ mod tests {
         let through_dyn = dyn_fc.evaluate(&id(3), &id(4));
         assert_eq!(direct.accept, through_dyn.accept);
     }
+
+    use proptest::prelude::*;
+
+    /// Build a small random LightCone: genesis + a chain of children,
+    /// each picking the previous block as parent (linear). Random
+    /// energies and observed_epochs, but topology is always genesis-
+    /// rooted line. Good enough to exercise the trajectory builder
+    /// across varying scores.
+    fn random_lc(energies: &[u64]) -> (LightCone, Vec<[u8; 32]>) {
+        let mut lc = LightCone::new();
+        let mut ids = Vec::with_capacity(energies.len() + 1);
+        let g = id(0);
+        lc.insert(Block::new(g, vec![], 1000, 0)).unwrap();
+        ids.push(g);
+        for (i, e) in energies.iter().enumerate() {
+            let bid = [(i + 1) as u8; 32];
+            let parent = ids[ids.len() - 1];
+            // observed_epoch grows monotonically.
+            lc.insert(Block::new(bid, vec![parent], *e, (i + 1) as u64))
+                .unwrap();
+            ids.push(bid);
+        }
+        (lc, ids)
+    }
+
+    proptest! {
+        /// Lane I.3 invariant proof: McCForkChoice is deterministic and
+        /// reflexive. Three properties locked across 256 random
+        /// LightCone shapes:
+        ///
+        /// 1. **Reflexivity** — `evaluate(x, x).accept == true` for any
+        ///    tip x in the DAG. Linear-equality fast-path must always
+        ///    accept.
+        /// 2. **Determinism** — calling `evaluate(a, b)` twice on the
+        ///    same instance returns the same verdict. Catches
+        ///    map-iteration-order bugs in trajectory builder or
+        ///    mcc_choose tie-break.
+        /// 3. **Dyn dispatch parity** — `&dyn ForkChoice` and concrete
+        ///    impl produce identical verdicts. Locks the G.3 seam
+        ///    contract.
+        #[test]
+        fn mcc_proptest_invariants(
+            // 1-12 children with random energies.
+            energies in proptest::collection::vec(1u64..2000, 1..12),
+            // β ∈ [0, 50_000] — covers degenerate β=0 (lex tie-break)
+            // through aggressive β.
+            beta_mb in 0u64..50_000,
+            // Tip-pair indices — wrapped via modulo so they always
+            // point at valid blocks in the generated chain.
+            local_idx in 0usize..16,
+            candidate_idx in 0usize..16,
+        ) {
+            let (lc, ids) = random_lc(&energies);
+            let n = ids.len();
+            let local = ids[local_idx % n];
+            let candidate = ids[candidate_idx % n];
+
+            let fc = MccForkChoice::new(lc.clone(), beta_mb);
+
+            // Property 1: reflexivity.
+            let v_self = fc.evaluate(&local, &local);
+            prop_assert!(
+                v_self.accept,
+                "evaluate(x, x) must accept — got reject for tip {:?}",
+                local
+            );
+
+            // Property 2: determinism.
+            let v1 = fc.evaluate(&local, &candidate);
+            let v2 = fc.evaluate(&local, &candidate);
+            prop_assert_eq!(v1, v2, "evaluate must be deterministic");
+
+            // Property 3: dyn dispatch parity.
+            let dyn_fc: &dyn ForkChoice = &fc;
+            let v_direct = fc.evaluate(&local, &candidate);
+            let v_dyn = dyn_fc.evaluate(&local, &candidate);
+            prop_assert_eq!(v_direct, v_dyn, "dyn dispatch must match concrete");
+            prop_assert_eq!(fc.name(), dyn_fc.name());
+        }
+    }
 }
