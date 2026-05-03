@@ -86,4 +86,57 @@ mod tests {
             CrooksError::ReverseZero
         );
     }
+
+    /// Verify the Crooks identity LHS == β·(W − ΔF) for a synthetic
+    /// forward/reverse pair constructed so the equality must hold.
+    /// Doctrine §A1.2 T2 promises this is an *exact equality*, not a
+    /// bound — Layer 2 of the punch list flagged that the equality
+    /// was never asserted in tests. This is the identity-primitive
+    /// verification: pick concrete `β`, `W`, `ΔF`, construct
+    /// `p_F = 2^(β·(W−ΔF))` and `p_R = 1`, assert the function
+    /// returns the same `β·(W−ΔF)` in millibits.
+    ///
+    /// The chain's hot path producing actual Crooks-distributed
+    /// forward/reverse work distributions is a separate, simulator-
+    /// scoped concern (it would require a stochastic-thermodynamics
+    /// driver beyond the substrate). Until that ships, this is the
+    /// strongest assertion the static crate can make.
+    #[test]
+    fn identity_holds_for_synthetic_forward_reverse_pair() {
+        // β·(W − ΔF) = 5 bits. Stays comfortably inside u64.
+        let exponent: u64 = 5;
+        let work_extracted: u64 = 8;
+        let free_energy_delta: u64 = 3;
+        // β chosen so β·(W − ΔF) = exponent (in bit units, since
+        // crooks_log_ratio_millibits returns log_2 in millibits).
+        let beta: u64 = exponent / (work_extracted - free_energy_delta);
+        assert_eq!(beta * (work_extracted - free_energy_delta), exponent);
+
+        let p_forward: u64 = 1u64 << exponent; // 2^5 = 32
+        let p_reverse: u64 = 1; // 2^0 = 1; bit_length = 1
+                                // bit_length(32) = 6, bit_length(1) = 1, diff = 5 → 5_000 millibits
+        let lhs = crooks_log_ratio_millibits(p_forward, p_reverse).unwrap();
+
+        // RHS: β·(W − ΔF) in millibits.
+        let rhs = (beta * (work_extracted - free_energy_delta)) as i64 * 1_000;
+
+        assert_eq!(
+            lhs, rhs,
+            "Crooks identity LHS must equal β·(W − ΔF) for the synthetic pair"
+        );
+    }
+
+    /// Inverse direction: reverse-dominant case must give the
+    /// negation. β·(W − ΔF) with reverse > forward gives a negative
+    /// log-ratio.
+    #[test]
+    fn identity_holds_for_negative_work() {
+        let exponent: i64 = -3;
+        let p_forward: u64 = 1; // 2^0
+        let p_reverse: u64 = 1u64 << 3; // 2^3
+                                        // bit_length(1) = 1, bit_length(8) = 4, diff = -3 → -3_000 mb
+        let lhs = crooks_log_ratio_millibits(p_forward, p_reverse).unwrap();
+        let rhs = exponent * 1_000;
+        assert_eq!(lhs, rhs);
+    }
 }
