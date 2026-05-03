@@ -751,6 +751,93 @@ mod conservation_enforce_tests {
         let _ = bal_after;
     }
 
+    /// Negative-case coverage for the gate's branching logic
+    /// (the gap flagged in commit 4d59b5d's "filed as a follow-up"
+    /// note). Tests `evaluate_conservation_gate` in isolation —
+    /// avoids a state-poisoning shim that would have been required
+    /// to exercise the full `execute_block` path with a violating
+    /// state transition.
+    ///
+    /// The kernel-level audit fn (`audit_block_step`) already has
+    /// negative-case coverage in `energy_audit::tests::*`; the
+    /// remaining gap was the gate's match-and-propagate logic, which
+    /// is now extracted into the testable helper.
+    #[test]
+    fn gate_passes_ok_verdict_under_observe_mode() {
+        use crate::evaluate_conservation_gate;
+        let result = evaluate_conservation_gate(Ok(()), false);
+        assert!(matches!(result, Ok(Ok(()))));
+    }
+
+    #[test]
+    fn gate_passes_ok_verdict_under_enforce_mode() {
+        use crate::evaluate_conservation_gate;
+        // Even under enforce mode, an Ok verdict propagates as
+        // "store Ok and continue" — no false-positive rejections.
+        let result = evaluate_conservation_gate(Ok(()), true);
+        assert!(matches!(result, Ok(Ok(()))));
+    }
+
+    #[test]
+    fn gate_stores_violation_under_observe_mode() {
+        use crate::evaluate_conservation_gate;
+        use evaporchain_energy_kernel::ConservationViolation;
+        // observe mode: a violation should be stored on the
+        // executor (Ok(Err(violation))) and the block commits.
+        let violation = ConservationViolation::DecayIncreasedTotal {
+            before: 1_000,
+            after: 1_500,
+        };
+        let result = evaluate_conservation_gate(Err(violation), false);
+        match result {
+            Ok(Err(ConservationViolation::DecayIncreasedTotal { before, after })) => {
+                assert_eq!(before, 1_000);
+                assert_eq!(after, 1_500);
+            }
+            other => panic!("expected Ok(Err(DecayIncreasedTotal)), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn gate_rejects_violation_under_enforce_mode() {
+        use crate::{evaluate_conservation_gate, ExecutionError};
+        use evaporchain_energy_kernel::ConservationViolation;
+        // enforce mode: a violation must propagate as
+        // ExecutionError::ConservationViolation. This is the negative
+        // case the integration tests can't easily reach without a
+        // state-poisoning shim — covered here at the unit-level
+        // gate.
+        let violation = ConservationViolation::DecayExceededLambda {
+            before: 1_000,
+            after: 100,
+            max_decay: 500,
+            epochs: 10,
+            half_life: 100,
+        };
+        let result = evaluate_conservation_gate(Err(violation), true);
+        match result {
+            Err(ExecutionError::ConservationViolation(
+                ConservationViolation::DecayExceededLambda {
+                    before,
+                    after,
+                    max_decay,
+                    epochs,
+                    half_life,
+                },
+            )) => {
+                assert_eq!(before, 1_000);
+                assert_eq!(after, 100);
+                assert_eq!(max_decay, 500);
+                assert_eq!(epochs, 10);
+                assert_eq!(half_life, 100);
+            }
+            other => panic!(
+                "expected Err(ExecutionError::ConservationViolation(DecayExceededLambda)), got {:?}",
+                other
+            ),
+        }
+    }
+
     /// Unknown flag value falls back to observe (legacy behaviour).
     /// Avoids a chain-halting typo: `enforse` ≠ `enforce`.
     #[test]

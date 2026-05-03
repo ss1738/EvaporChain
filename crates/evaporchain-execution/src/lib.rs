@@ -87,6 +87,30 @@ pub enum ExecutionError {
     ConservationViolation(evaporchain_energy_kernel::ConservationViolation),
 }
 
+/// Apply the `conservation_enforcement` governance gate to a kernel
+/// audit verdict and return what `execute_block` should do next:
+///
+/// | `audit_verdict` | `must_enforce` | Result |
+/// |---|---|---|
+/// | `Ok(())` | any | `Ok(Ok(()))` — store success on the executor, commit |
+/// | `Err(v)` | `false` (observe) | `Ok(Err(v))` — store err on the executor, commit |
+/// | `Err(v)` | `true` (enforce) | `Err(ExecutionError::ConservationViolation(v))` — reject |
+///
+/// Centralising the branching here lets us unit-test the gate
+/// without a state-poisoning shim; integration with `execute_block`
+/// is just a `?` away from the call site (Layer 0 item 1 follow-up
+/// per the conservation gate's negative-case test gap).
+pub fn evaluate_conservation_gate(
+    audit_verdict: Result<(), evaporchain_energy_kernel::ConservationViolation>,
+    must_enforce: bool,
+) -> Result<Result<(), evaporchain_energy_kernel::ConservationViolation>, ExecutionError> {
+    match audit_verdict {
+        Ok(()) => Ok(Ok(())),
+        Err(violation) if must_enforce => Err(ExecutionError::ConservationViolation(violation)),
+        Err(violation) => Ok(Err(violation)),
+    }
+}
+
 /// Contract event emitted during block execution, tagged with origin.
 #[derive(Debug, Clone)]
 pub struct BlockContractEvent {
@@ -3082,26 +3106,15 @@ impl ExecutionEngine for SimpleExecutor {
             db.get_governance_param("conservation_enforcement"),
             Some("enforce"),
         );
-        match audit_verdict {
-            Ok(()) => {
-                self.last_conservation_audit = Some(Ok(()));
-                self.last_audit_epoch = Some(block.epoch);
-            }
-            Err(violation) => {
-                if must_enforce {
-                    // Block-rejecting path. last_conservation_audit
-                    // and last_audit_epoch are left at their prior
-                    // values because no block commits — the next
-                    // attempt should compare against the same
-                    // baseline.
-                    return Err(ExecutionError::ConservationViolation(violation));
-                }
-                self.last_conservation_audit = Some(Err(violation));
-                // Observability mode: the block commits regardless,
-                // so the audit clock advances to the new epoch.
-                self.last_audit_epoch = Some(block.epoch);
-            }
-        }
+        // Gate the audit verdict through the centralised
+        // `evaluate_conservation_gate` helper so the branching is
+        // unit-testable in isolation. `?` propagates the rejection
+        // case — last_conservation_audit and last_audit_epoch stay
+        // at their prior values (the next attempt compares against
+        // the same baseline).
+        let stored = evaluate_conservation_gate(audit_verdict, must_enforce)?;
+        self.last_conservation_audit = Some(stored);
+        self.last_audit_epoch = Some(block.epoch);
 
         let mera_root = crate::mera_integration::compute_mera_commitment(db);
         let mera_commitment = if mera_root == [0u8; 32] {

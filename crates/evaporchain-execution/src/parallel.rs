@@ -2157,19 +2157,10 @@ impl ExecutionEngine for ParallelExecutor {
             db.get_governance_param("conservation_enforcement"),
             Some("enforce"),
         );
-        match audit_verdict {
-            Ok(()) => {
-                self.last_conservation_audit = Some(Ok(()));
-                self.last_audit_epoch = Some(block.epoch);
-            }
-            Err(violation) => {
-                if must_enforce {
-                    return Err(crate::ExecutionError::ConservationViolation(violation));
-                }
-                self.last_conservation_audit = Some(Err(violation));
-                self.last_audit_epoch = Some(block.epoch);
-            }
-        }
+        // Same gate as SimpleExecutor — see `evaluate_conservation_gate`.
+        let stored = crate::evaluate_conservation_gate(audit_verdict, must_enforce)?;
+        self.last_conservation_audit = Some(stored);
+        self.last_audit_epoch = Some(block.epoch);
 
         let mera_root = crate::mera_integration::compute_mera_commitment(db);
         let mera_commitment = if mera_root == [0u8; 32] {
