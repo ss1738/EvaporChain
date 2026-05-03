@@ -72,7 +72,7 @@ echo "  Log:             $LOG_FILE"
 echo ""
 
 nohup "$BINARY" \
-    --tendermint --network --api --mock-prove \
+    --tendermint --network --api --prove \
     --genesis-config "$GENESIS" \
     --validator-id "$VID" --validators 3 \
     --node-id "node-$VID" \
