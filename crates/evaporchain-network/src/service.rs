@@ -869,15 +869,27 @@ impl P2pNetworkService {
                 // (we already pass MessageAuthenticity::Signed). Pair
                 // with `MessageAuthenticity::Signed` below — the two
                 // settings are coupled.
+                // Phase 4.4 (2026-05-03): mesh fanout bumped from
+                // (3/2/6) to (8/6/12) per audit `end_to_end_audit
+                // _2026_04_27.md §4` — eclipse-attack resistance.
+                // With mesh_n=3 an attacker controlling 3 mesh slots
+                // could fully isolate a peer. Bumping to mesh_n=8
+                // (libp2p-gossipsub's recommended baseline) raises
+                // the eclipse cost to 8 controlled slots and matches
+                // the published Gossipsub paper's safe-degree
+                // threshold. mesh_outbound_min=2 forces at least
+                // two genuinely outbound (i.e. peer-id we dialed)
+                // mesh members so an inbound-only adversary can't
+                // saturate the slot count.
                 let gossipsub_config = gossipsub::ConfigBuilder::default()
                     .heartbeat_interval(Duration::from_millis(500))
                     .validation_mode(gossipsub::ValidationMode::Strict)
                     .max_transmit_size(MAX_GOSSIPSUB_TRANSMIT_SIZE)
-                    .mesh_n(3)
-                    .mesh_n_low(2)
-                    .mesh_n_high(6)
-                    .mesh_outbound_min(1)
-                    .gossip_lazy(3)
+                    .mesh_n(8)
+                    .mesh_n_low(6)
+                    .mesh_n_high(12)
+                    .mesh_outbound_min(2)
+                    .gossip_lazy(6)
                     .build()
                     .expect("valid gossipsub config");
                 let gossipsub = gossipsub::Behaviour::new(

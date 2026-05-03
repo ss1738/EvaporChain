@@ -183,6 +183,52 @@ pub struct AbiStateField {
     pub has_default: bool,
 }
 
+// ─── Deploy-time bytecode validation (Phase 4.4, 2026-05-03) ──────────────
+
+/// Maximum number of opcodes a deployed contract may carry.
+/// Bounds VM step memory and prevents pathological-size DoS.
+const MAX_DEPLOY_OPCODES: usize = 65_536;
+
+/// Validate freshly-compiled bytecode before persisting it.
+/// Rejects:
+///   - bytecode whose opcode count exceeds [`MAX_DEPLOY_OPCODES`].
+///   - any Jump/JumpIf/JumpIfFalse whose target is `>= opcodes.len()`.
+///   - any method-start offset (in `bytecode.methods`) that is
+///     `>= opcodes.len()`.
+fn validate_deploy_bytecode(
+    bytecode: &compiler::EvaporBytecode,
+) -> Result<(), ScriptError> {
+    use compiler::Op;
+    let n = bytecode.opcodes.len();
+    if n > MAX_DEPLOY_OPCODES {
+        return Err(ScriptError::Runtime(format!(
+            "deploy bytecode too large: {n} opcodes (max {MAX_DEPLOY_OPCODES})"
+        )));
+    }
+    for (i, op) in bytecode.opcodes.iter().enumerate() {
+        match op {
+            Op::Jump(t) | Op::JumpIf(t) | Op::JumpIfFalse(t) => {
+                if *t >= n {
+                    return Err(ScriptError::Runtime(format!(
+                        "deploy bytecode invalid: jump at offset {i} targets {t}, \
+                         out of range (n={n})"
+                    )));
+                }
+            }
+            _ => {}
+        }
+    }
+    for (name, &start) in bytecode.methods.iter() {
+        if start >= n {
+            return Err(ScriptError::Runtime(format!(
+                "deploy bytecode invalid: method '{name}' starts at {start}, \
+                 out of range (n={n})"
+            )));
+        }
+    }
+    Ok(())
+}
+
 // ─── Contract Events ───────────────────────────────────────────────────────
 
 /// Structured contract event for indexed querying.
@@ -475,6 +521,16 @@ impl ScriptEngine {
         // Compile
         let bytecode = compiler::compile(&contract_ast)?;
         let abi = compiler::generate_abi(&contract_ast);
+
+        // Phase 4.4 (2026-05-03) — deploy-time bytecode validation.
+        // Audit `end_to_end_audit_2026_04_27.md §3` flagged
+        // "bytecode validation at deploy time is loose". Hardening:
+        // (1) cap total opcode count to bound VM step memory.
+        // (2) verify every Jump/JumpIf/JumpIfFalse target lies
+        //     within the opcode list.
+        // (3) verify every method-start offset is in-range.
+        // Each rejection is a deploy failure (no bytecode persisted).
+        validate_deploy_bytecode(&bytecode)?;
 
         // Initialize state from schema defaults
         let mut state = HashMap::new();
@@ -1158,5 +1214,90 @@ contract MapTest {
         assert_eq!(Value::Str("42".to_string()).to_map_key(), "s:42");
         assert_eq!(Value::Bool(true).to_map_key(), "b:true");
         assert_eq!(Value::Null.to_map_key(), "n:null");
+    }
+
+    // ─── Value accessor invariants ────────────────────────────────────────
+
+    #[test]
+    fn test_value_as_u64_extracts_and_rejects_wrong_type() {
+        assert_eq!(Value::U64(7).as_u64().unwrap(), 7);
+        let err = Value::Str("nope".into()).as_u64().unwrap_err();
+        assert!(format!("{err}").contains("expected u64"));
+    }
+
+    #[test]
+    fn test_value_as_bool_extracts_and_rejects_wrong_type() {
+        assert!(Value::Bool(true).as_bool().unwrap());
+        assert!(!Value::Bool(false).as_bool().unwrap());
+        let err = Value::U64(0).as_bool().unwrap_err();
+        assert!(format!("{err}").contains("expected bool"));
+    }
+
+    #[test]
+    fn test_value_as_str_extracts_and_rejects_wrong_type() {
+        assert_eq!(Value::Str("hi".into()).as_str().unwrap(), "hi");
+        let err = Value::U64(1).as_str().unwrap_err();
+        assert!(format!("{err}").contains("expected string"));
+    }
+
+    #[test]
+    fn test_value_as_address_extracts_and_rejects_wrong_type() {
+        let addr = [0xABu8; 32];
+        assert_eq!(Value::Address(addr).as_address().unwrap(), addr);
+        let err = Value::Bool(true).as_address().unwrap_err();
+        assert!(format!("{err}").contains("expected address"));
+    }
+
+    #[test]
+    fn test_value_display_address_is_hex_prefixed() {
+        let addr = [0x01u8; 32];
+        let s = format!("{}", Value::Address(addr));
+        assert!(s.starts_with("0x"));
+        assert_eq!(s.len(), 66); // "0x" + 64 hex chars
+    }
+
+    #[test]
+    fn test_value_display_map_keys_sorted_deterministic() {
+        // Map iteration is non-deterministic in HashMap, but Display sorts
+        // keys. Same input map → same string regardless of insertion order.
+        let mut m1: std::collections::HashMap<String, Value> =
+            std::collections::HashMap::new();
+        m1.insert("zebra".into(), Value::U64(1));
+        m1.insert("alpha".into(), Value::U64(2));
+        m1.insert("middle".into(), Value::U64(3));
+
+        let mut m2: std::collections::HashMap<String, Value> =
+            std::collections::HashMap::new();
+        m2.insert("middle".into(), Value::U64(3));
+        m2.insert("alpha".into(), Value::U64(2));
+        m2.insert("zebra".into(), Value::U64(1));
+
+        let s1 = format!("{}", Value::Map(m1));
+        let s2 = format!("{}", Value::Map(m2));
+        assert_eq!(s1, s2);
+        // alpha < middle < zebra alphabetically
+        let alpha_pos = s1.find("alpha").unwrap();
+        let middle_pos = s1.find("middle").unwrap();
+        let zebra_pos = s1.find("zebra").unwrap();
+        assert!(alpha_pos < middle_pos);
+        assert!(middle_pos < zebra_pos);
+    }
+
+    #[test]
+    fn test_value_display_array_brackets() {
+        let arr = Value::Array(vec![Value::U64(1), Value::U64(2), Value::U64(3)]);
+        assert_eq!(format!("{arr}"), "[1, 2, 3]");
+        // Empty array
+        let empty = Value::Array(vec![]);
+        assert_eq!(format!("{empty}"), "[]");
+    }
+
+    #[test]
+    fn test_value_to_map_key_address_full_hex() {
+        let addr = [0xCDu8; 32];
+        let key = Value::Address(addr).to_map_key();
+        assert!(key.starts_with("a:"));
+        // 32 bytes → 64 hex chars
+        assert_eq!(key.len(), 2 + 64);
     }
 }
