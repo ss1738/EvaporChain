@@ -133,6 +133,7 @@ fn dispatch(state: &ApiState, req: JsonRpcRequest) -> JsonRpcResponse {
         "evap_getHbctStatus" => rpc_get_hbct_status(state, req.id),
         "evap_getPatronageStatus" => rpc_get_patronage_status(state, req.id),
         "evap_getLightClientStatus" => rpc_get_light_client_status(state, req.id),
+        "evap_getCheckpointStore" => rpc_get_checkpoint_store(state, req.id),
         "evap_getLogs" => rpc_get_logs(state, &req.params, req.id),
         "evap_getBlockLogs" => rpc_get_block_logs(state, &req.params, req.id),
         "evap_getFinalityStatus" => rpc_get_finality_status(state, &req.params, req.id),
@@ -679,6 +680,58 @@ fn rpc_get_light_client_status(state: &ApiState, id: Value) -> JsonRpcResponse {
     JsonRpcResponse::ok(
         id,
         format_light_client_status_response(latest, count),
+    )
+}
+
+/// Pure formatter for the weak-subjectivity checkpoint store RPC.
+/// Lane C.2 surfaces the operator-pinned `--trust-checkpoint` plus
+/// any historical (height, state_root) pairs the chain has
+/// accumulated, plus the chain-set weak-subjectivity period in
+/// blocks (governance-tunable; defaults from validator-set size).
+fn format_checkpoint_store_response(
+    operator_pinned: Option<(u64, [u8; 32], [u8; 32])>,
+    history: Vec<(u64, [u8; 32])>,
+    ws_period_blocks: u64,
+) -> Value {
+    serde_json::json!({
+        "operator_pinned": operator_pinned.map(|(h, sr, bh)| serde_json::json!({
+            "height": json_hex_u64(h),
+            "state_root": format!("0x{}", hex::encode(sr)),
+            "block_hash": format!("0x{}", hex::encode(bh)),
+        })).unwrap_or(Value::Null),
+        "history": history.into_iter().map(|(h, sr)| serde_json::json!({
+            "height": json_hex_u64(h),
+            "state_root": format!("0x{}", hex::encode(sr)),
+        })).collect::<Vec<_>>(),
+        "ws_period_blocks": json_hex_u64(ws_period_blocks),
+    })
+}
+
+/// `evap_getCheckpointStore()` — weak-subjectivity bootstrap state for
+/// joining-node operators. Returns the operator-pinned trusted
+/// checkpoint (the `--trust-checkpoint` / genesis-trusted-checkpoint
+/// seed), the cluster's historical weak-subjectivity checkpoints,
+/// and the active weak-subjectivity period in blocks (governance-set,
+/// defaults from validator-set size).
+fn rpc_get_checkpoint_store(state: &ApiState, id: Value) -> JsonRpcResponse {
+    let Some(ref tc_arc) = state.tendermint else {
+        // Mock-consensus / single-node path doesn't track WS checkpoints.
+        return JsonRpcResponse::ok(
+            id,
+            serde_json::json!({ "tendermint_disabled": true }),
+        );
+    };
+    let (operator_pinned, history, ws_period) = {
+        let tc = safe_lock(tc_arc);
+        (
+            tc.trusted_checkpoint(),
+            tc.checkpoints().to_vec(),
+            tc.weak_subjectivity_period(),
+        )
+    };
+    JsonRpcResponse::ok(
+        id,
+        format_checkpoint_store_response(operator_pinned, history, ws_period),
     )
 }
 
@@ -1558,6 +1611,36 @@ mod tests {
         assert_eq!(trie["compressions"], "0x5");
         assert_eq!(trie["decompressions"], "0x1");
         assert_eq!(v["lazy_snapshot_count"], "0x9");
+    }
+
+    #[test]
+    fn test_format_checkpoint_store_with_pinned() {
+        let v = format_checkpoint_store_response(
+            Some((1234, [0xAA; 32], [0xBB; 32])),
+            vec![(100, [0x11; 32]), (200, [0x22; 32])],
+            14_400,
+        );
+        let pinned = &v["operator_pinned"];
+        assert_eq!(pinned["height"], "0x4d2"); // 1234
+        assert_eq!(
+            pinned["state_root"].as_str().unwrap(),
+            format!("0x{}", "aa".repeat(32))
+        );
+        let history = v["history"].as_array().unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0]["height"], "0x64"); // 100
+        assert_eq!(history[1]["height"], "0xc8"); // 200
+        assert_eq!(v["ws_period_blocks"], "0x3840"); // 14400
+    }
+
+    #[test]
+    fn test_format_checkpoint_store_no_pinned_no_history() {
+        // Fresh chain: no operator pin, no historical checkpoints,
+        // ws_period still computed from validator-set size.
+        let v = format_checkpoint_store_response(None, vec![], 1_500);
+        assert_eq!(v["operator_pinned"], serde_json::Value::Null);
+        assert_eq!(v["history"].as_array().unwrap().len(), 0);
+        assert_eq!(v["ws_period_blocks"], "0x5dc"); // 1500
     }
 
     #[test]
