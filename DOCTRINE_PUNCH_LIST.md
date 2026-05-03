@@ -1,10 +1,23 @@
 # EvaporChain — Doctrine Punch List
 
-**Date:** 2026-05-03
+**Date:** 2026-05-03 (updated through Layer 2 partial completion + Layer 3 recheck)
 **Source:** parallel audit of 7 hardest crates + foundational substrate + consensus integration surface + Coq/TLA proof artefacts.
 **Pairs with:** `REMAINING_WORK.md` (security + infra), `research/INVENTION_STACK.md` (canonical doctrine).
 
 This file is the layered build plan to make the doctrine claims actually true. Every item below is a delta between what's shipped and what `INVENTION_STACK.md` says is shipped.
+
+## Status snapshot (2026-05-03 evening)
+
+| Layer | Items | Status | Commits |
+|---|---|---|---|
+| 0 | Substrate enforcement | ✅ DONE (5/5) | 4d59b5d, 6d1ac5e, 1d4332f |
+| 1 | Doctrine accuracy | ✅ Code-doc done (3/3 small items already in HEAD); 2 doctrine-doc amendments to `INVENTION_STACK.md` deferred for Satyawan |
+| 2 | Math completion | ⚠ Partial (3/5): Coq cleanup (5f18e43, build pending), Crooks identity test (d80921f), MCC math note (06db894). REMAINING: CSLC CSSR (~600-1000 LOC, multi-session); MERA real-Ethereum gate (needs external Dune data pull) |
+| 3 | Consensus trait seams | ✅ ALREADY DONE (audit miss) — all 4 traits exist with default impls from prior lane work: `BlockSource` (mempool.rs:41), `ForkChoice` (fork_choice.rs:48 + LinearForkChoice default), `MevPool` (encrypted_mempool.rs:332), `ValidatorSetSource` (validator_set.rs:1039). Hot-path *consumption* is Layer 4 work, but the seams themselves are landed. |
+| 4 | Hot-path doctrine wiring | ⏳ UNBLOCKED — antichain mempool replacing FIFO drain; MCC fork-choice replacing single `parent_hash` invariant; conservation gate already promoted in Layer 0 |
+| 5 | Lambda-Fold real Nova | ⏳ Multi-week (3-6) |
+| 6 | Ecosystem completion | ⏳ Multi-week + Light-Cone full rewrite |
+| 7 | LLSA full / descope | ⏳ 9-15 months OR descope to off-chain audited verifier |
 
 ---
 
