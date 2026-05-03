@@ -759,6 +759,55 @@ impl Default for Mempool {
     }
 }
 
+/// Lane I.5 helper: same-sender antichain projection over a
+/// `(candidates, hints)` slice. Used by the proposal-time draw site at
+/// `tendermint.rs::create_proposal` when the `block_source_mode`
+/// governance key is `"antichain"`. Extracted as a free function so it
+/// can be proptest'd in isolation.
+///
+/// Returns `(kept_txs, kept_hints, dropped_txs)`. Inputs MUST be
+/// index-parallel (hints[i] is the submit-epoch for txs[i]); panics in
+/// debug builds if they're not. The function preserves priority order
+/// (kept[0] is the highest-priority kept tx) because the input is
+/// already in priority-desc order from the FIFO draw.
+///
+/// Conflict heuristic: V1 same-sender = comparable. Mirrors
+/// `crate::tx_antichain_mempool::TxAntichainMempool` exactly.
+///
+/// Public-ish (`pub(crate)`) so the consensus crate can use it without
+/// re-exposing it as part of the public Mempool API.
+pub(crate) fn antichain_project(
+    candidates: Vec<Transaction>,
+    hints: Vec<u64>,
+) -> (Vec<Transaction>, Vec<u64>, Vec<Transaction>) {
+    debug_assert_eq!(
+        candidates.len(),
+        hints.len(),
+        "antichain_project: candidates and hints must be index-parallel"
+    );
+    let mut seen: HashSet<[u8; 32]> = HashSet::new();
+    let mut kept_txs: Vec<Transaction> = Vec::with_capacity(candidates.len());
+    let mut kept_hints: Vec<u64> = Vec::with_capacity(hints.len());
+    let mut dropped: Vec<Transaction> = Vec::new();
+    for (tx, hint) in candidates.into_iter().zip(hints.into_iter()) {
+        match tx.sender() {
+            Some(addr) => {
+                if seen.insert(*addr) {
+                    kept_txs.push(tx);
+                    kept_hints.push(hint);
+                } else {
+                    dropped.push(tx);
+                }
+            }
+            None => {
+                kept_txs.push(tx);
+                kept_hints.push(hint);
+            }
+        }
+    }
+    (kept_txs, kept_hints, dropped)
+}
+
 /// Lane G.1 blanket impl. `Mempool` already exposes every method the
 /// trait names — this is a pure delegation layer so callers can swap in
 /// alternative `BlockSource` impls without code churn. No behaviour
@@ -1096,6 +1145,100 @@ mod tests {
         assert_eq!(drained.len(), 2);
         assert_eq!(drained[0].nonce(), Some(0));
         assert_eq!(drained[1].nonce(), Some(1));
+    }
+
+    use proptest::prelude::*;
+
+    proptest! {
+        /// Lane I.5 invariant proof: `antichain_project` always
+        /// produces a kept set with no duplicate senders, and dropped +
+        /// kept = input. Locks the consumer-side helper called by
+        /// `tendermint.rs::create_proposal` when `block_source_mode`
+        /// = `"antichain"`.
+        #[test]
+        fn antichain_project_invariants(
+            // Up to 32 candidates; senders ∈ [0, 8) so collisions
+            // are likely.
+            inputs in proptest::collection::vec((0u8..8, 0u64..50), 0..32),
+        ) {
+            let candidates: Vec<Transaction> = inputs
+                .iter()
+                .map(|(s, _)| dummy_tx_with_nonce_and_sender(*s, 0))
+                .collect();
+            let hints: Vec<u64> = inputs.iter().map(|(_, h)| *h).collect();
+            let pre_len = candidates.len();
+            let pre_hints = hints.clone();
+            let pre_txs = candidates.clone();
+
+            let (kept, kept_hints, dropped) =
+                antichain_project(candidates, hints);
+
+            // Property 1: no duplicate senders in the kept set.
+            let mut seen: std::collections::HashSet<[u8; 32]> =
+                std::collections::HashSet::new();
+            for tx in &kept {
+                if let Some(addr) = tx.sender() {
+                    prop_assert!(
+                        seen.insert(*addr),
+                        "antichain_project must not return same-sender duplicates"
+                    );
+                }
+            }
+
+            // Property 2: kept_hints index-parallel to kept.
+            prop_assert_eq!(kept.len(), kept_hints.len());
+
+            // Property 3: kept + dropped = input total (nothing lost).
+            prop_assert_eq!(kept.len() + dropped.len(), pre_len);
+
+            // Property 4: kept hints are a subsequence of input hints
+            // (priority order preserved by the FIFO-preserving filter).
+            let kept_hints_iter = kept_hints.iter();
+            let mut input_iter = pre_hints.iter();
+            for kh in kept_hints_iter {
+                let mut found = false;
+                while let Some(ih) = input_iter.next() {
+                    if ih == kh {
+                        found = true;
+                        break;
+                    }
+                }
+                prop_assert!(
+                    found,
+                    "kept hints must appear in input order — projection \
+                     should not reorder"
+                );
+            }
+
+            // Property 5: every dropped tx has the same sender as some
+            // earlier-input tx that's in the kept set (i.e. drops are
+            // always due to a real same-sender conflict, not arbitrary).
+            let kept_senders: std::collections::HashSet<[u8; 32]> = kept
+                .iter()
+                .filter_map(|t| t.sender().copied())
+                .collect();
+            for d in &dropped {
+                if let Some(addr) = d.sender() {
+                    prop_assert!(
+                        kept_senders.contains(addr),
+                        "dropped tx must conflict with a kept tx of the same sender"
+                    );
+                }
+            }
+            // Silence unused-result warning for the cloned input vec.
+            let _ = pre_txs;
+        }
+    }
+
+    fn dummy_tx_with_nonce_and_sender(sender: u8, nonce: u64) -> Transaction {
+        Transaction::Transfer(TransferTx {
+            from: [sender; 32],
+            to: [99u8; 32],
+            amount: 100,
+            nonce,
+            signature: None,
+            public_key: None,
+        })
     }
 
     #[test]

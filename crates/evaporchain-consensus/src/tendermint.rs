@@ -3826,37 +3826,15 @@ impl TendermintConsensus {
                 .map(|s| s.as_str())
                 .unwrap_or("fifo");
             if antichain_mode == "antichain" {
-                use std::collections::HashSet;
-                let mut seen_senders: HashSet<[u8; 32]> = HashSet::new();
-                let mut keep: Vec<usize> = Vec::with_capacity(candidates.len());
-                let mut dropped: Vec<Transaction> = Vec::new();
-                for (i, tx) in candidates.iter().enumerate() {
-                    match tx.sender() {
-                        Some(addr) => {
-                            if seen_senders.insert(*addr) {
-                                keep.push(i);
-                            } else {
-                                dropped.push(tx.clone());
-                            }
-                        }
-                        None => keep.push(i), // no sender → cannot conflict
-                    }
-                }
-                if dropped.len() > 0 {
-                    let new_candidates: Vec<Transaction> = keep
-                        .iter()
-                        .map(|&i| candidates[i].clone())
-                        .collect();
-                    let new_hints: Vec<u64> =
-                        keep.iter().map(|&i| candidate_hints[i]).collect();
-                    candidates = new_candidates;
-                    candidate_hints = new_hints;
-                    // Return the dropped txs to the mempool — they're
-                    // valid, just deferred. They'll re-surface on the
-                    // next proposal once their predecessor commits.
-                    for tx in dropped {
-                        self.mempool.submit_priority(tx);
-                    }
+                let (kept_txs, kept_hints, dropped) =
+                    crate::mempool::antichain_project(candidates, candidate_hints);
+                candidates = kept_txs;
+                candidate_hints = kept_hints;
+                // Return the dropped txs to the mempool — they're
+                // valid, just deferred. They'll re-surface on the
+                // next proposal once their predecessor commits.
+                for tx in dropped {
+                    self.mempool.submit_priority(tx);
                 }
             }
             if self.executor.block_gas_limit > 0 {
