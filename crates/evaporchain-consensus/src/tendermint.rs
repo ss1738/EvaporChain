@@ -2566,13 +2566,25 @@ impl TendermintConsensus {
                     .unwrap_or("linear")
                 {
                     "mcc" => {
-                        // β = 10_000 mirrors the existing
-                        // `authoritative_head` default; future Lane I.6
-                        // can route this through chain-set CFM β
-                        // (`evaporchain_cfm::beta_millibits_per_fee`).
+                        // Lane I.6: derive β from the chain's λ instead
+                        // of the hardcoded constant. Mirrors the formula
+                        // `evaporchain_cfm::beta_millibits_per_fee` uses
+                        // (`1_000_000 / half_life`, microbits scale,
+                        // post Layer 0 #5 fix). At DEFAULT_LAMBDA = 4096
+                        // → β = 244 (small but non-zero, the doctrine
+                        // requirement). Replicated inline to avoid
+                        // adding `evaporchain-cfm` to the consensus
+                        // Cargo.toml mid-session — Lane I.7 will promote
+                        // the dep cleanly.
+                        let half_life = evaporchain_energy_kernel::ChainLambda::new(
+                            evaporchain_energy_kernel::DEFAULT_LAMBDA,
+                        )
+                        .half_life()
+                        .max(1);
+                        let beta_mb = 1_000_000u64 / half_life;
                         let fc = crate::fork_choice::MccForkChoice::new(
                             self.light_cone_dag.clone(),
-                            10_000,
+                            beta_mb,
                         );
                         let v = crate::fork_choice::ForkChoice::evaluate(
                             &fc,
