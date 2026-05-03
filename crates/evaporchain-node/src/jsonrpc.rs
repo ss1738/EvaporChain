@@ -125,6 +125,7 @@ fn dispatch(state: &ApiState, req: JsonRpcRequest) -> JsonRpcResponse {
         "evap_decayForgetProof" => rpc_decay_forget_proof(state, &req.params, req.id),
         "evap_getPntStatus" => rpc_get_pnt_status(state, req.id),
         "evap_getFrontierStatus" => rpc_get_frontier_status(state, req.id),
+        "evap_getLamportClock" => rpc_get_lamport_clock(state, req.id),
         "evap_getLogs" => rpc_get_logs(state, &req.params, req.id),
         "evap_getBlockLogs" => rpc_get_block_logs(state, &req.params, req.id),
         "evap_getFinalityStatus" => rpc_get_finality_status(state, &req.params, req.id),
@@ -619,6 +620,49 @@ fn format_frontier_status_response(
         },
         "lazy_snapshot_count": json_hex_u64(lazy_snapshot_count as u64),
     })
+}
+
+/// Pure formatter for Lamport-clock RPC responses.
+/// `current_tick` advances by 1 per `tick_quantum` energy spent;
+/// `accumulated_energy` is the residual that hasn't yet crossed
+/// the next quantum boundary. `tick_quantum` is the chain-set
+/// energy-per-tick parameter.
+fn format_lamport_clock_response(
+    current_tick: u64,
+    accumulated_energy: u64,
+    tick_quantum: u64,
+) -> Value {
+    serde_json::json!({
+        "current_tick": json_hex_u64(current_tick),
+        "accumulated_energy": json_hex_u64(accumulated_energy),
+        "tick_quantum": json_hex_u64(tick_quantum),
+    })
+}
+
+/// `evap_getLamportClock()` — energy-driven logical clock surface
+/// (Decay-Lamport Time, INVENTION_STACK §4.1 #3). Ticks once per
+/// `tick_quantum` units of chain-wide gas spent. Pure observability
+/// today — `block.epoch` is still authoritative time. Operators
+/// watch this to anchor the future governance amendment that
+/// promotes Lamport to authoritative time.
+fn rpc_get_lamport_clock(state: &ApiState, id: Value) -> JsonRpcResponse {
+    let clock = match state.lamport_clock.lock() {
+        Ok(c) => *c,
+        Err(_) => {
+            return JsonRpcResponse::ok(
+                id,
+                serde_json::json!({ "lamport_clock_unavailable": true }),
+            );
+        }
+    };
+    JsonRpcResponse::ok(
+        id,
+        format_lamport_clock_response(
+            clock.current_tick,
+            clock.accumulated_energy,
+            clock.tick_quantum,
+        ),
+    )
 }
 
 /// `evap_getFrontierStatus()` — anchor count, PoHA temperature
@@ -1145,6 +1189,24 @@ mod tests {
         assert_eq!(trie["compressions"], "0x5");
         assert_eq!(trie["decompressions"], "0x1");
         assert_eq!(v["lazy_snapshot_count"], "0x9");
+    }
+
+    #[test]
+    fn test_format_lamport_clock_basic() {
+        // current_tick=42, accumulated_energy=1000, tick_quantum=10000.
+        let v = format_lamport_clock_response(42, 1000, 10_000);
+        assert_eq!(v["current_tick"], "0x2a");
+        assert_eq!(v["accumulated_energy"], "0x3e8");
+        assert_eq!(v["tick_quantum"], "0x2710");
+    }
+
+    #[test]
+    fn test_format_lamport_clock_genesis() {
+        // Fresh clock: tick=0, accumulator=0.
+        let v = format_lamport_clock_response(0, 0, 1_000_000);
+        assert_eq!(v["current_tick"], "0x0");
+        assert_eq!(v["accumulated_energy"], "0x0");
+        assert_eq!(v["tick_quantum"], "0xf4240");
     }
 
     #[test]
