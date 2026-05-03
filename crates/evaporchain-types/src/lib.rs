@@ -188,6 +188,21 @@ pub struct Block {
     /// joining node can validate the transition without ambiguity.
     #[serde(default)]
     pub protocol_version: u8,
+    /// State-root commitment version. Independent of `protocol_version`
+    /// because the state-root semantics can flip on a different fork
+    /// epoch from the consensus-rule version. `0` is plain Verkle
+    /// (today's authoritative). `1` is the planned EnergyVerkleTrie-
+    /// authoritative flip (Lane E.2): once active, the `state_root`
+    /// field commits to the energy-annotated trie + cold-subtree
+    /// compressions instead of plain Verkle. The Nova step circuit's
+    /// `state_hash` binding has to read whichever version the block
+    /// declares.
+    ///
+    /// Same wire-format rules as `protocol_version`: `serde(default)`
+    /// for legacy bit-compat, no `skip_serializing_if` so the field
+    /// is always present once a chain has upgraded.
+    #[serde(default)]
+    pub state_root_version: u8,
     /// Phase-2 of `research/proposals/energy-stamped-mev-resistance.md`:
     /// per-tx submit-epoch hints carried on the wire so every validator
     /// computes the SAME priority for each tx, deterministically.
@@ -1817,6 +1832,7 @@ mod tests {
             oracle_state_root: None,
             shard_count: None,
             protocol_version: 0,
+            state_root_version: 0,
             submit_epoch_hints: vec![],
         };
         let json = serde_json::to_vec(&block).unwrap();

@@ -47,6 +47,7 @@ fn make_test_block(height: u64, producer_id: u64) -> Block {
         oracle_state_root: None,
         shard_count: None,
         protocol_version: 0,
+        state_root_version: 0,
         submit_epoch_hints: vec![],
     }
 }

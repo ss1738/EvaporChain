@@ -58,6 +58,7 @@ fn make_transfer_block(num_txs: usize, block_num: u64) -> Block {
         oracle_state_root: None,
         shard_count: None,
         protocol_version: 0,
+        state_root_version: 0,
         submit_epoch_hints: vec![],
         da_row_roots: vec![],
         da_col_roots: vec![],

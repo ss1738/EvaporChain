@@ -65,6 +65,7 @@ fn make_block_with_transfers(height: u64, num_txs: usize, account_count: u64) ->
         oracle_state_root: None,
         shard_count: None,
         protocol_version: 0,
+        state_root_version: 0,
         submit_epoch_hints: vec![],
     }
 }
@@ -156,6 +157,7 @@ fn bench_parallel_vs_sequential(c: &mut Criterion) {
                     oracle_state_root: None,
                     shard_count: None,
                     protocol_version: 0,
+                    state_root_version: 0,
                     submit_epoch_hints: vec![],
                 };
                 (db, executor, block)

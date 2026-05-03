@@ -3819,6 +3819,7 @@ impl TendermintConsensus {
             // protocol_version=0 (legacy semantics). Future fork-epoch
             // activations will bump this in lockstep across the cluster.
             protocol_version: 0,
+            state_root_version: 0,
             // Stamp per-tx hints so followers can deterministically reconstruct
             // the priority used at proposal time. Only stamp when at least one
             // hint is `Some` — otherwise leave empty so the field
@@ -5207,6 +5208,7 @@ mod tests {
             oracle_state_root: None,
             shard_count: None,
             protocol_version: 0,
+            state_root_version: 0,
             submit_epoch_hints: vec![],
         };
 
@@ -5240,6 +5242,7 @@ mod tests {
             oracle_state_root: None,
             shard_count: None,
             protocol_version: 0,
+            state_root_version: 0,
             submit_epoch_hints: vec![],
         };
 
@@ -5401,6 +5404,7 @@ mod tests {
             oracle_state_root: None,
             shard_count: None,
             protocol_version: 0,
+            state_root_version: 0,
             submit_epoch_hints: vec![],
         };
 
@@ -5775,6 +5779,7 @@ mod tests {
             oracle_state_root: None,
             shard_count: None,
             protocol_version: 0,
+            state_root_version: 0,
             submit_epoch_hints: vec![],
         };
 
@@ -5827,6 +5832,7 @@ mod tests {
             oracle_state_root: None,
             shard_count: None,
             protocol_version: 0,
+            state_root_version: 0,
             submit_epoch_hints: vec![],
         };
 
@@ -5880,6 +5886,7 @@ mod tests {
             oracle_state_root: None,
             shard_count: None,
             protocol_version: 0,
+            state_root_version: 0,
             submit_epoch_hints: vec![],
         };
 
@@ -6671,6 +6678,7 @@ mod vrf_tests {
             oracle_state_root: None,
             shard_count: None,
             protocol_version: 0,
+            state_root_version: 0,
             submit_epoch_hints: vec![],
         };
 
@@ -6900,6 +6908,7 @@ mod epoch_tests {
             oracle_state_root: None,
             shard_count: None,
             protocol_version: 0,
+            state_root_version: 0,
             submit_epoch_hints: vec![],
         }
     }
@@ -8212,6 +8221,7 @@ mod da_tests {
             oracle_state_root: None,
             shard_count: None,
             protocol_version: 0,
+            state_root_version: 0,
             submit_epoch_hints: vec![],
         }
     }
