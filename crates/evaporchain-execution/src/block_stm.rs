@@ -1080,6 +1080,23 @@ pub struct BlockStmExecutor {
     /// Below this threshold, sequential execution is used (less overhead).
     pub parallel_threshold: usize,
     pub chain_id: String,
+    /// Per-block §1.2 conservation audit verdict — populated by
+    /// `execute_block` from `energy_audit::audit_block_step`. Stored
+    /// for observability; gating is governance-controlled via
+    /// `conservation_enforcement` (see
+    /// `ExecutionError::ConservationViolation`).
+    pub last_conservation_audit:
+        Option<Result<(), evaporchain_energy_kernel::ConservationViolation>>,
+    /// Block.epoch of the previous successful audit. Drives the
+    /// `epochs_elapsed` argument fed to `energy_at_epoch`.
+    pub last_audit_epoch: Option<u64>,
+    /// Native demurrage parameters. Mirrors `SimpleExecutor` and
+    /// `ParallelExecutor` so all three executors fire the
+    /// per-epoch demurrage sweep on the same cadence.
+    pub demurrage_params: evaporchain_demurrage::DemurrageParams,
+    /// Protocol-owned refresh pool — same role as in the other
+    /// two executors. Demurrage redirects accrue here.
+    pub refresh_pool: evaporchain_energy_kernel::RefreshPool,
 }
 
 impl BlockStmExecutor {
@@ -1097,6 +1114,10 @@ impl BlockStmExecutor {
             decay_watchers: crate::temporal::DecayWatcherEngine::new(),
             parallel_threshold: 4,
             chain_id: String::new(),
+            last_conservation_audit: None,
+            last_audit_epoch: None,
+            demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
+            refresh_pool: evaporchain_energy_kernel::RefreshPool::new(),
         }
     }
 
@@ -1116,6 +1137,10 @@ impl BlockStmExecutor {
             decay_watchers: crate::temporal::DecayWatcherEngine::new(),
             parallel_threshold: 4,
             chain_id: String::new(),
+            last_conservation_audit: None,
+            last_audit_epoch: None,
+            demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
+            refresh_pool: evaporchain_energy_kernel::RefreshPool::new(),
         }
     }
 
@@ -1133,6 +1158,10 @@ impl BlockStmExecutor {
             decay_watchers: crate::temporal::DecayWatcherEngine::new(),
             parallel_threshold: 4,
             chain_id: String::new(),
+            last_conservation_audit: None,
+            last_audit_epoch: None,
+            demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
+            refresh_pool: evaporchain_energy_kernel::RefreshPool::new(),
         }
     }
 
@@ -1154,6 +1183,10 @@ impl BlockStmExecutor {
             decay_watchers: crate::temporal::DecayWatcherEngine::new(),
             parallel_threshold: 4,
             chain_id: String::new(),
+            last_conservation_audit: None,
+            last_audit_epoch: None,
+            demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
+            refresh_pool: evaporchain_energy_kernel::RefreshPool::new(),
         }
     }
 
@@ -1666,6 +1699,14 @@ impl ExecutionEngine for BlockStmExecutor {
             .set_protocol_version(block.protocol_version);
         let base_fee = self.fee_controller.as_ref().map_or(0, |fc| fc.base_fee);
 
+        // §1.2 conservation snapshot at the start of execute_block —
+        // mirrors SimpleExecutor / ParallelExecutor so all three
+        // executors enforce the kernel's audit on the same boundary.
+        let conservation_before = crate::energy_audit::compartment_snapshot_with_pool(
+            db,
+            self.refresh_pool.total_accrued(),
+        );
+
         // ── Phase 1: Separate contract/script txs (must be serial) ──
         let mut parallel_txs: Vec<&Transaction> = Vec::new();
         // Original block-tx index for each entry in `parallel_txs`, in
@@ -2051,7 +2092,13 @@ impl ExecutionEngine for BlockStmExecutor {
         // Punch-list 6: storage-rent collection. Inline (same shape as in
         // parallel.rs / SimpleExecutor) and gated on `last_rent_epoch` so
         // rent fires exactly once per epoch.
+        //
+        // Layer 0 item 4 follow-up: native-demurrage sweep wired in
+        // lockstep with rent. Until this commit BlockStmExecutor had
+        // no demurrage call site at all — the third executor was
+        // out-of-sync with SimpleExecutor + ParallelExecutor.
         if block.epoch > db.get_last_rent_epoch() {
+            let prev_rent_epoch = db.get_last_rent_epoch();
             let addresses = db.all_account_addresses();
             for addr in addresses {
                 let rent_info = {
@@ -2076,6 +2123,13 @@ impl ExecutionEngine for BlockStmExecutor {
                     acct.storage_bytes = 0;
                 }
             }
+            crate::demurrage_integration::collect_demurrage(
+                db,
+                &mut self.refresh_pool,
+                &self.demurrage_params,
+                prev_rent_epoch,
+                block.epoch,
+            );
             db.put_last_rent_epoch(block.epoch);
         }
 
@@ -2108,6 +2162,34 @@ impl ExecutionEngine for BlockStmExecutor {
         } else {
             Some(mera_root)
         };
+
+        // §1.2 conservation audit + governance gate — mirrors
+        // SimpleExecutor::execute_block and ParallelExecutor::execute_block
+        // so all three executors enforce the kernel's invariant on
+        // identical terms (Layer 0 follow-up — closes the
+        // BlockStmExecutor-has-no-audit gap from DOCTRINE_PUNCH_LIST.md).
+        let conservation_after = crate::energy_audit::compartment_snapshot_with_pool(
+            db,
+            self.refresh_pool.total_accrued(),
+        );
+        let lambda = evaporchain_energy_kernel::ChainLambda::default_genesis();
+        let epochs_elapsed = self
+            .last_audit_epoch
+            .map(|prev| block.epoch.saturating_sub(prev))
+            .unwrap_or(0);
+        let audit_verdict = crate::energy_audit::audit_block_step(
+            &conservation_before,
+            &conservation_after,
+            epochs_elapsed,
+            lambda,
+        );
+        let must_enforce = matches!(
+            db.get_governance_param("conservation_enforcement"),
+            Some("enforce"),
+        );
+        let stored = crate::evaluate_conservation_gate(audit_verdict, must_enforce)?;
+        self.last_conservation_audit = Some(stored);
+        self.last_audit_epoch = Some(block.epoch);
 
         // Re-assemble outcomes in block-tx order (parallel + serial both
         // tagged with original block index).
@@ -3187,6 +3269,11 @@ mod tests {
 
         let block = make_block(1, 1, txs);
         let mut executor = BlockStmExecutor::new_for_test(7);
+        // u64::MAX-balance overflow test — disable demurrage so the
+        // assertion about receiver's exact balance isn't perturbed by
+        // the per-epoch sweep on the huge holding.
+        executor.demurrage_params =
+            evaporchain_demurrage::DemurrageParams::new(0, u64::MAX);
         executor.parallel_threshold = 1; // Force parallel path
         let result = executor.execute_block(&mut db, &block).unwrap();
 
@@ -3228,6 +3315,8 @@ mod tests {
 
         let block = make_block(1, 1, txs);
         let mut executor = BlockStmExecutor::new_for_test(7);
+        executor.demurrage_params =
+            evaporchain_demurrage::DemurrageParams::new(0, u64::MAX);
         executor.parallel_threshold = 100; // Force sequential path
         let result = executor.execute_block(&mut db, &block).unwrap();
 
@@ -3274,6 +3363,8 @@ mod tests {
 
         let block = make_block(1, 1, txs);
         let mut executor = BlockStmExecutor::new_for_test(7);
+        executor.demurrage_params =
+            evaporchain_demurrage::DemurrageParams::new(0, u64::MAX);
         executor.parallel_threshold = 1;
         let result = executor.execute_block(&mut db, &block).unwrap();
 
@@ -3325,6 +3416,8 @@ mod tests {
 
         let block = make_block(1, 1, txs);
         let mut executor = BlockStmExecutor::new_for_test(7);
+        executor.demurrage_params =
+            evaporchain_demurrage::DemurrageParams::new(0, u64::MAX);
         executor.parallel_threshold = 1;
         let result = executor.execute_block(&mut db, &block).unwrap();
 
