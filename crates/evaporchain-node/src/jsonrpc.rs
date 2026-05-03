@@ -129,6 +129,7 @@ fn dispatch(state: &ApiState, req: JsonRpcRequest) -> JsonRpcResponse {
         "evap_getDsnWindow" => rpc_get_dsn_window(state, req.id),
         "evap_getEpvRegistry" => rpc_get_epv_registry(state, req.id),
         "evap_getFeeState" => rpc_get_fee_state(state, req.id),
+        "evap_getFourActSnapshot" => rpc_get_four_act_snapshot(state, req.id),
         "evap_getLogs" => rpc_get_logs(state, &req.params, req.id),
         "evap_getBlockLogs" => rpc_get_block_logs(state, &req.params, req.id),
         "evap_getFinalityStatus" => rpc_get_finality_status(state, &req.params, req.id),
@@ -640,6 +641,75 @@ fn format_lamport_clock_response(
         "accumulated_energy": json_hex_u64(accumulated_energy),
         "tick_quantum": json_hex_u64(tick_quantum),
     })
+}
+
+/// Pure formatter for the four-act narrative snapshot
+/// (INVENTION_STACK §A2.5): Birth (genesis with LLSA invariants),
+/// Life (sentinel autonomic governance), Small Deaths (Tombstone +
+/// eulogy trie), Final Death (Mortis death certificate).
+#[allow(clippy::too_many_arguments)]
+fn format_four_act_snapshot_response(
+    eulogy_count: usize,
+    eulogy_trie_root: Option<&str>,
+    refresh_pool_total: u64,
+    mortis_triggered: bool,
+    mortis_epoch_of_death: Option<u64>,
+    mortis_final_state_root: Option<&str>,
+    last_conservation_audit_ok: Option<bool>,
+    genesis_amendment_hash: Option<&str>,
+    light_cone_block_count: usize,
+) -> Value {
+    serde_json::json!({
+        "eulogy_count": json_hex_u64(eulogy_count as u64),
+        "eulogy_trie_root": eulogy_trie_root
+            .map(|s| Value::String(format!("0x{s}")))
+            .unwrap_or(Value::Null),
+        "refresh_pool_total": json_hex_u64(refresh_pool_total),
+        "mortis_triggered": mortis_triggered,
+        "mortis_epoch_of_death": mortis_epoch_of_death
+            .map(json_hex_u64)
+            .unwrap_or(Value::Null),
+        "mortis_final_state_root": mortis_final_state_root
+            .map(|s| Value::String(format!("0x{s}")))
+            .unwrap_or(Value::Null),
+        "last_conservation_audit_ok": last_conservation_audit_ok
+            .map(Value::Bool)
+            .unwrap_or(Value::Null),
+        "genesis_amendment_hash": genesis_amendment_hash
+            .map(|s| Value::String(format!("0x{s}")))
+            .unwrap_or(Value::Null),
+        "light_cone_block_count": json_hex_u64(light_cone_block_count as u64),
+    })
+}
+
+/// `evap_getFourActSnapshot()` — narrative-spine state for operators.
+/// All fields are observability-only today; chain is still
+/// authoritatively alive regardless of `mortis_triggered` (production
+/// governance amendment promotes Mortis to authoritative chain-end).
+fn rpc_get_four_act_snapshot(state: &ApiState, id: Value) -> JsonRpcResponse {
+    let snap = match state.four_act_snapshot.lock() {
+        Ok(s) => s.clone(),
+        Err(_) => {
+            return JsonRpcResponse::ok(
+                id,
+                serde_json::json!({ "four_act_snapshot_unavailable": true }),
+            );
+        }
+    };
+    JsonRpcResponse::ok(
+        id,
+        format_four_act_snapshot_response(
+            snap.eulogy_count,
+            snap.eulogy_trie_root.as_deref(),
+            snap.refresh_pool_total,
+            snap.mortis_triggered,
+            snap.mortis_epoch_of_death,
+            snap.mortis_final_state_root.as_deref(),
+            snap.last_conservation_audit_ok,
+            snap.genesis_amendment_hash.as_deref(),
+            snap.light_cone_block_count,
+        ),
+    )
 }
 
 /// Pure formatter for FeeState RPC responses. The fee controller
@@ -1307,6 +1377,66 @@ mod tests {
         assert_eq!(trie["compressions"], "0x5");
         assert_eq!(trie["decompressions"], "0x1");
         assert_eq!(v["lazy_snapshot_count"], "0x9");
+    }
+
+    #[test]
+    fn test_format_four_act_snapshot_alive() {
+        // Pre-mortis snapshot: a few tombstones exist, Mortis hasn't
+        // fired, last conservation audit passed.
+        let v = format_four_act_snapshot_response(
+            7,
+            Some("aabb"),
+            1_000_000,
+            false,
+            None,
+            None,
+            Some(true),
+            Some("ccdd"),
+            42,
+        );
+        assert_eq!(v["eulogy_count"], "0x7");
+        assert_eq!(v["eulogy_trie_root"], "0xaabb");
+        assert_eq!(v["refresh_pool_total"], "0xf4240");
+        assert_eq!(v["mortis_triggered"], false);
+        assert_eq!(v["mortis_epoch_of_death"], serde_json::Value::Null);
+        assert_eq!(v["last_conservation_audit_ok"], true);
+        assert_eq!(v["genesis_amendment_hash"], "0xccdd");
+        assert_eq!(v["light_cone_block_count"], "0x2a");
+    }
+
+    #[test]
+    fn test_format_four_act_snapshot_post_mortis() {
+        // After Mortis fires: triggered=true, epoch + final_state_root
+        // present, conservation_audit may have flipped.
+        let v = format_four_act_snapshot_response(
+            1024,
+            Some("11"),
+            0,
+            true,
+            Some(99_999),
+            Some("dead"),
+            Some(false),
+            None,
+            500,
+        );
+        assert_eq!(v["mortis_triggered"], true);
+        assert_eq!(v["mortis_epoch_of_death"], "0x1869f"); // 99_999
+        assert_eq!(v["mortis_final_state_root"], "0xdead");
+        assert_eq!(v["last_conservation_audit_ok"], false);
+        assert_eq!(v["genesis_amendment_hash"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn test_format_four_act_snapshot_genesis_zero() {
+        // Fresh chain: no tombstones, no Mortis, no audit yet.
+        let v = format_four_act_snapshot_response(
+            0, None, 0, false, None, None, None, None, 0,
+        );
+        assert_eq!(v["eulogy_count"], "0x0");
+        assert_eq!(v["eulogy_trie_root"], serde_json::Value::Null);
+        assert_eq!(v["refresh_pool_total"], "0x0");
+        assert_eq!(v["mortis_triggered"], false);
+        assert_eq!(v["last_conservation_audit_ok"], serde_json::Value::Null);
     }
 
     #[test]
