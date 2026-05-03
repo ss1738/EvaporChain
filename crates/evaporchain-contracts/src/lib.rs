@@ -2901,7 +2901,7 @@ mod tests {
         eng.call(
             id,
             "mint",
-            &serde_json::json!({"to": "alice", "metadata_hash": "abc", "energy": 50, "half_life": 5}),
+            &serde_json::json!({"to": addr_hex(2), "metadata_hash": "abc", "energy": 50, "half_life": 5}),
             &addr(1),
             0,
         )
@@ -2945,7 +2945,7 @@ mod tests {
         eng.call(
             id,
             "mint",
-            &serde_json::json!({"to": "alice", "metadata_hash": "abc", "energy": 50, "half_life": 5}),
+            &serde_json::json!({"to": addr_hex(2), "metadata_hash": "abc", "energy": 50, "half_life": 5}),
             &addr(1),
             0,
         )
@@ -3013,7 +3013,7 @@ mod tests {
         eng.call(
             id,
             "mint",
-            &serde_json::json!({"to": "alice", "metadata_hash": "abc", "energy": 50, "half_life": 5}),
+            &serde_json::json!({"to": addr_hex(2), "metadata_hash": "abc", "energy": 50, "half_life": 5}),
             &addr(1),
             0,
         )
@@ -3040,7 +3040,7 @@ mod tests {
             .call(
                 id,
                 "mint",
-                &serde_json::json!({"to": "alice", "metadata_hash": "abc123", "energy": 100, "half_life": 5}),
+                &serde_json::json!({"to": addr_hex(2), "metadata_hash": "abc123", "energy": 100, "half_life": 5}),
                 &addr(1),
                 0,
             )
@@ -3057,7 +3057,7 @@ mod tests {
                 0,
             )
             .unwrap();
-        assert_eq!(r.return_value["owner"], "alice");
+        assert_eq!(r.return_value["owner"], addr_hex(2));
     }
 
     #[test]
@@ -3067,7 +3067,7 @@ mod tests {
         eng.call(
             id,
             "mint",
-            &serde_json::json!({"to": "alice", "metadata_hash": "abc", "energy": 100, "half_life": 5}),
+            &serde_json::json!({"to": addr_hex(2), "metadata_hash": "abc", "energy": 100, "half_life": 5}),
             &addr(1),
             0,
         )
@@ -3076,7 +3076,7 @@ mod tests {
         eng.call(
             id,
             "transfer",
-            &serde_json::json!({"token_id": 1, "to": "bob"}),
+            &serde_json::json!({"token_id": 1, "to": addr_hex(3)}),
             &addr(1),
             0,
         )
@@ -3091,7 +3091,7 @@ mod tests {
                 0,
             )
             .unwrap();
-        assert_eq!(r.return_value["owner"], "bob");
+        assert_eq!(r.return_value["owner"], addr_hex(3));
     }
 
     #[test]
@@ -3104,7 +3104,7 @@ mod tests {
         eng.call(
             id,
             "mint",
-            &serde_json::json!({"to": "alice", "metadata_hash": "abc", "energy": 4, "half_life": 1}),
+            &serde_json::json!({"to": addr_hex(2), "metadata_hash": "abc", "energy": 4, "half_life": 1}),
             &addr(1),
             0,
         )
@@ -3160,7 +3160,7 @@ mod tests {
         eng.call(
             id,
             "mint",
-            &serde_json::json!({"to": "alice", "metadata_hash": "abc", "energy": 4, "half_life": 1}),
+            &serde_json::json!({"to": addr_hex(2), "metadata_hash": "abc", "energy": 4, "half_life": 1}),
             &addr(1),
             0,
         )
@@ -3195,7 +3195,7 @@ mod tests {
         eng.call(
             id,
             "mint",
-            &serde_json::json!({"to": "alice", "metadata_hash": "abc", "energy": 4, "half_life": 1}),
+            &serde_json::json!({"to": addr_hex(2), "metadata_hash": "abc", "energy": 4, "half_life": 1}),
             &addr(1),
             0,
         )
@@ -3205,7 +3205,7 @@ mod tests {
         let r = eng.call(
             id,
             "transfer",
-            &serde_json::json!({"token_id": 1, "to": "bob"}),
+            &serde_json::json!({"token_id": 1, "to": addr_hex(3)}),
             &addr(1),
             3,
         );
@@ -3219,7 +3219,7 @@ mod tests {
         eng.call(
             id,
             "mint",
-            &serde_json::json!({"to": "alice", "metadata_hash": "abc", "energy": 4, "half_life": 1}),
+            &serde_json::json!({"to": addr_hex(2), "metadata_hash": "abc", "energy": 4, "half_life": 1}),
             &addr(1),
             0,
         )
@@ -3442,7 +3442,7 @@ mod tests {
         eng.call(
             id,
             "stake",
-            &serde_json::json!({"staker": "alice", "amount": 1000}),
+            &serde_json::json!({"staker": addr_hex(2), "amount": 1000}),
             &addr(1),
             0,
         )
@@ -3455,7 +3455,7 @@ mod tests {
             .call(
                 id,
                 "pending_rewards",
-                &serde_json::json!({"staker": "alice"}),
+                &serde_json::json!({"staker": addr_hex(2)}),
                 &addr(1),
                 5,
             )
@@ -3472,7 +3472,7 @@ mod tests {
         eng.call(
             id,
             "stake",
-            &serde_json::json!({"staker": "alice", "amount": 1000}),
+            &serde_json::json!({"staker": addr_hex(2), "amount": 1000}),
             &addr(1),
             0,
         )
@@ -3484,7 +3484,7 @@ mod tests {
             .call(
                 id,
                 "pending_rewards",
-                &serde_json::json!({"staker": "alice"}),
+                &serde_json::json!({"staker": addr_hex(2)}),
                 &addr(1),
                 5,
             )
@@ -3497,7 +3497,7 @@ mod tests {
             .call(
                 id,
                 "pending_rewards",
-                &serde_json::json!({"staker": "alice"}),
+                &serde_json::json!({"staker": addr_hex(2)}),
                 &addr(1),
                 15,
             )
@@ -3530,7 +3530,7 @@ mod tests {
         eng.call(
             id,
             "stake",
-            &serde_json::json!({"staker": "alice", "amount": 1000}),
+            &serde_json::json!({"staker": addr_hex(2), "amount": 1000}),
             &addr(1),
             0,
         )
@@ -3542,7 +3542,7 @@ mod tests {
             .call(
                 id,
                 "claim_rewards",
-                &serde_json::json!({"staker": "alice"}),
+                &serde_json::json!({"staker": addr_hex(2)}),
                 &addr(1),
                 5,
             )
@@ -3555,7 +3555,7 @@ mod tests {
             .call(
                 id,
                 "pending_rewards",
-                &serde_json::json!({"staker": "alice"}),
+                &serde_json::json!({"staker": addr_hex(2)}),
                 &addr(1),
                 5,
             )
@@ -4147,7 +4147,7 @@ mod tests {
         let r = eng.call(
             id,
             "mint",
-            &serde_json::json!({"to": "eve", "metadata_hash": "evil", "energy": 100, "half_life": 5}),
+            &serde_json::json!({"to": addr_hex(4), "metadata_hash": "evil", "energy": 100, "half_life": 5}),
             &addr(2),
             0,
         );
@@ -4173,7 +4173,7 @@ mod tests {
         let r = eng.call(
             id,
             "transfer",
-            &serde_json::json!({"token_id": 1, "to": "mallory"}),
+            &serde_json::json!({"token_id": 1, "to": addr_hex(99)}),
             &addr(3),
             0,
         );
@@ -4199,7 +4199,7 @@ mod tests {
         let r = eng.call(
             id,
             "transfer",
-            &serde_json::json!({"token_id": 1, "to": "bob"}),
+            &serde_json::json!({"token_id": 1, "to": addr_hex(3)}),
             &addr(5),
             0,
         );
@@ -4275,7 +4275,7 @@ mod tests {
         eng.call(
             id,
             "stake",
-            &serde_json::json!({"staker": "alice", "amount": 1000}),
+            &serde_json::json!({"staker": addr_hex(2), "amount": 1000}),
             &addr(1),
             0,
         )
@@ -4285,7 +4285,7 @@ mod tests {
         let r = eng.call(
             id,
             "unstake",
-            &serde_json::json!({"staker": "alice"}),
+            &serde_json::json!({"staker": addr_hex(2)}),
             &addr(3),
             5,
         );
@@ -4300,7 +4300,7 @@ mod tests {
         eng.call(
             id,
             "stake",
-            &serde_json::json!({"staker": "alice", "amount": 1000}),
+            &serde_json::json!({"staker": addr_hex(2), "amount": 1000}),
             &addr(1),
             0,
         )
@@ -4312,7 +4312,7 @@ mod tests {
         let r = eng.call(
             id,
             "claim_rewards",
-            &serde_json::json!({"staker": "alice"}),
+            &serde_json::json!({"staker": addr_hex(2)}),
             &addr(3),
             5,
         );
