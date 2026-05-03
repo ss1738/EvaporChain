@@ -26,6 +26,16 @@ pub struct FrontierConfig {
     pub poha_energy: u64,
     /// Default half-life for PoHA certificates (in epochs).
     pub poha_half_life: u64,
+    /// PoHA re-attestation sampler — number of certificates picked per
+    /// tick (lowest-energy first via `select_for_re_attestation`).
+    /// Each picked cert receives a `re_attestation_boost` energy bump.
+    /// Set to 0 to disable the sampler entirely.
+    pub poha_sampler_size: usize,
+    /// PoHA re-attestation sampler cadence (in epochs). The sampler
+    /// only fires when `epoch >= last_sampler_epoch + interval`. Tuned
+    /// against `poha_half_life` so a typical Hot cert gets re-attested
+    /// before slipping past Warm.
+    pub poha_sampler_interval_epochs: u64,
 }
 
 impl Default for FrontierConfig {
@@ -34,6 +44,10 @@ impl Default for FrontierConfig {
             anchor_interval: 100,
             poha_energy: 10000,
             poha_half_life: 500,
+            // Default: re-attest 8 lowest-energy certs every 50 epochs
+            // (1/10th of the default half-life). Operator-tunable per node.
+            poha_sampler_size: 8,
+            poha_sampler_interval_epochs: 50,
         }
     }
 }
@@ -50,6 +64,9 @@ pub struct FrontierState {
     pub lazy_cache: LazyStateCache,
     /// Last anchor height for quick checks.
     last_anchor_height: u64,
+    /// PoHA re-attestation sampler config (size + interval).
+    poha_sampler_size: usize,
+    poha_sampler_interval_epochs: u64,
 }
 
 impl FrontierState {
@@ -62,6 +79,8 @@ impl FrontierState {
             energy_trie: EnergyVerkleTrie::new(),
             lazy_cache: LazyStateCache::new(rules, 10),
             last_anchor_height: 0,
+            poha_sampler_size: config.poha_sampler_size,
+            poha_sampler_interval_epochs: config.poha_sampler_interval_epochs,
         }
     }
 
@@ -151,6 +170,20 @@ impl FrontierState {
         let (poha_decayed, poha_evaporated) = self.poha.process_epoch(epoch);
         update.poha_decayed = poha_decayed;
         update.poha_evaporated = poha_evaporated;
+
+        // ── 3a. PoHA Re-Attestation Sampler ──
+        // Picks up to `poha_sampler_size` lowest-energy certs and bumps
+        // their energy by `re_attestation_boost`. Fires only when the
+        // configured interval has elapsed since the last sampler tick.
+        // Sampler-size = 0 disables the path entirely.
+        if self.poha_sampler_size > 0 {
+            let reattested = self.poha.tick_re_attestation_sampler(
+                epoch,
+                self.poha_sampler_size,
+                self.poha_sampler_interval_epochs,
+            );
+            update.poha_re_attested = reattested;
+        }
 
         // ── 4. Energy Trie Update ──
         // Sync energy trie with current active objects from state DB.
@@ -247,6 +280,9 @@ pub struct FrontierUpdate {
     pub poha_decayed: usize,
     /// Number of PoHA certificates that evaporated.
     pub poha_evaporated: usize,
+    /// Number of PoHA certificates re-attested by the sampler this tick.
+    /// Zero when the sampler's cadence hasn't elapsed or no candidates.
+    pub poha_re_attested: usize,
     /// Number of energy trie entries updated.
     pub trie_updates: u32,
     /// Number of cold subtrees compressed in the energy trie.
@@ -365,6 +401,7 @@ mod tests {
             anchor_interval: 5,
             poha_energy: 1000,
             poha_half_life: 10,
+            ..FrontierConfig::default()
         });
         let mut db = InMemoryStateDB::new();
 
@@ -473,5 +510,115 @@ mod tests {
         assert!(status.contains("poha=0"));
         assert!(status.contains("etrie=0active"));
         assert!(status.contains("lazy=0snap/0obj"));
+    }
+
+    #[test]
+    fn test_frontier_config_default_values() {
+        let cfg = FrontierConfig::default();
+        assert_eq!(cfg.anchor_interval, 100);
+        assert_eq!(cfg.poha_energy, 10000);
+        assert_eq!(cfg.poha_half_life, 500);
+    }
+
+    #[test]
+    fn test_frontier_update_default_is_zero() {
+        let u = FrontierUpdate::default();
+        assert!(u.anchor_created.is_none());
+        assert!(!u.poha_registered);
+        assert_eq!(u.poha_decayed, 0);
+        assert_eq!(u.poha_evaporated, 0);
+        assert_eq!(u.trie_updates, 0);
+        assert_eq!(u.trie_compressions, 0);
+    }
+
+    #[test]
+    fn test_query_lazy_unknown_id_is_none() {
+        let fs = FrontierState::new(FrontierConfig::default());
+        let unknown = [0x99u8; 32];
+        assert!(fs.query_lazy(&unknown, 100).is_none());
+        // query_all on empty cache returns empty
+        assert!(fs.query_all_lazy(100).is_empty());
+    }
+
+    #[test]
+    fn test_on_block_committed_no_da_no_anchor_is_quiescent() {
+        let mut fs = FrontierState::new(FrontierConfig {
+            anchor_interval: 100,
+            ..FrontierConfig::default()
+        });
+        let db = InMemoryStateDB::new();
+        // Block 1 with no DA cert and no anchor due → no registrations, no objects.
+        let u = fs.on_block_committed(1, 1, [0u8; 32], 0, 0, [0u8; 32], None, &db);
+        assert!(u.anchor_created.is_none());
+        assert!(!u.poha_registered);
+        assert_eq!(u.trie_updates, 0);
+        assert_eq!(fs.poha.active_count(), 0);
+    }
+
+    #[test]
+    fn test_poha_re_attestation_sampler_fires_through_on_block_committed() {
+        // Wire-up validation for the PoHA sampler: registering a cert,
+        // letting it decay below the re-attestation threshold, then
+        // hitting the cadence boundary must produce a non-zero
+        // `poha_re_attested` count in the FrontierUpdate.
+        //
+        // Fast decay (half_life=10) so a single half-life pushes the
+        // cert into the sampler's catchment range.
+        let mut fs = FrontierState::new(FrontierConfig {
+            anchor_interval: 1_000_000, // disable anchor noise
+            poha_energy: 1000,
+            poha_half_life: 10,
+            poha_sampler_size: 4,
+            poha_sampler_interval_epochs: 5,
+        });
+        let db = InMemoryStateDB::new();
+
+        // Register one cert at block 1 (epoch 1) — Hot at full energy.
+        let da_info = DACertInfo {
+            data_root: [0xAB; 32],
+            shard_count: 8,
+            attested_stake: 3000,
+            total_stake: 4000,
+            aggregate_signature: vec![0u8; 96],
+            signer_ids: vec![0, 1, 2],
+        };
+        fs.on_block_committed(1, 1, [1u8; 32], 0, 0, [0u8; 32], Some(&da_info), &db);
+
+        // Advance to epoch 30 — three half-lives of decay → energy 125
+        // → Cold range → eligible for re-attestation, AND interval=5
+        // has elapsed since the never-fired sampler.
+        let update = fs.on_block_committed(2, 30, [2u8; 32], 0, 0, [0u8; 32], None, &db);
+        assert!(
+            update.poha_re_attested >= 1,
+            "sampler must re-attest the decayed cert — got {}",
+            update.poha_re_attested
+        );
+    }
+
+    #[test]
+    fn test_poha_sampler_disabled_when_size_is_zero() {
+        let mut fs = FrontierState::new(FrontierConfig {
+            anchor_interval: 1_000_000,
+            poha_energy: 1000,
+            poha_half_life: 10,
+            poha_sampler_size: 0, // explicit disable
+            poha_sampler_interval_epochs: 5,
+        });
+        let db = InMemoryStateDB::new();
+
+        let da_info = DACertInfo {
+            data_root: [0xAB; 32],
+            shard_count: 8,
+            attested_stake: 3000,
+            total_stake: 4000,
+            aggregate_signature: vec![0u8; 96],
+            signer_ids: vec![0, 1, 2],
+        };
+        fs.on_block_committed(1, 1, [1u8; 32], 0, 0, [0u8; 32], Some(&da_info), &db);
+        let update = fs.on_block_committed(2, 30, [2u8; 32], 0, 0, [0u8; 32], None, &db);
+        assert_eq!(
+            update.poha_re_attested, 0,
+            "size=0 must short-circuit the sampler entirely"
+        );
     }
 }
