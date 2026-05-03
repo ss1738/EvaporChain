@@ -4155,6 +4155,12 @@ fn cmd_keygen(output: Option<&str>, json_mode: bool) -> Result<()> {
         "bls": {
             "public_key": hex::encode(&bls.public_key_bytes().0),
             "secret_key": hex::encode(&bls.secret_key_bytes().0),
+            // BLS proof-of-possession over the public key under BLS_POP_DST.
+            // Required at validator registration to defeat rogue-key attacks
+            // on aggregate signatures (audit-flagged 2026-04-27, closed
+            // 2026-05-02). Genesis JSON copies this into the validator's
+            // `bls_pop` field.
+            "proof_of_possession": hex::encode(&bls.proof_of_possession().0),
         },
         "ml_dsa": {
             "public_key": hex::encode(mldsa.public_key()),
