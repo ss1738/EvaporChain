@@ -11,6 +11,39 @@
 //! > entropy subject to one thermodynamic constraint, with closed-
 //! > form Perron solution."
 //!
+//! ## Math note — "closed-form Perron solution" on a DAG
+//!
+//! Layer 2 of the doctrine punch list flagged this language as
+//! mathematically vacuous on EvaporChain's actual structure: the
+//! [`evaporchain_light_cone::LightCone`] is a strict DAG, so its
+//! adjacency matrix `M` is nilpotent (every eigenvalue is 0) and no
+//! nontrivial Perron-Frobenius eigenvector exists. The Perron
+//! statement applies to *strongly-connected, irreducible* Markov
+//! chains, not DAG fork-choice.
+//!
+//! The good news: the doctrine's *actual* mathematical commitment
+//! ("the unique distribution maximizing path-entropy subject to one
+//! thermodynamic constraint") is met by a **Boltzmann argmax** —
+//! Jaynes' canonical closed form for MaxCal under a single
+//! constraint. For a candidate set of trajectories `{τ_i}` with
+//! path-energies `E_i`:
+//!
+//! ```text
+//!   p(τ_i) ∝ exp(−β · E_i)   with β = 1/λ  (Lagrange multiplier)
+//!   argmax_i p(τ_i)  =  argmin_i E_i  at large β
+//! ```
+//!
+//! That is exactly what [`choose::mcc_choose`] computes via
+//! [`evaporchain_cfm::boltzmann_weight`]. So the *code* matches the
+//! *theorem*; the doctrine wording is what needs amending — "Perron
+//! solution" should read "Lagrangian closed form" or "Boltzmann
+//! distribution over candidate trajectories" once Satyawan signs off
+//! on the §A1.2 T1 amendment.
+//!
+//! Until that amendment lands, treat the in-source code as the
+//! authoritative spec for MCC, and read the doctrine line as
+//! marketing-grade phrasing of the same underlying math.
+//!
 //! ## Operationalisation
 //!
 //! Maximum-caliber under the `⟨ΔE⟩ = λ` constraint puts a Boltzmann
