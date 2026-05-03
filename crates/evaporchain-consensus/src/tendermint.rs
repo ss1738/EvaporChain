@@ -2522,8 +2522,42 @@ impl TendermintConsensus {
                     return actions;
                 }
 
-                // Verify block connects to our chain
-                if block.parent_hash != self.parent_hash {
+                // Verify block connects to our chain.
+                //
+                // Lane I.4: governance-gated fork-choice dispatch via the
+                // ForkChoice trait seam (G.3). The legacy linear rule
+                // (`local == candidate`) stays the default to preserve
+                // bit-exact behaviour for the cluster soak. When the
+                // `parent_acceptance_mode` governance key is "mcc",
+                // dispatch instead to MccForkChoice — Maximum-Caliber
+                // path-entropy comparison via the LightCone DAG (Lane
+                // I.3 impl). Any other value falls back to the linear
+                // rule, so a typo can never halt the chain.
+                let parent_accepted = match self
+                    .governance_params
+                    .get("parent_acceptance_mode")
+                    .map(|s| s.as_str())
+                    .unwrap_or("linear")
+                {
+                    "mcc" => {
+                        // β = 10_000 mirrors the existing
+                        // `authoritative_head` default; future Lane I.6
+                        // can route this through chain-set CFM β
+                        // (`evaporchain_cfm::beta_millibits_per_fee`).
+                        let fc = crate::fork_choice::MccForkChoice::new(
+                            self.light_cone_dag.clone(),
+                            10_000,
+                        );
+                        let v = crate::fork_choice::ForkChoice::evaluate(
+                            &fc,
+                            &self.parent_hash,
+                            &block.parent_hash,
+                        );
+                        v.accept
+                    }
+                    _ => block.parent_hash == self.parent_hash,
+                };
+                if !parent_accepted {
                     warn!(
                         height = height,
                         round = round,

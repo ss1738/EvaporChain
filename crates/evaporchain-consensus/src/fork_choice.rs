@@ -113,7 +113,7 @@ impl ForkChoice for LinearForkChoice {
 // `Arc<RwLock<LightCone>>` if measurements warrant.
 
 use crate::mempool::BlockSource;  // Re-export anchor — keeps the seam group co-located in lib.rs.
-use evaporchain_light_cone::{Block, LightCone};
+use evaporchain_light_cone::LightCone;
 use evaporchain_mcc::{mcc_choose, Trajectory};
 use std::collections::HashSet;
 
@@ -292,6 +292,8 @@ mod tests {
     }
 
     // ─────────────────────── McCForkChoice tests ────────────────────────
+
+    use evaporchain_light_cone::Block;
 
     fn id(b: u8) -> [u8; 32] {
         [b; 32]
