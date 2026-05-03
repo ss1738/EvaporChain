@@ -126,6 +126,7 @@ fn dispatch(state: &ApiState, req: JsonRpcRequest) -> JsonRpcResponse {
         "evap_getPntStatus" => rpc_get_pnt_status(state, req.id),
         "evap_getFrontierStatus" => rpc_get_frontier_status(state, req.id),
         "evap_getLamportClock" => rpc_get_lamport_clock(state, req.id),
+        "evap_getDsnWindow" => rpc_get_dsn_window(state, req.id),
         "evap_getLogs" => rpc_get_logs(state, &req.params, req.id),
         "evap_getBlockLogs" => rpc_get_block_logs(state, &req.params, req.id),
         "evap_getFinalityStatus" => rpc_get_finality_status(state, &req.params, req.id),
@@ -637,6 +638,55 @@ fn format_lamport_clock_response(
         "accumulated_energy": json_hex_u64(accumulated_energy),
         "tick_quantum": json_hex_u64(tick_quantum),
     })
+}
+
+/// Pure formatter for DSN window RPC responses.
+/// `current_window` advances on `advance_window`; `total_count` is the
+/// nullifier count summed across all live accumulators; `aggregate_root`
+/// is a 32-byte commitment over all live accumulators (bounded size
+/// regardless of total nullifier count). `live_windows` is the count
+/// of accumulators currently retained (bounded by `window_depth`).
+fn format_dsn_window_response(
+    current_window: u64,
+    window_depth: usize,
+    live_windows: usize,
+    total_count: u64,
+    aggregate_root: [u8; 32],
+) -> Value {
+    serde_json::json!({
+        "current_window": json_hex_u64(current_window),
+        "window_depth": window_depth,
+        "live_windows": live_windows,
+        "total_count": json_hex_u64(total_count),
+        "aggregate_root": format!("0x{}", hex::encode(aggregate_root)),
+    })
+}
+
+/// `evap_getDsnWindow()` — Decay-Stamped Nullifier window state for
+/// operator monitoring. DSN is the bounded-state nullifier accumulator
+/// (INVENTION_STACK §4.2); the per-block tick at main.rs:4431 folds
+/// new nullifiers into `current_window`. Aggregate root provides a
+/// 32-byte commitment for light-client verification.
+fn rpc_get_dsn_window(state: &ApiState, id: Value) -> JsonRpcResponse {
+    let dsn = match state.dsn_window.lock() {
+        Ok(w) => w.clone(),
+        Err(_) => {
+            return JsonRpcResponse::ok(
+                id,
+                serde_json::json!({ "dsn_window_unavailable": true }),
+            );
+        }
+    };
+    JsonRpcResponse::ok(
+        id,
+        format_dsn_window_response(
+            dsn.current_window,
+            dsn.window_depth,
+            dsn.window.len(),
+            dsn.total_count(),
+            dsn.aggregate_root(),
+        ),
+    )
 }
 
 /// `evap_getLamportClock()` — energy-driven logical clock surface
@@ -1189,6 +1239,31 @@ mod tests {
         assert_eq!(trie["compressions"], "0x5");
         assert_eq!(trie["decompressions"], "0x1");
         assert_eq!(v["lazy_snapshot_count"], "0x9");
+    }
+
+    #[test]
+    fn test_format_dsn_window_basic() {
+        let v = format_dsn_window_response(7, 32, 5, 1234, [0x9Au8; 32]);
+        assert_eq!(v["current_window"], "0x7");
+        assert_eq!(v["window_depth"], 32);
+        assert_eq!(v["live_windows"], 5);
+        assert_eq!(v["total_count"], "0x4d2"); // 1234
+        assert_eq!(
+            v["aggregate_root"].as_str().unwrap(),
+            format!("0x{}", "9a".repeat(32))
+        );
+    }
+
+    #[test]
+    fn test_format_dsn_window_empty() {
+        let v = format_dsn_window_response(0, 32, 1, 0, [0u8; 32]);
+        assert_eq!(v["current_window"], "0x0");
+        assert_eq!(v["live_windows"], 1);
+        assert_eq!(v["total_count"], "0x0");
+        assert_eq!(
+            v["aggregate_root"].as_str().unwrap(),
+            format!("0x{}", "00".repeat(32))
+        );
     }
 
     #[test]
