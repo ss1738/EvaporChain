@@ -1382,6 +1382,15 @@ impl TendermintConsensus {
 
     /// Create a test-friendly consensus engine with a small privacy tree (depth 4)
     /// to avoid the ~60s initialization of the full 2^20 Merkle tree.
+    /// Enable block-reward distribution on the underlying executor.
+    /// Mirrors `MockConsensus::executor.enable_rewards`. Until called,
+    /// validators receive no block rewards even if a `Tokenomics` is
+    /// present in the genesis config — production tendermint nodes
+    /// pre-this-commit shipped without a reward pipeline at all.
+    pub fn enable_rewards(&mut self, tokenomics: evaporchain_types::genesis::Tokenomics) {
+        self.executor.enable_rewards(tokenomics);
+    }
+
     /// Get the priority sum captured at the most recent local proposal.
     /// Caller (operator runbook / metrics exporter / SimpleExecutor-mode
     /// node) drives where this is consumed. **Not consensus-deterministic**:

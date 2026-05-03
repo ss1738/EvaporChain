@@ -573,6 +573,12 @@ pub struct ParallelExecutor {
     /// gating later.
     pub last_conservation_audit:
         Option<Result<(), evaporchain_energy_kernel::ConservationViolation>>,
+    /// Reward accumulator for block rewards + fee distribution. Mirrors
+    /// `SimpleExecutor.reward_accumulator`; until this commit production
+    /// tendermint validators received NO block rewards because
+    /// `ParallelExecutor` lacked this field entirely. Initialised None;
+    /// node startup calls `enable_rewards(tokenomics)` to turn it on.
+    pub reward_accumulator: Option<crate::rewards::RewardAccumulator>,
 }
 
 impl ParallelExecutor {
@@ -598,7 +604,49 @@ impl ParallelExecutor {
             ),
             mortis_certificate: None,
             last_conservation_audit: None,
+            reward_accumulator: None,
         }
+    }
+
+    /// Enable block-reward distribution with the given tokenomics.
+    /// Mirrors `SimpleExecutor::enable_rewards`. Until called, no
+    /// block rewards or fee distribution fire from this executor.
+    pub fn enable_rewards(&mut self, tokenomics: evaporchain_types::genesis::Tokenomics) {
+        self.reward_accumulator = Some(crate::rewards::RewardAccumulator::new(tokenomics));
+    }
+
+    /// Apply the proposer-priority bonus (Phase-1.5 of the energy-
+    /// stamped MEV defense). Caller passes the priority sum captured
+    /// at proposal time via `Mempool::take_with_priority_and_sum`.
+    ///
+    /// Returns the bonus credited to `producer` (zero if rewards
+    /// aren't enabled or if the divisor zeroes the bonus). Mirrors
+    /// `SimpleExecutor::apply_proposer_priority_bonus`.
+    pub fn apply_proposer_priority_bonus(
+        &mut self,
+        db: &mut dyn evaporchain_state::db::StateDB,
+        producer: &evaporchain_types::AccountAddress,
+        epoch: evaporchain_types::Epoch,
+        priority_sum: u64,
+        scale_per_unit: u64,
+    ) -> u64 {
+        if let Some(ref mut ra) = self.reward_accumulator {
+            ra.apply_priority_bonus(db, producer, epoch, priority_sum, scale_per_unit)
+        } else {
+            0
+        }
+    }
+
+    /// Get a reference to the reward accumulator (if enabled).
+    pub fn reward_accumulator(&self) -> Option<&crate::rewards::RewardAccumulator> {
+        self.reward_accumulator.as_ref()
+    }
+
+    /// Get a mutable reference to the reward accumulator (if enabled).
+    pub fn reward_accumulator_mut(
+        &mut self,
+    ) -> Option<&mut crate::rewards::RewardAccumulator> {
+        self.reward_accumulator.as_mut()
     }
 
     /// Create executor with a small privacy tree for fast test initialization.
@@ -625,6 +673,7 @@ impl ParallelExecutor {
             ),
             mortis_certificate: None,
             last_conservation_audit: None,
+            reward_accumulator: None,
         }
     }
 
@@ -651,6 +700,7 @@ impl ParallelExecutor {
             ),
             mortis_certificate: None,
             last_conservation_audit: None,
+            reward_accumulator: None,
         }
     }
 
@@ -676,6 +726,7 @@ impl ParallelExecutor {
             ),
             mortis_certificate: None,
             last_conservation_audit: None,
+            reward_accumulator: None,
         }
     }
 
@@ -705,6 +756,7 @@ impl ParallelExecutor {
             ),
             mortis_certificate: None,
             last_conservation_audit: None,
+            reward_accumulator: None,
         }
     }
 
@@ -1825,6 +1877,46 @@ impl ExecutionEngine for ParallelExecutor {
             db.put_last_rent_epoch(block.epoch);
         }
 
+        // Reward distribution (mirrors SimpleExecutor::execute_block).
+        // Until this commit, ParallelExecutor (the executor production
+        // tendermint actually drives) had no reward path at all —
+        // validators received no block rewards in production. Wiring
+        // here is gated on `enable_rewards()` having been called at
+        // node startup; if not enabled, behaviour is unchanged.
+        if let Some(ref mut ra) = self.reward_accumulator {
+            let producer_addr = if let Some(pid) = block.producer_id {
+                db.get_stake(pid)
+                    .map(|s| s.validator_address)
+                    .unwrap_or_else(|| {
+                        let mut addr = [0u8; 32];
+                        addr[..8].copy_from_slice(&pid.to_le_bytes());
+                        addr
+                    })
+            } else {
+                [0u8; 32]
+            };
+            ra.process_block_rewards(db, &producer_addr, block.epoch, total_fees);
+
+            // Distribute staker rewards every 100 blocks
+            if block.number.is_multiple_of(100) && ra.pending_staker_rewards > 0 {
+                let stakers: Vec<([u8; 32], u64)> = db
+                    .all_stakes()
+                    .iter()
+                    .filter(|s| s.unbonding_epoch.is_none())
+                    .map(|s| (s.validator_address, s.staked_amount))
+                    .collect();
+                let distributed = ra.distribute_staker_rewards(db, &stakers, block.epoch);
+                if distributed > 0 {
+                    info!(
+                        distributed,
+                        stakers = stakers.len(),
+                        block = block.number,
+                        "Staker rewards distributed (parallel executor)"
+                    );
+                }
+            }
+        }
+
         let state_root = db.compute_state_root();
 
         info!(
@@ -2184,6 +2276,88 @@ mod tests {
     }
 
     // ── Execution Tests ──
+
+    #[test]
+    fn test_parallel_executor_mints_block_reward_to_producer() {
+        // ParallelExecutor (production tendermint's executor) was missing
+        // a reward_accumulator until this commit — validators ran without
+        // rewards. This test proves rewards now fire end-to-end through
+        // execute_block when enable_rewards() is called.
+        use evaporchain_types::genesis::Tokenomics;
+
+        let mut db = InMemoryStateDB::new();
+        let producer_id: u64 = 7;
+        let producer_addr = addr(producer_id as u8);
+        fund_account(&mut db, producer_id as u8, 0);
+        // Sender so the block has at least one tx.
+        fund_account(&mut db, 1, 1000);
+
+        let mut block = make_block(
+            1,
+            0, // epoch 0 — block reward is at full 100 from test tokenomics
+            vec![Transaction::Transfer(TransferTx {
+                from: addr(1),
+                to: addr(2),
+                amount: 100,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        block.producer_id = Some(producer_id);
+
+        let mut executor = ParallelExecutor::new_for_test(100);
+        executor.enable_rewards(Tokenomics {
+            total_supply: 10_000_000,
+            block_reward: 100,
+            reward_half_life: 1000,
+            fee_burn_rate: 0.50,
+            staker_fee_share: 0.50,
+            target_staking_apy: 0.05,
+        });
+
+        let _ = executor.execute_block(&mut db, &block).unwrap();
+
+        // Producer must have received the block reward (100 from
+        // test_tokenomics at epoch 0). Pre-fix this was 0.
+        let producer_balance = db.get_account(&producer_addr).unwrap().balance;
+        assert!(
+            producer_balance >= 100,
+            "producer must receive block reward — got {producer_balance}"
+        );
+        let ra = executor.reward_accumulator().unwrap();
+        assert_eq!(ra.total_minted, 100);
+    }
+
+    #[test]
+    fn test_parallel_executor_no_rewards_when_disabled() {
+        // Without enable_rewards(), no minting fires — preserves the
+        // pre-existing test-mode and node-pre-launch behaviour.
+        let mut db = InMemoryStateDB::new();
+        let producer_id: u64 = 9;
+        let producer_addr = addr(producer_id as u8);
+        fund_account(&mut db, producer_id as u8, 0);
+        fund_account(&mut db, 1, 1000);
+
+        let mut block = make_block(
+            1,
+            0,
+            vec![Transaction::Transfer(TransferTx {
+                from: addr(1),
+                to: addr(2),
+                amount: 100,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        block.producer_id = Some(producer_id);
+
+        let mut executor = ParallelExecutor::new_for_test(100);
+        let _ = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(db.get_account(&producer_addr).unwrap().balance, 0);
+        assert!(executor.reward_accumulator().is_none());
+    }
 
     #[test]
     fn test_parallel_transfer_execution() {

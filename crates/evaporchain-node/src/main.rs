@@ -2780,6 +2780,23 @@ async fn main() -> Result<()> {
             vs,
             args.block_gas_limit,
         );
+        // Enable block rewards if the genesis config carries a Tokenomics
+        // section. Pre-this-commit production tendermint shipped with no
+        // reward pipeline — validators received no block rewards. Now
+        // gated on the operator providing tokenomics in the genesis JSON.
+        if let Some(ref gc) = genesis_config_loaded {
+            tc.enable_rewards(gc.tokenomics.clone());
+            tracing::info!(
+                block_reward = gc.tokenomics.block_reward,
+                reward_half_life = gc.tokenomics.reward_half_life,
+                fee_burn_rate = gc.tokenomics.fee_burn_rate,
+                "Block rewards enabled from genesis tokenomics"
+            );
+        } else {
+            tracing::info!(
+                "No genesis_config — block rewards disabled (validators receive no mint)"
+            );
+        }
         // Inject Nova proof verifier into consensus
         tc.set_proof_verifier(
             Box::new(ChainProofVerifier {
