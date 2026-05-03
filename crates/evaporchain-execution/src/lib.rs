@@ -192,6 +192,16 @@ pub trait ExecutionEngine: Send + Sync {
 
     /// Number of nullifiers in the MMR.
     fn mmr_size(&self) -> usize;
+
+    /// Generate an inclusion proof for the leaf at `leaf_index` in the
+    /// evaporation-nullifier MMR. Returns `None` if `leaf_index` is past
+    /// the current MMR head. Light clients use this to verify that a
+    /// specific object's evaporation was actually accumulated, without
+    /// downloading the full MMR.
+    fn mmr_proof(
+        &self,
+        leaf_index: u64,
+    ) -> Option<evaporchain_crypto::accumulator::MMRProof>;
 }
 
 /// Gas cost constants for transaction types.
@@ -2989,6 +2999,13 @@ impl ExecutionEngine for SimpleExecutor {
 
     fn mmr_size(&self) -> usize {
         self.mmr.size()
+    }
+
+    fn mmr_proof(
+        &self,
+        leaf_index: u64,
+    ) -> Option<evaporchain_crypto::accumulator::MMRProof> {
+        self.mmr.prove(leaf_index)
     }
 }
 

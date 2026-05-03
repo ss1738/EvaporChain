@@ -4,6 +4,7 @@
 //! supported for tooling that probes the network layer.
 
 use axum::{extract::State, Json};
+use evaporchain_execution::ExecutionEngine;
 use evaporchain_state::db::StateDB;
 use evaporchain_types::Transaction;
 use serde::{Deserialize, Serialize};
@@ -119,6 +120,8 @@ fn dispatch(state: &ApiState, req: JsonRpcRequest) -> JsonRpcResponse {
         "evap_estimateGas" => rpc_estimate_gas(state, &req.params, req.id),
         "evap_getObject" => rpc_get_object(state, &req.params, req.id),
         "evap_mempoolSize" => rpc_mempool_size(state, req.id),
+        "evap_getMMRProof" => rpc_get_mmr_proof(state, &req.params, req.id),
+        "evap_getMMRRoot" => rpc_get_mmr_root(state, req.id),
         "evap_getLogs" => rpc_get_logs(state, &req.params, req.id),
         "evap_getBlockLogs" => rpc_get_block_logs(state, &req.params, req.id),
         "evap_getFinalityStatus" => rpc_get_finality_status(state, &req.params, req.id),
@@ -334,6 +337,65 @@ fn rpc_get_object(state: &ApiState, params: &Value, id: Value) -> JsonRpcRespons
         }
         None => JsonRpcResponse::ok(id, Value::Null),
     }
+}
+
+/// `evap_getMMRProof(leaf_index_hex)` — return an inclusion proof for the
+/// evaporation-nullifier MMR leaf at `leaf_index`. The proof bundle is
+/// `{ leaf_index, mmr_size, siblings, peak_hashes, peak_index }`. Light
+/// clients can verify a ghost-record's evaporation against the chain's
+/// `mmr_root` without downloading the whole accumulator.
+fn rpc_get_mmr_proof(state: &ApiState, params: &Value, id: Value) -> JsonRpcResponse {
+    let leaf_index_hex = match params
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(|v| v.as_str())
+    {
+        Some(s) => s,
+        None => return JsonRpcResponse::invalid_params(id, "missing leaf_index"),
+    };
+    let stripped = leaf_index_hex.strip_prefix("0x").unwrap_or(leaf_index_hex);
+    let leaf_index = match u64::from_str_radix(stripped, 16) {
+        Ok(n) => n,
+        Err(_) => {
+            return JsonRpcResponse::invalid_params(id, "leaf_index must be hex u64")
+        }
+    };
+    let proof_opt = {
+        let c = safe_lock(&state.consensus);
+        c.executor.mmr_proof(leaf_index)
+    };
+    match proof_opt {
+        Some(proof) => {
+            let json = serde_json::json!({
+                "leaf_index": json_hex_u64(proof.leaf_index),
+                "mmr_size": json_hex_u64(proof.mmr_size),
+                "peak_index": proof.peak_index,
+                "siblings": proof.siblings.iter()
+                    .map(|s| format!("0x{}", hex::encode(s)))
+                    .collect::<Vec<_>>(),
+                "peak_hashes": proof.peak_hashes.iter()
+                    .map(|p| format!("0x{}", hex::encode(p)))
+                    .collect::<Vec<_>>(),
+            });
+            JsonRpcResponse::ok(id, json)
+        }
+        None => JsonRpcResponse::ok(id, Value::Null),
+    }
+}
+
+/// `evap_getMMRRoot()` — return the current evaporation-nullifier MMR
+/// root + leaf count. Companion to `evap_getMMRProof`; clients verify
+/// proofs against this root.
+fn rpc_get_mmr_root(state: &ApiState, id: Value) -> JsonRpcResponse {
+    let (root, size) = {
+        let c = safe_lock(&state.consensus);
+        (c.executor.mmr_root(), c.executor.mmr_size())
+    };
+    let json = serde_json::json!({
+        "root": format!("0x{}", hex::encode(root)),
+        "size": json_hex_u64(size as u64),
+    });
+    JsonRpcResponse::ok(id, json)
 }
 
 fn rpc_mempool_size(state: &ApiState, id: Value) -> JsonRpcResponse {
@@ -671,6 +733,87 @@ mod tests {
     }
 
     // ── block_to_json ──
+
+    // ── parse_address_param edge cases ──
+
+    #[test]
+    fn test_parse_address_invalid_hex_chars() {
+        let params = serde_json::json!(["0xZZ"]);
+        assert!(parse_address_param(&params, 0).is_err());
+    }
+
+    #[test]
+    fn test_parse_address_too_long() {
+        let too_long = hex::encode([0xCDu8; 33]);
+        let params = serde_json::json!([format!("0x{}", too_long)]);
+        assert!(parse_address_param(&params, 0).is_err());
+    }
+
+    // ── parse_hex_u64 edge cases ──
+
+    #[test]
+    fn test_parse_hex_u64_empty_string_is_none() {
+        let v = Value::String(String::new());
+        assert_eq!(parse_hex_u64(&v), None);
+    }
+
+    #[test]
+    fn test_parse_hex_u64_overflow_is_none() {
+        let v = Value::String("0x10000000000000000".into()); // 2^64
+        assert_eq!(parse_hex_u64(&v), None);
+    }
+
+    // ── event_log_to_json field lock ──
+
+    #[test]
+    fn test_event_log_to_json_field_lock() {
+        let log = crate::persistence::ContractEventLog {
+            contract_id: 7,
+            block_number: 42,
+            log_index: 1,
+            epoch: 4,
+            timestamp: 1000,
+            tx_hash: "feedface".into(),
+            event_name: "Burn".into(),
+            topics: vec!["t0".into(), "t1".into()],
+            data: vec!["d0".into()],
+        };
+        let v = event_log_to_json(&log);
+        assert_eq!(v["contractId"], 7);
+        assert_eq!(v["blockNumber"], "0x2a");
+        assert_eq!(v["logIndex"], 1);
+        assert_eq!(v["epoch"], "0x4");
+        assert_eq!(v["timestamp"], "0x3e8");
+        assert_eq!(v["transactionHash"], "0xfeedface");
+        assert_eq!(v["eventName"], "Burn");
+        assert_eq!(v["topics"], serde_json::json!(["t0", "t1"]));
+        assert_eq!(v["data"], serde_json::json!(["d0"]));
+    }
+
+    // ── JsonRpcResponse serialization shape ──
+
+    #[test]
+    fn test_response_serializes_with_jsonrpc_2_0() {
+        let resp = JsonRpcResponse::ok(Value::Number(99.into()), Value::String("ok".into()));
+        let v = serde_json::to_value(&resp).unwrap();
+        assert_eq!(v["jsonrpc"], "2.0");
+        assert_eq!(v["id"], 99);
+        assert_eq!(v["result"], "ok");
+        assert!(v.get("error").is_none(), "error should be skipped on ok");
+    }
+
+    #[test]
+    fn test_error_response_skips_result_field() {
+        let resp = JsonRpcResponse::method_not_found(Value::Number(1.into()), "evap_unknown");
+        let v = serde_json::to_value(&resp).unwrap();
+        assert_eq!(v["jsonrpc"], "2.0");
+        assert!(v.get("result").is_none(), "result should be skipped on err");
+        assert_eq!(v["error"]["code"], -32601);
+        assert!(v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("evap_unknown"));
+    }
 
     #[test]
     fn test_block_to_json_no_txs() {

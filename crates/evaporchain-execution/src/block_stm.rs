@@ -2130,6 +2130,13 @@ impl ExecutionEngine for BlockStmExecutor {
     fn mmr_size(&self) -> usize {
         self.mmr.size()
     }
+
+    fn mmr_proof(
+        &self,
+        leaf_index: u64,
+    ) -> Option<evaporchain_crypto::accumulator::MMRProof> {
+        self.mmr.prove(leaf_index)
+    }
 }
 
 impl BlockStmExecutor {

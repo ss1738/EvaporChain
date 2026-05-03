@@ -368,7 +368,7 @@ impl ProvingEngine for NovaProver {
 //   - 2 for epoch/block increment
 //   - 4 for state/mmr/tx/evap bindings
 //   - 5 × MAX_OBJECTS for energy decay + evaporation checks
-//   - 2 × (RANGE_BITS + 2) × MAX_OBJECTS for decay remainder range checks
+//   - 2 × (OBJECT_REMAINDER_BITS + 2) × MAX_OBJECTS for decay remainder range checks
 //   - (2 + RANGE_BITS + 2) × MAX_TRANSFERS for balance conservation + amount range check
 //   - (1) × MAX_TRANSFERS for nonce increment
 //   - 1 × MAX_EVAPORATIONS for nullifier binding
@@ -380,7 +380,26 @@ const MAX_TRANSFERS: usize = 16;
 /// Maximum number of evaporations per block proof.
 const MAX_EVAPORATIONS: usize = 8;
 /// Number of bits for range checks (supports values up to 2^32 - 1).
+///
+/// Used for BALANCE-related checks where realistic transfer amounts and
+/// sender-balance-after differences are unbounded by protocol design and
+/// can occupy up to 32 bits in practice.
 const RANGE_BITS: usize = 32;
+
+/// Number of bits for the per-object decay REMAINDER range checks
+/// (`shift_remainder`, `frac_remainder`).
+///
+/// These witnesses are bounded by `2 * half_life` (frac_remainder) and
+/// `2 * shift_factor` (shift_remainder). Half-life and shift_factor are
+/// protocol-bounded scalars that fit comfortably in 16 bits in any
+/// realistic decay schedule (current production schedules use half-lives
+/// in the 16–4096-block range, so `2 * half_life` ≤ 8192 ≪ 2^16). A
+/// dedicated 16-bit cap shaves ~256–512 constraints (~2% of the
+/// step-circuit cost) at zero soundness loss for the ranges that
+/// actually appear.
+///
+/// Documented as "Cut C" of `research/proposals/smaller-ivc-circuit.md`.
+const OBJECT_REMAINDER_BITS: usize = 16;
 
 // ─────────────── Witness Types ─────────────────────────────────────────
 
@@ -1053,7 +1072,7 @@ impl<G: Group> StepCircuit<G::Scalar> for RealBlockCircuit<G> {
                 obj.shift_remainder,
                 &shift_fac,
                 obj.shift_factor,
-                RANGE_BITS,
+                OBJECT_REMAINDER_BITS,
             )?;
 
             // (g) Range check: frac_remainder < two_half_life
@@ -1065,7 +1084,7 @@ impl<G: Group> StepCircuit<G::Scalar> for RealBlockCircuit<G> {
                 obj.frac_remainder,
                 &two_hl,
                 obj.two_half_life,
-                RANGE_BITS,
+                OBJECT_REMAINDER_BITS,
             )?;
         }
 
