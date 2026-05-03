@@ -2880,6 +2880,31 @@ impl ExecutionEngine for SimpleExecutor {
             };
             ra.process_block_rewards(db, &producer_addr, block.epoch, total_fees);
 
+            // Lane A.3: priority bonus auto-fire (mirrors parallel.rs).
+            if !block.submit_epoch_hints.is_empty() {
+                let priority_sum: u64 = block
+                    .submit_epoch_hints
+                    .iter()
+                    .filter_map(|h| h.as_ref())
+                    .map(|submit| {
+                        let elapsed = block.number.saturating_sub(*submit);
+                        evaporchain_types::energy_at_epoch(
+                            evaporchain_types::BASE_INCLUSION_ENERGY,
+                            evaporchain_types::MEV_INCLUSION_HALF_LIFE_BLOCKS,
+                            elapsed,
+                        )
+                    })
+                    .fold(0u64, u64::saturating_add);
+                let bonus_scale = evaporchain_types::BASE_INCLUSION_ENERGY;
+                ra.apply_priority_bonus(
+                    db,
+                    &producer_addr,
+                    block.epoch,
+                    priority_sum,
+                    bonus_scale,
+                );
+            }
+
             // Distribute staker rewards every 100 blocks
             if block.number.is_multiple_of(100) && ra.pending_staker_rewards > 0 {
                 let stakers: Vec<([u8; 32], u64)> = db

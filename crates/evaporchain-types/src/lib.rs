@@ -1607,6 +1607,21 @@ impl Default for DecayCurve {
 /// Implemented via bit-shifting for complete halvings and linear
 /// interpolation for the fractional part.
 ///
+/// Initial inclusion-priority energy assigned to every tx at submission.
+/// Decays each block with `MEV_INCLUSION_HALF_LIFE_BLOCKS`. Sized so a tx
+/// held back for one half-life is worth ~50% of its initial priority,
+/// making reordering attacks bleed value
+/// (`research/proposals/energy-stamped-mev-resistance.md`). Lives in
+/// `evaporchain-types` so both `evaporchain-consensus::mempool` (for
+/// proposal-time priority sort) and `evaporchain-execution` (for
+/// consensus-deterministic priority-bonus minting from `execute_block`)
+/// can read the same constants without a circular dep.
+pub const BASE_INCLUSION_ENERGY: u64 = 1_000_000;
+/// Block-count half-life for tx inclusion priority. Tuned for 2-second
+/// block intervals — 4 blocks ≈ 8 seconds halving, comparable to the
+/// Ethereum 12-second slot window.
+pub const MEV_INCLUSION_HALF_LIFE_BLOCKS: u64 = 4;
+
 /// Mechanized monotonicity proof: `research/coq/EnergyDecayMonotonicity.v`
 /// (theorem `energy_at_epoch_monotone`). Any change to this function's
 /// arithmetic must be reflected in the Coq spec. Both the within-halving

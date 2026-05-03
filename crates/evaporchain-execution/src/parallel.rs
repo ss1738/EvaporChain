@@ -1897,6 +1897,42 @@ impl ExecutionEngine for ParallelExecutor {
             };
             ra.process_block_rewards(db, &producer_addr, block.epoch, total_fees);
 
+            // Lane A.3: priority bonus auto-fire. The proposer stamped
+            // `block.submit_epoch_hints` per Lane A.2 (commit 18beb29);
+            // every validator now sums `energy_at_epoch(BASE_INCLUSION_ENERGY,
+            // MEV_INCLUSION_HALF_LIFE_BLOCKS, block.number - hint)` across
+            // hinted txs and mints `priority_sum / scale_per_unit` to the
+            // producer. Followers compute the same priority_sum from on-the-
+            // wire hints, mint the same bonus, no state divergence — Phase
+            // 1.5 of `research/proposals/energy-stamped-mev-resistance.md`
+            // is now consensus-deterministic.
+            if !block.submit_epoch_hints.is_empty() {
+                let priority_sum: u64 = block
+                    .submit_epoch_hints
+                    .iter()
+                    .filter_map(|h| h.as_ref())
+                    .map(|submit| {
+                        let elapsed = block.number.saturating_sub(*submit);
+                        evaporchain_types::energy_at_epoch(
+                            evaporchain_types::BASE_INCLUSION_ENERGY,
+                            evaporchain_types::MEV_INCLUSION_HALF_LIFE_BLOCKS,
+                            elapsed,
+                        )
+                    })
+                    .fold(0u64, u64::saturating_add);
+                // `scale_per_unit = BASE_INCLUSION_ENERGY` ⇒ a fully-fresh
+                // tx (elapsed=0) yields ~1 token. Operator-tunable in a
+                // future commit (genesis tokenomics field).
+                let bonus_scale = evaporchain_types::BASE_INCLUSION_ENERGY;
+                ra.apply_priority_bonus(
+                    db,
+                    &producer_addr,
+                    block.epoch,
+                    priority_sum,
+                    bonus_scale,
+                );
+            }
+
             // Distribute staker rewards every 100 blocks
             if block.number.is_multiple_of(100) && ra.pending_staker_rewards > 0 {
                 let stakers: Vec<([u8; 32], u64)> = db
@@ -2335,6 +2371,107 @@ mod tests {
         );
         let ra = executor.reward_accumulator().unwrap();
         assert_eq!(ra.total_minted, 100);
+    }
+
+    #[test]
+    fn test_parallel_executor_priority_bonus_auto_fires_from_hints() {
+        // Lane A.3: when block.submit_epoch_hints carries Some(epoch)
+        // for any tx, execute_block computes priority_sum from on-the-
+        // wire hints (not from local mempool state) and mints a bonus
+        // to the producer on top of the block reward. This is what
+        // makes Phase 1.5 cluster-deterministic — every follower
+        // computes the same priority_sum and mints the same bonus.
+        use evaporchain_types::genesis::Tokenomics;
+
+        let mut db = InMemoryStateDB::new();
+        let producer_id: u64 = 7;
+        let producer_addr = addr(producer_id as u8);
+        fund_account(&mut db, producer_id as u8, 0);
+        fund_account(&mut db, 1, 1000);
+
+        let mut block = make_block(
+            5, // height 5
+            0,
+            vec![Transaction::Transfer(TransferTx {
+                from: addr(1),
+                to: addr(2),
+                amount: 100,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        block.producer_id = Some(producer_id);
+        // Tx submitted at epoch 5 (same height as the block) → elapsed=0
+        // → priority = BASE_INCLUSION_ENERGY = 1_000_000 → bonus =
+        // 1_000_000 / 1_000_000 = 1 token.
+        block.submit_epoch_hints = vec![Some(5)];
+
+        let mut executor = ParallelExecutor::new_for_test(100);
+        executor.enable_rewards(Tokenomics {
+            total_supply: 10_000_000,
+            block_reward: 100,
+            reward_half_life: 1000,
+            fee_burn_rate: 0.50,
+            staker_fee_share: 0.50,
+            target_staking_apy: 0.05,
+        });
+
+        let _ = executor.execute_block(&mut db, &block).unwrap();
+
+        // Producer should receive: block_reward (100) + priority_bonus (≥1).
+        let producer_balance = db.get_account(&producer_addr).unwrap().balance;
+        assert!(
+            producer_balance >= 101,
+            "producer must receive block reward + priority bonus — got {producer_balance}"
+        );
+    }
+
+    #[test]
+    fn test_parallel_executor_no_priority_bonus_when_hints_empty() {
+        // Lane A.3 negative case: empty hints vec ⇒ no priority bonus
+        // (legacy-quiet block path is bit-compat).
+        use evaporchain_types::genesis::Tokenomics;
+
+        let mut db = InMemoryStateDB::new();
+        let producer_id: u64 = 9;
+        let producer_addr = addr(producer_id as u8);
+        fund_account(&mut db, producer_id as u8, 0);
+        fund_account(&mut db, 1, 1000);
+
+        let mut block = make_block(
+            1,
+            0,
+            vec![Transaction::Transfer(TransferTx {
+                from: addr(1),
+                to: addr(2),
+                amount: 100,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })],
+        );
+        block.producer_id = Some(producer_id);
+        // Empty hints ⇒ no priority bonus.
+        block.submit_epoch_hints = vec![];
+
+        let mut executor = ParallelExecutor::new_for_test(100);
+        executor.enable_rewards(Tokenomics {
+            total_supply: 10_000_000,
+            block_reward: 100,
+            reward_half_life: 1000,
+            fee_burn_rate: 0.50,
+            staker_fee_share: 0.50,
+            target_staking_apy: 0.05,
+        });
+
+        let _ = executor.execute_block(&mut db, &block).unwrap();
+
+        let producer_balance = db.get_account(&producer_addr).unwrap().balance;
+        assert_eq!(
+            producer_balance, 100,
+            "no hints ⇒ block reward only, no priority bonus"
+        );
     }
 
     #[test]

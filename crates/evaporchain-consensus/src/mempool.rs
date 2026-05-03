@@ -2,16 +2,10 @@ use evaporchain_crypto::signatures::{HybridVerifier, Verifier};
 use evaporchain_types::{energy_at_epoch, Transaction};
 use std::collections::{HashMap, HashSet, VecDeque};
 
-/// Initial inclusion-priority energy assigned to every tx at submission.
-/// Decays each block with `MEV_INCLUSION_HALF_LIFE_BLOCKS`. Sized so a tx
-/// held back for one half-life is worth ~50% of its initial priority,
-/// making reordering attacks bleed value (see
-/// `research/proposals/energy-stamped-mev-resistance.md`).
-pub const BASE_INCLUSION_ENERGY: u64 = 1_000_000;
-/// Block-count half-life for tx inclusion priority. Tuned for 2-second
-/// block intervals — 4 blocks ≈ 8 seconds halving, comparable to the
-/// Ethereum 12-second slot window.
-pub const MEV_INCLUSION_HALF_LIFE_BLOCKS: u64 = 4;
+// Re-export the canonical priority constants from `evaporchain-types`
+// (Lane A.3 moved them out of mempool so the execution layer can read
+// the same constants without a circular consensus → execution dep).
+pub use evaporchain_types::{BASE_INCLUSION_ENERGY, MEV_INCLUSION_HALF_LIFE_BLOCKS};
 
 /// Maximum number of transactions in the mempool (DoS protection).
 const MAX_MEMPOOL_SIZE: usize = 10_000;
