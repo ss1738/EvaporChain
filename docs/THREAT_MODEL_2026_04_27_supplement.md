@@ -1,13 +1,15 @@
 # Threat Model Supplement — 2026-04-27 (post-closure annotated 2026-05-03)
 
 > **Status as of 2026-05-03:** §2.1, §2.2, §2.3, §2.5, §2.6 are **closed in code**.
-> Closure annotations are inline in each subsection. Only §2.4 remains open.
-> §2.7 was re-audited 2026-05-03 and found already-closed: every `db.put_cf`
-> / `db.write` site in `rocksdb_backend.rs` matches the `if let Err(e) = ...
-> { fatal_persistence_error(op, e); }` pattern, and the helper at lines
-> 62–71 logs + `exit(2)`s instead of panicking. When `THREAT_MODEL.md` §6
-> is rewritten for mainnet, this supplement folds in and is deleted, per
-> §5 below.
+> Closure annotations are inline in each subsection. **All §2.x items now
+> closed** as of the 2026-05-03 re-audit pass. §2.7 was already-closed via
+> the `fatal_persistence_error` helper + 15 `if let Err(e) = ... { ... }`
+> sites in `rocksdb_backend.rs`. §2.4 was already-closed via six layered
+> defenses in `FinalityTracker::on_block_finalized_with_active`
+> (active-signer guard, duplicate-finalization guard, superseded-floor
+> watermark, seen-proposals guard, empty-signer rejection, 2/3 stake
+> quorum). The supplement is now fully obsolete and folds into the main
+> `THREAT_MODEL.md` per §5 below in the next mainnet doc revision.
 
 This is a **supplement** to `docs/THREAT_MODEL.md`, not a replacement. The base document still defines the system overview, trust assumptions, and adversary model. This supplement adds:
 
@@ -80,7 +82,18 @@ Combined with `genesis-mainnet.json` allocating 35% of supply to a single Founda
 
 **Fix required:** decide whether the feature is in or out, then either implement it correctly (with `governance_approved` check) or remove `Transaction::UpgradeContract` until designed.
 
-### 2.4 Finality records pollution (HIGH, **OPEN** — design-level, deferred to refactor sprint)
+### 2.4 Finality records pollution (HIGH, **CLOSED** — verified 2026-05-03)
+
+> **Closure note (2026-05-03):** re-audit of `FinalityTracker::on_block_finalized_with_active` (`finality.rs:230-338`) confirmed six layered defenses against record pollution:
+>
+> 1. **Active-signer guard** (line 245-260) — a backfill cert signed by validators no longer in the active set is rejected with `"cert signed by validators no longer active"`.
+> 2. **Duplicate-finalization guard** (line 261) — `if self.records.contains_key(&height) return false` prevents any re-insertion of an existing record.
+> 3. **Superseded-floor watermark** (line 268-274) — pruned heights track `self.superseded_floor`; backfill at or below this floor is rejected. The watermark is bumped during LRU pruning (line 332-334).
+> 4. **Seen-proposals guard** (line 282-292) — a back-fill at `height < latest_finalized` is only accepted when the height was actually seen in a prior proposal observation, closing the "colluding majority backfills records the cluster never proposed" residual.
+> 5. **Empty-signer rejection** (line 293) — `signer_ids.is_empty()` ⇒ reject.
+> 6. **2/3 stake quorum** (line 296) — `signing_stake * 3 < total_stake * 2` ⇒ reject.
+>
+> Together these implement the "non-blocking variant of monotonicity that allows legitimate gap-fill but rejects already-superseded heights" that this section asked for. The supplement was stale; this annotation refreshes it.
 
 **Adversary capability added:** an attacker holding old valid `CommitCertificate` data can backfill `FinalityTracker.records` at gap heights below `latest_finalized`, misleading light clients that look up historical finality.
 
