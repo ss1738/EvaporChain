@@ -859,6 +859,9 @@ mod tests {
             da_col_roots: vec![],
             oracle_state_root: None,
             shard_count: None,
+            protocol_version: 0,
+            state_root_version: 0,
+            submit_epoch_hints: vec![],
         };
 
         // Execute with sig verification — should skip the bad tx
@@ -2186,6 +2189,9 @@ mod proving_integration {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            protocol_version: 0,
+            state_root_version: 0,
+            submit_epoch_hints: vec![],
         }
     }
 
