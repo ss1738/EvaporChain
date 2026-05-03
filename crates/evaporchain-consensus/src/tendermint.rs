@@ -1022,6 +1022,32 @@ impl TendermintConsensus {
             .unwrap_or("mcc")
     }
 
+    /// Snapshot all governance flags + their effective values (including
+    /// the documented defaults for unset keys). Used by the
+    /// `GET /api/governance/flags` RPC so operators can verify which
+    /// soft-fork knobs are active without reading internal state.
+    ///
+    /// The returned map is `{key → value}` for everything explicitly set
+    /// in `governance_params`, plus a small set of documented keys with
+    /// their default values when unset (so operators can see the
+    /// effective state, not just the explicit overrides).
+    pub fn governance_flags_snapshot(&self) -> std::collections::HashMap<String, String> {
+        let mut out = self.governance_params.clone();
+        // Document the soft-fork keys + their defaults so consumers
+        // see the *effective* value, not just the explicit overrides.
+        // Keys touched by Lane I.4 / Lane I.5 / Layer 0 #1.
+        for (key, default) in [
+            ("fork_choice_mode", "mcc"),
+            ("parent_acceptance_mode", "linear"),
+            ("block_source_mode", "fifo"),
+            ("conservation_enforcement", "observe"),
+        ] {
+            out.entry(key.to_string())
+                .or_insert_with(|| default.to_string());
+        }
+        out
+    }
+
     // ─── Singh-Boltzmann Stake ─────────────────────────────────────────────
 
     /// Ensure `validator_id` has a Boltzmann stake entry. If not present,

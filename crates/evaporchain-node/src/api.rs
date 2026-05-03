@@ -2141,6 +2141,33 @@ async fn post_governance_fork_choice_mode(
     }
 }
 
+/// GET /api/governance/flags — all governance soft-fork keys + their
+/// effective values (explicit overrides merged with documented defaults).
+/// Lane I.4 + Lane I.5 + Layer 0 #1 introduced opt-in flags
+/// (`parent_acceptance_mode`, `block_source_mode`, `conservation_enforcement`)
+/// that operators need to inspect to verify which doctrine claims are
+/// live. This RPC surfaces them all in one call.
+async fn get_governance_flags(
+    State(state): State<Arc<ApiState>>,
+) -> Json<serde_json::Value> {
+    if let Some(tc_arc) = &state.tendermint {
+        let tc = safe_lock(tc_arc);
+        let flags = tc.governance_flags_snapshot();
+        Json(serde_json::json!({
+            "flags": flags,
+            "detail": "Effective values for governance soft-fork keys. \
+                Defaults applied for any key not explicitly set: \
+                fork_choice_mode=mcc, parent_acceptance_mode=linear, \
+                block_source_mode=fifo, conservation_enforcement=observe."
+        }))
+    } else {
+        Json(serde_json::json!({
+            "flags": {},
+            "detail": "Tendermint consensus not running (single-validator devnet mode)"
+        }))
+    }
+}
+
 /// GET /api/governance/fork_choice_mode — current fork-choice mode + attractor set.
 async fn get_governance_fork_choice_mode(
     State(state): State<Arc<ApiState>>,
@@ -6366,6 +6393,7 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     ApiDocEntry { method: "POST", path: "/api/decay_forget/verify",         category: "substrate", description: "Verify a DecayForgetProof witness — tamper-evident check that the proof was not modified.", example: Some(r#"{"record_id_hex":"00..00","original_commitment":1000000,"activated_epoch":0,"query_epoch":500,"forget_threshold":100}"#) },
 
     // Governance
+    ApiDocEntry { method: "GET",  path: "/api/governance/flags",       category: "governance", description: "All governance soft-fork flags + their effective values (Lane I.4/I.5 + Layer 0 #1: parent_acceptance_mode, block_source_mode, conservation_enforcement, fork_choice_mode). Defaults applied for unset keys.", example: None },
     ApiDocEntry { method: "GET",  path: "/api/governance/fork_choice_mode", category: "governance", description: "Current authoritative fork-choice mode (mcc|singh_attractor) + attractor set.", example: None },
     ApiDocEntry { method: "POST", path: "/api/governance/fork_choice_mode", category: "governance", description: "Governance amendment to switch fork-choice between MCC and Singh-Attractor. Requires stake quorum from endorser_stakes.", example: Some(r#"{"mode":"singh_attractor","attractors":[{"center":1000,"basin_radius":200}],"endorser_stakes":[1000,800],"required_stake":1500}"#) },
 
@@ -14134,6 +14162,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/patronage/revoke", post(post_patronage_revoke))
         .route("/api/patronage/status", get(get_patronage_status))
         .route("/api/patronage/immune", get(get_patronage_immune))
+        .route("/api/governance/flags", get(get_governance_flags))
         .route(
             "/api/governance/fork_choice_mode",
             get(get_governance_fork_choice_mode),
