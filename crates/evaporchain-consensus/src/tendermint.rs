@@ -5718,6 +5718,113 @@ mod tests {
     }
 
     #[test]
+    fn test_governance_set_param_accepts_all_allowlisted_pairs() {
+        // Lane K.2: every (key, value) pair in the allowlist must
+        // succeed and actually mutate governance_params. Locks the
+        // contract operators rely on at POST /api/governance/param.
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+
+        // (key, value) pairs that MUST succeed.
+        let pairs = vec![
+            ("parent_acceptance_mode", "linear"),
+            ("parent_acceptance_mode", "mcc"),
+            ("block_source_mode", "fifo"),
+            ("block_source_mode", "antichain"),
+            ("conservation_enforcement", "observe"),
+            ("conservation_enforcement", "enforce"),
+        ];
+        for (key, value) in &pairs {
+            assert!(
+                tc.governance_set_param(key, value).is_ok(),
+                "allowlist pair ({key}, {value}) must succeed"
+            );
+            assert_eq!(
+                tc.get_governance_param(key),
+                Some(*value),
+                "governance_params must reflect the set value"
+            );
+        }
+        // After the loop, each key holds its LAST-set value (later
+        // pairs overwrite earlier ones for the same key). Snapshot
+        // must reflect those last-writes.
+        let snap = tc.governance_flags_snapshot();
+        assert_eq!(
+            snap.get("parent_acceptance_mode").map(|s| s.as_str()),
+            Some("mcc")
+        );
+        assert_eq!(
+            snap.get("block_source_mode").map(|s| s.as_str()),
+            Some("antichain")
+        );
+        assert_eq!(
+            snap.get("conservation_enforcement").map(|s| s.as_str()),
+            Some("enforce")
+        );
+    }
+
+    #[test]
+    fn test_governance_set_param_rejects_unknown_key() {
+        // Unknown keys must be rejected with UnknownKey — prevents
+        // operators from littering governance_params with junk that
+        // later breaks the typo-fall-through patterns.
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        let err = tc
+            .governance_set_param("not_a_real_key", "some_value")
+            .unwrap_err();
+        assert_eq!(
+            err,
+            GovernanceParamError::UnknownKey("not_a_real_key".to_string())
+        );
+        // governance_params must NOT have been mutated.
+        assert!(tc.get_governance_param("not_a_real_key").is_none());
+    }
+
+    #[test]
+    fn test_governance_set_param_rejects_invalid_value() {
+        // Valid key with an invalid value must be rejected with
+        // InvalidValue + the structured permitted-set so the RPC can
+        // surface useful diagnostics.
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        let err = tc
+            .governance_set_param("parent_acceptance_mode", "MCC") // wrong case
+            .unwrap_err();
+        match err {
+            GovernanceParamError::InvalidValue {
+                key,
+                value,
+                permitted,
+            } => {
+                assert_eq!(key, "parent_acceptance_mode");
+                assert_eq!(value, "MCC");
+                assert!(permitted.contains(&"linear".to_string()));
+                assert!(permitted.contains(&"mcc".to_string()));
+            }
+            other => panic!("expected InvalidValue, got {:?}", other),
+        }
+        // Pre-mutation default value preserved.
+        assert!(tc
+            .get_governance_param("parent_acceptance_mode")
+            .is_none());
+    }
+
+    #[test]
+    fn test_governance_set_param_rejects_fork_choice_mode() {
+        // fork_choice_mode is intentionally NOT in the allowlist — it
+        // requires endorser-stake validation and goes through
+        // governance_set_fork_choice_mode instead. Setting it via the
+        // generic param setter must be rejected with UnknownKey so
+        // operators can't bypass the stake check.
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        let err = tc
+            .governance_set_param("fork_choice_mode", "mcc")
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            GovernanceParamError::UnknownKey(ref k) if k == "fork_choice_mode"
+        ));
+    }
+
+    #[test]
     fn test_parent_acceptance_mode_typo_falls_through_to_linear() {
         // Lane J.2 typo-safety negative: a typo'd governance value
         // (e.g. "mcc " or "MCC" or anything not exactly "mcc") falls
