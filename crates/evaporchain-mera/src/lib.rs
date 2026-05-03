@@ -30,8 +30,12 @@
 //! # MERA gate
 //!
 //! This crate was gated on an empirical entropy measurement (§A1.8).
-//! Gate result: **PASS — MERA GO** (2026-04-29).
+//! Synthetic-data gate result: **PASS** (2026-04-29).
 //! See `research/mera-gate/GATE_RESULT.md`.
+//!
+//! Real-Ethereum-data gate per §A1.9 rule 12 is open work — tracked in
+//! `DOCTRINE_PUNCH_LIST.md` Layer 2. Until that gate runs, all
+//! "MERA-gate passed" statements MUST carry the synthetic-data caveat.
 //!
 //! # Bond dimension
 //!

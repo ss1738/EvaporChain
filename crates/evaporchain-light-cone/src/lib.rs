@@ -1,5 +1,15 @@
 //! Light-Cone Consensus substrate.
 //!
+//! **Production status (2026-05-03):** read-only observability layer.
+//! The chain authority is still Tendermint's linear chain — see the
+//! honest comment at `evaporchain-consensus/src/tendermint.rs:3115-3118`.
+//! This crate's DAG / antichain / causal-past machinery is correct math,
+//! but no consensus-rejecting decision currently consults it. Promoting
+//! Light-Cone to authoritative fork-choice (replacing the single
+//! `parent_hash` rule) is the Layer 4 work tracked in
+//! `DOCTRINE_PUNCH_LIST.md`. Until then, the "Soul of the chain" framing
+//! describes the *intent*, not the shipped behaviour.
+//!
 //! Per `research/INVENTION_STACK.md` §4.1 row 1:
 //!
 //! > **Light-Cone Consensus** — Causal-set partial-order consensus
