@@ -1501,6 +1501,7 @@ mod tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            submit_epoch_hints: vec![],
         }
     }
 

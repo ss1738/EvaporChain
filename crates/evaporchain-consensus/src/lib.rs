@@ -344,6 +344,7 @@ impl MockConsensus {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            submit_epoch_hints: vec![],
         };
 
         let execution = self.executor.execute_block(db, &block).map_err(
@@ -424,6 +425,7 @@ impl MockConsensus {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            submit_epoch_hints: vec![],
         };
 
         let execution = self.executor.execute_block(db, &block).map_err(
@@ -595,6 +597,7 @@ impl RotatingConsensus {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            submit_epoch_hints: vec![],
         };
 
         let execution = self.executor.execute_block(db, &block).map_err(
@@ -1270,6 +1273,7 @@ mod tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            submit_epoch_hints: vec![],
         };
 
         let result = rc.validate_received_block(&block);
@@ -1311,6 +1315,7 @@ mod tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            submit_epoch_hints: vec![],
         };
         assert!(rc.validate_received_block(&block).is_err());
     }
@@ -1386,6 +1391,7 @@ mod tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            submit_epoch_hints: vec![],
         };
 
         assert!(follower.apply_block(&mut db, &block).is_err());

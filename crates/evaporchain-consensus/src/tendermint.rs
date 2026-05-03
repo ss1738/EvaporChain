@@ -3800,6 +3800,7 @@ impl TendermintConsensus {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            submit_epoch_hints: vec![],
             da_row_roots: vec![],
             da_col_roots: vec![],
         };
@@ -5167,6 +5168,7 @@ mod tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            submit_epoch_hints: vec![],
         };
 
         tc.on_block_committed(&block, [1u8; 32], 0);
@@ -5198,6 +5200,7 @@ mod tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            submit_epoch_hints: vec![],
         };
 
         let h1 = TendermintConsensus::block_hash(&block);
@@ -5357,6 +5360,7 @@ mod tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            submit_epoch_hints: vec![],
         };
 
         let fake_proposal = ConsensusMessage::Proposal {
@@ -5729,6 +5733,7 @@ mod tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            submit_epoch_hints: vec![],
         };
 
         let msg = ConsensusMessage::Proposal {
@@ -5779,6 +5784,7 @@ mod tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            submit_epoch_hints: vec![],
         };
 
         let msg = ConsensusMessage::Proposal {
@@ -5830,6 +5836,7 @@ mod tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            submit_epoch_hints: vec![],
         };
 
         let msg = ConsensusMessage::Proposal {
@@ -6619,6 +6626,7 @@ mod vrf_tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            submit_epoch_hints: vec![],
         };
 
         let msg = ConsensusMessage::Proposal {
@@ -6846,6 +6854,7 @@ mod epoch_tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            submit_epoch_hints: vec![],
         }
     }
 
@@ -8098,6 +8107,7 @@ mod da_tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            submit_epoch_hints: vec![],
         }
     }
 

@@ -140,6 +140,7 @@ fn bench_transaction_throughput() -> f64 {
         state_function_commitment: None,
         oracle_state_root: None,
         shard_count: None,
+        submit_epoch_hints: vec![],
         da_row_roots: vec![],
         da_col_roots: vec![],
     };
@@ -220,6 +221,7 @@ fn bench_block_execution() -> f64 {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            submit_epoch_hints: vec![],
             da_row_roots: vec![],
             da_col_roots: vec![],
         };
@@ -330,6 +332,7 @@ fn bench_object_creation() -> f64 {
         state_function_commitment: None,
         oracle_state_root: None,
         shard_count: None,
+        submit_epoch_hints: vec![],
         da_row_roots: vec![],
         da_col_roots: vec![],
     };
@@ -416,6 +419,7 @@ fn bench_refresh_throughput() -> f64 {
         state_function_commitment: None,
         oracle_state_root: None,
         shard_count: None,
+        submit_epoch_hints: vec![],
         da_row_roots: vec![],
         da_col_roots: vec![],
     };
@@ -493,6 +497,7 @@ fn bench_stress_test() -> f64 {
         state_function_commitment: None,
         oracle_state_root: None,
         shard_count: None,
+        submit_epoch_hints: vec![],
         da_row_roots: vec![],
         da_col_roots: vec![],
     };
@@ -623,6 +628,7 @@ fn bench_mixed_workload() -> f64 {
         state_function_commitment: None,
         oracle_state_root: None,
         shard_count: None,
+        submit_epoch_hints: vec![],
         da_row_roots: vec![],
         da_col_roots: vec![],
     };
@@ -708,6 +714,7 @@ fn bench_multi_block_sustained() -> f64 {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            submit_epoch_hints: vec![],
             da_row_roots: vec![],
             da_col_roots: vec![],
         };

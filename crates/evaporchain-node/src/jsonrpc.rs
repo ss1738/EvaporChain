@@ -1506,6 +1506,7 @@ mod tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            submit_epoch_hints: vec![],
         };
         let json = block_to_json(&block, false);
         assert_eq!(json["number"], "0x2a");

@@ -172,6 +172,24 @@ pub struct Block {
     /// Shard health summary — number of active shards and compaction candidates.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shard_count: Option<u16>,
+    /// Phase-2 of `research/proposals/energy-stamped-mev-resistance.md`:
+    /// per-tx submit-epoch hints carried on the wire so every validator
+    /// computes the SAME priority for each tx, deterministically.
+    ///
+    /// Length conventions (verifier MUST enforce):
+    ///   - empty `vec![]` (the default for legacy blocks): no hints,
+    ///     mempool falls back to its local `tx_submit_epoch` for the
+    ///     producer's own priority calculation; followers can't
+    ///     reconstruct priority and the priority bonus is suppressed.
+    ///   - non-empty: `submit_epoch_hints.len() == transactions.len()`,
+    ///     and `submit_epoch_hints[i]` is `Some(epoch)` for tx `i` if
+    ///     the proposer included a hint, `None` if not.
+    ///
+    /// This is a soft-fork wire-format change: existing blocks
+    /// serialize bit-identically (skip-empty + skip-None), new blocks
+    /// add the field only when at least one tx was hinted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub submit_epoch_hints: Vec<Option<u64>>,
 }
 
 /// Commitment to the state function for Rule-Based Consensus.
@@ -1767,6 +1785,7 @@ mod tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            submit_epoch_hints: vec![],
         };
         let json = serde_json::to_vec(&block).unwrap();
         let back: Block = serde_json::from_slice(&json).unwrap();

@@ -2494,6 +2494,7 @@ mod tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            submit_epoch_hints: vec![],
             da_row_roots: vec![],
             da_col_roots: vec![],
         }
