@@ -2975,6 +2975,12 @@ impl ExecutionEngine for SimpleExecutor {
         // makes PNT authoritative.
         let _pnt_advanced = self.privacy_executor.tick_pnt_phase(block.epoch);
 
+        // Lane E.2: EnergyVerkleTrie cold-subtree compression (mirrors
+        // parallel.rs). v0=off, v1+=on.
+        if block.state_root_version >= 1 {
+            let _compressed = db.compress_cold_subtrees();
+        }
+
         let state_root = db.compute_state_root();
         db.commit_state_snapshot(block.number);
 
