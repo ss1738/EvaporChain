@@ -40,10 +40,14 @@
 //! - [`predict`] — `predict_next(machine, current_state)` returns
 //!   the per-symbol output distribution.
 
+pub mod cssr;
 pub mod machine;
 pub mod predict;
 pub mod reconstruct;
 
+pub use cssr::{
+    reconstruct_cssr, ReconstructError, DEFAULT_ALPHA, DEFAULT_L_MAX, MIN_COUNT_FOR_TEST,
+};
 pub use machine::{EpsilonMachine, MachineError, StateId};
 pub use predict::predict_next;
 pub use reconstruct::reconstruct_unconditional;
