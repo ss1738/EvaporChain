@@ -41,19 +41,47 @@ struct BlockDaOutputs {
     blob_commitments: Vec<[u8; 32]>,
 }
 
+/// Domain-separated `data_root` for an empty block.
+///
+/// Returns `blake3_keyed_hash("evaporchain:empty_block:v2", height ‖ parent_hash)`.
+/// Two empty blocks at different heights, or with different parent hashes,
+/// produce different `data_root` values, which prevents:
+///   - DA-attestation replay across heights (a signature on the empty-block
+///     sentinel at height H cannot be reused at height H′ ≠ H);
+///   - light-client confusion about whether two empty blocks are identical;
+///   - constant-sentinel collisions surfaced by the audit/ re-audit
+///     2026-05-03 (#9.1, "empty-block data_root handling").
+///
+/// The v2 suffix is intentional: pre-2026-05-03 nodes used a static
+/// `blake3("evaporchain:empty_block")`. New chains hash the (height,
+/// parent_hash) pair so empty-block headers carry chain-position context.
+pub fn empty_block_data_root(height: u64, parent_hash: &[u8; 32]) -> [u8; 32] {
+    const KEY: [u8; 32] = *b"evaporchain:empty_block:v2_____\0";
+    let mut input = [0u8; 8 + 32];
+    input[..8].copy_from_slice(&height.to_le_bytes());
+    input[8..].copy_from_slice(parent_hash);
+    *blake3::keyed_hash(&KEY, &input).as_bytes()
+}
+
 /// Compute the data availability commitments for a block's transactions.
 ///
 /// Uses [`BlockDA2D`] (Celestia-style 2D extended data square) to produce a
 /// `data_root`, per-row and per-column Merkle roots, and namespace blob
-/// commitments in a single call. Empty blocks fall back to a sentinel
-/// `data_root` so the DA attestation flow still fires every block.
+/// commitments in a single call. Empty blocks fall back to a domain-separated
+/// sentinel `data_root` (see [`empty_block_data_root`]) so the DA attestation
+/// flow still fires every block, but the sentinel is unique per
+/// (height, parent_hash).
 ///
 /// On any encoding failure all DA fields are returned empty / `None` and a
 /// warning is logged — block production is never aborted by a DA error.
-fn compute_block_da(txs: &[Transaction]) -> BlockDaOutputs {
+fn compute_block_da(
+    txs: &[Transaction],
+    height: u64,
+    parent_hash: &[u8; 32],
+) -> BlockDaOutputs {
     if txs.is_empty() {
         return BlockDaOutputs {
-            data_root: Some(blake3::hash(b"evaporchain:empty_block").into()),
+            data_root: Some(empty_block_data_root(height, parent_hash)),
             da_row_roots: vec![],
             da_col_roots: vec![],
             blob_commitments: vec![],
@@ -293,7 +321,7 @@ impl MockConsensus {
             .unwrap_or_default()
             .as_secs();
 
-        let da = compute_block_da(&txs);
+        let da = compute_block_da(&txs, self.block_number, &self.parent_hash);
         let mut block = Block {
             number: self.block_number,
             epoch: self.epoch,
@@ -373,7 +401,7 @@ impl MockConsensus {
             .unwrap_or_default()
             .as_secs();
 
-        let da = compute_block_da(&txs);
+        let da = compute_block_da(&txs, self.block_number, &self.parent_hash);
         let mut block = Block {
             number: self.block_number,
             epoch: self.epoch,
@@ -544,7 +572,7 @@ impl RotatingConsensus {
             .unwrap_or_default()
             .as_secs();
 
-        let da = compute_block_da(&txs);
+        let da = compute_block_da(&txs, self.block_number, &self.parent_hash);
         let mut block = Block {
             number: self.block_number,
             epoch: self.epoch,

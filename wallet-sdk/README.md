@@ -2,11 +2,35 @@
 
 Complete SDK for building dApps on EvaporChain. Provides wallet connection, a typed REST API client, React hooks, and utility functions. Zero external dependencies.
 
+## Status
+
+**Pre-1.0 (`v0.1.0`).** This package is **not yet published to npm.** Until first publish, consume it via the EvaporChain monorepo workspace or a local file dependency.
+
 ## Installation
 
+### From the EvaporChain monorepo
+
+The SDK lives at `wallet-sdk/` in the EvaporChain repository. Apps in the same monorepo (e.g. `website/`, the dApps under `dapps/`) consume it directly via the workspace path.
+
+### Local dependency (out-of-tree consumers)
+
 ```bash
+git clone https://github.com/ss1738/EvaporChain
+cd EvaporChain/wallet-sdk
+npm install && npm run build
+
+# In your dApp
+npm install /absolute/path/to/EvaporChain/wallet-sdk
+```
+
+### npm (planned)
+
+```bash
+# Once @evaporchain/wallet-sdk is published — currently TBD
 npm install @evaporchain/wallet-sdk
 ```
+
+Track publish status in `docs/PROGRESS.md` (Ecosystem table).
 
 ## What's Included
 

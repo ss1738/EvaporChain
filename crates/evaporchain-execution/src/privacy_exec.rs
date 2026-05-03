@@ -360,10 +360,27 @@ impl PrivacyExecutor {
             return Err(PrivacyExecError::StaleAnchor);
         }
 
-        // 3. Check nullifiers not already spent
+        // 3. Check nullifiers not already spent (against persisted db state).
         for nf in &tx.input_nullifiers {
             if db.is_nullifier_spent(nf) {
                 return Err(PrivacyExecError::DoubleSpend(hex::encode(&nf[..8])));
+            }
+        }
+
+        // 3a. Check for duplicate nullifiers WITHIN the transaction.
+        // Without this, a malicious unshield with `input_nullifiers = [nf, nf]`
+        // and matching duplicated `input_amounts` / `input_value_commitments`
+        // would pass step 3 (db check) and balance binding (sums match by
+        // construction) and double-extract from a single shielded note.
+        // `execute_private_transfer` had this check; `execute_unshield`
+        // did not. Closes audit-flagged 2026-05-03 #9.2 (privacy nullifier
+        // hygiene against Block-STM / serial-replay edge cases).
+        {
+            let mut seen = std::collections::HashSet::new();
+            for nf in &tx.input_nullifiers {
+                if !seen.insert(*nf) {
+                    return Err(PrivacyExecError::DoubleSpend(hex::encode(&nf[..8])));
+                }
             }
         }
 
@@ -411,10 +428,17 @@ impl PrivacyExecutor {
             return Err(PrivacyExecError::UnshieldBalanceMismatch);
         }
 
-        // 7. Spend nullifiers
+        // 7. Spend nullifiers. `NullifierSet::spend` returns `false` if the
+        // nullifier was already in the in-memory set — that branch must be
+        // surfaced as an error rather than silently dropped, otherwise an
+        // in-memory/db drift (e.g., a Block-STM-retried serial pass where
+        // `db.spend_nullifier` was rolled back but `engine.nullifier_set`
+        // was not) could let a duplicate spend slip through.
         for nf in &tx.input_nullifiers {
             let nullifier = Nullifier(*nf);
-            self.engine.nullifier_set.spend(&nullifier);
+            if !self.engine.nullifier_set.spend(&nullifier) {
+                return Err(PrivacyExecError::DoubleSpend(hex::encode(&nf[..8])));
+            }
             db.spend_nullifier(nf);
         }
 
@@ -617,10 +641,15 @@ impl PrivacyExecutor {
             return Err(PrivacyExecError::UnshieldBalanceMismatch);
         }
 
-        // 9. Spend nullifiers
+        // 9. Spend nullifiers. `NullifierSet::spend` returns `false` if the
+        // nullifier was already in the in-memory set — surface that as an
+        // error so an in-memory/db drift can't let a duplicate spend through.
+        // (See execute_unshield step 7 for the symmetric Block-STM rationale.)
         for nf in &tx.input_nullifiers {
             let nullifier = Nullifier(*nf);
-            self.engine.nullifier_set.spend(&nullifier);
+            if !self.engine.nullifier_set.spend(&nullifier) {
+                return Err(PrivacyExecError::DoubleSpend(hex::encode(&nf[..8])));
+            }
             db.spend_nullifier(nf);
         }
 
@@ -1168,6 +1197,87 @@ mod tests {
             err,
             PrivacyExecError::InvalidMerkleProof { index: 0 }
         ));
+    }
+
+    #[test]
+    fn test_unshield_duplicate_nullifier_in_tx_rejected() {
+        // Audit fix #9.2 (privacy nullifier hygiene): an unshield tx with
+        // duplicate input_nullifiers + matching duplicated witness fields
+        // would, pre-fix, pass step 3 (db check) and balance binding (sums
+        // match by construction) and double-extract from a single shielded
+        // note. `execute_private_transfer` already had a within-tx dup
+        // check; `execute_unshield` did not.
+        let sender = test_addr(1);
+        let receiver = test_addr(2);
+        let mut db = setup_db_with_balance(&sender, 10_000);
+        let mut executor = PrivacyExecutor::with_depth(8);
+        executor.set_epoch(1);
+
+        let note = do_shield(
+            &mut executor,
+            &mut db,
+            &sender,
+            5_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
+        );
+
+        let mut tx = build_real_unshield(&executor, &note, receiver, 5_000);
+        // Duplicate the nullifier and matching witness fields.
+        tx.input_nullifiers.push(tx.input_nullifiers[0]);
+        tx.input_amounts.push(tx.input_amounts[0]);
+        tx.input_blindings.push(tx.input_blindings[0]);
+        tx.input_value_commitments
+            .push(tx.input_value_commitments[0]);
+        tx.input_note_commitments.push(tx.input_note_commitments[0]);
+        tx.input_merkle_proofs
+            .push(tx.input_merkle_proofs[0].clone());
+
+        let err = executor.execute_unshield(&mut db, &tx).unwrap_err();
+        assert!(matches!(err, PrivacyExecError::DoubleSpend(_)));
+    }
+
+    #[test]
+    fn test_unshield_inmem_set_drift_caught_by_spend_return() {
+        // Audit fix #9.2 (Block-STM-related): if the in-memory
+        // `engine.nullifier_set` and the db nullifier set ever drift
+        // (e.g., a serial-replay path where db state was rolled back but
+        // the in-memory set was not), `NullifierSet::spend` returns
+        // `false` on the duplicate. Pre-fix the executor ignored the
+        // return value and silently accepted the double spend. Post-fix
+        // it surfaces a DoubleSpend error.
+        let sender = test_addr(1);
+        let receiver = test_addr(2);
+        let mut db = setup_db_with_balance(&sender, 10_000);
+        let mut executor = PrivacyExecutor::with_depth(8);
+        executor.set_epoch(1);
+
+        let note = do_shield(
+            &mut executor,
+            &mut db,
+            &sender,
+            5_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
+        );
+
+        let tx = build_real_unshield(&executor, &note, receiver, 5_000);
+
+        // Pre-poison the in-memory nullifier set so it claims this nullifier
+        // is already spent, while leaving the db consistent with the tx.
+        // db.is_nullifier_spent(...) will return false; only the in-memory
+        // `nullifier_set.spend()` return value will catch the drift.
+        executor
+            .engine
+            .nullifier_set
+            .spend(&Nullifier(tx.input_nullifiers[0]));
+
+        let err = executor.execute_unshield(&mut db, &tx).unwrap_err();
+        assert!(matches!(err, PrivacyExecError::DoubleSpend(_)));
     }
 
     // ── Private Transfer Tests (100% real) ──

@@ -2,14 +2,14 @@
 
 **Source of truth:** Rust source constants and `genesis-mainnet.json`. This table consolidates everything an operator, auditor, or integrator needs at a glance. Each row cites file:line so it stays grounded; if the value changes in source, update this table in the same PR.
 
-**Last refreshed:** 2026-04-27.
+**Last refreshed:** 2026-05-03.
 
 ## 1. Block & consensus
 
 | Parameter | Value | Where | Notes |
 |---|---|---|---|
 | Block interval (target) | 2000 ms | `genesis-mainnet.json` `chain_params.block_interval_ms` | Tunable via genesis |
-| Block gas limit | 500,000 | `genesis-mainnet.json` `chain_params.block_gas_limit` | Tunable via governance — **currently unbounded; see audit** |
+| Block gas limit | 500,000 | `genesis-mainnet.json` `chain_params.block_gas_limit` | Tunable via governance, **bounded** to `[10_000, 100_000_000]` — see §8 |
 | Max txs per block | 10,000 | `genesis-mainnet.json` `chain_params.max_txs_per_block` | Hard cap |
 | Max tx size (bytes) | 1,048,576 (1 MiB) | `genesis-mainnet.json` `chain_params.max_tx_size` | Tx-level cap |
 | Max blob size (bytes) | 131,072 (128 KiB) | `crates/evaporchain-execution/src/lib.rs:142` `MAX_BLOB_SIZE` | Per blob inside a tx |
@@ -35,7 +35,7 @@
 |---|---|---|---|
 | Total supply | 1,000,000,000 | `genesis-mainnet.json` `tokenomics.total_supply` | Sum of `accounts[].balance` matches |
 | Block reward (initial) | 100 | `genesis-mainnet.json` `tokenomics.block_reward` | Halves every `reward_half_life` blocks |
-| Reward half-life (blocks) | 1,000,000 | `genesis-mainnet.json` `tokenomics.reward_half_life` | Tunable via governance — **currently unbounded** |
+| Reward half-life (blocks) | 1,000,000 | `genesis-mainnet.json` `tokenomics.reward_half_life` | Tunable via governance, **bounded** to `[100, u64::MAX]` — see §8 |
 | Fee burn rate | 50% | `genesis-mainnet.json` `tokenomics.fee_burn_rate` | Remaining 50% to stakers |
 | Staker fee share | 50% | `genesis-mainnet.json` `tokenomics.staker_fee_share` | Of non-burned fees |
 | Target staking APY | 5% | `genesis-mainnet.json` `tokenomics.target_staking_apy` | Calibration target |
@@ -52,7 +52,7 @@
 | Community Airdrop | 100,000,000 | 10% |
 | Validator Operators (×4) | 50,000,000 each | 20% combined |
 
-⚠ **Centralization note:** Foundation Treasury alone holds 35%. Combined with vote-weight = balance and no quorum requirement (`execution/lib.rs:949`), Foundation can pass any governance proposal solo. Mainnet blocker — see `audit/end_to_end_audit_2026_04_27.md`.
+⚠ **Centralization note (status 2026-05-03):** Foundation Treasury alone holds 35% of supply. The "Foundation passes anything solo" path is now closed in code: governance enforces stake-weighted vote-weight (`min(balance, stake)`), a quorum threshold, parameter range validation against §8 floor bounds, and a timelock between proposal pass and apply. The supply-distribution centralization itself remains an operational concern for genesis ceremony — see `audit/end_to_end_audit_2026_04_27.md` and the closure-annotated `THREAT_MODEL_2026_04_27_supplement.md` §2.2.
 
 ## 4. Execution + smart contract limits
 

@@ -15,7 +15,7 @@ A Nova IVC step circuit encoding EvaporChain block transitions with the followin
 - **Accounts**: 64 accounts with balance tracking
 - **Objects**: 64 state objects with thermodynamic energy decay (configurable half-life, saturation handling)
 - **Transactions**: 50 transactions per block (transfers, object interactions, energy refreshes)
-- **Decay model**: Per-epoch energy depletion with saturation arithmetic to prevent underflow; objects reaching zero energy enter a 7-day grace period before evaporation
+- **Decay model**: Per-epoch energy depletion with saturation arithmetic to prevent underflow; objects reaching zero energy enter a 5-epoch grace period (`GRACE_PERIOD` in `crates/evaporchain-node/src/main.rs:163`) before evaporation
 - **Evaporation**: In-circuit verification that objects with depleted energy are correctly removed from active state
 
 ### Engine

@@ -88,7 +88,93 @@ Experimental sharding module for future horizontal scaling.
 Full node implementation. Combines all layers into a runnable binary with CLI arguments, an Axum-based HTTP API with a live dashboard, faucet, block explorer endpoints, and a transaction submission interface. Supports multi-node testnet deployment with configurable validator IDs and ports.
 
 ### evaporchain-cli
-Command-line interface for interacting with a running node. Supports transfers, object creation, refresh, account queries, and block inspection via the HTTP API.
+Command-line interface for interacting with a running node. Supports transfers, object creation, refresh, account queries, and block inspection via the HTTP API. Also hosts genesis (`genesis init`/`validate`/`show`), validator keygen (`keygen` produces BLS+ML-DSA+VRF bundle, encrypted at rest in EVPL format), and the validator-onboarding contribution-envelope flow.
+
+### evaporchain-mcp
+Model Context Protocol server. Surfaces a node's RPC, block explorer, faucet, and contract-deploy paths to MCP-compatible clients (Claude, IDEs).
+
+### evaporchain-fee-controller
+Standalone PID fee controller crate. Tracks recent block gas utilization, adjusts `base_fee_floor` and `base_fee_ceiling` against a configurable `target_gas_utilization`, and feeds the result back into `execute_transfer` / script-call paths.
+
+### evaporchain-da
+Data availability layer. 2D Reed-Solomon erasure coding over BLS12-381 field, namespaced Merkle tree (NMT, namespace 0 reserved), light-client sampling, BLS supermajority DA certificates. Block-production path now uses `build_block_da_inputs(txs)` so the `data_root` produced at proposal time matches the one served at verify time. Empty-block path tracked in audit backlog.
+
+## Substrate crates (60+ crates implementing the Tier-1 invention stack and launch-dApp lanes)
+
+These crates extend the core node with the protocol's novel primitives. They
+are independent crates that compose against the core types/state/consensus
+contracts. Tests live with each crate (`cargo test -p <name>`). Names below are
+grouped by lane.
+
+### Invention-stack primitives (Tier-1 doctrine)
+
+| Crate | Role |
+|---|---|
+| `evaporchain-light-cone` | Light-Cone Ledger DAG; pruning wired into consensus tick (every 100 blocks, 1000-epoch retention) |
+| `evaporchain-bell-beacon` | Bell-Certified Beacon — entropy source with non-classical certification |
+| `evaporchain-singh-attractor` | Singh Attractor Consensus — convergence-by-attractor variant of BFT-style fork choice |
+| `evaporchain-evap-fork-cert` | Evaporated-Fork Certificates — proves a fork's blocks are evaporated and unreachable |
+| `evaporchain-ib-validators` | Immune Validator Set — adaptive admission against poisoned peer surfaces |
+| `evaporchain-mera` | MERA gate (Tier-2; week-25+ window) |
+| `evaporchain-causal-cone`, `evaporchain-cone-bridge`, `evaporchain-cmu-gate` | Light-cone bridging + CMU gate |
+| `evaporchain-cslc` | Causal-state ledger control |
+| `evaporchain-singh-resonance`, `evaporchain-singh-attractor` | Singh resonance + attractor |
+| `evaporchain-tur-liveness`, `evaporchain-tropical` | Turing-style liveness + tropical algebra ledger |
+
+### Smart-contract paradigm trifecta (substrate)
+
+| Crate | Role |
+|---|---|
+| `evaporchain-sgb` | Singh-Girard !/? linear-logic types |
+| `evaporchain-sbav` | Singh-Bennett reversible VM (Landauer literal: only DECAY exports entropy) |
+| `evaporchain-ssm` | Singh Strategy Machines (Hyland-Ong arenas + AJM innocent strategies) |
+
+### Marketplace + cultural-launch lanes
+
+| Crate | Role |
+|---|---|
+| `evaporchain-sddc` | Skill-Decay Demand Curve marketplace base |
+| `evaporchain-sfsv` | Singh future-self vault (first launch dApp on SDDC) |
+| `evaporchain-shlm` | Skill half-life market (B2B wedge) |
+| `evaporchain-singh-sabi` | Singh-Sabi patina NFTs (first NFT lane) |
+| `evaporchain-singh-migrant` | Wanderwrits NFTs with novel-wallet refund + farm-attack guards |
+| `evaporchain-mnemochain` | Anki on-chain + FSRS forgetting curves |
+| `evaporchain-gallery-forgets` | The Gallery That Forgets (cultural-launch wedge; Mayfly NFTs) |
+| `evaporchain-singh-triage` | Singh triage (wallet UX lane) |
+| `evaporchain-childkey` | Childkey (consumer launch) |
+| `evaporchain-scl` | Capability-lease primitive |
+
+### Energy / decay / refresh substrate
+
+| Crate | Role |
+|---|---|
+| `evaporchain-energy-kernel`, `evaporchain-allen-decay`, `evaporchain-decay-forget`, `evaporchain-decay-lamport` | Decay & forget kernels |
+| `evaporchain-refresh-market`, `evaporchain-refresh-patronage` | Refresh markets |
+| `evaporchain-demurrage`, `evaporchain-tombstone`, `evaporchain-mortis` | Demurrage + tombstoning |
+| `evaporchain-eb-fs`, `evaporchain-eg-fss`, `evaporchain-efh`, `evaporchain-epv`, `evaporchain-etlp`, `evaporchain-fee-controller`, `evaporchain-padic`, `evaporchain-pnt`, `evaporchain-prp`, `evaporchain-rg-phase-map` | Fee, evaporation, and protocol-physics substrates |
+| `evaporchain-self-annealing`, `evaporchain-autopoietic` | Self-annealing + autopoietic state |
+
+### Consensus / mempool / DA substrate
+
+| Crate | Role |
+|---|---|
+| `evaporchain-antichain-mempool` | Antichain-aware mempool |
+| `evaporchain-braid-sequencer`, `evaporchain-modular-beacon`, `evaporchain-sentinel`, `evaporchain-dsn` | Sequencing + beacon + sentinel |
+| `evaporchain-hbct`, `evaporchain-hbct-elexon`, `evaporchain-hlts`, `evaporchain-hlwa`, `evaporchain-mcc`, `evaporchain-mdl-shard` | High-bandwidth coupling, MDL sharding, HLW analytics |
+| `evaporchain-cfm`, `evaporchain-llsa` | Concurrent-flow MEV / liveness substrates |
+| `evaporchain-entropic-slashing`, `evaporchain-sanov-slashing` | Entropic + Sanov-style slashing |
+| `evaporchain-crooks-mev-refund` | Crooks-relation MEV refund |
+| `evaporchain-boltzmann-stake`, `evaporchain-hot-cold-stake` | Boltzmann-temperature stake + hot/cold stake split |
+
+### Misc substrate
+
+| Crate | Role |
+|---|---|
+| `evaporchain-lad-vm`, `evaporchain-script-lad`, `evaporchain-lambda-fold` | LAD (Linear Affine Decay) VM dialect + script + fold |
+| `evaporchain-wsbf` | Witness-stamped block format |
+
+For up-to-date discovery, `ls crates/` is canonical; the list above is curated
+for narrative grouping, not as a registry of every crate.
 
 ## How Thermodynamic Decay Works
 

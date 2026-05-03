@@ -33,6 +33,8 @@ flowchart LR
     %% MockConsensus::produce_block_with_reveals, and
     %% RotatingConsensus::produce_block_if_leader. Tendermint already
     %% had its own DA wiring at tendermint.rs:1958. Empty blocks use a
-    %% sentinel data_root #40;blake3#40;"evaporchain:empty_block"#41;#41;
-    %% so DA attestation rounds fire on every block. Closed by
-    %% commit 1fc67c0 #40;K-04#41;.
+    %% domain-separated sentinel data_root
+    %% #40;keyed_hash"evaporchain:empty_block:v2", height || parent_hash#41;
+    %% so DA attestation rounds fire on every block AND empty-block
+    %% sentinels differ across heights / parents. Closed by 1fc67c0
+    %% #40;K-04#41;; sentinel domain-separation 2026-05-03 #40;#9.1#41;.

@@ -1253,7 +1253,21 @@ impl BlockStmExecutor {
         // M-20: Track abort counts per tx for serial fallback; sort re-exec set
         // by dependency depth (lowest tx_idx first = deepest dependency).
         const MAX_ABORTS_BEFORE_SERIAL: u32 = 3;
+        // Audit fix #9.3 (Block-STM O(N²) under high contention): a block-level
+        // ceiling on cumulative aborts. Pre-fix, even with per-tx fallback at
+        // MAX_ABORTS_BEFORE_SERIAL=3, an N-tx block targeting the same hot key
+        // could pay roughly 3N parallel re-executions PLUS the per-wave validate
+        // cost — quadratic worst-case CPU under sustained contention. Once
+        // cumulative aborts exceed BLOCK_ABORT_CEILING_MULTIPLIER × num_txs the
+        // executor stops trying to re-converge in parallel and drains every
+        // remaining unconverged tx through the serial path, capping total
+        // re-execution work at O(N × BLOCK_ABORT_CEILING_MULTIPLIER).
+        const BLOCK_ABORT_CEILING_MULTIPLIER: u32 = 2;
+        let block_abort_ceiling: u64 =
+            (BLOCK_ABORT_CEILING_MULTIPLIER as u64).saturating_mul(num_txs as u64);
         let mut abort_counts = vec![0u32; num_txs as usize];
+        let mut cumulative_aborts: u64 = 0;
+        let mut block_serial_drain = false;
         let max_waves = num_txs + 2; // Convergence bound
         for wave in 0..max_waves {
             let mut needs_reexec: Vec<u32> = Vec::new();
@@ -1292,12 +1306,25 @@ impl BlockStmExecutor {
             // M-20: sort by tx_idx (dependency order — lower indices first)
             needs_reexec.sort_unstable();
 
-            // Separate serial-fallback txs from parallel re-exec
+            // Separate serial-fallback txs from parallel re-exec.
+            // Once the block-level abort ceiling is breached, every
+            // remaining unconverged tx funnels through serial — this caps
+            // total re-execution work at O(N × BLOCK_ABORT_CEILING_MULTIPLIER)
+            // and prevents the O(N²) retry storm under high write-contention
+            // (audit fix #9.3, 2026-05-03).
+            cumulative_aborts =
+                cumulative_aborts.saturating_add(needs_reexec.len() as u64);
+            if cumulative_aborts > block_abort_ceiling {
+                block_serial_drain = true;
+            }
+
             let mut serial_txs = Vec::new();
             let mut parallel_reexec = Vec::new();
             for &tx_idx in &needs_reexec {
                 abort_counts[tx_idx as usize] += 1;
-                if abort_counts[tx_idx as usize] >= MAX_ABORTS_BEFORE_SERIAL {
+                if block_serial_drain
+                    || abort_counts[tx_idx as usize] >= MAX_ABORTS_BEFORE_SERIAL
+                {
                     serial_txs.push(tx_idx);
                 } else {
                     parallel_reexec.push(tx_idx);
@@ -1308,6 +1335,9 @@ impl BlockStmExecutor {
                 wave,
                 reexec_count = needs_reexec.len(),
                 serial_fallback = serial_txs.len(),
+                cumulative_aborts,
+                block_abort_ceiling,
+                block_serial_drain,
                 "Block-STM: re-executing invalidated txs"
             );
 
@@ -2852,6 +2882,56 @@ mod tests {
         for i in 0..10u8 {
             assert_eq!(db.get_account(&addr(10 + i)).unwrap().balance, 100);
         }
+    }
+
+    #[test]
+    fn test_block_stm_high_contention_block_abort_ceiling_caps_work() {
+        // Audit fix #9.3 (Block-STM O(N²) under high contention): a 64-tx
+        // block where every tx writes the same hot account exercises the
+        // worst-case retry storm. With BLOCK_ABORT_CEILING_MULTIPLIER=2,
+        // total cumulative aborts must stay bounded as the executor falls
+        // back to serial after the ceiling is breached. Functional check:
+        // final state must match serial execution.
+        const N: u64 = 64;
+        let mut db_par = InMemoryStateDB::new();
+        let mut db_seq = InMemoryStateDB::new();
+        // One sender, contended writer of its balance + nonce.
+        fund_account(&mut db_par, 1, 1_000_000);
+        fund_account(&mut db_seq, 1, 1_000_000);
+
+        let txs: Vec<Transaction> = (0..N)
+            .map(|i| {
+                Transaction::Transfer(TransferTx {
+                    from: addr(1),
+                    to: addr(((i % 32) + 10) as u8),
+                    amount: 1,
+                    nonce: i,
+                    signature: None,
+                    public_key: None,
+                })
+            })
+            .collect();
+
+        // Parallel run with low threshold so Block-STM is exercised.
+        let block_par = make_block(1, 1, txs.clone());
+        let mut par_exec = BlockStmExecutor::new_for_test(7);
+        par_exec.parallel_threshold = 1;
+        let par_result = par_exec.execute_block(&mut db_par, &block_par).unwrap();
+
+        // Sequential reference run.
+        let block_seq = make_block(1, 1, txs);
+        let mut seq_exec = BlockStmExecutor::new_for_test(7);
+        seq_exec.parallel_threshold = 10_000; // Force serial path
+        let seq_result = seq_exec.execute_block(&mut db_seq, &block_seq).unwrap();
+
+        assert_eq!(par_result.txs_executed as u64, N);
+        assert_eq!(par_result.state_root, seq_result.state_root,
+            "parallel + serial-drain final state must equal pure-serial state");
+        assert_eq!(
+            db_par.get_account(&addr(1)).unwrap().balance,
+            db_seq.get_account(&addr(1)).unwrap().balance
+        );
+        assert_eq!(db_par.get_account(&addr(1)).unwrap().nonce, N);
     }
 
     #[test]

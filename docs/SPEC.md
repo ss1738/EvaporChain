@@ -45,7 +45,7 @@ Differentiator vs other L1s: most chains assume state is permanent unless delete
 
 | Layer | Implementation |
 |---|---|
-| Language | Rust (16 workspace crates, ~66K LOC) |
+| Language | Rust (85 workspace crates: 18 core + 60 substrate + 7 Tier-2 starts) |
 | Smart contracts | Template contracts + EvaporScript (custom 44-opcode VM) |
 | Consensus | Tendermint BFT + BLS aggregation + VRF leader election |
 | Execution | Block-STM parallel + serial fallback + PID fee controller |
@@ -55,11 +55,12 @@ Differentiator vs other L1s: most chains assume state is permanent unless delete
 | API | Axum HTTP + JSON-RPC + WebSocket events + dashboard |
 | Wallets | TypeScript SDK, mobile (React Native), browser extension |
 
-## Status (2026-04-27)
+## Status (2026-05-03)
 
-- **What works:** 4,486+ tests passing, 3-Mini Tailscale testnet stable (~9.5 blocks/sec), all 13 prior-audit CRITICALs verified patched, primitives correct, privacy cryptographically sound.
-- **What's open:** oracle authentication is broken, governance has no quorum / weight cap / param bounds, contract upgrade is a no-op, DA encoder isn't wired into block production. See `audit/end_to_end_audit_2026_04_27.md`.
-- **Distance to mainnet:** roughly 50% weighted across code / operational / external-validation. Realistic timeline 8-14 months. See same audit doc.
+- **What works:** 6,202 native tests passing across 85 crates, zero `unsafe`, 3-Mini Tailscale cluster verified end-to-end including real Nova IVC `--prove` chain proofs, snapshot + fast-sync, integrity_hash reproducibility, async fold off the consensus thread, and lockstep finality.
+- **Hardening since 2026-04-27:** oracle authentication closed (HybridVerifier against validator-set lookup), governance closed (stake-weighted vote, quorum, param-range validation, timelock), contract upgrade closed (`governance_approved` gate), DA encoder wired (`build_block_da_inputs(txs)` → identical proposal-time and serve-time `data_root`), BLS rogue-key closed (PoP enforced at `add_validator()` and at genesis), encrypted mempool integrated, BLS key-at-rest encrypted (Argon2id + XChaCha20-Poly1305 EVPL format), gossip size unified at 4 MB, Nova `state_root_to_u64` truncation fixed, nova_proof attaches at checkpoint boundaries.
+- **What's still open:** weak-subjectivity checkpoints, Block-STM contention path under high write conflict, finality-records pollution at gap heights, persistence-write panic propagation, empty-block `data_root` handling, formal verification of Nova R1CS. See `audit/end_to_end_audit_2026_04_27.md` and the closure-annotated `THREAT_MODEL_2026_04_27_supplement.md`.
+- **Distance to mainnet:** code-side hardening near-complete; remaining work is operational (weak-subjectivity, Block-STM polish) plus external validation.
 
 ## Where to go next
 

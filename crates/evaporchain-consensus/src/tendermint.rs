@@ -3782,7 +3782,14 @@ impl TendermintConsensus {
 
         // Compute DA commitment fields on the final (post-trim) transaction set.
         if block.transactions.is_empty() {
-            block.data_root = Some(blake3::hash(b"evaporchain:empty_block").into());
+            // Domain-separated empty-block sentinel: keyed_hash over (height ‖ parent_hash).
+            // Prevents DA-attestation replay across heights and constant-sentinel
+            // collisions (audit re-audit 2026-05-03 #9.1). Matches the v2 helper
+            // in `lib.rs::empty_block_data_root`.
+            block.data_root = Some(crate::empty_block_data_root(
+                block.number,
+                &block.parent_hash,
+            ));
         } else if let Ok(tx_bytes) = serde_json::to_vec(&block.transactions) {
             // 1D commitment — this is the authoritative data_root stored in the header.
             match BlockDA::new() {
@@ -4485,15 +4492,12 @@ impl TendermintConsensus {
         let data_root = block.data_root?;
 
         // Empty-block sentinel: must mirror the proposer logic at the
-        // top of create_proposal (line ~2120). The proposer skips the
-        // BlockDA encoding entirely for txs.is_empty() and stamps a
-        // fixed blake3("evaporchain:empty_block") root. If the verifier
-        // tries to encode an empty tx list through BlockDA, it produces
-        // a DIFFERENT root and rejects every empty block — which is
-        // every block in a quiet cluster, so quorum never forms.
-        // Cluster-fix while bringing up the 3-Mini Tailscale BFT proof.
+        // top of create_proposal. The proposer skips the BlockDA encoding
+        // entirely for txs.is_empty() and stamps a domain-separated
+        // sentinel via `crate::empty_block_data_root(height, parent_hash)`.
+        // The verifier recomputes the same sentinel from the block header.
         if block.transactions.is_empty() {
-            let expected: [u8; 32] = blake3::hash(b"evaporchain:empty_block").into();
+            let expected = crate::empty_block_data_root(block.number, &block.parent_hash);
             if data_root != expected {
                 warn!(
                     height = block.number,
@@ -7327,15 +7331,49 @@ mod da_tests {
         let mut tc = make_test_tc();
         let mut db = InMemoryStateDB::new();
 
-        // No transactions in mempool — should still get a sentinel data_root
+        // No transactions in mempool — should still get a domain-separated sentinel data_root.
         let block = tc.create_proposal(&mut db).unwrap();
         assert_eq!(block.transactions.len(), 0);
-        let expected = blake3::hash(b"evaporchain:empty_block").into();
+        let expected = crate::empty_block_data_root(block.number, &block.parent_hash);
         assert_eq!(
             block.data_root,
             Some(expected),
-            "empty block should have sentinel data_root"
+            "empty block should have domain-separated sentinel data_root"
         );
+    }
+
+    #[test]
+    fn test_empty_block_sentinel_differs_across_heights() {
+        // Two empty blocks at different heights MUST have different data_root.
+        // Audit fix #9.1: prevents DA-attestation replay across heights.
+        let parent = [0x42u8; 32];
+        let r1 = crate::empty_block_data_root(1, &parent);
+        let r2 = crate::empty_block_data_root(2, &parent);
+        assert_ne!(
+            r1, r2,
+            "empty-block sentinel must be height-dependent"
+        );
+    }
+
+    #[test]
+    fn test_empty_block_sentinel_differs_across_parents() {
+        // Two empty blocks at the same height with different parents MUST differ.
+        let r_a = crate::empty_block_data_root(7, &[0xAAu8; 32]);
+        let r_b = crate::empty_block_data_root(7, &[0xBBu8; 32]);
+        assert_ne!(
+            r_a, r_b,
+            "empty-block sentinel must be parent-hash-dependent"
+        );
+    }
+
+    #[test]
+    fn test_empty_block_sentinel_is_deterministic() {
+        // Same inputs MUST produce the same sentinel — verifier and proposer
+        // must agree on the value.
+        let parent = [0x77u8; 32];
+        let r1 = crate::empty_block_data_root(42, &parent);
+        let r2 = crate::empty_block_data_root(42, &parent);
+        assert_eq!(r1, r2);
     }
 
     #[test]
@@ -7695,11 +7733,11 @@ mod da_tests {
         tc.set_bls_keypair(kp);
 
         let block = tc.create_proposal(&mut db).unwrap();
-        let expected: [u8; 32] = blake3::hash(b"evaporchain:empty_block").into();
+        let expected = crate::empty_block_data_root(block.number, &block.parent_hash);
         assert_eq!(
             block.data_root,
             Some(expected),
-            "Empty block should have sentinel data_root"
+            "Empty block should have domain-separated sentinel data_root"
         );
     }
 

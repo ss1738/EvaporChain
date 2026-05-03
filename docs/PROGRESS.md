@@ -2,7 +2,7 @@
 
 ## Overview
 
-Novel L1 blockchain with energy-based state decay. 16 Rust crates, ~220K LOC, 4,234 native tests (+ 3,491 WASM), post-quantum signatures (ML-DSA), Tendermint BFT consensus with BLS12-381 aggregate signatures, browser extension, mobile wallet, SDK, 4 dApps.
+Novel L1 blockchain with energy-based state decay. 85 Rust workspace crates (18 core + 60 substrate + 7 Tier-2 starts), 6,202 native tests passing (+ ~3,491 WASM bindings), post-quantum signatures (ML-DSA), Tendermint BFT consensus with BLS12-381 aggregate signatures, browser extension, mobile wallet, SDK, 4 dApps.
 
 **Repo:** github.com/ss1738/EvaporChain
 
@@ -119,16 +119,30 @@ Novel L1 blockchain with energy-based state decay. 16 Rust crates, ~220K LOC, 4,
 
 ---
 
-## 6 Frontier Features
+## Frontier Features
 
+### Phase-bracket primitives
 | Feature | Status |
 |---------|--------|
 | Parallel execution (Block-STM) | Implemented |
 | ZK privacy layer | Partial (Shield/Unshield txs exist) |
-| Recursive proof compression (Nova) | Wired into block pipeline, light client API |
+| Recursive proof compression (Nova) | Wired into block pipeline, light client API; real `--prove` chain proofs verified end-to-end on 3-Mini cluster (2026-05-02) |
 | Temporal smart contracts | Implemented (DeferredTx, TemporalGuard) |
 | Post-quantum VRF | Implemented (ML-DSA VRF) |
-| Data availability sampling | In progress (erasure coding exists) |
+| Data availability sampling | Implemented — `data_root` derived from `build_block_da_inputs(txs)`; identical at proposal-time and serve-time; finality gated on DA supermajority |
+
+### Invention-stack primitives (substrate crates)
+| Primitive | Crate | Status |
+|---|---|---|
+| Light-Cone Ledger DAG | `evaporchain-light-cone` | Live; pruning wired into consensus tick (every 100 blocks, 1000-epoch retention) |
+| Bell-Certified Beacon | `evaporchain-bell-beacon` | Live |
+| Singh Attractor Consensus | `evaporchain-singh-attractor` | Live |
+| Evaporated-Fork Certificates | `evaporchain-evap-fork-cert` | Live |
+| Immune Validator Set | `evaporchain-ib-validators` | Live |
+| MERA gate | `evaporchain-mera` | Tier-2 (week-25+) |
+
+### Marketplace + cultural-launch lanes
+SDDC (`evaporchain-sddc`) → SFSV future-self vault, SHLM skill half-life market, Singh-Sabi & Singh-Migrant patina NFTs, MnemoChain (Anki + FSRS on-chain), Gallery That Forgets (Mayfly NFTs), all on the SDDC pattern. SGB (Girard !/?) + SBAV (Bennett reversible VM) + SSM (Hyland-Ong arenas) close the smart-contract paradigm trifecta.
 
 ---
 
@@ -139,7 +153,7 @@ Novel L1 blockchain with energy-based state decay. 16 Rust crates, ~220K LOC, 4,
 | CLI Wallet | `wallet/` | 90+ modules, 57 behavior tests |
 | Browser Extension | `extension/` | Chrome MV3, ML-DSA via WASM |
 | Mobile Wallet | `mobile-wallet/` | Tier 2 (onboarding, QR, staking) |
-| Wallet SDK | `wallet-sdk/` | v0.2.0 |
+| Wallet SDK | `wallet-sdk/` | v0.1.0 |
 | NFT Marketplace dApp | `dapps/nft-marketplace/` | Complete |
 | Energy Pool dApp | `dapps/energy-pool/` | Complete |
 | Mortal Messages dApp | `dapps/mortal-messages/` | Complete |
@@ -172,4 +186,4 @@ Integration test suite: 358 tests across 61 modules. All substrate crates covere
 
 3-node BFT fault tolerance proven on physical hardware (3 Mac Mini M4s via Tailscale).
 
-*Last updated: 2026-04-29*
+*Last updated: 2026-05-03 (substrate crate count, test count, Frontier-Features expansion, wallet-sdk version)*

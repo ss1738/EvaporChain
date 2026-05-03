@@ -1,4 +1,9 @@
-# Threat Model Supplement — 2026-04-27
+# Threat Model Supplement — 2026-04-27 (post-closure annotated 2026-05-03)
+
+> **Status as of 2026-05-03:** §2.1, §2.2, §2.3, §2.5, §2.6 are **closed in code**.
+> Closure annotations are inline in each subsection. §2.4 and §2.7 remain open
+> (noted at their headings). When `THREAT_MODEL.md` §6 is rewritten for mainnet,
+> this supplement folds in and is deleted, per §5 below.
 
 This is a **supplement** to `docs/THREAT_MODEL.md`, not a replacement. The base document still defines the system overview, trust assumptions, and adversary model. This supplement adds:
 
@@ -15,9 +20,9 @@ When the base `THREAT_MODEL.md` is rewritten for mainnet, this supplement should
 | Base assumption | 2026-04-27 reality | Action |
 |---|---|---|
 | `Slashing conditions for equivocation (planned)` | Implemented for prevote/precommit equivocation; vote-liveness slashing also added (`f9ef6c8`). Equivocating votes are now rejected from quorum tally (verified at `tendermint.rs:1364-1378`) | Update base doc — slashing is no longer "planned" |
-| `Validator BLS public keys are correctly registered` | True for in-set validators, but **proof-of-possession is implemented and NOT enforced** at registration. Rogue-key attack surface remains | Add explicit assumption "validators perform PoP verification of all peer pubkeys before accepting them in their committee view" — currently UNVERIFIED |
+| `Validator BLS public keys are correctly registered` | **Closed (2026-05-02)** — PoP enforced at `ValidatorSet::add_validator()` and verified at genesis registration via `verify_pop`; `pop_verified=true` gating in node main.rs. Genesis schema carries `bls_pop` for every validator | Update base doc — rogue-key surface is closed |
 | `BLS signatures aggregate over distinct messages` (implicit) | DST domain separation is correct (`BLS_DST` and `BLS_POP_DST` distinct), but DA attestation message canonicalization needs verification | Open audit item — see end-to-end audit §1 |
-| `Encrypted mempool (MEV protection) implemented` (per README) | Confirmed in source — AES-256-GCM. Threshold decryption and reveal mechanics need separate review | Move from "planned" to "implemented; review pending" |
+| `Encrypted mempool (MEV protection) implemented` (per README) | Confirmed in source — AES-256-GCM, end-to-end integrated. Threshold decryption and reveal mechanics still recommended for separate review | Status: implemented; deeper review pending |
 
 ---
 
@@ -25,7 +30,10 @@ When the base `THREAT_MODEL.md` is rewritten for mainnet, this supplement should
 
 Each of these is a **real surface that the base threat model did not previously enumerate**. They are tracked individually in `audit/end_to_end_audit_2026_04_27.md`; the entries here exist so future threat-model maintainers can fold them into the canonical adversary table.
 
-### 2.1 Oracle impersonation (CRITICAL, open)
+### 2.1 Oracle impersonation (CRITICAL, **CLOSED 2026-05-02**)
+
+> **Closure note:** `oracle/consensus.rs` now invokes `HybridVerifier::verify` against the validator pubkey looked up by `vote.validator_id` from the validator set. Empty-signature short-circuit removed; non-short-circuit verification path enforced. See memory `evaporchain_reaudit_round_3_2026_05_02.md`.
+
 
 **Adversary capability added:** any party with network access can submit oracle votes claiming to be any validator, with no cryptographic check.
 
@@ -35,7 +43,10 @@ Each of these is a **real surface that the base threat model did not previously 
 
 **Fix required:** `HybridVerifier::verify` against a validator pubkey looked up from the validator set by `vote.validator_id`, not trusted from the vote payload.
 
-### 2.2 Governance whale-pass (CRITICAL, open)
+### 2.2 Governance whale-pass (CRITICAL, **CLOSED 2026-05-02**)
+
+> **Closure note:** governance now enforces stake-weighted voting (vote weight = `min(balance, stake)`), a quorum threshold, parameter range validation at proposal application, and a timelock between pass and apply. Foundation-vote-passes-anything path eliminated. See memory `evaporchain_audit_round_2026_05_02.md`.
+
 
 **Adversary capability added:** any account holding a plurality of supply can pass any governance proposal alone.
 
@@ -52,7 +63,10 @@ Combined with `genesis-mainnet.json` allocating 35% of supply to a single Founda
 
 **Fix required:** parameter range validation, vote-weight cap (e.g., `min(balance, stake)`), quorum requirement, optional timelock between pass and apply.
 
-### 2.3 Contract upgrade by anyone (CRITICAL or HIGH, open — depends on downstream path)
+### 2.3 Contract upgrade by anyone (CRITICAL or HIGH, **CLOSED 2026-05-02**)
+
+> **Closure note:** `Transaction::UpgradeContract` handler now reads `governance_approved` and refuses without an executed governance proposal of matching scope. Bytecode swap path implemented behind the gate. See memory `evaporchain_audit_round_2026_05_02.md`.
+
 
 **Adversary capability added:** any account submitting a `Transaction::UpgradeContract` either silently succeeds-as-noop (broken feature) or upgrades the bytecode without governance approval (privilege escalation).
 
@@ -62,7 +76,7 @@ Combined with `genesis-mainnet.json` allocating 35% of supply to a single Founda
 
 **Fix required:** decide whether the feature is in or out, then either implement it correctly (with `governance_approved` check) or remove `Transaction::UpgradeContract` until designed.
 
-### 2.4 Finality records pollution (HIGH, open)
+### 2.4 Finality records pollution (HIGH, **OPEN** — design-level, deferred to refactor sprint)
 
 **Adversary capability added:** an attacker holding old valid `CommitCertificate` data can backfill `FinalityTracker.records` at gap heights below `latest_finalized`, misleading light clients that look up historical finality.
 
@@ -72,7 +86,10 @@ Combined with `genesis-mainnet.json` allocating 35% of supply to a single Founda
 
 **Fix required:** non-blocking variant of monotonicity that allows legitimate gap-fill but rejects already-superseded heights.
 
-### 2.5 Real DA enforcement is absent (CRITICAL for mainnet, open)
+### 2.5 Real DA enforcement is absent (CRITICAL for mainnet, **CLOSED 2026-05-02**)
+
+> **Closure note:** `data_root` is now derived from `build_block_da_inputs(txs)` and is identical at proposal time and serve time (no mutated-block-bytes drift). `BlockDA2D::encode_block()` is wired into `produce_block` for both empty and non-empty blocks; finality is gated on DA attestation over the real `data_root`. `consensus/lib.rs:238` no longer leaves `data_root: None`. Empty-block `data_root` handling remains a code-side audit-backlog item. See memory `evaporchain_da_input_parity.md`.
+
 
 **Adversary capability added:** a validator can produce a block whose `data_root` is a sentinel rather than a real 2D-erasure commitment. DA attestations finalize over the sentinel. There is no actual data-availability guarantee on the chain today.
 
@@ -82,7 +99,10 @@ Combined with `genesis-mainnet.json` allocating 35% of supply to a single Founda
 
 **Fix required:** wire the encoder into `produce_block` for both empty and non-empty blocks, and gate finality on DA attestation over the real `data_root`.
 
-### 2.6 Validator BLS key extraction via local read (HIGH, mainnet-only)
+### 2.6 Validator BLS key extraction via local read (HIGH, **CLOSED 2026-05-02**)
+
+> **Closure note:** `bls_key.bin` is no longer plaintext. Encrypted-Validator-Private-Key-Layout (EVPL) format: Argon2id KDF (named public constants) + XChaCha20-Poly1305 AEAD; magic-byte detection (`detect_bls_key_format`) auto-handles legacy plaintext for one-shot migration. Passphrase delivered via `EVAPORCHAIN_VALIDATOR_KEY_PASS_FILE` (avoids /proc/.../environ exposure). `format_plaintext_for_disk` retained only for migration. Key-rotation runbook published. See memories `evaporchain_reaudit_round_5_2026_05_02.md`, `evaporchain_reaudit_round_6_2026_05_02.md`, `evaporchain_reaudit_round_10_2026_05_02.md`.
+
 
 **Adversary capability added:** an adversary with file-read access to a validator's `data_dir` can recover the BLS signing key from `bls_key.bin` (plaintext, mode 0600 only).
 
@@ -92,7 +112,7 @@ Combined with `genesis-mainnet.json` allocating 35% of supply to a single Founda
 
 **Fix required:** passphrase or KMS-backed encryption of `bls_key.bin` before mainnet. Document key-rotation procedure.
 
-### 2.7 Persistence panic on write failure (HIGH, open)
+### 2.7 Persistence panic on write failure (HIGH, **OPEN** — code-side audit-backlog item)
 
 **Adversary capability added:** an adversary who fills the disk or revokes write permissions on a validator host triggers a panic in `rocksdb_backend.rs:338, 388` (`.expect("write object to RocksDB")`), crashing the node.
 
@@ -109,7 +129,7 @@ Combined with `genesis-mainnet.json` allocating 35% of supply to a single Founda
 The base doc's external-adversary section says "Cannot: compromise honest validator private keys." Refine this to:
 
 > The external adversary cannot compromise honest validator private keys *via the network*, assuming the validator runs a hardened deployment with:
-> - Encrypted at-rest validator keys (KMS or passphrase) — **NOT YET IMPLEMENTED**
+> - Encrypted at-rest validator keys (Argon2id + XChaCha20-Poly1305 EVPL format) — **IMPLEMENTED (2026-05-02)**
 > - File system isolation (validator data_dir not readable by other users)
 > - No backup of `data_dir` to untrusted storage
 > - Operational hygiene around log redaction (no key bytes in logs)

@@ -63,7 +63,7 @@ leaving only cryptographic ghost records. The system uses:
 **Mitigated by:**
 - BFT consensus requires 2/3+1 honest votes for finality
 - Block validity proofs (Nova IVC) prevent invalid state transitions
-- Slashing conditions for equivocation (planned)
+- Slashing conditions for equivocation (live: 10% stake slash on double-vote evidence; downtime jailing)
 
 ### 3.3 Transaction-Level Adversary
 
@@ -79,7 +79,7 @@ leaving only cryptographic ghost records. The system uses:
 
 | Attack | Description | Mitigation | Status |
 |--------|-------------|------------|--------|
-| **Long-range attack** | Adversary forks from old state | Weak subjectivity checkpoints | Planned |
+| **Long-range attack** | Adversary forks from old state | Weak subjectivity checkpoints | Open (pre-mainnet) |
 | **Nothing-at-stake** | Validators vote on multiple forks | BFT finality (single-slot) | Implemented |
 | **Eclipse attack** | Isolate a node from honest peers | Peer diversity, gossip protocol | Partial |
 | **Double-vote** | Validator signs conflicting blocks | Equivocation detection + slashing (10% stake) | Implemented |
@@ -125,7 +125,7 @@ leaving only cryptographic ghost records. The system uses:
 
 | Attack | Description | Mitigation | Status |
 |--------|-------------|------------|--------|
-| **Gossip flood** | Send oversized messages | MAX_GOSSIP_MESSAGE_SIZE (10MB) + per-peer rate limiting (500/10s) | Implemented |
+| **Gossip flood** | Send oversized messages | MAX_GOSSIP_MESSAGE_SIZE (4MB, unified across transport + gossipsub) + per-peer rate limiting (500/10s) | Implemented |
 | **Deserialization bomb** | Malformed data crashes node | Size check before deserialize | Implemented |
 | **RwLock poisoning** | Crash thread holding lock | safe_read/safe_write recovery | Implemented |
 | **Peer starvation** | Deny block sync to target | Multiple peer connections | Implemented |
@@ -138,7 +138,7 @@ leaving only cryptographic ghost records. The system uses:
 | **Proof forgery** | Submit false Nova proof | HyperKZG verification (BN254) | Implemented |
 | **Witness manipulation** | Lie about balance/energy witnesses | R1CS constraints + range checks | Implemented |
 | **Field wraparound** | Exploit finite field arithmetic | 32-bit range checks on all values | Implemented |
-| **Constraint undercount** | Missing constraint allows cheat | 11,762 constraints, conservation laws | Verified |
+| **Constraint undercount** | Missing constraint allows cheat | 24,595 R1CS constraints (14,041 step-circuit + 10,554 fold/recursion), conservation laws | Verified |
 
 ### 4.7 Cryptographic Primitives
 
@@ -179,14 +179,18 @@ User → [ML-DSA Sign] → Transaction → [Gossip Network] → Validator Pool
 
 ### 6.1 Known Gaps (Pre-Mainnet)
 
-| Risk | Severity | Mitigation Plan |
-|------|----------|-----------------|
-| No slashing implementation | High | Phase 7 (mainnet genesis) |
-| No weak subjectivity checkpoints | Medium | Pre-mainnet implementation |
-| BLS rogue-key attack | Medium | Add proof-of-possession to validator registration |
-| No formal verification of circuits | Medium | Engage audit firm for R1CS review |
-| Poseidon field mismatch (Pallas vs BN256) | Low | Document; circuit uses BN256 natively |
-| No encrypted mempool in production | Low | AES-GCM commit-reveal implemented, needs integration |
+| Risk | Severity | Status |
+|------|----------|--------|
+| Slashing implementation | High | **Closed** — 10% equivocation slash + downtime jailing live in `evaporchain-consensus`; signed evidence path tested |
+| BLS rogue-key attack | Medium | **Closed** — proof-of-possession enforced at `add_validator()` and verified at genesis registration (`pop_verified=true`); see `validator_set::verify_pop` |
+| Encrypted mempool in production | Medium | **Closed** — AES-256-GCM commit-reveal mempool integrated end-to-end |
+| DA-2D wiring drift | Medium | **Closed** — `data_root` derived from `build_block_da_inputs(txs)`, identical at proposal-time and serve-time |
+| BLS key-at-rest plaintext | Medium | **Closed** — Encrypted-Validator-Private-Key-Layout (EVPL): Argon2id + XChaCha20-Poly1305; magic-byte auto-detection for plaintext-format migration |
+| Coordinator pubkey size validation | Low | **Closed** — `MAINNET_COORDINATOR_PK` length-checked at startup; `Option<&[u8]>` API with explicit None default |
+| No weak subjectivity checkpoints | Medium | Open — pre-mainnet implementation |
+| No formal verification of circuits | Medium | Open — engage audit firm for R1CS review |
+| Block-STM O(N²) under high contention | Medium | Open — MVCC retry storm possible; tracked in audit backlog |
+| Poseidon field mismatch (Pallas vs BN254) | Low | By design — Pallas Fp inside Nova step circuit, BN254 for HyperKZG; documented in `CRYPTO_SPEC.md` §1.2 |
 
 ### 6.2 Acceptable Risks
 

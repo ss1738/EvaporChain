@@ -742,28 +742,28 @@ Any verifier can check this proof without re-executing any transactions.
 
 ### 11.2 Circuit Design
 
-**IVC State Vector** (arity = 2):
+EvaporChain ships **two step-circuit variants** in `crates/evaporchain-proving/src/nova.rs`:
 
-```
-z = [state_hash, epoch]
-```
+- `BlockStepCircuit` — arity 2 `[state_hash, epoch]`. Minimal binding circuit, retained for testing and as a fallback.
+- `RealBlockCircuit` — arity 6 `[state_hash, mmr_root_hash, epoch, block_number, note_tree_root, pool_balance]`. Production circuit used by the `--prove` runtime path.
 
-**Per-step constraints:**
+The arity-6 circuit binds the full state-root via 4-limb recomposition (4-byte truncation has been replaced with 8-byte `hash_to_limbs[0]` to match `state_root_to_u64`; see `evaporchain_nova_state_root_truncation_fix.md`). It additionally enforces shielded-pool balance conservation `pool_new = pool_old + shields − unshields` and note-tree-root transitions.
 
-1. `epoch_new = epoch_old + 1`
-2. State hash binding: `state_hash · 1 = state_hash`
-3. Transaction count binding: `tx_count · tx_count = tx_count²`
-4. Evaporation count binding: `evap_count · 1 = evap_count`
+**Per-step constraints (real circuit):**
 
-**Witness per block:**
+1. Epoch monotonicity: `epoch_new = epoch_old + 1`.
+2. Block-number monotonicity: `block_number_new = block_number_old + 1`.
+3. State-hash binding: 8-byte limb agreement between witness `new_state_hash` and the recomposed `[state_hash]` element of `z`.
+4. MMR-root binding: 4-limb decomposition of the 32-byte MMR root.
+5. Energy decay (per object): integer thermodynamic model `E(t) = E₀ ≫ (Δepoch / τ)` with saturation, in-circuit.
+6. Transfer balance conservation: `Σ debits = Σ credits` per block.
+7. Shielded-pool balance conservation: `pool_new = pool_old + shields − unshields`.
+8. Note-tree-root transition: bound to witness deltas.
+9. Evaporation nullifier integrity: every nullifier in the block is bound.
 
-```rust
-BlockStepWitness {
-  new_state_hash: u64,         // Truncated state root (8 bytes)
-  tx_count: u64,
-  evaporation_count: u64,
-}
-```
+**Witness per block (real circuit):** `RealBlockWitness` (see `nova.rs`) carries the 32-byte state root, MMR root, epoch and block number, the transfer / energy / evaporation deltas, and the shield / unshield aggregates.
+
+**Constraint count (verified 2026-05-02):** 24,595 R1CS constraints split as 14,041 in the step circuit + 10,554 in the fold/recursion circuit. See `docs/CRYPTO_SPEC.md` §4.1 for the per-section breakdown.
 
 ### 11.3 Curve Parameters
 

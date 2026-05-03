@@ -2,7 +2,7 @@
 
 **Prepared for:** External security auditors
 **Date:** April 2026
-**Codebase:** ~220,000 LOC Rust, 16 crates, 4,234 native tests + 3,491 WASM tests, zero unsafe blocks
+**Codebase:** Rust workspace, 85 crates in `crates/` (18 core + 60 substrate + 7 Tier-2 starts), 6,202 native tests passing, zero `unsafe` blocks. WASM bindings (`evaporchain-crypto-wasm`) ship a separate ~3,491-case test corpus runnable via `wasm-pack test`.
 
 ## 1. Engagement Overview
 
@@ -20,32 +20,48 @@ We are seeking a comprehensive security audit before mainnet launch.
 
 ## 2. Repository Structure
 
+The 18 **core** crates listed below are the in-scope focus of this engagement.
+A further 60+ **substrate** crates (Light-Cone Ledger, Bell-Certified Beacon,
+Singh-Attractor Consensus, Evaporated-Fork Certificates, Immune Validator Set,
+MERA gate, Light-Cone DAG, Singh-Sabi/Migrant patina NFTs, MnemoChain,
+SDDC/SFSV/SHLM marketplaces, etc.) implement the Tier-1 invention stack and
+launch-dApp lanes; they are documented but secondary to the audit unless the
+auditor opts to include them.
+
 ```
 EvaporChain/
-├── crates/
-│   ├── evaporchain-crypto/      # Cryptographic primitives (PRIORITY 1)
-│   ├── evaporchain-proving/     # Nova IVC proofs (PRIORITY 1)
-│   ├── evaporchain-consensus/   # BFT consensus (PRIORITY 1)
-│   ├── evaporchain-execution/   # Block/tx execution (PRIORITY 2)
-│   ├── evaporchain-state/       # State DB + evaporation (PRIORITY 2)
-│   ├── evaporchain-script/      # EvaporScript VM (PRIORITY 2)
-│   ├── evaporchain-contracts/   # Template contracts (PRIORITY 3)
-│   ├── evaporchain-types/       # Core types (PRIORITY 3)
-│   ├── evaporchain-network/     # libp2p networking (PRIORITY 3)
-│   ├── evaporchain-da/          # Data availability (PRIORITY 3)
-│   ├── evaporchain-oracle/      # Oracle data feeds (PRIORITY 3)
-│   ├── evaporchain-sharding/    # Sharding (experimental) (PRIORITY 4)
-│   ├── evaporchain-node/        # Node binary (PRIORITY 4)
-│   ├── evaporchain-cli/         # CLI tool (PRIORITY 4)
-│   ├── evaporchain-mcp/         # MCP server (PRIORITY 4)
-│   └── evaporchain-crypto-wasm/ # WASM crypto bindings (PRIORITY 4)
-├── SECURITY.md                  # Vulnerability disclosure policy
+├── crates/                            # 85 crates total
+│   ├── evaporchain-crypto/            # Cryptographic primitives (PRIORITY 1)
+│   ├── evaporchain-proving/           # Nova IVC proofs (PRIORITY 1)
+│   ├── evaporchain-consensus/         # BFT consensus (PRIORITY 1)
+│   ├── evaporchain-execution/         # Block/tx execution (PRIORITY 2)
+│   ├── evaporchain-state/             # State DB + evaporation (PRIORITY 2)
+│   ├── evaporchain-script/            # EvaporScript VM (PRIORITY 2)
+│   ├── evaporchain-contracts/         # Template contracts (PRIORITY 3)
+│   ├── evaporchain-types/             # Core types (PRIORITY 3)
+│   ├── evaporchain-network/           # libp2p networking (PRIORITY 3)
+│   ├── evaporchain-da/                # Data availability (PRIORITY 3)
+│   ├── evaporchain-oracle/            # Oracle data feeds (PRIORITY 3)
+│   ├── evaporchain-fee-controller/    # PID fee controller (PRIORITY 3)
+│   ├── evaporchain-sharding/          # Sharding (experimental) (PRIORITY 4)
+│   ├── evaporchain-node/              # Node binary (PRIORITY 4)
+│   ├── evaporchain-cli/               # CLI tool (PRIORITY 4)
+│   ├── evaporchain-mcp/               # MCP server (PRIORITY 4)
+│   ├── evaporchain-crypto-wasm/       # WASM crypto bindings (PRIORITY 4)
+│   ├── evaporchain-light-cone/        # Light-Cone Ledger DAG (substrate, optional)
+│   ├── evaporchain-bell-beacon/       # Bell-Certified Beacon (substrate, optional)
+│   ├── evaporchain-singh-attractor/   # Singh Attractor Consensus (substrate, optional)
+│   ├── evaporchain-evap-fork-cert/    # Evaporated-Fork Certificates (substrate, optional)
+│   ├── evaporchain-ib-validators/     # Immune Validator Set (substrate, optional)
+│   ├── evaporchain-mera/              # MERA gate (substrate, optional)
+│   └── …59 further substrate crates (see ARCHITECTURE.md)
+├── SECURITY.md                        # Vulnerability disclosure policy
 ├── docs/
-│   ├── THREAT_MODEL.md          # Threat model document
-│   ├── CRYPTO_SPEC.md           # Cryptographic specification
-│   └── ARCHITECTURE.md          # System architecture
+│   ├── THREAT_MODEL.md                # Threat model document
+│   ├── CRYPTO_SPEC.md                 # Cryptographic specification
+│   └── ARCHITECTURE.md                # System architecture
 └── research/
-    └── whitepaper.md            # Protocol whitepaper
+    └── whitepaper.md                  # Protocol whitepaper
 ```
 
 ## 3. Priority 1: Cryptographic Primitives
@@ -179,39 +195,36 @@ EvaporChain/
 
 ## 6. Known Issues (Disclosed)
 
+Status reflects pre-mainnet hardening work completed against the threat model.
+
 | Issue | Severity | Status | Notes |
 |-------|----------|--------|-------|
-| No slashing | High | Planned for Phase 7 | Validators can misbehave without penalty |
-| No weak subjectivity | Medium | Planned | Long-range attacks possible |
-| BLS rogue-key | Medium | Planned | Proof-of-possession not yet enforced |
-| Poseidon on Pallas vs BN254 | Low | By design | Separate domains, documented |
+| Slashing | High | **Closed** | Live: 10% equivocation slash, downtime jailing, signed evidence; tested in `evaporchain-consensus` |
+| BLS rogue-key | Medium | **Closed** | Proof-of-possession enforced at validator registration (`add_validator()` and genesis-time `verify_pop`) |
+| Encrypted mempool | Medium | **Closed** | AES-256-GCM mempool encryption landed |
+| DA-2D wiring | Medium | **Closed** | `data_root` now built from `build_block_da_inputs(txs)`, encoded at proposal time and verified on serve |
+| BLS key-at-rest | Medium | **Closed** | Encrypted-Validator-Private-Key-Layout (EVPL) format: Argon2id KDF + XChaCha20-Poly1305; magic-byte detection for migration |
+| Plaintext-bytes coordinator pubkey | Low | **Closed** | `MAINNET_COORDINATOR_PK` length-checked at startup; `Option<&[u8]>` API with explicit None default |
+| No weak subjectivity | Medium | Open | Long-range attacks possible; weak-subjectivity checkpoints not yet enforced |
+| Poseidon on Pallas vs BN254 | Low | By design | Separate domains, documented in `CRYPTO_SPEC.md` §1.2 |
+| Block-STM O(N²) under high contention | Medium | Open | MVCC retry storm possible; tracked in audit backlog |
 
 ## 7. Test Suite
 
 ```
-Total: 4,234 native tests + 3,491 WASM tests
-├── evaporchain-wallet:      2,949 tests (90+ modules, keystore, signing, tx building)
-├── evaporchain-consensus:     288 tests (BFT state machine, BLS, validator set, adversarial)
-├── evaporchain-crypto:        169 tests (hash, ML-DSA signatures, Verkle, MMR)
-├── evaporchain-execution:     163 tests (transfers, gas, stress, proptest invariants)
-├── evaporchain-da:             94 tests (erasure coding, DA certificates, sampling)
-├── evaporchain-script:         84 tests (VM, parser, compiler, gas, safety)
-├── evaporchain-state:         101 tests (evaporation, state DB, ghost bridge)
-├── evaporchain-proving:        68 tests (Nova circuit, range checks, IVC folding)
-├── evaporchain-oracle:         60 tests (data feeds, authentication)
-├── evaporchain-contracts:      40 tests (template contracts)
-├── evaporchain-node:           38 tests (API, genesis, node lifecycle)
-├── evaporchain-sharding:       30 tests (experimental sharding)
-├── evaporchain-cli:            28 tests (genesis, keygen, CLI commands)
-├── evaporchain-network:        27 tests (gossip, sync, rate limiting)
-├── evaporchain-types:          25 tests (serialization, energy decay)
-├── evaporchain-integration:    13 tests (cross-crate integration)
-├── wallet behavior tests:      57 tests (account, keystore, mnemonic, offline, signer, tx_builder)
-├── evaporchain-crypto-wasm: 3,491 tests (WASM ML-DSA bindings, via wasm-pack test)
-└── dApps/SDK/website:        ~162 tests (TypeScript integration + unit tests)
+Total: 6,202 native tests across 85 workspace crates, all passing.
+       ~3,491 additional WASM-binding tests in evaporchain-crypto-wasm
+       (run separately via `wasm-pack test`).
+       ~162 TypeScript tests for dApps/SDK/website.
 ```
 
-All native tests pass. Zero `unsafe` blocks in the codebase.
+Per-crate counts shift as substrate crates are added; auditors should treat
+`cargo test --workspace 2>&1 | tail -20` as the source of truth for the
+current totals at the start of an engagement.
+
+Zero `unsafe` blocks in the codebase. All native tests pass on the reference
+3-Mini Tailscale cluster (Apple M4, macOS) used for sustained run-time
+verification.
 
 ## 8. Build and Test Instructions
 

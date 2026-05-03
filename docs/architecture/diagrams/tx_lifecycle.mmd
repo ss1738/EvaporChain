@@ -28,5 +28,7 @@ flowchart TD
 
     %% * As of 2026-04-27 the 2D erasure encoder is wired into all 3
     %% producers via compute_block_da #40;commit 1fc67c0#41;. Empty
-    %% blocks ship a sentinel data_root #40;blake3#40;"evaporchain:empty_block"#41;#41;
-    %% so DA attestation rounds fire on every block. Closed K-04.
+    %% blocks ship a domain-separated sentinel data_root
+    %% #40;keyed_hash"evaporchain:empty_block:v2", height || parent_hash#41;
+    %% so attestations fire every block AND can't replay across heights.
+    %% Closed K-04; sentinel domain-separation 2026-05-03 #40;#9.1#41;.
