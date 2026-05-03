@@ -102,6 +102,11 @@ fn to_merkle_proof(data: &MerkleProofData) -> MerkleProof {
     }
 }
 
+/// Default depth for the Phasing Nullifier Tree (PNT) sliding window.
+/// Five live phases at 100 epochs/phase = 500 epochs of guaranteed
+/// double-spend protection at any point in time. Audit-tunable.
+const PNT_WINDOW_DEPTH: usize = 5;
+
 /// The privacy execution engine. Maintains the in-memory note tree and
 /// nullifier set, syncing state to/from StateDB at block boundaries.
 pub struct PrivacyExecutor {
@@ -109,6 +114,17 @@ pub struct PrivacyExecutor {
     engine: PrivacyEngine,
     /// Current epoch (set at block start).
     current_epoch: u64,
+    /// Phasing Nullifier Tree (PNT, research/INVENTION_STACK.md §4.2).
+    /// Tracks every spent nullifier in a bounded sliding window of
+    /// phases. **Wiring stage 1 (this commit): shadow-tracking only.**
+    /// Inserts mirror the canonical nullifier_set / db.spend_nullifier
+    /// path; the chain still gates double-spend on the unbounded set
+    /// because making PNT authoritative is a consensus-breaking change
+    /// that needs a hard-fork plan. PNT.live_count() is exposed so a
+    /// node operator can compare growth curves before flipping the
+    /// gate. Stage 2 will wire `is_spent_in_window` into the
+    /// double-spend check itself.
+    pub pnt: evaporchain_pnt::PhasedNullifierTree,
 }
 
 impl PrivacyExecutor {
@@ -117,6 +133,8 @@ impl PrivacyExecutor {
         Self {
             engine: PrivacyEngine::new(NOTE_TREE_DEPTH),
             current_epoch: 0,
+            pnt: evaporchain_pnt::PhasedNullifierTree::new(PNT_WINDOW_DEPTH)
+                .expect("PNT_WINDOW_DEPTH must be >= 1"),
         }
     }
 
@@ -125,7 +143,16 @@ impl PrivacyExecutor {
         Self {
             engine: PrivacyEngine::new(depth),
             current_epoch: 0,
+            pnt: evaporchain_pnt::PhasedNullifierTree::new(PNT_WINDOW_DEPTH)
+                .expect("PNT_WINDOW_DEPTH must be >= 1"),
         }
+    }
+
+    /// Open a fresh PNT phase. Call at end-of-epoch (or end-of-block-N
+    /// for any chosen N) to age out the oldest live phase. Stage-1
+    /// shadow-tracking only, so this has no effect on consensus.
+    pub fn pnt_advance_phase(&mut self) {
+        self.pnt.advance_phase();
     }
 
     /// Set the current epoch (call at the start of each block).
@@ -440,6 +467,13 @@ impl PrivacyExecutor {
                 return Err(PrivacyExecError::DoubleSpend(hex::encode(&nf[..8])));
             }
             db.spend_nullifier(nf);
+            // PNT shadow-track (research-buildable item #8). Stage 1:
+            // record without consensus effect. The PNT may also reject
+            // (`Err(PntError::DoubleSpend)`) — we drop that error today
+            // because the canonical check above is already authoritative.
+            // Stage 2 (post hard-fork) will surface PNT errors and gate
+            // double-spend on `is_spent_in_window` directly.
+            let _ = self.pnt.insert_nullifier(*nf);
         }
 
         // 8. Add change outputs to tree (if any)
@@ -651,6 +685,13 @@ impl PrivacyExecutor {
                 return Err(PrivacyExecError::DoubleSpend(hex::encode(&nf[..8])));
             }
             db.spend_nullifier(nf);
+            // PNT shadow-track (research-buildable item #8). Stage 1:
+            // record without consensus effect. The PNT may also reject
+            // (`Err(PntError::DoubleSpend)`) — we drop that error today
+            // because the canonical check above is already authoritative.
+            // Stage 2 (post hard-fork) will surface PNT errors and gate
+            // double-spend on `is_spent_in_window` directly.
+            let _ = self.pnt.insert_nullifier(*nf);
         }
 
         // 10. Add output notes to tree
@@ -1237,6 +1278,78 @@ mod tests {
 
         let err = executor.execute_unshield(&mut db, &tx).unwrap_err();
         assert!(matches!(err, PrivacyExecError::DoubleSpend(_)));
+    }
+
+    #[test]
+    fn test_pnt_shadow_tracks_unshield_nullifier() {
+        // Audit-buildable #8 (PNT wiring stage 1). Every spend records
+        // into the PhasedNullifierTree alongside the canonical set.
+        // Stage 1 is shadow-only — the PNT does not yet gate consensus
+        // double-spend — but its growth must mirror the canonical set
+        // so an operator can compare curves.
+        let sender = test_addr(1);
+        let receiver = test_addr(2);
+        let mut db = setup_db_with_balance(&sender, 10_000);
+        let mut executor = PrivacyExecutor::with_depth(8);
+        executor.set_epoch(1);
+        assert_eq!(executor.pnt.live_count(), 0);
+
+        let note = do_shield(
+            &mut executor,
+            &mut db,
+            &sender,
+            5_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
+        );
+
+        let tx = build_real_unshield(&executor, &note, receiver, 5_000);
+        executor.execute_unshield(&mut db, &tx).unwrap();
+
+        assert_eq!(
+            executor.pnt.live_count(),
+            1,
+            "PNT must mirror the canonical nullifier_set on spend"
+        );
+        assert!(executor.pnt.is_spent_in_window(&tx.input_nullifiers[0]));
+    }
+
+    #[test]
+    fn test_pnt_advance_phase_keeps_recent_window() {
+        // Advancing phases shouldn't lose nullifiers within the window
+        // depth (5 phases by default). The very first phase containing
+        // our nullifier stays live until the 6th advance_phase.
+        let sender = test_addr(1);
+        let receiver = test_addr(2);
+        let mut db = setup_db_with_balance(&sender, 10_000);
+        let mut executor = PrivacyExecutor::with_depth(8);
+        executor.set_epoch(1);
+
+        let note = do_shield(
+            &mut executor,
+            &mut db,
+            &sender,
+            5_000,
+            0,
+            test_blinding(10),
+            test_blinding(20),
+            test_blinding(99),
+        );
+
+        let tx = build_real_unshield(&executor, &note, receiver, 5_000);
+        let nullifier = tx.input_nullifiers[0];
+        executor.execute_unshield(&mut db, &tx).unwrap();
+
+        // Advance up to (window_depth-1) times — nullifier still in window.
+        for _ in 0..4 {
+            executor.pnt_advance_phase();
+        }
+        assert!(
+            executor.pnt.is_spent_in_window(&nullifier),
+            "nullifier must remain live within the window"
+        );
     }
 
     #[test]
