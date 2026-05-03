@@ -1414,6 +1414,61 @@ contract Allen {
     }
 
     #[test]
+    fn test_vm_allen_relation_all_thirteen_codes() {
+        // Exhaustive test for the Allen-Decay VM built-in: every one of
+        // the 13 interval relations must round-trip through EvaporScript
+        // to the correct numeric code. The reference inputs match
+        // `evaporchain_allen_decay::compute::tests` exactly.
+        //
+        // Codes: 0 Before, 1 Meets, 2 Overlaps, 3 Starts, 4 During,
+        // 5 Finishes, 6 Equals, 7 FinishedBy, 8 Contains, 9 StartedBy,
+        // 10 OverlappedBy, 11 MetBy, 12 After.
+        let src = r#"
+contract AllenAll {
+    state { x: u64 = 0 }
+    fn rel(a_s: u64, a_e: u64, b_s: u64, b_e: u64) -> u64 {
+        return allen_relation(a_s, a_e, b_s, b_e)
+    }
+}
+"#;
+        let bytecode = compile_src(src);
+        let ctx = test_ctx();
+
+        // (input_a_start, input_a_end, input_b_start, input_b_end, expected_code)
+        let cases: [(u64, u64, u64, u64, u64); 13] = [
+            (1, 3, 5, 7, 0),  // Before
+            (1, 5, 5, 7, 1),  // Meets
+            (1, 5, 3, 7, 2),  // Overlaps
+            (1, 3, 1, 7, 3),  // Starts
+            (2, 5, 1, 7, 4),  // During
+            (3, 7, 1, 7, 5),  // Finishes
+            (1, 5, 1, 5, 6),  // Equals
+            (1, 7, 3, 7, 7),  // FinishedBy
+            (1, 7, 3, 5, 8),  // Contains
+            (1, 7, 1, 3, 9),  // StartedBy
+            (3, 7, 1, 5, 10), // OverlappedBy
+            (5, 7, 1, 5, 11), // MetBy
+            (5, 7, 1, 3, 12), // After
+        ];
+
+        for (i, (a_s, a_e, b_s, b_e, expected)) in cases.iter().enumerate() {
+            let args = vec![
+                Value::U64(*a_s),
+                Value::U64(*a_e),
+                Value::U64(*b_s),
+                Value::U64(*b_e),
+            ];
+            let r = EvaporVM::execute(&bytecode, "rel", args, empty_state(), &ctx).unwrap();
+            assert_eq!(
+                r.return_value,
+                Value::U64(*expected),
+                "case #{i}: relation(({a_s},{a_e}), ({b_s},{b_e})) — \
+                 expected code {expected}"
+            );
+        }
+    }
+
+    #[test]
     fn test_vm_allen_relation_invalid_interval_rejected() {
         // start_a >= end_a must be rejected by the underlying Interval::new.
         let src = r#"
