@@ -132,6 +132,7 @@ fn dispatch(state: &ApiState, req: JsonRpcRequest) -> JsonRpcResponse {
         "evap_getFourActSnapshot" => rpc_get_four_act_snapshot(state, req.id),
         "evap_getHbctStatus" => rpc_get_hbct_status(state, req.id),
         "evap_getPatronageStatus" => rpc_get_patronage_status(state, req.id),
+        "evap_getLightClientStatus" => rpc_get_light_client_status(state, req.id),
         "evap_getLogs" => rpc_get_logs(state, &req.params, req.id),
         "evap_getBlockLogs" => rpc_get_block_logs(state, &req.params, req.id),
         "evap_getFinalityStatus" => rpc_get_finality_status(state, &req.params, req.id),
@@ -643,6 +644,42 @@ fn format_lamport_clock_response(
         "accumulated_energy": json_hex_u64(accumulated_energy),
         "tick_quantum": json_hex_u64(tick_quantum),
     })
+}
+
+/// Pure formatter for LightClientVerifier RPC responses.
+/// `latest_trusted_height` is the highest height in the verifier's
+/// trusted-state map (None if it's empty, which only happens
+/// pre-genesis); `trusted_count` is the total number of trusted
+/// states retained (bounded by trust-period pruning).
+fn format_light_client_status_response(
+    latest_trusted_height: Option<u64>,
+    trusted_count: usize,
+) -> Value {
+    serde_json::json!({
+        "latest_trusted_height": latest_trusted_height
+            .map(json_hex_u64)
+            .unwrap_or(Value::Null),
+        "trusted_count": json_hex_u64(trusted_count as u64),
+    })
+}
+
+/// `evap_getLightClientStatus()` — verifier state for operators +
+/// embedded light clients. Surfaces the highest trusted height +
+/// total trusted-state count.
+fn rpc_get_light_client_status(state: &ApiState, id: Value) -> JsonRpcResponse {
+    let (latest, count) = match state.light_client.lock() {
+        Ok(lc) => (lc.latest_trusted_height(), lc.trusted_count()),
+        Err(_) => {
+            return JsonRpcResponse::ok(
+                id,
+                serde_json::json!({ "light_client_unavailable": true }),
+            );
+        }
+    };
+    JsonRpcResponse::ok(
+        id,
+        format_light_client_status_response(latest, count),
+    )
 }
 
 /// Pure formatter for Patronage RPC responses. Surfaces both the
@@ -1518,6 +1555,20 @@ mod tests {
         assert_eq!(trie["compressions"], "0x5");
         assert_eq!(trie["decompressions"], "0x1");
         assert_eq!(v["lazy_snapshot_count"], "0x9");
+    }
+
+    #[test]
+    fn test_format_light_client_status_populated() {
+        let v = format_light_client_status_response(Some(12345), 42);
+        assert_eq!(v["latest_trusted_height"], "0x3039"); // 12345
+        assert_eq!(v["trusted_count"], "0x2a");
+    }
+
+    #[test]
+    fn test_format_light_client_status_no_trusted_height() {
+        let v = format_light_client_status_response(None, 0);
+        assert_eq!(v["latest_trusted_height"], serde_json::Value::Null);
+        assert_eq!(v["trusted_count"], "0x0");
     }
 
     #[test]
