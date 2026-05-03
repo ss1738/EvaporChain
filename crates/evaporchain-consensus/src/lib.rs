@@ -344,6 +344,7 @@ impl MockConsensus {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            protocol_version: 0,
             submit_epoch_hints: vec![],
         };
 
@@ -425,6 +426,7 @@ impl MockConsensus {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            protocol_version: 0,
             submit_epoch_hints: vec![],
         };
 
@@ -597,6 +599,7 @@ impl RotatingConsensus {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            protocol_version: 0,
             submit_epoch_hints: vec![],
         };
 
@@ -1273,6 +1276,7 @@ mod tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            protocol_version: 0,
             submit_epoch_hints: vec![],
         };
 
@@ -1315,6 +1319,7 @@ mod tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            protocol_version: 0,
             submit_epoch_hints: vec![],
         };
         assert!(rc.validate_received_block(&block).is_err());
@@ -1391,6 +1396,7 @@ mod tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            protocol_version: 0,
             submit_epoch_hints: vec![],
         };
 

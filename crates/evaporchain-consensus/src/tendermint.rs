@@ -3815,6 +3815,10 @@ impl TendermintConsensus {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            // Pre-Lane-B: every block produced by this node carries
+            // protocol_version=0 (legacy semantics). Future fork-epoch
+            // activations will bump this in lockstep across the cluster.
+            protocol_version: 0,
             // Stamp per-tx hints so followers can deterministically reconstruct
             // the priority used at proposal time. Only stamp when at least one
             // hint is `Some` — otherwise leave empty so the field
@@ -5202,6 +5206,7 @@ mod tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            protocol_version: 0,
             submit_epoch_hints: vec![],
         };
 
@@ -5234,6 +5239,7 @@ mod tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            protocol_version: 0,
             submit_epoch_hints: vec![],
         };
 
@@ -5394,6 +5400,7 @@ mod tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            protocol_version: 0,
             submit_epoch_hints: vec![],
         };
 
@@ -5767,6 +5774,7 @@ mod tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            protocol_version: 0,
             submit_epoch_hints: vec![],
         };
 
@@ -5818,6 +5826,7 @@ mod tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            protocol_version: 0,
             submit_epoch_hints: vec![],
         };
 
@@ -5870,6 +5879,7 @@ mod tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            protocol_version: 0,
             submit_epoch_hints: vec![],
         };
 
@@ -6660,6 +6670,7 @@ mod vrf_tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            protocol_version: 0,
             submit_epoch_hints: vec![],
         };
 
@@ -6888,6 +6899,7 @@ mod epoch_tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            protocol_version: 0,
             submit_epoch_hints: vec![],
         }
     }
@@ -8199,6 +8211,7 @@ mod da_tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            protocol_version: 0,
             submit_epoch_hints: vec![],
         }
     }

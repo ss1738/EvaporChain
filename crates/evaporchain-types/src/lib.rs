@@ -172,6 +172,22 @@ pub struct Block {
     /// Shard health summary — number of active shards and compaction candidates.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shard_count: Option<u16>,
+    /// Soft-fork protocol version. `0` is the pre-Lane-B legacy
+    /// behaviour (this is what every existing block carries via
+    /// `serde(default)` — old chains read as `0`). Future fork-epoch
+    /// activations bump the value, e.g. `1` → PNT-authoritative
+    /// double-spend gating, `2` → EnergyVerkleTrie-authoritative
+    /// state root, etc. Validators MUST refuse blocks with
+    /// `protocol_version` higher than the version the binary
+    /// implements; equal-or-lower is accepted (forward-compat
+    /// downgrade for emergency rollback).
+    ///
+    /// Wire-format: `serde(default)` keeps legacy blocks bit-compat.
+    /// `skip_serializing_if` is intentionally NOT used — once a chain
+    /// upgrades, every block must carry the version explicitly so a
+    /// joining node can validate the transition without ambiguity.
+    #[serde(default)]
+    pub protocol_version: u8,
     /// Phase-2 of `research/proposals/energy-stamped-mev-resistance.md`:
     /// per-tx submit-epoch hints carried on the wire so every validator
     /// computes the SAME priority for each tx, deterministically.
@@ -1800,6 +1816,7 @@ mod tests {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
+            protocol_version: 0,
             submit_epoch_hints: vec![],
         };
         let json = serde_json::to_vec(&block).unwrap();
