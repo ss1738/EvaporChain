@@ -2141,6 +2141,46 @@ async fn post_governance_fork_choice_mode(
     }
 }
 
+/// POST /api/governance/param — Lane K.1. Set a soft-fork governance
+/// knob (parent_acceptance_mode, block_source_mode,
+/// conservation_enforcement) without recompiling. Validates against
+/// the allowlist in `TendermintConsensus::governance_set_param` so
+/// unknown keys and invalid values are rejected with structured
+/// diagnostics. fork_choice_mode is intentionally NOT in the
+/// allowlist — that key requires endorser-stake validation and goes
+/// through `POST /api/governance/fork_choice_mode` instead.
+#[derive(serde::Deserialize)]
+struct GovernanceParamReq {
+    key: String,
+    value: String,
+}
+
+async fn post_governance_param(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<GovernanceParamReq>,
+) -> Json<serde_json::Value> {
+    if let Some(tc_arc) = &state.tendermint {
+        let mut tc = safe_lock(tc_arc);
+        match tc.governance_set_param(&req.key, &req.value) {
+            Ok(()) => Json(serde_json::json!({
+                "status": "amended",
+                "key": req.key,
+                "value": req.value,
+                "detail": format!("governance soft-fork knob {} set to {}", req.key, req.value)
+            })),
+            Err(e) => Json(serde_json::json!({
+                "status": "error",
+                "detail": e.to_string()
+            })),
+        }
+    } else {
+        Json(serde_json::json!({
+            "status": "error",
+            "detail": "Tendermint consensus not running (single-validator devnet mode)"
+        }))
+    }
+}
+
 /// GET /api/governance/flags — all governance soft-fork keys + their
 /// effective values (explicit overrides merged with documented defaults).
 /// Lane I.4 + Lane I.5 + Layer 0 #1 introduced opt-in flags
@@ -6394,6 +6434,7 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
 
     // Governance
     ApiDocEntry { method: "GET",  path: "/api/governance/flags",       category: "governance", description: "All governance soft-fork flags + their effective values (Lane I.4/I.5 + Layer 0 #1: parent_acceptance_mode, block_source_mode, conservation_enforcement, fork_choice_mode). Defaults applied for unset keys.", example: None },
+    ApiDocEntry { method: "POST", path: "/api/governance/param",       category: "governance", description: "Lane K.1 — set a soft-fork governance knob without recompiling. Allowlist: parent_acceptance_mode∈{linear,mcc}, block_source_mode∈{fifo,antichain}, conservation_enforcement∈{observe,enforce}.", example: Some(r#"{"key":"parent_acceptance_mode","value":"mcc"}"#) },
     ApiDocEntry { method: "GET",  path: "/api/governance/fork_choice_mode", category: "governance", description: "Current authoritative fork-choice mode (mcc|singh_attractor) + attractor set.", example: None },
     ApiDocEntry { method: "POST", path: "/api/governance/fork_choice_mode", category: "governance", description: "Governance amendment to switch fork-choice between MCC and Singh-Attractor. Requires stake quorum from endorser_stakes.", example: Some(r#"{"mode":"singh_attractor","attractors":[{"center":1000,"basin_radius":200}],"endorser_stakes":[1000,800],"required_stake":1500}"#) },
 
@@ -14163,6 +14204,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/patronage/status", get(get_patronage_status))
         .route("/api/patronage/immune", get(get_patronage_immune))
         .route("/api/governance/flags", get(get_governance_flags))
+        .route("/api/governance/param", post(post_governance_param))
         .route(
             "/api/governance/fork_choice_mode",
             get(get_governance_fork_choice_mode),

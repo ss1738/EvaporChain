@@ -273,6 +273,40 @@ pub enum SlashReason {
     Downtime { missed_blocks: u64 },
 }
 
+/// Error returned by `TendermintConsensus::governance_set_param`
+/// (Lane K.1). Unknown keys + invalid-for-key values are rejected
+/// with structured error data so the RPC layer can surface useful
+/// diagnostics without leaking internal state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GovernanceParamError {
+    /// The key isn't a known soft-fork knob. See
+    /// `governance_set_param` doc for the allowlist.
+    UnknownKey(String),
+    /// Value isn't in the permitted set for this key.
+    InvalidValue {
+        key: String,
+        value: String,
+        permitted: Vec<String>,
+    },
+}
+
+impl std::fmt::Display for GovernanceParamError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnknownKey(k) => write!(
+                f,
+                "unknown governance soft-fork key: {k:?} (allowlist: parent_acceptance_mode, block_source_mode, conservation_enforcement)"
+            ),
+            Self::InvalidValue { key, value, permitted } => write!(
+                f,
+                "invalid value {value:?} for key {key:?} — permitted: {permitted:?}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for GovernanceParamError {}
+
 /// Error returned by `TendermintConsensus::governance_set_fork_choice_mode`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GovernanceAmendmentError {
@@ -681,6 +715,47 @@ impl TendermintConsensus {
 
     pub fn get_governance_param(&self, key: &str) -> Option<&str> {
         self.governance_params.get(key).map(|s| s.as_str())
+    }
+
+    /// Set a governance soft-fork parameter, validated against the
+    /// allowlist of known keys + their permitted values. Used by the
+    /// `POST /api/governance/param` RPC (Lane K.1) so operators can
+    /// flip Lane I.4 / I.5 / Layer 0 #1 knobs without recompiling +
+    /// without bypassing the safety allowlist.
+    ///
+    /// Returns `Err` if the key isn't a known soft-fork knob or if
+    /// the value isn't permitted for that key. Unknown keys are
+    /// rejected (not silently inserted) so a misspelled key can't
+    /// litter governance_params with junk that fails the typo-safety
+    /// fall-through patterns at the consumer sites.
+    ///
+    /// Allowlist:
+    /// - `parent_acceptance_mode` ∈ {`linear`, `mcc`}
+    /// - `block_source_mode` ∈ {`fifo`, `antichain`}
+    /// - `conservation_enforcement` ∈ {`observe`, `enforce`}
+    /// - `fork_choice_mode` is set via `governance_set_fork_choice_mode`
+    ///   instead (it requires endorser-stake validation).
+    pub fn governance_set_param(
+        &mut self,
+        key: &str,
+        value: &str,
+    ) -> Result<(), GovernanceParamError> {
+        let permitted: &[&str] = match key {
+            "parent_acceptance_mode" => &["linear", "mcc"],
+            "block_source_mode" => &["fifo", "antichain"],
+            "conservation_enforcement" => &["observe", "enforce"],
+            _ => return Err(GovernanceParamError::UnknownKey(key.to_string())),
+        };
+        if !permitted.contains(&value) {
+            return Err(GovernanceParamError::InvalidValue {
+                key: key.to_string(),
+                value: value.to_string(),
+                permitted: permitted.iter().map(|s| s.to_string()).collect(),
+            });
+        }
+        self.governance_params
+            .insert(key.to_string(), value.to_string());
+        Ok(())
     }
 
     pub fn da_confirmed_height(&self) -> u64 {
