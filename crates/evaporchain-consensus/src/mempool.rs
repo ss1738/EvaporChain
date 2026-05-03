@@ -145,6 +145,25 @@ impl Mempool {
             self.rejected_count += 1;
             return false;
         }
+        // Phase 4.3 (2026-05-03) — NMT namespace-0 reject at admission.
+        // Audit K-13: ns=0 is in active production use by the
+        // tendermint proposal builder for "core transactions"
+        // (non-Blob txs framed under ns=0). User-submitted BlobTx
+        // with namespace_id=0 collides with that frame and would
+        // forge a system-namespace blob. Execution already rejects
+        // at `lib.rs:2597`, but admission-side rejection
+        // additionally prevents adversaries from getting such txs
+        // accepted into the pool / proposed into a block. The walk-
+        // back at `evaporchain-da/src/namespace.rs:44-52` notes
+        // exactly this: "If user-submitted BlobTx with namespace_id=0
+        // needs to be rejected, gate it at mempool admission, not at
+        // NMT construction."
+        if let Transaction::Blob(blob) = tx {
+            if blob.namespace_id == 0 {
+                self.rejected_count += 1;
+                return false;
+            }
+        }
         let tx_size = Self::estimate_tx_size(tx);
         if tx_size > MAX_TX_SIZE_BYTES {
             self.rejected_count += 1;
