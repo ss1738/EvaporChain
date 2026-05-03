@@ -384,6 +384,44 @@ fn rpc_get_mmr_proof(state: &ApiState, params: &Value, id: Value) -> JsonRpcResp
     }
 }
 
+/// Pure computation behind `evap_decayForgetProof`. Extracted as a
+/// free function so it can be exhaustively unit-tested without
+/// constructing a full ApiState. Returns the JSON body that the RPC
+/// handler ships back, or `Err(message)` on out-of-range inputs.
+fn compute_decay_forget_response(
+    record_id: [u8; 32],
+    original_commitment: u64,
+    activated_epoch: u64,
+    query_epoch: u64,
+    forget_threshold: u64,
+    half_life: u64,
+) -> Result<Value, &'static str> {
+    if half_life == 0 {
+        return Err("half_life must be > 0");
+    }
+    let lambda = evaporchain_energy_kernel::ChainLambda::new(
+        evaporchain_energy_kernel::Lambda::from_epochs(half_life),
+    );
+    let proof = evaporchain_decay_forget::prove_forgotten(
+        record_id,
+        original_commitment,
+        lambda,
+        activated_epoch,
+        query_epoch,
+        forget_threshold,
+    );
+    Ok(serde_json::json!({
+        "record_id": format!("0x{}", hex::encode(proof.record_id)),
+        "original_commitment": json_hex_u64(proof.original_commitment),
+        "activated_epoch": json_hex_u64(proof.activated_epoch),
+        "forgotten_at_epoch": json_hex_u64(proof.forgotten_at_epoch),
+        "forget_threshold": json_hex_u64(proof.forget_threshold),
+        "decayed_commitment": json_hex_u64(proof.decayed_commitment),
+        "witness": format!("0x{}", hex::encode(proof.witness)),
+        "is_forgotten": proof.decayed_commitment <= proof.forget_threshold,
+    }))
+}
+
 /// `evap_decayForgetProof([record_id_hex32, original_commitment_hex,
 ///                         activated_epoch_hex, query_epoch_hex,
 ///                         forget_threshold_hex, half_life_epochs_hex])`
@@ -450,28 +488,17 @@ fn rpc_decay_forget_proof(state: &ApiState, params: &Value, id: Value) -> JsonRp
             )
         }
     };
-    let lambda = evaporchain_energy_kernel::ChainLambda::new(
-        evaporchain_energy_kernel::Lambda::from_epochs(half_life),
-    );
-    let proof = evaporchain_decay_forget::prove_forgotten(
+    match compute_decay_forget_response(
         record_bytes,
         original_commitment,
-        lambda,
         activated_epoch,
         query_epoch,
         forget_threshold,
-    );
-    let json = serde_json::json!({
-        "record_id": format!("0x{}", hex::encode(proof.record_id)),
-        "original_commitment": json_hex_u64(proof.original_commitment),
-        "activated_epoch": json_hex_u64(proof.activated_epoch),
-        "forgotten_at_epoch": json_hex_u64(proof.forgotten_at_epoch),
-        "forget_threshold": json_hex_u64(proof.forget_threshold),
-        "decayed_commitment": json_hex_u64(proof.decayed_commitment),
-        "witness": format!("0x{}", hex::encode(proof.witness)),
-        "is_forgotten": proof.decayed_commitment <= proof.forget_threshold,
-    });
-    JsonRpcResponse::ok(id, json)
+        half_life,
+    ) {
+        Ok(v) => JsonRpcResponse::ok(id, v),
+        Err(msg) => JsonRpcResponse::invalid_params(id, msg),
+    }
 }
 
 /// `evap_getMMRRoot()` — return the current evaporation-nullifier MMR
@@ -936,5 +963,63 @@ mod tests {
         assert_eq!(json["epoch"], "0x5");
         assert_eq!(json["txCount"], 0);
         assert!(json["stateRoot"].as_str().unwrap().starts_with("0x"));
+    }
+
+    // ── compute_decay_forget_response (evap_decayForgetProof core) ──
+
+    #[test]
+    fn test_decay_forget_zero_half_life_rejected() {
+        let r = compute_decay_forget_response([1u8; 32], 1_000, 0, 100, 10, 0);
+        assert!(r.is_err(), "half_life=0 must be rejected");
+    }
+
+    #[test]
+    fn test_decay_forget_carries_input_fields() {
+        // record_id, original_commitment, activated_epoch, query_epoch,
+        // forget_threshold, half_life
+        let v = compute_decay_forget_response([0xAA; 32], 1_000, 5, 105, 10, 100)
+            .expect("valid inputs must succeed");
+        assert_eq!(
+            v["record_id"].as_str().unwrap(),
+            format!("0x{}", hex::encode([0xAA; 32]))
+        );
+        assert_eq!(v["original_commitment"], "0x3e8"); // 1000
+        assert_eq!(v["activated_epoch"], "0x5");
+        assert_eq!(v["forgotten_at_epoch"], "0x69"); // 105
+        assert_eq!(v["forget_threshold"], "0xa"); // 10
+    }
+
+    #[test]
+    fn test_decay_forget_late_query_under_threshold() {
+        // 10 half-lives of decay → energy effectively 0; below threshold=10.
+        let v = compute_decay_forget_response([0u8; 32], 1_000, 0, 1_000, 10, 100)
+            .expect("valid inputs must succeed");
+        assert_eq!(v["is_forgotten"], serde_json::Value::Bool(true));
+    }
+
+    #[test]
+    fn test_decay_forget_early_query_over_threshold() {
+        // No elapsed time → decayed_commitment == original > 10.
+        let v = compute_decay_forget_response([0u8; 32], 1_000, 50, 50, 10, 100)
+            .expect("valid inputs must succeed");
+        assert_eq!(v["is_forgotten"], serde_json::Value::Bool(false));
+    }
+
+    #[test]
+    fn test_decay_forget_witness_is_32_byte_hex() {
+        let v = compute_decay_forget_response([7u8; 32], 1_000, 0, 100, 10, 100)
+            .expect("valid inputs must succeed");
+        let w = v["witness"].as_str().unwrap();
+        assert!(w.starts_with("0x"));
+        assert_eq!(w.len(), 2 + 64, "witness must be 0x + 32-byte hex");
+    }
+
+    #[test]
+    fn test_decay_forget_deterministic() {
+        // Same inputs must yield identical witnesses.
+        let v1 = compute_decay_forget_response([0xCC; 32], 1_000, 1, 50, 10, 100).unwrap();
+        let v2 = compute_decay_forget_response([0xCC; 32], 1_000, 1, 50, 10, 100).unwrap();
+        assert_eq!(v1["witness"], v2["witness"]);
+        assert_eq!(v1["decayed_commitment"], v2["decayed_commitment"]);
     }
 }
