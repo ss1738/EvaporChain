@@ -82,11 +82,13 @@ mod tests {
         let lc = lc_with_two_forks();
         let path_a = Trajectory::new(vec![id(0), id(1), id(3)]); // sum=2100
         let path_b = Trajectory::new(vec![id(0), id(2), id(4)]); // sum=2300
-                                                                 // β chosen so shift_a (= β·2100/1000) and shift_b (= β·2300/1000)
-                                                                 // are distinct AND both fit inside the 32-bit caliber headroom.
-                                                                 // β = 10 → shift_a=21, shift_b=23 → caliber_a=2^11, caliber_b=2^9
-                                                                 // → a wins.
-        let chosen = mcc_choose(vec![&path_a, &path_b], &lc, 10).unwrap();
+                                                                 // β chosen so shift_a (= β·2100/1_000_000) and
+                                                                 // shift_b (= β·2300/1_000_000) are distinct AND both fit
+                                                                 // inside the 32-bit caliber headroom. β = 10_000 →
+                                                                 // shift_a=21, shift_b=23 → caliber_a=2^11, caliber_b=2^9
+                                                                 // → a wins. (Was β=10 under the millibits scale; Layer 0
+                                                                 // item 5 moved CFM β to microbits.)
+        let chosen = mcc_choose(vec![&path_a, &path_b], &lc, 10_000).unwrap();
         assert_eq!(chosen, &path_a);
     }
 

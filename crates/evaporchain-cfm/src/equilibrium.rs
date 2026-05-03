@@ -108,11 +108,14 @@ mod tests {
     #[test]
     fn high_beta_concentrates_on_lowest_fee() {
         // Uniform mempool, fee buckets {0, 8, 16}.
-        // β = 1000 → weight(0)=MAX, weight(8)=MAX>>8, weight(16)=MAX>>16.
-        // Equilibrium is dominated by the f=0 bucket.
+        // β = 1_000_000 microbits/fee → shift = β·f / 1_000_000.
+        // weight(0)=MAX, weight(8)=MAX>>8, weight(16)=MAX>>16.
+        // Equilibrium is dominated by the f=0 bucket. (Under the
+        // earlier millibits scale this used β=1_000; Layer 0 item 5
+        // moved the scale to micro so β=1_000 is now a no-op.)
         let pmf = vec![333_333, 333_333, 333_334];
         let fees = vec![0, 8, 16];
-        let eq = cfm_equilibrium(&pmf, &fees, 1_000).unwrap();
+        let eq = cfm_equilibrium(&pmf, &fees, 1_000_000).unwrap();
         assert!(eq.pmf[0] > eq.pmf[1]);
         assert!(eq.pmf[1] > eq.pmf[2]);
         // f=0 bucket should hold most of the mass.

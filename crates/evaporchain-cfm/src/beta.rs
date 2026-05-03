@@ -3,9 +3,17 @@
 //!
 //! λ in the kernel is a half-life in epochs. The Crooks/Jarzynski
 //! formalism wants an inverse-temperature `β` with units of
-//! `1/(fee unit · epoch)`. We expose `β` in *millibits per fee unit per
-//! epoch* — small enough to be meaningful for typical λ ∈ [10², 10⁵]
-//! epochs, large enough to avoid integer-floor collapse to zero.
+//! `1/(fee unit · epoch)`. We expose `β` in **microbits per fee unit
+//! per epoch** — fine enough to give a non-zero β for the chain's
+//! genesis `DEFAULT_LAMBDA = 4096` (where the original millibits scale
+//! integer-floored to zero), while still fitting in `u64` headroom.
+//!
+//! The historical Rust + JSON field name `beta_mb` is kept for API
+//! stability — it predates the unit fix that renamed the *scale* from
+//! milli (×10³) to micro (×10⁶). Treat `_mb` as an opaque tag, not
+//! literally "millibits". Per the doctrine punch list (`Layer 0
+//! item 5`): fixing the resolution is non-negotiable; renaming the
+//! tag across consensus / mcc / node / mcp is deferred.
 
 use thiserror::Error;
 
@@ -17,24 +25,25 @@ pub enum BetaError {
     DegenerateLambda,
 }
 
-/// `β = 1/λ` in millibits per fee unit per epoch.
+/// `β = 1/λ` in **microbits per fee unit per epoch**.
 ///
-/// Concretely: `β_mb = 1000 / half_life`. For λ = 4096 (DEFAULT_LAMBDA)
-/// this gives `β_mb = 0` (integer floor) — meaning the substrate rate
-/// of decay is too slow for fee-market scale interactions to
-/// distinguish. For test λ = 10 we get `β_mb = 100` — a meaningful
-/// reweighting on a fee distribution with non-trivial spread.
+/// Concretely: `β_mb = 1_000_000 / half_life`. For λ = 4096
+/// (`DEFAULT_LAMBDA`) this gives `β_mb = 244` — small but non-zero,
+/// so a fee-market histogram with spread above ~4_000 fee units sees
+/// a meaningful reweighting (vs the prior millibits scale where
+/// every fee mapped to `MAX_WEIGHT`). For test λ = 10 we get
+/// `β_mb = 100_000` — aggressive, drives multi-bit shifts even at
+/// fees of 10.
 ///
-/// In production the chain will likely run with a *fee-market-scoped*
-/// β derived from a fee-market-specific time constant, while the
-/// global λ keeps the consensus/state-decay timeline. Single-λ remains
-/// the *source of truth*; downstream primitives may scale it.
+/// Function name is kept (`_millibits_per_fee`) to avoid a 30-touch
+/// rename across consensus / mcc / node / mcp / annealing-integration.
+/// The historical `_mb` suffix is now an opaque tag.
 pub fn beta_millibits_per_fee(chain_lambda: ChainLambda) -> Result<u64, BetaError> {
     let half_life = chain_lambda.half_life();
     if half_life == 0 {
         return Err(BetaError::DegenerateLambda);
     }
-    Ok(1_000 / half_life)
+    Ok(1_000_000 / half_life)
 }
 
 #[cfg(test)]
@@ -45,15 +54,18 @@ mod tests {
     #[test]
     fn beta_inverse_of_half_life() {
         let cl = ChainLambda::new(Lambda::from_epochs(10));
-        assert_eq!(beta_millibits_per_fee(cl).unwrap(), 100);
+        // 1_000_000 / 10 = 100_000 (microbits per fee per epoch).
+        assert_eq!(beta_millibits_per_fee(cl).unwrap(), 100_000);
     }
 
     #[test]
-    fn beta_floors_to_zero_for_large_lambda() {
+    fn beta_nonzero_at_default_lambda() {
         let cl = ChainLambda::new(Lambda::from_epochs(4096));
-        // 1000 / 4096 = 0 (integer floor) — flagged in module docs
-        // as the substrate boundary for typical genesis λ.
-        assert_eq!(beta_millibits_per_fee(cl).unwrap(), 0);
+        // 1_000_000 / 4096 = 244 (was 0 under the millibits scale —
+        // that was the degenerate case the doctrine punch list
+        // flagged). Layer 0 item 5: β must remain non-zero at
+        // genesis λ so the fee-market caliber score is meaningful.
+        assert_eq!(beta_millibits_per_fee(cl).unwrap(), 244);
     }
 
     #[test]
