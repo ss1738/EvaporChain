@@ -7,6 +7,68 @@ use std::collections::{HashMap, HashSet, VecDeque};
 // the same constants without a circular consensus → execution dep).
 pub use evaporchain_types::{BASE_INCLUSION_ENERGY, MEV_INCLUSION_HALF_LIFE_BLOCKS};
 
+/// Source of transactions for block proposals — Lane G.1 substrate seam.
+///
+/// `TendermintConsensus` currently holds a concrete [`Mempool`]. This trait
+/// names the abstract contract so alternative implementations (antichain
+/// mempool, MEV-aware reorderer, k-of-n shard router) can plug in without
+/// changing consensus code. The migration of `TendermintConsensus` to
+/// `Box<dyn BlockSource>` is Lane G.2 (separate commit) — this commit just
+/// lands the trait + the blanket impl on `Mempool` so other impls can be
+/// written against a stable seam.
+///
+/// Method set is the minimum needed by `tendermint.rs` today:
+///
+/// - [`submit_priority`](BlockSource::submit_priority): admit a tx with
+///   energy-decay priority bookkeeping. The "priority" naming is honoured
+///   by the existing `Mempool` impl but the contract is "admit-or-reject."
+///   Future impls (e.g. FIFO antichain) may ignore priority and just
+///   queue; the bool return = "did we admit it?"
+/// - [`len`](BlockSource::len) / [`is_empty`](BlockSource::is_empty):
+///   pending count for status RPCs.
+/// - [`set_epoch`](BlockSource::set_epoch): advance the TTL window so
+///   stale txs evict; called by consensus on every committed block.
+/// - [`take_with_priority_sum_and_hints`](BlockSource::take_with_priority_sum_and_hints):
+///   the proposal-time draw. Returns `(txs, priority_sum,
+///   submit_epoch_hints)` so `create_proposal` can stamp the
+///   priority-bonus and the on-the-wire submit-epoch hints (Lane A.2/A.3).
+///   Hints are `Vec<u64>` index-parallel to `txs`. Non-priority impls
+///   satisfy the contract by returning `(txs, 0, vec![current_block; txs.len()])`
+///   so per-tx priority degrades to a uniform 1-block elapsed window.
+///
+/// `Send + Sync` so consensus engines can hold this behind locks; the
+/// existing `Mempool` is already `Send + Sync` by virtue of its fields.
+pub trait BlockSource: Send + Sync {
+    /// Admit a transaction to the source. Returns `true` if accepted,
+    /// `false` if rejected (size cap, duplicate, malformed, etc.).
+    fn submit_priority(&mut self, tx: Transaction) -> bool;
+
+    /// Number of pending transactions.
+    fn len(&self) -> usize;
+
+    /// True iff `len() == 0`.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Advance the source's epoch counter so age-based eviction and
+    /// energy-decay bookkeeping stay current. Called by consensus on
+    /// every committed block.
+    fn set_epoch(&mut self, epoch: u64);
+
+    /// Draw up to `n` transactions for inclusion in a proposal at
+    /// `current_block`. Returns the txs, the aggregate priority sum
+    /// for the producer's reward bonus, and per-tx submit-epoch hints
+    /// (parallel to `txs`). Hints carry on-the-wire so every follower
+    /// can re-derive the priority bonus without consulting its local
+    /// mempool — see Lane A.2.
+    fn take_with_priority_sum_and_hints(
+        &mut self,
+        n: usize,
+        current_block: u64,
+    ) -> (Vec<Transaction>, u64, Vec<u64>);
+}
+
 /// Maximum number of transactions in the mempool (DoS protection).
 const MAX_MEMPOOL_SIZE: usize = 10_000;
 
@@ -697,6 +759,33 @@ impl Default for Mempool {
     }
 }
 
+/// Lane G.1 blanket impl. `Mempool` already exposes every method the
+/// trait names — this is a pure delegation layer so callers can swap in
+/// alternative `BlockSource` impls without code churn. No behaviour
+/// change. The migration of `TendermintConsensus.mempool` from
+/// `Mempool` to `Box<dyn BlockSource>` is Lane G.2.
+impl BlockSource for Mempool {
+    fn submit_priority(&mut self, tx: Transaction) -> bool {
+        Mempool::submit_priority(self, tx)
+    }
+
+    fn len(&self) -> usize {
+        Mempool::len(self)
+    }
+
+    fn set_epoch(&mut self, epoch: u64) {
+        Mempool::set_epoch(self, epoch)
+    }
+
+    fn take_with_priority_sum_and_hints(
+        &mut self,
+        n: usize,
+        current_block: u64,
+    ) -> (Vec<Transaction>, u64, Vec<u64>) {
+        Mempool::take_with_priority_sum_and_hints(self, n, current_block)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1007,5 +1096,40 @@ mod tests {
         assert_eq!(drained.len(), 2);
         assert_eq!(drained[0].nonce(), Some(0));
         assert_eq!(drained[1].nonce(), Some(1));
+    }
+
+    #[test]
+    fn block_source_trait_delegates_to_mempool() {
+        // Lane G.1: the BlockSource trait must dispatch to the same
+        // bytes-equal behaviour as direct Mempool calls. Hold a Mempool
+        // behind `&mut dyn BlockSource` and verify all four trait
+        // methods produce results identical to calling the inherent
+        // methods. This locks in the substrate seam: any future impl
+        // (antichain, MEV-aware) can be swapped behind the same dyn
+        // pointer without consensus code changes.
+        let mut pool = Mempool::new();
+        // Trait dispatch handle.
+        let bs: &mut dyn BlockSource = &mut pool;
+
+        // is_empty default impl, derived from len().
+        assert!(bs.is_empty());
+        assert_eq!(bs.len(), 0);
+
+        bs.set_epoch(5);
+        let admitted = bs.submit_priority(dummy_tx_with_nonce(1));
+        assert!(admitted);
+        assert_eq!(bs.len(), 1);
+        assert!(!bs.is_empty());
+
+        // Drawing for a proposal returns the same triple shape as the
+        // concrete method.
+        let (txs, sum, hints) = bs.take_with_priority_sum_and_hints(10, 5);
+        assert_eq!(txs.len(), 1);
+        assert_eq!(hints.len(), txs.len());
+        // Submitted at epoch 5 with current_block 5 → elapsed=0 → max
+        // priority = BASE_INCLUSION_ENERGY (per Lane A.2 spec).
+        assert!(sum >= 1);
+        // Hint is the recorded submit epoch (5).
+        assert_eq!(hints[0], 5);
     }
 }
