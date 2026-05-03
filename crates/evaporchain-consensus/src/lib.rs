@@ -9,6 +9,7 @@ pub mod checkpoint;
 pub mod da_attestation;
 pub mod encrypted_mempool;
 pub mod finality;
+pub mod fork_choice;
 pub mod ib_integration;
 pub mod light_client;
 pub mod mempool;
