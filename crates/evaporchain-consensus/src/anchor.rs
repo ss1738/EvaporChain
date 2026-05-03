@@ -74,18 +74,17 @@ impl DecayRules {
     }
 
     /// Apply the decay formula to compute energy at a given elapsed time.
+    ///
+    /// Routes through `evaporchain_types::energy_at_epoch` — the
+    /// canonical Coq-verified decay (`research/coq/EnergyDecayMonotonicity.v`)
+    /// that the kernel's `ConservationCheck::block_step` audits against.
+    /// Layer 0 unification: the prior raw `>> shifts` impl lacked the
+    /// fractional-decay correction between halvings, so anchor-replay
+    /// could disagree with the kernel by up to ~50% within a half-life.
     pub fn compute_energy(&self, initial_energy: u64, half_life: u64, elapsed_epochs: u64) -> u64 {
         match self.formula {
             DecayFormula::Exponential => {
-                if half_life == 0 {
-                    return 0;
-                }
-                let shifts = elapsed_epochs / half_life;
-                if shifts >= 64 {
-                    0
-                } else {
-                    initial_energy >> shifts
-                }
+                evaporchain_types::energy_at_epoch(initial_energy, half_life, elapsed_epochs)
             }
         }
     }

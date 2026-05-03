@@ -87,16 +87,15 @@ impl PoHACertificate {
     /// Compute current energy at the given epoch using exponential decay.
     /// Decay is measured from `created_epoch`, not `last_attested_epoch`.
     /// Re-attestation boosts energy but doesn't reset the decay clock.
+    ///
+    /// Routes through `evaporchain_types::energy_at_epoch` — the
+    /// canonical Coq-verified decay (`research/coq/EnergyDecayMonotonicity.v`).
+    /// Layer 0 unification: replaces a raw `>> shifts` impl that
+    /// lacked the fractional-decay correction between halvings, so
+    /// PoHA cooling now matches the kernel's audited model.
     pub fn energy_at(&self, epoch: u64) -> u64 {
-        if self.half_life == 0 {
-            return 0;
-        }
         let elapsed = epoch.saturating_sub(self.created_epoch);
-        let shifts = elapsed / self.half_life;
-        if shifts >= 64 {
-            return 0;
-        }
-        self.energy >> shifts
+        evaporchain_types::energy_at_epoch(self.energy, self.half_life, elapsed)
     }
 
     /// Apply decay: snapshot current energy at this epoch.
@@ -943,10 +942,16 @@ mod tests {
         let n2 = store.tick_re_attestation_sampler(50, 2, 50);
         assert_eq!(n2, 0, "tick must respect interval_epochs cadence");
 
-        // Past the cadence boundary, tick fires again. Decay first to
-        // ensure certs are still in re-attestation-eligible ranges.
-        store.process_epoch(85);
-        let n3 = store.tick_re_attestation_sampler(85, 2, 50);
+        // Past the cadence boundary (last fired at 30, interval 50
+        // → next allowed at 80), tick fires again. Use epoch 80
+        // exactly — under the canonical `energy_at_epoch` decay,
+        // running to epoch 85 (5 epochs into a half-life) shaves the
+        // boosted-cert energy from 11 to 9, which crosses the 1%
+        // ratio_pct floor and reclassifies the cert as Evaporated
+        // (ineligible for re-attestation). At epoch 80 the
+        // remainder is 0 so canonical and rogue agree.
+        store.process_epoch(80);
+        let n3 = store.tick_re_attestation_sampler(80, 2, 50);
         assert!(n3 > 0, "tick must fire again after interval elapsed");
     }
 

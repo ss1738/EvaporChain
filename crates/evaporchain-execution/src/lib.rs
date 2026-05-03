@@ -78,6 +78,13 @@ pub enum ExecutionError {
     BlockGasLimitExceeded { used: u64, limit: u64 },
     #[error("call depth exceeded: max {0}")]
     CallDepthExceeded(usize),
+    /// Conservation invariant violated and governance flag
+    /// `conservation_enforcement = "enforce"` is on. Block is rejected.
+    /// When the flag is unset or `"observe"`, audit verdicts are
+    /// stored on the executor's `last_conservation_audit` instead and
+    /// this error is never raised.
+    #[error("conservation invariant violated: {0:?}")]
+    ConservationViolation(evaporchain_energy_kernel::ConservationViolation),
 }
 
 /// Contract event emitted during block execution, tagged with origin.
@@ -494,11 +501,18 @@ pub struct SimpleExecutor {
     /// targets). Genesis defaults from `lyapunov_fees::default_params`.
     pub lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams,
     /// Per-block conservation audit verdict — populated by
-    /// `execute_block` from `energy_audit::audit_block_step`. Pure
-    /// observability for now; governance can promote to gating later.
+    /// `execute_block` from `energy_audit::audit_block_step`. Stored
+    /// for observability; gating is governance-controlled via
+    /// `conservation_enforcement` (see `ExecutionError::ConservationViolation`).
     /// `None` until the first block runs.
     pub last_conservation_audit:
         Option<Result<(), evaporchain_energy_kernel::ConservationViolation>>,
+    /// Block.epoch of the previous successful audit. Drives the
+    /// `epochs_elapsed` argument fed to `energy_at_epoch` so the
+    /// kernel's λ-decay floor matches the actual elapsed time between
+    /// audits, not a `saturating_sub(0)` proxy on storage-rent epoch.
+    /// `None` until the first audit runs.
+    pub last_audit_epoch: Option<u64>,
     /// Last Cμ-Gate verdict (Shalizi-Crutchfield identity Cμ ≤ E + hμ).
     /// Populated when the chain calls `record_cmu_observation`. Pure
     /// observability — governance can promote to consensus-rejection later.
@@ -554,6 +568,7 @@ impl SimpleExecutor {
             ),
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
             last_conservation_audit: None,
+            last_audit_epoch: None,
             last_cmu_verdict: None,
             last_tur_verdict: None,
             demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
@@ -716,6 +731,7 @@ impl SimpleExecutor {
             ),
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
             last_conservation_audit: None,
+            last_audit_epoch: None,
             last_cmu_verdict: None,
             last_tur_verdict: None,
             demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
@@ -752,6 +768,7 @@ impl SimpleExecutor {
             ),
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
             last_conservation_audit: None,
+            last_audit_epoch: None,
             last_cmu_verdict: None,
             last_tur_verdict: None,
             demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
@@ -788,6 +805,7 @@ impl SimpleExecutor {
             ),
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
             last_conservation_audit: None,
+            last_audit_epoch: None,
             last_cmu_verdict: None,
             last_tur_verdict: None,
             demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
@@ -828,6 +846,7 @@ impl SimpleExecutor {
             ),
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
             last_conservation_audit: None,
+            last_audit_epoch: None,
             last_cmu_verdict: None,
             last_tur_verdict: None,
             demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
@@ -868,6 +887,7 @@ impl SimpleExecutor {
             ),
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
             last_conservation_audit: None,
+            last_audit_epoch: None,
             last_cmu_verdict: None,
             last_tur_verdict: None,
             demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
@@ -909,6 +929,7 @@ impl SimpleExecutor {
             ),
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
             last_conservation_audit: None,
+            last_audit_epoch: None,
             last_cmu_verdict: None,
             last_tur_verdict: None,
             demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
@@ -2961,6 +2982,20 @@ impl ExecutionEngine for SimpleExecutor {
         // Decay-Lamport logical clock — tick with total gas used this block.
         self.lamport_clock = crate::lamport_integration::tick_block(self.lamport_clock, gas_used);
 
+        // Lane F.1: Singh-Lyapunov fee state — advance per-block against
+        // the just-applied gas_used. Closes the "substrate-shipped, no
+        // caller" gap from DOCTRINE_PUNCH_LIST.md §6: tick_lyapunov_fee_state
+        // existed but only tests + the operator-driven REST endpoint
+        // called it; the production hot path was static at genesis
+        // equilibrium. Fields lived on this executor since the four-act
+        // wiring; this commit makes them actually advance.
+        //
+        // Errors here are silently dropped: FeeControllerError fires only
+        // when params validation fails (e.g. target_gas == 0), which is
+        // unreachable under default_genesis. Logged at debug level if
+        // future params introduce a recoverable error.
+        let _ = self.tick_lyapunov_fee_state(gas_used, 1);
+
         // Vesting timelock release tick — runs every block (per-block
         // schedules need responsive release). Idempotent within an
         // epoch because pending_release_at == 0 once released_amount
@@ -3012,28 +3047,61 @@ impl ExecutionEngine for SimpleExecutor {
             })
             .collect();
 
-        // Post-block §1.2 conservation snapshot + audit. Pure
-        // observability — populates self.last_conservation_audit so
-        // chain-status / metrics can read the verdict without
-        // gating block acceptance. Governance can promote to gating.
+        // Post-block §1.2 conservation snapshot + audit.
+        //
+        // Governance-gated by `conservation_enforcement`:
+        //   * unset / "observe" — verdict stored on
+        //     `self.last_conservation_audit`; block commits regardless
+        //     (legacy behaviour, kept for backward compat with chains
+        //     that haven't activated enforcement).
+        //   * "enforce" — a `ConservationViolation` propagates as
+        //     `ExecutionError::ConservationViolation` and the block is
+        //     rejected. The chain refuses to commit any block whose
+        //     §1.2 invariant breaks.
         let conservation_after = crate::energy_audit::compartment_snapshot_with_pool(
             db,
             self.refresh_pool.total_accrued(),
         );
         let lambda = evaporchain_energy_kernel::ChainLambda::default_genesis();
-        // epochs_elapsed: best-available local proxy. apply_block path
-        // tracks block.epoch via db.get_last_rent_epoch — use the same
-        // delta convention here so the audit's λ-decay matches what
-        // collect_storage_rent assumed.
-        let epochs_elapsed = block
-            .epoch
-            .saturating_sub(db.get_last_rent_epoch().saturating_sub(0));
-        self.last_conservation_audit = Some(crate::energy_audit::audit_block_step(
+        // epochs_elapsed = block.epoch − last_audit_epoch. On the
+        // first audit (None), elapsed = 0 — the kernel's λ-decay floor
+        // collapses to "no decay allowed", which is the right
+        // bootstrap semantics: until we've seen one block to compare
+        // against, conservation is total-preserving by definition.
+        let epochs_elapsed = self
+            .last_audit_epoch
+            .map(|prev| block.epoch.saturating_sub(prev))
+            .unwrap_or(0);
+        let audit_verdict = crate::energy_audit::audit_block_step(
             &conservation_before,
             &conservation_after,
             epochs_elapsed,
             lambda,
-        ));
+        );
+        let must_enforce = matches!(
+            db.get_governance_param("conservation_enforcement"),
+            Some("enforce"),
+        );
+        match audit_verdict {
+            Ok(()) => {
+                self.last_conservation_audit = Some(Ok(()));
+                self.last_audit_epoch = Some(block.epoch);
+            }
+            Err(violation) => {
+                if must_enforce {
+                    // Block-rejecting path. last_conservation_audit
+                    // and last_audit_epoch are left at their prior
+                    // values because no block commits — the next
+                    // attempt should compare against the same
+                    // baseline.
+                    return Err(ExecutionError::ConservationViolation(violation));
+                }
+                self.last_conservation_audit = Some(Err(violation));
+                // Observability mode: the block commits regardless,
+                // so the audit clock advances to the new epoch.
+                self.last_audit_epoch = Some(block.epoch);
+            }
+        }
 
         let mera_root = crate::mera_integration::compute_mera_commitment(db);
         let mera_commitment = if mera_root == [0u8; 32] {

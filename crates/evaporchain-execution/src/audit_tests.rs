@@ -574,3 +574,153 @@ mod proptest_execution {
         }
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Conservation enforcement gate (Layer 0, item 1)
+//
+// `conservation_enforcement` governance flag: "observe" (default) keeps
+// the audit observability-only — verdict goes to
+// `executor.last_conservation_audit`, block commits regardless.
+// "enforce" propagates any violation as
+// `ExecutionError::ConservationViolation` and the block is rejected.
+//
+// These tests cover the happy path under both modes (a well-formed
+// transfer block must commit). The block-rejection case requires a
+// state-poisoning shim (an `InMemoryStateDB` wrapper that mints
+// untracked balance between the before/after snapshots) and is
+// tracked as a follow-up — the kernel-level negative cases are
+// already exercised in `energy_audit::tests::audit_total_increase_rejected`
+// and `audit_decay_below_lambda_floor_rejected`.
+// ═══════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod conservation_enforce_tests {
+    use crate::parallel::ParallelExecutor;
+    use crate::ExecutionEngine;
+    use evaporchain_state::db::{InMemoryStateDB, StateDB};
+    use evaporchain_types::{Account, Block, Transaction, TransferTx};
+
+    fn addr(byte: u8) -> [u8; 32] {
+        let mut a = [0u8; 32];
+        a[0] = byte;
+        a
+    }
+
+    fn fund(db: &mut InMemoryStateDB, byte: u8, balance: u64) {
+        db.put_account(Account {
+            address: addr(byte),
+            balance,
+            nonce: 0,
+            storage_deposit: 0,
+            storage_bytes: 0,
+            last_touched_epoch: 0,
+        });
+    }
+
+    fn block_with_one_transfer(number: u64, epoch: u64) -> Block {
+        let txs = vec![Transaction::Transfer(TransferTx {
+            from: addr(1),
+            to: addr(2),
+            amount: 100,
+            nonce: 0,
+            signature: None,
+            public_key: None,
+        })];
+        Block {
+            number,
+            epoch,
+            parent_hash: [0u8; 32],
+            state_root: [0u8; 32],
+            transactions: txs,
+            timestamp: 0,
+            chain_id: String::new(),
+            producer_id: None,
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
+            nova_proof: None,
+            anchor_hash: None,
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
+            protocol_version: 0,
+            state_root_version: 0,
+            submit_epoch_hints: vec![],
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+        }
+    }
+
+    /// Default behaviour (flag unset): block commits, verdict stored.
+    /// Regression check that the gate doesn't false-positive when
+    /// nothing in governance has changed.
+    #[test]
+    fn observe_default_unset_commits_normal_block() {
+        let mut db = InMemoryStateDB::new();
+        fund(&mut db, 1, 1_000_000);
+        fund(&mut db, 2, 0);
+        let mut executor = ParallelExecutor::new_for_test(5);
+        executor
+            .execute_block(&mut db, &block_with_one_transfer(1, 1))
+            .expect("normal transfer must commit when flag unset");
+        assert!(matches!(executor.last_conservation_audit, Some(Ok(()))));
+    }
+
+    /// Explicit "observe" — same as unset.
+    #[test]
+    fn observe_explicit_commits_normal_block() {
+        let mut db = InMemoryStateDB::new();
+        fund(&mut db, 1, 1_000_000);
+        fund(&mut db, 2, 0);
+        db.put_governance_param(
+            "conservation_enforcement".to_string(),
+            "observe".to_string(),
+        );
+        let mut executor = ParallelExecutor::new_for_test(5);
+        executor
+            .execute_block(&mut db, &block_with_one_transfer(1, 1))
+            .expect("normal transfer must commit when flag = observe");
+        assert!(matches!(executor.last_conservation_audit, Some(Ok(()))));
+    }
+
+    /// Enforce mode: a normal, well-formed block still commits — the
+    /// gate must not break the happy path. Verdict still stored as Ok.
+    /// This is the critical regression test: turning enforcement on
+    /// must not halt a healthy chain.
+    #[test]
+    fn enforce_mode_normal_block_still_commits() {
+        let mut db = InMemoryStateDB::new();
+        fund(&mut db, 1, 1_000_000);
+        fund(&mut db, 2, 0);
+        db.put_governance_param(
+            "conservation_enforcement".to_string(),
+            "enforce".to_string(),
+        );
+        let mut executor = ParallelExecutor::new_for_test(5);
+        executor
+            .execute_block(&mut db, &block_with_one_transfer(1, 1))
+            .expect("well-formed block must commit under enforce mode");
+        assert!(matches!(executor.last_conservation_audit, Some(Ok(()))));
+    }
+
+    /// Unknown flag value falls back to observe (legacy behaviour).
+    /// Avoids a chain-halting typo: `enforse` ≠ `enforce`.
+    #[test]
+    fn unknown_flag_value_treated_as_observe() {
+        let mut db = InMemoryStateDB::new();
+        fund(&mut db, 1, 1_000_000);
+        fund(&mut db, 2, 0);
+        db.put_governance_param(
+            "conservation_enforcement".to_string(),
+            "enforse".to_string(), // typo, intentional
+        );
+        let mut executor = ParallelExecutor::new_for_test(5);
+        executor
+            .execute_block(&mut db, &block_with_one_transfer(1, 1))
+            .expect("unknown flag value must not enable enforcement");
+        assert!(matches!(executor.last_conservation_audit, Some(Ok(()))));
+    }
+}

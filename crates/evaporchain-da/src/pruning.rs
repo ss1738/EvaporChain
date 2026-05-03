@@ -180,6 +180,40 @@ mod tests {
     }
 
     #[test]
+    fn test_empty_da_store_is_noop() {
+        let mut da_store: BTreeMap<u64, BlockDAPackage> = BTreeMap::new();
+        let poha = PoHAStore::new(1000, 100);
+        let result = prune_by_temperature(&mut da_store, &poha);
+        assert_eq!(result.shards_pruned, 0);
+        assert_eq!(result.blocks_fully_pruned, 0);
+        assert_eq!(result.blocks_parity_pruned, 0);
+        assert_eq!(result.blocks_retained, 0);
+    }
+
+    #[test]
+    fn test_block_without_poha_or_ghost_is_retained() {
+        // Pre-PoHA block (no certificate, no ghost) should NOT be pruned.
+        // This is the safety branch that protects historical blocks during
+        // PoHA rollout.
+        let mut da_store = BTreeMap::new();
+        let poha = PoHAStore::new(1000, 100);
+        da_store.insert(42, make_da_package(b"ancient block"));
+        let result = prune_by_temperature(&mut da_store, &poha);
+        assert_eq!(result.blocks_retained, 1);
+        assert_eq!(result.blocks_fully_pruned, 0);
+        assert!(da_store.contains_key(&42));
+    }
+
+    #[test]
+    fn test_prune_result_default() {
+        let r = PruneResult::default();
+        assert_eq!(r.shards_pruned, 0);
+        assert_eq!(r.blocks_fully_pruned, 0);
+        assert_eq!(r.blocks_parity_pruned, 0);
+        assert_eq!(r.blocks_retained, 0);
+    }
+
+    #[test]
     fn test_mixed_temperatures() {
         let mut da_store = BTreeMap::new();
         let mut poha = PoHAStore::new(1000, 100);
@@ -188,9 +222,16 @@ mod tests {
         da_store.insert(1, make_da_package(b"block-1"));
         register_cert(&mut poha, 1, 0);
 
-        // Block 2: created at epoch 195, will be Hot at epoch 200
+        // Block 2: created at epoch 200 (concurrent with the audit
+        // call below), so still Hot at epoch 300 — exactly one
+        // half-life elapsed gives energy = 500 (50% = Hot threshold).
+        // Was 195 under the rogue `>> shifts` decay, which left
+        // energy=1000 at the audit point; canonical
+        // `energy_at_epoch` adds fractional decay between halvings,
+        // dropping it to 487 (Warm). Registering at the epoch
+        // boundary keeps the "Hot" classification intact.
         da_store.insert(2, make_da_package(b"block-2"));
-        register_cert(&mut poha, 2, 195);
+        register_cert(&mut poha, 2, 200);
 
         // Block 3: created at epoch 0, manually decay further → Cold
         da_store.insert(3, make_da_package(b"block-3"));

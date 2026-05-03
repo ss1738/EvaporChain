@@ -568,17 +568,32 @@ pub struct ParallelExecutor {
     pub refresh_pool: evaporchain_energy_kernel::RefreshPool,
     pub mortis_monitor: evaporchain_mortis::MortisMonitor,
     pub mortis_certificate: Option<evaporchain_mortis::MortisCertificate>,
-    /// Per-block §1.2 conservation audit verdict. Pure observability —
-    /// chain accepts blocks regardless; governance can promote to
-    /// gating later.
+    /// Per-block §1.2 conservation audit verdict. Stored for
+    /// observability; gating is governance-controlled via
+    /// `conservation_enforcement` (see
+    /// `ExecutionError::ConservationViolation`).
     pub last_conservation_audit:
         Option<Result<(), evaporchain_energy_kernel::ConservationViolation>>,
+    /// Block.epoch of the previous successful audit. Drives the
+    /// `epochs_elapsed` argument fed to `energy_at_epoch`. `None`
+    /// until the first audit runs.
+    pub last_audit_epoch: Option<u64>,
     /// Reward accumulator for block rewards + fee distribution. Mirrors
     /// `SimpleExecutor.reward_accumulator`; until this commit production
     /// tendermint validators received NO block rewards because
     /// `ParallelExecutor` lacked this field entirely. Initialised None;
     /// node startup calls `enable_rewards(tokenomics)` to turn it on.
     pub reward_accumulator: Option<crate::rewards::RewardAccumulator>,
+    /// Singh-Lyapunov fee state. Mirrors `SimpleExecutor.lyapunov_fee_state`
+    /// — production runs `ParallelExecutor`, so without these fields the
+    /// Lyapunov controller had no per-block state advance in the hot path
+    /// at all (the field existed on `SimpleExecutor` only, and `execute_block`
+    /// never even ticked it there). Lane F.1 closes both gaps. Advanced
+    /// per-block via `tick_lyapunov_fee_state`.
+    pub lyapunov_fee_state: evaporchain_fee_controller::FeeState,
+    /// Singh-Lyapunov fee params (snapshot of the chain-global λ + targets).
+    /// Genesis defaults from `FeeControllerParams::default_genesis`.
+    pub lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams,
 }
 
 impl ParallelExecutor {
@@ -604,8 +619,41 @@ impl ParallelExecutor {
             ),
             mortis_certificate: None,
             last_conservation_audit: None,
+            last_audit_epoch: None,
             reward_accumulator: None,
+            lyapunov_fee_state: evaporchain_fee_controller::FeeState::at_equilibrium(
+                evaporchain_fee_controller::FeeControllerParams::default_genesis().target_energy,
+            ),
+            lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
         }
+    }
+
+    /// Per-block hook: advance the Singh-Lyapunov fee state against
+    /// `gas_used` from the just-applied block. Returns the new base fee
+    /// + Lyapunov drift. Mirrors `SimpleExecutor::tick_lyapunov_fee_state`.
+    /// Per INVENTION_STACK.md §4.1 #4 the empty-block drift is provably
+    /// monotone-non-positive (asserted by the property test in
+    /// `evaporchain-fee-controller`).
+    pub fn tick_lyapunov_fee_state(
+        &mut self,
+        gas_used: u64,
+        epochs_elapsed: u64,
+    ) -> Result<
+        (evaporchain_types::Energy, evaporchain_fee_controller::Drift),
+        evaporchain_fee_controller::controller::FeeControllerError,
+    > {
+        let (new_state, drift) = evaporchain_fee_controller::FeeController::step(
+            &self.lyapunov_fee_params,
+            &self.lyapunov_fee_state,
+            gas_used,
+            epochs_elapsed,
+        )?;
+        self.lyapunov_fee_state = new_state;
+        let new_fee = evaporchain_fee_controller::base_fee(
+            &self.lyapunov_fee_state,
+            &self.lyapunov_fee_params,
+        );
+        Ok((new_fee, drift))
     }
 
     /// Enable block-reward distribution with the given tokenomics.
@@ -673,7 +721,12 @@ impl ParallelExecutor {
             ),
             mortis_certificate: None,
             last_conservation_audit: None,
+            last_audit_epoch: None,
             reward_accumulator: None,
+            lyapunov_fee_state: evaporchain_fee_controller::FeeState::at_equilibrium(
+                evaporchain_fee_controller::FeeControllerParams::default_genesis().target_energy,
+            ),
+            lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
         }
     }
 
@@ -700,7 +753,12 @@ impl ParallelExecutor {
             ),
             mortis_certificate: None,
             last_conservation_audit: None,
+            last_audit_epoch: None,
             reward_accumulator: None,
+            lyapunov_fee_state: evaporchain_fee_controller::FeeState::at_equilibrium(
+                evaporchain_fee_controller::FeeControllerParams::default_genesis().target_energy,
+            ),
+            lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
         }
     }
 
@@ -726,7 +784,12 @@ impl ParallelExecutor {
             ),
             mortis_certificate: None,
             last_conservation_audit: None,
+            last_audit_epoch: None,
             reward_accumulator: None,
+            lyapunov_fee_state: evaporchain_fee_controller::FeeState::at_equilibrium(
+                evaporchain_fee_controller::FeeControllerParams::default_genesis().target_energy,
+            ),
+            lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
         }
     }
 
@@ -756,7 +819,12 @@ impl ParallelExecutor {
             ),
             mortis_certificate: None,
             last_conservation_audit: None,
+            last_audit_epoch: None,
             reward_accumulator: None,
+            lyapunov_fee_state: evaporchain_fee_controller::FeeState::at_equilibrium(
+                evaporchain_fee_controller::FeeControllerParams::default_genesis().target_energy,
+            ),
+            lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
         }
     }
 
@@ -1967,6 +2035,13 @@ impl ExecutionEngine for ParallelExecutor {
         // PNT authoritative for double-spend gating.
         let _pnt_advanced = self.privacy_executor.tick_pnt_phase(block.epoch);
 
+        // Lane F.1: Singh-Lyapunov fee state per-block advance. Mirrors
+        // SimpleExecutor's tick — closes the "substrate-shipped, no caller"
+        // gap from DOCTRINE_PUNCH_LIST.md §6 in the production path.
+        // Errors silently dropped: FeeControllerError is unreachable under
+        // default_genesis params.
+        let _ = self.tick_lyapunov_fee_state(total_gas_used, 1);
+
         // Lane E.2: EnergyVerkleTrie cold-subtree compression. v0 keeps
         // legacy behaviour (no compression). v1+ compresses cold subtrees
         // (max_energy=0) once per block so the trie physically contracts
@@ -2022,23 +2097,46 @@ impl ExecutionEngine for ParallelExecutor {
                 .collect();
         let cross_shard_processed = cross_shard_receipts.len();
 
-        // Post-block §1.2 conservation snapshot + audit. Pure
-        // observability: stored in self.last_conservation_audit
-        // for the chain-status API.
+        // Post-block §1.2 conservation snapshot + audit. Governance-
+        // gated by `conservation_enforcement`: "observe" (default)
+        // stores the verdict on `last_conservation_audit`; "enforce"
+        // rejects any block whose invariant breaks via
+        // `ExecutionError::ConservationViolation`. Mirrors
+        // SimpleExecutor::execute_block for parity across executors.
         let conservation_after = crate::energy_audit::compartment_snapshot_with_pool(
             db,
             self.refresh_pool.total_accrued(),
         );
         let lambda = evaporchain_energy_kernel::ChainLambda::default_genesis();
-        let epochs_elapsed = block
-            .epoch
-            .saturating_sub(db.get_last_rent_epoch().saturating_sub(0));
-        self.last_conservation_audit = Some(crate::energy_audit::audit_block_step(
+        // epochs_elapsed = block.epoch − last_audit_epoch (0 on first
+        // audit); see SimpleExecutor for the rationale.
+        let epochs_elapsed = self
+            .last_audit_epoch
+            .map(|prev| block.epoch.saturating_sub(prev))
+            .unwrap_or(0);
+        let audit_verdict = crate::energy_audit::audit_block_step(
             &conservation_before,
             &conservation_after,
             epochs_elapsed,
             lambda,
-        ));
+        );
+        let must_enforce = matches!(
+            db.get_governance_param("conservation_enforcement"),
+            Some("enforce"),
+        );
+        match audit_verdict {
+            Ok(()) => {
+                self.last_conservation_audit = Some(Ok(()));
+                self.last_audit_epoch = Some(block.epoch);
+            }
+            Err(violation) => {
+                if must_enforce {
+                    return Err(crate::ExecutionError::ConservationViolation(violation));
+                }
+                self.last_conservation_audit = Some(Err(violation));
+                self.last_audit_epoch = Some(block.epoch);
+            }
+        }
 
         let mera_root = crate::mera_integration::compute_mera_commitment(db);
         let mera_commitment = if mera_root == [0u8; 32] {
@@ -2965,5 +3063,57 @@ mod tests {
         assert_eq!(result.txs_executed, 2);
         assert_eq!(db.get_account(&addr(1)).unwrap().balance, 50_000);
         assert_eq!(db.get_account(&addr(2)).unwrap().balance, 70_000);
+    }
+
+    #[test]
+    fn test_parallel_executor_lyapunov_fee_state_advances_per_block() {
+        // Lane F.1: execute_block must call tick_lyapunov_fee_state with
+        // total_gas_used so the Singh-Lyapunov controller actually
+        // advances in the production hot path. Pre-Lane-F.1, this field
+        // sat at genesis equilibrium forever and the controller's
+        // doctrine claim was folklore (DOCTRINE_PUNCH_LIST.md §6).
+        //
+        // A single transfer uses GAS_TRANSFER (21k) which is below the
+        // controller's target_gas (~25M). Below-target gas ⇒ drift < 0
+        // ⇒ energy decreases below the genesis equilibrium. We assert
+        // exactly that: after one block, fee_state.energy < target_energy.
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1000);
+
+        let block = make_block(
+            1,
+            1, // epoch 1 so per-block tick has positive epochs_elapsed
+            vec![Transaction::Transfer(TransferTx {
+                from: addr(1),
+                to: addr(2),
+                amount: 100,
+                nonce: 0,
+                signature: None,
+                public_key: None,
+            })],
+        );
+
+        let mut executor = ParallelExecutor::new_for_test(100);
+        let target_e = executor.lyapunov_fee_params.target_energy;
+
+        // Pre-state: at equilibrium.
+        assert_eq!(
+            executor.lyapunov_fee_state.energy, target_e,
+            "executor should boot at equilibrium"
+        );
+
+        let _ = executor.execute_block(&mut db, &block).unwrap();
+
+        // Post-state: energy must have decreased (one transfer << target_gas
+        // ⇒ negative drift ⇒ energy decays below equilibrium). The exact
+        // delta depends on λ-decay parameters; the load-bearing assertion
+        // is just that the state mutated, proving execute_block actually
+        // called the tick. A static state would be the regression we care
+        // about.
+        assert!(
+            executor.lyapunov_fee_state.energy < target_e,
+            "lyapunov_fee_state.energy must decrease after a low-gas block — got {} (target {})",
+            executor.lyapunov_fee_state.energy, target_e
+        );
     }
 }

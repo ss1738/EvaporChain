@@ -34,24 +34,25 @@ pub struct AnnealingParams {
     pub beta_mb: u64,
 }
 
-/// Compute the effective temperature at `epoch` in fixed-point (implicit ×2^-16).
+/// Compute the effective temperature at `epoch`.
 ///
-/// `T(epoch) = lambda_half_life × 2^(−epoch / lambda_half_life)` in
-/// integer arithmetic via right-shift approximation.
+/// `T(epoch) = lambda_half_life × 2^(−epoch / lambda_half_life)`,
+/// computed via the canonical Coq-verified
+/// `evaporchain_types::energy_at_epoch` so the cooling schedule
+/// matches the kernel's audited decay (incl. fractional decay between
+/// halvings). Layer 0 unification: replaces a raw `>> half_lives` that
+/// lacked the fractional correction.
 ///
 /// Returns 0 once the temperature has decayed below 1 (fully crystallised).
 pub fn effective_temperature(params: &AnnealingParams, epoch: u64) -> u64 {
-    if params.lambda_half_life == 0 {
-        return 0;
-    }
-    // Number of half-lives elapsed.  We use integer div — fine for scheduling.
-    let half_lives = epoch / params.lambda_half_life;
-    // T = lambda_half_life >> half_lives (each half-life halves T).
-    // Saturating shift: once half_lives >= 63 the temperature is effectively 0.
-    if half_lives >= 64 {
-        return 0;
-    }
-    params.lambda_half_life >> half_lives
+    // Initial temperature = lambda_half_life; the cooling schedule
+    // halves once per λ-period, so half_life of the decay is itself
+    // lambda_half_life.
+    evaporchain_types::energy_at_epoch(
+        params.lambda_half_life,
+        params.lambda_half_life,
+        epoch,
+    )
 }
 
 /// SA acceptance gate.
