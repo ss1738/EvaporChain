@@ -20,10 +20,13 @@ Output:  printed decision + /Users/satyawansingh/EvaporChain/research/mera-gate/
 Runtime: < 60 s
 """
 
+import argparse
+import csv
 import sys
 import time
 import datetime
 import math
+from collections import Counter, defaultdict
 
 import numpy as np
 from scipy import linalg
@@ -127,6 +130,137 @@ def _generate_random(rng: np.random.Generator) -> np.ndarray:
     Verkle / standard Merkle is the right choice.
     """
     return (rng.random((N_ACCOUNTS, N_BLOCKS)) < 0.1).astype(np.float32)
+
+
+# ---------------------------------------------------------------------------
+# Real Ethereum mainnet loader (§A1.8 production gate)
+# ---------------------------------------------------------------------------
+
+def _load_real_ethereum(
+    csv_path: str,
+    n_accounts: int = N_ACCOUNTS,
+    n_blocks: int = N_BLOCKS,
+    block_column: str = "block_number",
+    account_column: str = "to_address",
+) -> np.ndarray:
+    """
+    Load Ethereum account-touch matrix from a Dune Analytics CSV export.
+
+    Doctrine §A1.9 rule 12 + §A4.4 rule 23 require the MERA gate to pass
+    on REAL chain data, not synthetic. This loader closes the gap: feed
+    a Dune CSV in and the gate re-runs in <60s on the same data shape
+    the synthetic generators produce.
+
+    ## Expected CSV format
+
+    Two columns at minimum (column names overrideable via kwargs):
+      block_number, to_address
+
+    Recommended Dune query (paste into https://dune.com/queries):
+
+        SELECT block_number, "to" AS to_address
+        FROM ethereum.transactions
+        WHERE block_number BETWEEN 19000000 AND 20000000
+          AND "to" IS NOT NULL
+        ORDER BY block_number
+
+    The free Dune tier exports up to ~10M rows; the 19M-20M block range
+    is ~12-14M tx, so the export will need to be paginated (LIMIT/OFFSET
+    with multiple downloads) or filtered to a tighter range like
+    19_500_000-19_700_000 (~3-4M tx, fits in one CSV).
+
+    ## Construction
+
+    1. Read the CSV with stdlib `csv` (no pandas dependency — keeps the
+       gate runnable on any vanilla Python install with numpy + scipy).
+    2. Determine the actual block range from the data and bin into
+       `n_blocks` contiguous bins. A cell M[i,j] = 1 iff account i was
+       touched in any block falling into bin j.
+    3. Find the top `n_accounts` addresses by total touch count
+       (sparsify Pareto head — keeps the matrix small enough to run
+       the MI computation in seconds while preserving the structural
+       signal MERA depends on).
+    4. Build the binary activation matrix in float32.
+
+    Returns: np.ndarray of shape (n_accounts, n_blocks), dtype float32,
+    with the same semantics as the synthetic generators above.
+    """
+    print(f"  loading real Ethereum data from {csv_path} ...", flush=True)
+    t0 = time.time()
+
+    block_set: set = set()
+    account_counter: Counter = Counter()
+    # First pass: tally touches per account + collect distinct blocks.
+    with open(csv_path, "r", newline="") as f:
+        reader = csv.DictReader(f)
+        if block_column not in reader.fieldnames or account_column not in reader.fieldnames:
+            raise ValueError(
+                f"CSV missing required columns. "
+                f"Expected '{block_column}' and '{account_column}'; "
+                f"got {reader.fieldnames}. Override with --block-column / "
+                f"--account-column if your Dune export uses different names."
+            )
+        for row in reader:
+            account = (row[account_column] or "").strip().lower()
+            if not account:
+                continue
+            block_str = (row[block_column] or "").strip()
+            if not block_str:
+                continue
+            try:
+                block = int(block_str)
+            except ValueError:
+                continue
+            account_counter[account] += 1
+            block_set.add(block)
+
+    if not account_counter:
+        raise ValueError("CSV produced zero touches — check column names + data path.")
+
+    # Top-N accounts by touch frequency.
+    top_accounts = [a for a, _ in account_counter.most_common(n_accounts)]
+    account_to_idx = {a: i for i, a in enumerate(top_accounts)}
+
+    blocks_sorted = sorted(block_set)
+    block_min = blocks_sorted[0]
+    block_max = blocks_sorted[-1]
+    block_range = max(1, block_max - block_min + 1)
+    # Block bin width — ceil-divides so every block maps to a valid bin.
+    bin_width = max(1, math.ceil(block_range / n_blocks))
+
+    def block_bin(b: int) -> int:
+        idx = (b - block_min) // bin_width
+        return min(idx, n_blocks - 1)
+
+    # Second pass: populate the matrix. Streaming to avoid holding the
+    # whole CSV in memory.
+    mat = np.zeros((n_accounts, n_blocks), dtype=np.float32)
+    n_rows = 0
+    n_filtered = 0
+    with open(csv_path, "r", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            n_rows += 1
+            account = (row[account_column] or "").strip().lower()
+            if account not in account_to_idx:
+                n_filtered += 1
+                continue
+            block_str = (row[block_column] or "").strip()
+            try:
+                block = int(block_str)
+            except ValueError:
+                continue
+            i = account_to_idx[account]
+            j = block_bin(block)
+            mat[i, j] = 1.0  # binary touched indicator
+
+    print(
+        f" done ({time.time()-t0:.1f}s; "
+        f"{n_rows} rows, {len(account_counter)} distinct accounts, "
+        f"kept top {n_accounts} accounts × {n_blocks} blocks; "
+        f"{n_filtered} rows filtered out as non-top-account)"
+    )
+    return mat
 
 
 # ---------------------------------------------------------------------------
@@ -339,7 +473,13 @@ def final_decision(results: list[dict]) -> dict:
     build decision.
     """
     by_name = {r["name"]: r for r in results}
-    log_corr = by_name.get("LOG-CORRELATED", {}).get("decision", "UNKNOWN")
+    # The MERA-decision input is whichever of LOG-CORRELATED (synthetic)
+    # or ETH-MAINNET (real) was run. Real-data mode replaces the
+    # synthetic proxy; both flow through the same verdict logic.
+    log_corr = (
+        by_name.get("ETH-MAINNET", {}).get("decision")
+        or by_name.get("LOG-CORRELATED", {}).get("decision", "UNKNOWN")
+    )
     area_law  = by_name.get("AREA-LAW",      {}).get("decision", "UNKNOWN")
     random    = by_name.get("RANDOM",         {}).get("decision", "UNKNOWN")
 
@@ -419,7 +559,10 @@ def write_report(results: list[dict], decision: dict, elapsed_total: float) -> N
     lines.append(f"**Run:** {run_ts}")
     lines.append(f"**Script:** `research/mera-gate/run_gate.py`")
     lines.append(f"**Total elapsed:** {elapsed_total:.1f}s")
-    lines.append(f"**Data:** SYNTHETIC PROXY (replace with real Ethereum mainnet data)")
+    if decision.get("real_data_mode"):
+        lines.append(f"**Data:** REAL ETHEREUM MAINNET (doctrine §A1.9 rule 12 satisfied)")
+    else:
+        lines.append(f"**Data:** SYNTHETIC PROXY (re-run with `--input <dune.csv>` for real)")
     lines.append(f"**Reference:** INVENTION_STACK.md §A1.8")
     lines.append("")
     lines.append("---")
@@ -520,31 +663,86 @@ def write_report(results: list[dict], decision: dict, elapsed_total: float) -> N
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="EvaporChain MERA Empirical Entropy Gate — §A1.8",
+    )
+    parser.add_argument(
+        "--input",
+        type=str,
+        default=None,
+        help=(
+            "Path to a Dune Analytics CSV export of "
+            "ethereum.transactions(block_number, to_address). When set, "
+            "the LOG-CORRELATED synthetic dataset is replaced by the real "
+            "Ethereum mainnet matrix and the verdict reflects real chain "
+            "data (doctrine §A1.9 rule 12). When unset, runs in synthetic "
+            "mode — verdict carries the synthetic-data caveat."
+        ),
+    )
+    parser.add_argument(
+        "--block-column",
+        type=str,
+        default="block_number",
+        help="Override the block-number column name in the input CSV.",
+    )
+    parser.add_argument(
+        "--account-column",
+        type=str,
+        default="to_address",
+        help="Override the account-address column name in the input CSV.",
+    )
+    args = parser.parse_args()
+
     t_start = time.time()
     print("EvaporChain MERA Empirical Entropy Gate (§A1.8)")
-    print(f"Data mode: SYNTHETIC PROXY — {N_ACCOUNTS} accounts × {N_BLOCKS} blocks")
+    real_data_mode = args.input is not None
+    if real_data_mode:
+        print(f"Data mode: REAL ETHEREUM — {args.input}")
+        print(f"Target shape: {N_ACCOUNTS} accounts × {N_BLOCKS} blocks (top-N by touch)")
+    else:
+        print(f"Data mode: SYNTHETIC PROXY — {N_ACCOUNTS} accounts × {N_BLOCKS} blocks")
+        print(f"  (pass --input <csv> to switch to real-Ethereum mode)")
     print(f"Thresholds: power-law R²>{POWERLAW_R2_THRESHOLD}, "
           f"exp R²>{EXPONENTIAL_R2_THRESHOLD}, "
           f"power-law margin>{POWERLAW_BEATS_EXP_MARGIN}")
 
     rng = np.random.default_rng(RNG_SEED)
 
-    datasets = [
-        ("LOG-CORRELATED", _generate_log_correlated(rng)),
-        ("AREA-LAW",       _generate_area_law(rng)),
-        ("RANDOM",         _generate_random(rng)),
-    ]
+    if real_data_mode:
+        # Real Ethereum replaces the LOG-CORRELATED proxy. Keep AREA-LAW
+        # + RANDOM as control sanity datasets so the classifier's
+        # behaviour remains measurable across the structural range.
+        datasets = [
+            ("ETH-MAINNET", _load_real_ethereum(
+                args.input,
+                block_column=args.block_column,
+                account_column=args.account_column,
+            )),
+            ("AREA-LAW",    _generate_area_law(rng)),
+            ("RANDOM",      _generate_random(rng)),
+        ]
+    else:
+        datasets = [
+            ("LOG-CORRELATED", _generate_log_correlated(rng)),
+            ("AREA-LAW",       _generate_area_law(rng)),
+            ("RANDOM",         _generate_random(rng)),
+        ]
 
     results = []
     for name, mat in datasets:
         results.append(run_dataset(name, mat))
 
     decision = final_decision(results)
+    decision["real_data_mode"] = real_data_mode
 
     print("\n" + "="*60)
     print("EVAPORCHAIN REAL DECISION")
     print("="*60)
     print(f"\nVERDICT: {decision['gate_verdict']}")
+    if real_data_mode:
+        print("(REAL Ethereum data — doctrine §A1.9 rule 12 satisfied)")
+    else:
+        print("(synthetic-data run — re-run with --input to satisfy §A1.9)")
     print(f"\n{decision['gate_reasoning']}")
     print(f"\nRECOMMENDED ACTION: {decision['recommended_action']}")
 
