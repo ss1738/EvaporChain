@@ -5982,7 +5982,7 @@ contract Counter {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 0);
         fund_account(&mut db, 2, 1_000_000);
-        let executor = Executor::new();
+        let executor = SimpleExecutor::new_for_test(7);
         // paymaster_nonce = None must fail.
         let tx = make_user_op(1, 0, Some(2), None, 1000);
         let r = executor.execute_user_op(&mut db, &tx, 0);
@@ -5994,7 +5994,7 @@ contract Counter {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 0);
         fund_account(&mut db, 2, 1_000_000);
-        let executor = Executor::new();
+        let executor = SimpleExecutor::new_for_test(7);
         let tx = make_user_op(1, 0, Some(2), Some(0), 1000);
         executor.execute_user_op(&mut db, &tx, 0).expect("first exec");
 
@@ -6014,7 +6014,7 @@ contract Counter {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 0);
         fund_account(&mut db, 2, 1_000_000);
-        let executor = Executor::new();
+        let executor = SimpleExecutor::new_for_test(7);
         let tx = make_user_op(1, 0, Some(2), Some(0), 1000);
 
         executor.execute_user_op(&mut db, &tx, 0).expect("first exec");
