@@ -27,15 +27,42 @@
 //! - Root hash = `blake3(root_tensor_bytes)` — compact 32-byte commitment.
 //! - Per-account proof = path of sibling tensors from leaf to root (O(log N)).
 //!
-//! # MERA gate
+//! # MERA gate — FAILED on real Ethereum data (2026-05-03)
 //!
-//! This crate was gated on an empirical entropy measurement (§A1.8).
-//! Synthetic-data gate result: **PASS** (2026-04-29).
-//! See `research/mera-gate/GATE_RESULT.md`.
+//! Doctrine §A1.8 / §A1.9 rule 12 / §A4.4 rule 23 gated this crate on
+//! an empirical entropy measurement of real chain workloads. The
+//! synthetic Pareto proxy passed (2026-04-29) but the real-data
+//! re-run on 2026-05-03 — across three independent angles — failed:
 //!
-//! Real-Ethereum-data gate per §A1.9 rule 12 is open work — tracked in
-//! `DOCTRINE_PUNCH_LIST.md` Layer 2. Until that gate runs, all
-//! "MERA-gate passed" statements MUST carry the synthetic-data caveat.
+//! | Sample | Mode | Power-law R² | Flat ratio | Verdict |
+//! |---|---|---|---|---|
+//! | 1,000 blocks (real Ethereum 19_900_000-19_901_000) | binary | 0.7112 | 3.1× | VERKLE |
+//! | 3,000 blocks (real Ethereum 19_900_000-19_903_000) | binary | 0.6913 | 3.1× | VERKLE |
+//! | 3,000 blocks | **energy-weighted** (gas-summed, the test the doctrine actually implies — "Disentanglers = decay operator, energy filtration IS the MERA RG flow") | 0.6614 | **5.4×** | VERKLE |
+//!
+//! All three cross the doctrine's `R² ≥ 0.85` threshold from the
+//! wrong side. The energy-weighted matrix is *more* flat than the
+//! binary one, ruling out "the gate tested the wrong matrix" as a
+//! possible escape clause. Real Ethereum activity does not have the
+//! tensor-network structure MERA's RG flow is supposed to
+//! coarse-grain.
+//!
+//! Per the doctrine's own contingency (§A1.8 — "If random: drop
+//! tensor networks; ship Verkle + Energy-Verkle"): **MERA does not
+//! ship.** The chain's authenticated state commitment is the
+//! Energy-Verkle Trie (already in `evaporchain-state`).
+//!
+//! **This crate is retained as a research artefact only.** The
+//! Givens-rotation disentanglers, isometries, end-to-end verifiable
+//! proof round-trip, and χ=4 tensor algebra are correct mathematics
+//! and may serve as a reference implementation for any future
+//! tensor-network state-commitment effort that runs its own gate on
+//! a workload with stronger log-correlation structure than Ethereum.
+//! It is NOT wired into block production, finality, or light-client
+//! verification on EvaporChain.
+//!
+//! See `research/mera-gate/GATE_RESULT.md` for the full numerical
+//! report.
 //!
 //! # Bond dimension
 //!

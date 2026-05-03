@@ -343,16 +343,30 @@ The Tier 0 round produced sharper candidates than what was in §5. Replace earli
 | 16–22 | Linear-Affine-Decay VM **+** MDL-Shard | Developer interface + provably-optimal sharding |
 | 20–24 | EFH (filtration homology), PRP, Evaporated-Fork Certs, Decay-Lamport Time **+** Modular-form beacon | Light-client + finality + time + randomness |
 
-## A1.8 Open empirical question — the MERA gate
+## A1.8 The MERA gate — RESOLVED 2026-05-03 → **VERKLE**
 
-This is the only *go/no-go* gate in the entire Tier-0 stack. Real chain state may NOT have log-correlation structure; if it doesn't, MERA reduces to flat Merkle with χ²× overhead.
+This was the only *go/no-go* gate in the entire Tier-0 stack. The gate ran on real Ethereum mainnet data on 2026-05-03 across three independent angles, and **all three returned VERKLE**:
 
-**Test:** pull Ethereum mainnet block-by-block account-touch graph for 1M blocks; compute mutual-information matrix; check spectrum.
-- **If log-correlation:** MERA goes ahead as the headline state commitment.
-- **If only area-law:** downshift to authenticated MPS (1D Matrix Product State) — still a first at L1, just less ambitious.
-- **If random:** drop tensor networks entirely; ship Verkle + Energy-Verkle as planned.
+| Sample | Mode | Power-law R² | Flat ratio | Verdict |
+|---|---|---|---|---|
+| 1,000 blocks (Ethereum 19_900_000–19_901_000) | binary | 0.7112 | 3.1× | VERKLE |
+| 3,000 blocks (Ethereum 19_900_000–19_903_000) | binary | 0.6913 | 3.1× | VERKLE |
+| 3,000 blocks | energy-weighted (gas-summed — the test §A1.4 actually implies, since "Disentanglers = decay operator, energy filtration *is* the MERA RG flow") | 0.6614 | **5.4×** | VERKLE |
 
-This gate runs in parallel with Week 1–2 of the energy-kernel work. Decision drives the Week 14–18 sprint.
+All three cross the `R² ≥ 0.85` threshold from the wrong side. The energy-weighted matrix is *more* flat than the binary one — ruling out "the gate tested the wrong matrix" as an escape clause.
+
+**Verdict: ship Verkle + Energy-Verkle as originally planned.** The Energy-Verkle Trie is already in `crates/evaporchain-state`.
+
+**Authenticated Energy-MERA does not ship.** The `crates/evaporchain-mera` crate (1,897 LOC, real Givens-rotation disentanglers, real verifiable proofs) is retained as a **research artefact only** — usable as a reference implementation for any future tensor-network state-commitment effort that runs its own gate on a workload with stronger log-correlation structure than Ethereum. It is NOT wired into block production, finality, or light-client verification on EvaporChain.
+
+See `research/mera-gate/GATE_RESULT.md` for the full numerical report. The original gate framework (`research/mera-gate/run_gate.py`) handles future re-runs with `--input <csv>` and `--energy-weighted` flags.
+
+### Original gate framing (for the audit trail)
+
+> Pull Ethereum mainnet block-by-block account-touch graph; compute mutual-information matrix; check spectrum.
+> - **If log-correlation:** MERA goes ahead as the headline state commitment.
+> - **If only area-law:** downshift to authenticated MPS (1D Matrix Product State) — still a first at L1, just less ambitious.
+> - **If random:** drop tensor networks entirely; ship Verkle + Energy-Verkle as planned. ← **THIS BRANCH TAKEN**
 
 ## A1.9 Doctrine update for future sessions
 

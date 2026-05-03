@@ -1,9 +1,9 @@
 # EvaporChain MERA Empirical Entropy Gate — Results
 
-**Run:** 2026-04-29 14:03:46 UTC
+**Run:** 2026-05-03 22:14:20 UTC
 **Script:** `research/mera-gate/run_gate.py`
-**Total elapsed:** 3.4s
-**Data:** SYNTHETIC PROXY (replace with real Ethereum mainnet data)
+**Total elapsed:** 4.0s
+**Data:** REAL ETHEREUM MAINNET (doctrine §A1.9 rule 12 satisfied)
 **Reference:** INVENTION_STACK.md §A1.8
 
 ---
@@ -11,12 +11,12 @@
 ## Gate Verdict
 
 ```
-VERDICT: PASS — MERA GO
+VERDICT: FAIL — VERKLE
 ```
 
-Log-correlated synthetic proxy passes the gate: real Pareto-distributed chain workloads are expected to show the same log-correlation structure. Authenticated Energy-MERA is cleared for the Week 14–18 sprint build. Confidence is HIGH for a real-chain MERA decision — but verify with actual Ethereum mainnet account-touch data before committing to the whitepaper MERA claim.
+No tensor-network structure detected even in the log-correlated proxy. Drop MERA and MPS. Ship Verkle + Energy-Verkle as originally planned.
 
-**Recommended action:** Proceed: scaffold `evaporchain-mera` crate (χ=4 prototype). Simultaneously, pull Ethereum mainnet blocks 19M–20M via an archive node or Dune Analytics export and re-run this script with real data. If real data also returns MERA, lock the whitepaper §MERA claim.
+**Recommended action:** Confirm with real Ethereum data. If real data also returns VERKLE, close the MERA gate permanently and focus on Energy-Verkle Trie (already in progress).
 
 ---
 
@@ -24,64 +24,64 @@ Log-correlated synthetic proxy passes the gate: real Pareto-distributed chain wo
 
 | Dataset | Power-law R² | Exp R² | Flat Ratio | Decision |
 |---------|-------------|--------|-----------|----------|
-| LOG-CORRELATED | 0.8773 (slope=0.508) | 0.6272 (rate=0.0321) | 15.3x | **MERA** |
-| AREA-LAW | 0.6984 (slope=1.499) | 0.7888 (rate=0.1190) | 37.8x | **VERKLE** |
-| RANDOM | 0.6493 (slope=0.070) | 0.3714 (rate=0.0040) | 1.6x | **VERKLE** |
+| ETH-MAINNET-ENERGY | 0.6614 (slope=0.248) | 0.3986 (rate=0.0144) | 5.4x | **VERKLE** |
+| AREA-LAW | 0.6906 (slope=1.488) | 0.7780 (rate=0.1180) | 36.2x | **VERKLE** |
+| RANDOM | 0.7489 (slope=0.079) | 0.4511 (rate=0.0046) | 1.6x | **VERKLE** |
 
 ---
 
 ## Eigenvalue Spectra (top 10)
 
-### LOG-CORRELATED
+### ETH-MAINNET-ENERGY
 
 | Rank | Eigenvalue |
 |------|-----------|
-| 1 | 5.216568 |
-| 2 | 1.268460 |
-| 3 | 0.946475 |
-| 4 | 0.860139 |
-| 5 | 0.818785 |
-| 6 | 0.768459 |
-| 7 | 0.712034 |
-| 8 | 0.680444 |
-| 9 | 0.639398 |
-| 10 | 0.624193 |
+| 1 | 9.376015 |
+| 2 | 2.572878 |
+| 3 | 2.509510 |
+| 4 | 2.464948 |
+| 5 | 2.389414 |
+| 6 | 2.343803 |
+| 7 | 2.330872 |
+| 8 | 2.312539 |
+| 9 | 2.283354 |
+| 10 | 2.210452 |
 
-**Reasoning:** Power-law fit dominates: R²=0.8773, slope=0.508. Log-correlation structure confirmed. Authenticated Energy-MERA is the correct state commitment.
+**Reasoning:** Neither power-law (R²=0.6614) nor exponential (R²=0.3986) fits well. Flat spectrum (ratio=5.4x). No tensor-network structure. Drop MERA/MPS; ship Verkle + Energy-Verkle as planned.
 
 ### AREA-LAW
 
 | Rank | Eigenvalue |
 |------|-----------|
-| 1 | 5.384543 |
-| 2 | 4.547771 |
-| 3 | 4.173277 |
-| 4 | 4.145904 |
-| 5 | 4.103974 |
-| 6 | 4.078333 |
-| 7 | 3.963785 |
-| 8 | 3.900919 |
-| 9 | 3.893908 |
-| 10 | 3.739480 |
+| 1 | 5.269920 |
+| 2 | 4.303494 |
+| 3 | 4.154687 |
+| 4 | 4.138483 |
+| 5 | 4.125095 |
+| 6 | 4.096436 |
+| 7 | 4.069620 |
+| 8 | 3.989954 |
+| 9 | 3.869061 |
+| 10 | 3.816619 |
 
-**Reasoning:** Neither power-law (R²=0.6984) nor exponential (R²=0.7888) fits well. Flat spectrum (ratio=37.8x). No tensor-network structure. Drop MERA/MPS; ship Verkle + Energy-Verkle as planned.
+**Reasoning:** Neither power-law (R²=0.6906) nor exponential (R²=0.7780) fits well. Flat spectrum (ratio=36.2x). No tensor-network structure. Drop MERA/MPS; ship Verkle + Energy-Verkle as planned.
 
 ### RANDOM
 
 | Rank | Eigenvalue |
 |------|-----------|
-| 1 | 0.849355 |
-| 2 | 0.595464 |
-| 3 | 0.586185 |
-| 4 | 0.573879 |
-| 5 | 0.570471 |
-| 6 | 0.564263 |
-| 7 | 0.562514 |
-| 8 | 0.559226 |
-| 9 | 0.557315 |
-| 10 | 0.556752 |
+| 1 | 0.848208 |
+| 2 | 0.614832 |
+| 3 | 0.601234 |
+| 4 | 0.595286 |
+| 5 | 0.576229 |
+| 6 | 0.572836 |
+| 7 | 0.567185 |
+| 8 | 0.566757 |
+| 9 | 0.564634 |
+| 10 | 0.561852 |
 
-**Reasoning:** Neither power-law (R²=0.6493) nor exponential (R²=0.3714) fits well. Flat spectrum (ratio=1.6x). No tensor-network structure. Drop MERA/MPS; ship Verkle + Energy-Verkle as planned.
+**Reasoning:** Neither power-law (R²=0.7489) nor exponential (R²=0.4511) fits well. Flat spectrum (ratio=1.6x). No tensor-network structure. Drop MERA/MPS; ship Verkle + Energy-Verkle as planned.
 
 ---
 
@@ -89,7 +89,7 @@ Log-correlated synthetic proxy passes the gate: real Pareto-distributed chain wo
 
 | Test | Classification |
 |------|---------------|
-| Log-correlated proxy | MERA |
+| Log-correlated proxy | VERKLE |
 | Area-law proxy | VERKLE |
 | Random proxy (sanity) | VERKLE |
 | Sanity check passed | True |

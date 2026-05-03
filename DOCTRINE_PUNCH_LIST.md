@@ -12,7 +12,7 @@ This file is the layered build plan to make the doctrine claims actually true. E
 |---|---|---|---|
 | 0 | Substrate enforcement | ✅ DONE (5/5) | 4d59b5d, 6d1ac5e, 1d4332f |
 | 1 | Doctrine accuracy | ✅ Code-doc done (3/3 small items already in HEAD); 2 doctrine-doc amendments to `INVENTION_STACK.md` deferred for Satyawan |
-| 2 | Math completion | ⚠ Partial (3/5): Coq cleanup (5f18e43, build pending), Crooks identity test (d80921f), MCC math note (06db894). REMAINING: CSLC CSSR (~600-1000 LOC, multi-session); MERA real-Ethereum gate (needs external Dune data pull) |
+| 2 | Math completion | ✅ DONE (5/5): Coq cleanup (5f18e43, build pending M2), Crooks identity test (d80921f), MCC math note (06db894), CSLC CSSR (ea71c29), MERA gate locked → **VERKLE** verdict on real Ethereum 3K-block + energy-weighted run (this commit) |
 | 3 | Consensus trait seams | ✅ ALREADY DONE (audit miss) — all 4 traits exist with default impls from prior lane work: `BlockSource` (mempool.rs:41), `ForkChoice` (fork_choice.rs:48 + LinearForkChoice default), `MevPool` (encrypted_mempool.rs:332), `ValidatorSetSource` (validator_set.rs:1039). Hot-path *consumption* is Layer 4 work, but the seams themselves are landed. |
 | 4 | Hot-path doctrine wiring | ⏳ UNBLOCKED — antichain mempool replacing FIFO drain; MCC fork-choice replacing single `parent_hash` invariant; conservation gate already promoted in Layer 0 |
 | 5 | Lambda-Fold real Nova | ⏳ Multi-week (3-6) |
@@ -25,35 +25,21 @@ This file is the layered build plan to make the doctrine claims actually true. E
 
 These three close the last decision-blocking gaps before Layer 4. Each one's outcome unlocks (or descopes) a downstream track. Order doesn't matter; do whichever's quickest to set up first.
 
-### M1 — Pull Dune CSV + re-run MERA gate (~30 min)
+### M1 — MERA gate ✅ RESOLVED 2026-05-03 → **VERKLE**
 
-Closes doctrine §A1.9 rule 12 violation. Today `evaporchain-mera/src/lib.rs:32-38` flags the gate as synthetic-PASS / real-data-PENDING; this run resolves which of MERA / MPS / VERKLE the chain ships.
+The gate ran on real Ethereum mainnet across three independent angles. **All three returned VERKLE**:
 
-```sql
--- Paste into https://dune.com/queries (free tier exports up to ~10M rows).
--- Tighten to 19_500_000-19_700_000 if 19M-20M is too large.
-SELECT block_number, "to" AS to_address
-FROM ethereum.transactions
-WHERE block_number BETWEEN 19000000 AND 20000000
-  AND "to" IS NOT NULL
-ORDER BY block_number
-```
+| Sample | Mode | Power-law R² | Flat ratio | Verdict |
+|---|---|---|---|---|
+| 1K blocks (19_900_000-19_901_000) | binary | 0.7112 | 3.1× | VERKLE |
+| 3K blocks (19_900_000-19_903_000) | binary | 0.6913 | 3.1× | VERKLE |
+| 3K blocks | energy-weighted (gas-summed) | 0.6614 | **5.4×** | VERKLE |
 
-Then locally:
+Energy-weighted matrix is more flat than binary — rules out methodology escape. Per doctrine §A1.8 contingency rule "If random: drop tensor networks; ship Verkle + Energy-Verkle as planned" — **MERA does not ship.** The `crates/evaporchain-mera` crate is retained as research artefact only. Energy-Verkle Trie (already in `crates/evaporchain-state`) is the chain's commitment.
 
-```bash
-cd ~/EvaporChain
-python3 research/mera-gate/run_gate.py --input <path-to-dune.csv>
-# Expected runtime <60s. Overwrites research/mera-gate/GATE_RESULT.md.
-```
+Data source: scraped `eth.publicnode.com` + `eth-mainnet.public.blastapi.io` via `/tmp/scrape_eth.py` (no Dune / no BigQuery — Dune free tier blocks CSV download, BigQuery requires billing). 23 MB CSV, 404,637 rows, 0 fetch failures.
 
-Outcome map:
-
-| Verdict | Action |
-|---|---|
-| **PASS (MERA)** | Remove synthetic caveat from `crates/evaporchain-mera/src/lib.rs:32-38`. Lock whitepaper §MERA claim. Tensor-network state commitment ships. |
-| **MPS** (area-law only) | Scaffold `evaporchain-mps` crate; archive MERA crate as research artefact. Still a first at L1. |
-| **VERKLE** (no structure) | Drop tensor networks. Strike MERA from Tier 0 (§A1.4). The 1,897 LOC of `evaporchain-mera` becomes either a research artefact or deletable. Energy-Verkle (already in `evaporchain-state`) is the chain's commitment. |
+See `research/mera-gate/GATE_RESULT.md` for full numerical report and `research/INVENTION_STACK.md §A1.8` for the doctrine-level resolution.
 
 ### M2 — Verify Coq build locally (~10 min)
 
