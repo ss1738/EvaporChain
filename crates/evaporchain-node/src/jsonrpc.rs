@@ -340,46 +340,61 @@ fn rpc_get_object(state: &ApiState, params: &Value, id: Value) -> JsonRpcRespons
     }
 }
 
+/// Pure formatter for MMR-proof responses. Extracted so the JSON
+/// shape is unit-testable without a full ApiState (which carries
+/// 30+ fields including RocksDB).
+fn format_mmr_proof_response(
+    proof: &evaporchain_crypto::accumulator::MMRProof,
+) -> Value {
+    serde_json::json!({
+        "leaf_index": json_hex_u64(proof.leaf_index),
+        "mmr_size": json_hex_u64(proof.mmr_size),
+        "peak_index": proof.peak_index,
+        "siblings": proof.siblings.iter()
+            .map(|s| format!("0x{}", hex::encode(s)))
+            .collect::<Vec<_>>(),
+        "peak_hashes": proof.peak_hashes.iter()
+            .map(|p| format!("0x{}", hex::encode(p)))
+            .collect::<Vec<_>>(),
+    })
+}
+
+/// Pure formatter for MMR-root responses.
+fn format_mmr_root_response(root: [u8; 32], size: usize) -> Value {
+    serde_json::json!({
+        "root": format!("0x{}", hex::encode(root)),
+        "size": json_hex_u64(size as u64),
+    })
+}
+
+/// Parse the leaf_index hex param from position 0 of the JSON-RPC
+/// params array.
+fn parse_leaf_index_param(params: &Value) -> Result<u64, &'static str> {
+    let s = params
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(|v| v.as_str())
+        .ok_or("missing leaf_index")?;
+    let stripped = s.strip_prefix("0x").unwrap_or(s);
+    u64::from_str_radix(stripped, 16).map_err(|_| "leaf_index must be hex u64")
+}
+
 /// `evap_getMMRProof(leaf_index_hex)` — return an inclusion proof for the
 /// evaporation-nullifier MMR leaf at `leaf_index`. The proof bundle is
 /// `{ leaf_index, mmr_size, siblings, peak_hashes, peak_index }`. Light
 /// clients can verify a ghost-record's evaporation against the chain's
 /// `mmr_root` without downloading the whole accumulator.
 fn rpc_get_mmr_proof(state: &ApiState, params: &Value, id: Value) -> JsonRpcResponse {
-    let leaf_index_hex = match params
-        .as_array()
-        .and_then(|a| a.first())
-        .and_then(|v| v.as_str())
-    {
-        Some(s) => s,
-        None => return JsonRpcResponse::invalid_params(id, "missing leaf_index"),
-    };
-    let stripped = leaf_index_hex.strip_prefix("0x").unwrap_or(leaf_index_hex);
-    let leaf_index = match u64::from_str_radix(stripped, 16) {
+    let leaf_index = match parse_leaf_index_param(params) {
         Ok(n) => n,
-        Err(_) => {
-            return JsonRpcResponse::invalid_params(id, "leaf_index must be hex u64")
-        }
+        Err(msg) => return JsonRpcResponse::invalid_params(id, msg),
     };
     let proof_opt = {
         let c = safe_lock(&state.consensus);
         c.executor.mmr_proof(leaf_index)
     };
     match proof_opt {
-        Some(proof) => {
-            let json = serde_json::json!({
-                "leaf_index": json_hex_u64(proof.leaf_index),
-                "mmr_size": json_hex_u64(proof.mmr_size),
-                "peak_index": proof.peak_index,
-                "siblings": proof.siblings.iter()
-                    .map(|s| format!("0x{}", hex::encode(s)))
-                    .collect::<Vec<_>>(),
-                "peak_hashes": proof.peak_hashes.iter()
-                    .map(|p| format!("0x{}", hex::encode(p)))
-                    .collect::<Vec<_>>(),
-            });
-            JsonRpcResponse::ok(id, json)
-        }
+        Some(proof) => JsonRpcResponse::ok(id, format_mmr_proof_response(&proof)),
         None => JsonRpcResponse::ok(id, Value::Null),
     }
 }
@@ -509,11 +524,7 @@ fn rpc_get_mmr_root(state: &ApiState, id: Value) -> JsonRpcResponse {
         let c = safe_lock(&state.consensus);
         (c.executor.mmr_root(), c.executor.mmr_size())
     };
-    let json = serde_json::json!({
-        "root": format!("0x{}", hex::encode(root)),
-        "size": json_hex_u64(size as u64),
-    });
-    JsonRpcResponse::ok(id, json)
+    JsonRpcResponse::ok(id, format_mmr_root_response(root, size))
 }
 
 fn rpc_mempool_size(state: &ApiState, id: Value) -> JsonRpcResponse {
@@ -966,6 +977,93 @@ mod tests {
     }
 
     // ── compute_decay_forget_response (evap_decayForgetProof core) ──
+
+    // ── MMR RPC helpers ──
+
+    #[test]
+    fn test_format_mmr_root_response_shape() {
+        let v = format_mmr_root_response([0xABu8; 32], 17);
+        assert_eq!(
+            v["root"].as_str().unwrap(),
+            format!("0x{}", "ab".repeat(32))
+        );
+        assert_eq!(v["size"], "0x11"); // 17 in hex
+    }
+
+    #[test]
+    fn test_format_mmr_proof_response_shape() {
+        use evaporchain_crypto::accumulator::MMRProof;
+        let proof = MMRProof {
+            leaf_index: 0x42,
+            mmr_size: 0x100,
+            siblings: vec![[0x11u8; 32], [0x22u8; 32]],
+            peak_hashes: vec![[0x33u8; 32]],
+            peak_index: 1,
+        };
+        let v = format_mmr_proof_response(&proof);
+        assert_eq!(v["leaf_index"], "0x42");
+        assert_eq!(v["mmr_size"], "0x100");
+        assert_eq!(v["peak_index"], 1);
+        let siblings = v["siblings"].as_array().unwrap();
+        assert_eq!(siblings.len(), 2);
+        assert_eq!(
+            siblings[0].as_str().unwrap(),
+            format!("0x{}", "11".repeat(32))
+        );
+        let peaks = v["peak_hashes"].as_array().unwrap();
+        assert_eq!(peaks.len(), 1);
+        assert_eq!(
+            peaks[0].as_str().unwrap(),
+            format!("0x{}", "33".repeat(32))
+        );
+    }
+
+    #[test]
+    fn test_format_mmr_proof_response_empty_arrays() {
+        // A leaf at the only peak has no siblings and no other peaks.
+        use evaporchain_crypto::accumulator::MMRProof;
+        let proof = MMRProof {
+            leaf_index: 0,
+            mmr_size: 1,
+            siblings: vec![],
+            peak_hashes: vec![],
+            peak_index: 0,
+        };
+        let v = format_mmr_proof_response(&proof);
+        assert_eq!(v["siblings"].as_array().unwrap().len(), 0);
+        assert_eq!(v["peak_hashes"].as_array().unwrap().len(), 0);
+        assert_eq!(v["peak_index"], 0);
+    }
+
+    #[test]
+    fn test_parse_leaf_index_param_with_prefix() {
+        let params = serde_json::json!(["0x2a"]);
+        assert_eq!(parse_leaf_index_param(&params).unwrap(), 42);
+    }
+
+    #[test]
+    fn test_parse_leaf_index_param_without_prefix() {
+        let params = serde_json::json!(["ff"]);
+        assert_eq!(parse_leaf_index_param(&params).unwrap(), 255);
+    }
+
+    #[test]
+    fn test_parse_leaf_index_param_missing() {
+        let params = serde_json::json!([]);
+        assert!(parse_leaf_index_param(&params).is_err());
+    }
+
+    #[test]
+    fn test_parse_leaf_index_param_invalid_hex() {
+        let params = serde_json::json!(["0xZZ"]);
+        assert!(parse_leaf_index_param(&params).is_err());
+    }
+
+    #[test]
+    fn test_parse_leaf_index_param_non_string() {
+        let params = serde_json::json!([42]);
+        assert!(parse_leaf_index_param(&params).is_err());
+    }
 
     #[test]
     fn test_decay_forget_zero_half_life_rejected() {
