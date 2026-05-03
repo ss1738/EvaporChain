@@ -353,4 +353,60 @@ mod tests {
         assert_eq!(hints.len(), 2);
         assert!(bs.is_empty());
     }
+
+    use proptest::prelude::*;
+    use std::collections::HashSet;
+
+    proptest! {
+        /// Lane I.1 invariant proof: for any random sequence of
+        /// `(sender, nonce)` submissions and any draw cap `n`, the
+        /// returned txs satisfy the antichain property — no two of
+        /// them share a sender. This is the V1 conflict heuristic
+        /// the whole crate is built around; the proptest locks it
+        /// against future refactors.
+        #[test]
+        fn antichain_invariant_no_duplicate_senders(
+            // Up to 32 submissions; sender ∈ [0, 8) so collisions
+            // are likely; nonce ∈ [0, 16) for variety.
+            submissions in proptest::collection::vec((0u8..8, 0u64..16), 0..32),
+            n in 0usize..32,
+            current_block in 0u64..50,
+            submit_epoch in 0u64..50,
+        ) {
+            let mut pool = TxAntichainMempool::new();
+            pool.set_epoch(submit_epoch);
+            for (sender, nonce) in &submissions {
+                pool.submit_priority(transfer(*sender, *nonce));
+            }
+            let pre_len = pool.len();
+            let (txs, _sum, hints) = pool.take_with_priority_sum_and_hints(n, current_block);
+
+            // Property 1: no duplicate senders in the antichain.
+            let mut seen: HashSet<[u8; 32]> = HashSet::new();
+            for tx in &txs {
+                if let Some(addr) = tx.sender() {
+                    prop_assert!(
+                        seen.insert(*addr),
+                        "antichain must not contain two txs with the same sender — \
+                         got duplicate {:?}",
+                        addr
+                    );
+                }
+            }
+
+            // Property 2: hints index-parallel to txs.
+            prop_assert_eq!(txs.len(), hints.len(), "hints must be index-parallel");
+
+            // Property 3: returned count ≤ min(n, pre_len).
+            prop_assert!(txs.len() <= n, "must respect the n cap");
+            prop_assert!(txs.len() <= pre_len, "cannot return more than was submitted");
+
+            // Property 4: dropped txs (pre_len - txs.len()) remain in pool.
+            prop_assert_eq!(
+                pool.len(),
+                pre_len - txs.len(),
+                "dropped txs must remain in the pool for next proposal"
+            );
+        }
+    }
 }
