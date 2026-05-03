@@ -3678,10 +3678,15 @@ impl TendermintConsensus {
             self.encrypted_mempool.process_reveals(self.epoch, &[])
         };
 
-        // Fill remaining capacity from plain mempool, respecting gas limit
+        // Fill remaining capacity from plain mempool, respecting gas limit.
+        // Uses energy-stamped inclusion priority so older transactions
+        // dominate the order — the proposer's reward incentive is to include
+        // high-priority txs first, which makes sandwich/frontrun attacks
+        // economically unprofitable when gross MEV gain < per-block decay
+        // cost. Phase 1 of `research/proposals/energy-stamped-mev-resistance.md`.
         let remaining = MAX_TXS_PER_BLOCK.saturating_sub(txs.len());
         if remaining > 0 {
-            let candidates = self.mempool.take(remaining);
+            let candidates = self.mempool.take_with_priority(remaining, self.height);
             if self.executor.block_gas_limit > 0 {
                 let mut gas_used: u64 = txs
                     .iter()
@@ -7683,6 +7688,47 @@ mod da_tests {
         let virtual_epoch = 1u64.wrapping_mul(100).wrapping_add(0);
         let proposer_id = vs.leader_for_epoch(virtual_epoch).unwrap().id;
         TendermintConsensus::new_for_test(proposer_id, 100, vs)
+    }
+
+    #[test]
+    fn test_create_proposal_orders_by_energy_priority() {
+        // Phase 1 of `research/proposals/energy-stamped-mev-resistance.md`:
+        // create_proposal() must order plaintext-mempool txs via
+        // `take_with_priority(remaining, self.height)`. A tx submitted
+        // RECENTLY (low elapsed) outranks one submitted EARLIER (high
+        // elapsed, more decayed) and is therefore included first.
+        // This validates that the wiring fires through the proposer.
+        let mut tc = make_proposer_tc();
+        let mut db = InMemoryStateDB::new();
+
+        let kp = BlsKeypair::generate();
+        tc.set_bls_keypair(kp);
+
+        // Old tx: submitted at epoch 0.
+        tc.mempool.set_epoch(0);
+        let old_tx = dummy_transfer(111);
+        let old_hash = old_tx.tx_hash();
+        tc.mempool.submit(old_tx);
+
+        // New tx: submitted later, at the same epoch the proposer will
+        // build at — so its priority is at full BASE_INCLUSION_ENERGY.
+        tc.mempool.set_epoch(tc.height);
+        let new_tx = dummy_transfer(222);
+        let new_hash = new_tx.tx_hash();
+        tc.mempool.submit(new_tx);
+
+        let block = tc.create_proposal(&mut db).unwrap();
+        assert_eq!(block.transactions.len(), 2);
+        assert_eq!(
+            block.transactions[0].tx_hash(),
+            new_hash,
+            "high-priority (recent) tx must be ordered first"
+        );
+        assert_eq!(
+            block.transactions[1].tx_hash(),
+            old_hash,
+            "decayed (older) tx falls to the back"
+        );
     }
 
     #[test]
