@@ -1009,6 +1009,87 @@ impl Default for EpochTransitionManager {
     }
 }
 
+// ─────────────────────── ValidatorSetSource seam ────────────────────────
+//
+// Lane G.5 — the final Layer 3 trait per DOCTRINE_PUNCH_LIST.md.
+// `TendermintConsensus` holds a concrete `ValidatorSet` field with a
+// large API surface (lookup, leader selection, stake bookkeeping, BLS
+// key management, health scoring, queued changes). Defining a trait that
+// wraps the entire surface would be overreach — alternative impls
+// (Singh-Boltzmann stake variants, Self-Annealing validator sets) will
+// replace the bookkeeping wholesale, not slot in piecewise.
+//
+// What the alternative impls genuinely need to plug in *to* is the
+// **read-only consensus-decision surface**: leader selection,
+// active-count snapshots, total-stake reads. The mutation pipeline
+// (joins, leaves, stake updates) stays concrete because it's
+// alt-impl-specific stateful bookkeeping. This trait names the
+// minimum read-only contract that consensus depends on.
+//
+// Object-safe: every method returns owned values or borrows of types
+// concrete to this crate (`ValidatorInfo`).
+
+/// Read-only lookup contract for validator sets. Alternative
+/// implementations (Singh-Boltzmann stake-based, Self-Annealing
+/// thermodynamic validator sets) implement this trait against their own
+/// internal storage; consensus calls only these methods on the read
+/// path.
+///
+/// `Send + Sync` so consensus engines can hold the source behind locks.
+pub trait ValidatorSetSource: Send + Sync {
+    /// Total number of registered validators (active + inactive).
+    fn len(&self) -> usize;
+
+    /// True iff the source is empty.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Count of validators currently considered "active" by the source's
+    /// health/liveness rule.
+    fn active_count(&self) -> usize;
+
+    /// Sum of effective stake across all validators. The "effective"
+    /// modifier is impl-specific: linear stake for the default impl,
+    /// Boltzmann-weighted under Singh-Boltzmann.
+    fn total_stake(&self) -> u64;
+
+    /// Lookup a validator by ID. `None` if not registered.
+    fn get(&self, id: u64) -> Option<&ValidatorInfo>;
+
+    /// Leader for the given epoch, if any. `None` for an empty set or
+    /// when the source's leader-selection rule rejects all candidates.
+    fn leader_for_epoch(&self, epoch: u64) -> Option<&ValidatorInfo>;
+}
+
+/// Lane G.5 blanket impl. Pure delegation to `ValidatorSet`'s inherent
+/// methods — no behaviour change.
+impl ValidatorSetSource for ValidatorSet {
+    fn len(&self) -> usize {
+        ValidatorSet::len(self)
+    }
+
+    fn is_empty(&self) -> bool {
+        ValidatorSet::is_empty(self)
+    }
+
+    fn active_count(&self) -> usize {
+        ValidatorSet::active_count(self)
+    }
+
+    fn total_stake(&self) -> u64 {
+        ValidatorSet::total_stake(self)
+    }
+
+    fn get(&self, id: u64) -> Option<&ValidatorInfo> {
+        ValidatorSet::get(self, id)
+    }
+
+    fn leader_for_epoch(&self, epoch: u64) -> Option<&ValidatorInfo> {
+        ValidatorSet::leader_for_epoch(self, epoch)
+    }
+}
+
 // ─────────────────────────── Tests ───────────────────────────────────────
 
 #[cfg(test)]
@@ -1721,5 +1802,46 @@ mod tests {
         // Validator with no BLS key registered yet.
         vs.add_validator(ValidatorInfo::new(7, 1000, [7u8; 32]));
         assert!(!vs.rotate_validator_key(7, vec![0u8; 48], vec![0u8; 96], 100));
+    }
+
+    #[test]
+    fn validator_set_source_trait_delegates_to_validator_set() {
+        // Lane G.5: trait dispatch parity. Holding ValidatorSet behind
+        // `&dyn ValidatorSetSource`, all six trait methods must produce
+        // results bit-equal to direct calls. Locks in the seam so
+        // alternative impls (Singh-Boltzmann, Self-Annealing) can swap
+        // in at the consensus read path without consensus code changes.
+        let vs = make_validator_set(4, 1000);
+
+        // Empty-set behaviour (separate Default).
+        let empty = ValidatorSet::new();
+        let empty_dyn: &dyn ValidatorSetSource = &empty;
+        assert!(empty_dyn.is_empty());
+        assert_eq!(empty_dyn.len(), 0);
+        assert_eq!(empty_dyn.active_count(), 0);
+        assert_eq!(empty_dyn.total_stake(), 0);
+        assert!(empty_dyn.get(0).is_none());
+        assert!(empty_dyn.leader_for_epoch(0).is_none());
+
+        // Populated set: dyn dispatch matches concrete inherent calls.
+        let dyn_vs: &dyn ValidatorSetSource = &vs;
+        assert_eq!(dyn_vs.len(), vs.len());
+        assert!(!dyn_vs.is_empty());
+        assert_eq!(dyn_vs.active_count(), vs.active_count());
+        assert_eq!(dyn_vs.total_stake(), vs.total_stake());
+
+        // Lookup parity for an existing validator.
+        let by_id_concrete = vs.get(0);
+        let by_id_dyn = dyn_vs.get(0);
+        assert_eq!(by_id_concrete.map(|v| v.id), by_id_dyn.map(|v| v.id));
+
+        // Leader-for-epoch parity at three different epochs.
+        for ep in [0u64, 1, 12345] {
+            assert_eq!(
+                vs.leader_for_epoch(ep).map(|v| v.id),
+                dyn_vs.leader_for_epoch(ep).map(|v| v.id),
+                "leader-for-epoch dispatch must match at epoch {ep}"
+            );
+        }
     }
 }
