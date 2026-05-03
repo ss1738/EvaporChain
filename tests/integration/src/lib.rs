@@ -3903,7 +3903,12 @@ mod cfm_integration {
 
     #[test]
     fn boltzmann_weight_decreases_with_fee() {
-        let beta_mb = 10u64;
+        // Layer 0 item 5 (commit 6d1ac5e) moved CFM β from millibits
+        // to microbits per fee per epoch. β=10 was a meaningful shift
+        // under the old scale; under the new scale it's a no-op.
+        // β=1_000_000 = 1 bit per fee unit gives the same relative
+        // shape the test originally asserted.
+        let beta_mb = 1_000_000u64;
         let w_low = boltzmann_weight(1, beta_mb);
         let w_high = boltzmann_weight(100, beta_mb);
         assert!(w_low > w_high, "higher fee → lower Boltzmann weight");
