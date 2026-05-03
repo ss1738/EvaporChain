@@ -300,6 +300,94 @@ impl Default for EncryptedMempool {
     }
 }
 
+// ─────────────────────── MevPool substrate seam ─────────────────────────
+//
+// Lane G.4. Today the chain holds a concrete `EncryptedMempool` field on
+// `TendermintConsensus`. This trait names the abstract MEV-protection
+// contract so alternative impls (threshold-encrypted with DKG, Ferveo /
+// Shutter-style sealed mempools, sealed-bid orderflow auction pools)
+// can plug into the consensus hot path without changing consensus code.
+//
+// Method set is the minimum that `tendermint.rs` calls on
+// `self.encrypted_mempool` today:
+//
+// - `submit_encrypted` — admit a sealed tx into the commit phase.
+// - `process_reveals` — drain the reveal-ready txs at a given epoch and
+//   return the plaintext set for execution. Drains the plaintext pool
+//   too as a side-effect (matches today's behaviour).
+// - `pending_count` — `(encrypted, plaintext)` size for status RPCs.
+//
+// `len` / `is_empty` are convenience defaults derived from
+// `pending_count`. The migration of `TendermintConsensus.encrypted_mempool`
+// from `EncryptedMempool` to `Box<dyn MevPool>` is Lane G.5 work
+// (separate commit) — this commit lands the trait + the blanket impl on
+// `EncryptedMempool` so other impls can be written against a stable seam.
+//
+// Doctrine link: INVENTION_STACK.md §A1.4 (MEV defense via encrypted
+// ordering) + the Layer 4 antichain-mempool work in DOCTRINE_PUNCH_LIST.md.
+
+/// Substrate contract for MEV-protected mempools. `Send + Sync` so
+/// consensus engines can hold this behind locks; `EncryptedMempool` is
+/// already `Send + Sync` by virtue of its fields.
+pub trait MevPool: Send + Sync {
+    /// Admit an encrypted transaction into the commit phase. The
+    /// validator orders this tx without seeing its contents — ordering
+    /// is by commitment hash, deterministic and unmanipulable.
+    fn submit_encrypted(&mut self, encrypted_tx: EncryptedTransaction);
+
+    /// Process all reveals for the given epoch. Returns plaintext
+    /// transactions for all encrypted txs whose reveal delay has passed,
+    /// given a list of `(commitment, nonce)` pairs. Also drains the
+    /// plaintext pool as a side-effect.
+    fn process_reveals(
+        &mut self,
+        current_epoch: u64,
+        nonces: &[([u8; 32], [u8; 32])],
+    ) -> Vec<Transaction>;
+
+    /// `(encrypted_count, plaintext_count)` — for status RPCs.
+    fn pending_count(&self) -> (usize, usize);
+
+    /// Total pending count. Default sums the two halves of `pending_count`.
+    fn len(&self) -> usize {
+        let (e, p) = self.pending_count();
+        e + p
+    }
+
+    /// True iff `len() == 0`.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+/// Lane G.4 blanket impl. Pure delegation to `EncryptedMempool`'s
+/// inherent methods — no behaviour change.
+impl MevPool for EncryptedMempool {
+    fn submit_encrypted(&mut self, encrypted_tx: EncryptedTransaction) {
+        EncryptedMempool::submit_encrypted(self, encrypted_tx)
+    }
+
+    fn process_reveals(
+        &mut self,
+        current_epoch: u64,
+        nonces: &[([u8; 32], [u8; 32])],
+    ) -> Vec<Transaction> {
+        EncryptedMempool::process_reveals(self, current_epoch, nonces)
+    }
+
+    fn pending_count(&self) -> (usize, usize) {
+        EncryptedMempool::pending_count(self)
+    }
+
+    fn len(&self) -> usize {
+        EncryptedMempool::len(self)
+    }
+
+    fn is_empty(&self) -> bool {
+        EncryptedMempool::is_empty(self)
+    }
+}
+
 // ─────────────────────────── Tests ───────────────────────────────────────
 
 #[cfg(test)]
@@ -615,5 +703,49 @@ mod tests {
 
         assert_ne!(enc1.commitment, enc2.commitment);
         assert_ne!(enc1.encrypted_payload, enc2.encrypted_payload);
+    }
+
+    #[test]
+    fn mev_pool_trait_delegates_to_encrypted_mempool() {
+        // Lane G.4: trait dispatch parity. Hold an EncryptedMempool
+        // behind `&mut dyn MevPool` and verify the four trait methods
+        // produce results bit-equal to the inherent calls. Locks in
+        // the substrate seam — alternative MEV pools (threshold-encrypted,
+        // Ferveo-style, sealed-bid) can swap in here without consensus
+        // code changes.
+        let mut pool = EncryptedMempool::new(2);
+        // Trait dispatch handle.
+        let mp: &mut dyn MevPool = &mut pool;
+
+        // Empty defaults.
+        assert!(mp.is_empty());
+        assert_eq!(mp.len(), 0);
+        assert_eq!(mp.pending_count(), (0, 0));
+
+        // Submit a sealed tx.
+        let tx = dummy_tx(123);
+        let nonce = random_nonce();
+        let enc = encrypt_transaction(&tx, &nonce, 1);
+        mp.submit_encrypted(enc.clone());
+
+        // Counts now show one encrypted, zero plaintext.
+        assert!(!mp.is_empty());
+        assert_eq!(mp.len(), 1);
+        assert_eq!(mp.pending_count(), (1, 0));
+
+        // Reveal at the right epoch through the trait — the tx should
+        // emerge as plaintext bit-equal to the original input.
+        let nonces = vec![(enc.commitment, nonce)];
+        let revealed = mp.process_reveals(3, &nonces);
+        assert_eq!(revealed.len(), 1);
+        // Compare via canonical bytes — the Transaction struct lacks
+        // PartialEq for the embedded signature/public_key Option<Vec<u8>>
+        // bookkeeping, but JSON roundtrip is deterministic for our test
+        // shape.
+        let orig = serde_json::to_vec(&tx).unwrap();
+        let got = serde_json::to_vec(&revealed[0]).unwrap();
+        assert_eq!(orig, got);
+        // Pool is now drained.
+        assert!(mp.is_empty());
     }
 }
