@@ -3763,7 +3763,7 @@ impl TendermintConsensus {
         let mut hints_vec: Vec<Option<u64>> = txs.iter().map(|_| None).collect();
         let remaining = MAX_TXS_PER_BLOCK.saturating_sub(txs.len());
         if remaining > 0 {
-            let (candidates, priority_sum, candidate_hints) = self
+            let (mut candidates, priority_sum, mut candidate_hints) = self
                 .mempool
                 .take_with_priority_sum_and_hints(remaining, self.height);
             self.last_proposal_priority_sum =
@@ -3773,6 +3773,66 @@ impl TendermintConsensus {
                 candidate_hints.len(),
                 "mempool returned mismatched hints"
             );
+            // Lane I.5: governance-gated antichain projection. When
+            // `block_source_mode == "antichain"`, post-filter the
+            // FIFO draw through a same-sender dedup so the resulting
+            // proposal carries only conflict-free txs (Block-STM can
+            // run them in maximum parallelism). Default `"fifo"` is
+            // bit-exact identical to today; any other value falls
+            // through to FIFO so a typo cannot halt the chain.
+            //
+            // The same-sender heuristic mirrors `TxAntichainMempool`'s
+            // V1 conflict rule: two txs are comparable iff they share
+            // a sender (sequential nonces force ordering). The
+            // projection drops the lower-priority duplicate, keeping
+            // priority order intact (candidates arrive priority-desc
+            // already from the FIFO draw).
+            //
+            // Skipped txs are returned to the mempool below (or
+            // implicitly retained — they were never committed).
+            // last_proposal_priority_sum is left at the unfiltered
+            // value: the bonus reflects the priority of txs that were
+            // *available* for inclusion, not just the antichain subset
+            // — so honest proposers aren't penalised for filtering.
+            let antichain_mode = self
+                .governance_params
+                .get("block_source_mode")
+                .map(|s| s.as_str())
+                .unwrap_or("fifo");
+            if antichain_mode == "antichain" {
+                use std::collections::HashSet;
+                let mut seen_senders: HashSet<[u8; 32]> = HashSet::new();
+                let mut keep: Vec<usize> = Vec::with_capacity(candidates.len());
+                let mut dropped: Vec<Transaction> = Vec::new();
+                for (i, tx) in candidates.iter().enumerate() {
+                    match tx.sender() {
+                        Some(addr) => {
+                            if seen_senders.insert(*addr) {
+                                keep.push(i);
+                            } else {
+                                dropped.push(tx.clone());
+                            }
+                        }
+                        None => keep.push(i), // no sender → cannot conflict
+                    }
+                }
+                if dropped.len() > 0 {
+                    let new_candidates: Vec<Transaction> = keep
+                        .iter()
+                        .map(|&i| candidates[i].clone())
+                        .collect();
+                    let new_hints: Vec<u64> =
+                        keep.iter().map(|&i| candidate_hints[i]).collect();
+                    candidates = new_candidates;
+                    candidate_hints = new_hints;
+                    // Return the dropped txs to the mempool — they're
+                    // valid, just deferred. They'll re-surface on the
+                    // next proposal once their predecessor commits.
+                    for tx in dropped {
+                        self.mempool.submit_priority(tx);
+                    }
+                }
+            }
             if self.executor.block_gas_limit > 0 {
                 let mut gas_used: u64 = txs
                     .iter()
