@@ -2075,6 +2075,11 @@ impl ExecutionEngine for BlockStmExecutor {
             db.put_last_rent_epoch(block.epoch);
         }
 
+        // PNT phase auto-advance (research-buildable #8 follow-up).
+        // Stage-1 shadow-only — rotates the PhasedNullifierTree window
+        // on the configured cadence; consensus state-root is unaffected.
+        let _pnt_advanced = self.privacy_executor.tick_pnt_phase(block.epoch);
+
         let state_root = db.compute_state_root();
 
         info!(

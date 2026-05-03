@@ -107,6 +107,11 @@ fn to_merkle_proof(data: &MerkleProofData) -> MerkleProof {
 /// double-spend protection at any point in time. Audit-tunable.
 const PNT_WINDOW_DEPTH: usize = 5;
 
+/// Default cadence (in epochs) at which PNT auto-advances its phase
+/// from `tick_pnt_phase`. With `PNT_WINDOW_DEPTH = 5`, advancing every
+/// 100 epochs gives 500 epochs of live double-spend protection.
+const PNT_DEFAULT_PHASE_INTERVAL_EPOCHS: u64 = 100;
+
 /// The privacy execution engine. Maintains the in-memory note tree and
 /// nullifier set, syncing state to/from StateDB at block boundaries.
 pub struct PrivacyExecutor {
@@ -116,7 +121,7 @@ pub struct PrivacyExecutor {
     current_epoch: u64,
     /// Phasing Nullifier Tree (PNT, research/INVENTION_STACK.md §4.2).
     /// Tracks every spent nullifier in a bounded sliding window of
-    /// phases. **Wiring stage 1 (this commit): shadow-tracking only.**
+    /// phases. **Wiring stage 1: shadow-tracking only.**
     /// Inserts mirror the canonical nullifier_set / db.spend_nullifier
     /// path; the chain still gates double-spend on the unbounded set
     /// because making PNT authoritative is a consensus-breaking change
@@ -125,6 +130,14 @@ pub struct PrivacyExecutor {
     /// gate. Stage 2 will wire `is_spent_in_window` into the
     /// double-spend check itself.
     pub pnt: evaporchain_pnt::PhasedNullifierTree,
+    /// Most recent epoch the PNT auto-advanced its phase via
+    /// `tick_pnt_phase`. `None` means "never auto-advanced" — first
+    /// tick at any epoch will fire (mirrors the PoHA sampler shape).
+    pnt_last_phase_epoch: Option<u64>,
+    /// Cadence (in epochs) at which `tick_pnt_phase` rotates the PNT
+    /// window. `0` disables auto-advance entirely (caller must drive
+    /// it via the original `pnt_advance_phase` direct-call path).
+    pnt_phase_interval_epochs: u64,
 }
 
 impl PrivacyExecutor {
@@ -135,6 +148,8 @@ impl PrivacyExecutor {
             current_epoch: 0,
             pnt: evaporchain_pnt::PhasedNullifierTree::new(PNT_WINDOW_DEPTH)
                 .expect("PNT_WINDOW_DEPTH must be >= 1"),
+            pnt_last_phase_epoch: None,
+            pnt_phase_interval_epochs: PNT_DEFAULT_PHASE_INTERVAL_EPOCHS,
         }
     }
 
@@ -145,6 +160,8 @@ impl PrivacyExecutor {
             current_epoch: 0,
             pnt: evaporchain_pnt::PhasedNullifierTree::new(PNT_WINDOW_DEPTH)
                 .expect("PNT_WINDOW_DEPTH must be >= 1"),
+            pnt_last_phase_epoch: None,
+            pnt_phase_interval_epochs: PNT_DEFAULT_PHASE_INTERVAL_EPOCHS,
         }
     }
 
@@ -153,6 +170,45 @@ impl PrivacyExecutor {
     /// shadow-tracking only, so this has no effect on consensus.
     pub fn pnt_advance_phase(&mut self) {
         self.pnt.advance_phase();
+        self.pnt_last_phase_epoch = Some(self.current_epoch);
+    }
+
+    /// Cadence-bounded PNT phase advance. Called per block by
+    /// `execute_block`; rotates the live-phase window iff the
+    /// configured `pnt_phase_interval_epochs` has elapsed since the
+    /// last advance. `interval=0` disables the path entirely.
+    /// Returns `true` if the window rotated.
+    pub fn tick_pnt_phase(&mut self, epoch: u64) -> bool {
+        if self.pnt_phase_interval_epochs == 0 {
+            return false;
+        }
+        let due = match self.pnt_last_phase_epoch {
+            Some(last) => epoch >= last.saturating_add(self.pnt_phase_interval_epochs),
+            None => true,
+        };
+        if !due {
+            return false;
+        }
+        self.pnt.advance_phase();
+        self.pnt_last_phase_epoch = Some(epoch);
+        true
+    }
+
+    /// Set the PNT auto-advance cadence (epochs). 0 disables.
+    pub fn set_pnt_phase_interval_epochs(&mut self, epochs: u64) {
+        self.pnt_phase_interval_epochs = epochs;
+    }
+
+    /// Read the configured PNT phase-advance cadence.
+    pub fn pnt_phase_interval_epochs(&self) -> u64 {
+        self.pnt_phase_interval_epochs
+    }
+
+    /// Most recent epoch a PNT phase advanced (via `tick_pnt_phase`
+    /// OR the direct `pnt_advance_phase` path). `None` until first
+    /// rotation.
+    pub fn pnt_last_phase_epoch(&self) -> Option<u64> {
+        self.pnt_last_phase_epoch
     }
 
     /// Set the current epoch (call at the start of each block).
@@ -1314,6 +1370,44 @@ mod tests {
             "PNT must mirror the canonical nullifier_set on spend"
         );
         assert!(executor.pnt.is_spent_in_window(&tx.input_nullifiers[0]));
+    }
+
+    #[test]
+    fn test_tick_pnt_phase_first_call_fires() {
+        // Audit-buildable #8 follow-up: tick_pnt_phase on a fresh
+        // executor must fire on the first call regardless of epoch
+        // (mirrors PoHA sampler's "first tick always fires" shape).
+        let mut executor = PrivacyExecutor::with_depth(8);
+        executor.set_epoch(7);
+        executor.set_pnt_phase_interval_epochs(100);
+        let phase_before = executor.pnt.current_phase;
+        let advanced = executor.tick_pnt_phase(7);
+        assert!(advanced, "first tick must fire");
+        assert_eq!(executor.pnt.current_phase, phase_before + 1);
+        assert_eq!(executor.pnt_last_phase_epoch(), Some(7));
+    }
+
+    #[test]
+    fn test_tick_pnt_phase_respects_cadence() {
+        // After firing at epoch 0, tick within the interval must NOT
+        // fire; tick at-or-past the interval boundary fires again.
+        let mut executor = PrivacyExecutor::with_depth(8);
+        executor.set_pnt_phase_interval_epochs(100);
+        assert!(executor.tick_pnt_phase(0));
+        assert!(!executor.tick_pnt_phase(50), "50 < 0+100 → no fire");
+        assert!(!executor.tick_pnt_phase(99), "99 < 0+100 → no fire");
+        assert!(executor.tick_pnt_phase(100), "100 >= 0+100 → fires");
+        assert!(!executor.tick_pnt_phase(150), "150 < 100+100 → no fire");
+        assert!(executor.tick_pnt_phase(200));
+    }
+
+    #[test]
+    fn test_tick_pnt_phase_zero_interval_disables() {
+        let mut executor = PrivacyExecutor::with_depth(8);
+        executor.set_pnt_phase_interval_epochs(0);
+        assert!(!executor.tick_pnt_phase(0));
+        assert!(!executor.tick_pnt_phase(u64::MAX));
+        assert_eq!(executor.pnt_last_phase_epoch(), None);
     }
 
     #[test]

@@ -1917,6 +1917,13 @@ impl ExecutionEngine for ParallelExecutor {
             }
         }
 
+        // PNT phase auto-advance (research-buildable #8 follow-up).
+        // Rotates the PhasedNullifierTree window iff the configured
+        // `pnt_phase_interval_epochs` has elapsed. Stage-1 shadow-only,
+        // so this is purely operational telemetry until Stage-2 makes
+        // PNT authoritative for double-spend gating.
+        let _pnt_advanced = self.privacy_executor.tick_pnt_phase(block.epoch);
+
         let state_root = db.compute_state_root();
 
         info!(
