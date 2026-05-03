@@ -130,6 +130,7 @@ fn dispatch(state: &ApiState, req: JsonRpcRequest) -> JsonRpcResponse {
         "evap_getEpvRegistry" => rpc_get_epv_registry(state, req.id),
         "evap_getFeeState" => rpc_get_fee_state(state, req.id),
         "evap_getFourActSnapshot" => rpc_get_four_act_snapshot(state, req.id),
+        "evap_getHbctStatus" => rpc_get_hbct_status(state, req.id),
         "evap_getLogs" => rpc_get_logs(state, &req.params, req.id),
         "evap_getBlockLogs" => rpc_get_block_logs(state, &req.params, req.id),
         "evap_getFinalityStatus" => rpc_get_finality_status(state, &req.params, req.id),
@@ -641,6 +642,64 @@ fn format_lamport_clock_response(
         "accumulated_energy": json_hex_u64(accumulated_energy),
         "tick_quantum": json_hex_u64(tick_quantum),
     })
+}
+
+/// Pure formatter for HBCT status RPC responses.
+/// Hour-Block Capacity Tokens (INVENTION_STACK §A3.4): capacity in
+/// hour H decays to 0 at H+1. Off-chain testnet ledger backed by
+/// `evaporchain-hbct`; production wires real GB Elexon BMRS /
+/// ENTSO-E adapters via `evaporchain_hbct::OracleFeed`.
+fn format_hbct_status_response(
+    entry_count: usize,
+    total_mwh: u64,
+    distinct_holders: usize,
+    distinct_slots: usize,
+) -> Value {
+    serde_json::json!({
+        "entry_count": json_hex_u64(entry_count as u64),
+        "total_mwh": json_hex_u64(total_mwh),
+        "distinct_holders": json_hex_u64(distinct_holders as u64),
+        "distinct_slots": json_hex_u64(distinct_slots as u64),
+    })
+}
+
+/// `evap_getHbctStatus()` — aggregate HBCT-book status for operators.
+/// Reports total mwh outstanding across the book + distinct
+/// (holder, slot) cardinality so an operator can see the chain's
+/// capacity-token-market footprint without enumerating every entry.
+fn rpc_get_hbct_status(state: &ApiState, id: Value) -> JsonRpcResponse {
+    let (entry_count, total_mwh, distinct_holders, distinct_slots) =
+        match state.hbct_book.lock() {
+            Ok(book) => {
+                let total: u64 = book
+                    .entries
+                    .values()
+                    .copied()
+                    .fold(0u64, u64::saturating_add);
+                let mut holders = std::collections::BTreeSet::new();
+                let mut slots = std::collections::BTreeSet::new();
+                for (loc, slot, holder) in book.entries.keys() {
+                    holders.insert(*holder);
+                    slots.insert((loc.clone(), *slot));
+                }
+                (book.entries.len(), total, holders.len(), slots.len())
+            }
+            Err(_) => {
+                return JsonRpcResponse::ok(
+                    id,
+                    serde_json::json!({ "hbct_book_unavailable": true }),
+                );
+            }
+        };
+    JsonRpcResponse::ok(
+        id,
+        format_hbct_status_response(
+            entry_count,
+            total_mwh,
+            distinct_holders,
+            distinct_slots,
+        ),
+    )
 }
 
 /// Pure formatter for the four-act narrative snapshot
@@ -1377,6 +1436,22 @@ mod tests {
         assert_eq!(trie["compressions"], "0x5");
         assert_eq!(trie["decompressions"], "0x1");
         assert_eq!(v["lazy_snapshot_count"], "0x9");
+    }
+
+    #[test]
+    fn test_format_hbct_status_basic() {
+        let v = format_hbct_status_response(12, 50_000, 4, 3);
+        assert_eq!(v["entry_count"], "0xc");
+        assert_eq!(v["total_mwh"], "0xc350"); // 50_000
+        assert_eq!(v["distinct_holders"], "0x4");
+        assert_eq!(v["distinct_slots"], "0x3");
+    }
+
+    #[test]
+    fn test_format_hbct_status_empty() {
+        let v = format_hbct_status_response(0, 0, 0, 0);
+        assert_eq!(v["entry_count"], "0x0");
+        assert_eq!(v["total_mwh"], "0x0");
     }
 
     #[test]
