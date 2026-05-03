@@ -237,13 +237,29 @@ node_position(leaf_index) = 2 × leaf_index - popcount(leaf_index)
 
 **Circuit: RealBlockCircuit**
 
+`pp.num_constraints()` reports `(14041, 10554)` — primary +
+secondary = **24,595 constraints/fold step** as of 2026-05-02.
+The breakdown below is the user-defined subset (~2,481
+constraints, ~10% of total); the remaining ~22,114 are Nova-
+internal augmented-step + secondary-curve verifier overhead, not
+controllable from the circuit body.
+
 | Section | Constraints | Purpose |
 |---------|-------------|---------|
-| Thermodynamic decay | ~3,000 | E(t) = E₀ × 2^(−t/τ) via bit-shift + interpolation |
-| Range checks | ~5,000 | 32-bit range checks on all intermediate values |
-| Balance conservation | ~2,000 | Σ debits = Σ credits per transfer batch |
-| Nonce ordering | ~1,000 | new_nonce = old_nonce + 1 |
-| **Total** | **~11,762** | Per fold step |
+| Per-object thermodynamic decay (5 enforce + 2 × 32-bit range checks per object × 16 objects) | ~1,168 | E(t) = E₀ × 2^(−t/τ) via bit-shift + remainder bounds |
+| Per-transfer (3 enforce + 1 × 32-bit range check per transfer × 16 transfers) | ~576 | Balance conservation + amount range check |
+| State-root limb decomposition (4 × 64-bit range checks + recomp + limb0 eq) | ~262 | Bind 32-byte verkle root |
+| MMR-root limb decomposition (mirror of state-root) | ~262 | Bind 32-byte MMR root |
+| Privacy state (note-tree binding + pool conservation + 3 × 64-bit range checks + bookkeeping) | ~199 | Shielded pool / note tree state transitions |
+| Per-evaporation nullifier binding | ~8 | One per evaporated object (≤ 8/block) |
+| Epoch + block + state/mmr/tx/evap bindings | 6 | IVC public-state transitions |
+| **User-defined subtotal** | **~2,481** | Constraints we control directly |
+| Nova augmented step (Poseidon binding + scalar-mul + commitment verifier) | ~11,560 | Primary-curve overhead, fixed by arity 6 |
+| Nova secondary verifier (full circuit on Grumpkin) | ~10,554 | Secondary-curve overhead |
+| **Total** | **~24,595** | Primary + secondary, per fold step |
+
+See `research/proposals/smaller-ivc-circuit.md` for cut analysis +
+reduction proposals.
 
 **Circuit Parameters:**
 | Parameter | Value |

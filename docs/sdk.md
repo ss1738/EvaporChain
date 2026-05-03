@@ -48,7 +48,7 @@ Returns `ChainStatus`:
 ```typescript
 interface ChainStatus {
   chain_name: string;       // "EvaporChain"
-  version: string;          // "0.2.0"
+  version: string;          // "0.1.0"
   block_height: number;
   epoch: number;
   active_objects: number;

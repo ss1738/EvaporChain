@@ -7,14 +7,22 @@
 
 ## Steps
 
-### 1. Download binary
+### 1. Build binary
+
+There is no GitHub Release artefact today. Build from source on the
+target host (or any host matching its OS/arch):
+
 ```bash
-# From GitHub releases
-wget https://github.com/ss1738/EvaporChain/releases/latest/download/evaporchain-linux-amd64.tar.gz
-tar xzf evaporchain-linux-amd64.tar.gz
-chmod +x evaporchain-linux-amd64
-sudo mv evaporchain-linux-amd64 /usr/local/bin/evaporchain-node
+git clone https://github.com/ss1738/EvaporChain.git
+cd EvaporChain
+cargo build --release -p evaporchain-node --features prove
+sudo install -m 0755 target/release/evaporchain-node /usr/local/bin/evaporchain-node
 ```
+
+When a tagged release is published the GitHub Releases workflow at
+`.github/workflows/release.yml` will produce
+`evaporchain-{linux,mac}-{amd64,arm64}` archives. Until that lands,
+build from source is the canonical install path.
 
 ### 2. Generate TLS certificates
 ```bash
@@ -22,12 +30,22 @@ sudo mv evaporchain-linux-amd64 /usr/local/bin/evaporchain-node
 ```
 
 ### 3. Get genesis config
+
+The canonical onboarding flow goes through the K-07/K-08
+coordinator-signed ceremony (see `docs/VALIDATOR_ONBOARDING.md` for
+the full flow):
+
 ```bash
-# Use the network-appropriate config
-cp configs/staging.json genesis.json
-# Or download from existing validator
-curl http://<existing-validator>:8080/api/genesis > genesis.json
+# Coordinator builds the signed genesis once and distributes it.
+# Each operator just verifies the bundle, never patches the JSON
+# by hand. Re-fetch from the coordinator if your file fails to
+# verify.
+evaporchain onboarding verify --genesis-config /path/to/genesis.json
 ```
+
+For ad-hoc / local devnets without a coordinator the
+`evaporchain testnet init --validators N --per-validator-ips ...`
+flow produces a self-signed genesis you can copy into place.
 
 ### 4. Start the node
 ```bash

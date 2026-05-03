@@ -112,11 +112,30 @@ return expression
 | `caller` | `address` | Address of the transaction sender |
 | `owner` | `address` | Address of the contract deployer |
 | `epoch` | `u64` | Current chain epoch |
+| `block_number` | `u64` | Current chain block number |
 | `energy` | `u64` | Contract's remaining energy |
+| `energy_of(obj_id)` | `u64` | Remaining energy of an arbitrary object |
 | `balance(addr)` | `u64` | On-chain EVAP balance of an address |
 | `transfer(to, amount)` | — | Transfer EVAP tokens to an address |
-| `emit(msg)` | — | Emit a contract event |
+| `emit(msg)` | — | Emit a freeform-string contract event |
+| `emit_event(name, [topics], data)` | — | Emit a structured event with topic + data |
 | `require(cond, msg)` | — | Revert execution if condition is false |
+| `require_epoch_range(min, max)` | — | Revert unless current epoch ∈ [min, max) |
+| `compute_decay(initial, half_life, elapsed)` | `u64` | Compute decayed energy from initial value |
+| `vrf_randomness()` | `u64` | Current block's VRF beacon value (truncated) |
+| `vrf_domain_randomness(dom)` | `u64` | Domain-separated VRF randomness |
+| `random_range(max)` | `u64` | Uniform `u64` in `[0, max)` derived from beacon |
+| `call_external(contract_id, method, args…)` | `value` | Cross-contract call (gas-bounded) |
+
+The compiler also surfaces array primitives as opcodes (`array_new`,
+`array_get`, `array_set`) and map primitives (`map_get`, `map_set`),
+exposed in EvaporScript via `[]` indexing on declared `array` and
+`map` state fields.
+
+Compiler `Op` enum (`crates/evaporchain-script/src/compiler.rs:9`)
+has 44 opcodes total; this table covers every user-visible builtin
+and primitive but groups stack/control/arithmetic ops as language
+operators rather than functions.
 
 ## Lifecycle Hooks
 
