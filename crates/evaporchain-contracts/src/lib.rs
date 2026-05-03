@@ -927,14 +927,18 @@ fn exec_token(
             let from = get_str(args, "from")?.to_string();
             let to = get_str(args, "to")?;
             let amount = get_u64(args, "amount")?;
-            // Caller must own the tokens being transferred (sender == caller),
-            // or be the contract creator (admin authority).
+            // EVR-20 spec auth: caller must equal `from` (token
+            // holder is the only one who can move their balance).
+            // The previous creator-override was a violation of
+            // ERC-20 parity — it let the deployer move any holder's
+            // tokens. Reconciled to spec 2026-05-03.
             let caller_hex = hex::encode(caller);
-            if !caller_hex.eq_ignore_ascii_case(&from) && caller != creator {
+            if !caller_hex.eq_ignore_ascii_case(&from) {
                 return Err(ContractError::PermissionDenied(
-                    "caller must be the sender or contract owner to transfer".into(),
+                    "caller must be the sender (caller == from) to transfer".into(),
                 ));
             }
+            let _ = creator; // no creator privilege on transfer per EVR-20
             let from_bal = ts.balances.get(&from).copied().unwrap_or(0);
             if from_bal < amount {
                 return Err(ContractError::InsufficientFunds {
@@ -960,12 +964,19 @@ fn exec_token(
             serde_json::json!({ "total_supply": total })
         }
         "burn" => {
-            if caller != creator {
+            // EVR-20 spec auth: token holder burns their own tokens.
+            // Code historically required `caller == creator` which
+            // contradicts ERC-20 parity (holders couldn't burn).
+            // Reconciled to spec 2026-05-03: caller must equal `from`.
+            // The contract creator retains an admin path only via
+            // burning their own held balance (no special privilege).
+            let from = get_str(args, "from")?.to_string();
+            let caller_hex = hex::encode(caller);
+            if !caller_hex.eq_ignore_ascii_case(&from) {
                 return Err(ContractError::PermissionDenied(
-                    "only owner can burn".into(),
+                    "caller must be the holder to burn (caller == from)".into(),
                 ));
             }
-            let from = get_str(args, "from")?.to_string();
             let amount = get_u64(args, "amount")?;
             let bal = ts.balances.get(&from).copied().unwrap_or(0);
             if bal < amount {
@@ -978,14 +989,18 @@ fn exec_token(
             serde_json::json!({ "burned": amount })
         }
         "refresh_balance" => {
-            if caller != creator {
-                return Err(ContractError::PermissionDenied(
-                    "only owner can refresh balances".into(),
-                ));
-            }
+            // EVR-20 spec auth: any caller can refresh (incentivised
+            // keeper op, similar to ERC-20's pattern of letting anyone
+            // trigger lazy state-maintenance ops). The previous
+            // creator-only check made the token un-maintainable
+            // without the deployer online. The amount of `energy` to
+            // restore is bounded by the per-balance refresh cost
+            // upstream — this method just applies the credit.
             let addr = get_str(args, "addr")?;
             let energy = get_u64(args, "energy")?;
             *ts.balances.entry(addr).or_insert(0) += energy;
+            // `caller` is intentionally not consulted — see comment.
+            let _ = (caller, creator);
             serde_json::json!({ "refreshed": energy })
         }
         _ => return Err(ContractError::UnknownMethod(method.into())),
@@ -2154,6 +2169,17 @@ mod tests {
         a
     }
 
+    /// Hex-encode `addr(b)` for use as a balances-map key.
+    /// Phase 2.1 (2026-05-03) reconciled the `DecayingToken`
+    /// auth model to match the EVR-20 spec, which keys balances by
+    /// hex-encoded address. The friendly-string ("alice"/"bob")
+    /// convention used in earlier tests collided with
+    /// `caller_hex.eq_ignore_ascii_case(&from)` checks once the
+    /// privileged-op gate was fixed; tests now use `addr_hex`.
+    fn addr_hex(b: u8) -> String {
+        hex::encode(addr(b))
+    }
+
     fn engine() -> ContractEngine {
         ContractEngine::new()
     }
@@ -2365,6 +2391,8 @@ mod tests {
     // ─── DecayingToken Tests ───────────────────────────────────────
 
     fn deploy_token(eng: &mut ContractEngine) -> u64 {
+        // Holder = addr(2) ("alice"); creator/deployer = addr(1).
+        // EVR-20 keys balances by hex address (see addr_hex doc).
         eng.deploy(
             ContractTemplate::DecayingToken,
             serde_json::json!({
@@ -2372,7 +2400,7 @@ mod tests {
                 "symbol": "TC",
                 "total_supply": 10000,
                 "decay_half_life": 10,
-                "owner": "alice"
+                "owner": addr_hex(2),
             }),
             vec![],
             addr(1),
@@ -2392,7 +2420,7 @@ mod tests {
             .call(
                 id,
                 "balance_of",
-                &serde_json::json!({"addr": "alice"}),
+                &serde_json::json!({"addr": addr_hex(2)}),
                 &addr(1),
                 0,
             )
@@ -2402,7 +2430,7 @@ mod tests {
         eng.call(
             id,
             "mint",
-            &serde_json::json!({"to": "bob", "amount": 500}),
+            &serde_json::json!({"to": addr_hex(3), "amount": 500}),
             &addr(1),
             0,
         )
@@ -2411,7 +2439,7 @@ mod tests {
             .call(
                 id,
                 "balance_of",
-                &serde_json::json!({"addr": "bob"}),
+                &serde_json::json!({"addr": addr_hex(3)}),
                 &addr(1),
                 0,
             )
@@ -2424,11 +2452,13 @@ mod tests {
         let mut eng = engine();
         let id = deploy_token(&mut eng);
 
+        // Holder = addr(2), recipient = addr(3). Caller MUST equal
+        // `from` per EVR-20 spec.
         eng.call(
             id,
             "transfer",
-            &serde_json::json!({"from": "alice", "to": "bob", "amount": 3000}),
-            &addr(1),
+            &serde_json::json!({"from": addr_hex(2), "to": addr_hex(3), "amount": 3000}),
+            &addr(2),
             0,
         )
         .unwrap();
@@ -2437,7 +2467,7 @@ mod tests {
             .call(
                 id,
                 "balance_of",
-                &serde_json::json!({"addr": "alice"}),
+                &serde_json::json!({"addr": addr_hex(2)}),
                 &addr(1),
                 0,
             )
@@ -2448,7 +2478,7 @@ mod tests {
             .call(
                 id,
                 "balance_of",
-                &serde_json::json!({"addr": "bob"}),
+                &serde_json::json!({"addr": addr_hex(3)}),
                 &addr(1),
                 0,
             )
@@ -2468,7 +2498,7 @@ mod tests {
             .call(
                 id,
                 "balance_of",
-                &serde_json::json!({"addr": "alice"}),
+                &serde_json::json!({"addr": addr_hex(2)}),
                 &addr(1),
                 10,
             )
@@ -2492,7 +2522,7 @@ mod tests {
             .call(
                 id,
                 "balance_of",
-                &serde_json::json!({"addr": "alice"}),
+                &serde_json::json!({"addr": addr_hex(2)}),
                 &addr(1),
                 200,
             )
@@ -2510,11 +2540,12 @@ mod tests {
         let mut eng = engine();
         let id = deploy_token(&mut eng);
 
+        // EVR-20 spec: caller must be the holder. Holder = addr(2).
         eng.call(
             id,
             "burn",
-            &serde_json::json!({"from": "alice", "amount": 2000}),
-            &addr(1),
+            &serde_json::json!({"from": addr_hex(2), "amount": 2000}),
+            &addr(2),
             0,
         )
         .unwrap();
@@ -2523,7 +2554,7 @@ mod tests {
             .call(
                 id,
                 "balance_of",
-                &serde_json::json!({"addr": "alice"}),
+                &serde_json::json!({"addr": addr_hex(2)}),
                 &addr(1),
                 0,
             )
@@ -3576,11 +3607,14 @@ mod tests {
         let mut eng = engine();
         let id = deploy_token(&mut eng);
 
+        // Caller must be the holder per EVR-20; the holder requesting
+        // more than their balance gets InsufficientFunds (not
+        // PermissionDenied).
         let r = eng.call(
             id,
             "transfer",
-            &serde_json::json!({"from": "alice", "to": "bob", "amount": 999999}),
-            &addr(1),
+            &serde_json::json!({"from": addr_hex(2), "to": addr_hex(3), "amount": 999999}),
+            &addr(2),
             0,
         );
         assert!(matches!(r, Err(ContractError::InsufficientFunds { .. })));
@@ -3597,7 +3631,7 @@ mod tests {
         let r = eng.call(
             id,
             "mint",
-            &serde_json::json!({"to": "eve", "amount": 1000000}),
+            &serde_json::json!({"to": addr_hex(4), "amount": 1000000}),
             &addr(2),
             0,
         );
@@ -3605,16 +3639,28 @@ mod tests {
     }
 
     #[test]
-    fn test_token_burn_rejected_for_non_owner() {
+    fn test_token_burn_rejected_for_non_holder() {
         let mut eng = engine();
         let id = deploy_token(&mut eng);
 
-        // addr(2) is NOT the creator, so burn should fail.
+        // EVR-20 spec: only the holder can burn their own tokens.
+        // addr(3) tries to burn addr(2)'s ("alice's") balance — must
+        // fail. The contract creator (addr(1)) likewise has no
+        // privilege to burn other holders' tokens.
         let r = eng.call(
             id,
             "burn",
-            &serde_json::json!({"from": "alice", "amount": 100}),
-            &addr(2),
+            &serde_json::json!({"from": addr_hex(2), "amount": 100}),
+            &addr(3),
+            0,
+        );
+        assert!(matches!(r, Err(ContractError::PermissionDenied(_))));
+
+        let r = eng.call(
+            id,
+            "burn",
+            &serde_json::json!({"from": addr_hex(2), "amount": 100}),
+            &addr(1), // creator — no privilege per EVR-20
             0,
         );
         assert!(matches!(r, Err(ContractError::PermissionDenied(_))));
@@ -3625,12 +3671,12 @@ mod tests {
         let mut eng = engine();
         let id = deploy_token(&mut eng);
 
-        // addr(3) is neither the creator nor does its hex match "alice",
-        // so transferring alice's tokens should fail.
+        // addr(3) is not the holder, so transferring addr(2)'s
+        // tokens must fail.
         let r = eng.call(
             id,
             "transfer",
-            &serde_json::json!({"from": "alice", "to": "eve", "amount": 100}),
+            &serde_json::json!({"from": addr_hex(2), "to": addr_hex(4), "amount": 100}),
             &addr(3),
             0,
         );
@@ -3638,20 +3684,23 @@ mod tests {
     }
 
     #[test]
-    fn test_token_transfer_allowed_by_creator() {
+    fn test_token_transfer_rejected_for_creator_when_not_holder() {
         let mut eng = engine();
         let id = deploy_token(&mut eng);
 
-        // addr(1) is the creator, so admin transfer is allowed even though
-        // caller hex != "alice".
+        // EVR-20 spec: creator has NO override on transfer. Even
+        // though addr(1) deployed the contract, transferring
+        // someone else's balance must fail. (Reconciled 2026-05-03
+        // from the previous over-permissive `caller == creator`
+        // bypass that contradicted ERC-20 parity.)
         let r = eng.call(
             id,
             "transfer",
-            &serde_json::json!({"from": "alice", "to": "bob", "amount": 100}),
+            &serde_json::json!({"from": addr_hex(2), "to": addr_hex(3), "amount": 100}),
             &addr(1),
             0,
         );
-        assert!(r.is_ok());
+        assert!(matches!(r, Err(ContractError::PermissionDenied(_))));
     }
 
     #[test]

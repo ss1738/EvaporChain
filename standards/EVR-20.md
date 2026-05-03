@@ -120,10 +120,21 @@ TokenHolder {
 | Method | Parameters | Auth Required | Description |
 |--------|-----------|--------------|-------------|
 | `deploy` | `name, symbol, total_supply, decay_half_life` | Sender signature | Create new token |
-| `transfer` | `token_id, from, to, amount` | Owner signature | Transfer tokens |
+| `transfer` | `token_id, from, to, amount` | Holder signature (caller == from) | Transfer tokens |
 | `mint` | `token_id, to, amount` | Deployer only | Mint additional supply |
-| `burn` | `token_id, from, amount` | Owner signature | Burn tokens from balance |
+| `burn` | `token_id, from, amount` | Holder signature (caller == from) | Burn tokens from balance |
 | `refresh_balance` | `token_id, address, energy` | Any signature | Add energy to counter decay |
+
+> **Auth note (2026-05-03 reconciliation):** "Owner signature" in the
+> previous version of this spec was ambiguous — it could mean the
+> contract deployer/owner or the balance holder. The reference
+> implementation (`crates/evaporchain-contracts/src/lib.rs`) had
+> initially required `caller == creator` for all three privileged
+> ops, which contradicted ERC-20 parity. The canonical EVR-20
+> behaviour is now: **caller MUST equal `from` for `transfer` and
+> `burn`; the contract deployer has no override**. `refresh_balance`
+> remains permissionless (any caller). Only `mint` is deployer-only,
+> matching ERC-20's typical issuer pattern.
 
 **Deploy** creates a new token:
 ```
