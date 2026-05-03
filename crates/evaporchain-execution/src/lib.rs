@@ -3953,6 +3953,8 @@ contract Counter {
     #[test]
     fn test_deploy_script_via_transaction() {
         let mut db = InMemoryStateDB::new();
+        // Phase 4.2: deploy now charges MIN_STORAGE_DEPOSIT.
+        fund_account(&mut db, 1, 10_000);
         let mut executor = SimpleExecutor::new_for_test(7);
 
         let block = make_block(
@@ -3983,6 +3985,7 @@ contract Counter {
     #[test]
     fn test_call_script_via_transaction() {
         let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 10_000);
         let mut executor = SimpleExecutor::new_for_test(7);
 
         // Deploy
@@ -4030,6 +4033,7 @@ contract Counter {
     #[test]
     fn test_script_contract_lifecycle_with_decay() {
         let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 10_000);
         // Very short half-life: 1 epoch, energy: 4 → dies at epoch ~3
         let mut executor = SimpleExecutor::new_for_test(3);
 
@@ -4062,6 +4066,7 @@ contract Counter {
     #[test]
     fn test_script_and_template_contracts_coexist() {
         let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 10_000);
         let mut executor = SimpleExecutor::new_for_test(7);
 
         // Deploy a template contract
