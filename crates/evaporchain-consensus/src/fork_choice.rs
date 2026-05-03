@@ -415,6 +415,44 @@ mod tests {
         ///    impl produce identical verdicts. Locks the G.3 seam
         ///    contract.
         #[test]
+        fn fork_choice_contract_holds_for_both_impls(
+            // Random tip hashes — bytes 0..32 each.
+            local in proptest::array::uniform32(0u8..),
+            candidate in proptest::array::uniform32(0u8..),
+            // Random LightCone shape for MCC's trajectory walks.
+            energies in proptest::collection::vec(1u64..2000, 1..8),
+            beta_mb in 0u64..50_000,
+        ) {
+            // Lane K.3: trait contract holds for BOTH LinearForkChoice
+            // AND McCForkChoice. Locks the G.3 substrate seam — any
+            // future impl that passes this is plug-compatible. New
+            // impls add another `fork_choice_contract(...)?` line.
+            //
+            // Property A: reflexivity (`evaluate(x, x).accept == true`).
+            // Property B: determinism (idempotent on same input).
+            // Property C: non-empty name (operator-visible label).
+
+            // LinearForkChoice — stateless, no LC.
+            let linear = LinearForkChoice;
+            let v_self_lin = linear.evaluate(&local, &local);
+            prop_assert!(v_self_lin.accept, "linear must accept reflexive");
+            let lin_v1 = linear.evaluate(&local, &candidate);
+            let lin_v2 = linear.evaluate(&local, &candidate);
+            prop_assert_eq!(lin_v1, lin_v2, "linear must be deterministic");
+            prop_assert!(!linear.name().is_empty());
+
+            // McCForkChoice — random LC + random β.
+            let (lc, _ids) = random_lc(&energies);
+            let mcc = MccForkChoice::new(lc, beta_mb);
+            let v_self_mcc = mcc.evaluate(&local, &local);
+            prop_assert!(v_self_mcc.accept, "mcc must accept reflexive");
+            let mcc_v1 = mcc.evaluate(&local, &candidate);
+            let mcc_v2 = mcc.evaluate(&local, &candidate);
+            prop_assert_eq!(mcc_v1, mcc_v2, "mcc must be deterministic");
+            prop_assert!(!mcc.name().is_empty());
+        }
+
+        #[test]
         fn mcc_proptest_invariants(
             // 1-12 children with random energies.
             energies in proptest::collection::vec(1u64..2000, 1..12),
