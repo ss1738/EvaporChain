@@ -5,6 +5,7 @@ pub mod antichain_integration;
 mod audit_tests;
 pub mod bridge;
 pub mod causal_cone_integration;
+pub mod checkpoint;
 pub mod da_attestation;
 pub mod encrypted_mempool;
 pub mod finality;
