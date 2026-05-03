@@ -357,6 +357,35 @@ mod tests {
     use proptest::prelude::*;
     use std::collections::HashSet;
 
+    /// Lane G.1 cross-impl proptest helper. Takes a `&mut dyn BlockSource`
+    /// and a sequence of submissions, then asserts the universal trait
+    /// contract: submit→len consistency, take returns a well-formed
+    /// triple (txs and hints index-parallel, count ≤ n, count ≤ pre_len),
+    /// and is_empty matches len==0.
+    ///
+    /// Reused for both `Mempool` (FIFO) and `TxAntichainMempool` so
+    /// any impl that satisfies the trait can plug in here.
+    fn block_source_contract(
+        bs: &mut dyn BlockSource,
+        submissions: &[(u8, u64)],
+        n: usize,
+        epoch: u64,
+        current_block: u64,
+    ) -> Result<(), proptest::test_runner::TestCaseError> {
+        bs.set_epoch(epoch);
+        for (sender, nonce) in submissions {
+            bs.submit_priority(transfer(*sender, *nonce));
+        }
+        let pre_len = bs.len();
+        prop_assert_eq!(bs.is_empty(), pre_len == 0);
+
+        let (txs, _sum, hints) = bs.take_with_priority_sum_and_hints(n, current_block);
+        prop_assert_eq!(txs.len(), hints.len(), "hints index-parallel to txs");
+        prop_assert!(txs.len() <= n, "must respect n cap");
+        prop_assert!(txs.len() <= pre_len, "cannot return more than was submitted");
+        Ok(())
+    }
+
     proptest! {
         /// Lane I.1 invariant proof: for any random sequence of
         /// `(sender, nonce)` submissions and any draw cap `n`, the
@@ -407,6 +436,26 @@ mod tests {
                 pre_len - txs.len(),
                 "dropped txs must remain in the pool for next proposal"
             );
+        }
+
+        /// Lane G.1 cross-impl: the BlockSource trait contract holds
+        /// for BOTH the canonical FIFO `Mempool` AND the antichain
+        /// `TxAntichainMempool`. Same input → both impls satisfy
+        /// submit/len/take/is_empty invariants. Locks the substrate
+        /// seam: any future impl (Singh-Boltzmann, Ferveo, etc.) that
+        /// passes this proptest is plug-compatible.
+        #[test]
+        fn block_source_contract_holds_for_both_impls(
+            submissions in proptest::collection::vec((0u8..8, 0u64..16), 0..32),
+            n in 0usize..32,
+            epoch in 0u64..50,
+            current_block in 0u64..50,
+        ) {
+            let mut fifo = crate::mempool::Mempool::new();
+            block_source_contract(&mut fifo, &submissions, n, epoch, current_block)?;
+
+            let mut antichain = TxAntichainMempool::new();
+            block_source_contract(&mut antichain, &submissions, n, epoch, current_block)?;
         }
     }
 }
