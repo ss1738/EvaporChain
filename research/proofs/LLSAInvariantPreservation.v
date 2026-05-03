@@ -26,7 +26,11 @@
 
 Require Import Coq.Arith.Arith.
 Require Import Coq.Arith.Div2.
-Require Import Coq.omega.Omega.
+(* Coq 8.12 removed Coq.omega.Omega; the modern decision procedure is
+   `lia` from `Coq.micromega.Lia`. Layer 2 of the doctrine punch list
+   migrated this file from `omega` to `lia` so it can build against
+   the project's pinned Coq 8.18 toolchain (research/coq/Makefile). *)
+Require Import Lia.
 Require Import Coq.Init.Nat.
 
 (* ================================================================
@@ -126,7 +130,7 @@ Proof.
   - (* n = 0: 0 / 0 = 0 by Nat.divmod definition *)
     reflexivity.
   - (* n = S n' > 0: use Nat.div_0_l *)
-    apply Nat.div_0_l. omega.
+    apply Nat.div_0_l. lia.
 Qed.
 
 (** energy_at_epoch(e, hl, 0) = e — elapsed = 0 means no decay has occurred. *)
@@ -164,9 +168,9 @@ Proof.
   split.
   - rewrite Htot_eq. exact Hbound.
   split.
-  - omega.
+  - lia.
   split.
-  - omega.
+  - lia.
   - rewrite energy_at_epoch_zero_elapsed. apply Nat.le_refl.
 Qed.
 
@@ -193,9 +197,9 @@ Proof.
       * exact Hmono.
       * exact Hbound.
   split.
-  - omega.
+  - lia.
   split.
-  - omega.
+  - lia.
   - rewrite energy_at_epoch_zero_elapsed. apply Nat.le_refl.
 Qed.
 
@@ -252,7 +256,7 @@ Qed.
    [ADMIT-1] and [ADMIT-2] were both discharged 2026-04-29 by:
 
        zero_div_any : forall n, 0 / n = 0
-         Proof: destruct n; [reflexivity | Nat.div_0_l + omega]
+         Proof: destruct n; [reflexivity | Nat.div_0_l + lia]
 
        energy_at_epoch_zero_elapsed : forall e hl, energy_at_epoch e hl 0 = e
          Proof: unfold, rewrite zero_div_any, simpl pow2, Nat.div_1_r
