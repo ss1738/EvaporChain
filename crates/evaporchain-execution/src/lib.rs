@@ -4067,17 +4067,24 @@ contract Counter {
     fn test_script_and_template_contracts_coexist() {
         let mut db = InMemoryStateDB::new();
         fund_account(&mut db, 1, 10_000);
+        fund_account(&mut db, 2, 10_000);
         let mut executor = SimpleExecutor::new_for_test(7);
 
-        // Deploy a template contract
+        // Deploy a template contract.
+        // owner needs to be canonical 64-hex (Phase 3.1 sweep);
+        // build it inline via hex::encode(addr(1)).
+        let owner_hex = hex::encode(addr(1));
+        let init_args = format!(
+            r#"{{"name":"TestToken","symbol":"TT","total_supply":1000000,"decay_half_life":100,"owner":"{}"}}"#,
+            owner_hex
+        );
         let deploy_template = make_block(
             1,
             1,
             vec![Transaction::DeployContract(DeployContractTx {
                 deployer: addr(1),
                 template: "DecayingToken".to_string(),
-                init_args: r#"{"name":"TestToken","symbol":"TT","total_supply":1000000,"decay_half_life":100,"owner":"alice"}"#
-                    .to_string(),
+                init_args,
                 energy: 10_000,
                 half_life: 100,
                 rules: None,
