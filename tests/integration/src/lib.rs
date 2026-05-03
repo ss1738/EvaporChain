@@ -5317,13 +5317,32 @@ mod oracle_consensus_integration {
     }
 
     #[test]
-    fn twap_two_points_within_window() {
+    fn twap_two_points_within_window_returns_none() {
+        // Audit `end_to_end_audit_2026_04_27.md §5` raised the TWAP
+        // floor from ≥2 to ≥3 entries — a 2-entry TWAP is still
+        // single-block-pinnable by an attacker controlling both
+        // endpoints. With only 2 time-distinct entries the
+        // accumulator must refuse to publish.
         let mut t = TwapAccumulator::new(300);
         t.push(1000, 60_000.0);
         t.push(1100, 62_000.0);
-        // time-weighted: both within window; result between the two values
+        assert_eq!(t.twap(), None);
+    }
+
+    #[test]
+    fn twap_three_points_within_window_publishes_weighted_average() {
+        let mut t = TwapAccumulator::new(300);
+        t.push(1000, 60_000.0);
+        t.push(1100, 62_000.0);
+        t.push(1200, 64_000.0);
+        // Weighted average over the two integration intervals:
+        // (60_000 * 100 + 62_000 * 100) / 200 = 61_000.
         let twap = t.twap().unwrap();
-        assert!(twap >= 60_000.0 && twap <= 62_000.0);
+        assert!(twap >= 60_000.0 && twap <= 64_000.0);
+        assert!(
+            (twap - 61_000.0).abs() < 1.0,
+            "expected ≈61_000, got {twap}"
+        );
     }
 
     // ── OracleConsensusRound ──
