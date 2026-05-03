@@ -18,6 +18,7 @@ pub use persistence::CheckpointedBellReading;
 pub mod rg_phase_integration;
 pub mod state_sync;
 pub mod tendermint;
+pub mod tx_antichain_mempool;
 pub mod validator_set;
 pub mod wsbf_integration;
 
