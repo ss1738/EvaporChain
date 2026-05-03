@@ -331,8 +331,30 @@ impl Mempool {
         n: usize,
         current_block: u64,
     ) -> (Vec<Transaction>, u64) {
+        let (txs, sum, _hints) = self.take_with_priority_sum_and_hints(n, current_block);
+        (txs, sum)
+    }
+
+    /// As [`take_with_priority_and_sum`] but ALSO returns a parallel
+    /// `Vec<u64>` of per-tx submit-epoch hints — one entry per returned
+    /// tx, equal to the epoch the mempool recorded when the tx was
+    /// submitted (or `current_block` for txs whose submit_epoch was
+    /// already evicted by an earlier take).
+    ///
+    /// Phase-1/Lane-A.2 MEV-resistance wire-format: the proposer
+    /// stamps these onto `Block.submit_epoch_hints` so every follower
+    /// validator computes the SAME priority for each tx (currently
+    /// only the proposer can — followers don't have the original
+    /// submit time). Once hints are on the wire, the priority bonus
+    /// can auto-fire from `execute_block` consistently across the
+    /// cluster (Lane A.3).
+    pub fn take_with_priority_sum_and_hints(
+        &mut self,
+        n: usize,
+        current_block: u64,
+    ) -> (Vec<Transaction>, u64, Vec<u64>) {
         let all: Vec<Transaction> = self.pending.drain(..).collect();
-        let mut with_meta: Vec<(u64, [u8; 32], Transaction)> = all
+        let mut with_meta: Vec<(u64, u64, [u8; 32], Transaction)> = all
             .into_iter()
             .map(|tx| {
                 let hash = tx.tx_hash();
@@ -347,7 +369,7 @@ impl Mempool {
                     MEV_INCLUSION_HALF_LIFE_BLOCKS,
                     elapsed,
                 );
-                (priority, hash, tx)
+                (priority, submit, hash, tx)
             })
             .collect();
         // Sort by (priority desc, sender, nonce, hash) — priority dominates,
@@ -355,28 +377,30 @@ impl Mempool {
         with_meta.sort_by(|a, b| {
             b.0.cmp(&a.0)
                 .then_with(|| {
-                    let sa = a.2.sender().copied().unwrap_or([0xff; 32]);
-                    let sb = b.2.sender().copied().unwrap_or([0xff; 32]);
+                    let sa = a.3.sender().copied().unwrap_or([0xff; 32]);
+                    let sb = b.3.sender().copied().unwrap_or([0xff; 32]);
                     sa.cmp(&sb)
                 })
                 .then_with(|| {
-                    let na = a.2.nonce().unwrap_or(0);
-                    let nb = b.2.nonce().unwrap_or(0);
+                    let na = a.3.nonce().unwrap_or(0);
+                    let nb = b.3.nonce().unwrap_or(0);
                     na.cmp(&nb)
                 })
-                .then_with(|| a.1.cmp(&b.1))
+                .then_with(|| a.2.cmp(&b.2))
         });
 
         let take_count = n.min(with_meta.len());
         let mut taken = Vec::with_capacity(take_count);
+        let mut hints = Vec::with_capacity(take_count);
         let mut remaining = VecDeque::new();
         let mut priority_sum: u64 = 0;
-        for (i, (priority, h, tx)) in with_meta.into_iter().enumerate() {
+        for (i, (priority, submit, h, tx)) in with_meta.into_iter().enumerate() {
             if i < take_count {
                 self.seen.remove(&h);
                 self.tx_submit_epoch.remove(&h);
                 self.track_account_remove(&tx);
                 taken.push(tx);
+                hints.push(submit);
                 priority_sum = priority_sum.saturating_add(priority);
             } else {
                 remaining.push_back(tx);
@@ -384,7 +408,7 @@ impl Mempool {
         }
         self.pending = remaining;
         self.total_bytes = self.pending.iter().map(Self::estimate_tx_size).sum();
-        (taken, priority_sum)
+        (taken, priority_sum, hints)
     }
 
     pub fn take_with_hashes(&mut self, n: usize) -> Vec<([u8; 32], Transaction)> {

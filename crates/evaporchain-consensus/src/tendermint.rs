@@ -3723,26 +3723,37 @@ impl TendermintConsensus {
         // operator can mint a proposer-reward bonus (`apply_local_priority_bonus`).
         // This is per-node and not consensus-deterministic in v1.
         self.last_proposal_priority_sum = 0;
+        // Encrypted-reveal txs taken before this point have no submit-epoch
+        // hint (they don't go through the priority mempool). Pad the hints
+        // vector with `None` for them so the indices stay parallel to `txs`.
+        let mut hints_vec: Vec<Option<u64>> = txs.iter().map(|_| None).collect();
         let remaining = MAX_TXS_PER_BLOCK.saturating_sub(txs.len());
         if remaining > 0 {
-            let (candidates, priority_sum) = self
+            let (candidates, priority_sum, candidate_hints) = self
                 .mempool
-                .take_with_priority_and_sum(remaining, self.height);
+                .take_with_priority_sum_and_hints(remaining, self.height);
             self.last_proposal_priority_sum =
                 self.last_proposal_priority_sum.saturating_add(priority_sum);
+            debug_assert_eq!(
+                candidates.len(),
+                candidate_hints.len(),
+                "mempool returned mismatched hints"
+            );
             if self.executor.block_gas_limit > 0 {
                 let mut gas_used: u64 = txs
                     .iter()
                     .map(ParallelExecutor::estimate_gas)
                     .fold(0u64, |a, g| a.saturating_add(g));
                 let mut rejected = Vec::new();
-                for tx in candidates {
+                for (tx, hint) in candidates.into_iter().zip(candidate_hints.into_iter())
+                {
                     let gas = ParallelExecutor::estimate_gas(&tx);
                     if gas_used.saturating_add(gas) > self.executor.block_gas_limit {
                         rejected.push(tx);
                     } else {
                         gas_used = gas_used.saturating_add(gas);
                         txs.push(tx);
+                        hints_vec.push(Some(hint));
                     }
                 }
                 // Return over-gas txs to mempool for future blocks
@@ -3750,7 +3761,11 @@ impl TendermintConsensus {
                     self.mempool.submit_priority(tx);
                 }
             } else {
-                txs.extend(candidates);
+                for (tx, hint) in candidates.into_iter().zip(candidate_hints.into_iter())
+                {
+                    txs.push(tx);
+                    hints_vec.push(Some(hint));
+                }
             }
         }
 
@@ -3800,7 +3815,16 @@ impl TendermintConsensus {
             state_function_commitment: None,
             oracle_state_root: None,
             shard_count: None,
-            submit_epoch_hints: vec![],
+            // Stamp per-tx hints so followers can deterministically reconstruct
+            // the priority used at proposal time. Only stamp when at least one
+            // hint is `Some` — otherwise leave empty so the field
+            // `skip_serializing_if = Vec::is_empty` stays bit-compat with
+            // legacy blocks.
+            submit_epoch_hints: if hints_vec.iter().any(|h| h.is_some()) {
+                hints_vec
+            } else {
+                vec![]
+            },
             da_row_roots: vec![],
             da_col_roots: vec![],
         };
@@ -3817,6 +3841,16 @@ impl TendermintConsensus {
                 );
                 while block.transactions.len() > 1 {
                     let removed = block.transactions.pop();
+                    // Keep block.submit_epoch_hints index-parallel with
+                    // block.transactions: if the trimmed slot had a hint
+                    // recorded, drop it too. The hints vector may be
+                    // shorter than transactions when only legacy/encrypted-
+                    // reveal txs exist (no hints stamped); guard the pop.
+                    if !block.submit_epoch_hints.is_empty()
+                        && block.submit_epoch_hints.len() == block.transactions.len() + 1
+                    {
+                        block.submit_epoch_hints.pop();
+                    }
                     if let Some(tx) = removed {
                         self.mempool.submit_priority(tx);
                     }
@@ -7740,6 +7774,64 @@ mod da_tests {
         let virtual_epoch = 1u64.wrapping_mul(100).wrapping_add(0);
         let proposer_id = vs.leader_for_epoch(virtual_epoch).unwrap().id;
         TendermintConsensus::new_for_test(proposer_id, 100, vs)
+    }
+
+    #[test]
+    fn test_create_proposal_stamps_submit_epoch_hints() {
+        // Lane A.2: proposer must stamp `block.submit_epoch_hints` so
+        // followers can deterministically reconstruct per-tx priority.
+        // For a block with N hinted txs, hints.len() == transactions.len()
+        // and every entry is `Some(submit_epoch)` from the local mempool.
+        let mut tc = make_proposer_tc();
+        let mut db = InMemoryStateDB::new();
+
+        let kp = BlsKeypair::generate();
+        tc.set_bls_keypair(kp);
+
+        // Two txs submitted at distinct epochs.
+        tc.mempool.set_epoch(3);
+        tc.mempool.submit(dummy_transfer(111));
+        tc.mempool.set_epoch(7);
+        tc.mempool.submit(dummy_transfer(222));
+
+        let block = tc.create_proposal(&mut db).unwrap();
+        assert_eq!(block.transactions.len(), 2);
+        assert_eq!(
+            block.submit_epoch_hints.len(),
+            block.transactions.len(),
+            "hints must be index-parallel with transactions"
+        );
+        // Both hints are Some(epoch) from the mempool's submit-epoch
+        // tracking. Order is priority-sorted (recent-first); we don't
+        // assume which tx ends up first — we just assert both hints
+        // are present and match the set {3, 7}.
+        let hints: std::collections::BTreeSet<u64> = block
+            .submit_epoch_hints
+            .iter()
+            .filter_map(|h| *h)
+            .collect();
+        assert_eq!(
+            hints,
+            [3u64, 7u64].iter().copied().collect()
+        );
+    }
+
+    #[test]
+    fn test_empty_proposal_has_no_submit_epoch_hints() {
+        // A block with zero plaintext-mempool txs leaves the hints
+        // vector empty — preserves bit-compat for legacy-quiet blocks.
+        let mut tc = make_proposer_tc();
+        let mut db = InMemoryStateDB::new();
+
+        let kp = BlsKeypair::generate();
+        tc.set_bls_keypair(kp);
+
+        let block = tc.create_proposal(&mut db).unwrap();
+        assert_eq!(block.transactions.len(), 0);
+        assert!(
+            block.submit_epoch_hints.is_empty(),
+            "empty block must have empty hints (skip_serializing_if = Vec::is_empty)"
+        );
     }
 
     #[test]
