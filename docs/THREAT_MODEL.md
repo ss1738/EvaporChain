@@ -189,7 +189,7 @@ User → [ML-DSA Sign] → Transaction → [Gossip Network] → Validator Pool
 | Coordinator pubkey size validation | Low | **Closed** — `MAINNET_COORDINATOR_PK` length-checked at startup; `Option<&[u8]>` API with explicit None default |
 | No weak subjectivity checkpoints | Medium | Open — pre-mainnet implementation |
 | No formal verification of circuits | Medium | Open — engage audit firm for R1CS review |
-| Block-STM O(N²) under high contention | Medium | Open — MVCC retry storm possible; tracked in audit backlog |
+| Block-STM O(N²) under high contention | Medium | **Closed** — `BLOCK_ABORT_CEILING_MULTIPLIER = 2` in `evaporchain-execution/src/block_stm.rs:1265`; once cumulative aborts exceed `2 × num_txs` the wave loop drains every remaining unconverged tx through the serial path, capping total re-execution at `O(N × 2)`. Determinism preserved by test (parallel-with-drain final state == pure-serial state). |
 | Poseidon field mismatch (Pallas vs BN254) | Low | By design — Pallas Fp inside Nova step circuit, BN254 for HyperKZG; documented in `CRYPTO_SPEC.md` §1.2 |
 
 ### 6.2 Acceptable Risks
