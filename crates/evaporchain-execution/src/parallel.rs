@@ -594,6 +594,13 @@ pub struct ParallelExecutor {
     /// Singh-Lyapunov fee params (snapshot of the chain-global λ + targets).
     /// Genesis defaults from `FeeControllerParams::default_genesis`.
     pub lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams,
+    /// Native demurrage parameters. Controls the piecewise log-rate
+    /// charged on idle balances above the threshold; sink is
+    /// `refresh_pool`. Mirrors `SimpleExecutor.demurrage_params` —
+    /// production runs `ParallelExecutor`, so wiring this field is
+    /// what actually turns demurrage on for the live chain (Layer 0
+    /// item 4 of the doctrine punch list).
+    pub demurrage_params: evaporchain_demurrage::DemurrageParams,
 }
 
 impl ParallelExecutor {
@@ -625,6 +632,7 @@ impl ParallelExecutor {
                 evaporchain_fee_controller::FeeControllerParams::default_genesis().target_energy,
             ),
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
+            demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
         }
     }
 
@@ -727,6 +735,7 @@ impl ParallelExecutor {
                 evaporchain_fee_controller::FeeControllerParams::default_genesis().target_energy,
             ),
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
+            demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
         }
     }
 
@@ -759,6 +768,7 @@ impl ParallelExecutor {
                 evaporchain_fee_controller::FeeControllerParams::default_genesis().target_energy,
             ),
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
+            demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
         }
     }
 
@@ -790,6 +800,7 @@ impl ParallelExecutor {
                 evaporchain_fee_controller::FeeControllerParams::default_genesis().target_energy,
             ),
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
+            demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
         }
     }
 
@@ -825,6 +836,7 @@ impl ParallelExecutor {
                 evaporchain_fee_controller::FeeControllerParams::default_genesis().target_energy,
             ),
             lyapunov_fee_params: evaporchain_fee_controller::FeeControllerParams::default_genesis(),
+            demurrage_params: evaporchain_demurrage::DemurrageParams::default(),
         }
     }
 
@@ -1905,7 +1917,15 @@ impl ExecutionEngine for ParallelExecutor {
         // a method on ParallelExecutor) because the rent logic is small,
         // gated by `last_rent_epoch`, and identical to the SimpleExecutor
         // path. Idempotent: if already charged this epoch, no-op.
+        //
+        // Layer 0 item 4 (Doctrine Punch List): native-demurrage sweep
+        // wired in lockstep with rent. Until this commit demurrage was
+        // implemented + tested + invoked from `SimpleExecutor`, but
+        // `ParallelExecutor` (the executor production tendermint
+        // actually drives) had no field for `demurrage_params` and no
+        // call site — so on the live chain demurrage was a no-op.
         if block.epoch > db.get_last_rent_epoch() {
+            let prev_rent_epoch = db.get_last_rent_epoch();
             let addresses = db.all_account_addresses();
             for addr in addresses {
                 let rent_info = {
@@ -1949,6 +1969,19 @@ impl ExecutionEngine for ParallelExecutor {
                     );
                 }
             }
+            // Native demurrage sweep — runs after storage rent on the
+            // same per-epoch cadence. `prev_rent_epoch` (captured
+            // above) is the lower bound of the sweep window;
+            // `block.epoch` is the upper bound. `collect_demurrage`
+            // skips accounts below `DemurrageParams.threshold` so
+            // small genesis accounts are never drained.
+            crate::demurrage_integration::collect_demurrage(
+                db,
+                &mut self.refresh_pool,
+                &self.demurrage_params,
+                prev_rent_epoch,
+                block.epoch,
+            );
             db.put_last_rent_epoch(block.epoch);
         }
 

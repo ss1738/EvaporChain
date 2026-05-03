@@ -94,14 +94,22 @@ mod invariant_tests {
             .map(|i| db.get_account(&addr(i)).unwrap().balance)
             .sum();
 
-        // Total supply = balances + fees collected
+        // Total supply = balances + fees collected + refresh pool.
+        // Demurrage now redirects from `account.balance` into
+        // `executor.refresh_pool` on every per-epoch sweep (Layer 0
+        // item 4). Conservation across the §1.2 compartments
+        // {Accounts, Stake, RefreshPool, SlashedPool} still holds —
+        // this assertion just had to grow to include the redirected
+        // pool balance instead of treating it as missing supply.
+        let pool = executor.refresh_pool.total_accrued();
         assert_eq!(
             total_before,
-            total_after + result.total_fees,
-            "INVARIANT VIOLATION: total supply not conserved. before={}, after={}, fees={}",
+            total_after + result.total_fees + pool,
+            "INVARIANT VIOLATION: total supply not conserved. before={}, after={}, fees={}, pool={}",
             total_before,
             total_after,
-            result.total_fees
+            result.total_fees,
+            pool
         );
     }
 
@@ -127,11 +135,16 @@ mod invariant_tests {
             .unwrap();
         let balance_after = db.get_account(&addr(1)).unwrap().balance;
 
-        // Balance should decrease only by fees
+        // Balance should decrease by fees + demurrage redirect.
+        // Layer 0 item 4 wired demurrage into ParallelExecutor's
+        // hot path; idle balances above the threshold drain to
+        // `executor.refresh_pool` on the per-epoch sweep, so this
+        // single-account conservation must include the pool.
+        let pool = executor.refresh_pool.total_accrued();
         assert_eq!(
             balance_before,
-            balance_after + result.total_fees,
-            "self-transfer must only deduct fees"
+            balance_after + result.total_fees + pool,
+            "self-transfer must only deduct fees and demurrage"
         );
     }
 
@@ -704,6 +717,38 @@ mod conservation_enforce_tests {
             .execute_block(&mut db, &block_with_one_transfer(1, 1))
             .expect("well-formed block must commit under enforce mode");
         assert!(matches!(executor.last_conservation_audit, Some(Ok(()))));
+    }
+
+    /// Demurrage is now wired into `ParallelExecutor::execute_block`
+    /// (Layer 0 item 4). A block run at epoch ≥ 1 against accounts
+    /// above `DemurrageParams.threshold` must accrue a positive
+    /// refresh-pool balance — proving the integration runs in the
+    /// production hot path, not just in `SimpleExecutor`.
+    #[test]
+    fn demurrage_fires_in_parallel_execute_block() {
+        let mut db = InMemoryStateDB::new();
+        // Above default threshold (1024) so demurrage will charge.
+        fund(&mut db, 1, 10_000_000);
+        let mut executor = ParallelExecutor::new_for_test(5);
+        // Aggressive params so the test sees a non-trivial charge
+        // within one block. Production uses `default()` which
+        // accrues much more slowly.
+        executor.demurrage_params = evaporchain_demurrage::DemurrageParams::new(100, 1_000);
+        let bal_before = db.get_account(&addr(1)).unwrap().balance;
+        executor
+            .execute_block(&mut db, &block_with_one_transfer(1, 10))
+            .expect("normal block must commit");
+        let bal_after = db.get_account(&addr(1)).unwrap().balance;
+        let pool = executor.refresh_pool.total_accrued();
+        assert!(pool > 0, "demurrage must accrue to refresh pool");
+        // The drained balance must equal the pool credit
+        // (transferred-out separately handled by the transfer flow).
+        // Account 1 was the *recipient* of the transfer, so its
+        // balance after = bal_before + 100 (received) − pool_share.
+        // We only assert pool > 0 here; per-account accounting is
+        // covered by the demurrage_integration unit tests.
+        let _ = bal_before;
+        let _ = bal_after;
     }
 
     /// Unknown flag value falls back to observe (legacy behaviour).
