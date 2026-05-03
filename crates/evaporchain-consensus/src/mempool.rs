@@ -316,6 +316,21 @@ impl Mempool {
     /// `pending.len() > n` (back-pressure scenario) or when reward
     /// weighting kicks in.
     pub fn take_with_priority(&mut self, n: usize, current_block: u64) -> Vec<Transaction> {
+        self.take_with_priority_and_sum(n, current_block).0
+    }
+
+    /// As [`take_with_priority`], but ALSO returns the cumulative inclusion
+    /// priority of the txs returned. Phase-1.5 MEV-resistance proposer-reward
+    /// weighting (research/proposals/energy-stamped-mev-resistance.md):
+    /// the proposer's reward bonus is proportional to `Σ priority_at_inclusion(tx)`.
+    /// The sum is computed once during the same sort-and-take pass — no extra
+    /// state required from the caller — and is `u64::saturating_add` accumulated
+    /// so a flood of high-priority txs can never overflow.
+    pub fn take_with_priority_and_sum(
+        &mut self,
+        n: usize,
+        current_block: u64,
+    ) -> (Vec<Transaction>, u64) {
         let all: Vec<Transaction> = self.pending.drain(..).collect();
         let mut with_meta: Vec<(u64, [u8; 32], Transaction)> = all
             .into_iter()
@@ -355,19 +370,21 @@ impl Mempool {
         let take_count = n.min(with_meta.len());
         let mut taken = Vec::with_capacity(take_count);
         let mut remaining = VecDeque::new();
-        for (i, (_p, h, tx)) in with_meta.into_iter().enumerate() {
+        let mut priority_sum: u64 = 0;
+        for (i, (priority, h, tx)) in with_meta.into_iter().enumerate() {
             if i < take_count {
                 self.seen.remove(&h);
                 self.tx_submit_epoch.remove(&h);
                 self.track_account_remove(&tx);
                 taken.push(tx);
+                priority_sum = priority_sum.saturating_add(priority);
             } else {
                 remaining.push_back(tx);
             }
         }
         self.pending = remaining;
         self.total_bytes = self.pending.iter().map(Self::estimate_tx_size).sum();
-        taken
+        (taken, priority_sum)
     }
 
     pub fn take_with_hashes(&mut self, n: usize) -> Vec<([u8; 32], Transaction)> {

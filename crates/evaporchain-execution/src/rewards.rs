@@ -41,6 +41,53 @@ impl RewardAccumulator {
         }
     }
 
+    /// Mint a proposer-priority bonus equal to
+    /// `priority_sum.saturating_div(scale_per_unit)` tokens.
+    ///
+    /// This is Phase-1.5 of the energy-stamped MEV defense
+    /// (`research/proposals/energy-stamped-mev-resistance.md`): without
+    /// this, the proposer has no economic reason to honour the priority
+    /// ordering. The bonus is computed AFTER `take_with_priority` selects
+    /// the block's txs, using the priority sum returned by
+    /// `Mempool::take_with_priority_and_sum`.
+    ///
+    /// `scale_per_unit` is a divisor that translates raw priority units
+    /// (~`BASE_INCLUSION_ENERGY` per fresh-arrival tx, decayed by the
+    /// inclusion half-life) into native tokens. A larger divisor means a
+    /// smaller bonus per priority unit. Defaults are operator-tunable;
+    /// passing 0 disables the bonus entirely (no-op).
+    ///
+    /// Returns the bonus actually credited (zero on no-op or empty pool).
+    pub fn apply_priority_bonus(
+        &mut self,
+        db: &mut dyn StateDB,
+        producer: &AccountAddress,
+        epoch: Epoch,
+        priority_sum: u64,
+        scale_per_unit: u64,
+    ) -> u64 {
+        if scale_per_unit == 0 || priority_sum == 0 {
+            return 0;
+        }
+        let bonus = priority_sum / scale_per_unit;
+        if bonus == 0 {
+            return 0;
+        }
+        let acct = db.get_or_create_account(producer);
+        acct.balance = acct.balance.saturating_add(bonus);
+        acct.last_touched_epoch = epoch;
+        self.total_minted = self.total_minted.saturating_add(bonus);
+        debug!(
+            producer = hex::encode(producer),
+            priority_sum,
+            scale_per_unit,
+            bonus,
+            epoch,
+            "Proposer priority bonus minted"
+        );
+        bonus
+    }
+
     /// Process rewards for a single block.
     ///
     /// 1. Mints block reward to the producer.
@@ -247,6 +294,48 @@ mod tests {
         assert_eq!(credit, 100);
         assert_eq!(db.get_account(&addr(1)).unwrap().balance, 100);
         assert_eq!(acc.total_minted, 100);
+    }
+
+    #[test]
+    fn test_priority_bonus_minted_to_producer() {
+        // Phase-1.5 of energy-stamped MEV defense. apply_priority_bonus
+        // mints `priority_sum / scale_per_unit` to the producer.
+        let mut db = InMemoryStateDB::new();
+        fund(&mut db, 1, 0);
+        let mut acc = RewardAccumulator::new(test_tokenomics());
+
+        // priority_sum=10_000, scale=1000 → bonus=10
+        let bonus = acc.apply_priority_bonus(&mut db, &addr(1), 5, 10_000, 1_000);
+        assert_eq!(bonus, 10);
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 10);
+        assert_eq!(acc.total_minted, 10);
+        // last_touched_epoch refreshed by the mint.
+        assert_eq!(db.get_account(&addr(1)).unwrap().last_touched_epoch, 5);
+    }
+
+    #[test]
+    fn test_priority_bonus_zero_scale_disables() {
+        // scale_per_unit=0 → no-op (bonus disabled).
+        let mut db = InMemoryStateDB::new();
+        fund(&mut db, 1, 0);
+        let mut acc = RewardAccumulator::new(test_tokenomics());
+
+        let bonus = acc.apply_priority_bonus(&mut db, &addr(1), 0, 1_000_000, 0);
+        assert_eq!(bonus, 0);
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 0);
+        assert_eq!(acc.total_minted, 0);
+    }
+
+    #[test]
+    fn test_priority_bonus_sub_unit_yields_zero() {
+        // priority_sum=100, scale=1000 → 100/1000=0 (integer div).
+        let mut db = InMemoryStateDB::new();
+        fund(&mut db, 1, 0);
+        let mut acc = RewardAccumulator::new(test_tokenomics());
+
+        let bonus = acc.apply_priority_bonus(&mut db, &addr(1), 0, 100, 1_000);
+        assert_eq!(bonus, 0);
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 0);
     }
 
     #[test]

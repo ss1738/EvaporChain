@@ -932,6 +932,32 @@ impl SimpleExecutor {
         self.reward_accumulator = Some(rewards::RewardAccumulator::new(tokenomics));
     }
 
+    /// Apply the proposer-priority bonus for a block. Called by the
+    /// consensus layer AFTER `execute_block` returns, with the
+    /// `priority_sum` produced by `Mempool::take_with_priority_and_sum`
+    /// at proposal time.
+    ///
+    /// `scale_per_unit` is operator-tunable (0 disables); see
+    /// `RewardAccumulator::apply_priority_bonus` for semantics.
+    /// Returns the bonus credited (zero if rewards aren't enabled or
+    /// the divisor produced a sub-integer bonus).
+    ///
+    /// Phase-1.5 of the energy-stamped MEV defense.
+    pub fn apply_proposer_priority_bonus(
+        &mut self,
+        db: &mut dyn StateDB,
+        producer: &evaporchain_types::AccountAddress,
+        epoch: evaporchain_types::Epoch,
+        priority_sum: u64,
+        scale_per_unit: u64,
+    ) -> u64 {
+        if let Some(ref mut ra) = self.reward_accumulator {
+            ra.apply_priority_bonus(db, producer, epoch, priority_sum, scale_per_unit)
+        } else {
+            0
+        }
+    }
+
     /// Estimate gas for a transaction.
     fn estimate_gas(tx: &Transaction) -> u64 {
         match tx {

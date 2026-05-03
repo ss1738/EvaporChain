@@ -393,6 +393,19 @@ pub struct TendermintConsensus {
     executor: ParallelExecutor,
     /// Transaction mempool.
     pub mempool: Mempool,
+    /// Sum of energy-stamped inclusion priorities for the txs the LOCAL
+    /// node included in the most recent proposal it built. Captured at
+    /// `create_proposal` from `Mempool::take_with_priority_and_sum`.
+    /// Phase-1.5 of the energy-stamped MEV defense.
+    ///
+    /// **Per-node** (not deterministic across the cluster): submit_epoch
+    /// is only known to the local mempool, so two validators looking at
+    /// the same block compute different priority sums. The stored value
+    /// is used by the operator-driven `apply_local_priority_bonus` path
+    /// below (off by default) and surfaced via tracing for observability.
+    /// Consensus-safe Phase-2 wiring (deterministic priority via on-the-
+    /// wire submit-epoch hints) is the future PR.
+    pub last_proposal_priority_sum: u64,
     /// Validator set for leader selection and vote counting.
     pub validator_set: ValidatorSet,
     /// Current round state.
@@ -607,6 +620,7 @@ impl TendermintConsensus {
                 block_gas_limit,
             ),
             mempool: Mempool::new(),
+            last_proposal_priority_sum: 0,
             validator_set,
             round_state: RoundState::new(0),
             locked_block: None,
@@ -1368,6 +1382,16 @@ impl TendermintConsensus {
 
     /// Create a test-friendly consensus engine with a small privacy tree (depth 4)
     /// to avoid the ~60s initialization of the full 2^20 Merkle tree.
+    /// Get the priority sum captured at the most recent local proposal.
+    /// Caller (operator runbook / metrics exporter / SimpleExecutor-mode
+    /// node) drives where this is consumed. **Not consensus-deterministic**:
+    /// only the proposing validator computes a meaningful value;
+    /// followers see 0 (they didn't run create_proposal). Phase-1.5 of
+    /// `research/proposals/energy-stamped-mev-resistance.md`.
+    pub fn last_proposal_priority_sum(&self) -> u64 {
+        self.last_proposal_priority_sum
+    }
+
     pub fn new_for_test(my_id: u64, grace_period: u64, validator_set: ValidatorSet) -> Self {
         Self {
             light_cone_dag: evaporchain_light_cone::LightCone::new(),
@@ -1380,6 +1404,7 @@ impl TendermintConsensus {
             parent_hash: [0u8; 32],
             executor: ParallelExecutor::new_for_test(grace_period),
             mempool: Mempool::new(),
+            last_proposal_priority_sum: 0,
             validator_set,
             round_state: RoundState::new(0),
             locked_block: None,
@@ -3684,9 +3709,18 @@ impl TendermintConsensus {
         // high-priority txs first, which makes sandwich/frontrun attacks
         // economically unprofitable when gross MEV gain < per-block decay
         // cost. Phase 1 of `research/proposals/energy-stamped-mev-resistance.md`.
+        //
+        // Phase 1.5: also capture the cumulative priority sum so the
+        // operator can mint a proposer-reward bonus (`apply_local_priority_bonus`).
+        // This is per-node and not consensus-deterministic in v1.
+        self.last_proposal_priority_sum = 0;
         let remaining = MAX_TXS_PER_BLOCK.saturating_sub(txs.len());
         if remaining > 0 {
-            let candidates = self.mempool.take_with_priority(remaining, self.height);
+            let (candidates, priority_sum) = self
+                .mempool
+                .take_with_priority_and_sum(remaining, self.height);
+            self.last_proposal_priority_sum =
+                self.last_proposal_priority_sum.saturating_add(priority_sum);
             if self.executor.block_gas_limit > 0 {
                 let mut gas_used: u64 = txs
                     .iter()
