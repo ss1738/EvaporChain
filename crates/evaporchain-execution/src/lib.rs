@@ -1153,6 +1153,7 @@ impl SimpleExecutor {
     /// Execute a contract deployment transaction.
     fn execute_deploy_contract(
         &mut self,
+        db: &mut dyn StateDB,
         tx: &DeployContractTx,
         epoch: Epoch,
     ) -> Result<(), ExecutionError> {
@@ -1182,6 +1183,40 @@ impl SimpleExecutor {
             vec![]
         };
 
+        // Phase 4.2 (2026-05-03): storage-rent enforcement on contract
+        // deploy. Audit `end_to_end_audit_2026_04_27.md §3` flagged
+        // that contract deploy paths added persistent state to the
+        // chain without ever touching the deployer's
+        // `storage_deposit` / `storage_bytes` — a deployer could
+        // claim arbitrary storage with no prepayment. Charge
+        // MIN_STORAGE_DEPOSIT and stamp the byte count so per-epoch
+        // `collect_storage_rent` charges them like any other
+        // storage holder. Mirrors the `execute_create_object` charge.
+        let contract_bytes = {
+            const BASE_CONTRACT_BYTES: u64 = 256; // template name + id + decay fields + bookkeeping
+            let init_bytes = tx.init_args.len() as u64;
+            let rules_bytes = tx.rules.as_ref().map(|s| s.len() as u64).unwrap_or(0);
+            BASE_CONTRACT_BYTES
+                .saturating_add(init_bytes)
+                .saturating_add(rules_bytes)
+        };
+        {
+            let deployer = db.get_or_create_account(&tx.deployer);
+            if deployer.balance < evaporchain_types::MIN_STORAGE_DEPOSIT {
+                return Err(ExecutionError::InsufficientBalance {
+                    account: hex::encode(tx.deployer),
+                    available: deployer.balance,
+                    required: evaporchain_types::MIN_STORAGE_DEPOSIT,
+                });
+            }
+            deployer.balance -= evaporchain_types::MIN_STORAGE_DEPOSIT;
+            deployer.storage_deposit = deployer
+                .storage_deposit
+                .saturating_add(evaporchain_types::MIN_STORAGE_DEPOSIT);
+            deployer.storage_bytes = deployer.storage_bytes.saturating_add(contract_bytes);
+            deployer.last_touched_epoch = epoch;
+        }
+
         let id = self
             .contract_engine
             .deploy(
@@ -1195,7 +1230,12 @@ impl SimpleExecutor {
             )
             .map_err(|e| ExecutionError::ContractError(e.to_string()))?;
 
-        debug!(contract_id = id, template = %tx.template, "Contract deployed");
+        debug!(
+            contract_id = id,
+            template = %tx.template,
+            storage_bytes = contract_bytes,
+            "Contract deployed"
+        );
         Ok(())
     }
 
@@ -1231,15 +1271,44 @@ impl SimpleExecutor {
     /// Execute a script deployment transaction.
     fn execute_deploy_script(
         &mut self,
+        db: &mut dyn StateDB,
         tx: &DeployScriptTx,
         epoch: Epoch,
     ) -> Result<(), ExecutionError> {
+        // Phase 4.2 (2026-05-03): storage-rent enforcement on script
+        // deploy. See execute_deploy_contract for rationale; same
+        // gap applies here.
+        let script_bytes = {
+            const BASE_SCRIPT_BYTES: u64 = 128;
+            BASE_SCRIPT_BYTES.saturating_add(tx.source_code.len() as u64)
+        };
+        {
+            let deployer = db.get_or_create_account(&tx.deployer);
+            if deployer.balance < evaporchain_types::MIN_STORAGE_DEPOSIT {
+                return Err(ExecutionError::InsufficientBalance {
+                    account: hex::encode(tx.deployer),
+                    available: deployer.balance,
+                    required: evaporchain_types::MIN_STORAGE_DEPOSIT,
+                });
+            }
+            deployer.balance -= evaporchain_types::MIN_STORAGE_DEPOSIT;
+            deployer.storage_deposit = deployer
+                .storage_deposit
+                .saturating_add(evaporchain_types::MIN_STORAGE_DEPOSIT);
+            deployer.storage_bytes = deployer.storage_bytes.saturating_add(script_bytes);
+            deployer.last_touched_epoch = epoch;
+        }
+
         let id = self
             .script_engine
             .deploy(&tx.source_code, tx.deployer, tx.energy, tx.half_life, epoch)
             .map_err(|e| ExecutionError::ScriptError(e.to_string()))?;
 
-        debug!(script_id = id, "Script contract deployed");
+        debug!(
+            script_id = id,
+            storage_bytes = script_bytes,
+            "Script contract deployed"
+        );
         Ok(())
     }
 
@@ -2456,7 +2525,7 @@ impl ExecutionEngine for SimpleExecutor {
                 }
                 Transaction::Refresh(refresh) => self.execute_refresh(db, refresh, block.epoch),
                 Transaction::DeployContract(deploy) => {
-                    self.execute_deploy_contract(deploy, block.epoch)
+                    self.execute_deploy_contract(db, deploy, block.epoch)
                 }
                 Transaction::CallContract(call) => {
                     let res = self.execute_call_contract(call);
@@ -2472,7 +2541,7 @@ impl ExecutionEngine for SimpleExecutor {
                     res
                 }
                 Transaction::DeployScript(deploy) => {
-                    self.execute_deploy_script(deploy, block.epoch)
+                    self.execute_deploy_script(db, deploy, block.epoch)
                 }
                 Transaction::CallScript(call) => {
                     let res = self.execute_call_script(call);
