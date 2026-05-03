@@ -3074,6 +3074,9 @@ mod tests {
 
     #[test]
     fn test_nft_dies_after_lifespan() {
+        // EVR-721 Phase 2.2: with default grace_period=5, the token
+        // enters Grace at energy=0 then evaporates to Ghost only
+        // after 5 more epochs.
         let mut eng = engine();
         let id = deploy_nft(&mut eng);
         eng.call(
@@ -3085,16 +3088,144 @@ mod tests {
         )
         .unwrap();
 
-        // energy=4, hl=1: epoch 1→2, epoch 2→1, epoch 3→0
+        // energy=4, hl=1: epoch 1→2, epoch 2→1, epoch 3→0 (Active→Grace).
+        // Then 5 more epochs of grace until epoch 8 (Grace→Ghost).
+        eng.tick(8);
+
+        let r = eng.call(
+            id,
+            "owner_of",
+            &serde_json::json!({"token_id": 1}),
+            &addr(1),
+            8,
+        );
+        assert!(r.is_err(), "owner_of should fail post-evaporation");
+
+        let r = eng
+            .call(
+                id,
+                "ghost_proof",
+                &serde_json::json!({"token_id": 1}),
+                &addr(1),
+                8,
+            )
+            .unwrap();
+        assert_eq!(r.return_value["token_id"], 1);
+        assert_eq!(r.return_value["evaporated_epoch"], 8);
+
+        let r = eng
+            .call(
+                id,
+                "state_of",
+                &serde_json::json!({"token_id": 1}),
+                &addr(1),
+                8,
+            )
+            .unwrap();
+        assert_eq!(r.return_value["state"], "ghost");
+    }
+
+    #[test]
+    fn test_nft_grace_state_at_energy_zero() {
+        let mut eng = engine();
+        let id = deploy_nft(&mut eng);
+        eng.call(
+            id,
+            "mint",
+            &serde_json::json!({"to": "alice", "metadata_hash": "abc", "energy": 4, "half_life": 1}),
+            &addr(1),
+            0,
+        )
+        .unwrap();
         eng.tick(3);
 
-        // NFT should be dead now.
+        let r = eng
+            .call(
+                id,
+                "state_of",
+                &serde_json::json!({"token_id": 1}),
+                &addr(1),
+                3,
+            )
+            .unwrap();
+        assert_eq!(r.return_value["state"], "grace");
+
         let r = eng.call(
             id,
             "owner_of",
             &serde_json::json!({"token_id": 1}),
             &addr(1),
             3,
+        );
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn test_nft_transfer_rejected_in_grace_state() {
+        let mut eng = engine();
+        let id = deploy_nft(&mut eng);
+        eng.call(
+            id,
+            "mint",
+            &serde_json::json!({"to": "alice", "metadata_hash": "abc", "energy": 4, "half_life": 1}),
+            &addr(1),
+            0,
+        )
+        .unwrap();
+        eng.tick(3);
+
+        let r = eng.call(
+            id,
+            "transfer",
+            &serde_json::json!({"token_id": 1, "to": "bob"}),
+            &addr(1),
+            3,
+        );
+        assert!(matches!(r, Err(ContractError::PermissionDenied(_))));
+    }
+
+    #[test]
+    fn test_nft_resurrect_from_ghost() {
+        let mut eng = engine();
+        let id = deploy_nft(&mut eng);
+        eng.call(
+            id,
+            "mint",
+            &serde_json::json!({"to": "alice", "metadata_hash": "abc", "energy": 4, "half_life": 1}),
+            &addr(1),
+            0,
+        )
+        .unwrap();
+        eng.tick(8);
+
+        let r = eng
+            .call(
+                id,
+                "refresh",
+                &serde_json::json!({"token_id": 1, "energy": 100}),
+                &addr(1),
+                8,
+            )
+            .unwrap();
+        assert_eq!(r.return_value["event"], "Resurrected");
+
+        let r = eng
+            .call(
+                id,
+                "state_of",
+                &serde_json::json!({"token_id": 1}),
+                &addr(1),
+                8,
+            )
+            .unwrap();
+        assert_eq!(r.return_value["state"], "active");
+
+        let r = eng.call(
+            id,
+            "ghost_proof",
+            &serde_json::json!({"token_id": 1}),
+            &addr(1),
+            8,
         );
         assert!(r.is_err());
     }
@@ -3511,7 +3642,7 @@ mod tests {
                     "symbol": "RC",
                     "total_supply": 100000,
                     "decay_half_life": 100,
-                    "owner": "alice"
+                    "owner": addr_hex(1),
                 }),
                 rules,
                 addr(1),
@@ -3526,7 +3657,7 @@ mod tests {
             .call(
                 id,
                 "transfer",
-                &serde_json::json!({"from": "alice", "to": "bob", "amount": 1000}),
+                &serde_json::json!({"from": addr_hex(1), "to": addr_hex(2), "amount": 1000}),
                 &addr(1),
                 0,
             )
@@ -3539,7 +3670,7 @@ mod tests {
             .call(
                 id,
                 "transfer",
-                &serde_json::json!({"from": "alice", "to": "bob", "amount": 10000}),
+                &serde_json::json!({"from": addr_hex(1), "to": addr_hex(2), "amount": 10000}),
                 &addr(1),
                 0,
             )
@@ -3607,7 +3738,7 @@ mod tests {
                     "symbol": "EC",
                     "total_supply": 10000,
                     "decay_half_life": 100,
-                    "owner": "alice"
+                    "owner": addr_hex(1),
                 }),
                 rules,
                 addr(1),
@@ -3621,7 +3752,7 @@ mod tests {
             .call(
                 id,
                 "transfer",
-                &serde_json::json!({"from": "alice", "to": "bob", "amount": 100}),
+                &serde_json::json!({"from": addr_hex(1), "to": addr_hex(2), "amount": 100}),
                 &addr(1),
                 0,
             )
@@ -3734,7 +3865,7 @@ mod tests {
                     "symbol": "MC",
                     "total_supply": 10000,
                     "decay_half_life": 100,
-                    "owner": "alice"
+                    "owner": addr_hex(1),
                 }),
                 vec![],
                 addr(1),
@@ -3748,7 +3879,7 @@ mod tests {
         eng.call(
             id,
             "transfer",
-            &serde_json::json!({"from": "alice", "to": "bob", "amount": 1000}),
+            &serde_json::json!({"from": addr_hex(1), "to": addr_hex(2), "amount": 1000}),
             &addr(1),
             0,
         )
@@ -3759,7 +3890,7 @@ mod tests {
             .call(
                 id,
                 "balance_of",
-                &serde_json::json!({"addr": "bob"}),
+                &serde_json::json!({"addr": addr_hex(2)}),
                 &addr(1),
                 0,
             )
@@ -3777,7 +3908,7 @@ mod tests {
         let r = eng.call(
             id,
             "balance_of",
-            &serde_json::json!({"addr": "bob"}),
+            &serde_json::json!({"addr": addr_hex(2)}),
             &addr(1),
             10,
         );
@@ -3842,7 +3973,7 @@ mod tests {
                     "symbol": "RC",
                     "total_supply": 100000,
                     "decay_half_life": 100,
-                    "owner": "alice"
+                    "owner": addr_hex(1),
                 }),
                 rules,
                 addr(1),
@@ -3857,7 +3988,7 @@ mod tests {
             .call(
                 id,
                 "burn",
-                &serde_json::json!({"from": "alice", "amount": 100}),
+                &serde_json::json!({"from": addr_hex(1), "amount": 100}),
                 &addr(1),
                 0,
             )
