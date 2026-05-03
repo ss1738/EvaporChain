@@ -21,6 +21,90 @@ This file is the layered build plan to make the doctrine claims actually true. E
 
 ---
 
+## Up next — three manual items (Satyawan, ~90 min total)
+
+These three close the last decision-blocking gaps before Layer 4. Each one's outcome unlocks (or descopes) a downstream track. Order doesn't matter; do whichever's quickest to set up first.
+
+### M1 — Pull Dune CSV + re-run MERA gate (~30 min)
+
+Closes doctrine §A1.9 rule 12 violation. Today `evaporchain-mera/src/lib.rs:32-38` flags the gate as synthetic-PASS / real-data-PENDING; this run resolves which of MERA / MPS / VERKLE the chain ships.
+
+```sql
+-- Paste into https://dune.com/queries (free tier exports up to ~10M rows).
+-- Tighten to 19_500_000-19_700_000 if 19M-20M is too large.
+SELECT block_number, "to" AS to_address
+FROM ethereum.transactions
+WHERE block_number BETWEEN 19000000 AND 20000000
+  AND "to" IS NOT NULL
+ORDER BY block_number
+```
+
+Then locally:
+
+```bash
+cd ~/EvaporChain
+python3 research/mera-gate/run_gate.py --input <path-to-dune.csv>
+# Expected runtime <60s. Overwrites research/mera-gate/GATE_RESULT.md.
+```
+
+Outcome map:
+
+| Verdict | Action |
+|---|---|
+| **PASS (MERA)** | Remove synthetic caveat from `crates/evaporchain-mera/src/lib.rs:32-38`. Lock whitepaper §MERA claim. Tensor-network state commitment ships. |
+| **MPS** (area-law only) | Scaffold `evaporchain-mps` crate; archive MERA crate as research artefact. Still a first at L1. |
+| **VERKLE** (no structure) | Drop tensor networks. Strike MERA from Tier 0 (§A1.4). The 1,897 LOC of `evaporchain-mera` becomes either a research artefact or deletable. Energy-Verkle (already in `evaporchain-state`) is the chain's commitment. |
+
+### M2 — Verify Coq build locally (~10 min)
+
+Closes the build-side of doctrine §A1.2 T4 LLSA. Commit `5f18e43` migrated `research/proofs/LLSAInvariantPreservation.v` from `Coq.omega.Omega` → `Lia` so it can build against the project's pinned Coq 8.18 toolchain. **Coq is not installed on Mini 1**, so the migration is unverified-but-mechanical.
+
+```bash
+cd ~/EvaporChain/research/coq
+make
+```
+
+Outcomes:
+
+| Result | Action |
+|---|---|
+| **`make` passes** | LLSA file actually checks against the kernel. "First chain whose governance is a theorem" claim becomes build-verifiable. Layer 7 (full or descope path) can proceed. |
+| **`make` fails** | Most likely: my relative-path `../proofs/LLSAInvariantPreservation.v` entry in `_CoqProject` doesn't cooperate with `coq_makefile`. Tell me the error; I'll either move the file into `research/coq/` or add a separate `_CoqProject` under `proofs/`. |
+
+### M3 — Two `INVENTION_STACK.md` amendments (~30 min)
+
+Closes the gap between marketing-grade doctrine wording and the math the code actually implements. Strategic naming calls — that's why I haven't done them unilaterally.
+
+**M3.1 — Amend §A1.2 T1 (MCC).** Current wording:
+
+> "Our fork choice is the unique distribution maximizing path-entropy subject to one thermodynamic constraint, with closed-form **Perron solution**."
+
+The "Perron solution" is mathematically vacuous on EvaporChain's strict-DAG LightCone (adjacency matrix nilpotent → no nontrivial Perron-Frobenius eigenvector). Replace with one of:
+
+- **Honest, still publishable** (recommended): *"Our fork choice is the unique Lagrangian closed-form Maximum-Caliber distribution under one thermodynamic constraint, with `β = 1/λ` as the inverse-temperature derived from the chain's single decay parameter."*
+- **Or**: commit to building the real thing on `(I − M)^{-1}` (path-counting matrix on the DAG). Adds engineering, gets the original wording back. ~200-400 LOC.
+
+The math note I added in commit `06db894` to `crates/evaporchain-mcc/src/lib.rs` is the source of truth here; doctrine should follow.
+
+**M3.2 — Amend §A1.2 T2 (CFM).** Current wording:
+
+> "Our fee market satisfies an **exact equality** between work and free-energy difference (not a bound), with the inverse temperature supplied by our decay constant."
+
+Today the substrate exposes the LHS of the Crooks identity (commit `d80921f` added the primitive verification). The chain doesn't actually produce Crooks-distributed forward/reverse work distributions — that would need a stochastic-thermodynamics simulator. Replace with one of:
+
+- **Soft** (recommended): *"Our fee market exposes the Crooks identity as a substrate primitive: validators can compute `log(p_F / p_R) == β·(W − ΔF)` on observed forward/reverse pairs and detect equilibrium violations."*
+- **Hard**: commit to building the simulator + chain integration so the identity is verified on actual chain trajectories. Multi-week.
+
+### Why these three matter
+
+| Item | Unlocks / blocks |
+|---|---|
+| M1 | MERA-track decision (build / downshift / drop). Unblocks the §A1.4 tensor-network workstream. |
+| M2 | LLSA-track decision (full path / descope path). Unblocks Layer 7. |
+| M3 | Doctrine accuracy. Prevents future drift between code and `INVENTION_STACK.md`. Without this, every auditor / reviewer / future-Claude reading the doctrine gets the wrong math. |
+
+---
+
 ## Headline finding
 
 The 7 hardest crates compile, test, and have clean public APIs — but the load-bearing math/protocol load is gated on "future commit" in every case, and the **production hot path is still 100% Tendermint + FIFO mempool**. Conservation is audited but not enforced. Three crates have rogue decay implementations that bypass the Coq-verified `energy_at_epoch`. MCC's `authoritative_head` has zero call sites in the workspace. MERA crate ships citing "PASS — MERA GO" without flagging the gate ran on synthetic data. Lambda-Fold is 362 LOC of blake3 with zero curve arithmetic. LLSA's only Coq invariant-preservation file (`research/proofs/LLSAInvariantPreservation.v`) won't even compile against the pinned 8.18 toolchain because it imports `Coq.omega.Omega` (removed in 8.12+).
