@@ -127,6 +127,7 @@ fn dispatch(state: &ApiState, req: JsonRpcRequest) -> JsonRpcResponse {
         "evap_getFrontierStatus" => rpc_get_frontier_status(state, req.id),
         "evap_getLamportClock" => rpc_get_lamport_clock(state, req.id),
         "evap_getDsnWindow" => rpc_get_dsn_window(state, req.id),
+        "evap_getEpvRegistry" => rpc_get_epv_registry(state, req.id),
         "evap_getLogs" => rpc_get_logs(state, &req.params, req.id),
         "evap_getBlockLogs" => rpc_get_block_logs(state, &req.params, req.id),
         "evap_getFinalityStatus" => rpc_get_finality_status(state, &req.params, req.id),
@@ -638,6 +639,44 @@ fn format_lamport_clock_response(
         "accumulated_energy": json_hex_u64(accumulated_energy),
         "tick_quantum": json_hex_u64(tick_quantum),
     })
+}
+
+/// Pure formatter for EPV registry RPC responses. The Evaporative
+/// Protocol Version registry (INVENTION_STACK §4.2) tracks every
+/// registered protocol version and its λ-decayed seed energy. Versions
+/// whose energy decays below E_min are pruned.
+fn format_epv_registry_response(versions: Vec<(u32, u64, u64)>) -> Value {
+    serde_json::json!({
+        "active_count": versions.len(),
+        "versions": versions
+            .iter()
+            .map(|(id, seed, act)| serde_json::json!({
+                "id": json_hex_u64(*id as u64),
+                "seed_energy": json_hex_u64(*seed),
+                "activated_epoch": json_hex_u64(*act),
+            }))
+            .collect::<Vec<_>>(),
+    })
+}
+
+/// `evap_getEpvRegistry()` — list every active EPV version with its
+/// seed_energy + activation epoch. Versions whose energy decayed
+/// below E_min have already been pruned by `EpvRegistry::prune` and
+/// don't appear here.
+fn rpc_get_epv_registry(state: &ApiState, id: Value) -> JsonRpcResponse {
+    let versions: Vec<(u32, u64, u64)> = match state.epv_registry.lock() {
+        Ok(reg) => reg
+            .iter()
+            .map(|v| (v.id, v.seed_energy, v.activated_epoch))
+            .collect(),
+        Err(_) => {
+            return JsonRpcResponse::ok(
+                id,
+                serde_json::json!({ "epv_registry_unavailable": true }),
+            );
+        }
+    };
+    JsonRpcResponse::ok(id, format_epv_registry_response(versions))
 }
 
 /// Pure formatter for DSN window RPC responses.
@@ -1239,6 +1278,30 @@ mod tests {
         assert_eq!(trie["compressions"], "0x5");
         assert_eq!(trie["decompressions"], "0x1");
         assert_eq!(v["lazy_snapshot_count"], "0x9");
+    }
+
+    #[test]
+    fn test_format_epv_registry_two_versions() {
+        let v = format_epv_registry_response(vec![
+            (1, 1_000_000, 0),
+            (2, 500_000, 100),
+        ]);
+        assert_eq!(v["active_count"], 2);
+        let arr = v["versions"].as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["id"], "0x1");
+        assert_eq!(arr[0]["seed_energy"], "0xf4240"); // 1_000_000
+        assert_eq!(arr[0]["activated_epoch"], "0x0");
+        assert_eq!(arr[1]["id"], "0x2");
+        assert_eq!(arr[1]["seed_energy"], "0x7a120"); // 500_000
+        assert_eq!(arr[1]["activated_epoch"], "0x64"); // 100
+    }
+
+    #[test]
+    fn test_format_epv_registry_empty() {
+        let v = format_epv_registry_response(vec![]);
+        assert_eq!(v["active_count"], 0);
+        assert_eq!(v["versions"].as_array().unwrap().len(), 0);
     }
 
     #[test]
