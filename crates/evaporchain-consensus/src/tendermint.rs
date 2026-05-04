@@ -4749,10 +4749,17 @@ impl TendermintConsensus {
         // Build block with placeholder DA fields.  We compute data_root, blob
         // commitments, and 2D roots AFTER trimming so they always reflect the
         // final transaction set that peers will see.
+        // Phase 1.3 of LIGHT_CONE_FULL_DAG_PLAN.md — DAG-aware
+        // proposer head selection. Under `parent_acceptance_mode =
+        // "mcc"` the new block's `parent_hash` is the DAG-derived
+        // tip (max-caliber leaf); otherwise it's `self.parent_hash`
+        // (linear chain default — bit-for-bit unchanged from
+        // pre-Light-Cone behaviour).
+        let proposed_parent = self.current_tip();
         let mut block = Block {
             number: self.height,
             epoch: next_epoch,
-            parent_hash: self.parent_hash,
+            parent_hash: proposed_parent,
             state_root: self.current_state_root,
             transactions: txs,
             timestamp,
@@ -6907,6 +6914,55 @@ mod tests {
 
     /// Phase 1.5 of `CROOKS_MEV_INTEGRATION_PLAN.md` — drive a
     /// synthetic sandwich block through `on_block_committed` and
+    /// Phase 1.3 of `LIGHT_CONE_FULL_DAG_PLAN.md` — under
+    /// `parent_acceptance_mode = "mcc"` mode, the proposer's
+    /// `current_tip()` returns the DAG-derived head; under default
+    /// `linear` mode it returns `parent_hash`. This test drives a
+    /// 2-leaf DAG (genesis + one block at height 1) and confirms
+    /// `current_tip()` flips between the two modes.
+    #[test]
+    fn test_current_tip_mcc_mode_returns_dag_leaf() {
+        use evaporchain_light_cone::Block as LcBlock;
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        // Inject a single block into the DAG by hand so the test
+        // doesn't depend on on_block_committed plumbing.
+        let genesis_id = [0xAA; 32];
+        let leaf_id = [0xBB; 32];
+        tc.light_cone_dag
+            .insert(LcBlock::new(genesis_id, vec![], 1000, 0))
+            .expect("insert genesis");
+        tc.light_cone_dag
+            .insert(LcBlock::new(leaf_id, vec![genesis_id], 700, 1))
+            .expect("insert leaf");
+
+        // Linear mode: still parent_hash (which is [0u8; 32] at this
+        // point — never updated through the test path).
+        assert_eq!(tc.current_tip(), tc.parent_hash());
+
+        // Flip to mcc: now select_tip walks the DAG and picks the
+        // higher-caliber leaf. With a single non-genesis leaf, that's
+        // `leaf_id` (the genesis is also a leaf in our 2-block DAG —
+        // tie-break is the smaller BlockId, but caliber differs.)
+        tc.governance_set_param("parent_acceptance_mode", "mcc")
+            .expect("mcc accepted by allowlist");
+        let tip = tc.current_tip();
+        // Either leaf is a valid pick depending on caliber math; the
+        // contract here is just that mcc-mode actually consults the
+        // DAG (returns one of the leaves) instead of parent_hash.
+        assert!(
+            tip == genesis_id || tip == leaf_id,
+            "mcc-mode current_tip must return a DAG leaf, got {:?}",
+            tip
+        );
+        assert_ne!(
+            tip,
+            tc.parent_hash(),
+            "mcc-mode tip must not silently fall back to parent_hash \
+             when the DAG has at least one block"
+        );
+    }
+
     /// Phase 1.2 of `LIGHT_CONE_FULL_DAG_PLAN.md` — `current_tip()`
     /// defers to the DAG only under `parent_acceptance_mode = "mcc"`.
     /// In default `linear` mode it returns `parent_hash` unchanged
