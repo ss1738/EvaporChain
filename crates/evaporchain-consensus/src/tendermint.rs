@@ -6368,6 +6368,148 @@ mod tests {
         );
     }
 
+    /// Lane O.8.2c — full-pipeline integration test for cartel-alarm
+    /// emission. Drives blocks through `on_block_committed` with
+    /// `cartel_alarm_mode = "alarm"` set via the K.1 RPC path, then
+    /// uses `_inject_status_for_test` to simulate an over-ceiling
+    /// status (synthetic empty-block traffic can't naturally cross
+    /// the doctrine ceiling — that's the whole point of Causal-CHSH),
+    /// drives one more block to trigger `maybe_emit_cartel_alarm_event`
+    /// from inside the real consensus hot path, and verifies the
+    /// queued event is drainable via `take_pending_cartel_alarms`.
+    ///
+    /// Distinct from the unit test in `test_cartel_alarm_event_emission_
+    /// governance_gated`: that test calls `maybe_emit_cartel_alarm_event`
+    /// directly. This test exercises the full path through
+    /// `on_block_committed` so the call-site wiring stays locked.
+    #[test]
+    fn test_cartel_alarm_event_emission_via_on_block_committed() {
+        use evaporchain_causal_chsh::{AlarmStatus, GateThresholds};
+        use evaporchain_types::Block;
+
+        fn make_block_for_test(height: u64) -> Block {
+            Block {
+                number: height,
+                epoch: height / 10,
+                parent_hash: [0u8; 32],
+                state_root: [0u8; 32],
+                transactions: vec![],
+                producer_id: Some(0),
+                timestamp: height * 12,
+                chain_id: String::new(),
+                commit_certificate: None,
+                nova_proof: None,
+                anchor_hash: None,
+                vrf_output: None,
+                vrf_proof: None,
+                data_root: None,
+                da_row_roots: vec![],
+                da_col_roots: vec![],
+                blob_commitments: vec![],
+                da_certificate: None,
+                state_function_commitment: None,
+                oracle_state_root: None,
+                shard_count: None,
+                protocol_version: 0,
+                state_root_version: 0,
+                submit_epoch_hints: vec![],
+            }
+        }
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+
+        // Step 1: drive a few blocks under default `observe` mode.
+        // Even if the synthetic alarm somehow produced a fresh status,
+        // observe mode must keep the queue empty.
+        for h in 1..=5u64 {
+            let block = make_block_for_test(h);
+            let mut state_root = [0u8; 32];
+            state_root[0] = h as u8;
+            tc.on_block_committed(&block, state_root, 0);
+        }
+        assert_eq!(
+            tc.take_pending_cartel_alarms().len(),
+            0,
+            "default observe mode must not queue events on hot path"
+        );
+
+        // Step 2: governance flip to alarm mode.
+        tc.governance_set_param("cartel_alarm_mode", "alarm")
+            .expect("alarm mode must pass allowlist");
+
+        // Step 3: inject an over-ceiling status (synthetic empty blocks
+        // can't naturally cross the bound — that's the whole point of
+        // Causal-CHSH on honest traffic).
+        let over_ceiling = AlarmStatus {
+            s_honest: 2.4,
+            s_cartel_synthetic: 3.5,
+            gap: 1.1,
+            s_honest_milli: 2400,
+            s_cartel_synthetic_milli: 3500,
+            gap_milli: 1100,
+            verdict: "Fail".to_string(),
+            last_run_at_height: 6, // matches the next on_block_committed call
+            samples_per_bucket: [20, 20, 20, 20],
+            thresholds: GateThresholds::doctrine(),
+        };
+        tc.cartel_alarm._inject_status_for_test(over_ceiling);
+
+        // Step 4: drive one more block through the real hot path. The
+        // record_block call inside on_block_committed pushes a new
+        // BlockSummary but DOESN'T overwrite the injected status (the
+        // periodic recompute only fires at run_interval boundaries
+        // with buffer.len() >= 50; we're far below both). So the
+        // emission gate sees our injected over-ceiling status and
+        // queues the event.
+        let block_6 = make_block_for_test(6);
+        let mut state_root_6 = [0u8; 32];
+        state_root_6[0] = 6;
+        tc.on_block_committed(&block_6, state_root_6, 0);
+
+        // Step 5: drain the queue and verify.
+        let events = tc.take_pending_cartel_alarms();
+        assert_eq!(events.len(), 1, "alarm mode + over-ceiling status must emit on hot path");
+        assert_eq!(events[0].at_height, 6);
+        assert_eq!(events[0].s_honest_milli, 2400);
+        assert_eq!(events[0].honest_ceiling_milli_at_fire, 1800);
+        assert_eq!(events[0].samples_per_bucket, [20, 20, 20, 20]);
+
+        // Step 6: drive another block — the dedupe should keep the
+        // queue empty for this height since we already emitted.
+        // (Inject the same status again to simulate the alarm not
+        // having recomputed yet.)
+        let over_ceiling_again = AlarmStatus {
+            s_honest: 2.4,
+            s_cartel_synthetic: 3.5,
+            gap: 1.1,
+            s_honest_milli: 2400,
+            s_cartel_synthetic_milli: 3500,
+            gap_milli: 1100,
+            verdict: "Fail".to_string(),
+            last_run_at_height: 6, // SAME height as before
+            samples_per_bucket: [20, 20, 20, 20],
+            thresholds: GateThresholds::doctrine(),
+        };
+        tc.cartel_alarm._inject_status_for_test(over_ceiling_again);
+
+        // Re-emit: queue is empty (last drain), so dedupe by `at_height`
+        // is against a cleared queue → it WILL emit again. The dedupe
+        // semantic is "don't double-emit while the event is still in
+        // the queue", not "never re-emit for a height". Operators
+        // should track their own ack-set if they need historical
+        // dedup.
+        let block_7 = make_block_for_test(7);
+        let mut state_root_7 = [0u8; 32];
+        state_root_7[0] = 7;
+        tc.on_block_committed(&block_7, state_root_7, 0);
+        let events_after_drain = tc.take_pending_cartel_alarms();
+        assert_eq!(
+            events_after_drain.len(),
+            1,
+            "after a drain, a same-height status reappears in the queue (operator owns ack-set)"
+        );
+    }
+
     /// Phase 1.5 of `CROOKS_MEV_INTEGRATION_PLAN.md` — drive a
     /// synthetic sandwich block through `on_block_committed` and
     /// confirm a `MevObservation` lands in the consensus engine's

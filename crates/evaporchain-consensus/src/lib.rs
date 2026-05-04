@@ -862,6 +862,8 @@ mod tests {
                 inner.signature = Some(sig);
                 inner.public_key = Some(pk);
             }
+            // Refund is protocol-issued — no caller signature to set.
+            Transaction::Refund(_) => {}
         }
     }
 
