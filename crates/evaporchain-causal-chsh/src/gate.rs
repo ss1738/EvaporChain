@@ -9,7 +9,7 @@
 //! This module ships the math + a smoke-test gate runnable from unit
 //! tests, with no external data dependencies.
 
-use crate::chsh::{compute_chsh_s, ChshError, ConcurrentPairSamples};
+use crate::chsh::{compute_chsh_s, ConcurrentPairSamples};
 use serde::{Deserialize, Serialize};
 
 /// Doctrine-locked thresholds for the gate verdict.
