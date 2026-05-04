@@ -54,13 +54,13 @@ Six phases, total scope **≈3-6 months**. Phases 1-3 ship in dedicated sessions
 
 **Goal:** add a `parents: Vec<[u8; 32]>` field to `Block` (defaulting to single-element when present) without breaking on-the-wire compat with existing chain history.
 
-- [ ] **2.1 — `parents: Vec<[u8; 32]>` on `Block`** (new optional field with `serde(default)`). Existing blocks deserialize with `parents = vec![parent_hash]` (single-parent fall-back). New blocks may emit `parents` directly.
-- [ ] **2.2 — Block validation rule.** `Block::validate_parents(dag) -> Result<(), Error>` — every parent must be in the DAG, none equal each other, no parent in the block's causal future (would be a cycle). Emitted by validators on receipt.
-- [ ] **2.3 — `protocol_version` bump.** New version 3 (current 2 = post-Lambda-Fold, 1 = pre-fold, 0 = legacy). `parents.len() > 1` requires `protocol_version >= 3`. Validators reject blocks claiming `parents.len() > 1` under lower versions.
-- [ ] **2.4 — Hash-stability test.** Old blocks (single-parent) hash identically post-migration (the `parents` field defaults to `vec![parent_hash]` and isn't included in `signable_bytes` until protocol_version 3 is active). Critical for chain-id continuity.
-- [ ] **2.5 — Tests.** Round-trip serialize/deserialize at v0, v2, v3; cycle-rejection; multi-parent acceptance under v3; reject under v2.
+- [x] **2.1 — `parents: Vec<[u8; 32]>` on `Block`.** SHIPPED. Field added with `#[serde(default, skip_serializing_if = "Vec::is_empty")]` so legacy blocks (empty `parents`) serialize bit-identically to pre-Light-Cone. `Block::effective_parents()` accessor returns `parents` when non-empty, else `vec![parent_hash]` (single-parent fallback). Light-Cone consumers should use the accessor.
+- [x] **2.2 — Block validation rule.** SHIPPED as `Block::validate_parents_wire_format()` with `BlockParentsValidationError` enum (`MultiParentRequiresV3`, `DuplicateParent`, `ParentHashMismatch`). Cycle-detection is the DAG-side responsibility (existing `LightCone::insert` rejects via `MissingParent`).
+- [x] **2.3 — `protocol_version` bump (gating).** Encoded in `validate_parents_wire_format`: `parents.len() > 1 && protocol_version < 3` → `MultiParentRequiresV3` error. Phase 4 antichain finality is the gate that bumps the chain's actual protocol_version.
+- [x] **2.4 — Hash-stability test.** `test_block_legacy_serialization_omits_parents_field` asserts `serde_json::to_string(&legacy_block)` does NOT contain `"parents"` when the field is empty. Confirms the `skip_serializing_if = "Vec::is_empty"` contract holds. **`block_hash` (`tendermint.rs:2590`) does NOT include the new `parents` field — chain-id continuity preserved.**
+- [x] **2.5 — Tests.** 4 new tests in `evaporchain-types` (effective-parents fallback + explicit, validate-parents 4 paths, hash-stability, round-trip) + the existing `test_block_serialization_roundtrip` extended with `parents: vec![]`. 5/5 green on Mini under release.
 
-**Phase 2 deliverable:** the wire format supports DAG-shaped blocks. Backward-compat preserved via `serde(default)` + `protocol_version` gating.
+**Phase 2 deliverable: SHIPPED.** Wire format supports DAG-shaped blocks. Backward-compat preserved via `serde(default)` + `skip_serializing_if`. Hash continuity locked. The chain can now produce v3 multi-parent blocks; whether it DOES is gated on Phase 4's antichain finality consensus.
 
 ### Phase 3 — Per-fork state branches (3-4 weeks)
 

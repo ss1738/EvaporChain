@@ -221,6 +221,102 @@ pub struct Block {
     /// add the field only when at least one tx was hinted.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub submit_epoch_hints: Vec<Option<u64>>,
+    /// Phase 2.1 of `LIGHT_CONE_FULL_DAG_PLAN.md` — DAG-shaped
+    /// parents. Empty (default) means single-parent linear chain
+    /// semantics (use `parent_hash`). Non-empty means the block has
+    /// `parents.len()` parents and represents a DAG-merge node.
+    /// Phase 2.3 contract: `parents.len() > 1` requires
+    /// `protocol_version >= 3`.
+    ///
+    /// Wire-format: `serde(default, skip_serializing_if =
+    /// "Vec::is_empty")` keeps existing single-parent blocks
+    /// bit-identical on the wire (the field is omitted when empty).
+    /// `block_hash` does NOT include this field, preserving the
+    /// pre-Light-Cone block-hash contract for chain-id continuity.
+    /// When/if Phase 4's antichain finality activates DAG-aware
+    /// hashing, the protocol_version bump will be the gate.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parents: Vec<[u8; 32]>,
+}
+
+/// Phase 2.2 of `LIGHT_CONE_FULL_DAG_PLAN.md` — wire-format
+/// validation error for the `parents` field.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum BlockParentsValidationError {
+    #[error(
+        "block carries parents.len() = {n} but protocol_version = {pv}; \
+         multi-parent blocks require protocol_version >= 3"
+    )]
+    MultiParentRequiresV3 { n: usize, pv: u8 },
+    #[error("block.parents contains a duplicate entry: {0:?}")]
+    DuplicateParent([u8; 32]),
+    #[error(
+        "block.parents[0] = {first:?} disagrees with block.parent_hash = {ph:?}; \
+         when both are present they must be equal"
+    )]
+    ParentHashMismatch { first: [u8; 32], ph: [u8; 32] },
+}
+
+impl Block {
+    /// Phase 2.1 of `LIGHT_CONE_FULL_DAG_PLAN.md` — return the
+    /// block's effective parent set. If `parents` is non-empty,
+    /// returns it as-is. Otherwise returns `vec![parent_hash]`
+    /// (single-parent linear-chain fallback).
+    ///
+    /// All Light-Cone consumers should use this accessor instead
+    /// of reading `parent_hash` or `parents` directly. Phase 3's
+    /// state-branch materialization keys off the effective set.
+    pub fn effective_parents(&self) -> Vec<[u8; 32]> {
+        if !self.parents.is_empty() {
+            self.parents.clone()
+        } else {
+            vec![self.parent_hash]
+        }
+    }
+
+    /// Phase 2.2 of `LIGHT_CONE_FULL_DAG_PLAN.md` — validate the
+    /// wire-format invariants of the `parents` field.
+    ///
+    /// Three failure modes:
+    /// - `MultiParentRequiresV3` — block carries >1 parents but
+    ///   `protocol_version < 3`. Soft-fork gate.
+    /// - `DuplicateParent` — same parent listed twice in `parents`.
+    /// - `ParentHashMismatch` — both `parents[0]` and `parent_hash`
+    ///   are present but disagree (validators rely on `parent_hash`
+    ///   for legacy paths; `parents[0]` for DAG paths; the two
+    ///   MUST agree to keep both paths convergent).
+    ///
+    /// Cycle detection is the DAG-side responsibility — see
+    /// `evaporchain-light-cone::LightCone::insert` for the
+    /// `MissingParent` rejection rule.
+    pub fn validate_parents_wire_format(
+        &self,
+    ) -> Result<(), BlockParentsValidationError> {
+        if self.parents.len() > 1 && self.protocol_version < 3 {
+            return Err(BlockParentsValidationError::MultiParentRequiresV3 {
+                n: self.parents.len(),
+                pv: self.protocol_version,
+            });
+        }
+
+        // Duplicate detection.
+        let mut seen = std::collections::BTreeSet::new();
+        for p in &self.parents {
+            if !seen.insert(*p) {
+                return Err(BlockParentsValidationError::DuplicateParent(*p));
+            }
+        }
+
+        // parent_hash / parents[0] consistency.
+        if !self.parents.is_empty() && self.parents[0] != self.parent_hash {
+            return Err(BlockParentsValidationError::ParentHashMismatch {
+                first: self.parents[0],
+                ph: self.parent_hash,
+            });
+        }
+
+        Ok(())
+    }
 }
 
 /// Commitment to the state function for Rule-Based Consensus.
@@ -1831,6 +1927,167 @@ mod tests {
     /// (source_block_height, source_observation_idx) pair is the
     /// unique identifier for replay protection.
     #[test]
+    /// Phase 2.1 of `LIGHT_CONE_FULL_DAG_PLAN.md` — `effective_parents()`
+    /// returns the explicit `parents` Vec when populated, else
+    /// `vec![parent_hash]` (single-parent fallback).
+    #[test]
+    fn test_block_effective_parents_fallback_and_explicit() {
+        // Helper: build a Block with given parent_hash / parents /
+        // protocol_version, all other fields default.
+        fn mk(parent_hash: [u8; 32], parents: Vec<[u8; 32]>, pv: u8) -> Block {
+            Block {
+                number: 1,
+                epoch: 1,
+                parent_hash,
+                state_root: [0u8; 32],
+                transactions: vec![],
+                timestamp: 0,
+                chain_id: String::new(),
+                producer_id: None,
+                vrf_output: None,
+                vrf_proof: None,
+                data_root: None,
+                da_row_roots: vec![],
+                da_col_roots: vec![],
+                blob_commitments: vec![],
+                da_certificate: None,
+                commit_certificate: None,
+                nova_proof: None,
+                anchor_hash: None,
+                state_function_commitment: None,
+                oracle_state_root: None,
+                shard_count: None,
+                protocol_version: pv,
+                state_root_version: 0,
+                submit_epoch_hints: vec![],
+                parents,
+            }
+        }
+
+        // Empty parents → fallback to vec![parent_hash].
+        let legacy = mk([0xAA; 32], vec![], 0);
+        assert_eq!(legacy.effective_parents(), vec![[0xAA; 32]]);
+
+        // Non-empty parents → returned as-is.
+        let dag = mk([0xAA; 32], vec![[0xAA; 32], [0xBB; 32]], 3);
+        assert_eq!(dag.effective_parents(), vec![[0xAA; 32], [0xBB; 32]]);
+    }
+
+    /// Phase 2.2 — wire-format validation of `parents` field.
+    /// Three failure modes + happy path.
+    #[test]
+    fn test_block_validate_parents_wire_format() {
+        fn mk(parents: Vec<[u8; 32]>, pv: u8, ph: [u8; 32]) -> Block {
+            Block {
+                number: 1,
+                epoch: 1,
+                parent_hash: ph,
+                state_root: [0u8; 32],
+                transactions: vec![],
+                timestamp: 0,
+                chain_id: String::new(),
+                producer_id: None,
+                vrf_output: None,
+                vrf_proof: None,
+                data_root: None,
+                da_row_roots: vec![],
+                da_col_roots: vec![],
+                blob_commitments: vec![],
+                da_certificate: None,
+                commit_certificate: None,
+                nova_proof: None,
+                anchor_hash: None,
+                state_function_commitment: None,
+                oracle_state_root: None,
+                shard_count: None,
+                protocol_version: pv,
+                state_root_version: 0,
+                submit_epoch_hints: vec![],
+                parents,
+            }
+        }
+
+        // Happy path: legacy block (empty parents) at any pv → Ok.
+        assert!(mk(vec![], 0, [0xAA; 32]).validate_parents_wire_format().is_ok());
+
+        // Happy path: single-parent block matching parent_hash → Ok.
+        assert!(mk(vec![[0xAA; 32]], 0, [0xAA; 32])
+            .validate_parents_wire_format()
+            .is_ok());
+
+        // Multi-parent at v3 → Ok.
+        assert!(mk(vec![[0xAA; 32], [0xBB; 32]], 3, [0xAA; 32])
+            .validate_parents_wire_format()
+            .is_ok());
+
+        // Multi-parent at v2 → MultiParentRequiresV3.
+        let err = mk(vec![[0xAA; 32], [0xBB; 32]], 2, [0xAA; 32])
+            .validate_parents_wire_format()
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            BlockParentsValidationError::MultiParentRequiresV3 { n: 2, pv: 2 }
+        ));
+
+        // Duplicate parent → DuplicateParent.
+        let err = mk(vec![[0xAA; 32], [0xAA; 32]], 3, [0xAA; 32])
+            .validate_parents_wire_format()
+            .unwrap_err();
+        assert!(matches!(err, BlockParentsValidationError::DuplicateParent(_)));
+
+        // parents[0] disagrees with parent_hash → ParentHashMismatch.
+        let err = mk(vec![[0xBB; 32]], 0, [0xAA; 32])
+            .validate_parents_wire_format()
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            BlockParentsValidationError::ParentHashMismatch { .. }
+        ));
+    }
+
+    /// Phase 2.4 of `LIGHT_CONE_FULL_DAG_PLAN.md` — hash-stability
+    /// gate. Adding the `parents` field with `serde(default,
+    /// skip_serializing_if = "Vec::is_empty")` MUST NOT change the
+    /// JSON serialization of legacy blocks (parents = vec![]).
+    /// Critical for chain-id continuity.
+    #[test]
+    fn test_block_legacy_serialization_omits_parents_field() {
+        let b = Block {
+            number: 1,
+            epoch: 1,
+            parent_hash: [0xAA; 32],
+            state_root: [0u8; 32],
+            transactions: vec![],
+            timestamp: 0,
+            chain_id: String::new(),
+            producer_id: None,
+            vrf_output: None,
+            vrf_proof: None,
+            data_root: None,
+            da_row_roots: vec![],
+            da_col_roots: vec![],
+            blob_commitments: vec![],
+            da_certificate: None,
+            commit_certificate: None,
+            nova_proof: None,
+            anchor_hash: None,
+            state_function_commitment: None,
+            oracle_state_root: None,
+            shard_count: None,
+            protocol_version: 0,
+            state_root_version: 0,
+            submit_epoch_hints: vec![],
+            parents: vec![],
+        };
+        let s = serde_json::to_string(&b).expect("serialize");
+        assert!(
+            !s.contains("\"parents\""),
+            "legacy block must not surface the new `parents` field on the wire — \
+             chain-id continuity gate. Got: {}",
+            s
+        );
+    }
+
     fn test_refund_tx_roundtrip_and_sender() {
         let tx = Transaction::Refund(RefundTx {
             source_block_height: 100,
@@ -1944,6 +2201,7 @@ mod tests {
             protocol_version: 0,
             state_root_version: 0,
             submit_epoch_hints: vec![],
+            parents: vec![],
         };
         let json = serde_json::to_vec(&block).unwrap();
         let back: Block = serde_json::from_slice(&json).unwrap();
