@@ -33,8 +33,8 @@ use evaporchain_types::{
     Block, CallContractTx, CallScriptTx, ClaimDelegationTx, CreateObjectTx, DelegateTx,
     DelegationRecord, DeployContractTx, DeployScriptTx, Epoch, GovernanceAction,
     GovernanceProposal, GovernanceTx, MultiSigTx, ObjectState, ProposalStatus, RefreshTx,
-    StakeRecord, StateObject, Transaction, TransferTx, UndelegateTx, ValidatorClaimStakeTx,
-    ValidatorExitTx, ValidatorStakeTx,
+    RefundTx, StakeRecord, StateObject, Transaction, TransferTx, UndelegateTx,
+    ValidatorClaimStakeTx, ValidatorExitTx, ValidatorStakeTx,
 };
 use thiserror::Error;
 use tracing::{debug, info};
@@ -1139,6 +1139,66 @@ impl SimpleExecutor {
             to = hex::encode(tx.to),
             amount = tx.amount,
             "Transfer executed"
+        );
+
+        Ok(())
+    }
+
+    /// Phase 3.5 of CROOKS_MEV_INTEGRATION_PLAN.md (Lane Q.1):
+    /// execute a protocol-issued `RefundTx`. Debits `attacker`,
+    /// credits `victim`, no nonce mutation (refund is not signed by
+    /// either party — it's emitted by consensus once the determinism
+    /// contract is satisfied).
+    ///
+    /// The Phase 3.2 determinism contract (caller must match the
+    /// validator's own `mev_observations` + `mev_attacker_stats` for
+    /// the source `(block_height, observation_idx)`) is enforced at
+    /// the consensus layer before the tx reaches execution; this
+    /// function trusts the caller has been validated.
+    ///
+    /// Errors:
+    /// - `ZeroAmount` — refund amount must be > 0.
+    /// - `SelfTransfer` — attacker == victim is a no-op refund.
+    /// - `InsufficientBalance` — attacker can't cover the refund.
+    fn execute_refund(
+        &self,
+        db: &mut dyn StateDB,
+        tx: &RefundTx,
+        epoch: Epoch,
+    ) -> Result<(), ExecutionError> {
+        if tx.attacker == tx.victim {
+            return Err(ExecutionError::SelfTransfer);
+        }
+        if tx.amount == 0 {
+            return Err(ExecutionError::ZeroAmount);
+        }
+
+        let attacker = db.get_or_create_account(&tx.attacker);
+        if attacker.balance < tx.amount {
+            return Err(ExecutionError::InsufficientBalance {
+                account: hex::encode(tx.attacker),
+                available: attacker.balance,
+                required: tx.amount,
+            });
+        }
+
+        attacker.balance -= tx.amount;
+        // No nonce increment — refund is protocol-issued, not signed.
+        // Stamp the demurrage anchor: balance just mutated.
+        attacker.last_touched_epoch = epoch;
+
+        let victim = db.get_or_create_account(&tx.victim);
+        victim.balance = victim.balance.saturating_add(tx.amount);
+        victim.last_touched_epoch = epoch;
+
+        debug!(
+            attacker = hex::encode(tx.attacker),
+            victim = hex::encode(tx.victim),
+            amount = tx.amount,
+            source_block_height = tx.source_block_height,
+            source_observation_idx = tx.source_observation_idx,
+            settle_block_height = tx.settle_block_height,
+            "Refund executed (Crooks-MEV Phase 3.5)"
         );
 
         Ok(())
@@ -2781,13 +2841,15 @@ impl ExecutionEngine for SimpleExecutor {
                 Transaction::ClaimDelegation(c) => {
                     self.execute_claim_delegation(db, c, block.epoch)
                 }
-                // Refund is protocol-issued. Phase 3.1 stub: validate
-                // shape, no balance movement until Phase 3.5 wires the
-                // attacker → victim transfer. Reject here so it doesn't
-                // silently appear successful.
-                Transaction::Refund(_) => Err(ExecutionError::ContractError(
-                    "refund tx execution: Phase 3.5 wiring not yet landed".into(),
-                )),
+                // Phase 3.5 (Lane Q.1): protocol-issued refund moves
+                // `amount` from attacker → victim. Determinism contract
+                // (Phase 3.2 — caller must match validator's
+                // `mev_observations` + `mev_attacker_stats`) is
+                // enforced at the consensus layer; this execution path
+                // only handles balance movement.
+                Transaction::Refund(refund) => {
+                    self.execute_refund(db, refund, block.epoch)
+                }
             };
 
             match result {
@@ -3390,6 +3452,113 @@ mod tests {
 
         assert_eq!(db.get_account(&addr(1)).unwrap().balance, 100);
         assert!(db.get_account(&addr(2)).is_none());
+    }
+
+    // ─── Crooks-MEV Refund (Lane Q.1 / Phase 3.5) ───
+
+    #[test]
+    fn test_refund_moves_balance_attacker_to_victim() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1000); // attacker
+        fund_account(&mut db, 2, 100);  // victim
+
+        let mut executor = SimpleExecutor::new_for_test(7);
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::Refund(RefundTx {
+                source_block_height: 0,
+                source_observation_idx: 0,
+                attacker: addr(1),
+                victim: addr(2),
+                amount: 250,
+                settle_block_height: 1,
+            })],
+        );
+
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_executed, 1);
+        assert_eq!(result.txs_failed, 0);
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 750);
+        assert_eq!(db.get_account(&addr(2)).unwrap().balance, 350);
+    }
+
+    #[test]
+    fn test_refund_self_refund_rejected() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1000);
+
+        let mut executor = SimpleExecutor::new_for_test(7);
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::Refund(RefundTx {
+                source_block_height: 0,
+                source_observation_idx: 0,
+                attacker: addr(1),
+                victim: addr(1), // self-refund
+                amount: 100,
+                settle_block_height: 1,
+            })],
+        );
+
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_failed, 1);
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 1000);
+    }
+
+    #[test]
+    fn test_refund_zero_amount_rejected() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 1000);
+        fund_account(&mut db, 2, 100);
+
+        let mut executor = SimpleExecutor::new_for_test(7);
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::Refund(RefundTx {
+                source_block_height: 0,
+                source_observation_idx: 0,
+                attacker: addr(1),
+                victim: addr(2),
+                amount: 0, // zero refund
+                settle_block_height: 1,
+            })],
+        );
+
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_failed, 1);
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 1000);
+        assert_eq!(db.get_account(&addr(2)).unwrap().balance, 100);
+    }
+
+    #[test]
+    fn test_refund_insufficient_attacker_balance_rejected() {
+        let mut db = InMemoryStateDB::new();
+        fund_account(&mut db, 1, 50); // attacker can't cover 250
+        fund_account(&mut db, 2, 100);
+
+        let mut executor = SimpleExecutor::new_for_test(7);
+        let block = make_block(
+            1,
+            1,
+            vec![Transaction::Refund(RefundTx {
+                source_block_height: 0,
+                source_observation_idx: 0,
+                attacker: addr(1),
+                victim: addr(2),
+                amount: 250,
+                settle_block_height: 1,
+            })],
+        );
+
+        let result = executor.execute_block(&mut db, &block).unwrap();
+        assert_eq!(result.txs_failed, 1);
+        // Sender state should be reverted (snapshot restore on failure
+        // path); attacker still has 50.
+        assert_eq!(db.get_account(&addr(1)).unwrap().balance, 50);
+        assert_eq!(db.get_account(&addr(2)).unwrap().balance, 100);
     }
 
     // ─── Self-Transfer Rejected ───
