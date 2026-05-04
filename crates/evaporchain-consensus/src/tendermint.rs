@@ -4128,8 +4128,20 @@ impl TendermintConsensus {
                         }
                     }
                     self.round_state.prevotes.insert(validator_id, block_hash);
+                    let dag_sig = bls_signature.clone().unwrap_or_default();
                     if let Some(sig) = bls_signature {
                         self.round_state.prevote_bls_sigs.insert(validator_id, sig);
+                    }
+
+                    // Phase 4.1 of LIGHT_CONE_FULL_DAG_PLAN.md —
+                    // mirror the vote into per-tip dag_round_states
+                    // when the rollout flag is on AND the voted-for
+                    // block is a current DAG leaf. No-op otherwise
+                    // (linear-mode bit-compat preserved).
+                    if let Some(tip) = block_hash {
+                        if self.light_cone_dag.contains(&tip) {
+                            self.record_dag_prevote(tip, validator_id, block_hash, dag_sig);
+                        }
                     }
 
                     if self.round_state.phase == Phase::Prevote {
@@ -4241,10 +4253,24 @@ impl TendermintConsensus {
                         }
                     }
                     self.round_state.precommits.insert(validator_id, block_hash);
+                    let dag_sig = bls_signature.clone().unwrap_or_default();
                     if let Some(sig) = bls_signature {
                         self.round_state
                             .precommit_bls_sigs
                             .insert(validator_id, sig);
+                    }
+
+                    // Phase 4.1 + 4.3 of LIGHT_CONE_FULL_DAG_PLAN.md —
+                    // mirror the precommit into per-tip
+                    // dag_round_states + run cross-fork equivocation
+                    // detection (Decision 3 — counts-based; bumps
+                    // cross_fork_equivocations[validator_id] on
+                    // observed double-precommit at the same round).
+                    // No-op when state_branches_enabled = false.
+                    if let Some(tip) = block_hash {
+                        if self.light_cone_dag.contains(&tip) {
+                            self.record_dag_precommit(tip, validator_id, block_hash, dag_sig);
+                        }
                     }
 
                     // Check if we can commit now. Peek before `take()`ing —
