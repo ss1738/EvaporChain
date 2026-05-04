@@ -184,7 +184,7 @@ Seven phases. Phases 1-2 are reversible design + prototype; phases 3-6 are the r
 
 - [x] **6.3 — Energy-fold lower-bound test**: `test_real_block_energy_fold_rejects_over_reported_decay`. Adversarial witness claims `energy_after_halvings = 5_000` against honest 10_000 (50% over-reported decay), violating constraint (a) `after_halvings * shift_factor = prev_total_energy - shift_remainder` of the Phase 2.3 energy-fold gadget. R1CS rejects as expected. Locks the soundness of the chain-aggregate energy-fold gadget.
 
-- [ ] **6.4 — Async fold queue**: confirm the existing `evaporchain_async_fold.rs` queue is compatible with the new arity. May need witness-shape updates.
+- [x] **6.4 — Async fold queue**: `evaporchain-proving::async_fold::FoldQueue` operates on `(Block, new_state_root)` pairs and delegates witness construction to `RealBlockProver` at the leaf — arity-8 changes were already self-contained inside the prover. **No witness-shape updates needed.** All 3 async-fold tests green on Mini under release: `submit_n_blocks_all_fold_in_order`, `queue_full_returns_queue_full_outcome`, `worker_gone_after_drop`.
 
 - [ ] **6.5 — Fuzz target**: extend `fuzz/fuzz_targets/` with a Nova-folding harness. Random witness sequences, assert verify succeeds for honest sequences and fails for tampered sequences.
 
