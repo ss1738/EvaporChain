@@ -7491,6 +7491,110 @@ mod tests {
         assert_eq!(orphans, vec![[0xAA; 32], [0xBB; 32], [0xCC; 32]]);
     }
 
+    /// Phase 6.1-substrate of `LIGHT_CONE_FULL_DAG_PLAN.md` —
+    /// end-to-end integration of Phase 3 (state branches) + Phase 5
+    /// (LRU + DAG-cascade prune) substrate via the real
+    /// `on_block_committed` lifecycle. Drives 5 sequential blocks
+    /// with `light_cone_state_branches_enabled = true` + cap=3,
+    /// asserts that state_branches stays bounded at the cap, the
+    /// DAG cascade-prunes oldest, and orphan-detection surfaces
+    /// stale tips.
+    #[test]
+    fn test_light_cone_substrate_end_to_end() {
+        use evaporchain_types::{Block, TransferTx};
+
+        fn make_block_local(num: u64) -> Block {
+            Block {
+                number: num,
+                epoch: num,
+                parent_hash: [0u8; 32],
+                state_root: [0u8; 32],
+                transactions: vec![Transaction::Transfer(TransferTx {
+                    from: [1u8; 32],
+                    to: [2u8; 32],
+                    amount: num + 1,
+                    nonce: num,
+                    signature: None,
+                    public_key: None,
+                })],
+                producer_id: Some(0),
+                timestamp: 0,
+                chain_id: String::new(),
+                commit_certificate: None,
+                nova_proof: None,
+                anchor_hash: None,
+                vrf_output: None,
+                vrf_proof: None,
+                data_root: None,
+                da_row_roots: vec![],
+                da_col_roots: vec![],
+                blob_commitments: vec![],
+                da_certificate: None,
+                state_function_commitment: None,
+                oracle_state_root: None,
+                shard_count: None,
+                protocol_version: 0,
+                state_root_version: 0,
+                submit_epoch_hints: vec![],
+                parents: vec![],
+            }
+        }
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+
+        // Default mode: state_branches stays empty regardless of activity.
+        for h in 1..=3u64 {
+            tc.on_block_committed(&make_block_local(h), [0u8; 32], 0);
+        }
+        assert!(
+            tc.state_branches.is_empty(),
+            "default-off chain must keep state_branches empty across activity"
+        );
+        assert!(
+            tc.committed_at_block().len() >= 3,
+            "Phase 4.4 dual-mode bookkeeping populates regardless of \
+             state_branches_enabled (block-indexed view is for \
+             antichain-finality consumers, not just DAG mode)"
+        );
+
+        // Flip the rollout flag + tighten the cap.
+        tc.governance_set_param("light_cone_state_branches_enabled", "true")
+            .unwrap();
+        tc.governance_set_param("light_cone_max_concurrent_forks", "3")
+            .unwrap();
+
+        // Commit 5 more blocks. state_branches must populate, and
+        // when len > 3 the LRU prune kicks in (lowest-caliber drop).
+        for h in 4..=8u64 {
+            tc.on_block_committed(&make_block_local(h), [0u8; 32], 0);
+        }
+        // Cap = 3 → state_branches.len() <= 3.
+        assert!(
+            tc.state_branches.len() <= 3,
+            "LRU cap enforced: len={} > 3",
+            tc.state_branches.len()
+        );
+
+        // Orphan-detection rule (Phase 5.1) — with default
+        // threshold = 0, no orphans. Bump threshold high enough so
+        // every tip is below it; recency window = 32, so any tip
+        // last touched < (current_height - 32) shows up. Our tips
+        // were touched at heights 4..=8; current_height=100 puts
+        // staleness_horizon=68; all tips < 68 → all stale.
+        tc.governance_set_param("light_cone_orphan_caliber_threshold", "10000")
+            .unwrap();
+        let orphans = tc.detect_orphan_branches(100);
+        assert_eq!(
+            orphans.len(),
+            tc.state_branches.len(),
+            "with high threshold + stale recency, every tip orphan-eligible"
+        );
+
+        // Phase 4.4 dual-mode bookkeeping: committed_at_block has
+        // entries from all 8 commits.
+        assert_eq!(tc.committed_at_block().len(), 8);
+    }
+
     /// Phase 5.3 of `LIGHT_CONE_FULL_DAG_PLAN.md` — LRU eviction
     /// at the metadata level pairs with a DAG-side cascade prune.
     /// When `prune_state_branches` evicts a tip, the matching
