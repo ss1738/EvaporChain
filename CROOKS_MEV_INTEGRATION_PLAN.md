@@ -94,7 +94,14 @@ Seven phases, ~4–6 weeks total. Phases 1-2 unblock observability; Phases 3-5 a
     - **consensus (1):** `test_validate_block_refunds_observe_vs_enforce` — drives sandwich → past-grace → mode flip → asserts all three failure modes + happy path.
 
   **NOT yet wired into the actual block-validation pipeline.** The `validate_block_refunds` accessor exists; the next session's Phase 3.5 work plumbs it into `tendermint.rs` block-acceptance flow alongside the slashing rule and the executor balance-movement.
-- [ ] **3.5 — Slashing rule**: producer who omits a required refund is slashed via `evaporchain-entropic-slashing`. Severity = `SlashSeverity::Negligence` (not `::Equivocation`).
+- [x] **3.5 — Slashing + balance movement**: SHIPPED in three sub-pieces.
+  - **3.5a — Executor balance movement**: shipped by parallel session (see `lib.rs:1147 execute_refund` + serial-phase dispatch at `lib.rs:2850`). Debits attacker, credits victim, no nonce mutation, stamps demurrage anchor. Errors: `ZeroAmount`, `SelfTransfer`, `InsufficientBalance`. 4/4 tests green on Mini under release: `test_refund_moves_balance_attacker_to_victim`, `test_refund_self_refund_rejected`, `test_refund_zero_amount_rejected`, `test_refund_insufficient_attacker_balance_rejected`.
+  - **3.5b — Validator rejection wiring**: `validate_block_refunds(&block)` called in the proposal-handling path at `tendermint.rs:3328` right after `verify_da_certificate`. No-op in `observe` mode (default — current chain behaviour preserved). In `enforce` mode rejects proposals with `MissingRefund` / `UnexpectedRefund` / `MismatchedRefund` errors via `warn!` + early-return.
+  - **3.5c — Slashing groundwork**: `TendermintConsensus::mev_missing_refund_violations: HashMap<u64, u64>` counts `MissingRefund` rejections per proposer id. Operators feed `[counts]` into `evaporchain_entropic_slashing::entropic_slash(stake, counts)` to derive the slash amount. Read-only accessor `mev_missing_refund_violations()` shipped. **The actual stake deduction is deferred to Phase 3.5d follow-up** — wiring it requires touching the validator-set consensus-state machine, a focused next-session piece.
+
+  **Why partial 3.5c**: full slashing requires plumbing the violation counter into the Singh-Boltzmann stake update path and reasoning about cross-validator agreement on slash timing. That's a careful piece of consensus-state-machine work better done in its own dedicated session, not bundled here.
+
+  Phase 3 of the plan is now substantively SHIPPED for the observe-mode chain (no behavioural change) and ready for the enforce-mode flip once Phase 3.5d closes the slashing loop. Existing Phase 3.4 test `test_validate_block_refunds_observe_vs_enforce` still green; no regressions.
 - [ ] **3.6 — Tests**: 
   - 3-block sandwich → grace period elapses → next block must include `RefundTx` (validators reject if absent).
   - Stale observation (older than `refund_window`) → no `RefundTx` required.

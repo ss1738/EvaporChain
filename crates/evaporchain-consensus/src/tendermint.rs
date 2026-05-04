@@ -444,6 +444,15 @@ pub struct TendermintConsensus {
     /// once. Populated in `on_block_committed` by walking the
     /// block's `Transaction::Refund` variants.
     pub settled_refunds: std::collections::HashSet<(u64, usize)>,
+    /// Phase 3.5c of `CROOKS_MEV_INTEGRATION_PLAN.md` — counter of
+    /// `MissingRefund` proposal rejections per validator id.
+    /// Operators feed `[counts_per_validator]` into
+    /// `evaporchain_entropic_slashing::entropic_slash(stake, counts)`
+    /// to derive the slash amount at slashing time. Intentionally
+    /// does NOT touch the validator set's stake directly — the
+    /// stake-deduction wiring is a separate consensus-state-machine
+    /// change tracked as Phase 3.5d follow-up.
+    pub mev_missing_refund_violations: std::collections::HashMap<u64, u64>,
     /// Causal-CHSH cartel-detection alarm (Lane O.8.1). Rolling-buffer
     /// observability primitive — every committed block pushes a
     /// `BlockSummary` into the alarm; periodic gate runs (default
@@ -714,6 +723,7 @@ impl TendermintConsensus {
             ),
             mev_attacker_stats: std::collections::HashMap::new(),
             settled_refunds: std::collections::HashSet::new(),
+            mev_missing_refund_violations: std::collections::HashMap::new(),
             cartel_alarm: evaporchain_causal_chsh::CartelAlarm::doctrine_default(),
             pending_cartel_alarms: Vec::new(),
             lambda_fold: evaporchain_lambda_fold::FoldedInstance::identity(),
@@ -1656,6 +1666,16 @@ impl TendermintConsensus {
     /// Returns a `RefundValidationError` describing the violation
     /// otherwise. Phase 3.5 will pair `MissingRefund` with a
     /// proposer-slash.
+    /// Phase 3.5c of `CROOKS_MEV_INTEGRATION_PLAN.md` — read-only
+    /// view of the per-proposer MissingRefund violation counter.
+    /// Operators feed `[counts_per_validator]` into
+    /// `evaporchain_entropic_slashing::entropic_slash(stake, counts)`
+    /// to compute the slash amount; the actual stake deduction is
+    /// separate consensus-state-machine work (Phase 3.5d).
+    pub fn mev_missing_refund_violations(&self) -> &std::collections::HashMap<u64, u64> {
+        &self.mev_missing_refund_violations
+    }
+
     pub fn validate_block_refunds(
         &self,
         block: &Block,
@@ -1948,6 +1968,7 @@ impl TendermintConsensus {
             ),
             mev_attacker_stats: std::collections::HashMap::new(),
             settled_refunds: std::collections::HashSet::new(),
+            mev_missing_refund_violations: std::collections::HashMap::new(),
             cartel_alarm: evaporchain_causal_chsh::CartelAlarm::doctrine_default(),
             pending_cartel_alarms: Vec::new(),
             lambda_fold: evaporchain_lambda_fold::FoldedInstance::identity(),
@@ -3322,6 +3343,39 @@ impl TendermintConsensus {
                         round = round,
                         proposer = proposer_id,
                         "Rejected proposal: invalid DA certificate"
+                    );
+                    return actions;
+                }
+
+                // ── Crooks-MEV refund validation (Phase 3.5b of
+                // CROOKS_MEV_INTEGRATION_PLAN.md) ──
+                // No-op in `observe` mode (default). In `enforce`
+                // mode, rejects proposals whose RefundTx set
+                // diverges from the chain's deterministically-
+                // computed expected set. Phase 3.5c will add the
+                // proposer-slash for `MissingRefund`.
+                if let Err(refund_err) = self.validate_block_refunds(&block) {
+                    // Phase 3.5c — bump per-proposer MissingRefund
+                    // counter; operators feed this into
+                    // entropic_slash(stake, counts) at slashing time.
+                    // Mismatched/Unexpected don't bump because they
+                    // could result from a benign software-version
+                    // skew; only true omission is the slashable case.
+                    if matches!(
+                        refund_err,
+                        evaporchain_mev_detect::RefundValidationError::MissingRefund { .. }
+                    ) {
+                        *self
+                            .mev_missing_refund_violations
+                            .entry(proposer_id)
+                            .or_insert(0) += 1;
+                    }
+                    warn!(
+                        height = height,
+                        round = round,
+                        proposer = proposer_id,
+                        error = %refund_err,
+                        "Rejected proposal: Crooks-MEV refund-set mismatch"
                     );
                     return actions;
                 }
@@ -5045,6 +5099,20 @@ impl TendermintConsensus {
     /// Pass 2 only runs when pass 1 fails AND at least one signer is in
     /// its grace window, so steady-state cost is unchanged.
     pub fn verify_commit_certificate(&self, cert: &CommitCertificate) -> bool {
+        // **Audit fix HIGH-9**: dedup signer_ids before stake-summing.
+        // Legacy code summed `validator.effective_stake()` once per
+        // entry in `signer_ids` — a malicious cert that lists the same
+        // signer twice would inflate the quorum count, and (with some
+        // BLS aggregation schemes) the duplicated pubkey survives
+        // aggregate-verify when the signer signed once. Reject any
+        // certificate with duplicate signers.
+        let mut sorted_signers = cert.signer_ids.clone();
+        sorted_signers.sort_unstable();
+        if sorted_signers.windows(2).any(|w| w[0] == w[1]) {
+            warn!("Rejecting cert: duplicate signer_ids");
+            return false;
+        }
+
         let threshold = self.stake_quorum_threshold();
         let mut signer_stake: u64 = 0;
 
@@ -5053,7 +5121,7 @@ impl TendermintConsensus {
         for &vid in &cert.signer_ids {
             if let Some(validator) = self.validator_set.get(vid) {
                 // Must match `total_stake()` weight function. See audit P2-01.
-                signer_stake += validator.effective_stake();
+                signer_stake = signer_stake.saturating_add(validator.effective_stake());
                 if let Some(ref bls_pk_bytes) = validator.bls_public_key {
                     // Reject if PoP was submitted but failed verification
                     if !validator.pop_verified {
