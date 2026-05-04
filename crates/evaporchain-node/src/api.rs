@@ -1181,23 +1181,40 @@ fn require_wallet_ownership(
     }
 }
 
-/// Sign a transaction using the appropriate keypair.
+/// Admin-endpoint auth gate. Fail-CLOSED if `EVAPORCHAIN_ADMIN_KEY`
+/// is unset or empty.
+///
+/// **Audit fix C1**: the legacy implementation returned `Ok(())` when
+/// the env var was unset, leaving every admin endpoint
+/// (`/api/admin/drain`, `/api/admin/undrain`, `/metrics`,
+/// `/api/network/ban`, `/api/network/unban`, `/api/proof_replay`)
+/// completely unauthenticated. Only a stderr warning at startup
+/// covered this. Operators who started without the env var believed
+/// they were still gated. This now returns 503 Service Unavailable
+/// with a clear error message — admin endpoints are unusable until
+/// the operator sets the env var.
 fn require_admin_auth(headers: &HeaderMap) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
     let expected = match std::env::var("EVAPORCHAIN_ADMIN_KEY") {
         Ok(k) if !k.is_empty() => k,
-        _ => return Ok(()),
+        _ => {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "error": "admin endpoints disabled: EVAPORCHAIN_ADMIN_KEY not configured",
+                    "remedy": "set EVAPORCHAIN_ADMIN_KEY to a strong random value before exposing admin endpoints"
+                })),
+            ));
+        }
     };
     let provided = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .unwrap_or("");
-    // Network-4 (re-audit 2026-05-02): constant-time compare to deny
-    // an attacker the ability to brute-force the bearer token by
-    // measuring per-character mismatch latency. Length mismatch
-    // short-circuits to false (length is harmless to leak — it's
-    // bounded by the env var the operator chose). Same length goes
-    // through subtle::ConstantTimeEq.
+    // Network-4 (re-audit 2026-05-02): constant-time compare. Length
+    // mismatch short-circuits (length leak is harmless; bounded by
+    // the env var the operator chose). Same-length goes through
+    // subtle::ConstantTimeEq.
     let provided_bytes = provided.as_bytes();
     let expected_bytes = expected.as_bytes();
     let ok = provided_bytes.len() == expected_bytes.len()
@@ -4218,6 +4235,69 @@ async fn get_mev_observations(
         count: observations.len(),
         observations,
     })
+}
+
+// ─────────── Crooks-MEV dispute endpoint (Phase 4.4) ───────────────
+
+#[derive(Debug, Deserialize)]
+pub struct MevDisputeQuery {
+    pub source_block_height: u64,
+    pub source_observation_idx: usize,
+    pub current_height: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MevDisputeResp {
+    pub status: &'static str,
+    pub detail: String,
+}
+
+/// POST /api/mev/dispute — Phase 4.4 operator-dispute endpoint.
+/// Adds the (source_block_height, source_observation_idx) pair to
+/// the local validator's `disputed_observations` set so
+/// `due_refund_txs` no longer emits the corresponding RefundTx.
+/// Only effective WITHIN the grace period; past grace, the dispute
+/// is rejected with `PastGracePeriod`.
+///
+/// **Local to this validator** — cluster-wide dispute consensus is
+/// a future Phase 4.4d follow-up. Operators who need cluster-level
+/// dispute MUST coordinate via governance multisig today.
+async fn post_mev_dispute(
+    State(state): State<Arc<ApiState>>,
+    Json(q): Json<MevDisputeQuery>,
+) -> Json<MevDisputeResp> {
+    let tc_arc = match state.tendermint.as_ref() {
+        Some(tc) => tc.clone(),
+        None => {
+            return Json(MevDisputeResp {
+                status: "error",
+                detail: "no consensus engine".into(),
+            });
+        }
+    };
+    let mut tc = match tc_arc.lock() {
+        Ok(g) => g,
+        Err(_) => {
+            return Json(MevDisputeResp {
+                status: "error",
+                detail: "consensus mutex poisoned".into(),
+            });
+        }
+    };
+    match tc.dispute_observation(q.source_block_height, q.source_observation_idx, q.current_height)
+    {
+        Ok(()) => Json(MevDisputeResp {
+            status: "ok",
+            detail: format!(
+                "dispute recorded for ({}, {})",
+                q.source_block_height, q.source_observation_idx
+            ),
+        }),
+        Err(e) => Json(MevDisputeResp {
+            status: "error",
+            detail: format!("{e}"),
+        }),
+    }
 }
 
 // ─────────── Lambda-Fold Nova endpoints (Phase 5.4) ────────────────
@@ -9946,36 +10026,70 @@ const FAUCET_RATE_LIMIT_MAP_CAP: usize = 100_000;
 
 /// Resolve the originating client IP from a request.
 ///
-/// Order:
-///   1. `X-Forwarded-For`: take the **left-most** entry (RFC 7239 +
-///      common reverse-proxy convention — the original client). The
-///      header may carry a comma-separated chain when traversing
-///      multiple proxies; only the first entry is the originator.
-///   2. `axum::extract::ConnectInfo<SocketAddr>`: the direct peer
-///      address, used when there is no proxy in front.
-///   3. Fallback: `0.0.0.0`. We log a warning so an operator can spot
-///      a misconfigured proxy stack (header dropped + connect_info
-///      missing). All such requests collapse onto a single rate-limit
-///      bucket — fine for warning visibility, not relied on for
-///      security.
+/// **Audit fix C3**: legacy implementation blindly trusted the
+/// left-most `X-Forwarded-For` entry, which any unauth'd attacker can
+/// spoof to drain the faucet to arbitrary recipients (the header is
+/// trivially set on the request).
+///
+/// New behaviour, **default-deny**: ignore `X-Forwarded-For` entirely
+/// unless the operator opts in via `EVAPORCHAIN_TRUSTED_PROXY_DEPTH`.
+/// When `depth > 0`, take the **right-most `depth`-th entry** of the
+/// header (the operator's own proxy chain — the leftmost entries are
+/// attacker-controlled and ignored). When `depth = 0` (default), the
+/// header is ignored and `ConnectInfo` (the direct TCP peer) is the
+/// only trusted source.
+///
+/// Order with depth=0 (default):
+///   1. `axum::extract::ConnectInfo<SocketAddr>`: the direct peer.
+///   2. Fallback: `0.0.0.0` (logged warning).
+///
+/// Order with depth=N>0:
+///   1. `X-Forwarded-For`: take the entry that is the N-th from the
+///      right (counting from 1). If absent or malformed, REJECT —
+///      return `0.0.0.0` so the request collapses onto a single
+///      rate-limit bucket (no silent fallback to ConnectInfo).
 fn client_ip_from(
     headers: &HeaderMap,
     connect_info: Option<std::net::SocketAddr>,
 ) -> std::net::IpAddr {
-    if let Some(raw) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
-        if let Some(first) = raw.split(',').next() {
-            let trimmed = first.trim();
-            if let Ok(ip) = trimmed.parse::<std::net::IpAddr>() {
-                return ip;
+    let depth = std::env::var("EVAPORCHAIN_TRUSTED_PROXY_DEPTH")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0);
+
+    if depth > 0 {
+        // Right-most depth-th entry. The leftmost entries are
+        // attacker-supplied; the operator's proxies append on the right.
+        if let Some(raw) = headers
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+        {
+            let entries: Vec<&str> = raw.split(',').map(|s| s.trim()).collect();
+            if entries.len() >= depth {
+                let target = &entries[entries.len() - depth];
+                if let Ok(ip) = target.parse::<std::net::IpAddr>() {
+                    return ip;
+                }
             }
         }
+        // Header missing or malformed under non-zero depth → fail-safe
+        // 0.0.0.0 so the request collapses onto a single rate-limit
+        // bucket. Operators should ensure their proxy always sets the
+        // header at this depth.
+        tracing::warn!(
+            "client_ip_from: TRUSTED_PROXY_DEPTH={} but X-Forwarded-For missing/malformed",
+            depth
+        );
+        return std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED);
     }
+
+    // Default (depth=0): ignore X-Forwarded-For entirely; trust only
+    // the direct TCP peer.
     if let Some(sock) = connect_info {
         return sock.ip();
     }
     tracing::warn!(
-        "faucet: could not resolve client IP (no X-Forwarded-For, no ConnectInfo); \
-         falling back to 0.0.0.0 — verify reverse-proxy headers"
+        "faucet: could not resolve client IP (no ConnectInfo); falling back to 0.0.0.0"
     );
     std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
 }
@@ -14631,6 +14745,8 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/lambda_fold/verify", post(post_lambda_fold_verify))
         // Crooks-MEV Phase 1.4 — observe-only MEV ring buffer view.
         .route("/api/mev/observations", get(get_mev_observations))
+        // Crooks-MEV Phase 4.4 — operator dispute endpoint.
+        .route("/api/mev/dispute", post(post_mev_dispute))
         .route("/api/singh_attractor", post(post_singh_attractor))
         .route("/api/bell_beacon", post(post_bell_beacon))
         .route("/api/allen_relation", post(post_allen_relation))
@@ -15991,48 +16107,60 @@ mod faucet_rate_limit_tests {
         );
     }
 
-    /// `client_ip_from` honours `X-Forwarded-For` (left-most entry,
-    /// per RFC 7239 + standard proxy chains) ahead of the direct
-    /// peer's `ConnectInfo`. Ensures a node behind a reverse proxy
-    /// rate-limits per real client, not per shared proxy IP.
+    /// **Audit fix C3, default-deny path**: with no
+    /// `EVAPORCHAIN_TRUSTED_PROXY_DEPTH` env var set,
+    /// `X-Forwarded-For` is **ignored entirely** to defeat header
+    /// spoofing. The direct TCP peer is the only trusted source.
     #[test]
-    fn client_ip_prefers_x_forwarded_for_over_connect_info() {
+    fn client_ip_ignores_x_forwarded_for_by_default() {
+        // Make sure no test elsewhere has set the env var.
+        std::env::remove_var("EVAPORCHAIN_TRUSTED_PROXY_DEPTH");
         let mut h = HeaderMap::new();
         h.insert("x-forwarded-for", "203.0.113.5, 198.51.100.7".parse().unwrap());
         let direct = SocketAddr::new(ip(10, 0, 0, 1), 12345);
         let resolved = client_ip_from(&h, Some(direct));
-        assert_eq!(resolved, ip(203, 0, 113, 5));
+        // With depth=0, the spoofable header is ignored — the direct
+        // peer wins.
+        assert_eq!(resolved, ip(10, 0, 0, 1));
     }
 
-    /// No `X-Forwarded-For` → fall through to `ConnectInfo`. This is
-    /// the localhost / direct-connection path.
+    /// No `X-Forwarded-For` → fall through to `ConnectInfo`.
     #[test]
     fn client_ip_falls_back_to_connect_info() {
+        std::env::remove_var("EVAPORCHAIN_TRUSTED_PROXY_DEPTH");
         let h = HeaderMap::new();
         let direct = SocketAddr::new(ip(10, 0, 0, 9), 4444);
         let resolved = client_ip_from(&h, Some(direct));
         assert_eq!(resolved, ip(10, 0, 0, 9));
     }
 
-    /// Header missing AND no ConnectInfo (e.g. a misconfigured layer
-    /// that strips both) → `0.0.0.0`. Verifies the fallback constant
-    /// rather than a panic.
+    /// Header missing AND no ConnectInfo → `0.0.0.0`. Verifies the
+    /// fallback constant rather than a panic.
     #[test]
     fn client_ip_unresolved_falls_back_to_unspecified() {
+        std::env::remove_var("EVAPORCHAIN_TRUSTED_PROXY_DEPTH");
         let h = HeaderMap::new();
         let resolved = client_ip_from(&h, None);
         assert_eq!(resolved, IpAddr::V4(Ipv4Addr::UNSPECIFIED));
     }
 
-    /// A garbage `X-Forwarded-For` value falls through to ConnectInfo
-    /// rather than poisoning the rate-limit map with an `UNSPECIFIED`
-    /// catch-all key.
+    /// Operator opt-in: with `TRUSTED_PROXY_DEPTH=1`, the rightmost
+    /// entry (the closest proxy hop, set by the operator's reverse
+    /// proxy) is used. Leftmost (attacker-controlled) entries are
+    /// ignored.
     #[test]
-    fn client_ip_invalid_xff_falls_through_to_connect_info() {
+    fn client_ip_with_depth_one_uses_rightmost_entry() {
+        std::env::set_var("EVAPORCHAIN_TRUSTED_PROXY_DEPTH", "1");
         let mut h = HeaderMap::new();
-        h.insert("x-forwarded-for", "not-an-ip".parse().unwrap());
-        let direct = SocketAddr::new(ip(10, 0, 0, 11), 7777);
+        // Attacker prefixes "9.9.9.9, " in front; the operator's proxy
+        // appends "203.0.113.5". Rightmost = trusted client.
+        h.insert(
+            "x-forwarded-for",
+            "9.9.9.9, 203.0.113.5".parse().unwrap(),
+        );
+        let direct = SocketAddr::new(ip(10, 0, 0, 1), 12345);
         let resolved = client_ip_from(&h, Some(direct));
-        assert_eq!(resolved, ip(10, 0, 0, 11));
+        assert_eq!(resolved, ip(203, 0, 113, 5));
+        std::env::remove_var("EVAPORCHAIN_TRUSTED_PROXY_DEPTH");
     }
 }

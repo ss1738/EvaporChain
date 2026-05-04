@@ -307,6 +307,26 @@ impl std::fmt::Display for GovernanceParamError {
 
 impl std::error::Error for GovernanceParamError {}
 
+/// Phase 4.4 of `CROOKS_MEV_INTEGRATION_PLAN.md` — error returned
+/// by `TendermintConsensus::dispute_observation` when an operator
+/// tries to dispute a refund that doesn't exist or has aged past
+/// the grace period.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum MevDisputeError {
+    #[error("no MevObservation found for (src_h={src_h}, src_idx={src_idx})")]
+    NotFound { src_h: u64, src_idx: usize },
+    #[error(
+        "observation (src_h={src_h}, src_idx={src_idx}) is past grace \
+         period: age={age}, grace={grace}"
+    )]
+    PastGracePeriod {
+        src_h: u64,
+        src_idx: usize,
+        age: u64,
+        grace: u64,
+    },
+}
+
 /// Error returned by `TendermintConsensus::governance_set_fork_choice_mode`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GovernanceAmendmentError {
@@ -453,6 +473,15 @@ pub struct TendermintConsensus {
     /// stake-deduction wiring is a separate consensus-state-machine
     /// change tracked as Phase 3.5d follow-up.
     pub mev_missing_refund_violations: std::collections::HashMap<u64, u64>,
+    /// Phase 4.4 of `CROOKS_MEV_INTEGRATION_PLAN.md` — set of
+    /// `(source_block_height, source_observation_idx)` pairs that
+    /// the chain operator has DISPUTED via `/api/mev/dispute`.
+    /// `due_refund_txs` skips disputed pairs so an operator can
+    /// cancel a pending refund within the grace period (e.g.,
+    /// false-positive detection). Disputes are local to the validator
+    /// receiving the RPC; consensus-wide dispute consensus is a
+    /// future Phase 4.4d follow-up (this is the scaffolding).
+    pub disputed_observations: std::collections::HashSet<(u64, usize)>,
     /// Causal-CHSH cartel-detection alarm (Lane O.8.1). Rolling-buffer
     /// observability primitive — every committed block pushes a
     /// `BlockSummary` into the alarm; periodic gate runs (default
@@ -724,6 +753,7 @@ impl TendermintConsensus {
             mev_attacker_stats: std::collections::HashMap::new(),
             settled_refunds: std::collections::HashSet::new(),
             mev_missing_refund_violations: std::collections::HashMap::new(),
+            disputed_observations: std::collections::HashSet::new(),
             cartel_alarm: evaporchain_causal_chsh::CartelAlarm::doctrine_default(),
             pending_cartel_alarms: Vec::new(),
             lambda_fold: evaporchain_lambda_fold::FoldedInstance::identity(),
@@ -871,6 +901,27 @@ impl TendermintConsensus {
                         key: key.to_string(),
                         value: value.to_string(),
                         permitted: vec!["any u64 ≥ 1".to_string()],
+                    });
+                }
+                self.governance_params
+                    .insert(key.to_string(), value.to_string());
+                return Ok(());
+            }
+            // Phase 4.1 of CROOKS_MEV_INTEGRATION_PLAN.md —
+            // confidence threshold in milli-units (0..=1000).
+            "crooks_mev_confidence_threshold_milli" => {
+                let v = value.parse::<u64>().map_err(|_| {
+                    GovernanceParamError::InvalidValue {
+                        key: key.to_string(),
+                        value: value.to_string(),
+                        permitted: vec!["any u64 in 0..=1000".to_string()],
+                    }
+                })?;
+                if v > 1000 {
+                    return Err(GovernanceParamError::InvalidValue {
+                        key: key.to_string(),
+                        value: value.to_string(),
+                        permitted: vec!["any u64 in 0..=1000".to_string()],
                     });
                 }
                 self.governance_params
@@ -1647,13 +1698,80 @@ impl TendermintConsensus {
             .get("crooks_mev_refund_window_blocks")
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(evaporchain_mev_detect::CROOKS_MEV_DEFAULT_REFUND_WINDOW_BLOCKS);
+        // Phase 4.1 — confidence threshold is governance-set.
+        let conf_threshold = self
+            .governance_params
+            .get("crooks_mev_confidence_threshold_milli")
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(evaporchain_mev_detect::CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_MILLI);
         evaporchain_mev_detect::due_refund_txs(
             &self.mev_observations,
             &self.settled_refunds,
+            &self.disputed_observations,
             current_height,
             grace,
             window,
+            conf_threshold,
         )
+    }
+
+    /// Phase 4.4 of `CROOKS_MEV_INTEGRATION_PLAN.md` — operator
+    /// dispute. Cancels a pending refund by adding its
+    /// `(source_block_height, source_observation_idx)` pair to
+    /// `disputed_observations` so `due_refund_txs` no longer emits
+    /// it. Only effective WITHIN the grace period; past grace, the
+    /// refund will already be in the proposer's set (and possibly
+    /// already settled).
+    ///
+    /// Returns `Err` if the observation isn't in the buffer (nothing
+    /// to dispute) or is already past the grace window (too late).
+    /// Disputes are local to this validator; cluster-wide dispute
+    /// agreement is a Phase 4.4d follow-up.
+    pub fn dispute_observation(
+        &mut self,
+        source_block_height: u64,
+        source_observation_idx: usize,
+        current_height: u64,
+    ) -> Result<(), MevDisputeError> {
+        // Find the observation.
+        let obs = self
+            .mev_observations
+            .iter()
+            .find(|o| {
+                o.block_height == source_block_height
+                    && o.attacker_pre_idx == source_observation_idx
+            })
+            .ok_or(MevDisputeError::NotFound {
+                src_h: source_block_height,
+                src_idx: source_observation_idx,
+            })?;
+
+        // Read grace from governance.
+        let grace = self
+            .governance_params
+            .get("crooks_mev_grace_period_blocks")
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(evaporchain_mev_detect::CROOKS_MEV_DEFAULT_GRACE_PERIOD_BLOCKS);
+
+        // Past grace ⇒ too late.
+        let age = current_height.saturating_sub(obs.block_height);
+        if age > grace {
+            return Err(MevDisputeError::PastGracePeriod {
+                src_h: source_block_height,
+                src_idx: source_observation_idx,
+                age,
+                grace,
+            });
+        }
+
+        self.disputed_observations
+            .insert((source_block_height, source_observation_idx));
+        Ok(())
+    }
+
+    /// Phase 4.4 — read-only view of disputed observations.
+    pub fn disputed_observations(&self) -> &std::collections::HashSet<(u64, usize)> {
+        &self.disputed_observations
     }
 
     /// Phase 3.4 of `CROOKS_MEV_INTEGRATION_PLAN.md` — verify the
@@ -1969,6 +2087,7 @@ impl TendermintConsensus {
             mev_attacker_stats: std::collections::HashMap::new(),
             settled_refunds: std::collections::HashSet::new(),
             mev_missing_refund_violations: std::collections::HashMap::new(),
+            disputed_observations: std::collections::HashSet::new(),
             cartel_alarm: evaporchain_causal_chsh::CartelAlarm::doctrine_default(),
             pending_cartel_alarms: Vec::new(),
             lambda_fold: evaporchain_lambda_fold::FoldedInstance::identity(),
@@ -6743,6 +6862,90 @@ mod tests {
 
     /// Phase 1.5 of `CROOKS_MEV_INTEGRATION_PLAN.md` — drive a
     /// synthetic sandwich block through `on_block_committed` and
+    /// Phase 4.4 of `CROOKS_MEV_INTEGRATION_PLAN.md` — operator
+    /// dispute flow: drive a sandwich, dispute the observation
+    /// within grace, confirm `due_refund_txs` no longer emits the
+    /// refund. Then test the past-grace rejection + NotFound.
+    #[test]
+    fn test_mev_dispute_flow() {
+        use evaporchain_types::{Block, TransferTx};
+
+        fn addr_local(seed: u8) -> [u8; 32] {
+            let mut a = [0u8; 32];
+            a[0] = seed;
+            a
+        }
+        fn transfer_local(from: u8, to: u8, amount: u64, nonce: u64) -> Transaction {
+            Transaction::Transfer(TransferTx {
+                from: addr_local(from),
+                to: addr_local(to),
+                amount,
+                nonce,
+                signature: None,
+                public_key: None,
+            })
+        }
+        fn make_block_local(num: u64, txs: Vec<Transaction>) -> Block {
+            Block {
+                number: num,
+                epoch: num,
+                parent_hash: [0u8; 32],
+                state_root: [0u8; 32],
+                transactions: txs,
+                producer_id: Some(0),
+                timestamp: 0,
+                chain_id: String::new(),
+                commit_certificate: None,
+                nova_proof: None,
+                anchor_hash: None,
+                vrf_output: None,
+                vrf_proof: None,
+                data_root: None,
+                da_row_roots: vec![],
+                da_col_roots: vec![],
+                blob_commitments: vec![],
+                da_certificate: None,
+                state_function_commitment: None,
+                oracle_state_root: None,
+                shard_count: None,
+                protocol_version: 0,
+                state_root_version: 0,
+                submit_epoch_hints: vec![],
+            }
+        }
+
+        let sandwich_block = make_block_local(
+            1,
+            vec![
+                transfer_local(0xAA, 0x99, 100, 0),
+                transfer_local(0xBB, 0x99, 200, 0),
+                transfer_local(0xAA, 0x99, 150, 1),
+            ],
+        );
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.on_block_committed(&sandwich_block, [0u8; 32], 0);
+
+        // Within grace (default 5 blocks): dispute succeeds.
+        tc.dispute_observation(1, 0, 3).expect("dispute within grace");
+        assert!(tc.disputed_observations().contains(&(1, 0)));
+
+        // due_refund_txs past-grace skips disputed.
+        let due = tc.due_refund_txs(10);
+        assert!(due.is_empty(), "disputed observation must not settle");
+
+        // NotFound for a non-existent observation.
+        let err = tc.dispute_observation(999, 0, 3).unwrap_err();
+        assert!(matches!(err, MevDisputeError::NotFound { .. }));
+
+        // Past grace ⇒ PastGracePeriod (use a fresh consensus
+        // instance to avoid the prior dispute side-effect).
+        let mut tc2 = make_consensus(1, &[1, 2, 3, 4]);
+        tc2.on_block_committed(&sandwich_block, [0u8; 32], 0);
+        let err = tc2.dispute_observation(1, 0, 100).unwrap_err();
+        assert!(matches!(err, MevDisputeError::PastGracePeriod { .. }));
+    }
+
     /// Phase 3.4 of `CROOKS_MEV_INTEGRATION_PLAN.md` —
     /// `validate_block_refunds` defaults to Ok in observe-mode;
     /// in enforce-mode rejects blocks whose Refund-tx set diverges
