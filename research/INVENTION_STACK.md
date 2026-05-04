@@ -94,7 +94,7 @@ All Tier 1 primitives share the single λ. All ship in the May–Oct 2026 sprint
 | 5 | **Singh-Boltzmann Stake** | Validator stake decays by default; refresh by producing blocks. Kills the stake-and-lease-key-to-MEV pattern. | Mechanism design |
 | 6 | **Native Demurrage → Refresh Pool** | Piecewise rate `r(balance) = max(0, λ_base · log(balance/threshold))`. Sink = protocol-controlled refresh pool. Closes the philosophy loop. | Mechanism design |
 | 7 | **Refresh Market** | AMM-priced rent per state object. Continuous keep-alive flow becomes the chain's primary economic activity. | Mechanism design |
-| 8 | **Lambda-Fold (Energy-Folded Light Client)** | First sublinear-in-active-energy verifier. Nova extension where each fold step folds the energy state. Decade-defining if the math holds. | Light clients |
+| 8 | **Lambda-Fold (Energy-Folded Light Client)** | First sublinear-in-active-energy verifier. Nova extension where each fold step folds the energy state. **SHIPPED 2026-05-04** (Phases 1–6 of `LAMBDA_FOLD_NOVA_PLAN.md`): real Nova IVC at arity 8 with Poseidon-bound state root + 5-equation chain-aggregate energy-fold gadget; preprocessed `vk_bytes` distributed to light clients; `verify_with_vk_bytes` decides validity in **23 ms at 100 folds (1.083× of 10 folds)** on Mac Mini M4 under release. Soundness locked by `test_real_block_state_root_collision_resistance` (192-bit binding) and `test_real_block_energy_fold_rejects_over_reported_decay` (decay over-reporting). | Light clients |
 | 9 | **Evaporative Filtration Homology (EFH)** | Persistent homology with energy as the filtration parameter. Stability theorem (Cohen-Steiner-Edelsbrunner-Harer 2007) gives free tamper-evidence. | Topology |
 | 10 | **Evaporated-Fork Certificates** | Negative-finality ZK proof: a fork *cannot* finalize because its energy decayed below threshold. Light clients verify in O(1). | Locked from twin |
 | 11 | **Provable Retention Proofs** | Positive-finality dual of #10. Provable retention as a first-class operation. Regulator-survival primitive. | Locked from twin |
@@ -176,7 +176,7 @@ Different from the original Light-Cone-first plan because the agents revealed wh
 | 4–7 | **Singh-Lyapunov Fee Controller** — Lyapunov stability theorem + impl | Whitepaper centerpiece; must complete before launch |
 | 6–10 | **Singh-Boltzmann Stake** + **Refresh Market** | Same kernel; defines validator economics + economic engine |
 | 8–14 | **Light-Cone Consensus** + **Evap-Antichain Mempool** | Paired structurally — mempool *is* the partial order |
-| 12–18 | **Lambda-Fold** light client | Decade-defining moonshot; needs the rest as substrate |
+| 12–18 | **Lambda-Fold** light client | **SHIPPED 2026-05-04** — real Nova IVC, arity 8, sublinear verifier (23 ms @ 100 folds on M4) |
 | 16–22 | **Linear-Affine-Decay VM** | Wraps the whole stack as a developer interface |
 | 20–24 | **EFH**, **Provable Retention Proofs**, **Evaporated-Fork Certificates**, **Decay-Lamport Time** | Light-client + regulator + finality + time stories |
 

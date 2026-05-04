@@ -282,5 +282,68 @@ mod tests {
             let s = compute_chsh_s_classical(&pairs).unwrap();
             prop_assert!(s <= 2.0 + 1e-9, "Bell bound violated by LHV source: {}", s);
         }
+
+        /// Lane O.10 cross-validation: the per-pair LHV API
+        /// (`compute_chsh_s_classical`) and the four-sample API
+        /// (`compute_chsh_s`) must agree on classical inputs.
+        ///
+        /// Given LHV pairs `[(a_i, a'_i, b_i, b'_i)]`, expand to four
+        /// samples by computing the four products PER PAIR:
+        ///   samples_ab[i]      = a_i · b_i
+        ///   samples_ab_prime[i] = a_i · b'_i
+        ///   samples_a_prime_b[i] = a'_i · b_i
+        ///   samples_a_prime_b_prime[i] = a'_i · b'_i
+        /// Then `compute_chsh_s(expanded) == compute_chsh_s_classical(pairs)`
+        /// because the per-bucket means are identical (each bucket
+        /// averages N samples, where N is the original pair count).
+        ///
+        /// This is the algebraic bridge between the two APIs: the
+        /// classical helper is a special case of the four-sample
+        /// helper where the four samples are PERFECTLY CORRELATED via
+        /// a shared underlying LHV — which is exactly what Bell's
+        /// theorem says forces `S ≤ 2`.
+        #[test]
+        fn classical_helper_matches_four_sample_helper_on_lhv_input(
+            pairs in proptest::collection::vec(
+                (any::<bool>(), any::<bool>(), any::<bool>(), any::<bool>()),
+                1..32,
+            ),
+        ) {
+            let pairs: Vec<ConcurrentPair> = pairs
+                .into_iter()
+                .map(|(a, ap, b, bp)| ConcurrentPair {
+                    a: if a { 1 } else { -1 },
+                    a_prime: if ap { 1 } else { -1 },
+                    b: if b { 1 } else { -1 },
+                    b_prime: if bp { 1 } else { -1 },
+                })
+                .collect();
+
+            // Reference: classical helper.
+            let s_ref = compute_chsh_s_classical(&pairs).unwrap();
+
+            // Cross-validate: expand to four samples + run four-sample
+            // helper. Result MUST equal the classical reference.
+            let expanded = ConcurrentPairSamples {
+                samples_ab: pairs.iter().map(|p| p.a * p.b).collect(),
+                samples_ab_prime: pairs.iter().map(|p| p.a * p.b_prime).collect(),
+                samples_a_prime_b: pairs.iter().map(|p| p.a_prime * p.b).collect(),
+                samples_a_prime_b_prime: pairs.iter().map(|p| p.a_prime * p.b_prime).collect(),
+            };
+            let s_xval = compute_chsh_s(&expanded).unwrap();
+
+            // Bit-equality not possible across two sums-then-divide
+            // paths (FP rounding); 1e-12 tolerance is generous.
+            prop_assert!(
+                (s_ref - s_xval).abs() < 1e-12,
+                "classical and four-sample helpers must agree: ref={} xval={}",
+                s_ref,
+                s_xval
+            );
+
+            // Bonus: as a corollary, the four-sample helper on
+            // expanded LHV input also satisfies Bell's bound.
+            prop_assert!(s_xval <= 2.0 + 1e-9, "expanded LHV must satisfy Bell: {}", s_xval);
+        }
     }
 }

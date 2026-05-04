@@ -745,25 +745,28 @@ Any verifier can check this proof without re-executing any transactions.
 EvaporChain ships **two step-circuit variants** in `crates/evaporchain-proving/src/nova.rs`:
 
 - `BlockStepCircuit` — arity 2 `[state_hash, epoch]`. Minimal binding circuit, retained for testing and as a fallback.
-- `RealBlockCircuit` — arity 6 `[state_hash, mmr_root_hash, epoch, block_number, note_tree_root, pool_balance]`. Production circuit used by the `--prove` runtime path.
+- `RealBlockCircuit` — arity 8 `[state_root_poseidon, mmr_root_hash, epoch, block_number, note_tree_root, pool_balance, total_energy_remaining, step_count]`. Production circuit used by the `--prove` runtime path. Arity bumped from 6 to 8 in Phase 2 of the Lambda-Fold Nova plan to carry the chain-aggregate `total_energy_remaining` (z[6]) and `step_count` (z[7]) inside the IVC state vector.
 
-The arity-6 circuit binds the full state-root via 4-limb recomposition (4-byte truncation has been replaced with 8-byte `hash_to_limbs[0]` to match `state_root_to_u64`; see `evaporchain_nova_state_root_truncation_fix.md`). It additionally enforces shielded-pool balance conservation `pool_new = pool_old + shields − unshields` and note-tree-root transitions.
+The state-root binding is now via Poseidon-128 hash over the 4 u64 limbs of the 32-byte verkle root: `z[0] = Poseidon(limb[0], limb[1], limb[2], limb[3])`. This replaces the prior 8-byte truncation (`state_root_to_u64`) which left 192 bits of the state root unbound. Genesis `z0[0]` is computed natively via `nova-snark`'s vanilla `Sponge<Scalar, U24>` to match what the in-circuit `SpongeCircuit` writes to `z_new[0]` at every fold step. The circuit additionally enforces shielded-pool balance conservation `pool_new = pool_old + shields − unshields`, note-tree-root transitions, and a 5-equation chain-aggregate energy-fold gadget.
 
 **Per-step constraints (real circuit):**
 
 1. Epoch monotonicity: `epoch_new = epoch_old + 1`.
 2. Block-number monotonicity: `block_number_new = block_number_old + 1`.
-3. State-hash binding: 8-byte limb agreement between witness `new_state_hash` and the recomposed `[state_hash]` element of `z`.
+3. State-hash binding: Poseidon hash of all 4 u64 limbs of the 32-byte verkle root, bound into `z[0]` (~250 constraints).
 4. MMR-root binding: 4-limb decomposition of the 32-byte MMR root.
 5. Energy decay (per object): integer thermodynamic model `E(t) = E₀ ≫ (Δepoch / τ)` with saturation, in-circuit.
-6. Transfer balance conservation: `Σ debits = Σ credits` per block.
-7. Shielded-pool balance conservation: `pool_new = pool_old + shields − unshields`.
-8. Note-tree-root transition: bound to witness deltas.
-9. Evaporation nullifier integrity: every nullifier in the block is bound.
+6. **Chain-aggregate energy fold (Phase 2.3):** 5-equation gadget folding `total_energy_remaining` from one step to the next via the same integer-division + linear-interpolated fractional correction used per-object, with `range_check_bits(128)` on the `u128` total (~130 constraints) and `range_check_bits(64)` on `step_energy` and `step_count` (~64+64 constraints).
+7. Transfer balance conservation: `Σ debits = Σ credits` per block.
+8. Shielded-pool balance conservation: `pool_new = pool_old + shields − unshields`.
+9. Note-tree-root transition: bound to witness deltas.
+10. Evaporation nullifier integrity: every nullifier in the block is bound.
 
-**Witness per block (real circuit):** `RealBlockWitness` (see `nova.rs`) carries the 32-byte state root, MMR root, epoch and block number, the transfer / energy / evaporation deltas, and the shield / unshield aggregates.
+**Witness per block (real circuit):** `RealBlockWitness` (see `nova.rs`) carries the 32-byte state root (as 4 u64 limbs), MMR root, epoch and block number, the transfer / energy / evaporation deltas, the shield / unshield aggregates, and the energy-fold witness fields (`prev_total_energy: u128`, `step_energy: u64`, `epochs_elapsed_at_step: u64`, plus 8 intermediate fields for the constraint-(a) through constraint-(e) gadget).
 
-**Constraint count (verified 2026-05-02):** 24,595 R1CS constraints split as 14,041 in the step circuit + 10,554 in the fold/recursion circuit. See `docs/CRYPTO_SPEC.md` §4.1 for the per-section breakdown.
+**Constraint count (verified 2026-05-04):** 25,129 R1CS constraints split as 14,575 in the step circuit + 10,554 in the fold/recursion circuit. The step-circuit growth from 14,041 → 14,575 (+534 constraints) accounts for the Poseidon state-root binding (+250), `range_check_bits(128)` on total energy (+130), step-count and step-energy bit decompositions (+64+64), and 5 `cs.enforce` calls for the energy-fold gadget. See `docs/CRYPTO_SPEC.md` §4.1 for the per-section breakdown and `LAMBDA_FOLD_NOVA_PLAN.md` Phase 2.6 for the detailed accounting.
+
+**Sublinearity (verified 2026-05-04):** the `vk` from `CompressedSNARK::setup` is cached on the prover (Phase 3.2 contract). On a Mac Mini M4 under release, `verify_proof` wall-clock is **21.5 ms at 10 folds, 22.9 ms at 50 folds, 23.3 ms at 100 folds** — verify(100)/verify(10) = 1.083, essentially flat. The chain ships the first sublinear-in-active-energy verifier as defined in `INVENTION_STACK.md §4.1` row 8.
 
 ### 11.3 Curve Parameters
 

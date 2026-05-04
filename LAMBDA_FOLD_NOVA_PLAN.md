@@ -194,17 +194,17 @@ Seven phases. Phases 1-2 are reversible design + prototype; phases 3-6 are the r
 
 **Goal:** truthful documentation of what's shipped.
 
-- [ ] **7.1 — Whitepaper §11.2**: update the constraint count (was 24,595, now ~25,400) and the IVC arity (was 6, now 7). Note the new energy-fold constraint and the state-root limb fix.
+- [x] **7.1 — Whitepaper §11.2**: arity bumped from 6 to 8 in the production circuit description; constraint count updated to 25,129 (14,575 step + 10,554 fold). New section enumerates the Phase 2.3 chain-aggregate energy-fold gadget as constraint #6 and the Phase 2.5 Poseidon state-root binding as constraint #3. Sublinearity numbers (23 ms @ 100 folds, 1.083× of 10 folds) added.
 
-- [ ] **7.2 — `INVENTION_STACK.md §4.1 row 8`**: rewrite the "decade-defining if the math holds" framing into "shipped — first sublinear-in-active-energy verifier, validated against benchmark X / collision-resistance test Y." The hedge can come down once Phase 6 is green.
+- [x] **7.2 — `INVENTION_STACK.md §4.1 row 8`**: "Decade-defining if the math holds" → "**SHIPPED 2026-05-04** (Phases 1–6 of `LAMBDA_FOLD_NOVA_PLAN.md`)" with sublinearity numbers, collision-resistance test names, and energy-fold soundness test names inline. §A3.1 row also updated.
 
-- [ ] **7.3 — `evaporchain-lambda-fold/src/lib.rs` rewrite**: replace the "substrate quality" caveat at lib.rs:38-41 with the production claim. Mirror the MERA crate's "what's shipped vs research artefact" pattern from commit `2053a86`.
+- [x] **7.3 — `evaporchain-lambda-fold/src/lib.rs` rewrite**: substrate-quality caveat replaced with a dual-mode description: substrate path (default, blake3 hash chain) and Nova path (`feature = "nova"`, real IVC + sublinear `vk_bytes` verifier). Calls out Phase 5.3's "substrate ALWAYS runs, Nova is additive" call-site contract.
 
-- [ ] **7.4 — `DOCTRINE_PUNCH_LIST.md`**: mark Layer 5 ✅ DONE.
+- [x] **7.4 — `DOCTRINE_PUNCH_LIST.md`**: Layer 5 row flipped from ⏳ Genuinely open to ✅ DONE 2026-05-04 with full evidence (sublinearity numbers, soundness test names, e2e test name, governance flag, HTTP endpoints).
 
-- [ ] **7.5 — Optional: arXiv preprint** of the energy-fold gadget. The chain ships first; the paper is the academic-press lane (per doctrine §A3.3).
+- [ ] **7.5 — Optional: arXiv preprint** of the energy-fold gadget. The chain ships first; the paper is the academic-press lane (per doctrine §A3.3). Deferred — out of scope for this sprint.
 
-**Phase 7 deliverable:** docs match reality. The chain's "first sublinear-in-active-energy verifier" claim is honest and reproducible.
+**Phase 7 deliverable: SHIPPED (4/5).** Docs match reality. The chain's "first sublinear-in-active-energy verifier" claim is honest, reproducible, and locked into INVENTION_STACK + whitepaper + DOCTRINE_PUNCH_LIST + crate-level docs.
 
 ---
 

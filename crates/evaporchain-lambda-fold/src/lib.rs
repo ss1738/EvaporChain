@@ -23,22 +23,44 @@
 //!
 //! ## What this crate ships
 //!
+//! Two parallel paths, chosen at chain startup via the
+//! `lambda_fold_mode` governance flag (Phase 5.2 of
+//! `LAMBDA_FOLD_NOVA_PLAN.md`):
+//!
+//! **Substrate path** (default, always available):
 //! - [`witness`] — `StepWitness { state_hash, step_energy,
 //!   epochs_elapsed }` — the per-step input the prover commits to.
 //! - [`folded`] — `FoldedInstance { acc_hash, total_energy_remaining,
 //!   step_count, latest_epoch }`.
-//! - [`fold`] — `fold(prev, step, λ)` accumulates a step into the
-//!   folded instance.
+//! - [`fold`] — `fold(prev, step, λ)` accumulates a step via a
+//!   domain-separated blake3 hash chain. Cheap, deterministic, and
+//!   serves as the fall-back authoritative accumulator.
 //! - [`verify`] — `verify_folded(instance, expected_acc_hash,
-//!   expected_remaining_energy)` — substrate verifier (hash + energy
-//!   bound; real Nova R1CS check plugs in later).
+//!   expected_remaining_energy)` — hash + energy bound check.
 //!
-//! The `acc_hash` field uses a domain-separated blake3 chain rather
-//! than the real Nova folding arithmetic over a curve — substrate
-//! quality, sufficient for downstream consumers to type-check
-//! against the API. The cryptographic strengthening to actual
-//! Nova/HyperNova folding is a separate commit (gated on the
-//! arkworks integration in `evaporchain-proving`).
+//! **Nova path** (`feature = "nova"`, shipped 2026-05-04):
+//! - [`nova_path::NovaFolder`] wraps `evaporchain-proving`'s
+//!   `RealBlockProver` (Nova IVC at arity 8 with Poseidon-bound
+//!   state root and a 5-equation chain-aggregate energy-fold
+//!   gadget). One folder per chain — the heavy `pp` setup runs
+//!   once.
+//! - [`nova_path::NovaFoldedInstance`] carries a
+//!   bincode-serialized `CompressedSNARK` proof (replaces blake3
+//!   `acc_hash`) plus the same `total_energy_remaining`,
+//!   `step_count`, `latest_epoch` fields as the substrate
+//!   `FoldedInstance` for hot-path reads without verification.
+//! - [`nova_path::verify_nova_folded`] runs the light-client
+//!   verifier against preprocessed `vk_bytes` only — no `pp`,
+//!   no prover state — and decides validity in **~23 ms at 100
+//!   folds** on M4 (verify(100)/verify(10) = 1.083, essentially
+//!   flat per `LAMBDA_FOLD_NOVA_PLAN.md` Phase 6.1).
+//!
+//! The Nova path is the production cryptographic strengthening of
+//! the substrate path. The substrate path is retained because it's
+//! fast to build (no nova-snark / halo2curves transitive deps when
+//! the `nova` feature is off) and because Phase 5.3's call-site
+//! contract runs the substrate fold ALWAYS — the Nova path is
+//! additive, not replacing.
 
 pub mod fold;
 pub mod folded;
