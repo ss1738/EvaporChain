@@ -1387,8 +1387,10 @@ impl TendermintConsensus {
                     .get(&v.id)
                     .map(|s| s.active)
                     .unwrap_or(v.stake);
-                // activity_score = blocks produced (health_score * 16 as proxy)
-                let activity = (v.health_score * 16.0).round() as u64;
+                // activity_score = blocks produced (health_score * 16 as proxy).
+                // Pure-integer ppm: health_score_ppm * 16 / 1_000_000.
+                let activity = (v.health_score_ppm as u64).saturating_mul(16)
+                    / crate::validator_set::VS_PPM_DENOMINATOR;
                 let w = proposer_weight(b_stake, activity, beta_mb);
                 (v.id, w)
             })
@@ -1415,15 +1417,15 @@ impl TendermintConsensus {
         let w = window.max(2);
         let observed = match Distribution::from_counts(&[0, w]) {
             Ok(d) => d,
-            Err(_) => return (stake as f64 * 0.10).round() as u64, // fallback
+            Err(_) => return ((stake as u128 * 100_000) / 1_000_000) as u64, // fallback
         };
         let honest = match Distribution::from_counts(&[w - 1, 1]) {
             Ok(d) => d,
-            Err(_) => return (stake as f64 * 0.10).round() as u64,
+            Err(_) => return ((stake as u128 * 100_000) / 1_000_000) as u64,
         };
         let slash_amount = match sanov_slash(stake, &observed, &honest) {
             Ok(s) => s,
-            Err(_) => (stake as f64 * 0.10).round() as u64,
+            Err(_) => ((stake as u128 * 100_000) / 1_000_000) as u64,
         };
         // Entropic Slashing advisory (§Tier2): Shannon-weighted slash for comparison.
         // Sanov is authoritative; entropic is logged so governance can tune.
@@ -1529,6 +1531,20 @@ impl TendermintConsensus {
         &self,
     ) -> &std::collections::VecDeque<evaporchain_mev_detect::MevObservation> {
         &self.mev_observations
+    }
+
+    /// Phase 3.2 of `CROOKS_MEV_INTEGRATION_PLAN.md` — deterministic
+    /// digest of the (observations, attacker_stats) pair. Two
+    /// validators driven through identical block sequences MUST
+    /// produce identical digests; divergent histories MUST diverge.
+    /// Phase 3.3 will commit this digest to the block header (or
+    /// state root) so consensus enforces convergence; for now it's
+    /// an in-memory contract validators can cross-check via RPC.
+    pub fn mev_state_digest(&self) -> [u8; 32] {
+        evaporchain_mev_detect::mev_state_digest(
+            &self.mev_observations,
+            &self.mev_attacker_stats,
+        )
     }
 
     /// Phase 5.3 of LAMBDA_FOLD_NOVA_PLAN — nova-mode fold helper.
@@ -6512,6 +6528,119 @@ mod tests {
 
     /// Phase 1.5 of `CROOKS_MEV_INTEGRATION_PLAN.md` — drive a
     /// synthetic sandwich block through `on_block_committed` and
+    /// Phase 3.2 of `CROOKS_MEV_INTEGRATION_PLAN.md` — two
+    /// independently-constructed validators driven through identical
+    /// block sequences must produce identical `mev_state_digest()`;
+    /// divergent histories must NOT converge.
+    #[test]
+    fn test_mev_state_digest_converges_across_validators() {
+        use evaporchain_types::{Block, TransferTx};
+
+        fn addr_local(seed: u8) -> [u8; 32] {
+            let mut a = [0u8; 32];
+            a[0] = seed;
+            a
+        }
+        fn transfer_local(from: u8, to: u8, amount: u64, nonce: u64) -> Transaction {
+            Transaction::Transfer(TransferTx {
+                from: addr_local(from),
+                to: addr_local(to),
+                amount,
+                nonce,
+                signature: None,
+                public_key: None,
+            })
+        }
+        fn make_block_local(num: u64, txs: Vec<Transaction>) -> Block {
+            Block {
+                number: num,
+                epoch: num,
+                parent_hash: [0u8; 32],
+                state_root: [0u8; 32],
+                transactions: txs,
+                producer_id: Some(0),
+                timestamp: 0,
+                chain_id: String::new(),
+                commit_certificate: None,
+                nova_proof: None,
+                anchor_hash: None,
+                vrf_output: None,
+                vrf_proof: None,
+                data_root: None,
+                da_row_roots: vec![],
+                da_col_roots: vec![],
+                blob_commitments: vec![],
+                da_certificate: None,
+                state_function_commitment: None,
+                oracle_state_root: None,
+                shard_count: None,
+                protocol_version: 0,
+                state_root_version: 0,
+                submit_epoch_hints: vec![],
+            }
+        }
+
+        let mut a = make_consensus(1, &[1, 2, 3, 4]);
+        let mut b = make_consensus(2, &[1, 2, 3, 4]);
+        let blocks = vec![
+            make_block_local(
+                1,
+                vec![
+                    transfer_local(0xAA, 0x99, 100, 0),
+                    transfer_local(0xBB, 0x99, 200, 0),
+                    transfer_local(0xAA, 0x99, 150, 1),
+                ],
+            ),
+            make_block_local(
+                2,
+                vec![
+                    transfer_local(0xAA, 0x99, 50, 2),
+                    transfer_local(0xCC, 0x99, 300, 0),
+                    transfer_local(0xAA, 0x99, 75, 3),
+                ],
+            ),
+            make_block_local(
+                3,
+                vec![
+                    transfer_local(0xDD, 0x88, 100, 0),
+                    transfer_local(0xEE, 0x88, 200, 0),
+                ],
+            ),
+        ];
+        for blk in &blocks {
+            a.on_block_committed(blk, [0u8; 32], 0);
+            b.on_block_committed(blk, [0u8; 32], 0);
+            assert_eq!(
+                a.mev_state_digest(),
+                b.mev_state_digest(),
+                "validators must converge after block {} (Phase 3.2)",
+                blk.number
+            );
+        }
+
+        let empty_digest = evaporchain_mev_detect::mev_state_digest(
+            &std::collections::VecDeque::new(),
+            &std::collections::HashMap::new(),
+        );
+        assert_ne!(
+            a.mev_state_digest(),
+            empty_digest,
+            "after sandwich blocks digest must diverge from empty"
+        );
+
+        let mut c = make_consensus(3, &[1, 2, 3, 4]);
+        let mut reversed = blocks.clone();
+        reversed.reverse();
+        for blk in &reversed {
+            c.on_block_committed(blk, [0u8; 32], 0);
+        }
+        assert_ne!(
+            a.mev_state_digest(),
+            c.mev_state_digest(),
+            "validators with divergent histories must NOT converge"
+        );
+    }
+
     /// confirm a `MevObservation` lands in the consensus engine's
     /// ring buffer. Locks the call-site contract: substrate
     /// observation runs every block, no settlement, no false
@@ -6821,6 +6950,10 @@ mod tests {
             junk_key in "[a-z]{3,18}",
         ) {
             use proptest::prelude::*;
+            // Some toolchains don't surface proptest's assertion
+            // macros via the prelude glob; explicit imports below
+            // make them available unconditionally.
+            use proptest::{prop_assert, prop_assert_eq, prop_assert_ne, prop_assume};
             let mut tc = make_consensus(1, &[1, 2, 3, 4]);
             let (key, value, expected): (&str, String, &str) = match bucket {
                 0 => ("parent_acceptance_mode", "mcc".to_string(), "ok"),
@@ -6834,7 +6967,7 @@ mod tests {
             match expected {
                 "ok" => {
                     prop_assert!(result.is_ok());
-                    prop_assert_eq!(
+                    proptest::prop_assert_eq!(
                         tc.get_governance_param(key).map(|s| s.to_string()),
                         Some(value.clone()),
                         "Ok must mutate governance_params"
@@ -6871,7 +7004,7 @@ mod tests {
                     } else {
                         match result {
                             Err(GovernanceParamError::UnknownKey(ref k)) => {
-                                prop_assert_eq!(k, key);
+                                proptest::prop_assert_eq!(k, key);
                             }
                             other => {
                                 prop_assert!(false, "expected UnknownKey, got {:?}", other);
@@ -6882,6 +7015,98 @@ mod tests {
                 }
                 _ => unreachable!(),
             }
+        }
+    }
+
+    proptest::proptest! {
+        /// Lane O.8.2d invariant proof for `maybe_emit_cartel_alarm_event`.
+        ///
+        /// Four invariants over `(alarm_mode, s_honest_milli,
+        /// last_run_at_height)`:
+        /// 1. **Observe-mode silence:** queue stays empty regardless of S.
+        /// 2. **Ceiling gate (alarm mode):** emit iff `s_honest_milli >= 1800`.
+        /// 3. **Dedupe by height:** back-to-back ticks at same height
+        ///    do not double-emit.
+        /// 4. **Drain-then-emit:** after drain, a re-injected over-
+        ///    ceiling status at the same height re-fires (operators
+        ///    own the historical ack-set).
+        #[test]
+        fn cartel_alarm_emission_invariants(
+            mode_bit in 0u8..2,
+            s_honest_milli in -2000i64..4001,
+            last_run_at_height in 0u64..1_000_001,
+        ) {
+            use proptest::prelude::*;
+            use proptest::{prop_assert, prop_assert_eq, prop_assert_ne, prop_assume};
+            use evaporchain_causal_chsh::{AlarmStatus, GateThresholds};
+
+            let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+            let mode = if mode_bit == 0 { "observe" } else { "alarm" };
+            tc.governance_set_param("cartel_alarm_mode", mode).unwrap();
+
+            let st = AlarmStatus {
+                s_honest: s_honest_milli as f64 / 1000.0,
+                s_cartel_synthetic: 4.0,
+                gap: 4.0 - (s_honest_milli as f64 / 1000.0),
+                s_honest_milli,
+                s_cartel_synthetic_milli: 4000,
+                gap_milli: 4000 - s_honest_milli,
+                verdict: "Test".to_string(),
+                last_run_at_height,
+                samples_per_bucket: [10, 10, 10, 10],
+                thresholds: GateThresholds::doctrine(),
+            };
+            tc.cartel_alarm._inject_status_for_test(st.clone());
+
+            tc.maybe_emit_cartel_alarm_event();
+            let queue_len_after_first = tc.pending_cartel_alarms.len();
+
+            const CEILING_MILLI: i64 = 1800;
+            let crosses_ceiling = s_honest_milli >= CEILING_MILLI;
+
+            match mode {
+                "observe" => {
+                    proptest::prop_assert_eq!(
+                        queue_len_after_first, 0,
+                        "observe mode must not emit (s={}, h={})",
+                        s_honest_milli, last_run_at_height
+                    );
+                }
+                "alarm" => {
+                    let expected = if crosses_ceiling { 1 } else { 0 };
+                    proptest::prop_assert_eq!(
+                        queue_len_after_first, expected,
+                        "alarm mode emit iff s_honest_milli >= {} (got s={}, h={})",
+                        CEILING_MILLI, s_honest_milli, last_run_at_height
+                    );
+                }
+                _ => unreachable!(),
+            }
+
+            tc.maybe_emit_cartel_alarm_event();
+            proptest::prop_assert_eq!(
+                tc.pending_cartel_alarms.len(),
+                queue_len_after_first,
+                "dedupe by at_height must hold across back-to-back ticks"
+            );
+
+            let drained = tc.take_pending_cartel_alarms();
+            proptest::prop_assert_eq!(drained.len(), queue_len_after_first);
+            proptest::prop_assert_eq!(tc.pending_cartel_alarms.len(), 0);
+
+            tc.cartel_alarm._inject_status_for_test(st);
+            tc.maybe_emit_cartel_alarm_event();
+            let queue_after_redrain = tc.pending_cartel_alarms.len();
+            let expected_after_redrain = if mode == "alarm" && crosses_ceiling {
+                1
+            } else {
+                0
+            };
+            proptest::prop_assert_eq!(
+                queue_after_redrain, expected_after_redrain,
+                "post-drain re-emit must follow ceiling gate again (mode={})",
+                mode
+            );
         }
     }
 
