@@ -1,0 +1,14 @@
+[package]
+name = "evaporchain-light-cone-v2"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Light-Cone Consensus V2 — locked invention #1 hardening. V1 ships causal_past(lc, block_id) as a reachability query that returns BTreeSet<BlockId>; verifier must hold the full DAG. V2 adds causal-cone Merkle commitments: a per-block BLAKE3 root over sorted ancestor ids, plus O(log N) ancestry proofs verifiable from (causal_root, proof) without the DAG. Domain-separated leaf/inner hashing. Holographic-bulk → boundary-data reduction at the consensus layer."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+evaporchain-light-cone = { path = "../evaporchain-light-cone" }
+blake3     = { workspace = true }
+serde      = { workspace = true }
+thiserror  = { workspace = true }
