@@ -69,10 +69,12 @@
 //! This commit lands the math primitive + synthetic gate. Real-data
 //! gate is the next lane (Lane O.2).
 
+pub mod alarm;
 pub mod chsh;
 pub mod gate;
 pub mod trace;
 
+pub use alarm::{AlarmStatus, CartelAlarm};
 pub use chsh::{compute_chsh_s, ChshError, ConcurrentPair};
 pub use gate::{run_synthetic_gate, GateThresholds, GateVerdict};
 pub use trace::{extract_chsh_samples, synthesize_max_cartel_samples, BlockSummary};

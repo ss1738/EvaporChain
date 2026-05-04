@@ -13,7 +13,7 @@ use crate::chsh::{compute_chsh_s, ChshError, ConcurrentPairSamples};
 use serde::{Deserialize, Serialize};
 
 /// Doctrine-locked thresholds for the gate verdict.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct GateThresholds {
     /// Maximum S allowed under honest traffic. If actual `S_honest >=`
     /// this, the inequality is vacuous (honest traffic already trips
