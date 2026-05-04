@@ -4227,7 +4227,7 @@ async fn get_mev_observations(
             victim_hex: hex::encode(o.victim),
             target_hex: hex::encode(o.target),
             work_estimate: o.work_estimate,
-            confidence_score: o.confidence_score,
+            confidence_score: o.confidence_score_ppm as f64 / 1_000_000.0,
             refund_amount: o.refund_amount,
         })
         .collect();
@@ -7909,8 +7909,7 @@ async fn get_validators(State(state): State<Arc<ApiState>>) -> Json<ValidatorsRe
             effective_stake: v.effective_stake(),
             jailed: v.jailed,
             bls_registered: v.bls_public_key.is_some(),
-            // f64 view-only conversion at the public-API boundary.
-            health_score: v.health_score_ppm as f64 / 1_000_000.0,
+            health_score: v.health_score,
             blocks_produced: v.blocks_produced,
             total_slashed: v.total_slashed,
         })
