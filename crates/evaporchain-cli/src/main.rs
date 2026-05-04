@@ -1577,7 +1577,7 @@ fn cmd_testnet_init(
         // simplest contract. Operator-side encryption is out of scope.
         let kp = BlsKeypair::generate();
         let sk_bytes = kp.secret_key_bytes();
-        let sk: &[u8] = &sk_bytes.0;
+        let sk: &[u8] = sk_bytes.as_bytes();
         let pk_hex = hex::encode(&kp.public_key_bytes().0);
         // Audit fix 2026-05-02: also produce the BLS proof-of-
         // possession at testnet-init time so the per-validator entry
@@ -4154,7 +4154,7 @@ fn cmd_keygen(output: Option<&str>, json_mode: bool) -> Result<()> {
     let bundle = serde_json::json!({
         "bls": {
             "public_key": hex::encode(&bls.public_key_bytes().0),
-            "secret_key": hex::encode(&bls.secret_key_bytes().0),
+            "secret_key": hex::encode(bls.secret_key_bytes().as_bytes()),
             // BLS proof-of-possession over the public key under BLS_POP_DST.
             // Required at validator registration to defeat rogue-key attacks
             // on aggregate signatures (audit-flagged 2026-04-27, closed
