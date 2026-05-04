@@ -2205,6 +2205,62 @@ async fn get_cartel_alarm_chain_status(
     }
 }
 
+/// GET /api/cartel_alarm/pending_events — Lane O.8.2b. Drain and
+/// return the chain's queue of `CartelAlarmEvent`s emitted since the
+/// last call. Polling the endpoint consumes the queue (each event is
+/// returned exactly once) so an operator dashboard / pager can ack
+/// events without bookkeeping its own seen-set.
+///
+/// Pre-conditions:
+/// - Governance must have set `cartel_alarm_mode = "alarm"` for any
+///   events to be queued in the first place; default `observe` mode
+///   never emits.
+/// - The chain's rolling alarm has produced an `AlarmStatus` whose
+///   `s_honest_milli` crossed the doctrine `honest_ceiling_milli`
+///   (1800 under doctrine defaults).
+///
+/// V1 is event surface only — no in-protocol validator reaction
+/// policy. Lane O.8.3+ will design how validators react.
+async fn get_cartel_alarm_pending_events(
+    State(state): State<Arc<ApiState>>,
+) -> Json<serde_json::Value> {
+    if let Some(tc_arc) = &state.tendermint {
+        let mut tc = safe_lock(tc_arc);
+        let events = tc.take_pending_cartel_alarms();
+        let alarm_mode = tc
+            .governance_flags_snapshot()
+            .get("cartel_alarm_mode")
+            .cloned()
+            .unwrap_or_else(|| "observe".to_string());
+        let count = events.len();
+        let json_events: Vec<serde_json::Value> = events
+            .into_iter()
+            .map(|e| {
+                serde_json::json!({
+                    "at_height": e.at_height,
+                    "s_honest_milli": e.s_honest_milli,
+                    "s_cartel_synthetic_milli": e.s_cartel_synthetic_milli,
+                    "gap_milli": e.gap_milli,
+                    "honest_ceiling_milli_at_fire": e.honest_ceiling_milli_at_fire,
+                    "samples_per_bucket": e.samples_per_bucket,
+                })
+            })
+            .collect();
+        Json(serde_json::json!({
+            "status": "ok",
+            "cartel_alarm_mode": alarm_mode,
+            "event_count": count,
+            "events": json_events,
+            "doctrine_ref": "INVENTION_STACK.md §A1.10",
+        }))
+    } else {
+        Json(serde_json::json!({
+            "status": "error",
+            "detail": "Tendermint consensus not running (single-validator devnet mode)"
+        }))
+    }
+}
+
 /// POST /api/cartel_alarm/run_gate — Lane O.5. Run the Causal-CHSH
 /// gate against operator-supplied chain trace data. Returns the
 /// verdict (Pass/Fail/InputError) plus the S statistic + per-bucket
@@ -6809,6 +6865,7 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     ApiDocEntry { method: "POST", path: "/api/governance/param",       category: "governance", description: "Lane K.1 — set a soft-fork governance knob without recompiling. Allowlist: parent_acceptance_mode∈{linear,mcc}, block_source_mode∈{fifo,antichain}, conservation_enforcement∈{observe,enforce}.", example: Some(r#"{"key":"parent_acceptance_mode","value":"mcc"}"#) },
     ApiDocEntry { method: "POST", path: "/api/cartel_alarm/run_gate",  category: "substrate",  description: "Lane O.5 — run the Causal-CHSH cartel-detection gate (§A1.10) against operator-supplied chain trace. Returns Pass/Fail/InputError + S statistic + per-bucket sample counts. Doctrine-locked thresholds (1.8/2.2/0.4) baked in.", example: Some(r#"{"trace":[{"height":1,"timestamp_secs":1700000000,"energy":50000,"gas":12000000,"tx_count":150}],"concurrency_window_secs":60}"#) },
     ApiDocEntry { method: "GET",  path: "/api/cartel_alarm/chain_status", category: "substrate", description: "Lane O.8.1b — on-chain Causal-CHSH alarm status. Returns the chain's own self-monitoring verdict (rolling buffer of last 200 committed blocks, gate run every 50 records). Distinct from /api/cartel_alarm/run_gate which takes operator-supplied trace data.", example: None },
+    ApiDocEntry { method: "GET",  path: "/api/cartel_alarm/pending_events", category: "substrate", description: "Lane O.8.2b — drain queued CartelAlarmEvents emitted by the chain when its honest-source S crossed the doctrine ceiling AND governance set cartel_alarm_mode=alarm. Each event returned exactly once (polling consumes the queue). Default observe mode keeps the queue empty.", example: None },
     ApiDocEntry { method: "GET",  path: "/api/governance/fork_choice_mode", category: "governance", description: "Current authoritative fork-choice mode (mcc|singh_attractor) + attractor set.", example: None },
     ApiDocEntry { method: "POST", path: "/api/governance/fork_choice_mode", category: "governance", description: "Governance amendment to switch fork-choice between MCC and Singh-Attractor. Requires stake quorum from endorser_stakes.", example: Some(r#"{"mode":"singh_attractor","attractors":[{"center":1000,"basin_radius":200}],"endorser_stakes":[1000,800],"required_stake":1500}"#) },
 
@@ -14583,6 +14640,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/governance/param", post(post_governance_param))
         .route("/api/cartel_alarm/run_gate", post(post_cartel_alarm_run_gate))
         .route("/api/cartel_alarm/chain_status", get(get_cartel_alarm_chain_status))
+        .route("/api/cartel_alarm/pending_events", get(get_cartel_alarm_pending_events))
         .route(
             "/api/governance/fork_choice_mode",
             get(get_governance_fork_choice_mode),
