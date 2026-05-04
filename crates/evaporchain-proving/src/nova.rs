@@ -894,7 +894,22 @@ impl<G: Group> RealBlockCircuit<G> {
 
 impl<G: Group> StepCircuit<G::Scalar> for RealBlockCircuit<G> {
     fn arity(&self) -> usize {
-        6 // [state_hash, mmr_root_hash, epoch, block_number, note_tree_root, pool_balance]
+        // Phase 2.2 of LAMBDA_FOLD_NOVA_PLAN — arity 6 → 8 to carry
+        // Lambda-Fold's energy-fold and the full state-root Poseidon
+        // binding through the IVC z-vector.
+        //   z[0] = state_root_poseidon_hash    (NEW; closes the
+        //                                       192-bit collision risk
+        //                                       per Phase 1 Decision 4)
+        //   z[1] = mmr_root_truncated          (unchanged)
+        //   z[2] = epoch                       (unchanged)
+        //   z[3] = block_number                (unchanged)
+        //   z[4] = note_tree_root_truncated    (unchanged)
+        //   z[5] = pool_balance                (unchanged)
+        //   z[6] = total_energy_remaining      (NEW; Lambda-Fold core)
+        //   z[7] = step_count                  (NEW; light-client
+        //                                       convenience — number
+        //                                       of fold steps applied)
+        8
     }
 
     fn synthesize<CS: ConstraintSystem<G::Scalar>>(
@@ -902,11 +917,16 @@ impl<G: Group> StepCircuit<G::Scalar> for RealBlockCircuit<G> {
         cs: &mut CS,
         z: &[AllocatedNum<G::Scalar>],
     ) -> Result<Vec<AllocatedNum<G::Scalar>>, SynthesisError> {
-        // z = [state_hash, mmr_root, epoch, block_number, note_tree_root, pool_balance]
+        // z = [state_root_poseidon, mmr_root, epoch, block_number,
+        //      note_tree_root, pool_balance, total_energy_remaining,
+        //      step_count]
         let old_epoch = &z[2];
         let old_block_number = &z[3];
         let _old_note_tree_root = &z[4];
         let old_pool_balance = &z[5];
+        // Phase 2.3 — energy-fold + step-count inputs.
+        let old_total_energy = &z[6];
+        let old_step_count = &z[7];
 
         // ═══ 1. Epoch increment: new_epoch = old_epoch + 1 ═══
         let new_epoch = AllocatedNum::alloc(cs.namespace(|| "new_epoch"), || {
@@ -1406,6 +1426,77 @@ impl<G: Group> StepCircuit<G::Scalar> for RealBlockCircuit<G> {
             );
         }
 
+        // ═══════════════════════════════════════════════════════════════
+        // Phase 2.3 partial — Lambda-Fold step_count gadget for z[7].
+        //
+        // Trivial: new_step_count = old_step_count + 1. The 64-bit
+        // range check defends against witness manipulation that would
+        // produce a step_count outside the IVC's expected range.
+        //
+        // Adds 2 R1CS constraints: 1 for the +1 enforce, 65 for
+        // range_check_bits(64) — total ~67.
+        // ═══════════════════════════════════════════════════════════════
+        let new_step_count = AllocatedNum::alloc(cs.namespace(|| "new_step_count"), || {
+            old_step_count
+                .get_value()
+                .map(|s| s + G::Scalar::ONE)
+                .ok_or(SynthesisError::AssignmentMissing)
+        })?;
+        cs.enforce(
+            || "step_count_inc",
+            |lc| lc + new_step_count.get_variable(),
+            |lc| lc + CS::one(),
+            |lc| lc + old_step_count.get_variable() + CS::one(),
+        );
+        // Range-check the new step count fits in u64. The witness
+        // value is reconstructible by the verifier from `num_folded`
+        // — but inside the circuit we range-check against
+        // self.witness.epochs_elapsed_at_step's bookkeeping. (For the
+        // stub, we use a conservative u64::MAX upper bound by
+        // checking 64 bits.)
+        //
+        // Witness value derivation: number of folds applied so far
+        // is the IVC's `num_folded` counter, which the prover knows.
+        // For the in-circuit witness we pass it explicitly — Phase
+        // 5's RealBlockProver wiring populates `step_count_witness`
+        // (TODO field on the witness) from `self.num_folded`.
+        // For now, we extract from old_step_count + 1 via get_value().
+        let step_count_value: u64 = new_step_count
+            .get_value()
+            .map(|fe| {
+                // Convert field element to u64 via byte representation.
+                // Safe since we range-check immediately after.
+                let bytes = fe.to_repr();
+                let mut acc: u64 = 0;
+                for (i, b) in bytes.as_ref().iter().take(8).enumerate() {
+                    acc |= (*b as u64) << (i * 8);
+                }
+                acc
+            })
+            .unwrap_or(0);
+        range_check_bits::<G, CS>(cs, "step_count_rc", &new_step_count, step_count_value, 64)?;
+
+        // ═══════════════════════════════════════════════════════════════
+        // Phase 2.3 STUB — Lambda-Fold total_energy_remaining for z[6].
+        //
+        // Identity passthrough for now. The real energy-fold gadget
+        // (decay by epochs_elapsed_at_step half-lives + add
+        // step_energy + range_check_bits(128)) lands in a follow-up
+        // commit. Without it, the chain CANNOT validly enable
+        // `lambda_fold_mode = "nova"` — the default `hash_chain` mode
+        // is what production uses, and that path doesn't consult z[6].
+        //
+        // The stub still binds new_total_energy == old_total_energy in
+        // the circuit so a malicious prover can't sneak in arbitrary
+        // values — but it doesn't enforce decay. Mark with TODO so
+        // future commits can find this and replace with the full 4-
+        // enforce decay gadget (modelled on per-object decay at
+        // nova.rs:1027-1056).
+        //
+        // TODO(layer-5-phase-2.3): replace with real decay+fold gadget.
+        // ═══════════════════════════════════════════════════════════════
+        let new_total_energy = old_total_energy.clone();
+
         Ok(vec![
             new_state_hash,
             new_mmr_root,
@@ -1413,6 +1504,8 @@ impl<G: Group> StepCircuit<G::Scalar> for RealBlockCircuit<G> {
             new_block,
             new_note_tree_root,
             new_pool_balance,
+            new_total_energy,
+            new_step_count,
         ])
     }
 }
@@ -1448,6 +1541,15 @@ impl RealBlockProver {
             Scalar::from(0u64), // block_number starts at 0
             Scalar::from(0u64), // note_tree_root starts empty
             Scalar::from(0u64), // shielded_pool_balance starts at 0
+            // Phase 2.2 of LAMBDA_FOLD_NOVA_PLAN — arity 6 → 8.
+            // z[6] = total_energy_remaining at genesis (per Phase 1
+            // open question 3, default 0 — the IVC is the running
+            // accumulator; chain energy starts to accumulate from
+            // step_energy from block 1 onward).
+            Scalar::from(0u64),
+            // z[7] = step_count at genesis (number of fold steps
+            // applied so far; 0 means the IVC has seen no folds).
+            Scalar::from(0u64),
         ];
 
         Ok(Self {
