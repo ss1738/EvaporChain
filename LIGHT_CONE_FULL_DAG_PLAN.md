@@ -101,14 +101,14 @@ Six phases, total scope **≈3-6 months**. Phases 1-3 ship in dedicated sessions
 
 **Goal:** lock the contract end-to-end and update doctrine.
 
-- [ ] **6.1 — End-to-end DAG-mode test.** Drive a 100-block DAG through `on_block_committed` with 4 forks, finalize via antichain rule, assert state convergence + correct caliber-based tip selection.
-- [ ] **6.2 — Adversarial 2-fork test.** Validators split into two groups voting on different tips; assert MCC + equivocation rule converges within 5 rounds.
-- [ ] **6.3 — Performance budget.** 1000 DAG blocks @ 4 concurrent forks: insertion < 100 ms/block, fork-choice select_tip < 50 ms, state-branch creation < 200 ms.
-- [ ] **6.4 — `DOCTRINE_PUNCH_LIST.md` Layer 6.** Flip Light-Cone full DAG row from ⏳ to ✅. Layer 6 closes.
-- [ ] **6.5 — `INVENTION_STACK.md §A1.2 row 1`.** "Light-Cone Consensus" row updated with SHIPPED date + test names.
-- [ ] **6.6 — Whitepaper §4.** Replace the rotating-leader Tendermint section with the DAG-consensus section. Big chunk; touches academic-press lane.
+- [ ] **6.1 — End-to-end DAG-mode test.** Pending. Needs Phase 4 voting-handler wiring before the antichain finality + caliber-based tip selection can be exercised end-to-end.
+- [ ] **6.2 — Adversarial 2-fork test.** Pending. Same gating as 6.1 (Phase 4 wiring required).
+- [ ] **6.3 — Performance budget.** Pending. Substrate-level perf is fine (light-cone tests sub-ms; LRU O(n) over the cap=4 typical case is sub-µs); the 100ms/block / 200ms-state-branch budgets are end-to-end measurements gated on Phase 4 wiring.
+- [x] **6.4 — `DOCTRINE_PUNCH_LIST.md` Layer 6.** SHIPPED. Light-Cone row in Layer 6 cell flipped from "⏳ tendermint.rs still 8,782 LOC; …" to "✅ substrate-complete 2026-05-04 — full plan in `LIGHT_CONE_FULL_DAG_PLAN.md`" with the full Phase 1+2+3+5 + Phase 4 substrate manifest, governance flags, and the locked-decisions pointer. Voting-handler wiring called out as the only remaining consensus-state-machine surgery.
+- [x] **6.5 — `INVENTION_STACK.md §A1.2 row 1`.** SHIPPED. Light-Cone Consensus row updated with "✅ SUBSTRATE-COMPLETE 2026-05-04" + manifest of shipped pieces + governance flag pointer.
+- [ ] **6.6 — Whitepaper §4.** Pending. Touches the consensus chapter substantively; better deferred until Phase 4 voting-handler wiring lands so the documented behaviour matches the shipped behaviour.
 
-**Phase 6 deliverable:** Light-Cone is the chain's actual consensus mechanism. Linear Tendermint stays as a fallback governance mode for emergency rollback.
+**Phase 6 partial deliverable: 2/6 sub-items shipped (doctrine docs).** End-to-end tests + perf budgets gated on Phase 4 wiring. Whitepaper §4 deferred until consensus wiring lands. Doctrine-level Light-Cone substrate is now ✅ across the canonical docs.
 
 ---
 
