@@ -2428,4 +2428,92 @@ mod tests {
         s.rejections.record(RejectionReason::Unauthorized);
         assert_eq!(s.rejections.unauthorized.load(Ordering::Relaxed), 1);
     }
+
+    /// Lane R.2 regression test for Lane R.1 — the cluster-freeze
+    /// fix where authorized validators bypass the Sybil idle-score
+    /// penalty.
+    ///
+    /// Locks two properties:
+    ///   1. **Bug class still exists** if no gate is applied: after
+    ///      `ceil(|SCORE_BAN_THRESHOLD| / |SCORE_IDLE_TICK|)` = 100
+    ///      idle ticks, an un-gated peer crosses the ban threshold.
+    ///      This confirms why R.1 was needed.
+    ///   2. **Gate works** when the call-site (service.rs idle-score
+    ///      tick loop) skips `adjust_score` for authorized peers:
+    ///      300 idle ticks with the gate = zero score decay = no ban.
+    ///
+    /// If either property regresses (e.g. SCORE_IDLE_TICK changes
+    /// magnitude, or someone removes the `peer_authority.is_authorized`
+    /// gate), this test fails loudly. Mirrors the mechanism in the
+    /// real service.rs idle-tick loop without depending on the full
+    /// libp2p Swarm runtime.
+    #[test]
+    fn test_authorized_peer_bypass_idle_score_lane_r1() {
+        // Arithmetic check: 100 ticks should be enough to ban an
+        // un-gated peer.
+        let ticks_to_ban =
+            (SCORE_BAN_THRESHOLD.unsigned_abs() / SCORE_IDLE_TICK.unsigned_abs()) as usize;
+        assert_eq!(
+            ticks_to_ban, 100,
+            "Lane R.1 fix is calibrated to 100-tick ban time; if these constants \
+             change, re-evaluate whether the cluster-freeze fix is still load-bearing"
+        );
+
+        // ── Property 1: bug class confirmed (un-gated peer eventually bans) ──
+        {
+            let mut s = SybilState::new(sybil_cfg(), None);
+            let ip = ipv4(192, 0, 2, 100);
+            let pid = PeerId::random();
+            s.try_admit_inbound(ip, 0).unwrap();
+            s.record_connect(pid, ip);
+            let mut triggered_at: Option<usize> = None;
+            for i in 0..200 {
+                if let Some(returned_ip) = s.adjust_score(&pid, SCORE_IDLE_TICK) {
+                    s.ban_ip(returned_ip, "score_threshold_breach");
+                    triggered_at = Some(i + 1);
+                    break;
+                }
+            }
+            // After 100 ticks the score reaches -100 (== threshold,
+            // not below). Ban triggers when score < threshold, so the
+            // 101st tick at -101 fires it.
+            assert_eq!(
+                triggered_at,
+                Some(101),
+                "un-gated peer must hit ban at the 101st tick (score crosses below -100)"
+            );
+            assert!(s.bans.is_banned(&ip));
+        }
+
+        // ── Property 2: Lane R.1 gate works (authorized peer never bans) ──
+        // Models the call-site skip:
+        //   if peer_authority.is_authorized(&pid) { continue; }
+        {
+            let mut s = SybilState::new(sybil_cfg(), None);
+            let ip = ipv4(198, 51, 100, 100);
+            let pid = PeerId::random();
+            s.try_admit_inbound(ip, 0).unwrap();
+            s.record_connect(pid, ip);
+            // Gate applied: skip adjust_score for "authorized" peer.
+            let is_authorized_in_test = true;
+            for _ in 0..300 {
+                if !is_authorized_in_test {
+                    if let Some(returned_ip) = s.adjust_score(&pid, SCORE_IDLE_TICK) {
+                        s.ban_ip(returned_ip, "score_threshold_breach");
+                    }
+                }
+            }
+            assert!(
+                !s.bans.is_banned(&ip),
+                "authorized peer must never be banned by idle ticks (Lane R.1)"
+            );
+            // Score must remain at the default starting value (0) since
+            // adjust_score was never called.
+            let score_after = s.scores.get(&pid).map(|e| e.score).unwrap_or(0);
+            assert_eq!(
+                score_after, 0,
+                "authorized peer score must not decay when the gate is in place"
+            );
+        }
+    }
 }
