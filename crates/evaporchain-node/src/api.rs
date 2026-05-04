@@ -2155,6 +2155,95 @@ struct GovernanceParamReq {
     value: String,
 }
 
+/// POST /api/cartel_alarm/run_gate — Lane O.5. Run the Causal-CHSH
+/// gate against operator-supplied chain trace data. Returns the
+/// verdict (Pass/Fail/InputError) plus the S statistic + per-bucket
+/// sample counts. Doctrine-locked thresholds (honest_ceiling=1.8,
+/// cartel_floor=2.2, min_gap=0.4) baked in — operators cannot override.
+#[derive(serde::Deserialize)]
+struct CartelAlarmRunReq {
+    trace: Vec<evaporchain_causal_chsh::BlockSummary>,
+    #[serde(default)]
+    concurrency_window_secs: Option<u64>,
+}
+
+async fn post_cartel_alarm_run_gate(
+    State(_state): State<Arc<ApiState>>,
+    Json(req): Json<CartelAlarmRunReq>,
+) -> Json<serde_json::Value> {
+    use evaporchain_causal_chsh::{
+        chsh::compute_chsh_s,
+        extract_chsh_samples,
+        gate::{run_synthetic_gate, GateThresholds, GateVerdict},
+        synthesize_max_cartel_samples,
+    };
+
+    let window = req.concurrency_window_secs.unwrap_or(60);
+    let trace = req.trace;
+    if trace.len() < 50 {
+        return Json(serde_json::json!({
+            "verdict": "InputError",
+            "detail": format!(
+                "trace too small ({} blocks) — gate verdict would be noise-bound; supply ≥ 50",
+                trace.len()
+            )
+        }));
+    }
+
+    let honest = extract_chsh_samples(&trace, window);
+    let n_per_bucket = honest.samples_ab.len();
+    if n_per_bucket < 5 {
+        return Json(serde_json::json!({
+            "verdict": "InputError",
+            "detail": format!(
+                "under-populated buckets ({} per setting-pair) — widen concurrency_window_secs",
+                n_per_bucket
+            )
+        }));
+    }
+
+    let s_honest = match compute_chsh_s(&honest) {
+        Ok(s) => s,
+        Err(e) => {
+            return Json(serde_json::json!({
+                "verdict": "InputError",
+                "detail": e.to_string()
+            }));
+        }
+    };
+    let cartel = synthesize_max_cartel_samples(n_per_bucket);
+    let s_cartel = compute_chsh_s(&cartel).unwrap_or(0.0);
+    let thresholds = GateThresholds::doctrine();
+    let v = run_synthetic_gate(&honest, &cartel, thresholds);
+
+    let samples_per_bucket = vec![
+        honest.samples_ab.len(),
+        honest.samples_ab_prime.len(),
+        honest.samples_a_prime_b.len(),
+        honest.samples_a_prime_b_prime.len(),
+    ];
+    let (verdict_label, fail_reasons): (&str, Vec<String>) = match &v {
+        GateVerdict::Pass { .. } => ("Pass", Vec::new()),
+        GateVerdict::Fail { reasons, .. } => ("Fail", reasons.clone()),
+        GateVerdict::InputError(msg) => ("InputError", vec![msg.clone()]),
+    };
+
+    Json(serde_json::json!({
+        "verdict": verdict_label,
+        "s_honest": s_honest,
+        "s_cartel_synthetic": s_cartel,
+        "gap": s_cartel - s_honest,
+        "samples_per_bucket": samples_per_bucket,
+        "thresholds": {
+            "honest_ceiling": thresholds.honest_ceiling,
+            "cartel_floor": thresholds.cartel_floor,
+            "min_gap": thresholds.min_gap,
+        },
+        "fail_reasons": fail_reasons,
+        "doctrine_ref": "INVENTION_STACK.md §A1.10",
+    }))
+}
+
 async fn post_governance_param(
     State(state): State<Arc<ApiState>>,
     Json(req): Json<GovernanceParamReq>,
@@ -6435,6 +6524,7 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     // Governance
     ApiDocEntry { method: "GET",  path: "/api/governance/flags",       category: "governance", description: "All governance soft-fork flags + their effective values (Lane I.4/I.5 + Layer 0 #1: parent_acceptance_mode, block_source_mode, conservation_enforcement, fork_choice_mode). Defaults applied for unset keys.", example: None },
     ApiDocEntry { method: "POST", path: "/api/governance/param",       category: "governance", description: "Lane K.1 — set a soft-fork governance knob without recompiling. Allowlist: parent_acceptance_mode∈{linear,mcc}, block_source_mode∈{fifo,antichain}, conservation_enforcement∈{observe,enforce}.", example: Some(r#"{"key":"parent_acceptance_mode","value":"mcc"}"#) },
+    ApiDocEntry { method: "POST", path: "/api/cartel_alarm/run_gate",  category: "substrate",  description: "Lane O.5 — run the Causal-CHSH cartel-detection gate (§A1.10) against operator-supplied chain trace. Returns Pass/Fail/InputError + S statistic + per-bucket sample counts. Doctrine-locked thresholds (1.8/2.2/0.4) baked in.", example: Some(r#"{"trace":[{"height":1,"timestamp_secs":1700000000,"energy":50000,"gas":12000000,"tx_count":150}],"concurrency_window_secs":60}"#) },
     ApiDocEntry { method: "GET",  path: "/api/governance/fork_choice_mode", category: "governance", description: "Current authoritative fork-choice mode (mcc|singh_attractor) + attractor set.", example: None },
     ApiDocEntry { method: "POST", path: "/api/governance/fork_choice_mode", category: "governance", description: "Governance amendment to switch fork-choice between MCC and Singh-Attractor. Requires stake quorum from endorser_stakes.", example: Some(r#"{"mode":"singh_attractor","attractors":[{"center":1000,"basin_radius":200}],"endorser_stakes":[1000,800],"required_stake":1500}"#) },
 
@@ -14205,6 +14295,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/patronage/immune", get(get_patronage_immune))
         .route("/api/governance/flags", get(get_governance_flags))
         .route("/api/governance/param", post(post_governance_param))
+        .route("/api/cartel_alarm/run_gate", post(post_cartel_alarm_run_gate))
         .route(
             "/api/governance/fork_choice_mode",
             get(get_governance_fork_choice_mode),

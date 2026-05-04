@@ -35,6 +35,7 @@ evaporchain-decay-lamport = { path = "../evaporchain-decay-lamport" }
 evaporchain-causal-cone = { path = "../evaporchain-causal-cone" }
 evaporchain-tur-liveness = { path = "../evaporchain-tur-liveness" }
 evaporchain-cmu-gate = { path = "../evaporchain-cmu-gate" }
+evaporchain-causal-chsh = { path = "../evaporchain-causal-chsh" }
 evaporchain-crooks-mev-refund = { path = "../evaporchain-crooks-mev-refund" }
 evaporchain-cfm = { path = "../evaporchain-cfm" }
 evaporchain-modular-beacon = { path = "../evaporchain-modular-beacon" }
