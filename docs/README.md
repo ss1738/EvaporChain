@@ -123,6 +123,29 @@ Available templates: `DecayingToken`, `MortalNFT`, `ThermodynamicEscrow`, `Decay
 | GET | `/faucet` | — | Faucet web page |
 | POST | `/api/faucet` | `{address: u8}` | Request 10,000 testnet tokens |
 
+### Network diagnostics
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/network/peers` | Per-peer summary: `peer_id`, `ip`, `subnet`, `since_ms`, `score`, `age_seconds`, `infractions`, `last_seen_ms`. Lane R.15 added the last two — together they give a one-curl read of all key freeze-class signals (a peer with `score: -100, infractions: 0` got there by idle-decay; with `infractions: high` got there by misbehaviour). |
+
+### Frontier — Causal-CHSH cartel detector
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/cartel_alarm/run_gate` | Run the Causal-CHSH gate against operator-supplied chain trace data. Returns Pass/Fail/InputError + S statistic + per-bucket sample counts. Doctrine-locked thresholds (1.8/2.2/0.4) baked in. Lane O.5. |
+| GET | `/api/cartel_alarm/chain_status` | The chain's own self-monitoring verdict from the rolling buffer (200 blocks, gate every 50 records). Includes `pending_events_count` (Lane O.8.2f) so dashboards see queue depth without draining. Lane O.8.1b. |
+| GET | `/api/cartel_alarm/pending_events` | Drain the queue of `CartelAlarmEvent`s emitted when chain S crossed the doctrine ceiling AND governance set `cartel_alarm_mode = "alarm"`. Each event returned exactly once. Default `observe` mode keeps the queue empty. Lane O.8.2b. |
+
+### Crooks-MEV refund (substrate-level)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/mev/observations` | Recent sandwich-pattern detections from `evaporchain-mev-detect`. Includes `confidence_score_ppm` (parts-per-million; divide by 1_000_000 for f64). |
+| POST | `/api/mev/dispute` | Operator dispute path — reject a false-positive observation. |
+
+Refund settlement (`Transaction::Refund`) is governance-gated via `crooks_mev_settlement_mode ∈ {observe, enforce}` (default `observe`). Both `SimpleExecutor` and the parallel-executor serial phase wire the attacker-debit / victim-credit balance movement (Lanes Q.1 + S.1).
+
 ## Run Locally
 
 ```bash

@@ -17,7 +17,7 @@ EvaporChain introduces thermodynamic state decay — every piece of on-chain sta
 - [x] ZK proving (Nova recursive proof folding)
 - [x] P2P networking (block propagation, tx gossip)
 - [x] Full node with API, dashboard, faucet, and CLI
-- [x] **5,500+ tests passing** (286 cross-crate integration tests across 48 modules)
+- [x] **7,477+ lib tests passing** across 100+ crates (substrate primitives, consensus, execution, proving, DA, networking, plus 36+ doctrine "press-claim" tests asserting headline properties as structural invariants)
 - [ ] Public testnet deployment
 
 ## Run Locally
@@ -57,7 +57,7 @@ Coming soon. Infrastructure is Terraform-ready (`deploy/terraform/modules/hetzne
 | Layer | Implementation |
 |-------|----------------|
 | Language | Rust |
-| Smart Contracts | 7 template contracts + EvaporScript (custom 44-opcode VM) |
+| Smart Contracts | 8 template contracts + EvaporScript (custom 44-opcode VM) |
 | Consensus | Tendermint BFT with BLS aggregation + VRF leader election |
 | Execution | SimpleExecutor with gas metering + PID fee controller |
 | ZK Proofs | Nova IVC recursive proof folding |
@@ -89,11 +89,11 @@ evaporchain-mcp         MCP server for AI agent interaction (26 tools, 13 resour
 
 ## Test Coverage
 
-**5,500+ tests** across 71 crates — all passing. Includes 286 cross-crate integration tests covering the full pipeline (consensus → execution → DA → proving → contracts → frontier primitives → 48 substrate modules).
+**7,477+ lib tests passing, 0 failing** across 100+ workspace crates. Coverage spans the core pipeline (consensus → execution → DA → proving → contracts → frontier primitives) plus 80+ substrate modules and 36+ top-level "press-claim" tests that assert each crate's doctrine headline as a structural invariant — so the press claim breaks loudly if the implementation drifts.
 
 ```bash
 cargo test --workspace
-# 5,500+ passed; 0 failed
+# 7,477+ passed; 0 failed
 ```
 
 ## License
