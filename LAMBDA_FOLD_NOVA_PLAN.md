@@ -148,11 +148,11 @@ Seven phases. Phases 1-2 are reversible design + prototype; phases 3-6 are the r
 
 **Goal:** wire the real Lambda-Fold into the production hot path. Same governance-flag pattern as Layer 4 — default keeps blake3 substrate, flag flips to real Nova.
 
-- [ ] **5.1 — Dual-mode field**: `tendermint.rs` `TendermintConsensus` keeps the existing blake3 `FoldedInstance` for backward compat AND adds a real-Nova path behind a flag.
+- [ ] **5.1 — Dual-mode field**: `tendermint.rs` `TendermintConsensus` keeps the existing blake3 `FoldedInstance` for backward compat AND adds a real-Nova path behind a flag. (Pending: needs careful handling of `RealBlockProver::new`'s 60-90s `pp` setup — must not block the consensus hot path. Likely deferred-init on first nova-mode fold.)
 
-- [ ] **5.2 — Governance flag**: add `lambda_fold_mode` to the soft-fork allowlist (next to `block_source_mode`, `parent_acceptance_mode`, `conservation_enforcement`). Values: `"hash_chain"` (default), `"nova"`.
+- [x] **5.2 — Governance flag**: `lambda_fold_mode` added to the soft-fork allowlist in `governance_set_param` (`tendermint.rs:744-750`). Values: `"hash_chain"` (default) and `"nova"`. `governance_flags_snapshot` reports `hash_chain` when unset so operators see the effective default. `UnknownKey` error message updated to list the new key. Three tests green on Mini under release: `test_governance_set_param_accepts_all_allowlisted_pairs` (with both values), `test_governance_lambda_fold_mode_default_hash_chain`, `test_governance_lambda_fold_mode_rejects_invalid_value`. Until 5.1 + 5.3 land, the flag is observed by operators but no consumer reads it — the substrate fold runs unconditionally at `tendermint.rs:3316`.
 
-- [ ] **5.3 — Branch at fold call site** (`tendermint.rs:3169` area): if mode is `"nova"`, invoke real-Nova folding; else blake3 substrate.
+- [ ] **5.3 — Branch at fold call site** (`tendermint.rs:3316` area): if mode is `"nova"`, invoke real-Nova folding; else blake3 substrate. Blocked on 5.1.
 
 - [ ] **5.4 — Light-client API updates**: `evaporchain-node::api.rs` `/api/lambda_fold/verify` endpoint takes either a blake3 `FoldedInstance` (for hash_chain mode) or a Nova `CompressedSNARK` (for nova mode). Two endpoints or content-negotiation.
 

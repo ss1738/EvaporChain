@@ -295,7 +295,7 @@ impl std::fmt::Display for GovernanceParamError {
         match self {
             Self::UnknownKey(k) => write!(
                 f,
-                "unknown governance soft-fork key: {k:?} (allowlist: parent_acceptance_mode, block_source_mode, conservation_enforcement)"
+                "unknown governance soft-fork key: {k:?} (allowlist: parent_acceptance_mode, block_source_mode, conservation_enforcement, lambda_fold_mode)"
             ),
             Self::InvalidValue { key, value, permitted } => write!(
                 f,
@@ -733,6 +733,14 @@ impl TendermintConsensus {
     /// - `parent_acceptance_mode` ∈ {`linear`, `mcc`}
     /// - `block_source_mode` ∈ {`fifo`, `antichain`}
     /// - `conservation_enforcement` ∈ {`observe`, `enforce`}
+    /// - `lambda_fold_mode` ∈ {`hash_chain`, `nova`} — Phase 5 of
+    ///   LAMBDA_FOLD_NOVA_PLAN. `hash_chain` (default) keeps the
+    ///   substrate blake3 fold; `nova` flips the per-block fold call
+    ///   site to the real Nova IVC path in `evaporchain-lambda-fold`'s
+    ///   `nova_path` module. The Nova path needs the `lambda_fold_nova`
+    ///   crate feature on `evaporchain-consensus`; with the feature
+    ///   off, the flag is ignored at the call site and the
+    ///   substrate path runs regardless.
     /// - `fork_choice_mode` is set via `governance_set_fork_choice_mode`
     ///   instead (it requires endorser-stake validation).
     pub fn governance_set_param(
@@ -744,6 +752,7 @@ impl TendermintConsensus {
             "parent_acceptance_mode" => &["linear", "mcc"],
             "block_source_mode" => &["fifo", "antichain"],
             "conservation_enforcement" => &["observe", "enforce"],
+            "lambda_fold_mode" => &["hash_chain", "nova"],
             _ => return Err(GovernanceParamError::UnknownKey(key.to_string())),
         };
         if !permitted.contains(&value) {
@@ -1116,6 +1125,7 @@ impl TendermintConsensus {
             ("parent_acceptance_mode", "linear"),
             ("block_source_mode", "fifo"),
             ("conservation_enforcement", "observe"),
+            ("lambda_fold_mode", "hash_chain"),
         ] {
             out.entry(key.to_string())
                 .or_insert_with(|| default.to_string());
@@ -5732,6 +5742,12 @@ mod tests {
             ("block_source_mode", "antichain"),
             ("conservation_enforcement", "observe"),
             ("conservation_enforcement", "enforce"),
+            // Phase 5.2 of LAMBDA_FOLD_NOVA_PLAN — `lambda_fold_mode`
+            // governance flag chooses between the substrate blake3
+            // hash-chain fold and the real Nova IVC pipeline at the
+            // tendermint per-block fold call site.
+            ("lambda_fold_mode", "hash_chain"),
+            ("lambda_fold_mode", "nova"),
         ];
         for (key, value) in &pairs {
             assert!(
@@ -5760,6 +5776,41 @@ mod tests {
             snap.get("conservation_enforcement").map(|s| s.as_str()),
             Some("enforce")
         );
+        assert_eq!(
+            snap.get("lambda_fold_mode").map(|s| s.as_str()),
+            Some("nova")
+        );
+    }
+
+    #[test]
+    fn test_governance_lambda_fold_mode_default_hash_chain() {
+        // Phase 5.2 of LAMBDA_FOLD_NOVA_PLAN: when `lambda_fold_mode`
+        // is unset, the snapshot reports `hash_chain` so operators see
+        // the substrate path is in effect by default.
+        let tc = make_consensus(1, &[1, 2, 3, 4]);
+        let snap = tc.governance_flags_snapshot();
+        assert_eq!(
+            snap.get("lambda_fold_mode").map(|s| s.as_str()),
+            Some("hash_chain"),
+            "lambda_fold_mode default must be hash_chain (substrate)"
+        );
+    }
+
+    #[test]
+    fn test_governance_lambda_fold_mode_rejects_invalid_value() {
+        // Phase 5.2: invalid values are rejected — only hash_chain /
+        // nova are permitted. Stops typos like "Nova" / "novA" /
+        // "real_nova" silently flipping behaviour.
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        let err = tc
+            .governance_set_param("lambda_fold_mode", "Nova")
+            .unwrap_err();
+        match err {
+            GovernanceParamError::InvalidValue { key, .. } => {
+                assert_eq!(key, "lambda_fold_mode");
+            }
+            other => panic!("expected InvalidValue, got {:?}", other),
+        }
     }
 
     #[test]
