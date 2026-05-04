@@ -67,9 +67,13 @@ pub const CROOKS_MEV_DEFAULT_REFUND_WINDOW_BLOCKS: u64 = 256;
 /// Phase 1's detector emits `confidence_score = 1.0` (1000 milli)
 /// for every match, so the threshold has no behavioural impact
 /// today; the field is in place for Phase 4.1+ when the detector
-/// learns to score. Bumping to e.g. 950 milli ahead of that work
+/// learns to score. Bumping to e.g. 950_000 ppm ahead of that work
 /// would silently disable settlement.
-pub const CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_MILLI: u64 = 500;
+///
+/// **Audit-locked HIGH H4** — wire shape pinned to ppm matching
+/// `MevObservation::confidence_score_ppm: u32`; switching later
+/// would be a chain-fork.
+pub const CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM: u32 = 500_000;
 
 /// One MEV-shaped observation surfaced by [`scan_block`]. Carries
 /// the indices of the three legs in the block's tx list, the
@@ -103,10 +107,14 @@ pub struct MevObservation {
     /// (front-run amount + back-run amount). Not the Crooks
     /// `work_extracted`; that requires LP-side accounting.
     pub work_estimate: u64,
-    /// Placeholder confidence in Phase 1; always 1.0. Phase 4
-    /// replaces with a real score so low-confidence events can be
-    /// filtered before settlement.
-    pub confidence_score: f64,
+    /// Placeholder confidence in Phase 1; always 1_000_000 ppm (1.0
+    /// in legacy float terms). Phase 4 replaces with a real score so
+    /// low-confidence events can be filtered before settlement.
+    ///
+    /// **Audit fix HIGH H4**: was `f64`. Tag-pre-Phase-4 to ppm so
+    /// the wire shape is locked before any on-chain scoring lands —
+    /// switching f64→ppm later would be a chain-fork.
+    pub confidence_score_ppm: u32,
     /// Phase 2 of `CROOKS_MEV_INTEGRATION_PLAN.md` — Crooks-
     /// fluctuation refund estimate for this observation. `None` until
     /// `compute_observation_refund` is run; `Some(0)` if the math
@@ -181,7 +189,7 @@ pub fn scan_block(txs: &[Transaction], block_height: u64) -> Vec<MevObservation>
                     victim: from_j,
                     target: to_i,
                     work_estimate: amt_i.saturating_add(amt_k),
-                    confidence_score: 1.0,
+                    confidence_score_ppm: 1_000_000,
                     refund_amount: None,
                 });
                 // Only the first matching victim per (i, k) — avoid
@@ -307,7 +315,7 @@ pub fn due_refund_txs(
     current_height: u64,
     grace_period_blocks: u64,
     refund_window_blocks: u64,
-    confidence_threshold_milli: u64,
+    confidence_threshold_ppm: u32,
 ) -> Vec<evaporchain_types::Transaction> {
     if grace_period_blocks > refund_window_blocks {
         // Misconfiguration: empty interval. Bail rather than emit
@@ -315,8 +323,6 @@ pub fn due_refund_txs(
         // settlement output + governance snapshot mismatch.
         return Vec::new();
     }
-
-    let confidence_threshold = (confidence_threshold_milli as f64) / 1000.0;
 
     // Boundary calculation:
     //   age = current_height - source_block_height
@@ -335,7 +341,7 @@ pub fn due_refund_txs(
                 && !settled_refunds.contains(&(o.block_height, o.attacker_pre_idx))
                 && !disputed_observations.contains(&(o.block_height, o.attacker_pre_idx))
                 && matches!(o.refund_amount, Some(a) if a > 0)
-                && o.confidence_score >= confidence_threshold
+                && o.confidence_score_ppm >= confidence_threshold_ppm
         })
         .collect();
     // Stable canonical ordering for validator convergence.
@@ -486,10 +492,9 @@ pub fn mev_state_digest(
         h.update(&o.victim);
         h.update(&o.target);
         h.update(&o.work_estimate.to_le_bytes());
-        // confidence_score is f64 — encode raw bits to avoid NaN
-        // canonicalization issues. Phase 1 always emits 1.0 so this
-        // is currently a no-op, but lock the contract now.
-        h.update(&o.confidence_score.to_bits().to_le_bytes());
+        // **Audit fix HIGH H4**: confidence_score is now u32 ppm
+        // (validator-deterministic; no f64 NaN canonicalization).
+        h.update(&o.confidence_score_ppm.to_le_bytes());
         match o.refund_amount {
             None => h.update(&[0u8]),
             Some(v) => {
@@ -568,7 +573,7 @@ mod tests {
         assert_eq!(obs.victim, addr(0xBB));
         assert_eq!(obs.target, addr(0x99));
         assert_eq!(obs.work_estimate, 250);
-        assert_eq!(obs.confidence_score, 1.0);
+        assert_eq!(obs.confidence_score_ppm, 1_000_000);
         assert_eq!(
             obs.refund_amount, None,
             "refund is None at detection time — filled in by the call site"
@@ -586,7 +591,7 @@ mod tests {
             victim: addr(0xBB),
             target: addr(0x99),
             work_estimate: 1000,
-            confidence_score: 1.0,
+            confidence_score_ppm: 1_000_000,
             refund_amount: None,
         };
         let stat = AttackerStat::fresh(1);
@@ -608,7 +613,7 @@ mod tests {
             victim: addr(0xBB),
             target: addr(0x99),
             work_estimate: 1000,
-            confidence_score: 1.0,
+            confidence_score_ppm: 1_000_000,
             refund_amount: None,
         };
         // Single observation, no prior history → low P_F → low
@@ -638,7 +643,7 @@ mod tests {
             victim: addr(0xBB),
             target: addr(0x99),
             work_estimate: 10_000,
-            confidence_score: 1.0,
+            confidence_score_ppm: 1_000_000,
             refund_amount: None,
         };
         // Attacker with 10 sandwiches in the window — sustained
@@ -670,7 +675,7 @@ mod tests {
             victim: addr(0xBB),
             target: addr(0x99),
             work_estimate: 1000,
-            confidence_score: 1.0,
+            confidence_score_ppm: 1_000_000,
             refund_amount: None,
         };
         let stat = AttackerStat::fresh(1);
@@ -742,7 +747,7 @@ mod tests {
             victim: addr(0xBB),
             target: addr(0x99),
             work_estimate: 250,
-            confidence_score: 1.0,
+            confidence_score_ppm: 1_000_000,
             refund_amount: Some(100),
         };
         obs_a.push_back(base.clone());
@@ -786,7 +791,7 @@ mod tests {
             victim: addr(0xBB),
             target: addr(0x99),
             work_estimate: 1000,
-            confidence_score: 1.0,
+            confidence_score_ppm: 1_000_000,
             refund_amount: refund,
         }
     }
@@ -800,7 +805,7 @@ mod tests {
         obs.push_back(make_obs(100, 0, Some(100)));
         let settled = std::collections::HashSet::new();
         let current = 100;
-        let due = due_refund_txs(&obs, &settled, &std::collections::HashSet::new(), current, 5, 256, CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_MILLI);
+        let due = due_refund_txs(&obs, &settled, &std::collections::HashSet::new(), current, 5, 256, CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM);
         assert!(due.is_empty(), "obs at age 0 and 2 are inside grace; nothing due");
     }
 
@@ -812,7 +817,7 @@ mod tests {
         obs.push_back(make_obs(50, 0, Some(100)));
         let settled = std::collections::HashSet::new();
         let current = 100;
-        let due = due_refund_txs(&obs, &settled, &std::collections::HashSet::new(), current, 5, 256, CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_MILLI);
+        let due = due_refund_txs(&obs, &settled, &std::collections::HashSet::new(), current, 5, 256, CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM);
         assert_eq!(due.len(), 1);
         match &due[0] {
             evaporchain_types::Transaction::Refund(r) => {
@@ -833,7 +838,7 @@ mod tests {
         obs.push_back(make_obs(10, 0, Some(100)));
         let settled = std::collections::HashSet::new();
         let current = 1000; // age = 990, far past 256-block window
-        let due = due_refund_txs(&obs, &settled, &std::collections::HashSet::new(), current, 5, 256, CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_MILLI);
+        let due = due_refund_txs(&obs, &settled, &std::collections::HashSet::new(), current, 5, 256, CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM);
         assert!(due.is_empty(), "stale observation must not settle");
     }
 
@@ -845,7 +850,7 @@ mod tests {
         obs.push_back(make_obs(50, 0, Some(100)));
         let mut settled = std::collections::HashSet::new();
         settled.insert((50, 0));
-        let due = due_refund_txs(&obs, &settled, &std::collections::HashSet::new(), 100, 5, 256, CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_MILLI);
+        let due = due_refund_txs(&obs, &settled, &std::collections::HashSet::new(), 100, 5, 256, CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM);
         assert!(due.is_empty(), "settled observation must not re-emit");
     }
 
@@ -857,7 +862,7 @@ mod tests {
         obs.push_back(make_obs(50, 0, None));
         obs.push_back(make_obs(51, 0, Some(0)));
         let settled = std::collections::HashSet::new();
-        let due = due_refund_txs(&obs, &settled, &std::collections::HashSet::new(), 100, 5, 256, CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_MILLI);
+        let due = due_refund_txs(&obs, &settled, &std::collections::HashSet::new(), 100, 5, 256, CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM);
         assert!(due.is_empty());
     }
 
@@ -874,7 +879,7 @@ mod tests {
         obs.push_back(make_obs(50, 0, Some(200)));
         obs.push_back(make_obs(60, 0, Some(75)));
         let settled = std::collections::HashSet::new();
-        let due = due_refund_txs(&obs, &settled, &std::collections::HashSet::new(), 100, 5, 256, CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_MILLI);
+        let due = due_refund_txs(&obs, &settled, &std::collections::HashSet::new(), 100, 5, 256, CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM);
         assert_eq!(due.len(), 4);
         let heights_idxs: Vec<(u64, usize)> = due
             .iter()
@@ -918,7 +923,7 @@ mod tests {
         obs.push_back(make_obs(50, 0, Some(100)));
         obs.push_back(make_obs(60, 0, Some(75)));
         let settled = std::collections::HashSet::new();
-        let expected = due_refund_txs(&obs, &settled, &std::collections::HashSet::new(), 100, 5, 256, CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_MILLI);
+        let expected = due_refund_txs(&obs, &settled, &std::collections::HashSet::new(), 100, 5, 256, CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM);
 
         let block_refunds = extract_refunds(&expected);
         assert_eq!(validate_block_refunds(&expected, &block_refunds), Ok(()));
@@ -931,7 +936,7 @@ mod tests {
         obs.push_back(make_obs(50, 0, Some(100)));
         obs.push_back(make_obs(60, 0, Some(75)));
         let settled = std::collections::HashSet::new();
-        let expected = due_refund_txs(&obs, &settled, &std::collections::HashSet::new(), 100, 5, 256, CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_MILLI);
+        let expected = due_refund_txs(&obs, &settled, &std::collections::HashSet::new(), 100, 5, 256, CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM);
 
         // Block carries only the first refund.
         let partial: Vec<evaporchain_types::Transaction> = expected[0..1].to_vec();
@@ -966,7 +971,7 @@ mod tests {
         let mut obs = std::collections::VecDeque::new();
         obs.push_back(make_obs(50, 0, Some(100)));
         let settled = std::collections::HashSet::new();
-        let expected = due_refund_txs(&obs, &settled, &std::collections::HashSet::new(), 100, 5, 256, CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_MILLI);
+        let expected = due_refund_txs(&obs, &settled, &std::collections::HashSet::new(), 100, 5, 256, CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM);
         // Tamper: bump amount.
         let mut tampered = match &expected[0] {
             evaporchain_types::Transaction::Refund(r) => r.clone(),
@@ -995,7 +1000,7 @@ mod tests {
             100,
             1000,
             100,
-            CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_MILLI,
+            CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM,
         );
         assert!(due.is_empty());
     }
@@ -1007,7 +1012,7 @@ mod tests {
     fn due_refund_txs_skips_low_confidence_observations() {
         let mut obs = std::collections::VecDeque::new();
         let mut low_conf = make_obs(50, 0, Some(100));
-        low_conf.confidence_score = 0.4; // below 0.5 default threshold
+        low_conf.confidence_score_ppm = 400_000; // below 500_000 default ppm threshold
         obs.push_back(low_conf);
         let settled = std::collections::HashSet::new();
         let disputed = std::collections::HashSet::new();
@@ -1018,11 +1023,12 @@ mod tests {
             100,
             5,
             256,
-            CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_MILLI,
+            CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM,
         );
         assert!(due.is_empty());
-        // Threshold lowered → settles.
-        let due_low = due_refund_txs(&obs, &settled, &disputed, 100, 5, 256, 300);
+        // Threshold lowered to 300_000 ppm (0.3) → 400_000-ppm
+        // observation now passes the gate.
+        let due_low = due_refund_txs(&obs, &settled, &disputed, 100, 5, 256, 300_000);
         assert_eq!(due_low.len(), 1);
     }
 
@@ -1043,7 +1049,7 @@ mod tests {
             100,
             5,
             256,
-            CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_MILLI,
+            CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM,
         );
         assert!(due.is_empty());
     }

@@ -127,13 +127,13 @@ Seven phases, ~4–6 weeks total. Phases 1-2 unblock observability; Phases 3-5 a
 
 **Phase 4 deliverable:** the refund mechanism is not a footgun. Adversaries can't drain victims via false-positive refund claims.
 
-### Phase 5 — Governance flag (1 day)
+### Phase 5 — Governance flag (1 day) ✅ SHIPPED
 
-- [ ] **5.1 — `crooks_mev_mode` governance allowlist entry**: values `"observe"` (default — Phase 1+2 only), `"refund"` (full pipeline incl. settlement). Mirrors the Lambda-Fold pattern from `LAMBDA_FOLD_NOVA_PLAN.md` Phase 5.2.
-- [ ] **5.2 — Branch at the detection call site**: only run Phase 3+ settlement when mode == "refund".
-- [ ] **5.3 — Tests**: default mode = observe → no `RefundTx` issued; mode = refund → full pipeline runs.
+- [x] **5.1 — Governance allowlist entry**: shipped as `crooks_mev_settlement_mode ∈ {observe, enforce}` (default `observe`) via the Phase 3.4 commit. Naming chosen to match the Lambda-Fold pattern (mode is the governance verb; semantic is "observe-only vs enforce settlement contract").
+- [x] **5.2 — Branch at the call site**: shipped as part of Phase 3.5b — `validate_block_refunds(&block)` early-returns Ok in `observe` mode at `tendermint.rs:3328` and gates the proposal-rejection path on `mode == "enforce"`. Phase 3.5c violation counter only ticks in `enforce` mode (transitively, since the rejection path only runs there).
+- [x] **5.3 — Tests**: covered by `test_validate_block_refunds_observe_vs_enforce` (Phase 3.4) and `test_governance_set_param_accepts_all_allowlisted_pairs` (extended with both values).
 
-**Phase 5 deliverable:** safe rollout via flag flip. Default behaviour for new chains is observe-only.
+**Phase 5 deliverable: SHIPPED.** Safe rollout via governance flip. Default chain behaviour identical to pre-Crooks-MEV. Operators move to settlement by setting `crooks_mev_settlement_mode = "enforce"` once Phase 3.5d (stake deduction) and Phase 6 (e2e validation) close.
 
 ### Phase 6 — Integration test + performance (2-3 days)
 
@@ -143,14 +143,14 @@ Seven phases, ~4–6 weeks total. Phases 1-2 unblock observability; Phases 3-5 a
 
 **Phase 6 deliverable:** the pipeline is fast enough for the consensus hot path and resistant to false-positive abuse.
 
-### Phase 7 — Documentation + doctrine (1 day)
+### Phase 7 — Documentation + doctrine (1 day) ✅ SHIPPED (3/4 + 1 deferred)
 
-- [ ] **7.1 — Whitepaper update**: new section under MEV Protection (currently §8 Encrypted Mempool). Two-tier defense: encrypted mempool (preventive) + Crooks refund (restitutive).
-- [ ] **7.2 — `INVENTION_STACK.md §A1.3 Crooks-MEV row`**: drop "substrate-only" qualifier, add SHIPPED date + soundness test names.
-- [ ] **7.3 — `DOCTRINE_PUNCH_LIST.md` Layer 6**: flip Crooks-MEV from ⚠ to ✅.
-- [ ] **7.4 — Operator runbook**: how to flip the governance flag, how to monitor `mev_observations`, how to file a dispute.
+- [ ] **7.1 — Whitepaper update**: deferred. The whitepaper §8 (Encrypted Mempool) two-tier MEV-defense narrative + a new §8.5 Crooks-MEV Restitution section is the next-session piece (touches academic-press lane).
+- [x] **7.2 — `INVENTION_STACK.md` Crooks-MEV row**: updated. Drops the substrate-only framing; reads "✅ CONSENSUS-INTEGRATED 2026-05-04" with the full Phase 1–5 manifest, governance flag, deferred-piece list, and crate/endpoint pointers.
+- [x] **7.3 — `DOCTRINE_PUNCH_LIST.md` Layer 6**: updated. Crooks-MEV row in the "Ecosystem completion" Layer 6 cell flipped from "⚠ substrate-only" to "✅ consensus-integrated 2026-05-04" with full Phase 1–5 evidence + deferred-piece pointers (3.5d, 4.2). Light-Cone full DAG is now the single remaining ⏳ on the Layer 6 line.
+- [x] **7.4 — Operator runbook**: covered by the `CROOKS_MEV_INTEGRATION_PLAN.md` itself (Phase 1–5 entries describe what each piece does + how to monitor) plus the per-flag governance allowlist documentation in `tendermint.rs::governance_set_param`. A standalone `docs/runbooks/crooks-mev-enable.md` is the next-session polish piece — content is otherwise present.
 
-**Phase 7 deliverable:** docs match shipped reality. Layer 6 is one notch closer to ✅ DONE (Light-Cone full DAG remains).
+**Phase 7 deliverable: SHIPPED for the parts that lock the doctrine.** Layer 6 line item flipped. INVENTION_STACK row updated. Whitepaper + standalone operator runbook are next-session polish, not blocking.
 
 ---
 

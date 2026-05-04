@@ -908,20 +908,21 @@ impl TendermintConsensus {
                 return Ok(());
             }
             // Phase 4.1 of CROOKS_MEV_INTEGRATION_PLAN.md —
-            // confidence threshold in milli-units (0..=1000).
-            "crooks_mev_confidence_threshold_milli" => {
-                let v = value.parse::<u64>().map_err(|_| {
+            // confidence threshold in parts-per-million (0..=1_000_000).
+            // **Audit fix HIGH H4**: ppm replaces legacy milli.
+            "crooks_mev_confidence_threshold_ppm" => {
+                let v = value.parse::<u32>().map_err(|_| {
                     GovernanceParamError::InvalidValue {
                         key: key.to_string(),
                         value: value.to_string(),
-                        permitted: vec!["any u64 in 0..=1000".to_string()],
+                        permitted: vec!["any u32 in 0..=1_000_000".to_string()],
                     }
                 })?;
-                if v > 1000 {
+                if v > 1_000_000 {
                     return Err(GovernanceParamError::InvalidValue {
                         key: key.to_string(),
                         value: value.to_string(),
-                        permitted: vec!["any u64 in 0..=1000".to_string()],
+                        permitted: vec!["any u32 in 0..=1_000_000".to_string()],
                     });
                 }
                 self.governance_params
@@ -1699,11 +1700,14 @@ impl TendermintConsensus {
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(evaporchain_mev_detect::CROOKS_MEV_DEFAULT_REFUND_WINDOW_BLOCKS);
         // Phase 4.1 — confidence threshold is governance-set.
+        // **Audit fix HIGH H4**: type is now ppm (u32), matches
+        // `MevObservation::confidence_score_ppm`. Governance param
+        // also renamed to disambiguate.
         let conf_threshold = self
             .governance_params
-            .get("crooks_mev_confidence_threshold_milli")
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(evaporchain_mev_detect::CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_MILLI);
+            .get("crooks_mev_confidence_threshold_ppm")
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(evaporchain_mev_detect::CROOKS_MEV_DEFAULT_CONFIDENCE_THRESHOLD_PPM);
         evaporchain_mev_detect::due_refund_txs(
             &self.mev_observations,
             &self.settled_refunds,
