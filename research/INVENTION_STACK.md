@@ -289,7 +289,7 @@ Out of 14 candidate exotic-math primitives, **5 survived** as ship-now or resear
 
 | Primitive | Math | Why it ships |
 |---|---|---|
-| **Authenticated Energy-MERA** | Vidal 2007 / Evenbly-Vidal 2011 — Multi-scale Entanglement Renormalization Ansatz | MERA layer ℓ = states with half-life τ₀·2^ℓ. Disentanglers = decay operator. Energy filtration *is* the MERA RG flow. First state commitment exposing **correlation structure**, not just account scalars. **GATED on empirical entropy measurement** of real chain workloads — this is a 2-week go/no-go study. If chain state has log-correlation, MERA crushes Verkle. If only area-law, downshift to authenticated MPS (still a first). |
+| **Authenticated Energy-MERA** ⚠ DOES NOT SHIP — see §A1.8 | Vidal 2007 / Evenbly-Vidal 2011 — Multi-scale Entanglement Renormalization Ansatz | MERA layer ℓ = states with half-life τ₀·2^ℓ. Disentanglers = decay operator. Energy filtration *is* the MERA RG flow. **Gated on empirical entropy measurement of real chain workloads — VERDICT 2026-05-03: VERKLE** (R²=0.66 across three independent runs vs threshold 0.85). The chain commits to Energy-Verkle Trie (§A1.4 Tier-0 head). The `crates/evaporchain-mera` crate is retained as research artefact only. See §A1.8 for the gate resolution. |
 | **p-adic ultrametric Merkle** | Hughes 2004 (every ultrametric space embeds in a tree); Khrennikov 1996 | p-adic valuation v_p(x) = energy level. Ultrametric balls form a *strict* tree — perfect Merkle-native geometry. Distinctive, low-risk, ship-now. No other chain has p-adic state metrics. |
 | **Tropical Plücker Light Client** | Speyer-Sturmfels 2004 (tropical Grassmannian = phylogenetic trees) | Tropical Plücker coords commit to *entire tree shape* canonically, not just root. Edge weights `−log(remaining energy)` — tropical (min,+) gives multiplicative aggregation = energy-product paths. Clean fit. |
 | **Modular-Form Beacon** | Zagier; Eisenstein E_k(τ), modular discriminant Δ(τ) | Per-epoch beacon = (E_4, E_6, Δ) at τ_epoch from VRF. Outputs satisfy known modular equations — aperiodic, hard to fake without solving the modular equation, cheap to verify. q-expansion in q = e^(2πiτ) reframes naturally as e^(−λt). |
@@ -339,7 +339,7 @@ The Tier 0 round produced sharper candidates than what was in §5. Replace earli
 | 8–14 | Light-Cone Consensus **+** Evap-Antichain Mempool **+ MCC fork choice +** Causal-Cone Validator State | Headline consensus stack — all four pieces are theorem-grade together |
 | 10–16 | **LLSA** (Coq tooling, MetaCoq + extraction) **+ EPV** (parallel, much simpler) | Self-amendment with invariant proofs + un-rollbackable history |
 | 12–18 | Lambda-Fold light client **+ CSLC** (ε-machine reconstruction via CSSR) **+ Cμ-Gate** | Theorem-grade light client + sufficient-statistic state + spam detector |
-| 14–18 | (if MERA gate passed) **Authenticated Energy-MERA** crate, χ=4 prototype | Tensor-network state commitment with correlation structure |
+| 14–18 | ~~(if MERA gate passed) Authenticated Energy-MERA~~ — gate FAILED 2026-05-03; slot now consumed by **Energy-Verkle Trie hardening** + auxiliary Layer 5 (Lambda-Fold real Nova) groundwork | See §A1.8 — VERKLE verdict |
 | 16–22 | Linear-Affine-Decay VM **+** MDL-Shard | Developer interface + provably-optimal sharding |
 | 20–24 | EFH (filtration homology), PRP, Evaporated-Fork Certs, Decay-Lamport Time **+** Modular-form beacon | Light-client + finality + time + randomness |
 
@@ -562,7 +562,7 @@ End of Amendment 2.
 |---|---|---|
 | **Tier 0 — closed-form theorems** | 5 | MCC (Jaynes), CFM (Crooks), CSLC (Shalizi-Crutchfield), LLSA (Coq invariants), EPV (decay-pruned versions) |
 | **Tier 0 — supporting theorem-grade** | 6 | Sanov-Slashing, TUR Liveness Detector, Cμ-Gate, MDL-Shard, Causal-Cone Validator State, Crooks-MEV Refund |
-| **Far-frontier math survivors** | 5 | Authenticated Energy-MERA (gated), p-adic Merkle, Tropical Plücker Light Client, Modular-Form Beacon, Braid-Group Sequencer Commitment |
+| **Far-frontier math survivors** | 4 | ~~Authenticated Energy-MERA~~ (gate FAILED 2026-05-03 → see §A1.8), p-adic Merkle, Tropical Plücker Light Client, Modular-Form Beacon, Braid-Group Sequencer Commitment |
 | **Tier 1 — launch primitives** | 12 | Light-Cone Consensus, Evap-Antichain Mempool, Decay-Lamport Time, Singh-Lyapunov Fee Controller, Singh-Boltzmann Stake, Native Demurrage→Refresh Pool, Refresh Market, Lambda-Fold, EFH, Evaporated-Fork Certificates, Provable Retention Proofs, Linear-Affine-Decay VM |
 | **Tier 2 — V2 primitives** | 19 | (see §4.2) |
 | **Tier 3 — app-layer specialized** | ~16 | (see §4.3) |
@@ -641,7 +641,7 @@ Consolidating Amendment 1 §A1.7 + Amendment 2 §A2.8:
 | **8–14** | **Tombstone** primitive (alongside above) | Self-referential |
 | **10–16** | **LLSA** (MetaCoq + extraction) + EPV (parallel) | Tier 0 |
 | **12–18** | Lambda-Fold + CSLC ε-machine + Cμ-Gate | Tier 0 |
-| **14–18** | (if MERA gate passed) Authenticated Energy-MERA crate | Far-frontier |
+| **14–18** | ~~(if MERA gate passed) Authenticated Energy-MERA~~ — FAILED 2026-05-03; slot to **Energy-Verkle Trie hardening** | See §A1.8 |
 | **14–18** | **Mortis** death predicate + auto-mint rule | Self-referential |
 | **16–20** | **Sentinel** autonomic controller built on LLSA | Self-referential |
 | **16–22** | Linear-Affine-Decay VM + MDL-Shard | Tier 1 + 0 |
