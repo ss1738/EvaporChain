@@ -1,12 +1,12 @@
 # EvaporChain — Doctrine Punch List
 
-**Date:** 2026-05-03 (updated through Layer 2 partial completion + Layer 3 recheck)
+**Date:** 2026-05-04 (updated 2026-05-03 evening through Layer 4 closure; 2026-05-04 evening for Causal-CHSH frontier-primitive addendum)
 **Source:** parallel audit of 7 hardest crates + foundational substrate + consensus integration surface + Coq/TLA proof artefacts.
-**Pairs with:** `REMAINING_WORK.md` (security + infra), `research/INVENTION_STACK.md` (canonical doctrine).
+**Pairs with:** `REMAINING_WORK.md` (security + infra), `research/INVENTION_STACK.md` (canonical doctrine), `CHANGELOG.md` (session-by-session ship log).
 
 This file is the layered build plan to make the doctrine claims actually true. Every item below is a delta between what's shipped and what `INVENTION_STACK.md` says is shipped.
 
-## Status snapshot (2026-05-03 evening)
+## Status snapshot (2026-05-03 evening + Causal-CHSH addendum 2026-05-04)
 
 | Layer | Items | Status | Commits |
 |---|---|---|---|
@@ -18,6 +18,10 @@ This file is the layered build plan to make the doctrine claims actually true. E
 | 5 | Lambda-Fold real Nova | ⏳ Genuinely open — `evaporchain-proving::nova.rs:865` arity still 6, no `total_energy_remaining` in IVC z-vector. Confirmed 3-6 week cryptographer-grade work. |
 | 6 | Ecosystem completion | ⚠ Partial — **Singh-Lyapunov fee controller** ✅ wired (`evaporchain-execution::tick_lyapunov_fee_state` called per-block at `parallel.rs:2076` Lane F.1). **Crooks-MEV refund** ⚠ substrate-only — HTTP endpoint at `api.rs:4153/4168` consumes `evaporchain_crooks_mev_refund::compute_refund` but no consensus hot-path integration. **Light-Cone full consensus rewrite** ⏳ tendermint.rs still 8,782 LOC; `MccForkChoice` (Layer 4) cherry-picks parents but doesn't materialise alternative state branches — full DAG fork-choice is genuine months-long work. |
 | 7 | LLSA full / descope | ⚠ Descope path ~70% done — `evaporchain-llsa::apply_amendment` gated chain-side via HTTP endpoint at `api.rs:4694` + integrated into `evaporchain-execution::genesis_invariant`. EPV registry binding works. **Still stub:** production verifier is `AlwaysAcceptVerifier` (per `api.rs:6515`); no MetaCoq + Rust extraction; no multi-auditor k-of-n signature aggregation. Manual M2 (verify Coq build locally) gates further. |
+| **Frontier — Causal-CHSH** | First 100% original primitive | ✅ DONE — empirical gate **PASS** on real Ethereum 2026-05-04 (200-block + 3K-block runs both pass with ~150× headroom on the doctrine ceiling) | `801fd7c, 7876624, c9e553c, 76cc71d, f396b7d, cdb736c, 63b6cf6, 5968295, fd221ce, 2f6d094` (see `INVENTION_STACK.md §A1.10` + `CHANGELOG.md` Causal-CHSH amendment + `research/causal-chsh/README.md`) |
+
+**Tier-0 supporting count:** 6 → 7 (Causal-CHSH added per §A1.10).
+**Total Tier-0 primitives:** 5 + 7 = 12.
 
 ---
 
