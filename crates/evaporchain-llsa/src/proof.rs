@@ -107,6 +107,91 @@ impl ProofVerifier for AlwaysRejectVerifier {
     }
 }
 
+/// Layer 7 (LLSA descope) of `DOCTRINE_PUNCH_LIST.md` — k-of-n
+/// multi-auditor threshold verifier. Wraps multiple
+/// `ProofVerifier` implementations; accepts iff at least `k` of
+/// the inner verifiers accept.
+///
+/// **Use case:** the chain's production verifier is gated on a
+/// Coq build (manual M2). Until that lands, the descope path uses
+/// k-of-n auditor signatures: each auditor independently runs
+/// their preferred verifier, and the chain accepts the proof iff
+/// `k` auditors agree. This is the substrate the chain's auditor-
+/// multisig wraps; the `ProofVerifier` impls plugged in here are
+/// typically auditor-specific signature checkers, not the
+/// per-proof Coq kernel.
+///
+/// The threshold contract: `0 < k <= n` where `n = verifiers.len()`.
+/// `k = 1` is "any verifier accepts"; `k = n` is "every verifier
+/// accepts" (the unanimous case). Construction with `k = 0` or
+/// `k > n` is rejected at the caller.
+pub struct MultiAuditorVerifier {
+    verifiers: Vec<Box<dyn ProofVerifier + Send + Sync>>,
+    threshold: usize,
+}
+
+impl MultiAuditorVerifier {
+    /// Construct a k-of-n verifier. `threshold` is `k`; the inner
+    /// `verifiers` Vec defines `n`. Returns `None` if the threshold
+    /// is 0 or exceeds the number of verifiers (caller must
+    /// validate before reaching consensus).
+    pub fn new(
+        verifiers: Vec<Box<dyn ProofVerifier + Send + Sync>>,
+        threshold: usize,
+    ) -> Option<Self> {
+        if threshold == 0 || threshold > verifiers.len() {
+            return None;
+        }
+        Some(Self {
+            verifiers,
+            threshold,
+        })
+    }
+
+    /// `k` — the threshold.
+    pub fn threshold(&self) -> usize {
+        self.threshold
+    }
+
+    /// `n` — the number of verifiers.
+    pub fn n(&self) -> usize {
+        self.verifiers.len()
+    }
+}
+
+impl ProofVerifier for MultiAuditorVerifier {
+    fn verify(
+        &self,
+        proof: &LlsaProof,
+        expected_invariant: InvariantId,
+        expected_amendment: AmendmentHash,
+    ) -> Result<(), ProofError> {
+        let mut accepts = 0usize;
+        let mut last_rejection: Option<ProofError> = None;
+        for v in &self.verifiers {
+            match v.verify(proof, expected_invariant, expected_amendment) {
+                Ok(()) => {
+                    accepts += 1;
+                    if accepts >= self.threshold {
+                        return Ok(());
+                    }
+                }
+                Err(e) => {
+                    last_rejection = Some(e);
+                }
+            }
+        }
+        Err(ProofError::VerifierRejected(format!(
+            "k-of-n threshold not met: {} accepted, threshold={}, n={} \
+             (last rejection: {:?})",
+            accepts,
+            self.threshold,
+            self.verifiers.len(),
+            last_rejection
+        )))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,5 +234,105 @@ mod tests {
         let p = proof([1u8; 32], [2u8; 32]);
         let err = v.verify(&p, [1u8; 32], [2u8; 32]).unwrap_err();
         assert!(matches!(err, ProofError::VerifierRejected(_)));
+    }
+
+    /// Layer 7 — `MultiAuditorVerifier::new` rejects degenerate
+    /// thresholds.
+    #[test]
+    fn multi_auditor_constructor_rejects_invalid_thresholds() {
+        let vs: Vec<Box<dyn ProofVerifier + Send + Sync>> =
+            vec![Box::new(AlwaysAcceptVerifier), Box::new(AlwaysAcceptVerifier)];
+        // threshold = 0 → None
+        assert!(MultiAuditorVerifier::new(vs, 0).is_none());
+        let vs: Vec<Box<dyn ProofVerifier + Send + Sync>> =
+            vec![Box::new(AlwaysAcceptVerifier)];
+        // threshold > n → None
+        assert!(MultiAuditorVerifier::new(vs, 2).is_none());
+    }
+
+    /// Layer 7 — k=1 unanimous accept (any verifier accepting is
+    /// enough). Locks the OR-semantic.
+    #[test]
+    fn multi_auditor_one_of_three_accepts() {
+        let v = MultiAuditorVerifier::new(
+            vec![
+                Box::new(AlwaysRejectVerifier),
+                Box::new(AlwaysAcceptVerifier),
+                Box::new(AlwaysRejectVerifier),
+            ],
+            1,
+        )
+        .expect("valid threshold");
+        let p = proof([1u8; 32], [2u8; 32]);
+        assert!(v.verify(&p, [1u8; 32], [2u8; 32]).is_ok());
+    }
+
+    /// Layer 7 — k=2 of 3, 2 accept → ok.
+    #[test]
+    fn multi_auditor_two_of_three_meets_threshold() {
+        let v = MultiAuditorVerifier::new(
+            vec![
+                Box::new(AlwaysAcceptVerifier),
+                Box::new(AlwaysRejectVerifier),
+                Box::new(AlwaysAcceptVerifier),
+            ],
+            2,
+        )
+        .expect("valid threshold");
+        let p = proof([1u8; 32], [2u8; 32]);
+        assert!(v.verify(&p, [1u8; 32], [2u8; 32]).is_ok());
+    }
+
+    /// Layer 7 — k=2 of 3, only 1 accepts → rejected.
+    #[test]
+    fn multi_auditor_below_threshold_rejected() {
+        let v = MultiAuditorVerifier::new(
+            vec![
+                Box::new(AlwaysAcceptVerifier),
+                Box::new(AlwaysRejectVerifier),
+                Box::new(AlwaysRejectVerifier),
+            ],
+            2,
+        )
+        .expect("valid threshold");
+        let p = proof([1u8; 32], [2u8; 32]);
+        let err = v.verify(&p, [1u8; 32], [2u8; 32]).unwrap_err();
+        assert!(matches!(err, ProofError::VerifierRejected(_)));
+    }
+
+    /// Layer 7 — k=n unanimous case. All accept → ok; one rejects → fail.
+    #[test]
+    fn multi_auditor_unanimous_threshold() {
+        let v = MultiAuditorVerifier::new(
+            vec![Box::new(AlwaysAcceptVerifier), Box::new(AlwaysAcceptVerifier)],
+            2,
+        )
+        .expect("valid threshold");
+        let p = proof([1u8; 32], [2u8; 32]);
+        assert!(v.verify(&p, [1u8; 32], [2u8; 32]).is_ok());
+
+        let v_with_reject = MultiAuditorVerifier::new(
+            vec![Box::new(AlwaysAcceptVerifier), Box::new(AlwaysRejectVerifier)],
+            2,
+        )
+        .expect("valid threshold");
+        assert!(v_with_reject.verify(&p, [1u8; 32], [2u8; 32]).is_err());
+    }
+
+    /// Layer 7 — `threshold()` and `n()` accessors return the
+    /// constructed values.
+    #[test]
+    fn multi_auditor_accessors() {
+        let v = MultiAuditorVerifier::new(
+            vec![
+                Box::new(AlwaysAcceptVerifier),
+                Box::new(AlwaysAcceptVerifier),
+                Box::new(AlwaysAcceptVerifier),
+            ],
+            2,
+        )
+        .expect("valid");
+        assert_eq!(v.threshold(), 2);
+        assert_eq!(v.n(), 3);
     }
 }

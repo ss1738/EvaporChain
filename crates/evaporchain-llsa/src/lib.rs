@@ -41,4 +41,7 @@ pub mod proof;
 
 pub use amendment::{Amendment, AmendmentError};
 pub use apply::apply_amendment;
-pub use proof::{LlsaProof, ProofError, ProofVerifier};
+pub use proof::{
+    AlwaysAcceptVerifier, AlwaysRejectVerifier, LlsaProof, MultiAuditorVerifier, ProofError,
+    ProofVerifier,
+};
