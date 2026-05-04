@@ -1032,6 +1032,48 @@ mod tests {
         assert_eq!(due_low.len(), 1);
     }
 
+    /// Phase 6.2 of `CROOKS_MEV_INTEGRATION_PLAN.md` — worst-case
+    /// detection cost benchmark. Generates a synthetic 1000-tx
+    /// block and times `scan_block`. The plan's hot-path budget is
+    /// 50 ms on M4. The current O(n²) outer scan over Transfer txs
+    /// completes in well under that — confirmed empirically.
+    ///
+    /// Marked `#[ignore]` because it's an instrumentation test, not
+    /// a correctness check. Run with
+    /// `cargo test -p evaporchain-mev-detect --release -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "perf benchmark — run with --ignored to record numbers"]
+    fn benchmark_scan_block_n1000() {
+        // Pathological-but-plausible block: 1000 transfers, half
+        // sharing the same `from` (heavy attacker-pair fan-out so
+        // the inner triple-search visits the most candidates).
+        let mut txs = Vec::with_capacity(1000);
+        for i in 0..1000usize {
+            let from = if i % 2 == 0 { 0xAA } else { (i % 200) as u8 };
+            let to = (i % 50) as u8;
+            txs.push(transfer(from, to, (i + 1) as u64, i as u64));
+        }
+
+        let start = std::time::Instant::now();
+        let observations = scan_block(&txs, 1);
+        let elapsed = start.elapsed();
+
+        eprintln!(
+            "[scan_block bench] 1000 txs → {} observations in {:?}",
+            observations.len(),
+            elapsed
+        );
+
+        // 50 ms hot-path budget per the plan. 100 ms hard ceiling
+        // (Phase 6.2 stopping condition: re-design to bucket-by-target
+        // if the scan exceeds this).
+        assert!(
+            elapsed.as_millis() < 100,
+            "scan_block @ 1000 txs exceeded 100 ms ceiling: {:?}",
+            elapsed
+        );
+    }
+
     /// Phase 4.4 — disputed observation must NOT settle even if
     /// otherwise due. Operators dispute via the `/api/mev/dispute`
     /// endpoint within the grace period.

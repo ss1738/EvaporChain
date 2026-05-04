@@ -6866,6 +6866,130 @@ mod tests {
 
     /// Phase 1.5 of `CROOKS_MEV_INTEGRATION_PLAN.md` — drive a
     /// synthetic sandwich block through `on_block_committed` and
+    /// Phase 6.1 of `CROOKS_MEV_INTEGRATION_PLAN.md` — single
+    /// end-to-end pipeline test that exercises **every** consensus-
+    /// side Crooks-MEV stage in one run:
+    ///
+    ///   1. Detection (Phase 1) — sandwich block produces an observation.
+    ///   2. Refund computation (Phase 2) — observation gains a refund_amount.
+    ///   3. Producer helper (Phase 3.3) — past grace, due_refund_txs returns the Refund tx.
+    ///   4. Validator rejection (Phase 3.4) — enforce mode requires the proposer to include it.
+    ///   5. Replay protection (Phase 3.3) — once committed, settled_refunds populates.
+    ///   6. Determinism (Phase 3.2) — mev_state_digest converges across two validators driven through the same blocks.
+    ///   7. Anti-gaming (Phase 4) — disputed observation drops out of due_refund_txs.
+    ///
+    /// Locks the chain-level pipeline contract for `observe → enforce`
+    /// rollout. Executor-side balance movement (Phase 3.5a) is exercised
+    /// independently in `evaporchain-execution::tests::test_refund_*`.
+    #[test]
+    fn test_crooks_mev_end_to_end_consensus_pipeline() {
+        use evaporchain_types::{Block, TransferTx};
+
+        fn addr_local(seed: u8) -> [u8; 32] {
+            let mut a = [0u8; 32];
+            a[0] = seed;
+            a
+        }
+        fn transfer_local(from: u8, to: u8, amount: u64, nonce: u64) -> Transaction {
+            Transaction::Transfer(TransferTx {
+                from: addr_local(from),
+                to: addr_local(to),
+                amount,
+                nonce,
+                signature: None,
+                public_key: None,
+            })
+        }
+        fn make_block_local(num: u64, txs: Vec<Transaction>) -> Block {
+            Block {
+                number: num,
+                epoch: num,
+                parent_hash: [0u8; 32],
+                state_root: [0u8; 32],
+                transactions: txs,
+                producer_id: Some(0),
+                timestamp: 0,
+                chain_id: String::new(),
+                commit_certificate: None,
+                nova_proof: None,
+                anchor_hash: None,
+                vrf_output: None,
+                vrf_proof: None,
+                data_root: None,
+                da_row_roots: vec![],
+                da_col_roots: vec![],
+                blob_commitments: vec![],
+                da_certificate: None,
+                state_function_commitment: None,
+                oracle_state_root: None,
+                shard_count: None,
+                protocol_version: 0,
+                state_root_version: 0,
+                submit_epoch_hints: vec![],
+            }
+        }
+
+        let mut a = make_consensus(1, &[1, 2, 3, 4]);
+        let mut b = make_consensus(2, &[1, 2, 3, 4]);
+
+        // Phase 1+2: sandwich block. Both validators detect.
+        let sandwich = make_block_local(
+            1,
+            vec![
+                transfer_local(0xAA, 0x99, 100, 0),
+                transfer_local(0xBB, 0x99, 200, 0),
+                transfer_local(0xAA, 0x99, 150, 1),
+            ],
+        );
+        a.on_block_committed(&sandwich, [0u8; 32], 0);
+        b.on_block_committed(&sandwich, [0u8; 32], 0);
+
+        // Both have one observation, refund_amount populated.
+        assert_eq!(a.mev_observations().len(), 1);
+        let obs = &a.mev_observations()[0];
+        assert!(obs.refund_amount.is_some());
+        assert!(obs.refund_amount.unwrap() <= 250);
+
+        // Phase 3.2: digests converge.
+        assert_eq!(a.mev_state_digest(), b.mev_state_digest());
+
+        // Phase 3.3: past grace, due_refund_txs returns the Refund tx.
+        let due = a.due_refund_txs(10);
+        assert_eq!(due.len(), 1);
+        let due_refund = match &due[0] {
+            Transaction::Refund(r) => r.clone(),
+            _ => unreachable!(),
+        };
+
+        // Phase 3.4 + 5: enforce-mode validator REQUIRES the refund.
+        a.governance_set_param("crooks_mev_settlement_mode", "enforce")
+            .unwrap();
+        let proposed = make_block_local(10, vec![Transaction::Refund(due_refund.clone())]);
+        assert_eq!(a.validate_block_refunds(&proposed), Ok(()));
+
+        // Empty proposal at the same height → MissingRefund.
+        let empty = make_block_local(10, vec![]);
+        let err = a.validate_block_refunds(&empty).unwrap_err();
+        assert!(matches!(
+            err,
+            evaporchain_mev_detect::RefundValidationError::MissingRefund { .. }
+        ));
+
+        // Phase 3.3 commit → settled_refunds populates.
+        a.on_block_committed(&proposed, [0u8; 32], 0);
+        assert!(a.settled_refunds.contains(&(1, 0)));
+
+        // Replay protection: subsequent due_refund_txs no longer emits.
+        let after = a.due_refund_txs(20);
+        assert!(after.is_empty());
+
+        // Phase 4 anti-gaming on validator b (still in observe mode):
+        // dispute the observation within grace → due_refund_txs skips.
+        b.dispute_observation(1, 0, 3).expect("dispute within grace");
+        let due_b = b.due_refund_txs(10);
+        assert!(due_b.is_empty(), "disputed observation must not settle");
+    }
+
     /// Phase 4.4 of `CROOKS_MEV_INTEGRATION_PLAN.md` — operator
     /// dispute flow: drive a sandwich, dispute the observation
     /// within grace, confirm `due_refund_txs` no longer emits the

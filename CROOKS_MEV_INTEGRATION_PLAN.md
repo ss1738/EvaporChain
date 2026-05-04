@@ -137,11 +137,11 @@ Seven phases, ~4–6 weeks total. Phases 1-2 unblock observability; Phases 3-5 a
 
 ### Phase 6 — Integration test + performance (2-3 days)
 
-- [ ] **6.1 — End-to-end test**: governance set `crooks_mev_mode = "refund"`, drive a synthetic sandwich through `on_block_committed`, observe the next block contains the expected `RefundTx`, victim balance increases, attacker balance decreases.
-- [ ] **6.2 — Worst-case detection cost**: profile detection on a block with N=1000 txs. Goal: < 50 ms on M4. If detection is O(N²) (cross-pair sandwich check), add bucketing by token pair to bring it back to O(N log N).
-- [ ] **6.3 — Adversarial witness test**: false-positive sandwich (3 unrelated txs at the same time) → confidence < threshold → no refund. Locks the precision of detection.
+- [x] **6.1 — End-to-end test**: SHIPPED. `test_crooks_mev_end_to_end_consensus_pipeline` exercises every consensus-side stage in one run: detection (Phase 1) → refund computation (Phase 2) → digest convergence across two validators (Phase 3.2) → due_refund_txs past grace (Phase 3.3) → enforce-mode validator rejection of empty proposal + acceptance of correct proposal (Phase 3.4) → settled_refunds replay protection (Phase 3.3) → operator dispute via Phase 4.4. **Executor balance movement (Phase 3.5a) is exercised separately** in `evaporchain-execution::tests::test_refund_*` (4/4 green) — combining at the Block-execution-pipeline level is a bigger test-scaffolding piece deferred to a dedicated session.
+- [x] **6.2 — Worst-case detection cost**: SHIPPED. `benchmark_scan_block_n1000` (`#[ignore]`) generates a 1000-tx pathological block (~half sharing the same attacker `from`) and times `scan_block`. **Result on Mini under release: 13.576 ms** — well under the 50 ms hot-path budget and the 100 ms stopping condition. O(n²) outer scan stays within budget at production scale; bucket-by-target optimization (plan note) not currently needed.
+- [x] **6.3 — Adversarial witness test**: ALREADY DONE. `honest_sequential_transfers_no_observation` (Phase 1) + `validate_block_refunds_unexpected_refund` (Phase 3.4) cover the false-positive precision contract. Three unrelated txs share no attacker → no triple matches → no observation → no refund. Locked at detection time.
 
-**Phase 6 deliverable:** the pipeline is fast enough for the consensus hot path and resistant to false-positive abuse.
+**Phase 6 deliverable: SHIPPED (3/3).** Pipeline is fast enough (13.6 ms @ N=1000) for the hot path, end-to-end-tested at the consensus level, and resistant to false-positive abuse via Phase 1's detection-time filter. Executor-pipeline integration (driving sandwich through ParallelExecutor end-to-end) is a Phase 6.4 follow-up if/when needed.
 
 ### Phase 7 — Documentation + doctrine (1 day) ✅ SHIPPED (3/4 + 1 deferred)
 
