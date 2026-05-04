@@ -4,6 +4,7 @@
 //! (state roots, transaction counts, evaporation counts, epochs).
 
 use core::marker::PhantomData;
+use std::sync::Mutex;
 use std::time::Instant;
 
 use nova_snark::{
@@ -15,7 +16,8 @@ use nova_snark::{
         num::AllocatedNum,
         ConstraintSystem, SynthesisError,
     },
-    nova::{CompressedSNARK, PublicParams, RecursiveSNARK},
+    nova::{CompressedSNARK, ProverKey as NovaProverKey, PublicParams, RecursiveSNARK,
+           VerifierKey as NovaVerifierKey},
     provider::{Bn256EngineKZG, GrumpkinEngine},
     traits::{circuit::StepCircuit, snark::RelaxedR1CSSNARKTrait, Engine, Group},
 };
@@ -1010,7 +1012,7 @@ fn enforce_less_than<G: Group, CS: ConstraintSystem<G::Scalar>>(
 ///   - Note tree root transitions are bound
 ///   - Full 32-byte state root integrity via limb recomposition
 #[derive(Clone, Debug)]
-struct RealBlockCircuit<G: Group> {
+pub(crate) struct RealBlockCircuit<G: Group> {
     witness: RealBlockWitness,
     _p: PhantomData<G>,
 }
@@ -1832,6 +1834,17 @@ pub struct RealBlockProver {
     z0: Vec<Scalar>,
     num_folded: usize,
     last_fold_time_us: u64,
+    // Phase 3 of LAMBDA_FOLD_NOVA_PLAN — cache the compressed-SNARK
+    // (pk, vk) pair so `CompressedSNARK::setup` runs at most once
+    // per prover lifetime. ProvingEngine takes &self, so we use
+    // Mutex<Option<…>> for interior mutability. Setup is idempotent
+    // and writes the pair once, so contention is bounded.
+    compressed_setup: Mutex<
+        Option<(
+            NovaProverKey<E1, E2, RealBlockCircuit<G1>, S1, S2>,
+            NovaVerifierKey<E1, E2, RealBlockCircuit<G1>, S1, S2>,
+        )>,
+    >,
 }
 
 impl RealBlockProver {
@@ -1870,7 +1883,44 @@ impl RealBlockProver {
             z0,
             num_folded: 0,
             last_fold_time_us: 0,
+            compressed_setup: Mutex::new(None),
         })
+    }
+
+    /// Phase 3.1/3.2 of LAMBDA_FOLD_NOVA_PLAN — run the compressed
+    /// SNARK setup at most once per prover lifetime and cache the
+    /// (pk, vk) pair. Subsequent `get_proof` / `verify_proof` calls
+    /// reuse the cached keys, which is what makes the verifier
+    /// sublinear in fold-step count for light clients.
+    fn ensure_compressed_setup(&self) -> Result<(), ProvingError> {
+        let mut guard = self
+            .compressed_setup
+            .lock()
+            .map_err(|_| ProvingError::CompressionFailed("CS setup mutex poisoned".to_string()))?;
+        if guard.is_some() {
+            return Ok(());
+        }
+        let (pk, vk) = CompressedSNARK::<_, _, _, S1, S2>::setup(&self.pp)
+            .map_err(|e| ProvingError::CompressionFailed(format!("CS setup: {:?}", e)))?;
+        *guard = Some((pk, vk));
+        Ok(())
+    }
+
+    /// Phase 3.2 — preprocessed verifying-key bytes for light
+    /// clients. Returns bincode-serialized `vk` — the actual wire
+    /// shape to embed in chain spec / hand to a thin verifier.
+    /// `VerifierKey` is not `Clone` in nova-snark 0.68, so we hand
+    /// out bytes rather than a borrowed ref through the Mutex.
+    /// Triggers preprocessing on first call.
+    pub fn vk_bytes(&self) -> Result<Vec<u8>, ProvingError> {
+        self.ensure_compressed_setup()?;
+        let guard = self
+            .compressed_setup
+            .lock()
+            .map_err(|_| ProvingError::CompressionFailed("CS setup mutex poisoned".to_string()))?;
+        let (_pk, vk) = guard.as_ref().expect("compressed setup just ensured");
+        bincode::serialize(vk)
+            .map_err(|e| ProvingError::CompressionFailed(format!("vk serialize: {:?}", e)))
     }
 
     /// Number of R1CS constraints in the primary circuit.
@@ -1955,10 +2005,17 @@ impl RealBlockProver {
                 ProvingError::CompressionFailed(format!("recursive verify failed: {:?}", e))
             })?;
 
-        let (pk, _vk) = CompressedSNARK::<_, _, _, S1, S2>::setup(&self.pp)
-            .map_err(|e| ProvingError::CompressionFailed(format!("CS setup: {:?}", e)))?;
+        // Phase 3 of LAMBDA_FOLD_NOVA_PLAN — heavy `CompressedSNARK::setup`
+        // runs at most once per prover lifetime. Subsequent proofs
+        // reuse the cached pk.
+        self.ensure_compressed_setup()?;
+        let guard = self
+            .compressed_setup
+            .lock()
+            .map_err(|_| ProvingError::CompressionFailed("CS setup mutex poisoned".to_string()))?;
+        let (pk, _vk) = guard.as_ref().expect("compressed setup just ensured");
 
-        let compressed = CompressedSNARK::<_, _, _, S1, S2>::prove(&self.pp, &pk, snark)
+        let compressed = CompressedSNARK::<_, _, _, S1, S2>::prove(&self.pp, pk, snark)
             .map_err(|e| ProvingError::CompressionFailed(format!("CS prove: {:?}", e)))?;
 
         let proof_bytes = bincode::serialize(&compressed)
@@ -1987,8 +2044,39 @@ impl RealBlockProver {
         let z0: Vec<Scalar> = bincode::deserialize(&proof.z0_bytes)
             .map_err(|e| ProvingError::VerificationFailed(format!("z0 deserialize: {:?}", e)))?;
 
-        let (_pk, vk) = CompressedSNARK::<_, _, _, S1, S2>::setup(&self.pp)
-            .map_err(|e| ProvingError::VerificationFailed(format!("CS setup: {:?}", e)))?;
+        self.ensure_compressed_setup()?;
+        let guard = self
+            .compressed_setup
+            .lock()
+            .map_err(|_| ProvingError::VerificationFailed("CS setup mutex poisoned".to_string()))?;
+        let (_pk, vk) = guard.as_ref().expect("compressed setup just ensured");
+
+        match compressed.verify(vk, num_blocks, &z0) {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+
+    /// Phase 3.4 — verify a compressed proof against a preprocessed
+    /// `vk` held only as serialized bytes. This is the exact shape
+    /// a thin light client uses: hold `vk_bytes` (from chain spec /
+    /// genesis init), receive a `CompressedProof`, decide validity
+    /// without touching `pp`. Static method — no `&self` needed.
+    pub fn verify_with_vk_bytes(
+        proof: &CompressedProof,
+        num_blocks: usize,
+        vk_bytes: &[u8],
+    ) -> Result<bool, ProvingError> {
+        let vk: NovaVerifierKey<E1, E2, RealBlockCircuit<G1>, S1, S2> =
+            bincode::deserialize(vk_bytes)
+                .map_err(|e| ProvingError::VerificationFailed(format!("vk deserialize: {:?}", e)))?;
+
+        let compressed: CompressedSNARK<E1, E2, RealBlockCircuit<G1>, S1, S2> =
+            bincode::deserialize(&proof.proof_bytes)
+                .map_err(|e| ProvingError::VerificationFailed(format!("deserialize: {:?}", e)))?;
+
+        let z0: Vec<Scalar> = bincode::deserialize(&proof.z0_bytes)
+            .map_err(|e| ProvingError::VerificationFailed(format!("z0 deserialize: {:?}", e)))?;
 
         match compressed.verify(&vk, num_blocks, &z0) {
             Ok(_) => Ok(true),
@@ -2336,6 +2424,52 @@ mod tests {
         // Verify compressed proof
         let valid = prover.verify_proof(&proof, 5).expect("verify_proof failed");
         assert!(valid);
+    }
+
+    /// Phase 3.5 of LAMBDA_FOLD_NOVA_PLAN — light-client round-trip:
+    /// build pp once, fold N steps, get_proof, export `vk_bytes`,
+    /// `verify_with_vk_bytes` from a fresh deserialize. Closes the
+    /// preprocessed-vk path that makes the verifier sublinear.
+    #[test]
+    fn test_real_block_vk_bytes_roundtrip() {
+        let genesis = make_dual_commitment(0, 0);
+        let mut prover = RealBlockProver::new(&genesis).expect("setup failed");
+
+        for i in 1..=3u64 {
+            let block = make_block_with_txs(i, i, 1);
+            let new_state = make_dual_commitment(i as u8, i);
+            prover
+                .fold_real_block(
+                    &block,
+                    &make_dual_commitment((i - 1) as u8, i - 1),
+                    &new_state,
+                )
+                .expect("fold failed");
+        }
+
+        let proof = prover.get_proof().expect("get_proof failed");
+        let vk_bytes = prover.vk_bytes().expect("vk_bytes failed");
+
+        // Light-client path: verify entirely from serialized vk +
+        // proof, no &prover access.
+        let valid = RealBlockProver::verify_with_vk_bytes(&proof, 3, &vk_bytes)
+            .expect("verify_with_vk_bytes failed");
+        assert!(valid, "Light-client verification should pass");
+
+        let wrong_count = RealBlockProver::verify_with_vk_bytes(&proof, 4, &vk_bytes)
+            .expect("verify_with_vk_bytes failed");
+        assert!(
+            !wrong_count,
+            "Wrong step count must fail under light-client verify"
+        );
+
+        // vk_bytes is stable across repeated calls — preprocessing
+        // is cached (Phase 3.1's "setup runs at most once" contract).
+        let vk_bytes_again = prover.vk_bytes().expect("vk_bytes second call failed");
+        assert_eq!(
+            vk_bytes, vk_bytes_again,
+            "vk_bytes must be deterministic across calls (preprocessing cached)"
+        );
     }
 
     #[test]

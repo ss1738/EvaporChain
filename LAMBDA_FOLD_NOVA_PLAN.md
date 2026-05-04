@@ -110,20 +110,17 @@ Seven phases. Phases 1-2 are reversible design + prototype; phases 3-6 are the r
 
 **Goal:** expose Lambda-Fold-shaped `fold_step` and `verify` methods on `RealBlockProver`.
 
-- [ ] **3.1 — Persistent `pp` (PublicParams)**: today `RealBlockProver::new` constructs `pp` per instance. Lambda-Fold needs the same `pp` across many fold steps + verify calls. Either:
-  - Move `pp` to a shared lazy static keyed by circuit hash, OR
-  - Hold `pp` on `RealBlockProver` (current) and require Lambda-Fold to keep one prover instance per chain.
-  - Default: **option 2** for V1.
+- [x] **3.1 — Persistent `pp` (PublicParams)**: option 2 chosen. `pp` lives on `RealBlockProver` from `new()` onwards; Lambda-Fold keeps one prover per chain. No code change needed — already the design.
 
-- [ ] **3.2 — Persistent `vk` (VerifyingKey)** preprocessing: `CompressedSNARK::setup` called once at genesis, `vk` cached. Add `RealBlockProver::preprocessed_vk() -> &VerifyingKey`. Lambda-Fold's verify uses this instead of regenerating.
+- [x] **3.2 — Persistent `vk` (VerifyingKey)** preprocessing: `compressed_setup: Mutex<Option<(pk, vk)>>` cache added to `RealBlockProver` (`nova.rs:1841`). `ensure_compressed_setup(&self)` runs `CompressedSNARK::setup` at most once per prover lifetime. Public accessor: `vk_bytes(&self) -> Vec<u8>` (returns bincode-serialized vk; `VerifierKey` is not `Clone` in nova-snark 0.68 so we hand out bytes).
 
-- [ ] **3.3 — `fold_real_block_with_energy` method**: takes `(prev_recursive_snark, witness, step_energy, elapsed)`, returns `RecursiveSNARK` advanced by one step. The witness includes the new energy fields from Phase 2.1.
+- [x] **3.3 — Energy-fold step method**: already shipped in Phase 2 as `fold_real_block_with_witness(block, old, new, &ThermodynamicWitness)` — the witness path that carries `step_energy` + `epochs_elapsed`. No Phase-3 rename needed; the Lambda-Fold lane plugs into this entry point.
 
-- [ ] **3.4 — `verify_real_block_proof` method**: takes `(CompressedSNARK, num_folded, z0)`, returns `Result<(), Error>`. Uses preprocessed `vk`.
+- [x] **3.4 — `verify_real_block_proof` method**: shipped as `RealBlockProver::verify_with_vk_bytes(proof, num_blocks, vk_bytes)` static method. Light client holds only `vk_bytes` (from chain spec) and decides validity without ever touching `pp`. In-process callers continue to use `verify_proof(&self, proof, num_blocks)` which now reads from the cache rather than re-running `setup`.
 
-- [ ] **3.5 — Sub-tests**: round-trip test (build pp once, fold N steps, compress, verify). Performance budget: ~250-350 ms/fold per `evaporchain_async_fold.md` baseline.
+- [x] **3.5 — Round-trip test**: `test_real_block_vk_bytes_roundtrip` in `nova.rs:2434` — folds 3 blocks, calls `get_proof`, exports `vk_bytes`, verifies via `verify_with_vk_bytes`. Asserts wrong-step-count fails, asserts `vk_bytes` is deterministic across calls (cache contract). Green on Mini under `cargo test -p evaporchain-proving --features nova,test-utils --release` (101 passed, 0 failed, 4 ignored slow tests). 23.98s on the new test under release.
 
-**Phase 3 deliverable:** `evaporchain-proving` exposes a Lambda-Fold-shaped public API. Round-trip test green. Sublinearity claim revisited (single `vk`, single `pp`, no setup per call).
+**Phase 3 deliverable: SHIPPED.** `evaporchain-proving` exposes a Lambda-Fold-shaped public API. Round-trip test green. Sublinearity claim closed: `setup` runs once per prover lifetime via Mutex cache; light clients verify against `vk_bytes` only, no `pp` re-derivation.
 
 ### Phase 4 — Lambda-Fold rewrite (2-4 days)
 
