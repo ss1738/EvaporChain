@@ -837,6 +837,12 @@ impl TendermintConsensus {
             "block_source_mode" => &["fifo", "antichain"],
             "conservation_enforcement" => &["observe", "enforce"],
             "lambda_fold_mode" => &["hash_chain", "nova"],
+            // Phase 3.4 of CROOKS_MEV_INTEGRATION_PLAN.md —
+            // `crooks_mev_settlement_mode` chooses between
+            // observe-only (default) and enforce (validators reject
+            // blocks omitting required RefundTxs). Phase 3.5 ships
+            // the slashing rule that pairs with `enforce`.
+            "crooks_mev_settlement_mode" => &["observe", "enforce"],
             "cartel_alarm_mode" => &["observe", "alarm"],
             // Phase 2.2 of CROOKS_MEV_INTEGRATION_PLAN.md —
             // `crooks_mev_beta_mb` is a u64 ≥ 1; allowlist enforces
@@ -1638,6 +1644,40 @@ impl TendermintConsensus {
             grace,
             window,
         )
+    }
+
+    /// Phase 3.4 of `CROOKS_MEV_INTEGRATION_PLAN.md` — verify the
+    /// block's `Transaction::Refund` set exactly matches what the
+    /// chain expects at this height. `Ok(())` when:
+    /// - settlement mode is `"observe"` (default — no enforcement), OR
+    /// - settlement mode is `"enforce"` and the block's refund set
+    ///   matches the chain's expected set exactly (every required
+    ///   refund present, no extras, payloads byte-equal).
+    /// Returns a `RefundValidationError` describing the violation
+    /// otherwise. Phase 3.5 will pair `MissingRefund` with a
+    /// proposer-slash.
+    pub fn validate_block_refunds(
+        &self,
+        block: &Block,
+    ) -> Result<(), evaporchain_mev_detect::RefundValidationError> {
+        let mode = self
+            .governance_params
+            .get("crooks_mev_settlement_mode")
+            .map(|s| s.as_str())
+            .unwrap_or("observe");
+        if mode != "enforce" {
+            return Ok(());
+        }
+        let expected = self.due_refund_txs(block.number);
+        let block_refunds: Vec<&evaporchain_types::RefundTx> = block
+            .transactions
+            .iter()
+            .filter_map(|tx| match tx {
+                evaporchain_types::Transaction::Refund(r) => Some(r),
+                _ => None,
+            })
+            .collect();
+        evaporchain_mev_detect::validate_block_refunds(&expected, &block_refunds)
     }
 
     /// Phase 5.3 of LAMBDA_FOLD_NOVA_PLAN — nova-mode fold helper.
@@ -6253,6 +6293,9 @@ mod tests {
             ("crooks_mev_beta_mb", "1000"),
             ("crooks_mev_beta_mb", "1"),
             ("crooks_mev_beta_mb", "999999"),
+            // Phase 3.4 of CROOKS_MEV_INTEGRATION_PLAN.md.
+            ("crooks_mev_settlement_mode", "observe"),
+            ("crooks_mev_settlement_mode", "enforce"),
         ];
         for (key, value) in &pairs {
             assert!(
@@ -6632,6 +6675,140 @@ mod tests {
 
     /// Phase 1.5 of `CROOKS_MEV_INTEGRATION_PLAN.md` — drive a
     /// synthetic sandwich block through `on_block_committed` and
+    /// Phase 3.4 of `CROOKS_MEV_INTEGRATION_PLAN.md` —
+    /// `validate_block_refunds` defaults to Ok in observe-mode;
+    /// in enforce-mode rejects blocks whose Refund-tx set diverges
+    /// from `due_refund_txs`. Three explicit failure modes:
+    /// MissingRefund / UnexpectedRefund / MismatchedRefund.
+    #[test]
+    fn test_validate_block_refunds_observe_vs_enforce() {
+        use evaporchain_types::{Block, RefundTx, TransferTx};
+
+        fn addr_local(seed: u8) -> [u8; 32] {
+            let mut a = [0u8; 32];
+            a[0] = seed;
+            a
+        }
+        fn transfer_local(from: u8, to: u8, amount: u64, nonce: u64) -> Transaction {
+            Transaction::Transfer(TransferTx {
+                from: addr_local(from),
+                to: addr_local(to),
+                amount,
+                nonce,
+                signature: None,
+                public_key: None,
+            })
+        }
+        fn make_block_local(num: u64, txs: Vec<Transaction>) -> Block {
+            Block {
+                number: num,
+                epoch: num,
+                parent_hash: [0u8; 32],
+                state_root: [0u8; 32],
+                transactions: txs,
+                producer_id: Some(0),
+                timestamp: 0,
+                chain_id: String::new(),
+                commit_certificate: None,
+                nova_proof: None,
+                anchor_hash: None,
+                vrf_output: None,
+                vrf_proof: None,
+                data_root: None,
+                da_row_roots: vec![],
+                da_col_roots: vec![],
+                blob_commitments: vec![],
+                da_certificate: None,
+                state_function_commitment: None,
+                oracle_state_root: None,
+                shard_count: None,
+                protocol_version: 0,
+                state_root_version: 0,
+                submit_epoch_hints: vec![],
+            }
+        }
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+
+        // Set up: one sandwich at height 1, then advance to height 10
+        // (past the default 5-block grace).
+        tc.on_block_committed(
+            &make_block_local(
+                1,
+                vec![
+                    transfer_local(0xAA, 0x99, 100, 0),
+                    transfer_local(0xBB, 0x99, 200, 0),
+                    transfer_local(0xAA, 0x99, 150, 1),
+                ],
+            ),
+            [0u8; 32],
+            0,
+        );
+
+        let due = tc.due_refund_txs(10);
+        assert_eq!(due.len(), 1);
+        let due_refund = match &due[0] {
+            Transaction::Refund(r) => r.clone(),
+            _ => unreachable!(),
+        };
+
+        // Observe mode (default): every block passes regardless.
+        let empty_block = make_block_local(10, vec![]);
+        assert_eq!(tc.validate_block_refunds(&empty_block), Ok(()));
+        let block_with_refund =
+            make_block_local(10, vec![Transaction::Refund(due_refund.clone())]);
+        assert_eq!(tc.validate_block_refunds(&block_with_refund), Ok(()));
+
+        // Switch to enforce mode.
+        tc.governance_set_param("crooks_mev_settlement_mode", "enforce")
+            .unwrap();
+
+        // Empty block at height 10 with one due refund → MissingRefund.
+        let err = tc.validate_block_refunds(&empty_block).unwrap_err();
+        assert!(matches!(
+            err,
+            evaporchain_mev_detect::RefundValidationError::MissingRefund { .. }
+        ));
+
+        // Block carrying the exact due refund → Ok.
+        assert_eq!(tc.validate_block_refunds(&block_with_refund), Ok(()));
+
+        // Block carrying a tampered refund (wrong amount) →
+        // MismatchedRefund.
+        let mut tampered = due_refund.clone();
+        tampered.amount += 1;
+        let bad_block =
+            make_block_local(10, vec![Transaction::Refund(tampered)]);
+        let err = tc.validate_block_refunds(&bad_block).unwrap_err();
+        assert!(matches!(
+            err,
+            evaporchain_mev_detect::RefundValidationError::MismatchedRefund { .. }
+        ));
+
+        // Block carrying an unexpected refund (no such observation)
+        // → UnexpectedRefund.
+        let bogus = RefundTx {
+            source_block_height: 999,
+            source_observation_idx: 0,
+            attacker: addr_local(0xAA),
+            victim: addr_local(0xBB),
+            amount: 100,
+            settle_block_height: 10,
+        };
+        let unexpected_block = make_block_local(
+            10,
+            vec![
+                Transaction::Refund(due_refund.clone()),
+                Transaction::Refund(bogus),
+            ],
+        );
+        let err = tc.validate_block_refunds(&unexpected_block).unwrap_err();
+        assert!(matches!(
+            err,
+            evaporchain_mev_detect::RefundValidationError::UnexpectedRefund { .. }
+        ));
+    }
+
     /// Phase 3.3 of `CROOKS_MEV_INTEGRATION_PLAN.md` — drive a
     /// sandwich block, advance past the grace period, confirm
     /// `due_refund_txs` returns one Refund tx with the expected

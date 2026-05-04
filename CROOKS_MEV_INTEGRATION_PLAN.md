@@ -84,7 +84,16 @@ Seven phases, ~4–6 weeks total. Phases 1-2 unblock observability; Phases 3-5 a
     - **consensus (1):** `test_due_refund_txs_grace_window_and_replay_protection` — drives a sandwich block, asserts no emission within grace, exactly one emission past grace, then commits a block carrying that Refund and asserts `settled_refunds` populates + future calls don't re-emit.
 
   **NOT yet wired into proposer block construction.** Phase 3.4 (validator rejection rule) and Phase 3.5 (slashing for omission + actual balance movement) must ship before a proposer can safely include a Refund tx — today the executor returns "Phase 3.5 wiring not yet landed" for `Transaction::Refund` and would reject the block. The 3.3 helper is operator-facing right now; integration into block construction happens once 3.4-3.5 land.
-- [ ] **3.4 — Block validation rule**: validators reject blocks that omit a required `RefundTx`. `ValidationError::MissingRefund`.
+- [x] **3.4 — Block validation rule**: SHIPPED.
+  - `evaporchain_mev_detect::RefundValidationError` enum with three variants: `MissingRefund`, `UnexpectedRefund`, `MismatchedRefund`. Phase 3.5 will pair `MissingRefund` with proposer-slash via `evaporchain-entropic-slashing`.
+  - `evaporchain_mev_detect::validate_block_refunds(expected, block_refunds)` static helper — diffs the proposer's `RefundTx` set against the chain's expected set; rejects on any divergence.
+  - `TendermintConsensus::validate_block_refunds(block) -> Result<(), RefundValidationError>` wrapper. Reads governance flag `crooks_mev_settlement_mode ∈ {observe, enforce}` (default `observe`). In `observe` mode every block passes (Phase 1+2 chain default — no behavioural change). In `enforce` mode the diff is enforced; non-matching blocks rejected.
+  - New governance allowlist entry `crooks_mev_settlement_mode`.
+  - Tests (6/6 green on Mini under release):
+    - **mev-detect (5):** empty-passes, exact-match-passes, missing-required, unexpected-refund, mismatched-amount.
+    - **consensus (1):** `test_validate_block_refunds_observe_vs_enforce` — drives sandwich → past-grace → mode flip → asserts all three failure modes + happy path.
+
+  **NOT yet wired into the actual block-validation pipeline.** The `validate_block_refunds` accessor exists; the next session's Phase 3.5 work plumbs it into `tendermint.rs` block-acceptance flow alongside the slashing rule and the executor balance-movement.
 - [ ] **3.5 — Slashing rule**: producer who omits a required refund is slashed via `evaporchain-entropic-slashing`. Severity = `SlashSeverity::Negligence` (not `::Equivocation`).
 - [ ] **3.6 — Tests**: 
   - 3-block sandwich → grace period elapses → next block must include `RefundTx` (validators reject if absent).

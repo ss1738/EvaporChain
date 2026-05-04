@@ -338,6 +338,102 @@ pub fn due_refund_txs(
         .collect()
 }
 
+/// Phase 3.4 of `CROOKS_MEV_INTEGRATION_PLAN.md` — validator-side
+/// refund-set check. Returned by `validate_block_refunds` when a
+/// proposer omits a required refund or includes an unexpected one.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum RefundValidationError {
+    #[error(
+        "block missing required RefundTx for observation \
+         (source_block_height={src_h}, source_observation_idx={src_idx})"
+    )]
+    MissingRefund { src_h: u64, src_idx: usize },
+    #[error(
+        "block contains unexpected RefundTx for observation \
+         (source_block_height={src_h}, source_observation_idx={src_idx}) \
+         — either no such observation exists, it's already settled, \
+         or it's outside the (grace, refund_window) interval"
+    )]
+    UnexpectedRefund { src_h: u64, src_idx: usize },
+    #[error(
+        "block's RefundTx for (src_h={src_h}, src_idx={src_idx}) \
+         does not match the chain's expected (attacker, victim, amount, \
+         settle_block_height)"
+    )]
+    MismatchedRefund { src_h: u64, src_idx: usize },
+}
+
+/// Phase 3.4 of `CROOKS_MEV_INTEGRATION_PLAN.md` — verify that a
+/// block's Refund-tx set exactly matches the chain's expected
+/// settlement set at `current_height`. Validators run this when
+/// `crooks_mev_settlement_mode = "enforce"`; the default
+/// `"observe"` skips the check (no behavioural change).
+///
+/// Three failure modes:
+/// - `MissingRefund` — block omits a refund the chain expected (proposer slash-eligible per Phase 3.5).
+/// - `UnexpectedRefund` — block includes a refund for an observation that doesn't exist, is already settled, or is outside the (grace, window) interval.
+/// - `MismatchedRefund` — block's refund payload (attacker/victim/amount/settle_height) disagrees with the chain's deterministic computation.
+///
+/// All three failures are non-recoverable — the block is rejected.
+/// Caller computes `expected = due_refund_txs(...)` once per
+/// validation round; this helper just diffs the block's refund txs
+/// against `expected`.
+pub fn validate_block_refunds(
+    expected: &[evaporchain_types::Transaction],
+    block_refunds: &[&evaporchain_types::RefundTx],
+) -> Result<(), RefundValidationError> {
+    use std::collections::HashMap;
+
+    // Build a lookup of (src_h, src_idx) → expected RefundTx.
+    let mut expected_map: HashMap<(u64, usize), &evaporchain_types::RefundTx> = HashMap::new();
+    for tx in expected {
+        if let evaporchain_types::Transaction::Refund(r) = tx {
+            expected_map.insert((r.source_block_height, r.source_observation_idx), r);
+        }
+    }
+
+    // Track which expected refunds the block satisfies — by
+    // observation key — and reject anything unexpected or
+    // mismatched.
+    let mut seen: std::collections::HashSet<(u64, usize)> = std::collections::HashSet::new();
+    for r in block_refunds {
+        let key = (r.source_block_height, r.source_observation_idx);
+        let exp = match expected_map.get(&key) {
+            Some(e) => *e,
+            None => {
+                return Err(RefundValidationError::UnexpectedRefund {
+                    src_h: key.0,
+                    src_idx: key.1,
+                });
+            }
+        };
+        if exp.attacker != r.attacker
+            || exp.victim != r.victim
+            || exp.amount != r.amount
+            || exp.settle_block_height != r.settle_block_height
+        {
+            return Err(RefundValidationError::MismatchedRefund {
+                src_h: key.0,
+                src_idx: key.1,
+            });
+        }
+        seen.insert(key);
+    }
+
+    // Anything in `expected_map` that wasn't `seen` is missing from
+    // the block.
+    for key in expected_map.keys() {
+        if !seen.contains(key) {
+            return Err(RefundValidationError::MissingRefund {
+                src_h: key.0,
+                src_idx: key.1,
+            });
+        }
+    }
+
+    Ok(())
+}
+
 /// Phase 3.2 of `CROOKS_MEV_INTEGRATION_PLAN.md` — deterministic
 /// digest of the (observations, attacker_stats) pair. Two
 /// validators with identical histories MUST compute identical
@@ -777,6 +873,93 @@ mod tests {
             vec![(50, 0), (50, 5), (60, 0), (75, 0)],
             "canonical (block_height, attacker_pre_idx) ordering"
         );
+    }
+
+    /// Phase 3.4 helper — extract `&RefundTx` slices from a block's
+    /// transaction vector for the validator-side check.
+    fn extract_refunds(txs: &[evaporchain_types::Transaction]) -> Vec<&evaporchain_types::RefundTx> {
+        txs.iter()
+            .filter_map(|tx| match tx {
+                evaporchain_types::Transaction::Refund(r) => Some(r),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Phase 3.4 — empty expected + empty block refunds = OK
+    /// (the observe-mode default chain state).
+    #[test]
+    fn validate_block_refunds_empty_passes() {
+        assert_eq!(validate_block_refunds(&[], &[]), Ok(()));
+    }
+
+    /// Phase 3.4 — exact match: every expected refund present, no
+    /// extras. Pass.
+    #[test]
+    fn validate_block_refunds_exact_match_passes() {
+        let mut obs = std::collections::VecDeque::new();
+        obs.push_back(make_obs(50, 0, Some(100)));
+        obs.push_back(make_obs(60, 0, Some(75)));
+        let settled = std::collections::HashSet::new();
+        let expected = due_refund_txs(&obs, &settled, 100, 5, 256);
+
+        let block_refunds = extract_refunds(&expected);
+        assert_eq!(validate_block_refunds(&expected, &block_refunds), Ok(()));
+    }
+
+    /// Phase 3.4 — block missing a required refund → MissingRefund.
+    #[test]
+    fn validate_block_refunds_missing_required() {
+        let mut obs = std::collections::VecDeque::new();
+        obs.push_back(make_obs(50, 0, Some(100)));
+        obs.push_back(make_obs(60, 0, Some(75)));
+        let settled = std::collections::HashSet::new();
+        let expected = due_refund_txs(&obs, &settled, 100, 5, 256);
+
+        // Block carries only the first refund.
+        let partial: Vec<evaporchain_types::Transaction> = expected[0..1].to_vec();
+        let block_refunds = extract_refunds(&partial);
+        let err = validate_block_refunds(&expected, &block_refunds).unwrap_err();
+        assert!(matches!(err, RefundValidationError::MissingRefund { .. }));
+    }
+
+    /// Phase 3.4 — block carrying a refund for an observation that
+    /// doesn't exist (or isn't due) → UnexpectedRefund.
+    #[test]
+    fn validate_block_refunds_unexpected_refund() {
+        let expected = Vec::new(); // chain expects nothing
+        let bogus = evaporchain_types::RefundTx {
+            source_block_height: 999,
+            source_observation_idx: 0,
+            attacker: addr(0xAA),
+            victim: addr(0xBB),
+            amount: 100,
+            settle_block_height: 1000,
+        };
+        let block_txs = vec![evaporchain_types::Transaction::Refund(bogus)];
+        let block_refunds = extract_refunds(&block_txs);
+        let err = validate_block_refunds(&expected, &block_refunds).unwrap_err();
+        assert!(matches!(err, RefundValidationError::UnexpectedRefund { .. }));
+    }
+
+    /// Phase 3.4 — block carrying a refund for the right
+    /// observation but with a tampered amount → MismatchedRefund.
+    #[test]
+    fn validate_block_refunds_mismatched_amount() {
+        let mut obs = std::collections::VecDeque::new();
+        obs.push_back(make_obs(50, 0, Some(100)));
+        let settled = std::collections::HashSet::new();
+        let expected = due_refund_txs(&obs, &settled, 100, 5, 256);
+        // Tamper: bump amount.
+        let mut tampered = match &expected[0] {
+            evaporchain_types::Transaction::Refund(r) => r.clone(),
+            _ => unreachable!(),
+        };
+        tampered.amount = tampered.amount + 1;
+        let block_txs = vec![evaporchain_types::Transaction::Refund(tampered)];
+        let block_refunds = extract_refunds(&block_txs);
+        let err = validate_block_refunds(&expected, &block_refunds).unwrap_err();
+        assert!(matches!(err, RefundValidationError::MismatchedRefund { .. }));
     }
 
     /// Phase 3.3 — misconfigured grace > window emits empty
