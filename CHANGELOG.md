@@ -1,5 +1,103 @@
 # EvaporChain Changelog
 
+## 2026-05-04 evening — Lane R.* cluster-freeze fix + origin/main reconciliation
+
+### What broke
+
+3-Mini Tailscale cluster halted at h=771 after ~90 minutes uptime.
+Mini 1 was stuck at h=145 on a different state root from Mini 2/3
+(h=771, lockstep). Root-cause investigation via `/api/network/peers`
+on Mini 2 surfaced a peer with `score: -292, age_seconds: 47` — the
+score had been decaying for ~24 hours while the peer was DISCONNECTED.
+
+Three independent design issues compounded into a livelock:
+
+  1. **`SCORE_IDLE_TICK = -1`** fired every 5 min on every entry in
+     the `scores` HashMap, including disconnected peers (which
+     `record_disconnect` left in the map).
+  2. **`record_connect`** used `entry().or_default()`, so a peer
+     reconnecting after going negative INHERITED their prior score
+     instead of getting a fresh slate.
+  3. **No authorization gate** on idle-score penalty: validators
+     pre-vetted via TLS / peer-id allowlist (`peer_authority`) got
+     penalized identically to random Sybil peers.
+
+After ~100 idle ticks (~8 hours wall-clock), any peer crossed
+`SCORE_BAN_THRESHOLD = -100` → IP soft-banned for `peer_ban_duration_secs
+= 3600` (1 hour). With BFT 2/3+1, losing one validator halts a
+3-validator cluster. Once unbanned + reconnected, the inherited
+negative score reban'd it. Livelock per process lifetime.
+
+### What landed (genuine three-layer fix)
+
+| Lane | What | Commit |
+|---|---|---|
+| R.1 | Authorized validators bypass Sybil idle-ban + auto-unban on connect | `803ac6d` |
+| R.2 | Regression test: 256-tick fixture confirms bug class + gate works | `9d192bf` |
+| R.3 | `record_disconnect` clears score entry; `record_connect` fresh-slates; idle tick iterates `peer_ips` not `scores` | `1555eb8` |
+
+Each layer alone closes the livelock; all three make accidental
+regression near-impossible. Network crate tests: 62/62 pass.
+
+### Origin/main reconciliation (Lane R.4 attempt → R.5 revert → R.6-R.12 disciplined)
+
+Deploying R.1+R.3 to the live cluster required rebuilding the node
+binary on each Mini, which required origin/main to be buildable on
+a clean checkout. It wasn't — origin/main had accumulated weeks of
+half-finished cross-crate refactors:
+
+  - `FEE_PPM_DENOMINATOR` referenced but never declared in fees.rs
+  - `VS_PPM_DENOMINATOR` similarly undeclared in validator_set.rs
+  - `health_score_ppm` / `target_utilization_ppm` / `confidence_score`
+    fields referenced before they were added
+  - `Transaction::Refund` arm missing in 3 separate match sites across
+    consensus + wallet + execution
+  - 73 sister-session crates listed in workspace Cargo.toml but never
+    committed — each missing one fails build sequentially
+  - nova-snark API drift: `compressed.verify` returns `Vec<Scalar>`
+    not the old `(Vec, Vec)` tuple
+
+| Lane | What | Commit |
+|---|---|---|
+| R.4 | Bulk Mac-state commit attempt (42 files) — pollution, reverted | (reverted) |
+| R.5 | Revert R.4 mass-commit; keep R.1/R.2/R.3 + sister docs interleaved | `7e289bc` |
+| R.6 | Light-Cone DAG Phase 1.1: `LightCone::leaves()` + `ForkChoice::select_tip` seam + types contract test | `6b23261` `18c926f` |
+| R.7 | Minimal pub-const decls (`FEE_PPM_DENOMINATOR`, `VS_PPM_DENOMINATOR`) + Refund arm in wallet/gas | `c2c6294` |
+| R.8 | Fees `target_utilization` fallback + wallet/signer Refund arm | `e0b3b64` |
+| R.9 | Tendermint `health_score` fallback (was `health_score_ppm`) | `f064f57` |
+| R.10 | Node api.rs `confidence_score_ppm` + `health_score` field renames | `a6aae53` |
+| R.11 | Land the 535-LOC `evaporchain-light-cone-v2` crate that workspace listed | `6ef88de` |
+| R.12 | Land the remaining 72 sister-session crates (337 files, 47.8K LOC) | `2f53749` |
+
+Each Lane R.X was committed as a small additive batch, verified on
+Mini 1 with `cargo check --workspace`, then rolled forward. The
+disciplined approach converged in 9 commits; the earlier bulk-commit
+approach (R.4) blew up worse than not committing at all.
+
+### Cluster recovery + first in-production R.1/R.3 validation
+
+After R.12, all 3 Minis built clean (`cargo build --release --features
+prove` finished in ~1m23s on each). Stopped processes, restored BLS
+private keys from `~/validator-N-keys.json` (the data-dir wipe had
+deleted `bls_key.bin`), restarted with the launch flags.
+
+Cluster came back at h=37 with peer_count=2 across all three. By
+2026-05-04 16:51 UTC: h=1591, identical state root
+`1ec9175f30efc58eb38595d557781a276c5815b0c267d9fdff4344d7ce5a8e13`,
+4.2 blk/s. Both peers showed `score: 0` after 6 min of uptime —
+without R.1/R.3 they'd be at -1 already (SCORE_IDLE_TICK fired at
+the 5-min mark). **First in-production validation of R.1/R.3.**
+
+### What's still open
+
+| Item | Effort |
+|---|---|
+| Sister-session ppm migration: complete the FEE_PPM/VS_PPM PID refactor that the Lane R.7-R.10 stubs unblock | 1-2 sessions |
+| Cluster diagnostic RPC: `/api/network/scores` exposing per-peer `score` + `last_tick` so the next freeze surfaces faster | half-session |
+| Whitepaper §A1.3 Causal-CHSH amendment | manual |
+
+---
+
 ## 2026-05-03 / 2026-05-04 — Layer 3/4 substrate seams + Layer 0 closure + doctrine sweeps
 
 This session lands the consensus abstraction seams (Layer 3), the
