@@ -348,6 +348,36 @@ mod tests {
         lc
     }
 
+    /// Phase 1.1 of `LIGHT_CONE_FULL_DAG_PLAN.md` — DAG-aware tip
+    /// selection picks the leaf whose trajectory has max caliber.
+    /// Canonical 2-fork DAG: A-path 1000+700+400=2100, B-path
+    /// 1000+700+600=2300. β=10_000 favours lower energy → A2 = id(3).
+    #[test]
+    fn mcc_select_tip_picks_lower_energy_leaf_at_positive_beta() {
+        let lc = lc_two_forks();
+        let fc = MccForkChoice::new(lc, 10_000);
+        assert_eq!(fc.select_tip(), Some(id(3)));
+    }
+
+    #[test]
+    fn mcc_select_tip_empty_dag_returns_none() {
+        let fc = MccForkChoice::new(LightCone::new(), 10_000);
+        assert_eq!(fc.select_tip(), None);
+    }
+
+    #[test]
+    fn mcc_select_tip_single_block_returns_that_block() {
+        let mut lc = LightCone::new();
+        lc.insert(Block::new(id(0), vec![], 1000, 0)).unwrap();
+        let fc = MccForkChoice::new(lc, 10_000);
+        assert_eq!(fc.select_tip(), Some(id(0)));
+    }
+
+    #[test]
+    fn linear_select_tip_returns_none() {
+        assert_eq!(LinearForkChoice.select_tip(), None);
+    }
+
     #[test]
     fn mcc_accepts_matching_local_tip() {
         // Linear case: when local_tip == candidate_parent, accept
