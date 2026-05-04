@@ -499,6 +499,15 @@ pub const SCORE_IDLE_TICK: i32 = -1;
 pub const SCORE_BAN_THRESHOLD: i32 = -100;
 
 /// Per-peer summary for `/api/network/peers`.
+///
+/// Lane R.15: extended with `infractions` + `last_seen_ms` so
+/// freeze-class debugging gets richer signal from one endpoint.
+/// The Lane R.* cluster-freeze investigation needed all four
+/// fields (score, infractions, age, last_seen) to confirm the
+/// idle-tick was the culprit rather than a misbehaviour-driven
+/// score drop. Without `infractions` you can't tell a
+/// score=-100 from-idle-decay (infractions=0) apart from a
+/// score=-100 from-spam (infractions=high).
 #[derive(Debug, Clone, Serialize)]
 pub struct PeerInfo {
     pub peer_id: String,
@@ -508,6 +517,14 @@ pub struct PeerInfo {
     pub since_ms: u64,
     pub score: i32,
     pub age_seconds: u64,
+    /// Count of negative-delta `adjust_score` calls since this
+    /// peer's score entry was last reset (i.e. since the most
+    /// recent successful `record_connect`). Lane R.15.
+    pub infractions: u32,
+    /// Unix-epoch ms of the most recent score-affecting event.
+    /// Stays at the connect-time value if `adjust_score` has
+    /// never fired for this peer. Lane R.15.
+    pub last_seen_ms: u64,
 }
 
 /// Counters surfaced to Prometheus as
@@ -720,13 +737,21 @@ impl SybilState {
         let now = now_ms();
         self.peer_ips
             .iter()
-            .map(|(pid, (ip, since))| PeerInfo {
-                peer_id: pid.to_string(),
-                ip: Some(ip.to_string()),
-                subnet: Some(subnet_key(ip)),
-                since_ms: *since,
-                score: self.scores.get(pid).map(|s| s.score).unwrap_or(0),
-                age_seconds: now.saturating_sub(*since) / 1_000,
+            .map(|(pid, (ip, since))| {
+                let score_entry = self.scores.get(pid);
+                PeerInfo {
+                    peer_id: pid.to_string(),
+                    ip: Some(ip.to_string()),
+                    subnet: Some(subnet_key(ip)),
+                    since_ms: *since,
+                    score: score_entry.map(|s| s.score).unwrap_or(0),
+                    age_seconds: now.saturating_sub(*since) / 1_000,
+                    // Lane R.15: surface infractions + last_seen_ms
+                    // so freeze-class debugging reads cleanly from
+                    // one endpoint.
+                    infractions: score_entry.map(|s| s.infractions).unwrap_or(0),
+                    last_seen_ms: score_entry.map(|s| s.last_seen_ms).unwrap_or(*since),
+                }
             })
             .collect()
     }
