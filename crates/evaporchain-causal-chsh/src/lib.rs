@@ -71,6 +71,8 @@
 
 pub mod chsh;
 pub mod gate;
+pub mod trace;
 
 pub use chsh::{compute_chsh_s, ChshError, ConcurrentPair};
 pub use gate::{run_synthetic_gate, GateThresholds, GateVerdict};
+pub use trace::{extract_chsh_samples, synthesize_max_cartel_samples, BlockSummary};
