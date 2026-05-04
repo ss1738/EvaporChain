@@ -4103,6 +4103,10 @@ pub struct MevObservationView {
     pub target_hex: String,
     pub work_estimate: u64,
     pub confidence_score: f64,
+    /// Phase 2 of `CROOKS_MEV_INTEGRATION_PLAN.md` — Crooks
+    /// fluctuation refund estimate. `None` if computation hasn't
+    /// run (Phase 1 default state) or β was set to 0.
+    pub refund_amount: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -4140,6 +4144,7 @@ async fn get_mev_observations(
             target_hex: hex::encode(o.target),
             work_estimate: o.work_estimate,
             confidence_score: o.confidence_score,
+            refund_amount: o.refund_amount,
         })
         .collect();
     Json(MevObservationsResp {

@@ -8,6 +8,11 @@ description = "MEV-shaped pattern detector for EvaporChain blocks. Phase 1 of CR
 
 [dependencies]
 evaporchain-types = { path = "../evaporchain-types" }
+# Phase 2 of CROOKS_MEV_INTEGRATION_PLAN.md — pmf math wraps the
+# already-shipped Crooks-fluctuation primitives in evaporchain-cfm
+# and evaporchain-crooks-mev-refund.
+evaporchain-cfm = { path = "../evaporchain-cfm" }
+evaporchain-crooks-mev-refund = { path = "../evaporchain-crooks-mev-refund" }
 serde = { workspace = true }
 thiserror = { workspace = true }
 

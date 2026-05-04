@@ -49,13 +49,16 @@ Seven phases, ~4–6 weeks total. Phases 1-2 unblock observability; Phases 3-5 a
 
 **Goal:** wire the detected events into the existing `crooks_mev_refund` math. Compute refund amounts but don't settle them yet.
 
-- [ ] **2.1 — Pmf source design**: rolling window of similar-fee-tier swap txs (forward) vs the same window with attacker/victim ordering reversed (reverse). Window size = governance flag, default 256 blocks.
-- [ ] **2.2 — β source design**: pull from `Lyapunov::current_beta()` (Singh-Lyapunov already runs per-block at `parallel.rs:2076`). If Lyapunov hasn't converged, default β = governance constant.
-- [ ] **2.3 — Refund pipeline**: for each `MevObservation`, compute `(p_forward_ppm, p_reverse_ppm)` from the windows, call existing `compute_refund(work, delta_f)`, attach the result to the observation.
-- [ ] **2.4 — `MevObservation` extended**: gain `refund_amount: Option<u64>` field.
-- [ ] **2.5 — Tests**: synthetic sandwich produces non-zero refund estimate; honest swap produces zero; refund amount stable under repeated measurement.
+- [x] **2.1 — Pmf source design**: rate-based proxy per `research/crooks_mev/PHASE_2_DECISIONS.md` Decision 1. `AttackerStat { sandwich_count, first_seen_height, last_seen_height }` table on `TendermintConsensus::mev_attacker_stats`. Pruned at the start of each `on_block_committed` for determinism (drop entries with `last_seen_height < block.number - CROOKS_MEV_DEFAULT_WINDOW_BLOCKS`). Window default 256 blocks.
+- [x] **2.2 — β source design**: governance constant `crooks_mev_beta_mb` (default 1000) per Decision 2. Lyapunov derivation rejected as a category error. Allowlist accepts any `u64 ≥ 1`; "0", non-numeric, and negative values are rejected with `InvalidValue`. Tests: `test_governance_crooks_mev_beta_rejects_zero_and_non_numeric`, `test_governance_set_param_accepts_all_allowlisted_pairs` (extended with three crooks_mev_beta_mb pairs).
+- [x] **2.3 — Refund pipeline**: `evaporchain-mev-detect::compute_observation_refund(obs, stat, beta_mb, window)` chains `crooks_log_ratio_millibits → compute_delta_f_millibits → compute_refund` from the existing crates. Wired into `on_block_committed` per Phase 2 Decision 4 ordering: prune stale → for each new obs, update stat → compute refund using updated stat → push obs+refund.
+- [x] **2.4 — `MevObservation` extended**: `refund_amount: Option<u64>` field with `#[serde(default)]`. `MevObservationView` (HTTP) gets the same field.
+- [x] **2.5 — Tests** (15/15 green on Mini under release):
+  - Crate-level: `refund_helper_zero_beta_rejects`, `refund_helper_window_zero_rejects`, `refund_helper_one_off_attacker_yields_small_or_zero_refund`, `refund_helper_sustained_attacker_yields_meaningful_refund`, `attacker_stat_fresh_has_count_one`, `attacker_stat_record_bumps_count_and_height`.
+  - Consensus-level: `test_mev_observations_sandwich_recorded` extended with `assert!(refund_amount.is_some() && refund <= work_estimate)`.
+  - Governance-level: `test_governance_crooks_mev_beta_rejects_zero_and_non_numeric`.
 
-**Phase 2 deliverable:** chain estimates refund amounts for every detected MEV event. Still no settlement; observations are operator-readable only.
+**Phase 2 deliverable: SHIPPED.** Chain computes Crooks-fluctuation refund estimates eagerly at observation time; refund travels with each `MevObservation` through the ring buffer's lifetime. Operators see refund estimates live via `/api/mev/observations`. **Still no settlement** — Phase 3 ships that.
 
 ### Phase 3 — Settlement plumbing (5-7 days)
 

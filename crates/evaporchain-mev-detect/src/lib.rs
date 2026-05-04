@@ -40,6 +40,13 @@ use serde::{Deserialize, Serialize};
 
 use evaporchain_types::{AccountAddress, Transaction};
 
+// Phase 2 of CROOKS_MEV_INTEGRATION_PLAN.md — exposed for
+// consensus-side refund computation. Default β per
+// `research/crooks_mev/PHASE_2_DECISIONS.md` Decision 2; default
+// window per Decision 1.
+pub const CROOKS_MEV_DEFAULT_BETA_MB: u64 = 1000;
+pub const CROOKS_MEV_DEFAULT_WINDOW_BLOCKS: u64 = 256;
+
 /// One MEV-shaped observation surfaced by [`scan_block`]. Carries
 /// the indices of the three legs in the block's tx list, the
 /// attacker/victim addresses, and a placeholder `confidence_score`
@@ -76,6 +83,16 @@ pub struct MevObservation {
     /// replaces with a real score so low-confidence events can be
     /// filtered before settlement.
     pub confidence_score: f64,
+    /// Phase 2 of `CROOKS_MEV_INTEGRATION_PLAN.md` — Crooks-
+    /// fluctuation refund estimate for this observation. `None` until
+    /// `compute_observation_refund` is run; `Some(0)` if the math
+    /// produced a non-positive refund (ΔF ≥ work); `Some(n)` for a
+    /// positive refund. Phase 1.3 detection emits with `None`; the
+    /// consensus call site fills it in before pushing to the ring
+    /// buffer (per Phase 2 Decision 4 in
+    /// `research/crooks_mev/PHASE_2_DECISIONS.md`).
+    #[serde(default)]
+    pub refund_amount: Option<u64>,
 }
 
 /// Scan an ordered transaction list for sandwich-shaped triples.
@@ -141,6 +158,7 @@ pub fn scan_block(txs: &[Transaction], block_height: u64) -> Vec<MevObservation>
                     target: to_i,
                     work_estimate: amt_i.saturating_add(amt_k),
                     confidence_score: 1.0,
+                    refund_amount: None,
                 });
                 // Only the first matching victim per (i, k) — avoid
                 // exponential blowup from multiple victims sharing
@@ -151,6 +169,91 @@ pub fn scan_block(txs: &[Transaction], block_height: u64) -> Vec<MevObservation>
     }
 
     out
+}
+
+/// Per-attacker rolling-window stat — Phase 2 Decision 1 of the
+/// plan. Tracks how many sandwich-shaped triples a given address
+/// has been the attacker side of, in the recent window. The
+/// consensus engine maintains a `HashMap<AccountAddress,
+/// AttackerStat>` of these and prunes entries whose `last_seen_height
+/// < current_height - window` for determinism.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttackerStat {
+    pub sandwich_count: u64,
+    pub first_seen_height: u64,
+    pub last_seen_height: u64,
+}
+
+impl AttackerStat {
+    /// First observation for this attacker.
+    pub fn fresh(height: u64) -> Self {
+        Self {
+            sandwich_count: 1,
+            first_seen_height: height,
+            last_seen_height: height,
+        }
+    }
+
+    /// Append a new observation; bumps count + last_seen.
+    pub fn record(&mut self, height: u64) {
+        self.sandwich_count = self.sandwich_count.saturating_add(1);
+        self.last_seen_height = height.max(self.last_seen_height);
+    }
+}
+
+/// Phase 2.3 of `CROOKS_MEV_INTEGRATION_PLAN.md` — compute the
+/// Crooks-fluctuation refund estimate for one observation, given a
+/// rolling per-attacker stat, β (in millibits), and the window size
+/// in blocks.
+///
+/// Returns `Some(refund_amount)` on success, `None` if any of the
+/// underlying primitives reject the inputs (e.g., β=0 → undefined).
+///
+/// **Honesty caveat:** the pmf computed here uses a rate-based
+/// proxy (sandwich count over window) rather than the rigorous
+/// forward/reverse path probabilities Crooks 1999 calls for. See
+/// `research/crooks_mev/PHASE_2_DECISIONS.md` Decision 1 for why
+/// and the deferred research follow-up.
+pub fn compute_observation_refund(
+    obs: &MevObservation,
+    stat: &AttackerStat,
+    beta_mb: u64,
+    window_blocks: u64,
+) -> Option<u64> {
+    if beta_mb == 0 || window_blocks == 0 {
+        return None;
+    }
+
+    // P_F (ppm) = sandwich_count / window_blocks, scaled to ppm.
+    // Capped at 999_999 to keep crooks_log_ratio_millibits in-range
+    // (the primitive rejects p_forward == 1_000_000).
+    let p_forward_ppm = (stat
+        .sandwich_count
+        .saturating_mul(1_000_000)
+        / window_blocks)
+        .min(999_999);
+
+    // P_R (ppm) = noise floor = 1 / (window_blocks * 1024) in ppm.
+    // For window=256 → ~3.8 ppm. Caps at 1 to avoid div-by-zero in
+    // the log primitive when window_blocks is huge.
+    let p_reverse_ppm = (1_000_000u64
+        / window_blocks.saturating_mul(1024))
+    .max(1);
+
+    let log_ratio = evaporchain_cfm::crooks_log_ratio_millibits(p_forward_ppm, p_reverse_ppm)
+        .ok()?;
+
+    let delta_f = evaporchain_crooks_mev_refund::compute_delta_f_millibits(
+        obs.work_estimate as i64,
+        log_ratio,
+        beta_mb,
+    )
+    .ok()?;
+
+    Some(evaporchain_crooks_mev_refund::compute_refund(
+        obs.work_estimate,
+        delta_f,
+    ))
 }
 
 #[cfg(test)]
@@ -208,6 +311,136 @@ mod tests {
         assert_eq!(obs.target, addr(0x99));
         assert_eq!(obs.work_estimate, 250);
         assert_eq!(obs.confidence_score, 1.0);
+        assert_eq!(
+            obs.refund_amount, None,
+            "refund is None at detection time — filled in by the call site"
+        );
+    }
+
+    #[test]
+    fn refund_helper_zero_beta_rejects() {
+        let obs = MevObservation {
+            block_height: 1,
+            attacker_pre_idx: 0,
+            victim_idx: 1,
+            attacker_post_idx: 2,
+            attacker: addr(0xAA),
+            victim: addr(0xBB),
+            target: addr(0x99),
+            work_estimate: 1000,
+            confidence_score: 1.0,
+            refund_amount: None,
+        };
+        let stat = AttackerStat::fresh(1);
+        assert_eq!(
+            compute_observation_refund(&obs, &stat, 0, CROOKS_MEV_DEFAULT_WINDOW_BLOCKS),
+            None,
+            "β=0 must reject"
+        );
+    }
+
+    #[test]
+    fn refund_helper_one_off_attacker_yields_small_or_zero_refund() {
+        let obs = MevObservation {
+            block_height: 1,
+            attacker_pre_idx: 0,
+            victim_idx: 1,
+            attacker_post_idx: 2,
+            attacker: addr(0xAA),
+            victim: addr(0xBB),
+            target: addr(0x99),
+            work_estimate: 1000,
+            confidence_score: 1.0,
+            refund_amount: None,
+        };
+        // Single observation, no prior history → low P_F → low
+        // log_ratio → small ΔF → refund ≈ work (the formula
+        // attributes most of work to dissipation when the rate
+        // signal is weak — that's the conservative direction).
+        let stat = AttackerStat::fresh(1);
+        let refund = compute_observation_refund(
+            &obs,
+            &stat,
+            CROOKS_MEV_DEFAULT_BETA_MB,
+            CROOKS_MEV_DEFAULT_WINDOW_BLOCKS,
+        );
+        assert!(refund.is_some());
+        // Refund must be bounded by work_estimate.
+        assert!(refund.unwrap() <= obs.work_estimate);
+    }
+
+    #[test]
+    fn refund_helper_sustained_attacker_yields_meaningful_refund() {
+        let obs = MevObservation {
+            block_height: 100,
+            attacker_pre_idx: 0,
+            victim_idx: 1,
+            attacker_post_idx: 2,
+            attacker: addr(0xAA),
+            victim: addr(0xBB),
+            target: addr(0x99),
+            work_estimate: 10_000,
+            confidence_score: 1.0,
+            refund_amount: None,
+        };
+        // Attacker with 10 sandwiches in the window — sustained
+        // pattern, high P_F, high log_ratio.
+        let stat = AttackerStat {
+            sandwich_count: 10,
+            first_seen_height: 1,
+            last_seen_height: 100,
+        };
+        let refund = compute_observation_refund(
+            &obs,
+            &stat,
+            CROOKS_MEV_DEFAULT_BETA_MB,
+            CROOKS_MEV_DEFAULT_WINDOW_BLOCKS,
+        );
+        assert!(refund.is_some(), "sustained attacker → math must succeed");
+        let r = refund.unwrap();
+        assert!(r <= obs.work_estimate, "refund bounded by work");
+    }
+
+    #[test]
+    fn refund_helper_window_zero_rejects() {
+        let obs = MevObservation {
+            block_height: 1,
+            attacker_pre_idx: 0,
+            victim_idx: 1,
+            attacker_post_idx: 2,
+            attacker: addr(0xAA),
+            victim: addr(0xBB),
+            target: addr(0x99),
+            work_estimate: 1000,
+            confidence_score: 1.0,
+            refund_amount: None,
+        };
+        let stat = AttackerStat::fresh(1);
+        assert_eq!(
+            compute_observation_refund(&obs, &stat, CROOKS_MEV_DEFAULT_BETA_MB, 0),
+            None,
+            "window=0 must reject"
+        );
+    }
+
+    #[test]
+    fn attacker_stat_fresh_has_count_one() {
+        let s = AttackerStat::fresh(42);
+        assert_eq!(s.sandwich_count, 1);
+        assert_eq!(s.first_seen_height, 42);
+        assert_eq!(s.last_seen_height, 42);
+    }
+
+    #[test]
+    fn attacker_stat_record_bumps_count_and_height() {
+        let mut s = AttackerStat::fresh(1);
+        s.record(5);
+        assert_eq!(s.sandwich_count, 2);
+        assert_eq!(s.first_seen_height, 1);
+        assert_eq!(s.last_seen_height, 5);
+        // Out-of-order record must NOT clobber last_seen.
+        s.record(3);
+        assert_eq!(s.last_seen_height, 5);
     }
 
     #[test]

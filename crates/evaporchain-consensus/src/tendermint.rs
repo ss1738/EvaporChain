@@ -295,7 +295,7 @@ impl std::fmt::Display for GovernanceParamError {
         match self {
             Self::UnknownKey(k) => write!(
                 f,
-                "unknown governance soft-fork key: {k:?} (allowlist: parent_acceptance_mode, block_source_mode, conservation_enforcement, lambda_fold_mode)"
+                "unknown governance soft-fork key: {k:?} (allowlist: parent_acceptance_mode, block_source_mode, conservation_enforcement, lambda_fold_mode, cartel_alarm_mode)"
             ),
             Self::InvalidValue { key, value, permitted } => write!(
                 f,
@@ -425,6 +425,17 @@ pub struct TendermintConsensus {
     /// is observe-only — no Crooks refund settlement runs from this
     /// buffer until Phase 3 of the plan ships the `RefundTx` plumbing.
     pub mev_observations: std::collections::VecDeque<evaporchain_mev_detect::MevObservation>,
+    /// Phase 2.1 of `CROOKS_MEV_INTEGRATION_PLAN.md` — rolling
+    /// per-attacker sandwich-count stats. Drives the rate-based pmf
+    /// fed to the Crooks-fluctuation refund math. Pruned at the
+    /// start of each `on_block_committed` to keep the table bounded
+    /// AND deterministic across validators (Phase 3.2 contract):
+    /// any attacker with `last_seen_height < current_height -
+    /// CROOKS_MEV_DEFAULT_WINDOW_BLOCKS` is dropped.
+    pub mev_attacker_stats: std::collections::HashMap<
+        evaporchain_types::AccountAddress,
+        evaporchain_mev_detect::AttackerStat,
+    >,
     /// Causal-CHSH cartel-detection alarm (Lane O.8.1). Rolling-buffer
     /// observability primitive — every committed block pushes a
     /// `BlockSummary` into the alarm; periodic gate runs (default
@@ -435,6 +446,14 @@ pub struct TendermintConsensus {
     /// on `S > cartel_floor` is the deferred Lane O.8.2.
     /// Doctrine reference: `INVENTION_STACK.md §A1.10`.
     pub cartel_alarm: evaporchain_causal_chsh::CartelAlarm,
+    /// Lane O.8.2 — queue of `CartelAlarmEvent`s emitted when the
+    /// chain's S crosses `honest_ceiling_milli` AND governance has
+    /// set `cartel_alarm_mode = "alarm"`. Default `"observe"` mode
+    /// never enqueues. Drained by `take_pending_cartel_alarms()`.
+    /// **V1 is event surface only** — no validator-side reaction
+    /// policy is in-protocol. Operators consume via HTTP polling or
+    /// (future) a websocket subscriber.
+    pub pending_cartel_alarms: Vec<evaporchain_causal_chsh::CartelAlarmEvent>,
     /// Lambda-Fold accumulated instance, ticked per committed block.
     /// O(1) memory regardless of chain length — the substrate guarantee
     /// of the energy-folded light client. Per INVENTION_STACK.md §4.1
@@ -685,7 +704,9 @@ impl TendermintConsensus {
             mev_observations: std::collections::VecDeque::with_capacity(
                 MEV_OBSERVATION_BUFFER_CAP,
             ),
+            mev_attacker_stats: std::collections::HashMap::new(),
             cartel_alarm: evaporchain_causal_chsh::CartelAlarm::doctrine_default(),
+            pending_cartel_alarms: Vec::new(),
             lambda_fold: evaporchain_lambda_fold::FoldedInstance::identity(),
             #[cfg(feature = "lambda_fold_nova")]
             lambda_fold_nova: None,
@@ -790,6 +811,13 @@ impl TendermintConsensus {
     ///   substrate path runs regardless.
     /// - `fork_choice_mode` is set via `governance_set_fork_choice_mode`
     ///   instead (it requires endorser-stake validation).
+    /// - `cartel_alarm_mode` ∈ {`observe`, `alarm`} — Lane O.8.2.
+    ///   `observe` (default) keeps the chain's rolling Causal-CHSH
+    ///   alarm in pure-observation mode (status RPCs only). `alarm`
+    ///   flips on `CartelAlarmEvent` emission whenever the chain's
+    ///   honest-source S crosses `honest_ceiling_milli` (1800 under
+    ///   doctrine defaults). V1 is event surface only — no validator-
+    ///   side reaction policy is in-protocol.
     pub fn governance_set_param(
         &mut self,
         key: &str,
@@ -800,6 +828,30 @@ impl TendermintConsensus {
             "block_source_mode" => &["fifo", "antichain"],
             "conservation_enforcement" => &["observe", "enforce"],
             "lambda_fold_mode" => &["hash_chain", "nova"],
+            "cartel_alarm_mode" => &["observe", "alarm"],
+            // Phase 2.2 of CROOKS_MEV_INTEGRATION_PLAN.md —
+            // `crooks_mev_beta_mb` is a u64 ≥ 1; allowlist enforces
+            // numeric parseability + lower bound rather than
+            // enumerating values. Special-cased below.
+            "crooks_mev_beta_mb" => {
+                let v = value.parse::<u64>().map_err(|_| {
+                    GovernanceParamError::InvalidValue {
+                        key: key.to_string(),
+                        value: value.to_string(),
+                        permitted: vec!["any u64 ≥ 1".to_string()],
+                    }
+                })?;
+                if v < 1 {
+                    return Err(GovernanceParamError::InvalidValue {
+                        key: key.to_string(),
+                        value: value.to_string(),
+                        permitted: vec!["any u64 ≥ 1".to_string()],
+                    });
+                }
+                self.governance_params
+                    .insert(key.to_string(), value.to_string());
+                return Ok(());
+            }
             _ => return Err(GovernanceParamError::UnknownKey(key.to_string())),
         };
         if !permitted.contains(&value) {
@@ -1180,6 +1232,21 @@ impl TendermintConsensus {
         self.cartel_alarm.records_seen()
     }
 
+    /// Drain the queue of pending `CartelAlarmEvent`s emitted since the
+    /// last call. Returns an empty Vec when nothing has fired or
+    /// `cartel_alarm_mode` is the default `observe`. Lane O.8.2.
+    ///
+    /// Consumers (RPC layer, websocket dispatcher, slashing engine in
+    /// future Lane O.8.3+) call this on a tick / on each block to
+    /// surface fired alarms downstream. The queue holds at most one
+    /// event per `last_run_at_height` (de-duplicated at emission time)
+    /// so back-to-back ticks at the same height never double-emit.
+    pub fn take_pending_cartel_alarms(
+        &mut self,
+    ) -> Vec<evaporchain_causal_chsh::CartelAlarmEvent> {
+        std::mem::take(&mut self.pending_cartel_alarms)
+    }
+
     /// in `governance_params`, plus a small set of documented keys with
     /// their default values when unset (so operators can see the
     /// effective state, not just the explicit overrides).
@@ -1194,6 +1261,7 @@ impl TendermintConsensus {
             ("block_source_mode", "fifo"),
             ("conservation_enforcement", "observe"),
             ("lambda_fold_mode", "hash_chain"),
+            ("cartel_alarm_mode", "observe"),
         ] {
             out.entry(key.to_string())
                 .or_insert_with(|| default.to_string());
@@ -1681,7 +1749,9 @@ impl TendermintConsensus {
             mev_observations: std::collections::VecDeque::with_capacity(
                 MEV_OBSERVATION_BUFFER_CAP,
             ),
+            mev_attacker_stats: std::collections::HashMap::new(),
             cartel_alarm: evaporchain_causal_chsh::CartelAlarm::doctrine_default(),
+            pending_cartel_alarms: Vec::new(),
             lambda_fold: evaporchain_lambda_fold::FoldedInstance::identity(),
             #[cfg(feature = "lambda_fold_nova")]
             lambda_fold_nova: None,
@@ -3458,6 +3528,12 @@ impl TendermintConsensus {
             },
             block.number,
         );
+        // Lane O.8.2: emit a CartelAlarmEvent when the chain's S crosses
+        // the doctrine ceiling AND governance has set
+        // `cartel_alarm_mode = "alarm"`. Default `"observe"` skips
+        // emission; the alarm verdict still gets stored on the
+        // alarm itself for status RPCs (Lane O.8.1b).
+        self.maybe_emit_cartel_alarm_event();
 
         // Record this block in the parallel Light-Cone DAG. Per
         // INVENTION_STACK.md §4.1 #1 this is the substrate for the
@@ -3508,15 +3584,41 @@ impl TendermintConsensus {
             self.last_tur_verdict = Some(evaporchain_tur_liveness::tur_check(&samples, sigma));
         }
 
-        // Phase 1.3 of CROOKS_MEV_INTEGRATION_PLAN.md — scan the
-        // committed block for sandwich-shaped tx triples and append
-        // observations to the bounded ring buffer. Phase 1 is
-        // observe-only — no Crooks refund settlement runs from this
-        // buffer until Phase 3 ships the RefundTx plumbing. The scan
-        // is O(n²) over Transfer txs only; with N_max ~1000 txs/block
-        // the worst-case is ~10⁶ ops, well under the 50 ms hot-path
-        // budget per Phase 6.2 of the plan.
-        for obs in evaporchain_mev_detect::scan_block(&block.transactions, block.number) {
+        // Phase 1.3 + 2 of CROOKS_MEV_INTEGRATION_PLAN.md — scan the
+        // committed block for sandwich-shaped tx triples, update
+        // per-attacker rolling stats, compute Crooks-fluctuation
+        // refund estimates, and append observations to the bounded
+        // ring buffer. Phase 1+2 are observe-only — no settlement
+        // runs from this buffer until Phase 3 ships the RefundTx
+        // plumbing. The scan is O(n²) over Transfer txs only.
+        //
+        // Phase 2 Decision 4 ordering: prune stale stats, then for
+        // each new observation update the stat, THEN compute refund
+        // (so the new observation contributes to its own pmf). This
+        // is the deterministic-across-validators contract that
+        // Phase 3.2 will rely on.
+        let window = evaporchain_mev_detect::CROOKS_MEV_DEFAULT_WINDOW_BLOCKS;
+        // Beta from governance, with a default if unset/unparseable.
+        let beta_mb = self
+            .governance_params
+            .get("crooks_mev_beta_mb")
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(evaporchain_mev_detect::CROOKS_MEV_DEFAULT_BETA_MB);
+        // Prune stats older than the window — deterministic since
+        // every validator sees the same block.number.
+        let prune_horizon = block.number.saturating_sub(window);
+        self.mev_attacker_stats
+            .retain(|_, stat| stat.last_seen_height >= prune_horizon);
+
+        for mut obs in evaporchain_mev_detect::scan_block(&block.transactions, block.number) {
+            // Update or insert attacker stat first (Phase 2 Decision 4).
+            let stat = self
+                .mev_attacker_stats
+                .entry(obs.attacker)
+                .and_modify(|s| s.record(block.number))
+                .or_insert_with(|| evaporchain_mev_detect::AttackerStat::fresh(block.number));
+            obs.refund_amount =
+                evaporchain_mev_detect::compute_observation_refund(&obs, stat, beta_mb, window);
             self.mev_observations.push_back(obs);
             while self.mev_observations.len() > MEV_OBSERVATION_BUFFER_CAP {
                 self.mev_observations.pop_front();
@@ -5979,6 +6081,10 @@ mod tests {
             // tendermint per-block fold call site.
             ("lambda_fold_mode", "hash_chain"),
             ("lambda_fold_mode", "nova"),
+            // Phase 2.2 of CROOKS_MEV_INTEGRATION_PLAN.md.
+            ("crooks_mev_beta_mb", "1000"),
+            ("crooks_mev_beta_mb", "1"),
+            ("crooks_mev_beta_mb", "999999"),
         ];
         for (key, value) in &pairs {
             assert!(
@@ -6194,6 +6300,17 @@ mod tests {
         assert_eq!(o.victim, addr(0xBB));
         assert_eq!(o.target, addr(0x99));
         assert_eq!(o.work_estimate, 250);
+        // Phase 2 of CROOKS_MEV_INTEGRATION_PLAN.md — refund_amount
+        // must be filled in by the call site (not None), bounded by
+        // work_estimate.
+        let refund = o
+            .refund_amount
+            .expect("refund_amount must be Some after call-site computation");
+        assert!(
+            refund <= o.work_estimate,
+            "refund {refund} must be bounded by work_estimate {}",
+            o.work_estimate
+        );
 
         // Honest follow-up block: three different senders — must
         // not register a false positive.
@@ -6295,6 +6412,27 @@ mod tests {
         let vk_bytes = folder.vk_bytes().expect("vk_bytes failed");
         evaporchain_lambda_fold::verify_nova_folded(&nova, &vk_bytes, 0)
             .expect("light-client verify of consensus-produced proof failed");
+    }
+
+    #[test]
+    fn test_governance_crooks_mev_beta_rejects_zero_and_non_numeric() {
+        // Phase 2.2: β=0 is undefined for the Crooks formula; junk
+        // strings must surface as InvalidValue.
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        assert!(matches!(
+            tc.governance_set_param("crooks_mev_beta_mb", "0").unwrap_err(),
+            GovernanceParamError::InvalidValue { .. }
+        ));
+        assert!(matches!(
+            tc.governance_set_param("crooks_mev_beta_mb", "not_a_number")
+                .unwrap_err(),
+            GovernanceParamError::InvalidValue { .. }
+        ));
+        assert!(matches!(
+            tc.governance_set_param("crooks_mev_beta_mb", "-100")
+                .unwrap_err(),
+            GovernanceParamError::InvalidValue { .. }
+        ));
     }
 
     #[test]
