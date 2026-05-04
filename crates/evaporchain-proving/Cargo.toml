@@ -7,7 +7,7 @@ repository.workspace = true
 
 [features]
 default = []
-nova = ["dep:nova-snark", "dep:ff", "dep:bincode"]
+nova = ["dep:nova-snark", "dep:ff", "dep:bincode", "dep:generic-array"]
 test-utils = []
 
 [dependencies]
@@ -24,6 +24,12 @@ tokio = { workspace = true, features = ["sync", "rt", "macros"] }
 nova-snark = { version = "0.68", features = ["test-utils"], optional = true }
 ff = { version = "0.13", optional = true }
 bincode = { version = "1", optional = true }
+# Poseidon sponge typenum (Phase 2.5 of LAMBDA_FOLD_NOVA_PLAN —
+# state-root binding via Poseidon hash over 4 limbs to close the
+# 192-bit collision risk on the truncated u64). nova-snark uses
+# the same generic-array shape internally; we just need the
+# typenum::U24 token here for the SpongeCircuit instantiation.
+generic-array = { version = "1", optional = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

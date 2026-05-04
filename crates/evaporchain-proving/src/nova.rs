@@ -7,14 +7,28 @@ use core::marker::PhantomData;
 use std::time::Instant;
 
 use nova_snark::{
-    frontend::{num::AllocatedNum, ConstraintSystem, SynthesisError},
+    frontend::{
+        gadgets::poseidon::{
+            Elt, IOPattern, Simplex, Sponge, SpongeAPI, SpongeCircuit, SpongeOp, SpongeTrait,
+            Strength,
+        },
+        num::AllocatedNum,
+        ConstraintSystem, SynthesisError,
+    },
     nova::{CompressedSNARK, PublicParams, RecursiveSNARK},
     provider::{Bn256EngineKZG, GrumpkinEngine},
     traits::{circuit::StepCircuit, snark::RelaxedR1CSSNARKTrait, Engine, Group},
 };
+// Poseidon sponge state size — `U24` matches the example at
+// nova-snark-0.68.0/examples/hashchain.rs. Wide enough to absorb
+// the 4 state-root limbs in one round + squeeze a single output.
+use generic_array::typenum::U24;
 
 use crate::{CompressedProof, ProvingEngine, ProvingError};
 use evaporchain_types::{energy_at_epoch, Block, DualCommitment, Transaction};
+// Phase 2.2/2.3 — `ff::Field` for `Scalar::ONE`; `ff::PrimeField`
+// for `Scalar::to_repr()` (used in step_count witness extraction).
+use ff::{Field, PrimeField};
 
 // ─────────────────────────── Type Aliases ─────────────────────────────────
 
@@ -885,6 +899,72 @@ fn range_check_bits<G: Group, CS: ConstraintSystem<G::Scalar>>(
     Ok(())
 }
 
+/// 128-bit version of [`range_check_bits`]. Identical structure, but
+/// takes `value: u128` so bits 64-127 can be extracted correctly
+/// (Rust's u64 right-shift past 63 bits is undefined, so the u64
+/// version silently truncates to 64-bit checks). Adds `num_bits + 1`
+/// R1CS constraints — same per-bit cost as the u64 version, just
+/// extended to higher exponents.
+///
+/// The 2^idx coefficient is built from G::Scalar arithmetic (1 << 32
+/// twice for the high half) since `1u64 << idx` overflows for
+/// idx ≥ 64.
+fn range_check_bits_u128<G: Group, CS: ConstraintSystem<G::Scalar>>(
+    cs: &mut CS,
+    ns: &str,
+    value: &AllocatedNum<G::Scalar>,
+    value_u128: u128,
+    num_bits: usize,
+) -> Result<(), SynthesisError> {
+    debug_assert!(num_bits <= 128, "range_check_bits_u128 supports up to 128 bits");
+    let two_32 = G::Scalar::from(1u64 << 32);
+    let mut bit_vars = Vec::with_capacity(num_bits);
+    for bit_idx in 0..num_bits {
+        let bit_val = ((value_u128 >> bit_idx) & 1) as u64;
+        let bit = AllocatedNum::alloc(cs.namespace(|| format!("{ns}_b{bit_idx}")), || {
+            Ok(G::Scalar::from(bit_val))
+        })?;
+        cs.enforce(
+            || format!("{ns}_bl{bit_idx}"),
+            |lc| lc + bit.get_variable(),
+            |lc| lc + CS::one() - bit.get_variable(),
+            |lc| lc,
+        );
+        bit_vars.push(bit);
+    }
+    // Recomposition: Σ(bit_i × 2^i) = value, with 2^i computed via
+    // repeated multiplication for i ≥ 64 (since 1u64 << i overflows).
+    cs.enforce(
+        || format!("{ns}_rc"),
+        |mut lc| {
+            for (idx, bit) in bit_vars.iter().enumerate() {
+                let coef = if idx < 64 {
+                    G::Scalar::from(1u64 << idx)
+                } else {
+                    // 2^idx = 2^32 × 2^32 × ... × 2^(idx mod 32)
+                    let high = idx - 64;
+                    let low_part = G::Scalar::from(1u64 << 32) * G::Scalar::from(1u64 << 32);
+                    let mut coef = low_part;
+                    let full_32 = high / 32;
+                    let rem_32 = high % 32;
+                    for _ in 0..full_32 {
+                        coef *= two_32;
+                    }
+                    if rem_32 > 0 {
+                        coef *= G::Scalar::from(1u64 << rem_32);
+                    }
+                    coef
+                };
+                lc = lc + (coef, bit.get_variable());
+            }
+            lc
+        },
+        |lc| lc + CS::one(),
+        |lc| lc + value.get_variable(),
+    );
+    Ok(())
+}
+
 /// Proves `a < b` by decomposing `b - a - 1` into `num_bits` bits.
 /// Adds `num_bits + 2` constraints.
 fn enforce_less_than<G: Group, CS: ConstraintSystem<G::Scalar>>(
@@ -1375,18 +1455,29 @@ impl<G: Group> StepCircuit<G::Scalar> for RealBlockCircuit<G> {
         );
 
         // ═══════════════════════════════════════════════════════════════
-        // 11. FULL 32-BYTE STATE ROOT DECOMPOSITION
+        // 11. FULL 32-BYTE STATE ROOT DECOMPOSITION + POSEIDON BINDING
         //
-        // The IVC state carries a truncated u64 state hash for efficiency.
-        // Here we prove the full 32-byte root decomposes into 4 u64 limbs
-        // and the first limb matches the truncated hash.
+        // Phase 2.5 of LAMBDA_FOLD_NOVA_PLAN — Phase 1 Decision 4:
         //
-        // state_root = limb[0] + limb[1]·2^64 + limb[2]·2^128 + limb[3]·2^192
-        // limb[0] == new_state_hash  (consistency with IVC state)
+        // The IVC state carries `state_root_poseidon_hash` at z[0]
+        // (replacing the prior truncated u64). The full 32-byte root
+        // decomposes into 4 u64 limbs; we Poseidon-hash all 4 limbs
+        // and bind the result into z_new[0]. This closes the 192-bit
+        // collision risk: an adversary who could vary limb[1..3]
+        // while keeping limb[0] fixed (and thus z[0]) under the old
+        // truncated-u64 binding can no longer do so — Poseidon's
+        // collision resistance binds all 4 limbs.
         //
-        // This prevents collision attacks on the u64 truncation.
+        // Recomposition constraint preserved as defence-in-depth:
+        //   state_root = limb[0] + limb[1]·2^64 + limb[2]·2^128 + limb[3]·2^192
+        // Poseidon over the 4 limbs is what flows through IVC state.
+        //
+        // The `limb[0] == new_state_hash` consistency constraint
+        // stays — `new_state_hash` is still allocated locally for
+        // sanity-checking the witness, even though it's no longer
+        // the IVC public input.
         // ═══════════════════════════════════════════════════════════════
-        {
+        let state_root_poseidon = {
             let limbs = &self.witness.state_root_limbs;
             let mut limb_vars = Vec::with_capacity(4);
             for j in 0..4 {
@@ -1398,7 +1489,8 @@ impl<G: Group> StepCircuit<G::Scalar> for RealBlockCircuit<G> {
                 limb_vars.push(limb);
             }
 
-            // Consistency: limb[0] == new_state_hash (the truncated value in IVC state).
+            // Consistency: limb[0] == new_state_hash (kept for sanity
+            // — new_state_hash is the legacy truncated-u64 value).
             cs.enforce(
                 || "sr_limb0_eq",
                 |lc| lc + limb_vars[0].get_variable(),
@@ -1408,7 +1500,8 @@ impl<G: Group> StepCircuit<G::Scalar> for RealBlockCircuit<G> {
 
             // Recomposition constraint for full 32-byte root:
             // limb[0] + limb[1]·2^64 + limb[2]·2^128 + limb[3]·2^192
-            // This is committed as a single field element (fits in BN256 scalar field ~2^254).
+            // (defence-in-depth — Poseidon below is the load-bearing
+            // binding that flows into z[0])
             let full_root = AllocatedNum::alloc(cs.namespace(|| "sr_full"), || {
                 let l0 = G::Scalar::from(limbs[0]);
                 let l1 = G::Scalar::from(limbs[1]);
@@ -1434,7 +1527,38 @@ impl<G: Group> StepCircuit<G::Scalar> for RealBlockCircuit<G> {
                     lc
                 },
             );
-        }
+
+            // ─── Phase 2.5 — Poseidon hash over the 4 limbs ───
+            //
+            // SpongeCircuit pattern lifted from
+            // nova-snark-0.68.0/examples/hashchain.rs. Absorbs 4
+            // field elements, squeezes 1. Result is the IVC public
+            // input z_new[0].
+            let elt: Vec<Elt<G::Scalar>> = limb_vars
+                .iter()
+                .map(|v| Elt::Allocated(v.clone()))
+                .collect();
+            let pc = Sponge::<G::Scalar, U24>::api_constants(Strength::Standard);
+            let mut ns = cs.namespace(|| "sr_poseidon");
+            let mut sponge = SpongeCircuit::new_with_constants(&pc, Simplex);
+            sponge.start(
+                IOPattern(vec![SpongeOp::Absorb(4), SpongeOp::Squeeze(1)]),
+                None,
+                &mut ns,
+            );
+            SpongeAPI::absorb(&mut sponge, 4, &elt, &mut ns);
+            let output = SpongeAPI::squeeze(&mut sponge, 1, &mut ns);
+            sponge
+                .finish(&mut ns)
+                .map_err(|_| SynthesisError::Unsatisfiable("sr_poseidon finish".to_string()))?;
+            // Bind to a local so `ns` (the namespace borrow inside
+            // the block) is dropped before this AllocatedNum
+            // escapes the block — avoids E0597 lifetime error from
+            // the temporary outliving the local namespace.
+            let alloc =
+                Elt::ensure_allocated(&output[0], &mut ns.namespace(|| "sr_poseidon_alloc"))?;
+            alloc
+        };
 
         // Same for MMR root.
         {
@@ -1654,14 +1778,14 @@ impl<G: Group> StepCircuit<G::Scalar> for RealBlockCircuit<G> {
         range_check_bits::<G, CS>(cs, "step_e_rc", &step_e, self.witness.step_energy, 64)?;
 
         // (e) new_total_energy = after_decay + step_energy
+        let new_total_energy_u128 = self
+            .witness
+            .energy_after_halvings
+            .saturating_sub(self.witness.energy_frac_decay)
+            .saturating_add(self.witness.step_energy as u128);
         let new_total_energy =
             AllocatedNum::alloc(cs.namespace(|| "new_total_energy"), || {
-                let ad = self
-                    .witness
-                    .energy_after_halvings
-                    .saturating_sub(self.witness.energy_frac_decay);
-                let new = ad.saturating_add(self.witness.step_energy as u128);
-                Ok(u128_to_scalar(new))
+                Ok(u128_to_scalar(new_total_energy_u128))
             })?;
         cs.enforce(
             || "new_total_energy_sum",
@@ -1670,8 +1794,23 @@ impl<G: Group> StepCircuit<G::Scalar> for RealBlockCircuit<G> {
             |lc| lc + after_decay.get_variable() + step_e.get_variable(),
         );
 
+        // Phase 2.4 — 128-bit range check on new_total_energy.
+        // Defends against witness manipulation that would let
+        // an adversary claim arbitrary high values via the (e) sum.
+        range_check_bits_u128::<G, CS>(
+            cs,
+            "new_te_rc",
+            &new_total_energy,
+            new_total_energy_u128,
+            128,
+        )?;
+
         Ok(vec![
-            new_state_hash,
+            // z[0] = state_root_poseidon_hash (Phase 2.5 / Decision 4
+            // — replaces the prior new_state_hash truncated u64 with
+            // a Poseidon hash over all 4 state-root limbs to close
+            // the 192-bit collision risk).
+            state_root_poseidon,
             new_mmr_root,
             new_epoch,
             new_block,
