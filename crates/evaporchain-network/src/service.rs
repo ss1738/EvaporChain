@@ -1159,6 +1159,24 @@ impl P2pNetworkService {
                         if let Ok(mut s) = sybil_state_inner.write() {
                             let peer_ids: Vec<PeerId> = s.scores.keys().copied().collect();
                             for pid in peer_ids {
+                                // Lane R.1: skip idle-score penalty for
+                                // authorized validators. In a permissioned
+                                // validator-set cluster the Sybil-score
+                                // mechanism is the wrong tool — authorized
+                                // peers are pre-vetted via TLS / peer-id
+                                // allowlist (`peer_authority`) and must
+                                // not be slow-banned just because they
+                                // went 100 idle ticks without a positive
+                                // event. Without this gate, every small
+                                // cluster eventually freezes itself
+                                // (caught on the 3-Mini Tailscale cluster
+                                // 2026-05-04: cluster halted at h=771
+                                // after ~90 min because peers crossed
+                                // SCORE_BAN_THRESHOLD via accumulated
+                                // SCORE_IDLE_TICK without misbehaviour).
+                                if peer_authority.is_authorized(&pid) {
+                                    continue;
+                                }
                                 if let Some(ip) = s.adjust_score(&pid, SCORE_IDLE_TICK) {
                                     s.ban_ip(ip, "score_threshold_breach");
                                     to_disconnect.push((pid, ip));
@@ -1510,6 +1528,24 @@ impl P2pNetworkService {
                                 // PeerId is cheap to mint, source IP is not.
                                 let endpoint_ip = endpoint_remote_ip(endpoint);
                                 if let Some(ip) = endpoint_ip {
+                                    // Lane R.1 defence-in-depth: if an
+                                    // authorized validator's IP is on
+                                    // the ban list (e.g. inherited from
+                                    // a previous-version cluster freeze
+                                    // before R.1 landed, or from a
+                                    // legitimate score breach that has
+                                    // since recovered), auto-unban so
+                                    // the cluster can recover without
+                                    // operator restart. We've already
+                                    // confirmed `peer_id` is authorized.
+                                    if let Ok(mut s) = sybil_state_inner.write() {
+                                        if s.bans.is_banned(&ip) {
+                                            warn!(
+                                                "network: auto-unbanning {ip} for authorized peer {peer_id} (Lane R.1 recovery)"
+                                            );
+                                            s.unban_ip(&ip);
+                                        }
+                                    }
                                     let total = swarm.connected_peers().count();
                                     let admit = sybil_state_inner.write().map(|mut s| {
                                         s.try_admit_inbound(ip, total)
