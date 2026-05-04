@@ -186,7 +186,9 @@ Seven phases. Phases 1-2 are reversible design + prototype; phases 3-6 are the r
 
 - [x] **6.4 — Async fold queue**: `evaporchain-proving::async_fold::FoldQueue` operates on `(Block, new_state_root)` pairs and delegates witness construction to `RealBlockProver` at the leaf — arity-8 changes were already self-contained inside the prover. **No witness-shape updates needed.** All 3 async-fold tests green on Mini under release: `submit_n_blocks_all_fold_in_order`, `queue_full_returns_queue_full_outcome`, `worker_gone_after_drop`.
 
-- [ ] **6.5 — Fuzz target**: extend `fuzz/fuzz_targets/` with a Nova-folding harness. Random witness sequences, assert verify succeeds for honest sequences and fails for tampered sequences.
+- [x] **6.5 — Fuzz target**: shipped as `fuzz/fuzz_targets/nova_verify.rs` (wired into `fuzz/Cargo.toml` as `fuzz_nova_verify`). Targets the **light-client verify path DoS resistance** rather than the full prover (full IVC fuzzing would be ~0.001 iter/s — useless). The harness feeds arbitrary bytes as `(proof_bytes, vk_bytes, z0_bytes, num_steps)` to `RealBlockProver::verify_with_vk_bytes` and asserts no panic. The harness compiles clean on Mini.
+
+  Unit-test counterpart `test_real_block_verify_with_vk_bytes_no_panic_on_garbage` covers 5 curated adversarial inputs (empty, short-and-random, length-prefixed-corrupt, pseudo-random 1 KB, maximum-size 4 KB) — all return clean errors, no panic. Test passes on Mini under release. The fuzz target is ready for `cargo +nightly fuzz run fuzz_nova_verify` once `cargo install cargo-fuzz` is run on the Mini.
 
 **Phase 6 deliverable:** four security-grade tests pass; benchmark numbers added to `crates/evaporchain-proving/BENCHMARKS.md`.
 

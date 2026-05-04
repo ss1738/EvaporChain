@@ -2573,6 +2573,70 @@ mod tests {
         );
     }
 
+    /// Phase 6.5 of LAMBDA_FOLD_NOVA_PLAN — light-client verify
+    /// must not panic on adversarial / random byte sequences. This
+    /// is the unit-test counterpart to `fuzz/fuzz_targets/nova_verify.rs`
+    /// — same surface (proof_bytes + vk_bytes), curated inputs that
+    /// cover the parser failure modes the fuzz target would
+    /// otherwise discover. A panic here is a soundness violation
+    /// (light clients deployed in wallets cannot tolerate panics on
+    /// network input).
+    #[test]
+    fn test_real_block_verify_with_vk_bytes_no_panic_on_garbage() {
+        // 1. Empty inputs.
+        let proof = CompressedProof {
+            proof_bytes: vec![],
+            num_steps: 0,
+            z0_bytes: vec![],
+        };
+        let _ = RealBlockProver::verify_with_vk_bytes(&proof, 0, &[]);
+
+        // 2. Random bytes shorter than any real serialized form.
+        let proof = CompressedProof {
+            proof_bytes: vec![0x42, 0x42, 0x42],
+            num_steps: 1,
+            z0_bytes: vec![0xff, 0xff],
+        };
+        let _ = RealBlockProver::verify_with_vk_bytes(&proof, 1, &[0xab; 8]);
+
+        // 3. Bytes that look plausibly like the right shape (bincode
+        // length prefix + payload) but corrupt downstream.
+        let mut proof_bytes = vec![0u8; 32];
+        proof_bytes[0] = 0x10; // looks like a 16-byte length prefix
+        let proof = CompressedProof {
+            proof_bytes,
+            num_steps: 100,
+            z0_bytes: vec![0x08, 0, 0, 0, 0, 0, 0, 0, 0xde, 0xad, 0xbe, 0xef],
+        };
+        let _ = RealBlockProver::verify_with_vk_bytes(&proof, 100, &[0u8; 64]);
+
+        // 4. Truly random pattern.
+        let mut proof_bytes = vec![0u8; 1024];
+        for (i, b) in proof_bytes.iter_mut().enumerate() {
+            *b = ((i.wrapping_mul(31).wrapping_add(7)) % 256) as u8;
+        }
+        let mut vk_bytes = vec![0u8; 512];
+        for (i, b) in vk_bytes.iter_mut().enumerate() {
+            *b = ((i.wrapping_mul(53).wrapping_add(11)) % 256) as u8;
+        }
+        let proof = CompressedProof {
+            proof_bytes,
+            num_steps: 5,
+            z0_bytes: vec![0x42; 256],
+        };
+        let _ = RealBlockProver::verify_with_vk_bytes(&proof, 5, &vk_bytes);
+
+        // 5. Maximum-size garbage (stress the size-bound paths).
+        let proof = CompressedProof {
+            proof_bytes: vec![0xff; 4096],
+            num_steps: usize::MAX / 2,
+            z0_bytes: vec![0xff; 4096],
+        };
+        let _ = RealBlockProver::verify_with_vk_bytes(&proof, usize::MAX / 2, &vec![0xff; 4096]);
+        // If we got here without panicking, the verify path is
+        // panic-free on these adversarial shapes.
+    }
+
     /// Phase 6.1 of LAMBDA_FOLD_NOVA_PLAN — sublinearity audit.
     /// Measures `verify_proof` wall-clock at 10, 50, and 100 folds.
     /// The Phase 3 vk-caching contract says verify is sublinear in

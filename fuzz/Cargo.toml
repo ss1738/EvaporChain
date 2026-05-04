@@ -12,6 +12,11 @@ libfuzzer-sys = "0.4"
 evaporchain-crypto = { path = "../crates/evaporchain-crypto" }
 evaporchain-script = { path = "../crates/evaporchain-script" }
 evaporchain-types = { path = "../crates/evaporchain-types" }
+# Phase 6.5 of LAMBDA_FOLD_NOVA_PLAN — fuzz the Nova verify path
+# (light-client DoS resistance). Takes the heavy nova-snark
+# transitive dep tree, but the fuzz crate isn't in the default
+# workspace member list so this doesn't affect default builds.
+evaporchain-proving = { path = "../crates/evaporchain-proving", features = ["nova"] }
 arbitrary = { version = "1", features = ["derive"] }
 serde_json = "1"
 
@@ -40,4 +45,15 @@ doc = false
 [[bin]]
 name = "fuzz_block_deser"
 path = "fuzz_targets/block_deser.rs"
+doc = false
+
+# Phase 6.5 of LAMBDA_FOLD_NOVA_PLAN — light-client verify DoS fuzz.
+# Feeds arbitrary bytes as (proof_bytes, vk_bytes) to
+# RealBlockProver::verify_with_vk_bytes; the verifier must not panic
+# for any byte sequence. Caught crashes are treated as soundness
+# violations (a malicious prover could DoS a verifier by sending
+# malformed proofs).
+[[bin]]
+name = "fuzz_nova_verify"
+path = "fuzz_targets/nova_verify.rs"
 doc = false
