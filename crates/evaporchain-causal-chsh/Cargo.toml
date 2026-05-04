@@ -1,0 +1,15 @@
+[package]
+name = "evaporchain-causal-chsh"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Causal-CHSH — Bell-style cartel-detection bound for blockchain causal sets. Computes the four-term S statistic over concurrent block pairs in the LightCone DAG. Theorem (proposed): S ≤ 2 under honest validators + LightCone causality + single-λ decay. Violation S > 2 ⇒ hidden cross-validator coordination. ⚠ GATED — empirical verification on real Ethereum + synthetic cartel injection required before doctrine commit."
+
+[dependencies]
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
