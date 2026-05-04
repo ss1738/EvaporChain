@@ -62,6 +62,15 @@ pub trait ForkChoice: Send + Sync {
     /// `TendermintConsensus::fork_choice_mode()` but lives on the impl,
     /// so swapping impls automatically updates the label.
     fn name(&self) -> &'static str;
+
+    /// Phase 1.1 of `LIGHT_CONE_FULL_DAG_PLAN.md` — pick the chain's
+    /// current head from the DAG's leaves. Default impl returns
+    /// `None` (linear mode falls back to its `parent_hash`-tracked
+    /// tip). DAG-aware impls override; Phase 1.3 wires this into
+    /// `tendermint.rs::create_proposal`.
+    fn select_tip(&self) -> Option<[u8; 32]> {
+        None
+    }
 }
 
 /// The chain's default fork-choice rule: a proposal is accepted iff its
@@ -219,6 +228,33 @@ impl ForkChoice for MccForkChoice {
 
     fn name(&self) -> &'static str {
         "mcc"
+    }
+
+    /// Phase 1.1 of `LIGHT_CONE_FULL_DAG_PLAN.md` — DAG-aware tip
+    /// selection. Walks every leaf in the DAG, scores its first-parent
+    /// trajectory by `path_caliber`, returns the leaf with max score.
+    /// Tie-break: smaller BlockId wins (deterministic across validators
+    /// since `LightCone::leaves` returns BTreeMap-sorted output).
+    /// Returns `None` only when the DAG is empty.
+    fn select_tip(&self) -> Option<[u8; 32]> {
+        let leaves: Vec<[u8; 32]> = self.lc.leaves().collect();
+        if leaves.is_empty() {
+            return None;
+        }
+        let mut best: Option<([u8; 32], u64)> = None;
+        for leaf in leaves {
+            let traj = self.first_parent_trajectory(&leaf);
+            let score = evaporchain_mcc::path_caliber(&traj, &self.lc, self.beta_mb);
+            best = match best {
+                None => Some((leaf, score)),
+                Some((_, prev)) if score > prev => Some((leaf, score)),
+                Some((prev_leaf, prev)) if score == prev && leaf < prev_leaf => {
+                    Some((leaf, prev))
+                }
+                Some(b) => Some(b),
+            };
+        }
+        best.map(|(id, _)| id)
     }
 }
 

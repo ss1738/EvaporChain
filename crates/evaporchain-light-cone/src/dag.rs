@@ -54,6 +54,19 @@ impl LightCone {
         self.blocks.keys().copied()
     }
 
+    /// Phase 1.1 of `LIGHT_CONE_FULL_DAG_PLAN.md` — DAG **leaves**:
+    /// blocks with no children. These are the candidate tips a
+    /// DAG-aware fork-choice scores to pick the chain head. Returned
+    /// in `BTreeMap` (sorted) order for cross-validator determinism.
+    pub fn leaves(&self) -> impl Iterator<Item = BlockId> + '_ {
+        self.blocks.keys().filter(|id| {
+            self.children
+                .get(id)
+                .map(|ch| ch.is_empty())
+                .unwrap_or(true)
+        }).copied()
+    }
+
     /// Insert a block. All parents must already be present (this is a
     /// causal-consistency requirement; the consensus layer enforces it
     /// at network ingest).
