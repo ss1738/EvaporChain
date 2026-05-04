@@ -1986,6 +1986,15 @@ impl TendermintConsensus {
                 })
             {
                 self.state_branches.remove(&victim);
+                // Phase 5.3 of LIGHT_CONE_FULL_DAG_PLAN.md — pair
+                // the metadata eviction with a DAG-side cascade
+                // prune. `prune_orphan_branch` walks the victim's
+                // exclusive ancestry backwards and trims it from
+                // the DAG; safety guards (non-leaf reject, unknown
+                // tip no-op) make this idempotent + correctness-
+                // preserving even when the victim is at a branch
+                // point or has descendants from another live tip.
+                let _pruned_dag = self.light_cone_dag.prune_orphan_branch(victim);
             } else {
                 break;
             }
@@ -7368,6 +7377,72 @@ mod tests {
         // Block-indexed key is the canonical block_hash.
         let block_id = TendermintConsensus::block_hash(&block);
         assert!(tc.committed_at_block().contains_key(&block_id));
+    }
+
+    /// Phase 5.3 of `LIGHT_CONE_FULL_DAG_PLAN.md` — LRU eviction
+    /// at the metadata level pairs with a DAG-side cascade prune.
+    /// When `prune_state_branches` evicts a tip, the matching
+    /// `LightCone` ancestors are trimmed (subject to safety:
+    /// non-leaf rejection, branch-point stop). Locks the contract
+    /// the consensus engine relies on for unbounded-DAG memory
+    /// hygiene.
+    #[test]
+    fn test_state_branches_lru_paired_dag_prune() {
+        use evaporchain_light_cone::Block as LcBlock;
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        // Cap=2 so 3 inserts → 1 eviction.
+        tc.governance_set_param("light_cone_max_concurrent_forks", "2")
+            .unwrap();
+
+        // Insert a 3-fork DAG: genesis → A, B, C (three siblings,
+        // all leaves). Each has its own state-branch metadata.
+        let g = [0xFF; 32];
+        let a = [0xAA; 32];
+        let b = [0xBB; 32];
+        let c = [0xCC; 32];
+        tc.light_cone_dag
+            .insert(LcBlock::new(g, vec![], 1000, 0))
+            .unwrap();
+        tc.light_cone_dag
+            .insert(LcBlock::new(a, vec![g], 100, 1))
+            .unwrap();
+        tc.light_cone_dag
+            .insert(LcBlock::new(b, vec![g], 200, 1))
+            .unwrap();
+        tc.light_cone_dag
+            .insert(LcBlock::new(c, vec![g], 150, 1))
+            .unwrap();
+
+        // Record metadata for all 3 leaves with distinct calibers.
+        // a = lowest caliber → first to evict.
+        tc.record_state_branch(a, 1, 100);
+        tc.record_state_branch(b, 1, 200);
+        tc.record_state_branch(c, 1, 150);
+        assert_eq!(tc.state_branches.len(), 3);
+
+        // Pre-prune: DAG has all 4 blocks (genesis + 3 leaves).
+        assert!(tc.light_cone_dag.contains(&g));
+        assert!(tc.light_cone_dag.contains(&a));
+        assert!(tc.light_cone_dag.contains(&b));
+        assert!(tc.light_cone_dag.contains(&c));
+
+        // Trigger eviction.
+        tc.prune_state_branches();
+
+        // Metadata: lowest-caliber leaf `a` evicted.
+        assert_eq!(tc.state_branches.len(), 2);
+        assert!(!tc.state_branches.contains_key(&a));
+        assert!(tc.state_branches.contains_key(&b));
+        assert!(tc.state_branches.contains_key(&c));
+
+        // DAG side: `a` is gone (cascade-pruned). `g` survives —
+        // it's a branch point shared with `b` and `c`. `b` and `c`
+        // are live leaves and untouched.
+        assert!(!tc.light_cone_dag.contains(&a));
+        assert!(tc.light_cone_dag.contains(&g));
+        assert!(tc.light_cone_dag.contains(&b));
+        assert!(tc.light_cone_dag.contains(&c));
     }
 
     /// Phase 3.2 of `LIGHT_CONE_FULL_DAG_PLAN.md` — `LightConeBranchSnapshot`
