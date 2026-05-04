@@ -1044,6 +1044,23 @@ impl TendermintConsensus {
                     .insert(key.to_string(), value.to_string());
                 return Ok(());
             }
+            // Phase 5.1 of LIGHT_CONE_FULL_DAG_PLAN.md —
+            // orphan-detection caliber threshold. Tips with
+            // caliber < threshold are eligible for orphan pruning
+            // (subject to the recency check). Default 0 = no
+            // orphans by caliber alone. Range 0..=u64::MAX.
+            "light_cone_orphan_caliber_threshold" => {
+                let v = value.parse::<u64>().map_err(|_| {
+                    GovernanceParamError::InvalidValue {
+                        key: key.to_string(),
+                        value: value.to_string(),
+                        permitted: vec!["any u64".to_string()],
+                    }
+                })?;
+                self.governance_params
+                    .insert(key.to_string(), v.to_string());
+                return Ok(());
+            }
             // Phase 3 Decision 2 of LIGHT_CONE_FULL_DAG_PLAN.md —
             // concurrent-fork cap as governance flag, range 1..=8,
             // default 4. Inert when light_cone_state_branches_enabled
@@ -1958,6 +1975,42 @@ impl TendermintConsensus {
         let m = self.state_branches.get_mut(&tip)?;
         m.snapshot = Some(snapshot);
         Some(())
+    }
+
+    /// Phase 5.1 of `LIGHT_CONE_FULL_DAG_PLAN.md` — orphan
+    /// detection. Returns the set of state-branch tips that the
+    /// chain considers orphaned: tips whose caliber falls below
+    /// the `light_cone_orphan_caliber_threshold` governance flag
+    /// (default 0) AND whose `last_touched_block` is older than
+    /// `current_height - recency_window` (window: 32 blocks).
+    ///
+    /// The result feeds operator/auditor tooling and Phase 5.3's
+    /// LRU pruning. **Does not mutate state** — purely
+    /// observational. Tips returned here are CANDIDATES for
+    /// pruning; whether they're actually evicted depends on the
+    /// `light_cone_max_concurrent_forks` cap.
+    ///
+    /// Returns canonical-ordered list (sorted by BlockId) for
+    /// validator-determinism.
+    pub fn detect_orphan_branches(&self, current_height: u64) -> Vec<[u8; 32]> {
+        let threshold = self
+            .governance_params
+            .get("light_cone_orphan_caliber_threshold")
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0);
+        let recency_window: u64 = 32;
+        let staleness_horizon = current_height.saturating_sub(recency_window);
+
+        let mut orphans: Vec<[u8; 32]> = self
+            .state_branches
+            .iter()
+            .filter(|(_, m)| {
+                m.caliber < threshold && m.last_touched_block < staleness_horizon
+            })
+            .map(|(tip, _)| *tip)
+            .collect();
+        orphans.sort();
+        orphans
     }
 
     /// Phase 3.4 of `LIGHT_CONE_FULL_DAG_PLAN.md` — concurrent-fork
@@ -7377,6 +7430,65 @@ mod tests {
         // Block-indexed key is the canonical block_hash.
         let block_id = TendermintConsensus::block_hash(&block);
         assert!(tc.committed_at_block().contains_key(&block_id));
+    }
+
+    /// Phase 5.1 of `LIGHT_CONE_FULL_DAG_PLAN.md` — `detect_orphan_branches`
+    /// returns tips below the caliber threshold AND outside the
+    /// recency window (32 blocks). Default threshold = 0 means no
+    /// orphans by caliber alone.
+    #[test]
+    fn test_detect_orphan_branches_default_threshold() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.record_state_branch([0xAA; 32], 1, 100);
+        tc.record_state_branch([0xBB; 32], 1, 200);
+        // Default threshold = 0; nothing below 0 → no orphans.
+        let orphans = tc.detect_orphan_branches(100);
+        assert!(orphans.is_empty());
+    }
+
+    /// Phase 5.1 — with threshold = 150, tip [0xAA; 32] (caliber=100)
+    /// is below threshold; tip [0xBB; 32] (caliber=200) is above.
+    /// Recency: both `last_touched_block = 1`; current_height=100;
+    /// staleness_horizon = 100 - 32 = 68; 1 < 68 so both are stale.
+    /// Net: only [0xAA; 32] qualifies.
+    #[test]
+    fn test_detect_orphan_branches_caliber_filter() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.governance_set_param("light_cone_orphan_caliber_threshold", "150")
+            .unwrap();
+        tc.record_state_branch([0xAA; 32], 1, 100); // below threshold + stale
+        tc.record_state_branch([0xBB; 32], 1, 200); // above threshold
+        let orphans = tc.detect_orphan_branches(100);
+        assert_eq!(orphans, vec![[0xAA; 32]]);
+    }
+
+    /// Phase 5.1 — recency window protects fresh tips. Tip with
+    /// low caliber but recent last_touched_block is NOT orphaned.
+    #[test]
+    fn test_detect_orphan_branches_recency_filter() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.governance_set_param("light_cone_orphan_caliber_threshold", "150")
+            .unwrap();
+        // Tip with low caliber but touched at height 90 (within 32
+        // of current 100 → not stale).
+        tc.record_state_branch([0xAA; 32], 90, 100);
+        let orphans = tc.detect_orphan_branches(100);
+        assert!(orphans.is_empty(), "fresh low-caliber tip must NOT be orphaned");
+    }
+
+    /// Phase 5.1 — canonical sorting: orphans returned in BlockId
+    /// order regardless of insertion order (validator determinism).
+    #[test]
+    fn test_detect_orphan_branches_canonical_order() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.governance_set_param("light_cone_orphan_caliber_threshold", "1000")
+            .unwrap();
+        // Insert in reverse-sort order; expect sorted output.
+        tc.record_state_branch([0xCC; 32], 1, 100);
+        tc.record_state_branch([0xAA; 32], 1, 100);
+        tc.record_state_branch([0xBB; 32], 1, 100);
+        let orphans = tc.detect_orphan_branches(100);
+        assert_eq!(orphans, vec![[0xAA; 32], [0xBB; 32], [0xCC; 32]]);
     }
 
     /// Phase 5.3 of `LIGHT_CONE_FULL_DAG_PLAN.md` — LRU eviction
