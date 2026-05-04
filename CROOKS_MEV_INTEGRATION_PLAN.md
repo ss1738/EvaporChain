@@ -74,7 +74,16 @@ Seven phases, ~4–6 weeks total. Phases 1-2 unblock observability; Phases 3-5 a
   **Wire-format binding deferred to Phase 3.3** — the digest is in-memory and operator-readable for now. Phase 3.3 picks the commit shape (block-header field, state-root inclusion, or commit-certificate extension) based on the producer-rule design.
 
   **Drive-by:** parallel session's commit `6cb4b90` (Lane O.8.2c cartel-alarm proptest) built broken — `prop_assert_eq!` macro wasn't surfacing through `proptest::prelude::*` glob on this toolchain. Added explicit `use proptest::{prop_assert, prop_assert_eq, prop_assert_ne, prop_assume};` in both proptest blocks. Unrelated to Phase 3.2 but blocked the build.
-- [ ] **3.3 — Block construction rule**: proposer MUST include a `RefundTx` for every observation in the buffer that's at least N blocks old (`grace_period`) and at most M blocks old (`refund_window`). Outside this window, the observation is discarded as stale.
+- [x] **3.3 — Block construction rule (helper + replay protection)**: SHIPPED.
+  - `evaporchain_mev_detect::due_refund_txs(observations, settled_refunds, current_height, grace, window) -> Vec<Transaction>` — emits a `Transaction::Refund` for every observation aged `[grace, window]` blocks that has `refund_amount > 0` and `confidence_score >= 0.5` and isn't already settled. Returns canonical-ordered list (sorted by `(source_block_height, source_observation_idx)`) so all proposers agree on tx ordering.
+  - `TendermintConsensus::settled_refunds: HashSet<(u64, usize)>` — populated by `on_block_committed` walking the block's `Transaction::Refund` variants. Replay-protection: a single observation can settle at most once.
+  - `TendermintConsensus::due_refund_txs(current_height) -> Vec<Transaction>` accessor wraps the helper, reads grace/window from governance flags.
+  - Two governance flags added to allowlist: `crooks_mev_grace_period_blocks` (default 5), `crooks_mev_refund_window_blocks` (default 256). Both accept `u64 ≥ 1`.
+  - Tests (8/8 green on Mini under release):
+    - **mev-detect (7):** in-grace-period skip; in-window emit; stale-drop; already-settled skip; None/zero-refund skip; canonical ordering with multi-observation; misconfigured grace>window yields empty.
+    - **consensus (1):** `test_due_refund_txs_grace_window_and_replay_protection` — drives a sandwich block, asserts no emission within grace, exactly one emission past grace, then commits a block carrying that Refund and asserts `settled_refunds` populates + future calls don't re-emit.
+
+  **NOT yet wired into proposer block construction.** Phase 3.4 (validator rejection rule) and Phase 3.5 (slashing for omission + actual balance movement) must ship before a proposer can safely include a Refund tx — today the executor returns "Phase 3.5 wiring not yet landed" for `Transaction::Refund` and would reject the block. The 3.3 helper is operator-facing right now; integration into block construction happens once 3.4-3.5 land.
 - [ ] **3.4 — Block validation rule**: validators reject blocks that omit a required `RefundTx`. `ValidationError::MissingRefund`.
 - [ ] **3.5 — Slashing rule**: producer who omits a required refund is slashed via `evaporchain-entropic-slashing`. Severity = `SlashSeverity::Negligence` (not `::Equivocation`).
 - [ ] **3.6 — Tests**: 

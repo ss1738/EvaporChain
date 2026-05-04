@@ -861,6 +861,28 @@ impl TendermintConsensus {
                     .insert(key.to_string(), value.to_string());
                 return Ok(());
             }
+            // Phase 3.3 of CROOKS_MEV_INTEGRATION_PLAN.md — grace
+            // period and refund window. Both are u64 ≥ 1; window
+            // must be ≥ grace (enforced at use site, not allowlist).
+            "crooks_mev_grace_period_blocks" | "crooks_mev_refund_window_blocks" => {
+                let v = value.parse::<u64>().map_err(|_| {
+                    GovernanceParamError::InvalidValue {
+                        key: key.to_string(),
+                        value: value.to_string(),
+                        permitted: vec!["any u64 ≥ 1".to_string()],
+                    }
+                })?;
+                if v < 1 {
+                    return Err(GovernanceParamError::InvalidValue {
+                        key: key.to_string(),
+                        value: value.to_string(),
+                        permitted: vec!["any u64 ≥ 1".to_string()],
+                    });
+                }
+                self.governance_params
+                    .insert(key.to_string(), value.to_string());
+                return Ok(());
+            }
             _ => return Err(GovernanceParamError::UnknownKey(key.to_string())),
         };
         if !permitted.contains(&value) {
@@ -6610,6 +6632,115 @@ mod tests {
 
     /// Phase 1.5 of `CROOKS_MEV_INTEGRATION_PLAN.md` — drive a
     /// synthetic sandwich block through `on_block_committed` and
+    /// Phase 3.3 of `CROOKS_MEV_INTEGRATION_PLAN.md` — drive a
+    /// sandwich block, advance past the grace period, confirm
+    /// `due_refund_txs` returns one Refund tx with the expected
+    /// (attacker, victim, amount). Then simulate the proposer
+    /// including that Refund in a future block — `settled_refunds`
+    /// is populated, and `due_refund_txs` no longer emits it
+    /// (replay protection).
+    #[test]
+    fn test_due_refund_txs_grace_window_and_replay_protection() {
+        use evaporchain_types::{Block, RefundTx, TransferTx};
+
+        fn addr_local(seed: u8) -> [u8; 32] {
+            let mut a = [0u8; 32];
+            a[0] = seed;
+            a
+        }
+        fn transfer_local(from: u8, to: u8, amount: u64, nonce: u64) -> Transaction {
+            Transaction::Transfer(TransferTx {
+                from: addr_local(from),
+                to: addr_local(to),
+                amount,
+                nonce,
+                signature: None,
+                public_key: None,
+            })
+        }
+        fn make_block_local(num: u64, txs: Vec<Transaction>) -> Block {
+            Block {
+                number: num,
+                epoch: num,
+                parent_hash: [0u8; 32],
+                state_root: [0u8; 32],
+                transactions: txs,
+                producer_id: Some(0),
+                timestamp: 0,
+                chain_id: String::new(),
+                commit_certificate: None,
+                nova_proof: None,
+                anchor_hash: None,
+                vrf_output: None,
+                vrf_proof: None,
+                data_root: None,
+                da_row_roots: vec![],
+                da_col_roots: vec![],
+                blob_commitments: vec![],
+                da_certificate: None,
+                state_function_commitment: None,
+                oracle_state_root: None,
+                shard_count: None,
+                protocol_version: 0,
+                state_root_version: 0,
+                submit_epoch_hints: vec![],
+            }
+        }
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+
+        // Block 1: a sandwich. Generates one MevObservation with
+        // refund_amount populated by Phase 2 wiring.
+        tc.on_block_committed(
+            &make_block_local(
+                1,
+                vec![
+                    transfer_local(0xAA, 0x99, 100, 0),
+                    transfer_local(0xBB, 0x99, 200, 0),
+                    transfer_local(0xAA, 0x99, 150, 1),
+                ],
+            ),
+            [0u8; 32],
+            0,
+        );
+        assert_eq!(tc.mev_observations().len(), 1);
+
+        // Within the grace period (default 5 blocks): no refund due.
+        let due_inside_grace = tc.due_refund_txs(3);
+        assert!(due_inside_grace.is_empty(), "obs at age 2 still in grace");
+
+        // Past grace, inside refund_window: one Refund tx due.
+        let due_past_grace = tc.due_refund_txs(10);
+        assert_eq!(due_past_grace.len(), 1, "obs at age 9 must settle");
+        let refund_tx = match &due_past_grace[0] {
+            Transaction::Refund(r) => r.clone(),
+            other => panic!("expected Refund, got {:?}", other),
+        };
+        assert_eq!(refund_tx.source_block_height, 1);
+        assert_eq!(refund_tx.attacker, addr_local(0xAA));
+        assert_eq!(refund_tx.victim, addr_local(0xBB));
+
+        // Simulate the proposer including the RefundTx: commit a
+        // block carrying it. settled_refunds gets populated.
+        tc.on_block_committed(
+            &make_block_local(10, vec![Transaction::Refund(refund_tx.clone())]),
+            [0u8; 32],
+            0,
+        );
+        assert!(
+            tc.settled_refunds.contains(&(1, 0)),
+            "proposer-included Refund must populate settled_refunds"
+        );
+
+        // Replay protection: due_refund_txs at a later height MUST
+        // NOT re-emit the same observation.
+        let due_after_settle = tc.due_refund_txs(20);
+        assert!(
+            due_after_settle.is_empty(),
+            "settled observation must not re-emit"
+        );
+    }
+
     /// Phase 3.2 of `CROOKS_MEV_INTEGRATION_PLAN.md` — two
     /// independently-constructed validators driven through identical
     /// block sequences must produce identical `mev_state_digest()`;

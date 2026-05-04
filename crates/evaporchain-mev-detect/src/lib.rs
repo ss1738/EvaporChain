@@ -47,6 +47,18 @@ use evaporchain_types::{AccountAddress, Transaction};
 pub const CROOKS_MEV_DEFAULT_BETA_MB: u64 = 1000;
 pub const CROOKS_MEV_DEFAULT_WINDOW_BLOCKS: u64 = 256;
 
+/// Phase 3.3 of `CROOKS_MEV_INTEGRATION_PLAN.md` — minimum age of
+/// an observation before it's eligible for settlement. Provides a
+/// dispute window in which Phase 4.4's operator override can cancel
+/// a pending refund. Governance flag: `crooks_mev_grace_period_blocks`.
+pub const CROOKS_MEV_DEFAULT_GRACE_PERIOD_BLOCKS: u64 = 5;
+
+/// Phase 3.3 — maximum age of an observation that's still settleable.
+/// Past this horizon the observation is considered stale and dropped
+/// without settlement. Governance flag:
+/// `crooks_mev_refund_window_blocks`. Must be ≥ grace period.
+pub const CROOKS_MEV_DEFAULT_REFUND_WINDOW_BLOCKS: u64 = 256;
+
 /// One MEV-shaped observation surfaced by [`scan_block`]. Carries
 /// the indices of the three legs in the block's tx list, the
 /// attacker/victim addresses, and a placeholder `confidence_score`
@@ -254,6 +266,76 @@ pub fn compute_observation_refund(
         obs.work_estimate,
         delta_f,
     ))
+}
+
+/// Phase 3.3 of `CROOKS_MEV_INTEGRATION_PLAN.md` — walk the
+/// observation buffer and emit a `RefundTx` for every observation
+/// in the (grace_period, refund_window) interval relative to
+/// `current_height`. Excludes observations already in
+/// `settled_refunds` (replay-protection: an observation settled in
+/// an earlier block must not be re-settled).
+///
+/// Returns observations in stable order (sorted by
+/// `(source_block_height, source_observation_idx)`) so all
+/// validators agree on the tx ordering inside the proposed block.
+///
+/// Per Phase 3.3 of the plan: the proposer MUST include exactly
+/// these txs in the next block (Phase 3.4 ships the validator-side
+/// rejection rule when they're omitted, Phase 3.5 ships slashing
+/// for omission).
+///
+/// Phase 1 contract: skip observations with `refund_amount = None`
+/// or `Some(0)` — nothing to settle. Skip observations with
+/// `confidence_score < 0.5` — Phase 4.1's confidence threshold
+/// will tighten this.
+pub fn due_refund_txs(
+    observations: &std::collections::VecDeque<MevObservation>,
+    settled_refunds: &std::collections::HashSet<(u64, usize)>,
+    current_height: u64,
+    grace_period_blocks: u64,
+    refund_window_blocks: u64,
+) -> Vec<evaporchain_types::Transaction> {
+    if grace_period_blocks > refund_window_blocks {
+        // Misconfiguration: empty interval. Bail rather than emit
+        // garbage. Operators see the misconfiguration via empty
+        // settlement output + governance snapshot mismatch.
+        return Vec::new();
+    }
+
+    // Boundary calculation:
+    //   age = current_height - source_block_height
+    //   grace_period_blocks ≤ age ≤ refund_window_blocks
+    // Equivalently:
+    //   current_height - refund_window_blocks ≤ source_block_height
+    //                                        ≤ current_height - grace_period_blocks
+    let oldest_settleable = current_height.saturating_sub(refund_window_blocks);
+    let youngest_settleable = current_height.saturating_sub(grace_period_blocks);
+
+    let mut due: Vec<&MevObservation> = observations
+        .iter()
+        .filter(|o| {
+            o.block_height >= oldest_settleable
+                && o.block_height <= youngest_settleable
+                && !settled_refunds.contains(&(o.block_height, o.attacker_pre_idx))
+                && matches!(o.refund_amount, Some(a) if a > 0)
+                && o.confidence_score >= 0.5
+        })
+        .collect();
+    // Stable canonical ordering for validator convergence.
+    due.sort_by_key(|o| (o.block_height, o.attacker_pre_idx));
+
+    due.into_iter()
+        .map(|o| {
+            evaporchain_types::Transaction::Refund(evaporchain_types::RefundTx {
+                source_block_height: o.block_height,
+                source_observation_idx: o.attacker_pre_idx,
+                attacker: o.attacker,
+                victim: o.victim,
+                amount: o.refund_amount.unwrap_or(0),
+                settle_block_height: current_height,
+            })
+        })
+        .collect()
 }
 
 /// Phase 3.2 of `CROOKS_MEV_INTEGRATION_PLAN.md` — deterministic
@@ -574,6 +656,139 @@ mod tests {
             mev_state_digest(&obs, &stats_empty),
             mev_state_digest(&obs, &stats_one),
         );
+    }
+
+    /// Phase 3.3 helper: synthetic observation builder for tests.
+    fn make_obs(
+        block_height: u64,
+        attacker_pre_idx: usize,
+        refund: Option<u64>,
+    ) -> MevObservation {
+        MevObservation {
+            block_height,
+            attacker_pre_idx,
+            victim_idx: attacker_pre_idx + 1,
+            attacker_post_idx: attacker_pre_idx + 2,
+            attacker: addr(0xAA),
+            victim: addr(0xBB),
+            target: addr(0x99),
+            work_estimate: 1000,
+            confidence_score: 1.0,
+            refund_amount: refund,
+        }
+    }
+
+    /// Phase 3.3 — observation younger than grace_period must NOT
+    /// be in due_refund_txs (still in dispute window).
+    #[test]
+    fn due_refund_txs_skips_observations_in_grace_period() {
+        let mut obs = std::collections::VecDeque::new();
+        obs.push_back(make_obs(98, 0, Some(100)));
+        obs.push_back(make_obs(100, 0, Some(100)));
+        let settled = std::collections::HashSet::new();
+        let current = 100;
+        let due = due_refund_txs(&obs, &settled, current, 5, 256);
+        assert!(due.is_empty(), "obs at age 0 and 2 are inside grace; nothing due");
+    }
+
+    /// Phase 3.3 — observation in (grace, refund_window) interval
+    /// IS in due_refund_txs.
+    #[test]
+    fn due_refund_txs_emits_for_observations_in_interval() {
+        let mut obs = std::collections::VecDeque::new();
+        obs.push_back(make_obs(50, 0, Some(100)));
+        let settled = std::collections::HashSet::new();
+        let current = 100;
+        let due = due_refund_txs(&obs, &settled, current, 5, 256);
+        assert_eq!(due.len(), 1);
+        match &due[0] {
+            evaporchain_types::Transaction::Refund(r) => {
+                assert_eq!(r.source_block_height, 50);
+                assert_eq!(r.source_observation_idx, 0);
+                assert_eq!(r.amount, 100);
+                assert_eq!(r.settle_block_height, 100);
+            }
+            other => panic!("expected Refund, got {:?}", other),
+        }
+    }
+
+    /// Phase 3.3 — observation older than refund_window is dropped
+    /// (stale; outside the chain's responsibility).
+    #[test]
+    fn due_refund_txs_drops_stale_observations() {
+        let mut obs = std::collections::VecDeque::new();
+        obs.push_back(make_obs(10, 0, Some(100)));
+        let settled = std::collections::HashSet::new();
+        let current = 1000; // age = 990, far past 256-block window
+        let due = due_refund_txs(&obs, &settled, current, 5, 256);
+        assert!(due.is_empty(), "stale observation must not settle");
+    }
+
+    /// Phase 3.3 — already-settled observation must not re-emit
+    /// (replay protection).
+    #[test]
+    fn due_refund_txs_skips_already_settled() {
+        let mut obs = std::collections::VecDeque::new();
+        obs.push_back(make_obs(50, 0, Some(100)));
+        let mut settled = std::collections::HashSet::new();
+        settled.insert((50, 0));
+        let due = due_refund_txs(&obs, &settled, 100, 5, 256);
+        assert!(due.is_empty(), "settled observation must not re-emit");
+    }
+
+    /// Phase 3.3 — observation with no refund (None) skipped;
+    /// observation with refund=0 skipped (nothing to settle).
+    #[test]
+    fn due_refund_txs_skips_zero_or_none_refund() {
+        let mut obs = std::collections::VecDeque::new();
+        obs.push_back(make_obs(50, 0, None));
+        obs.push_back(make_obs(51, 0, Some(0)));
+        let settled = std::collections::HashSet::new();
+        let due = due_refund_txs(&obs, &settled, 100, 5, 256);
+        assert!(due.is_empty());
+    }
+
+    /// Phase 3.3 — multiple due observations emitted in stable
+    /// (block_height, attacker_pre_idx) order. Locks the
+    /// validator-convergence contract: all proposers must propose
+    /// the SAME tx ordering.
+    #[test]
+    fn due_refund_txs_canonical_ordering() {
+        let mut obs = std::collections::VecDeque::new();
+        // Insert out-of-order to exercise the sort.
+        obs.push_back(make_obs(75, 0, Some(50)));
+        obs.push_back(make_obs(50, 5, Some(100)));
+        obs.push_back(make_obs(50, 0, Some(200)));
+        obs.push_back(make_obs(60, 0, Some(75)));
+        let settled = std::collections::HashSet::new();
+        let due = due_refund_txs(&obs, &settled, 100, 5, 256);
+        assert_eq!(due.len(), 4);
+        let heights_idxs: Vec<(u64, usize)> = due
+            .iter()
+            .map(|tx| match tx {
+                evaporchain_types::Transaction::Refund(r) => {
+                    (r.source_block_height, r.source_observation_idx)
+                }
+                _ => panic!("non-Refund in due list"),
+            })
+            .collect();
+        assert_eq!(
+            heights_idxs,
+            vec![(50, 0), (50, 5), (60, 0), (75, 0)],
+            "canonical (block_height, attacker_pre_idx) ordering"
+        );
+    }
+
+    /// Phase 3.3 — misconfigured grace > window emits empty
+    /// (rather than negative interval). Observable via empty
+    /// settlement output.
+    #[test]
+    fn due_refund_txs_grace_exceeds_window_yields_empty() {
+        let mut obs = std::collections::VecDeque::new();
+        obs.push_back(make_obs(50, 0, Some(100)));
+        let settled = std::collections::HashSet::new();
+        let due = due_refund_txs(&obs, &settled, 100, 1000, 100);
+        assert!(due.is_empty());
     }
 
     #[test]
