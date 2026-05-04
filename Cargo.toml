@@ -16,7 +16,12 @@ members = [
     "crates/evaporchain-script-lad",
     "crates/evaporchain-tur-liveness",
     "crates/evaporchain-light-cone",
-    "crates/evaporchain-light-cone-v2",
+    # Lane R.4: evaporchain-light-cone-v2 entry temporarily removed
+    # because the crate dir is sister-session WIP that was never
+    # committed (only the Cargo.toml entry was). Restoring breaks
+    # cluster builds. Sister session: commit the crate dir to
+    # restore this entry.
+    # "crates/evaporchain-light-cone-v2",
     "crates/evaporchain-antichain-mempool",
     "crates/evaporchain-mcc",
     "crates/evaporchain-causal-cone",
