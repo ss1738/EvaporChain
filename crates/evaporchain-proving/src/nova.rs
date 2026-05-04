@@ -401,8 +401,11 @@ impl ProvingEngine for NovaProver {
         let (_pk, vk) = CompressedSNARK::<_, _, _, S1, S2>::setup(&self.pp)
             .map_err(|e| ProvingError::VerificationFailed(format!("CS setup: {:?}", e)))?;
 
-        let (z_n_primary, _z_n_secondary) = match compressed.verify(&vk, num_blocks, &z0) {
-            Ok((p, s)) => (p, s),
+        // nova-snark CompressedSNARK::verify returns Vec<Scalar> (the
+        // primary z_n) directly; secondary is implicit. Adapted to
+        // current API.
+        let z_n_primary = match compressed.verify(&vk, num_blocks, &z0) {
+            Ok(p) => p,
             Err(_) => return Ok(false),
         };
 
@@ -2230,8 +2233,9 @@ impl ProvingEngine for RealBlockProver {
             .map_err(|_| ProvingError::VerificationFailed("CS setup mutex poisoned".to_string()))?;
         let (_pk, vk) = guard.as_ref().expect("compressed setup just ensured");
 
-        let (z_n_primary, _z_n_secondary) = match compressed.verify(vk, num_blocks, &z0) {
-            Ok((p, s)) => (p, s),
+        // nova-snark API: verify returns Vec<Scalar> directly.
+        let z_n_primary = match compressed.verify(vk, num_blocks, &z0) {
+            Ok(p) => p,
             Err(_) => return Ok(false),
         };
 
