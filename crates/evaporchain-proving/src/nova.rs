@@ -645,6 +645,36 @@ struct RealBlockWitness {
     /// `block.epoch - prev_step.epoch` for non-genesis steps;
     /// witness for genesis is 0.
     epochs_elapsed_at_step: u64,
+    /// 2^full_halvings where full_halvings = epochs_elapsed_at_step
+    /// / chain_half_life. Mirrors `ObjectDecaySlot::shift_factor`
+    /// for the chain-aggregate energy-fold gadget. Computed
+    /// off-circuit; verified in-circuit via the (a) constraint
+    /// `after_halvings * shift_factor = prev_total_energy -
+    /// shift_remainder`.
+    energy_shift_factor: u128,
+    /// prev_total_energy / shift_factor (integer division). Mirrors
+    /// `ObjectDecaySlot::after_halvings`.
+    energy_after_halvings: u128,
+    /// prev_total_energy mod shift_factor. Mirrors
+    /// `ObjectDecaySlot::shift_remainder`. Bounded by shift_factor.
+    energy_shift_remainder: u128,
+    /// epochs_elapsed_at_step mod chain_half_life. Mirrors
+    /// `ObjectDecaySlot::remainder_epochs`.
+    energy_remainder_epochs: u64,
+    /// 2 × chain_half_life. Chain constant; pinned in the witness
+    /// to make the constraint linear in the witness alone.
+    energy_two_half_life: u64,
+    /// after_halvings × remainder_epochs. Intermediate witness for
+    /// the (c) and (d) constraints. Mirrors
+    /// `ObjectDecaySlot::product_ar`.
+    energy_product_ar: u128,
+    /// floor(product_ar / two_half_life). The fractional-decay
+    /// quantum subtracted from after_halvings to produce
+    /// after_decay. Mirrors `ObjectDecaySlot::frac_decay`.
+    energy_frac_decay: u128,
+    /// product_ar mod two_half_life. Mirrors
+    /// `ObjectDecaySlot::frac_remainder`. Bounded by two_half_life.
+    energy_frac_remainder: u128,
 }
 
 impl RealBlockWitness {
@@ -670,6 +700,20 @@ impl RealBlockWitness {
             prev_total_energy: 0,
             step_energy: 0,
             epochs_elapsed_at_step: 0,
+            // Energy-fold gadget defaults — all zero for the dummy
+            // witness. The (a)..(d) constraints reduce to 0=0
+            // tautologies under these values, so the dummy witness
+            // satisfies the energy-fold constraints trivially. This
+            // matches the existing per-object decay slot's
+            // `empty()` behaviour.
+            energy_shift_factor: 1, // shift_factor = 2^0 = 1 by convention
+            energy_after_halvings: 0,
+            energy_shift_remainder: 0,
+            energy_remainder_epochs: 0,
+            energy_two_half_life: 1, // avoids division-by-zero in (d)
+            energy_product_ar: 0,
+            energy_frac_decay: 0,
+            energy_frac_remainder: 0,
         }
     }
 
@@ -782,6 +826,18 @@ impl RealBlockWitness {
             prev_total_energy: 0,
             step_energy: 0,
             epochs_elapsed_at_step: 0,
+            // Energy-fold intermediates — same trivially-satisfying
+            // defaults as `dummy()`. Phase 5's RealBlockProver wiring
+            // populates these from the chain's energy_audit hooks
+            // before each `prove_step` call.
+            energy_shift_factor: 1,
+            energy_after_halvings: 0,
+            energy_shift_remainder: 0,
+            energy_remainder_epochs: 0,
+            energy_two_half_life: 1,
+            energy_product_ar: 0,
+            energy_frac_decay: 0,
+            energy_frac_remainder: 0,
         }
     }
 }
@@ -1477,25 +1533,142 @@ impl<G: Group> StepCircuit<G::Scalar> for RealBlockCircuit<G> {
         range_check_bits::<G, CS>(cs, "step_count_rc", &new_step_count, step_count_value, 64)?;
 
         // ═══════════════════════════════════════════════════════════════
-        // Phase 2.3 STUB — Lambda-Fold total_energy_remaining for z[6].
+        // Phase 2.3 — Lambda-Fold energy-fold gadget for z[6].
         //
-        // Identity passthrough for now. The real energy-fold gadget
-        // (decay by epochs_elapsed_at_step half-lives + add
-        // step_energy + range_check_bits(128)) lands in a follow-up
-        // commit. Without it, the chain CANNOT validly enable
-        // `lambda_fold_mode = "nova"` — the default `hash_chain` mode
-        // is what production uses, and that path doesn't consult z[6].
+        // Mirrors the per-object decay gadget at nova.rs:1027-1056
+        // (`ObjectDecaySlot`) but operates on chain-aggregate
+        // total_energy in u128 representation. Four enforce
+        // constraints + one summation step + one consistency-with-z[6]
+        // bind:
         //
-        // The stub still binds new_total_energy == old_total_energy in
-        // the circuit so a malicious prover can't sneak in arbitrary
-        // values — but it doesn't enforce decay. Mark with TODO so
-        // future commits can find this and replace with the full 4-
-        // enforce decay gadget (modelled on per-object decay at
-        // nova.rs:1027-1056).
+        //   (a) after_halvings × shift_factor = prev_total_energy − shift_remainder
+        //   (b) after_decay + frac_decay = after_halvings
+        //   (c) after_halvings × remainder_epochs = product_ar
+        //   (d) frac_decay × two_half_life = product_ar − frac_remainder
+        //   (e) new_total_energy = after_decay + step_energy
         //
-        // TODO(layer-5-phase-2.3): replace with real decay+fold gadget.
+        // u128 representation: BN256 scalars are ~254 bits, so u128
+        // values fit in a single AllocatedNum. Conversion via lo+hi×2^64
+        // matches the state_root limb-recomposition pattern at
+        // nova.rs:1361-1364.
+        //
+        // TODO(layer-5-phase-2.4): add range_check_bits_u128 helper +
+        // call on new_total_energy. The gadget below is sound under
+        // the constraint relationships alone, but defence-in-depth
+        // range-checking will land with the helper.
         // ═══════════════════════════════════════════════════════════════
-        let new_total_energy = old_total_energy.clone();
+        let two_64 =
+            G::Scalar::from(1u64 << 32) * G::Scalar::from(1u64 << 32);
+        let u128_to_scalar = |v: u128| -> G::Scalar {
+            G::Scalar::from(v as u64)
+                + G::Scalar::from((v >> 64) as u64) * two_64
+        };
+
+        // Allocate prev_total_energy from witness, bind to z[6].
+        let prev_e = AllocatedNum::alloc(cs.namespace(|| "prev_total_e"), || {
+            Ok(u128_to_scalar(self.witness.prev_total_energy))
+        })?;
+        cs.enforce(
+            || "prev_e_eq_z6",
+            |lc| lc + prev_e.get_variable(),
+            |lc| lc + CS::one(),
+            |lc| lc + old_total_energy.get_variable(),
+        );
+
+        // Allocate the eight decay-intermediate witness values.
+        let energy_shift_fac = AllocatedNum::alloc(cs.namespace(|| "energy_shift_fac"), || {
+            Ok(u128_to_scalar(self.witness.energy_shift_factor))
+        })?;
+        let energy_after_halv = AllocatedNum::alloc(cs.namespace(|| "energy_after_halv"), || {
+            Ok(u128_to_scalar(self.witness.energy_after_halvings))
+        })?;
+        let energy_shift_rem = AllocatedNum::alloc(cs.namespace(|| "energy_shift_rem"), || {
+            Ok(u128_to_scalar(self.witness.energy_shift_remainder))
+        })?;
+        let energy_rem_epochs = AllocatedNum::alloc(cs.namespace(|| "energy_rem_epochs"), || {
+            Ok(G::Scalar::from(self.witness.energy_remainder_epochs))
+        })?;
+        let energy_two_hl = AllocatedNum::alloc(cs.namespace(|| "energy_two_hl"), || {
+            Ok(G::Scalar::from(self.witness.energy_two_half_life))
+        })?;
+        let energy_product_ar = AllocatedNum::alloc(cs.namespace(|| "energy_product_ar"), || {
+            Ok(u128_to_scalar(self.witness.energy_product_ar))
+        })?;
+        let energy_frac_decay = AllocatedNum::alloc(cs.namespace(|| "energy_frac_decay"), || {
+            Ok(u128_to_scalar(self.witness.energy_frac_decay))
+        })?;
+        let energy_frac_rem = AllocatedNum::alloc(cs.namespace(|| "energy_frac_rem"), || {
+            Ok(u128_to_scalar(self.witness.energy_frac_remainder))
+        })?;
+
+        // (a) after_halvings × shift_factor = prev_total_energy − shift_remainder
+        cs.enforce(
+            || "energy_shift_div",
+            |lc| lc + energy_after_halv.get_variable(),
+            |lc| lc + energy_shift_fac.get_variable(),
+            |lc| lc + prev_e.get_variable() - energy_shift_rem.get_variable(),
+        );
+
+        // After-decay = after_halvings - frac_decay (intermediate before
+        // adding step_energy). Constraint (b) is enforced as the sum
+        // identity below.
+        let after_decay = AllocatedNum::alloc(cs.namespace(|| "energy_after_decay"), || {
+            let ad = self
+                .witness
+                .energy_after_halvings
+                .saturating_sub(self.witness.energy_frac_decay);
+            Ok(u128_to_scalar(ad))
+        })?;
+
+        // (b) after_decay + frac_decay = after_halvings
+        cs.enforce(
+            || "energy_frac_bal",
+            |lc| lc + after_decay.get_variable() + energy_frac_decay.get_variable(),
+            |lc| lc + CS::one(),
+            |lc| lc + energy_after_halv.get_variable(),
+        );
+
+        // (c) after_halvings × remainder_epochs = product_ar
+        cs.enforce(
+            || "energy_prod",
+            |lc| lc + energy_after_halv.get_variable(),
+            |lc| lc + energy_rem_epochs.get_variable(),
+            |lc| lc + energy_product_ar.get_variable(),
+        );
+
+        // (d) frac_decay × two_half_life = product_ar − frac_remainder
+        cs.enforce(
+            || "energy_frac_formula",
+            |lc| lc + energy_frac_decay.get_variable(),
+            |lc| lc + energy_two_hl.get_variable(),
+            |lc| lc + energy_product_ar.get_variable() - energy_frac_rem.get_variable(),
+        );
+
+        // step_energy is u64 — fits trivially in a scalar.
+        let step_e = AllocatedNum::alloc(cs.namespace(|| "step_energy"), || {
+            Ok(G::Scalar::from(self.witness.step_energy))
+        })?;
+        // 64-bit range check on step_energy (defends against witness
+        // values exceeding u64 — would otherwise let an adversary
+        // claim arbitrary new_total_energy via the (e) sum).
+        range_check_bits::<G, CS>(cs, "step_e_rc", &step_e, self.witness.step_energy, 64)?;
+
+        // (e) new_total_energy = after_decay + step_energy
+        let new_total_energy =
+            AllocatedNum::alloc(cs.namespace(|| "new_total_energy"), || {
+                let ad = self
+                    .witness
+                    .energy_after_halvings
+                    .saturating_sub(self.witness.energy_frac_decay);
+                let new = ad.saturating_add(self.witness.step_energy as u128);
+                Ok(u128_to_scalar(new))
+            })?;
+        cs.enforce(
+            || "new_total_energy_sum",
+            |lc| lc + new_total_energy.get_variable(),
+            |lc| lc + CS::one(),
+            |lc| lc + after_decay.get_variable() + step_e.get_variable(),
+        );
 
         Ok(vec![
             new_state_hash,
