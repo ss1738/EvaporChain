@@ -25,6 +25,84 @@ This file is the layered build plan to make the doctrine claims actually true. E
 
 ---
 
+## Operational addendum 2026-05-04 evening — Lane R.* cluster-freeze fix
+
+The 3-Mini Tailscale cluster halted at h=771 after ~90 min uptime
+with a livelock fed by three compounding network-layer bugs (Sybil
+idle-tick scoring decaying into IP soft-bans for authorized validators).
+Diagnosed via `/api/network/peers` showing `score: -292, age_seconds:
+47` — the score had been decaying for ~24 hours while the peer was
+DISCONNECTED.
+
+### Root cause (three independent design bugs)
+
+1. `SCORE_IDLE_TICK = -1` fired every 5 min on every entry in `scores`
+   HashMap, including disconnected peers (which `record_disconnect`
+   left in the map).
+2. `record_connect` used `entry().or_default()`, so a peer reconnecting
+   inherited their prior negative score instead of getting a fresh
+   slate.
+3. No authorization gate on idle-score penalty: validators pre-vetted
+   via TLS / peer-id allowlist (`peer_authority`) got penalized
+   identically to random Sybil peers.
+
+After ~100 idle ticks (~8 hours wall-clock) any peer crossed
+`SCORE_BAN_THRESHOLD = -100` → IP soft-banned for 1 h. With BFT 2/3+1,
+losing one validator halts a 3-validator cluster. Reconnect after
+ban-TTL inherited the negative score → re-banned. Livelock per
+process lifetime.
+
+### Three-layer fix shipped
+
+| Lane | What | Commit |
+|---|---|---|
+| R.1 | Authorized validators bypass Sybil idle-ban + auto-unban on connect | `803ac6d` |
+| R.2 | Regression test: 256-tick fixture confirms bug class + gate works | `9d192bf` |
+| R.3 | `record_disconnect` clears score; `record_connect` fresh-slates; idle tick iterates `peer_ips` not `scores` | `1555eb8` |
+
+Each layer alone closes the livelock; all three make accidental
+regression near-impossible. Network crate tests: 62/62 pass.
+
+### Origin/main reconciliation (Lane R.4 reverted; R.6-R.12 disciplined)
+
+Deploying R.1+R.3 to the live cluster required origin/main to be
+buildable on a clean checkout. It wasn't — origin/main had accumulated
+weeks of half-finished cross-crate refactors (FEE_PPM_DENOMINATOR,
+VS_PPM_DENOMINATOR, health_score_ppm, target_utilization_ppm,
+confidence_score, Refund-arm gaps in 3 match sites, 73 sister-session
+crates listed in workspace Cargo.toml but never committed,
+nova-snark API drift). R.4 attempted a 42-file bulk commit that
+polluted origin and was reverted in R.5. R.6-R.12 used a disciplined
+small-batch approach: 9 commits, each verified on Mini 1 with
+`cargo check --workspace` before rolling forward. See `CHANGELOG.md`
+2026-05-04 evening for the full lane table.
+
+### First in-production validation
+
+Cluster restarted post-R.12 + R.1/R.3 binary at h=37; by h=6702 (31
+min uptime) all 3 Minis were lockstep on identical state root
+`12177f6cd263b1826ba5a7565d141fd2ba578c32a24042d4d5a69e07b74b2986`.
+`/api/network/peers` showed both peers at `score: 0` after 6 min —
+without R.1/R.3 they'd be at -1 (SCORE_IDLE_TICK fires at 5-min mark).
+**This is the empirical confirmation that the three-layer fix works
+in production, not just in unit tests.**
+
+### What's still open (carried into future sessions)
+
+- **Sister-session ppm migration**: complete the FEE_PPM/VS_PPM
+  integer-PID refactor that the Lane R.7-R.10 stubs unblock. Tracked
+  for a dedicated session.
+- **Cluster diagnostic RPC**: `/api/network/scores` exposing per-peer
+  `score` + `last_tick` so the next freeze-class issue surfaces
+  without log-grepping.
+- **Operational lesson**: `~/.evaporchain-tailscale-data` holds
+  `bls_key.bin`. Wiping the data dir without preserving the BLS keys
+  blocks restart unless `~/validator-N-keys.json` is around. See
+  `docs/runbooks/validator-passphrase-migration.md` (or future
+  cluster-recovery runbook) for the restore procedure.
+
+---
+
 ## Up next — one manual item (Satyawan, ~10 min)
 
 Two of the three original manual items resolved 2026-05-03/04. Only **M2** (Coq build verification) remains — see below for the reasoning history of M1 and M3 which are kept for the audit trail.
