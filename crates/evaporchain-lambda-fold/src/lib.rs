@@ -45,7 +45,19 @@ pub mod folded;
 pub mod verify;
 pub mod witness;
 
+// Phase 4 of LAMBDA_FOLD_NOVA_PLAN — Nova-backed fold/verify path
+// behind the `nova` feature. The substrate blake3 path above stays
+// available; Phase 5's `lambda_fold_mode` governance flag chooses
+// which one runs at chain startup.
+#[cfg(feature = "nova")]
+pub mod nova_path;
+
 pub use fold::{fold, FoldError};
 pub use folded::FoldedInstance;
 pub use verify::{verify_folded, VerifyError};
 pub use witness::StepWitness;
+
+#[cfg(feature = "nova")]
+pub use nova_path::{
+    verify_nova_folded, NovaFoldError, NovaFoldedInstance, NovaFolder, NovaVerifyError,
+};

@@ -126,19 +126,23 @@ Seven phases. Phases 1-2 are reversible design + prototype; phases 3-6 are the r
 
 **Goal:** replace Lambda-Fold's blake3 hash chain with the Nova folding pipeline from Phase 3, keeping the public API surface stable so existing `tendermint.rs:3169-3171` call sites need at most a one-line dep update.
 
-- [ ] **4.1 — Cargo.toml**: add `evaporchain-proving = { ..., features = ["nova"] }` to `evaporchain-lambda-fold/Cargo.toml`. Drop direct `blake3` dep if no other use.
+- [x] **4.1 — Cargo.toml**: `evaporchain-proving = { path = "...", features = ["nova"], optional = true }` + `bincode = { version = "1", optional = true }` added under a new `nova = ["dep:evaporchain-proving", "dep:bincode"]` feature. blake3 dep KEPT — substrate path stays for the dual-mode design (Phase 5's `lambda_fold_mode` flag picks at runtime). Default features build untouched.
 
-- [ ] **4.2 — `FoldedInstance` rewrite**: replace `acc_hash: [u8; 32]` with `proof: nova_snark::CompressedSNARK` (or Box wrapper if size matters). Keep `total_energy_remaining`, `step_count`, `latest_epoch` fields — they're now redundant with the IVC state but useful for hot-path queries without verification.
+- [x] **4.2 — Nova-shaped FoldedInstance**: shipped as a parallel `NovaFoldedInstance` type (`src/nova_path.rs`) carrying `proof_bytes: Vec<u8>` (bincode-serialized `CompressedProof`) instead of `acc_hash: [u8; 32]`. Other fields (`total_energy_remaining`, `step_count`, `latest_epoch`) preserved exactly. Substrate `FoldedInstance` unchanged so existing call sites still compile.
 
-- [ ] **4.3 — `fold` rewrite**: call `evaporchain_proving::RealBlockProver::fold_real_block_with_energy` instead of the blake3 hash chain. Witness is built from `StepWitness` plus the energy fields from Phase 2.
+- [x] **4.3 — Fold rewrite**: shipped as `NovaFolder::fold_block(block, old, new, &thermo, observed_epoch, step_energy)`. Internally calls `RealBlockProver::fold_real_block_with_witness` (Phase 2 energy gadget) and tracks the running `(total_energy_remaining, step_count, latest_epoch)` tuple outside the IVC for cheap reads. Returns a fresh `NovaFoldedInstance` with a serialized `CompressedProof`.
 
-- [ ] **4.4 — `verify_folded` rewrite**: call `evaporchain_proving::RealBlockProver::verify_real_block_proof` instead of byte-equality on `acc_hash`. The energy lower-bound check (`total_energy_remaining ≥ min_remaining`) stays as-is — that's an on-the-wire chain-policy check, not a cryptographic one.
+- [x] **4.4 — Verify rewrite**: shipped as `verify_nova_folded(instance, vk_bytes, min_remaining_energy)` calling `RealBlockProver::verify_with_vk_bytes` (Phase 3.4 light-client entry). The energy floor check stays — it's a chain-policy check, not a cryptographic one.
 
-- [ ] **4.5 — Test updates**: existing `lambda-fold/src/{fold,verify}.rs::tests` update to use the new API. The `acc_hash != [0; 32]` style assertions become `proof.is_valid()` style checks.
+- [x] **4.5 — Tests**: 3 new tests under `cfg(feature = "nova")`:
+  - `nova_fold_three_blocks_and_verify` — folds 3 blocks, verifies via vk_bytes path. Closes the substrate→Nova migration.
+  - `nova_verify_rejects_identity` — guards against silent identity-pass.
+  - `nova_verify_rejects_below_energy_floor` — guards the chain-policy energy floor.
+  All 12 tests (9 substrate + 3 Nova) green under `cargo test -p evaporchain-lambda-fold --features nova --release` on Mini. Substrate-only build (no `--features`) also green at 9/9.
 
-- [ ] **4.6 — `identity()` update**: `FoldedInstance::identity()` was a `const fn`. Now it has to construct a Nova base case (z0). Move to a regular fn; update call sites in `tendermint.rs:612, 1409` accordingly.
+- [x] **4.6 — Identity update**: `NovaFoldedInstance::identity()` is a regular `fn` (not `const fn` because it allocates `Vec::new()`); substrate `FoldedInstance::identity()` stays `const fn` per existing API. No call-site changes needed since substrate API is intact.
 
-**Phase 4 deliverable:** Lambda-Fold uses real Nova folding. `cargo test -p evaporchain-lambda-fold --lib` green. Workspace builds clean.
+**Phase 4 deliverable: SHIPPED.** Lambda-Fold supports real Nova folding behind `nova` feature; substrate blake3 path co-exists for fast builds + Phase 5 governance dual-mode. 12/12 tests green on Mini.
 
 ### Phase 5 — Tendermint integration (1-3 days)
 

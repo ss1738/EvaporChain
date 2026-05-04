@@ -6,12 +6,25 @@ license.workspace = true
 repository.workspace = true
 description = "Lambda-Fold (Energy-Folded Light Client). First sublinear-in-active-energy verifier. Nova/HyperNova extension where each fold step folds the energy state alongside the witness. Per INVENTION_STACK.md §4.1 #8 — decade-defining moonshot."
 
+[features]
+default = []
+# Phase 4 of LAMBDA_FOLD_NOVA_PLAN — gates the Nova-backed fold/verify
+# path. Without this feature, lambda-fold ships only the substrate
+# blake3 hash-chain. With it, the `nova_path` module exposes the real
+# IVC-folded proof pipeline backed by `evaporchain-proving`. Phase 5
+# uses the `lambda_fold_mode` governance flag to choose which path
+# tendermint exercises at runtime.
+nova = ["dep:evaporchain-proving", "dep:bincode"]
+
 [dependencies]
 evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
 evaporchain-types = { path = "../evaporchain-types" }
 serde = { workspace = true }
 thiserror = { workspace = true }
 blake3 = { workspace = true }
+# Phase 4 — Nova path deps, only compiled with the "nova" feature.
+evaporchain-proving = { path = "../evaporchain-proving", features = ["nova"], optional = true }
+bincode = { version = "1", optional = true }
 
 [dev-dependencies]
 proptest = "1"
