@@ -549,6 +549,71 @@ Encrypted transactions are ordered by their commitment hash (deterministic, unma
 | Encryption | AES-256-GCM | Authenticated encryption |
 | Commitment | BLAKE3 | Binding and hiding |
 
+### 8.4 Crooks-MEV Restitution (Restitutive)
+
+Where the encrypted mempool is the **preventive** layer, Crooks-MEV is the **restitutive** layer: when a sandwich-shaped attack lands despite the encryption (e.g., the chain runs with a non-encrypted relay path, or the attacker's tx flow is observable through some side channel), Crooks-MEV identifies the dissipative work and refunds it to the victim. The mechanism is grounded in the Crooks 1999 fluctuation theorem (per `INVENTION_STACK.md §A1.3`).
+
+#### 8.4.1 Detection
+
+Per committed block, `evaporchain_mev_detect::scan_block` walks the ordered transaction list looking for **strict sandwich triples**:
+
+```
+tx_i (attacker → target)   ← front-run leg
+tx_j (victim   → target)   ← victim
+tx_k (attacker → target)   ← back-run leg
+```
+
+where `tx_i.from == tx_k.from` (same attacker), `tx_j.from != attacker` (victim), and all three Transfer txs target the same `to` account. Phase 1 of `CROOKS_MEV_INTEGRATION_PLAN.md` ships only this strict shape; front-run-only and time-delayed sandwiches are not detected.
+
+The detector is O(n²) over Transfer txs; benchmarked at **13.6 ms on a 1000-tx block** (Mac Mini M4, release) — well under the 50 ms hot-path budget.
+
+#### 8.4.2 Crooks-fluctuation refund formula
+
+For each detected observation, the chain computes:
+
+```
+log_ratio    = log₂(P_F / P_R)    [millibits — Crooks identity LHS]
+ΔF           = W − (1/β) · log_ratio
+refund       = max(0, W − ΔF)
+```
+
+where `W = work_estimate = front_amount + back_amount` (upper bound, since EvaporChain has no native LP/AMM accounting); `P_F` is the rolling **per-attacker sandwich rate** over a 256-block window; `P_R` is a fixed noise floor (~10⁻⁶ rate); `β` is a governance constant (default 1000 millibits per fee unit). The pmf substitution is rate-based rather than the rigorous forward/reverse path Crooks 1999 calls for — see `research/crooks_mev/PHASE_2_DECISIONS.md` for why the substitution is sound for a non-AMM substrate and what the deferred research follow-up looks like.
+
+`refund_amount = max(0, W − ΔF)` is the dissipative work fed into the settlement transaction.
+
+#### 8.4.3 Settlement
+
+A new protocol-issued transaction variant `Transaction::Refund(RefundTx)` carries the settlement. When governance flag `crooks_mev_settlement_mode = "enforce"`:
+
+1. After the **grace period** (default 5 blocks — operator dispute window) and within the **refund window** (default 256 blocks), the proposer MUST include a `RefundTx` for every due observation.
+2. Validators reject blocks that omit a required refund (`MissingRefund`), include unexpected refunds (`UnexpectedRefund`), or carry mismatched payloads (`MismatchedRefund`).
+3. The executor's `execute_refund` debits attacker, credits victim, no nonce mutation (refund is not user-signed).
+4. Per-proposer `MissingRefund` count feeds `evaporchain_entropic_slashing::entropic_slash(stake, counts)` for slash derivation.
+
+Default `observe` mode keeps the chain bit-compatible with the pre-Crooks-MEV behaviour while operators monitor `/api/mev/observations` to validate the detector's precision before flipping to `enforce`.
+
+#### 8.4.4 Anti-gaming
+
+- **Self-MEV** (attacker == victim) is filtered at detection time — never reaches the buffer.
+- **Confidence threshold** (governance flag, default 500_000 ppm) — observations below threshold are recorded but not settled. Phase 1's detector emits `confidence_score_ppm = 1_000_000` for every match; the threshold is in place for when the detector learns to score.
+- **Operator dispute** via `POST /api/mev/dispute` — within the grace period, an operator can cancel a pending refund (e.g., false-positive). Past grace, dispute is rejected.
+
+#### 8.4.5 Sublinearity properties carried through to light clients
+
+Light clients verify the chain's MEV-observation buffer state via the `mev_state_digest` (canonical-ordered, blake3 over observations + attacker stats), enabling sublinear-time validator-convergence checks complementary to the Lambda-Fold IVC verifier covered in §11.
+
+### 8.5 Composition: encrypted mempool + Crooks-MEV
+
+| Stage | Encrypted mempool | Crooks-MEV |
+|---|---|---|
+| When it acts | At submission (commit phase) | At commit + N blocks later (settlement) |
+| What it protects | Front-running and reordering by validators | Dissipative work captured by sandwich attacks |
+| Failure mode it covers | Validator-side MEV | Network-side MEV that bypassed encryption |
+| Cost | Double-round-trip latency | One protocol-issued tx per detected event |
+| Governance flag | (none — feature) | `crooks_mev_settlement_mode ∈ {observe, enforce}` |
+
+The two layers are designed to compose: a chain running encrypted mempool with `crooks_mev_settlement_mode = "enforce"` has near-complete MEV defense. An operator running `observe` only logs MEV-shaped events for monitoring without changing block contents — useful for empirical detector tuning before enforcement goes live.
+
 ---
 
 ## 9. Transaction Execution and Fee Market
