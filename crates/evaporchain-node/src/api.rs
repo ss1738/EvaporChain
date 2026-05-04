@@ -4036,6 +4036,172 @@ async fn post_lambda_fold_verify(
     }
 }
 
+// ─────────── Lambda-Fold Nova endpoints (Phase 5.4) ────────────────
+
+/// GET /api/lambda_fold/nova response: surfaces the running Nova
+/// instance's hot-path-readable fields without exposing the full
+/// (potentially MB-sized) compressed proof bytes — those are fetched
+/// out-of-band via verify when needed.
+#[cfg(feature = "lambda_fold_nova")]
+#[derive(Debug, Serialize)]
+pub struct LambdaFoldNovaResp {
+    pub total_energy_remaining: String,
+    pub step_count: u64,
+    pub latest_epoch: u64,
+    pub is_identity: bool,
+    /// Size of the compressed proof in bytes; 0 if at identity.
+    pub proof_bytes_len: usize,
+}
+
+#[cfg(feature = "lambda_fold_nova")]
+async fn get_lambda_fold_nova(
+    State(state): State<Arc<ApiState>>,
+) -> Json<LambdaFoldNovaResp> {
+    let tc = match state.tendermint.as_ref() {
+        Some(tc) => tc,
+        None => {
+            return Json(LambdaFoldNovaResp {
+                total_energy_remaining: "0".into(),
+                step_count: 0,
+                latest_epoch: 0,
+                is_identity: true,
+                proof_bytes_len: 0,
+            });
+        }
+    };
+    let tc = safe_lock(tc);
+    let i = tc.lambda_fold_nova_instance();
+    Json(LambdaFoldNovaResp {
+        total_energy_remaining: i.total_energy_remaining.to_string(),
+        step_count: i.step_count,
+        latest_epoch: i.latest_epoch,
+        is_identity: i.is_identity(),
+        proof_bytes_len: i.proof_bytes.len(),
+    })
+}
+
+/// POST /api/lambda_fold/nova/verify — runs the full Nova
+/// light-client verify path against the chain's current Nova
+/// instance. The verifier holds only `vk_bytes` + the instance's
+/// proof, no `pp` recomputation. Closes the sublinear-verifier
+/// claim on the wire.
+#[cfg(feature = "lambda_fold_nova")]
+#[derive(Debug, Deserialize)]
+pub struct LambdaFoldNovaVerifyQuery {
+    /// Lower bound on `total_energy_remaining` the caller expects.
+    pub expected_remaining_energy: u128,
+}
+
+#[cfg(feature = "lambda_fold_nova")]
+#[derive(Debug, Serialize)]
+pub struct LambdaFoldNovaVerifyResp {
+    pub status: &'static str,
+    pub detail: String,
+    pub step_count: u64,
+}
+
+#[cfg(feature = "lambda_fold_nova")]
+async fn post_lambda_fold_nova_verify(
+    State(state): State<Arc<ApiState>>,
+    Json(q): Json<LambdaFoldNovaVerifyQuery>,
+) -> Json<LambdaFoldNovaVerifyResp> {
+    let tc = match state.tendermint.as_ref() {
+        Some(tc) => tc,
+        None => {
+            return Json(LambdaFoldNovaVerifyResp {
+                status: "error",
+                detail: "no consensus engine".into(),
+                step_count: 0,
+            });
+        }
+    };
+    let tc = safe_lock(tc);
+    let inst = tc.lambda_fold_nova_instance().clone();
+
+    // Pull vk_bytes from the consensus engine's Nova folder. If the
+    // chain hasn't yet folded a nova-mode block, the folder hasn't
+    // been lazy-init'd and there's no vk to verify against.
+    let vk_bytes = match tc.lambda_fold_nova_vk_bytes() {
+        Some(Ok(v)) => v,
+        Some(Err(e)) => {
+            return Json(LambdaFoldNovaVerifyResp {
+                status: "error",
+                detail: format!("vk_bytes failed: {e}"),
+                step_count: inst.step_count,
+            });
+        }
+        None => {
+            return Json(LambdaFoldNovaVerifyResp {
+                status: "error",
+                detail: "nova folder not initialised — chain has not folded a nova-mode block yet".into(),
+                step_count: inst.step_count,
+            });
+        }
+    };
+    drop(tc);
+
+    match evaporchain_lambda_fold::verify_nova_folded(&inst, &vk_bytes, q.expected_remaining_energy) {
+        Ok(()) => Json(LambdaFoldNovaVerifyResp {
+            status: "ok",
+            detail: String::new(),
+            step_count: inst.step_count,
+        }),
+        Err(e) => Json(LambdaFoldNovaVerifyResp {
+            status: "violation",
+            detail: format!("{e}"),
+            step_count: inst.step_count,
+        }),
+    }
+}
+
+/// GET /api/lambda_fold/nova/vk_bytes — hex-encoded preprocessed
+/// `vk` for off-process light clients. Returns 404-ish status if the
+/// folder hasn't been lazy-initialised (no nova-mode block yet).
+#[cfg(feature = "lambda_fold_nova")]
+#[derive(Debug, Serialize)]
+pub struct LambdaFoldNovaVkResp {
+    pub status: &'static str,
+    pub vk_bytes_hex: String,
+    pub vk_bytes_len: usize,
+}
+
+#[cfg(feature = "lambda_fold_nova")]
+async fn get_lambda_fold_nova_vk_bytes(
+    State(state): State<Arc<ApiState>>,
+) -> Json<LambdaFoldNovaVkResp> {
+    let tc = match state.tendermint.as_ref() {
+        Some(tc) => tc,
+        None => {
+            return Json(LambdaFoldNovaVkResp {
+                status: "error",
+                vk_bytes_hex: String::new(),
+                vk_bytes_len: 0,
+            });
+        }
+    };
+    let tc = safe_lock(tc);
+    match tc.lambda_fold_nova_vk_bytes() {
+        Some(Ok(v)) => {
+            let len = v.len();
+            Json(LambdaFoldNovaVkResp {
+                status: "ok",
+                vk_bytes_hex: hex::encode(v),
+                vk_bytes_len: len,
+            })
+        }
+        Some(Err(e)) => Json(LambdaFoldNovaVkResp {
+            status: "error",
+            vk_bytes_hex: format!("vk_bytes failed: {e}"),
+            vk_bytes_len: 0,
+        }),
+        None => Json(LambdaFoldNovaVkResp {
+            status: "uninitialised",
+            vk_bytes_hex: String::new(),
+            vk_bytes_len: 0,
+        }),
+    }
+}
+
 // ─────────── Evaporative Filtration Homology (EFH) ─────────────────
 
 #[derive(Debug, Deserialize)]
@@ -14217,7 +14383,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/wallet/activity", get(crate::auth::get_activity))
         .with_state(auth_state);
 
-    Router::new()
+    let router = Router::new()
         // Wallet is the landing page
         .route("/", get(wallet_html))
         .route("/wallet", get(wallet_html))
@@ -14572,7 +14738,26 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         // WebSocket subscriptions
         .route("/ws", get(ws_upgrade_handler))
         // JSON-RPC 2.0 endpoint
-        .route("/rpc", post(crate::jsonrpc::handle_jsonrpc))
+        .route("/rpc", post(crate::jsonrpc::handle_jsonrpc));
+
+    // Phase 5.4 of LAMBDA_FOLD_NOVA_PLAN — nova-mode Lambda-Fold
+    // endpoints are only mounted when the `lambda_fold_nova` feature
+    // is on. With the feature off, the routes don't exist (404)
+    // rather than returning a runtime "not compiled in" error —
+    // operators see the absence in `/api/docs` and the routing table.
+    #[cfg(feature = "lambda_fold_nova")]
+    let router = router
+        .route("/api/lambda_fold/nova", get(get_lambda_fold_nova))
+        .route(
+            "/api/lambda_fold/nova/verify",
+            post(post_lambda_fold_nova_verify),
+        )
+        .route(
+            "/api/lambda_fold/nova/vk_bytes",
+            get(get_lambda_fold_nova_vk_bytes),
+        );
+
+    router
         .with_state(state)
         // Merge auth routes (different state type)
         .merge(auth_router)

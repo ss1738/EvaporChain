@@ -161,7 +161,14 @@ Seven phases. Phases 1-2 are reversible design + prototype; phases 3-6 are the r
   - `test_lambda_fold_nova_mode_no_op_without_feature` — guards the feature-off contract
   - `test_lambda_fold_nova_instance_starts_at_identity` (cfg-gated to nova feature)
 
-- [ ] **5.4 — Light-client API updates**: `evaporchain-node::api.rs` `/api/lambda_fold/verify` endpoint takes either a blake3 `FoldedInstance` (for hash_chain mode) or a Nova `CompressedSNARK` (for nova mode). Two endpoints or content-negotiation.
+- [x] **5.4 — Light-client API updates**: 3 new HTTP endpoints on `evaporchain-node`, gated on a new `lambda_fold_nova` crate feature (`Cargo.toml:14`):
+  - `GET /api/lambda_fold/nova` → `LambdaFoldNovaResp { total_energy_remaining, step_count, latest_epoch, is_identity, proof_bytes_len }`. Surfaces hot-path-readable fields without the (potentially MB-sized) proof body.
+  - `POST /api/lambda_fold/nova/verify { expected_remaining_energy }` → runs `verify_nova_folded` against the chain's running Nova instance using the consensus engine's preprocessed `vk_bytes`. Returns 404-ish status if the folder hasn't lazy-init'd yet (no nova-mode block seen).
+  - `GET /api/lambda_fold/nova/vk_bytes` → hex-encoded preprocessed `vk` for off-process light clients to deserialize once and verify forever. Returns `uninitialised` status if no nova-mode block seen yet.
+
+  New accessor: `TendermintConsensus::lambda_fold_nova_vk_bytes(&self) -> Option<Result<Vec<u8>, NovaFoldError>>` wraps `NovaFolder::vk_bytes` (which itself caches `CompressedSNARK::setup` per Phase 3.2).
+
+  Endpoints chose two-endpoints over content-negotiation for clarity: existing `/api/lambda_fold/verify` keeps blake3 substrate semantics unchanged, new `/nova/verify` is opt-in. Both feature configurations build clean on Mini.
 
 - [x] **5.5 — Integration test**: `test_lambda_fold_nova_end_to_end_three_blocks` (cfg-gated to `lambda_fold_nova`, marked `#[ignore]` because it triggers the heavy `pp` setup). Drives 3 blocks through `on_block_committed` with `lambda_fold_mode = "nova"`, asserts both substrate and Nova accumulators advance to step_count 3, then runs the full light-client verify path: `lambda_fold_nova.vk_bytes()` → `verify_nova_folded(&nova_instance, &vk_bytes, 0)`. **5.24 s end-to-end on Mini under release** (well under the 30 s budget). The test closes the wiring from governance flag → lazy-init NovaFolder → fold → compress → light-client verify.
 

@@ -9,6 +9,13 @@ repository.workspace = true
 default = []
 prove = ["evaporchain-proving/nova"]
 test-utils = ["evaporchain-proving/test-utils"]
+# Phase 5.4 of LAMBDA_FOLD_NOVA_PLAN — opt the node into the
+# nova-mode Lambda-Fold path (consensus-side Nova folding +
+# /api/lambda_fold/verify_nova HTTP endpoint).
+lambda_fold_nova = [
+    "evaporchain-consensus/lambda_fold_nova",
+    "evaporchain-lambda-fold/nova",
+]
 
 [[bench]]
 name = "core_benchmarks"

@@ -1424,6 +1424,18 @@ impl TendermintConsensus {
         &self.lambda_fold_nova_instance
     }
 
+    /// Phase 5.4 of LAMBDA_FOLD_NOVA_PLAN — preprocessed vk bytes for
+    /// the Nova folder. Returns `None` when the lazy folder hasn't
+    /// been constructed yet (chain hasn't seen a nova-mode block).
+    /// Wraps `NovaFolder::vk_bytes`, which itself triggers
+    /// `CompressedSNARK::setup` on first call and caches the result.
+    #[cfg(feature = "lambda_fold_nova")]
+    pub fn lambda_fold_nova_vk_bytes(
+        &self,
+    ) -> Option<Result<Vec<u8>, evaporchain_lambda_fold::NovaFoldError>> {
+        self.lambda_fold_nova.as_ref().map(|f| f.vk_bytes())
+    }
+
     /// Number of samples currently in the TUR observation window.
     pub fn tur_window_len(&self) -> usize {
         self.tur_window.len()
