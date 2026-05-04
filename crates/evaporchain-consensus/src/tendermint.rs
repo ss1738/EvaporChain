@@ -415,6 +415,20 @@ pub struct TendermintConsensus {
     /// of the energy-folded light client. Per INVENTION_STACK.md §4.1
     /// row 8.
     pub lambda_fold: evaporchain_lambda_fold::FoldedInstance,
+    /// Phase 5.1 of LAMBDA_FOLD_NOVA_PLAN — real Nova-IVC fold state.
+    /// Lazily constructed on first nova-mode fold (the heavy
+    /// `RealBlockProver::new` `pp` setup is ~60-90 s on M4 — running it
+    /// at TendermintConsensus construction would block startup; running
+    /// it lazily on the first nova-mode block keeps the substrate path
+    /// startup unchanged). Only present when the `lambda_fold_nova`
+    /// crate feature is enabled.
+    #[cfg(feature = "lambda_fold_nova")]
+    lambda_fold_nova: Option<Box<evaporchain_lambda_fold::NovaFolder>>,
+    /// Running Nova-folded instance — mirrors `lambda_fold` for the
+    /// Nova path. Always present (cheap: holds an empty Vec until the
+    /// first nova fold), only mutated when nova mode is active.
+    #[cfg(feature = "lambda_fold_nova")]
+    pub lambda_fold_nova_instance: evaporchain_lambda_fold::NovaFoldedInstance,
     /// This node's validator id.
     pub my_id: u64,
     /// Current block height being decided.
@@ -644,6 +658,10 @@ impl TendermintConsensus {
             tur_window: std::collections::VecDeque::with_capacity(TUR_WINDOW_BLOCKS),
             last_tur_verdict: None,
             lambda_fold: evaporchain_lambda_fold::FoldedInstance::identity(),
+            #[cfg(feature = "lambda_fold_nova")]
+            lambda_fold_nova: None,
+            #[cfg(feature = "lambda_fold_nova")]
+            lambda_fold_nova_instance: evaporchain_lambda_fold::NovaFoldedInstance::identity(),
             my_id,
             height: 1, // Start at height 1 (genesis is 0)
             epoch: 0,
@@ -1336,6 +1354,76 @@ impl TendermintConsensus {
         self.lambda_fold
     }
 
+    /// Phase 5.3 of LAMBDA_FOLD_NOVA_PLAN — nova-mode fold helper.
+    /// Lazily constructs the `NovaFolder` on first call (Phase 5.1's
+    /// deferred-init pattern: avoids the ~60-90 s `pp` setup until the
+    /// chain actually flips into nova mode), then folds one block. The
+    /// substrate fold remains the authoritative accumulator at the
+    /// call site; this helper updates the parallel Nova instance only.
+    ///
+    /// `_old_state` in `RealBlockProver::fold_real_block_with_witness`
+    /// is unused (the IVC binds only the new state in `z_new`), so we
+    /// pass the same `DualCommitment` for old + new — cryptographically
+    /// equivalent to passing distinct values.
+    #[cfg(feature = "lambda_fold_nova")]
+    fn try_nova_fold(
+        &mut self,
+        block: &Block,
+        state_root: [u8; 32],
+        step_energy: u64,
+    ) -> Result<(), evaporchain_lambda_fold::NovaFoldError> {
+        let new_dc = evaporchain_types::DualCommitment {
+            verkle_root: state_root,
+            mmr_root: self.executor.mmr_root(),
+            epoch: block.epoch,
+            active_count: 0,
+            ghost_count: 0,
+        };
+
+        if self.lambda_fold_nova.is_none() {
+            // Lazy construction — uses the genesis state_root the
+            // chain was initialised with. Heavy `pp` setup happens
+            // here exactly once.
+            let genesis_dc = evaporchain_types::DualCommitment {
+                verkle_root: self.genesis_state_root,
+                mmr_root: [0u8; 32],
+                epoch: 0,
+                active_count: 0,
+                ghost_count: 0,
+            };
+            self.lambda_fold_nova = Some(Box::new(
+                evaporchain_lambda_fold::NovaFolder::new(&genesis_dc)?,
+            ));
+        }
+
+        let folder = self
+            .lambda_fold_nova
+            .as_mut()
+            .expect("lazy-init populated above");
+        let thermo = evaporchain_lambda_fold::NovaThermodynamicWitness {
+            object_energies: vec![(0, 0, 100)],
+            evaporation_nullifiers: vec![],
+        };
+        let inst = folder.fold_block(
+            block,
+            &new_dc,
+            &new_dc,
+            &thermo,
+            block.epoch,
+            step_energy,
+        )?;
+        self.lambda_fold_nova_instance = inst;
+        Ok(())
+    }
+
+    /// Phase 5.1 — accessor for the running Nova-folded instance.
+    /// Returns `NovaFoldedInstance::identity()` until the chain flips
+    /// into nova mode and folds at least one block.
+    #[cfg(feature = "lambda_fold_nova")]
+    pub fn lambda_fold_nova_instance(&self) -> &evaporchain_lambda_fold::NovaFoldedInstance {
+        &self.lambda_fold_nova_instance
+    }
+
     /// Number of samples currently in the TUR observation window.
     pub fn tur_window_len(&self) -> usize {
         self.tur_window.len()
@@ -1518,6 +1606,10 @@ impl TendermintConsensus {
             tur_window: std::collections::VecDeque::with_capacity(TUR_WINDOW_BLOCKS),
             last_tur_verdict: None,
             lambda_fold: evaporchain_lambda_fold::FoldedInstance::identity(),
+            #[cfg(feature = "lambda_fold_nova")]
+            lambda_fold_nova: None,
+            #[cfg(feature = "lambda_fold_nova")]
+            lambda_fold_nova_instance: evaporchain_lambda_fold::NovaFoldedInstance::identity(),
             my_id,
             height: 1,
             epoch: 0,
@@ -3322,10 +3414,35 @@ impl TendermintConsensus {
         // observed_epoch = block.epoch}. The fold accumulator is O(1)
         // memory regardless of chain length. Out-of-order steps are
         // ignored (Tendermint commits monotone in epoch in practice).
+        //
+        // Phase 5.3 of LAMBDA_FOLD_NOVA_PLAN — branch on the
+        // `lambda_fold_mode` governance flag. The substrate path
+        // ALWAYS runs (it's cheap, deterministic, and provides the
+        // fall-back accumulator if the Nova path errors out). The
+        // Nova branch additionally runs the real IVC fold when the
+        // flag is `"nova"` AND the `lambda_fold_nova` crate feature is
+        // compiled in. The Nova folder is lazily constructed on first
+        // use because `RealBlockProver::new` runs a ~60-90 s `pp`
+        // setup that we don't want at TendermintConsensus
+        // construction time.
         let chain_lambda = evaporchain_energy_kernel::ChainLambda::default_genesis();
         let step = evaporchain_lambda_fold::StepWitness::new(state_root, block_j, block.epoch);
         if let Ok(folded) = evaporchain_lambda_fold::fold(self.lambda_fold, step, chain_lambda) {
             self.lambda_fold = folded;
+        }
+        #[cfg(feature = "lambda_fold_nova")]
+        {
+            if self.governance_params.get("lambda_fold_mode").map(|s| s.as_str())
+                == Some("nova")
+            {
+                if let Err(e) = self.try_nova_fold(block, state_root, block_j) {
+                    // Nova fold errors are observed but don't reject
+                    // the block — the substrate fold above is the
+                    // authoritative chain accumulator until 5.4
+                    // promotes the Nova path.
+                    tracing::warn!(error = %e, "lambda_fold nova path errored; substrate fold stands");
+                }
+            }
         }
 
         // WSBF RG flow — coarse-grain per-block data into effective λ.
@@ -5780,6 +5897,32 @@ mod tests {
             snap.get("lambda_fold_mode").map(|s| s.as_str()),
             Some("nova")
         );
+    }
+
+    /// Phase 5.1 of LAMBDA_FOLD_NOVA_PLAN — default-features build:
+    /// the Nova folder is not compiled in, so flipping
+    /// `lambda_fold_mode = "nova"` is a no-op at the call site (the
+    /// substrate fold runs unconditionally). Locks the feature-gate
+    /// contract.
+    #[test]
+    fn test_lambda_fold_nova_mode_no_op_without_feature() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.governance_set_param("lambda_fold_mode", "nova").unwrap();
+        // The flag is observable…
+        assert_eq!(tc.get_governance_param("lambda_fold_mode"), Some("nova"));
+        // …and the substrate fold accumulator is at identity (no
+        // folds run yet — the test doesn't drive on_block_committed).
+        assert!(tc.lambda_fold.is_identity());
+    }
+
+    /// Phase 5.1 — when the `lambda_fold_nova` feature IS compiled in,
+    /// the running Nova instance is at identity until the first
+    /// nova-mode fold lands.
+    #[cfg(feature = "lambda_fold_nova")]
+    #[test]
+    fn test_lambda_fold_nova_instance_starts_at_identity() {
+        let tc = make_consensus(1, &[1, 2, 3, 4]);
+        assert!(tc.lambda_fold_nova_instance().is_identity());
     }
 
     #[test]

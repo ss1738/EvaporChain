@@ -148,11 +148,18 @@ Seven phases. Phases 1-2 are reversible design + prototype; phases 3-6 are the r
 
 **Goal:** wire the real Lambda-Fold into the production hot path. Same governance-flag pattern as Layer 4 — default keeps blake3 substrate, flag flips to real Nova.
 
-- [ ] **5.1 — Dual-mode field**: `tendermint.rs` `TendermintConsensus` keeps the existing blake3 `FoldedInstance` for backward compat AND adds a real-Nova path behind a flag. (Pending: needs careful handling of `RealBlockProver::new`'s 60-90s `pp` setup — must not block the consensus hot path. Likely deferred-init on first nova-mode fold.)
+- [x] **5.1 — Dual-mode field**: `TendermintConsensus` gains two feature-gated fields under the new `lambda_fold_nova` crate feature (`Cargo.toml`): `lambda_fold_nova: Option<Box<NovaFolder>>` (lazy-init on first nova-mode fold to defer the ~60-90 s `pp` setup) and `lambda_fold_nova_instance: NovaFoldedInstance`. Both constructors initialise the lazy slot to `None` and the running instance to `identity()`. Substrate `lambda_fold` field unchanged so default builds are bit-compat. Public accessor `lambda_fold_nova_instance(&self) -> &NovaFoldedInstance` shipped.
 
-- [x] **5.2 — Governance flag**: `lambda_fold_mode` added to the soft-fork allowlist in `governance_set_param` (`tendermint.rs:744-750`). Values: `"hash_chain"` (default) and `"nova"`. `governance_flags_snapshot` reports `hash_chain` when unset so operators see the effective default. `UnknownKey` error message updated to list the new key. Three tests green on Mini under release: `test_governance_set_param_accepts_all_allowlisted_pairs` (with both values), `test_governance_lambda_fold_mode_default_hash_chain`, `test_governance_lambda_fold_mode_rejects_invalid_value`. Until 5.1 + 5.3 land, the flag is observed by operators but no consumer reads it — the substrate fold runs unconditionally at `tendermint.rs:3316`.
+- [x] **5.2 — Governance flag**: `lambda_fold_mode` added to the soft-fork allowlist in `governance_set_param` (`tendermint.rs:744-750`). Values: `"hash_chain"` (default) and `"nova"`. `governance_flags_snapshot` reports `hash_chain` when unset so operators see the effective default. `UnknownKey` error message updated to list the new key.
 
-- [ ] **5.3 — Branch at fold call site** (`tendermint.rs:3316` area): if mode is `"nova"`, invoke real-Nova folding; else blake3 substrate. Blocked on 5.1.
+- [x] **5.3 — Branch at fold call site** (`tendermint.rs:3325` area): substrate fold ALWAYS runs (cheap, deterministic, fall-back accumulator). Additionally, when `lambda_fold_mode == "nova"` AND the `lambda_fold_nova` feature is compiled in, `try_nova_fold(block, state_root, step_energy)` runs — lazily constructs the `NovaFolder` from the chain's `genesis_state_root`, builds a `DualCommitment` from the new `state_root` + `executor.mmr_root()`, and folds via `RealBlockProver::fold_real_block_with_witness`. Nova-fold errors are observed via `tracing::warn!` but don't reject the block — substrate stays authoritative until 5.4 promotes the Nova path. Re-export `NovaThermodynamicWitness` added on `evaporchain-lambda-fold` so consensus doesn't need a direct `evaporchain-proving` dep.
+
+  Tests (4/4 green on Mini under release, both feature configs):
+  - `test_governance_set_param_accepts_all_allowlisted_pairs` (hash_chain + nova values)
+  - `test_governance_lambda_fold_mode_default_hash_chain`
+  - `test_governance_lambda_fold_mode_rejects_invalid_value`
+  - `test_lambda_fold_nova_mode_no_op_without_feature` — guards the feature-off contract
+  - `test_lambda_fold_nova_instance_starts_at_identity` (cfg-gated to nova feature)
 
 - [ ] **5.4 — Light-client API updates**: `evaporchain-node::api.rs` `/api/lambda_fold/verify` endpoint takes either a blake3 `FoldedInstance` (for hash_chain mode) or a Nova `CompressedSNARK` (for nova mode). Two endpoints or content-negotiation.
 

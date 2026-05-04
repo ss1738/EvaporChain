@@ -61,3 +61,9 @@ pub use witness::StepWitness;
 pub use nova_path::{
     verify_nova_folded, NovaFoldError, NovaFoldedInstance, NovaFolder, NovaVerifyError,
 };
+
+// Phase 5.1 — re-export the witness type consumers need to feed
+// `NovaFolder::fold_block` so they don't have to depend on
+// `evaporchain-proving` directly.
+#[cfg(feature = "nova")]
+pub use evaporchain_proving::nova::ThermodynamicWitness as NovaThermodynamicWitness;

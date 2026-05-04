@@ -49,3 +49,12 @@ proptest = "1"
 # Historical test-utils gate in tendermint.rs DA self-attestation path.
 # Empty default; opt-in with --features test-utils when re-introduced.
 test-utils = []
+# Phase 5.1 of LAMBDA_FOLD_NOVA_PLAN — opts the consensus crate into
+# the real Nova IVC fold path. Without this feature the substrate
+# blake3 fold runs unconditionally, regardless of the
+# `lambda_fold_mode` governance flag value. With it on, the flag is
+# honoured at the per-block fold call site. Gated behind a feature
+# because pulling in `evaporchain-proving` with `nova` adds the heavy
+# nova-snark + halo2curves transitive dep tree, so default builds
+# stay fast.
+lambda_fold_nova = ["evaporchain-lambda-fold/nova"]
