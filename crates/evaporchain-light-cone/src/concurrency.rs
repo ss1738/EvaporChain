@@ -174,6 +174,67 @@ mod tests {
         assert!(is_antichain(&lc, &ac));
     }
 
+    /// Phase 4.2 robustness — invariant: for any randomly-generated
+    /// DAG, `closing_antichain` is always actually an antichain.
+    /// Proptest sweeps random DAG shapes (linear chains + tree-like
+    /// branching) and verifies the postcondition.
+    proptest::proptest! {
+        #[test]
+        fn closing_antichain_is_always_an_antichain(
+            // Sweep DAG sizes 1..=20 with random branching factors.
+            // Each block (after genesis) picks 1..=2 random parents
+            // from the existing DAG.
+            seed in 0u64..1000,
+            n_blocks in 1usize..=20,
+        ) {
+            use proptest::prop_assert;
+
+            // Deterministic synthetic DAG generator from (seed, n_blocks).
+            // Block i's parents = pick from { 0..i } based on seed-derived hash.
+            let mut lc = LightCone::new();
+            // Genesis (block 0) — no parents.
+            lc.insert(Block::new(id(0), vec![], 1000, 0)).unwrap();
+            for i in 1..n_blocks {
+                // Number of parents: 1 or 2 based on hash bit.
+                let h = (seed.wrapping_mul(i as u64).wrapping_add(31)).wrapping_mul(2654435761);
+                let two_parents = (h & 1) == 1 && i >= 2;
+                let mut parents = Vec::new();
+                let p1 = (h.wrapping_div(7) as usize) % i;
+                parents.push(id(p1 as u8));
+                if two_parents {
+                    let p2 = (h.wrapping_div(11) as usize) % i;
+                    if p2 != p1 {
+                        parents.push(id(p2 as u8));
+                    }
+                }
+                // Inserting a block whose parents include itself is
+                // impossible by construction (p1, p2 < i = block_id).
+                let _ = lc.insert(Block::new(id(i as u8), parents, 100, i as u64));
+            }
+
+            // Postcondition: closing_antichain is always an antichain.
+            let ac = closing_antichain(&lc);
+            prop_assert!(
+                is_antichain(&lc, &ac),
+                "closing_antichain returned a non-antichain set: {:?}",
+                ac
+            );
+
+            // Additional invariant: every leaf appears in the
+            // closing antichain (the antichain IS the leaves).
+            let mut sorted_leaves: Vec<BlockId> = lc.leaves().collect();
+            sorted_leaves.sort();
+            let mut sorted_ac = ac.clone();
+            sorted_ac.sort();
+            prop_assert!(
+                sorted_leaves == sorted_ac,
+                "closing_antichain ≠ leaves: ac={:?}, leaves={:?}",
+                sorted_ac,
+                sorted_leaves
+            );
+        }
+    }
+
     /// Phase 4.2 — `closing_antichain` on a 3-sibling DAG returns
     /// all three siblings (they're the leaves and pairwise
     /// concurrent).
