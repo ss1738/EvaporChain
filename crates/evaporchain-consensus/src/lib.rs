@@ -22,6 +22,15 @@ pub mod tx_antichain_mempool;
 pub mod validator_set;
 pub mod wsbf_integration;
 
+// Phase 3.1 + 3.2 + 4.1 + 4.3 + 4.4 of LIGHT_CONE_FULL_DAG_PLAN.md —
+// re-export the public Light-Cone substrate types so downstream
+// crates (notably evaporchain-execution, when Phase 3.2's executor
+// dispatch wires in) can `use evaporchain_consensus::{...}` without
+// reaching into the tendermint module.
+pub use tendermint::{
+    LightConeBranchMetadata, LightConeBranchSnapshot, MevDisputeError,
+};
+
 use encrypted_mempool::EncryptedMempool;
 use evaporchain_crypto::hash::blake3_hash;
 use evaporchain_da::BlockDA2D;
@@ -64,6 +73,43 @@ pub fn empty_block_data_root(height: u64, parent_hash: &[u8; 32]) -> [u8; 32] {
     input[..8].copy_from_slice(&height.to_le_bytes());
     input[8..].copy_from_slice(parent_hash);
     *blake3::keyed_hash(&KEY, &input).as_bytes()
+}
+
+#[cfg(test)]
+mod press_claim_tests {
+    use super::*;
+
+    /// **Audit fix (test-coverage gap)**: doctrine claim asserted as
+    /// a structural test.
+    ///
+    /// Press claim: "empty_block_data_root binds (height, parent_hash)
+    /// into a domain-tagged keyed hash so DA attestations on empty
+    /// blocks cannot replay across heights or parent forks. v2 was
+    /// the audit fix for the pre-2026-05-03 constant-sentinel
+    /// collision class."
+    #[test]
+    fn the_press_claim_lives_as_a_test() {
+        let parent_a = [0xAA; 32];
+        let parent_b = [0xBB; 32];
+
+        let r_h1_a = empty_block_data_root(1, &parent_a);
+        let r_h1_a_again = empty_block_data_root(1, &parent_a);
+        // Pure function: same inputs → same root.
+        assert_eq!(r_h1_a, r_h1_a_again);
+
+        // Different height with the same parent → different root
+        // (defeats DA-attestation replay across heights).
+        let r_h2_a = empty_block_data_root(2, &parent_a);
+        assert_ne!(r_h1_a, r_h2_a);
+
+        // Different parent at the same height → different root
+        // (defeats fork ambiguity).
+        let r_h1_b = empty_block_data_root(1, &parent_b);
+        assert_ne!(r_h1_a, r_h1_b);
+
+        // Sentinel is non-trivial (not all zero).
+        assert_ne!(r_h1_a, [0u8; 32]);
+    }
 }
 
 /// Compute the data availability commitments for a block's transactions.
@@ -350,6 +396,7 @@ impl MockConsensus {
             protocol_version: 0,
             state_root_version: 0,
             submit_epoch_hints: vec![],
+            parents: vec![],
         };
 
         let execution = self.executor.execute_block(db, &block).map_err(
@@ -433,6 +480,7 @@ impl MockConsensus {
             protocol_version: 0,
             state_root_version: 0,
             submit_epoch_hints: vec![],
+            parents: vec![],
         };
 
         let execution = self.executor.execute_block(db, &block).map_err(
@@ -607,6 +655,7 @@ impl RotatingConsensus {
             protocol_version: 0,
             state_root_version: 0,
             submit_epoch_hints: vec![],
+            parents: vec![],
         };
 
         let execution = self.executor.execute_block(db, &block).map_err(
@@ -1287,6 +1336,7 @@ mod tests {
             protocol_version: 0,
             state_root_version: 0,
             submit_epoch_hints: vec![],
+            parents: vec![],
         };
 
         let result = rc.validate_received_block(&block);
@@ -1331,6 +1381,7 @@ mod tests {
             protocol_version: 0,
             state_root_version: 0,
             submit_epoch_hints: vec![],
+            parents: vec![],
         };
         assert!(rc.validate_received_block(&block).is_err());
     }
@@ -1409,6 +1460,7 @@ mod tests {
             protocol_version: 0,
             state_root_version: 0,
             submit_epoch_hints: vec![],
+            parents: vec![],
         };
 
         assert!(follower.apply_block(&mut db, &block).is_err());

@@ -7491,6 +7491,35 @@ mod tests {
         assert_eq!(orphans, vec![[0xAA; 32], [0xBB; 32], [0xCC; 32]]);
     }
 
+    /// Phase 6.1 of `LIGHT_CONE_FULL_DAG_PLAN.md` — re-exported
+    /// types are usable from `crate::` (mirrors the path a
+    /// downstream consumer would see via `evaporchain_consensus::`).
+    /// Locks the public-API surface for executor crates that
+    /// implement `LightConeBranchSnapshot`.
+    #[test]
+    fn test_light_cone_substrate_reexports_usable() {
+        // The re-exports at lib.rs:24 surface these types into the
+        // crate root. From a test inside `tendermint::tests`, that
+        // means `crate::LightConeBranchMetadata` and
+        // `crate::LightConeBranchSnapshot` should both resolve.
+        let _: crate::LightConeBranchMetadata =
+            crate::LightConeBranchMetadata::fresh(1, 100);
+
+        // Trait re-export is also at the crate root.
+        struct StubAtCrateRoot;
+        impl crate::LightConeBranchSnapshot for StubAtCrateRoot {
+            fn tip(&self) -> [u8; 32] {
+                [0xCC; 32]
+            }
+            fn created_at_height(&self) -> u64 {
+                42
+            }
+        }
+        let s = StubAtCrateRoot;
+        assert_eq!(s.tip(), [0xCC; 32]);
+        assert_eq!(s.created_at_height(), 42);
+    }
+
     /// Phase 6.1-substrate of `LIGHT_CONE_FULL_DAG_PLAN.md` —
     /// end-to-end integration of Phase 3 (state branches) + Phase 5
     /// (LRU + DAG-cascade prune) substrate via the real
