@@ -35,6 +35,40 @@ pub fn is_concurrent(lc: &LightCone, a: BlockId, b: BlockId) -> bool {
     !precedes(lc, a, b) && !precedes(lc, b, a)
 }
 
+/// Phase 4.2 of `LIGHT_CONE_FULL_DAG_PLAN.md` — antichain test.
+/// A set of `BlockId`s is an **antichain** iff every pair of
+/// distinct elements is concurrent (neither precedes the other).
+/// Empty sets and singletons are vacuously antichains.
+///
+/// Phase 4.2's antichain finality rule consumes this: a set finalizes
+/// only when it's an antichain AND every block in the set has 2f+1
+/// precommits. The full predicate lives in tendermint.rs; this
+/// helper is the substrate primitive.
+pub fn is_antichain(lc: &LightCone, set: &[BlockId]) -> bool {
+    for i in 0..set.len() {
+        for j in (i + 1)..set.len() {
+            if comparable(lc, set[i], set[j]) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Phase 4.2 — minimal closing antichain at the current DAG state.
+/// Returns the DAG's leaves: every leaf is concurrent with every
+/// other leaf by definition (a leaf has no descendants in the DAG,
+/// so no leaf can precede another). Sorted by `BTreeMap` order for
+/// validator-determinism — every validator computes the same set
+/// from the same DAG.
+///
+/// This is the **default** closing antichain. The full Phase 4.2
+/// predicate may select a sub-antichain when only some leaves have
+/// 2f+1 precommits; that selection logic lives in tendermint.rs.
+pub fn closing_antichain(lc: &LightCone) -> Vec<BlockId> {
+    lc.leaves().collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -87,5 +121,75 @@ mod tests {
         assert!(comparable(&lc, id(0), id(3)));
         assert!(comparable(&lc, id(3), id(0))); // either direction
         assert!(!comparable(&lc, id(1), id(2))); // concurrent
+    }
+
+    /// Phase 4.2 — empty + singleton sets are vacuously antichains.
+    #[test]
+    fn is_antichain_empty_and_singleton() {
+        let lc = diamond();
+        assert!(is_antichain(&lc, &[]));
+        assert!(is_antichain(&lc, &[id(0)]));
+        assert!(is_antichain(&lc, &[id(3)]));
+    }
+
+    /// Phase 4.2 — concurrent pair forms an antichain.
+    #[test]
+    fn is_antichain_concurrent_pair() {
+        let lc = diamond();
+        assert!(is_antichain(&lc, &[id(1), id(2)]));
+        assert!(is_antichain(&lc, &[id(2), id(1)])); // order-independent
+    }
+
+    /// Phase 4.2 — ordered pair (parent + descendant) is NOT an
+    /// antichain. Locks the soundness contract.
+    #[test]
+    fn is_antichain_rejects_comparable_pair() {
+        let lc = diamond();
+        assert!(!is_antichain(&lc, &[id(0), id(3)]));
+        assert!(!is_antichain(&lc, &[id(0), id(1)]));
+        assert!(!is_antichain(&lc, &[id(1), id(3)]));
+    }
+
+    /// Phase 4.2 — three concurrent blocks form an antichain
+    /// (transitivity of concurrency at the antichain level).
+    #[test]
+    fn is_antichain_three_concurrent_blocks() {
+        // A → B, A → C, A → D (three siblings of A — pairwise concurrent).
+        let mut lc = LightCone::new();
+        lc.insert(Block::new(id(0), vec![], 1000, 0)).unwrap();
+        lc.insert(Block::new(id(1), vec![id(0)], 900, 1)).unwrap();
+        lc.insert(Block::new(id(2), vec![id(0)], 900, 1)).unwrap();
+        lc.insert(Block::new(id(3), vec![id(0)], 900, 1)).unwrap();
+        assert!(is_antichain(&lc, &[id(1), id(2), id(3)]));
+    }
+
+    /// Phase 4.2 — `closing_antichain` returns the DAG's leaves
+    /// (which are pairwise concurrent by definition).
+    #[test]
+    fn closing_antichain_in_diamond() {
+        let lc = diamond();
+        let ac = closing_antichain(&lc);
+        // Diamond's leaves: just D (id(3)) since A->B->D and A->C->D.
+        assert_eq!(ac, vec![id(3)]);
+        assert!(is_antichain(&lc, &ac));
+    }
+
+    /// Phase 4.2 — `closing_antichain` on a 3-sibling DAG returns
+    /// all three siblings (they're the leaves and pairwise
+    /// concurrent).
+    #[test]
+    fn closing_antichain_three_siblings() {
+        let mut lc = LightCone::new();
+        lc.insert(Block::new(id(0), vec![], 1000, 0)).unwrap();
+        lc.insert(Block::new(id(1), vec![id(0)], 900, 1)).unwrap();
+        lc.insert(Block::new(id(2), vec![id(0)], 900, 1)).unwrap();
+        lc.insert(Block::new(id(3), vec![id(0)], 900, 1)).unwrap();
+        let ac = closing_antichain(&lc);
+        // Genesis (id(0)) has 3 children → not a leaf. Three siblings
+        // are all leaves.
+        let mut sorted = ac.clone();
+        sorted.sort();
+        assert_eq!(sorted, vec![id(1), id(2), id(3)]);
+        assert!(is_antichain(&lc, &ac));
     }
 }

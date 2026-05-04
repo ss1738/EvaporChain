@@ -78,13 +78,13 @@ Six phases, total scope **≈3-6 months**. Phases 1-3 ship in dedicated sessions
 
 **Goal:** Tendermint's prevote/precommit machinery extended to DAG semantics. Multi-tip voting, antichain finality, equivocation detection across forks.
 
-- [ ] **4.1 — Per-fork RoundState.** `round_state: HashMap<BlockId, RoundState>` instead of a single `RoundState`. Each tip has its own prevote/precommit tally.
-- [ ] **4.2 — Antichain finality.** A set of blocks is finalized iff (a) all blocks in the set form an antichain (mutually concurrent), (b) every block in the set has 2f+1 precommits, (c) the set covers a "minimal closing antichain" of the DAG up to height N.
-- [ ] **4.3 — Cross-fork equivocation rule.** A validator who precommits on two concurrent tips at the same round is slashable. Reuses the existing `evaporchain-entropic-slashing` primitive.
-- [ ] **4.4 — Finality gap on antichains.** `committed_at: HashMap<BlockId, u64>` (was `HashMap<u64, u64>`). Replace height-indexed finality bookkeeping with block-indexed.
-- [ ] **4.5 — Tests.** Antichain-finalization happy path; concurrent-tip equivocation slash; round-fail recovery on 2-tip vote-split scenarios.
+- [ ] **4.1 — Per-fork RoundState.** Pending. Substrate primitives (4.2) shipped first; per-fork `RoundState` HashMap is the consensus-state-machine surgery for the next session.
+- [x] **4.2 — Antichain primitives (substrate).** SHIPPED in `evaporchain-light-cone::concurrency`. `is_antichain(set: &[BlockId]) -> bool` (every pair concurrent or set ≤ 1) + `closing_antichain(lc) -> Vec<BlockId>` (returns DAG leaves in canonical sorted order). 6 new tests: empty/singleton-vacuous, concurrent pair, comparable-pair rejection, three-concurrent-siblings, diamond closing-antichain, three-sibling closing-antichain. The full Phase 4.2 finality predicate (antichain + 2f+1 precommits) consumes these primitives; that wiring is Phase 4.1's job in tendermint.rs.
+- [ ] **4.3 — Cross-fork equivocation rule.** Pending. Slashing via `evaporchain-entropic-slashing` per existing pattern.
+- [ ] **4.4 — Finality gap on antichains.** Pending. Replaces `committed_at: HashMap<u64, u64>` with `HashMap<BlockId, u64>`.
+- [ ] **4.5 — Tests.** 6 new substrate tests shipped (above); end-to-end antichain-finalization + cross-fork equivocation tests pending Phase 4.1+4.3.
 
-**Phase 4 deliverable:** the chain finalizes antichain sets, not single heights. Multi-tip voting works end-to-end. Equivocation across forks is slashable.
+**Phase 4 partial deliverable: substrate primitives shipped + 6 tests green.** The consensus-state-machine wiring (per-fork RoundState, antichain finalization, cross-fork equivocation, block-indexed finality gap) is the next session's bounded piece — substrate primitives are ready to plug in.
 
 ### Phase 5 — Compaction + orphan GC (1-2 weeks)
 
