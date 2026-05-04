@@ -5925,6 +5925,80 @@ mod tests {
         assert!(tc.lambda_fold_nova_instance().is_identity());
     }
 
+    /// Phase 5.5 of LAMBDA_FOLD_NOVA_PLAN — end-to-end integration.
+    /// Drives 3 blocks through `on_block_committed` with the
+    /// `lambda_fold_mode = "nova"` flag set; verifies the running
+    /// `NovaFoldedInstance` ticks to step_count == 3 with a non-empty
+    /// proof, and the substrate accumulator also ticks (Nova path
+    /// is additive).
+    ///
+    /// Marked `#[ignore]` because the first nova fold triggers
+    /// `RealBlockProver::new`'s ~60-90 s `pp` setup. Run with
+    /// `cargo test --release --features lambda_fold_nova -- --ignored`.
+    #[cfg(feature = "lambda_fold_nova")]
+    #[test]
+    #[ignore = "heavy: triggers RealBlockProver pp setup (~60-90 s on M4)"]
+    fn test_lambda_fold_nova_end_to_end_three_blocks() {
+        fn make_block_for_test(height: u64) -> Block {
+            Block {
+                number: height,
+                epoch: height,
+                parent_hash: [0u8; 32],
+                state_root: [0u8; 32],
+                transactions: vec![],
+                producer_id: Some(0),
+                timestamp: 0,
+                chain_id: String::new(),
+                commit_certificate: None,
+                nova_proof: None,
+                anchor_hash: None,
+                vrf_output: None,
+                vrf_proof: None,
+                data_root: None,
+                da_row_roots: vec![],
+                da_col_roots: vec![],
+                blob_commitments: vec![],
+                da_certificate: None,
+                state_function_commitment: None,
+                oracle_state_root: None,
+                shard_count: None,
+                protocol_version: 0,
+                state_root_version: 0,
+                submit_epoch_hints: vec![],
+            }
+        }
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.governance_set_param("lambda_fold_mode", "nova").unwrap();
+
+        for h in 1..=3u64 {
+            let block = make_block_for_test(h);
+            let mut state_root = [0u8; 32];
+            state_root[0] = h as u8;
+            tc.on_block_committed(&block, state_root, 0);
+        }
+
+        // Substrate accumulator advances regardless (Phase 5.3 says
+        // substrate ALWAYS runs, Nova is additive).
+        assert_eq!(tc.lambda_fold.step_count, 3);
+
+        // Nova accumulator advances only when nova-mode + feature on.
+        let nova = tc.lambda_fold_nova_instance().clone();
+        assert_eq!(nova.step_count, 3, "nova fold should have ticked 3x");
+        assert!(!nova.proof_bytes.is_empty(), "nova proof should be non-empty");
+
+        // Light-client path: round-trip the proof through
+        // verify_nova_folded with the prover's vk_bytes. This closes
+        // the wiring all the way to the light-client API surface.
+        let folder = tc
+            .lambda_fold_nova
+            .as_ref()
+            .expect("nova folder constructed lazily on first nova fold");
+        let vk_bytes = folder.vk_bytes().expect("vk_bytes failed");
+        evaporchain_lambda_fold::verify_nova_folded(&nova, &vk_bytes, 0)
+            .expect("light-client verify of consensus-produced proof failed");
+    }
+
     #[test]
     fn test_governance_lambda_fold_mode_default_hash_chain() {
         // Phase 5.2 of LAMBDA_FOLD_NOVA_PLAN: when `lambda_fold_mode`

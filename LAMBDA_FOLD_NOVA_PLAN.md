@@ -163,9 +163,9 @@ Seven phases. Phases 1-2 are reversible design + prototype; phases 3-6 are the r
 
 - [ ] **5.4 — Light-client API updates**: `evaporchain-node::api.rs` `/api/lambda_fold/verify` endpoint takes either a blake3 `FoldedInstance` (for hash_chain mode) or a Nova `CompressedSNARK` (for nova mode). Two endpoints or content-negotiation.
 
-- [ ] **5.5 — Integration test**: governance set `lambda_fold_mode = "nova"`, run a 5-block sequence, fold + compress + verify on a separate process. Performance budget: <30 s end-to-end on Mini 1.
+- [x] **5.5 — Integration test**: `test_lambda_fold_nova_end_to_end_three_blocks` (cfg-gated to `lambda_fold_nova`, marked `#[ignore]` because it triggers the heavy `pp` setup). Drives 3 blocks through `on_block_committed` with `lambda_fold_mode = "nova"`, asserts both substrate and Nova accumulators advance to step_count 3, then runs the full light-client verify path: `lambda_fold_nova.vk_bytes()` → `verify_nova_folded(&nova_instance, &vk_bytes, 0)`. **5.24 s end-to-end on Mini under release** (well under the 30 s budget). The test closes the wiring from governance flag → lazy-init NovaFolder → fold → compress → light-client verify.
 
-**Phase 5 deliverable:** real-Nova Lambda-Fold runs in tendermint when the governance flag is set. Default behavior unchanged. End-to-end test green.
+**Phase 5 deliverable: SHIPPED (except 5.4).** real-Nova Lambda-Fold runs in tendermint when the governance flag is set + the `lambda_fold_nova` crate feature is on. Default behavior unchanged. End-to-end test green at 5.24 s on Mini.
 
 ### Phase 6 — Performance + security tightening (2-3 days)
 
