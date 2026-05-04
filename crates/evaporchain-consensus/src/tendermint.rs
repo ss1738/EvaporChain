@@ -7538,6 +7538,68 @@ mod tests {
         assert_eq!(tc.dag_round_state_counts(&[0xBB; 32]), None);
     }
 
+    /// Phase 6.2 of `LIGHT_CONE_FULL_DAG_PLAN.md` — adversarial
+    /// 2-fork split-vote test. Validators split 2/2 voting on
+    /// different leaves; with f=1 (4 validators), threshold=3,
+    /// neither leaf gets quorum → no finalization. When one
+    /// validator switches sides, the surviving leaf reaches 3
+    /// precommits and finalizes.
+    ///
+    /// **Honest-validator switching IS cross-fork equivocation**
+    /// in this minimal implementation because the equivocation
+    /// detector scans other tips' precommits without distinguishing
+    /// honest-switch from malicious double-vote. Phase 4.3d
+    /// (certificate-based equivocation evidence with on-chain proof)
+    /// would refine this; for now operators interpret the counter
+    /// in context.
+    #[test]
+    fn test_dag_mode_adversarial_2fork_split_vote_converges() {
+        use evaporchain_light_cone::Block as LcBlock;
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.governance_set_param("light_cone_state_branches_enabled", "true")
+            .unwrap();
+
+        let g = [0xFF; 32];
+        let a = [0xAA; 32];
+        let b = [0xBB; 32];
+        tc.light_cone_dag.insert(LcBlock::new(g, vec![], 1000, 0)).unwrap();
+        tc.light_cone_dag.insert(LcBlock::new(a, vec![g], 100, 1)).unwrap();
+        tc.light_cone_dag.insert(LcBlock::new(b, vec![g], 100, 1)).unwrap();
+
+        // Split 2/2: validators 1,2 → leaf A; validators 3,4 → leaf B.
+        tc.record_dag_precommit(a, 1, Some(a), vec![]);
+        tc.record_dag_precommit(a, 2, Some(a), vec![]);
+        tc.record_dag_precommit(b, 3, Some(b), vec![]);
+        tc.record_dag_precommit(b, 4, Some(b), vec![]);
+
+        // Threshold = 2*1+1 = 3; neither leaf has 3 precommits.
+        let finalized_round_1 = tc.try_finalize_antichain();
+        assert!(
+            finalized_round_1.is_empty(),
+            "split-vote 2/2 must NOT finalize at threshold=3"
+        );
+
+        // Validator 3 switches to leaf A. Equivocation triggers
+        // (Decision 3 — counts-based; can't distinguish honest
+        // re-vote from malicious double-vote at this layer).
+        tc.record_dag_precommit(a, 3, Some(a), vec![]);
+        assert!(
+            tc.cross_fork_equivocations().get(&3).copied().unwrap_or(0) > 0,
+            "switching honestly between tips IS counted as equivocation \
+             in the minimal counts-based detection (Decision 3 honesty \
+             caveat); Phase 4.3d certificate-based detection refines this"
+        );
+
+        // Now leaf A has 3 precommits → finalizes.
+        let finalized_round_2 = tc.try_finalize_antichain();
+        assert_eq!(
+            finalized_round_2,
+            vec![a],
+            "after switch, leaf A reaches quorum and finalizes"
+        );
+    }
+
     /// Phase 6.1 of `LIGHT_CONE_FULL_DAG_PLAN.md` — end-to-end
     /// DAG-mode integration test. Exercises the full pipeline:
     /// Phase 4.1 vote-record → Phase 4.2 finalization →
