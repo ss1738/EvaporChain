@@ -318,4 +318,96 @@ mod tests {
         let alarm = CartelAlarm::new(10, 50, 60); // 10 < 50 → clamped
         assert_eq!(alarm.capacity, 50);
     }
+
+    use proptest::prelude::*;
+
+    proptest! {
+        /// Lane O.7 invariant proof: for ANY length of honest synthetic-
+        /// Eth trace fed into a fresh `CartelAlarm`, the load-bearing
+        /// invariants must hold:
+        ///
+        /// 1. `buffer_len() ≤ capacity` always (no unbounded growth)
+        /// 2. `records_seen()` monotonically increases by exactly 1 per
+        ///    `record_block` call
+        /// 3. After `n_records >= run_interval` AND `buffer_len() >= 50`,
+        ///    `status().is_some()` (a periodic run has fired)
+        /// 4. On an honest synthetic-Eth source, the rolling verdict is
+        ///    "Pass" (the bound has empirical headroom for honest traffic
+        ///    of any length)
+        ///
+        /// 256 random `(capacity, run_interval, n_records)` triples
+        /// validate the rolling-buffer + periodic-run + verdict pipeline
+        /// end-to-end.
+        #[test]
+        fn rolling_alarm_invariants_hold_for_any_honest_trace(
+            // Capacity ∈ [50, 400] (50 is the clamped minimum).
+            capacity in 50usize..400,
+            // Run-interval ∈ [10, 200].
+            run_interval in 10u64..200,
+            // Records to feed ∈ [60, 600] (at least one run interval +
+            // 50-block buffer minimum).
+            n_records in 60u64..600,
+        ) {
+            let mut alarm = CartelAlarm::new(capacity, run_interval, 60);
+
+            // Feed n_records honest synthetic-Eth blocks.
+            for h in 0..n_records {
+                alarm.record_block(synth_block(h), h);
+
+                // Invariants 1 + 2: checked after EVERY record.
+                prop_assert!(
+                    alarm.buffer_len() <= capacity,
+                    "buffer grew past capacity: {} > {}",
+                    alarm.buffer_len(),
+                    capacity
+                );
+                prop_assert_eq!(
+                    alarm.records_seen(),
+                    h + 1,
+                    "records_seen must increase by 1 per record_block call"
+                );
+            }
+
+            // Invariant 3: after `n_records >= first_run_threshold`, a
+            // run has fired. The first run fires when records_seen %
+            // interval == 0 AND buffer.len() >= 50. The smallest
+            // records_seen value satisfying both is the smallest
+            // multiple of interval that is ≥ 50:
+            //   first_run_threshold = ceil(50 / interval) * interval
+            // For interval ≥ 50: threshold = interval.
+            // For interval < 50 (e.g. 21): threshold = next multiple
+            // ≥ 50 (e.g. 63).
+            let first_run_threshold = ((50 + run_interval - 1) / run_interval) * run_interval;
+            if n_records >= first_run_threshold {
+                prop_assert!(
+                    alarm.status().is_some(),
+                    "after {} records (≥ interval {}), status should have fired",
+                    n_records,
+                    run_interval
+                );
+
+                // Invariant 4: verdict is "Pass" for honest source. The
+                // synthetic LCG produces independent random observables
+                // → S well below 1.8 ceiling → Pass.
+                let st = alarm.status().unwrap();
+                prop_assert_eq!(
+                    &st.verdict,
+                    "Pass",
+                    "honest synthetic-Eth source must produce Pass verdict"
+                );
+                prop_assert!(
+                    st.s_honest < 1.8,
+                    "honest S must stay below ceiling — got {}",
+                    st.s_honest
+                );
+            } else {
+                // No run has fired — status stays None.
+                prop_assert!(
+                    alarm.status().is_none(),
+                    "no run should fire before record-count reaches first_run_threshold ({})",
+                    first_run_threshold
+                );
+            }
+        }
+    }
 }
