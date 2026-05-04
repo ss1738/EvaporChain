@@ -713,6 +713,7 @@ impl TendermintConsensus {
                 MEV_OBSERVATION_BUFFER_CAP,
             ),
             mev_attacker_stats: std::collections::HashMap::new(),
+            settled_refunds: std::collections::HashSet::new(),
             cartel_alarm: evaporchain_causal_chsh::CartelAlarm::doctrine_default(),
             pending_cartel_alarms: Vec::new(),
             lambda_fold: evaporchain_lambda_fold::FoldedInstance::identity(),
@@ -1255,6 +1256,17 @@ impl TendermintConsensus {
         std::mem::take(&mut self.pending_cartel_alarms)
     }
 
+    /// Lane O.8.2f — current depth of the pending-events queue WITHOUT
+    /// draining. Counterpart of `take_pending_cartel_alarms()` for
+    /// observability dashboards / health checks that need to monitor
+    /// queue growth without consuming events. Pairs with
+    /// `cartel_alarm_buffer_len()` (rolling-buffer depth) and
+    /// `cartel_alarm_records_seen()` (lifetime tick count) to give a
+    /// complete operator view.
+    pub fn pending_cartel_alarms_count(&self) -> usize {
+        self.pending_cartel_alarms.len()
+    }
+
     /// Lane O.8.2 emission gate. Pushes a `CartelAlarmEvent` onto
     /// `pending_cartel_alarms` iff:
     ///
@@ -1571,6 +1583,41 @@ impl TendermintConsensus {
         )
     }
 
+    /// Phase 3.3 of `CROOKS_MEV_INTEGRATION_PLAN.md` — list of
+    /// `Transaction::Refund` txs the proposer SHOULD include in
+    /// the next block. Walks the observation buffer for entries in
+    /// the (grace_period, refund_window) interval that haven't
+    /// already been settled. Returned in canonical
+    /// (source_block_height, source_observation_idx) order so all
+    /// validators agree.
+    ///
+    /// Phase 3.4 (validator rejection) and Phase 3.5 (slashing)
+    /// haven't shipped yet — until then a proposer including these
+    /// txs would have its block rejected by the executor (which
+    /// returns "Phase 3.5 wiring not yet landed" for `Transaction::Refund`).
+    /// This accessor is therefore primarily useful for operator RPC
+    /// inspection right now; integration into block construction
+    /// happens once 3.4-3.5 ship.
+    pub fn due_refund_txs(&self, current_height: u64) -> Vec<evaporchain_types::Transaction> {
+        let grace = self
+            .governance_params
+            .get("crooks_mev_grace_period_blocks")
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(evaporchain_mev_detect::CROOKS_MEV_DEFAULT_GRACE_PERIOD_BLOCKS);
+        let window = self
+            .governance_params
+            .get("crooks_mev_refund_window_blocks")
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(evaporchain_mev_detect::CROOKS_MEV_DEFAULT_REFUND_WINDOW_BLOCKS);
+        evaporchain_mev_detect::due_refund_txs(
+            &self.mev_observations,
+            &self.settled_refunds,
+            current_height,
+            grace,
+            window,
+        )
+    }
+
     /// Phase 5.3 of LAMBDA_FOLD_NOVA_PLAN — nova-mode fold helper.
     /// Lazily constructs the `NovaFolder` on first call (Phase 5.1's
     /// deferred-init pattern: avoids the ~60-90 s `pp` setup until the
@@ -1838,6 +1885,7 @@ impl TendermintConsensus {
                 MEV_OBSERVATION_BUFFER_CAP,
             ),
             mev_attacker_stats: std::collections::HashMap::new(),
+            settled_refunds: std::collections::HashSet::new(),
             cartel_alarm: evaporchain_causal_chsh::CartelAlarm::doctrine_default(),
             pending_cartel_alarms: Vec::new(),
             lambda_fold: evaporchain_lambda_fold::FoldedInstance::identity(),
@@ -3710,6 +3758,16 @@ impl TendermintConsensus {
             self.mev_observations.push_back(obs);
             while self.mev_observations.len() > MEV_OBSERVATION_BUFFER_CAP {
                 self.mev_observations.pop_front();
+            }
+        }
+
+        // Phase 3.3 of CROOKS_MEV_INTEGRATION_PLAN.md — record any
+        // RefundTx the proposer included so the same observation
+        // cannot be re-settled in a future block. Replay protection.
+        for tx in &block.transactions {
+            if let evaporchain_types::Transaction::Refund(r) = tx {
+                self.settled_refunds
+                    .insert((r.source_block_height, r.source_observation_idx));
             }
         }
 

@@ -2185,6 +2185,7 @@ async fn get_cartel_alarm_chain_status(
                 "status": "uninitialised",
                 "buffer_len": tc.cartel_alarm_buffer_len(),
                 "records_seen": tc.cartel_alarm_records_seen(),
+                "pending_events_count": tc.pending_cartel_alarms_count(),
                 "detail": "alarm has not run yet — needs at least 50 committed blocks and a run-interval boundary",
                 "doctrine_ref": "INVENTION_STACK.md §A1.10",
             })),
@@ -2203,6 +2204,7 @@ async fn get_cartel_alarm_chain_status(
                 },
                 "buffer_len": tc.cartel_alarm_buffer_len(),
                 "records_seen": tc.cartel_alarm_records_seen(),
+                "pending_events_count": tc.pending_cartel_alarms_count(),
                 "doctrine_ref": "INVENTION_STACK.md §A1.10",
             })),
         }
@@ -7827,7 +7829,8 @@ async fn get_validators(State(state): State<Arc<ApiState>>) -> Json<ValidatorsRe
             effective_stake: v.effective_stake(),
             jailed: v.jailed,
             bls_registered: v.bls_public_key.is_some(),
-            health_score: v.health_score,
+            // f64 view-only conversion at the public-API boundary.
+            health_score: v.health_score_ppm as f64 / 1_000_000.0,
             blocks_produced: v.blocks_produced,
             total_slashed: v.total_slashed,
         })
