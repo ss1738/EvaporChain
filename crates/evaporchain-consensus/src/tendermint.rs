@@ -7538,6 +7538,120 @@ mod tests {
         assert_eq!(tc.dag_round_state_counts(&[0xBB; 32]), None);
     }
 
+    /// Phase 6.3 of `LIGHT_CONE_FULL_DAG_PLAN.md` — performance
+    /// budget benchmark. Drives 1000 DAG blocks @ 4 concurrent
+    /// forks and times the hot operations:
+    /// - LightCone insertion (per-block)
+    /// - MccForkChoice::select_tip (per-tip-selection)
+    /// - state-branch metadata insertion + LRU prune
+    ///
+    /// Plan budgets: insertion < 100 ms/block, select_tip < 50 ms,
+    /// state-branch operations < 200 ms. Marked `#[ignore]`
+    /// because it's an instrumentation test, not a correctness
+    /// check. Run with
+    /// `cargo test -p evaporchain-consensus --release --
+    ///  --ignored --nocapture`.
+    #[test]
+    #[ignore = "perf benchmark — run with --ignored to record numbers"]
+    fn benchmark_light_cone_phase_6_3() {
+        use evaporchain_light_cone::Block as LcBlock;
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.governance_set_param("light_cone_state_branches_enabled", "true")
+            .unwrap();
+        tc.governance_set_param("light_cone_max_concurrent_forks", "4")
+            .unwrap();
+
+        // Build a 1000-block DAG with 4 concurrent forks. Pattern:
+        // genesis → 4 leaves → each leaf extended 249 times in
+        // parallel = ~1000 blocks total.
+        let total_blocks = 1000;
+        let n_forks = 4;
+        let blocks_per_fork = total_blocks / n_forks;
+
+        let g = [0xFF; 32];
+        tc.light_cone_dag.insert(LcBlock::new(g, vec![], 1000, 0)).unwrap();
+
+        // 4 leaf seeds.
+        let mut tips: Vec<[u8; 32]> = (0..n_forks)
+            .map(|i| {
+                let mut id = [0u8; 32];
+                id[0] = 0xA0 + i as u8;
+                id
+            })
+            .collect();
+        for tip in &tips {
+            tc.light_cone_dag
+                .insert(LcBlock::new(*tip, vec![g], 100, 1))
+                .unwrap();
+        }
+
+        let insert_start = std::time::Instant::now();
+        for round in 0..blocks_per_fork {
+            for fork_idx in 0..n_forks {
+                let mut new_tip = [0u8; 32];
+                new_tip[0] = 0xA0 + fork_idx as u8;
+                new_tip[1] = (round as u8).wrapping_add(1);
+                new_tip[2] = ((round >> 8) as u8).wrapping_add(1);
+                let parent = tips[fork_idx];
+                if tc
+                    .light_cone_dag
+                    .insert(LcBlock::new(new_tip, vec![parent], 100, (round + 2) as u64))
+                    .is_ok()
+                {
+                    tips[fork_idx] = new_tip;
+                }
+            }
+        }
+        let insert_total = insert_start.elapsed();
+        let insert_per_block = insert_total / total_blocks as u32;
+        eprintln!(
+            "[Phase 6.3] DAG insertion: {:?} total / {:?} per block ({} blocks)",
+            insert_total, insert_per_block, total_blocks
+        );
+        assert!(
+            insert_per_block.as_millis() < 100,
+            "insertion budget: < 100 ms/block; got {:?}",
+            insert_per_block
+        );
+
+        // select_tip benchmark.
+        let fc =
+            crate::fork_choice::MccForkChoice::new(tc.light_cone_dag.clone(), 1000);
+        let select_start = std::time::Instant::now();
+        let _tip = {
+            use crate::fork_choice::ForkChoice;
+            fc.select_tip()
+        };
+        let select_elapsed = select_start.elapsed();
+        eprintln!(
+            "[Phase 6.3] select_tip on {}-block DAG: {:?}",
+            total_blocks, select_elapsed
+        );
+        assert!(
+            select_elapsed.as_millis() < 50,
+            "select_tip budget: < 50 ms; got {:?}",
+            select_elapsed
+        );
+
+        // state-branch metadata insertion + LRU prune.
+        let sb_start = std::time::Instant::now();
+        for tip in &tips {
+            tc.record_state_branch(*tip, 1000, 100);
+        }
+        tc.prune_state_branches();
+        let sb_elapsed = sb_start.elapsed();
+        eprintln!(
+            "[Phase 6.3] 4-fork state-branch ops: {:?}",
+            sb_elapsed
+        );
+        assert!(
+            sb_elapsed.as_millis() < 200,
+            "state-branch ops budget: < 200 ms; got {:?}",
+            sb_elapsed
+        );
+    }
+
     /// Phase 6.2 of `LIGHT_CONE_FULL_DAG_PLAN.md` — adversarial
     /// 2-fork split-vote test. Validators split 2/2 voting on
     /// different leaves; with f=1 (4 validators), threshold=3,

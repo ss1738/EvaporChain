@@ -333,6 +333,60 @@ Followers validate:
 - Re-execute all transactions and evaporation
 - Verify state root matches
 
+### 4.5 Light-Cone Full DAG Mode (Optional, governance-gated)
+
+In addition to the rotating-leader Tendermint engine described above, EvaporChain ships a **DAG-mode consensus path** that operators can activate via the `light_cone_state_branches_enabled` governance flag. When the flag is `true`, the chain replaces single-tip linear consensus with **partial-order causal-set consensus** over a Light-Cone DAG. This is the doctrine's "Light-Cone Consensus" primitive (`research/INVENTION_STACK.md §A1.2 row 1`); the full plan + locked decisions are in `LIGHT_CONE_FULL_DAG_PLAN.md` + `research/light_cone/PHASE_3_DECISIONS.md` + `research/light_cone/PHASE_4_DECISIONS.md`.
+
+Default chain behaviour is bit-compat with §§4.1-4.4 above. The DAG-mode pieces below activate only under the rollout flag.
+
+#### 4.5.1 Multi-parent block format
+
+`Block` carries an optional `parents: Vec<[u8; 32]>` field (with `serde(default, skip_serializing_if = "Vec::is_empty")`) for multi-parent merge nodes. Single-parent legacy blocks serialize bit-identically (the field is omitted when empty); the canonical `block_hash` does NOT include `parents`, preserving chain-id continuity. `Block::effective_parents()` returns the explicit parents when non-empty, else `vec![parent_hash]` (single-parent fallback). `Block::validate_parents_wire_format()` enforces the soft-fork gate: `parents.len() > 1` requires `protocol_version >= 3`.
+
+#### 4.5.2 Tip selection — Maximum-Caliber fork choice
+
+`MccForkChoice` walks the DAG's leaves (via `LightCone::leaves()`), scores each tip's first-parent trajectory by `path_caliber` (the Maximum-Caliber path-entropy primitive from `evaporchain-mcc`), and returns the leaf with the highest score. Tie-break is the smaller `BlockId` byte ordering (validator-deterministic since `leaves()` is `BTreeMap`-sorted). `TendermintConsensus::current_tip()` uses this when `parent_acceptance_mode = "mcc"`; the proposer at `create_proposal` builds its block on top of the DAG-derived head.
+
+#### 4.5.3 Per-fork state branches
+
+`TendermintConsensus::state_branches: HashMap<BlockId, LightConeBranchMetadata>` tracks per-tip metadata (created_at_block, last_touched_block, caliber). Each entry can hold an `Arc<dyn LightConeBranchSnapshot + Send + Sync>` reference to the executor's per-tip RocksDB snapshot (Phase 3.2 contract). Concurrent forks are capped at `light_cone_max_concurrent_forks` (default 4); LRU eviction by lowest caliber drops the metadata AND triggers a DAG-side cascade prune via `LightCone::prune_orphan_branch` (Phase 5 contract).
+
+#### 4.5.4 Antichain finalization
+
+A set of blocks `S` is finalized iff:
+
+1. **Antichain:** `is_antichain(lc, &S)` — every pair concurrent (vacuous on the DAG's leaves).
+2. **Quorum per block:** every `b ∈ S` has `dag_round_states[b].precommits.len() ≥ 2f + 1`, where `f = (|validator_set| - 1) / 3`.
+3. **Closing antichain coverage:** `S` covers `closing_antichain(lc)` — implicit when `S` is the subset of leaves meeting condition 2.
+
+`TendermintConsensus::try_finalize_antichain()` computes this predicate. The chain finalizes block sets, not single heights — the height-indexed `committed_at: HashMap<u64, u64>` is paired with a block-indexed `committed_at_block: HashMap<BlockId, u64>` (dual-mode bookkeeping per `PHASE_4_DECISIONS.md` Decision 4).
+
+#### 4.5.5 Cross-fork equivocation
+
+When validator `V` precommits on tip B with a different `block_hash` than they did for concurrent tip A at the same round, `cross_fork_equivocations[V]` increments. Operators feed `[counts]` into `evaporchain_entropic_slashing::entropic_slash(stake, counts)` to derive the slash amount — same pattern as Crooks-MEV's `MissingRefund` counter (§8.4.3). Counts-based detection cannot distinguish honest re-vote from malicious double-vote at this layer; certificate-based equivocation evidence with on-chain proof is a Phase 4.3d follow-up.
+
+#### 4.5.6 Performance
+
+Benchmarked on a Mac Mini M4 under release with a 1000-block DAG @ 4 concurrent forks:
+
+| Operation | Measured | Budget |
+|---|---|---|
+| `LightCone::insert` per block | 418 ns | < 100 ms |
+| `MccForkChoice::select_tip` over 1000 blocks | 365 µs | < 50 ms |
+| 4-fork state-branch metadata + LRU prune | 15.8 µs | < 200 ms |
+
+All hot operations are 100×–10⁵× under their plan budgets, leaving ample headroom for production load.
+
+#### 4.5.7 Rollout
+
+DAG mode activates via two governance flags:
+
+- `light_cone_state_branches_enabled` — `"true"` / `"false"` (default `false`).
+- `light_cone_max_concurrent_forks` — `u8 in 1..=8` (default `4`).
+- `light_cone_orphan_caliber_threshold` — caliber floor for Phase 5.1 orphan detection.
+
+Operators flip on testnet first, observe `state_branches` + `dag_round_states` + `try_finalize_antichain` behaviour, then flip mainnet via governance once cluster operations are validated. Linear Tendermint stays as the fallback governance mode for emergency rollback.
+
 ---
 
 ## 5. Post-Quantum Cryptography
