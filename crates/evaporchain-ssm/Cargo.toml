@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-ssm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Singh Strategy Machines (SSM). Game-semantic contracts: a contract is an arena A; a program is an innocent strategy σ:A. Execution = play between Proponent (contract) and Opponent (callers/adversary/environment). Energy budget = bounded justification-pointer depth — a move is legal iff its justifier still has positive λ-residual. Per INVENTION_STACK.md §A5.1 — paradigm-grade smart contract foundation."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde     = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+serde_json = { workspace = true }

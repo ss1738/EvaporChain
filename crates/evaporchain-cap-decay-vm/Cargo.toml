@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-cap-decay-vm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Capability-Decay VM. KeyKOS/seL4 object-capability model with structural energy-bound authority. Default-deny, no tx.origin equivalent. Three operations: transfer (passes the capability whole), attenuate (creates a strict-subset capability with at-most-equal authority), revoke (zeroes the energy on issuer command). When a capability's energy decays below threshold it becomes unforgeably non-invocable — no permission check needed. Tier 2 substrate (per INVENTION_STACK §4.2)."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+blake3     = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

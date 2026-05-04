@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-sddc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Singh Decay-Dutch Continuous Auction (SDDC). Joint clearing on (price, λ-tolerance) — bidders commit a max price AND a max decay rate they'll accept; high-λ-tolerant bidders win cheaper assets that decay faster. Foundational marketplace mechanism per INVENTION_STACK.md §A5.2 — reused by SAP, SCL, SFSV, SHLM."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+serde_json = { workspace = true }

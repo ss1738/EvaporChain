@@ -1,0 +1,20 @@
+[package]
+name = "evaporchain-app-templates-bind"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Per-primitive invariant-validation layer. Sits between the engine's JSON-typed init configs and the ContractEngine's actual on-chain constructors. For each TypedInit variant, validates the per-primitive invariants (initial > 0, floor < initial, m ≤ n, ladder sorted, etc.) before any chain state is touched. Returns Bound — a TypedInit that's been pre-flighted for all known invariant failures."
+
+[dependencies]
+evaporchain-types                       = { path = "../evaporchain-types" }
+evaporchain-app-templates               = { path = "../evaporchain-app-templates" }
+evaporchain-app-templates-engine        = { path = "../evaporchain-app-templates-engine" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+evaporchain-app-templates-deploy      = { path = "../evaporchain-app-templates-deploy" }
+evaporchain-app-templates-materialise = { path = "../evaporchain-app-templates-materialise" }

@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-total-evaporscript-fuel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Total-Programming EvaporScript V2 — fuel-based termination certificate. Complements V1's syntactic strict-decrement gate with a symbolic-execution-of-fuel pass: caller supplies an initial fuel; the checker symbolically executes the loop body and confirms fuel strictly decreases on every CFG path. Accepts programs V1 would reject syntactically but are still total under fuel ordering. V2-hardening of evaporchain-total-evaporscript."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+evaporchain-total-evaporscript = { path = "../evaporchain-total-evaporscript" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

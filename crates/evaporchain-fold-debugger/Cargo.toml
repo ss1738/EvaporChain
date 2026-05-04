@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-fold-debugger"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Folded-State Debugger. Rewind tool for the chain's state at any past height. Maintains a fold tree of energy-folded snapshots; rewinds via O(log N) fold-tree traversal instead of block-by-block replay. Deterministic — same fold sequence rebuilds byte-identical state across debugger instances. Tier-3 specialized primitive (per INVENTION_STACK §4.3 'Folded-State Debugger — rewind tool')."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+blake3     = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

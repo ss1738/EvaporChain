@@ -1,0 +1,19 @@
+[package]
+name = "evaporchain-app-templates-eventlog"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Append-only deploy-event log. Wraps DeployReceipts with monotonic block-ordered indices; exposes since(height) / range(start, end) queries; computes a Merkle root over canonical receipt bytes for light-client inclusion proofs. Indexers consume this as a stream; light clients verify against the Merkle root."
+
+[dependencies]
+evaporchain-types                       = { path = "../evaporchain-types" }
+evaporchain-app-templates               = { path = "../evaporchain-app-templates" }
+evaporchain-app-templates-receipt       = { path = "../evaporchain-app-templates-receipt" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+blake3     = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

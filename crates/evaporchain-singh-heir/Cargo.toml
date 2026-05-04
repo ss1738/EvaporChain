@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-singh-heir"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Singh-Heir (Patrilithic Tokens) — kin-graph heirloom NFTs. Holders declare ordered kin relations; on certified death, the token transfers along the kin graph to the highest-ranked living heir. Each inheritance hop halves the token's energy (inheritance-tax half-life), so heirloom value decays across generations unless heirs actively reinforce. Application V2 primitive (per INVENTION_STACK §A5.3 'Singh-Heir — kin-graph heirloom NFTs')."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+blake3     = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

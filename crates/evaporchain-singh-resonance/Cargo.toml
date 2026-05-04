@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-singh-resonance"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Singh-Resonance (Vital-Sign NFTs). Engagement-coupled decay: λ inversely proportional to recent engagement. Loved art slows toward immortality; ignored art accelerates toward zero. Per INVENTION_STACK.md §A5.3 — frame as attention-economy critique (Tristan Harris, Jenny Odell), not Black Mirror."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde     = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+serde_json = { workspace = true }

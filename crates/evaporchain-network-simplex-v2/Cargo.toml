@@ -1,0 +1,15 @@
+[package]
+name = "evaporchain-network-simplex-v2"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "V2-hardening of evaporchain-network-simplex. V1 ships a greedy minimum-cell heuristic that is suboptimal on adversarial cost matrices. V2 ships proper Successive-Shortest-Path with potentials + Dijkstra on reduced costs — provably optimal for non-negative integer costs and balanced transportation LPs. Same input/output shape as V1 so callers (EW-TWAP, EMBD, PLC, Ollivier-Ricci) can swap the backend without changing call sites."
+
+[dependencies]
+evaporchain-network-simplex = { path = "../evaporchain-network-simplex" }
+serde      = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

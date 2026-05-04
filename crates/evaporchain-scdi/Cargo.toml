@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-scdi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Singh Counter-Decay Insurance (SCDI). Inverse-decay insurance: premium grows linearly with policy age (loyalty cost) and payout-cap also grows with age (rewarding sticky policyholders). Claim-energy floor still gates payouts — stale incidents unclaimable. Distinct from Energy-Clocked Coverage where age-grown premium and decay-shrunk payout pull opposite ways. Application V2 / Year-2 doctrine-deferred (per INVENTION_STACK §A5.5 'SCDI — counter-decay insurance')."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

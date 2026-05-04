@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-ra-did"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Reinforced-Attribute Decentralized Identifier (RA-DID). DID whose attributes (age-verified, KYC-tier, professional-credential, etc.) are each independently energy-tagged; attributes whose energy decays below floor become structurally non-presentable without re-attestation. Anti-Sybil: spinning up a fresh DID requires earning attributes again at full attestation cost. Selective-disclosure presentation. Tier-3 specialized primitive (per INVENTION_STACK §4.3 'Reinforced-Attribute DID — anti-Sybil identity')."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+blake3     = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

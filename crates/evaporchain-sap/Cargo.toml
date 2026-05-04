@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-sap"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Singh Attention Pool (SAP). Each verified human wallet emits Attention Quanta (AQ) per minute, capped, decaying at cognitive-forgetting-curve λ. Advertisers/creators bid via SDDC into a pool that pays out only against AQs whose decay-state is above threshold. 'For the first time, your attention has a half-life — and a price.' Per INVENTION_STACK.md §A5.2 — V1 ships AQ + bid pool + payout; gaze-attestation TEE plugs in V2."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+evaporchain-sddc  = { path = "../evaporchain-sddc" }
+serde     = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+serde_json = { workspace = true }

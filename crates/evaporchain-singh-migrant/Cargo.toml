@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-singh-migrant"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Singh-Migrant (Wanderwrits). NFTs that die if held still. Resting threshold (~30 days); λ doubles past it, quadruples past 60 days; transfer to a *new* wallet refunds a fraction of energy. Cultural lineage: Trobriand kula ring, chain letters, Mauss's *The Gift*. Cheapest viral wildcard per INVENTION_STACK.md §A5.3."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde     = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+serde_json = { workspace = true }

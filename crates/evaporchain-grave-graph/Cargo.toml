@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-grave-graph"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "GraveGraph — mortality-aware social network primitive. Users declare legacy edges during life (memorial relations, dedications, posthumous follows). On certified death, edges INVERT: a Living→Dead edge becomes a Dead→Living dedication that survivors curate. The first social structure where death adds rather than removes connectivity. Application V2 / Year-2 doctrine-deferred (per INVENTION_STACK §A5.5 'GraveGraph — mortality-aware social')."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+blake3     = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

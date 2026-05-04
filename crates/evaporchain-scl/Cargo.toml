@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-scl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Singh Capability Lease (SCL). Capability tuples (subject, verb, object, λ_cap) minted as fungible-non-transferable leases. At expiry the underlying right snaps back atomically — no revocation tx, no race. Per INVENTION_STACK.md §A5.2 — B2DAO + B2-AI-agent native; built on evaporchain-sddc."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+evaporchain-sddc  = { path = "../evaporchain-sddc" }
+serde     = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+serde_json = { workspace = true }

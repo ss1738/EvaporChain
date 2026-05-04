@@ -1,0 +1,15 @@
+[package]
+name = "evaporchain-network-simplex"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "V2-hardening: exact transportation-LP solver for any decay-aware primitive that needs min-cost flow / earth-mover distance over arbitrary supply / demand distributions and cost matrices. V1 ships the simpler 'successive shortest path' variant of network simplex (correct for balanced supply/demand, integer costs); V2.x will add the full revised-simplex pivoting for tightness on adversarial inputs. Pure-integer fixed-point. Reusable by EW-TWAP, EMBD, plc, ollivier-ricci."
+
+[dependencies]
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

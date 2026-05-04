@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-singh-posthuma"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Singh-Posthuma (Sealed Testaments). Confessional NFTs revealed on certified death. Mint commits encrypted payload; threshold attestation committee signs a death certificate; reveal triggers λ-decay on the now-public testament, fading to a permanent on-chain marker. Per INVENTION_STACK.md §A5.3 — the New Yorker-grade press piece. Closes the 5-primitive NFT lane."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde     = { workspace = true }
+thiserror = { workspace = true }
+blake3    = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+serde_json = { workspace = true }

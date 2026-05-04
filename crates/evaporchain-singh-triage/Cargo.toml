@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-singh-triage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Singh-Triage (EvaporWallet-Triage). Wallet opens on inbox, not balance — items are bucketed by remaining-half-lives-to-decay (Today / Tomorrow / This Week / Healthy). Backing data structures + classifier per INVENTION_STACK.md §A5.4. Highest design-press leverage; ship-first wallet UX paradigm."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde     = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+serde_json = { workspace = true }

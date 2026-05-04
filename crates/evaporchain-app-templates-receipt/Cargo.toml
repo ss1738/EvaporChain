@@ -1,0 +1,18 @@
+[package]
+name = "evaporchain-app-templates-receipt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Deploy-receipt layer for app-templates. The output analogue of DeployRequest. After a deploy succeeds, the chain emits a DeployReceipt { commitment, instance_id, template_class, deployer, fee_paid, deployed_at_epoch, block_height } with canonical bytes + BLAKE3 commitment for event-log inclusion. dApps poll for it, indexers store it, wallets render it."
+
+[dependencies]
+evaporchain-types          = { path = "../evaporchain-types" }
+evaporchain-app-templates  = { path = "../evaporchain-app-templates" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+blake3     = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

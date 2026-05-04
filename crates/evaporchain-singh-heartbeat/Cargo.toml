@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-singh-heartbeat"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Singh-Heartbeat (EvaporWallet-Pulse). Persistent ambient signal encoding aggregate wallet energy as a pulse rate. Healthy: slow 60bpm green pulse. Decay below threshold: arrhythmic red. Per INVENTION_STACK.md §A5.4 — wallet UX paradigm. 'Your crypto wallet has a pulse.'"
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+evaporchain-singh-triage = { path = "../evaporchain-singh-triage" }
+serde     = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+serde_json = { workspace = true }

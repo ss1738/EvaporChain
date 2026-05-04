@@ -1,0 +1,18 @@
+[package]
+name = "evaporchain-dfri-fs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "dFRI V2 — multi-round Fiat-Shamir-amplified energy-weighted FRI. Wraps evaporchain-dfri's single-round check with O(λ) repeated queries; positions derived deterministically from a Fiat-Shamir transcript so the prover commits before seeing challenges. Soundness error decreases exponentially with round count. Validator-deterministic. V2-hardening of evaporchain-dfri."
+
+[dependencies]
+evaporchain-types  = { path = "../evaporchain-types" }
+evaporchain-dfri   = { path = "../evaporchain-dfri" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+blake3     = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

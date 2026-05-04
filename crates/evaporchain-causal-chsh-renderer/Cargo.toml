@@ -1,0 +1,12 @@
+[package]
+name = "evaporchain-causal-chsh-renderer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Lane O.5 markdown renderer for evaporchain-causal-chsh-sweep. Turns a SweepReport into a GATE_RESULT.md-shaped doctrine document: per-model markdown table with rational-parameter rows, S_honest / S_cartel / gap / verdict columns, fail-reason summary, and detection-floor / discrimination-ceiling annotations. Pure-string; no I/O — operator chooses where to write."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+evaporchain-causal-chsh = { path = "../evaporchain-causal-chsh" }
+evaporchain-causal-chsh-sweep = { path = "../evaporchain-causal-chsh-sweep" }

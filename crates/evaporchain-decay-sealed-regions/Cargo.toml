@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-decay-sealed-regions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Decay-Sealed Regions — sub-block finality primitive. A region is a contiguous span of state-keys committed-and-sealed mid-block; once the region's seal energy decays below the chain's finality floor, the region is cryptographically frozen — no validator can produce a competing seal over the same span. Domain-separated commitment, span-disjoint registry, validator-deterministic. Tier-3 specialized primitive (per INVENTION_STACK §4.3 'Decay-Sealed Regions — sub-block finality')."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+blake3     = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

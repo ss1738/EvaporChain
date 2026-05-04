@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-happy-code"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "HaPPY Holographic Decay Code (Pastawski-Yoshida-Harlow-Preskill 2015 inspired). Bulk-boundary erasure code: bulk state reconstructable from any sufficiently-large subset of boundary positions. With decay: boundary positions whose energy has decayed below floor are excluded from reconstruction. Adversary needs ≥ k_threshold FRESH boundary positions to recover the bulk. Tier-3 specialized primitive (per INVENTION_STACK §4.3 'HaPPY-style Holographic Decay Code')."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+blake3     = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

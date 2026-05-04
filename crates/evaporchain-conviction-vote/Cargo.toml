@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-conviction-vote"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Evaporating Conviction Vote. Conviction grows with time on a proposal (Commons Stack model) but the underlying voter weight decays under the chain's single-λ. Sustained conviction requires sustained engagement; abandoned proposals' conviction can never reach threshold because their generating stake decays first. Pure-integer fixed-point, validator-deterministic. Tier-3 specialized primitive (per INVENTION_STACK §4.3 'Evaporating Conviction Vote (governance)')."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

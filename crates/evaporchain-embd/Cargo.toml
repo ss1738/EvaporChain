@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-embd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Earth-Mover Block Diff (EMBD). MEV-detection primitive: computes the L1-Wasserstein (earth-mover) distance between a block's final transaction order and the arrival-order it had in the mempool. Large EMBD ⇒ block reordered transactions far from arrival ⇒ MEV signal. Pure-integer fixed-point. Tier-3 specialized primitive (per INVENTION_STACK §4.3 'Earth-Mover Block Diff (EMBD, MEV detection)')."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

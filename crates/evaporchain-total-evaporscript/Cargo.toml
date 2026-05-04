@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-total-evaporscript"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Structural-totality checker for EvaporScript. A restricted AST where every loop carries a syntactic termination witness — counted BoundedFor (whose loop variable cannot be mutated) and BoundedWhile (whose body must syntactically decrement a named ranking variable on every path). The checker statically rejects non-total programs. Closes the infinite-loop DoS class as a paradigm-grade type-system property, not a gas-metering heuristic. Tier 2 substrate (per INVENTION_STACK §4.2)."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

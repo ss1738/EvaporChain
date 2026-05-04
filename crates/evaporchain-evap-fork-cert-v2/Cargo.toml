@@ -1,0 +1,15 @@
+[package]
+name = "evaporchain-evap-fork-cert-v2"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Evaporated-Fork Certificate V2 — locked invention #2 hardening. V1 binds (fork_root, eval_epoch, total_seed, decayed, threshold) into a witness; deterministic energy-decay math means a tactical forker can pre-compute the cert. V2 additionally binds a 32-byte bell_seed_anchor (typically a published BellCertificate.seed) and seed_anchor_epoch, with causality constraint seed_anchor_epoch ≤ evaluated_at_epoch. Forging V2 requires also breaking the Bell-Beacon V2 anti-grinding seed."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+evaporchain-energy-kernel = { path = "../evaporchain-energy-kernel" }
+evaporchain-evap-fork-cert = { path = "../evaporchain-evap-fork-cert" }
+blake3     = { workspace = true }
+serde      = { workspace = true }
+thiserror  = { workspace = true }

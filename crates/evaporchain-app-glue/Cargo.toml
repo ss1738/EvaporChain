@@ -1,0 +1,25 @@
+[package]
+name = "evaporchain-app-glue"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "App-layer glue. Wires the application primitives (Mayfly mortality, Singh-Posthuma testaments, Singh-Sabi patina floor) to the chain's existing four-act narrative crates (Mortis, Sentinel, Tombstone). Realises the autopoietic-narrative coupling per INVENTION_STACK §A2.5: Birth (LLSA-checked genesis) → Life (Sentinel homeostasis) → Small deaths (Tombstone) → Final death (Mortis)."
+
+[dependencies]
+evaporchain-types          = { path = "../evaporchain-types" }
+evaporchain-tombstone      = { path = "../evaporchain-tombstone" }
+evaporchain-sentinel       = { path = "../evaporchain-sentinel" }
+evaporchain-mortis         = { path = "../evaporchain-mortis" }
+evaporchain-singh-sabi     = { path = "../evaporchain-singh-sabi" }
+evaporchain-singh-posthuma = { path = "../evaporchain-singh-posthuma" }
+evaporchain-gallery-forgets = { path = "../evaporchain-gallery-forgets" }
+evaporchain-witnessfit     = { path = "../evaporchain-witnessfit" }
+evaporchain-mnemochain     = { path = "../evaporchain-mnemochain" }
+evaporchain-singh-resonance = { path = "../evaporchain-singh-resonance" }
+serde     = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+serde_json = { workspace = true }

@@ -1,0 +1,15 @@
+[package]
+name = "evaporchain-causal-chsh-sweep"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Lane O.4 parameter-sweep harness for evaporchain-causal-chsh. Drives the three cartel-injection models (coordinated-subset, biased-coin, PR-box) from Lane O.3 across rational parameter grids and emits per-cell {S_honest, S_cartel, gap, verdict} tables. Closes the cartel-detection story by mapping the operating envelope where the doctrine thresholds {1.8 / 2.2 / 0.4} actually discriminate."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+evaporchain-causal-chsh = { path = "../evaporchain-causal-chsh" }
+evaporchain-causal-chsh-cartels = { path = "../evaporchain-causal-chsh-cartels" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }

@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-thermal-stm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Thermal Software Transactional Memory — decay-aware concurrent VM. Optimistic concurrency over chain state with read-set/write-set tracking; conflict detection at commit time; energy-priority ordering breaks ties (higher-energy tx wins). Validator-deterministic schedule: same set of transactions in any submission order produces the byte-identical final state. Tier-3 specialized primitive (per INVENTION_STACK §4.3 'Decay-Aware Concurrent VM (Thermal STM)')."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+blake3     = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

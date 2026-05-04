@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-childkey"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Singh Letter / ChildKey / Singh Vault. Parents seal text/voice/photo/video to a child, locked by age-of-recipient (not date). Decay synergy: inverted decay — chain runs decay backward to compute energy-time-to-unlock. Same primitive, opposite sign. Per INVENTION_STACK.md §A5.5 — A5.8 recommended consumer launch pick."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde     = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+serde_json = { workspace = true }

@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-ollivier-ricci"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Ollivier-Ricci Mixing Bound. Computes Ollivier-Ricci curvature on the validator-gossip graph as a falsifiable network-health SLA. Edges with curvature below the chain's floor are flagged as bottlenecks; the chain uses this as a per-peer contribution-to-mixing signal. Integer-fixed-point curvature, validator-deterministic. Tier-3 specialized primitive (per INVENTION_STACK §4.3 'Ollivier-Ricci Mixing Bound — gossip SLA')."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

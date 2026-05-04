@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-dp-native-vm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Differential-Privacy-Native VM. First L1 with VM-level (ε,δ)-differential privacy where the DP budget reservoir IS the decay primitive. Basic + advanced composition (Dwork-Roth-Vadhan), Laplace + Gaussian mechanisms, query gate that fails closed when the budget is exhausted. Validator-deterministic noise via seeded ChaCha — same query against same dataset under same seed yields byte-identical noised output across validators. Tier-2 substrate (per INVENTION_STACK §4.2)."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+blake3     = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

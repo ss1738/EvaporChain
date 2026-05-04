@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-causal-chsh-cartels"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Lane O.3 realistic cartel-injection models for evaporchain-causal-chsh. Replaces the static max-violation cartel from the synthetic gate with three doctrine-locked models: coordinated-subset (k of n pairs rigged), biased-coin (bias p in [0.5,1.0] toward violation pattern), and Popescu-Rohrlich box approximation (S -> 4 with adjustable visibility v). All models are validator-deterministic via blake3-seeded RNG."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+evaporchain-causal-chsh = { path = "../evaporchain-causal-chsh" }
+blake3     = { workspace = true }
+serde      = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

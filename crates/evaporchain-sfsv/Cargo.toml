@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-sfsv"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Singh Future-Self Vault (SFSV). User posts an energy-denominated commitment that pays out to their own future address when a decay-state predicate clears. Secondary market clears via SDDC at (discount_price, max_decay_until_payout). First launch dApp candidate per INVENTION_STACK.md §A5.2 — built on evaporchain-sddc."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+evaporchain-sddc  = { path = "../evaporchain-sddc" }
+serde     = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+serde_json = { workspace = true }

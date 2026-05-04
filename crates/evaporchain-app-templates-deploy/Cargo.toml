@@ -1,0 +1,18 @@
+[package]
+name = "evaporchain-app-templates-deploy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Deploy-request layer for app-templates. Produces canonical-byte DeployRequest payloads (template_class + params + nonce + deployer) the chain's ContractEngine can materialise. Validator-deterministic encoding + schema validation against each catalogue entry's required-keys shape. Closes the loop from 'dApp can enumerate' (app-templates) to 'dApp can actually deploy.'"
+
+[dependencies]
+evaporchain-types          = { path = "../evaporchain-types" }
+evaporchain-app-templates  = { path = "../evaporchain-app-templates" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+blake3     = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

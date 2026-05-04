@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-ew-twap"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Energy-Weighted Time-Weighted Average Price (EW-TWAP) oracle. Standard TWAP weighs observations by elapsed time; EW-TWAP weighs each by its energy-at-observation, so fresh-attested prices dominate stale ones. Manipulation by N stale observations is structurally hard because their cumulative weight has decayed. Pure-integer fixed-point arithmetic, sliding window, validator-deterministic. Tier-3 specialized primitive (per INVENTION_STACK §4.3 'EW-TWAP oracle')."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

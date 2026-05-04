@@ -1,0 +1,18 @@
+[package]
+name = "evaporchain-epa-mmr-sumcheck"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "EPA-MMR V2 — sumcheck-folded inclusion proofs. Lund-Fortnow-Karloff-Nisan 1992 sumcheck protocol applied to the multilinear extension of the leaf-energy vector. Verifier checks O(log² N) field operations against a folded accumulator instead of walking O(log N) hash siblings; the energy floor still gates structurally. Pure-integer arithmetic over Mersenne-31 (matching evaporchain-dfri / evaporchain-happy-code). V2-hardening of evaporchain-epa-mmr."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+evaporchain-epa-mmr = { path = "../evaporchain-epa-mmr" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+blake3     = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-epa-mmr"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Energy-Padded Authenticated Merkle Mountain Range. Append-only log with energy-tagged leaves + O(log N) inclusion proofs that become STRUCTURALLY INVALID when the leaf's energy decays below threshold. Domain-separated leaf/inner/peak hashing prevents second-pre-image attacks. Tier-3 specialized primitive (per INVENTION_STACK §4.3 'EPA-MMR — sumcheck-folded MMR'). V1 ships the substrate; sumcheck-style fold is V2."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+blake3     = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

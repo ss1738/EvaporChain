@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-mnemochain"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "MnemoChain / Singh Curve / Mnemo Trie. Anki on-chain with FSRS forgetting curves: every flashcard is an on-chain object with half-life = its scientifically-modeled forgetting curve. Correct recall re-energizes with longer half-life; wrong recall collapses it. The chain literally IS the spaced-repetition scheduler. Per INVENTION_STACK.md §A5.5 — only candidate where decay isn't metaphor but the literal cognitive-science primitive."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde     = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+serde_json = { workspace = true }

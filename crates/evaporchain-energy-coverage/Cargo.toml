@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-energy-coverage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Energy-Clocked Coverage. Decay-native insurance: premium accumulates with policy age (cumulative cost grows), payouts are gated by claim-energy that decays from the incident epoch. Stale claims become structurally unprovable. Pure-integer fixed-point, validator-deterministic. Tier-3 specialized primitive (per INVENTION_STACK §4.3 'Energy-Clocked Coverage — insurance')."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

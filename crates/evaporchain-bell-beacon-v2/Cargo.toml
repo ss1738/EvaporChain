@@ -1,0 +1,15 @@
+[package]
+name = "evaporchain-bell-beacon-v2"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Bell-Certified Beacon V2 — chain-level certificate. Consumes a window of concurrent-block pairs from the LightCone DAG, runs the Causal-CHSH gate (synthetic cartel injection over the same pair set), and on Pass emits a BellCertificate{window, stats, seed} anchored to the previous block hash. Verifiers re-run the gate to validate. V1 (`evaporchain-bell-beacon`) ships abstract integer-arithmetic gate logic; V2 hardens it onto chain data."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+evaporchain-causal-chsh = { path = "../evaporchain-causal-chsh" }
+evaporchain-causal-chsh-cartels = { path = "../evaporchain-causal-chsh-cartels" }
+blake3     = { workspace = true }
+serde      = { workspace = true }
+thiserror  = { workspace = true }

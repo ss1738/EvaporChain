@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-finality-attestation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Finality Attestation — single artefact that ties together Light-Cone V2 (causal-root), Bell-Beacon V2 (anti-grinding seed), and Evap-Fork-Cert V2 (Bell-anchored decayed-fork witnesses) into one canonical 32-byte attestation root. A light client verifies finality of a block from (block_hash, attestation, attestation_root) without holding the DAG, the beacon archive, or any fork blocks. Domain-separated BLAKE3 commitment; bit-exact across validators."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+evaporchain-light-cone-v2 = { path = "../evaporchain-light-cone-v2" }
+evaporchain-bell-beacon-v2 = { path = "../evaporchain-bell-beacon-v2" }
+evaporchain-evap-fork-cert-v2 = { path = "../evaporchain-evap-fork-cert-v2" }
+blake3     = { workspace = true }
+serde      = { workspace = true }
+thiserror  = { workspace = true }

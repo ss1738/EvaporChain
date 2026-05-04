@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-sgb"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Singh-Girard Bang-Whimper Types (SGB). Linear-logic !/? exponentials at L1: !T admits duplication (decay-immune), ?T admits silent loss (decay-eligible), de Morgan duals. First system where ephemerality is a type, not a runtime convention. Per INVENTION_STACK.md §A5.1 — paradigm-grade smart contract foundation; pairs with LAD-VM."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde     = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+serde_json = { workspace = true }

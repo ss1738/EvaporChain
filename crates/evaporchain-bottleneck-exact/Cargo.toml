@@ -1,0 +1,15 @@
+[package]
+name = "evaporchain-bottleneck-exact"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "V2-hardening: exact polynomial-time bottleneck distance via binary-searched threshold + Hopcroft-Karp bipartite matching. Replaces the brute-force / lower-bound approximations in evaporchain-plc and evaporchain-ollivier-ricci's V1 W₁ implementations. Pure-integer fixed-point. Generic over the cost matrix; reusable by any decay-aware primitive that needs exact earth-mover distance."
+
+[dependencies]
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

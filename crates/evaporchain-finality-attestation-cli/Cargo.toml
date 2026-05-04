@@ -1,0 +1,21 @@
+[package]
+name = "evaporchain-finality-attestation-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "CLI driver for evaporchain-finality-attestation. Two subcommands: `build` reads a JSON FinalityAttestation, computes the canonical 32-byte root, writes it as hex; `verify` reads (FinalityAttestation, attestation_root_hex) and returns Ok / typed error. Pluggable CliIo trait so the lib half is fully unit-testable in-memory; production binary uses real fs + stdin/stdout. Stdlib argv parsing; no clap."
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "evaporchain-finality-attestation"
+path = "src/main.rs"
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+evaporchain-finality-attestation = { path = "../evaporchain-finality-attestation" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }

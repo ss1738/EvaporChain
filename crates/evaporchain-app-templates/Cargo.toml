@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-app-templates"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Deployable-template catalogue for the new A5.* application primitives. Each Singh-named primitive (Sabi, Migrant, Resonance, Posthuma, ChildKey, MnemoChain, Streak, Letter, etc.) registered as a TemplateDescriptor (id + class + default params + ABI hint) so wallets and dApps can list 'what can I deploy?' and pick. Parallel to the chain's existing ContractTemplate enum but for the post-V1 application layer."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

@@ -1,0 +1,15 @@
+[package]
+name = "evaporchain-singh-inequality-v2"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Singh-Inequality V2 — variance-aware Bernstein bound. V1 (`evaporchain-singh-inequality`) ships energy-weighted Hoeffding (uses range² only, ignores observed variance). V2 adds the Bernstein bound (uses both range and a per-contributor variance proxy), strictly tighter when empirical variance is small relative to range². Structural integer-arithmetic gate; pure u128, no floats."
+
+[dependencies]
+evaporchain-singh-inequality = { path = "../evaporchain-singh-inequality" }
+serde      = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

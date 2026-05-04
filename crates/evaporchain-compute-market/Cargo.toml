@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-compute-market"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Energy-Budgeted Compute Marketplace. Buyers post compute jobs with an energy budget + result deadline. Workers claim a job (locking a bond), run it off-chain, submit a result with proof-energy. Payout gated by proof-energy decayed from job-post epoch — stale workers cannot collect. Bond slashed on missed deadline. Pure-integer fixed-point. Tier-3 specialized primitive (per INVENTION_STACK §4.3 'Energy-Budgeted Compute Marketplace')."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

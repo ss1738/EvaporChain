@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-plc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Topological Light Clients (PLC). Light-client state is a persistent-homology barcode summary of the energy-filtered chain, not a list of headers. By the Cohen-Steiner-Edelsbrunner-Harer 2007 stability theorem, barcode bottleneck distance is bounded by interleaving distance — gives free tamper-evidence between blocks. Sublinear-in-history light-client state. Tier-3 specialized primitive (per INVENTION_STACK §4.3 'Topological Light Clients (PLC, derives from EFH)')."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+blake3     = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

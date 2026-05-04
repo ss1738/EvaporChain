@@ -1,0 +1,19 @@
+[package]
+name = "evaporchain-app-templates-materialise"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Materialiser layer for app-templates. Consumes a validated DeployRequest, derives a deterministic instance id, and emits a MaterialiseInstruction { template_class, instance_id, init_calldata } the chain's ContractEngine dispatches. Closes the loop from 'dApp can deploy' (app-templates-deploy) to 'on-chain instance lives.'"
+
+[dependencies]
+evaporchain-types                  = { path = "../evaporchain-types" }
+evaporchain-app-templates          = { path = "../evaporchain-app-templates" }
+evaporchain-app-templates-deploy   = { path = "../evaporchain-app-templates-deploy" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+blake3     = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

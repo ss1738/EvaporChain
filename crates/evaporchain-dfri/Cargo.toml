@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-dfri"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Decay-FRI (dFRI). Energy-weighted Fast Reed-Solomon Interactive Oracle Proximity testing. Each codeword position carries an energy tag; positions whose energy has decayed below the verifier floor are excluded from the proximity test, so a prover cannot pass dFRI by relying on decayed (unprovable) coordinates. Pure-integer fixed-point. Tier-3 specialized primitive (per INVENTION_STACK §4.3 'Decay-FRI / dFRI — energy-weighted proximity testing')."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+blake3     = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

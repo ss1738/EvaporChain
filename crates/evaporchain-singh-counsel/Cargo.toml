@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-singh-counsel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Singh-Counsel — chat-first AI-wallet primitive. Wallet operations expressed as natural-language intents; each intent is a structured (verb, object, constraint, deadline_epoch, energy_budget). Deadline-passed or budget-exhausted intents auto-abandon. The chain validates intents against a grammar before executing — chat noise that doesn't parse is rejected, NOT executed-blindly. Application V2 / Year-2 doctrine-deferred (per INVENTION_STACK §A5.4 'Singh-Counsel — chat-first AI wallet')."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+blake3     = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

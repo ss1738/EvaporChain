@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-happy-tensor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "HaPPY V2 — perfect-tensor cell tiling. Pastawski-Yoshida-Harlow-Preskill 2015 tensor-network code: cells of (k, k+1) perfect tensors arranged in a hyperbolic disk; bulk qubits at centre, boundary qubits at edge. Reconstruction requires a connected boundary subset whose causal cone covers the bulk — strictly stronger than V1's flat any-k threshold. Pure-integer field. V2-hardening of evaporchain-happy-code."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+evaporchain-happy-code = { path = "../evaporchain-happy-code" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

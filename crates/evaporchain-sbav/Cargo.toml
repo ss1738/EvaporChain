@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-sbav"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Singh-Bennett Asymmetric VM (SBAV). Reversible compute (Bennett 1973): every classical opcode is invertible (zero-energy in the limit). Only DECAY(λ) exports entropy and is the unique irreversible primitive — Landauer 1961 literally, not analogy. Per INVENTION_STACK.md §A5.1 — paradigm-grade smart contract foundation, philosophically cleanest in the stack."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde     = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+serde_json = { workspace = true }

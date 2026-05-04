@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-half-life-nft"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Half-Life NFT with retention tiers. NFT decays at a tier-determined half-life; long-held tokens promote to slower-decay tiers, rewarding loyal collectors structurally rather than mercenary traders. Transferring resets the retention clock to tier 0. Pure-integer fixed-point. Tier-3 specialized primitive (per INVENTION_STACK §4.3 'Half-Life NFT — with retention-tier')."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

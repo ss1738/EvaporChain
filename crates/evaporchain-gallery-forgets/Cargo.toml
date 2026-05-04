@@ -1,0 +1,18 @@
+[package]
+name = "evaporchain-gallery-forgets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The Gallery That Forgets. Cultural-launch wedge per INVENTION_STACK.md §A2.3 — fuses Singh-Sabi patina tokens, declared-half-life Mayfly NFTs, and a Gallery contract whose closing date is *thermodynamic* (not calendrical). The single sentence: 'It is the first thing humans have made that is provably going to die.'"
+
+[dependencies]
+evaporchain-types       = { path = "../evaporchain-types" }
+evaporchain-singh-sabi  = { path = "../evaporchain-singh-sabi" }
+serde     = { workspace = true }
+thiserror = { workspace = true }
+blake3    = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+serde_json = { workspace = true }

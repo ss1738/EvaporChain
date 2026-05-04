@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-cl-amm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Singh Pool — decay-aware constant-product AMM. LP shares carry an energy tag; shares whose energy decays below floor cannot withdraw, so mercenary capital that briefly farms incentives and leaves becomes structurally unprofitable. Re-anchor restores energy. Standard xy=k math underneath; the novelty is the *expiry of LP shares* in epochs. Tier-3 specialized primitive (per INVENTION_STACK §4.3 'CL-AMM / Singh Pool — decay-AMM, eliminates mercenary capital')."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+blake3     = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

@@ -1,0 +1,19 @@
+[package]
+name = "evaporchain-app-templates-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Per-template typed materialiser registry. Maps each TemplateClass to a handler that parses canonical init_calldata into a typed InitConfig the chain's ContractEngine instantiates. Closes the loop from MaterialiseInstruction (dispatch envelope) to typed application instance. 20 handlers, one per registered template."
+
+[dependencies]
+evaporchain-types                       = { path = "../evaporchain-types" }
+evaporchain-app-templates               = { path = "../evaporchain-app-templates" }
+evaporchain-app-templates-deploy        = { path = "../evaporchain-app-templates-deploy" }
+evaporchain-app-templates-materialise   = { path = "../evaporchain-app-templates-materialise" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

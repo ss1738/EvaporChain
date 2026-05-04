@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-grave-graph-split"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "GraveGraph V2 — split Dedications. A Legacy edge with a SplitSpec (per-recipient share in basis points, summing to 10_000) inverts on certified death into N weighted Dedications. Each survivor curates their share independently; cumulative paid-out shares are tracked to prevent double-claim. V2-hardening of evaporchain-grave-graph."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-singh-lineage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Singh-Lineage (EvaporWallet-Lineage). Graduated dormancy-based inheritance: 'If I'm silent 90 days, my daughter's key gains 25% authority; 180 days, 50%; 365 days, full.' Per-asset posthumous designation. Per INVENTION_STACK.md §A5.4 — highest mainstream-press potency of the wallet set (FT, NYT personal finance, Atlantic)."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde     = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+serde_json = { workspace = true }

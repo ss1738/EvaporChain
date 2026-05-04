@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-witnessfit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "WitnessFit / Singh-Streak / Decay-Bond. Wearable + chain attestation streaks where the streak itself decays if you stop checking in. Per INVENTION_STACK.md §A5.5 — consumer launch primitive. Moat = decay-as-streak-anchor (Strava/Streaks reset; this fades). 100M+ wearable-owner TAM."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde     = { workspace = true }
+thiserror = { workspace = true }
+blake3    = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+serde_json = { workspace = true }

@@ -1,0 +1,20 @@
+[package]
+name = "evaporchain-app-templates-fees"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Deploy-fee oracle for app-templates. Pure function: TypedInit → u64 gas cost. Per-primitive complexity model with monotonicity invariants (longer ladder ⇒ more gas, longer fragment ⇒ more gas). Lets dApps quote users the cost before they sign, and lets the chain charge deterministically across validators."
+
+[dependencies]
+evaporchain-types                       = { path = "../evaporchain-types" }
+evaporchain-app-templates               = { path = "../evaporchain-app-templates" }
+evaporchain-app-templates-engine        = { path = "../evaporchain-app-templates-engine" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+evaporchain-app-templates-deploy      = { path = "../evaporchain-app-templates-deploy" }
+evaporchain-app-templates-materialise = { path = "../evaporchain-app-templates-materialise" }

@@ -1,0 +1,17 @@
+[package]
+name = "evaporchain-shlm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Singh Skill Half-Life Market (SHLM). Skill credentials decay at skill-specific rates (e.g. Python λ ≈ 18mo, COBOL λ ≈ 8yr, prompt-engineering λ ≈ 4mo). Holders refresh via micro-assessments; employers post bounties for fresh-skill tokens. Built on evaporchain-sddc per INVENTION_STACK.md §A5.2 — biggest commercial wedge ($50B B2B TAM)."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+evaporchain-sddc  = { path = "../evaporchain-sddc" }
+serde     = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+serde_json = { workspace = true }

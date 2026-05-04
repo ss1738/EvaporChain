@@ -1,0 +1,14 @@
+[package]
+name = "evaporchain-singh-attractor-v2"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Singh Attractor Consensus V2 — locked invention #3 hardening. V1 ships basin-membership + nearest-centre fallback. V2 anchors fallback selection to a Bell-Certified Beacon seed: when state is out-of-basin, a malicious validator cannot predict which attractor the chain will select before the certificate is published. Adds Lyapunov drift toward the selected centre with bounded step. Validator-deterministic; pure-integer."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+evaporchain-singh-attractor = { path = "../evaporchain-singh-attractor" }
+blake3     = { workspace = true }
+serde      = { workspace = true }
+thiserror  = { workspace = true }

@@ -1,0 +1,11 @@
+[package]
+name = "evaporchain-finality-attestation-renderer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Markdown renderer for evaporchain-finality-attestation. Turns a FinalityAttestation + computed root into a FINALITY.md-shaped doctrine document: H1 title, summary block (block_hash, finalised_at_epoch, attestation_root), three commitment sections (causal_root, bell_seed, evaporated forks table). Pure-string; no I/O — operator chooses where to write."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+evaporchain-finality-attestation = { path = "../evaporchain-finality-attestation" }

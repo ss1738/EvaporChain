@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-singh-inequality"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Singh Inequality — energy-weighted Hoeffding-style tail bound. For a sum of bounded independent contributors, standard Hoeffding uses sum of squared raw ranges. The Singh form weighs each contributor's range by its current energy share so decayed contributors no longer inflate the bound. Pure-integer fixed-point. Tier-0 supporting theorem-grade primitive."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

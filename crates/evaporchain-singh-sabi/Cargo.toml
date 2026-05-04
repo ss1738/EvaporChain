@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-singh-sabi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Singh-Sabi (Patina Tokens). NFTs that age toward 'ruined-beautiful' — visual entropy increases on a deterministic curve as energy decays, asymptoting at ~15% floor instead of evaporating. Cultural lineage: wabi-sabi, kintsugi, Basinski's Disintegration Loops. First NFT primitive of the cultural launch moment per INVENTION_STACK.md §A5.3."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+serde     = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+serde_json = { workspace = true }

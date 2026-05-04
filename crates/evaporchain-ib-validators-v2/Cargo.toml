@@ -1,0 +1,16 @@
+[package]
+name = "evaporchain-ib-validators-v2"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "IB Validators V2 — locked invention #5 hardening. V1 ships per-validator IB vote gate (Commit/Abstain on KL vs prior). V2 wraps the gate with a structural jail layer: validators active during a CHSH-failed window jail; validators below energy floor jail; explicit slashes jail. JailState is BTreeMap-canonical; jail expiry is deterministic on epoch. Closes the validator-set side of the Bell-Beacon V2 plumbing."
+
+[dependencies]
+evaporchain-types = { path = "../evaporchain-types" }
+evaporchain-ib-validators = { path = "../evaporchain-ib-validators" }
+serde      = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
