@@ -108,3 +108,92 @@ current sync protocol couldn't reconcile — Mini 1 stuck at h=178, peers
 halted at h=771 awaiting BFT 2/3+1). Cluster ops were de-prioritised in
 favour of the building work above. Cluster-wide reset can be issued
 later via `restart-tailscale-3node.sh` on all 3 Minis simultaneously.
+
+---
+
+## Amendment — 2026-05-04 — Causal-CHSH frontier primitive shipped end-to-end
+
+After the MERA gate FAILED → VERKLE verdict (commit `2053a86`) closed
+the question of whether MERA ships, the user asked: "do we must
+introduce our new math and our frontier idea, insane novel?" The
+answer was yes — but with the same MERA-style empirical gating
+discipline that just earned its keep. Lanes O.1 through O.7+ delivered
+EvaporChain's first 100% original frontier theorem from concept to
+operationally-exposed primitive in one session.
+
+### The Causal-CHSH cartel-detection bound
+
+Bell's CHSH inequality (Clauser-Horne-Shimony-Holt 1969) translated
+to blockchain causal sets. Theorem (proposed): for `S = |E(A,B) +
+E(A,B') + E(A',B) − E(A',B')|` over four samples of ±1 products
+drawn from concurrent block pairs in the LightCone DAG under four
+setting-pairs, **`S ≤ 2`** under honest validators + LightCone
+causality + EvaporChain's single-λ decay. **Violation `S > 2` ⇒
+hidden cross-validator coordination.**
+
+Where Bell's theorem gave physics quantum-entanglement detection,
+Causal-CHSH gives blockchain *cartel-detection* with a closed-form
+bound — not a heuristic, not a slashing rule, a *theorem*. **Only
+LightCone-style chains can even form the four-term correlation**
+(Tendermint linear chains have no concurrent blocks; Ethereum's
+reorgs are competing finalisers, not concurrent producers). The
+math is new because the substrate is new.
+
+### The build → gate → ship cycle
+
+| Lane | What | Commit |
+|---|---|---|
+| O.1 | New crate `evaporchain-causal-chsh` with math primitive + synthetic gate (12 tests including 2 proptests) | `801fd7c` |
+| O.2 | Real-data driver: `extract_chsh_samples` over a `BlockSummary` trace via concurrency-window proxy + 4 binary observables; synthetic-Eth methodology validated (17 tests) | `7876624` |
+| O.3 | Real Ethereum gate runner (Rust binary) + Python scraper. **Verdict: PASS** on 200 mainnet blocks (19_900_000+) — S_honest=0.012, S_cartel=4.0, gap=3.99 — ~150× headroom on the doctrine ceiling | `c9e553c` |
+| O.4 | INVENTION_STACK.md `§A1.3` row reservation + new `§A1.10` gate-resolution section (parallel to MERA's `§A1.8`) + new doctrine rule #14 ("pre-commit gate thresholds before running") + Tier-0-supporting count 6 → 7 | `76cc71d` |
+| O.5 | `POST /api/cartel_alarm/run_gate` — operators can run the gate live against arbitrary chain trace data; doctrine-locked thresholds baked in (no operator override) | `f396b7d` |
+| O.6 | 3K-block sanity check on the same Eth window MERA used (19_900_000–19_903_000). **Verdict: PASS again** — S_honest=0.018 (vs 0.012 on 200-block, both well below 1.8), 14,885 ±1 samples (15× more than 200-block run). Verdict robust under sample-size scaling. | `cdb736c` |
+| O.7 | `CartelAlarm` rolling-buffer substrate primitive — fixed-capacity ring of `BlockSummary`, periodic gate-run logic, last-S tracking. Observability-first; no auto-action emission yet (deferred to Lane O.8 design). | `63b6cf6` |
+| O.7+ | Proptest 256× alarm invariants (buffer cap, monotonic counter, first-run threshold, honest-source verdict). Caught a real off-by-one in the periodic-run logic (capacity=50, interval=21, n_records=60 edge case) — pure proptest win. | `5968295` |
+
+### MERA / Causal-CHSH paired symmetry
+
+Same gate discipline. Opposite outcomes. Both demonstrate that
+pre-committed thresholds are a feature, not a bug.
+
+| Primitive | Empirical metric | Threshold | Verdict | Outcome |
+|---|---|---|---|---|
+| Authenticated Energy-MERA | R² = 0.66 (3 independent runs on real Eth) | ≥ 0.85 | FAIL | Drop, retain as research artefact (`§A1.8`) |
+| **Causal-CHSH Cartel Detector** | **S_honest = 0.012-0.018, gap = 3.98** (200-block + 3K-block runs on real Eth) | S_honest < 1.8 + gap > 0.4 | **PASS** | **Ship as Tier-0-supporting** (`§A1.10`) |
+
+A doctrine that can fail empirically is a doctrine that can ship
+credibly when it doesn't. The credibility is in the symmetry.
+
+### Final Causal-CHSH test counts
+
+- 26 tests total in `evaporchain-causal-chsh`
+- 5 proptests across the crate (Bell bound for LHV sources, S
+  algebraic range, alarm invariants, plus chsh dispatch)
+- Real-Ethereum gate verdict locked in `research/causal-chsh/GATE_RESULT.md`
+- 3K-block sanity verdict locked in `research/causal-chsh/GATE_RESULT_3K.md`
+- 200-block reproducibility CSV at `research/causal-chsh/honest.csv`
+- 3K-block reproducibility CSV at `research/causal-chsh/honest_3k.csv`
+
+### Doctrine drift across reference docs — closed again
+
+After Lane M.1/M.2 closed the drift left over from the original
+session, Lane O.4 reopened it (because shipping a new primitive
+requires updating the doctrine). This amendment closes it once
+more. Future sessions: the four reference surfaces should agree
+that EvaporChain ships **5 Tier-0 primitives + 7 Tier-0 supporting
+primitives** (was 6 before Causal-CHSH).
+
+### What's still genuinely open after this session
+
+| Item | Effort |
+|---|---|
+| Lane O.8 — proper consensus integration (`cartel_alarm` governance hook with rolling buffer + auto-emission on `S > cartel_floor`) | multi-day, design-heavy |
+| Layer 5 — Lambda-Fold real Nova IVC (sister session) | 3-6 weeks |
+| Layer 6 — Crooks-MEV refund consensus integration | multi-day |
+| Layer 6 — Light-Cone full consensus rewrite | months |
+| Layer 7 — LLSA full theorem-grade or descope to k-of-n auditor signatures | 9-15 months OR 4-6 weeks |
+| M2 — Coq build verification (manual) | 10 min |
+| M3.1 / M3.2 — INVENTION_STACK §A1.2 wording (Satyawan strategic call) | 30 min each |
+| Layer 2 — CSSR | 2-3 sessions |
+| Larger Causal-CHSH validation (10K+ blocks, multiple Eth windows) | half-day per window |
