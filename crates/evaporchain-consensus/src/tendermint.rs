@@ -1514,9 +1514,11 @@ impl TendermintConsensus {
                     .map(|s| s.active)
                     .unwrap_or(v.stake);
                 // activity_score = blocks produced (health_score * 16 as proxy).
-                // Pure-integer ppm: health_score_ppm * 16 / 1_000_000.
-                let activity = (v.health_score_ppm as u64).saturating_mul(16)
-                    / crate::validator_set::VS_PPM_DENOMINATOR;
+                // health_score is f64 ∈ [0.0, 1.0]; multiply then truncate
+                // to u64. (Parallel-session draft referenced a `_ppm: u32`
+                // shape that was never landed on the struct — fall back
+                // to the actual field.)
+                let activity = (v.health_score * 16.0) as u64;
                 let w = proposer_weight(b_stake, activity, beta_mb);
                 (v.id, w)
             })
