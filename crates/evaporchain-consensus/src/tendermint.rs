@@ -410,6 +410,16 @@ pub struct TendermintConsensus {
     /// Last TUR verdict computed at block-commit time. None until the
     /// window has at least 2 samples (variance is meaningless on 1).
     pub last_tur_verdict: Option<evaporchain_tur_liveness::Verdict>,
+    /// Causal-CHSH cartel-detection alarm (Lane O.8.1). Rolling-buffer
+    /// observability primitive — every committed block pushes a
+    /// `BlockSummary` into the alarm; periodic gate runs (default
+    /// every 50 records, 200-record buffer, 60s concurrency window)
+    /// store the latest verdict on the alarm itself for status RPCs.
+    /// **No ConsensusAction emission** — this slice is observability-
+    /// only. Per-validator soft-fork policy for auto-action emission
+    /// on `S > cartel_floor` is the deferred Lane O.8.2.
+    /// Doctrine reference: `INVENTION_STACK.md §A1.10`.
+    pub cartel_alarm: evaporchain_causal_chsh::CartelAlarm,
     /// Lambda-Fold accumulated instance, ticked per committed block.
     /// O(1) memory regardless of chain length — the substrate guarantee
     /// of the energy-folded light client. Per INVENTION_STACK.md §4.1
@@ -657,6 +667,7 @@ impl TendermintConsensus {
             light_cone_dag: evaporchain_light_cone::LightCone::new(),
             tur_window: std::collections::VecDeque::with_capacity(TUR_WINDOW_BLOCKS),
             last_tur_verdict: None,
+            cartel_alarm: evaporchain_causal_chsh::CartelAlarm::doctrine_default(),
             lambda_fold: evaporchain_lambda_fold::FoldedInstance::identity(),
             #[cfg(feature = "lambda_fold_nova")]
             lambda_fold_nova: None,
@@ -1130,6 +1141,27 @@ impl TendermintConsensus {
     /// soft-fork knobs are active without reading internal state.
     ///
     /// The returned map is `{key → value}` for everything explicitly set
+    /// Lane O.8.1 status getter — returns the latest cartel-alarm
+    /// verdict snapshot, or `None` if the rolling buffer hasn't yet
+    /// run the periodic gate (needs at least 50 records + one
+    /// run-interval boundary). Operators use this for the
+    /// `GET /api/cartel_alarm/chain_status` RPC (Lane O.8.2 wiring).
+    pub fn cartel_alarm_status(&self) -> Option<&evaporchain_causal_chsh::AlarmStatus> {
+        self.cartel_alarm.status()
+    }
+
+    /// Buffer occupancy of the cartel alarm — useful for status
+    /// dashboards / health checks before the first verdict lands.
+    pub fn cartel_alarm_buffer_len(&self) -> usize {
+        self.cartel_alarm.buffer_len()
+    }
+
+    /// Total `record_block` calls since alarm construction. Operator-
+    /// visibility into how many blocks have flowed through the alarm.
+    pub fn cartel_alarm_records_seen(&self) -> u64 {
+        self.cartel_alarm.records_seen()
+    }
+
     /// in `governance_params`, plus a small set of documented keys with
     /// their default values when unset (so operators can see the
     /// effective state, not just the explicit overrides).
@@ -1617,6 +1649,7 @@ impl TendermintConsensus {
             light_cone_dag: evaporchain_light_cone::LightCone::new(),
             tur_window: std::collections::VecDeque::with_capacity(TUR_WINDOW_BLOCKS),
             last_tur_verdict: None,
+            cartel_alarm: evaporchain_causal_chsh::CartelAlarm::doctrine_default(),
             lambda_fold: evaporchain_lambda_fold::FoldedInstance::identity(),
             #[cfg(feature = "lambda_fold_nova")]
             lambda_fold_nova: None,
@@ -3371,6 +3404,28 @@ impl TendermintConsensus {
         hash_input.extend_from_slice(&state_root);
         hash_input.extend_from_slice(&block.parent_hash);
         self.parent_hash = blake3_hash(&hash_input);
+
+        // Lane O.8.1: tick the Causal-CHSH cartel alarm. Pushes a
+        // BlockSummary into the rolling buffer; the alarm internally
+        // recomputes the gate every `run_interval_blocks` records. No
+        // ConsensusAction emission yet — observability only. Status
+        // surfaces via `cartel_alarm_status()` for RPC consumption.
+        // Doctrine reference: INVENTION_STACK.md §A1.10.
+        let total_gas: u64 = block
+            .transactions
+            .iter()
+            .map(|_| 21_000u64) // GAS_TRANSFER lower bound; real gas accounting happens in the executor, not here
+            .sum();
+        self.cartel_alarm.record_block(
+            evaporchain_causal_chsh::BlockSummary {
+                height: block.number,
+                timestamp_secs: block.timestamp,
+                energy: total_gas, // proxy: gas as energy weight
+                gas: total_gas,
+                tx_count: block.transactions.len() as u64,
+            },
+            block.number,
+        );
 
         // Record this block in the parallel Light-Cone DAG. Per
         // INVENTION_STACK.md §4.1 #1 this is the substrate for the
