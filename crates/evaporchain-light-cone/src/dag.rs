@@ -90,6 +90,72 @@ impl LightCone {
         Ok(())
     }
 
+    /// Phase 5 of `LIGHT_CONE_FULL_DAG_PLAN.md` — cascade-prune an
+    /// orphaned branch. Starting from `tip`, walks the DAG backwards
+    /// removing every ancestor that is exclusively in `tip`'s
+    /// causal past (not reachable via any other live branch's
+    /// ancestry). Stops at the first ancestor with multiple
+    /// children — that's a branch point shared with a live tip.
+    ///
+    /// Returns the set of pruned BlockIds (for the caller to drop
+    /// matching `state_branches[id]` entries in lockstep).
+    /// Idempotent: returns empty if `tip` is not in the DAG OR
+    /// is not actually a leaf (has children).
+    ///
+    /// Phase 3.4 LRU eviction in `tendermint.rs::prune_state_branches`
+    /// drops the `LightConeBranchMetadata` entry; this method is
+    /// the DAG-side companion that actually trims the underlying
+    /// blocks. The two are paired in Phase 5 of the plan.
+    pub fn prune_orphan_branch(&mut self, tip: BlockId) -> std::collections::BTreeSet<BlockId> {
+        let mut pruned = std::collections::BTreeSet::new();
+
+        // Tip must be a current leaf — pruning an internal block
+        // would break ancestry of live descendants. Phase 5 contract.
+        if !self.blocks.contains_key(&tip) {
+            return pruned;
+        }
+        if self.children.get(&tip).map(|c| !c.is_empty()).unwrap_or(false) {
+            return pruned;
+        }
+
+        // Walk backwards, removing each block iff after the cleanup
+        // it has no remaining descendants. Stop at branch points
+        // that are still reachable from another tip.
+        let mut frontier: Vec<BlockId> = vec![tip];
+        while let Some(id) = frontier.pop() {
+            // Skip if already gone or has surviving descendants.
+            let block = match self.blocks.get(&id) {
+                Some(b) => b,
+                None => continue,
+            };
+            let has_living_children = self
+                .children
+                .get(&id)
+                .map(|ch| ch.iter().any(|c| !pruned.contains(c)))
+                .unwrap_or(false);
+            if has_living_children {
+                continue;
+            }
+            // Eligible — capture the parents before removal so we
+            // can keep walking backwards.
+            let parents: Vec<BlockId> = block.parents.clone();
+            pruned.insert(id);
+            self.blocks.remove(&id);
+            self.children.remove(&id);
+            // Strip the pruned id from any remaining parent's
+            // children-set so the next iteration can see it as a
+            // potential leaf.
+            for p in &parents {
+                if let Some(ch) = self.children.get_mut(p) {
+                    ch.remove(&id);
+                }
+                frontier.push(*p);
+            }
+        }
+
+        pruned
+    }
+
     /// Re-audit (2026-05-02) Light-cone prune bound: drop any block
     /// whose `observed_epoch` is strictly less than `keep_after_epoch`,
     /// along with the inverse-adjacency edges pointing to / from it.
@@ -240,5 +306,80 @@ mod tests {
         // and so does NOT appear in B's past or future.
         assert_eq!(causal_past(&lc, id(1)), [id(0)].into_iter().collect());
         assert_eq!(causal_future(&lc, id(1)), [id(3)].into_iter().collect());
+    }
+
+    /// Phase 5 of `LIGHT_CONE_FULL_DAG_PLAN.md` — pruning a tip
+    /// that doesn't exist returns empty + leaves the DAG unchanged.
+    #[test]
+    fn prune_orphan_branch_unknown_tip_noop() {
+        let mut lc = LightCone::new();
+        lc.insert(Block::new(id(0), vec![], 1000, 0)).unwrap();
+        let pruned = lc.prune_orphan_branch(id(99));
+        assert!(pruned.is_empty());
+        assert_eq!(lc.len(), 1);
+    }
+
+    /// Phase 5 — pruning a non-leaf is rejected (would orphan
+    /// downstream descendants). Locks the safety contract.
+    #[test]
+    fn prune_orphan_branch_rejects_non_leaf() {
+        // A → B; A is not a leaf.
+        let mut lc = LightCone::new();
+        lc.insert(Block::new(id(0), vec![], 1000, 0)).unwrap();
+        lc.insert(Block::new(id(1), vec![id(0)], 900, 1)).unwrap();
+        let pruned = lc.prune_orphan_branch(id(0));
+        assert!(pruned.is_empty(), "non-leaf prune must be a no-op");
+        assert_eq!(lc.len(), 2, "DAG unchanged");
+    }
+
+    /// Phase 5 — pruning a single-leaf chain cascades all the way
+    /// to genesis. A → B → C, prune C → {A, B, C} all gone.
+    #[test]
+    fn prune_orphan_branch_full_cascade_on_linear_chain() {
+        let mut lc = LightCone::new();
+        lc.insert(Block::new(id(0), vec![], 1000, 0)).unwrap();
+        lc.insert(Block::new(id(1), vec![id(0)], 900, 1)).unwrap();
+        lc.insert(Block::new(id(2), vec![id(1)], 800, 2)).unwrap();
+        let pruned = lc.prune_orphan_branch(id(2));
+        assert_eq!(pruned.len(), 3);
+        assert!(pruned.contains(&id(0)));
+        assert!(pruned.contains(&id(1)));
+        assert!(pruned.contains(&id(2)));
+        assert!(lc.is_empty());
+    }
+
+    /// Phase 5 — at a branch point the cascade STOPS. Y-shape:
+    /// A → B, A → C. Pruning C cascades C only — A is shared with
+    /// B's lineage and must NOT be pruned.
+    #[test]
+    fn prune_orphan_branch_stops_at_branch_point() {
+        let mut lc = LightCone::new();
+        lc.insert(Block::new(id(0), vec![], 1000, 0)).unwrap();
+        lc.insert(Block::new(id(1), vec![id(0)], 900, 1)).unwrap();
+        lc.insert(Block::new(id(2), vec![id(0)], 900, 1)).unwrap();
+        let pruned = lc.prune_orphan_branch(id(2));
+        assert_eq!(pruned.len(), 1);
+        assert!(pruned.contains(&id(2)));
+        assert!(lc.contains(&id(0)), "branch point A preserved");
+        assert!(lc.contains(&id(1)), "sibling B preserved");
+        assert!(!lc.contains(&id(2)), "pruned tip C removed");
+    }
+
+    /// Phase 5 — diamond DAG. Pruning the merge node D (a leaf)
+    /// cascades back through B, C, A — all of them are exclusively
+    /// in D's causal past once D is gone. (After D is removed, B
+    /// and C have no children → they become orphans → A loses both
+    /// its children → A becomes orphan.)
+    #[test]
+    fn prune_orphan_branch_diamond_cascades_fully() {
+        let mut lc = LightCone::new();
+        lc.insert(Block::new(id(0), vec![], 1000, 0)).unwrap();
+        lc.insert(Block::new(id(1), vec![id(0)], 900, 1)).unwrap();
+        lc.insert(Block::new(id(2), vec![id(0)], 900, 1)).unwrap();
+        lc.insert(Block::new(id(3), vec![id(1), id(2)], 800, 2))
+            .unwrap();
+        let pruned = lc.prune_orphan_branch(id(3));
+        assert_eq!(pruned.len(), 4, "all 4 blocks pruned: {:?}", pruned);
+        assert!(lc.is_empty());
     }
 }

@@ -90,10 +90,10 @@ Six phases, total scope **≈3-6 months**. Phases 1-3 ship in dedicated sessions
 
 **Goal:** garbage-collect orphaned branches so DAG memory doesn't grow unboundedly.
 
-- [ ] **5.1 — Orphan detection.** A branch is orphaned when its tip's caliber falls below a governance-set threshold *and* it's not in the most recent K finalized antichains.
-- [ ] **5.2 — Cascade prune.** Pruning a tip cascades: prune all ancestors that are orphaned (not in any other live branch's causal past). `LightCone::prune_orphan_branch(tip)`.
-- [ ] **5.3 — State branch GC.** Drop the corresponding `StateBranchTable` entry. Concurrent reads block until prune completes (writer's lock).
-- [ ] **5.4 — Tests.** 4-fork DAG, prune the lowest-caliber tip, assert state shrinks; round-trip insertion of a previously-pruned block (the chain rejects re-insertion as a sanity check).
+- [ ] **5.1 — Orphan detection.** Pending. The detection rule (caliber threshold + recency check) is the consumer-side; the substrate primitive in 5.2 is shipped.
+- [x] **5.2 — Cascade prune.** SHIPPED. `LightCone::prune_orphan_branch(tip) -> BTreeSet<BlockId>` walks the DAG backwards from `tip`, removing every ancestor exclusively in `tip`'s causal past. Stops at branch points shared with live tips. Safety guards: rejects non-leaf tips (would orphan downstream); idempotent on unknown tips. 5 tests green: unknown-tip no-op, non-leaf rejection, linear-chain full cascade, branch-point stop, diamond full cascade.
+- [ ] **5.3 — State branch GC.** Phase 3.4 LRU eviction in `tendermint.rs::prune_state_branches` already drops `LightConeBranchMetadata` entries; pairing it with 5.2's DAG-side `prune_orphan_branch` is the focused next-session piece — when LRU evicts a tip, also call `light_cone_dag.prune_orphan_branch(tip)` to trim the underlying DAG ancestors.
+- [x] **5.4 — Tests.** 5 substrate tests shipped (above); end-to-end "4-fork DAG, prune lowest-caliber tip, assert state shrinks" pending the 5.3 wiring.
 
 **Phase 5 deliverable:** memory bounded under continuous DAG growth. GC is deterministic across validators (every validator prunes the same set).
 
