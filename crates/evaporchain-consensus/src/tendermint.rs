@@ -1955,6 +1955,106 @@ impl TendermintConsensus {
         &self.cross_fork_equivocations
     }
 
+    /// Phase 4.1 of `LIGHT_CONE_FULL_DAG_PLAN.md` (Decision 1) —
+    /// record a prevote against a specific DAG tip's `RoundState`.
+    /// Creates the entry if the tip wasn't tracked. No-op when
+    /// `light_cone_state_branches_enabled = false` (linear-mode
+    /// chain bit-compat).
+    ///
+    /// `block_hash` is the block the validator is voting for (or
+    /// `None` for a nil prevote — Tendermint convention).
+    /// `signature` is the validator's BLS signature over the
+    /// vote message; stored for the antichain commit-certificate
+    /// aggregation in Phase 4.2.
+    pub fn record_dag_prevote(
+        &mut self,
+        tip: [u8; 32],
+        validator_id: u64,
+        block_hash: Option<[u8; 32]>,
+        signature: Vec<u8>,
+    ) {
+        if self
+            .governance_params
+            .get("light_cone_state_branches_enabled")
+            .map(|s| s.as_str())
+            != Some("true")
+        {
+            return;
+        }
+        let rs = self
+            .dag_round_states
+            .entry(tip)
+            .or_insert_with(|| RoundState::new(0));
+        rs.prevotes.insert(validator_id, block_hash);
+        if !signature.is_empty() {
+            rs.prevote_bls_sigs.insert(validator_id, signature);
+        }
+    }
+
+    /// Phase 4.1 + 4.3 — record a precommit against a tip + detect
+    /// cross-fork equivocation. If the validator has previously
+    /// precommitted on a *different* concurrent tip at the same
+    /// round, increment `cross_fork_equivocations[validator_id]`
+    /// per Decision 3. Operator slashing tooling reads the counter.
+    ///
+    /// No-op when `light_cone_state_branches_enabled = false`.
+    pub fn record_dag_precommit(
+        &mut self,
+        tip: [u8; 32],
+        validator_id: u64,
+        block_hash: Option<[u8; 32]>,
+        signature: Vec<u8>,
+    ) {
+        if self
+            .governance_params
+            .get("light_cone_state_branches_enabled")
+            .map(|s| s.as_str())
+            != Some("true")
+        {
+            return;
+        }
+
+        // Cross-fork equivocation check (Phase 4.3): scan all
+        // OTHER tips' precommits for the same validator at the
+        // same round; if any disagrees with this precommit's
+        // block_hash, increment the equivocation counter.
+        let this_round = self
+            .dag_round_states
+            .get(&tip)
+            .map(|rs| rs.round)
+            .unwrap_or(0);
+        let mut equivocated = false;
+        for (other_tip, rs) in &self.dag_round_states {
+            if *other_tip == tip {
+                continue;
+            }
+            if rs.round != this_round {
+                continue;
+            }
+            if let Some(prior) = rs.precommits.get(&validator_id) {
+                if *prior != block_hash {
+                    equivocated = true;
+                    break;
+                }
+            }
+        }
+        if equivocated {
+            *self
+                .cross_fork_equivocations
+                .entry(validator_id)
+                .or_insert(0) += 1;
+        }
+
+        let rs = self
+            .dag_round_states
+            .entry(tip)
+            .or_insert_with(|| RoundState::new(0));
+        rs.precommits.insert(validator_id, block_hash);
+        if !signature.is_empty() {
+            rs.precommit_bls_sigs.insert(validator_id, signature);
+        }
+    }
+
     /// Phase 4.4 — read-only view of block-indexed finality
     /// bookkeeping. Populates alongside `committed_at` (height-
     /// indexed); both kept for dual-mode bookkeeping per Decision 4.
@@ -7356,6 +7456,62 @@ mod tests {
         assert_eq!(tc.dag_round_states_count(), 1);
         assert_eq!(tc.dag_round_state_counts(&tip), Some((2, 1)));
         assert_eq!(tc.dag_round_state_counts(&[0xBB; 32]), None);
+    }
+
+    /// Phase 4.1 of `LIGHT_CONE_FULL_DAG_PLAN.md` —
+    /// `record_dag_prevote` no-op when flag is off; populates when
+    /// flag is on.
+    #[test]
+    fn test_record_dag_prevote_flag_gated() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        let tip = [0xAA; 32];
+        // Default flag-off → no-op.
+        tc.record_dag_prevote(tip, 1, Some([0x11; 32]), vec![1, 2, 3]);
+        assert!(tc.dag_round_states.is_empty());
+
+        // Flag on → record persists.
+        tc.governance_set_param("light_cone_state_branches_enabled", "true")
+            .unwrap();
+        tc.record_dag_prevote(tip, 1, Some([0x11; 32]), vec![1, 2, 3]);
+        assert_eq!(tc.dag_round_states_count(), 1);
+        assert_eq!(tc.dag_round_state_counts(&tip), Some((1, 0)));
+    }
+
+    /// Phase 4.1 + 4.3 — precommit on two concurrent tips at the
+    /// same round increments the cross-fork equivocation counter.
+    #[test]
+    fn test_record_dag_precommit_detects_cross_fork_equivocation() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.governance_set_param("light_cone_state_branches_enabled", "true")
+            .unwrap();
+        let tip_a = [0xAA; 32];
+        let tip_b = [0xBB; 32];
+
+        // Validator 42 precommits on tip A for block X.
+        tc.record_dag_precommit(tip_a, 42, Some([0xAB; 32]), vec![]);
+        assert!(tc.cross_fork_equivocations().is_empty());
+
+        // Validator 42 also precommits on tip B for a DIFFERENT
+        // block at the same round — equivocation.
+        tc.record_dag_precommit(tip_b, 42, Some([0xCD; 32]), vec![]);
+        assert_eq!(tc.cross_fork_equivocations().get(&42), Some(&1));
+
+        // Honest validator 7 only precommits on tip A → no equivocation.
+        tc.record_dag_precommit(tip_a, 7, Some([0xAB; 32]), vec![]);
+        assert_eq!(tc.cross_fork_equivocations().get(&7), None);
+    }
+
+    /// Phase 4.1 + 4.3 — same validator, same block_hash on two
+    /// tips at the same round = NOT equivocation (rare but legal:
+    /// the block is shared between two voting tracks).
+    #[test]
+    fn test_record_dag_precommit_same_block_hash_not_equivocation() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.governance_set_param("light_cone_state_branches_enabled", "true")
+            .unwrap();
+        tc.record_dag_precommit([0xAA; 32], 42, Some([0xAB; 32]), vec![]);
+        tc.record_dag_precommit([0xBB; 32], 42, Some([0xAB; 32]), vec![]);
+        assert!(tc.cross_fork_equivocations().is_empty());
     }
 
     /// Phase 4.3 (Decision 3) — `cross_fork_equivocations` starts
