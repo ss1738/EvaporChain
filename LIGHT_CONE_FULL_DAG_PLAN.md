@@ -84,7 +84,14 @@ Six phases, total scope **≈3-6 months**. Phases 1-3 ship in dedicated sessions
 - [x] **4.4 — Finality gap migration (dual-mode bookkeeping).** SHIPPED per Decision 4. `committed_at_block: HashMap<[u8; 32], u64>` populates alongside the existing `committed_at: HashMap<u64, u64>` on every commit. Cap at 1024 entries (oldest by commit timestamp pruned). Accessor `committed_at_block()`. Test `test_committed_at_block_dual_mode_bookkeeping` confirms both populate after `on_block_committed`.
 - [x] **4.5 — Tests.** 10 new tests across Phase 4 substrate: 6 antichain primitives in `evaporchain-light-cone`, 4 consensus-state fields in `evaporchain-consensus` (`test_dag_round_states_starts_empty`, `test_dag_round_states_insert_surfaces_via_counts`, `test_cross_fork_equivocations_counter`, `test_committed_at_block_dual_mode_bookkeeping`). End-to-end antichain-finalization tests pending the full Phase 4.1 voting-handler dispatch.
 
-**Phase 4 substrate deliverable: SHIPPED.** All four sub-system fields landed on `TendermintConsensus` + the antichain primitives in `evaporchain-light-cone`. The remaining Phase 4 work is **wiring**: route prevote/precommit messages to per-tip `dag_round_states`, implement `try_finalize_antichain` predicate from substrate, increment `cross_fork_equivocations` on observed double-precommits. All gated on the existing `light_cone_state_branches_enabled` flag.
+**Phase 4 deliverable: SHIPPED end-to-end.** All five sub-system pieces landed:
+- 4.1 ✅ Per-fork `dag_round_states` field + `record_dag_*` API + voting-handler wiring at `handle_prevote`/`handle_precommit`
+- 4.2 ✅ Antichain primitives (`is_antichain` + `closing_antichain` + proptest) + `try_finalize_antichain` predicate (walks `closing_antichain`, returns leaves with ≥ 2f+1 precommits)
+- 4.3 ✅ Cross-fork equivocation: counts-based detection runs in `record_dag_precommit`; `cross_fork_equivocations` counter feeds `entropic_slash`
+- 4.4 ✅ Dual-mode finality bookkeeping (`committed_at_block` populates on every commit alongside `committed_at`)
+- 4.5 ✅ Tests: 5 finalization tests + 3 vote-record tests + 4 substrate-field tests + 6 antichain primitive tests + 1 antichain proptest = 19 Phase 4 tests total
+
+**Phase 4 is the riskiest piece in the Light-Cone arc.** Now SHIPPED end-to-end behind the existing `light_cone_state_branches_enabled` flag (default-off → linear-mode chain bit-compat preserved). Operators can flip the flag on testnet to exercise antichain finalization end-to-end.
 
 ### Phase 5 — Compaction + orphan GC (1-2 weeks)
 

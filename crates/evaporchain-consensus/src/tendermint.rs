@@ -1991,6 +1991,60 @@ impl TendermintConsensus {
         }
     }
 
+    /// Phase 4.2 of `LIGHT_CONE_FULL_DAG_PLAN.md` (Decision 2) —
+    /// antichain finalization predicate. Walks the DAG's closing
+    /// antichain (leaves) and returns the subset that meets ALL
+    /// three conditions:
+    ///
+    /// 1. `is_antichain(lc, &S)` — vacuously true for the leaves
+    ///    set per `closing_antichain`'s contract.
+    /// 2. Every block `b ∈ S` has ≥ 2f+1 precommits in
+    ///    `dag_round_states[&b].precommits`, where `f =
+    ///    (validator_set.len() - 1) / 3`.
+    /// 3. S covers the closing antichain — implicit since we
+    ///    return the subset of leaves that meets condition 2.
+    ///
+    /// Returns the subset of leaves eligible for finalization.
+    /// Empty Vec when no leaves meet the precommit threshold.
+    /// No-op (returns empty) when `light_cone_state_branches_enabled
+    /// = false` — linear-mode chain bit-compat preserved.
+    ///
+    /// Validator-deterministic: `closing_antichain` returns
+    /// BTreeMap-sorted leaves, and the precommit-count check is
+    /// pure-function of `dag_round_states` which validators agree
+    /// on (Phase 4.1 contract).
+    pub fn try_finalize_antichain(&self) -> Vec<[u8; 32]> {
+        if self
+            .governance_params
+            .get("light_cone_state_branches_enabled")
+            .map(|s| s.as_str())
+            != Some("true")
+        {
+            return Vec::new();
+        }
+        let n = self.validator_set.len();
+        if n == 0 {
+            return Vec::new();
+        }
+        let f = (n.saturating_sub(1)) / 3;
+        let threshold = 2 * f + 1;
+
+        let candidates =
+            evaporchain_light_cone::concurrency::closing_antichain(&self.light_cone_dag);
+        let mut finalized = Vec::new();
+        for tip in candidates {
+            let precommit_count = self
+                .dag_round_states
+                .get(&tip)
+                .map(|rs| rs.precommits.len())
+                .unwrap_or(0);
+            if precommit_count >= threshold {
+                finalized.push(tip);
+            }
+        }
+        finalized
+    }
+
     /// Phase 4.1 + 4.3 — record a precommit against a tip + detect
     /// cross-fork equivocation. If the validator has previously
     /// precommitted on a *different* concurrent tip at the same
@@ -7482,6 +7536,100 @@ mod tests {
         assert_eq!(tc.dag_round_states_count(), 1);
         assert_eq!(tc.dag_round_state_counts(&tip), Some((2, 1)));
         assert_eq!(tc.dag_round_state_counts(&[0xBB; 32]), None);
+    }
+
+    /// Phase 4.2 of `LIGHT_CONE_FULL_DAG_PLAN.md` —
+    /// `try_finalize_antichain` no-op when flag is off.
+    #[test]
+    fn test_try_finalize_antichain_flag_gated() {
+        let tc = make_consensus(1, &[1, 2, 3, 4]);
+        // Default flag-off → empty.
+        assert!(tc.try_finalize_antichain().is_empty());
+    }
+
+    /// Phase 4.2 — empty DAG → no candidates → empty finalization.
+    #[test]
+    fn test_try_finalize_antichain_empty_dag() {
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.governance_set_param("light_cone_state_branches_enabled", "true")
+            .unwrap();
+        assert!(tc.try_finalize_antichain().is_empty());
+    }
+
+    /// Phase 4.2 — leaf with insufficient precommits is NOT
+    /// finalized. With 4 validators, f=1, threshold = 2*1+1 = 3.
+    #[test]
+    fn test_try_finalize_antichain_below_quorum() {
+        use evaporchain_light_cone::Block as LcBlock;
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.governance_set_param("light_cone_state_branches_enabled", "true")
+            .unwrap();
+        let leaf = [0xAA; 32];
+        tc.light_cone_dag
+            .insert(LcBlock::new(leaf, vec![], 1000, 0))
+            .unwrap();
+        // Record 2 precommits — below the threshold of 3.
+        tc.record_dag_precommit(leaf, 1, Some(leaf), vec![]);
+        tc.record_dag_precommit(leaf, 2, Some(leaf), vec![]);
+        let finalized = tc.try_finalize_antichain();
+        assert!(finalized.is_empty(), "below-quorum leaf must not finalize");
+    }
+
+    /// Phase 4.2 — leaf with ≥ 2f+1 precommits IS finalized.
+    #[test]
+    fn test_try_finalize_antichain_meets_quorum() {
+        use evaporchain_light_cone::Block as LcBlock;
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.governance_set_param("light_cone_state_branches_enabled", "true")
+            .unwrap();
+        let leaf = [0xAA; 32];
+        tc.light_cone_dag
+            .insert(LcBlock::new(leaf, vec![], 1000, 0))
+            .unwrap();
+        // Record 3 precommits → ≥ threshold (2*1+1 with n=4).
+        tc.record_dag_precommit(leaf, 1, Some(leaf), vec![]);
+        tc.record_dag_precommit(leaf, 2, Some(leaf), vec![]);
+        tc.record_dag_precommit(leaf, 3, Some(leaf), vec![]);
+        let finalized = tc.try_finalize_antichain();
+        assert_eq!(finalized, vec![leaf]);
+    }
+
+    /// Phase 4.2 — multi-leaf antichain: each leaf finalizes
+    /// independently. Two siblings, each with 3 precommits → both
+    /// finalize.
+    #[test]
+    fn test_try_finalize_antichain_multi_leaf() {
+        use evaporchain_light_cone::Block as LcBlock;
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        tc.governance_set_param("light_cone_state_branches_enabled", "true")
+            .unwrap();
+        let g = [0xFF; 32];
+        let a = [0xAA; 32];
+        let b = [0xBB; 32];
+        tc.light_cone_dag.insert(LcBlock::new(g, vec![], 1000, 0)).unwrap();
+        tc.light_cone_dag.insert(LcBlock::new(a, vec![g], 100, 1)).unwrap();
+        tc.light_cone_dag.insert(LcBlock::new(b, vec![g], 200, 1)).unwrap();
+        for v in 1..=3u64 {
+            // Same validators precommit on BOTH leaves with the
+            // matching block_hash — equivocation detection skips
+            // (Decision 3: same-block_hash on two tips is NOT
+            // equivocation).
+            tc.record_dag_precommit(a, v, Some(a), vec![]);
+            tc.record_dag_precommit(b, v, Some(b), vec![]);
+        }
+        // Equivocation IS detected here because each validator
+        // precommitted on different block_hashes (a vs b) at the
+        // same round.
+        assert!(!tc.cross_fork_equivocations().is_empty());
+
+        // But finalization is per-leaf; both leaves meet quorum.
+        let finalized = tc.try_finalize_antichain();
+        let mut sorted = finalized.clone();
+        sorted.sort();
+        assert_eq!(sorted, vec![a, b]);
     }
 
     /// Phase 4.1 of `LIGHT_CONE_FULL_DAG_PLAN.md` —
