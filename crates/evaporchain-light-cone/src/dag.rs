@@ -61,7 +61,7 @@ impl LightCone {
     pub fn leaves(&self) -> impl Iterator<Item = BlockId> + '_ {
         self.blocks.keys().filter(|id| {
             self.children
-                .get(id)
+                .get(*id)
                 .map(|ch| ch.is_empty())
                 .unwrap_or(true)
         }).copied()
