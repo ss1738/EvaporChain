@@ -135,19 +135,14 @@ Each item completes a primitive's claimed math without touching the hot path. Al
   - three-phase CSSR loop: (i) initialize all L=0 histories in one state, (ii) homogenize by splitting when child-distribution test rejects, growing L from 1 to L_max, (iii) determinize transitions
   - **Acceptance**: 50k-symbol synthetic golden-mean stream → recover 2-state ε-machine within ε=0.02 TV-distance at α=0.001. Even-process → 3 states. Fair coin → 1 state.
   - Effort: 2-3 focused sessions.
-- [ ] **MERA real-Ethereum gate.** Doctrine §A1.9 rule 12 says "MERA gate must pass before MERA ships." It hasn't. Action:
-  - pull Ethereum mainnet blocks 19M-20M account-touch matrix via Dune CSV (`ethereum.transactions`, group by `to`/touched-storage per block, sparsify to top-N by frequency)
-  - write `_load_real_ethereum(path) -> np.ndarray` of shape `(N_accounts, N_blocks)` matching `compute_mi_matrix`'s expected input
-  - replace synthetic generators in `research/mera-gate/run_gate.py:532-536`, re-run, overwrite `GATE_RESULT.md`
-  - if PASS: remove the Layer 1 caveat. If MPS: downshift crate to authenticated MPS. If random: drop tensor networks, ship Verkle + Energy-Verkle as planned.
-  - Effort: half a day (Dune path) to 2 days (Erigon).
+- [x] **MERA real-Ethereum gate.** ✅ DONE → **VERKLE verdict** (commit `2053a86`, see M1 resolution above). Three independent runs at R²=0.71/0.69/0.66 vs threshold 0.85. Per §A1.8 contingency, MERA crate retained as research artefact only; Energy-Verkle Trie (in `evaporchain-state`) is the chain's authenticated commitment. Data via `eth.publicnode.com` + `eth-mainnet.public.blastapi.io` scrape (Dune blocked CSV download).
 - [ ] **Coq cleanup.** Three actions:
   - `research/proofs/LLSAInvariantPreservation.v`: replace `Require Import Coq.omega.Omega` (line 29, removed in 8.12+) with `Require Import Lia`. Replace `omega.` tactic at lines 129, 167, 169, 196, 198 with `lia.`.
   - Add `LLSAInvariantPreservation.v` to `research/coq/_CoqProject` so the Makefile actually builds it.
   - Investigate the two `_TTrace_*.tla` files in `research/tla/states/` (dated 2026-04-30) — these are TLC-emitted counter-example replay specs. The model checker found a violation. Either fix the spec / model or document the counterexample as accepted scope reduction.
   - Effort: 1-2 days.
 - [ ] **MCC: decide between (a) re-label Boltzmann as canonical or (b) build real Perron.** Choice gate in Layer 1; if (b), implement power iteration on `(I−M)^{-1}` over the LightCone DAG. Estimated 200-400 LOC if (b); 0 LOC if (a).
-- [ ] **CFM: real Crooks equality test.** Construct synthetic forward/reverse trajectory pair with known work `W` and free-energy difference `ΔF`. Assert `crooks_log_ratio_millibits(p_F, p_R) ≈ beta_mb * (W − ΔF) / 1000` to within fixed-point precision. ~50 LOC test.
+- [x] **CFM: real Crooks equality test.** ✅ DONE (sister commit `d80921f`, per Layer 2 status snapshot above). Substrate primitive `crooks_log_ratio_millibits` now has a synthetic forward/reverse equality test asserting the identity to within fixed-point precision.
 
 **Acceptance:** every item above has a concrete test or model-check confirming the doctrine claim is computationally true.
 
@@ -159,22 +154,10 @@ Each item completes a primitive's claimed math without touching the hot path. Al
 
 **Refactor only — zero behavior change.** Move concrete consensus types behind traits so Layer 4 can swap them. This is the biggest "no risk if done carefully" win in the punch list.
 
-- [ ] **`trait BlockSource` in `evaporchain-consensus`.** Today `Mempool` is a concrete struct (`mempool.rs:34`). Define:
-  ```rust
-  pub trait BlockSource {
-      fn build_block_payload(&mut self, ctx: &ProposalCtx) -> Vec<Transaction>;
-  }
-  ```
-  Implement it for the existing FIFO+priority `Mempool`. Replace the drain at `tendermint.rs:3699-3770` with `self.block_source.build_block_payload(...)`.
-- [ ] **`trait ForkChoice` in `evaporchain-consensus`.** Today fork-choice is inlined as private methods on `TendermintConsensus`; the chain assumes single-line history via `self.parent_hash` (`tendermint.rs:3112`) and rejects any block whose `parent_hash != self.parent_hash` (`tendermint.rs:2526`). Define:
-  ```rust
-  pub trait ForkChoice {
-      fn select_chain(&self, candidate_heads: &[BlockId], lc: &LightCone) -> BlockId;
-  }
-  ```
-  Implement it for the current single-line choice (returns `self.parent_hash` always). This unblocks Layer 4.
-- [ ] **`trait MevPool` in `evaporchain-consensus`.** Encrypted mempool is a concrete field today; same drop-in-impl pattern.
-- [ ] **`trait ValidatorSetSource`.** Validator-set updates today go through concrete `queue_change` / `add_validator` / `remove_validator`. Trait-ize so Singh-Boltzmann stake variants and Self-Annealing validator sets can plug in cleanly.
+- [x] **`trait BlockSource` in `evaporchain-consensus`.** ✅ DONE (Lane G.1, commit `f78d965`). Trait at `mempool.rs:41` with 4 methods (`submit_priority`, `len`, `set_epoch`, `take_with_priority_sum_and_hints`). Blanket impl on `Mempool`. Cross-impl proptest with `TxAntichainMempool` (Lane G.1 follow-up + I.1, commits `842363f`, `d3f7a1f`).
+- [x] **`trait ForkChoice` in `evaporchain-consensus`.** ✅ DONE (Lane G.3, commit `61eb888`). Trait + `LinearForkChoice` default at `fork_choice.rs:48`. `MccForkChoice` impl walks first-parent trajectories + scores via `mcc_choose` (Lane I.3, commit `c1a05bb`). Cross-impl proptest (Lane K.3, commit `2279060`).
+- [x] **`trait MevPool` in `evaporchain-consensus`.** ✅ DONE (Lane G.4, commit `150292c`). Trait at `encrypted_mempool.rs:332` with 4 methods. Blanket impl on `EncryptedMempool`. Trait-dispatch parity test included.
+- [x] **`trait ValidatorSetSource`.** ✅ DONE (Lane G.5, commit `118b19d`). Read-only lookup trait at `validator_set.rs:1039` with 6 methods covering the consensus-decision surface. Mutation/maintenance methods stay on concrete `ValidatorSet` (per design — alt impls replace bookkeeping wholesale).
 
 **Acceptance:** all 4 traits exist with default impls that preserve current Tendermint behavior bit-for-bit. Existing tests pass unchanged.
 
@@ -188,13 +171,9 @@ Each item completes a primitive's claimed math without touching the hot path. Al
 
 This is where doctrine primitives stop being shadows and start running the chain. Depends on Layer 3 traits + Layer 0 substrate.
 
-- [ ] **Antichain mempool replaces FIFO drain.** Implement `BlockSource` for an antichain-aware tx-mempool:
-  - first need a tx-level partial order (today antichain-mempool operates on `BlockId`s in LightCone, not pending txs). Add a causal-deps field to `Transaction` or compute one from nonce/state-root reads
-  - `build_block_payload` calls `extend_to_maximal` over the tx-DAG, gates on `total_energy_meets_threshold`
-  - replace brute-force scans with an incrementally-maintained concurrency index (per `antichain-mempool/src/maximal.rs:24` self-admission)
-  - wire encrypted mempool reveals into the same partial order (today `encrypted_mempool.rs` has zero antichain awareness)
-  - Effort: medium (4-7 days).
-- [ ] **MCC fork-choice replaces single `parent_hash`.** Implement `ForkChoice` via `mcc_choose`:
+- [x] **Antichain mempool replaces FIFO drain.** ✅ DONE behind governance flag. `TxAntichainMempool` (Lane I.1, commit `842363f`) is the standalone tx-level antichain `BlockSource` impl. The post-FIFO antichain projection (`mempool::antichain_project`, Lane I.5, commit `2bdcdc2`) lets the chain flip via `block_source_mode = "antichain"` governance key without changing storage. Same-sender heuristic = V1; richer heuristics (state read/write set overlap) are a future refinement. Default `"fifo"` stays bit-exact compat. End-to-end integration test at `tendermint.rs::test_block_source_mode_antichain_dedups_same_sender_in_proposal` (Lane J.1, commit `63ed378`); 5-property proptest at `mempool::antichain_project_invariants`; cross-impl proptest at `tx_antichain_mempool::block_source_contract_holds_for_both_impls`.
+- [x] **MCC fork-choice replaces single `parent_hash`.** ✅ DONE behind governance flag (Lane I.3 + I.4 + I.6, commits `c1a05bb`, `ded1a73`, `a45588c`). `MccForkChoice` impl walks first-parent trajectories from both tips back to genesis via the LightCone DAG, scores via `mcc_choose` at β derived from chain CFM (microbits/fee/epoch). At `tendermint.rs:2643` the parent-acceptance check dispatches through the trait when `parent_acceptance_mode = "mcc"`; default `"linear"` keeps bit-exact compat. End-to-end integration test at `tendermint.rs::test_parent_acceptance_mode_mcc_diverges_from_linear_on_diverging_parent` (Lane J.2, commit `07efe97`). Cross-impl proptest (Lane K.3, commit `2279060`). 3-property single-impl proptest (Lane I.3 follow-up, commit `60a7db4`).
+- [ ] **MCC fork-choice (full multi-parent enumeration).** Layer I.4+ extension:
   - track all sibling heads (today `tendermint.rs:2526` rejects any block off the single line)
   - replay state per chosen head — biggest engineering risk; needs careful re-execution semantics
   - dispatcher already exists at `tendermint.rs:954-969` (`authoritative_head`, gated by `governance_params["fork_choice_mode"]`); promote from admin-RPC-only to hot-path
