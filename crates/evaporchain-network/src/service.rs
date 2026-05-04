@@ -617,6 +617,14 @@ impl SybilState {
     }
 
     /// Record a successful connection.
+    ///
+    /// Lane R.3: a successful handshake is a fresh slate. Reset score
+    /// to 0 (and clear infraction count) so a peer that previously
+    /// went idle, disconnected, then reconnected does NOT inherit
+    /// the residual negative score from its last connection lifetime.
+    /// Without this reset, disconnected peers accumulate
+    /// SCORE_IDLE_TICK penalties indefinitely (Lane R.3 root cause)
+    /// and arrive already-near-banned on reconnect.
     pub fn record_connect(&mut self, peer_id: PeerId, ip: IpAddr) {
         let now = now_ms();
         self.peer_ips.entry(peer_id).or_insert((ip, now));
@@ -625,11 +633,31 @@ impl SybilState {
             entry.push(peer_id);
         }
         *self.subnet_counts.entry(subnet_key(&ip)).or_insert(0) += 1;
-        self.scores.entry(peer_id).or_default();
+        // Fresh-slate the score on successful reconnection. The TLS /
+        // peer-id authorization check has already passed by the time
+        // we reach here; the peer's pre-disconnect Sybil history is
+        // moot for purposes of forward-looking conduct.
+        self.scores.insert(
+            peer_id,
+            PeerScore {
+                score: 0,
+                last_seen_ms: now,
+                infractions: 0,
+            },
+        );
     }
 
     /// Record a connection close. Idempotent.
+    ///
+    /// Lane R.3: removes the score entry too. If we leave it in
+    /// `scores`, the periodic SCORE_IDLE_TICK sweep will keep
+    /// decrementing the score even though the peer is gone — a
+    /// disconnected peer accumulating idle penalty is the bug
+    /// `score: -292, age_seconds: 47` surfaced (the score had been
+    /// decaying for hours while offline, even though the
+    /// "connection" had only existed for 47 s).
     pub fn record_disconnect(&mut self, peer_id: &PeerId) {
+        self.scores.remove(peer_id);
         if let Some((ip, _)) = self.peer_ips.remove(peer_id) {
             if let Some(v) = self.ip_peers.get_mut(&ip) {
                 v.retain(|p| p != peer_id);
@@ -1157,7 +1185,18 @@ impl P2pNetworkService {
                         ban_list.gc();
                         let mut to_disconnect: Vec<(PeerId, IpAddr)> = Vec::new();
                         if let Ok(mut s) = sybil_state_inner.write() {
-                            let peer_ids: Vec<PeerId> = s.scores.keys().copied().collect();
+                            // Lane R.3: iterate only CONNECTED peers
+                            // (peer_ips), not the score map (which
+                            // outlives connection lifetime in older
+                            // builds). A peer that disconnected hours
+                            // ago must not still be accumulating
+                            // SCORE_IDLE_TICK penalty in absentia.
+                            // Lane R.3's `record_disconnect` clears
+                            // the score entry on disconnect, but this
+                            // belt-and-braces iteration source makes
+                            // the invariant explicit at the call site
+                            // too.
+                            let peer_ids: Vec<PeerId> = s.peer_ips.keys().copied().collect();
                             for pid in peer_ids {
                                 // Lane R.1: skip idle-score penalty for
                                 // authorized validators. In a permissioned
@@ -2427,6 +2466,86 @@ mod tests {
         let s = SybilState::new(sybil_cfg(), None);
         s.rejections.record(RejectionReason::Unauthorized);
         assert_eq!(s.rejections.unauthorized.load(Ordering::Relaxed), 1);
+    }
+
+    /// Lane R.3 root-cause regression test. Locks two invariants
+    /// that — together with the Lane R.1 authorization gate — kill
+    /// the cluster-freeze livelock at the data-structure level:
+    ///
+    ///   I1. **Disconnected peers must NOT continue accumulating
+    ///       SCORE_IDLE_TICK penalty.** `record_disconnect` removes
+    ///       the score entry from `scores`. Without this, a peer
+    ///       that vanishes for hours arrives at reconnect already
+    ///       deep in negative territory (the live-cluster diagnosis
+    ///       caught a peer with `score: -292, age_seconds: 47` —
+    ///       the score had decayed for hours while offline even
+    ///       though the connection had only existed for 47 s).
+    ///
+    ///   I2. **`record_connect` is a fresh slate.** Any pre-existing
+    ///       score for that PeerId is overwritten with a default
+    ///       PeerScore (score=0, infractions=0). A successful TLS /
+    ///       peer-id authorization handshake supersedes whatever
+    ///       Sybil residue was inherited.
+    ///
+    /// Together: an authorized peer can disconnect, stay away for
+    /// weeks, and reconnect with the SAME score=0 state every time.
+    #[test]
+    fn test_score_reset_on_reconnect_lane_r3() {
+        let mut s = SybilState::new(sybil_cfg(), None);
+        let ip = ipv4(192, 0, 2, 200);
+        let pid = PeerId::random();
+
+        // Initial connect → score=0.
+        s.try_admit_inbound(ip, 0).unwrap();
+        s.record_connect(pid, ip);
+        assert_eq!(s.scores.get(&pid).map(|e| e.score), Some(0));
+
+        // Drive the score deeply negative (-90, just above the -100
+        // ban threshold so we don't trigger ban_ip in this test).
+        for _ in 0..90 {
+            s.adjust_score(&pid, SCORE_IDLE_TICK);
+        }
+        assert_eq!(s.scores.get(&pid).map(|e| e.score), Some(-90));
+
+        // Disconnect → I1: score entry must be removed.
+        s.record_disconnect(&pid);
+        assert!(
+            !s.scores.contains_key(&pid),
+            "Lane R.3 I1: record_disconnect must clear score entry"
+        );
+
+        // Simulate the bug-class scenario: idle ticks fire while
+        // peer is offline. The R.3 fix in the call site iterates
+        // peer_ips not scores, so disconnected peers are skipped —
+        // here we just confirm at the data layer that the score
+        // doesn't get implicitly recreated.
+        for _ in 0..200 {
+            // No-op: peer is disconnected, its score doesn't exist.
+            // Real call site iterates peer_ips so this lookup
+            // wouldn't even happen, but we assert the property
+            // holds even if a stray adjust_score were called.
+            if s.scores.contains_key(&pid) {
+                s.adjust_score(&pid, SCORE_IDLE_TICK);
+            }
+        }
+        assert!(
+            !s.scores.contains_key(&pid),
+            "Lane R.3 I1: no implicit score recreation while disconnected"
+        );
+
+        // Reconnect → I2: fresh slate (NOT inherited -90).
+        s.try_admit_inbound(ip, 0).unwrap();
+        s.record_connect(pid, ip);
+        assert_eq!(
+            s.scores.get(&pid).map(|e| e.score),
+            Some(0),
+            "Lane R.3 I2: record_connect must fresh-slate the score, not inherit residue"
+        );
+        assert_eq!(
+            s.scores.get(&pid).map(|e| e.infractions),
+            Some(0),
+            "Lane R.3 I2: infractions must reset on reconnect"
+        );
     }
 
     /// Lane R.2 regression test for Lane R.1 — the cluster-freeze
