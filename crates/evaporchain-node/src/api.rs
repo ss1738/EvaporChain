@@ -2155,6 +2155,56 @@ struct GovernanceParamReq {
     value: String,
 }
 
+/// GET /api/cartel_alarm/chain_status — Lane O.8.1b. Returns the
+/// on-chain rolling Causal-CHSH alarm's latest verdict snapshot from
+/// `TendermintConsensus.cartel_alarm`. The alarm ticks on every
+/// committed block (Lane O.8.1) and re-runs the gate every 50
+/// records once the buffer reaches 50 entries.
+///
+/// Distinct from `POST /api/cartel_alarm/run_gate` (Lane O.5) which
+/// runs the gate against operator-supplied trace data. THIS endpoint
+/// reports the chain's own self-monitoring state — no operator input
+/// required, just the latest verdict the chain has computed against
+/// its own commit history.
+async fn get_cartel_alarm_chain_status(
+    State(state): State<Arc<ApiState>>,
+) -> Json<serde_json::Value> {
+    if let Some(tc_arc) = &state.tendermint {
+        let tc = safe_lock(tc_arc);
+        match tc.cartel_alarm_status() {
+            None => Json(serde_json::json!({
+                "status": "uninitialised",
+                "buffer_len": tc.cartel_alarm_buffer_len(),
+                "records_seen": tc.cartel_alarm_records_seen(),
+                "detail": "alarm has not run yet — needs at least 50 committed blocks and a run-interval boundary",
+                "doctrine_ref": "INVENTION_STACK.md §A1.10",
+            })),
+            Some(s) => Json(serde_json::json!({
+                "status": "ok",
+                "verdict": s.verdict,
+                "s_honest": s.s_honest,
+                "s_cartel_synthetic": s.s_cartel_synthetic,
+                "gap": s.gap,
+                "last_run_at_height": s.last_run_at_height,
+                "samples_per_bucket": s.samples_per_bucket,
+                "thresholds": {
+                    "honest_ceiling": s.thresholds.honest_ceiling,
+                    "cartel_floor": s.thresholds.cartel_floor,
+                    "min_gap": s.thresholds.min_gap,
+                },
+                "buffer_len": tc.cartel_alarm_buffer_len(),
+                "records_seen": tc.cartel_alarm_records_seen(),
+                "doctrine_ref": "INVENTION_STACK.md §A1.10",
+            })),
+        }
+    } else {
+        Json(serde_json::json!({
+            "status": "error",
+            "detail": "Tendermint consensus not running (single-validator devnet mode)"
+        }))
+    }
+}
+
 /// POST /api/cartel_alarm/run_gate — Lane O.5. Run the Causal-CHSH
 /// gate against operator-supplied chain trace data. Returns the
 /// verdict (Pass/Fail/InputError) plus the S statistic + per-bucket
@@ -6691,6 +6741,7 @@ const ENDPOINT_CATALOG: &[ApiDocEntry] = &[
     ApiDocEntry { method: "GET",  path: "/api/governance/flags",       category: "governance", description: "All governance soft-fork flags + their effective values (Lane I.4/I.5 + Layer 0 #1: parent_acceptance_mode, block_source_mode, conservation_enforcement, fork_choice_mode). Defaults applied for unset keys.", example: None },
     ApiDocEntry { method: "POST", path: "/api/governance/param",       category: "governance", description: "Lane K.1 — set a soft-fork governance knob without recompiling. Allowlist: parent_acceptance_mode∈{linear,mcc}, block_source_mode∈{fifo,antichain}, conservation_enforcement∈{observe,enforce}.", example: Some(r#"{"key":"parent_acceptance_mode","value":"mcc"}"#) },
     ApiDocEntry { method: "POST", path: "/api/cartel_alarm/run_gate",  category: "substrate",  description: "Lane O.5 — run the Causal-CHSH cartel-detection gate (§A1.10) against operator-supplied chain trace. Returns Pass/Fail/InputError + S statistic + per-bucket sample counts. Doctrine-locked thresholds (1.8/2.2/0.4) baked in.", example: Some(r#"{"trace":[{"height":1,"timestamp_secs":1700000000,"energy":50000,"gas":12000000,"tx_count":150}],"concurrency_window_secs":60}"#) },
+    ApiDocEntry { method: "GET",  path: "/api/cartel_alarm/chain_status", category: "substrate", description: "Lane O.8.1b — on-chain Causal-CHSH alarm status. Returns the chain's own self-monitoring verdict (rolling buffer of last 200 committed blocks, gate run every 50 records). Distinct from /api/cartel_alarm/run_gate which takes operator-supplied trace data.", example: None },
     ApiDocEntry { method: "GET",  path: "/api/governance/fork_choice_mode", category: "governance", description: "Current authoritative fork-choice mode (mcc|singh_attractor) + attractor set.", example: None },
     ApiDocEntry { method: "POST", path: "/api/governance/fork_choice_mode", category: "governance", description: "Governance amendment to switch fork-choice between MCC and Singh-Attractor. Requires stake quorum from endorser_stakes.", example: Some(r#"{"mode":"singh_attractor","attractors":[{"center":1000,"basin_radius":200}],"endorser_stakes":[1000,800],"required_stake":1500}"#) },
 
@@ -14462,6 +14513,7 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/governance/flags", get(get_governance_flags))
         .route("/api/governance/param", post(post_governance_param))
         .route("/api/cartel_alarm/run_gate", post(post_cartel_alarm_run_gate))
+        .route("/api/cartel_alarm/chain_status", get(get_cartel_alarm_chain_status))
         .route(
             "/api/governance/fork_choice_mode",
             get(get_governance_fork_choice_mode),
