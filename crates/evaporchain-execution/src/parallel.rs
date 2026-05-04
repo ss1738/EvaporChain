@@ -134,6 +134,14 @@ fn extract_access_keys(tx: &Transaction) -> Vec<AccessKey> {
         Transaction::ClaimDelegation(tx) => {
             vec![AccessKey::Account(tx.delegator)]
         }
+        // Crooks-MEV refund — Phase 3.1 of CROOKS_MEV_INTEGRATION_PLAN.md.
+        // Touches both the debited (attacker) and credited (victim)
+        // accounts. Phase 3.5 will add the actual balance movement;
+        // for now this declares the access pattern correctly so the
+        // BlockSTM scheduler doesn't run conflicting refunds in parallel.
+        Transaction::Refund(tx) => {
+            vec![AccessKey::Account(tx.attacker), AccessKey::Account(tx.victim)]
+        }
     }
 }
 
@@ -919,6 +927,8 @@ impl ParallelExecutor {
             Transaction::Undelegate(_) => crate::GAS_UNDELEGATE,
             Transaction::RotateValidatorKey(_) => crate::GAS_ROTATE_VALIDATOR_KEY,
             Transaction::ClaimDelegation(_) => crate::GAS_CLAIM_DELEGATION,
+            // Refund is protocol-issued; gas charged at issuance time.
+            Transaction::Refund(_) => GAS_TRANSFER,
         }
     }
 
@@ -1114,6 +1124,9 @@ impl ParallelExecutor {
                 )),
                 Transaction::ClaimDelegation(_) => Err(ExecutionError::ContractError(
                     "delegation txs execute in serial phase".into(),
+                )),
+                Transaction::Refund(_) => Err(ExecutionError::ContractError(
+                    "refund txs execute in serial phase".into(),
                 )),
             };
 
@@ -1431,7 +1444,9 @@ impl ExecutionEngine for ParallelExecutor {
                 // BlockExecutionResult.validator_key_rotations side
                 // channel, which only the serial path populates. Putting
                 // it in the parallel pool would silently drop rotations.
-                | Transaction::RotateValidatorKey(_) => serial_txs.push((i, tx)),
+                | Transaction::RotateValidatorKey(_)
+                // Refund is protocol-issued and serial.
+                | Transaction::Refund(_) => serial_txs.push((i, tx)),
                 _ => parallel_txs.push((i, tx)),
             }
         }
@@ -2499,9 +2514,9 @@ mod tests {
             total_supply: 10_000_000,
             block_reward: 100,
             reward_half_life: 1000,
-            fee_burn_rate: 0.50,
-            staker_fee_share: 0.50,
-            target_staking_apy: 0.05,
+            fee_burn_rate_ppm: 500_000,
+            staker_fee_share_ppm: 500_000,
+            target_staking_apy_bps: 500,
         });
 
         let _ = executor.execute_block(&mut db, &block).unwrap();
@@ -2556,9 +2571,9 @@ mod tests {
             total_supply: 10_000_000,
             block_reward: 100,
             reward_half_life: 1000,
-            fee_burn_rate: 0.50,
-            staker_fee_share: 0.50,
-            target_staking_apy: 0.05,
+            fee_burn_rate_ppm: 500_000,
+            staker_fee_share_ppm: 500_000,
+            target_staking_apy_bps: 500,
         });
 
         let _ = executor.execute_block(&mut db, &block).unwrap();
@@ -2660,9 +2675,9 @@ mod tests {
             total_supply: 10_000_000,
             block_reward: 100,
             reward_half_life: 1000,
-            fee_burn_rate: 0.50,
-            staker_fee_share: 0.50,
-            target_staking_apy: 0.05,
+            fee_burn_rate_ppm: 500_000,
+            staker_fee_share_ppm: 500_000,
+            target_staking_apy_bps: 500,
         });
 
         let _ = executor.execute_block(&mut db, &block).unwrap();

@@ -254,6 +254,11 @@ pub(crate) const GAS_UPGRADE_CONTRACT: u64 = 100_000;
 pub(crate) const GAS_DELEGATE: u64 = 40_000;
 pub(crate) const GAS_UNDELEGATE: u64 = 40_000;
 pub(crate) const GAS_CLAIM_DELEGATION: u64 = 30_000;
+/// Crooks-MEV Phase 3.1 — protocol-issued refund tx. Two account
+/// touches (debit + credit). Set low because the proposer (not a
+/// user) pays — high gas would discourage proposers from settling
+/// observations they're contractually obligated to settle.
+pub(crate) const GAS_REFUND: u64 = 5_000;
 /// BLS key rotation: covers two PoP-style verifications (old + new) plus
 /// the validator-set update. Higher than stake/exit because of the
 /// double signature check.
@@ -1047,6 +1052,8 @@ impl SimpleExecutor {
             Transaction::Undelegate(_) => GAS_UNDELEGATE,
             Transaction::RotateValidatorKey(_) => GAS_ROTATE_VALIDATOR_KEY,
             Transaction::ClaimDelegation(_) => GAS_CLAIM_DELEGATION,
+            // Refund is protocol-issued; charge transfer-equivalent gas.
+            Transaction::Refund(_) => GAS_TRANSFER,
         }
     }
 
@@ -2336,7 +2343,11 @@ impl SimpleExecutor {
             if let Some(val) = db.get_governance_param("target_gas_utilization") {
                 if let Ok(target) = val.parse::<f64>() {
                     if (0.0..=1.0).contains(&target) {
-                        fc.target_utilization = target;
+                        // f64 → ppm boundary at the governance-param parse boundary.
+                        // Same conversion across all validators given the same
+                        // string-encoded governance param.
+                        fc.target_utilization_ppm =
+                            (target * crate::fees::FEE_PPM_DENOMINATOR as f64) as u32;
                     }
                 }
             }
@@ -2770,6 +2781,13 @@ impl ExecutionEngine for SimpleExecutor {
                 Transaction::ClaimDelegation(c) => {
                     self.execute_claim_delegation(db, c, block.epoch)
                 }
+                // Refund is protocol-issued. Phase 3.1 stub: validate
+                // shape, no balance movement until Phase 3.5 wires the
+                // attacker → victim transfer. Reject here so it doesn't
+                // silently appear successful.
+                Transaction::Refund(_) => Err(ExecutionError::ContractError(
+                    "refund tx execution: Phase 3.5 wiring not yet landed".into(),
+                )),
             };
 
             match result {
@@ -3307,6 +3325,8 @@ mod tests {
                 c.signature = Some(sig);
                 c.public_key = Some(pk);
             }
+            // Refund is protocol-issued; no signature attached.
+            Transaction::Refund(_) => {}
         }
     }
 

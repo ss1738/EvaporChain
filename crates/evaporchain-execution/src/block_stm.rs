@@ -737,6 +737,9 @@ fn execute_tx(
         Transaction::ClaimDelegation(_) => Err(TxViewError::ExecutionError(
             ExecutionError::ContractError("delegation txs execute in serial phase".into()),
         )),
+        Transaction::Refund(_) => Err(TxViewError::ExecutionError(
+            ExecutionError::ContractError("refund txs execute in serial phase".into()),
+        )),
     };
 
     match result {
@@ -803,6 +806,8 @@ fn estimate_gas(tx: &Transaction) -> u64 {
         Transaction::Undelegate(_) => crate::GAS_UNDELEGATE,
         Transaction::RotateValidatorKey(_) => crate::GAS_ROTATE_VALIDATOR_KEY,
         Transaction::ClaimDelegation(_) => crate::GAS_CLAIM_DELEGATION,
+        // Refund is protocol-issued; gas charged at issuance time.
+        Transaction::Refund(_) => GAS_TRANSFER,
     }
 }
 

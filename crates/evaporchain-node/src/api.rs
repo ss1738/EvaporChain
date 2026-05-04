@@ -794,6 +794,13 @@ fn tx_to_json(tx: &Transaction) -> serde_json::Value {
             "type": "claim_delegation",
             "validator_id": t.validator_id,
         }),
+        Transaction::Refund(t) => serde_json::json!({
+            "type": "refund",
+            "source_block_height": t.source_block_height,
+            "attacker_hex": hex::encode(t.attacker),
+            "victim_hex": hex::encode(t.victim),
+            "amount": t.amount,
+        }),
     }
 }
 
@@ -1328,6 +1335,8 @@ fn set_tx_signature(tx: &mut Transaction, sig: Vec<u8>, pk: Vec<u8>) {
             c.signature = Some(sig);
             c.public_key = Some(pk);
         }
+        // Refund is protocol-issued; signing is a no-op.
+        Transaction::Refund(_) => {}
     }
 }
 
@@ -15082,6 +15091,7 @@ fn estimate_tx_gas(tx: &Transaction) -> u64 {
         Transaction::Undelegate(_) => 40_000,
         Transaction::RotateValidatorKey(_) => 80_000,
         Transaction::ClaimDelegation(_) => 30_000,
+        Transaction::Refund(_) => 5_000,
     }
 }
 
@@ -15526,6 +15536,22 @@ pub fn tx_records_from_block_with_outcomes(
                     from: account_full(&tx.delegator),
                     to: format!("validator-{}", tx.validator_id),
                     amount: None,
+                    object_id: None,
+                    energy: None,
+                    half_life: None,
+                    method: None,
+                    gas,
+                    block_number: block.number,
+                    epoch: block.epoch,
+                    status: status.clone(),
+                    error: error.clone(),
+                },
+                Transaction::Refund(tx) => TxRecord {
+                    hash,
+                    tx_type: "refund".to_string(),
+                    from: account_full(&tx.attacker),
+                    to: account_full(&tx.victim),
+                    amount: Some(tx.amount),
                     object_id: None,
                     energy: None,
                     half_life: None,

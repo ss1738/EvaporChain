@@ -390,6 +390,15 @@ pub enum Transaction {
     /// Claim a previously-undelegated amount back to the delegator's
     /// balance once the unbonding period has elapsed (P0 #4 Phase 7).
     ClaimDelegation(ClaimDelegationTx),
+    /// Crooks-MEV refund transaction — protocol-issued by the block
+    /// proposer to settle a `MevObservation` from an earlier block.
+    /// Per `CROOKS_MEV_INTEGRATION_PLAN.md` Phase 3.1. NOT user-
+    /// signed; the proposer constructs it deterministically from
+    /// the chain's `mev_observations` buffer + `mev_attacker_stats`
+    /// table. Validators verify the construction matches their
+    /// independently-computed observation+refund (Phase 3.2
+    /// determinism contract).
+    Refund(RefundTx),
 }
 
 impl Transaction {
@@ -693,6 +702,20 @@ impl Transaction {
                 buf.extend_from_slice(&tx.nonce.to_le_bytes());
                 buf
             }
+            // Crooks-MEV refund — protocol-issued, no signature.
+            // signable_bytes still defined for canonical hashing /
+            // tx_hash purposes; consensus does NOT sign-verify Refund.
+            Transaction::Refund(tx) => {
+                let mut buf = Vec::new();
+                buf.push(0x18);
+                buf.extend_from_slice(&tx.source_block_height.to_le_bytes());
+                buf.extend_from_slice(&(tx.source_observation_idx as u64).to_le_bytes());
+                buf.extend_from_slice(&tx.attacker);
+                buf.extend_from_slice(&tx.victim);
+                buf.extend_from_slice(&tx.amount.to_le_bytes());
+                buf.extend_from_slice(&tx.settle_block_height.to_le_bytes());
+                buf
+            }
         }
     }
 
@@ -739,6 +762,8 @@ impl Transaction {
             Transaction::Undelegate(tx) => tx.signature.as_deref(),
             Transaction::RotateValidatorKey(tx) => tx.signature.as_deref(),
             Transaction::ClaimDelegation(tx) => tx.signature.as_deref(),
+            // Refund is protocol-issued; no signature.
+            Transaction::Refund(_) => None,
         }
     }
 
@@ -768,6 +793,8 @@ impl Transaction {
             Transaction::Undelegate(tx) => tx.public_key.as_deref(),
             Transaction::RotateValidatorKey(tx) => tx.public_key.as_deref(),
             Transaction::ClaimDelegation(tx) => tx.public_key.as_deref(),
+            // Refund is protocol-issued; no public key.
+            Transaction::Refund(_) => None,
         }
     }
 
@@ -805,6 +832,12 @@ impl Transaction {
             Transaction::Undelegate(tx) => Some(&tx.delegator),
             Transaction::RotateValidatorKey(tx) => Some(&tx.validator_address),
             Transaction::ClaimDelegation(tx) => Some(&tx.delegator),
+            // Refund is protocol-issued — the "sender" semantically
+            // is the chain itself. Surface the attacker (debited
+            // party) for accounting/UI purposes; consensus-level
+            // logic gates on the deterministic-construction contract,
+            // not on sender.
+            Transaction::Refund(tx) => Some(&tx.attacker),
         }
     }
 
@@ -833,6 +866,12 @@ impl Transaction {
             Transaction::Undelegate(tx) => Some(tx.nonce),
             Transaction::RotateValidatorKey(tx) => Some(tx.nonce),
             Transaction::ClaimDelegation(tx) => Some(tx.nonce),
+            // Refund tx is protocol-issued — no replay nonce. The
+            // (source_block_height, source_observation_idx) pair is
+            // the unique identifier; replay-protection happens via
+            // the consensus engine refusing to settle the same
+            // observation twice (Phase 3.3 contract).
+            Transaction::Refund(_) => None,
         }
     }
 }
@@ -1541,6 +1580,42 @@ pub struct DeferredTx {
     pub public_key: Option<Vec<u8>>,
 }
 
+/// Crooks-MEV refund transaction — `CROOKS_MEV_INTEGRATION_PLAN.md`
+/// Phase 3.1. **Protocol-issued**, not user-signed: the block
+/// proposer constructs one of these for every `MevObservation` in
+/// the consensus engine's ring buffer that has aged past the grace
+/// period. Validators reject blocks whose `Refund` transactions
+/// don't match their independently-computed observation set.
+///
+/// `signature` and `public_key` are absent — execution-side
+/// validation skips signature checks for this variant and instead
+/// runs the determinism contract (Phase 3.2): the values must match
+/// what the validator's own `mev_observations` + `mev_attacker_stats`
+/// would have produced.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RefundTx {
+    /// Block height at which the original `MevObservation` was
+    /// detected. Pairs the refund to the source observation
+    /// deterministically.
+    pub source_block_height: u64,
+    /// Index of the original observation within that block's
+    /// detected MEV-observation list. (block_height, index) is the
+    /// observation's stable identifier.
+    pub source_observation_idx: usize,
+    /// Address debited (the attacker side of the source sandwich).
+    pub attacker: AccountAddress,
+    /// Address credited (the victim side of the source sandwich).
+    pub victim: AccountAddress,
+    /// Refund amount, in native token units. Equals the
+    /// `MevObservation::refund_amount` computed at observation time
+    /// (Phase 2 contract).
+    pub amount: u64,
+    /// Block height at which this refund is being settled. Bounded
+    /// by the (grace_period, refund_window) interval relative to
+    /// `source_block_height` per Phase 3.3 of the plan.
+    pub settle_block_height: u64,
+}
+
 /// Energy watcher: monitors an object and fires a callback when energy crosses a threshold.
 /// Registered by contracts to react to thermodynamic state changes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1748,6 +1823,41 @@ mod tests {
             public_key: None,
         });
         assert_eq!(tx.sender(), Some(&[0xAA; 32]));
+    }
+
+    /// Phase 3.1 of `CROOKS_MEV_INTEGRATION_PLAN.md` — `RefundTx`
+    /// round-trip serializes through serde and surfaces the
+    /// attacker (debited party) as `sender()`. No nonce — the
+    /// (source_block_height, source_observation_idx) pair is the
+    /// unique identifier for replay protection.
+    #[test]
+    fn test_refund_tx_roundtrip_and_sender() {
+        let tx = Transaction::Refund(RefundTx {
+            source_block_height: 100,
+            source_observation_idx: 0,
+            attacker: [0xAA; 32],
+            victim: [0xBB; 32],
+            amount: 250,
+            settle_block_height: 110,
+        });
+        // Sender = attacker.
+        assert_eq!(tx.sender(), Some(&[0xAA; 32]));
+        // No replay nonce.
+        assert_eq!(tx.nonce(), None);
+        // Round-trip via JSON.
+        let s = serde_json::to_string(&tx).expect("serialize");
+        let back: Transaction = serde_json::from_str(&s).expect("deserialize");
+        match back {
+            Transaction::Refund(r) => {
+                assert_eq!(r.source_block_height, 100);
+                assert_eq!(r.source_observation_idx, 0);
+                assert_eq!(r.attacker, [0xAA; 32]);
+                assert_eq!(r.victim, [0xBB; 32]);
+                assert_eq!(r.amount, 250);
+                assert_eq!(r.settle_block_height, 110);
+            }
+            other => panic!("expected Refund, got {:?}", other),
+        }
     }
 
     #[test]

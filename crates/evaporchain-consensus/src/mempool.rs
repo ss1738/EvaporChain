@@ -562,6 +562,8 @@ impl Mempool {
             Transaction::Undelegate(_) => 40_000,
             Transaction::RotateValidatorKey(_) => 80_000,
             Transaction::ClaimDelegation(_) => 30_000,
+            // Refund is protocol-issued; transfer-equivalent gas.
+            Transaction::Refund(_) => 21_000,
         }
     }
 
@@ -749,6 +751,8 @@ impl Mempool {
                     + tx.signature.as_ref().map_or(0, |s| s.len())
                     + tx.public_key.as_ref().map_or(0, |p| p.len())
             }
+            // Refund: attacker (32) + victim (32) + amount (8) + reason hash (32).
+            Transaction::Refund(_) => 32 + 32 + 8 + 32,
         }
     }
 }
