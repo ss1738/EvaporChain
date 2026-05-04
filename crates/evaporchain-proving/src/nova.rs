@@ -192,6 +192,31 @@ fn state_root_to_u64(root: &[u8; 32]) -> u64 {
     u64::from_le_bytes(buf)
 }
 
+/// Phase 6.2 of LAMBDA_FOLD_NOVA_PLAN — native Poseidon hash of the
+/// 4 u64 limbs of a 32-byte state root. Mirrors exactly what the
+/// in-circuit `synthesize` does at every fold step (Phase 2.5
+/// binding); used at genesis so `z0[0]` matches the IVC's per-step
+/// `z[0]` semantic. Without this, genesis `z0[0]` was the truncated
+/// u64 of the state root — leaving the upper 24 bytes unbound at
+/// the IVC's base case (caught by `test_real_block_state_root_collision_resistance`).
+fn poseidon_state_root_hash(root: &[u8; 32]) -> Scalar {
+    let limbs = hash_to_limbs(root);
+    let elts: Vec<Scalar> = limbs.iter().map(|l| Scalar::from(*l)).collect();
+    let pc = Sponge::<Scalar, U24>::api_constants(Strength::Standard);
+    let mut sponge = Sponge::<Scalar, U24>::new_with_constants(&pc, Simplex);
+    let acc = &mut ();
+    SpongeAPI::start(
+        &mut sponge,
+        IOPattern(vec![SpongeOp::Absorb(4), SpongeOp::Squeeze(1)]),
+        None,
+        acc,
+    );
+    SpongeAPI::absorb(&mut sponge, 4, &elts, acc);
+    let out = SpongeAPI::squeeze(&mut sponge, 1, acc);
+    SpongeAPI::finish(&mut sponge, acc).expect("native Sponge finish");
+    out[0]
+}
+
 // ─────────────────────────── NovaProver ──────────────────────────────────
 
 /// Nova IVC proving engine that folds each block's state transition.
@@ -1860,7 +1885,13 @@ impl RealBlockProver {
         .map_err(|e| ProvingError::FoldingFailed(format!("PP setup failed: {:?}", e)))?;
 
         let z0 = vec![
-            Scalar::from(state_root_to_u64(&genesis.verkle_root)),
+            // Phase 6.2 fix — z0[0] is the Poseidon hash of the 4
+            // limbs of genesis.verkle_root, matching what the in-
+            // circuit `synthesize` writes to z_new[0] at every fold
+            // step. Pre-fix this was `state_root_to_u64` (truncated
+            // u64) which left the upper 24 bytes of the genesis
+            // state root unbound at the IVC base case.
+            poseidon_state_root_hash(&genesis.verkle_root),
             Scalar::from(state_root_to_u64(&genesis.mmr_root)),
             Scalar::from(genesis.epoch as u64),
             Scalar::from(0u64), // block_number starts at 0
@@ -2424,6 +2455,263 @@ mod tests {
         // Verify compressed proof
         let valid = prover.verify_proof(&proof, 5).expect("verify_proof failed");
         assert!(valid);
+    }
+
+    /// Phase 6.2 of LAMBDA_FOLD_NOVA_PLAN — adversarial state-root
+    /// collision test. Proves the Phase 2.5 Poseidon binding fix:
+    /// two genesis commitments whose `verkle_root` agrees in the
+    /// first 8 bytes but differs in the upper 24 bytes must produce
+    /// distinct IVC `z[0]` values (Poseidon hash of all 4 limbs),
+    /// and proofs must NOT cross-verify between the two chains.
+    ///
+    /// Pre-Phase-2.5, `z[0]` was the truncated u64 of the state root
+    /// alone — the upper 24 bytes were unbound, allowing an
+    /// adversary to swap which 32-byte state the IVC committed to.
+    /// This test would have passed cross-verification under that
+    /// regime; post-fix it fails, locking the binding.
+    #[test]
+    fn test_real_block_state_root_collision_resistance() {
+        // Two roots that AGREE on the first 8 bytes (limb[0]) but
+        // DIFFER in the upper 24 bytes (limb[1..3]).
+        let mut root_a = [0u8; 32];
+        let mut root_b = [0u8; 32];
+        for i in 0..8 {
+            root_a[i] = 0xAB;
+            root_b[i] = 0xAB;
+        }
+        // Upper bytes diverge — pre-Phase-2.5, these would not be
+        // bound; post-fix they're hashed into z[0] via Poseidon.
+        for i in 8..32 {
+            root_a[i] = 0x11;
+            root_b[i] = 0x22;
+        }
+        // Sanity check: limb[0] (low u64) must match between the two.
+        let limb0_a = u64::from_le_bytes([
+            root_a[0], root_a[1], root_a[2], root_a[3], root_a[4], root_a[5], root_a[6], root_a[7],
+        ]);
+        let limb0_b = u64::from_le_bytes([
+            root_b[0], root_b[1], root_b[2], root_b[3], root_b[4], root_b[5], root_b[6], root_b[7],
+        ]);
+        assert_eq!(
+            limb0_a, limb0_b,
+            "test setup error: roots must agree on limb[0]"
+        );
+        assert_ne!(root_a, root_b, "test setup error: full roots must differ");
+
+        let genesis_a = DualCommitment {
+            verkle_root: root_a,
+            mmr_root: [0u8; 32],
+            epoch: 0,
+            active_count: 0,
+            ghost_count: 0,
+        };
+        let genesis_b = DualCommitment {
+            verkle_root: root_b,
+            mmr_root: [0u8; 32],
+            epoch: 0,
+            active_count: 0,
+            ghost_count: 0,
+        };
+
+        let mut prover_a = RealBlockProver::new(&genesis_a).expect("prover_a setup");
+        let mut prover_b = RealBlockProver::new(&genesis_b).expect("prover_b setup");
+
+        let block = make_block_with_txs(1, 1, 1);
+        let new_a = make_dual_commitment(1, 1);
+        let new_b = make_dual_commitment(1, 1);
+        prover_a
+            .fold_real_block(&block, &genesis_a, &new_a)
+            .expect("fold_a failed");
+        prover_b
+            .fold_real_block(&block, &genesis_b, &new_b)
+            .expect("fold_b failed");
+
+        let proof_a = prover_a.get_proof().expect("get_proof_a");
+        let proof_b = prover_b.get_proof().expect("get_proof_b");
+
+        // The serialized z0 bytes must differ — z[0] is
+        // Poseidon(limb[0..4]) and limb[1..3] differs between the
+        // two chains. Pre-Phase-2.5 (when z[0] = limb[0] only) the
+        // z0 bytes would have been identical here.
+        assert_ne!(
+            proof_a.z0_bytes, proof_b.z0_bytes,
+            "z0 must differ when state roots differ in upper bits — \
+             Phase 2.5 binding contract"
+        );
+
+        // Each chain's proof must verify against its OWN prover —
+        // sanity check that the proofs are otherwise well-formed.
+        assert!(prover_a.verify_proof(&proof_a, 1).expect("verify_a"));
+        assert!(prover_b.verify_proof(&proof_b, 1).expect("verify_b"));
+
+        // Cross-verification: proof_a must NOT verify under
+        // prover_b's pp. (The pp differs because z0 differs at
+        // genesis; the pp is parameterised over the dummy circuit
+        // which doesn't depend on z0, but the proof embeds z0_a and
+        // verify uses z0 from the proof bytes against pp_b. The
+        // mismatch surfaces as verify returning false.)
+        //
+        // Note: `verify_proof` deserializes z0 from the proof bytes
+        // and verifies against `self.pp`. With distinct z0 values
+        // and (pp_a, pp_b) sharing circuit shape but having
+        // different randomness, cross-verification is governed by
+        // the SNARK's soundness: a proof generated with z0_a will
+        // not verify under any pp that's not pp_a.
+        let cross_a_under_b = prover_b
+            .verify_proof(&proof_a, 1)
+            .expect("verify call should not error");
+        let cross_b_under_a = prover_a
+            .verify_proof(&proof_b, 1)
+            .expect("verify call should not error");
+        assert!(
+            !cross_a_under_b,
+            "proof_a must NOT verify under prover_b — state-root binding leak"
+        );
+        assert!(
+            !cross_b_under_a,
+            "proof_b must NOT verify under prover_a — state-root binding leak"
+        );
+    }
+
+    /// Phase 6.1 of LAMBDA_FOLD_NOVA_PLAN — sublinearity audit.
+    /// Measures `verify_proof` wall-clock at 10, 50, and 100 folds.
+    /// The Phase 3 vk-caching contract says verify is sublinear in
+    /// fold count — empirically the wall-clock should be roughly
+    /// flat (each call is dominated by the same SNARK verifier
+    /// work, not by replaying the IVC).
+    ///
+    /// Marked `#[ignore]` because 100 folds × ~250 ms = ~25 s of
+    /// prove time alone. Run with
+    /// `cargo test --release --features nova,test-utils -- --ignored`.
+    #[test]
+    #[ignore = "heavy: 100 folds + 3 verify samples (~30 s total under release)"]
+    fn test_real_block_verify_sublinearity_benchmark() {
+        let genesis = make_dual_commitment(0, 0);
+        let mut prover = RealBlockProver::new(&genesis).expect("setup failed");
+
+        let mut prev_state = genesis.clone();
+
+        let mut sample_at = |fold_count: u64,
+                             prover: &mut RealBlockProver|
+         -> std::time::Duration {
+            // Get a fresh proof at the current fold count and time
+            // the verify call. Verify is what matters — prove time
+            // is expected to scale linearly in fold count, but
+            // verify is the sublinearity claim.
+            let proof = prover.get_proof().expect("get_proof");
+            let start = std::time::Instant::now();
+            let _ = prover
+                .verify_proof(&proof, fold_count as usize)
+                .expect("verify");
+            start.elapsed()
+        };
+
+        // Fold blocks up to each sampling point and record verify time.
+        let sample_points = [10u64, 50, 100];
+        let mut samples: Vec<(u64, std::time::Duration)> = Vec::new();
+
+        let mut next_sample_idx = 0;
+        for h in 1..=*sample_points.last().unwrap() {
+            let block = make_block_with_txs(h, h, 1);
+            let new_state = make_dual_commitment(h as u8, h);
+            prover
+                .fold_real_block(&block, &prev_state, &new_state)
+                .expect("fold");
+            prev_state = new_state;
+
+            if next_sample_idx < sample_points.len()
+                && h == sample_points[next_sample_idx]
+            {
+                let elapsed = sample_at(h, &mut prover);
+                eprintln!(
+                    "[sublinearity] verify @ {} folds: {:?}",
+                    h, elapsed
+                );
+                samples.push((h, elapsed));
+                next_sample_idx += 1;
+            }
+        }
+
+        // Sublinearity assertion: verify @ 100 folds should not be
+        // more than 5× verify @ 10 folds. A linear verifier would
+        // be 10× slower; flat (truly sublinear) is 1×. The 5× cap
+        // is loose to absorb variance in CompressedSNARK::prove
+        // and bincode (de)serialize cost which dominate over the
+        // actual SNARK verifier on small fold counts.
+        let (_, t10) = samples[0];
+        let (_, t100) = samples[2];
+        let ratio = t100.as_secs_f64() / t10.as_secs_f64().max(1e-9);
+        eprintln!("[sublinearity] verify(100) / verify(10) = {:.3}", ratio);
+        assert!(
+            ratio < 5.0,
+            "verify wall-clock grew {:.3}x from 10 to 100 folds — \
+             sublinearity claim violated",
+            ratio
+        );
+    }
+
+    /// Phase 6.3 of LAMBDA_FOLD_NOVA_PLAN — energy-fold lower-bound
+    /// soundness. Proves that an adversary cannot over-report decay
+    /// for the chain-aggregate `total_energy_remaining` (Phase 2.3
+    /// energy-fold gadget).
+    ///
+    /// Honest inputs: prev_total_energy = 10_000, half_life = 100,
+    /// epochs_elapsed = 50. Honest output (per the 5-constraint
+    /// gadget):
+    ///   shift_factor = 1 (no full halvings), after_halvings = 10_000,
+    ///   shift_remainder = 0, remainder_epochs = 50,
+    ///   two_half_life = 200, product_ar = 500_000,
+    ///   frac_decay = 2_500, new_total_energy = 10_000 - 2_500 = 7_500.
+    ///
+    /// Adversarial witness: claim `energy_after_halvings = 5_000`
+    /// (over-reporting decay by 50%). This breaks constraint (a)
+    /// `after_halvings * shift_factor = prev_total_energy -
+    /// shift_remainder` (5_000 * 1 ≠ 10_000 - 0). The R1CS must
+    /// reject.
+    #[test]
+    fn test_real_block_energy_fold_rejects_over_reported_decay() {
+        let genesis = make_dual_commitment(0, 0);
+        let prover = RealBlockProver::new(&genesis).expect("setup failed");
+
+        let block = dummy_block(1, 50);
+        let new_state = make_dual_commitment(1, 50);
+
+        let mut witness = RealBlockWitness::from_block(&block, &new_state, None, None);
+        // Set honest aggregate inputs.
+        witness.prev_total_energy = 10_000;
+        witness.step_energy = 0;
+        witness.epochs_elapsed_at_step = 50;
+        witness.energy_two_half_life = 200; // 2 × half_life=100
+        // Adversarial: claim after_halvings=5_000 (honest=10_000).
+        witness.energy_shift_factor = 1;
+        witness.energy_after_halvings = 5_000;
+        witness.energy_shift_remainder = 0;
+        witness.energy_remainder_epochs = 50;
+        // Patch the dependent witness values so the LATER constraints
+        // are individually satisfiable in isolation — this isolates
+        // the constraint-(a) violation as the smoking gun.
+        witness.energy_product_ar = 5_000 * 50; // (c) after_halvings * remainder_epochs
+        witness.energy_frac_decay = (5_000 * 50) / 200; // (d) frac_decay * two_half_life ≤ product_ar
+        witness.energy_frac_remainder = (5_000 * 50) % 200;
+
+        let circuit = RealBlockCircuit::<G1>::new(witness);
+        let snark_result =
+            RecursiveSNARK::<E1, E2, RealBlockCircuit<G1>>::new(&prover.pp, &circuit, &prover.z0);
+
+        // Either snark creation rejects, or snark.verify rejects
+        // after prove_step. Both shapes are acceptable as the
+        // soundness of the gadget — what's NOT acceptable is a
+        // valid-looking proof on a witness that breaks constraint
+        // (a) of the energy-fold gadget.
+        if let Ok(mut snark) = snark_result {
+            let _ = snark.prove_step(&prover.pp, &circuit);
+            let verify_result = snark.verify(&prover.pp, 1, &prover.z0);
+            assert!(
+                verify_result.is_err(),
+                "Energy-fold over-reporting (after_halvings = 5_000 vs honest 10_000) \
+                 must be caught by constraint (a) of the energy-fold gadget"
+            );
+        }
     }
 
     /// Phase 3.5 of LAMBDA_FOLD_NOVA_PLAN — light-client round-trip:
