@@ -117,6 +117,7 @@ grouped by lane.
 | `evaporchain-ib-validators` | Immune Validator Set — adaptive admission against poisoned peer surfaces |
 | `evaporchain-mera` | MERA gate (Tier-2; week-25+ window) |
 | `evaporchain-causal-cone`, `evaporchain-cone-bridge`, `evaporchain-cmu-gate` | Light-cone bridging + CMU gate |
+| `evaporchain-causal-chsh` | **Causal-CHSH** — Bell-style cartel-detection bound on LightCone causal sets. EvaporChain's first 100% original frontier theorem (gate PASS 2026-05-04, see `INVENTION_STACK.md §A1.10`). Tier-0 supporting; live in `TendermintConsensus.cartel_alarm` (Lane O.8.1) |
 | `evaporchain-cslc` | Causal-state ledger control |
 | `evaporchain-singh-resonance`, `evaporchain-singh-attractor` | Singh resonance + attractor |
 | `evaporchain-tur-liveness`, `evaporchain-tropical` | Turing-style liveness + tropical algebra ledger |
