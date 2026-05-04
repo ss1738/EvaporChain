@@ -628,6 +628,23 @@ struct RealBlockWitness {
     // ── Full 32-byte state root decomposition (4 × u64 limbs) ──
     state_root_limbs: [u64; 4],
     mmr_root_limbs: [u64; 4],
+    // ── Lambda-Fold energy fold (Phase 2.1 of LAMBDA_FOLD_NOVA_PLAN) ──
+    /// Total chain energy carried into this step, decayed forward
+    /// by `epochs_elapsed_at_step` half-lives. The IVC z-vector
+    /// holds this at index 6 (per Phase 1 Decision 3).
+    /// Single u128 field element; range-checked at 128 bits in
+    /// `synthesize` (Phase 2.4).
+    prev_total_energy: u128,
+    /// Energy injected by this step (fees collected + creation
+    /// deposits + refresh deposits). Added to the decayed
+    /// `prev_total_energy` to produce `new_total_energy`.
+    step_energy: u64,
+    /// Epochs elapsed between the previous fold step's epoch and
+    /// this block's epoch. Drives the decay coefficient applied to
+    /// `prev_total_energy` in the energy-fold gadget. Equals
+    /// `block.epoch - prev_step.epoch` for non-genesis steps;
+    /// witness for genesis is 0.
+    epochs_elapsed_at_step: u64,
 }
 
 impl RealBlockWitness {
@@ -650,6 +667,9 @@ impl RealBlockWitness {
             nullifiers_spent: 0,
             state_root_limbs: [0; 4],
             mmr_root_limbs: [0; 4],
+            prev_total_energy: 0,
+            step_energy: 0,
+            epochs_elapsed_at_step: 0,
         }
     }
 
@@ -751,6 +771,17 @@ impl RealBlockWitness {
             nullifiers_spent,
             state_root_limbs,
             mmr_root_limbs,
+            // Phase 2.1 placeholder values — the energy-fold gadget
+            // wiring (Phase 2.3) will populate these from the
+            // chain's energy accumulator. Until then, this
+            // constructor passes zeros so existing call sites
+            // continue to work bit-exactly. Lambda-Fold's
+            // `lambda_fold_mode = "nova"` governance flag (Phase
+            // 5.2) will be the reader; until that flips, these
+            // fields are unused.
+            prev_total_energy: 0,
+            step_energy: 0,
+            epochs_elapsed_at_step: 0,
         }
     }
 }
