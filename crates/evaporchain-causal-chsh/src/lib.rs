@@ -75,6 +75,6 @@ pub mod gate;
 pub mod trace;
 
 pub use alarm::{AlarmStatus, CartelAlarm};
-pub use chsh::{compute_chsh_s, ChshError, ConcurrentPair};
+pub use chsh::{compute_chsh_s, compute_chsh_s_milli, ChshError, ConcurrentPair};
 pub use gate::{run_synthetic_gate, GateThresholds, GateVerdict};
 pub use trace::{extract_chsh_samples, synthesize_max_cartel_samples, BlockSummary};

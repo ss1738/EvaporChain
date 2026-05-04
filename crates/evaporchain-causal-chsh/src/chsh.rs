@@ -85,6 +85,12 @@ pub enum ChshError {
 ///
 /// `|S| ≤ 2` under honest validators + LightCone causality (proposed
 /// theorem). `S > 2` is the cartel-detection signal.
+///
+/// **Off-consensus only.** This function returns `f64` and is used by
+/// off-chain operator tools (renderer, sweep CLI, off-chain detection).
+/// **For any consensus-bearing path (Bell-Beacon V2 certificate, fork
+/// rules), use [`compute_chsh_s_milli`] instead** — f64 isn't bitwise
+/// deterministic across architectures.
 pub fn compute_chsh_s(samples: &ConcurrentPairSamples) -> Result<f64, ChshError> {
     let e_ab = mean_of_pm1(&samples.samples_ab, "AB")?;
     let e_abp = mean_of_pm1(&samples.samples_ab_prime, "AB'")?;
@@ -92,6 +98,24 @@ pub fn compute_chsh_s(samples: &ConcurrentPairSamples) -> Result<f64, ChshError>
     let e_apbp = mean_of_pm1(&samples.samples_a_prime_b_prime, "A'B'")?;
 
     Ok((e_ab + e_abp + e_apb - e_apbp).abs())
+}
+
+/// Pure-integer CHSH S statistic in milli-units (×1000). Returns
+/// `|S * 1000|` as `i64`, range `[0, 4000]`.
+///
+/// **Validator-deterministic.** All arithmetic is i64/i128; samples are
+/// `i8 ∈ {-1, +1}`; per-bucket means use truncating integer division
+/// (matches the Rust `f64 as i64` cast for the bounded values produced
+/// here). Use this on every consensus path that needs CHSH S — Bell-
+/// Beacon V2 certificate derivation, fork-choice rules, slashing.
+pub fn compute_chsh_s_milli(samples: &ConcurrentPairSamples) -> Result<i64, ChshError> {
+    let e_ab = milli_mean_of_pm1(&samples.samples_ab, "AB")?;
+    let e_abp = milli_mean_of_pm1(&samples.samples_ab_prime, "AB'")?;
+    let e_apb = milli_mean_of_pm1(&samples.samples_a_prime_b, "A'B")?;
+    let e_apbp = milli_mean_of_pm1(&samples.samples_a_prime_b_prime, "A'B'")?;
+    // Sum is bounded by 4 * 1000 = 4000 → comfortably fits i64.
+    let s_signed = (e_ab as i128) + (e_abp as i128) + (e_apb as i128) - (e_apbp as i128);
+    Ok(s_signed.unsigned_abs() as i64)
 }
 
 /// Compute the CHSH S statistic for a CLASSICAL local-hidden-variable
@@ -150,6 +174,30 @@ fn mean_of_pm1(samples: &[i8], pair_label: &'static str) -> Result<f64, ChshErro
         sum += *v as i64;
     }
     Ok(sum as f64 / samples.len() as f64)
+}
+
+/// Pure-integer per-bucket mean × 1000. Validates ±1 inputs, bails on
+/// empty bucket. Result is in `[-1000, 1000]` for valid inputs since
+/// `|sum| ≤ len`.
+fn milli_mean_of_pm1(samples: &[i8], pair_label: &'static str) -> Result<i64, ChshError> {
+    if samples.is_empty() {
+        return Err(ChshError::EmptySample { pair_label });
+    }
+    let mut sum: i64 = 0;
+    for (i, v) in samples.iter().enumerate() {
+        if !is_binary(*v) {
+            return Err(ChshError::NonBinaryObservable {
+                pair_label,
+                index: i,
+                value: *v,
+            });
+        }
+        sum += *v as i64;
+    }
+    // Truncating integer division. Matches Rust's `f64 as i64` cast for
+    // the bounded values produced by f64-path mean_of_pm1 when the
+    // float sum is exactly representable — but never silently rounds.
+    Ok(sum.saturating_mul(1000) / samples.len() as i64)
 }
 
 #[inline]
@@ -233,6 +281,77 @@ mod tests {
         let bal = vec![1, -1, 1, -1, 1, -1, 1, -1];
         let s = compute_chsh_s(&samples(bal.clone(), bal.clone(), bal.clone(), bal)).unwrap();
         assert!(s.abs() < 1e-9, "expected S≈0, got {}", s);
+    }
+
+    // ── milli (integer, validator-deterministic) ───────────────────
+
+    #[test]
+    fn milli_max_violation_is_4000() {
+        // Cartel pattern: S = 4 → S_milli = 4000 exactly.
+        let s = samples(
+            vec![1, 1, 1, 1],
+            vec![1, 1, 1, 1],
+            vec![1, 1, 1, 1],
+            vec![-1, -1, -1, -1],
+        );
+        assert_eq!(compute_chsh_s_milli(&s).unwrap(), 4000);
+    }
+
+    #[test]
+    fn milli_balanced_honest_is_zero() {
+        let bal = vec![1, -1, 1, -1, 1, -1, 1, -1];
+        let s = compute_chsh_s_milli(&samples(bal.clone(), bal.clone(), bal.clone(), bal)).unwrap();
+        assert_eq!(s, 0);
+    }
+
+    #[test]
+    fn milli_empty_bucket_errs() {
+        let s = samples(vec![], vec![1], vec![1], vec![1]);
+        assert!(matches!(
+            compute_chsh_s_milli(&s),
+            Err(ChshError::EmptySample { pair_label: "AB" })
+        ));
+    }
+
+    #[test]
+    fn milli_non_binary_rejected() {
+        let s = samples(vec![1, 2, 1], vec![1], vec![1], vec![1]);
+        assert!(matches!(
+            compute_chsh_s_milli(&s),
+            Err(ChshError::NonBinaryObservable { .. })
+        ));
+    }
+
+    #[test]
+    fn milli_is_validator_deterministic() {
+        // Same inputs → byte-identical output across calls.
+        let s = samples(
+            vec![1, -1, 1, -1, 1],
+            vec![1, 1, -1, -1, 1],
+            vec![-1, 1, 1, -1, 1],
+            vec![1, 1, 1, -1, -1],
+        );
+        let a = compute_chsh_s_milli(&s).unwrap();
+        let b = compute_chsh_s_milli(&s).unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn milli_truncates_toward_zero_on_uneven_buckets() {
+        // 7 samples summing to 1 → mean = 1/7 ≈ 0.1428571. milli = 142
+        // (truncated). The f64 path would give 142 also (1000/7 = 142.857
+        // → as i64 = 142), so this round-trips with f64 for this case.
+        // Build a single-bucket scenario by zeroing the other three
+        // buckets via balanced ±1 (each contributes 0).
+        let bal = vec![1, -1, 1, -1];
+        let s = samples(
+            vec![1, 1, 1, 1, -1, -1, -1], // sum = 1, len = 7 → milli = 142
+            bal.clone(),
+            bal.clone(),
+            bal,
+        );
+        // S_milli = |142 + 0 + 0 - 0| = 142
+        assert_eq!(compute_chsh_s_milli(&s).unwrap(), 142);
     }
 
     use proptest::prelude::*;

@@ -63,15 +63,43 @@ pub struct CartelAlarm {
 }
 
 /// Snapshot of the most recent gate run on the rolling buffer.
+///
+/// **Two parallel S representations** are stored:
+///
+/// - `s_honest_milli` / `s_cartel_synthetic_milli` / `gap_milli` —
+///   integer `×1000` units, computed via `compute_chsh_s_milli`.
+///   **Validator-deterministic** (i64 arithmetic; bit-identical
+///   across architectures). This is the value consensus must
+///   consult when the alarm gates ConsensusActions (Lane O.8.2).
+///
+/// - `s_honest` / `s_cartel_synthetic` / `gap` — `f64` units,
+///   computed via `compute_chsh_s`. For RPC display + operator
+///   tooling. **Not consensus-bearing** — f64 is non-deterministic
+///   across architectures.
+///
+/// The verdict is derived from the milli values so it is itself
+/// deterministic.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AlarmStatus {
-    /// S statistic from the buffer at the time of the run.
+    /// S statistic from the buffer at the time of the run (f64
+    /// display value; **not consensus-bearing**).
     pub s_honest: f64,
-    /// S statistic from the synthetic cartel of the same size.
+    /// S statistic from the synthetic cartel of the same size (f64
+    /// display value).
     pub s_cartel_synthetic: f64,
-    /// `s_cartel_synthetic - s_honest`.
+    /// `s_cartel_synthetic - s_honest` (f64 display value).
     pub gap: f64,
-    /// `Pass`, `Fail`, or `InputError` — string for cross-language clarity.
+    /// Validator-deterministic milli-units S (×1000) from the buffer.
+    /// **Use this on every consensus-bearing path** — fork rules,
+    /// slashing, ConsensusAction emission.
+    pub s_honest_milli: i64,
+    /// Validator-deterministic milli-units S (×1000) from the
+    /// synthetic cartel.
+    pub s_cartel_synthetic_milli: i64,
+    /// `s_cartel_synthetic_milli - s_honest_milli` in i64 arithmetic.
+    pub gap_milli: i64,
+    /// `Pass`, `Fail`, or `InputError` — string for cross-language
+    /// clarity. Derived from the milli values for determinism.
     pub verdict: String,
     /// Block height of the last record at the time of the run (caller-
     /// supplied, so it reflects the chain height not just `records_seen`).
@@ -128,48 +156,78 @@ impl CartelAlarm {
     /// Force a gate recompute against the current buffer. Useful for
     /// status RPCs that want a fresh verdict without waiting for the
     /// next periodic run.
+    ///
+    /// Computes both the validator-deterministic milli-units S
+    /// (consensus-bearing path via `compute_chsh_s_milli`) and the
+    /// f64 display S (operator-RPC path via `compute_chsh_s`). The
+    /// verdict is derived from the milli values so it remains
+    /// deterministic across validator architectures.
     pub fn recompute_now(&mut self, current_height: u64) {
         let trace: Vec<BlockSummary> = self.buffer.iter().copied().collect();
         let honest = extract_chsh_samples(&trace, self.concurrency_window_secs);
         let n_per_bucket = honest.samples_ab.len();
+        let th = GateThresholds::doctrine();
         if n_per_bucket < 5 {
             self.last_status = Some(AlarmStatus {
                 s_honest: 0.0,
                 s_cartel_synthetic: 0.0,
                 gap: 0.0,
+                s_honest_milli: 0,
+                s_cartel_synthetic_milli: 0,
+                gap_milli: 0,
                 verdict: format!(
                     "InputError: {} per-bucket samples (need ≥5; widen window)",
                     n_per_bucket
                 ),
                 last_run_at_height: current_height,
                 samples_per_bucket: [0; 4],
-                thresholds: GateThresholds::doctrine(),
+                thresholds: th,
             });
             return;
         }
 
-        let s_honest = match compute_chsh_s(&honest) {
+        // Authoritative validator-deterministic computation in i64
+        // milli-units (×1000).
+        let s_honest_milli = match crate::chsh::compute_chsh_s_milli(&honest) {
             Ok(s) => s,
             Err(e) => {
                 self.last_status = Some(AlarmStatus {
                     s_honest: 0.0,
                     s_cartel_synthetic: 0.0,
                     gap: 0.0,
+                    s_honest_milli: 0,
+                    s_cartel_synthetic_milli: 0,
+                    gap_milli: 0,
                     verdict: format!("InputError: {e}"),
                     last_run_at_height: current_height,
                     samples_per_bucket: [0; 4],
-                    thresholds: GateThresholds::doctrine(),
+                    thresholds: th,
                 });
                 return;
             }
         };
         let cartel = synthesize_max_cartel_samples(n_per_bucket);
+        let s_cartel_milli =
+            crate::chsh::compute_chsh_s_milli(&cartel).unwrap_or(0);
+        let gap_milli = s_cartel_milli - s_honest_milli;
+
+        // f64 display values (operator-RPC path). Recomputed
+        // independently of the milli path; the two should agree to
+        // ~1e-3 but we don't enforce equivalence here — the milli
+        // path is authoritative.
+        let s_honest = compute_chsh_s(&honest).unwrap_or(0.0);
         let s_cartel = compute_chsh_s(&cartel).unwrap_or(0.0);
         let gap = s_cartel - s_honest;
-        let th = GateThresholds::doctrine();
-        let verdict = if s_honest < th.honest_ceiling
-            && s_cartel > th.cartel_floor
-            && gap > th.min_gap
+
+        // Threshold comparison in milli space — validator-deterministic.
+        // honest_ceiling=1.8 → 1800; cartel_floor=2.2 → 2200;
+        // min_gap=0.4 → 400.
+        let honest_ceiling_milli = (th.honest_ceiling * 1000.0) as i64;
+        let cartel_floor_milli = (th.cartel_floor * 1000.0) as i64;
+        let min_gap_milli = (th.min_gap * 1000.0) as i64;
+        let verdict = if s_honest_milli < honest_ceiling_milli
+            && s_cartel_milli > cartel_floor_milli
+            && gap_milli > min_gap_milli
         {
             "Pass".to_string()
         } else {
@@ -180,6 +238,9 @@ impl CartelAlarm {
             s_honest,
             s_cartel_synthetic: s_cartel,
             gap,
+            s_honest_milli,
+            s_cartel_synthetic_milli: s_cartel_milli,
+            gap_milli,
             verdict,
             last_run_at_height: current_height,
             samples_per_bucket: [
