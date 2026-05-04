@@ -308,11 +308,11 @@ impl std::fmt::Display for GovernanceParamError {
 impl std::error::Error for GovernanceParamError {}
 
 /// Phase 3.1 of `LIGHT_CONE_FULL_DAG_PLAN.md` — per-tip state-branch
-/// metadata. The Arc<dyn StateDB> snapshot ref slots in beside this
-/// in Phase 3.2; today the metadata alone is enough to drive Phase
-/// 3.4's LRU eviction (caliber-based) and Phase 5's orphan-prune
-/// horizon (last_touched_block).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// metadata. The `snapshot` field carries an opaque `Arc` whose
+/// concrete type is the chain's `StateDB` snapshot once Phase 3.2
+/// wires the executor in; today it's a typed placeholder
+/// (`Arc<dyn LightConeBranchSnapshot + Send + Sync>`).
+#[derive(Clone)]
 pub struct LightConeBranchMetadata {
     /// Block height at which this tip was first observed.
     pub created_at_block: u64,
@@ -322,20 +322,73 @@ pub struct LightConeBranchMetadata {
     /// Phase 3.4 LRU score — Phase 1.1's `path_caliber` for this
     /// tip's first-parent trajectory. Stored as u64 so the eviction
     /// rule is deterministic across validators (no f64 NaN paths).
-    /// Updated when the tip's caliber re-scoring crosses a meaningful
-    /// delta (Phase 3.4 implementation detail).
     pub caliber: u64,
+    /// Phase 3.2 of `LIGHT_CONE_FULL_DAG_PLAN.md` — opaque
+    /// snapshot reference for per-tip state. `None` until the chain
+    /// installs a snapshot provider (and the
+    /// `light_cone_state_branches_enabled` flag is on). Phase 3.2
+    /// full implementation types this as `Arc<dyn StateDB>` once
+    /// the consensus crate gets the `evaporchain-state` trait
+    /// dependency; today the trait `LightConeBranchSnapshot` is a
+    /// minimal abstraction that the executor will implement.
+    pub snapshot: Option<std::sync::Arc<dyn LightConeBranchSnapshot + Send + Sync>>,
 }
 
+impl std::fmt::Debug for LightConeBranchMetadata {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LightConeBranchMetadata")
+            .field("created_at_block", &self.created_at_block)
+            .field("last_touched_block", &self.last_touched_block)
+            .field("caliber", &self.caliber)
+            .field("snapshot_present", &self.snapshot.is_some())
+            .finish()
+    }
+}
+
+impl PartialEq for LightConeBranchMetadata {
+    fn eq(&self, other: &Self) -> bool {
+        self.created_at_block == other.created_at_block
+            && self.last_touched_block == other.last_touched_block
+            && self.caliber == other.caliber
+            && self.snapshot.is_some() == other.snapshot.is_some()
+    }
+}
+
+impl Eq for LightConeBranchMetadata {}
+
 impl LightConeBranchMetadata {
-    /// Fresh metadata for a newly-observed tip.
-    pub const fn fresh(block_height: u64, caliber: u64) -> Self {
+    /// Fresh metadata for a newly-observed tip. No snapshot yet —
+    /// caller installs via `attach_snapshot` if Phase 3.2 wiring is
+    /// active.
+    pub fn fresh(block_height: u64, caliber: u64) -> Self {
         Self {
             created_at_block: block_height,
             last_touched_block: block_height,
             caliber,
+            snapshot: None,
         }
     }
+}
+
+/// Phase 3.2 of `LIGHT_CONE_FULL_DAG_PLAN.md` — minimal trait the
+/// executor implements to hand a typed snapshot ref to the consensus
+/// engine without the engine having to depend on
+/// `evaporchain-state`'s concrete `StateDB` trait.
+///
+/// Implementation contract:
+/// - `tip()` returns the BlockId the snapshot was created at.
+/// - `created_at_height()` returns the chain height at snapshot
+///   creation. Phase 3.4 LRU uses this for tie-breaks.
+///
+/// The actual reads (account / object lookups) go through whatever
+/// concrete API the implementation exposes — Phase 3.2's executor
+/// will downcast via `Arc::downcast` or similar to its own snapshot
+/// type. This trait is the consensus-side seam, not the executor's.
+pub trait LightConeBranchSnapshot {
+    /// BlockId the snapshot was taken at.
+    fn tip(&self) -> [u8; 32];
+    /// Chain height at snapshot creation.
+    fn created_at_height(&self) -> u64;
 }
 
 /// Phase 4.4 of `CROOKS_MEV_INTEGRATION_PLAN.md` — error returned
@@ -1827,6 +1880,21 @@ impl TendermintConsensus {
                 m.caliber = caliber;
             })
             .or_insert_with(|| LightConeBranchMetadata::fresh(block_height, caliber));
+    }
+
+    /// Phase 3.2 of `LIGHT_CONE_FULL_DAG_PLAN.md` — attach a
+    /// snapshot reference to an existing tip's metadata. Called by
+    /// the executor after taking a RocksDB snapshot at commit time.
+    /// `None` if the tip isn't tracked (caller must `record_state_branch`
+    /// first).
+    pub fn attach_branch_snapshot(
+        &mut self,
+        tip: [u8; 32],
+        snapshot: std::sync::Arc<dyn LightConeBranchSnapshot + Send + Sync>,
+    ) -> Option<()> {
+        let m = self.state_branches.get_mut(&tip)?;
+        m.snapshot = Some(snapshot);
+        Some(())
     }
 
     /// Phase 3.4 of `LIGHT_CONE_FULL_DAG_PLAN.md` — concurrent-fork
@@ -7111,6 +7179,44 @@ mod tests {
         assert_eq!(m.created_at_block, 1);
         assert_eq!(m.last_touched_block, 5);
         assert_eq!(m.caliber, 250);
+    }
+
+    /// Phase 3.2 of `LIGHT_CONE_FULL_DAG_PLAN.md` — `LightConeBranchSnapshot`
+    /// trait + `attach_branch_snapshot` method. Locks the seam the
+    /// executor will plug into in Phase 3.2 full implementation.
+    #[test]
+    fn test_state_branches_snapshot_attach() {
+        // Synthetic snapshot impl — minimal trait surface, no
+        // dependencies on evaporchain-state.
+        struct StubSnapshot {
+            tip: [u8; 32],
+            height: u64,
+        }
+        impl LightConeBranchSnapshot for StubSnapshot {
+            fn tip(&self) -> [u8; 32] {
+                self.tip
+            }
+            fn created_at_height(&self) -> u64 {
+                self.height
+            }
+        }
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        let tip = [0xAA; 32];
+
+        // Without prior record: attach returns None.
+        let snap = std::sync::Arc::new(StubSnapshot { tip, height: 1 });
+        assert_eq!(tc.attach_branch_snapshot(tip, snap.clone()), None);
+
+        // After record: attach succeeds.
+        tc.record_state_branch(tip, 1, 100);
+        assert_eq!(tc.attach_branch_snapshot(tip, snap.clone()), Some(()));
+
+        // Snapshot is now in the metadata; trait methods reachable.
+        let m = &tc.state_branches()[&tip];
+        let s = m.snapshot.as_ref().expect("snapshot attached");
+        assert_eq!(s.tip(), tip);
+        assert_eq!(s.created_at_height(), 1);
     }
 
     /// Phase 3.4 (LRU eviction) — when state_branches exceeds the
