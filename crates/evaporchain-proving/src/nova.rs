@@ -2846,13 +2846,30 @@ mod tests {
              MAX_TRANSFERS: {MAX_TRANSFERS}\n\
              MAX_EVAPORATIONS: {MAX_EVAPORATIONS}\n\
              RANGE_BITS: {RANGE_BITS}\n\
-             IVC arity: 6 [state_hash, mmr_root, epoch, block_num, note_tree_root, pool_balance]"
+             IVC arity: 8 [state_root_poseidon, mmr_root, epoch, block_num, \
+             note_tree_root, pool_balance, total_energy_remaining, step_count]"
         );
 
-        // With privacy + state root limbs, expect significantly more constraints.
+        // With privacy + state root limbs + Poseidon binding +
+        // energy-fold gadget + step_count gadget + 128-bit range
+        // check on total_energy, expect significantly more
+        // constraints than the pre-Layer-5 baseline (14,041 primary).
         assert!(
             primary > 2000,
             "Expected >2000 constraints with privacy + limb decomposition, got {primary}"
+        );
+
+        // Phase 2.6 of LAMBDA_FOLD_NOVA_PLAN — stopping-condition
+        // regression bound. The plan budgets ~14,800-15,200 primary
+        // after Phase 2.1-2.5 land; the stopping threshold is
+        // 30,000. If we overshoot 30,000 the design is wrong and
+        // Phase 1 needs re-litigation.
+        assert!(
+            primary < 30_000,
+            "Phase 2.6 stopping condition: primary constraints \
+             exceeded 30,000 ({primary}) — Phase 1 design needs \
+             re-litigation per LAMBDA_FOLD_NOVA_PLAN Stopping \
+             Conditions section"
         );
     }
 
