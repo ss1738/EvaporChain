@@ -21,9 +21,9 @@ This file is the layered build plan to make the doctrine claims actually true. E
 
 ---
 
-## Up next — three manual items (Satyawan, ~90 min total)
+## Up next — one manual item (Satyawan, ~10 min)
 
-These three close the last decision-blocking gaps before Layer 4. Each one's outcome unlocks (or descopes) a downstream track. Order doesn't matter; do whichever's quickest to set up first.
+Two of the three original manual items resolved 2026-05-03/04. Only **M2** (Coq build verification) remains — see below for the reasoning history of M1 and M3 which are kept for the audit trail.
 
 ### M1 — MERA gate ✅ RESOLVED 2026-05-03 → **VERKLE**
 
@@ -57,29 +57,17 @@ Outcomes:
 | **`make` passes** | LLSA file actually checks against the kernel. "First chain whose governance is a theorem" claim becomes build-verifiable. Layer 7 (full or descope path) can proceed. |
 | **`make` fails** | Most likely: my relative-path `../proofs/LLSAInvariantPreservation.v` entry in `_CoqProject` doesn't cooperate with `coq_makefile`. Tell me the error; I'll either move the file into `research/coq/` or add a separate `_CoqProject` under `proofs/`. |
 
-### M3 — Two `INVENTION_STACK.md` amendments (~30 min)
+### M3 — Two `INVENTION_STACK.md` amendments ✅ RESOLVED 2026-05-04
 
-Closes the gap between marketing-grade doctrine wording and the math the code actually implements. Strategic naming calls — that's why I haven't done them unilaterally.
+Both §A1.2 T1 (MCC) and §A1.2 T2 (CFM) have been amended in line with the math-driven recommendations. The doctrine wording is now the source of truth and matches the code's actual behaviour.
 
-**M3.1 — Amend §A1.2 T1 (MCC).** Current wording:
+**M3.1 — §A1.2 T1 (MCC) — DONE.** Now reads: *"Our fork choice is the unique trajectory `argmax exp(−β·E_path)` over candidate chain trajectories — closed form by Lagrange duality on the maximum-entropy program. (Note: a Perron-Frobenius solution would require a strongly connected graph; the LightCone DAG is acyclic, so adjacency is nilpotent and Perron is vacuous. The Lagrangian `argmax` is what's actually shipped.)"*
 
-> "Our fork choice is the unique distribution maximizing path-entropy subject to one thermodynamic constraint, with closed-form **Perron solution**."
+Mirrors the math note shipped in commit `06db894` at `crates/evaporchain-mcc/src/lib.rs`. The hard variant — building a real Perron eigenvector on `(I − M)^{-1}` — remains tabled as a research-grade refinement; the chain's shipped fork-choice (`MccForkChoice` + `argmax exp(−β·E_path)`) is now correctly described.
 
-The "Perron solution" is mathematically vacuous on EvaporChain's strict-DAG LightCone (adjacency matrix nilpotent → no nontrivial Perron-Frobenius eigenvector). Replace with one of:
+**M3.2 — §A1.2 T2 (CFM) — DONE (soft variant).** Now reads: *"Our fee market exposes the Crooks identity primitive `log(p_F / p_R) = β·(W − ΔF)` — implemented as `crooks_log_ratio_millibits(p_F, p_R)`. The chain ships the LHS; the RHS-equality test (synthetic forward/reverse trajectory pair, assert equality to fixed-point precision) is open work tracked in `DOCTRINE_PUNCH_LIST.md` Layer 2."*
 
-- **Honest, still publishable** (recommended): *"Our fork choice is the unique Lagrangian closed-form Maximum-Caliber distribution under one thermodynamic constraint, with `β = 1/λ` as the inverse-temperature derived from the chain's single decay parameter."*
-- **Or**: commit to building the real thing on `(I − M)^{-1}` (path-counting matrix on the DAG). Adds engineering, gets the original wording back. ~200-400 LOC.
-
-The math note I added in commit `06db894` to `crates/evaporchain-mcc/src/lib.rs` is the source of truth here; doctrine should follow.
-
-**M3.2 — Amend §A1.2 T2 (CFM).** Current wording:
-
-> "Our fee market satisfies an **exact equality** between work and free-energy difference (not a bound), with the inverse temperature supplied by our decay constant."
-
-Today the substrate exposes the LHS of the Crooks identity (commit `d80921f` added the primitive verification). The chain doesn't actually produce Crooks-distributed forward/reverse work distributions — that would need a stochastic-thermodynamics simulator. Replace with one of:
-
-- **Soft** (recommended): *"Our fee market exposes the Crooks identity as a substrate primitive: validators can compute `log(p_F / p_R) == β·(W − ΔF)` on observed forward/reverse pairs and detect equilibrium violations."*
-- **Hard**: commit to building the simulator + chain integration so the identity is verified on actual chain trajectories. Multi-week.
+The hard variant — building a stochastic-thermodynamics driver that produces actual Crooks-distributed forward/reverse trajectories — remains an open multi-week research task if EvaporChain wants to upgrade the claim from "exposed primitive" to "verified on actual chain trajectories." Until then, the chain's claim is honestly scoped.
 
 ### Why these three matter
 
@@ -103,8 +91,8 @@ The good news: `evaporchain-proving` has a real Nova pipeline (24,595 measured R
 
 **Without this, every upper-layer doctrine claim is folklore.** Audits run; verdicts ignored.
 
-- [ ] **Promote conservation audit from observability to gating.** Today `evaporchain-execution/src/lib.rs:3015-3036` calls `audit_block_step` post-block and writes to `last_conservation_audit`, but block acceptance does not depend on it. Inline comment confirms this is intentional. Make `ConservationViolation` block-rejecting under a governance flag, default-on for new chains.
-- [ ] **Unify decay through `evaporchain_types::energy_at_epoch`.** Three rogue implementations bypass the canonical Coq-verified function:
+- [x] **Promote conservation audit from observability to gating.** ✅ DONE (commits `4d59b5d`, `65c2b93` extracted `evaluate_conservation_gate` for unit-testability, `5e87c39` parity in BlockStmExecutor). Block acceptance now consults `conservation_enforcement` governance key: `"observe"` (default) keeps legacy storage-only verdicts; `"enforce"` propagates `ConservationViolation` as `ExecutionError`. Wired across `SimpleExecutor`, `ParallelExecutor`, `BlockStmExecutor`. Operator UX via `POST /api/governance/param` (Lane K.1) + `GET /api/governance/flags` (Lane J.0); allowlist-validated with `governance_set_param` (Lane K.2 + K.4).
+- [x] **Unify decay through `evaporchain_types::energy_at_epoch`.** ✅ DONE (commit `4d59b5d`). All three rogue implementations rerouted through the canonical Coq-verified function:
   - `crates/evaporchain-consensus/src/anchor.rs:77-91` — `DecayFormula::Exponential::compute_energy` does raw `>> shifts`, lacks the u128 fractional-decay correction
   - `crates/evaporchain-da/src/poha.rs:99` — `self.energy >> shifts`
   - `crates/evaporchain-self-annealing/src/annealing.rs:54` — shifts `lambda_half_life`
@@ -125,11 +113,11 @@ The good news: `evaporchain-proving` has a real Nova pipeline (24,595 measured R
 
 These are wording corrections, not code. Cheapest items in the punch list; ship before any Layer 2+ work because they prevent future-Claude / future-auditor from being misled by the doctrine.
 
-- [ ] **Amend `INVENTION_STACK.md §A1.2 T1` (MCC).** "Closed-form Perron solution" is mathematically vacuous on a DAG (adjacency matrix is nilpotent — every eigenvalue is 0). What's actually shipped is the correct Jaynes Lagrangian closed-form: `argmax exp(−β·E_path)` over candidate trajectories. Either re-word to "argmax of `exp(-β·E_path)` over candidate trajectories — closed form by Lagrange duality" OR commit to building the real thing on `(I−M)^{-1}` (path-counting matrix) or the time-reversed Markov fork-choice.
-- [ ] **Amend `INVENTION_STACK.md §A1.2 T2` (CFM).** "Exact equality between work and free-energy difference (not a bound)" is not asserted or tested anywhere in `evaporchain-cfm`. `crooks_log_ratio_millibits` returns `(bit_length(p_F) - bit_length(p_R)) * 1000` — the LHS only; the RHS `β·(W − ΔF)` is never constructed. Either add a real Crooks-equality test (synthetic forward/reverse pair, assert `crooks_log_ratio == β·(W − ΔF)` to within fixed-point precision) OR weaken doctrine to "exposed identity primitive."
-- [ ] **Add MERA synthetic-data caveat to `crates/evaporchain-mera/src/lib.rs:30-34`.** Today says: *"Gate result: PASS — MERA GO (2026-04-29)."* Make it: *"Synthetic-data gate result: PASS (2026-04-29). Real-Ethereum gate per §A1.8: pending."*
-- [ ] **Update `crates/evaporchain-light-cone/src/lib.rs` first paragraph** to match the honest comment at `tendermint.rs:3115-3118` ("read-only observability — chain authority is still Tendermint's linear chain"). Today the docstring says "Soul of the chain" without flagging that the soul is currently a downstream observer.
-- [ ] **Update `crates/evaporchain-cslc` HTTP endpoint description.** `evaporchain-node/src/api.rs:6316` documents `POST /api/cslc_reconstruct` as "ε-machine reconstruction (CSSR) from symbol-count distribution." It's not CSSR. Re-label as "single-state baseline (CSSR pending)."
+- [ ] **Amend `INVENTION_STACK.md §A1.2 T1` (MCC).** "Closed-form Perron solution" is mathematically vacuous on a DAG (adjacency matrix is nilpotent — every eigenvalue is 0). What's actually shipped is the correct Jaynes Lagrangian closed-form: `argmax exp(−β·E_path)` over candidate trajectories. Either re-word to "argmax of `exp(-β·E_path)` over candidate trajectories — closed form by Lagrange duality" OR commit to building the real thing on `(I−M)^{-1}` (path-counting matrix) or the time-reversed Markov fork-choice. *(M3.1 — Satyawan strategic call.)*
+- [ ] **Amend `INVENTION_STACK.md §A1.2 T2` (CFM).** "Exact equality between work and free-energy difference (not a bound)" is not asserted or tested anywhere in `evaporchain-cfm`. `crooks_log_ratio_millibits` returns `(bit_length(p_F) - bit_length(p_R)) * 1000` — the LHS only; the RHS `β·(W − ΔF)` is never constructed. Either add a real Crooks-equality test (synthetic forward/reverse pair, assert `crooks_log_ratio == β·(W − ΔF)` to within fixed-point precision) OR weaken doctrine to "exposed identity primitive." *(M3.2 — Satyawan strategic call. The substrate primitive added by sister commit `d80921f`; the wording amend remains.)*
+- [x] **MERA caveat closed → MERA gate FAILED on real Ethereum.** ✅ DONE (commit `2053a86`). The "synthetic-data caveat" item was overtaken by the real-Ethereum gate run (R²=0.66 across three independent tests vs threshold 0.85). Per doctrine §A1.8 contingency, MERA does NOT ship; chain commits to Energy-Verkle Trie. Crate header at `crates/evaporchain-mera/src/lib.rs` updated with the locked verdict.
+- [x] **Update `crates/evaporchain-light-cone/src/lib.rs` first paragraph.** ✅ DONE (commit `bfaa758`). Production-status note added — read-only observability until Layer 4 promotes Light-Cone to authoritative fork-choice.
+- [x] **Update `crates/evaporchain-cslc` HTTP endpoint description.** ✅ DONE (commit `bfaa758`). `POST /api/cslc_reconstruct` re-labeled as "single-state baseline (CSSR per Shalizi-Klinkner 2004 is open work)".
 
 **Acceptance:** every primitive's doctrine claim matches the implementation's actual depth.
 
