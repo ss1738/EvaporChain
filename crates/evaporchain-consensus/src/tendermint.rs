@@ -369,6 +369,14 @@ pub struct ConsensusFourActState {
 /// signatures within ~1 minute of activity at typical block times.
 pub const TUR_WINDOW_BLOCKS: usize = 64;
 
+/// Phase 1.3 of `CROOKS_MEV_INTEGRATION_PLAN.md` — fixed-size ring
+/// buffer cap for MEV-shaped observations recorded per committed
+/// block by `evaporchain-mev-detect::scan_block`. Older entries are
+/// pruned when the cap is exceeded; downstream consumers (Phase 3
+/// settlement) act on the most recent block-window worth of
+/// observations and tolerate drops.
+pub const MEV_OBSERVATION_BUFFER_CAP: usize = 1024;
+
 /// Conversion factor from window-summed gas to entropy production Σ
 /// in TUR's natural units. Launch placeholder: σ = sum(window) / 1000
 /// is order-of-magnitude correct (entropy ∝ flux), calibratable by
@@ -410,6 +418,13 @@ pub struct TendermintConsensus {
     /// Last TUR verdict computed at block-commit time. None until the
     /// window has at least 2 samples (variance is meaningless on 1).
     pub last_tur_verdict: Option<evaporchain_tur_liveness::Verdict>,
+    /// Phase 1.3 of `CROOKS_MEV_INTEGRATION_PLAN.md` — ring buffer
+    /// of sandwich-shaped tx triples observed per committed block by
+    /// `evaporchain-mev-detect::scan_block`. Capped at
+    /// `MEV_OBSERVATION_BUFFER_CAP`; oldest entries pruned. Phase 1
+    /// is observe-only — no Crooks refund settlement runs from this
+    /// buffer until Phase 3 of the plan ships the `RefundTx` plumbing.
+    pub mev_observations: std::collections::VecDeque<evaporchain_mev_detect::MevObservation>,
     /// Causal-CHSH cartel-detection alarm (Lane O.8.1). Rolling-buffer
     /// observability primitive — every committed block pushes a
     /// `BlockSummary` into the alarm; periodic gate runs (default
@@ -667,6 +682,9 @@ impl TendermintConsensus {
             light_cone_dag: evaporchain_light_cone::LightCone::new(),
             tur_window: std::collections::VecDeque::with_capacity(TUR_WINDOW_BLOCKS),
             last_tur_verdict: None,
+            mev_observations: std::collections::VecDeque::with_capacity(
+                MEV_OBSERVATION_BUFFER_CAP,
+            ),
             cartel_alarm: evaporchain_causal_chsh::CartelAlarm::doctrine_default(),
             lambda_fold: evaporchain_lambda_fold::FoldedInstance::identity(),
             #[cfg(feature = "lambda_fold_nova")]
@@ -1386,6 +1404,17 @@ impl TendermintConsensus {
         self.lambda_fold
     }
 
+    /// Phase 1.3 of `CROOKS_MEV_INTEGRATION_PLAN.md` — read-only
+    /// view of the MEV-observation ring buffer. Operators consume
+    /// this via `GET /api/mev/observations` for monitoring; Phase 3
+    /// settlement will additionally consume it inside the proposer
+    /// for `RefundTx` construction.
+    pub fn mev_observations(
+        &self,
+    ) -> &std::collections::VecDeque<evaporchain_mev_detect::MevObservation> {
+        &self.mev_observations
+    }
+
     /// Phase 5.3 of LAMBDA_FOLD_NOVA_PLAN — nova-mode fold helper.
     /// Lazily constructs the `NovaFolder` on first call (Phase 5.1's
     /// deferred-init pattern: avoids the ~60-90 s `pp` setup until the
@@ -1649,6 +1678,9 @@ impl TendermintConsensus {
             light_cone_dag: evaporchain_light_cone::LightCone::new(),
             tur_window: std::collections::VecDeque::with_capacity(TUR_WINDOW_BLOCKS),
             last_tur_verdict: None,
+            mev_observations: std::collections::VecDeque::with_capacity(
+                MEV_OBSERVATION_BUFFER_CAP,
+            ),
             cartel_alarm: evaporchain_causal_chsh::CartelAlarm::doctrine_default(),
             lambda_fold: evaporchain_lambda_fold::FoldedInstance::identity(),
             #[cfg(feature = "lambda_fold_nova")]
@@ -3474,6 +3506,21 @@ impl TendermintConsensus {
             let sigma = sum.saturating_mul(TUR_SIGMA_PER_GAS_NUM) / TUR_SIGMA_PER_GAS_DEN.max(1);
             let samples: Vec<u64> = self.tur_window.iter().copied().collect();
             self.last_tur_verdict = Some(evaporchain_tur_liveness::tur_check(&samples, sigma));
+        }
+
+        // Phase 1.3 of CROOKS_MEV_INTEGRATION_PLAN.md — scan the
+        // committed block for sandwich-shaped tx triples and append
+        // observations to the bounded ring buffer. Phase 1 is
+        // observe-only — no Crooks refund settlement runs from this
+        // buffer until Phase 3 ships the RefundTx plumbing. The scan
+        // is O(n²) over Transfer txs only; with N_max ~1000 txs/block
+        // the worst-case is ~10⁶ ops, well under the 50 ms hot-path
+        // budget per Phase 6.2 of the plan.
+        for obs in evaporchain_mev_detect::scan_block(&block.transactions, block.number) {
+            self.mev_observations.push_back(obs);
+            while self.mev_observations.len() > MEV_OBSERVATION_BUFFER_CAP {
+                self.mev_observations.pop_front();
+            }
         }
 
         // Lambda-Fold per-block step. Each committed block contributes
@@ -6068,6 +6115,101 @@ mod tests {
             st.last_run_at_height,
             50,
             "first run fires at records_seen=50, height=50"
+        );
+    }
+
+    /// Phase 1.5 of `CROOKS_MEV_INTEGRATION_PLAN.md` — drive a
+    /// synthetic sandwich block through `on_block_committed` and
+    /// confirm a `MevObservation` lands in the consensus engine's
+    /// ring buffer. Locks the call-site contract: substrate
+    /// observation runs every block, no settlement, no false
+    /// positives on a same-attacker honest sequence.
+    #[test]
+    fn test_mev_observations_sandwich_recorded() {
+        use evaporchain_types::{Block, TransferTx};
+
+        fn addr(seed: u8) -> [u8; 32] {
+            let mut a = [0u8; 32];
+            a[0] = seed;
+            a
+        }
+        fn transfer(from: u8, to: u8, amount: u64, nonce: u64) -> Transaction {
+            Transaction::Transfer(TransferTx {
+                from: addr(from),
+                to: addr(to),
+                amount,
+                nonce,
+                signature: None,
+                public_key: None,
+            })
+        }
+        fn make_block(num: u64, txs: Vec<Transaction>) -> Block {
+            Block {
+                number: num,
+                epoch: num,
+                parent_hash: [0u8; 32],
+                state_root: [0u8; 32],
+                transactions: txs,
+                producer_id: Some(0),
+                timestamp: 0,
+                chain_id: String::new(),
+                commit_certificate: None,
+                nova_proof: None,
+                anchor_hash: None,
+                vrf_output: None,
+                vrf_proof: None,
+                data_root: None,
+                da_row_roots: vec![],
+                da_col_roots: vec![],
+                blob_commitments: vec![],
+                da_certificate: None,
+                state_function_commitment: None,
+                oracle_state_root: None,
+                shard_count: None,
+                protocol_version: 0,
+                state_root_version: 0,
+                submit_epoch_hints: vec![],
+            }
+        }
+
+        let mut tc = make_consensus(1, &[1, 2, 3, 4]);
+        // Sandwich: attacker 0xAA front-runs + back-runs victim 0xBB,
+        // all targeting account 0x99.
+        let block = make_block(
+            1,
+            vec![
+                transfer(0xAA, 0x99, 100, 0),
+                transfer(0xBB, 0x99, 200, 0),
+                transfer(0xAA, 0x99, 150, 1),
+            ],
+        );
+
+        tc.on_block_committed(&block, [0u8; 32], 0);
+
+        let obs = tc.mev_observations();
+        assert_eq!(obs.len(), 1, "exactly one sandwich observation expected");
+        let o = &obs[0];
+        assert_eq!(o.block_height, 1);
+        assert_eq!(o.attacker, addr(0xAA));
+        assert_eq!(o.victim, addr(0xBB));
+        assert_eq!(o.target, addr(0x99));
+        assert_eq!(o.work_estimate, 250);
+
+        // Honest follow-up block: three different senders — must
+        // not register a false positive.
+        let honest = make_block(
+            2,
+            vec![
+                transfer(0xCC, 0x99, 100, 0),
+                transfer(0xDD, 0x99, 200, 0),
+                transfer(0xEE, 0x99, 150, 0),
+            ],
+        );
+        tc.on_block_committed(&honest, [0u8; 32], 0);
+        assert_eq!(
+            tc.mev_observations().len(),
+            1,
+            "honest block must not add observations"
         );
     }
 

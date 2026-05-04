@@ -44,6 +44,7 @@ evaporchain-tur-liveness = { path = "../evaporchain-tur-liveness" }
 evaporchain-cmu-gate = { path = "../evaporchain-cmu-gate" }
 evaporchain-causal-chsh = { path = "../evaporchain-causal-chsh" }
 evaporchain-crooks-mev-refund = { path = "../evaporchain-crooks-mev-refund" }
+evaporchain-mev-detect = { path = "../evaporchain-mev-detect" }
 evaporchain-cfm = { path = "../evaporchain-cfm" }
 evaporchain-modular-beacon = { path = "../evaporchain-modular-beacon" }
 evaporchain-prp = { path = "../evaporchain-prp" }

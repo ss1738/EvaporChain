@@ -37,13 +37,13 @@ Seven phases, ~4–6 weeks total. Phases 1-2 unblock observability; Phases 3-5 a
 
 **Goal:** ship a no-op detector that records candidate MEV events without acting on them. The chain emits "MEV observation" log entries; nothing settles.
 
-- [ ] **1.1 — MEV signature module** (`crates/evaporchain-mev-detect/`): new crate. Inputs: ordered tx list, per-tx execution side-effects (balance deltas, gas spent, price-relevant state reads). Outputs: list of `(attacker_tx_idx, victim_tx_idx, work_extracted_estimate)` tuples for sandwich-shaped patterns.
-- [ ] **1.2 — Per-block evidence struct**: `MevObservation { block_height, attacker_tx_hash, victim_tx_hash, work_estimate, confidence_score }`. Lives in `evaporchain-types`.
-- [ ] **1.3 — Detection call site**: hook into `ParallelExecutor::execute_block` (or wherever the post-execution side-effects are settled) — emit observations. Wire a fixed-size ring buffer on `TendermintConsensus::mev_observations: VecDeque<MevObservation>`.
-- [ ] **1.4 — `GET /api/mev/observations` endpoint**: surfaces the ring buffer for operator monitoring + analyst tooling.
-- [ ] **1.5 — Tests**: synthetic sandwich (3-tx pattern: front-run buy + victim swap + back-run sell), assert detection fires; honest sequential trades, assert no false positive.
+- [x] **1.1 — MEV signature module** (`crates/evaporchain-mev-detect/`): SHIPPED. New crate `evaporchain-mev-detect` with `scan_block(txs, height) -> Vec<MevObservation>`. O(n²) outer scan over `Transaction::Transfer` triples; non-Transfer txs skipped. 9/9 tests green covering classic sandwich, honest sequence, target mismatch, self-MEV skip, multi-sandwich, multi-victim cardinality cap.
+- [x] **1.2 — Per-block evidence struct**: `MevObservation` shipped in `evaporchain-mev-detect` (decision: keep co-located with its only producer for now; move to `evaporchain-types` in Phase 1.6+ if downstream consumers need it from there). Fields: `(block_height, attacker_pre_idx, victim_idx, attacker_post_idx, attacker, victim, target, work_estimate, confidence_score)`. Phase 4.3 self-MEV anti-gaming guard already pre-wired (attacker == victim → not emitted at detection time).
+- [x] **1.3 — Detection call site**: SHIPPED at `tendermint.rs:on_block_committed` (right before the Lambda-Fold per-block step). Bounded ring buffer `mev_observations: VecDeque<MevObservation>` on `TendermintConsensus`, capped at `MEV_OBSERVATION_BUFFER_CAP = 1024`. Read-only accessor `mev_observations(&self) -> &VecDeque<…>` shipped.
+- [x] **1.4 — `GET /api/mev/observations` endpoint**: SHIPPED on `evaporchain-node`. Returns `MevObservationsResp { count, observations: Vec<MevObservationView> }` with hex-encoded addresses.
+- [x] **1.5 — Tests**: `test_mev_observations_sandwich_recorded` in `tendermint.rs` drives a synthetic sandwich block + an honest follow-up block through `on_block_committed`, asserts (a) the sandwich produces exactly 1 observation with the expected attacker/victim/target/work fields, (b) the honest block does NOT add a false-positive observation. Test passes on Mini under release.
 
-**Phase 1 deliverable:** chain logs MEV-shaped patterns at zero operational cost. Default is no-op observation.
+**Phase 1 deliverable: SHIPPED.** Chain logs MEV-shaped patterns at zero operational cost. Default is no-op observation. HTTP endpoint exposes the buffer for operator tooling.
 
 ### Phase 2 — Refund computation (2-3 days)
 

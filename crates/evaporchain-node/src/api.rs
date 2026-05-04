@@ -4086,6 +4086,68 @@ async fn post_lambda_fold_verify(
     }
 }
 
+// ─────────── MEV-detect observations (Crooks-MEV Phase 1.4) ────────
+
+/// One MEV-shaped observation surfaced by the consensus engine's
+/// per-block sandwich detector. Operators consume this for
+/// monitoring; Phase 3 of `CROOKS_MEV_INTEGRATION_PLAN.md` will add
+/// a refund-amount field once the substrate math is wired in.
+#[derive(Debug, Serialize)]
+pub struct MevObservationView {
+    pub block_height: u64,
+    pub attacker_pre_idx: usize,
+    pub victim_idx: usize,
+    pub attacker_post_idx: usize,
+    pub attacker_hex: String,
+    pub victim_hex: String,
+    pub target_hex: String,
+    pub work_estimate: u64,
+    pub confidence_score: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MevObservationsResp {
+    pub count: usize,
+    pub observations: Vec<MevObservationView>,
+}
+
+/// GET /api/mev/observations — read-only view of the consensus
+/// engine's MEV-observation ring buffer (Phase 1.3 of the plan).
+/// Phase 1 is observe-only; no settlement runs yet.
+async fn get_mev_observations(
+    State(state): State<Arc<ApiState>>,
+) -> Json<MevObservationsResp> {
+    let tc = match state.tendermint.as_ref() {
+        Some(tc) => tc,
+        None => {
+            return Json(MevObservationsResp {
+                count: 0,
+                observations: vec![],
+            });
+        }
+    };
+    let tc = safe_lock(tc);
+    let observations: Vec<MevObservationView> = tc
+        .mev_observations()
+        .iter()
+        .map(|o| MevObservationView {
+            block_height: o.block_height,
+            attacker_pre_idx: o.attacker_pre_idx,
+            victim_idx: o.victim_idx,
+            attacker_post_idx: o.attacker_post_idx,
+            attacker_hex: hex::encode(o.attacker),
+            victim_hex: hex::encode(o.victim),
+            target_hex: hex::encode(o.target),
+            work_estimate: o.work_estimate,
+            confidence_score: o.confidence_score,
+        })
+        .collect();
+    Json(MevObservationsResp {
+        count: observations.len(),
+        observations,
+    })
+}
+
 // ─────────── Lambda-Fold Nova endpoints (Phase 5.4) ────────────────
 
 /// GET /api/lambda_fold/nova response: surfaces the running Nova
@@ -14493,6 +14555,8 @@ pub fn create_router(state: Arc<ApiState>, auth_state: Arc<crate::auth::AuthStat
         .route("/api/efh/bottleneck", post(post_efh_bottleneck))
         .route("/api/lambda_fold", get(get_lambda_fold))
         .route("/api/lambda_fold/verify", post(post_lambda_fold_verify))
+        // Crooks-MEV Phase 1.4 — observe-only MEV ring buffer view.
+        .route("/api/mev/observations", get(get_mev_observations))
         .route("/api/singh_attractor", post(post_singh_attractor))
         .route("/api/bell_beacon", post(post_bell_beacon))
         .route("/api/allen_relation", post(post_allen_relation))
