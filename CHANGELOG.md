@@ -151,6 +151,13 @@ math is new because the substrate is new.
 | O.6 | 3K-block sanity check on the same Eth window MERA used (19_900_000–19_903_000). **Verdict: PASS again** — S_honest=0.018 (vs 0.012 on 200-block, both well below 1.8), 14,885 ±1 samples (15× more than 200-block run). Verdict robust under sample-size scaling. | `cdb736c` |
 | O.7 | `CartelAlarm` rolling-buffer substrate primitive — fixed-capacity ring of `BlockSummary`, periodic gate-run logic, last-S tracking. Observability-first; no auto-action emission yet (deferred to Lane O.8 design). | `63b6cf6` |
 | O.7+ | Proptest 256× alarm invariants (buffer cap, monotonic counter, first-run threshold, honest-source verdict). Caught a real off-by-one in the periodic-run logic (capacity=50, interval=21, n_records=60 edge case) — pure proptest win. | `5968295` |
+| O.8.1 | `TendermintConsensus` hosts `CartelAlarm` rolling buffer; `on_block_committed` ticks the alarm with a `BlockSummary` per committed block. Observability-only at this stage — no governance hook yet. | (earlier) |
+| O.8.1b | `GET /api/cartel_alarm/chain_status` — chain's own self-monitoring verdict surfaced via RPC. Distinct from the operator-supplied-trace path of O.5. | (earlier) |
+| O.8.1c | Integration test driving 60 blocks through `on_block_committed` → alarm fires at records_seen=50, height=50; verdict shape locked. | (earlier) |
+| O.8.1d | `CartelAlarm.recompute_now` switched to `compute_chsh_s_milli` (i64 milli-units) for validator-determinism on the consensus-bearing path; f64 path retained for RPC display only. | `8853078` |
+| O.8.2 | `CartelAlarmEvent` emission. Per-block emission gate fires when (a) governance `cartel_alarm_mode = "alarm"`, (b) chain's `s_honest_milli >= 1800` (doctrine ceiling), (c) no event for `last_run_at_height` already queued. Default `observe` mode silent. Surface drained via `take_pending_cartel_alarms()`. **Closes the original Lane O.8 design lane: alarm hook + governance + dedupe all in-protocol.** | `122821f` |
+| O.8.2b | `GET /api/cartel_alarm/pending_events` — RPC drains the chain's queued `CartelAlarmEvent`s; each event returned exactly once. Operator dashboard / pager surface. | `0fac70f` |
+| O.8.2c | Full-pipeline integration test: drives blocks through `on_block_committed` with `cartel_alarm_mode = alarm` → injected over-ceiling status → emission → drain. Distinct from O.8.2's unit test which calls the helper directly. Locks the call-site wiring end-to-end. | `6cb4b90` |
 
 ### MERA / Causal-CHSH paired symmetry
 
@@ -167,9 +174,13 @@ credibly when it doesn't. The credibility is in the symmetry.
 
 ### Final Causal-CHSH test counts
 
-- 26 tests total in `evaporchain-causal-chsh`
+- 33 tests total in `evaporchain-causal-chsh` (post O.8.2 — added
+  `CartelAlarmEvent` struct + `_inject_status_for_test` doctrine helper)
 - 5 proptests across the crate (Bell bound for LHV sources, S
   algebraic range, alarm invariants, plus chsh dispatch)
+- `evaporchain-consensus`: 423 lib tests pass (post O.8.2 + O.8.2c —
+  added `test_cartel_alarm_event_emission_governance_gated` and
+  `test_cartel_alarm_event_emission_via_on_block_committed`)
 - Real-Ethereum gate verdict locked in `research/causal-chsh/GATE_RESULT.md`
 - 3K-block sanity verdict locked in `research/causal-chsh/GATE_RESULT_3K.md`
 - 200-block reproducibility CSV at `research/causal-chsh/honest.csv`
@@ -188,7 +199,8 @@ primitives** (was 6 before Causal-CHSH).
 
 | Item | Effort |
 |---|---|
-| Lane O.8 — proper consensus integration (`cartel_alarm` governance hook with rolling buffer + auto-emission on `S > cartel_floor`) | multi-day, design-heavy |
+| ~~Lane O.8 — proper consensus integration (`cartel_alarm` governance hook with rolling buffer + auto-emission on `S > cartel_floor`)~~ — **closed by Lane O.8.1 / O.8.2 / O.8.2b / O.8.2c.** Hook ticks every block; `cartel_alarm_mode` governance flag gates emission; `CartelAlarmEvent` queue + `take_pending_cartel_alarms()` + `GET /api/cartel_alarm/pending_events` complete the operator surface. | done |
+| Lane O.8.3+ — validator-side reaction policy on emitted `CartelAlarmEvent` (slashing? freeze? governance amendment?). V1 is event surface only — operators page their own response. | multi-day, design-heavy |
 | Layer 5 — Lambda-Fold real Nova IVC (sister session) | 3-6 weeks |
 | Layer 6 — Crooks-MEV refund consensus integration | multi-day |
 | Layer 6 — Light-Cone full consensus rewrite | months |

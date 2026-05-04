@@ -427,10 +427,10 @@ Causal-CHSH requires **concurrent blocks as a primitive** (mutually incomparable
 
 The Eth verdict is a proxy (windowed pairs on a linear chain); the genuine bound on a true LightCone substrate has to wait until EvaporChain testnet matures. But the proxy passes by such enormous margins (S_honest ≈ 0.012 vs ceiling 1.8) that a real LightCone trace would have to look pathologically different from real chain traffic to fail it.
 
-### Future work — Lane O.5+ deferred
+### Future work — Lane O.5+
 
-- Consensus integration: wire `cartel_alarm` governance hook that runs the gate on rolling windows + emits an alarm event when S exceeds the cartel_floor on the chain itself.
-- Larger sample: 3K-block run from the same 19_900_000+ window the MERA gate used, as a statistical sanity check on the 200-block result.
+- ~~Consensus integration: wire `cartel_alarm` governance hook that runs the gate on rolling windows + emits an alarm event when S exceeds the cartel_floor on the chain itself.~~ **CLOSED 2026-05-04** by Lanes O.8.1 / O.8.1b / O.8.1c / O.8.1d / O.8.2 / O.8.2b / O.8.2c. `TendermintConsensus` ticks `CartelAlarm.record_block` on every committed block; verdict computed in i64 milli-units for validator-determinism; `cartel_alarm_mode = "alarm"` governance flag gates `CartelAlarmEvent` emission; `take_pending_cartel_alarms()` + `GET /api/cartel_alarm/pending_events` complete the operator surface; `GET /api/cartel_alarm/chain_status` exposes the ongoing verdict. V1 is event surface only — no in-protocol validator reaction policy. Lane O.8.3+ will design how validators react.
+- ~~Larger sample: 3K-block run from the same 19_900_000+ window the MERA gate used, as a statistical sanity check on the 200-block result.~~ **CLOSED** by Lane O.6 (S_honest=0.018, gate verdict robust under 15× sample-size scaling).
 - Whitepaper §A1.3 amendment to introduce the primitive + its theorem statement.
 
 ---
